@@ -5,7 +5,6 @@
 //! - Concurrent downloads with connection pooling
 //! - Progress bars with per-repo status
 //! - Automatic decompression (gzip, xz)
-//! - InRelease/Release signature verification (optional)
 //! - Atomic cache updates
 
 #![cfg(any(feature = "debian", feature = "debian-pure"))]
@@ -20,7 +19,6 @@ use futures::stream::{self, StreamExt};
 use indicatif::{MultiProgress, ProgressBar, ProgressStyle};
 use owo_colors::OwoColorize;
 use reqwest::Client;
-use sha2::{Digest, Sha256};
 use tempfile::NamedTempFile;
 
 use crate::core::paths;
@@ -42,17 +40,7 @@ const INITIAL_BACKOFF_MS: u64 = 200;
 /// Cache TTL in seconds (6 hours)
 const CACHE_TTL_SECS: u64 = 6 * 60 * 60;
 
-/// Repository sync state for caching
-#[derive(serde::Serialize, serde::Deserialize, Default)]
-#[expect(dead_code)] // Future feature: incremental sync
-struct SyncCache {
-    /// When this cache was created
-    synced_at: u64,
-    /// Map of repo URI+suite to last sync timestamp
-    repos: std::collections::HashMap<String, u64>,
-}
-
-/// Check if apt's cache (/var/lib/apt/lists/) is fresh enough
+/// Check if apt's cache (`/var/lib/apt/lists/`) is fresh enough
 /// Returns true if apt cache was updated within the last 6 hours
 fn is_apt_cache_fresh() -> bool {
     let apt_lists = Path::new("/var/lib/apt/lists");
@@ -610,51 +598,6 @@ fn atomic_write(dest: &Path, data: &[u8]) -> Result<()> {
         .map_err(|error| error.error)
         .with_context(|| format!("Failed to persist {}", dest.display()))?;
     Ok(())
-}
-
-/// Verify SHA256 checksum of data
-#[expect(dead_code)] // Future feature: Release file verification
-fn verify_checksum(data: &[u8], expected_hash: &str) -> Result<()> {
-    let mut hasher = Sha256::new();
-    hasher.update(data);
-    let result = hasher.finalize();
-    let actual_hash = hex::encode(result);
-
-    if actual_hash == expected_hash {
-        Ok(())
-    } else {
-        anyhow::bail!("Checksum mismatch: expected {expected_hash}, got {actual_hash}")
-    }
-}
-
-/// Parse Release file to extract SHA256 checksums
-#[expect(dead_code)] // Future feature: Release file verification
-fn parse_release_file(content: &str) -> std::collections::HashMap<String, String> {
-    let mut checksums = std::collections::HashMap::new();
-    let mut in_sha256_section = false;
-
-    for line in content.lines() {
-        if line.starts_with("SHA256:") {
-            in_sha256_section = true;
-            continue;
-        }
-
-        if in_sha256_section {
-            if line.starts_with(' ') || line.starts_with('\t') {
-                let parts: Vec<&str> = line.split_whitespace().collect();
-                if parts.len() >= 3 {
-                    let hash = parts[0];
-                    let filename = parts[2];
-                    checksums.insert(filename.to_string(), hash.to_string());
-                }
-            } else if !line.is_empty() {
-                // End of SHA256 section
-                break;
-            }
-        }
-    }
-
-    checksums
 }
 
 /// Get the cache directory for a repository
