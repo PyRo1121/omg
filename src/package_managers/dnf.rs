@@ -208,28 +208,38 @@ impl DnfPackageManager {
         let mut packages = Vec::with_capacity(2048);
 
         for line in stdout.lines() {
-            let fields: Vec<&str> = line.split('\t').collect();
-            if fields.len() < 7 {
+            if line.is_empty() {
                 continue;
             }
-
-            let reason = match fields[6] {
-                "0" | "user" => InstallReason::User,
-                _ => InstallReason::Dependency,
-            };
-
-            packages.push(InstalledPackage {
-                name: fields[0].to_string(),
-                version: fields[1].to_string(),
-                release: fields[2].to_string(),
-                summary: fields[3].to_string(),
-                size: fields[4].parse().unwrap_or(0),
-                install_time: fields[5].parse().unwrap_or(0),
-                reason,
-            });
+            packages.push(Self::parse_rpm_qa_line(line)?);
         }
 
         Ok(packages)
+    }
+
+    fn parse_rpm_qa_line(line: &str) -> Result<InstalledPackage> {
+        let fields: Vec<&str> = line.split('\t').collect();
+        if fields.len() < 7 {
+            anyhow::bail!(
+                "malformed rpm -qa output: expected 7 fields, got {}",
+                fields.len()
+            );
+        }
+
+        let reason = match fields[6] {
+            "0" | "user" => InstallReason::User,
+            _ => InstallReason::Dependency,
+        };
+
+        Ok(InstalledPackage {
+            name: fields[0].to_string(),
+            version: fields[1].to_string(),
+            release: fields[2].to_string(),
+            summary: fields[3].to_string(),
+            size: fields[4].parse().unwrap_or(0),
+            install_time: fields[5].parse().unwrap_or(0),
+            reason,
+        })
     }
 
     /// Parse RPM header blob to extract metadata
@@ -901,6 +911,27 @@ mod tests {
             .expect_err("invalid magic must not parse as an empty tag map");
         assert!(
             error.to_string().contains("Invalid RPM header magic"),
+            "got: {error}"
+        );
+    }
+
+    #[test]
+    fn test_parse_rpm_qa_line_reads_installed_package() {
+        let pkg = DnfPackageManager::parse_rpm_qa_line(
+            "bash\t5.2.15\t1.fc39\tThe GNU Bourne Again shell\t1024\t1700000000\t0",
+        )
+        .expect("valid rpm -qa line");
+        assert_eq!(pkg.name, "bash");
+        assert_eq!(pkg.version, "5.2.15");
+        assert_eq!(pkg.reason, InstallReason::User);
+    }
+
+    #[test]
+    fn test_parse_rpm_qa_line_rejects_truncated_row() {
+        let error = DnfPackageManager::parse_rpm_qa_line("bash\t5.2.15")
+            .expect_err("truncated rpm -qa line must not skip the package");
+        assert!(
+            error.to_string().contains("malformed rpm -qa output"),
             "got: {error}"
         );
     }
