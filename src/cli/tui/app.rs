@@ -358,7 +358,7 @@ impl App {
 
     pub async fn run_security_audit(&self) -> Result<usize> {
         let scanner = crate::core::security::vulnerability::VulnerabilityScanner::new();
-        scanner.scan_system().await
+        Ok(scanner.scan_system().await?)
     }
 
     pub async fn tick(&mut self) -> Result<()> {

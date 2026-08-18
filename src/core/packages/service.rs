@@ -431,8 +431,9 @@ mod tests {
         ) -> Pin<
             Box<
                 dyn Future<
-                        Output = anyhow::Result<
+                        Output = Result<
                             Vec<crate::core::security::vulnerability::VulnerabilityReport>,
+                            crate::core::security::vulnerability::VulnerabilityError,
                         >,
                     > + Send
                     + 'a,

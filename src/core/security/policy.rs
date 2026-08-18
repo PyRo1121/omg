@@ -136,7 +136,7 @@ impl SecurityPolicy {
         name: &str,
         version: &Version,
         is_official: bool,
-    ) -> anyhow::Result<SecurityGrade> {
+    ) -> Result<SecurityGrade, super::vulnerability::VulnerabilityError> {
         // An unavailable evidence source must not be treated as a clean package.
         if !scanner.scan_package(name, version).await?.is_empty() {
             return Ok(SecurityGrade::Risk);
@@ -237,7 +237,7 @@ pub fn license_matches_allowlist(license: &str, allowed: &[String]) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use anyhow::Result;
+    use crate::core::security::vulnerability::VulnerabilityError;
 
     #[test]
     fn test_grade_ordering() {
@@ -311,6 +311,7 @@ mod tests {
                 dyn std::future::Future<
                         Output = Result<
                             Vec<crate::core::security::vulnerability::VulnerabilityReport>,
+                            VulnerabilityError,
                         >,
                     > + Send
                     + 'a,
@@ -332,12 +333,17 @@ mod tests {
                 dyn std::future::Future<
                         Output = Result<
                             Vec<crate::core::security::vulnerability::VulnerabilityReport>,
+                            VulnerabilityError,
                         >,
                     > + Send
                     + 'a,
             >,
         > {
-            Box::pin(async { anyhow::bail!("osv unavailable") })
+            Box::pin(async {
+                Err(VulnerabilityError::Unavailable {
+                    reason: "osv unavailable".to_string(),
+                })
+            })
         }
     }
 
@@ -376,7 +382,10 @@ mod tests {
             .await
             .expect_err("missing evidence must not look like a clean package");
         assert!(
-            error.to_string().contains("osv unavailable"),
+            matches!(
+                error,
+                VulnerabilityError::Unavailable { ref reason } if reason == "osv unavailable"
+            ),
             "scanner error must be preserved, got: {error}"
         );
     }

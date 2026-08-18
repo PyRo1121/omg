@@ -91,7 +91,7 @@ pub enum SbomError {
     #[error("Failed to fetch vulnerability data")]
     FetchVulnerabilities {
         #[source]
-        source: anyhow::Error,
+        source: super::vulnerability::VulnerabilityError,
     },
     #[error("Failed to serialize SBOM")]
     Serialize {
