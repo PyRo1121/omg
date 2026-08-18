@@ -1046,69 +1046,6 @@ fn prepare_status_entry(control_file: &Path) -> Result<String> {
     Ok(result)
 }
 
-/// Update /var/lib/dpkg/status with package info
-#[expect(dead_code)]
-fn update_dpkg_status(name: &str, version: &str, control_dir: &Path) -> Result<()> {
-    let control_file = control_dir.join("control");
-    if !control_file.exists() {
-        return Ok(()); // No control file to process
-    }
-
-    let control_content = fs::read_to_string(&control_file)?;
-
-    // Parse control file and add Status field
-    let mut status_entry = String::new();
-    let mut found_status = false;
-
-    for line in control_content.lines() {
-        if line.starts_with("Status:") {
-            found_status = true;
-            status_entry.push_str("Status: install ok installed\n");
-        } else {
-            status_entry.push_str(line);
-            status_entry.push('\n');
-        }
-    }
-
-    if !found_status {
-        // Insert Status field after Package field
-        let mut new_entry = String::new();
-        for line in control_content.lines() {
-            new_entry.push_str(line);
-            new_entry.push('\n');
-            if line.starts_with("Package:") {
-                new_entry.push_str("Status: install ok installed\n");
-            }
-        }
-        status_entry = new_entry;
-    }
-
-    // Append to dpkg status file
-    let status_path = Path::new("/var/lib/dpkg/status");
-    let mut file = fs::OpenOptions::new()
-        .append(true)
-        .open(status_path)
-        .with_context(|| format!("Failed to open {}", status_path.display()))?;
-
-    file.write_all(b"\n")?;
-    file.write_all(status_entry.as_bytes())?;
-
-    // Also copy files list
-    let list_file = control_dir.join("conffiles");
-    if list_file.exists() {
-        let dest = Path::new("/var/lib/dpkg/info").join(format!("{name}.conffiles"));
-        fs::copy(&list_file, &dest)?;
-    }
-
-    // Note: In a full implementation, we'd also:
-    // - Update /var/lib/dpkg/info/*.list with installed files
-    // - Handle triggers
-    // - Update /var/lib/dpkg/info/*.md5sums
-
-    tracing::debug!("Updated dpkg status for {} {}", name, version);
-    Ok(())
-}
-
 /// Download a package with streaming to disk (lower memory usage)
 ///
 /// OPTIMIZATION: Streams response directly to disk instead of buffering in memory.
