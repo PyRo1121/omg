@@ -663,6 +663,36 @@ fn system_status_for_backend(pm_name: &str) -> anyhow::Result<(usize, usize, usi
     }
 }
 
+fn explicit_packages_for_backend(pm_name: &str) -> anyhow::Result<Vec<String>> {
+    match pm_name {
+        "apt" => {
+            #[cfg(feature = "debian")]
+            {
+                crate::package_managers::apt_list_explicit()
+            }
+            #[cfg(not(feature = "debian"))]
+            Err(anyhow::anyhow!("Debian backend disabled"))
+        }
+        "apt-pure" => {
+            #[cfg(any(feature = "debian", feature = "debian-pure"))]
+            {
+                crate::package_managers::debian_db::list_explicit_fast()
+            }
+            #[cfg(not(any(feature = "debian", feature = "debian-pure")))]
+            Err(anyhow::anyhow!("Debian backend disabled"))
+        }
+        "pacman" => {
+            #[cfg(feature = "arch")]
+            {
+                crate::package_managers::list_explicit_fast()
+            }
+            #[cfg(not(feature = "arch"))]
+            Err(anyhow::anyhow!("Arch backend disabled"))
+        }
+        other => Err(anyhow::anyhow!("Unsupported package manager: {other}")),
+    }
+}
+
 /// Handle status request
 #[tracing::instrument(skip(state))]
 async fn handle_status(state: Arc<DaemonState>, id: RequestId) -> Response {
@@ -865,28 +895,7 @@ async fn handle_list_explicit(state: Arc<DaemonState>, id: RequestId) -> Respons
 
     let state_clone = Arc::clone(&state);
     let packages_result = tokio::task::spawn_blocking(move || {
-        let pm_name = state_clone.package_manager.name();
-        if pm_name == "apt" {
-            #[cfg(feature = "debian")]
-            {
-                crate::package_managers::apt_list_explicit()
-            }
-            #[cfg(not(feature = "debian"))]
-            {
-                Err::<Vec<String>, _>(anyhow::anyhow!("Debian backend disabled"))
-            }
-        } else if pm_name == "pacman" {
-            #[cfg(feature = "arch")]
-            {
-                crate::package_managers::list_explicit_fast()
-            }
-            #[cfg(not(feature = "arch"))]
-            {
-                Err(anyhow::anyhow!("Arch backend disabled"))
-            }
-        } else {
-            Err(anyhow::anyhow!("Unsupported package manager: {pm_name}"))
-        }
+        explicit_packages_for_backend(state_clone.package_manager.name())
     })
     .await;
 
@@ -917,28 +926,8 @@ async fn handle_explicit_count(state: Arc<DaemonState>, id: RequestId) -> Respon
 
     let state_clone = Arc::clone(&state);
     let count_result = tokio::task::spawn_blocking(move || {
-        let pm_name = state_clone.package_manager.name();
-        if pm_name == "apt" {
-            #[cfg(feature = "debian")]
-            {
-                crate::package_managers::apt_list_explicit().map(|packages| packages.len())
-            }
-            #[cfg(not(feature = "debian"))]
-            {
-                Err::<usize, _>(anyhow::anyhow!("Debian backend disabled"))
-            }
-        } else if pm_name == "pacman" {
-            #[cfg(feature = "arch")]
-            {
-                crate::package_managers::list_explicit_fast().map(|packages| packages.len())
-            }
-            #[cfg(not(feature = "arch"))]
-            {
-                Err(anyhow::anyhow!("Arch backend disabled"))
-            }
-        } else {
-            Err(anyhow::anyhow!("Unsupported package manager: {pm_name}"))
-        }
+        explicit_packages_for_backend(state_clone.package_manager.name())
+            .map(|packages| packages.len())
     })
     .await;
 
@@ -1084,6 +1073,27 @@ mod tests {
     fn apt_pure_status_without_debian_fails() {
         let error = system_status_for_backend("apt-pure")
             .expect_err("apt-pure without a Debian backend must not invent counts");
+        assert!(
+            error.to_string().contains("Debian backend disabled"),
+            "got: {error}"
+        );
+    }
+
+    #[test]
+    fn explicit_rejects_unknown_package_manager() {
+        let error = explicit_packages_for_backend("homebrew")
+            .expect_err("unknown backends must not invent an empty explicit list");
+        assert!(
+            error.to_string().contains("Unsupported package manager"),
+            "got: {error}"
+        );
+    }
+
+    #[test]
+    #[cfg(not(any(feature = "debian", feature = "debian-pure")))]
+    fn apt_pure_explicit_without_debian_fails() {
+        let error = explicit_packages_for_backend("apt-pure")
+            .expect_err("apt-pure without a Debian backend must not invent an empty explicit list");
         assert!(
             error.to_string().contains("Debian backend disabled"),
             "got: {error}"
