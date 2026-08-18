@@ -9,7 +9,7 @@ use anyhow::{Context, Result};
 use std::fs;
 #[cfg(unix)]
 use std::os::unix::fs::PermissionsExt;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use crate::cli::style;
 
@@ -94,6 +94,16 @@ fn get_hooks_dir() -> Result<PathBuf> {
     Ok(git_dir.join("hooks"))
 }
 
+fn read_hook_file(path: &Path) -> Result<Option<String>> {
+    match fs::read_to_string(path) {
+        Ok(content) => Ok(Some(content)),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(None),
+        Err(error) => {
+            Err(error).with_context(|| format!("Failed to read git hook {}", path.display()))
+        }
+    }
+}
+
 /// Install all Git hooks
 pub fn install(force: bool) -> Result<()> {
     println!("{} Installing Git hooks...\n", style::header("OMG"));
@@ -114,23 +124,23 @@ pub fn install(force: bool) -> Result<()> {
         let hook_path = hooks_dir.join(name);
 
         // Check if hook already exists
-        if hook_path.exists()
-            && !force
-            && let Ok(existing) = fs::read_to_string(&hook_path)
-            && existing.contains("# OMG")
-        {
-            println!("  {} {} (already installed)", style::dim("•"), name);
-            continue;
-        }
-
-        if hook_path.exists() && !force {
-            println!(
-                "  {} {} (exists, use --force to overwrite)",
-                style::warning("⚠"),
-                name
-            );
-            skipped += 1;
-            continue;
+        if !force {
+            match read_hook_file(&hook_path)? {
+                Some(existing) if existing.contains("# OMG") => {
+                    println!("  {} {} (already installed)", style::dim("•"), name);
+                    continue;
+                }
+                Some(_) => {
+                    println!(
+                        "  {} {} (exists, use --force to overwrite)",
+                        style::warning("⚠"),
+                        name
+                    );
+                    skipped += 1;
+                    continue;
+                }
+                None => {}
+            }
         }
 
         // Write the hook
@@ -181,21 +191,20 @@ pub fn uninstall() -> Result<()> {
     for name in hooks {
         let hook_path = hooks_dir.join(name);
 
-        if !hook_path.exists() {
-            println!("  {} {} (not installed)", style::dim("•"), name);
-            continue;
-        }
-
-        // Check if it's our hook before removing
-        if let Ok(content) = fs::read_to_string(&hook_path)
-            && !content.contains("# OMG")
-        {
-            println!(
-                "  {} {} (not an OMG hook, skipping)",
-                style::warning("⚠"),
-                name
-            );
-            continue;
+        match read_hook_file(&hook_path)? {
+            None => {
+                println!("  {} {} (not installed)", style::dim("•"), name);
+                continue;
+            }
+            Some(content) if !content.contains("# OMG") => {
+                println!(
+                    "  {} {} (not an OMG hook, skipping)",
+                    style::warning("⚠"),
+                    name
+                );
+                continue;
+            }
+            Some(_) => {}
         }
 
         fs::remove_file(&hook_path).with_context(|| format!("Failed to remove {name} hook"))?;
@@ -228,24 +237,20 @@ pub fn status() -> Result<()> {
     for name in hooks {
         let hook_path = hooks_dir.join(name);
 
-        if !hook_path.exists() {
-            println!("  {} {} - not installed", style::dim("○"), name);
-            continue;
-        }
-
-        // Check if it's our hook
-        if let Ok(content) = fs::read_to_string(&hook_path) {
-            if content.contains("# OMG") {
+        match read_hook_file(&hook_path)? {
+            None => {
+                println!("  {} {} - not installed", style::dim("○"), name);
+            }
+            Some(content) if content.contains("# OMG") => {
                 println!("  {} {} - installed (OMG)", style::success("●"), name);
-            } else {
+            }
+            Some(_) => {
                 println!(
                     "  {} {} - installed (custom, not OMG)",
                     style::warning("●"),
                     name
                 );
             }
-        } else {
-            println!("  {} {} - exists (unreadable)", style::warning("●"), name);
         }
     }
 
@@ -285,4 +290,50 @@ pub fn run_hook(hook_name: &str) -> Result<()> {
     }
 
     Ok(())
+}
+
+#[cfg(test)]
+#[expect(clippy::unwrap_used, clippy::expect_used)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_read_hook_file_missing_is_none() {
+        let missing = tempfile::TempDir::new()
+            .unwrap()
+            .path()
+            .join("does-not-exist");
+        assert!(read_hook_file(&missing).unwrap().is_none());
+    }
+
+    #[test]
+    fn test_read_hook_file_reads_content() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let path = dir.path().join("pre-commit");
+        fs::write(&path, "# OMG\n").unwrap();
+        assert_eq!(read_hook_file(&path).unwrap().as_deref(), Some("# OMG\n"));
+    }
+
+    #[test]
+    fn test_read_hook_file_unreadable_errors() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let path = dir.path().join("pre-commit");
+        fs::write(&path, "# OMG\n").unwrap();
+        let original = fs::metadata(&path).unwrap().permissions();
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            fs::set_permissions(&path, fs::Permissions::from_mode(0o000)).unwrap();
+        }
+        let blocked = fs::read_to_string(&path).is_err();
+        let result = read_hook_file(&path);
+        let _ = fs::set_permissions(&path, original);
+        if !blocked {
+            return;
+        }
+        assert!(
+            result.is_err(),
+            "unreadable hook file must fail closed, got {result:?}"
+        );
+    }
 }
