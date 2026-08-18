@@ -112,6 +112,10 @@ pub enum SbomError {
     },
     #[error("SBOM generation is not available without an Arch or Debian package backend")]
     NoBackend,
+    #[error(
+        "Arch Linux Security Advisory data cannot be used to scan Debian packages; generate the SBOM without vulnerability matching"
+    )]
+    AlsaUnsupportedOnDebian,
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
@@ -210,6 +214,40 @@ fn package_website(name: &str, debian_like: bool) -> String {
         format!("https://packages.debian.org/{name}")
     } else {
         format!("https://archlinux.org/packages/?name={name}")
+    }
+}
+
+#[cfg(any(feature = "arch", feature = "debian", feature = "debian-pure"))]
+struct OsSbomIdentity {
+    name: &'static str,
+    purl: &'static str,
+    version: &'static str,
+    description: &'static str,
+    supplier: &'static str,
+    supplier_url: &'static str,
+}
+
+#[cfg(any(feature = "arch", feature = "debian", feature = "debian-pure"))]
+fn os_sbom_identity(debian_like: bool) -> OsSbomIdentity {
+    if debian_like {
+        OsSbomIdentity {
+            name: "Debian",
+            purl: "pkg:os/debian",
+            // Release is not known here; do not invent Arch's "rolling".
+            version: "",
+            description: "Debian-like system",
+            supplier: "Debian",
+            supplier_url: "https://www.debian.org",
+        }
+    } else {
+        OsSbomIdentity {
+            name: "Arch Linux",
+            purl: "pkg:os/archlinux",
+            version: "rolling",
+            description: "Arch Linux system",
+            supplier: "Arch Linux",
+            supplier_url: "https://archlinux.org",
+        }
     }
 }
 
@@ -314,8 +352,12 @@ impl SbomGenerator {
             }
 
             // Scan for vulnerabilities if enabled. A failed fetch must not look like
-            // a clean bill of materials.
+            // a clean bill of materials. ALSA is Arch-specific; matching it against
+            // dpkg names would report zero issues and look clean.
             if self.include_vulns {
+                if debian_like {
+                    return Err(SbomError::AlsaUnsupportedOnDebian);
+                }
                 let scanner = super::vulnerability::VulnerabilityScanner::new();
                 let issues = scanner
                     .fetch_alsa_issues()
@@ -356,6 +398,8 @@ impl SbomGenerator {
                 }
             }
 
+            let os = os_sbom_identity(debian_like);
+
             Ok(Sbom {
                 bom_format: "CycloneDX".to_string(),
                 spec_version: "1.5".to_string(),
@@ -371,11 +415,11 @@ impl SbomGenerator {
                     component: Some(SbomComponent {
                         component_type: "operating-system".to_string(),
                         mime_type: None,
-                        bom_ref: Some("pkg:os/archlinux".to_string()),
-                        name: "Arch Linux".to_string(),
-                        version: "rolling".to_string(),
-                        description: Some("Arch Linux system".to_string()),
-                        purl: Some("pkg:os/archlinux".to_string()),
+                        bom_ref: Some(os.purl.to_string()),
+                        name: os.name.to_string(),
+                        version: os.version.to_string(),
+                        description: Some(os.description.to_string()),
+                        purl: Some(os.purl.to_string()),
                         licenses: vec![],
                         hashes: vec![],
                         external_references: vec![],
@@ -383,8 +427,8 @@ impl SbomGenerator {
                     }),
                     manufacture: None,
                     supplier: Some(SbomOrganization {
-                        name: "Arch Linux".to_string(),
-                        url: Some(vec!["https://archlinux.org".to_string()]),
+                        name: os.supplier.to_string(),
+                        url: Some(vec![os.supplier_url.to_string()]),
                     }),
                 },
                 components,
@@ -500,6 +544,17 @@ mod tests {
     }
 
     #[test]
+    fn alsa_unsupported_on_debian_is_typed() {
+        let error = SbomError::AlsaUnsupportedOnDebian;
+        assert!(
+            error
+                .to_string()
+                .contains("cannot be used to scan Debian packages"),
+            "got: {error}"
+        );
+    }
+
+    #[test]
     #[cfg(any(feature = "arch", feature = "debian", feature = "debian-pure"))]
     fn debian_like_packages_use_deb_purl_and_debian_urls() {
         assert_eq!(
@@ -523,5 +578,25 @@ mod tests {
             package_website("pacman", false),
             "https://archlinux.org/packages/?name=pacman"
         );
+    }
+
+    #[test]
+    #[cfg(any(feature = "arch", feature = "debian", feature = "debian-pure"))]
+    fn debian_like_os_identity_is_not_arch() {
+        let os = os_sbom_identity(true);
+        assert_eq!(os.name, "Debian");
+        assert_eq!(os.purl, "pkg:os/debian");
+        assert_ne!(os.version, "rolling");
+        assert_eq!(os.supplier, "Debian");
+        assert_eq!(os.supplier_url, "https://www.debian.org");
+    }
+
+    #[test]
+    #[cfg(any(feature = "arch", feature = "debian", feature = "debian-pure"))]
+    fn arch_os_identity_stays_arch() {
+        let os = os_sbom_identity(false);
+        assert_eq!(os.name, "Arch Linux");
+        assert_eq!(os.purl, "pkg:os/archlinux");
+        assert_eq!(os.version, "rolling");
     }
 }
