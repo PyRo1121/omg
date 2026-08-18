@@ -632,6 +632,37 @@ async fn handle_info(state: Arc<DaemonState>, id: RequestId, package: String) ->
     }
 }
 
+/// Query native status counts for a production package-manager backend.
+fn system_status_for_backend(pm_name: &str) -> anyhow::Result<(usize, usize, usize, usize)> {
+    match pm_name {
+        "apt" => {
+            #[cfg(feature = "debian")]
+            {
+                crate::package_managers::apt_get_system_status()
+            }
+            #[cfg(not(feature = "debian"))]
+            Err(anyhow::anyhow!("Debian backend disabled"))
+        }
+        "apt-pure" => {
+            #[cfg(any(feature = "debian", feature = "debian-pure"))]
+            {
+                crate::package_managers::debian_db::get_counts_fast()
+            }
+            #[cfg(not(any(feature = "debian", feature = "debian-pure")))]
+            Err(anyhow::anyhow!("Debian backend disabled"))
+        }
+        "pacman" => {
+            #[cfg(feature = "arch")]
+            {
+                crate::package_managers::get_system_status()
+            }
+            #[cfg(not(feature = "arch"))]
+            Err(anyhow::anyhow!("Arch backend disabled"))
+        }
+        other => Err(anyhow::anyhow!("Unsupported package manager: {other}")),
+    }
+}
+
 /// Handle status request
 #[tracing::instrument(skip(state))]
 async fn handle_status(state: Arc<DaemonState>, id: RequestId) -> Response {
@@ -684,31 +715,7 @@ async fn handle_status(state: Arc<DaemonState>, id: RequestId) -> Response {
     let status_result = if state.system_backends.is_production() {
         let state_clone = Arc::clone(&state);
         match tokio::task::spawn_blocking(move || {
-            let pm_name = state_clone.package_manager.name();
-
-            if pm_name == "apt" {
-                #[cfg(feature = "debian")]
-                {
-                    crate::package_managers::apt_get_system_status()
-                }
-                #[cfg(not(feature = "debian"))]
-                {
-                    Err::<(usize, usize, usize, usize), _>(anyhow::anyhow!(
-                        "Debian backend disabled"
-                    ))
-                }
-            } else if pm_name == "pacman" {
-                #[cfg(feature = "arch")]
-                {
-                    crate::package_managers::get_system_status()
-                }
-                #[cfg(not(feature = "arch"))]
-                {
-                    Err(anyhow::anyhow!("Arch backend disabled"))
-                }
-            } else {
-                Err(anyhow::anyhow!("Unsupported package manager: {pm_name}"))
-            }
+            system_status_for_backend(state_clone.package_manager.name())
         })
         .await
         {
@@ -1055,5 +1062,31 @@ fn not_found_error(id: RequestId, message: impl Into<String>) -> Response {
         id,
         code: error_codes::PACKAGE_NOT_FOUND,
         message: message.into(),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn status_rejects_unknown_package_manager() {
+        let error = system_status_for_backend("homebrew")
+            .expect_err("unknown backends must not invent a healthy status");
+        assert!(
+            error.to_string().contains("Unsupported package manager"),
+            "got: {error}"
+        );
+    }
+
+    #[test]
+    #[cfg(not(any(feature = "debian", feature = "debian-pure")))]
+    fn apt_pure_status_without_debian_fails() {
+        let error = system_status_for_backend("apt-pure")
+            .expect_err("apt-pure without a Debian backend must not invent counts");
+        assert!(
+            error.to_string().contains("Debian backend disabled"),
+            "got: {error}"
+        );
     }
 }
