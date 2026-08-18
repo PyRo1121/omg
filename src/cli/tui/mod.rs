@@ -107,26 +107,29 @@ async fn run_app(
 async fn handle_special_key_actions(app: &mut app::App, key_code: KeyCode) {
     match key_code {
         KeyCode::Char('u') if app.current_tab == app::Tab::Dashboard => {
-            if let Err(e) = app.update_system().await {
-                tracing::error!("Failed to update system: {}", e);
-            }
+            report_action_result(app, app.update_system().await, "update system");
             force_refresh(app);
         }
         KeyCode::Char('c') if app.current_tab == app::Tab::Dashboard => {
-            if let Err(e) = app.clean_cache().await {
-                tracing::error!("Failed to clean cache: {}", e);
-            }
+            report_action_result(app, app.clean_cache().await, "clean cache");
         }
         KeyCode::Char('o') if app.current_tab == app::Tab::Dashboard => {
-            if let Err(e) = app.remove_orphans().await {
-                tracing::error!("Failed to remove orphans: {}", e);
-            }
+            report_action_result(app, app.remove_orphans().await, "remove orphans");
         }
         KeyCode::Char('a') if app.current_tab == app::Tab::Security => {
             match app.run_security_audit().await {
-                Ok(0) => tracing::info!("No vulnerabilities found!"),
-                Ok(vulns) => tracing::warn!("Found {} vulnerabilities", vulns),
-                Err(e) => tracing::error!("Failed to run audit: {}", e),
+                Ok(0) => {
+                    app.action_error = None;
+                    tracing::info!("No vulnerabilities found!");
+                }
+                Ok(vulns) => {
+                    app.action_error = None;
+                    tracing::warn!("Found {vulns} vulnerabilities");
+                }
+                Err(e) => {
+                    tracing::error!("Failed to run audit: {e}");
+                    app.action_error = Some(format!("audit failed: {e}"));
+                }
             }
         }
         KeyCode::Enter
@@ -136,15 +139,27 @@ async fn handle_special_key_actions(app: &mut app::App, key_code: KeyCode) {
         {
             if let Some(pkg) = app.search_results.get(app.selected_index) {
                 let pkg_name = pkg.name.clone();
-                if let Err(e) = app.install_package(&pkg_name).await {
-                    tracing::error!("Failed to install {}: {}", pkg_name, e);
-                }
+                report_action_result(
+                    app,
+                    app.install_package(&pkg_name).await,
+                    &format!("install {pkg_name}"),
+                );
                 force_refresh(app);
             }
         }
         _ => {
             // Normal key handling
             app.handle_key(key_code);
+        }
+    }
+}
+
+fn report_action_result(app: &mut app::App, result: Result<()>, action: &str) {
+    match result {
+        Ok(()) => app.action_error = None,
+        Err(e) => {
+            tracing::error!("Failed to {action}: {e}");
+            app.action_error = Some(format!("{action} failed: {e}"));
         }
     }
 }
