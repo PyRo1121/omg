@@ -714,6 +714,17 @@ fn draw_packages(f: &mut Frame, area: Rect, app: &App) {
     );
     f.render_widget(search_bar, *search_area);
 
+    if let Some(error) = &app.search_error {
+        let error_panel = Paragraph::new(Line::from(Span::styled(
+            format!(" Search failed: {error}"),
+            Style::default().fg(colors::ACCENT_RED),
+        )))
+        .block(styled_block(" Packages"))
+        .style(Style::default().bg(colors::BG_MEDIUM));
+        f.render_widget(error_panel, *list_area);
+        return;
+    }
+
     // Package table with modern styling
     let rows: Vec<Row> = app
         .search_results

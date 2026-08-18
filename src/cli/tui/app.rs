@@ -2,7 +2,7 @@ use crate::core::env::team::TeamStatus;
 use crate::core::history::Transaction;
 #[cfg(unix)]
 use crate::daemon::protocol::StatusResult;
-#[cfg(any(feature = "arch", feature = "debian"))]
+#[cfg(any(feature = "arch", feature = "debian", feature = "debian-pure"))]
 use anyhow::Context;
 use anyhow::Result;
 use crossterm::event::KeyCode;
@@ -35,6 +35,7 @@ pub struct App {
 
     // Search results
     pub search_results: Vec<crate::package_managers::SyncPackage>,
+    pub search_error: Option<String>,
 
     // System metrics
     pub system_metrics: SystemMetrics,
@@ -70,6 +71,7 @@ impl App {
             search_mode: false,
             daemon_connected: false,
             search_results: Vec::new(),
+            search_error: None,
             system_metrics: SystemMetrics::default(),
             last_update: Instant::now(),
             usage_stats: crate::core::usage::UsageStats::load(),
@@ -283,6 +285,7 @@ impl App {
     pub async fn search_packages(&mut self, query: &str) -> Result<()> {
         if query.is_empty() {
             self.search_results.clear();
+            self.search_error = None;
             return Ok(());
         }
 
@@ -309,6 +312,7 @@ impl App {
                     installed: false,
                 })
                 .collect();
+            self.search_error = None;
             return Ok(());
         }
 
@@ -318,13 +322,40 @@ impl App {
             self.search_results = crate::package_managers::search_sync(query)
                 .context("Failed to search official packages")?;
         }
-        #[cfg(feature = "debian")]
+        #[cfg(all(feature = "debian", not(feature = "arch")))]
         {
             self.search_results = crate::package_managers::apt_search_sync(query)
                 .context("Failed to search official packages")?;
         }
+        #[cfg(all(
+            feature = "debian-pure",
+            not(feature = "arch"),
+            not(feature = "debian")
+        ))]
+        {
+            self.search_results = crate::package_managers::apt_search_fast(query)
+                .context("Failed to search official packages")?
+                .into_iter()
+                .map(|pkg| crate::package_managers::SyncPackage {
+                    name: pkg.name,
+                    version: pkg.version,
+                    description: pkg.description,
+                    repo: "official".to_string(),
+                    download_size: 0,
+                    installed: pkg.installed,
+                })
+                .collect();
+        }
+        #[cfg(not(any(feature = "arch", feature = "debian", feature = "debian-pure")))]
+        {
+            anyhow::bail!("Failed to search official packages: no package manager backend enabled");
+        }
 
-        Ok(())
+        #[cfg(any(feature = "arch", feature = "debian", feature = "debian-pure"))]
+        {
+            self.search_error = None;
+            Ok(())
+        }
     }
 
     pub async fn install_package(&self, package_name: &str) -> Result<()> {
@@ -417,6 +448,7 @@ impl App {
                     self.search_mode = true;
                     self.search_query.clear();
                     self.search_results.clear();
+                    self.search_error = None;
                 }
             }
             KeyCode::Esc => {

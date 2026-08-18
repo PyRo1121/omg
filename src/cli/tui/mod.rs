@@ -91,7 +91,9 @@ async fn run_app(
                 // Clone to avoid borrow checker issues
                 let query = last_search.clone();
                 if let Err(e) = app.search_packages(&query).await {
-                    tracing::error!("Search failed: {}", e);
+                    tracing::error!("Search failed: {e}");
+                    app.search_results.clear();
+                    app.search_error = Some(e.to_string());
                 }
             }
         }
