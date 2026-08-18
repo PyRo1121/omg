@@ -27,10 +27,14 @@ pub async fn install(packages: &[String], yes: bool, dry_run: bool) -> Result<()
         return install_dry_run(packages);
     }
 
-    #[cfg(feature = "arch")]
-    {
-        return arch::install(packages, yes).await;
+    #[cfg(any(feature = "debian", feature = "debian-pure"))]
+    if crate::core::env::distro::is_debian_like() {
+        let _ = yes;
+        return debian::install(packages).await;
     }
+
+    #[cfg(feature = "arch")]
+    return arch::install(packages, yes).await;
 
     #[cfg(all(
         not(feature = "arch"),
@@ -47,11 +51,8 @@ pub async fn install(packages: &[String], yes: bool, dry_run: bool) -> Result<()
     ))]
     {
         let _ = yes;
-        return generic::install(packages).await;
+        generic::install(packages).await
     }
-
-    #[allow(unreachable_code)]
-    Ok(())
 }
 
 pub fn install_dry_run_cli(packages: &[String]) -> Result<bool> {
@@ -64,27 +65,23 @@ pub fn install_dry_run_cli(packages: &[String]) -> Result<bool> {
 
 #[allow(clippy::unnecessary_wraps)]
 fn install_dry_run(packages: &[String]) -> Result<()> {
-    #[cfg(feature = "arch")]
-    {
-        return arch::install_dry_run(packages);
+    #[cfg(any(feature = "debian", feature = "debian-pure"))]
+    if crate::core::env::distro::is_debian_like() {
+        return debian::install_dry_run(packages);
     }
+
+    #[cfg(feature = "arch")]
+    return arch::install_dry_run(packages);
 
     #[cfg(all(
         not(feature = "arch"),
         any(feature = "debian", feature = "debian-pure")
     ))]
-    {
-        return debian::install_dry_run(packages);
-    }
+    return debian::install_dry_run(packages);
 
     #[cfg(all(
         not(feature = "arch"),
         not(any(feature = "debian", feature = "debian-pure"))
     ))]
-    {
-        return generic::install_dry_run(packages);
-    }
-
-    #[allow(unreachable_code)]
-    Ok(())
+    generic::install_dry_run(packages)
 }
