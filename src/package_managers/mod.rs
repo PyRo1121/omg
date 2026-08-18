@@ -208,8 +208,27 @@ pub fn get_package_info(name: &str) -> anyhow::Result<Option<types::PackageInfo>
     anyhow::bail!("No package manager backend enabled to query {name}")
 }
 
+pub fn list_orphans_fast() -> anyhow::Result<Vec<String>> {
+    #[cfg(any(feature = "debian", feature = "debian-pure"))]
+    if crate::core::env::distro::is_debian_like() {
+        return debian_db::list_orphans_fast();
+    }
+
+    #[cfg(feature = "arch")]
+    return alpm_direct::list_orphans_fast();
+
+    #[cfg(all(
+        not(feature = "arch"),
+        any(feature = "debian", feature = "debian-pure")
+    ))]
+    return debian_db::list_orphans_fast();
+
+    #[cfg(not(any(feature = "arch", feature = "debian", feature = "debian-pure")))]
+    anyhow::bail!("No package manager backend enabled")
+}
+
 #[cfg(feature = "arch")]
-pub use alpm_direct::{clear_alpm_cache, get_counts, list_orphans_fast, search_local};
+pub use alpm_direct::{clear_alpm_cache, get_counts, search_local};
 #[cfg(feature = "arch")]
 pub use alpm_ops::DownloadInfo;
 #[cfg(feature = "arch")]
