@@ -110,10 +110,47 @@ pub fn list_explicit_fast() -> anyhow::Result<Vec<String>> {
     anyhow::bail!("No package manager backend enabled")
 }
 
+#[cfg(any(feature = "debian", feature = "debian-pure"))]
+fn local_packages_from_debian_db() -> anyhow::Result<Vec<LocalPackage>> {
+    Ok(debian_db::list_installed_fast()?
+        .into_iter()
+        .map(|pkg| LocalPackage {
+            name: pkg.name,
+            version: parse_version_or_zero(&pkg.version),
+            description: pkg.description,
+            install_size: 0,
+            reason: if pkg.is_explicit {
+                "explicit"
+            } else {
+                "dependency"
+            },
+        })
+        .collect())
+}
+
+pub fn list_installed_fast() -> anyhow::Result<Vec<LocalPackage>> {
+    #[cfg(any(feature = "debian", feature = "debian-pure"))]
+    if crate::core::env::distro::is_debian_like() {
+        return local_packages_from_debian_db();
+    }
+
+    #[cfg(feature = "arch")]
+    return alpm_direct::list_installed_fast();
+
+    #[cfg(all(
+        not(feature = "arch"),
+        any(feature = "debian", feature = "debian-pure")
+    ))]
+    return local_packages_from_debian_db();
+
+    #[cfg(not(any(feature = "arch", feature = "debian", feature = "debian-pure")))]
+    anyhow::bail!("No package manager backend enabled")
+}
+
 #[cfg(feature = "arch")]
 pub use alpm_direct::{
-    clear_alpm_cache, get_counts, get_package_info, is_installed_fast, list_installed_fast,
-    list_orphans_fast, search_local,
+    clear_alpm_cache, get_counts, get_package_info, is_installed_fast, list_orphans_fast,
+    search_local,
 };
 #[cfg(feature = "arch")]
 pub use alpm_ops::DownloadInfo;
