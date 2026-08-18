@@ -26,6 +26,10 @@ OMG is the fastest unified package manager for Linux, replacing pacman, yay, nvm
 - **Ci**: Cross-platform install script and R2 release sync
 ### 🐛 Bug Fixes
 
+- Fail closed when DNF cannot invalidate repo_index.bin
+
+A permission error on cache removal must not leave a stale index that later reads as success.
+
 - Fail closed on truncated rpm -qa inventory lines
 - Fail closed on invalid or short AUR validpgpkeys
 - Fail closed when debian-pure removal targets a missing package
