@@ -1580,7 +1580,7 @@ pub fn list_installed_fast() -> Result<Vec<LocalPackage>> {
 
     let status_path = Path::new("/var/lib/dpkg/status");
     if !status_path.exists() {
-        return Ok(Vec::new());
+        anyhow::bail!("dpkg status file not found: {}", status_path.display());
     }
 
     let extended_states_path = Path::new("/var/lib/apt/extended_states");
