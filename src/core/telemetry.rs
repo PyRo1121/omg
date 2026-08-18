@@ -131,21 +131,22 @@ fn get_platform() -> String {
 
 /// Get package manager backend
 pub fn get_backend() -> String {
+    #[cfg(any(feature = "debian", feature = "debian-pure"))]
+    if crate::core::env::distro::is_debian_like() {
+        return "debian".to_string();
+    }
+
     #[cfg(feature = "arch")]
     return "arch".to_string();
 
-    #[cfg(all(feature = "debian", not(feature = "arch")))]
-    return "debian".to_string();
-
     #[cfg(all(
-        feature = "debian-pure",
         not(feature = "arch"),
-        not(feature = "debian")
+        any(feature = "debian", feature = "debian-pure")
     ))]
     return "debian".to_string();
 
     #[cfg(not(any(feature = "arch", feature = "debian", feature = "debian-pure")))]
-    return "none".to_string();
+    "none".to_string()
 }
 
 /// Create install marker file
@@ -864,14 +865,21 @@ mod tests {
 
     #[test]
     fn backend_name_matches_compiled_features() {
+        #[cfg(any(feature = "debian", feature = "debian-pure"))]
+        if crate::core::env::distro::is_debian_like() {
+            assert_eq!(get_backend(), "debian");
+            return;
+        }
         #[cfg(feature = "arch")]
-        assert_eq!(get_backend(), "arch");
-        #[cfg(all(
-            feature = "debian-pure",
-            not(feature = "arch"),
-            not(feature = "debian")
-        ))]
-        assert_eq!(get_backend(), "debian");
+        {
+            assert_eq!(get_backend(), "arch");
+            return;
+        }
+        #[cfg(any(feature = "debian", feature = "debian-pure"))]
+        {
+            assert_eq!(get_backend(), "debian");
+            return;
+        }
         #[cfg(not(any(feature = "arch", feature = "debian", feature = "debian-pure")))]
         assert_eq!(get_backend(), "none");
     }
