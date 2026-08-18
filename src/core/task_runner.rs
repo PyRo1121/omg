@@ -100,6 +100,14 @@ pub struct TaskDetector {
     pub config: OmgProjectConfig,
 }
 
+fn read_optional_file(path: &Path) -> Result<Option<String>> {
+    match std::fs::read_to_string(path) {
+        Ok(content) => Ok(Some(content)),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(None),
+        Err(error) => Err(error).with_context(|| format!("Failed to read {}", path.display())),
+    }
+}
+
 impl TaskDetector {
     pub fn new(current_dir: PathBuf) -> Result<Self> {
         let config = Self::load_config(&current_dir)?;
@@ -111,30 +119,28 @@ impl TaskDetector {
 
     fn load_config(path: &Path) -> Result<OmgProjectConfig> {
         let config_path = path.join(".omg.toml");
-        match std::fs::read_to_string(&config_path) {
-            Ok(content) => toml::from_str(&content)
-                .with_context(|| format!("Failed to parse {}", config_path.display())),
-            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
-                Ok(OmgProjectConfig::default())
-            }
-            Err(error) => {
-                Err(error).with_context(|| format!("Failed to read {}", config_path.display()))
-            }
-        }
+        let Some(content) = read_optional_file(&config_path)? else {
+            return Ok(OmgProjectConfig::default());
+        };
+        toml::from_str(&content)
+            .with_context(|| format!("Failed to parse {}", config_path.display()))
     }
 
-    fn detect_js_tasks(&self, tasks: &mut Vec<Task>) {
-        if let Some(package_manager) = detect_js_package_manager(&self.current_dir) {
-            let js_ecosystem = if package_manager == "bun" {
-                Ecosystem::Bun
-            } else {
-                Ecosystem::Node
-            };
+    fn detect_js_tasks(&self, tasks: &mut Vec<Task>) -> Result<()> {
+        let Some(package_manager) = detect_js_package_manager(&self.current_dir)? else {
+            return Ok(());
+        };
+        let js_ecosystem = if package_manager == "bun" {
+            Ecosystem::Bun
+        } else {
+            Ecosystem::Node
+        };
 
-            if let Ok(file) = std::fs::File::open(self.current_dir.join("package.json"))
-                && let Ok(pkg) = serde_json::from_reader::<_, PackageJson>(file)
-                && let Some(scripts) = pkg.scripts
-            {
+        let path = self.current_dir.join("package.json");
+        if let Some(content) = read_optional_file(&path)? {
+            let pkg: PackageJson = serde_json::from_str(&content)
+                .with_context(|| format!("Failed to parse {}", path.display()))?;
+            if let Some(scripts) = pkg.scripts {
                 for (name, _) in scripts {
                     tasks.push(Task {
                         name: name.clone(),
@@ -145,49 +151,60 @@ impl TaskDetector {
                     });
                 }
             }
+        }
 
+        tasks.push(Task {
+            name: "install".to_string(),
+            command: package_manager,
+            args: vec!["install".to_string()],
+            source: "package.json".to_string(),
+            ecosystem: js_ecosystem,
+        });
+        Ok(())
+    }
+
+    fn detect_deno_tasks(&self, tasks: &mut Vec<Task>) -> Result<()> {
+        let path = self.current_dir.join("deno.json");
+        let Some(content) = read_optional_file(&path)? else {
+            return Ok(());
+        };
+        let pkg: DenoJson = serde_json::from_str(&content)
+            .with_context(|| format!("Failed to parse {}", path.display()))?;
+        let Some(dtasks) = pkg.tasks else {
+            return Ok(());
+        };
+        for (name, _) in dtasks {
             tasks.push(Task {
-                name: "install".to_string(),
-                command: package_manager,
-                args: vec!["install".to_string()],
-                source: "package.json".to_string(),
-                ecosystem: js_ecosystem,
+                name: name.clone(),
+                command: "deno".to_string(),
+                args: vec!["task".to_string(), name],
+                source: "deno.json".to_string(),
+                ecosystem: Ecosystem::Deno,
             });
         }
+        Ok(())
     }
 
-    fn detect_deno_tasks(&self, tasks: &mut Vec<Task>) {
-        if let Ok(file) = std::fs::File::open(self.current_dir.join("deno.json"))
-            && let Ok(pkg) = serde_json::from_reader::<_, DenoJson>(file)
-            && let Some(dtasks) = pkg.tasks
-        {
-            for (name, _) in dtasks {
-                tasks.push(Task {
-                    name: name.clone(),
-                    command: "deno".to_string(),
-                    args: vec!["task".to_string(), name],
-                    source: "deno.json".to_string(),
-                    ecosystem: Ecosystem::Deno,
-                });
-            }
+    fn detect_php_tasks(&self, tasks: &mut Vec<Task>) -> Result<()> {
+        let path = self.current_dir.join("composer.json");
+        let Some(content) = read_optional_file(&path)? else {
+            return Ok(());
+        };
+        let pkg: ComposerJson = serde_json::from_str(&content)
+            .with_context(|| format!("Failed to parse {}", path.display()))?;
+        let Some(scripts) = pkg.scripts else {
+            return Ok(());
+        };
+        for (name, _) in scripts {
+            tasks.push(Task {
+                name: name.clone(),
+                command: "composer".to_string(),
+                args: vec!["run-script".to_string(), name],
+                source: "composer.json".to_string(),
+                ecosystem: Ecosystem::Php,
+            });
         }
-    }
-
-    fn detect_php_tasks(&self, tasks: &mut Vec<Task>) {
-        if let Ok(file) = std::fs::File::open(self.current_dir.join("composer.json"))
-            && let Ok(pkg) = serde_json::from_reader::<_, ComposerJson>(file)
-            && let Some(scripts) = pkg.scripts
-        {
-            for (name, _) in scripts {
-                tasks.push(Task {
-                    name: name.clone(),
-                    command: "composer".to_string(),
-                    args: vec!["run-script".to_string(), name],
-                    source: "composer.json".to_string(),
-                    ecosystem: Ecosystem::Php,
-                });
-            }
-        }
+        Ok(())
     }
 
     fn detect_rust_tasks(&self, tasks: &mut Vec<Task>) {
@@ -205,51 +222,57 @@ impl TaskDetector {
         }
     }
 
-    fn detect_makefile_tasks(&self, tasks: &mut Vec<Task>) {
-        if self.current_dir.join("Makefile").exists()
-            && let Ok(content) = std::fs::read_to_string(self.current_dir.join("Makefile"))
-        {
-            for line in content.lines() {
-                if let Some(target) = line.split(':').next() {
-                    let target = target.trim();
-                    if !target.is_empty()
-                        && !target.contains('=')
-                        && !target.contains('.')
-                        && !target.starts_with('#')
-                        && !target.contains('%')
-                    {
-                        tasks.push(Task {
-                            name: target.to_string(),
-                            command: "make".to_string(),
-                            args: vec![target.to_string()],
-                            source: "Makefile".to_string(),
-                            ecosystem: Ecosystem::Make,
-                        });
-                    }
+    fn detect_makefile_tasks(&self, tasks: &mut Vec<Task>) -> Result<()> {
+        let path = self.current_dir.join("Makefile");
+        let Some(content) = read_optional_file(&path)? else {
+            return Ok(());
+        };
+        for line in content.lines() {
+            if let Some(target) = line.split(':').next() {
+                let target = target.trim();
+                if !target.is_empty()
+                    && !target.contains('=')
+                    && !target.contains('.')
+                    && !target.starts_with('#')
+                    && !target.contains('%')
+                {
+                    tasks.push(Task {
+                        name: target.to_string(),
+                        command: "make".to_string(),
+                        args: vec![target.to_string()],
+                        source: "Makefile".to_string(),
+                        ecosystem: Ecosystem::Make,
+                    });
                 }
             }
         }
+        Ok(())
     }
 
-    fn detect_python_tasks(&self, tasks: &mut Vec<Task>) {
-        if let Ok(content) = std::fs::read_to_string(self.current_dir.join("pyproject.toml"))
-            && let Ok(proj) = toml::from_str::<PyProject>(&content)
-            && let Some(tool) = proj.tool
-            && let Some(poetry) = tool.poetry
-            && let Some(scripts) = poetry.scripts
-        {
-            for (name, _) in scripts {
-                tasks.push(Task {
-                    name: name.clone(),
-                    command: "poetry".to_string(),
-                    args: vec!["run".to_string(), name],
-                    source: "pyproject.toml".to_string(),
-                    ecosystem: Ecosystem::Python,
-                });
+    fn detect_python_tasks(&self, tasks: &mut Vec<Task>) -> Result<()> {
+        let pyproject = self.current_dir.join("pyproject.toml");
+        if let Some(content) = read_optional_file(&pyproject)? {
+            let proj: PyProject = toml::from_str(&content)
+                .with_context(|| format!("Failed to parse {}", pyproject.display()))?;
+            if let Some(scripts) = proj
+                .tool
+                .and_then(|tool| tool.poetry)
+                .and_then(|p| p.scripts)
+            {
+                for (name, _) in scripts {
+                    tasks.push(Task {
+                        name: name.clone(),
+                        command: "poetry".to_string(),
+                        args: vec!["run".to_string(), name],
+                        source: "pyproject.toml".to_string(),
+                        ecosystem: Ecosystem::Python,
+                    });
+                }
             }
         }
 
-        if let Ok(content) = std::fs::read_to_string(self.current_dir.join("Pipfile")) {
+        let pipfile = self.current_dir.join("Pipfile");
+        if let Some(content) = read_optional_file(&pipfile)? {
             let mut in_scripts = false;
             for line in content.lines() {
                 let line = line.trim();
@@ -276,6 +299,7 @@ impl TaskDetector {
                 }
             }
         }
+        Ok(())
     }
 
     fn detect_java_tasks(&self, tasks: &mut Vec<Task>) {
@@ -308,12 +332,12 @@ impl TaskDetector {
     pub fn detect(&self) -> Result<Vec<Task>> {
         let mut tasks = Vec::new();
 
-        self.detect_js_tasks(&mut tasks);
-        self.detect_deno_tasks(&mut tasks);
-        self.detect_php_tasks(&mut tasks);
+        self.detect_js_tasks(&mut tasks)?;
+        self.detect_deno_tasks(&mut tasks)?;
+        self.detect_php_tasks(&mut tasks)?;
         self.detect_rust_tasks(&mut tasks);
-        self.detect_makefile_tasks(&mut tasks);
-        self.detect_python_tasks(&mut tasks);
+        self.detect_makefile_tasks(&mut tasks)?;
+        self.detect_python_tasks(&mut tasks)?;
         self.detect_java_tasks(&mut tasks);
 
         if self.current_dir.join("Taskfile.yml").exists()
@@ -571,46 +595,49 @@ fn ensure_java_runtime(version: &str) -> Result<String> {
     ensure_runtime_impl!("Java", version.trim().to_string(), manager)
 }
 
-fn detect_js_package_manager(current_dir: &std::path::Path) -> Option<String> {
-    if !current_dir.join("package.json").exists() {
-        return None;
-    }
+fn detect_js_package_manager(current_dir: &std::path::Path) -> Result<Option<String>> {
+    let path = current_dir.join("package.json");
+    let Some(content) = read_optional_file(&path)? else {
+        return Ok(None);
+    };
+    let pkg: PackageJson = serde_json::from_str(&content)
+        .with_context(|| format!("Failed to parse {}", path.display()))?;
 
-    if let Ok(file) = std::fs::File::open(current_dir.join("package.json"))
-        && let Ok(pkg) = serde_json::from_reader::<_, PackageJson>(file)
-        && let Some(package_manager) = pkg.package_manager
+    if let Some(package_manager) = pkg.package_manager
         && let Some(name) = parse_package_manager_name(&package_manager)
     {
-        return Some(name);
+        return Ok(Some(name));
     }
 
     if current_dir.join("bun.lockb").exists() {
-        return Some("bun".to_string());
+        return Ok(Some("bun".to_string()));
     }
     if current_dir.join("pnpm-lock.yaml").exists() {
-        return Some("pnpm".to_string());
+        return Ok(Some("pnpm".to_string()));
     }
     if current_dir.join("yarn.lock").exists() {
-        return Some("yarn".to_string());
+        return Ok(Some("yarn".to_string()));
     }
     if current_dir.join("package-lock.json").exists()
         || current_dir.join("npm-shrinkwrap.json").exists()
     {
-        return Some("npm".to_string());
+        return Ok(Some("npm".to_string()));
     }
 
-    Some("bun".to_string())
+    Ok(Some("bun".to_string()))
 }
 
-fn detect_js_runtime(current_dir: &std::path::Path) -> Option<(String, String)> {
-    let package_manager = detect_js_package_manager(current_dir)?;
+fn detect_js_runtime(current_dir: &std::path::Path) -> Result<Option<(String, String)>> {
+    let Some(package_manager) = detect_js_package_manager(current_dir)? else {
+        return Ok(None);
+    };
     let runtime = if package_manager == "bun" {
         "bun"
     } else {
         "node"
     };
     let default_version = if runtime == "bun" { "latest" } else { "lts" };
-    Some((runtime.to_string(), default_version.to_string()))
+    Ok(Some((runtime.to_string(), default_version.to_string())))
 }
 
 #[derive(Deserialize)]
@@ -683,7 +710,7 @@ fn execute_process(
         // If system Rust exists, rustup will handle toolchain switching automatically
     }
     let mut versions = hooks::detect_versions(&current_dir)?;
-    if let Some((runtime, default_version)) = detect_js_runtime(&current_dir) {
+    if let Some((runtime, default_version)) = detect_js_runtime(&current_dir)? {
         versions.entry(runtime).or_insert(default_version);
     }
     ensure_js_package_manager(cmd)?;
@@ -1188,5 +1215,61 @@ build = "node"
             Ok(_) => panic!("corrupt .omg.toml must fail"),
             Err(error) => assert!(error.to_string().contains("Failed to parse")),
         }
+    }
+
+    #[test]
+    fn missing_task_manifests_are_empty() {
+        let temp = TempDir::new().unwrap();
+        let detector = TaskDetector::new(temp.path().to_path_buf()).unwrap();
+        let tasks = detector.detect().unwrap();
+        assert!(tasks.is_empty());
+    }
+
+    #[test]
+    fn unreadable_package_json_fails_closed() {
+        let temp = TempDir::new().unwrap();
+        let path = temp.path().join("package.json");
+        fs::write(&path, r#"{"scripts": {"test": "echo"}}"#).unwrap();
+        let original = fs::metadata(&path).unwrap().permissions();
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            fs::set_permissions(&path, fs::Permissions::from_mode(0o000)).unwrap();
+        }
+        let blocked = fs::read_to_string(&path).is_err();
+        let detector = TaskDetector::new(temp.path().to_path_buf()).unwrap();
+        let result = detector.detect();
+        let _ = fs::set_permissions(&path, original);
+        if !blocked {
+            return;
+        }
+        assert!(
+            result.is_err(),
+            "unreadable package.json must fail closed, got {result:?}"
+        );
+    }
+
+    #[test]
+    fn invalid_package_json_fails_closed() {
+        let temp = TempDir::new().unwrap();
+        fs::write(temp.path().join("package.json"), "not json").unwrap();
+        let detector = TaskDetector::new(temp.path().to_path_buf()).unwrap();
+        let error = detector.detect().unwrap_err();
+        assert!(
+            error.to_string().contains("Failed to parse"),
+            "unexpected error: {error:#}"
+        );
+    }
+
+    #[test]
+    fn invalid_pyproject_toml_fails_closed() {
+        let temp = TempDir::new().unwrap();
+        fs::write(temp.path().join("pyproject.toml"), "tool = [").unwrap();
+        let detector = TaskDetector::new(temp.path().to_path_buf()).unwrap();
+        let error = detector.detect().unwrap_err();
+        assert!(
+            error.to_string().contains("Failed to parse"),
+            "unexpected error: {error:#}"
+        );
     }
 }
