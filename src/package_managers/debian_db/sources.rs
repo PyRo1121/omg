@@ -120,8 +120,8 @@ pub fn parse_all_sources() -> Result<Vec<Repository>> {
 
     // Parse sources.list.d directory
     let sources_dir = Path::new("/etc/apt/sources.list.d");
-    if sources_dir.is_dir() {
-        if let Ok(entries) = fs::read_dir(sources_dir) {
+    match sources_list_d_from_read_dir(fs::read_dir(sources_dir))? {
+        Some(entries) => {
             for entry in entries.flatten() {
                 let path = entry.path();
                 let Some(ext) = path.extension() else {
@@ -150,12 +150,23 @@ pub fn parse_all_sources() -> Result<Vec<Repository>> {
                 }
             }
         }
-    } else {
-        tracing::debug!("Sources directory not found at {}", sources_dir.display());
+        None => {
+            tracing::debug!("Sources directory not found at {}", sources_dir.display());
+        }
     }
 
     tracing::info!("Loaded {} total repositories from APT sources", repos.len());
     Ok(repos)
+}
+
+fn sources_list_d_from_read_dir(
+    result: std::io::Result<fs::ReadDir>,
+) -> Result<Option<fs::ReadDir>> {
+    match result {
+        Ok(entries) => Ok(Some(entries)),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(None),
+        Err(error) => Err(error).context("Failed to read APT sources directory"),
+    }
 }
 
 /// Parse a legacy sources.list file
@@ -587,5 +598,32 @@ random text here
 
         let repos = parse_sources_list_content(content, Path::new("/test")).unwrap();
         assert_eq!(repos.len(), 1);
+    }
+
+    #[test]
+    fn test_sources_list_d_from_read_dir_allows_missing() {
+        assert!(
+            sources_list_d_from_read_dir(Err(std::io::Error::new(
+                std::io::ErrorKind::NotFound,
+                "no dir",
+            )))
+            .expect("missing sources.list.d is not an error")
+            .is_none()
+        );
+    }
+
+    #[test]
+    fn test_sources_list_d_from_read_dir_rejects_unreadable() {
+        let error = sources_list_d_from_read_dir(Err(std::io::Error::new(
+            std::io::ErrorKind::PermissionDenied,
+            "denied",
+        )))
+        .expect_err("unreadable sources.list.d must not look empty");
+        assert!(
+            error
+                .to_string()
+                .contains("Failed to read APT sources directory"),
+            "got: {error}"
+        );
     }
 }
