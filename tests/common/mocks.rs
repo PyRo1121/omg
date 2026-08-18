@@ -507,8 +507,11 @@ impl omg_lib::package_managers::PackageManager for MockPackageManager {
         Box::pin(async move { Ok(self.db.updates.lock().unwrap().clone()) })
     }
 
-    fn is_installed(&self, package: &str) -> Pin<Box<dyn Future<Output = bool> + Send + '_>> {
+    fn is_installed(
+        &self,
+        package: &str,
+    ) -> Pin<Box<dyn Future<Output = anyhow::Result<bool>> + Send + '_>> {
         let result = self.db.is_installed(package);
-        Box::pin(async move { result })
+        Box::pin(async move { Ok(result) })
     }
 }

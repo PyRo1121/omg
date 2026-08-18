@@ -109,7 +109,7 @@ async fn test_install_package() {
     assert!(result.is_ok());
 
     // Verify it's marked as installed
-    assert!(pm.is_installed("test-package").await);
+    assert!(pm.is_installed("test-package").await.unwrap());
 }
 
 #[tokio::test]
@@ -143,7 +143,7 @@ async fn test_remove_package() {
     assert!(result.is_ok());
 
     // Verify it's no longer installed
-    assert!(!pm.is_installed("test-package").await);
+    assert!(!pm.is_installed("test-package").await.unwrap());
 }
 
 #[tokio::test]
@@ -324,14 +324,14 @@ mod proptest_tests {
                 service.install(&[package_name.clone()], false)
             );
             prop_assert!(install_result.is_ok());
-            prop_assert!(rt.block_on(pm.is_installed(&package_name)));
+            prop_assert!(rt.block_on(pm.is_installed(&package_name)).unwrap());
 
             // Remove
             let remove_result = rt.block_on(
                 service.remove(&[package_name.clone()], false)
             );
             prop_assert!(remove_result.is_ok());
-            prop_assert!(!rt.block_on(pm.is_installed(&package_name)));
+            prop_assert!(!rt.block_on(pm.is_installed(&package_name)).unwrap());
         }
     }
 }

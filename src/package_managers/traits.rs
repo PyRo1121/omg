@@ -64,5 +64,8 @@ pub trait PackageManager: Send + Sync {
     >;
 
     /// Check if a specific package is installed
-    fn is_installed(&self, package: &str) -> Pin<Box<dyn Future<Output = bool> + Send + '_>>;
+    fn is_installed(
+        &self,
+        package: &str,
+    ) -> Pin<Box<dyn Future<Output = Result<bool>> + Send + '_>>;
 }

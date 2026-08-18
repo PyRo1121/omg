@@ -919,14 +919,17 @@ impl PackageManager for DnfPackageManager {
         })
     }
 
-    fn is_installed(&self, package: &str) -> Pin<Box<dyn Future<Output = bool> + Send + '_>> {
+    fn is_installed(
+        &self,
+        package: &str,
+    ) -> Pin<Box<dyn Future<Output = Result<bool>> + Send + '_>> {
         let package = package.to_string();
         Box::pin(async move {
-            self.installed_cache.contains_key(&package)
-                || self
-                    .load_installed_packages()
-                    .await
-                    .is_ok_and(|packages| packages.iter().any(|p| p.name == package))
+            if self.installed_cache.contains_key(&package) {
+                return Ok(true);
+            }
+            let packages = self.load_installed_packages().await?;
+            Ok(packages.iter().any(|p| p.name == package))
         })
     }
 }
