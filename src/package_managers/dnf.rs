@@ -410,12 +410,9 @@ impl DnfPackageManager {
 
         for row in rows {
             let blob = row?;
-            match Self::parse_package_from_blob(&blob) {
-                Ok(pkg) => packages.push(pkg),
-                Err(e) => {
-                    tracing::trace!("Skipping malformed RPM header: {e}");
-                }
-            }
+            let pkg = Self::parse_package_from_blob(&blob)
+                .context("Malformed RPM header in Packages table")?;
+            packages.push(pkg);
         }
 
         tracing::debug!("Loaded {} packages from SQLite database", packages.len());
@@ -909,6 +906,16 @@ mod tests {
     }
 
     #[test]
+    fn test_parse_rpm_header_rejects_invalid_magic() {
+        let error = DnfPackageManager::parse_rpm_header(&[0u8; 32])
+            .expect_err("invalid magic must not parse as an empty tag map");
+        assert!(
+            error.to_string().contains("Invalid RPM header magic"),
+            "got: {error}"
+        );
+    }
+
+    #[test]
     fn test_fetch_repo_packages_is_unimplemented_error() {
         let repo = RepoConfig {
             name: "fedora".to_string(),
@@ -977,6 +984,61 @@ mod tests {
         assert_eq!(
             repos[0].baseurl.as_deref(),
             Some("https://example.test/fedora")
+        );
+    }
+
+    #[cfg(feature = "fedora")]
+    fn minimal_named_rpm_header(name: &[u8]) -> Vec<u8> {
+        let mut header = Vec::new();
+        header.extend_from_slice(&RPM_HEADER_MAGIC);
+        header.extend_from_slice(&[0, 0, 0, 1]);
+        header.extend_from_slice(&(name.len() as u32).to_be_bytes());
+        header.extend_from_slice(&1000u32.to_be_bytes());
+        header.extend_from_slice(&6u32.to_be_bytes());
+        header.extend_from_slice(&0i32.to_be_bytes());
+        header.extend_from_slice(&(name.len() as u32).to_be_bytes());
+        header.extend_from_slice(name);
+        header
+    }
+
+    #[cfg(feature = "fedora")]
+    fn write_packages_db(blobs: &[&[u8]]) -> tempfile::TempDir {
+        let dir = tempfile::TempDir::new().expect("temp dir");
+        let db = dir.path().join("rpmdb.sqlite");
+        let conn = Connection::open(&db).expect("open sqlite");
+        conn.execute("CREATE TABLE Packages (blob BLOB NOT NULL)", [])
+            .expect("create Packages");
+        for blob in blobs {
+            conn.execute("INSERT INTO Packages (blob) VALUES (?1)", [blob.to_vec()])
+                .expect("insert blob");
+        }
+        dir
+    }
+
+    #[cfg(feature = "fedora")]
+    #[test]
+    fn test_read_rpm_sqlite_malformed_blob_is_error() {
+        let dir = write_packages_db(&[&[0u8; 32]]);
+        let error = DnfPackageManager::read_rpm_sqlite(&dir.path().join("rpmdb.sqlite"))
+            .expect_err("malformed header must not look like an empty inventory");
+        let message = format!("{error:#}");
+        assert!(
+            message.contains("Malformed RPM header in Packages table"),
+            "got: {message}"
+        );
+    }
+
+    #[cfg(feature = "fedora")]
+    #[test]
+    fn test_read_rpm_sqlite_mixed_blobs_do_not_drop_corrupt_row() {
+        let valid = minimal_named_rpm_header(b"bash\0");
+        let dir = write_packages_db(&[valid.as_slice(), &[0u8; 32]]);
+        let error = DnfPackageManager::read_rpm_sqlite(&dir.path().join("rpmdb.sqlite"))
+            .expect_err("one corrupt row must not omit that package from the catalog");
+        let message = format!("{error:#}");
+        assert!(
+            message.contains("Malformed RPM header in Packages table"),
+            "got: {message}"
         );
     }
 }
