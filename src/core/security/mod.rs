@@ -14,7 +14,7 @@ pub use audit::{
     AuditError, AuditEventType, AuditLogger, AuditSeverity, audit_log, init_audit_logger,
 };
 pub use policy::{PolicyError, SecurityGrade, SecurityPolicy};
-pub use sbom::{Sbom, SbomGenerator};
+pub use sbom::{Sbom, SbomError, SbomGenerator};
 pub use secrets::{SecretError, SecretScanResult, SecretScanner};
 pub use slsa::{SlsaLevel, SlsaVerifier};
 pub use validation::{
