@@ -298,17 +298,8 @@ impl SlsaVerifier {
         let uuids: Vec<String> = response.json().await.context("Invalid Rekor index JSON")?;
 
         let mut entries = Vec::new();
-        let mut last_err = None;
         for uuid in uuids.iter().take(5) {
-            match self.get_rekor_entry(uuid).await {
-                Ok(entry) => entries.push(entry),
-                Err(error) => last_err = Some(error),
-            }
-        }
-        if entries.is_empty()
-            && let Some(error) = last_err
-        {
-            return Err(error).context("Failed to fetch Rekor log entries");
+            entries.push(self.get_rekor_entry(uuid).await?);
         }
 
         Ok(entries)

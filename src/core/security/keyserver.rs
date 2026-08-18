@@ -130,7 +130,8 @@ pub fn is_key_in_keyring(key_id: &str, keyring_path: &Path) -> Result<bool> {
     let certs = sequoia_openpgp::cert::CertParser::from_reader(&mut file)
         .context("Failed to parse keyring")?;
 
-    for cert in certs.flatten() {
+    for cert in certs {
+        let cert = cert.context("Failed to parse certificate in keyring")?;
         if cert
             .keys()
             .any(|k| k.key().key_handle().aliases(&key_handle))
@@ -251,5 +252,14 @@ mod tests {
             user_ids: vec![],
         };
         assert_eq!(format!("{info}"), "ABCD1234");
+    }
+
+    #[test]
+    fn is_key_in_keyring_fails_closed_on_corrupt_data() {
+        let temp = tempfile::NamedTempFile::new().unwrap();
+        std::fs::write(temp.path(), "this is not an OpenPGP certificate\n").unwrap();
+        let error = is_key_in_keyring("0123456789ABCDEF", temp.path())
+            .expect_err("corrupt keyring data must not look like a miss");
+        assert!(error.to_string().contains("parse"), "got: {error}");
     }
 }
