@@ -252,13 +252,32 @@ pub fn get_counts() -> anyhow::Result<(usize, usize, usize)> {
     anyhow::bail!("No package manager backend enabled")
 }
 
+pub fn get_system_status() -> anyhow::Result<(usize, usize, usize, usize)> {
+    #[cfg(any(feature = "debian", feature = "debian-pure"))]
+    if crate::core::env::distro::is_debian_like() {
+        return debian_db::get_counts_fast();
+    }
+
+    #[cfg(feature = "arch")]
+    return alpm_ops::get_system_status();
+
+    #[cfg(all(
+        not(feature = "arch"),
+        any(feature = "debian", feature = "debian-pure")
+    ))]
+    return debian_db::get_counts_fast();
+
+    #[cfg(not(any(feature = "arch", feature = "debian", feature = "debian-pure")))]
+    anyhow::bail!("No package manager backend enabled")
+}
+
 #[cfg(feature = "arch")]
 pub use alpm_direct::{clear_alpm_cache, search_local};
 #[cfg(feature = "arch")]
 pub use alpm_ops::DownloadInfo;
 #[cfg(feature = "arch")]
 pub use alpm_ops::{
-    clean_cache, display_pkg_info, execute_transaction, get_sync_pkg_info, get_system_status,
+    clean_cache, display_pkg_info, execute_transaction, get_sync_pkg_info,
     get_update_download_list, get_update_list, list_orphans_direct, sync_dbs,
 };
 #[cfg(feature = "arch")]
