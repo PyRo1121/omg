@@ -591,18 +591,27 @@ fn commit_alpm_transaction(alpm: &mut alpm::Alpm, main_pb: &indicatif::ProgressB
         if !pkgs_to_add.is_empty() {
             main_pb.set_message("Verifying package signatures in parallel...");
 
-            let verification_data: Vec<_> = pkgs_to_add
-                .iter()
-                .filter_map(|pkg| {
-                    pkg.filename().map(|filename| {
-                        let cache_path = paths::pacman_cache_dir().join(filename);
-                        let sig_path =
-                            std::path::PathBuf::from(format!("{}.sig", cache_path.display()));
-                        (pkg.name().to_string(), cache_path, sig_path)
-                    })
-                })
-                .filter(|(_, cache_path, sig_path)| cache_path.exists() && sig_path.exists())
-                .collect();
+            let verification_data: Vec<_> = {
+                let mut data = Vec::new();
+                for pkg in pkgs_to_add.iter() {
+                    let Some(filename) = pkg.filename() else {
+                        anyhow::bail!(
+                            "Package '{}' has no filename; cannot verify a PGP signature",
+                            pkg.name()
+                        );
+                    };
+                    let cache_path = paths::pacman_cache_dir().join(filename);
+                    let sig_path =
+                        std::path::PathBuf::from(format!("{}.sig", cache_path.display()));
+                    crate::core::security::pgp::require_detached_signature_files(
+                        pkg.name(),
+                        &cache_path,
+                        &sig_path,
+                    )?;
+                    data.push((pkg.name().to_string(), cache_path, sig_path));
+                }
+                data
+            };
 
             let failed = AtomicBool::new(false);
             let failure_msg = std::sync::Mutex::new(String::new());

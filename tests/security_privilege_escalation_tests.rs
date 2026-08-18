@@ -727,8 +727,11 @@ mod attack_scenarios {
         // Many nested paths
         let deep = (0..10000).map(|_| "a").collect::<Vec<_>>().join("/");
         let result = validate_relative_path(&deep);
-        // Should either reject or handle gracefully
-        assert!(result.is_ok() || result.is_err());
+        assert!(
+            result.is_err(),
+            "paths over {MAX} bytes must be rejected",
+            MAX = 4096
+        );
 
         // Recursive symlinks would be caught at filesystem level
     }
@@ -851,8 +854,8 @@ mod attack_scenarios {
             // Should handle gracefully without panic
             let result = validate_package_name(attack);
             assert!(
-                result.is_ok() || result.is_err(),
-                "Should handle unicode: {attack:?}",
+                result.is_err(),
+                "unicode control characters are not valid package names: {attack:?} => {result:?}"
             );
         }
     }

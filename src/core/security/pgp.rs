@@ -206,6 +206,28 @@ impl PgpVerifier {
     }
 }
 
+/// Fail closed when a package blob or its detached `.sig` is missing.
+/// Skipping unsigned packages is not verification.
+pub fn require_detached_signature_files(
+    package_name: &str,
+    package_path: &Path,
+    signature_path: &Path,
+) -> Result<()> {
+    if !package_path.exists() {
+        anyhow::bail!(
+            "Package file missing for '{package_name}': {}",
+            package_path.display()
+        );
+    }
+    if !signature_path.exists() {
+        anyhow::bail!(
+            "PGP signature missing for '{package_name}': {}",
+            signature_path.display()
+        );
+    }
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -310,5 +332,50 @@ mod tests {
                 "got: {err}"
             );
         }
+    }
+
+    #[test]
+    fn missing_signature_file_is_not_skipped() {
+        let mut pkg = NamedTempFile::new().unwrap();
+        writeln!(pkg, "package data").unwrap();
+        pkg.flush().unwrap();
+        let err = require_detached_signature_files(
+            "vim",
+            pkg.path(),
+            std::path::Path::new("/nonexistent.sig"),
+        )
+        .expect_err("unsigned packages must not proceed");
+        assert!(
+            err.to_string().contains("PGP signature missing"),
+            "got: {err}"
+        );
+    }
+
+    #[test]
+    fn missing_package_file_is_an_error() {
+        let mut sig = NamedTempFile::new().unwrap();
+        writeln!(sig, "sig").unwrap();
+        sig.flush().unwrap();
+        let err = require_detached_signature_files(
+            "vim",
+            std::path::Path::new("/nonexistent.pkg"),
+            sig.path(),
+        )
+        .expect_err("missing package blob must fail");
+        assert!(
+            err.to_string().contains("Package file missing"),
+            "got: {err}"
+        );
+    }
+
+    #[test]
+    fn present_package_and_signature_paths_are_accepted() {
+        let mut pkg = NamedTempFile::new().unwrap();
+        writeln!(pkg, "package data").unwrap();
+        pkg.flush().unwrap();
+        let mut sig = NamedTempFile::new().unwrap();
+        writeln!(sig, "sig").unwrap();
+        sig.flush().unwrap();
+        assert!(require_detached_signature_files("vim", pkg.path(), sig.path()).is_ok());
     }
 }

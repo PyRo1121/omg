@@ -165,6 +165,57 @@ impl Default for SlsaVerifier {
     }
 }
 
+/// Evidence available to [`classify_slsa_evidence`]. None of these are a
+/// completed in-toto/SLSA verification.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SlsaEvidence {
+    None,
+    /// Local JSON parsed as provenance, with no signature check.
+    UnsignedLocalJson,
+    /// Rekor returned an index hit for the artifact hash.
+    RekorIndexHit,
+}
+
+/// Map raw evidence to a result. A Rekor UUID or unsigned JSON file is not
+/// SLSA L1/L2 and must not be reported as verified.
+#[must_use]
+pub fn classify_slsa_evidence(evidence: SlsaEvidence) -> VerificationResult {
+    match evidence {
+        SlsaEvidence::None => VerificationResult {
+            verified: false,
+            slsa_level: SlsaLevel::None,
+            transparency_log_entry: None,
+            builder_id: None,
+            build_timestamp: None,
+            error: Some("No verified SLSA provenance".to_string()),
+        },
+        SlsaEvidence::UnsignedLocalJson => VerificationResult {
+            verified: false,
+            slsa_level: SlsaLevel::None,
+            transparency_log_entry: None,
+            builder_id: None,
+            build_timestamp: None,
+            error: Some("Local provenance JSON is not a verified attestation".to_string()),
+        },
+        SlsaEvidence::RekorIndexHit => VerificationResult {
+            verified: false,
+            slsa_level: SlsaLevel::None,
+            transparency_log_entry: None,
+            builder_id: None,
+            build_timestamp: None,
+            error: Some("Rekor log index hit is not in-toto/SLSA verification".to_string()),
+        },
+    }
+}
+
+fn rekor_index_must_succeed(status_success: bool) -> Result<()> {
+    if status_success {
+        Ok(())
+    } else {
+        anyhow::bail!("Rekor index query failed")
+    }
+}
+
 impl SlsaVerifier {
     pub fn new() -> Result<Self> {
         Ok(Self {
@@ -187,17 +238,22 @@ impl SlsaVerifier {
             .await
             .context("Failed to query Rekor")?;
 
-        if !response.status().is_success() {
-            return Ok(Vec::new());
-        }
+        rekor_index_must_succeed(response.status().is_success())?;
 
-        let uuids: Vec<String> = response.json().await.unwrap_or_default();
+        let uuids: Vec<String> = response.json().await.context("Invalid Rekor index JSON")?;
 
         let mut entries = Vec::new();
+        let mut last_err = None;
         for uuid in uuids.iter().take(5) {
-            if let Ok(entry) = self.get_rekor_entry(uuid).await {
-                entries.push(entry);
+            match self.get_rekor_entry(uuid).await {
+                Ok(entry) => entries.push(entry),
+                Err(error) => last_err = Some(error),
             }
+        }
+        if entries.is_empty()
+            && let Some(error) = last_err
+        {
+            return Err(error).context("Failed to fetch Rekor log entries");
         }
 
         Ok(entries)
@@ -255,51 +311,22 @@ impl SlsaVerifier {
         // Check Rekor for transparency log entries
         let rekor_entries = self.query_rekor(&artifact_hash).await?;
 
-        if rekor_entries.is_empty() {
-            // No transparency log entry found
-            // Check if we have local provenance
-            if let Some(prov_path) = provenance_path
-                && prov_path.as_ref().exists()
-            {
-                // Parse local provenance
-                let content = std::fs::read_to_string(prov_path.as_ref())?;
-                if let Ok(provenance) = serde_json::from_str::<SlsaProvenance>(&content) {
-                    return Ok(VerificationResult {
-                        verified: true,
-                        slsa_level: SlsaLevel::Level1,
-                        transparency_log_entry: None,
-                        builder_id: Some(provenance.builder.id),
-                        build_timestamp: provenance.metadata.and_then(|m| m.build_finished_on),
-                        error: None,
-                    });
-                }
-            }
-
-            return Ok(VerificationResult {
-                verified: false,
-                slsa_level: SlsaLevel::None,
-                transparency_log_entry: None,
-                builder_id: None,
-                build_timestamp: None,
-                error: Some("No transparency log entry found".to_string()),
-            });
+        if let Some(entry) = rekor_entries.first() {
+            let mut result = classify_slsa_evidence(SlsaEvidence::RekorIndexHit);
+            result.transparency_log_entry = Some(entry.uuid.clone());
+            return Ok(result);
         }
 
-        // Found in Rekor - this is at least SLSA Level 2
-        let entry = &rekor_entries[0];
+        if let Some(prov_path) = provenance_path
+            && prov_path.as_ref().exists()
+        {
+            let content = std::fs::read_to_string(prov_path.as_ref())?;
+            let _: SlsaProvenance =
+                serde_json::from_str(&content).context("Invalid local provenance JSON")?;
+            return Ok(classify_slsa_evidence(SlsaEvidence::UnsignedLocalJson));
+        }
 
-        Ok(VerificationResult {
-            verified: true,
-            slsa_level: SlsaLevel::Level2,
-            transparency_log_entry: Some(entry.uuid.clone()),
-            builder_id: None,
-            build_timestamp: Some(
-                jiff::Timestamp::from_second(entry.integrated_time.cast_signed())
-                    .map(|t| t.strftime("%Y-%m-%dT%H:%M:%SZ").to_string())
-                    .unwrap_or_default(),
-            ),
-            error: None,
-        })
+        Ok(classify_slsa_evidence(SlsaEvidence::None))
     }
 
     /// Calculate SHA-256 hash of a file
@@ -417,5 +444,48 @@ mod tests {
     fn test_slsa_verifier_default() {
         let verifier = SlsaVerifier::default();
         assert_eq!(verifier.rekor_url, "https://rekor.sigstore.dev");
+    }
+
+    #[test]
+    fn rekor_index_hit_is_not_slsa_level2() {
+        let result = classify_slsa_evidence(SlsaEvidence::RekorIndexHit);
+        assert!(
+            !result.verified,
+            "a Rekor UUID is not a verified attestation"
+        );
+        assert_eq!(result.slsa_level, SlsaLevel::None);
+        assert!(
+            result
+                .error
+                .as_deref()
+                .is_some_and(|e| e.contains("not in-toto")),
+            "got: {:?}",
+            result.error
+        );
+    }
+
+    #[test]
+    fn unsigned_local_json_is_not_slsa_level1() {
+        let result = classify_slsa_evidence(SlsaEvidence::UnsignedLocalJson);
+        assert!(!result.verified, "parsed JSON is not a signature check");
+        assert_eq!(result.slsa_level, SlsaLevel::None);
+    }
+
+    #[test]
+    fn missing_evidence_is_unverified() {
+        let result = classify_slsa_evidence(SlsaEvidence::None);
+        assert!(!result.verified);
+        assert_eq!(result.slsa_level, SlsaLevel::None);
+    }
+
+    #[test]
+    fn rekor_http_failure_is_an_error() {
+        let err =
+            rekor_index_must_succeed(false).expect_err("HTTP failure must not look like no entry");
+        assert!(
+            err.to_string().contains("Rekor index query failed"),
+            "got: {err}"
+        );
+        assert!(rekor_index_must_succeed(true).is_ok());
     }
 }
