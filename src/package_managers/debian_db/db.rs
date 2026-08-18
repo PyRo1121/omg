@@ -72,14 +72,25 @@ struct DebianIndexCache {
 }
 
 /// Cache for /var/lib/dpkg/status to avoid expensive reparsing
-#[derive(Default)]
 struct DpkgStatusCache {
     packages: Vec<LocalPackage>,
     installed_set: AHashSet<String>,
-    status_mtime: Option<std::time::SystemTime>,
+    status_mtime: std::time::SystemTime,
     extended_states_mtime: Option<std::time::SystemTime>,
     /// Last access time for TTL-based eviction (30-minute safety net)
     last_accessed: Option<std::time::SystemTime>,
+}
+
+impl Default for DpkgStatusCache {
+    fn default() -> Self {
+        Self {
+            packages: Vec::new(),
+            installed_set: AHashSet::new(),
+            status_mtime: std::time::UNIX_EPOCH,
+            extended_states_mtime: None,
+            last_accessed: None,
+        }
+    }
 }
 
 /// Global mmap-based index for zero-copy access (optional, used when available)
@@ -408,13 +419,24 @@ fn apt_lists_entry(result: std::io::Result<fs::DirEntry>) -> Result<fs::DirEntry
     result.context("Failed to read APT lists directory entry")
 }
 
-fn apt_lists_packages_mtime(
-    path: &Path,
-    result: std::io::Result<std::fs::Metadata>,
-) -> Result<std::time::SystemTime> {
-    result
+fn required_mtime(path: &Path) -> Result<std::time::SystemTime> {
+    fs::metadata(path)
         .and_then(|meta| meta.modified())
-        .with_context(|| format!("Failed to read APT Packages file mtime {}", path.display()))
+        .with_context(|| format!("Failed to read mtime {}", path.display()))
+}
+
+fn optional_mtime(path: &Path) -> Result<Option<std::time::SystemTime>> {
+    match fs::metadata(path) {
+        Ok(meta) => {
+            Ok(Some(meta.modified().with_context(|| {
+                format!("Failed to read mtime {}", path.display())
+            })?))
+        }
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(None),
+        Err(error) => {
+            Err(error).with_context(|| format!("Failed to read mtime {}", path.display()))
+        }
+    }
 }
 
 pub fn ensure_index_loaded() -> Result<()> {
@@ -439,7 +461,7 @@ pub fn ensure_index_loaded() -> Result<()> {
         {
             continue;
         }
-        let mtime = apt_lists_packages_mtime(&path, entry.metadata())?;
+        let mtime = required_mtime(&path)?;
         current_files.insert(path, mtime);
     }
 
@@ -841,30 +863,24 @@ fn parse_packages_file_sync(path: &Path) -> Result<Vec<DebianPackage>> {
     let packages = if paragraph_ranges.len() > 100 {
         paragraph_ranges
             .par_iter()
-            .filter_map(|(start, end)| {
-                let paragraph = &content[*start..*end];
-                if paragraph.trim().is_empty() {
-                    None
-                } else {
-                    parse_paragraph_str(paragraph, &component).ok()
-                }
-            })
-            .collect()
+            .map(|(start, end)| parse_packages_paragraph(&content[*start..*end], &component))
+            .collect::<Result<Vec<_>>>()?
     } else {
         paragraph_ranges
             .iter()
-            .filter_map(|(start, end)| {
-                let paragraph = &content[*start..*end];
-                if paragraph.trim().is_empty() {
-                    None
-                } else {
-                    parse_paragraph_str(paragraph, &component).ok()
-                }
-            })
-            .collect()
+            .map(|(start, end)| parse_packages_paragraph(&content[*start..*end], &component))
+            .collect::<Result<Vec<_>>>()?
     };
 
-    Ok(packages)
+    Ok(packages.into_iter().flatten().collect())
+}
+
+fn parse_packages_paragraph(paragraph: &str, component: &str) -> Result<Option<DebianPackage>> {
+    if paragraph.trim().is_empty() {
+        Ok(None)
+    } else {
+        parse_paragraph_str(paragraph, component).map(Some)
+    }
 }
 
 fn read_packages_file_content(path: &Path) -> Result<String> {
@@ -1600,18 +1616,8 @@ pub fn list_installed_fast() -> Result<Vec<LocalPackage>> {
 
     let extended_states_path = Path::new("/var/lib/apt/extended_states");
 
-    // Get mtimes
-    let status_mtime = fs::metadata(status_path)
-        .ok()
-        .and_then(|m| m.modified().ok());
-    let extended_states_mtime = extended_states_path
-        .exists()
-        .then(|| {
-            fs::metadata(extended_states_path)
-                .ok()
-                .and_then(|m| m.modified().ok())
-        })
-        .flatten();
+    let status_mtime = required_mtime(status_path)?;
+    let extended_states_mtime = optional_mtime(extended_states_path)?;
 
     // Check cache first
     {
@@ -2224,51 +2230,40 @@ pub fn clean_package_cache() -> Result<(usize, u64)> {
     }
 
     let cache_dir = Path::new("/var/cache/apt/archives");
-    let partial_dir = cache_dir.join("partial");
+    let (removed_main, freed_main) = remove_deb_files(cache_dir)?;
+    let (removed_partial, freed_partial) = remove_deb_files(&cache_dir.join("partial"))?;
+    Ok((removed_main + removed_partial, freed_main + freed_partial))
+}
+
+fn remove_deb_files(dir: &Path) -> Result<(usize, u64)> {
+    let entries = match fs::read_dir(dir) {
+        Ok(entries) => entries,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok((0, 0)),
+        Err(error) => {
+            return Err(error)
+                .with_context(|| format!("Failed to read APT cache directory {}", dir.display()));
+        }
+    };
 
     let mut removed = 0;
     let mut freed = 0u64;
-
-    // Clean main cache directory
-    if cache_dir.exists() {
-        for entry in fs::read_dir(cache_dir)? {
-            let entry = entry?;
-            let path = entry.path();
-
-            if let Some(filename) = path.file_name().and_then(|n| n.to_str())
-                && filename.to_ascii_lowercase().ends_with(".deb")
-                && path.is_file()
-            {
-                if let Ok(meta) = fs::metadata(&path) {
-                    freed += meta.len();
-                }
-                if fs::remove_file(&path).is_ok() {
-                    removed += 1;
-                }
-            }
+    for entry in entries {
+        let path = entry
+            .with_context(|| format!("Failed to read APT cache directory {}", dir.display()))?
+            .path();
+        let Some(filename) = path.file_name().and_then(|n| n.to_str()) else {
+            continue;
+        };
+        if !filename.to_ascii_lowercase().ends_with(".deb") || !path.is_file() {
+            continue;
         }
+        let meta = fs::metadata(&path)
+            .with_context(|| format!("Failed to read APT cache file {}", path.display()))?;
+        fs::remove_file(&path)
+            .with_context(|| format!("Failed to remove APT cache file {}", path.display()))?;
+        freed += meta.len();
+        removed += 1;
     }
-
-    // Clean partial directory
-    if partial_dir.exists() {
-        for entry in fs::read_dir(&partial_dir)? {
-            let entry = entry?;
-            let path = entry.path();
-
-            if let Some(filename) = path.file_name().and_then(|n| n.to_str())
-                && filename.to_ascii_lowercase().ends_with(".deb")
-                && path.is_file()
-            {
-                if let Ok(meta) = fs::metadata(&path) {
-                    freed += meta.len();
-                }
-                if fs::remove_file(&path).is_ok() {
-                    removed += 1;
-                }
-            }
-        }
-    }
-
     Ok((removed, freed))
 }
 
@@ -2693,29 +2688,101 @@ mod tests {
     }
 
     #[test]
-    fn apt_lists_packages_mtime_allows_success() {
+    fn required_mtime_allows_success() {
         let dir = tempfile::TempDir::new().expect("temp dir");
-        let path = dir.path().join("foo_Packages");
-        std::fs::write(&path, b"").expect("lists file");
-        apt_lists_packages_mtime(&path, fs::metadata(&path))
-            .expect("readable Packages file mtime must be kept");
+        let path = dir.path().join("status");
+        std::fs::write(&path, b"").expect("status file");
+        required_mtime(&path).expect("readable file mtime must be kept");
     }
 
     #[test]
-    fn apt_lists_packages_mtime_rejects_unreadable() {
-        let error = apt_lists_packages_mtime(
-            Path::new("/var/lib/apt/lists/foo_Packages"),
-            Err(std::io::Error::new(
-                std::io::ErrorKind::PermissionDenied,
-                "denied",
-            )),
-        )
-        .expect_err("unreadable Packages file must not look absent");
+    fn required_mtime_rejects_missing() {
+        let error = required_mtime(Path::new("/no/such/dpkg/status"))
+            .expect_err("missing file mtime must not look like a cache hit");
         assert!(
-            error
-                .to_string()
-                .contains("Failed to read APT Packages file mtime"),
+            error.to_string().contains("Failed to read mtime"),
             "got: {error}"
         );
+    }
+
+    #[test]
+    fn optional_mtime_missing_file_is_none() {
+        let mtime = optional_mtime(Path::new("/no/such/extended_states"))
+            .expect("missing extended_states mtime is optional");
+        assert!(mtime.is_none());
+    }
+
+    #[test]
+    fn optional_mtime_rejects_unreadable_existing() {
+        let dir = tempfile::TempDir::new().expect("temp dir");
+        let nested = dir.path().join("extended_states");
+        std::fs::create_dir(&nested).expect("nested dir");
+        let original = std::fs::metadata(dir.path())
+            .expect("parent metadata")
+            .permissions();
+        let mut denied = original.clone();
+        std::os::unix::fs::PermissionsExt::set_mode(&mut denied, 0o000);
+        std::fs::set_permissions(dir.path(), denied).expect("deny parent");
+        let result = optional_mtime(&nested);
+        std::fs::set_permissions(dir.path(), original).expect("restore parent");
+        let error = result.expect_err("unreadable existing extended_states must not look missing");
+        assert!(
+            error.to_string().contains("Failed to read mtime"),
+            "got: {error}"
+        );
+    }
+
+    #[test]
+    fn parse_packages_file_sync_rejects_corrupt_paragraph() {
+        let dir = tempfile::TempDir::new().expect("temp dir");
+        let path = dir.path().join("test_Packages");
+        std::fs::write(
+            &path,
+            "Package: vim\nVersion: 1.0\n\nVersion: 2.0\n\nPackage: bash\nVersion: 1.0\n",
+        )
+        .expect("packages file");
+        let error = parse_packages_file_sync(&path)
+            .expect_err("corrupt Packages paragraph must not be skipped");
+        assert!(
+            error.to_string().contains("missing 'Package' field"),
+            "got: {error}"
+        );
+    }
+
+    #[test]
+    fn parse_packages_file_sync_reads_valid_packages() {
+        let dir = tempfile::TempDir::new().expect("temp dir");
+        let path = dir.path().join("test_Packages");
+        std::fs::write(
+            &path,
+            "Package: vim\nVersion: 1.0\n\nPackage: bash\nVersion: 1.0\n",
+        )
+        .expect("packages file");
+        let packages = parse_packages_file_sync(&path).expect("valid Packages file");
+        assert_eq!(packages.len(), 2);
+        assert_eq!(packages[0].name, "vim");
+        assert_eq!(packages[1].name, "bash");
+    }
+
+    #[test]
+    fn remove_deb_files_missing_dir_is_empty() {
+        let (removed, freed) = remove_deb_files(Path::new("/no/such/apt/archives"))
+            .expect("missing APT cache directory is empty");
+        assert_eq!(removed, 0);
+        assert_eq!(freed, 0);
+    }
+
+    #[test]
+    fn remove_deb_files_deletes_deb_and_skips_other_files() {
+        let dir = tempfile::TempDir::new().expect("temp dir");
+        let deb = dir.path().join("foo.deb");
+        let other = dir.path().join("keep.txt");
+        std::fs::write(&deb, b"deb").expect("deb file");
+        std::fs::write(&other, b"keep").expect("non-deb file");
+        let (removed, freed) = remove_deb_files(dir.path()).expect("cache cleanup");
+        assert_eq!(removed, 1);
+        assert_eq!(freed, 3);
+        assert!(!deb.exists());
+        assert!(other.exists());
     }
 }
