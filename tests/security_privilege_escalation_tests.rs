@@ -708,13 +708,13 @@ mod attack_scenarios {
 
         // AWS keys (using realistic format, not EXAMPLE)
         let content = "AWS_ACCESS_KEY_ID=AKIAI44QH8DHBEXAMPLE"; // Real format but still fake
-        let _findings = scanner.scan_content(content, "test.env").unwrap();
+        let _findings = scanner.scan_content(content, "test.env");
         // Note: May be filtered as placeholder if contains "EXAMPLE"
         // So we'll test with actual private key pattern which is more reliable
 
         // Private keys - more reliably detected
         let content = "-----BEGIN RSA PRIVATE KEY-----\nMIIE...";
-        let findings = scanner.scan_content(content, "key.pem").unwrap();
+        let findings = scanner.scan_content(content, "key.pem");
         assert!(!findings.is_empty(), "Should detect private key");
         assert!(
             findings
@@ -735,7 +735,7 @@ mod attack_scenarios {
         ];
 
         for placeholder in placeholders {
-            let findings = scanner.scan_content(placeholder, "test.txt").unwrap();
+            let findings = scanner.scan_content(placeholder, "test.txt");
             assert!(
                 findings.is_empty(),
                 "Should ignore placeholder: {placeholder}",
