@@ -9,7 +9,7 @@ use std::collections::HashMap;
 use std::fs;
 use std::path::{Path, PathBuf};
 
-use anyhow::Result;
+use anyhow::{Context, Result};
 use semver::{Version, VersionReq};
 use serde::Deserialize;
 use toml::Value;
@@ -81,9 +81,22 @@ struct MiseConfig {
     tools: Option<HashMap<String, Value>>,
 }
 
-fn read_package_json_versions(dir: &Path) -> Option<HashMap<String, String>> {
-    let file = std::fs::File::open(dir.join("package.json")).ok()?;
-    let pkg: PackageJsonVersions = serde_json::from_reader(file).ok()?;
+fn read_pin_file(path: &Path) -> Result<Option<String>> {
+    match fs::read_to_string(path) {
+        Ok(content) => Ok(Some(content)),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(None),
+        Err(error) => Err(error)
+            .with_context(|| format!("Failed to read version pin file {}", path.display())),
+    }
+}
+
+fn read_package_json_versions(dir: &Path) -> Result<Option<HashMap<String, String>>> {
+    let path = dir.join("package.json");
+    let Some(content) = read_pin_file(&path)? else {
+        return Ok(None);
+    };
+    let pkg: PackageJsonVersions = serde_json::from_str(&content)
+        .with_context(|| format!("Failed to parse {}", path.display()))?;
     let mut versions = HashMap::new();
 
     // Process volta first (lower priority)
@@ -106,13 +119,18 @@ fn read_package_json_versions(dir: &Path) -> Option<HashMap<String, String>> {
         }
     }
 
-    (!versions.is_empty()).then_some(versions)
+    Ok((!versions.is_empty()).then_some(versions))
 }
 
-fn read_mise_versions(path: &Path) -> Option<HashMap<String, String>> {
-    let content = fs::read_to_string(path).ok()?;
-    let config: MiseConfig = toml::from_str(&content).ok()?;
-    let tools = config.tools?;
+fn read_mise_versions(path: &Path) -> Result<Option<HashMap<String, String>>> {
+    let Some(content) = read_pin_file(path)? else {
+        return Ok(None);
+    };
+    let config: MiseConfig =
+        toml::from_str(&content).with_context(|| format!("Failed to parse {}", path.display()))?;
+    let Some(tools) = config.tools else {
+        return Ok(None);
+    };
     let mut versions = HashMap::new();
 
     for (tool, value) in tools {
@@ -122,7 +140,7 @@ fn read_mise_versions(path: &Path) -> Option<HashMap<String, String>> {
         }
     }
 
-    (!versions.is_empty()).then_some(versions)
+    Ok((!versions.is_empty()).then_some(versions))
 }
 
 fn mise_tool_version(value: &Value) -> Option<String> {
@@ -169,7 +187,7 @@ pub fn hook_env(shell: &str) -> Result<()> {
     let cwd = std::env::current_dir()?;
 
     // Detect version files in current directory and parents
-    let versions = detect_versions(&cwd);
+    let versions = detect_versions(&cwd)?;
 
     if versions.is_empty() {
         return Ok(());
@@ -200,62 +218,77 @@ pub fn hook_env(shell: &str) -> Result<()> {
     Ok(())
 }
 
-fn parse_tool_versions_file(file_path: &Path, versions: &mut HashMap<String, String>) {
-    if let Ok(content) = std::fs::read_to_string(file_path) {
-        for line in content.lines() {
-            let parts: Vec<&str> = line.split_whitespace().collect();
-            let (Some(rt_part), Some(ver_part)) = (parts.first(), parts.get(1)) else {
-                continue;
-            };
-            let rt = normalize_runtime_name(rt_part);
-            let ver = (*ver_part).to_string();
-            versions.entry(rt).or_insert(ver);
-        }
+fn parse_tool_versions_file(
+    file_path: &Path,
+    versions: &mut HashMap<String, String>,
+) -> Result<()> {
+    let Some(content) = read_pin_file(file_path)? else {
+        return Ok(());
+    };
+    for line in content.lines() {
+        let parts: Vec<&str> = line.split_whitespace().collect();
+        let (Some(rt_part), Some(ver_part)) = (parts.first(), parts.get(1)) else {
+            continue;
+        };
+        let rt = normalize_runtime_name(rt_part);
+        let ver = (*ver_part).to_string();
+        versions.entry(rt).or_insert(ver);
     }
+    Ok(())
 }
 
 fn parse_rust_toolchain_file(
     file_path: &Path,
     runtime: &str,
     versions: &mut HashMap<String, String>,
-) {
-    if let Ok(content) = std::fs::read_to_string(file_path) {
-        for line in content.lines() {
-            if line.contains("channel")
-                && let Some(version) = line.split('=').nth(1)
-            {
-                let v = version.trim().trim_matches('"').trim_matches('\'');
-                versions.insert(runtime.to_string(), v.to_string());
-            }
+) -> Result<()> {
+    let Some(content) = read_pin_file(file_path)? else {
+        return Ok(());
+    };
+    for line in content.lines() {
+        if line.contains("channel")
+            && let Some(version) = line.split('=').nth(1)
+        {
+            let v = version.trim().trim_matches('"').trim_matches('\'');
+            versions.insert(runtime.to_string(), v.to_string());
         }
     }
+    Ok(())
 }
 
-fn parse_go_mod_file(file_path: &Path, runtime: &str, versions: &mut HashMap<String, String>) {
-    if let Ok(content) = std::fs::read_to_string(file_path) {
-        for line in content.lines() {
-            let line = line.trim();
-            if let Some(version) = line.strip_prefix("go ")
-                && !version.trim().is_empty()
-            {
-                versions.insert(runtime.to_string(), version.trim().to_string());
-                break;
-            }
+fn parse_go_mod_file(
+    file_path: &Path,
+    runtime: &str,
+    versions: &mut HashMap<String, String>,
+) -> Result<()> {
+    let Some(content) = read_pin_file(file_path)? else {
+        return Ok(());
+    };
+    for line in content.lines() {
+        let line = line.trim();
+        if let Some(version) = line.strip_prefix("go ")
+            && !version.trim().is_empty()
+        {
+            versions.insert(runtime.to_string(), version.trim().to_string());
+            break;
         }
     }
+    Ok(())
 }
 
 fn parse_simple_version_file(
     file_path: &Path,
     runtime: &str,
     versions: &mut HashMap<String, String>,
-) {
-    if let Ok(content) = std::fs::read_to_string(file_path) {
-        let version = content.trim().trim_start_matches('v').to_string();
-        if !version.is_empty() {
-            versions.insert(runtime.to_string(), version);
-        }
+) -> Result<()> {
+    let Some(content) = read_pin_file(file_path)? else {
+        return Ok(());
+    };
+    let version = content.trim().trim_start_matches('v').to_string();
+    if !version.is_empty() {
+        versions.insert(runtime.to_string(), version);
     }
+    Ok(())
 }
 
 fn try_parse_version_file(
@@ -264,12 +297,12 @@ fn try_parse_version_file(
     runtime: &str,
     dir: &Path,
     versions: &mut HashMap<String, String>,
-) {
+) -> Result<()> {
     match filename {
-        ".tool-versions" => parse_tool_versions_file(file_path, versions),
-        "rust-toolchain.toml" => parse_rust_toolchain_file(file_path, runtime, versions),
+        ".tool-versions" => parse_tool_versions_file(file_path, versions)?,
+        "rust-toolchain.toml" => parse_rust_toolchain_file(file_path, runtime, versions)?,
         "package.json" => {
-            if let Some(extra) = read_package_json_versions(dir) {
+            if let Some(extra) = read_package_json_versions(dir)? {
                 for (runtime, version) in extra {
                     versions
                         .entry(runtime)
@@ -277,9 +310,9 @@ fn try_parse_version_file(
                 }
             }
         }
-        "go.mod" => parse_go_mod_file(file_path, runtime, versions),
+        "go.mod" => parse_go_mod_file(file_path, runtime, versions)?,
         ".mise.toml" | ".mise.local.toml" | "mise.toml" => {
-            if let Some(extra) = read_mise_versions(file_path) {
+            if let Some(extra) = read_mise_versions(file_path)? {
                 for (runtime, version) in extra {
                     versions
                         .entry(runtime)
@@ -287,13 +320,13 @@ fn try_parse_version_file(
                 }
             }
         }
-        _ => parse_simple_version_file(file_path, runtime, versions),
+        _ => parse_simple_version_file(file_path, runtime, versions)?,
     }
+    Ok(())
 }
 
 /// Detect version files in directory and parents
-#[must_use]
-pub fn detect_versions(start: &Path) -> HashMap<String, String> {
+pub fn detect_versions(start: &Path) -> Result<HashMap<String, String>> {
     let mut versions = HashMap::new();
     let mut current = Some(start.to_path_buf());
 
@@ -305,14 +338,14 @@ pub fn detect_versions(start: &Path) -> HashMap<String, String> {
 
             let file_path = dir.join(filename);
             if file_path.exists() {
-                try_parse_version_file(filename, &file_path, runtime, &dir, &mut versions);
+                try_parse_version_file(filename, &file_path, runtime, &dir, &mut versions)?;
             }
         }
 
         current = dir.parent().map(std::path::Path::to_path_buf);
     }
 
-    versions
+    Ok(versions)
 }
 
 /// Build PATH additions for detected versions
@@ -556,9 +589,8 @@ fn native_runtime_bin_path(runtime: &str, version: &str) -> Option<PathBuf> {
 // moved to core::runtime_resolver module
 
 /// Get active versions for display
-#[must_use]
-pub fn get_active_versions() -> HashMap<String, String> {
-    let cwd = std::env::current_dir().unwrap_or_default();
+pub fn get_active_versions() -> Result<HashMap<String, String>> {
+    let cwd = std::env::current_dir().context("Failed to get current directory")?;
     detect_versions(&cwd)
 }
 
@@ -721,7 +753,7 @@ mod tests {
         let dir = tempdir().unwrap();
         fs::write(dir.path().join(".nvmrc"), "20.10.0").unwrap();
 
-        let versions = detect_versions(dir.path());
+        let versions = detect_versions(dir.path()).unwrap();
         assert_eq!(versions.get("node"), Some(&"20.10.0".to_string()));
     }
 
@@ -734,7 +766,7 @@ mod tests {
         )
         .unwrap();
 
-        let versions = detect_versions(dir.path());
+        let versions = detect_versions(dir.path()).unwrap();
         assert_eq!(versions.get("node"), Some(&"20.10.0".to_string()));
         assert_eq!(versions.get("python"), Some(&"3.12.0".to_string()));
     }
@@ -745,7 +777,7 @@ mod tests {
         fs::write(dir.path().join(".nvmrc"), "18.19.0").unwrap();
         fs::write(dir.path().join(".node-version"), "20.11.1").unwrap();
 
-        let versions = detect_versions(dir.path());
+        let versions = detect_versions(dir.path()).unwrap();
         assert_eq!(versions.get("node"), Some(&"20.11.1".to_string()));
     }
 
@@ -761,7 +793,7 @@ mod tests {
         )
         .unwrap();
 
-        let versions = detect_versions(dir.path());
+        let versions = detect_versions(dir.path()).unwrap();
         assert_eq!(versions.get("node"), Some(&">=18 <21".to_string()));
         assert_eq!(versions.get("bun"), Some(&"1.1.0".to_string()));
     }
@@ -779,7 +811,7 @@ python = "3.12.1"
         )
         .unwrap();
 
-        let versions = detect_versions(dir.path());
+        let versions = detect_versions(dir.path()).unwrap();
         assert_eq!(versions.get("node"), Some(&"20.10.0".to_string()));
         assert_eq!(versions.get("bun"), Some(&"1.0.25".to_string()));
         assert_eq!(versions.get("python"), Some(&"3.12.1".to_string()));
@@ -801,7 +833,7 @@ erlang = "26.2"
         )
         .unwrap();
 
-        let versions = detect_versions(dir.path());
+        let versions = detect_versions(dir.path()).unwrap();
         assert_eq!(versions.get("deno"), Some(&"1.40.0".to_string()));
         assert_eq!(versions.get("elixir"), Some(&"1.16.0".to_string()));
         assert_eq!(versions.get("zig"), Some(&"0.11.0".to_string()));
@@ -838,9 +870,49 @@ erlang = "26.2"
         )
         .unwrap();
 
-        let versions = detect_versions(dir.path());
+        let versions = detect_versions(dir.path()).unwrap();
         assert_eq!(versions.get("deno"), Some(&"1.40.0".to_string()));
         assert_eq!(versions.get("elixir"), Some(&"1.16.0".to_string()));
         assert_eq!(versions.get("zig"), Some(&"0.11.0".to_string()));
+    }
+
+    #[test]
+    fn test_read_pin_file_missing_is_none() {
+        let missing = tempdir().unwrap().path().join("does-not-exist");
+        assert!(read_pin_file(&missing).unwrap().is_none());
+    }
+
+    #[test]
+    fn test_detect_versions_unreadable_pin_errors() {
+        let dir = tempdir().unwrap();
+        let pin = dir.path().join(".nvmrc");
+        fs::write(&pin, "20.10.0").unwrap();
+        let original = fs::metadata(&pin).unwrap().permissions();
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            fs::set_permissions(&pin, fs::Permissions::from_mode(0o000)).unwrap();
+        }
+        let blocked = fs::read_to_string(&pin).is_err();
+        let result = detect_versions(dir.path());
+        let _ = fs::set_permissions(&pin, original);
+        if !blocked {
+            return;
+        }
+        assert!(
+            result.is_err(),
+            "unreadable pin file must fail closed, got {result:?}"
+        );
+    }
+
+    #[test]
+    fn test_detect_versions_invalid_package_json_errors() {
+        let dir = tempdir().unwrap();
+        fs::write(dir.path().join("package.json"), "not json").unwrap();
+        let error = detect_versions(dir.path()).unwrap_err();
+        assert!(
+            error.to_string().contains("Failed to parse"),
+            "unexpected error: {error:#}"
+        );
     }
 }

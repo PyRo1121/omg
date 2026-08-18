@@ -682,7 +682,7 @@ fn execute_process(
         }
         // If system Rust exists, rustup will handle toolchain switching automatically
     }
-    let mut versions = hooks::detect_versions(&current_dir);
+    let mut versions = hooks::detect_versions(&current_dir)?;
     if let Some((runtime, default_version)) = detect_js_runtime(&current_dir) {
         versions.entry(runtime).or_insert(default_version);
     }

@@ -14,7 +14,7 @@ use crate::runtimes::{
 static MISE: LazyLock<MiseManager> = LazyLock::new(MiseManager::new);
 
 pub fn resolve_active_version(runtime: &str) -> Result<Option<String>> {
-    let versions = crate::hooks::get_active_versions();
+    let versions = crate::hooks::get_active_versions()?;
     if let Some(version) = versions.get(&runtime.to_lowercase()) {
         return Ok(Some(version.clone()));
     }
@@ -119,7 +119,7 @@ pub async fn use_version(runtime: &str, version: Option<&str>) -> Result<()> {
     let version = if let Some(v) = version {
         v.to_string()
     } else {
-        let active = crate::hooks::get_active_versions();
+        let active = crate::hooks::get_active_versions()?;
         let Some(v) = active.get(&runtime) else {
             anyhow::bail!("No version specified and none detected in .tool-versions, .nvmrc, etc.");
         };
