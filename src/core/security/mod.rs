@@ -22,4 +22,4 @@ pub use validation::{
     validate_package_names, validate_package_names_or_files, validate_relative_path,
     validate_runtime_version, validate_version,
 };
-pub use vulnerability::VulnerabilityScanner;
+pub use vulnerability::{VulnerabilityError, VulnerabilityScanner};
