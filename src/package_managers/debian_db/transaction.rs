@@ -644,6 +644,14 @@ impl Transaction {
         }
     }
 
+    fn require_package_installed(name: &str, installed: bool) -> Result<()> {
+        if installed {
+            Ok(())
+        } else {
+            anyhow::bail!("package {name} is not installed")
+        }
+    }
+
     /// Execute package removal
     #[allow(clippy::unused_async)]
     pub async fn execute_removal(&mut self) -> Result<()> {
@@ -678,71 +686,44 @@ impl Transaction {
             );
             pb.set_prefix(package_name.clone());
 
-            // Validate package is installed
             pb.set_message("validating");
             pb.inc(1);
-            if !super::is_installed_fast(package_name)? {
-                pb.set_message("not installed".red().to_string());
-                pb.finish();
-                tracing::warn!("Package {} is not installed, skipping", package_name);
-                overall.inc(1);
-                continue;
-            }
+            Self::require_package_installed(package_name, super::is_installed_fast(package_name)?)?;
 
-            // Get installed version for logging
             let version = Self::require_installed_version(
                 package_name,
                 super::get_package_version(package_name)?,
             )?;
 
-            // Run prerm script
             pb.set_message("prerm");
             pb.inc(1);
-            if let Err(e) = run_prerm_script(package_name) {
-                pb.set_message(format!("prerm failed: {e}").red().to_string());
-                pb.finish();
-                overall.inc(1);
-                tracing::error!("Failed to run prerm script for {package_name}: {e}");
-                anyhow::bail!("Package removal failed during prerm script for {package_name}");
-            }
+            run_prerm_script(package_name).map_err(|error| {
+                removal_step_failed(&pb, &overall, package_name, "prerm script", &error)
+            })?;
 
-            // Remove package files
             pb.set_message("removing files");
             pb.inc(1);
-            if let Err(e) = remove_package_files(package_name) {
-                pb.set_message(format!("file removal failed: {e}").red().to_string());
-                pb.finish();
-                overall.inc(1);
-                tracing::error!("Failed to remove files for {package_name}: {e}");
-                anyhow::bail!("Package removal failed during file removal for {package_name}");
-            }
+            remove_package_files(package_name).map_err(|error| {
+                removal_step_failed(&pb, &overall, package_name, "file removal", &error)
+            })?;
 
-            // Run postrm script
             pb.set_message("postrm");
             pb.inc(1);
-            if let Err(e) = run_postrm_script(package_name) {
-                pb.set_message(format!("postrm failed: {e}").red().to_string());
-                pb.finish();
-                overall.inc(1);
-                tracing::error!("Failed to run postrm script for {package_name}: {e}");
-                anyhow::bail!("Package removal failed during postrm script for {package_name}");
-            }
+            run_postrm_script(package_name).map_err(|error| {
+                removal_step_failed(&pb, &overall, package_name, "postrm script", &error)
+            })?;
 
-            // Update dpkg status
             pb.set_message("updating status");
             pb.inc(1);
-            if let Err(e) = update_dpkg_status_for_removal(package_name) {
-                pb.set_message(format!("status update failed: {e}").red().to_string());
-                pb.finish();
-                overall.inc(1);
-                tracing::error!("Failed to update dpkg status for {package_name}: {e}");
-                anyhow::bail!("Package removal failed during status update for {package_name}");
-            }
+            update_dpkg_status_for_removal(package_name).map_err(|error| {
+                removal_step_failed(&pb, &overall, package_name, "status update", &error)
+            })?;
 
-            // Clean up dpkg info files
             pb.set_message("cleanup");
             pb.inc(1);
-            cleanup_dpkg_info_files(package_name);
+            cleanup_dpkg_info_files(package_name).map_err(|error| {
+                removal_step_failed(&pb, &overall, package_name, "cleanup", &error)
+            })?;
 
             pb.set_message("✓".green().to_string());
             pb.finish();
@@ -1201,73 +1182,58 @@ async fn download_streaming_once(
     Ok(())
 }
 
+fn removal_step_failed(
+    pb: &ProgressBar,
+    overall: &ProgressBar,
+    package_name: &str,
+    step: &str,
+    error: &anyhow::Error,
+) -> anyhow::Error {
+    pb.set_message(format!("{step} failed: {error}").red().to_string());
+    pb.finish();
+    overall.inc(1);
+    tracing::error!("Failed to {step} for {package_name}: {error}");
+    anyhow::anyhow!("Package removal failed during {step} for {package_name}")
+}
+
+const DPKG_INFO_DIR: &str = "/var/lib/dpkg/info";
+
+fn dpkg_info_candidates(package_name: &str, extension: &str) -> [PathBuf; 2] {
+    let arch = std::env::consts::ARCH;
+    [
+        Path::new(DPKG_INFO_DIR).join(format!("{package_name}:{arch}.{extension}")),
+        Path::new(DPKG_INFO_DIR).join(format!("{package_name}.{extension}")),
+    ]
+}
+
+fn existing_dpkg_info_file(package_name: &str, extension: &str) -> Option<PathBuf> {
+    dpkg_info_candidates(package_name, extension)
+        .into_iter()
+        .find(|path| path.exists())
+}
+
 /// Run prerm script for package removal
 fn run_prerm_script(package_name: &str) -> Result<()> {
-    // Try both with and without architecture suffix
-    let arch = std::env::consts::ARCH;
-    let candidates = [
-        format!("{package_name}:{arch}.prerm"),
-        format!("{package_name}.prerm"),
-    ];
-
-    for script_name in &candidates {
-        let script = Path::new("/var/lib/dpkg/info").join(script_name);
-        if script.exists() {
-            run_maintainer_script(&script, "remove")?;
-            return Ok(());
-        }
-    }
-
-    // No prerm script found - this is OK
-    tracing::debug!("No prerm script found for {}", package_name);
-    Ok(())
+    run_removal_maintainer_script(package_name, "prerm")
 }
 
 /// Run postrm script for package removal
 fn run_postrm_script(package_name: &str) -> Result<()> {
-    let arch = std::env::consts::ARCH;
-    let candidates = [
-        format!("{package_name}:{arch}.postrm"),
-        format!("{package_name}.postrm"),
-    ];
+    run_removal_maintainer_script(package_name, "postrm")
+}
 
-    for script_name in &candidates {
-        let script = Path::new("/var/lib/dpkg/info").join(script_name);
-        if script.exists() {
-            run_maintainer_script(&script, "remove")?;
-            return Ok(());
-        }
-    }
-
-    tracing::debug!("No postrm script found for {}", package_name);
-    Ok(())
+fn run_removal_maintainer_script(package_name: &str, kind: &str) -> Result<()> {
+    let Some(script) = existing_dpkg_info_file(package_name, kind) else {
+        tracing::debug!("No {kind} script found for {package_name}");
+        return Ok(());
+    };
+    run_maintainer_script(&script, "remove")
 }
 
 /// Remove package files from the filesystem
 fn remove_package_files(package_name: &str) -> Result<()> {
-    // Find the .list file
-    let arch = std::env::consts::ARCH;
-    let candidates = [
-        format!("{package_name}:{arch}.list"),
-        format!("{package_name}.list"),
-    ];
-
-    let mut list_file_path = None;
-    for candidate in &candidates {
-        let path = Path::new("/var/lib/dpkg/info").join(candidate);
-        if path.exists() {
-            list_file_path = Some(path);
-            break;
-        }
-    }
-
-    let Some(list_path) = list_file_path else {
-        tracing::warn!(
-            "No .list file found for {}, cannot remove files",
-            package_name
-        );
-        return Ok(());
-    };
+    let list_path = existing_dpkg_info_file(package_name, "list")
+        .ok_or_else(|| anyhow::anyhow!("No .list file found for {package_name}"))?;
 
     // Read file list
     let list_content = fs::read_to_string(&list_path)
@@ -1285,43 +1251,30 @@ fn remove_package_files(package_name: &str) -> Result<()> {
 
         let path = PathBuf::from(line);
         if line.ends_with('/') {
-            // Directory
             dirs_to_remove.push(path);
         } else {
-            // Regular file or symlink
             files_to_remove.push(path);
         }
     }
 
-    // Remove files in reverse order (deepest first)
     files_to_remove.reverse();
 
     let mut removed_count = 0;
-    let mut failed_count = 0;
 
     for file_path in &files_to_remove {
-        // Skip if it doesn't exist
         if !file_path.exists() {
             continue;
         }
 
-        // Check if it's a conffile - skip those (keep for config-files state)
-        if is_conffile(package_name, file_path) {
+        if is_conffile(package_name, file_path)? {
             tracing::debug!("Skipping conffile: {}", file_path.display());
             continue;
         }
 
-        // Remove the file
-        match fs::remove_file(file_path) {
-            Ok(()) => {
-                removed_count += 1;
-                tracing::trace!("Removed: {}", file_path.display());
-            }
-            Err(e) => {
-                failed_count += 1;
-                tracing::debug!("Failed to remove {}: {}", file_path.display(), e);
-            }
-        }
+        fs::remove_file(file_path)
+            .with_context(|| format!("Failed to remove {}", file_path.display()))?;
+        removed_count += 1;
+        tracing::trace!("Removed: {}", file_path.display());
     }
 
     // Try to remove empty directories (bottom-up)
@@ -1337,36 +1290,21 @@ fn remove_package_files(package_name: &str) -> Result<()> {
         }
     }
 
-    tracing::debug!(
-        "Removed {} files from {} (skipped: {})",
-        removed_count,
-        package_name,
-        failed_count
-    );
+    tracing::debug!("Removed {removed_count} files from {package_name}");
 
     Ok(())
 }
 
 /// Check if a file path is a conffile for the given package
-fn is_conffile(package_name: &str, file_path: &Path) -> bool {
-    let arch = std::env::consts::ARCH;
-    let candidates = [
-        format!("{package_name}:{arch}.conffiles"),
-        format!("{package_name}.conffiles"),
-    ];
-
-    for candidate in &candidates {
-        let conffiles_path = Path::new("/var/lib/dpkg/info").join(candidate);
-        if let Ok(content) = fs::read_to_string(&conffiles_path) {
-            for line in content.lines() {
-                if Path::new(line.trim()) == file_path {
-                    return true;
-                }
-            }
-        }
-    }
-
-    false
+fn is_conffile(package_name: &str, file_path: &Path) -> Result<bool> {
+    let Some(conffiles_path) = existing_dpkg_info_file(package_name, "conffiles") else {
+        return Ok(false);
+    };
+    let content = fs::read_to_string(&conffiles_path)
+        .with_context(|| format!("Failed to read {}", conffiles_path.display()))?;
+    Ok(content
+        .lines()
+        .any(|line| Path::new(line.trim()) == file_path))
 }
 
 /// Update /var/lib/dpkg/status to mark package as removed (config-files state)
@@ -1439,10 +1377,7 @@ fn update_dpkg_status_for_removal(package_name: &str) -> Result<()> {
 }
 
 /// Clean up dpkg info files after removal
-fn cleanup_dpkg_info_files(package_name: &str) {
-    let arch = std::env::consts::ARCH;
-
-    // Files to remove
+fn cleanup_dpkg_info_files(package_name: &str) -> Result<()> {
     let extensions_to_remove = [
         "list", "md5sums", "prerm", "postinst", "preinst", "postrm", "triggers", "shlibs",
         "symbols",
@@ -1451,30 +1386,19 @@ fn cleanup_dpkg_info_files(package_name: &str) {
     let mut removed_count = 0;
 
     for ext in &extensions_to_remove {
-        let candidates = [
-            format!("{package_name}:{arch}.{ext}"),
-            format!("{package_name}.{ext}"),
-        ];
-
-        for candidate in &candidates {
-            let file_path = Path::new("/var/lib/dpkg/info").join(candidate);
-            if file_path.exists() {
-                if let Err(e) = fs::remove_file(&file_path) {
-                    tracing::warn!("Failed to remove {}: {}", file_path.display(), e);
-                } else {
-                    removed_count += 1;
-                    tracing::trace!("Removed: {}", file_path.display());
-                }
+        for file_path in dpkg_info_candidates(package_name, ext) {
+            if !file_path.exists() {
+                continue;
             }
+            fs::remove_file(&file_path)
+                .with_context(|| format!("Failed to remove {}", file_path.display()))?;
+            removed_count += 1;
+            tracing::trace!("Removed: {}", file_path.display());
         }
     }
 
-    // Keep .conffiles and .config files (for config-files state)
-    tracing::debug!(
-        "Cleaned up {} info files for {} (kept conffiles)",
-        removed_count,
-        package_name
-    );
+    tracing::debug!("Cleaned up {removed_count} info files for {package_name} (kept conffiles)");
+    Ok(())
 }
 
 /// Dry-run a transaction (show what would be done)
@@ -1578,6 +1502,24 @@ mod tests {
             empty.to_string().contains("no version in dpkg status"),
             "got: {empty}"
         );
+    }
+
+    #[test]
+    fn test_require_package_installed_rejects_missing() {
+        Transaction::require_package_installed("vim", true).expect("installed package is valid");
+        let error = Transaction::require_package_installed("vim", false)
+            .expect_err("not-installed removal must not succeed");
+        assert!(
+            error.to_string().contains("package vim is not installed"),
+            "got: {error}"
+        );
+    }
+
+    #[test]
+    fn test_dpkg_info_candidates_prefer_arch_qualified_name() {
+        let [qualified, unqualified] = dpkg_info_candidates("curl", "list");
+        assert!(qualified.ends_with(format!("curl:{}.list", std::env::consts::ARCH)));
+        assert!(unqualified.ends_with("curl.list"));
     }
 
     #[test]
