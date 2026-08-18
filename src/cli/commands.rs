@@ -145,13 +145,6 @@ fn complete_installed_packages(
 }
 
 /// Get installed package names for remove completion
-#[cfg_attr(
-    not(any(feature = "arch", feature = "debian", feature = "debian-pure")),
-    expect(
-        clippy::unnecessary_wraps,
-        reason = "empty fallback has an unnecessary Result wrap"
-    )
-)]
 fn get_installed_package_names() -> Result<Vec<String>> {
     #[cfg(feature = "arch")]
     {
@@ -167,18 +160,16 @@ fn get_installed_package_names() -> Result<Vec<String>> {
             .context("Failed to list installed packages for completion");
     }
 
-    #[allow(unreachable_code)]
-    Ok(Vec::new())
+    #[cfg(not(any(feature = "arch", feature = "debian", feature = "debian-pure")))]
+    package_completion_requires_backend()
 }
 
 /// Get package names from daemon with fallback to direct access
 async fn get_package_names_with_fallback() -> Result<Vec<String>> {
+    #[cfg(feature = "debian")]
     if use_debian_backend() {
-        #[cfg(feature = "debian")]
         return apt_list_all_package_names()
             .context("Failed to list official package names for completion");
-        #[cfg(not(feature = "debian"))]
-        return Ok(Vec::new());
     }
 
     // Try daemon first. A missing or down daemon is expected and falls back.
@@ -196,8 +187,34 @@ async fn get_package_names_with_fallback() -> Result<Vec<String>> {
     #[cfg(feature = "arch")]
     return crate::package_managers::alpm_direct::list_all_package_names()
         .context("Failed to list official package names for completion");
-    #[cfg(not(feature = "arch"))]
-    Ok(Vec::new())
+
+    #[cfg(all(feature = "debian", not(feature = "arch")))]
+    return apt_list_all_package_names()
+        .context("Failed to list official package names for completion");
+
+    #[cfg(all(
+        feature = "debian-pure",
+        not(feature = "arch"),
+        not(feature = "debian")
+    ))]
+    {
+        return crate::package_managers::debian_db::search_fast("")
+            .map(|packages| packages.into_iter().map(|pkg| pkg.name).collect())
+            .context("Failed to list official package names for completion");
+    }
+
+    #[cfg(not(any(feature = "arch", feature = "debian", feature = "debian-pure")))]
+    package_completion_requires_backend()
+}
+
+#[cfg(any(
+    not(any(feature = "arch", feature = "debian", feature = "debian-pure")),
+    test
+))]
+fn package_completion_requires_backend() -> Result<Vec<String>> {
+    anyhow::bail!(
+        "Package name completion is not available without an Arch or Debian package backend"
+    )
 }
 
 /// Complete runtime names
@@ -1299,4 +1316,21 @@ pub fn stats() -> Result<()> {
 
     println!();
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn package_completion_without_backend_is_an_error() {
+        let error = package_completion_requires_backend()
+            .expect_err("completion with no backend must not look like an empty catalog");
+        assert!(
+            error
+                .to_string()
+                .contains("not available without an Arch or Debian package backend"),
+            "got: {error}"
+        );
+    }
 }

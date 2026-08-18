@@ -87,9 +87,21 @@ pub fn explicit_sync_with_json(count: bool, json: bool) -> Result<()> {
             return Ok(());
         }
 
-        #[cfg(not(feature = "arch"))]
+        #[cfg(any(feature = "debian", feature = "debian-pure"))]
         {
-            anyhow::bail!("Explicit count only supported on Arch Linux");
+            let packages = crate::package_managers::list_explicit_fast()
+                .context("Failed to list explicitly installed packages")?;
+            if json {
+                println!(r#"{{"count": {}}}"#, packages.len());
+            } else {
+                println!("{}", packages.len());
+            }
+            return Ok(());
+        }
+
+        #[cfg(not(any(feature = "arch", feature = "debian", feature = "debian-pure")))]
+        {
+            return explicit_requires_backend();
         }
     }
 
@@ -98,14 +110,32 @@ pub fn explicit_sync_with_json(count: bool, json: bool) -> Result<()> {
         let packages = crate::package_managers::list_explicit_fast()
             .context("Failed to list explicitly installed packages")?;
         display_explicit_list(packages, json)?;
+        return Ok(());
     }
 
-    #[cfg(not(any(feature = "arch", feature = "debian")))]
+    #[cfg(all(
+        any(feature = "debian", feature = "debian-pure"),
+        not(feature = "arch")
+    ))]
     {
-        println!("No package manager backend enabled");
+        let packages = crate::package_managers::list_explicit_fast()
+            .context("Failed to list explicitly installed packages")?;
+        display_explicit_list(packages, json)?;
+        return Ok(());
     }
 
-    Ok(())
+    #[cfg(not(any(feature = "arch", feature = "debian", feature = "debian-pure")))]
+    explicit_requires_backend()
+}
+
+#[cfg(any(
+    not(any(feature = "arch", feature = "debian", feature = "debian-pure")),
+    test
+))]
+fn explicit_requires_backend() -> Result<()> {
+    anyhow::bail!(
+        "Explicit package listing is not available without an Arch or Debian package backend"
+    )
 }
 
 fn display_explicit_list(mut packages: Vec<String>, json: bool) -> Result<()> {
@@ -150,4 +180,21 @@ fn display_explicit_list(mut packages: Vec<String>, json: bool) -> Result<()> {
 /// List explicitly installed packages (Async fallback)
 pub async fn explicit(count: bool) -> Result<()> {
     explicit_sync(count)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn explicit_without_backend_is_an_error() {
+        let error = explicit_requires_backend()
+            .expect_err("explicit listing with no backend must not look like success");
+        assert!(
+            error
+                .to_string()
+                .contains("not available without an Arch or Debian package backend"),
+            "got: {error}"
+        );
+    }
 }
