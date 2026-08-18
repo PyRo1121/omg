@@ -119,17 +119,23 @@ async fn complete_package_names(
         ));
     }
 
-    // Get package names from daemon or fallback to direct ALPM.
     // Official lookup failures fail closed; AUR names remain optional enrichment.
     #[allow(unused_mut)] // Mutated only inside feature-gated block
     let mut names = get_package_names_with_fallback().await?;
 
-    // Include AUR packages on Arch
+    // Include AUR packages on Arch. Skip on Debian even if Arch is compiled in.
     #[cfg(feature = "arch")]
-    if let Ok(aur_names) = engine.get_aur_package_names().await {
-        names.extend(aur_names);
-        names.sort();
-        names.dedup();
+    {
+        #[cfg(any(feature = "debian", feature = "debian-pure"))]
+        if crate::core::env::distro::is_debian_like() {
+            return Ok(engine.fuzzy_match(current, names));
+        }
+
+        if let Ok(aur_names) = engine.get_aur_package_names().await {
+            names.extend(aur_names);
+            names.sort();
+            names.dedup();
+        }
     }
 
     Ok(engine.fuzzy_match(current, names))
