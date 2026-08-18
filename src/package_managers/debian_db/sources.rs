@@ -87,14 +87,6 @@ impl RepoType {
             _ => None,
         }
     }
-
-    #[expect(dead_code)] // Future feature: sources.list writing
-    fn as_str(self) -> &'static str {
-        match self {
-            Self::Binary => "deb",
-            Self::Source => "deb-src",
-        }
-    }
 }
 
 /// Parse all APT sources from the system
