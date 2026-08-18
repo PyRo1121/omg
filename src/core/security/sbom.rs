@@ -110,6 +110,8 @@ pub enum SbomError {
         #[source]
         source: io::Error,
     },
+    #[error("SBOM generation is not available without an Arch or Debian package backend")]
+    NoBackend,
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
@@ -228,29 +230,38 @@ impl SbomGenerator {
 
     /// Generate SBOM for all installed packages
     pub async fn generate_system_sbom(&self) -> Result<Sbom, SbomError> {
-        #[cfg(feature = "arch")]
-        let installed = crate::package_managers::list_installed_fast()
-            .map_err(|source| SbomError::ListPackages { source })?;
-        #[cfg(all(feature = "debian", not(feature = "arch")))]
-        let installed = crate::package_managers::apt_list_installed_fast()
-            .map_err(|source| SbomError::ListPackages { source })?;
-        #[cfg(not(any(feature = "arch", feature = "debian")))]
-        let installed: Vec<crate::package_managers::types::LocalPackage> = Vec::new();
+        #[cfg(not(any(feature = "arch", feature = "debian", feature = "debian-pure")))]
+        {
+            let _ = self;
+            return Err(SbomError::NoBackend);
+        }
 
-        let timestamp = jiff::Zoned::now()
-            .strftime("%Y-%m-%dT%H:%M:%SZ")
-            .to_string();
-        let serial_number = format!("urn:uuid:{}", uuid::Uuid::new_v4());
+        #[cfg(any(feature = "arch", feature = "debian", feature = "debian-pure"))]
+        {
+            #[cfg(feature = "arch")]
+            let installed = crate::package_managers::list_installed_fast()
+                .map_err(|source| SbomError::ListPackages { source })?;
+            #[cfg(all(
+                any(feature = "debian", feature = "debian-pure"),
+                not(feature = "arch")
+            ))]
+            let installed = crate::package_managers::apt_list_installed_fast()
+                .map_err(|source| SbomError::ListPackages { source })?;
 
-        let mut components = Vec::with_capacity(installed.len());
-        let mut vulnerabilities = Vec::new();
-        let mut dependencies = Vec::new();
+            let timestamp = jiff::Zoned::now()
+                .strftime("%Y-%m-%dT%H:%M:%SZ")
+                .to_string();
+            let serial_number = format!("urn:uuid:{}", uuid::Uuid::new_v4());
 
-        // Build component list
-        for pkg in &installed {
-            let bom_ref = format!("pkg:pacman/archlinux/{}@{}", pkg.name, pkg.version);
+            let mut components = Vec::with_capacity(installed.len());
+            let mut vulnerabilities = Vec::new();
+            let mut dependencies = Vec::new();
 
-            let component = SbomComponent {
+            // Build component list
+            for pkg in &installed {
+                let bom_ref = format!("pkg:pacman/archlinux/{}@{}", pkg.name, pkg.version);
+
+                let component = SbomComponent {
                 component_type: "library".to_string(),
                 mime_type: None,
                 bom_ref: Some(bom_ref.clone()),
@@ -268,94 +279,96 @@ impl SbomGenerator {
                 properties: None,
             };
 
-            components.push(component);
+                components.push(component);
 
-            // Add dependency info if enabled
-            if self.include_deps {
-                dependencies.push(SbomDependency {
-                    dep_ref: bom_ref,
-                    depends_on: vec![], // Would need to resolve actual deps
-                });
+                // Add dependency info if enabled
+                if self.include_deps {
+                    dependencies.push(SbomDependency {
+                        dep_ref: bom_ref,
+                        depends_on: vec![], // Would need to resolve actual deps
+                    });
+                }
             }
-        }
 
-        // Scan for vulnerabilities if enabled. A failed fetch must not look like
-        // a clean bill of materials.
-        if self.include_vulns {
-            let scanner = super::vulnerability::VulnerabilityScanner::new();
-            let issues = scanner
-                .fetch_alsa_issues()
-                .await
-                .map_err(|source| SbomError::FetchVulnerabilities { source })?;
-            for issue in issues {
-                for pkg_name in &issue.packages {
-                    if let Some(pkg) = installed.iter().find(|p| p.name == *pkg_name) {
-                        let bom_ref = format!("pkg:pacman/archlinux/{}@{}", pkg.name, pkg.version);
+            // Scan for vulnerabilities if enabled. A failed fetch must not look like
+            // a clean bill of materials.
+            if self.include_vulns {
+                let scanner = super::vulnerability::VulnerabilityScanner::new();
+                let issues = scanner
+                    .fetch_alsa_issues()
+                    .await
+                    .map_err(|source| SbomError::FetchVulnerabilities { source })?;
+                for issue in issues {
+                    for pkg_name in &issue.packages {
+                        if let Some(pkg) = installed.iter().find(|p| p.name == *pkg_name) {
+                            let bom_ref =
+                                format!("pkg:pacman/archlinux/{}@{}", pkg.name, pkg.version);
 
-                        let severity = match issue.severity.to_lowercase().as_str() {
-                            "critical" => Some("critical".to_string()),
-                            "high" => Some("high".to_string()),
-                            "medium" => Some("medium".to_string()),
-                            "low" => Some("low".to_string()),
-                            _ => None,
-                        };
+                            let severity = match issue.severity.to_lowercase().as_str() {
+                                "critical" => Some("critical".to_string()),
+                                "high" => Some("high".to_string()),
+                                "medium" => Some("medium".to_string()),
+                                "low" => Some("low".to_string()),
+                                _ => None,
+                            };
 
-                        vulnerabilities.push(SbomVulnerability {
-                            id: issue.name.clone(),
-                            source: Some(SbomVulnSource {
-                                name: "Arch Linux Security Advisory".to_string(),
-                                url: Some("https://security.archlinux.org".to_string()),
-                            }),
-                            ratings: vec![SbomVulnRating {
-                                score: None,
-                                severity,
-                                method: Some("other".to_string()),
-                            }],
-                            description: Some(format!("Affected: {}", issue.affected)),
-                            affects: vec![SbomVulnAffects {
-                                affects_ref: bom_ref,
-                            }],
-                        });
+                            vulnerabilities.push(SbomVulnerability {
+                                id: issue.name.clone(),
+                                source: Some(SbomVulnSource {
+                                    name: "Arch Linux Security Advisory".to_string(),
+                                    url: Some("https://security.archlinux.org".to_string()),
+                                }),
+                                ratings: vec![SbomVulnRating {
+                                    score: None,
+                                    severity,
+                                    method: Some("other".to_string()),
+                                }],
+                                description: Some(format!("Affected: {}", issue.affected)),
+                                affects: vec![SbomVulnAffects {
+                                    affects_ref: bom_ref,
+                                }],
+                            });
+                        }
                     }
                 }
             }
-        }
 
-        Ok(Sbom {
-            bom_format: "CycloneDX".to_string(),
-            spec_version: "1.5".to_string(),
-            serial_number,
-            version: 1,
-            metadata: SbomMetadata {
-                timestamp,
-                tools: vec![SbomTool {
-                    vendor: "OMG".to_string(),
-                    name: "omg".to_string(),
-                    version: env!("CARGO_PKG_VERSION").to_string(),
-                }],
-                component: Some(SbomComponent {
-                    component_type: "operating-system".to_string(),
-                    mime_type: None,
-                    bom_ref: Some("pkg:os/archlinux".to_string()),
-                    name: "Arch Linux".to_string(),
-                    version: "rolling".to_string(),
-                    description: Some("Arch Linux system".to_string()),
-                    purl: Some("pkg:os/archlinux".to_string()),
-                    licenses: vec![],
-                    hashes: vec![],
-                    external_references: vec![],
-                    properties: None,
-                }),
-                manufacture: None,
-                supplier: Some(SbomOrganization {
-                    name: "Arch Linux".to_string(),
-                    url: Some(vec!["https://archlinux.org".to_string()]),
-                }),
-            },
-            components,
-            dependencies,
-            vulnerabilities,
-        })
+            Ok(Sbom {
+                bom_format: "CycloneDX".to_string(),
+                spec_version: "1.5".to_string(),
+                serial_number,
+                version: 1,
+                metadata: SbomMetadata {
+                    timestamp,
+                    tools: vec![SbomTool {
+                        vendor: "OMG".to_string(),
+                        name: "omg".to_string(),
+                        version: env!("CARGO_PKG_VERSION").to_string(),
+                    }],
+                    component: Some(SbomComponent {
+                        component_type: "operating-system".to_string(),
+                        mime_type: None,
+                        bom_ref: Some("pkg:os/archlinux".to_string()),
+                        name: "Arch Linux".to_string(),
+                        version: "rolling".to_string(),
+                        description: Some("Arch Linux system".to_string()),
+                        purl: Some("pkg:os/archlinux".to_string()),
+                        licenses: vec![],
+                        hashes: vec![],
+                        external_references: vec![],
+                        properties: None,
+                    }),
+                    manufacture: None,
+                    supplier: Some(SbomOrganization {
+                        name: "Arch Linux".to_string(),
+                        url: Some(vec!["https://archlinux.org".to_string()]),
+                    }),
+                },
+                components,
+                dependencies,
+                vulnerabilities,
+            })
+        }
     }
 
     /// Export SBOM to JSON file
@@ -450,5 +463,27 @@ mod tests {
             .export_json(&sample_sbom(), temp.path())
             .expect_err("writing an SBOM over a directory must fail");
         assert!(matches!(error, SbomError::Write { .. }), "got: {error}");
+    }
+
+    #[test]
+    fn sbom_without_backend_is_typed() {
+        let error = SbomError::NoBackend;
+        assert!(
+            error
+                .to_string()
+                .contains("not available without an Arch or Debian package backend"),
+            "got: {error}"
+        );
+    }
+
+    #[tokio::test]
+    #[cfg(not(any(feature = "arch", feature = "debian", feature = "debian-pure")))]
+    async fn generate_system_sbom_without_backend_fails() {
+        let error = SbomGenerator::new()
+            .with_vulnerabilities(false)
+            .generate_system_sbom()
+            .await
+            .expect_err("SBOM generation with no backend must not invent an empty inventory");
+        assert!(matches!(error, SbomError::NoBackend), "got: {error}");
     }
 }
