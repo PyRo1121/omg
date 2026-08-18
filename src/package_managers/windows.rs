@@ -765,6 +765,15 @@ impl WindowsPackageManager {
         Ok(Vec::new())
     }
 
+    #[cfg(any(target_os = "windows", test))]
+    fn invalidate_package_cache_file(result: std::io::Result<()>) -> Result<()> {
+        match result {
+            Ok(()) => Ok(()),
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(()),
+            Err(error) => Err(error).context("Failed to invalidate Windows package cache"),
+        }
+    }
+
     /// Load binary cache
     async fn load_cache(&self) -> Result<PackageCache> {
         let cache_path = self.cache_dir.join("packages.cache");
@@ -985,7 +994,7 @@ impl PackageManager for WindowsPackageManager {
                 self.run_scoop_operation(&["update", "*"]).await?;
                 // Invalidate cache after update
                 let cache_path = self.cache_dir.join("packages.cache");
-                let _ = fs::remove_file(cache_path).await;
+                Self::invalidate_package_cache_file(fs::remove_file(cache_path).await)?;
                 Ok(())
             }
 
@@ -1217,5 +1226,30 @@ mod tests {
         let pm = WindowsPackageManager::new();
         assert!(!pm.is_installed_fast("this-package-definitely-does-not-exist-12345")?);
         Ok(())
+    }
+
+    #[test]
+    fn test_invalidate_package_cache_file_allows_missing() {
+        WindowsPackageManager::invalidate_package_cache_file(Err(std::io::Error::new(
+            std::io::ErrorKind::NotFound,
+            "no cache",
+        )))
+        .expect("missing cache file is not an error");
+        WindowsPackageManager::invalidate_package_cache_file(Ok(())).expect("removed cache file");
+    }
+
+    #[test]
+    fn test_invalidate_package_cache_file_rejects_other_io_errors() {
+        let error = WindowsPackageManager::invalidate_package_cache_file(Err(std::io::Error::new(
+            std::io::ErrorKind::PermissionDenied,
+            "denied",
+        )))
+        .expect_err("stale cache must not be left in place");
+        assert!(
+            error
+                .to_string()
+                .contains("Failed to invalidate Windows package cache"),
+            "got: {error}"
+        );
     }
 }
