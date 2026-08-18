@@ -140,14 +140,21 @@ pub async fn run(
                     // 3. Scan for Vulnerabilities (async, done in background)
                     // This is already async, so we run it here in the async context
                     let scanner = crate::core::security::VulnerabilityScanner::new();
-                    let vuln_count = match scanner.scan_system().await {
-                        Ok(count) => count,
-                        Err(error) => {
-                            tracing::warn!(
-                                "Vulnerability scan failed during status refresh: {error}"
-                            );
-                            0
-                        }
+                    let previous_vulns = state
+                        .cache
+                        .get_status()
+                        .map(|status| status.security_vulnerabilities);
+                    let scan = scanner.scan_system().await;
+                    if let Err(error) = &scan {
+                        tracing::warn!("Vulnerability scan failed during status refresh: {error}");
+                    }
+                    let Some(vuln_count) =
+                        super::protocol::vulnerability_count_from_scan(scan, previous_vulns)
+                    else {
+                        tracing::warn!(
+                            "No prior vulnerability count; not publishing a zero-vuln status"
+                        );
+                        return;
                     };
 
                     let res = super::protocol::StatusResult {
