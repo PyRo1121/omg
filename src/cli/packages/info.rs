@@ -7,7 +7,8 @@ use crate::cli::tea::run_info_elm;
 use crate::cli::{style, ui};
 #[cfg(unix)]
 use crate::core::client::DaemonClient;
-use crate::core::env::distro::use_debian_backend;
+#[cfg(any(feature = "debian", feature = "debian-pure"))]
+use crate::core::env::distro::is_debian_like;
 use crate::package_managers::get_package_manager;
 
 #[cfg(feature = "arch")]
@@ -24,28 +25,26 @@ pub fn info_sync(package: &str) -> Result<bool> {
         anyhow::bail!("Invalid package name: {e}");
     }
 
-    if use_debian_backend() {
-        #[cfg(any(feature = "debian", feature = "debian-pure"))]
-        {
-            if let Some(pkg) = crate::package_managers::debian_db::get_info_fast(package)? {
-                let version = pkg.version.clone();
-                ui::print_kv("Name", &style::package(&pkg.name));
-                ui::print_kv("Version", &style::version(&version));
-                ui::print_kv("Description", &pkg.description);
-                ui::print_kv(
-                    "Status",
-                    if pkg.installed {
-                        "installed"
-                    } else {
-                        "not installed"
-                    },
-                );
-                ui::print_kv(
-                    "Source",
-                    &format!("Official repository ({})", style::info("apt")),
-                );
-                return Ok(true);
-            }
+    #[cfg(any(feature = "debian", feature = "debian-pure"))]
+    if is_debian_like() {
+        if let Some(pkg) = crate::package_managers::debian_db::get_info_fast(package)? {
+            let version = pkg.version.clone();
+            ui::print_kv("Name", &style::package(&pkg.name));
+            ui::print_kv("Version", &style::version(&version));
+            ui::print_kv("Description", &pkg.description);
+            ui::print_kv(
+                "Status",
+                if pkg.installed {
+                    "installed"
+                } else {
+                    "not installed"
+                },
+            );
+            ui::print_kv(
+                "Source",
+                &format!("Official repository ({})", style::info("apt")),
+            );
+            return Ok(true);
         }
         #[cfg(feature = "debian")]
         {
@@ -249,7 +248,8 @@ async fn info_fallback(package: &str) -> Result<()> {
         return Ok(());
     }
 
-    if use_debian_backend() {
+    #[cfg(any(feature = "debian", feature = "debian-pure"))]
+    if is_debian_like() {
         anyhow::bail!("Package '{package}' not found. Try: omg search {package}");
     }
 
