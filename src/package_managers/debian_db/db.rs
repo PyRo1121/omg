@@ -1830,6 +1830,66 @@ pub fn get_updates_from_mmap(
     Ok(updates)
 }
 
+fn dependencies_from_status(content: &str, package_name: &str) -> (Vec<String>, Vec<String>) {
+    let mut dependencies = Vec::new();
+    let mut reverse_deps = Vec::new();
+    let mut current_pkg = String::new();
+    let mut current_deps = Vec::new();
+    let mut in_target = false;
+
+    for line in content.lines() {
+        if line.is_empty() {
+            close_dependency_paragraph(
+                package_name,
+                &mut dependencies,
+                &mut reverse_deps,
+                &mut current_pkg,
+                &mut current_deps,
+                &mut in_target,
+            );
+        } else if let Some(pkg) = line.strip_prefix("Package: ") {
+            current_pkg = pkg.trim().to_string();
+            in_target = current_pkg == package_name;
+        } else if let Some(deps_str) = line.strip_prefix("Depends: ") {
+            for dep in deps_str.split(',') {
+                let dep_name = dep.split_whitespace().next().unwrap_or("");
+                if !dep_name.is_empty() {
+                    current_deps.push(dep_name.to_string());
+                }
+            }
+        }
+    }
+
+    close_dependency_paragraph(
+        package_name,
+        &mut dependencies,
+        &mut reverse_deps,
+        &mut current_pkg,
+        &mut current_deps,
+        &mut in_target,
+    );
+
+    (dependencies, reverse_deps)
+}
+
+fn close_dependency_paragraph(
+    package_name: &str,
+    dependencies: &mut Vec<String>,
+    reverse_deps: &mut Vec<String>,
+    current_pkg: &mut String,
+    current_deps: &mut Vec<String>,
+    in_target: &mut bool,
+) {
+    if *in_target {
+        *dependencies = std::mem::take(current_deps);
+    } else if !current_pkg.is_empty() && current_deps.iter().any(|dep| dep == package_name) {
+        reverse_deps.push(std::mem::take(current_pkg));
+    }
+    current_pkg.clear();
+    current_deps.clear();
+    *in_target = false;
+}
+
 /// Get package dependencies from `/var/lib/dpkg/status`
 /// Returns `(dependencies, reverse_dependencies)` for the specified package
 pub fn get_package_dependencies(package_name: &str) -> Result<(Vec<String>, Vec<String>)> {
@@ -1843,40 +1903,7 @@ pub fn get_package_dependencies(package_name: &str) -> Result<(Vec<String>, Vec<
     }
 
     let content = fs::read_to_string(status_path)?;
-
-    let mut dependencies = Vec::new();
-    let mut reverse_deps = Vec::new();
-    let mut current_pkg = String::new();
-    let mut current_deps = Vec::new();
-    let mut in_target = false;
-
-    for line in content.lines() {
-        if line.is_empty() {
-            if in_target {
-                dependencies = std::mem::take(&mut current_deps);
-            } else if !current_pkg.is_empty() && current_deps.iter().any(|d| d == package_name) {
-                reverse_deps.push(current_pkg.clone());
-            }
-            current_pkg.clear();
-            current_deps.clear();
-            in_target = false;
-        } else if let Some(pkg) = line.strip_prefix("Package: ") {
-            current_pkg = pkg.trim().to_string();
-            in_target = current_pkg == package_name;
-        } else if line.starts_with("Depends: ") {
-            let deps_str = line
-                .strip_prefix("Depends: ")
-                .expect("guarded by starts_with check");
-            for dep in deps_str.split(',') {
-                let dep_name = dep.split_whitespace().next().unwrap_or("");
-                if !dep_name.is_empty() {
-                    current_deps.push(dep_name.to_string());
-                }
-            }
-        }
-    }
-
-    Ok((dependencies, reverse_deps))
+    Ok(dependencies_from_status(&content, package_name))
 }
 
 /// Get package size from /var/lib/dpkg/status
@@ -2352,6 +2379,19 @@ mod tests {
         unsafe {
             std::env::remove_var("OMG_TEST_MODE");
         }
+    }
+
+    #[test]
+    fn test_dependencies_from_status_last_paragraph_without_trailing_blank() {
+        let last_is_target = "Package: gvim\nDepends: vim\n\nPackage: vim\nDepends: libc6";
+        let (deps, reverse) = dependencies_from_status(last_is_target, "vim");
+        assert_eq!(deps, vec!["libc6".to_string()]);
+        assert_eq!(reverse, vec!["gvim".to_string()]);
+
+        let last_is_reverse = "Package: vim\nDepends: libc6\n\nPackage: gvim\nDepends: vim";
+        let (deps, reverse) = dependencies_from_status(last_is_reverse, "vim");
+        assert_eq!(deps, vec!["libc6".to_string()]);
+        assert_eq!(reverse, vec!["gvim".to_string()]);
     }
 
     #[test]
