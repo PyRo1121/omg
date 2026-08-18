@@ -20,9 +20,6 @@ use super::protocol::{Request, Response, error_codes};
 use crate::core::metrics::GLOBAL_METRICS;
 use crate::core::security::{AuditEventType, AuditSeverity, audit_log};
 
-#[cfg(feature = "debian")]
-use crate::package_managers::apt_get_system_status;
-
 /// Request handling timeout (30 seconds should be sufficient for most operations)
 const REQUEST_TIMEOUT: Duration = Duration::from_secs(30);
 
@@ -60,10 +57,10 @@ pub async fn run(
 
         // OPTIMIZATION: Deduplicate status fetching logic into a helper function
         async fn refresh_status(state: &Arc<DaemonState>) {
+            let pm_name = state.package_manager.name().to_string();
             // Offload heavy I/O and CPU work to a blocking thread
             let result = tokio::task::spawn_blocking(move || {
                 use crate::cli::runtimes::{ensure_active_version, known_runtimes};
-                use crate::core::env::distro::use_debian_backend;
 
                 // 1. Probe Runtimes (Fast but sync I/O)
                 let mut versions = Vec::new();
@@ -87,34 +84,7 @@ pub async fn run(
                 }
 
                 // 2. Refresh Package Status (Heavy sync I/O)
-                #[cfg(feature = "arch")]
-                let status_result = if use_debian_backend() {
-                    #[cfg(feature = "debian")]
-                    {
-                        apt_get_system_status()
-                    }
-                    #[cfg(not(feature = "debian"))]
-                    {
-                        Err(anyhow::anyhow!("Debian backend disabled"))
-                    }
-                } else {
-                    use crate::package_managers::get_system_status;
-                    get_system_status()
-                };
-
-                #[cfg(not(feature = "arch"))]
-                let status_result = if use_debian_backend() {
-                    #[cfg(feature = "debian")]
-                    {
-                        apt_get_system_status()
-                    }
-                    #[cfg(not(feature = "debian"))]
-                    {
-                        Err(anyhow::anyhow!("No package manager backend available"))
-                    }
-                } else {
-                    Err(anyhow::anyhow!("Arch backend disabled"))
-                };
+                let status_result = super::handlers::system_status_for_backend(&pm_name);
 
                 (versions, status_result)
             })

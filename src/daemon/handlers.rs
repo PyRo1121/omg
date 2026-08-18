@@ -633,7 +633,9 @@ async fn handle_info(state: Arc<DaemonState>, id: RequestId, package: String) ->
 }
 
 /// Query native status counts for a production package-manager backend.
-fn system_status_for_backend(pm_name: &str) -> anyhow::Result<(usize, usize, usize, usize)> {
+pub(crate) fn system_status_for_backend(
+    pm_name: &str,
+) -> anyhow::Result<(usize, usize, usize, usize)> {
     match pm_name {
         "apt" => {
             #[cfg(feature = "debian")]
