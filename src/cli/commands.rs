@@ -377,7 +377,7 @@ fn complete_runtime_versions(
     runtime: &str,
 ) -> Result<Vec<String>> {
     // Priority 1: Context awareness (package.json, .nvmrc, etc.)
-    let mut suggestions = engine.probe_context(runtime);
+    let mut suggestions = engine.probe_context(runtime)?;
 
     // Priority 2: Installed versions
     let data_dir = crate::core::Database::default_path()?
