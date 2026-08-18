@@ -665,7 +665,7 @@ pub(crate) fn system_status_for_backend(
     }
 }
 
-fn explicit_packages_for_backend(pm_name: &str) -> anyhow::Result<Vec<String>> {
+pub(crate) fn explicit_packages_for_backend(pm_name: &str) -> anyhow::Result<Vec<String>> {
     match pm_name {
         "apt" => {
             #[cfg(feature = "debian")]

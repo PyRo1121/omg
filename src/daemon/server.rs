@@ -152,16 +152,11 @@ pub async fn run(
             }
 
             // Pre-compute explicit package list for instant first query
-            // This is also heavy, so we spawn another blocking task or check if it's fast enough
-            #[cfg(feature = "arch")]
             {
+                let pm_name = state.package_manager.name().to_string();
                 let state_explicit = Arc::clone(state);
                 if let Err(error) = tokio::task::spawn_blocking(move || {
-                    use crate::core::env::distro::use_debian_backend;
-                    if use_debian_backend() {
-                        return;
-                    }
-                    match crate::package_managers::list_explicit_fast() {
+                    match super::handlers::explicit_packages_for_backend(&pm_name) {
                         Ok(explicit_pkgs) => {
                             state_explicit.cache.update_explicit(explicit_pkgs);
                             tracing::debug!("Pre-warmed explicit package cache");
