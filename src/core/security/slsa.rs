@@ -4,9 +4,9 @@
 //! specification for supply chain security attestation.
 
 use std::collections::HashMap;
+use std::io;
 use std::path::Path;
 
-use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use sha2::{Digest, Sha256};
@@ -27,6 +27,44 @@ pub enum RekorError {
     EntryNotFound { uuid: String },
     #[error("Invalid Rekor response: empty entry map")]
     EmptyEntryMap,
+}
+
+/// Failures hashing artifacts or talking to Rekor.
+#[derive(Debug, Error)]
+pub enum SlsaError {
+    #[error(transparent)]
+    Rekor(#[from] RekorError),
+    #[error("Failed to query Rekor")]
+    RekorRequest {
+        #[source]
+        source: reqwest::Error,
+    },
+    #[error("Invalid Rekor index JSON")]
+    RekorIndexJson {
+        #[source]
+        source: reqwest::Error,
+    },
+    #[error("Failed to get Rekor entry")]
+    RekorEntryRequest {
+        #[source]
+        source: reqwest::Error,
+    },
+    #[error("Invalid Rekor entry JSON")]
+    RekorEntryJson {
+        #[source]
+        source: reqwest::Error,
+    },
+    #[error("Failed to read '{path}'")]
+    Read {
+        path: String,
+        #[source]
+        source: io::Error,
+    },
+    #[error("Invalid local provenance JSON")]
+    ProvenanceParse {
+        #[source]
+        source: serde_json::Error,
+    },
 }
 
 /// SLSA Level definitions per SLSA v1.0 specification
@@ -280,7 +318,7 @@ impl SlsaVerifier {
     }
 
     /// Query Rekor transparency log for an artifact hash
-    pub async fn query_rekor(&self, artifact_hash: &str) -> Result<Vec<RekorEntry>> {
+    pub async fn query_rekor(&self, artifact_hash: &str) -> Result<Vec<RekorEntry>, SlsaError> {
         let url = format!("{}/api/v1/index/retrieve", self.rekor_url);
 
         let response = self
@@ -291,11 +329,14 @@ impl SlsaVerifier {
             }))
             .send()
             .await
-            .context("Failed to query Rekor")?;
+            .map_err(|source| SlsaError::RekorRequest { source })?;
 
         rekor_http_must_succeed(response.status())?;
 
-        let uuids: Vec<String> = response.json().await.context("Invalid Rekor index JSON")?;
+        let uuids: Vec<String> = response
+            .json()
+            .await
+            .map_err(|source| SlsaError::RekorIndexJson { source })?;
 
         let mut entries = Vec::new();
         for uuid in uuids.iter().take(5) {
@@ -306,7 +347,7 @@ impl SlsaVerifier {
     }
 
     /// Get a specific Rekor entry by UUID
-    async fn get_rekor_entry(&self, uuid: &str) -> Result<RekorEntry> {
+    async fn get_rekor_entry(&self, uuid: &str) -> Result<RekorEntry, SlsaError> {
         let url = format!("{}/api/v1/log/entries/{}", self.rekor_url, uuid);
 
         let response = self
@@ -314,11 +355,14 @@ impl SlsaVerifier {
             .get(&url)
             .send()
             .await
-            .context("Failed to get Rekor entry")?;
+            .map_err(|source| SlsaError::RekorEntryRequest { source })?;
 
         rekor_http_must_succeed(response.status())?;
 
-        let entry_map: HashMap<String, Value> = response.json().await?;
+        let entry_map: HashMap<String, Value> = response
+            .json()
+            .await
+            .map_err(|source| SlsaError::RekorEntryJson { source })?;
         Ok(parse_rekor_entry(uuid, entry_map)?)
     }
 
@@ -327,7 +371,7 @@ impl SlsaVerifier {
         &self,
         blob_path: P,
         provenance_path: Option<P>,
-    ) -> Result<VerificationResult> {
+    ) -> Result<VerificationResult, SlsaError> {
         // Calculate artifact hash
         let artifact_hash = Self::calculate_hash(&blob_path)?;
 
@@ -343,9 +387,14 @@ impl SlsaVerifier {
         if let Some(prov_path) = provenance_path
             && prov_path.as_ref().exists()
         {
-            let content = std::fs::read_to_string(prov_path.as_ref())?;
-            let _: SlsaProvenance =
-                serde_json::from_str(&content).context("Invalid local provenance JSON")?;
+            let path_str = prov_path.as_ref().display().to_string();
+            let content =
+                std::fs::read_to_string(prov_path.as_ref()).map_err(|source| SlsaError::Read {
+                    path: path_str,
+                    source,
+                })?;
+            let _: SlsaProvenance = serde_json::from_str(&content)
+                .map_err(|source| SlsaError::ProvenanceParse { source })?;
             return Ok(classify_slsa_evidence(SlsaEvidence::UnsignedLocalJson));
         }
 
@@ -353,14 +402,21 @@ impl SlsaVerifier {
     }
 
     /// Calculate SHA-256 hash of a file
-    fn calculate_hash<P: AsRef<Path>>(path: P) -> Result<String> {
+    fn calculate_hash<P: AsRef<Path>>(path: P) -> Result<String, SlsaError> {
         use std::io::Read as _;
 
+        let path_str = path.as_ref().display().to_string();
         let mut hasher = Sha256::new();
-        let mut file = std::fs::File::open(path)?;
+        let mut file = std::fs::File::open(&path).map_err(|source| SlsaError::Read {
+            path: path_str.clone(),
+            source,
+        })?;
         let mut buffer = [0u8; 8192];
         loop {
-            let read = file.read(&mut buffer)?;
+            let read = file.read(&mut buffer).map_err(|source| SlsaError::Read {
+                path: path_str.clone(),
+                source,
+            })?;
             if read == 0 {
                 break;
             }
@@ -370,7 +426,11 @@ impl SlsaVerifier {
     }
 
     /// Verify hash of a file against expected value
-    pub fn verify_hash<P: AsRef<Path>>(&self, path: P, expected_hash: &str) -> Result<bool> {
+    pub fn verify_hash<P: AsRef<Path>>(
+        &self,
+        path: P,
+        expected_hash: &str,
+    ) -> Result<bool, SlsaError> {
         let actual_hash = Self::calculate_hash(path)?;
         Ok(actual_hash == expected_hash)
     }
@@ -427,6 +487,13 @@ mod tests {
             hash,
             "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
         );
+    }
+
+    #[test]
+    fn calculate_hash_fails_closed_when_file_is_missing() {
+        let err = SlsaVerifier::calculate_hash("/no/such/artifact.bin")
+            .expect_err("a missing artifact must not produce a hash");
+        assert!(matches!(err, SlsaError::Read { .. }), "got: {err}");
     }
 
     #[test]
