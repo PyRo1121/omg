@@ -821,6 +821,14 @@ fn confirm_env_capture(stdout: &mut io::Stdout) -> Result<bool> {
     }
 }
 
+fn read_optional_shell_rc(path: &str) -> Result<Option<String>> {
+    match std::fs::read_to_string(path) {
+        Ok(content) => Ok(Some(content)),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(None),
+        Err(error) => Err(error).with_context(|| format!("Failed to read {path}")),
+    }
+}
+
 fn install_shell_hook(stdout: &mut io::Stdout, shell: Shell, start_daemon: bool) -> Result<()> {
     let home = std::env::var("HOME").unwrap_or_else(|_| "~".to_string());
     let config_path = shell.config_file().replace('~', &home);
@@ -835,8 +843,7 @@ fn install_shell_hook(stdout: &mut io::Stdout, shell: Shell, start_daemon: bool)
         Print(format!(" Installing {} hook...", shell.name()))
     )?;
 
-    // Check if hook already exists
-    if let Ok(content) = std::fs::read_to_string(&config_path)
+    if let Some(content) = read_optional_shell_rc(&config_path)?
         && content.contains("omg hook")
     {
         execute!(
@@ -1049,4 +1056,57 @@ fn print_completion(stdout: &mut io::Stdout, state: &WizardState) -> Result<()> 
     )?;
 
     Ok(())
+}
+
+#[cfg(test)]
+#[expect(clippy::unwrap_used, clippy::expect_used)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_read_optional_shell_rc_missing_is_none() {
+        let missing = tempfile::TempDir::new()
+            .unwrap()
+            .path()
+            .join("does-not-exist");
+        assert!(
+            read_optional_shell_rc(missing.to_str().unwrap())
+                .unwrap()
+                .is_none()
+        );
+    }
+
+    #[test]
+    fn test_read_optional_shell_rc_reads_content() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let path = dir.path().join(".zshrc");
+        std::fs::write(&path, "eval \"$(omg hook zsh)\"\n").unwrap();
+        let content = read_optional_shell_rc(path.to_str().unwrap())
+            .unwrap()
+            .unwrap();
+        assert!(content.contains("omg hook"));
+    }
+
+    #[test]
+    fn test_read_optional_shell_rc_unreadable_errors() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let path = dir.path().join(".zshrc");
+        std::fs::write(&path, "eval \"$(omg hook zsh)\"\n").unwrap();
+        let original = std::fs::metadata(&path).unwrap().permissions();
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o000)).unwrap();
+        }
+        let blocked = std::fs::read_to_string(&path).is_err();
+        let result = read_optional_shell_rc(path.to_str().unwrap());
+        let _ = std::fs::set_permissions(&path, original);
+        if !blocked {
+            return;
+        }
+        assert!(
+            result.is_err(),
+            "unreadable shell rc must fail closed, got {result:?}"
+        );
+    }
 }
