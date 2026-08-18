@@ -485,23 +485,29 @@ impl DnfPackageManager {
 
     /// Discover enabled repositories from /etc/yum.repos.d
     async fn discover_repositories(&self) -> Result<Vec<RepoConfig>> {
+        Self::discover_repositories_in(&self.repos_dir).await
+    }
+
+    async fn discover_repositories_in(repos_dir: &Path) -> Result<Vec<RepoConfig>> {
         let mut repos = Vec::new();
 
-        let mut entries = fs::read_dir(&self.repos_dir).await?;
+        let mut entries = fs::read_dir(repos_dir).await?;
         while let Some(entry) = entries.next_entry().await? {
             let path = entry.path();
-            if path.extension().and_then(|s| s.to_str()) == Some("repo")
-                && let Ok(repo_configs) = self.parse_repo_file(&path).await
-            {
-                repos.extend(repo_configs);
+            if path.extension().and_then(|s| s.to_str()) != Some("repo") {
+                continue;
             }
+            let repo_configs = Self::parse_repo_file(&path)
+                .await
+                .with_context(|| format!("Failed to parse repository file {}", path.display()))?;
+            repos.extend(repo_configs);
         }
 
         Ok(repos)
     }
 
     /// Parse a .repo file for repository configuration
-    async fn parse_repo_file(&self, path: &Path) -> Result<Vec<RepoConfig>> {
+    async fn parse_repo_file(path: &Path) -> Result<Vec<RepoConfig>> {
         let content = fs::read_to_string(path).await?;
         let mut repos = Vec::new();
         let mut current_repo: Option<RepoConfig> = None;
@@ -920,5 +926,57 @@ mod tests {
             "got: {error}"
         );
         assert!(error.to_string().contains("fedora"), "got: {error}");
+    }
+
+    #[tokio::test]
+    async fn test_discover_repositories_missing_dir_is_error() {
+        let error = DnfPackageManager::discover_repositories_in(Path::new("/no/such/yum.repos.d"))
+            .await
+            .expect_err("missing repos dir must not look like an empty catalog");
+        assert!(
+            error.to_string().contains("No such file")
+                || error
+                    .chain()
+                    .any(|cause| cause.to_string().contains("No such file")),
+            "got: {error:?}"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_discover_repositories_unreadable_repo_file_is_error() {
+        let dir = tempfile::TempDir::new().expect("temp dir");
+        let broken = dir.path().join("broken.repo");
+        std::fs::create_dir(&broken).expect("directory named .repo is not a readable file");
+
+        let error = DnfPackageManager::discover_repositories_in(dir.path())
+            .await
+            .expect_err("unreadable .repo must not be skipped");
+        let message = format!("{error:#}");
+        assert!(
+            message.contains("Failed to parse repository file"),
+            "got: {message}"
+        );
+        assert!(message.contains("broken.repo"), "got: {message}");
+    }
+
+    #[tokio::test]
+    async fn test_discover_repositories_parses_enabled_repo() {
+        let dir = tempfile::TempDir::new().expect("temp dir");
+        std::fs::write(
+            dir.path().join("fedora.repo"),
+            "[fedora]\nenabled=1\nbaseurl=https://example.test/fedora\n",
+        )
+        .expect("write repo file");
+        std::fs::write(dir.path().join("readme.txt"), "not a repo\n").expect("write ignored file");
+
+        let repos = DnfPackageManager::discover_repositories_in(dir.path())
+            .await
+            .expect("valid .repo must parse");
+        assert_eq!(repos.len(), 1);
+        assert_eq!(repos[0].name, "fedora");
+        assert_eq!(
+            repos[0].baseurl.as_deref(),
+            Some("https://example.test/fedora")
+        );
     }
 }
