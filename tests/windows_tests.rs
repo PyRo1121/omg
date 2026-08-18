@@ -76,7 +76,7 @@ mod windows_integration {
     async fn test_is_installed_check() -> Result<()> {
         let pm = WindowsPackageManager::new();
 
-        let is_scoop_installed = pm.is_installed("scoop").await;
+        let is_scoop_installed = pm.is_installed("scoop").await.unwrap();
 
         Ok(())
     }
@@ -92,20 +92,20 @@ mod windows_libscoop_integration {
 
         let test_package = "hello";
 
-        let initial_check = pm.is_installed(test_package).await;
+        let initial_check = pm.is_installed(test_package).await.unwrap();
         if initial_check {
             pm.remove(&[test_package.to_string()]).await?;
         }
 
         pm.install(&[test_package.to_string()]).await?;
         assert!(
-            pm.is_installed(test_package).await,
+            pm.is_installed(test_package).await.unwrap(),
             "Package should be installed"
         );
 
         pm.remove(&[test_package.to_string()]).await?;
         assert!(
-            !pm.is_installed(test_package).await,
+            !pm.is_installed(test_package).await.unwrap(),
             "Package should be removed"
         );
 

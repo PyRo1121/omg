@@ -246,9 +246,12 @@ impl PackageManager for ArchPackageManager {
         })
     }
 
-    fn is_installed(&self, package: &str) -> Pin<Box<dyn Future<Output = bool> + Send + '_>> {
-        let result = crate::package_managers::is_installed_fast(package).unwrap_or_default();
-        Box::pin(async move { result })
+    fn is_installed(
+        &self,
+        package: &str,
+    ) -> Pin<Box<dyn Future<Output = AnyhowResult<bool>> + Send + '_>> {
+        let package = package.to_string();
+        Box::pin(async move { crate::package_managers::is_installed_fast(&package) })
     }
 }
 
@@ -279,6 +282,6 @@ pub async fn list_explicit() -> AnyhowResult<Vec<String>> {
     crate::package_managers::list_explicit_fast()
 }
 
-pub async fn is_installed(package: &str) -> bool {
-    crate::package_managers::is_installed_fast(package).unwrap_or_default()
+pub async fn is_installed(package: &str) -> AnyhowResult<bool> {
+    crate::package_managers::is_installed_fast(package)
 }

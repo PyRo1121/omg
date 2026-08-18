@@ -2272,9 +2272,25 @@ impl AurClient {
         })
     }
 
+    fn read_file_or_empty_if_missing(path: &Path) -> Result<Vec<u8>> {
+        match std::fs::read(path) {
+            Ok(bytes) => Ok(bytes),
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(Vec::new()),
+            Err(error) => Err(error.into()),
+        }
+    }
+
+    fn read_text_if_exists(path: &Path) -> Result<Option<String>> {
+        match std::fs::read_to_string(path) {
+            Ok(text) => Ok(Some(text)),
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(None),
+            Err(error) => Err(error.into()),
+        }
+    }
+
     fn cache_key(&self, pkg_dir: &Path, makeflags: &str) -> Result<String> {
         let pkgbuild = std::fs::read(pkg_dir.join("PKGBUILD"))?;
-        let srcinfo = std::fs::read(pkg_dir.join(".SRCINFO")).unwrap_or_default();
+        let srcinfo = Self::read_file_or_empty_if_missing(&pkg_dir.join(".SRCINFO"))?;
         let makepkg_args = self.makepkg_args().join(" ");
         let build_method = format!("{:?}", self.settings.aur.build_method);
         let mut hasher = Sha256::new();
@@ -2309,19 +2325,16 @@ impl AurClient {
         let cache_path = self.cache_path(&package);
 
         tokio::task::spawn_blocking(move || {
-            if !cache_path.exists() {
-                return None;
-            }
-
-            let cached = std::fs::read_to_string(&cache_path).unwrap_or_default();
+            let Some(cached) = Self::read_text_if_exists(&cache_path)? else {
+                return Ok(None);
+            };
             if cached.trim() != cache_key {
-                return None;
+                return Ok(None);
             }
 
-            Self::find_package_in_dir(&pkgdest, &[package])
+            Ok(Self::find_package_in_dir(&pkgdest, &[package]))
         })
-        .await
-        .map_err(Into::into)
+        .await?
     }
 
     async fn write_cache_key(&self, package: &str, cache_key: &str) -> Result<()> {
@@ -2717,6 +2730,51 @@ mod tests {
             "build dir must be named after the package, got {}",
             env.builddir.display()
         );
+    }
+
+    #[test]
+    fn cache_key_allows_missing_srcinfo() {
+        let client = AurClient::new().expect("test settings must load");
+        let dir = tempfile::tempdir().expect("temp dir");
+        let pkg_dir = dir.path().join("mypkg");
+        std::fs::create_dir(&pkg_dir).expect("pkg dir");
+        std::fs::write(pkg_dir.join("PKGBUILD"), "pkgname=mypkg\n").expect("pkgbuild");
+
+        client
+            .cache_key(&pkg_dir, "")
+            .expect("missing .SRCINFO is allowed");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn cache_key_fails_when_srcinfo_is_unreadable() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let client = AurClient::new().expect("test settings must load");
+        let dir = tempfile::tempdir().expect("temp dir");
+        let pkg_dir = dir.path().join("mypkg");
+        std::fs::create_dir(&pkg_dir).expect("pkg dir");
+        std::fs::write(pkg_dir.join("PKGBUILD"), "pkgname=mypkg\n").expect("pkgbuild");
+        let srcinfo = pkg_dir.join(".SRCINFO");
+        std::fs::write(&srcinfo, "pkgbase = mypkg\n").expect("srcinfo");
+        let mut permissions = std::fs::metadata(&srcinfo)
+            .expect("srcinfo metadata")
+            .permissions();
+        permissions.set_mode(0o000);
+        std::fs::set_permissions(&srcinfo, permissions).expect("chmod");
+
+        let result = client.cache_key(&pkg_dir, "");
+        let unreadable = std::fs::read(&srcinfo).is_err();
+
+        let mut restore = std::fs::metadata(&srcinfo)
+            .expect("srcinfo metadata")
+            .permissions();
+        restore.set_mode(0o644);
+        std::fs::set_permissions(&srcinfo, restore).expect("restore chmod");
+
+        if unreadable {
+            result.expect_err("unreadable .SRCINFO must fail closed");
+        }
     }
 
     #[test]

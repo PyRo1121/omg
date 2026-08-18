@@ -366,9 +366,12 @@ impl PackageManager for PureDebianPackageManager {
         })
     }
 
-    fn is_installed(&self, package: &str) -> Pin<Box<dyn Future<Output = bool> + Send + '_>> {
+    fn is_installed(
+        &self,
+        package: &str,
+    ) -> Pin<Box<dyn Future<Output = Result<bool>> + Send + '_>> {
         let result = debian_db::is_installed_fast(package);
-        Box::pin(async move { result })
+        Box::pin(async move { Ok(result) })
     }
 }
 

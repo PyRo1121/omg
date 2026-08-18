@@ -89,7 +89,7 @@ mod homebrew_integration {
     async fn test_is_installed_check() -> Result<()> {
         let pm = HomebrewPackageManager::new();
 
-        let _is_brew_installed = pm.is_installed("homebrew").await;
+        let _is_brew_installed = pm.is_installed("homebrew").await.unwrap();
 
         Ok(())
     }
@@ -105,20 +105,20 @@ mod homebrew_cellar_operations {
 
         let test_formula = "hello";
 
-        let initial_check = pm.is_installed(test_formula).await;
+        let initial_check = pm.is_installed(test_formula).await.unwrap();
         if initial_check {
             pm.remove(&[test_formula.to_string()]).await?;
         }
 
         pm.install(&[test_formula.to_string()]).await?;
         assert!(
-            pm.is_installed(test_formula).await,
+            pm.is_installed(test_formula).await.unwrap(),
             "Formula should be installed"
         );
 
         pm.remove(&[test_formula.to_string()]).await?;
         assert!(
-            !pm.is_installed(test_formula).await,
+            !pm.is_installed(test_formula).await.unwrap(),
             "Formula should be removed"
         );
 

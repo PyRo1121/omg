@@ -470,16 +470,14 @@ impl PackageManager for MockPackageManager {
         })
     }
 
-    fn is_installed(&self, package: &str) -> Pin<Box<dyn Future<Output = bool> + Send + '_>> {
+    fn is_installed(
+        &self,
+        package: &str,
+    ) -> Pin<Box<dyn Future<Output = Result<bool>> + Send + '_>> {
         let package = package.to_string();
         Box::pin(async move {
-            match self.load_state() {
-                Ok(state) => state.installed.contains_key(&package),
-                Err(error) => {
-                    tracing::warn!("Failed to inspect mock package state: {error}");
-                    false
-                }
-            }
+            let state = self.load_state()?;
+            Ok(state.installed.contains_key(&package))
         })
     }
 }

@@ -137,16 +137,16 @@ mod install_remove_operations {
 
         pm.remove(&["firefox".to_string()]).await?;
 
-        assert!(!pm.is_installed("firefox").await);
+        assert!(!pm.is_installed("firefox").await.unwrap());
 
         pm.install(&["firefox".to_string()]).await?;
-        assert!(pm.is_installed("firefox").await);
+        assert!(pm.is_installed("firefox").await.unwrap());
 
         let installed = pm.list_installed().await?;
         assert!(installed.iter().any(|p| p.name == "firefox"));
 
         pm.remove(&["firefox".to_string()]).await?;
-        assert!(!pm.is_installed("firefox").await);
+        assert!(!pm.is_installed("firefox").await.unwrap());
 
         Ok(())
     }
@@ -158,13 +158,13 @@ mod install_remove_operations {
 
         pm.remove(&["vim-enhanced".to_string()]).await?;
 
-        assert!(!pm.is_installed("vim-enhanced").await);
+        assert!(!pm.is_installed("vim-enhanced").await.unwrap());
 
         pm.install(&["vim-enhanced".to_string()]).await?;
-        assert!(pm.is_installed("vim-enhanced").await);
+        assert!(pm.is_installed("vim-enhanced").await.unwrap());
 
         pm.remove(&["vim-enhanced".to_string()]).await?;
-        assert!(!pm.is_installed("vim-enhanced").await);
+        assert!(!pm.is_installed("vim-enhanced").await.unwrap());
 
         Ok(())
     }
@@ -176,13 +176,13 @@ mod install_remove_operations {
 
         pm.remove(&["ripgrep".to_string()]).await?;
 
-        assert!(!pm.is_installed("ripgrep").await);
+        assert!(!pm.is_installed("ripgrep").await.unwrap());
 
         pm.install(&["ripgrep".to_string()]).await?;
-        assert!(pm.is_installed("ripgrep").await);
+        assert!(pm.is_installed("ripgrep").await.unwrap());
 
         pm.remove(&["ripgrep".to_string()]).await?;
-        assert!(!pm.is_installed("ripgrep").await);
+        assert!(!pm.is_installed("ripgrep").await.unwrap());
 
         Ok(())
     }
@@ -194,13 +194,13 @@ mod install_remove_operations {
 
         pm.remove(&["wget".to_string()]).await?;
 
-        assert!(!pm.is_installed("wget").await);
+        assert!(!pm.is_installed("wget").await.unwrap());
 
         pm.install(&["wget".to_string()]).await?;
-        assert!(pm.is_installed("wget").await);
+        assert!(pm.is_installed("wget").await.unwrap());
 
         pm.remove(&["wget".to_string()]).await?;
-        assert!(!pm.is_installed("wget").await);
+        assert!(!pm.is_installed("wget").await.unwrap());
 
         Ok(())
     }
@@ -215,13 +215,19 @@ mod install_remove_operations {
         pm.install(&packages).await?;
 
         for pkg in &packages {
-            assert!(pm.is_installed(pkg).await, "{pkg} should be installed");
+            assert!(
+                pm.is_installed(pkg).await.unwrap(),
+                "{pkg} should be installed"
+            );
         }
 
         pm.remove(&packages).await?;
 
         for pkg in &packages {
-            assert!(!pm.is_installed(pkg).await, "{pkg} should not be installed");
+            assert!(
+                !pm.is_installed(pkg).await.unwrap(),
+                "{pkg} should not be installed"
+            );
         }
 
         Ok(())
@@ -423,18 +429,21 @@ mod consistency_checks {
         pm1.remove(&["rust".to_string()]).await?;
 
         pm1.install(&["rust".to_string()]).await?;
-        assert!(pm1.is_installed("rust").await);
+        assert!(pm1.is_installed("rust").await.unwrap());
 
         let pm2 = MockPackageManager::fedora();
         assert!(
-            pm2.is_installed("rust").await,
+            pm2.is_installed("rust").await.unwrap(),
             "State should persist across instances"
         );
 
         pm2.remove(&["rust".to_string()]).await?;
 
         let pm3 = MockPackageManager::fedora();
-        assert!(!pm3.is_installed("rust").await, "Removal should persist");
+        assert!(
+            !pm3.is_installed("rust").await.unwrap(),
+            "Removal should persist"
+        );
 
         Ok(())
     }
@@ -450,9 +459,9 @@ mod consistency_checks {
 
         pm_fedora.install(&["rust".to_string()]).await?;
 
-        assert!(pm_fedora.is_installed("rust").await);
+        assert!(pm_fedora.is_installed("rust").await.unwrap());
         assert!(
-            !pm_windows.is_installed("rust").await,
+            !pm_windows.is_installed("rust").await.unwrap(),
             "Fedora installation should not affect Windows mock"
         );
 
@@ -471,11 +480,11 @@ mod edge_cases {
         pm.remove(&["git".to_string()]).await?;
 
         pm.install(&["git".to_string()]).await?;
-        assert!(pm.is_installed("git").await);
+        assert!(pm.is_installed("git").await.unwrap());
 
         pm.install(&["git".to_string()]).await?;
         assert!(
-            pm.is_installed("git").await,
+            pm.is_installed("git").await.unwrap(),
             "Reinstall should be idempotent"
         );
 

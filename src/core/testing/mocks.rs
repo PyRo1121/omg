@@ -310,13 +310,17 @@ impl PackageManager for TestPackageManager {
         })
     }
 
-    fn is_installed(&self, package: &str) -> Pin<Box<dyn Future<Output = bool> + Send + '_>> {
+    fn is_installed(
+        &self,
+        package: &str,
+    ) -> Pin<Box<dyn Future<Output = Result<bool>> + Send + '_>> {
         let package = package.to_string();
         Box::pin(async move {
-            self.installed
+            Ok(self
+                .installed
                 .lock()
                 .expect("lock poisoned")
-                .contains(&package)
+                .contains(&package))
         })
     }
 }
@@ -347,11 +351,11 @@ mod tests {
         pm.add_package("test", "1.0.0", "Test package");
 
         // Initially not installed
-        assert!(!pm.is_installed("test").await);
+        assert!(!pm.is_installed("test").await.unwrap());
 
         // Install
         pm.install(&["test".to_string()]).await.unwrap();
-        assert!(pm.is_installed("test").await);
+        assert!(pm.is_installed("test").await.unwrap());
 
         // List installed
         let installed = pm.list_installed().await.unwrap();
@@ -359,7 +363,7 @@ mod tests {
 
         // Remove
         pm.remove(&["test".to_string()]).await.unwrap();
-        assert!(!pm.is_installed("test").await);
+        assert!(!pm.is_installed("test").await.unwrap());
     }
 
     #[tokio::test]
@@ -378,8 +382,8 @@ mod tests {
         assert_eq!(pm.package_count(), 4);
         assert!(pm.has_package("firefox"));
         assert!(pm.has_package("git"));
-        assert!(pm.is_installed("git").await);
-        assert!(!pm.is_installed("firefox").await);
+        assert!(pm.is_installed("git").await.unwrap());
+        assert!(!pm.is_installed("firefox").await.unwrap());
     }
 
     #[tokio::test]

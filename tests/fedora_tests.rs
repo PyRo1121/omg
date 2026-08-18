@@ -76,7 +76,7 @@ mod dnf_integration {
 
         let pm = DnfPackageManager::new();
 
-        let is_bash_installed = pm.is_installed("bash").await;
+        let is_bash_installed = pm.is_installed("bash").await.unwrap();
         assert!(
             is_bash_installed,
             "bash should be installed on Fedora system"
@@ -120,20 +120,20 @@ mod dnf_operations {
 
         let test_package = "nano";
 
-        let initial_check = pm.is_installed(test_package).await;
+        let initial_check = pm.is_installed(test_package).await.unwrap();
         if initial_check {
             pm.remove(&[test_package.to_string()]).await?;
         }
 
         pm.install(&[test_package.to_string()]).await?;
         assert!(
-            pm.is_installed(test_package).await,
+            pm.is_installed(test_package).await.unwrap(),
             "Package should be installed"
         );
 
         pm.remove(&[test_package.to_string()]).await?;
         assert!(
-            !pm.is_installed(test_package).await,
+            !pm.is_installed(test_package).await.unwrap(),
             "Package should be removed"
         );
 
