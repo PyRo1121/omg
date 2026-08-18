@@ -1162,6 +1162,27 @@ pub async fn rollback(id: Option<String>, yes: bool) -> Result<()> {
             )
         );
     } else {
+        #[cfg(any(feature = "debian", feature = "debian-pure"))]
+        if crate::core::env::distro::is_debian_like() {
+            #[cfg(feature = "debian")]
+            {
+                println!(
+                    "{} Rolling back {} packages...",
+                    style::info("→"),
+                    to_install.len()
+                );
+                let apt = crate::package_managers::AptPackageManager::new();
+                use crate::package_managers::PackageManager as _;
+                apt.install(&to_install).await?;
+                println!("{}", style::success("✓ Rollback completed successfully"));
+                return Ok(());
+            }
+            #[cfg(not(feature = "debian"))]
+            {
+                return rollback_requires_backend(&to_install);
+            }
+        }
+
         #[cfg(feature = "arch")]
         {
             println!(
@@ -1174,50 +1195,7 @@ pub async fn rollback(id: Option<String>, yes: bool) -> Result<()> {
             println!("{}", style::success("✓ Rollback completed successfully"));
         }
 
-        #[cfg(feature = "debian")]
-        {
-            if crate::core::env::distro::use_debian_backend() {
-                #[cfg(feature = "debian")]
-                {
-                    println!(
-                        "{} Rolling back {} packages...",
-                        style::info("→"),
-                        to_install.len()
-                    );
-                    let apt = crate::package_managers::AptPackageManager::new();
-                    use crate::package_managers::PackageManager as _;
-                    apt.install(&to_install).await?;
-                    println!("{}", style::success("✓ Rollback completed successfully"));
-                }
-
-                #[cfg(not(feature = "debian"))]
-                {
-                    println!(
-                        "{} Rollback requires APT package installation support.",
-                        style::warning("⚠")
-                    );
-                    println!(
-                        "{}",
-                        style::dim(
-                            "To enable full rollback support, rebuild with 'debian' feature."
-                        )
-                    );
-                    println!(
-                        "{}",
-                        style::dim(
-                            "Alternatively, you can manually install the following packages:"
-                        )
-                    );
-                    for pkg in &to_install {
-                        println!("  apt install {}", style::package(pkg));
-                    }
-                }
-            } else {
-                anyhow::bail!("Rollback is only supported on Arch Linux and Debian/Ubuntu systems");
-            }
-        }
-
-        #[cfg(not(any(feature = "arch", feature = "debian")))]
+        #[cfg(not(feature = "arch"))]
         {
             return rollback_requires_backend(&to_install);
         }
@@ -1226,7 +1204,7 @@ pub async fn rollback(id: Option<String>, yes: bool) -> Result<()> {
     Ok(())
 }
 
-#[cfg(any(not(any(feature = "arch", feature = "debian")), test))]
+#[cfg(any(not(feature = "arch"), feature = "debian-pure", test))]
 fn rollback_requires_backend(packages: &[String]) -> Result<()> {
     if packages.is_empty() {
         anyhow::bail!("Package rollback is not available without the Arch or APT backend");
