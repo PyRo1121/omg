@@ -25,7 +25,7 @@ mod update;
 // Re-export all public functions
 pub use clean::clean;
 pub use explicit::{explicit, explicit_sync, explicit_sync_with_json};
-pub use info::{info, info_aur, info_sync, info_sync_cli, info_with_json};
+pub use info::{info, info_aur, info_sync, info_with_json};
 pub use install::{install, install_dry_run_cli};
 pub use remove::remove;
 pub use search::{search, search_sync_cli, search_sync_cli_with_limit, search_with_json};

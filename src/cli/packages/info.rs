@@ -18,12 +18,6 @@ const DAEMON_INFO_TIMEOUT: Duration = Duration::from_secs(3);
 const AUR_INFO_TIMEOUT: Duration = Duration::from_secs(8);
 
 /// Show package information (Synchronous fast-path)
-/// Alias for CLI fast path
-pub fn info_sync_cli(package: &str) -> Result<bool> {
-    info_sync(package)
-}
-
-/// Show package information (Synchronous fast-path)
 pub fn info_sync(package: &str) -> Result<bool> {
     // SECURITY: Validate package name
     if let Err(e) = crate::core::security::validate_package_name(package) {
@@ -33,10 +27,7 @@ pub fn info_sync(package: &str) -> Result<bool> {
     if use_debian_backend() {
         #[cfg(any(feature = "debian", feature = "debian-pure"))]
         {
-            if let Some(pkg) = crate::package_managers::debian_db::get_info_fast(package)
-                .ok()
-                .flatten()
-            {
+            if let Some(pkg) = crate::package_managers::debian_db::get_info_fast(package)? {
                 let version = pkg.version.clone();
                 ui::print_kv("Name", &style::package(&pkg.name));
                 ui::print_kv("Version", &style::version(&version));
@@ -58,10 +49,7 @@ pub fn info_sync(package: &str) -> Result<bool> {
         }
         #[cfg(feature = "debian")]
         {
-            if let Some(info) = crate::package_managers::apt_get_sync_pkg_info(package)
-                .ok()
-                .flatten()
-            {
+            if let Some(info) = crate::package_managers::apt_get_sync_pkg_info(package)? {
                 display_package_info(&info);
                 ui::print_kv(
                     "Source",
@@ -120,9 +108,7 @@ pub fn info_sync(package: &str) -> Result<bool> {
 pub async fn info_aur(package: &str) -> Result<()> {
     let aur = AurClient::new()?;
     let Some(info) = aur.info(package).await? else {
-        ui::print_error(format!("Package '{package}' not found"));
-        ui::print_tip("Try: omg search <package>");
-        return Ok(());
+        anyhow::bail!("Package '{package}' not found. Try: omg search {package}");
     };
 
     ui::print_header("OMG", "AUR Package Information");
@@ -154,9 +140,7 @@ pub async fn info_aur(package: &str) -> Result<()> {
 /// Show AUR package information - no-op fallback for non-Arch systems
 #[cfg(not(feature = "arch"))]
 pub async fn info_aur(package: &str) -> Result<()> {
-    ui::print_error(format!("Package '{package}' not found"));
-    ui::print_tip(&format!("Try: omg search {package}"));
-    Ok(())
+    anyhow::bail!("Package '{package}' not found. Try: omg search {package}");
 }
 
 /// Helper to display detailed info from daemon
@@ -265,9 +249,7 @@ async fn info_fallback(package: &str) -> Result<()> {
     }
 
     if use_debian_backend() {
-        ui::print_error(format!("Package '{package}' not found"));
-        ui::print_tip(&format!("Try: omg search {package}"));
-        return Ok(());
+        anyhow::bail!("Package '{package}' not found. Try: omg search {package}");
     }
 
     // 3. Try AUR directly as final fallback (Arch only)
@@ -292,9 +274,7 @@ async fn info_fallback(package: &str) -> Result<()> {
         pb.finish_and_clear();
 
         let Some(pkg) = details.into_iter().find(|p| p.name == package) else {
-            ui::print_error(format!("Package '{package}' not found"));
-            ui::print_tip(&format!("Try: omg search {package}"));
-            return Ok(());
+            anyhow::bail!("Package '{package}' not found. Try: omg search {package}");
         };
 
         ui::print_kv("Name", &style::package(&pkg.name));
@@ -313,16 +293,11 @@ async fn info_fallback(package: &str) -> Result<()> {
         ui::print_spacer();
         ui::print_warning("Source: Arch User Repository (AUR)");
         ui::print_spacer();
+        return Ok(());
     }
 
-    // Fallback for systems without arch or debian feature enabled
     #[cfg(not(feature = "arch"))]
-    {
-        ui::print_error(format!("Package '{package}' not found"));
-        ui::print_tip(&format!("Try: omg search {package}"));
-    }
-
-    Ok(())
+    anyhow::bail!("Package '{package}' not found. Try: omg search {package}");
 }
 
 /// Display package info (debian only)
