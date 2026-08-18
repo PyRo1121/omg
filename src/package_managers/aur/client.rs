@@ -2127,7 +2127,11 @@ impl AurClient {
             // Check if key is already in keyring
             match keyserver::is_key_in_keyring(key_id, &keyring_path) {
                 Ok(true) => {}
-                Ok(false) | Err(_) => missing_keys.push(key_id.clone()),
+                Ok(false) => missing_keys.push(key_id.clone()),
+                Err(error) => {
+                    tracing::warn!("Failed to read PGP keyring while checking {key_id}: {error}");
+                    return;
+                }
             }
         }
 
