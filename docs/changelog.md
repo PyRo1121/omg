@@ -1101,6 +1101,12 @@ which newer clippy versions flag as an error with -D warnings.
 - Run Docker E2E tests explicitly
 ### 📚 Documentation
 
+- Re-link AUR support page from package docs
+
+Removing the AUR refactor/plan docs orphaned docs/aur.md; restore its
+
+nav link from docs/packages.md so the feature doc stays reachable.
+
 - Track Pi AGENTS.md as the repo agent contract
 
 Stop ignoring AGENTS.md so Cloud Agents load the no-slop baseline
