@@ -11,6 +11,7 @@ mod database;
 pub mod env;
 pub mod error;
 pub mod fast_status;
+pub mod format;
 pub mod history;
 pub mod http;
 pub mod license;
@@ -29,6 +30,9 @@ pub mod sysinfo;
 pub mod task_runner;
 pub mod telemetry;
 pub mod telemetry_client;
+/// Test fixtures, helpers, and mocks. Compiled only for tests and debug
+/// builds so release binaries do not ship test infrastructure.
+#[cfg(any(test, debug_assertions))]
 pub mod testing;
 mod types;
 pub mod usage;

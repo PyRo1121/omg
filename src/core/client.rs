@@ -26,8 +26,6 @@ use crate::daemon::protocol::{
     SecurityAuditResult, StatusResult, UpdateEntry,
 };
 #[cfg(unix)]
-use std::io::{Read, Write};
-#[cfg(unix)]
 use std::os::unix::net::UnixStream as SyncUnixStream;
 
 /// Create a new sync connection to the daemon
@@ -360,61 +358,11 @@ impl DaemonClient {
 
     /// Send a request and get response synchronously (ultra fast)
     pub fn call_sync(&mut self, request: &Request) -> Result<ResponseResult> {
-        let id = request.id();
         let stream = self
             .sync_stream
             .as_mut()
             .context("Client is in async mode")?;
-
-        // 1. Encode
-        let request_bytes =
-            bitcode::serialize(request).context("Failed to serialize daemon request")?;
-        let len =
-            u32::try_from(request_bytes.len()).context("Request too large for protocol framing")?;
-
-        // 2. Send length-delimited (Big Endian) combined to save a syscall
-        let mut send_buf = Vec::with_capacity(4 + request_bytes.len());
-        send_buf.extend_from_slice(&len.to_be_bytes());
-        send_buf.extend_from_slice(&request_bytes);
-        stream
-            .write_all(&send_buf)
-            .context("Failed to write request to daemon socket")?;
-
-        // 3. Read length
-        let mut len_buf = [0u8; 4];
-        stream
-            .read_exact(&mut len_buf)
-            .context("Failed to read response length from daemon")?;
-        let resp_len = u32::from_be_bytes(len_buf) as usize;
-
-        // 4. Read body
-        let mut resp_bytes = vec![0u8; resp_len];
-        stream
-            .read_exact(&mut resp_bytes)
-            .context("Failed to read response body from daemon")?;
-
-        // 5. Decode
-        let response: Response =
-            bitcode::deserialize(&resp_bytes).context("Failed to deserialize daemon response")?;
-
-        match response {
-            Response::Success {
-                id: resp_id,
-                result,
-            } => {
-                if resp_id != id {
-                    anyhow::bail!("Request ID mismatch: sent {id}, got {resp_id}");
-                }
-                Ok(result)
-            }
-            Response::Error {
-                id: _,
-                code,
-                message,
-            } => {
-                anyhow::bail!("Daemon error ({code}): {message}");
-            }
-        }
+        sync_roundtrip(stream, request)
     }
 
     /// Get package info synchronously
@@ -626,6 +574,40 @@ impl DaemonClient {
     }
 }
 
+/// Serialize `request`, exchange one length-delimited frame with the daemon,
+/// and validate the response ID. Shared by the sync client paths above and
+/// [`PooledSyncClient`].
+fn sync_roundtrip(stream: &mut SyncUnixStream, request: &Request) -> Result<ResponseResult> {
+    let id = request.id();
+    let request_bytes =
+        bitcode::serialize(request).context("Failed to serialize daemon request")?;
+    crate::daemon::protocol::write_frame(stream, &request_bytes)
+        .context("Failed to write request to daemon socket")?;
+    let resp_bytes = crate::daemon::protocol::read_frame(stream)
+        .context("Failed to read response from daemon")?;
+    let response: Response =
+        bitcode::deserialize(&resp_bytes).context("Failed to deserialize daemon response")?;
+
+    match response {
+        Response::Success {
+            id: resp_id,
+            result,
+        } => {
+            if resp_id != id {
+                anyhow::bail!("Request ID mismatch: sent {id}, got {resp_id}");
+            }
+            Ok(result)
+        }
+        Response::Error {
+            id: _,
+            code,
+            message,
+        } => {
+            anyhow::bail!("Daemon error ({code}): {message}");
+        }
+    }
+}
+
 /// Synchronous client for non-async contexts
 pub struct PooledSyncClient {
     stream: Option<SyncUnixStream>,
@@ -646,54 +628,8 @@ impl PooledSyncClient {
 
     /// Send a request and get response
     pub fn call(&mut self, request: &Request) -> Result<ResponseResult> {
-        let id = request.id();
         let stream = self.stream.as_mut().context("Connection not available")?;
-
-        // Encode
-        let request_bytes =
-            bitcode::serialize(request).context("Failed to serialize daemon request")?;
-        let len =
-            u32::try_from(request_bytes.len()).context("Request too large for protocol framing")?;
-
-        // Send length-delimited
-        let mut send_buf = Vec::with_capacity(4 + request_bytes.len());
-        send_buf.extend_from_slice(&len.to_be_bytes());
-        send_buf.extend_from_slice(&request_bytes);
-        stream
-            .write_all(&send_buf)
-            .context("Failed to write request to daemon socket")?;
-
-        // Read length
-        let mut len_buf = [0u8; 4];
-        stream
-            .read_exact(&mut len_buf)
-            .context("Failed to read response length from daemon")?;
-        let resp_len = u32::from_be_bytes(len_buf) as usize;
-
-        // Read body
-        let mut resp_bytes = vec![0u8; resp_len];
-        stream
-            .read_exact(&mut resp_bytes)
-            .context("Failed to read response body from daemon")?;
-
-        // Decode
-        let response: Response =
-            bitcode::deserialize(&resp_bytes).context("Failed to deserialize daemon response")?;
-
-        match response {
-            Response::Success {
-                id: resp_id,
-                result,
-            } => {
-                if resp_id != id {
-                    anyhow::bail!("Request ID mismatch: sent {id}, got {resp_id}");
-                }
-                Ok(result)
-            }
-            Response::Error { code, message, .. } => {
-                anyhow::bail!("Daemon error ({code}): {message}");
-            }
-        }
+        sync_roundtrip(stream, request)
     }
 
     /// Get package info

@@ -7,6 +7,7 @@ use serde::Serialize;
 use crate::cli::packages::common::{description_width, validate_search_query};
 use crate::cli::style;
 use crate::core::Package;
+use crate::core::format::truncate;
 use crate::package_managers::get_package_manager;
 
 #[cfg(unix)]
@@ -354,10 +355,7 @@ fn write_package_cached<W: Write>(
         style::package(&pkg.name),
         style::version(&pkg.version),
         source_style,
-        style::dim(&crate::cli::packages::common::truncate(
-            &pkg.description,
-            desc_width
-        ))
+        style::dim(&truncate(&pkg.description, desc_width))
     )?;
 
     if let Some(votes) = pkg.votes {
@@ -393,10 +391,7 @@ fn write_daemon_package<W: Write>(
         style::package(&pkg.name),
         style::version(&pkg.version),
         source_style,
-        style::dim(&crate::cli::packages::common::truncate(
-            &pkg.description,
-            desc_width
-        ))
+        style::dim(&truncate(&pkg.description, desc_width))
     )
 }
 
@@ -413,10 +408,7 @@ mod tests {
             super::style::package(&pkg.name),
             super::style::version(&pkg.version),
             source_style,
-            super::style::dim(&crate::cli::packages::common::truncate(
-                &pkg.description,
-                50
-            ))
+            super::style::dim(&truncate(&pkg.description, 50))
         )
     }
     use super::*;

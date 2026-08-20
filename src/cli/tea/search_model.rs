@@ -5,6 +5,7 @@
 use crate::cli::style;
 use crate::cli::tea::{Cmd, Model};
 use crate::core::Package;
+use crate::core::format::truncate;
 use crate::package_managers::SyncPackage;
 use std::fmt::Write;
 
@@ -319,11 +320,6 @@ impl Model for SearchModel {
     }
 }
 
-/// Helper function to truncate text
-fn truncate(text: &str, max_len: usize) -> String {
-    crate::cli::packages::common::truncate(text, max_len)
-}
-
 fn desc_width() -> usize {
     crate::cli::packages::common::description_width()
 }
@@ -484,15 +480,6 @@ mod tests {
     fn test_package_source_labels() {
         assert!(PackageSource::Official.styled_label().contains("official"));
         assert!(PackageSource::Aur.styled_label().contains("aur"));
-    }
-
-    #[test]
-    fn test_truncate() {
-        // With max=5, we get 2 chars + "..." (3 chars) = 5 total
-        assert_eq!(truncate("hello world", 5), "he...");
-        assert_eq!(truncate("hi", 10), "hi");
-        // With max=8, we get 5 chars + "..." = 8 total
-        assert_eq!(truncate("hello world", 8), "hello...");
     }
 
     #[test]

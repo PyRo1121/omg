@@ -4,6 +4,7 @@
 //! like I/O operations, timers, or async work. They're returned from
 //! `update()` and processed by the runtime.
 
+use crate::core::format::truncate;
 use std::fmt;
 
 /// A Command represents a side effect to execute
@@ -89,14 +90,6 @@ impl<M> fmt::Debug for Cmd<M> {
             Self::Panel(_) => write!(f, "Cmd::Panel(...)"),
             Self::Spacer => write!(f, "Cmd::Spacer"),
         }
-    }
-}
-
-fn truncate(s: &str, max_len: usize) -> String {
-    if s.len() <= max_len {
-        s.to_string()
-    } else {
-        format!("{}...", &s[..max_len])
     }
 }
 
@@ -454,11 +447,5 @@ mod tests {
     fn test_cmd_card() {
         let cmd: Cmd<()> = Cmd::card("Title", vec!["line1".to_string(), "line2".to_string()]);
         assert!(matches!(cmd, Cmd::Card(_, _)));
-    }
-
-    #[test]
-    fn test_truncate() {
-        assert_eq!(truncate("hello", 10), "hello");
-        assert_eq!(truncate("hello world", 5), "hello...");
     }
 }

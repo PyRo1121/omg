@@ -180,16 +180,6 @@ pub fn print_info(msg: &str) {
 // PACKAGE OPERATIONS
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
-
-/// Show a step in multi-step process (minimal)
-pub fn print_step(msg: &str) {
-    if crate::cli::style::colors_enabled() {
-        println!("    {} {}", "→".dimmed(), msg.dimmed());
-    } else {
-        println!("    → {msg}");
-    }
-}
-
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 // UPDATE OPERATIONS
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
@@ -347,19 +337,3 @@ pub fn print_aur_build_phase(phase: &str, package: &str) {
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 // TIMING & STATS
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-
-
-// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-// ADDITIONAL DISPLAY HELPERS
-// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-
-/// Print dry-run footer
-pub fn print_dry_run_footer() {
-    println!();
-    if crate::cli::style::colors_enabled() {
-        println!("  {} No changes made (dry run)", "ℹ".blue().dimmed());
-    } else {
-        println!("  ℹ No changes made (dry run)");
-    }
-    println!();
-}

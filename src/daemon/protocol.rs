@@ -116,6 +116,43 @@ impl Request {
             Self::ListUpdates { .. } => "list_updates",
         }
     }
+
+    /// Estimated heap footprint in bytes (stack size + owned heap contents).
+    ///
+    /// Used by the daemon's compression-bomb guard. `std::mem::size_of_val`
+    /// only measures the enum's stack size and can never see `String`/`Vec`
+    /// payloads, so a guard built on it can never fire.
+    ///
+    /// Recursion over `Batch` children is safe because the daemon validates
+    /// batch nesting depth before calling this.
+    #[must_use]
+    pub fn heap_size(&self) -> usize {
+        let mut size = std::mem::size_of::<Self>();
+        match self {
+            Self::Search { query, .. }
+            | Self::Suggest { query, .. }
+            | Self::DebianSearch { query, .. } => size += query.capacity(),
+            Self::Info { package, .. } => size += package.capacity(),
+            Self::Batch { requests, .. } => {
+                for request in requests {
+                    size += request.heap_size();
+                }
+                // Account for over-allocated but unused slots in the Vec buffer.
+                size += (requests.capacity() - requests.len()) * std::mem::size_of::<Self>();
+            }
+            Self::Status { .. }
+            | Self::Explicit { .. }
+            | Self::ExplicitCount { .. }
+            | Self::SecurityAudit { .. }
+            | Self::Ping { .. }
+            | Self::CacheStats { .. }
+            | Self::CacheClear { .. }
+            | Self::Metrics { .. }
+            | Self::Health { .. }
+            | Self::ListUpdates { .. } => {}
+        }
+        size
+    }
 }
 
 /// Unified Response Enum
@@ -316,6 +353,54 @@ pub struct UpdateEntry {
     pub repo: String,
 }
 
+// ═══════════════════════════════════════════════════════════════════════════
+// Synchronous framing helpers
+// ═══════════════════════════════════════════════════════════════════════════
+
+/// Maximum frame size accepted by [`read_frame`] (10 MiB). Matches the
+/// daemon's response budget and prevents a hostile or corrupt peer from
+/// triggering unbounded client-side allocation.
+pub const MAX_FRAME_SIZE: usize = 10 * 1024 * 1024;
+
+/// Write a length-delimited frame: big-endian `u32` length prefix + payload.
+///
+/// # Errors
+/// Returns `InvalidInput` if the payload exceeds `u32::MAX`, or propagates
+/// the underlying I/O error.
+pub fn write_frame<W: std::io::Write>(writer: &mut W, payload: &[u8]) -> std::io::Result<()> {
+    let len = u32::try_from(payload.len()).map_err(|_| {
+        std::io::Error::new(
+            std::io::ErrorKind::InvalidInput,
+            "payload too large for protocol framing",
+        )
+    })?;
+    // Single write: one syscall, no interleaving risk on a shared socket.
+    let mut buf = Vec::with_capacity(4 + payload.len());
+    buf.extend_from_slice(&len.to_be_bytes());
+    buf.extend_from_slice(payload);
+    writer.write_all(&buf)
+}
+
+/// Read a length-delimited frame written by [`write_frame`].
+///
+/// # Errors
+/// Returns `InvalidData` if the announced length exceeds [`MAX_FRAME_SIZE`],
+/// or propagates the underlying I/O error.
+pub fn read_frame<R: std::io::Read>(reader: &mut R) -> std::io::Result<Vec<u8>> {
+    let mut len_buf = [0u8; 4];
+    reader.read_exact(&mut len_buf)?;
+    let len = u32::from_be_bytes(len_buf) as usize;
+    if len > MAX_FRAME_SIZE {
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::InvalidData,
+            format!("frame length {len} exceeds maximum {MAX_FRAME_SIZE}"),
+        ));
+    }
+    let mut payload = vec![0u8; len];
+    reader.read_exact(&mut payload)?;
+    Ok(payload)
+}
+
 #[cfg(test)]
 mod tests {
     use super::{status_snapshot, vulnerability_count_from_scan};
@@ -358,5 +443,45 @@ mod tests {
         assert!(status.vulnerabilities_scanned);
         assert_eq!(status.scanned_vulnerability_count(), Some(7));
         assert_eq!(status.security_vulnerabilities, 7);
+    }
+
+    #[test]
+    fn heap_size_counts_string_payloads() {
+        let request = super::Request::Search {
+            id: 1,
+            query: "x".repeat(2048),
+            limit: None,
+        };
+        let size = request.heap_size();
+        assert!(
+            size >= 2048,
+            "heap_size must include String payloads, got {size}"
+        );
+    }
+
+    #[test]
+    fn heap_size_counts_nested_batch_payloads() {
+        let inner = super::Request::Batch {
+            id: 2,
+            requests: vec![super::Request::Info {
+                id: 3,
+                package: "y".repeat(1024),
+            }],
+        };
+        let outer = super::Request::Batch {
+            id: 1,
+            requests: vec![inner],
+        };
+        let size = outer.heap_size();
+        assert!(
+            size >= 1024 + 2 * std::mem::size_of::<super::Request>(),
+            "heap_size must walk nested batch payloads, got {size}"
+        );
+    }
+
+    #[test]
+    fn heap_size_of_unit_variants_is_stack_only() {
+        let size = super::Request::Ping { id: 1 }.heap_size();
+        assert_eq!(size, std::mem::size_of::<super::Request>());
     }
 }

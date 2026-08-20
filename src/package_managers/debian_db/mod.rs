@@ -37,10 +37,7 @@ pub use sources::{
     parse_sources_list_content,
 };
 pub use transaction::{Transaction, TransactionState, dry_run};
-pub use validation::{
-    check_disk_space, check_mirror_availability, estimate_time_remaining, format_bytes,
-    format_speed, require_verified_deb, validate_deb_archive, verify_package_hash,
-};
+pub use validation::{check_disk_space, require_verified_deb};
 
 /// Fast status may omit orphans/updates. A failed accurate query must not
 /// look like zero orphans and zero updates.
