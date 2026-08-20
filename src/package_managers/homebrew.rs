@@ -186,11 +186,11 @@ impl HomebrewPackageManager {
             prefix,
             cellar,
             cache: Arc::new(RwLock::new(None)),
-            client: reqwest::Client::builder()
-                .user_agent(concat!("omg/", env!("CARGO_PKG_VERSION")))
-                .timeout(std::time::Duration::from_secs(30))
-                .build()
-                .unwrap_or_else(|_| reqwest::Client::new()),
+            // Shared download client: the formula/cask API responses are
+            // multi-megabyte JSON, so they need the extended download
+            // timeouts and read-stall detection instead of an ad-hoc client
+            // that silently fell back to an unconfigured one on failure.
+            client: crate::core::http::download_client().clone(),
         }
     }
 
@@ -448,13 +448,21 @@ impl HomebrewPackageManager {
     /// 3. Homebrew's local JSON cache (~50-100ms, no network)
     /// 4. Homebrew API fetch (2-3s, requires network)
     async fn ensure_cache(&self) -> Result<()> {
-        if self.cache.read().expect("lock poisoned").is_some() {
+        if self
+            .cache
+            .read()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .is_some()
+        {
             return Ok(());
         }
 
         if let Ok(Some(cache)) = self.load_cache_from_disk().await {
             tracing::debug!("Loaded cache from OMG rkyv store");
-            *self.cache.write().expect("lock poisoned") = Some(cache);
+            *self
+                .cache
+                .write()
+                .unwrap_or_else(std::sync::PoisonError::into_inner) = Some(cache);
             return Ok(());
         }
 
@@ -463,13 +471,19 @@ impl HomebrewPackageManager {
             if let Err(e) = self.save_cache_to_disk(&cache).await {
                 tracing::warn!("Failed to persist Homebrew cache to OMG format: {}", e);
             }
-            *self.cache.write().expect("lock poisoned") = Some(cache);
+            *self
+                .cache
+                .write()
+                .unwrap_or_else(std::sync::PoisonError::into_inner) = Some(cache);
             return Ok(());
         }
 
         tracing::debug!("No local cache available, fetching from Homebrew API");
         let cache = self.fetch_and_cache_formulas().await?;
-        *self.cache.write().expect("lock poisoned") = Some(cache);
+        *self
+            .cache
+            .write()
+            .unwrap_or_else(std::sync::PoisonError::into_inner) = Some(cache);
 
         Ok(())
     }
@@ -883,7 +897,10 @@ impl PackageManager for HomebrewPackageManager {
             self.ensure_cache().await?;
 
             let installed = self.read_installed_packages().await?;
-            let cache = self.cache.read().expect("lock poisoned");
+            let cache = self
+                .cache
+                .read()
+                .unwrap_or_else(std::sync::PoisonError::into_inner);
             let cache = cache.as_ref().context("Cache not loaded")?;
 
             let mut updates = Vec::new();

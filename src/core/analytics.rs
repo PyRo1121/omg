@@ -111,9 +111,6 @@ pub struct AnalyticsEvent {
     pub session_id: String,
     /// Machine ID
     pub machine_id: String,
-    /// License key (if activated)
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub license_key: Option<String>,
     /// OMG version
     pub version: String,
     /// Platform
@@ -317,7 +314,6 @@ fn create_event(
     duration_ms: Option<u64>,
 ) -> AnalyticsEvent {
     let session = get_session();
-    let license = crate::core::license::load_license();
     let system = match crate::core::sysinfo::SystemInfo::detect() {
         Ok(sys) => {
             properties.insert("sys_cpu".to_string(), serde_json::json!(sys.cpu_cores));
@@ -345,7 +341,6 @@ fn create_event(
         timestamp: format_timestamp(jiff::Timestamp::now()),
         session_id: session.session_id,
         machine_id: crate::core::license::get_machine_id(),
-        license_key: license.map(|l| l.key),
         version: env!("CARGO_PKG_VERSION").to_string(),
         platform: format!("{}-{}", std::env::consts::OS, std::env::consts::ARCH),
         duration_ms,
@@ -502,6 +497,21 @@ pub fn maybe_heartbeat() {
     }
 }
 
+/// Wire-only wrapper that attaches the license key at flush time.
+///
+/// The license key is deliberately **not** part of [`AnalyticsEvent`]: queued
+/// events are persisted to `event_queue.json` on disk, and a credential must
+/// never be written there. It is attached here, at the network boundary, and
+/// lives only in memory for the duration of the flush.
+#[derive(Debug, Serialize)]
+struct OutboundEvent<'a> {
+    #[serde(flatten)]
+    event: &'a AnalyticsEvent,
+    /// License key (if activated); attached at flush time, never persisted.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    license_key: Option<&'a str>,
+}
+
 /// Flush event queue to API
 pub async fn flush_events() -> Result<()> {
     if !is_enabled() {
@@ -522,9 +532,17 @@ pub async fn flush_events() -> Result<()> {
     }
 
     let client = crate::core::http::shared_client();
+    let license_key = crate::core::license::load_license().map(|license| license.key);
+    let outbound: Vec<OutboundEvent<'_>> = events
+        .iter()
+        .map(|event| OutboundEvent {
+            event,
+            license_key: license_key.as_deref(),
+        })
+        .collect();
     let res = client
         .post(ANALYTICS_API_URL)
-        .json(&serde_json::json!({ "events": events }))
+        .json(&serde_json::json!({ "events": outbound }))
         .timeout(std::time::Duration::from_secs(10))
         .send()
         .await;
@@ -800,7 +818,6 @@ mod tests {
                 timestamp: String::new(),
                 session_id: String::new(),
                 machine_id: String::new(),
-                license_key: None,
                 version: String::new(),
                 platform: String::new(),
                 duration_ms: None,

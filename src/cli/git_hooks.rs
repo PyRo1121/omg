@@ -293,7 +293,7 @@ pub fn run_hook(hook_name: &str) -> Result<()> {
 }
 
 #[cfg(test)]
-#[expect(clippy::unwrap_used, clippy::expect_used)]
+#[allow(clippy::unwrap_used, clippy::expect_used)]
 mod tests {
     use super::*;
 

@@ -2,6 +2,8 @@
 
 use anyhow::Result;
 
+use super::dispatch_backend;
+
 #[cfg(feature = "arch")]
 mod arch;
 #[cfg(any(feature = "debian", feature = "debian-pure"))]
@@ -27,46 +29,18 @@ pub async fn remove(packages: &[String], recursive: bool, _yes: bool, dry_run: b
         return remove_dry_run(packages, recursive);
     }
 
-    #[cfg(any(feature = "debian", feature = "debian-pure"))]
-    if crate::core::env::distro::is_debian_like() {
-        return debian::remove(packages, recursive).await;
+    dispatch_backend! {
+        debian: { debian::remove(packages, recursive).await },
+        arch: { arch::remove(packages, recursive).await },
+        generic: { generic::remove(packages, recursive).await },
     }
-
-    #[cfg(feature = "arch")]
-    return arch::remove(packages, recursive).await;
-
-    #[cfg(all(
-        not(feature = "arch"),
-        any(feature = "debian", feature = "debian-pure")
-    ))]
-    return debian::remove(packages, recursive).await;
-
-    #[cfg(all(
-        not(feature = "arch"),
-        not(any(feature = "debian", feature = "debian-pure"))
-    ))]
-    generic::remove(packages, recursive).await
 }
 
 #[allow(clippy::unnecessary_wraps)]
 fn remove_dry_run(packages: &[String], recursive: bool) -> Result<()> {
-    #[cfg(any(feature = "debian", feature = "debian-pure"))]
-    if crate::core::env::distro::is_debian_like() {
-        return debian::remove_dry_run(packages, recursive);
+    dispatch_backend! {
+        debian: { debian::remove_dry_run(packages, recursive) },
+        arch: { arch::remove_dry_run(packages, recursive) },
+        generic: { generic::remove_dry_run(packages, recursive) },
     }
-
-    #[cfg(feature = "arch")]
-    return arch::remove_dry_run(packages, recursive);
-
-    #[cfg(all(
-        not(feature = "arch"),
-        any(feature = "debian", feature = "debian-pure")
-    ))]
-    return debian::remove_dry_run(packages, recursive);
-
-    #[cfg(all(
-        not(feature = "arch"),
-        not(any(feature = "debian", feature = "debian-pure"))
-    ))]
-    generic::remove_dry_run(packages, recursive)
 }
