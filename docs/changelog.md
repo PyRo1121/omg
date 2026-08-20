@@ -13,6 +13,14 @@ OMG is the fastest unified package manager for Linux, replacing pacman, yay, nvm
 ## [Unreleased]
 ### ♻️  Refactoring
 
+- Remove unwired tea install/remove models
+
+InstallModel/RemoveModel (and their Msg/State types) were exported from
+
+cli::tea but never referenced by any command, test, or other module.
+
+The install/remove commands use the modern_ui + ui paths exclusively.
+
 - Remove dead code, dedupe helpers, harden watch/IPC paths
 
 Audit cleanup slices:
@@ -53,6 +61,28 @@ std::io imports); format touched files with rustfmt
 
 - Reuse atomic download helper for mise installs
 ### ⚡ Performance
+
+- Remove unreferenced and superseded documentation
+
+Drop 13 docs that nothing links to from the docs hub, README, or any
+
+other tracked file, plus the stale root RELEASE_v0.1.215.md:
+
+  - AUTOCOMPLETE, CHANGELOG_EXAMPLE/GUIDE, PLATFORM_TESTING, TESTING
+
+  - architecture/UPDATE_OPTIMIZATION_ANALYSIS, dev/session-summary
+
+  - homebrew, migration/from-nvm, migration/from-pyenv
+
+  - plans/2026-01-29-world-class-aur-performance, shell-hook-deep-dive
+
+  - team-dashboard-test-coverage
+
+The from-nvm/from-pyenv content mapped to the real 'omg migrate' CLI but
+
+was not linked from any doc; its command usage remains in docs/runtimes.md
+
+( docs: remove fully with git log --oneline -2
 
 - Remove obsolete performance toggle
 - Remove skipped integration performance module
