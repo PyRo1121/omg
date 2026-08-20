@@ -401,12 +401,10 @@ async fn handle_client(stream: tokio::net::UnixStream, state: Arc<DaemonState>) 
         // Decode request
         let request: Request = bitcode::deserialize(&bytes)?;
 
-        // SECURITY: Validate deserialized size to prevent compression bomb attacks
-        let estimated_size = std::mem::size_of_val(&request);
-        if estimated_size > MAX_DESERIALIZED_SIZE {
-            let msg = format!(
-                "Deserialized request too large: {estimated_size} bytes (max {MAX_DESERIALIZED_SIZE})"
-            );
+        // SECURITY: Validate batch nesting depth before walking heap contents;
+        // this bounds the recursion in both this check and `heap_size`.
+        if let Err(e) = validate_batch_depth(&request, 0) {
+            let msg = format!("Invalid batch structure: {e}");
             tracing::warn!("{}", msg);
             audit_log(
                 AuditEventType::PolicyViolation,
@@ -418,9 +416,14 @@ async fn handle_client(stream: tokio::net::UnixStream, state: Arc<DaemonState>) 
             continue;
         }
 
-        // SECURITY: Validate batch nesting depth to prevent recursion DoS
-        if let Err(e) = validate_batch_depth(&request, 0) {
-            let msg = format!("Invalid batch structure: {e}");
+        // SECURITY: Validate deserialized size to prevent compression bomb attacks.
+        // `heap_size` walks `String`/`Vec` payloads; `std::mem::size_of_val`
+        // would only measure the enum's stack size and could never fire.
+        let estimated_size = request.heap_size();
+        if estimated_size > MAX_DESERIALIZED_SIZE {
+            let msg = format!(
+                "Deserialized request too large: {estimated_size} bytes (max {MAX_DESERIALIZED_SIZE})"
+            );
             tracing::warn!("{}", msg);
             audit_log(
                 AuditEventType::PolicyViolation,

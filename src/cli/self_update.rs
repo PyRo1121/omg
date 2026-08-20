@@ -2,37 +2,43 @@
 
 use anyhow::{Context, Result};
 use owo_colors::OwoColorize;
+use semver::Version;
+use sha2::{Digest, Sha256};
 use std::env;
 use std::fs;
 
 use crate::cli::style;
+use crate::core::env::distro::{Distro, detect_distro};
 
 const UPDATE_URL: &str = "https://releases.pyro1121.com";
 
+/// Upper bound for the update archive download.
+///
+/// Release tarballs are a few MiB. The cap bounds both `Vec` preallocation
+/// driven by the server-reported `Content-Length` and streaming growth, so a
+/// hostile release server cannot trigger runaway allocation.
+const MAX_DOWNLOAD_BYTES: usize = 256 * 1024 * 1024;
+
+/// Cap on `Vec::with_capacity` preallocation before streaming proves the size.
+const MAX_PREALLOC_BYTES: usize = 16 * 1024 * 1024;
+
 /// Update OMG to the latest version
+///
+/// Fails closed: the pinned SHA-256 sidecar published next to each release
+/// archive must be fetched and the archive digest verified before extraction;
+/// any missing or malformed checksum aborts the update.
 pub async fn run(force: bool, version: Option<String>) -> Result<()> {
-    let current_version = env!("CARGO_PKG_VERSION");
+    let current_version = parse_version(env!("CARGO_PKG_VERSION"))
+        .context("built-in CARGO_PKG_VERSION is not valid semver")?;
     println!(
-        "{} Checking for updates... (current: v{})",
+        "{} Checking for updates... (current: v{current_version})",
         style::runtime("OMG"),
-        current_version
     );
 
-    let target_version = if let Some(v) = version {
-        v
-    } else {
-        // Fetch latest version
-        let resp = crate::core::http::shared_client()
-            .get(format!("{UPDATE_URL}/latest-version"))
-            .send()
-            .await
-            .context("Failed to check for updates")?;
-
-        if !resp.status().is_success() {
-            anyhow::bail!("Failed to fetch version info: {}", resp.status());
-        }
-
-        resp.text().await?.trim().to_string()
+    let target_version = match version {
+        Some(raw) => parse_version(&raw)
+            .with_context(|| format!("`--version {raw}` is not valid semver (e.g. 1.2.3)"))?,
+        None => fetch_latest_version().await?,
     };
 
     if !force && target_version == current_version {
@@ -43,46 +49,20 @@ pub async fn run(force: bool, version: Option<String>) -> Result<()> {
         return Ok(());
     }
 
+    let artifact = release_artifact(&target_version)?;
+
     println!(
-        "  {} Downloading version v{}...",
+        "  {} Downloading {}...",
         style::maybe_color("⬇", |t| t.blue().to_string()),
-        target_version
+        artifact.file_name
     );
 
-    // Download binary
-    let platform = "x86_64-unknown-linux-gnu"; // Auto-detect in real impl
-    let download_url = format!("{UPDATE_URL}/download/omg-{target_version}-{platform}.tar.gz");
+    // Integrity gate: fetch the pinned digest before downloading the archive.
+    let expected_digest = fetch_checksum(&artifact.checksum_url()).await?;
 
-    let response = crate::core::http::download_client()
-        .get(&download_url)
-        .send()
-        .await?;
-    if !response.status().is_success() {
-        anyhow::bail!("Failed to download update: {}", response.status());
-    }
+    let bytes = download_verified(&artifact.download_url(), &expected_digest).await?;
 
-    let total_size = response
-        .content_length()
-        .ok_or_else(|| anyhow::anyhow!("Failed to get content length"))?;
-
-    use indicatif::{ProgressBar, ProgressStyle};
-    let pb = ProgressBar::new(total_size);
-    pb.set_style(ProgressStyle::default_bar()
-        .template("{spinner:.green} [{elapsed_precise}] [{bar:40.cyan/blue}] {bytes}/{total_bytes} ({eta})")?
-        .progress_chars("#>-"));
-
-    let capacity =
-        usize::try_from(total_size).context("Update file size exceeds platform address space")?;
-    let mut bytes = Vec::with_capacity(capacity);
-    let mut stream = response.bytes_stream();
-
-    use futures::StreamExt;
-    while let Some(item) = stream.next().await {
-        let chunk = item.context("Failed to read update download chunk")?;
-        bytes.extend_from_slice(&chunk);
-        pb.inc(chunk.len() as u64);
-    }
-    pb.finish_with_message("Download complete");
+    let archive_name = artifact.file_name.clone();
 
     // Perform blocking extraction and binary replacement in a separate thread
     // to avoid blocking the tokio async runtime
@@ -96,10 +76,8 @@ pub async fn run(force: bool, version: Option<String>) -> Result<()> {
             .unpack(temp_dir.path())
             .context("Failed to extract update archive")?;
 
-        let new_binary = temp_dir.path().join("omg");
-        if !new_binary.exists() {
-            anyhow::bail!("Update archive did not contain 'omg' binary");
-        }
+        let new_binary = locate_binary(temp_dir.path(), &archive_name)
+            .ok_or_else(|| anyhow::anyhow!("update archive did not contain an 'omg' binary"))?;
 
         // Replace current binary
         let current_exe = env::current_exe().context("Failed to find current executable path")?;
@@ -156,4 +134,358 @@ pub async fn run(force: bool, version: Option<String>) -> Result<()> {
     );
 
     Ok(())
+}
+
+/// Locate the `omg` binary inside an unpacked release archive.
+///
+/// CI wraps the payload in a directory named after the archive
+/// (`omg-v1.2.3-x86_64-linux-debian/omg`); a flat root-level `omg` layout is
+/// accepted as a fallback.
+fn locate_binary(extract_dir: &std::path::Path, archive_name: &str) -> Option<std::path::PathBuf> {
+    if let Some(wrapper) = archive_name.strip_suffix(".tar.gz") {
+        let wrapped = extract_dir.join(wrapper).join("omg");
+        if wrapped.is_file() {
+            return Some(wrapped);
+        }
+    }
+    let flat = extract_dir.join("omg");
+    flat.is_file().then_some(flat)
+}
+
+/// A platform-specific release archive published by CI.
+#[derive(Debug)]
+struct ReleaseArtifact {
+    /// Archive file name on the release server, e.g.
+    /// `omg-v1.2.3-x86_64-linux-debian.tar.gz`.
+    file_name: String,
+}
+
+impl ReleaseArtifact {
+    /// Archive URL on the release server.
+    fn download_url(&self) -> String {
+        format!("{UPDATE_URL}/download/{}", self.file_name)
+    }
+
+    /// URL of the SHA-256 sidecar published next to the archive.
+    fn checksum_url(&self) -> String {
+        format!("{}.sha256", self.download_url())
+    }
+}
+
+/// Parse a semantic version, tolerating a leading `v` and surrounding
+/// whitespace.
+///
+/// `Version` only renders `[0-9A-Za-z-.]` characters, so interpolating it into
+/// artifact URLs can never break out of the path segment — unlike the raw
+/// server-provided string that was previously used verbatim.
+fn parse_version(raw: &str) -> Result<Version> {
+    let trimmed = raw.trim().trim_start_matches('v');
+    Version::parse(trimmed).with_context(|| format!("invalid semantic version: {raw:?}"))
+}
+
+/// Fetch the latest published version from the release server and validate it.
+async fn fetch_latest_version() -> Result<Version> {
+    let response = crate::core::http::shared_client()
+        .get(format!("{UPDATE_URL}/latest-version"))
+        .send()
+        .await
+        .context("Failed to check for updates")?;
+    if !response.status().is_success() {
+        anyhow::bail!("Failed to fetch version info: {}", response.status());
+    }
+    let body = response
+        .text()
+        .await
+        .context("Failed to read latest-version response body")?;
+    parse_version(&body).context("Release server returned an invalid latest-version payload")
+}
+
+/// The `(arch, target)` fragment of the artifacts built by
+/// `.github/workflows/release.yml`, for each distro this updater supports.
+///
+/// Returns `None` when no matching artifact exists (Windows releases are
+/// `.zip` archives, which this updater does not handle).
+fn release_target(distro: Distro) -> Option<(&'static str, &'static str)> {
+    match distro {
+        Distro::Arch => Some(("x86_64", "linux-arch")),
+        Distro::Debian => Some(("x86_64", "linux-debian")),
+        Distro::Ubuntu => Some(("x86_64", "linux-ubuntu")),
+        Distro::Fedora => Some(("x86_64", "linux-fedora")),
+        Distro::MacOS => Some(("aarch64", "darwin")),
+        Distro::Windows | Distro::Unknown => None,
+    }
+}
+
+/// Select the release artifact for the running platform.
+fn release_artifact(version: &Version) -> Result<ReleaseArtifact> {
+    let Some((release_arch, target)) = release_target(detect_distro()) else {
+        anyhow::bail!(
+            "self-update has no release artifact for this platform; \
+             download the archive manually from {UPDATE_URL}"
+        );
+    };
+    let host_arch = std::env::consts::ARCH;
+    if host_arch != release_arch {
+        anyhow::bail!(
+            "self-update publishes no {target} artifact for {host_arch}; \
+             download the archive manually from {UPDATE_URL}"
+        );
+    }
+    Ok(ReleaseArtifact {
+        file_name: format!("omg-v{version}-{release_arch}-{target}.tar.gz"),
+    })
+}
+
+/// Fetch the pinned SHA-256 digest for the artifact from its sidecar file.
+async fn fetch_checksum(url: &str) -> Result<String> {
+    let response = crate::core::http::shared_client()
+        .get(url)
+        .send()
+        .await
+        .with_context(|| format!("Failed to fetch checksum sidecar {url}"))?;
+    if !response.status().is_success() {
+        anyhow::bail!(
+            "Checksum sidecar request failed: {} ({url})",
+            response.status()
+        );
+    }
+    let body = response
+        .text()
+        .await
+        .context("Failed to read checksum sidecar body")?;
+    parse_checksum(&body)
+}
+
+/// Parse a `sha256sum`-style sidecar (`<hex>  <file name>`) into the pinned
+/// lowercase-hex SHA-256 digest.
+///
+/// CI emits these with `sha256sum` (Linux), `shasum -a 256` (macOS), and
+/// `Get-FileHash` (Windows, which writes CRLF line endings), so `\r` and
+/// case differences must be tolerated.
+fn parse_checksum(body: &str) -> Result<String> {
+    let line = body
+        .lines()
+        .map(str::trim)
+        .find(|line| !line.is_empty())
+        .ok_or_else(|| anyhow::anyhow!("checksum sidecar is empty"))?;
+    let digest = line
+        .split_whitespace()
+        .next()
+        .ok_or_else(|| anyhow::anyhow!("checksum sidecar has no digest field"))?;
+    if digest.len() != 64 || hex::decode(digest).is_err() {
+        anyhow::bail!("checksum sidecar does not contain a valid SHA-256 digest");
+    }
+    Ok(digest.to_ascii_lowercase())
+}
+
+/// Stream `url` into memory while hashing it, enforcing the download size
+/// cap, then verify the pinned digest before the bytes reach extraction.
+///
+/// Fails closed: any mismatch aborts the update instead of installing
+/// unverified bytes.
+async fn download_verified(url: &str, expected_digest: &str) -> Result<Vec<u8>> {
+    let response = crate::core::http::download_client()
+        .get(url)
+        .send()
+        .await
+        .with_context(|| format!("Failed to download update archive from {url}"))?;
+    if !response.status().is_success() {
+        anyhow::bail!("Update download failed: {} ({url})", response.status());
+    }
+
+    // Preallocate from Content-Length only up to the prealloc cap, so a
+    // hostile or buggy server cannot force a huge allocation up front; the
+    // hard cap below still bounds streaming growth.
+    let prealloc = response
+        .content_length()
+        .and_then(|len| usize::try_from(len).ok())
+        .map_or(0, |len| len.min(MAX_PREALLOC_BYTES));
+
+    use indicatif::{ProgressBar, ProgressStyle};
+    let progress = ProgressBar::new(response.content_length().unwrap_or(0));
+    progress.set_style(
+        ProgressStyle::default_bar()
+            .template(
+                "{spinner:.green} [{elapsed_precise}] [{bar:40.cyan/blue}] \
+                 {bytes}/{total_bytes} ({eta})",
+            )?
+            .progress_chars("#>-"),
+    );
+
+    let mut bytes = Vec::with_capacity(prealloc);
+    let mut hasher = Sha256::new();
+
+    use futures::StreamExt;
+    let mut stream = response.bytes_stream();
+    while let Some(item) = stream.next().await {
+        let chunk = item.context("Failed to read update download chunk")?;
+        if bytes.len() + chunk.len() > MAX_DOWNLOAD_BYTES {
+            anyhow::bail!(
+                "Update download exceeded the {} MiB size cap",
+                MAX_DOWNLOAD_BYTES / (1024 * 1024)
+            );
+        }
+        hasher.update(&chunk);
+        bytes.extend_from_slice(&chunk);
+        progress.inc(chunk.len() as u64);
+    }
+    progress.finish_with_message("Download complete");
+
+    let actual_digest = hex::encode(hasher.finalize());
+    if actual_digest != expected_digest {
+        anyhow::bail!(
+            "Update archive failed integrity verification: \
+             expected SHA-256 {expected_digest}, got {actual_digest}"
+        );
+    }
+    Ok(bytes)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn parse_version_accepts_v_prefix_and_surrounding_whitespace() {
+        let expected = Version::new(1, 2, 3);
+        assert_eq!(
+            parse_version("1.2.3").expect("bare semver must parse"),
+            expected
+        );
+        assert_eq!(
+            parse_version("v1.2.3").expect("v-prefixed semver must parse"),
+            expected
+        );
+        assert_eq!(
+            parse_version("  1.2.3\n").expect("whitespace must be trimmed"),
+            expected
+        );
+        assert_eq!(
+            parse_version("v1.2.3-rc.1+b5").expect("pre-release must parse"),
+            Version::parse("1.2.3-rc.1+b5").expect("baseline pre-release")
+        );
+    }
+
+    #[test]
+    fn parse_version_rejects_malformed_and_hostile_input() {
+        for raw in [
+            "",
+            "v",
+            "not-a-version",
+            "1.2",
+            "1.2.3.4",
+            "1.2.3/../../evil",
+            "1.2.3?redirect=x",
+            "https://evil.example/1.2.3",
+        ] {
+            assert!(
+                parse_version(raw).is_err(),
+                "input {raw:?} must not parse as a version"
+            );
+        }
+    }
+
+    #[test]
+    fn parse_checksum_accepts_sha256sum_sidecar_format() {
+        let digest = "a".repeat(64);
+        let body = format!("{digest}  omg-v1.2.3-x86_64-linux-arch.tar.gz\n");
+        assert_eq!(
+            parse_checksum(&body).expect("sha256sum format must parse"),
+            digest
+        );
+    }
+
+    #[test]
+    fn parse_checksum_accepts_windows_crlf_and_uppercase_hex() {
+        let body = format!(
+            "{}  omg-v1.2.3-x86_64-windows.zip.sha256...\r\n",
+            "B".repeat(64)
+        );
+        assert_eq!(
+            parse_checksum(&body).expect("Get-FileHash format must parse"),
+            "b".repeat(64)
+        );
+    }
+
+    #[test]
+    fn parse_checksum_skips_leading_blank_lines() {
+        let digest = "c".repeat(64);
+        let body = format!("\n\n  \n{digest}  omg.tar.gz\n");
+        assert_eq!(
+            parse_checksum(&body).expect("blank lines must be skipped"),
+            digest
+        );
+    }
+
+    #[test]
+    fn parse_checksum_rejects_invalid_payloads() {
+        for body in ["", "   \n\n", "no digest field long enough to matter here"] {
+            assert!(
+                parse_checksum(body).is_err(),
+                "sidecar body {body:?} must be rejected"
+            );
+        }
+        assert!(
+            parse_checksum(&"g".repeat(64)).is_err(),
+            "non-hex characters must be rejected"
+        );
+        assert!(
+            parse_checksum(&format!("{}  omg.tar.gz", "a".repeat(63))).is_err(),
+            "truncated digests must be rejected"
+        );
+    }
+
+    #[test]
+    fn release_target_matches_ci_artifact_names() {
+        assert_eq!(release_target(Distro::Arch), Some(("x86_64", "linux-arch")));
+        assert_eq!(
+            release_target(Distro::Debian),
+            Some(("x86_64", "linux-debian"))
+        );
+        assert_eq!(
+            release_target(Distro::Ubuntu),
+            Some(("x86_64", "linux-ubuntu"))
+        );
+        assert_eq!(
+            release_target(Distro::Fedora),
+            Some(("x86_64", "linux-fedora"))
+        );
+        assert_eq!(release_target(Distro::MacOS), Some(("aarch64", "darwin")));
+        assert_eq!(release_target(Distro::Windows), None);
+        assert_eq!(release_target(Distro::Unknown), None);
+    }
+
+    #[test]
+    fn locate_binary_finds_wrapped_ci_layout() {
+        let tmp = tempfile::tempdir().expect("temp dir");
+        let wrapper = tmp.path().join("omg-v1.2.3-x86_64-linux-arch");
+        std::fs::create_dir_all(&wrapper).expect("wrapper dir");
+        std::fs::write(wrapper.join("omg"), b"#!/bin/sh\n").expect("binary");
+        assert_eq!(
+            locate_binary(tmp.path(), "omg-v1.2.3-x86_64-linux-arch.tar.gz"),
+            Some(wrapper.join("omg"))
+        );
+    }
+
+    #[test]
+    fn locate_binary_finds_flat_layout_fallback() {
+        let tmp = tempfile::tempdir().expect("temp dir");
+        let flat = tmp.path().join("omg");
+        std::fs::write(&flat, b"#!/bin/sh\n").expect("binary");
+        assert_eq!(
+            locate_binary(tmp.path(), "omg-v1.2.3-x86_64-linux-arch.tar.gz"),
+            Some(flat)
+        );
+    }
+
+    #[test]
+    fn locate_binary_returns_none_when_archive_has_no_binary() {
+        let tmp = tempfile::tempdir().expect("temp dir");
+        std::fs::create_dir_all(tmp.path().join("omg-v1.2.3-x86_64-linux-arch"))
+            .expect("empty wrapper dir");
+        assert_eq!(
+            locate_binary(tmp.path(), "omg-v1.2.3-x86_64-linux-arch.tar.gz"),
+            None
+        );
+    }
 }

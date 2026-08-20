@@ -2,6 +2,8 @@
 
 use anyhow::Result;
 
+use super::dispatch_backend;
+
 #[cfg(feature = "arch")]
 mod arch;
 #[cfg(any(feature = "debian", feature = "debian-pure"))]
@@ -27,31 +29,10 @@ pub async fn install(packages: &[String], yes: bool, dry_run: bool) -> Result<()
         return install_dry_run(packages);
     }
 
-    #[cfg(any(feature = "debian", feature = "debian-pure"))]
-    if crate::core::env::distro::is_debian_like() {
-        let _ = yes;
-        return debian::install(packages).await;
-    }
-
-    #[cfg(feature = "arch")]
-    return arch::install(packages, yes).await;
-
-    #[cfg(all(
-        not(feature = "arch"),
-        any(feature = "debian", feature = "debian-pure")
-    ))]
-    {
-        let _ = yes;
-        return debian::install(packages).await;
-    }
-
-    #[cfg(all(
-        not(feature = "arch"),
-        not(any(feature = "debian", feature = "debian-pure"))
-    ))]
-    {
-        let _ = yes;
-        generic::install(packages).await
+    dispatch_backend! {
+        debian: { let _ = yes; debian::install(packages).await },
+        arch: { arch::install(packages, yes).await },
+        generic: { let _ = yes; generic::install(packages).await },
     }
 }
 
@@ -65,23 +46,9 @@ pub fn install_dry_run_cli(packages: &[String]) -> Result<bool> {
 
 #[allow(clippy::unnecessary_wraps)]
 fn install_dry_run(packages: &[String]) -> Result<()> {
-    #[cfg(any(feature = "debian", feature = "debian-pure"))]
-    if crate::core::env::distro::is_debian_like() {
-        return debian::install_dry_run(packages);
+    dispatch_backend! {
+        debian: { debian::install_dry_run(packages) },
+        arch: { arch::install_dry_run(packages) },
+        generic: { generic::install_dry_run(packages) },
     }
-
-    #[cfg(feature = "arch")]
-    return arch::install_dry_run(packages);
-
-    #[cfg(all(
-        not(feature = "arch"),
-        any(feature = "debian", feature = "debian-pure")
-    ))]
-    return debian::install_dry_run(packages);
-
-    #[cfg(all(
-        not(feature = "arch"),
-        not(any(feature = "debian", feature = "debian-pure"))
-    ))]
-    generic::install_dry_run(packages)
 }

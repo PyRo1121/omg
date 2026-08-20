@@ -194,9 +194,25 @@ pub fn elevate_if_needed(args: &[String]) -> anyhow::Result<()> {
             .map(std::string::String::as_str)
             .collect();
 
-        tokio::runtime::Runtime::new()
-            .context("Failed to create runtime")?
-            .block_on(run_self_sudo(&args_refs))?;
+        let run_elevation = |args_refs: &[&str]| -> anyhow::Result<()> {
+            tokio::runtime::Runtime::new()
+                .context("Failed to create runtime")?
+                .block_on(run_self_sudo(args_refs))
+        };
+
+        // Creating a runtime and calling block_on panics when invoked from
+        // within an existing async runtime. When we are inside one, isolate
+        // the elevation on a dedicated thread with its own runtime instead.
+        if tokio::runtime::Handle::try_current().is_ok() {
+            std::thread::scope(|scope| {
+                scope
+                    .spawn(|| run_elevation(&args_refs))
+                    .join()
+                    .map_err(|_| anyhow::anyhow!("elevation thread panicked"))?
+            })?;
+        } else {
+            run_elevation(&args_refs)?;
+        }
 
         // If run_self_sudo returns, it means the command succeeded.
         // We exit here to mimic exec() behavior (process replacement)
@@ -404,8 +420,12 @@ pub async fn run_self_sudo(args: &[&str]) -> anyhow::Result<()> {
     }
 }
 
-/// Execute a closure that requires root, elevating if needed
-/// Returns Ok(true) if we elevated (caller should exit), Ok(false) if already root
+/// Execute a closure that requires root, elevating if needed.
+///
+/// When not running as root this re-executes the current process under sudo;
+/// in production builds the child exits after the elevated command, so this
+/// function only returns normally when already root (or in test builds, where
+/// elevation is a no-op).
 pub fn with_root<F, T>(f: F) -> anyhow::Result<T>
 where
     F: FnOnce() -> anyhow::Result<T>,
@@ -415,8 +435,9 @@ where
         // Re-exec with sudo - this replaces the process
         elevate_if_needed(&args)
             .map_err(|e| anyhow::anyhow!("Failed to elevate privileges: {e}"))?;
-        // This line is never reached
-        unreachable!()
+        // Production: unreachable (elevate_if_needed exits the process).
+        // Test builds: elevation is mocked as a no-op, so fall through and
+        // run the closure directly.
     }
     f()
 }

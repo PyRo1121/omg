@@ -308,18 +308,18 @@ mod self_update_tests {
     /// Verify that the download URL is constructed correctly
     #[test]
     fn test_download_url_construction() {
-        // Given: Version and platform
+        // Given: Version and platform (naming must match .github/workflows/release.yml)
         let version = "0.1.75";
-        let platform = "x86_64-unknown-linux-gnu";
+        let platform = "x86_64-linux-debian";
         let base_url = "https://releases.pyro1121.com";
 
         // When: We construct the URL
-        let url = format!("{base_url}/download/omg-{version}-{platform}.tar.gz");
+        let url = format!("{base_url}/download/omg-v{version}-{platform}.tar.gz");
 
         // Then: URL should be properly formatted
         assert_eq!(
             url,
-            "https://releases.pyro1121.com/download/omg-0.1.75-x86_64-unknown-linux-gnu.tar.gz"
+            "https://releases.pyro1121.com/download/omg-v0.1.75-x86_64-linux-debian.tar.gz"
         );
     }
 

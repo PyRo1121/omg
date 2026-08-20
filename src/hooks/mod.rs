@@ -369,7 +369,7 @@ pub fn build_path_additions<S: std::hash::BuildHasher>(
             "ruby" => data_dir.join("versions/ruby").join(version).join("bin"),
             "java" => data_dir.join("versions/java").join(version).join("bin"),
             "bun" => {
-                let Some(path) = resolve_bun_bin_path(&data_dir, version) else {
+                let Some(path) = resolve_bun_bin_path(&data_dir, version)? else {
                     continue;
                 };
                 path
@@ -422,7 +422,7 @@ fn resolve_node_bin_path(data_dir: &Path, version: &str) -> Result<Option<PathBu
         return Ok(Some(path));
     }
 
-    if let Some(resolved) = resolve_installed_version_req(&versions_dir, normalized)
+    if let Some(resolved) = resolve_installed_version_req(&versions_dir, normalized)?
         && let Some(path) = node_version_bin_path(&versions_dir, &resolved)
     {
         return Ok(Some(path));
@@ -431,20 +431,20 @@ fn resolve_node_bin_path(data_dir: &Path, version: &str) -> Result<Option<PathBu
     nvm_node_bin(normalized)
 }
 
-fn resolve_bun_bin_path(data_dir: &Path, version: &str) -> Option<PathBuf> {
+fn resolve_bun_bin_path(data_dir: &Path, version: &str) -> Result<Option<PathBuf>> {
     let normalized = version.trim_start_matches('v');
     let versions_dir = data_dir.join("versions/bun");
     if let Some(path) = bun_version_bin_path(&versions_dir, normalized) {
-        return Some(path);
+        return Ok(Some(path));
     }
 
-    if let Some(resolved) = resolve_installed_version_req(&versions_dir, normalized)
+    if let Some(resolved) = resolve_installed_version_req(&versions_dir, normalized)?
         && let Some(path) = bun_version_bin_path(&versions_dir, &resolved)
     {
-        return Some(path);
+        return Ok(Some(path));
     }
 
-    None
+    Ok(None)
 }
 
 fn node_version_bin_path(versions_dir: &Path, version: &str) -> Option<PathBuf> {
@@ -459,13 +459,31 @@ fn bun_version_bin_path(versions_dir: &Path, version: &str) -> Option<PathBuf> {
     crate::runtimes::common::is_valid_version_dir(&path).then_some(path)
 }
 
-fn resolve_installed_version_req(versions_dir: &Path, req: &str) -> Option<String> {
-    let req = normalize_version_req(req)?;
+fn resolve_installed_version_req(versions_dir: &Path, req: &str) -> Result<Option<String>> {
+    let Some(req) = normalize_version_req(req) else {
+        return Ok(None);
+    };
     let mut candidates = Vec::new();
 
-    let entries = fs::read_dir(versions_dir).ok()?;
+    let entries = match fs::read_dir(versions_dir) {
+        Ok(entries) => entries,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+        Err(error) => {
+            return Err(error).with_context(|| {
+                format!(
+                    "Failed to read runtime versions directory {}",
+                    versions_dir.display()
+                )
+            });
+        }
+    };
     for entry in entries {
-        let entry = entry.ok()?;
+        let entry = entry.with_context(|| {
+            format!(
+                "Failed to read runtime versions directory {}",
+                versions_dir.display()
+            )
+        })?;
         let name = entry.file_name().to_string_lossy().to_string();
         if name == "current" || !crate::runtimes::common::is_valid_version_dir(&entry.path()) {
             continue;
@@ -480,7 +498,7 @@ fn resolve_installed_version_req(versions_dir: &Path, req: &str) -> Option<Strin
     }
 
     candidates.sort_by(|a, b| b.0.cmp(&a.0));
-    candidates.first().map(|(_, name)| name.clone())
+    Ok(candidates.first().map(|(_, name)| name.clone()))
 }
 
 fn normalize_version_req(value: &str) -> Option<VersionReq> {
@@ -586,7 +604,7 @@ fn native_runtime_bin_path(runtime: &str, version: &str) -> Result<Option<PathBu
                 .join("bin")
         }
         "bun" => {
-            let Some(path) = resolve_bun_bin_path(&data_dir, version) else {
+            let Some(path) = resolve_bun_bin_path(&data_dir, version)? else {
                 return Ok(None);
             };
             path
@@ -881,6 +899,39 @@ erlang = "26.2"
         assert_eq!(
             resolve_node_bin_path(dir.path(), "^20").unwrap(),
             Some(expected)
+        );
+    }
+
+    #[test]
+    fn resolve_installed_version_req_missing_dir_is_none() {
+        let dir = tempdir().unwrap();
+        assert!(
+            resolve_installed_version_req(&dir.path().join("versions/node"), "^20")
+                .unwrap()
+                .is_none()
+        );
+    }
+
+    #[test]
+    fn resolve_installed_version_req_unreadable_dir_fails_closed() {
+        let dir = tempdir().unwrap();
+        let versions_dir = dir.path().join("versions/node");
+        fs::create_dir_all(&versions_dir).unwrap();
+        let original = fs::metadata(&versions_dir).unwrap().permissions();
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            fs::set_permissions(&versions_dir, fs::Permissions::from_mode(0o000)).unwrap();
+        }
+        let blocked = fs::read_dir(&versions_dir).is_err();
+        let result = resolve_installed_version_req(&versions_dir, "^20");
+        let _ = fs::set_permissions(&versions_dir, original);
+        if !blocked {
+            return;
+        }
+        assert!(
+            result.is_err(),
+            "unreadable versions directory must fail closed, got {result:?}"
         );
     }
 

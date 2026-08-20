@@ -422,13 +422,22 @@ impl Transaction {
                 // This reduces disk I/O and frees up temp space quickly
                 if let Err(e) = remove_file_if_present(&deb_path) {
                     tracing::error!("Failed to delete unpacked {}: {}", deb_path.display(), e);
-                    let mut guard = unpack_errors.lock().expect("lock poisoned");
+                    let mut guard = unpack_errors
+                        .lock()
+                        .unwrap_or_else(std::sync::PoisonError::into_inner);
                     guard.push((name.clone(), e));
                 }
             }
 
-            let files = installed_files.into_inner().unwrap_or_default();
-            let errors = unpack_errors.into_inner().unwrap_or_default();
+            // into_inner on a poisoned mutex still carries the data;
+            // into_inner's Err variant must not be swapped for a default,
+            // or installed-file tracking would be lost and rollback broken.
+            let files = installed_files
+                .into_inner()
+                .unwrap_or_else(std::sync::PoisonError::into_inner);
+            let errors = unpack_errors
+                .into_inner()
+                .unwrap_or_else(std::sync::PoisonError::into_inner);
             (files, errors)
         });
 

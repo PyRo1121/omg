@@ -86,8 +86,9 @@ pub struct DnfPackageManager {
     repo_cache: Arc<RwLock<Option<Vec<RepoPackage>>>>,
     /// Installed packages cache (name -> package info)
     installed_cache: Arc<DashMap<String, InstalledPackage>>,
-    /// Cache directory for binary metadata
-    cache_dir: PathBuf,
+    /// Cache directory for binary metadata (`None` when no user cache
+    /// directory can be determined, e.g. `$HOME` unset)
+    cache_dir: Option<PathBuf>,
 }
 
 /// Installed package information from RPM database
@@ -117,16 +118,19 @@ impl Default for DnfPackageManager {
 }
 
 impl DnfPackageManager {
-    /// Create a new DNF package manager instance
+    /// Create a new DNF package manager instance.
     ///
-    /// # Panics
-    /// Panics if no user cache directory can be determined (e.g., $HOME unset).
+    /// When no user cache directory can be determined (e.g. `$HOME` unset),
+    /// the on-disk metadata cache is disabled instead of panicking; queries
+    /// fall back to parsing sources directly.
     #[must_use]
     pub fn new() -> Self {
-        let cache_dir = dirs::cache_dir()
-            .expect("Cannot determine cache directory - ensure $HOME is set")
-            .join("omg")
-            .join("dnf");
+        let cache_dir = dirs::cache_dir().map(|dir| dir.join("omg").join("dnf"));
+        if cache_dir.is_none() {
+            tracing::warn!(
+                "Cannot determine user cache directory ($HOME unset); DNF metadata cache disabled"
+            );
+        }
 
         Self {
             rpm_db_path: PathBuf::from("/var/lib/rpm/rpmdb.sqlite"),
@@ -419,17 +423,32 @@ impl DnfPackageManager {
         Ok(packages)
     }
 
+    /// Path to the on-disk repository index, if a cache directory exists
+    fn repo_cache_file(&self) -> Option<PathBuf> {
+        self.cache_dir
+            .as_ref()
+            .map(|dir| dir.join("repo_index.bin"))
+    }
+
     /// Load repository metadata from yum.repos.d configuration
     async fn load_repo_metadata(&self) -> Result<Vec<RepoPackage>> {
         // Check in-memory cache first
-        if let Some(ref packages) = *self.repo_cache.read().expect("lock poisoned") {
+        if let Some(ref packages) = *self
+            .repo_cache
+            .read()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+        {
             return Ok(packages.clone());
         }
 
-        // Check binary cache on disk
-        let cache_file = self.cache_dir.join("repo_index.bin");
-        if let Ok(cached) = self.load_cached_index(&cache_file).await {
-            *self.repo_cache.write().expect("lock poisoned") = Some(cached.packages.clone());
+        // Check binary cache on disk (skipped when no cache directory exists)
+        if let Some(cache_file) = self.repo_cache_file()
+            && let Ok(cached) = self.load_cached_index(&cache_file).await
+        {
+            *self
+                .repo_cache
+                .write()
+                .unwrap_or_else(std::sync::PoisonError::into_inner) = Some(cached.packages.clone());
             return Ok(cached.packages);
         }
 
@@ -437,8 +456,13 @@ impl DnfPackageManager {
         let packages = self.parse_repo_metadata().await?;
 
         // Save to binary cache and update in-memory cache
-        self.save_cached_index(&cache_file, &packages).await?;
-        *self.repo_cache.write().expect("lock poisoned") = Some(packages.clone());
+        if let Some(cache_file) = self.repo_cache_file() {
+            self.save_cached_index(&cache_file, &packages).await?;
+        }
+        *self
+            .repo_cache
+            .write()
+            .unwrap_or_else(std::sync::PoisonError::into_inner) = Some(packages.clone());
 
         Ok(packages)
     }
@@ -460,7 +484,9 @@ impl DnfPackageManager {
 
     /// Save repository index to binary cache
     async fn save_cached_index(&self, path: &Path, packages: &[RepoPackage]) -> Result<()> {
-        fs::create_dir_all(&self.cache_dir).await?;
+        if let Some(cache_dir) = &self.cache_dir {
+            fs::create_dir_all(cache_dir).await?;
+        }
 
         let index = RepoIndex {
             packages: packages.to_vec(),
@@ -585,7 +611,10 @@ impl DnfPackageManager {
         if status.success() {
             // Invalidate caches after mutations
             self.installed_cache.clear();
-            let mut cache = self.repo_cache.write().expect("lock poisoned");
+            let mut cache = self
+                .repo_cache
+                .write()
+                .unwrap_or_else(std::sync::PoisonError::into_inner);
             *cache = None;
             Ok(())
         } else {
@@ -720,13 +749,17 @@ impl PackageManager for DnfPackageManager {
             // Clear caches and trigger metadata refresh
             self.installed_cache.clear();
             {
-                let mut cache = self.repo_cache.write().expect("lock poisoned");
+                let mut cache = self
+                    .repo_cache
+                    .write()
+                    .unwrap_or_else(std::sync::PoisonError::into_inner);
                 *cache = None;
             }
 
             // Remove binary cache to force re-parsing
-            let cache_file = self.cache_dir.join("repo_index.bin");
-            Self::invalidate_repo_cache_file(fs::remove_file(cache_file).await)?;
+            if let Some(cache_file) = self.repo_cache_file() {
+                Self::invalidate_repo_cache_file(fs::remove_file(cache_file).await)?;
+            }
 
             tokio::task::spawn_blocking({
                 let manager = Self::new();

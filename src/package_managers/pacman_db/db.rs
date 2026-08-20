@@ -1415,8 +1415,10 @@ pub async fn verify_aur_packages(package_names: &[String]) -> Result<Vec<String>
     let chunked_names = chunk_aur_names(package_names);
     let mut aur_packages = Vec::new();
 
-    // Create HTTP client
-    let client = reqwest::Client::builder().user_agent("omg/0.1.0").build()?;
+    // Shared client with the canonical user agent, timeouts, and pooling.
+    // The previous ad-hoc client sent a stale "omg/0.1.0" user agent and had
+    // no request timeout at all, so a hung AUR RPC call could stall forever.
+    let client = crate::core::http::shared_client();
 
     // Query AUR API in parallel
     let concurrency = std::cmp::min(8, chunked_names.len());

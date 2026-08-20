@@ -2,6 +2,8 @@
 
 use anyhow::Result;
 
+use super::dispatch_backend;
+
 #[cfg(feature = "arch")]
 mod arch;
 #[cfg(any(feature = "debian", feature = "debian-pure"))]
@@ -13,67 +15,25 @@ mod debian;
 mod generic;
 
 pub async fn update_fast() -> Result<()> {
-    #[cfg(any(feature = "debian", feature = "debian-pure"))]
-    if crate::core::env::distro::is_debian_like() {
-        return debian::update_fast().await;
+    dispatch_backend! {
+        debian: { debian::update_fast().await },
+        arch: { arch::update_fast().await },
+        generic: { generic::update_fast().await },
     }
-
-    #[cfg(feature = "arch")]
-    return arch::update_fast().await;
-
-    #[cfg(all(
-        not(feature = "arch"),
-        any(feature = "debian", feature = "debian-pure")
-    ))]
-    return debian::update_fast().await;
-
-    #[cfg(all(
-        not(feature = "arch"),
-        not(any(feature = "debian", feature = "debian-pure"))
-    ))]
-    generic::update_fast().await
 }
 
 pub async fn update_turbo() -> Result<()> {
-    #[cfg(any(feature = "debian", feature = "debian-pure"))]
-    if crate::core::env::distro::is_debian_like() {
-        return debian::update_turbo().await;
+    dispatch_backend! {
+        debian: { debian::update_turbo().await },
+        arch: { arch::update_turbo().await },
+        generic: { generic::update_turbo().await },
     }
-
-    #[cfg(feature = "arch")]
-    return arch::update_turbo().await;
-
-    #[cfg(all(
-        not(feature = "arch"),
-        any(feature = "debian", feature = "debian-pure")
-    ))]
-    return debian::update_turbo().await;
-
-    #[cfg(all(
-        not(feature = "arch"),
-        not(any(feature = "debian", feature = "debian-pure"))
-    ))]
-    generic::update_turbo().await
 }
 
 pub async fn update(check_only: bool, yes: bool, dry_run: bool) -> Result<()> {
-    #[cfg(any(feature = "debian", feature = "debian-pure"))]
-    if crate::core::env::distro::is_debian_like() {
-        return debian::update(check_only, yes, dry_run).await;
+    dispatch_backend! {
+        debian: { debian::update(check_only, yes, dry_run).await },
+        arch: { arch::update(check_only, yes, dry_run).await },
+        generic: { generic::update(check_only, yes, dry_run).await },
     }
-
-    #[cfg(feature = "arch")]
-    return arch::update(check_only, yes, dry_run).await;
-
-    #[cfg(all(
-        not(feature = "arch"),
-        any(feature = "debian", feature = "debian-pure")
-    ))]
-    return debian::update(check_only, yes, dry_run).await;
-
-    #[cfg(all(
-        not(feature = "arch"),
-        not(any(feature = "debian", feature = "debian-pure"))
-    ))]
-    generic::update(check_only, yes, dry_run).await
 }
