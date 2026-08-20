@@ -1326,6 +1326,18 @@ dependency-type: indirect
 chore(deps): update rust crate git2 to 0.20 [security]
 ### 🔧 Maintenance
 
+- Align repo with enterprise governance standard
+
+  - Add .github/CODEOWNERS for review ownership
+
+  - Remove TECH_DEBT.md (local audit register from prior session; process
+
+artifact, not product content)
+
+CONTRIBUTING/SECURITY/README + issue/PR templates + CI/dependabot/renovate
+
+were already present.
+
 - Drop stale dead_code allow on live RPM header parser
 - Drop unused Windows registry type and write-only install cache
 - Drop unused DNF RPM tag and type constants
