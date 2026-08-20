@@ -17,7 +17,7 @@ OMG provides unified package management for official repositories and AUR on Arc
 OMG's package management features:
 
 - **12-24x faster searches** than pacman (5-11ms vs 133ms)
-- **Unified AUR integration** — no separate AUR helper needed
+- **Unified AUR integration** — no separate AUR helper needed — see [AUR Support](./aur.md)
 - **Security grading** — packages rated before installation
 - **Policy enforcement** — organization-wide installation rules
 - **Transaction history** — full audit trail with rollback
