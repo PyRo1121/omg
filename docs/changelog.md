@@ -13,6 +13,44 @@ OMG is the fastest unified package manager for Linux, replacing pacman, yay, nvm
 ## [Unreleased]
 ### ♻️  Refactoring
 
+- Remove dead code, dedupe helpers, harden watch/IPC paths
+
+Audit cleanup slices:
+
+  - Dead code (~330 LOC): delete src/shims/, unused theme system,
+
+modern_ui::{print_step, print_dry_run_footer}, ui::print_error
+
+  - Gate test infrastructure (mock backend, OMG_TEST_MODE) behind
+
+#[cfg(any(test, debug_assertions))]; release binaries ship no test code
+
+  - run_task_watch is synchronous now; watch mode no longer falls back to
+
+watching "." and filters target/, node_modules/, .git/ events to stop
+
+rebuild loops
+
+  - Share length-delimited IPC framing in daemon::protocol (write_frame/
+
+read_frame + frame cap); sync client paths reuse it
+
+  - Consolidate truncate/format_bytes into core::format:
+
+* fixes UTF-8 panic in tea Cmd Debug output (raw byte slicing)
+
+* one canonical byte-size formatter (1 decimal, TB support)
+
+* deletes zero-caller debian_db helpers (validate_deb_archive,
+
+check_mirror_availability, estimate_time_remaining, format_speed);
+
+verify_package_hash is private now
+
+  - Fix release-only compile errors (closure type annotation, unused
+
+std::io imports); format touched files with rustfmt
+
 - Reuse atomic download helper for mise installs
 ### ⚡ Performance
 
@@ -25,6 +63,28 @@ OMG is the fastest unified package manager for Linux, replacing pacman, yay, nvm
 
 - **Ci**: Cross-platform install script and R2 release sync
 ### 🐛 Bug Fixes
+
+- Harden self-update integrity, credential safety, and fail-closed paths
+
+Verifies self-update archives against the pinned SHA-256 sidecar before
+
+extraction, parses --version as semver before URL construction, and caps
+
+download/preallocation sizes (C1 / TECH_DEBT).
+
+Stops persisting the license key to the on-disk event queue; it is now
+
+attached only at the network flush boundary (credential safety).
+
+Propagates real errors instead of silently swallowing them in runtime
+
+version-path resolution (hooks/mod.rs), consolidates package-manager
+
+backend selection behind a dispatch_backend! macro (install/remove/update),
+
+and isolates elevation onto a dedicated runtime thread when called from
+
+within an async context.
 
 - Fail closed on unreadable nvm alias files
 - Fail closed on /proc hardware probes instead of inventing specs
