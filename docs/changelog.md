@@ -62,6 +62,32 @@ std::io imports); format touched files with rustfmt
 - Reuse atomic download helper for mise installs
 ### ⚡ Performance
 
+- Cut local-only fluff from the repo
+
+Remove tooling, planning docs, and stale content that nothing references
+
+and that should remain local-only rather than ship in the repo:
+
+  - deploy-tui/: standalone Go deploy TUI + a tracked 4.9 MB compiled ELF
+
+binary (repo-hygiene violation); referenced by nothing
+
+  - conductor/: agent/planning harness (tracks, archived plans); unreferenced
+
+  - docs/: SCREENSHOTS-TODO, TRANSLATION-PLAN, dev/aur-module-refactoring,
+
+fast-status-deep-dive, search-performance-deep-dive, cli-internals
+
+  - scripts/: 12 unreferenced local dev/test/benchmark utilities; kept the 3
+
+referenced by CI (perf-regression, benchmark-chart, release-notes) and
+
+rewrote scripts/README to document only those
+
+Net -5,407 lines of text; tracked tree now ~144k lines. IDE/agent configs
+
+(.vscode .opencode .windsurf .sisyphus .ui-design) were already gitignored.
+
 - Remove unreferenced and superseded documentation
 
 Drop 13 docs that nothing links to from the docs hub, README, or any
