@@ -5,14 +5,13 @@
 //! ## Features
 //! - **`NO_COLOR` support**: Respects the [NO_COLOR standard](https://no-color.org/)
 //! - **TTY detection**: Auto-detects terminal capabilities
-//! - **Theme-aware**: Supports user-configurable color schemes
 //! - **Accessibility**: WCAG AA compliant contrast ratios
 
 use std::env;
 #[cfg(not(test))]
 use std::sync::OnceLock;
 
-use indicatif::{MultiProgress, ProgressBar, ProgressStyle};
+use indicatif::{ProgressBar, ProgressStyle};
 use owo_colors::OwoColorize;
 use supports_color::Stream;
 
@@ -20,104 +19,10 @@ use supports_color::Stream;
 // COLOR DETECTION & CONFIGURATION
 // ═══════════════════════════════════════════════════════════════════════════
 
-/// OMG color theme configuration
-#[derive(Debug, Clone, Copy)]
-pub struct ColorTheme {
-    pub primary: &'static str,
-    pub success: &'static str,
-    pub warning: &'static str,
-    pub error: &'static str,
-    pub info: &'static str,
-    pub muted: &'static str,
-}
-
-impl Default for ColorTheme {
-    fn default() -> Self {
-        Self::catppuccin()
-    }
-}
-
-impl ColorTheme {
-    /// Catppuccin-inspired color palette (default)
-    #[must_use]
-    pub const fn catppuccin() -> Self {
-        Self {
-            primary: "86",  // Cyan
-            success: "142", // Green
-            warning: "221", // Yellow
-            error: "203",   // Red
-            info: "117",    // Blue
-            muted: "245",   // Grey
-        }
-    }
-
-    /// Nord theme
-    #[must_use]
-    pub const fn nord() -> Self {
-        Self {
-            primary: "109", // Nordic cyan
-            success: "151", // Nordic green
-            warning: "222", // Nordic yellow
-            error: "167",   // Nordic red
-            info: "110",    // Nordic blue
-            muted: "244",   // Nordic grey
-        }
-    }
-
-    /// Gruvbox theme
-    #[must_use]
-    pub const fn gruvbox() -> Self {
-        Self {
-            primary: "142", // Gruvbox aqua
-            success: "142", // Gruvbox green
-            warning: "214", // Gruvbox yellow
-            error: "167",   // Gruvbox red
-            info: "109",    // Gruvbox blue
-            muted: "244",   // Gruvbox grey
-        }
-    }
-
-    /// Dracula theme
-    #[must_use]
-    pub const fn dracula() -> Self {
-        Self {
-            primary: "117", // Dracula cyan
-            success: "84",  // Dracula green
-            warning: "228", // Dracula yellow
-            error: "203",   // Dracula red
-            info: "141",    // Dracula purple
-            muted: "243",   // Dracula grey
-        }
-    }
-}
-
-use std::sync::atomic::{AtomicU8, Ordering};
-
-const THEME_CATPPUCCIN: u8 = 0;
-const THEME_NORD: u8 = 1;
-const THEME_GRUVBOX: u8 = 2;
-const THEME_DRACULA: u8 = 3;
-
-static CURRENT_THEME: AtomicU8 = AtomicU8::new(THEME_CATPPUCCIN);
 #[cfg(not(test))]
 static COLORS_ENABLED_CACHE: OnceLock<bool> = OnceLock::new();
 #[cfg(not(test))]
 static USE_UNICODE_CACHE: OnceLock<bool> = OnceLock::new();
-
-/// Get the current color theme
-#[must_use]
-pub fn theme() -> ColorTheme {
-    match CURRENT_THEME.load(Ordering::Relaxed) {
-        THEME_NORD => ColorTheme::nord(),
-        THEME_GRUVBOX => ColorTheme::gruvbox(),
-        THEME_DRACULA => ColorTheme::dracula(),
-        _ => ColorTheme::catppuccin(),
-    }
-}
-
-fn set_theme_id(id: u8) {
-    CURRENT_THEME.store(id, Ordering::Relaxed);
-}
 
 /// Detect if colors should be enabled
 ///
@@ -152,12 +57,6 @@ fn detect_colors_enabled() -> bool {
 
     // 3. Check terminal capabilities via supports-color crate
     supports_color::on(Stream::Stdout).is_some_and(|level| level.has_basic)
-}
-
-/// Check if we're in a TTY
-#[must_use]
-pub fn is_tty() -> bool {
-    console::user_attended()
 }
 
 /// Check if unicode icons should be used
@@ -200,7 +99,7 @@ pub fn maybe_color(text: &str, f: impl Fn(&str) -> String) -> String {
 /// Get an icon (unicode or ASCII fallback)
 #[inline]
 #[must_use]
-pub fn icon(unicode: &str, ascii: &str) -> String {
+fn icon(unicode: &str, ascii: &str) -> String {
     if use_unicode() {
         unicode.to_string()
     } else {
@@ -315,12 +214,6 @@ pub fn highlight(msg: &str) -> String {
     maybe_color(msg, |m| m.yellow().bold().to_string())
 }
 
-/// Count/number formatting (bold)
-#[must_use]
-pub fn count(n: usize) -> String {
-    maybe_color(&n.to_string(), |s| s.bold().to_string())
-}
-
 /// Size formatting (e.g., "1.5 MB")
 #[must_use]
 pub fn size(bytes: u64) -> String {
@@ -332,20 +225,6 @@ pub fn size(bytes: u64) -> String {
         format!("{:.1} MB", bytes as f64 / 1024.0 / 1024.0)
     } else {
         format!("{:.2} GB", bytes as f64 / 1024.0 / 1024.0 / 1024.0)
-    }
-}
-
-/// Duration formatting
-#[must_use]
-pub fn duration(ms: u64) -> String {
-    if ms < 1000 {
-        format!("{ms}ms")
-    } else if ms < 60_000 {
-        format!("{:.1}s", ms as f64 / 1000.0)
-    } else {
-        let mins = ms / 60_000;
-        let secs = (ms % 60_000) / 1000;
-        format!("{mins}m {secs}s")
     }
 }
 
@@ -381,76 +260,6 @@ pub fn spinner(msg: &str) -> ProgressBar {
     pb.set_message(msg.to_string());
     pb.enable_steady_tick(std::time::Duration::from_millis(80));
     pb
-}
-
-/// Create a progress bar for determinate progress
-#[must_use]
-#[expect(clippy::expect_used, clippy::literal_string_with_formatting_args)] // Static indicatif templates are always valid; braces are template syntax not Rust format args
-pub fn progress_bar(total: u64, msg: &str) -> ProgressBar {
-    let pb = ProgressBar::new(total);
-
-    let template = if colors_enabled() {
-        "{msg} [{bar:40.cyan/blue}] {pos}/{len} ({percent}%)"
-    } else {
-        "{msg} [{bar:40}] {pos}/{len} ({percent}%)"
-    };
-
-    pb.set_style(
-        ProgressStyle::default_bar()
-            .template(template)
-            .expect("static template")
-            .progress_chars(if use_unicode() { "█▓▒░" } else { "#=" }),
-    );
-    pb.set_message(msg.to_string());
-    pb
-}
-
-/// Create a download progress bar with speed and ETA
-#[must_use]
-#[expect(clippy::expect_used, clippy::literal_string_with_formatting_args)] // Static indicatif templates are always valid; braces are template syntax not Rust format args
-pub fn download_bar(total: u64, filename: &str) -> ProgressBar {
-    let pb = ProgressBar::new(total);
-
-    let filename_colored = if colors_enabled() {
-        filename.cyan().to_string()
-    } else {
-        filename.to_string()
-    };
-
-    let template = if colors_enabled() {
-        "{msg}\n  [{bar:50.green/dim}] {bytes}/{total_bytes} ({bytes_per_sec}, {eta})"
-    } else {
-        "{msg}\n  [{bar:50}] {bytes}/{total_bytes} ({bytes_per_sec}, {eta})"
-    };
-
-    pb.set_style(
-        ProgressStyle::default_bar()
-            .template(template)
-            .expect("static template")
-            .progress_chars(if use_unicode() { "━━╸" } else { "=>" }),
-    );
-    pb.set_message(format!("Downloading {filename_colored}"));
-    pb
-}
-
-/// Create a multi-progress container for parallel operations
-#[must_use]
-pub fn multi_progress() -> MultiProgress {
-    MultiProgress::new()
-}
-
-// ═══════════════════════════════════════════════════════════════════════════
-// THEME INITIALIZATION
-// ═══════════════════════════════════════════════════════════════════════════
-
-pub fn init_theme() {
-    let id = match env::var("OMG_THEME").as_deref() {
-        Ok("nord") => THEME_NORD,
-        Ok("gruvbox") => THEME_GRUVBOX,
-        Ok("dracula") => THEME_DRACULA,
-        Ok("catppuccin" | _) | Err(_) => THEME_CATPPUCCIN,
-    };
-    set_theme_id(id);
 }
 
 #[cfg(test)]
@@ -501,12 +310,5 @@ mod tests {
         assert_eq!(size(1024), "1.0 KB");
         assert_eq!(size(1024 * 1024), "1.0 MB");
         assert_eq!(size(1024 * 1024 * 1024), "1.00 GB");
-    }
-
-    #[test]
-    fn test_duration_formatting() {
-        assert_eq!(duration(500), "500ms");
-        assert_eq!(duration(1500), "1.5s");
-        assert_eq!(duration(65000), "1m 5s");
     }
 }

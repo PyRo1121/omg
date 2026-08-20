@@ -22,7 +22,7 @@ impl LocalCommandRunner for RunCommand {
             .map_err(|err| anyhow::anyhow!(err))?;
 
         if self.watch {
-            task_runner::run_task_watch(&self.task, &self.args, backend).await?;
+            task_runner::run_task_watch(&self.task, &self.args, backend)?;
         } else if self.parallel {
             task_runner::run_tasks_parallel(&self.task, &self.args, backend).await?;
         } else {

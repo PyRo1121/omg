@@ -33,6 +33,8 @@ use std::os::unix::net::UnixStream;
 
 #[cfg(unix)]
 use anyhow::{Context, Result};
+#[cfg(unix)]
+use omg_lib::core::format::truncate;
 
 #[cfg(unix)]
 fn main() {
@@ -263,24 +265,6 @@ fn send_info_request(stream: &mut UnixStream, package: &str) -> Result<()> {
     }
 
     Ok(())
-}
-
-/// Truncate a string to a maximum length, respecting UTF-8 char boundaries.
-/// Appends "..." if truncated.
-fn truncate(s: &str, max: usize) -> String {
-    if s.len() <= max {
-        return s.to_string();
-    }
-
-    let target_len = max.saturating_sub(3);
-    // Find the last valid UTF-8 char boundary at or before target_len
-    let truncate_at = s
-        .char_indices()
-        .take_while(|(i, _)| *i <= target_len)
-        .last()
-        .map_or(0, |(i, c)| i + c.len_utf8());
-
-    format!("{}...", &s[..truncate_at])
 }
 
 // Windows stub - fast queries not supported (no daemon)

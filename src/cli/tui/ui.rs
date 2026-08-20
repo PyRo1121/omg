@@ -3,6 +3,7 @@
 //! Inspired by bottom, lazygit, and k9s - modern, beautiful, and functional.
 
 use crate::cli::tui::app::{App, Tab};
+use crate::core::format::format_bytes;
 use ratatui::{
     Frame,
     layout::{Alignment, Constraint, Direction, Layout, Rect},
@@ -1405,23 +1406,4 @@ fn draw_popup(f: &mut Frame, app: &App) {
     );
 
     f.render_widget(popup, popup_area);
-}
-
-// Helper functions
-fn format_bytes(bytes: u64) -> String {
-    const UNITS: &[&str] = &["B", "KB", "MB", "GB", "TB"];
-    let mut size = bytes as f64;
-    let mut unit_index = 0;
-
-    while size >= 1024.0 && unit_index < UNITS.len() - 1 {
-        size /= 1024.0;
-        unit_index += 1;
-    }
-
-    let unit = UNITS.get(unit_index).unwrap_or(&"B");
-    if unit_index == 0 {
-        format!("{bytes} {unit}")
-    } else {
-        format!("{size:.1} {unit}")
-    }
 }

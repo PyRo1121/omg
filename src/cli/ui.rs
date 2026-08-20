@@ -164,12 +164,6 @@ pub fn print_success(msg: impl Display) {
     println!("  {} {}", icon_style.render("✓"), msg);
 }
 
-/// A standard error message with a world-class icon.
-pub fn print_error(msg: impl Display) {
-    let icon_style = Style::new().foreground(Color::Red).bold(true);
-    println!("  {} {}", icon_style.render("✗"), msg);
-}
-
 /// A standard warning message with a world-class icon.
 pub fn print_warning(msg: impl Display) {
     let icon_style = Style::new().foreground(Color::Yellow).bold(true);

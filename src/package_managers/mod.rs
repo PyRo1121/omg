@@ -36,6 +36,9 @@ pub mod dnf;
 // macOS Homebrew support - can be enabled via feature or auto-detected on macOS
 #[cfg(any(feature = "macos", target_os = "macos"))]
 pub mod homebrew;
+/// Mock backend for integration tests. Debug/test builds only: production
+/// binaries must never silently substitute a fake package manager.
+#[cfg(any(test, debug_assertions))]
 pub mod mock;
 #[cfg(feature = "arch")]
 pub mod pacman_db;
@@ -304,6 +307,8 @@ pub fn get_package_manager() -> anyhow::Result<Arc<dyn PackageManager>> {
     // Feature-gated re-exports; not all features compile the same subset
     use crate::core::env::distro::{Distro, detect_distro};
 
+    // Test-mode mock substitution is compiled out of release binaries.
+    #[cfg(any(test, debug_assertions))]
     if crate::core::paths::test_mode() {
         let distro = std::env::var("OMG_TEST_DISTRO").unwrap_or_else(|_| "arch".to_string());
         return Ok(Arc::new(mock::MockPackageManager::new(&distro)));

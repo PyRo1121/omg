@@ -975,8 +975,9 @@ fn ensure_js_package_manager(command: &str) -> Result<()> {
 // Runtime resolution functions moved to core::runtime_resolver module
 
 /// Run a task in watch mode - re-run on file changes
-#[expect(clippy::unused_async)] // Async for API consistency with other task functions
-pub async fn run_task_watch(
+///
+/// Synchronous and blocking by design: the process lives in the watch loop.
+pub fn run_task_watch(
     task_name: &str,
     extra_args: &[String],
     backend_override: Option<RuntimeBackend>,
@@ -996,12 +997,25 @@ pub async fn run_task_watch(
         eprintln!("{} Task failed: {error}", "!".yellow());
     }
 
-    // Set up file watcher
+    // Set up file watcher. Events under build-artifact/VCS directories are
+    // dropped: without this filter, watching a project root turns `target/`
+    // writes from the triggered task itself into an event storm and a
+    // self-sustaining rebuild loop.
     let (tx, rx) = channel();
     let mut watcher = RecommendedWatcher::new(
-        move |res| {
+        move |res: std::result::Result<notify::Event, notify::Error>| {
             if let Ok(event) = res {
-                let _ = tx.send(event);
+                let ignored = event.paths.iter().any(|path| {
+                    path.components().any(|component| {
+                        matches!(
+                            component.as_os_str().to_str(),
+                            Some("target" | "node_modules" | ".git")
+                        )
+                    })
+                });
+                if !ignored {
+                    let _ = tx.send(event);
+                }
             }
         },
         Config::default().with_poll_interval(Duration::from_millis(500)),
@@ -1009,19 +1023,32 @@ pub async fn run_task_watch(
 
     let current_dir = std::env::current_dir()?;
 
-    // Watch common source directories
-    let watch_dirs = ["src", "lib", "app", "pages", "components", "tests", "."];
+    // Watch conventional source directories. Only when none exist do we fall
+    // back to the project root (with the noise filter above as protection).
+    let watch_dirs = ["src", "lib", "app", "pages", "components", "tests"];
+    let mut watched_any = false;
     for dir in watch_dirs {
         let path = current_dir.join(dir);
-        if path.exists()
-            && let Err(error) = watcher.watch(&path, RecursiveMode::Recursive)
-        {
-            eprintln!(
-                "{} Failed to watch {}: {error}",
-                "!".yellow(),
-                path.display()
-            );
+        if !path.exists() {
+            continue;
         }
+        match watcher.watch(&path, RecursiveMode::Recursive) {
+            Ok(()) => watched_any = true,
+            Err(error) => {
+                eprintln!(
+                    "{} Failed to watch {}: {error}",
+                    "!".yellow(),
+                    path.display()
+                );
+            }
+        }
+    }
+    if !watched_any {
+        watcher
+            .watch(&current_dir, RecursiveMode::Recursive)
+            .map_err(|error| {
+                anyhow::anyhow!("Failed to watch {}: {error}", current_dir.display())
+            })?;
     }
 
     println!("  {} Watching for changes...\n", "→".dimmed());

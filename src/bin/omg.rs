@@ -516,7 +516,6 @@ async fn async_main(args: Vec<String>) -> Result<()> {
     // Record startup time for telemetry
     omg_lib::core::telemetry::record_startup_time();
 
-    omg_lib::cli::style::init_theme();
     let cmd_start = omg_lib::core::analytics::start_timer();
     let cli = Cli::parse_from(&args);
 
