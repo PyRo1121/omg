@@ -16,7 +16,7 @@
 //! - [`package_managers`] - Arch (ALPM) and Debian (apt) backends
 //! - [`runtimes`] - Node, Python, Rust, Go, Ruby, Java, Bun version managers
 
-#![allow(clippy::missing_const_for_fn)] // Many of these can't actually be const
+#![expect(clippy::missing_const_for_fn)] // Many of these can't actually be const
 
 pub mod cli;
 pub mod config;

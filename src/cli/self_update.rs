@@ -203,8 +203,7 @@ async fn fetch_latest_version() -> Result<Version> {
 /// The `(arch, target)` fragment of the artifacts built by
 /// `.github/workflows/release.yml`, for each distro this updater supports.
 ///
-/// Returns `None` when no matching artifact exists (Windows releases are
-/// `.zip` archives, which this updater does not handle).
+/// Returns `None` when no matching artifact exists.
 fn release_target(distro: Distro) -> Option<(&'static str, &'static str)> {
     match distro {
         Distro::Arch => Some(("x86_64", "linux-arch")),
@@ -212,7 +211,7 @@ fn release_target(distro: Distro) -> Option<(&'static str, &'static str)> {
         Distro::Ubuntu => Some(("x86_64", "linux-ubuntu")),
         Distro::Fedora => Some(("x86_64", "linux-fedora")),
         Distro::MacOS => Some(("aarch64", "darwin")),
-        Distro::Windows | Distro::Unknown => None,
+        Distro::Unknown => None,
     }
 }
 
@@ -396,9 +395,9 @@ mod tests {
     }
 
     #[test]
-    fn parse_checksum_accepts_windows_crlf_and_uppercase_hex() {
+    fn parse_checksum_accepts_crlf_and_uppercase_hex() {
         let body = format!(
-            "{}  omg-v1.2.3-x86_64-windows.zip.sha256...\r\n",
+            "{}  omg-v1.2.3-x86_64-linux-arch.tar.gz.sha256...\r\n",
             "B".repeat(64)
         );
         assert_eq!(
@@ -451,7 +450,6 @@ mod tests {
             Some(("x86_64", "linux-fedora"))
         );
         assert_eq!(release_target(Distro::MacOS), Some(("aarch64", "darwin")));
-        assert_eq!(release_target(Distro::Windows), None);
         assert_eq!(release_target(Distro::Unknown), None);
     }
 

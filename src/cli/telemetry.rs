@@ -198,33 +198,38 @@ pub async fn privacy_status() -> Result<()> {
 
 /// Export all user data (Right to Portability)
 pub async fn export_data(output_path: Option<&str>) -> Result<()> {
-    let license = license::load_license()
-        .context("No license found. Activate with 'omg license activate <key>' first.")?;
-
     println!(
-        "  {} Requesting data export...",
+        "  {} Collecting local data...",
         style::maybe_color("⏳", |_| "⏳".to_string())
     );
 
-    let response = crate::core::http::shared_client()
-        .post(format!("{PRIVACY_API_URL}/export"))
-        .json(&serde_json::json!({ "license_key": license.key }))
-        .timeout(std::time::Duration::from_secs(30))
-        .send()
-        .await
-        .context("Failed to connect to privacy API")?;
+    let remote = match license::load_license() {
+        Some(license) => {
+            let response = crate::core::http::shared_client()
+                .post(format!("{PRIVACY_API_URL}/export"))
+                .json(&serde_json::json!({ "license_key": license.key }))
+                .timeout(std::time::Duration::from_secs(30))
+                .send()
+                .await
+                .context("Failed to connect to privacy API")?;
 
-    if !response.status().is_success() {
-        let err: serde_json::Value = response.json().await.unwrap_or_default();
-        anyhow::bail!(
-            "Export failed: {}",
-            err["error"].as_str().unwrap_or("Unknown error")
-        );
-    }
+            if !response.status().is_success() {
+                let error: serde_json::Value = response.json().await.unwrap_or_default();
+                anyhow::bail!(
+                    "Export failed: {}",
+                    error["error"].as_str().unwrap_or("Unknown error")
+                );
+            }
+            Some(response.json::<serde_json::Value>().await?)
+        }
+        None => None,
+    };
 
-    let data: serde_json::Value = response.json().await?;
-
-    // Determine output path
+    let data = serde_json::json!({
+        "exported_at": jiff::Timestamp::now().to_string(),
+        "local": collect_local_privacy_data()?,
+        "remote": remote,
+    });
     let path = output_path.map_or_else(
         || {
             let date = jiff::Zoned::now().date().to_string();
@@ -232,18 +237,46 @@ pub async fn export_data(output_path: Option<&str>) -> Result<()> {
         },
         String::from,
     );
-
-    // Write to file
-    let content = serde_json::to_string_pretty(&data)?;
-    std::fs::write(&path, &content)?;
+    crate::core::safe_ops::atomic_write_file_sync(&path, serde_json::to_vec_pretty(&data)?)?;
 
     println!(
         "  {} Data exported to: {}",
         style::maybe_color("✓", |t| t.green().to_string()),
         style::path(&path)
     );
-
     Ok(())
+}
+
+fn collect_local_privacy_data() -> Result<serde_json::Value> {
+    let data_dir = crate::core::paths::data_dir();
+    let config_path = crate::core::paths::config_dir().join("config.toml");
+    let mut files = serde_json::Map::new();
+
+    for name in [
+        "usage.json",
+        "telemetry_queue.json",
+        "telemetry_session.json",
+        "session.json",
+        "event_queue.json",
+        "history.json",
+    ] {
+        let path = data_dir.join(name);
+        if path.is_file() {
+            let bytes = std::fs::read(&path)
+                .with_context(|| format!("Failed to read {}", path.display()))?;
+            let value = serde_json::from_slice(&bytes)
+                .with_context(|| format!("Failed to parse {}", path.display()))?;
+            files.insert(name.to_string(), value);
+        }
+    }
+
+    if config_path.is_file() {
+        let config = std::fs::read_to_string(&config_path)
+            .with_context(|| format!("Failed to read {}", config_path.display()))?;
+        files.insert("config.toml".to_string(), serde_json::Value::String(config));
+    }
+
+    Ok(serde_json::Value::Object(files))
 }
 
 /// Request data deletion (Right to Erasure)

@@ -8,7 +8,7 @@
 static GLOBAL: mimalloc::MiMalloc = mimalloc::MiMalloc;
 
 #[cfg(unix)]
-use anyhow::Result;
+use anyhow::{Context, Result};
 #[cfg(unix)]
 use clap::Parser;
 #[cfg(unix)]
@@ -73,8 +73,14 @@ async fn main() -> Result<()> {
         .with(sentry_layer)
         .init();
 
-    // Determine socket path
+    // Determine socket path and establish a private, user-owned runtime directory.
     let socket_path = args.socket.unwrap_or_else(paths::socket_path);
+    paths::prepare_socket_parent(&socket_path).with_context(|| {
+        format!(
+            "Refusing insecure daemon socket directory for {}",
+            socket_path.display()
+        )
+    })?;
 
     tracing::info!("Starting OMG daemon (omgd) v{}", env!("CARGO_PKG_VERSION"));
 

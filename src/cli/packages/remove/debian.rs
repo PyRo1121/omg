@@ -39,7 +39,7 @@ pub async fn remove(packages: &[String], recursive: bool) -> Result<()> {
     Ok(())
 }
 
-#[allow(clippy::unnecessary_wraps)]
+#[expect(clippy::unnecessary_wraps)]
 pub fn remove_dry_run(packages: &[String], recursive: bool) -> Result<()> {
     crate::cli::modern_ui::print_phase_header("🗑️", "Remove Preview", "dry run");
     println!();

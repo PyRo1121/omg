@@ -757,8 +757,10 @@ fn draw_packages(f: &mut Frame, area: Rect, app: &App) {
                         }),
                 )),
                 Cell::from(Span::styled(
-                    #[allow(clippy::implicit_clone)]
-                    // Version is feature-gated type alias; .to_string() is the required conversion
+                    #[allow(
+                        clippy::implicit_clone,
+                        reason = "the package version type varies by backend feature"
+                    )]
                     pkg.version.to_string(),
                     base_style.fg(colors::ACCENT_GREEN),
                 )),

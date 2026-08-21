@@ -26,7 +26,7 @@ pub async fn install(packages: &[String], yes: bool, dry_run: bool) -> Result<()
     }
 
     if dry_run {
-        return install_dry_run(packages);
+        return install_dry_run(packages).await;
     }
 
     dispatch_backend! {
@@ -37,18 +37,30 @@ pub async fn install(packages: &[String], yes: bool, dry_run: bool) -> Result<()
 }
 
 pub fn install_dry_run_cli(packages: &[String]) -> Result<bool> {
-    if packages.is_empty() {
-        return Ok(false);
-    }
-    install_dry_run(packages)?;
-    Ok(true)
+    crate::core::security::validate_package_names_or_files(packages)?;
+    // Source resolution can require an AUR request, so the synchronous startup
+    // fast path must defer to the normal asynchronous command implementation.
+    Ok(false)
 }
 
-#[allow(clippy::unnecessary_wraps)]
-fn install_dry_run(packages: &[String]) -> Result<()> {
+#[cfg(feature = "arch")]
+async fn install_dry_run(packages: &[String]) -> Result<()> {
     dispatch_backend! {
         debian: { debian::install_dry_run(packages) },
-        arch: { arch::install_dry_run(packages) },
+        arch: { arch::install_dry_run(packages).await },
         generic: { generic::install_dry_run(packages) },
     }
+}
+
+#[cfg(all(
+    not(feature = "arch"),
+    any(feature = "debian", feature = "debian-pure")
+))]
+fn install_dry_run(packages: &[String]) -> impl std::future::Future<Output = Result<()>> + use<'_> {
+    std::future::ready(debian::install_dry_run(packages))
+}
+
+#[cfg(not(any(feature = "arch", feature = "debian", feature = "debian-pure")))]
+fn install_dry_run(packages: &[String]) -> impl std::future::Future<Output = Result<()>> + use<'_> {
+    std::future::ready(generic::install_dry_run(packages))
 }

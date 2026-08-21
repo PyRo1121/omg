@@ -40,6 +40,18 @@ pub async fn update_turbo() -> Result<()> {
         .await
 }
 
+fn history_changes(updates: &[UpdateInfo]) -> Vec<crate::core::history::PackageChange> {
+    updates
+        .iter()
+        .map(|update| crate::core::history::PackageChange {
+            name: update.name.clone(),
+            old_version: Some(update.old_version.clone()),
+            new_version: Some(update.new_version.clone()),
+            source: update.repo.clone(),
+        })
+        .collect()
+}
+
 pub async fn update(check_only: bool, yes: bool, dry_run: bool) -> Result<()> {
     use owo_colors::OwoColorize;
 
@@ -102,7 +114,7 @@ pub async fn update(check_only: bool, yes: bool, dry_run: bool) -> Result<()> {
     all_updates.extend(official_updates);
 
     let (_aur_count, aur_packages) = {
-        if crate::core::env::distro::is_debian_like() {
+        if crate::core::paths::test_mode() || crate::core::env::distro::is_debian_like() {
             (0, Vec::new())
         } else {
             let aur_pb = modern_ui::modern_spinner("Checking", "AUR packages");
@@ -190,96 +202,106 @@ pub async fn update(check_only: bool, yes: bool, dry_run: bool) -> Result<()> {
     println!();
     modern_ui::print_section("Installing updates");
 
+    let history = crate::core::history::HistoryManager::new()?;
+    let changes = history_changes(&all_updates);
     let mut installed_count = 0;
     let mut failed_count = 0;
 
-    if official_count > 0 {
-        if needs_deferred_sync {
-            let pb = modern_ui::modern_spinner(
-                "Syncing & upgrading",
-                &format!("{official_count} official packages"),
-            );
-            crate::package_managers::arch::run_privileged_operation("fullupdate", &[], || async {
-                Ok(())
-            })
-            .await?;
-            modern_ui::finish_success(
-                &pb,
-                "Synced & upgraded",
-                &format!("{official_count} packages"),
-            );
-            installed_count += official_count;
-        } else {
-            let pb = modern_ui::modern_spinner(
-                "Upgrading",
-                &format!("{official_count} official packages"),
-            );
-            pm.update().await?;
-            modern_ui::finish_success(&pb, "Upgraded", &format!("{official_count} packages"));
-            installed_count += official_count;
+    let operation_result: Result<()> = async {
+        if official_count > 0 {
+            if needs_deferred_sync {
+                let pb = modern_ui::modern_spinner(
+                    "Syncing & upgrading",
+                    &format!("{official_count} official packages"),
+                );
+                crate::package_managers::arch::run_privileged_operation(
+                    "fullupdate",
+                    &[],
+                    || async { Ok(()) },
+                )
+                .await?;
+                modern_ui::finish_success(
+                    &pb,
+                    "Synced & upgraded",
+                    &format!("{official_count} packages"),
+                );
+                installed_count += official_count;
+            } else {
+                let pb = modern_ui::modern_spinner(
+                    "Upgrading",
+                    &format!("{official_count} official packages"),
+                );
+                pm.update().await?;
+                modern_ui::finish_success(&pb, "Upgraded", &format!("{official_count} packages"));
+                installed_count += official_count;
+            }
         }
-    }
 
-    if !aur_packages.is_empty() {
-        println!();
-        println!(
-            "  {} Building {} AUR package{} in parallel...",
-            "→".magenta(),
-            aur_packages.len(),
-            if aur_packages.len() == 1 { "" } else { "s" }
-        );
+        if !aur_packages.is_empty() {
+            println!();
+            println!(
+                "  {} Building {} AUR package{} in parallel...",
+                "→".magenta(),
+                aur_packages.len(),
+                if aur_packages.len() == 1 { "" } else { "s" }
+            );
 
-        use crate::package_managers::aur::{BuildJob, ParallelBuilder};
-        use std::sync::Arc;
+            use crate::package_managers::aur::{BuildJob, ParallelBuilder};
+            use std::sync::Arc;
 
-        let client = Arc::new(crate::package_managers::AurClient::new()?);
-        let jobs: Vec<BuildJob> = aur_packages
-            .iter()
-            .map(|pkg| BuildJob::new(pkg.clone(), Vec::new()))
-            .collect();
-        let max_concurrent = std::env::var("OMG_AUR_PARALLEL")
-            .ok()
-            .and_then(|v| v.parse().ok())
-            .unwrap_or(2);
-        let builder = ParallelBuilder::new(client, max_concurrent);
+            let client = Arc::new(crate::package_managers::AurClient::new()?);
+            let jobs: Vec<BuildJob> = aur_packages
+                .iter()
+                .map(|pkg| BuildJob::new(pkg.clone(), Vec::new()))
+                .collect();
+            let max_concurrent = std::env::var("OMG_AUR_PARALLEL")
+                .ok()
+                .and_then(|v| v.parse().ok())
+                .unwrap_or(2);
+            let builder = ParallelBuilder::new(client, max_concurrent);
 
-        if let Err(e) = builder.build_packages(jobs).await {
-            println!("  {} Failed to build AUR packages: {}", "✗".red(), e);
-            failed_count += aur_packages.len();
-        } else {
-            installed_count += aur_packages.len();
+            if let Err(e) = builder.build_packages(jobs).await {
+                println!("  {} Failed to build AUR packages: {}", "✗".red(), e);
+                failed_count += aur_packages.len();
+            } else {
+                installed_count += aur_packages.len();
+            }
         }
+
+        if failed_count > 0 {
+            modern_ui::print_warning(&format!(
+                "Upgraded {installed_count} packages, {failed_count} failed"
+            ));
+            anyhow::bail!("{failed_count} package(s) failed to update");
+        }
+        if installed_count > 0 {
+            modern_ui::print_success(&format!("Upgraded {installed_count} packages"));
+        } else {
+            modern_ui::print_up_to_date();
+        }
+        Ok(())
     }
+    .await;
 
     let duration_ms = start_time.elapsed().as_millis() as u64;
-    let success = failed_count == 0;
-    let error_msg = if failed_count > 0 {
-        Some(format!("{failed_count} packages failed to update"))
-    } else {
-        None
-    };
+    let error_message = operation_result.as_ref().err().map(ToString::to_string);
     crate::core::usage::track_update_timed(
         installed_count,
         duration_ms,
-        success,
-        error_msg.as_deref(),
+        operation_result.is_ok(),
+        error_message.as_deref(),
     );
-
-    if failed_count > 0 {
-        modern_ui::print_warning(&format!(
-            "Upgraded {installed_count} packages, {failed_count} failed"
-        ));
-        anyhow::bail!("{failed_count} package(s) failed to update");
-    }
-    if installed_count > 0 {
-        modern_ui::print_success(&format!("Upgraded {installed_count} packages"));
-    } else {
-        modern_ui::print_up_to_date();
-    }
-    Ok(())
+    history.finish_operation(
+        crate::core::history::TransactionType::Update,
+        changes,
+        operation_result,
+    )
 }
 
-#[allow(clippy::unnecessary_wraps)]
+#[allow(
+    clippy::unnecessary_wraps,
+    reason = "signature is shared with fallible backend dry-run implementations"
+)]
 fn update_dry_run(updates: &[UpdateInfo]) -> Result<()> {
     ui::print_header("OMG", "Dry Run - Update Preview");
     ui::print_spacer();
@@ -353,7 +375,31 @@ async fn try_daemon_list_updates() -> Option<Vec<UpdateInfo>> {
 }
 
 #[cfg(not(unix))]
-#[allow(clippy::unused_async)]
+#[allow(
+    clippy::unused_async,
+    reason = "the non-Unix implementation preserves the asynchronous command interface"
+)]
 async fn try_daemon_list_updates() -> Option<Vec<UpdateInfo>> {
     None
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn update_history_preserves_versions_and_sources() {
+        let changes = history_changes(&[UpdateInfo {
+            name: "example".to_string(),
+            old_version: "1.0".to_string(),
+            new_version: "2.0".to_string(),
+            repo: "core".to_string(),
+        }]);
+
+        assert_eq!(changes.len(), 1);
+        assert_eq!(changes[0].name, "example");
+        assert_eq!(changes[0].old_version.as_deref(), Some("1.0"));
+        assert_eq!(changes[0].new_version.as_deref(), Some("2.0"));
+        assert_eq!(changes[0].source, "core");
+    }
 }

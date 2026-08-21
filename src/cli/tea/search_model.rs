@@ -397,7 +397,10 @@ async fn fetch_search_results(query: &str) -> SearchMsg {
 // CONVERSIONS
 // ═══════════════════════════════════════════════════════════════════════════════
 
-#[allow(clippy::implicit_clone)] // Version type varies by feature flag
+#[allow(
+    clippy::implicit_clone,
+    reason = "the package version type varies by backend feature"
+)]
 impl From<SyncPackage> for SearchResult {
     fn from(pkg: SyncPackage) -> Self {
         Self {
@@ -417,7 +420,10 @@ impl From<SyncPackage> for SearchResult {
     }
 }
 
-#[allow(clippy::implicit_clone)] // Version type varies by feature flag
+#[allow(
+    clippy::implicit_clone,
+    reason = "the package version type varies by backend feature"
+)]
 impl From<Package> for SearchResult {
     fn from(pkg: Package) -> Self {
         let source = match pkg.source {

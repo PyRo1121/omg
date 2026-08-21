@@ -7,7 +7,7 @@ use dialoguer::Confirm;
 
 use crate::cli::style;
 use crate::config::Settings;
-use crate::core::RuntimeBackend;
+use crate::core::{RuntimeBackend, paths};
 
 /// Get a configuration value
 pub fn get(key: &str) -> Result<()> {
@@ -28,10 +28,7 @@ pub fn get(key: &str) -> Result<()> {
         "aur.makeflags" => settings.aur.makeflags.unwrap_or_default(),
         "runtime_backend" => format!("{:?}", settings.runtime_backend).to_lowercase(),
         "default_shell" => settings.default_shell,
-        _ => {
-            println!("{} Unknown key: {}", style::error("✗"), key);
-            return Ok(());
-        }
+        _ => anyhow::bail!("Unknown config key: '{key}'"),
     };
 
     println!("{value}");
@@ -379,9 +376,7 @@ pub fn path() -> Result<()> {
 
 /// Get the configuration file path
 fn config_path() -> String {
-    dirs::config_dir()
-        .unwrap_or_else(|| std::path::PathBuf::from("~/.config"))
-        .join("omg")
+    paths::config_dir()
         .join("config.toml")
         .display()
         .to_string()

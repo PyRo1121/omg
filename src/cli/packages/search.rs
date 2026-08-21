@@ -33,7 +33,10 @@ struct DisplayPackage {
 }
 
 impl DisplayPackage {
-    #[allow(clippy::implicit_clone)] // Version type varies by feature flag
+    #[allow(
+        clippy::implicit_clone,
+        reason = "the package version type varies by backend feature"
+    )]
     fn from_package(p: Package) -> Self {
         Self {
             name: p.name,
@@ -62,34 +65,27 @@ impl DisplayPackage {
     }
 }
 
-#[allow(clippy::fn_params_excessive_bools)] // API requires distinct boolean flags
-pub async fn search(query: &str, detailed: bool, interactive: bool, no_aur: bool) -> Result<()> {
-    search_internal(query, detailed, interactive, false, no_aur, 50).await
+pub async fn search(query: &str, detailed: bool, no_aur: bool) -> Result<()> {
+    search_internal(query, detailed, false, no_aur, 50).await
 }
 
-#[expect(clippy::fn_params_excessive_bools)] // API requires distinct boolean flags
 pub async fn search_with_json(
     query: &str,
     detailed: bool,
-    interactive: bool,
     json: bool,
     no_aur: bool,
     limit: usize,
 ) -> Result<()> {
-    search_internal(query, detailed, interactive, json, no_aur, limit).await
+    search_internal(query, detailed, json, no_aur, limit).await
 }
 
-#[expect(clippy::fn_params_excessive_bools)] // Internal function matching public API
 async fn search_internal(
     query: &str,
     detailed: bool,
-    interactive: bool,
     json: bool,
     no_aur: bool,
     limit: usize,
 ) -> Result<()> {
-    reject_unimplemented_interactive_search(interactive)?;
-
     let start_time = Instant::now();
 
     validate_search_query(query)?;
@@ -101,13 +97,26 @@ async fn search_internal(
         if no_aur {
             return Ok(Vec::new());
         }
-        search_aur_packages(query, detailed).await
+        tokio::time::timeout(
+            std::time::Duration::from_secs(4),
+            search_aur_packages(query, detailed),
+        )
+        .await
+        .context("AUR search timed out")?
     };
 
-    // Run official + AUR searches concurrently (saves ~50-100ms vs sequential)
-    let (official_packages, aur_packages) = tokio::try_join!(official_search, aur_search)?;
-
-    let mut display_packages = official_packages;
+    // Official results are authoritative and remain useful when optional AUR
+    // enrichment is unavailable. Run both concurrently, but bound AUR latency.
+    let (official_result, aur_result) = tokio::join!(official_search, aur_search);
+    let mut display_packages = official_result?;
+    let aur_packages = match aur_result {
+        Ok(packages) => packages,
+        Err(error) if !display_packages.is_empty() => {
+            tracing::debug!("AUR search unavailable; returning official results: {error}");
+            Vec::new()
+        }
+        Err(error) => return Err(error).context("Failed to search AUR packages"),
+    };
     // Deduplicate: skip AUR packages already present in official results
     let official_names: std::collections::HashSet<String> =
         display_packages.iter().map(|p| p.name.clone()).collect();
@@ -198,8 +207,12 @@ async fn search_official_packages(query: &str) -> Result<Vec<DisplayPackage>> {
         .collect())
 }
 
-#[cfg_attr(not(feature = "arch"), allow(clippy::unused_async))]
+#[cfg_attr(not(feature = "arch"), expect(clippy::unused_async))]
 async fn search_aur_packages(query: &str, detailed: bool) -> Result<Vec<DisplayPackage>> {
+    if crate::core::paths::test_mode() {
+        return Ok(Vec::new());
+    }
+
     #[cfg(any(feature = "debian", feature = "debian-pure"))]
     if crate::core::env::distro::is_debian_like() {
         let _ = (query, detailed);
@@ -232,33 +245,16 @@ async fn search_aur_packages(query: &str, detailed: bool) -> Result<Vec<DisplayP
     }
 }
 
-pub fn search_sync_cli(
-    query: &str,
-    detailed: bool,
-    interactive: bool,
-    no_aur: bool,
-) -> Result<bool> {
-    search_sync_cli_with_limit(query, detailed, interactive, no_aur, 50)
-}
-
-fn reject_unimplemented_interactive_search(interactive: bool) -> Result<()> {
-    if interactive {
-        anyhow::bail!(
-            "Interactive search is not implemented. Omit --interactive to print results, then install with `omg install <name>`."
-        );
-    }
-    Ok(())
+pub fn search_sync_cli(query: &str, detailed: bool, no_aur: bool) -> Result<bool> {
+    search_sync_cli_with_limit(query, detailed, no_aur, 50)
 }
 
 pub fn search_sync_cli_with_limit(
     query: &str,
     detailed: bool,
-    interactive: bool,
     no_aur: bool,
     limit: usize,
 ) -> Result<bool> {
-    reject_unimplemented_interactive_search(interactive)?;
-
     if !crate::cli::packages::common::is_valid_search_query(query) {
         return Ok(false);
     }
@@ -281,14 +277,7 @@ pub fn search_sync_cli_with_limit(
     let rt = tokio::runtime::Builder::new_current_thread()
         .enable_all()
         .build()?;
-    rt.block_on(search_internal(
-        query,
-        detailed,
-        interactive,
-        false,
-        no_aur,
-        limit,
-    ))?;
+    rt.block_on(search_internal(query, detailed, false, no_aur, limit))?;
     Ok(true)
 }
 
@@ -474,7 +463,7 @@ mod tests {
     #[tokio::test]
     async fn test_search_query_too_long() {
         let long_query = "a".repeat(101);
-        let result = search_internal(&long_query, false, false, false, false, 50).await;
+        let result = search_internal(&long_query, false, false, false, 50).await;
         assert!(result.is_err());
         assert!(
             result
@@ -486,7 +475,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_search_query_control_chars() {
-        let result = search_internal("test\x00query", false, false, false, false, 50).await;
+        let result = search_internal("test\x00query", false, false, false, 50).await;
         assert!(result.is_err());
         assert!(
             result
@@ -498,14 +487,14 @@ mod tests {
 
     #[tokio::test]
     async fn test_search_query_path_traversal() {
-        let result = search_internal("../etc/passwd", false, false, false, false, 50).await;
+        let result = search_internal("../etc/passwd", false, false, false, 50).await;
         assert!(result.is_err());
         assert!(result.unwrap_err().to_string().contains("path traversal"));
     }
 
     #[tokio::test]
     async fn test_search_query_shell_metacharacters() {
-        let result = search_internal("test;rm -rf", false, false, false, false, 50).await;
+        let result = search_internal("test;rm -rf", false, false, false, 50).await;
         assert!(result.is_err());
         assert!(
             result
@@ -517,23 +506,12 @@ mod tests {
 
     #[test]
     fn test_search_sync_cli_validation() {
-        assert!(!search_sync_cli("a".repeat(101).as_str(), false, false, true).unwrap());
+        assert!(!search_sync_cli("a".repeat(101).as_str(), false, true).unwrap());
 
-        assert!(!search_sync_cli("test\x00query", false, false, true).unwrap());
+        assert!(!search_sync_cli("test\x00query", false, true).unwrap());
 
-        assert!(!search_sync_cli("../passwd", false, false, true).unwrap());
+        assert!(!search_sync_cli("../passwd", false, true).unwrap());
 
-        assert!(!search_sync_cli("test;ls", false, false, true).unwrap());
-    }
-
-    #[test]
-    fn interactive_search_is_an_error() {
-        let err = reject_unimplemented_interactive_search(true)
-            .expect_err("advertised interactive search must not silently no-op");
-        assert!(
-            err.to_string().contains("not implemented"),
-            "interactive search must fail closed, got: {err}"
-        );
-        assert!(reject_unimplemented_interactive_search(false).is_ok());
+        assert!(!search_sync_cli("test;ls", false, true).unwrap());
     }
 }

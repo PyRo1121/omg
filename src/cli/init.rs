@@ -1059,7 +1059,7 @@ fn print_completion(stdout: &mut io::Stdout, state: &WizardState) -> Result<()> 
 }
 
 #[cfg(test)]
-#[allow(clippy::unwrap_used, clippy::expect_used)]
+#[expect(clippy::unwrap_used)]
 mod tests {
     use super::*;
 

@@ -18,6 +18,10 @@ pub fn explicit_sync(count: bool) -> Result<()> {
     explicit_sync_with_json(count, false)
 }
 
+#[allow(
+    clippy::needless_return,
+    reason = "additive backend feature branches return before compiled fallbacks"
+)]
 pub fn explicit_sync_with_json(count: bool, json: bool) -> Result<()> {
     #[cfg(unix)]
     if let Ok(mut client) = DaemonClient::connect_sync() {
@@ -83,7 +87,10 @@ pub fn explicit_sync_with_json(count: bool, json: bool) -> Result<()> {
             return Ok(());
         }
 
-        #[cfg(any(feature = "debian", feature = "debian-pure"))]
+        #[cfg(all(
+            any(feature = "debian", feature = "debian-pure"),
+            not(feature = "arch")
+        ))]
         {
             let packages = crate::package_managers::list_explicit_fast()
                 .context("Failed to list explicitly installed packages")?;
@@ -106,6 +113,10 @@ pub fn explicit_sync_with_json(count: bool, json: bool) -> Result<()> {
         let packages = crate::package_managers::list_explicit_fast()
             .context("Failed to list explicitly installed packages")?;
         display_explicit_list(packages, json)?;
+        #[allow(
+            clippy::needless_return,
+            reason = "required when additive backend features compile later fallback blocks"
+        )]
         return Ok(());
     }
 

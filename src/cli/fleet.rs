@@ -15,7 +15,6 @@ impl LocalCommandRunner for FleetCommands {
             FleetCommands::Push { team, message } => {
                 push(team.as_deref(), message.as_deref(), ctx).await
             }
-            FleetCommands::Remediate { dry_run, confirm } => remediate(*dry_run, *confirm, ctx),
         }
     }
 }
@@ -198,12 +197,6 @@ pub async fn push(team: Option<&str>, message: Option<&str>, _ctx: &CliContext) 
     ]));
 
     Ok(())
-}
-
-/// Auto-remediate drift across fleet
-pub fn remediate(_dry_run: bool, _confirm: bool, _ctx: &CliContext) -> Result<()> {
-    license::require_feature("fleet")?;
-    anyhow::bail!("Fleet remediation is not implemented")
 }
 
 fn fleet_push_http_outcome(status: u16) -> Result<()> {

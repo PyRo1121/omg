@@ -5,6 +5,10 @@ use anyhow::Result;
 use crate::cli::tea::Cmd;
 
 /// Show disk usage analysis
+#[allow(
+    clippy::needless_return,
+    reason = "additive backend feature branches return before compiled fallbacks"
+)]
 pub fn run(tree: Option<&str>, limit: usize) -> Result<()> {
     if let Some(package) = tree {
         crate::core::security::validate_package_name(package)?;
@@ -302,7 +306,7 @@ fn size_requires_backend() -> Result<Cmd<()>> {
     anyhow::bail!("Size analysis is not available without an Arch or Debian package backend")
 }
 
-#[allow(dead_code)] // Infrastructure function used only in feature-gated code
+#[cfg(any(feature = "arch", feature = "debian", feature = "debian-pure"))]
 fn format_size(bytes: i64) -> String {
     const KB: i64 = 1024;
     const MB: i64 = KB * 1024;
@@ -319,7 +323,7 @@ fn format_size(bytes: i64) -> String {
     }
 }
 
-#[allow(dead_code)] // Infrastructure function used only in feature-gated code
+#[cfg(any(feature = "arch", feature = "debian", feature = "debian-pure"))]
 fn generate_bar(value: i64, max: i64, width: usize) -> String {
     let ratio = if max > 0 {
         (value as f64 / max as f64).min(1.0)
@@ -335,18 +339,18 @@ fn generate_bar(value: i64, max: i64, width: usize) -> String {
 fn get_cache_size() -> Result<i64> {
     use std::fs;
 
-    let cache_dir = std::path::Path::new("/var/cache/pacman/pkg");
-    if !cache_dir.exists() {
-        return Ok(0);
-    }
-
     let mut total: i64 = 0;
-    for entry in fs::read_dir(cache_dir)? {
-        if let Ok(entry) = entry
-            && let Ok(meta) = entry.metadata()
-        {
-            // Use saturating_add to prevent overflow on extremely large caches
-            total = total.saturating_add(meta.len().try_into().unwrap_or(i64::MAX));
+    for cache_dir in crate::core::paths::pacman_cache_dirs() {
+        if !cache_dir.exists() {
+            continue;
+        }
+        for entry in fs::read_dir(&cache_dir)? {
+            if let Ok(entry) = entry
+                && let Ok(metadata) = entry.metadata()
+            {
+                // Use saturating_add to prevent overflow on extremely large caches
+                total = total.saturating_add(metadata.len().try_into().unwrap_or(i64::MAX));
+            }
         }
     }
 

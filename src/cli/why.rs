@@ -8,6 +8,10 @@ use std::collections::{HashMap, HashSet, VecDeque};
 use crate::cli::tea::Cmd;
 
 /// Explain why a package is installed
+#[allow(
+    clippy::needless_return,
+    reason = "additive backend feature branches return before compiled fallbacks"
+)]
 pub fn run(package: &str, reverse: bool) -> Result<()> {
     // SECURITY: Validate package name
     crate::core::security::validate_package_name(package)?;
@@ -31,7 +35,7 @@ pub fn run(package: &str, reverse: bool) -> Result<()> {
             show_dependency_chain(package)?
         };
         crate::cli::packages::execute_cmd(cmd);
-        return Ok(());
+        Ok(())
     }
 
     #[cfg(all(

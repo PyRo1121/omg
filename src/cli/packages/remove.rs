@@ -36,7 +36,10 @@ pub async fn remove(packages: &[String], recursive: bool, _yes: bool, dry_run: b
     }
 }
 
-#[allow(clippy::unnecessary_wraps)]
+#[allow(
+    clippy::unnecessary_wraps,
+    reason = "backend feature dispatch may select fallible implementations"
+)]
 fn remove_dry_run(packages: &[String], recursive: bool) -> Result<()> {
     dispatch_backend! {
         debian: { debian::remove_dry_run(packages, recursive) },

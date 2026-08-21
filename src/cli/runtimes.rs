@@ -572,7 +572,7 @@ mod tests {
         assert_eq!(value["runtime"], "node");
         assert_eq!(value["current"], "20.10.0");
         assert_eq!(
-            value["installed"].as_array().map(|versions| versions.len()),
+            value["installed"].as_array().map(std::vec::Vec::len),
             Some(2)
         );
     }

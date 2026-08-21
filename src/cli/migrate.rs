@@ -29,9 +29,6 @@ pub struct PackageMapping {
 
 /// Export current environment to portable manifest
 pub async fn export(output: &str) -> Result<()> {
-    // SECURITY: Validate output path
-    crate::core::security::validate_relative_path(output)?;
-
     println!("{} Exporting environment...\n", style::runtime("OMG"));
 
     let state = EnvironmentState::capture().await?;
@@ -52,7 +49,7 @@ pub async fn export(output: &str) -> Result<()> {
     };
 
     let content = serde_json::to_string_pretty(&manifest)?;
-    fs::write(output, &content)?;
+    crate::core::safe_ops::atomic_write_file_sync(output, content)?;
 
     println!(
         "  {} Exported to {}",
@@ -84,8 +81,7 @@ pub async fn export(output: &str) -> Result<()> {
 
 /// Import environment from manifest with package mapping
 pub async fn import(manifest_path: &str, dry_run: bool) -> Result<()> {
-    // SECURITY: Validate manifest path
-    crate::core::security::validate_relative_path(manifest_path)?;
+    let manifest_path = crate::core::safe_ops::validate_path(manifest_path)?;
 
     println!(
         "{} {} manifest...\n",
@@ -93,7 +89,7 @@ pub async fn import(manifest_path: &str, dry_run: bool) -> Result<()> {
         if dry_run { "Previewing" } else { "Importing" }
     );
 
-    let content = fs::read_to_string(manifest_path)?;
+    let content = fs::read_to_string(&manifest_path)?;
     let manifest: MigrationManifest = serde_json::from_str(&content)?;
 
     let target_distro = format!("{:?}", detect_distro()).to_lowercase();
@@ -183,7 +179,7 @@ pub async fn import(manifest_path: &str, dry_run: bool) -> Result<()> {
         );
         println!(
             "  Run without --dry-run to install: {}",
-            style::command(&format!("omg migrate import {manifest_path}"))
+            style::command(&format!("omg migrate import {}", manifest_path.display()))
         );
         return Ok(());
     }

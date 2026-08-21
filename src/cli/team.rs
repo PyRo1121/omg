@@ -3,8 +3,7 @@
 use crate::cli::components::Components;
 use crate::cli::tea::Cmd;
 use crate::cli::{
-    CliContext, GoldenPathCommands, LocalCommandRunner, NotifyCommands, TeamCommands,
-    TeamRoleCommands,
+    CliContext, GoldenPathCommands, LocalCommandRunner, TeamCommands, TeamRoleCommands,
 };
 use anyhow::{Context, Result};
 
@@ -21,11 +20,8 @@ impl LocalCommandRunner for TeamCommands {
             TeamCommands::Pull => pull(ctx).await,
             TeamCommands::Members => members(ctx).await,
             TeamCommands::Dashboard => dashboard(ctx).await,
-            TeamCommands::Invite { email, role } => invite(email.as_deref(), role, ctx),
             TeamCommands::Roles { command } => match command {
                 TeamRoleCommands::List => roles::list(ctx),
-                TeamRoleCommands::Assign { member, role } => roles::assign(member, role, ctx),
-                TeamRoleCommands::Remove { member } => roles::remove(member, ctx),
             },
             TeamCommands::Propose { message } => propose(message, ctx).await,
             TeamCommands::Proposals => list_proposals(ctx).await,
@@ -50,12 +46,6 @@ impl LocalCommandRunner for TeamCommands {
                 compliance(export.as_deref(), *enforce, ctx)
             }
             TeamCommands::Activity { days } => activity(*days, ctx).await,
-            TeamCommands::Notify { command } => match command {
-                NotifyCommands::Add { notify_type, url } => team_notify::add(notify_type, url, ctx),
-                NotifyCommands::List => team_notify::list(ctx),
-                NotifyCommands::Remove { id } => team_notify::remove(id, ctx),
-                NotifyCommands::Test { id } => team_notify::test(id, ctx),
-            },
         }
     }
 }
@@ -87,7 +77,7 @@ pub fn init(team_id: &str, name: Option<&str>, _ctx: &CliContext) -> Result<()> 
     // Require Team tier for team sync features
     license::require_feature("team-sync")?;
     let cwd = std::env::current_dir()?;
-    let mut workspace = TeamWorkspace::new(&cwd);
+    let mut workspace = TeamWorkspace::new(&cwd)?;
 
     let display_name = name.unwrap_or(team_id);
 
@@ -131,7 +121,7 @@ pub async fn join(remote_url: &str, _ctx: &CliContext) -> Result<()> {
     // Require Team tier for team sync features
     license::require_feature("team-sync")?;
     let cwd = std::env::current_dir()?;
-    let mut workspace = TeamWorkspace::new(&cwd);
+    let mut workspace = TeamWorkspace::new(&cwd)?;
 
     if !workspace.is_team_workspace() {
         // Auto-init if not a team workspace
@@ -167,7 +157,7 @@ pub async fn status(_ctx: &CliContext) -> Result<()> {
     use crate::cli::packages::execute_cmd;
 
     let cwd = std::env::current_dir()?;
-    let workspace = TeamWorkspace::new(&cwd);
+    let workspace = TeamWorkspace::new(&cwd)?;
 
     if !workspace.is_team_workspace() {
         execute_cmd(Components::error_with_suggestion(
@@ -238,7 +228,7 @@ pub async fn push(_ctx: &CliContext) -> Result<()> {
     use crate::cli::packages::execute_cmd;
 
     let cwd = std::env::current_dir()?;
-    let workspace = TeamWorkspace::new(&cwd);
+    let workspace = TeamWorkspace::new(&cwd)?;
 
     if !workspace.is_team_workspace() {
         execute_cmd(Components::error_with_suggestion(
@@ -265,7 +255,7 @@ pub async fn pull(_ctx: &CliContext) -> Result<()> {
     use crate::cli::packages::execute_cmd;
 
     let cwd = std::env::current_dir()?;
-    let workspace = TeamWorkspace::new(&cwd);
+    let workspace = TeamWorkspace::new(&cwd)?;
 
     if !workspace.is_team_workspace() {
         execute_cmd(Components::error_with_suggestion(
@@ -410,31 +400,6 @@ pub async fn dashboard(_ctx: &CliContext) -> Result<()> {
     crate::cli::tui::run_with_tab(crate::cli::tui::app::Tab::Team).await
 }
 
-/// Generate team invite link
-pub fn invite(email: Option<&str>, role: &str, _ctx: &CliContext) -> Result<()> {
-    use crate::cli::packages::execute_cmd;
-
-    // SECURITY: Validate role and email
-    let valid_roles = ["admin", "lead", "developer", "readonly"];
-    if !valid_roles.contains(&role) {
-        execute_cmd(Components::error_with_suggestion(
-            format!("Invalid role: {role}"),
-            "Valid roles: admin, lead, developer, readonly",
-        ));
-        anyhow::bail!("Invalid role: {role}");
-    }
-    if let Some(e) = email
-        && (!e.contains('@') || e.len() > 255)
-    {
-        execute_cmd(Cmd::error("Invalid email address"));
-        anyhow::bail!("Invalid email address");
-    }
-
-    license::require_feature("team-sync")?;
-
-    anyhow::bail!("Team invite links are not implemented")
-}
-
 /// Manage team roles
 pub mod roles {
     use super::{CliContext, Result, license};
@@ -458,29 +423,6 @@ pub mod roles {
         ]));
 
         Ok(())
-    }
-
-    pub fn assign(member: &str, role: &str, _ctx: &CliContext) -> Result<()> {
-        // SECURITY: Validate role and member
-        let valid_roles = ["admin", "lead", "developer", "readonly"];
-        if !valid_roles.contains(&role) {
-            execute_cmd(Cmd::error(format!("Invalid role: {role}")));
-            anyhow::bail!("Invalid role: {role}");
-        }
-        if member.len() > 128 || member.chars().any(char::is_control) {
-            execute_cmd(Cmd::error("Invalid member identifier"));
-            anyhow::bail!("Invalid member identifier");
-        }
-
-        license::require_feature("team-sync")?;
-
-        anyhow::bail!("Team role assignment is not implemented")
-    }
-
-    pub fn remove(_member: &str, _ctx: &CliContext) -> Result<()> {
-        license::require_feature("team-sync")?;
-
-        anyhow::bail!("Team role removal is not implemented")
     }
 }
 
@@ -848,52 +790,4 @@ pub async fn activity(days: u32, _ctx: &CliContext) -> Result<()> {
     ]));
 
     Ok(())
-}
-
-/// Manage webhook notifications
-pub mod team_notify {
-    use super::{CliContext, Result, license};
-    use crate::cli::components::Components;
-    use crate::cli::packages::execute_cmd;
-    use crate::cli::tea::Cmd;
-
-    pub fn add(notify_type: &str, url: &str, _ctx: &CliContext) -> Result<()> {
-        // SECURITY: Validate type and URL
-        let valid_types = ["slack", "discord", "webhook"];
-        if !valid_types.contains(&notify_type) {
-            execute_cmd(Cmd::error(format!(
-                "Invalid notification type: {notify_type}"
-            )));
-            anyhow::bail!("Invalid notification type: {notify_type}");
-        }
-        if !url.starts_with("https://") || url.len() > 1024 {
-            execute_cmd(Components::error_with_suggestion(
-                "Invalid or insecure notification URL",
-                "HTTPS URLs are required for webhooks",
-            ));
-            anyhow::bail!("Invalid or insecure notification URL (HTTPS required)");
-        }
-
-        license::require_feature("team-sync")?;
-
-        anyhow::bail!("Team notification webhooks are not implemented")
-    }
-
-    pub fn list(_ctx: &CliContext) -> Result<()> {
-        license::require_feature("team-sync")?;
-
-        anyhow::bail!("Team notification webhooks are not implemented")
-    }
-
-    pub fn remove(_id: &str, _ctx: &CliContext) -> Result<()> {
-        license::require_feature("team-sync")?;
-
-        anyhow::bail!("Team notification webhooks are not implemented")
-    }
-
-    pub fn test(_id: &str, _ctx: &CliContext) -> Result<()> {
-        license::require_feature("team-sync")?;
-
-        anyhow::bail!("Team notification webhooks are not implemented")
-    }
 }

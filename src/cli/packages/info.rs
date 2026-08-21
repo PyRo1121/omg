@@ -28,9 +28,8 @@ pub fn info_sync(package: &str) -> Result<bool> {
     #[cfg(any(feature = "debian", feature = "debian-pure"))]
     if is_debian_like() {
         if let Some(pkg) = crate::package_managers::debian_db::get_info_fast(package)? {
-            let version = pkg.version.clone();
             ui::print_kv("Name", &style::package(&pkg.name));
-            ui::print_kv("Version", &style::version(&version));
+            ui::print_kv("Version", &style::version(&pkg.version));
             ui::print_kv("Description", &pkg.description);
             ui::print_kv(
                 "Status",
@@ -138,7 +137,10 @@ pub async fn info_aur(package: &str) -> Result<()> {
 
 /// Show AUR package information - no-op fallback for non-Arch systems
 #[cfg(not(feature = "arch"))]
-#[allow(clippy::unused_async)]
+#[allow(
+    clippy::unused_async,
+    reason = "the non-Arch implementation preserves the asynchronous command interface"
+)]
 pub async fn info_aur(package: &str) -> Result<()> {
     anyhow::bail!("Package '{package}' not found. Try: omg search {package}");
 }
@@ -221,7 +223,7 @@ async fn info_json(package: &str) -> Result<()> {
         };
         let json_obj = serde_json::json!({
             "name": pkg.name,
-            "version": pkg.version.to_string(),
+            "version": pkg.version,
             "description": pkg.description,
             "installed": pkg.installed,
         });
@@ -264,7 +266,10 @@ async fn info_json(package: &str) -> Result<()> {
     anyhow::bail!("Package '{package}' not found")
 }
 
-#[allow(clippy::unused_async)] // Contains .await in arch feature block only
+#[allow(
+    clippy::unused_async,
+    reason = "the Arch feature branch awaits while fallback builds do not"
+)]
 async fn info_fallback(package: &str) -> Result<()> {
     // Try sync path first
     if info_sync(package)? {
@@ -317,7 +322,7 @@ async fn info_fallback(package: &str) -> Result<()> {
         ui::print_spacer();
         ui::print_warning("Source: Arch User Repository (AUR)");
         ui::print_spacer();
-        return Ok(());
+        Ok(())
     }
 
     #[cfg(not(feature = "arch"))]

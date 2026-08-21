@@ -101,20 +101,24 @@ impl Model for StatusModel {
                     #[cfg(unix)]
                     let daemon_result =
                         crate::cli::tea::async_bridge::run_blocking_future(async move {
-                            if let Ok(mut client) = DaemonClient::connect().await
-                                && let Ok(ResponseResult::Status(status)) =
-                                    client.call(Request::Status { id: 0 }).await
-                            {
-                                return Some(StatusData {
-                                    total_packages: status.total_packages,
-                                    explicit_packages: status.explicit_packages,
-                                    orphan_packages: status.orphan_packages,
-                                    updates_available: status.updates_available,
-                                    duration_ms: start.elapsed().as_secs_f64() * 1000.0,
-                                    fast_mode: fast,
-                                });
-                            }
-                            None
+                            tokio::time::timeout(std::time::Duration::from_millis(500), async {
+                                if let Ok(mut client) = DaemonClient::connect().await
+                                    && let Ok(ResponseResult::Status(status)) =
+                                        client.call(Request::Status { id: 0 }).await
+                                {
+                                    return Some(StatusData {
+                                        total_packages: status.total_packages,
+                                        explicit_packages: status.explicit_packages,
+                                        orphan_packages: status.orphan_packages,
+                                        updates_available: status.updates_available,
+                                        duration_ms: start.elapsed().as_secs_f64() * 1000.0,
+                                        fast_mode: fast,
+                                    });
+                                }
+                                None
+                            })
+                            .await
+                            .unwrap_or(None)
                         })
                         .unwrap_or(None);
 
@@ -161,7 +165,7 @@ impl Model for StatusModel {
 
     fn view(&self) -> String {
         match self.state {
-            StatusState::Idle => "No status data available".to_string(),
+            StatusState::Idle => String::new(),
             StatusState::Loading => "⟳ Gathering system status...".cyan().dimmed().to_string(),
             StatusState::Complete => {
                 if let Some(data) = &self.data {

@@ -1243,7 +1243,10 @@ async fn dispatch_command(
 
 #[cfg(test)]
 mod fast_path_tests {
-    use super::{has_all_flag, has_json_flag, parse_fast_list_tail, split_elevated_invocation};
+    use super::{has_all_flag, has_json_flag, parse_fast_list_tail};
+
+    #[cfg(feature = "arch")]
+    use super::split_elevated_invocation;
 
     #[cfg(feature = "arch")]
     fn args(list: &[&str]) -> Vec<String> {

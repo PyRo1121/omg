@@ -34,9 +34,7 @@ impl std::fmt::Display for UpdateType {
 }
 
 /// Show outdated packages
-pub async fn run(security_only: bool, json: bool) -> Result<()> {
-    require_security_classification_available(security_only)?;
-
+pub async fn run(json: bool) -> Result<()> {
     use crate::cli::components::Components;
 
     // SECURITY: This command has no string inputs, but we validate environment state
@@ -173,15 +171,6 @@ pub async fn run(security_only: bool, json: bool) -> Result<()> {
     Ok(())
 }
 
-fn require_security_classification_available(security_only: bool) -> Result<()> {
-    if security_only {
-        anyhow::bail!(
-            "Security-advisory classification is not implemented. Omit --security to list all outdated packages by version change."
-        );
-    }
-    Ok(())
-}
-
 fn classify_update(old: &str, new: &str) -> UpdateType {
     // Parse semver-like versions
     let old_parts: Vec<_> = old.split('.').collect();
@@ -225,17 +214,6 @@ fn classify_update(old: &str, new: &str) -> UpdateType {
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn security_only_is_rejected_until_advisories_exist() {
-        let err = require_security_classification_available(true)
-            .expect_err("--security must not silently return an empty list");
-        assert!(
-            err.to_string().contains("not implemented"),
-            "security filter must fail closed, got: {err}"
-        );
-        assert!(require_security_classification_available(false).is_ok());
-    }
 
     #[test]
     fn classify_update_uses_version_change_not_cve_status() {

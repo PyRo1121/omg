@@ -21,11 +21,9 @@ impl LocalCommandRunner for EnterpriseCommands {
                 format,
             } => reports(report_type, format, ctx).await,
             EnterpriseCommands::Policy { command } => match command {
-                EnterprisePolicyCommands::Set { scope, rule } => policy::set(scope, rule, ctx),
                 EnterprisePolicyCommands::Show { scope } => {
                     policy::show(scope.as_deref(), ctx).await
                 }
-                EnterprisePolicyCommands::Inherit { from, to } => policy::inherit(from, to, ctx),
             },
             EnterpriseCommands::AuditExport {
                 format,
@@ -34,11 +32,6 @@ impl LocalCommandRunner for EnterpriseCommands {
             } => audit_export(format, period.as_deref(), output, ctx),
             EnterpriseCommands::LicenseScan { export } => license_scan(export.as_deref(), ctx),
             EnterpriseCommands::Server { command } => match command {
-                ServerCommands::Init {
-                    license,
-                    storage,
-                    domain,
-                } => server::init(license, storage, domain, ctx),
                 ServerCommands::Mirror { upstream } => server::mirror(upstream, ctx).await,
             },
         }
@@ -271,26 +264,6 @@ pub mod policy {
     use crate::cli::packages::execute_cmd;
     use crate::cli::tea::Cmd;
 
-    pub fn set(scope: &str, rule: &str, _ctx: &CliContext) -> Result<()> {
-        // SECURITY: Validate scope and rule
-        if scope.len() > 64
-            || scope
-                .chars()
-                .any(|c| !c.is_ascii_alphanumeric() && c != ':' && c != '-')
-        {
-            execute_cmd(Cmd::error("Invalid policy scope"));
-            anyhow::bail!("Invalid policy scope");
-        }
-        if rule.len() > 1024 {
-            execute_cmd(Cmd::error("Policy rule too long (max 1024 characters)"));
-            anyhow::bail!("Policy rule too long");
-        }
-
-        license::require_feature("enterprise-policy")?;
-
-        anyhow::bail!("Enterprise policy persistence is not implemented")
-    }
-
     pub async fn show(scope: Option<&str>, _ctx: &CliContext) -> Result<()> {
         if let Some(s) = scope
             && (s.len() > 64
@@ -341,30 +314,6 @@ pub mod policy {
 
         Ok(())
     }
-
-    pub fn inherit(from: &str, to: &str, _ctx: &CliContext) -> Result<()> {
-        // SECURITY: Validate scopes
-        if from.len() > 64
-            || from
-                .chars()
-                .any(|c| !c.is_ascii_alphanumeric() && c != ':' && c != '-')
-        {
-            execute_cmd(Cmd::error("Invalid source scope"));
-            anyhow::bail!("Invalid source scope");
-        }
-        if to.len() > 64
-            || to
-                .chars()
-                .any(|c| !c.is_ascii_alphanumeric() && c != ':' && c != '-')
-        {
-            execute_cmd(Cmd::error("Invalid target scope"));
-            anyhow::bail!("Invalid target scope");
-        }
-
-        license::require_feature("enterprise-policy")?;
-
-        anyhow::bail!("Enterprise policy inheritance is not implemented")
-    }
 }
 
 /// Self-hosted server management
@@ -374,34 +323,6 @@ pub mod server {
     use crate::cli::packages::execute_cmd;
     use crate::cli::tea::Cmd;
     use anyhow::Context;
-
-    pub fn init(license_key: &str, storage: &str, domain: &str, _ctx: &CliContext) -> Result<()> {
-        // SECURITY: Validate all inputs
-        if license_key.len() > 128
-            || license_key
-                .chars()
-                .any(|c| !c.is_ascii_alphanumeric() && c != '-')
-        {
-            execute_cmd(Cmd::error("Invalid license key format"));
-            anyhow::bail!("Invalid license key format");
-        }
-        if let Err(e) = crate::core::security::validate_relative_path(storage) {
-            execute_cmd(Cmd::error(format!("Invalid storage path: {e}")));
-            return Err(e.into());
-        }
-        if domain.len() > 255
-            || domain
-                .chars()
-                .any(|c| !c.is_ascii_alphanumeric() && c != '.' && c != '-')
-        {
-            execute_cmd(Cmd::error("Invalid domain name"));
-            anyhow::bail!("Invalid domain name");
-        }
-
-        license::require_feature("self-hosted")?;
-
-        anyhow::bail!("Self-hosted server initialization is not implemented")
-    }
 
     pub async fn mirror(upstream: &str, _ctx: &CliContext) -> Result<()> {
         // SECURITY: Basic URL validation

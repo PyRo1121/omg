@@ -1,6 +1,8 @@
 //! Clean/orphan functionality for packages
 
-use anyhow::{Context, Result};
+#[cfg(any(feature = "arch", feature = "debian-pure"))]
+use anyhow::Context;
+use anyhow::Result;
 
 #[cfg(any(feature = "debian", feature = "debian-pure"))]
 use crate::core::env::distro::is_debian_like;
@@ -16,6 +18,10 @@ use crate::package_managers::debian_db::{clean_package_cache, list_orphans_fast}
 
 /// Clean up orphans and caches
 #[expect(clippy::fn_params_excessive_bools)] // Parameters map directly to CLI boolean flags (orphans, cache, aur, all, dry_run)
+#[allow(
+    clippy::needless_return,
+    reason = "additive backend feature branches return before compiled fallbacks"
+)]
 pub async fn clean(orphans: bool, cache: bool, aur: bool, all: bool, dry_run: bool) -> Result<()> {
     if dry_run {
         crate::cli::modern_ui::print_phase_header("🧹", "Clean Preview", "dry run");
@@ -212,7 +218,7 @@ pub async fn clean(orphans: bool, cache: bool, aur: bool, all: bool, dry_run: bo
 
 /// Handle clean operations for debian-pure backend
 #[cfg(feature = "debian-pure")]
-#[allow(clippy::fn_params_excessive_bools)]
+#[expect(clippy::fn_params_excessive_bools)]
 async fn handle_debian_pure_clean(
     orphans: bool,
     cache: bool,

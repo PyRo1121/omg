@@ -9,6 +9,7 @@ use crate::cli::{modern_ui, ui};
 use crate::core::client::DaemonClient;
 #[cfg(unix)]
 use crate::core::client::PooledSyncClient;
+use crate::core::security::is_local_package_file;
 use crate::core::usage::OperationTimer;
 use crate::package_managers::AurClient;
 use crate::package_managers::get_package_manager;
@@ -34,8 +35,6 @@ pub async fn install(packages: &[String], yes: bool) -> Result<()> {
     );
 
     let pb = modern_ui::modern_spinner("Resolving", "package sources");
-
-    use crate::core::security::is_local_package_file;
 
     #[cfg(unix)]
     let mut daemon_client = DaemonClient::connect().await.ok();
@@ -65,45 +64,53 @@ pub async fn install(packages: &[String], yes: bool) -> Result<()> {
         resolution_start.elapsed().as_millis()
     );
 
-    if !missing_packages.is_empty() {
-        if missing_packages.len() == 1 {
-            return handle_missing_package(
-                missing_packages[0].clone(),
-                anyhow::anyhow!("Package not found in official repos"),
-                yes,
-            )
-            .await;
-        }
-
-        if missing_packages.len() < packages.len() {
-            let official: Vec<String> = packages
-                .iter()
-                .filter(|p| !missing_packages.contains(p))
-                .cloned()
-                .collect();
-            if !official.is_empty() {
-                pm.install(&official).await?;
+    let operation_result = if missing_packages.is_empty() {
+        match pm.install(packages).await {
+            Ok(()) => Ok(()),
+            Err(error) => {
+                let message = error.to_string();
+                if let Some(package_name) = extract_missing_package(&message, packages) {
+                    missing_packages.push(package_name.clone());
+                    handle_missing_package(package_name, error, yes).await
+                } else {
+                    Err(error)
+                }
             }
         }
+    } else if missing_packages.len() == 1 {
+        handle_missing_package(
+            missing_packages[0].clone(),
+            anyhow::anyhow!("Package not found in official repos"),
+            yes,
+        )
+        .await
+    } else {
+        async {
+            if missing_packages.len() < packages.len() {
+                let official: Vec<String> = packages
+                    .iter()
+                    .filter(|package| !missing_packages.contains(package))
+                    .cloned()
+                    .collect();
+                if !official.is_empty() {
+                    pm.install(&official).await?;
+                }
+            }
 
-        for missing_pkg in missing_packages {
-            handle_missing_package(
-                missing_pkg,
-                anyhow::anyhow!("Package not found in official repos"),
-                yes,
-            )
-            .await?;
+            for missing_pkg in &missing_packages {
+                handle_missing_package(
+                    missing_pkg.clone(),
+                    anyhow::anyhow!("Package not found in official repos"),
+                    yes,
+                )
+                .await?;
+            }
+            Ok(())
         }
-        return Ok(());
-    }
+        .await
+    };
 
-    if let Err(e) = pm.install(packages).await {
-        let msg = e.to_string();
-        if let Some(pkg_name) = extract_missing_package(&msg, packages) {
-            return handle_missing_package(pkg_name, e, yes).await;
-        }
-        return Err(e);
-    }
+    record_install_history(packages, &missing_packages, operation_result)?;
 
     modern_ui::print_success_with_packages(
         &format!(
@@ -122,8 +129,74 @@ pub async fn install(packages: &[String], yes: bool) -> Result<()> {
     Ok(())
 }
 
-#[allow(clippy::unnecessary_wraps)]
-pub fn install_dry_run(packages: &[String]) -> Result<()> {
+fn record_install_history(
+    packages: &[String],
+    aur_packages: &[String],
+    operation_result: Result<()>,
+) -> Result<()> {
+    use crate::core::history::{HistoryManager, PackageChange, TransactionType};
+
+    let changes = packages
+        .iter()
+        .map(|package| {
+            Ok(PackageChange {
+                name: history_package_name(package),
+                old_version: None,
+                new_version: None,
+                source: if is_local_package_file(package) {
+                    "local"
+                } else if aur_packages.contains(package) {
+                    "aur"
+                } else {
+                    "pacman"
+                }
+                .to_string(),
+            })
+        })
+        .collect::<Result<Vec<_>>>()?;
+
+    HistoryManager::new()?.finish_operation(TransactionType::Install, changes, operation_result)
+}
+
+fn history_package_name(package: &str) -> String {
+    if !is_local_package_file(package) {
+        return package.to_string();
+    }
+
+    try_local_package_name(package).unwrap_or_else(|error| {
+        // History must retain the package operation's original error even when
+        // an invalid local archive has no readable metadata.
+        tracing::warn!("Could not read local package name for history: {error}");
+        package.to_string()
+    })
+}
+
+fn try_local_package_name(package: &str) -> Result<String> {
+    let package_path = std::fs::canonicalize(package)
+        .with_context(|| format!("Failed to resolve installed package file {package}"))?;
+    let package_path = package_path
+        .to_str()
+        .context("Installed package path contains invalid UTF-8")?;
+    let alpm = alpm::Alpm::new(
+        crate::core::paths::pacman_root()
+            .to_string_lossy()
+            .into_owned(),
+        crate::core::paths::pacman_db_dir()
+            .to_string_lossy()
+            .into_owned(),
+    )
+    .context("Failed to initialize ALPM while recording package history")?;
+    let loaded = alpm
+        .pkg_load(package_path, false, alpm::SigLevel::NONE)
+        .with_context(|| format!("Failed to read installed package metadata from {package}"))?;
+    Ok(loaded.name().to_string())
+}
+
+#[allow(
+    clippy::unnecessary_wraps,
+    reason = "signature is shared with fallible backend dry-run implementations"
+)]
+pub async fn install_dry_run(packages: &[String]) -> Result<()> {
     use comfy_table::{Table, modifiers::UTF8_ROUND_CORNERS, presets::UTF8_FULL};
     use owo_colors::OwoColorize;
 
@@ -167,15 +240,8 @@ pub fn install_dry_run(packages: &[String]) -> Result<()> {
                             continue;
                         }
 
-                        if !is_official {
-                            table.add_row(vec![
-                                pkg_name.bold().to_string(),
-                                String::new(),
-                                String::new(),
-                                format!("{} AUR?", "?".yellow()),
-                            ]);
-                            continue;
-                        }
+                        // Unknown official packages fall through to an AUR
+                        // lookup instead of being reported as a successful guess.
                     }
                     Err(_) => {
                         daemon_client = None;
@@ -197,11 +263,16 @@ pub fn install_dry_run(packages: &[String]) -> Result<()> {
                 ]);
             }
             Ok(None) => {
+                let aur = AurClient::new()?;
+                let info = aur
+                    .info(pkg_name)
+                    .await?
+                    .with_context(|| format!("Package '{pkg_name}' was not found"))?;
                 table.add_row(vec![
-                    pkg_name.bold().to_string(),
+                    info.name.bold().to_string(),
+                    info.version.to_string().magenta().to_string(),
                     String::new(),
-                    String::new(),
-                    format!("{} AUR?", "?".yellow()),
+                    format!("{} AUR", "✓".green()),
                 ]);
             }
             Err(error) => {

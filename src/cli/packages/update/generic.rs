@@ -173,7 +173,7 @@ async fn try_daemon_list_updates() -> Option<Vec<UpdateInfo>> {
 }
 
 #[cfg(not(unix))]
-#[allow(clippy::unused_async)]
+#[expect(clippy::unused_async)]
 async fn try_daemon_list_updates() -> Option<Vec<UpdateInfo>> {
     None
 }

@@ -118,7 +118,7 @@ pub async fn update(check_only: bool, yes: bool, dry_run: bool) -> Result<()> {
     Ok(())
 }
 
-#[allow(clippy::unnecessary_wraps)]
+#[expect(clippy::unnecessary_wraps)]
 fn update_dry_run(updates: &[UpdateInfo]) -> Result<()> {
     ui::print_header("OMG", "Dry Run - Update Preview");
     ui::print_spacer();
@@ -171,7 +171,7 @@ async fn try_daemon_list_updates() -> Option<Vec<UpdateInfo>> {
 }
 
 #[cfg(not(unix))]
-#[allow(clippy::unused_async)]
+#[expect(clippy::unused_async)]
 async fn try_daemon_list_updates() -> Option<Vec<UpdateInfo>> {
     None
 }

@@ -39,8 +39,20 @@ pub async fn remove(packages: &[String], recursive: bool) -> Result<()> {
     Ok(())
 }
 
-#[allow(clippy::unnecessary_wraps)]
+#[allow(
+    clippy::unnecessary_wraps,
+    reason = "signature is shared with fallible backend dry-run implementations"
+)]
 pub fn remove_dry_run(packages: &[String], recursive: bool) -> Result<()> {
+    let package_info = packages
+        .iter()
+        .map(|package| {
+            crate::package_managers::get_package_info(package)
+                .with_context(|| format!("Failed to look up installed package {package}"))?
+                .ok_or_else(|| anyhow::anyhow!("Package '{package}' is not installed"))
+        })
+        .collect::<Result<Vec<_>>>()?;
+
     crate::cli::modern_ui::print_phase_header("🗑️", "Remove Preview", "dry run");
     println!();
     println!(
@@ -49,31 +61,16 @@ pub fn remove_dry_run(packages: &[String], recursive: bool) -> Result<()> {
     );
 
     let mut total_size: u64 = 0;
-    for pkg_name in packages {
-        match crate::package_managers::get_package_info(pkg_name) {
-            Ok(Some(info)) => {
-                let size_mb = info.size as f64 / 1024.0 / 1024.0;
-                total_size += info.size;
-                println!(
-                    "    {} {} {} ({:.2} MB)",
-                    style::error("✗"),
-                    style::package(&info.name),
-                    style::version(&info.version.to_string()),
-                    size_mb
-                );
-            }
-            Ok(None) => {
-                println!(
-                    "    {} {} (not installed)",
-                    style::warning("?"),
-                    style::package(pkg_name)
-                );
-            }
-            Err(error) => {
-                return Err(error)
-                    .with_context(|| format!("Failed to look up installed package {pkg_name}"));
-            }
-        }
+    for info in package_info {
+        let size_mb = info.size as f64 / 1024.0 / 1024.0;
+        total_size += info.size;
+        println!(
+            "    {} {} {} ({:.2} MB)",
+            style::error("✗"),
+            style::package(&info.name),
+            style::version(&info.version.to_string()),
+            size_mb
+        );
     }
 
     if recursive {

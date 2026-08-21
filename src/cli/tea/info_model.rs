@@ -353,7 +353,7 @@ async fn fetch_info(package: &str) -> InfoMsg {
                 Ok(Some(pkg)) => {
                     return InfoMsg::InfoReceived(PackageInfo {
                         name: pkg.name,
-                        version: pkg.version.clone(),
+                        version: pkg.version,
                         description: pkg.description,
                         source: InfoSource::Official,
                         repo: "apt".to_string(),

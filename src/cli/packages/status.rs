@@ -30,8 +30,11 @@ pub async fn status_with_json(fast: bool, json: bool) -> Result<()> {
     if json {
         return status_json(fast).await;
     }
+    if fast {
+        return status_fallback(true).await;
+    }
 
-    if let Err(e) = run_status_elm(fast) {
+    if let Err(e) = run_status_elm(false) {
         if e.kind() == std::io::ErrorKind::Other {
             return Err(e.into());
         }
@@ -46,18 +49,28 @@ async fn status_json(fast: bool) -> Result<()> {
     let start = std::time::Instant::now();
 
     #[cfg(unix)]
-    let (total, explicit, orphans, updates) = if let Ok(mut client) = DaemonClient::connect().await
-        && let Ok(ResponseResult::Status(status)) = client.call(Request::Status { id: 0 }).await
-    {
-        (
-            status.total_packages,
-            status.explicit_packages,
-            status.orphan_packages,
-            status.updates_available,
-        )
-    } else {
-        let pm = get_package_manager()?;
-        pm.get_status(fast).await?
+    let (total, explicit, orphans, updates) = {
+        let daemon_status = tokio::time::timeout(std::time::Duration::from_millis(500), async {
+            let mut client = DaemonClient::connect().await.ok()?;
+            match client.call(Request::Status { id: 0 }).await.ok()? {
+                ResponseResult::Status(status) => Some(status),
+                _ => None,
+            }
+        })
+        .await
+        .unwrap_or(None);
+
+        if let Some(status) = daemon_status {
+            (
+                status.total_packages,
+                status.explicit_packages,
+                status.orphan_packages,
+                status.updates_available,
+            )
+        } else {
+            let pm = get_package_manager()?;
+            pm.get_status(fast).await?
+        }
     };
 
     #[cfg(not(unix))]
@@ -87,8 +100,14 @@ async fn status_fallback(fast: bool) -> Result<()> {
 
     // 1. Try Daemon first (Hot Path)
     #[cfg(unix)]
-    if let Ok(mut client) = DaemonClient::connect().await
-        && let Ok(ResponseResult::Status(status)) = client.call(Request::Status { id: 0 }).await
+    if let Ok(Some(status)) = tokio::time::timeout(std::time::Duration::from_millis(500), async {
+        let mut client = DaemonClient::connect().await.ok()?;
+        match client.call(Request::Status { id: 0 }).await.ok()? {
+            ResponseResult::Status(status) => Some(status),
+            _ => None,
+        }
+    })
+    .await
     {
         display_status_report(
             status.total_packages,

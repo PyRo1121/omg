@@ -2,9 +2,7 @@ use crate::core::env::team::TeamStatus;
 use crate::core::history::Transaction;
 #[cfg(unix)]
 use crate::daemon::protocol::StatusResult;
-#[cfg(any(feature = "arch", feature = "debian", feature = "debian-pure"))]
-use anyhow::Context;
-use anyhow::Result;
+use anyhow::{Context, Result};
 use crossterm::event::KeyCode;
 use std::time::Instant;
 
@@ -76,7 +74,8 @@ impl App {
             action_error: None,
             system_metrics: SystemMetrics::default(),
             last_update: Instant::now(),
-            usage_stats: crate::core::usage::UsageStats::load(),
+            usage_stats: crate::core::usage::UsageStats::load()
+                .context("Failed to load usage statistics")?,
         };
         app.refresh().await?;
         Ok(app)
@@ -126,13 +125,12 @@ impl App {
 
     async fn fetch_team_status(&mut self) {
         // 1. Try to load local team workspace status
-        if let Ok(cwd) = std::env::current_dir() {
-            let workspace = crate::core::env::team::TeamWorkspace::new(&cwd);
-            if workspace.is_team_workspace()
-                && let Ok(status) = workspace.load_status()
-            {
-                self.team_status = Some(status);
-            }
+        if let Ok(cwd) = std::env::current_dir()
+            && let Ok(workspace) = crate::core::env::team::TeamWorkspace::new(&cwd)
+            && workspace.is_team_workspace()
+            && let Ok(status) = workspace.load_status()
+        {
+            self.team_status = Some(status);
         }
 
         // 2. If we have a Team+ license, try to fetch real-time member data from the API
@@ -391,7 +389,10 @@ impl App {
         crate::cli::packages::clean(true, true, true, false, false).await
     }
 
-    #[allow(clippy::unused_async)] // Async required: feature-gated branches call .await; fallback stubs omit it
+    #[allow(
+        clippy::unused_async,
+        reason = "feature-gated implementations await while fallback builds do not"
+    )]
     pub async fn remove_orphans(&self) -> Result<()> {
         #[cfg(any(feature = "debian", feature = "debian-pure"))]
         if crate::core::env::distro::is_debian_like() {
@@ -582,7 +583,7 @@ impl App {
         return self
             .status
             .as_ref()
-            .and_then(|status| status.scanned_vulnerability_count());
+            .and_then(crate::daemon::protocol::StatusResult::scanned_vulnerability_count);
         #[cfg(not(unix))]
         None
     }
