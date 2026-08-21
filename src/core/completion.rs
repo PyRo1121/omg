@@ -53,10 +53,10 @@ impl CompletionEngine {
     /// Probe context (package.json, .nvmrc, etc.) to prioritize versions
     pub fn probe_context(&self, runtime: &str) -> Result<Vec<String>> {
         let current_dir = std::env::current_dir().context("Failed to get current directory")?;
-        self.probe_context_from(&current_dir, runtime)
+        Self::probe_context_from(&current_dir, runtime)
     }
 
-    fn probe_context_from(&self, start: &Path, runtime: &str) -> Result<Vec<String>> {
+    fn probe_context_from(start: &Path, runtime: &str) -> Result<Vec<String>> {
         let mut suggestions = Vec::new();
         let mut dir = Some(start);
 
@@ -167,129 +167,6 @@ fn read_optional_file(path: &Path) -> Result<Option<String>> {
     }
 }
 
-/// Get completions for common commands
-#[must_use]
-pub fn get_command_completions(partial: &str) -> Vec<String> {
-    let commands = vec![
-        "search",
-        "install",
-        "remove",
-        "update",
-        "info",
-        "why",
-        "outdated",
-        "pin",
-        "size",
-        "blame",
-        "diff",
-        "snapshot",
-        "ci",
-        "migrate",
-        "clean",
-        "explicit",
-        "sync",
-        "use",
-        "list",
-        "hook",
-        "run",
-        "new",
-        "tool",
-        "env",
-        "team",
-        "container",
-        "license",
-        "fleet",
-        "enterprise",
-        "history",
-        "rollback",
-        "dash",
-        "stats",
-        "init",
-        "doctor",
-        "audit",
-    ];
-
-    if partial.is_empty() {
-        return commands.into_iter().map(String::from).collect();
-    }
-
-    let partial_lower = partial.to_lowercase();
-    commands
-        .into_iter()
-        .filter(|c| c.starts_with(&partial_lower))
-        .map(String::from)
-        .collect()
-}
-
-/// Get completions for runtime names
-#[must_use]
-pub fn get_runtime_completions(partial: &str) -> Vec<String> {
-    let runtimes = vec!["node", "python", "rust", "go", "ruby", "java", "bun"];
-
-    if partial.is_empty() {
-        return runtimes.into_iter().map(String::from).collect();
-    }
-
-    let partial_lower = partial.to_lowercase();
-    runtimes
-        .into_iter()
-        .filter(|r| r.starts_with(&partial_lower))
-        .map(String::from)
-        .collect()
-}
-
-/// Get completions for tool names from registry
-#[must_use]
-pub fn get_tool_completions(partial: &str) -> Vec<String> {
-    let tools = crate::cli::tool::registry_tool_names();
-
-    if partial.is_empty() {
-        return tools;
-    }
-
-    let partial_lower = partial.to_lowercase();
-    tools
-        .into_iter()
-        .filter(|t| t.to_lowercase().starts_with(&partial_lower))
-        .collect()
-}
-
-/// Get completions for container subcommands
-#[must_use]
-pub fn get_container_completions(partial: &str) -> Vec<String> {
-    let subcommands = vec![
-        "status", "run", "shell", "build", "list", "images", "pull", "stop", "exec", "init",
-    ];
-
-    if partial.is_empty() {
-        return subcommands.into_iter().map(String::from).collect();
-    }
-
-    let partial_lower = partial.to_lowercase();
-    subcommands
-        .into_iter()
-        .filter(|c| c.starts_with(&partial_lower))
-        .map(String::from)
-        .collect()
-}
-
-/// Get completions for env subcommands
-#[must_use]
-pub fn get_env_completions(partial: &str) -> Vec<String> {
-    let subcommands = vec!["capture", "check", "share", "sync"];
-
-    if partial.is_empty() {
-        return subcommands.into_iter().map(String::from).collect();
-    }
-
-    let partial_lower = partial.to_lowercase();
-    subcommands
-        .into_iter()
-        .filter(|c| c.starts_with(&partial_lower))
-        .map(String::from)
-        .collect()
-}
-
 #[cfg(test)]
 #[expect(clippy::unwrap_used)] // Idiomatic in tests: panics on failure with clear error context
 mod tests {
@@ -324,26 +201,10 @@ mod tests {
     }
 
     #[test]
-    fn command_completions_work() {
-        let results = get_command_completions("ins");
-        assert!(results.contains(&"install".to_string()));
-    }
-
-    #[test]
-    fn runtime_completions_work() {
-        let results = get_runtime_completions("no");
-        assert!(results.contains(&"node".to_string()));
-    }
-
-    #[test]
     fn probe_context_reads_python_version() {
         let temp_dir = TempDir::new().unwrap();
         std::fs::write(temp_dir.path().join(".python-version"), "3.12.0\n").unwrap();
-        let db = Database::open(temp_dir.path().join("test.redb")).unwrap();
-        let engine = CompletionEngine::new(db);
-        let suggestions = engine
-            .probe_context_from(temp_dir.path(), "python")
-            .unwrap();
+        let suggestions = CompletionEngine::probe_context_from(temp_dir.path(), "python").unwrap();
         assert_eq!(suggestions.first().map(String::as_str), Some("3.12.0"));
     }
 
@@ -359,9 +220,7 @@ mod tests {
             std::fs::set_permissions(&pin, std::fs::Permissions::from_mode(0o000)).unwrap();
         }
         let blocked = std::fs::read_to_string(&pin).is_err();
-        let db = Database::open(temp_dir.path().join("test.redb")).unwrap();
-        let engine = CompletionEngine::new(db);
-        let result = engine.probe_context_from(temp_dir.path(), "python");
+        let result = CompletionEngine::probe_context_from(temp_dir.path(), "python");
         let _ = std::fs::set_permissions(&pin, original);
         if !blocked {
             return;
@@ -376,11 +235,7 @@ mod tests {
     fn probe_context_invalid_package_json_fails_closed() {
         let temp_dir = TempDir::new().unwrap();
         std::fs::write(temp_dir.path().join("package.json"), "not json").unwrap();
-        let db = Database::open(temp_dir.path().join("test.redb")).unwrap();
-        let engine = CompletionEngine::new(db);
-        let error = engine
-            .probe_context_from(temp_dir.path(), "node")
-            .unwrap_err();
+        let error = CompletionEngine::probe_context_from(temp_dir.path(), "node").unwrap_err();
         assert!(
             error.to_string().contains("Failed to parse"),
             "unexpected error: {error:#}"

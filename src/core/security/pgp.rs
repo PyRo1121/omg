@@ -89,7 +89,7 @@ fn system_keyring_path() -> Option<&'static str> {
         crate::core::env::distro::Distro::Arch | crate::core::env::distro::Distro::Unknown => {
             Some("/usr/share/pacman/keyrings/archlinux.gpg")
         }
-        crate::core::env::distro::Distro::MacOS | crate::core::env::distro::Distro::Windows => None,
+        crate::core::env::distro::Distro::MacOS => None,
     }
 }
 

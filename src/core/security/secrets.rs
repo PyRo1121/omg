@@ -367,8 +367,13 @@ impl SecretScanner {
                 if let Some(captures) = pattern.pattern.captures(line) {
                     let matched = captures.get(0).map_or("", |m| m.as_str());
 
-                    // Skip if it looks like a placeholder or example
-                    if Self::is_placeholder(matched) {
+                    // Skip only when the captured secret value itself is an
+                    // obvious placeholder; never drop findings merely because
+                    // the value contains a placeholder-like substring.
+                    let secret_value = captures
+                        .get(captures.len() - 1)
+                        .map_or(matched, |m| m.as_str());
+                    if Self::is_placeholder(secret_value) {
                         continue;
                     }
 
@@ -505,9 +510,22 @@ impl SecretScanner {
             || sensitive_files.iter().any(|f| file_name.contains(f))
     }
 
-    /// Check if a match looks like a placeholder
-    fn is_placeholder(text: &str) -> bool {
-        let placeholders = [
+    /// Check if the captured secret value looks like a placeholder.
+    ///
+    /// Placeholder detection must be conservative: generic words such as
+    /// `test` or `123` appear inside real credentials all the time, so they
+    /// are only skipped when they equal the whole value. Structural template
+    /// markers (`<`, `${`, `{{`) and explicit `your_`/`my_` prefixes remain
+    /// substring/prefix checks because they cannot occur in legitimate key
+    /// material emitted by any provider covered by [`PATTERNS`].
+    fn is_placeholder(value: &str) -> bool {
+        const TEMPLATE_MARKERS: [&str; 3] = ["<", "${", "{{"];
+        if TEMPLATE_MARKERS.iter().any(|marker| value.contains(marker)) {
+            return true;
+        }
+
+        let normalized = value.trim().to_lowercase();
+        const PLACEHOLDER_VALUES: [&str; 12] = [
             "example",
             "sample",
             "test",
@@ -520,30 +538,43 @@ impl SecretScanner {
             "123",
             "fake",
             "dummy",
-            "your_",
-            "my_",
-            "<",
-            ">",
-            "${",
-            "{{",
         ];
+        if PLACEHOLDER_VALUES.contains(&normalized.as_str()) {
+            return true;
+        }
 
-        let lower = text.to_lowercase();
-        placeholders.iter().any(|p| lower.contains(p))
+        normalized.starts_with("your_")
+            || normalized.starts_with("my_")
+            || normalized.starts_with("example_")
+            || normalized.starts_with("sample_")
+            || normalized.starts_with("placeholder_")
     }
 
     /// Redact a secret for safe display
+    ///
+    /// Slices on `char` boundaries only: matched secrets may contain
+    /// arbitrary non-whitespace UTF-8 (e.g. via the generic password
+    /// pattern), and byte-index slicing would panic on multi-byte chars.
     fn redact(text: &str) -> String {
         if text.len() <= 8 {
             return "*".repeat(text.len());
         }
 
         let visible_chars = 4;
-        let prefix = &text[..visible_chars];
-        let suffix = &text[text.len() - visible_chars..];
-        let hidden_len = text.len() - (visible_chars * 2);
+        let total_chars = text.chars().count();
+        let prefix: String = text.chars().take(visible_chars).collect();
+        let suffix: String = text
+            .chars()
+            .skip(total_chars.saturating_sub(visible_chars))
+            .collect();
+        let hidden_chars = total_chars.saturating_sub(visible_chars * 2);
 
-        format!("{}{}...{}", prefix, "*".repeat(hidden_len.min(10)), suffix)
+        format!(
+            "{}{}...{}",
+            prefix,
+            "*".repeat(hidden_chars.min(10)),
+            suffix
+        )
     }
 }
 
@@ -605,11 +636,9 @@ mod tests {
         let findings = scanner.scan_content(content, "key.pem");
 
         assert!(!findings.is_empty(), "Should detect private key");
-        assert!(
-            findings
-                .iter()
-                .any(|f| matches!(f.secret_type, SecretType::PrivateKey))
-        );
+        assert!(findings
+            .iter()
+            .any(|f| matches!(f.secret_type, SecretType::PrivateKey)));
     }
 
     #[test]
@@ -628,6 +657,56 @@ mod tests {
 
         assert!(redacted.contains('*'), "Should contain asterisks");
         assert!(!redacted.is_empty(), "Should produce output");
+    }
+
+    #[test]
+    fn redaction_never_panics_on_multibyte_secrets() {
+        // Regression: byte-index slicing panicked on non-ASCII matches from
+        // the generic password pattern ([^\s"]{8,}).
+        let scanner = SecretScanner::new();
+        let content = "password = \u{43f}\u{430}\u{440}\u{43e}\u{43b}\u{44c}12345678"; // Cyrillic + digits, > 8 chars
+        let findings = scanner.scan_content(content, "dotfile");
+
+        assert!(!findings.is_empty(), "multibyte password must be detected");
+        let redacted = findings[0].redacted.clone();
+        assert!(
+            redacted.contains('*'),
+            "redacted output must mask the secret"
+        );
+        assert_eq!(
+            SecretScanner::redact(
+                "\u{5bc2}\u{9759}\u{5bc6}\u{7801}\u{5b8c}\u{6574}\u{7684}\u{957f}\u{5ea6}"
+            ),
+            SecretScanner::redact(
+                "\u{5bc2}\u{9759}\u{5bc6}\u{7801}\u{5b8c}\u{6574}\u{7684}\u{957f}\u{5ea6}"
+            )
+        );
+    }
+
+    #[test]
+    fn real_api_key_containing_placeholder_substrings_is_still_reported() {
+        // Regression: substring placeholder filtering dropped genuine keys
+        // that merely contained words like `test` or `123`.
+        let scanner = SecretScanner::new();
+        let content = "apikey = 'abcd1234test567890efgh'";
+        let findings = scanner.scan_content(content, "config.ini");
+
+        assert!(
+            !findings.is_empty(),
+            "a real key containing the word 'test' must still be reported"
+        );
+    }
+
+    #[test]
+    fn exact_placeholder_values_are_still_skipped() {
+        let scanner = SecretScanner::new();
+        let content = "api_key = 'YOUR_API_KEY_HERE'\napi_key = example";
+        let findings = scanner.scan_content(content, "config.py");
+
+        assert!(
+            findings.is_empty(),
+            "exact placeholder values must be skipped"
+        );
     }
 
     #[test]
@@ -673,10 +752,8 @@ mod tests {
         let path = temp.path().join("key.pem");
         std::fs::write(&path, "-----BEGIN RSA PRIVATE KEY-----\nMIIE...").unwrap();
         let findings = SecretScanner::new().scan_file(&path).unwrap();
-        assert!(
-            findings
-                .iter()
-                .any(|f| matches!(f.secret_type, SecretType::PrivateKey))
-        );
+        assert!(findings
+            .iter()
+            .any(|f| matches!(f.secret_type, SecretType::PrivateKey)));
     }
 }

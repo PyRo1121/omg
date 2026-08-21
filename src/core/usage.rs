@@ -14,7 +14,7 @@ use std::collections::HashMap;
 use std::path::PathBuf;
 use std::time::Instant;
 
-use anyhow::Result;
+use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
 
 const USAGE_SYNC_API: &str = "https://api.pyro1121.com/api/report-usage";
@@ -181,6 +181,13 @@ pub struct UsageStats {
     pub time_saved_today_ms: u64,
 }
 
+#[derive(Clone, Copy)]
+enum DailyOperation {
+    Install,
+    Search,
+    RuntimeSwitch,
+}
+
 impl UsageStats {
     /// Get the usage stats file path
     fn path() -> Result<PathBuf> {
@@ -189,84 +196,123 @@ impl UsageStats {
         Ok(data_dir.join("usage.json"))
     }
 
-    /// Load usage stats from disk
-    pub fn load() -> Self {
-        Self::path()
-            .ok()
-            .and_then(|p| std::fs::read_to_string(p).ok())
-            .and_then(|s| serde_json::from_str(&s).ok())
-            .unwrap_or_default()
+    /// Load usage stats from disk.
+    pub fn load() -> Result<Self> {
+        Self::load_from(&Self::path()?)
     }
 
-    /// Save usage stats to disk
+    fn load_from(path: &std::path::Path) -> Result<Self> {
+        let content = match std::fs::read_to_string(path) {
+            Ok(content) => content,
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+                return Ok(Self::default());
+            }
+            Err(error) => {
+                return Err(error)
+                    .with_context(|| format!("Failed to read usage stats: {}", path.display()));
+            }
+        };
+        serde_json::from_str(&content)
+            .with_context(|| format!("Malformed usage stats: {}", path.display()))
+    }
+
+    /// Save usage stats to disk.
     pub fn save(&self) -> Result<()> {
         let path = Self::path()?;
-        let content = serde_json::to_string_pretty(self)?;
-        std::fs::write(path, content)?;
-        Ok(())
+        self.save_to(&path)
+            .with_context(|| format!("Failed to save usage stats: {}", path.display()))
     }
 
-    /// Record a command execution
+    fn save_to(&self, path: &std::path::Path) -> Result<()> {
+        let content = serde_json::to_vec_pretty(self).context("Failed to serialize usage stats")?;
+        crate::core::safe_ops::atomic_write_file_sync(path, content)
+    }
+
+    /// Record a command execution.
     pub fn record_command(&mut self, command: &str, time_saved_ms: u64) {
-        // Update totals
+        self.record_command_on(command, time_saved_ms, jiff::Zoned::now().date());
+        self.save_best_effort();
+    }
+
+    fn record_specialized_command(
+        &mut self,
+        command: &str,
+        time_saved_ms: u64,
+        operation: DailyOperation,
+    ) {
+        self.record_specialized_command_on(
+            command,
+            time_saved_ms,
+            operation,
+            jiff::Zoned::now().date(),
+        );
+        self.save_best_effort();
+    }
+
+    fn record_specialized_command_on(
+        &mut self,
+        command: &str,
+        time_saved_ms: u64,
+        operation: DailyOperation,
+        today: jiff::civil::Date,
+    ) {
+        self.rollover_for(today);
+        match operation {
+            DailyOperation::Install => self.installs_today += 1,
+            DailyOperation::Search => self.searches_today += 1,
+            DailyOperation::RuntimeSwitch => self.runtimes_today += 1,
+        }
+        self.record_command_on(command, time_saved_ms, today);
+    }
+
+    fn record_command_on(&mut self, command: &str, time_saved_ms: u64, today: jiff::civil::Date) {
+        self.rollover_for(today);
         self.total_commands += 1;
         self.time_saved_ms += time_saved_ms;
-
-        // Update command counts
         *self.commands.entry(command.to_string()).or_insert(0) += 1;
+        self.queries_today += 1;
+        self.time_saved_today_ms += time_saved_ms;
+        self.queries_this_month += 1;
+        self.check_achievements();
+    }
 
-        // Update daily/monthly counters and streak
-        let today = jiff::Zoned::now().date().to_string();
-        let month = today[..7].to_string(); // YYYY-MM
+    fn save_best_effort(&self) {
+        if let Err(error) = self.save() {
+            tracing::warn!("Failed to save usage stats: {error}");
+        }
+    }
 
-        // Set first use date if not set
+    fn rollover_for(&mut self, today: jiff::civil::Date) {
+        let today_string = today.to_string();
+        let month = today_string[..7].to_string();
+
         if self.first_use_date.is_empty() {
-            self.first_use_date = today.clone();
+            self.first_use_date.clone_from(&today_string);
         }
 
-        // Update streak
-        if self.last_query_date != today {
-            // Check if yesterday (streak continues)
+        if self.last_query_date != today_string {
             if let Ok(last_date) = jiff::civil::Date::strptime("%Y-%m-%d", &self.last_query_date) {
-                let today_date = jiff::Zoned::now().date();
-                let diff = today_date - last_date;
-                if diff.get_days() == 1 {
+                let elapsed_days = (today - last_date).get_days();
+                if elapsed_days == 1 {
                     self.current_streak += 1;
-                } else if diff.get_days() > 1 {
-                    self.current_streak = 1; // Reset streak
+                } else if elapsed_days > 1 {
+                    self.current_streak = 1;
                 }
             } else {
-                self.current_streak = 1; // First day
+                self.current_streak = 1;
             }
-
-            // Update longest streak
-            if self.current_streak > self.longest_streak {
-                self.longest_streak = self.current_streak;
-            }
-
-            // Reset all daily counters
+            self.longest_streak = self.longest_streak.max(self.current_streak);
             self.queries_today = 0;
             self.installs_today = 0;
             self.searches_today = 0;
             self.runtimes_today = 0;
             self.time_saved_today_ms = 0;
-            self.last_query_date = today;
+            self.last_query_date = today_string;
         }
-        self.queries_today += 1;
-        self.time_saved_today_ms += time_saved_ms;
 
         if self.last_month != month {
             self.queries_this_month = 0;
             self.last_month = month;
-        }
-        self.queries_this_month += 1;
-
-        // Check for new achievements
-        self.check_achievements();
-
-        // Auto-save
-        if let Err(e) = self.save() {
-            tracing::warn!("Failed to save usage stats: {}", e);
         }
     }
 
@@ -433,12 +479,14 @@ impl UsageStats {
         });
 
         let client = crate::core::http::shared_client();
-        let _response = client
+        client
             .post(USAGE_SYNC_API)
             .json(&payload)
             .timeout(std::time::Duration::from_secs(5))
             .send()
-            .await?;
+            .await?
+            .error_for_status()
+            .context("Usage sync server rejected the update")?;
 
         self.last_sync = jiff::Timestamp::now().as_second();
         self.save()?;
@@ -447,17 +495,76 @@ impl UsageStats {
     }
 }
 
+fn load_for_tracking() -> Option<UsageStats> {
+    match UsageStats::load() {
+        Ok(stats) => Some(stats),
+        Err(error) => {
+            tracing::warn!("Skipping usage tracking because persisted stats are invalid: {error}");
+            None
+        }
+    }
+}
+
+/// Acquire the cross-process usage lock (`usage.json.lock`) so a full
+/// load-modify-save cycle cannot interleave with another omg invocation
+/// (which would silently lose counters to last-writer-wins). The lock is
+/// released when the returned file is dropped. Same pattern as
+/// [`crate::core::history::HistoryManager`].
+fn lock_usage_file() -> Option<std::fs::File> {
+    lock_file_at(&UsageStats::path().ok()?.with_extension("lock"))
+}
+
+fn lock_file_at(lock_path: &std::path::Path) -> Option<std::fs::File> {
+    let lock = match std::fs::OpenOptions::new()
+        .create(true)
+        .read(true)
+        .write(true)
+        .truncate(false)
+        .open(lock_path)
+    {
+        Ok(lock) => lock,
+        Err(error) => {
+            tracing::warn!(
+                "Failed to open usage lock {}: skipping locked update ({error})",
+                lock_path.display()
+            );
+            return None;
+        }
+    };
+    if let Err(error) = lock.lock() {
+        tracing::warn!(
+            "Failed to lock usage stats {}: {error}",
+            lock_path.display()
+        );
+        return None;
+    }
+    Some(lock)
+}
+
+/// Run a load-modify-save cycle while holding the usage file lock.
+fn with_usage_lock<T>(mutate: impl FnOnce() -> T) -> T {
+    let _lock = lock_usage_file();
+    mutate()
+}
+
 /// Track a command execution (convenience function)
 pub fn track(command: &str, time_saved_ms: u64) {
-    let mut stats = UsageStats::load();
-    stats.record_command(command, time_saved_ms);
+    with_usage_lock(|| {
+        let Some(mut stats) = load_for_tracking() else {
+            return;
+        };
+        stats.record_command(command, time_saved_ms);
+    });
 }
 
 /// Track search command
 pub fn track_search() {
-    let mut stats = UsageStats::load();
-    stats.searches_today += 1;
-    stats.record_command("search", time_saved::SEARCH_MS);
+    with_usage_lock(|| {
+        let Some(mut stats) = load_for_tracking() else {
+            return;
+        };
+        stats.record_specialized_command("search", time_saved::SEARCH_MS, DailyOperation::Search);
+    });
 }
 
 /// Track info command
@@ -477,29 +584,43 @@ pub fn track_status() {
 
 /// Track install command
 pub fn track_install(packages: &[String]) {
-    let mut stats = UsageStats::load();
+    with_usage_lock(|| {
+        let Some(mut stats) = load_for_tracking() else {
+            return;
+        };
 
-    for pkg in packages {
-        *stats.installed_packages.entry(pkg.clone()).or_insert(0) += 1;
-    }
+        for pkg in packages {
+            *stats.installed_packages.entry(pkg.clone()).or_insert(0) += 1;
+        }
 
-    stats.installs_today += 1;
-    stats.record_command("install", time_saved::INSTALL_MS);
+        stats.record_specialized_command(
+            "install",
+            time_saved::INSTALL_MS,
+            DailyOperation::Install,
+        );
+    });
 }
 
 /// Track runtime switch
 pub fn track_runtime_switch(runtime: &str) {
-    let mut stats = UsageStats::load();
+    with_usage_lock(|| {
+        let Some(mut stats) = load_for_tracking() else {
+            return;
+        };
 
-    *stats
-        .runtime_usage_counts
-        .entry(runtime.to_string())
-        .or_insert(0) += 1;
+        *stats
+            .runtime_usage_counts
+            .entry(runtime.to_string())
+            .or_insert(0) += 1;
 
-    stats.record_runtime(runtime);
+        stats.record_runtime(runtime);
 
-    stats.runtimes_today += 1;
-    stats.record_command("runtime_switch", time_saved::RUNTIME_SWITCH_MS);
+        stats.record_specialized_command(
+            "runtime_switch",
+            time_saved::RUNTIME_SWITCH_MS,
+            DailyOperation::RuntimeSwitch,
+        );
+    });
 }
 
 // =============================================================================
@@ -674,26 +795,25 @@ pub fn track_feature_usage_with_metadata(
 
 /// Sync usage in background if needed
 pub fn maybe_sync_background() {
-    // Only sync if we have a license
-    if let Some(license) = crate::core::license::load_license() {
-        let stats = UsageStats::load();
-        if stats.needs_sync() || stats.needs_immediate_sync() {
-            // Spawn background task
-            tokio::spawn(async move {
-                let mut stats = UsageStats::load();
-                if let Err(e) = stats.sync(&license.key).await {
-                    tracing::debug!("Usage sync failed: {e}");
-                }
-            });
-        }
+    // Only sync if we have a license and valid persisted usage state.
+    if let Some(license) = crate::core::license::load_license()
+        && let Some(mut stats) = load_for_tracking()
+        && (stats.needs_sync() || stats.needs_immediate_sync())
+    {
+        tokio::spawn(async move {
+            if let Err(e) = stats.sync(&license.key).await {
+                tracing::debug!("Usage sync failed: {e}");
+            }
+        });
     }
 }
 
 /// Force immediate sync (for important events like achievements)
 pub fn force_sync_background() {
-    if let Some(license) = crate::core::license::load_license() {
+    if let Some(license) = crate::core::license::load_license()
+        && let Some(mut stats) = load_for_tracking()
+    {
         tokio::spawn(async move {
-            let mut stats = UsageStats::load();
             if let Err(e) = stats.sync(&license.key).await {
                 tracing::debug!("Force sync failed: {e}");
             }
@@ -703,8 +823,12 @@ pub fn force_sync_background() {
 
 /// Track and sync immediately (for real-time dashboard updates)
 pub fn track_and_sync(command: &str, time_saved_ms: u64) {
-    let mut stats = UsageStats::load();
-    stats.record_command(command, time_saved_ms);
+    with_usage_lock(|| {
+        let Some(mut stats) = load_for_tracking() else {
+            return;
+        };
+        stats.record_command(command, time_saved_ms);
+    });
     maybe_sync_background();
 }
 
@@ -713,13 +837,12 @@ pub async fn sync_usage_now() {
     if crate::core::paths::test_mode() {
         return;
     }
-    if let Some(license) = crate::core::license::load_license() {
-        let mut stats = UsageStats::load();
-        if (stats.needs_sync() || stats.needs_immediate_sync() || stats.total_commands > 0)
-            && let Err(e) = stats.sync(&license.key).await
-        {
-            tracing::debug!("Usage sync failed: {e}");
-        }
+    if let Some(license) = crate::core::license::load_license()
+        && let Some(mut stats) = load_for_tracking()
+        && (stats.needs_sync() || stats.needs_immediate_sync() || stats.total_commands > 0)
+        && let Err(e) = stats.sync(&license.key).await
+    {
+        tracing::debug!("Usage sync failed: {e}");
     }
 }
 
@@ -755,11 +878,96 @@ mod tests {
     }
 
     #[test]
+    fn first_specialized_operation_after_daily_rollover_is_counted() {
+        let today =
+            jiff::civil::Date::strptime("%Y-%m-%d", "2025-04-10").expect("valid fixture date");
+        let mut stats = UsageStats {
+            last_query_date: "2025-04-09".to_string(),
+            last_month: "2025-04".to_string(),
+            searches_today: 9,
+            ..Default::default()
+        };
+
+        stats.record_specialized_command_on(
+            "search",
+            time_saved::SEARCH_MS,
+            DailyOperation::Search,
+            today,
+        );
+
+        assert_eq!(stats.searches_today, 1);
+        assert_eq!(stats.queries_today, 1);
+        assert_eq!(stats.commands.get("search"), Some(&1));
+    }
+
+    #[test]
+    fn malformed_usage_stats_are_rejected_without_modification() {
+        let directory = tempfile::tempdir().expect("create temporary directory");
+        let path = directory.path().join("usage.json");
+        std::fs::write(&path, b"{not-json").expect("write malformed fixture");
+
+        let error = UsageStats::load_from(&path).expect_err("malformed stats must be rejected");
+
+        assert!(error.to_string().contains("Malformed usage stats"));
+        assert_eq!(std::fs::read(&path).expect("read fixture"), b"{not-json");
+    }
+
+    #[test]
+    fn missing_usage_stats_load_as_empty() {
+        let directory = tempfile::tempdir().expect("create temporary directory");
+        let stats = UsageStats::load_from(&directory.path().join("missing.json"))
+            .expect("missing stats are the initial state");
+        assert_eq!(stats.total_commands, 0);
+    }
+
+    #[test]
+    fn concurrent_locked_updates_do_not_lose_counters() {
+        // Regression: usage.json load-modify-save cycles used to run without
+        // a cross-process lock, so concurrent omg invocations clobbered each
+        // other's counters (last-writer-wins).
+        const WRITERS: usize = 8;
+        const UPDATES_PER_WRITER: usize = 5;
+        let directory = tempfile::tempdir().expect("create temporary directory");
+        let path = directory.path().join("usage.json");
+
+        let barrier = std::sync::Arc::new(std::sync::Barrier::new(WRITERS));
+        let mut writers = Vec::new();
+        for writer_index in 0..WRITERS {
+            let path = path.clone();
+            let barrier = std::sync::Arc::clone(&barrier);
+            writers.push(std::thread::spawn(move || {
+                barrier.wait();
+                for _ in 0..UPDATES_PER_WRITER {
+                    // Same lock + load-modify-save shape as the public track* functions.
+                    let _lock = lock_file_at(&path.with_extension("lock"));
+                    let mut stats = UsageStats::load_from(&path).expect("valid usage stats");
+                    stats.record_command_on(
+                        "search",
+                        1,
+                        jiff::civil::Date::strptime("%Y-%m-%d", "2025-04-10")
+                            .expect("valid fixture date"),
+                    );
+                    stats.save_to(&path).expect("locked save must succeed");
+                }
+                writer_index
+            }));
+        }
+        for writer in writers {
+            writer.join().expect("usage writer panicked");
+        }
+
+        let stats = UsageStats::load_from(&path).expect("final stats must be valid");
+        assert_eq!(stats.total_commands, (WRITERS * UPDATES_PER_WRITER) as u64);
+    }
+
+    #[test]
     fn test_record_command() {
+        let today =
+            jiff::civil::Date::strptime("%Y-%m-%d", "2025-04-10").expect("valid fixture date");
         let mut stats = UsageStats::default();
-        stats.record_command("search", 127);
-        stats.record_command("search", 127);
-        stats.record_command("info", 132);
+        stats.record_command_on("search", 127, today);
+        stats.record_command_on("search", 127, today);
+        stats.record_command_on("info", 132, today);
 
         assert_eq!(stats.total_commands, 3);
         assert_eq!(stats.commands.get("search"), Some(&2));

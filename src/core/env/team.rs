@@ -109,11 +109,60 @@ pub struct TeamWorkspace {
 }
 
 impl TeamWorkspace {
-    /// Create a new team workspace manager
-    pub fn new(root: impl AsRef<Path>) -> Self {
+    /// Create a new team workspace manager.
+    ///
+    /// A missing team config means the directory is not initialized. Existing
+    /// but unreadable or malformed config is rejected rather than treated as
+    /// absent.
+    pub fn new(root: impl AsRef<Path>) -> Result<Self> {
         let root = root.as_ref().to_path_buf();
-        let config = Self::load_config(&root).ok();
-        Self { root, config }
+        Self::validate_config_dir(&root)?;
+        let config_path = root.join(".omg/team.toml");
+        let config = match std::fs::symlink_metadata(&config_path) {
+            Ok(metadata) => {
+                anyhow::ensure!(
+                    !metadata.file_type().is_symlink() && metadata.is_file(),
+                    "Team config must be a regular file: {}",
+                    config_path.display()
+                );
+                Some(Self::load_config(&root)?)
+            }
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => None,
+            Err(error) => {
+                return Err(error).with_context(|| {
+                    format!("Failed to inspect team config: {}", config_path.display())
+                });
+            }
+        };
+        Ok(Self { root, config })
+    }
+
+    fn validate_config_dir(root: &Path) -> Result<()> {
+        let config_dir = root.join(".omg");
+        match std::fs::symlink_metadata(&config_dir) {
+            Ok(metadata) => {
+                anyhow::ensure!(
+                    !metadata.file_type().is_symlink() && metadata.is_dir(),
+                    "Team config path must be a real directory: {}",
+                    config_dir.display()
+                );
+                Ok(())
+            }
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(()),
+            Err(error) => Err(error).with_context(|| {
+                format!(
+                    "Failed to inspect team config directory: {}",
+                    config_dir.display()
+                )
+            }),
+        }
+    }
+
+    fn ensure_config_dir(&self) -> Result<()> {
+        Self::validate_config_dir(&self.root)?;
+        std::fs::create_dir_all(self.config_dir())
+            .context("Failed to create team config directory")?;
+        Self::validate_config_dir(&self.root)
     }
 
     /// Get the team config directory
@@ -145,7 +194,15 @@ impl TeamWorkspace {
 
     /// Load team configuration from disk
     fn load_config(root: &Path) -> Result<TeamConfig> {
+        Self::validate_config_dir(root)?;
         let path = root.join(".omg/team.toml");
+        let metadata = std::fs::symlink_metadata(&path)
+            .with_context(|| format!("Failed to inspect team config: {}", path.display()))?;
+        anyhow::ensure!(
+            !metadata.file_type().is_symlink() && metadata.is_file(),
+            "Team config must be a regular file: {}",
+            path.display()
+        );
         let content = std::fs::read_to_string(&path)
             .with_context(|| format!("Failed to read team config: {}", path.display()))?;
         toml::from_str(&content).context("Failed to parse team config")
@@ -153,8 +210,7 @@ impl TeamWorkspace {
 
     /// Initialize a new team workspace
     pub fn init(&mut self, team_id: &str, name: &str) -> Result<()> {
-        let config_dir = self.config_dir();
-        std::fs::create_dir_all(&config_dir)?;
+        self.ensure_config_dir()?;
 
         let config = TeamConfig {
             team_id: team_id.to_string(),
@@ -169,9 +225,6 @@ impl TeamWorkspace {
                 on_member_join: false,
             },
         };
-
-        let content = toml::to_string_pretty(&config)?;
-        std::fs::write(self.config_path(), content)?;
 
         // Create initial status
         let status = TeamStatus {
@@ -188,8 +241,12 @@ impl TeamWorkspace {
             updated_at: jiff::Timestamp::now().as_second(),
         };
 
-        let status_json = serde_json::to_string_pretty(&status)?;
-        std::fs::write(self.status_path(), status_json)?;
+        // Publish the config last. Its presence is the initialization marker,
+        // so a failed status write cannot leave a half-initialized workspace.
+        let status_json = serde_json::to_vec_pretty(&status)?;
+        crate::core::safe_ops::atomic_write_file_sync(self.status_path(), status_json)?;
+        let content = toml::to_string_pretty(&config)?;
+        crate::core::safe_ops::atomic_write_file_sync(self.config_path(), content)?;
 
         self.config = Some(config);
 
@@ -201,11 +258,13 @@ impl TeamWorkspace {
 
     /// Join an existing team workspace
     pub fn join(&mut self, remote_url: &str) -> Result<()> {
+        self.ensure_config_dir()?;
+        let config_path = self.config_path();
         // For now, just set the remote URL and sync
         if let Some(ref mut config) = self.config {
             config.remote_url = Some(remote_url.to_string());
             let content = toml::to_string_pretty(config)?;
-            std::fs::write(self.config_path(), content)?;
+            crate::core::safe_ops::atomic_write_file_sync(config_path, content)?;
         } else {
             anyhow::bail!("Not a team workspace. Run 'omg team init' first.");
         }
@@ -244,13 +303,9 @@ impl TeamWorkspace {
             },
         };
 
-        // Load existing status or create new
-        let mut status = self.load_status().unwrap_or_else(|_| TeamStatus {
-            config: config.clone(),
-            lock_hash: lock_hash.clone(),
-            members: Vec::new(),
-            updated_at: jiff::Timestamp::now().as_second(),
-        });
+        // Existing team state is durable data. Reject missing or malformed
+        // status instead of replacing it with an empty member set.
+        let mut status = self.load_status()?;
 
         // Update or add member
         if let Some(existing) = status.members.iter_mut().find(|m| m.id == member.id) {
@@ -262,22 +317,34 @@ impl TeamWorkspace {
         status.lock_hash = lock_hash;
         status.updated_at = jiff::Timestamp::now().as_second();
 
-        // Save status
-        let status_json = serde_json::to_string_pretty(&status)?;
-        std::fs::write(self.status_path(), status_json)?;
+        // Save status through an atomic replacement so an interruption cannot
+        // truncate durable team state.
+        self.ensure_config_dir()?;
+        let status_json = serde_json::to_vec_pretty(&status)?;
+        crate::core::safe_ops::atomic_write_file_sync(self.status_path(), status_json)?;
 
         Ok(status)
     }
 
     /// Load team status from disk
     pub fn load_status(&self) -> Result<TeamStatus> {
-        let content = std::fs::read_to_string(self.status_path())?;
+        Self::validate_config_dir(&self.root)?;
+        let path = self.status_path();
+        let metadata = std::fs::symlink_metadata(&path)
+            .with_context(|| format!("Failed to inspect team status: {}", path.display()))?;
+        anyhow::ensure!(
+            !metadata.file_type().is_symlink() && metadata.is_file(),
+            "Team status must be a regular file: {}",
+            path.display()
+        );
+        let content = std::fs::read_to_string(&path)
+            .with_context(|| format!("Failed to read team status: {}", path.display()))?;
         serde_json::from_str(&content).context("Failed to parse team status")
     }
 
     /// Push local environment to team lock
     pub async fn push(&self) -> Result<()> {
-        let _config = self.config.as_ref().context("Not a team workspace")?;
+        let config = self.config.as_ref().context("Not a team workspace")?;
 
         // Capture and save
         let state = EnvironmentState::capture().await?;
@@ -287,8 +354,7 @@ impl TeamWorkspace {
         // Update status
         self.update_status().await?;
 
-        // If auto-commit is enabled and we're in a git repo, commit the change
-        if self.is_git_repo() {
+        if config.auto_push && self.is_git_repo() {
             self.git_commit_lock("Update omg.lock via team push")?;
         }
 
@@ -382,17 +448,29 @@ fi
             return Ok(());
         }
 
-        // Stage omg.lock
-        Command::new("git")
+        let add = Command::new("git")
             .args(["add", "--", "omg.lock"])
             .current_dir(&self.root)
-            .output()?;
+            .output()
+            .context("Failed to run git add for omg.lock")?;
+        if !add.status.success() {
+            anyhow::bail!(
+                "git add failed: {}",
+                String::from_utf8_lossy(&add.stderr).trim()
+            );
+        }
 
-        // Commit
-        Command::new("git")
-            .args(["commit", "-m", message, "--no-verify"])
+        let commit = Command::new("git")
+            .args(["commit", "-m", message])
             .current_dir(&self.root)
-            .output()?;
+            .output()
+            .context("Failed to run git commit for omg.lock")?;
+        if !commit.status.success() {
+            anyhow::bail!(
+                "git commit failed: {}",
+                String::from_utf8_lossy(&commit.stderr).trim()
+            );
+        }
 
         Ok(())
     }
@@ -423,5 +501,61 @@ pub fn get_git_remote() -> Result<Option<String>> {
         Ok(Some(url))
     } else {
         Ok(None)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn missing_team_config_is_an_uninitialized_workspace() {
+        let directory = tempfile::tempdir().expect("temp dir");
+        let workspace = TeamWorkspace::new(directory.path()).expect("create workspace");
+
+        assert!(!workspace.is_team_workspace());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn init_rejects_symlinked_team_config_directory() {
+        use std::os::unix::fs::symlink;
+
+        let workspace_directory = tempfile::tempdir().expect("workspace temp dir");
+        let outside_directory = tempfile::tempdir().expect("outside temp dir");
+        let mut workspace =
+            TeamWorkspace::new(workspace_directory.path()).expect("create workspace manager");
+        symlink(
+            outside_directory.path(),
+            workspace_directory.path().join(".omg"),
+        )
+        .expect("create malicious config symlink");
+
+        let error = workspace
+            .init("team-id", "Team")
+            .expect_err("symlinked config directory must be rejected");
+
+        assert!(error.to_string().contains("must be a real directory"));
+        assert!(!outside_directory.path().join("team.toml").exists());
+        assert!(!outside_directory.path().join("team-status.json").exists());
+    }
+
+    #[test]
+    fn malformed_team_config_is_rejected_without_rewriting_it() {
+        let directory = tempfile::tempdir().expect("temp dir");
+        let config_dir = directory.path().join(".omg");
+        std::fs::create_dir(&config_dir).expect("create config dir");
+        let config_path = config_dir.join("team.toml");
+        std::fs::write(&config_path, "team_id = [").expect("write malformed config");
+
+        let error = TeamWorkspace::new(directory.path())
+            .err()
+            .expect("malformed config must be rejected");
+
+        assert!(error.to_string().contains("Failed to parse team config"));
+        assert_eq!(
+            std::fs::read_to_string(config_path).expect("read original config"),
+            "team_id = ["
+        );
     }
 }

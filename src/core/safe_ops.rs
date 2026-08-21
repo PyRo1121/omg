@@ -118,65 +118,39 @@ pub fn validate_path<P: AsRef<Path>>(path: P) -> Result<PathBuf> {
 
 /// Safe file write with atomic operations
 pub async fn atomic_write_file<P: AsRef<Path>, C: AsRef<[u8]>>(path: P, contents: C) -> Result<()> {
-    let path = path.as_ref();
-    let contents = contents.as_ref();
-
-    // Validate path first
-    validate_path(path)?;
-
-    // Create parent directory if it doesn't exist
-    if let Some(parent) = path.parent() {
-        tokio::fs::create_dir_all(parent)
-            .await
-            .with_context(|| format!("Failed to create parent directory: {}", parent.display()))?;
-    }
-
-    // Write to temporary file first
-    let temp_path = path.with_extension("tmp");
-    tokio::fs::write(&temp_path, contents)
+    let path = path.as_ref().to_path_buf();
+    let contents = contents.as_ref().to_vec();
+    tokio::task::spawn_blocking(move || atomic_write_file_sync(path, contents))
         .await
-        .with_context(|| format!("Failed to write to temporary file: {}", temp_path.display()))?;
-
-    // Atomic rename
-    tokio::fs::rename(&temp_path, path).await.with_context(|| {
-        format!(
-            "Failed to rename {} to {}",
-            temp_path.display(),
-            path.display()
-        )
-    })?;
-
-    Ok(())
+        .context("Atomic file writer task failed")?
 }
 
 /// Safe synchronous file write with atomic operations
 pub fn atomic_write_file_sync<P: AsRef<Path>, C: AsRef<[u8]>>(path: P, contents: C) -> Result<()> {
-    let path = path.as_ref();
-    let contents = contents.as_ref();
+    use std::io::Write;
 
-    // Validate path first
-    validate_path(path)?;
+    let path = validate_path(path)?;
+    let parent = path
+        .parent()
+        .filter(|parent| !parent.as_os_str().is_empty())
+        .unwrap_or_else(|| Path::new("."));
+    std::fs::create_dir_all(parent)
+        .with_context(|| format!("Failed to create parent directory: {}", parent.display()))?;
 
-    // Create parent directory if it doesn't exist
-    if let Some(parent) = path.parent() {
-        std::fs::create_dir_all(parent)
-            .with_context(|| format!("Failed to create parent directory: {}", parent.display()))?;
-    }
-
-    // Write to temporary file first
-    let temp_path = path.with_extension("tmp");
-    std::fs::write(&temp_path, contents)
-        .with_context(|| format!("Failed to write to temporary file: {}", temp_path.display()))?;
-
-    // Atomic rename
-    std::fs::rename(&temp_path, path).with_context(|| {
-        format!(
-            "Failed to rename {} to {}",
-            temp_path.display(),
-            path.display()
-        )
-    })?;
-
+    let mut temporary = tempfile::NamedTempFile::new_in(parent)
+        .with_context(|| format!("Failed to create temporary file in {}", parent.display()))?;
+    temporary
+        .as_file_mut()
+        .write_all(contents.as_ref())
+        .with_context(|| format!("Failed to write temporary file for {}", path.display()))?;
+    temporary
+        .as_file_mut()
+        .sync_all()
+        .with_context(|| format!("Failed to sync temporary file for {}", path.display()))?;
+    temporary
+        .persist(&path)
+        .map_err(|error| error.error)
+        .with_context(|| format!("Failed to replace {}", path.display()))?;
     Ok(())
 }
 

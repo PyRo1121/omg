@@ -11,7 +11,7 @@
 
 use std::collections::VecDeque;
 use std::sync::Mutex;
-use std::sync::atomic::{AtomicU32, AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, Ordering};
 use std::time::Duration;
 
 use anyhow::Result;
@@ -40,11 +40,16 @@ static CIRCUIT_STATE: AtomicU32 = AtomicU32::new(0);
 /// Consecutive failure count for circuit breaker
 static FAILURE_COUNT: AtomicU32 = AtomicU32::new(0);
 
+/// Single-flight flag for half-open probes: only one request may probe the
+/// recovering endpoint at a time; all others stay queued while it is in
+/// flight (otherwise every queued event would probe concurrently).
+static HALF_OPEN_PROBE_IN_FLIGHT: AtomicBool = AtomicBool::new(false);
+
 /// Timestamp of last failure (Unix epoch seconds as u64)
 static LAST_FAILURE: AtomicU64 = AtomicU64::new(0);
 
 /// Retry queue for failed events
-static RETRY_QUEUE: Mutex<VecDeque<TelemetryEvent>> = Mutex::new(VecDeque::new());
+static RETRY_QUEUE: Mutex<VecDeque<TelemetryPayload>> = Mutex::new(VecDeque::new());
 
 /// Command-level telemetry event
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -209,10 +214,19 @@ fn check_circuit_breaker() -> CircuitState {
             let now = jiff::Timestamp::now().as_second() as u64;
 
             if now.saturating_sub(last_failure) >= CIRCUIT_OPEN_DURATION_SECS {
-                // Transition to half-open (will try one request)
-                CIRCUIT_STATE.store(CircuitState::HalfOpen as u32, Ordering::Relaxed);
-                tracing::debug!("Circuit breaker transitioning to half-open state");
-                CircuitState::HalfOpen
+                // Transition to half-open with single-flight semantics: the
+                // first caller wins the probe slot; concurrent callers stay
+                // queued until the probe resolves (record_success/failure).
+                if HALF_OPEN_PROBE_IN_FLIGHT
+                    .compare_exchange(false, true, Ordering::Relaxed, Ordering::Relaxed)
+                    .is_ok()
+                {
+                    CIRCUIT_STATE.store(CircuitState::HalfOpen as u32, Ordering::Relaxed);
+                    tracing::debug!("Circuit breaker transitioning to half-open state");
+                    CircuitState::HalfOpen
+                } else {
+                    CircuitState::Open
+                }
             } else {
                 CircuitState::Open
             }
@@ -225,6 +239,7 @@ fn check_circuit_breaker() -> CircuitState {
 fn record_success() {
     FAILURE_COUNT.store(0, Ordering::Relaxed);
     CIRCUIT_STATE.store(CircuitState::Closed as u32, Ordering::Relaxed);
+    HALF_OPEN_PROBE_IN_FLIGHT.store(false, Ordering::Relaxed);
     tracing::debug!("Circuit breaker reset to closed state");
 }
 
@@ -233,6 +248,8 @@ fn record_failure() {
     let failures = FAILURE_COUNT.fetch_add(1, Ordering::Relaxed) + 1;
     let now = jiff::Timestamp::now().as_second() as u64;
     LAST_FAILURE.store(now, Ordering::Relaxed);
+    // Any in-flight half-open probe has now resolved (as a failure).
+    HALF_OPEN_PROBE_IN_FLIGHT.store(false, Ordering::Relaxed);
 
     if failures >= CIRCUIT_FAILURE_THRESHOLD {
         CIRCUIT_STATE.store(CircuitState::Open as u32, Ordering::Relaxed);
@@ -279,8 +296,8 @@ pub fn should_send_telemetry() -> bool {
         return false;
     }
 
-    // Require license for telemetry (user has explicitly opted in)
-    crate::core::license::load_license().is_some()
+    // Enhanced telemetry requires a signed, unexpired license token.
+    crate::core::license::load_license().is_some_and(|license| license.is_token_valid())
 }
 
 /// Send a single telemetry event
@@ -355,7 +372,7 @@ fn queue_for_retry(mut payload: TelemetryPayload) {
             // Drop oldest events to make room
             queue.drain(0..MAX_RETRY_QUEUE_SIZE / 2);
         }
-        queue.push_back(payload.event);
+        queue.push_back(payload);
     }
 }
 
@@ -369,14 +386,7 @@ pub async fn send_batch(events: Vec<TelemetryEvent>) -> Result<()> {
     let circuit_state = check_circuit_breaker();
 
     if circuit_state == CircuitState::Open {
-        tracing::debug!(
-            "Circuit breaker is open, queuing {} events locally",
-            events.len()
-        );
-        for event in events {
-            queue_for_retry(TelemetryPayload::new(event));
-        }
-        return Ok(());
+        anyhow::bail!("Telemetry circuit breaker is open");
     }
 
     let payloads: Vec<TelemetryPayload> = events.into_iter().map(TelemetryPayload::new).collect();
@@ -408,21 +418,15 @@ pub async fn send_batch(events: Vec<TelemetryEvent>) -> Result<()> {
             Ok(())
         }
         Ok(resp) => {
-            tracing::debug!("Telemetry batch failed with status: {}", resp.status());
+            let status = resp.status();
+            tracing::debug!("Telemetry batch failed with status: {status}");
             record_failure();
-            // Re-queue events for retry
-            for payload in batch.events {
-                queue_for_retry(payload);
-            }
-            Ok(())
+            anyhow::bail!("Telemetry batch rejected with status {status}")
         }
-        Err(e) => {
-            tracing::debug!("Telemetry batch send error: {e}");
+        Err(error) => {
+            tracing::debug!("Telemetry batch send error: {error}");
             record_failure();
-            for payload in batch.events {
-                queue_for_retry(payload);
-            }
-            Ok(())
+            Err(error.into())
         }
     }
 }
@@ -433,7 +437,7 @@ pub async fn flush_retry_queue() -> Result<()> {
         return Ok(());
     }
 
-    let events: Vec<TelemetryEvent> = {
+    let payloads: Vec<TelemetryPayload> = {
         if let Ok(mut queue) = RETRY_QUEUE.lock() {
             queue.drain(..).collect()
         } else {
@@ -441,12 +445,15 @@ pub async fn flush_retry_queue() -> Result<()> {
         }
     };
 
-    if events.is_empty() {
+    if payloads.is_empty() {
         return Ok(());
     }
 
-    tracing::debug!("Flushing {} events from retry queue", events.len());
-    send_batch(events).await
+    tracing::debug!("Flushing {} events from retry queue", payloads.len());
+    for payload in payloads {
+        send_event_internal(payload).await?;
+    }
+    Ok(())
 }
 
 /// Send command telemetry event
@@ -608,6 +615,31 @@ mod tests {
         assert!(!payload.machine_id.is_empty());
         assert!(!payload.version.is_empty());
         assert!(!payload.platform.is_empty());
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn retry_queue_preserves_attempt_count() {
+        RETRY_QUEUE.lock().expect("retry queue").clear();
+        let payload = TelemetryPayload {
+            event: TelemetryEvent::Feature(FeatureEvent {
+                feature: "test".to_string(),
+                enabled: true,
+                metadata: None,
+            }),
+            timestamp: String::new(),
+            machine_id: String::new(),
+            version: String::new(),
+            platform: String::new(),
+            license_key: None,
+            retries: 1,
+        };
+
+        queue_for_retry(payload);
+
+        let mut queue = RETRY_QUEUE.lock().expect("retry queue");
+        assert_eq!(queue.front().map(|payload| payload.retries), Some(2));
+        queue.clear();
     }
 
     #[test]

@@ -6,7 +6,9 @@ use crate::core::security::{
 };
 use crate::package_managers::PackageManager;
 use crate::package_managers::types::UpdateInfo;
-use anyhow::{Context, Result};
+#[cfg(feature = "arch")]
+use anyhow::Context;
+use anyhow::Result;
 use std::sync::Arc;
 
 /// Service for orchestrating package operations across different backends.
@@ -80,7 +82,10 @@ impl PackageService {
                     changes.push(PackageChange {
                         name: info.name,
                         old_version: None,
-                        #[allow(clippy::implicit_clone)] // Version is feature-gated type alias; .to_string() is the required conversion
+                        #[allow(
+                            clippy::implicit_clone,
+                            reason = "the package version type varies by backend feature"
+                        )]
                         new_version: Some(info.version.to_string()),
                         source: "official".to_string(),
                     });
@@ -100,7 +105,10 @@ impl PackageService {
                     changes.push(PackageChange {
                         name: info.name,
                         old_version: None,
-                        #[allow(clippy::implicit_clone)] // Version is feature-gated type alias; .to_string() is the required conversion
+                        #[allow(
+                            clippy::implicit_clone,
+                            reason = "the package version type varies by backend feature"
+                        )]
                         new_version: Some(info.version.to_string()),
                         source: "aur".to_string(),
                     });
@@ -143,7 +151,10 @@ impl PackageService {
                     changes.push(PackageChange {
                         name: info.name,
                         old_version: None,
-                        #[allow(clippy::implicit_clone)] // Version is feature-gated type alias; .to_string() is the required conversion
+                        #[allow(
+                            clippy::implicit_clone,
+                            reason = "the package version type varies by backend feature"
+                        )]
                         new_version: Some(info.version.to_string()),
                         source: self.backend.name().to_string(),
                     });
@@ -175,7 +186,10 @@ impl PackageService {
                     changes.push(PackageChange {
                         name: info.name,
                         old_version: None,
-                        #[allow(clippy::implicit_clone)] // Version is feature-gated type alias; .to_string() is the required conversion
+                        #[allow(
+                            clippy::implicit_clone,
+                            reason = "the package version type varies by backend feature"
+                        )]
                         new_version: Some(info.version.to_string()),
                         source: self.backend.name().to_string(),
                     });
@@ -196,7 +210,10 @@ impl PackageService {
             if let Some(info) = self.backend.info(pkg).await? {
                 changes.push(PackageChange {
                     name: info.name,
-                    #[allow(clippy::implicit_clone)] // Version is feature-gated type alias; .to_string() is the required conversion
+                    #[allow(
+                        clippy::implicit_clone,
+                        reason = "the package version type varies by backend feature"
+                    )]
                     old_version: Some(info.version.to_string()),
                     new_version: None,
                     source: self.backend.name().to_string(),
@@ -247,26 +264,18 @@ impl PackageService {
         changes: Vec<PackageChange>,
         operation_result: Result<()>,
     ) -> Result<()> {
-        let history_result = self.history.as_ref().map(|history| {
-            history
-                .add_transaction(transaction_type, changes, operation_result.is_ok())
-                .context("Failed to persist package operation history")
-        });
-
-        match (operation_result, history_result) {
-            (Ok(()), None | Some(Ok(()))) => Ok(()),
-            (Err(operation_error), None | Some(Ok(()))) => Err(operation_error),
-            (Ok(()), Some(Err(history_error))) => Err(history_error
-                .context("Package operation succeeded but its history could not be persisted")),
-            (Err(operation_error), Some(Err(history_error))) => Err(anyhow::anyhow!(
-                "Package operation failed: {operation_error}; history persistence also failed: {history_error}"
-            )),
+        match &self.history {
+            Some(history) => history.finish_operation(transaction_type, changes, operation_result),
+            None => operation_result,
         }
     }
 
     /// List available updates
     pub async fn list_updates(&self) -> Result<Vec<UpdateInfo>> {
-        #[allow(unused_mut)] // Mutated only inside feature-gated block
+        #[allow(
+            unused_mut,
+            reason = "mutated only when the Arch AUR branch is compiled"
+        )]
         let mut updates = self.backend.list_updates().await?;
 
         #[cfg(feature = "arch")]

@@ -16,13 +16,15 @@ pub struct RepoConfig {
 pub struct PacmanConfig {
     pub root_dir: Option<String>,
     pub db_path: Option<String>,
-    pub cache_dir: Option<String>,
+    pub cache_dirs: Vec<String>,
     pub log_file: Option<String>,
     pub gpg_dir: Option<String>,
-    pub hook_dir: Option<String>,
+    pub hook_dirs: Vec<String>,
     pub hold_pkg: Vec<String>,
     pub ignore_pkg: Vec<String>,
     pub ignore_group: Vec<String>,
+    pub no_upgrade: Vec<String>,
+    pub no_extract: Vec<String>,
     pub architecture: Option<String>,
     pub sig_level: Option<String>,
     pub local_file_sig_level: Option<String>,
@@ -99,10 +101,22 @@ impl PacmanConfig {
         match key {
             "RootDir" => config.root_dir = value.map(String::from),
             "DBPath" => config.db_path = value.map(String::from),
-            "CacheDir" => config.cache_dir = value.map(String::from),
+            "CacheDir" => {
+                if let Some(value) = value {
+                    config
+                        .cache_dirs
+                        .extend(value.split_whitespace().map(String::from));
+                }
+            }
             "LogFile" => config.log_file = value.map(String::from),
             "GPGDir" => config.gpg_dir = value.map(String::from),
-            "HookDir" => config.hook_dir = value.map(String::from),
+            "HookDir" => {
+                if let Some(value) = value {
+                    config
+                        .hook_dirs
+                        .extend(value.split_whitespace().map(String::from));
+                }
+            }
             "Architecture" => config.architecture = value.map(String::from),
             "SigLevel" => config.sig_level = value.map(String::from),
             "LocalFileSigLevel" => config.local_file_sig_level = value.map(String::from),
@@ -125,6 +139,20 @@ impl PacmanConfig {
                 if let Some(v) = value {
                     config
                         .ignore_group
+                        .extend(v.split_whitespace().map(String::from));
+                }
+            }
+            "NoUpgrade" => {
+                if let Some(v) = value {
+                    config
+                        .no_upgrade
+                        .extend(v.split_whitespace().map(String::from));
+                }
+            }
+            "NoExtract" => {
+                if let Some(v) = value {
+                    config
+                        .no_extract
                         .extend(v.split_whitespace().map(String::from));
                 }
             }
@@ -178,15 +206,25 @@ impl PacmanConfig {
 pub fn get_configured_repos() -> Result<Vec<String>> {
     let conf_path = crate::core::paths::pacman_conf_path();
     if !conf_path.exists() {
-        return Ok(vec![
-            "core".to_string(),
-            "extra".to_string(),
-            "multilib".to_string(),
-        ]);
+        anyhow::bail!(
+            "pacman configuration does not exist: {}",
+            conf_path.display()
+        );
     }
 
     let config = PacmanConfig::parse(&conf_path)?;
-    Ok(config.repos.into_iter().map(|r| r.name).collect())
+    let repos = config
+        .repos
+        .into_iter()
+        .map(|repo| repo.name)
+        .collect::<Vec<_>>();
+    if repos.is_empty() {
+        anyhow::bail!(
+            "pacman configuration contains no repositories: {}",
+            conf_path.display()
+        );
+    }
+    Ok(repos)
 }
 
 #[cfg(test)]
@@ -194,12 +232,34 @@ mod tests {
     use super::*;
 
     #[test]
+    #[serial_test::serial]
+    fn missing_pacman_config_is_not_replaced_with_fabricated_repositories() {
+        let directory = tempfile::tempdir().expect("temp dir");
+        let missing = directory.path().join("missing-pacman.conf");
+
+        temp_env::with_var("OMG_PACMAN_CONF", Some(missing.as_os_str()), || {
+            let error = get_configured_repos()
+                .expect_err("missing pacman config must be reported explicitly");
+            assert!(error.to_string().contains("does not exist"));
+        });
+    }
+
+    #[test]
     fn test_parse_basic_config() {
         let content = r"
 [options]
 RootDir = /
 DBPath = /var/lib/pacman
+CacheDir = /var/cache/pacman/pkg /srv/pacman-cache
+CacheDir = relative-cache
+HookDir = /usr/local/share/libalpm/hooks
+HookDir = etc/pacman.d/hooks
 Architecture = auto
+HoldPkg = pacman glibc
+IgnorePkg = linux linux-lts
+IgnoreGroup = modified
+NoUpgrade = etc/passwd etc/group
+NoExtract = usr/share/help/*
 
 [core]
 Include = /etc/pacman.d/mirrorlist
@@ -214,6 +274,23 @@ Include = /etc/pacman.d/mirrorlist
         let config = PacmanConfig::parse_str(content).unwrap();
         assert_eq!(config.root_dir, Some("/".to_string()));
         assert_eq!(config.db_path, Some("/var/lib/pacman".to_string()));
+        assert_eq!(
+            config.cache_dirs,
+            [
+                "/var/cache/pacman/pkg",
+                "/srv/pacman-cache",
+                "relative-cache"
+            ]
+        );
+        assert_eq!(
+            config.hook_dirs,
+            ["/usr/local/share/libalpm/hooks", "etc/pacman.d/hooks"]
+        );
+        assert_eq!(config.hold_pkg, ["pacman", "glibc"]);
+        assert_eq!(config.ignore_pkg, ["linux", "linux-lts"]);
+        assert_eq!(config.ignore_group, ["modified"]);
+        assert_eq!(config.no_upgrade, ["etc/passwd", "etc/group"]);
+        assert_eq!(config.no_extract, ["usr/share/help/*"]);
         assert_eq!(config.repos.len(), 3);
         assert_eq!(config.repos[0].name, "core");
         assert_eq!(config.repos[1].name, "extra");

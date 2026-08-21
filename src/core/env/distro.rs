@@ -5,7 +5,9 @@
 //! - Debian and derivatives (Ubuntu, Linux Mint, `Pop!_OS`, etc.)
 //! - Fedora and derivatives (RHEL, `CentOS`, Rocky, Alma, etc.)
 //! - macOS (via `uname`)
-//! - Windows (via `cfg`)
+//!
+//! Windows Subsystem for Linux is detected through its Linux distribution.
+//! Native Windows is not supported.
 
 use std::collections::HashMap;
 use std::fs;
@@ -24,8 +26,6 @@ pub enum Distro {
     Fedora,
     /// macOS (`Homebrew`)
     MacOS,
-    /// Windows (`Scoop`/`Winget`)
-    Windows,
     /// Unknown or unsupported
     Unknown,
 }
@@ -39,7 +39,6 @@ impl Distro {
             Self::Debian | Self::Ubuntu => "apt",
             Self::Fedora => "dnf",
             Self::MacOS => "brew",
-            Self::Windows => "scoop",
             Self::Unknown => "unknown",
         }
     }
@@ -69,15 +68,8 @@ pub fn detect_distro() -> Distro {
                 "ubuntu" => Distro::Ubuntu,
                 "fedora" | "rhel" | "centos" | "rocky" | "alma" => Distro::Fedora,
                 "macos" | "darwin" => Distro::MacOS,
-                "windows" => Distro::Windows,
                 _ => Distro::Unknown,
             };
-        }
-
-        // Windows detection (compile-time)
-        #[cfg(target_os = "windows")]
-        {
-            return Distro::Windows;
         }
 
         // macOS detection (compile-time)
@@ -125,7 +117,7 @@ pub fn detect_distro() -> Distro {
             Distro::Unknown
         }
 
-        #[cfg(not(any(target_os = "linux", target_os = "macos", target_os = "windows")))]
+        #[cfg(not(any(target_os = "linux", target_os = "macos")))]
         {
             Distro::Unknown
         }
@@ -154,12 +146,6 @@ pub fn is_fedora_like() -> bool {
 #[must_use]
 pub fn is_macos() -> bool {
     matches!(detect_distro(), Distro::MacOS)
-}
-
-/// Returns true if running on Windows
-#[must_use]
-pub fn is_windows() -> bool {
-    matches!(detect_distro(), Distro::Windows)
 }
 
 /// Check if we should use Debian backend based on current distro and features
@@ -199,20 +185,6 @@ pub fn use_homebrew_backend() -> bool {
     }
 
     #[cfg(not(feature = "macos"))]
-    {
-        false
-    }
-}
-
-/// Check if we should use Windows backend
-#[must_use]
-pub fn use_windows_backend() -> bool {
-    #[cfg(feature = "windows")]
-    {
-        is_windows()
-    }
-
-    #[cfg(not(feature = "windows"))]
     {
         false
     }

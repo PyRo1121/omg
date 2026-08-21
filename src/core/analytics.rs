@@ -9,7 +9,7 @@
 //!
 //! Privacy-respecting: opt-out via `OMG_TELEMETRY=0`
 
-use anyhow::Result;
+use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::path::PathBuf;
@@ -29,7 +29,12 @@ const SESSION_TIMEOUT_SECS: i64 = 1800;
 
 /// Global state caches to avoid redundant disk I/O
 static SESSION_CACHE: OnceLock<RwLock<SessionState>> = OnceLock::new();
-static QUEUE_CACHE: OnceLock<RwLock<EventQueue>> = OnceLock::new();
+/// In-process authoritative event queue. All reads-modify-writes go through
+/// this mutex so a concurrent `push` cannot be lost between a flush's
+/// take-and-save cycle; cross-process persistence still flows through
+/// [`EventQueue::save`] on every mutation.
+static EVENT_QUEUE_STATE: OnceLock<RwLock<EventQueue>> = OnceLock::new();
+static FLUSH_LOCK: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
 
 /// Persist analytics state on a best-effort basis. Analytics must never fail a
 /// user command, so persistence errors are logged at debug level and the
@@ -124,7 +129,7 @@ pub struct AnalyticsEvent {
 }
 
 /// Session state stored locally
-#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SessionState {
     /// Current session ID
     pub session_id: String,
@@ -138,6 +143,26 @@ pub struct SessionState {
     pub errors_this_session: u32,
     /// Features used this session
     pub features_used: Vec<String>,
+    #[serde(skip, default = "persistence_enabled")]
+    persistence_enabled: bool,
+}
+
+const fn persistence_enabled() -> bool {
+    true
+}
+
+impl Default for SessionState {
+    fn default() -> Self {
+        Self {
+            session_id: String::new(),
+            started_at: String::new(),
+            last_heartbeat: 0,
+            commands_this_session: 0,
+            errors_this_session: 0,
+            features_used: Vec::new(),
+            persistence_enabled: true,
+        }
+    }
 }
 
 impl SessionState {
@@ -156,11 +181,35 @@ impl SessionState {
     }
 
     fn load_from_disk() -> Self {
-        Self::path()
-            .ok()
-            .and_then(|p| std::fs::read_to_string(p).ok())
-            .and_then(|s| serde_json::from_str(&s).ok())
-            .unwrap_or_default()
+        let result = Self::path().and_then(|path| Self::load_from(&path));
+        match result {
+            Ok(session) => session,
+            Err(error) => {
+                tracing::warn!(
+                    "Analytics session persistence disabled because its state is invalid: {error}"
+                );
+                Self {
+                    persistence_enabled: false,
+                    ..Self::default()
+                }
+            }
+        }
+    }
+
+    fn load_from(path: &std::path::Path) -> Result<Self> {
+        let content = match std::fs::read_to_string(path) {
+            Ok(content) => content,
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+                return Ok(Self::default());
+            }
+            Err(error) => {
+                return Err(error).with_context(|| {
+                    format!("Failed to read analytics session: {}", path.display())
+                });
+            }
+        };
+        serde_json::from_str(&content)
+            .with_context(|| format!("Malformed analytics session: {}", path.display()))
     }
 
     pub fn save(&self) -> Result<()> {
@@ -171,10 +220,15 @@ impl SessionState {
             *writer = self.clone();
         }
 
+        anyhow::ensure!(
+            self.persistence_enabled,
+            "analytics session persistence is disabled after a load failure"
+        );
         let path = Self::path()?;
-        let content = serde_json::to_string_pretty(self)?;
-        std::fs::write(path, content)?;
-        Ok(())
+        let content =
+            serde_json::to_vec_pretty(self).context("Failed to serialize analytics session")?;
+        crate::core::safe_ops::atomic_write_file_sync(&path, content)
+            .with_context(|| format!("Failed to save analytics session: {}", path.display()))
     }
 
     /// Check if we need a new session (>30 min since last activity)
@@ -210,10 +264,22 @@ impl SessionState {
 }
 
 /// Event queue for batching
-#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct EventQueue {
     pub events: Vec<AnalyticsEvent>,
     pub last_flush: i64,
+    #[serde(skip, default = "persistence_enabled")]
+    persistence_enabled: bool,
+}
+
+impl Default for EventQueue {
+    fn default() -> Self {
+        Self {
+            events: Vec::new(),
+            last_flush: 0,
+            persistence_enabled: true,
+        }
+    }
 }
 
 impl EventQueue {
@@ -223,34 +289,47 @@ impl EventQueue {
         Ok(data_dir.join("event_queue.json"))
     }
 
-    pub fn load() -> Self {
-        QUEUE_CACHE
-            .get_or_init(|| RwLock::new(Self::load_from_disk()))
-            .read()
-            .unwrap_or_else(std::sync::PoisonError::into_inner)
-            .clone()
+    fn load_from_disk() -> Self {
+        let result = Self::path().and_then(|path| Self::load_from(&path));
+        match result {
+            Ok(queue) => queue,
+            Err(error) => {
+                tracing::warn!(
+                    "Analytics queue persistence disabled because its state is invalid: {error}"
+                );
+                Self {
+                    persistence_enabled: false,
+                    ..Self::default()
+                }
+            }
+        }
     }
 
-    fn load_from_disk() -> Self {
-        Self::path()
-            .ok()
-            .and_then(|p| std::fs::read_to_string(p).ok())
-            .and_then(|s| serde_json::from_str(&s).ok())
-            .unwrap_or_default()
+    fn load_from(path: &std::path::Path) -> Result<Self> {
+        let content = match std::fs::read_to_string(path) {
+            Ok(content) => content,
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+                return Ok(Self::default());
+            }
+            Err(error) => {
+                return Err(error).with_context(|| {
+                    format!("Failed to read analytics queue: {}", path.display())
+                });
+            }
+        };
+        serde_json::from_str(&content)
+            .with_context(|| format!("Malformed analytics queue: {}", path.display()))
     }
 
     pub fn save(&self) -> Result<()> {
-        if let Some(cache) = QUEUE_CACHE.get() {
-            let mut writer = cache
-                .write()
-                .unwrap_or_else(std::sync::PoisonError::into_inner);
-            *writer = self.clone();
-        }
-
+        anyhow::ensure!(
+            self.persistence_enabled,
+            "analytics queue persistence is disabled after a load failure"
+        );
         let path = Self::path()?;
-        let content = serde_json::to_string(self)?;
-        std::fs::write(path, content)?;
-        Ok(())
+        let content = serde_json::to_vec(self).context("Failed to serialize analytics queue")?;
+        crate::core::safe_ops::atomic_write_file_sync(&path, content)
+            .with_context(|| format!("Failed to save analytics queue: {}", path.display()))
     }
 
     pub fn push(&mut self, event: AnalyticsEvent) {
@@ -277,7 +356,7 @@ impl EventQueue {
 /// Check if analytics is enabled
 #[must_use]
 pub fn is_enabled() -> bool {
-    !crate::core::telemetry::is_telemetry_opt_out()
+    crate::core::telemetry::is_enhanced_telemetry_enabled()
 }
 
 /// Get or create session
@@ -361,8 +440,18 @@ pub fn queue_event(
     }
 
     let event = create_event(event_type, event_name, properties, duration_ms);
-    let mut queue = EventQueue::load();
-    queue.push(event);
+    with_event_queue(|queue| queue.push(event));
+}
+
+/// Access the process-wide event queue. The mutex makes every
+/// load-modify-save cycle atomic within the process, so events pushed while
+/// a flush is taking/saving cannot be overwritten (lost update).
+fn with_event_queue<T>(f: impl FnOnce(&mut EventQueue) -> T) -> T {
+    let mut guard = EVENT_QUEUE_STATE
+        .get_or_init(|| RwLock::new(EventQueue::load_from_disk()))
+        .write()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    f(&mut guard)
 }
 
 /// Track a command execution
@@ -518,17 +607,27 @@ pub async fn flush_events() -> Result<()> {
         return Ok(());
     }
 
-    let mut queue = EventQueue::load();
-    if queue.events.is_empty() {
-        return Ok(());
-    }
+    let _flush_guard = FLUSH_LOCK.lock().await;
+    let events = with_event_queue(|queue| {
+        if queue.events.is_empty() {
+            return Vec::new();
+        }
 
-    let events = queue.take_events();
-    // A failed save here leaves the old queue on disk; the events are
-    // re-enqueued on the next load, so duplicates are possible. Log at warn
-    // because it is observable, unlike ordinary best-effort persistence.
-    if let Err(error) = queue.save() {
-        tracing::warn!("Failed to persist analytics queue before flush: {error}");
+        let events = queue.take_events();
+        // A failed save here leaves the old queue on disk; the events are
+        // re-enqueued on the next process start, so duplicates are possible.
+        // Log at warn because it is observable, unlike ordinary best-effort
+        // persistence.
+        if let Err(error) = queue.save() {
+            tracing::warn!("Failed to persist analytics queue before flush: {error}");
+            // Put the events back so they are not lost from the in-memory
+            // queue either.
+            queue.events.clone_from(&events);
+        }
+        events
+    });
+    if events.is_empty() {
+        return Ok(());
     }
 
     let client = crate::core::http::shared_client();
@@ -553,19 +652,20 @@ pub async fn flush_events() -> Result<()> {
         }
         _ => {
             // Re-queue on failure for "Gold Tier" reliability, with retry limits
-            let mut queue = EventQueue::load();
-            for mut event in events {
-                event.retries += 1;
-                if event.retries <= MAX_RETRIES {
-                    queue.push(event);
-                } else {
-                    tracing::warn!(
-                        "Dropping analytics event '{}' after {} retries",
-                        event.event_name,
-                        MAX_RETRIES
-                    );
+            with_event_queue(|queue| {
+                for mut event in events {
+                    event.retries += 1;
+                    if event.retries <= MAX_RETRIES {
+                        queue.push(event);
+                    } else {
+                        tracing::warn!(
+                            "Dropping analytics event '{}' after {} retries",
+                            event.event_name,
+                            MAX_RETRIES
+                        );
+                    }
                 }
-            }
+            });
         }
     }
 
@@ -578,8 +678,8 @@ pub async fn maybe_flush() {
         return;
     }
 
-    let queue = EventQueue::load();
-    if queue.needs_flush() {
+    let queue_ready = with_event_queue(|queue| queue.needs_flush());
+    if queue_ready {
         persist_best_effort(flush_events().await);
     }
 }
@@ -796,8 +896,42 @@ mod tests {
         let mut session = SessionState::default();
         assert!(session.needs_new_session());
 
-        session.start_new();
+        session.session_id = "test-session".to_string();
+        session.last_heartbeat = jiff::Timestamp::now().as_second();
         assert!(!session.needs_new_session());
+    }
+
+    #[test]
+    fn malformed_persisted_analytics_are_rejected_without_modification() {
+        let directory = tempfile::tempdir().expect("create temporary directory");
+        let session_path = directory.path().join("session.json");
+        let queue_path = directory.path().join("queue.json");
+        std::fs::write(&session_path, b"{bad-session").expect("write malformed session");
+        std::fs::write(&queue_path, b"{bad-queue").expect("write malformed queue");
+
+        let session_error =
+            SessionState::load_from(&session_path).expect_err("malformed session must be rejected");
+        let queue_error =
+            EventQueue::load_from(&queue_path).expect_err("malformed queue must be rejected");
+
+        assert!(
+            session_error
+                .to_string()
+                .contains("Malformed analytics session")
+        );
+        assert!(
+            queue_error
+                .to_string()
+                .contains("Malformed analytics queue")
+        );
+        assert_eq!(
+            std::fs::read(&session_path).expect("read malformed session"),
+            b"{bad-session"
+        );
+        assert_eq!(
+            std::fs::read(&queue_path).expect("read malformed queue"),
+            b"{bad-queue"
+        );
     }
 
     #[test]
@@ -805,6 +939,7 @@ mod tests {
         let mut queue = EventQueue {
             events: Vec::new(),
             last_flush: jiff::Timestamp::now().as_second(), // Set to now to avoid time-based flush
+            persistence_enabled: true,
         };
         assert!(!queue.needs_flush());
 

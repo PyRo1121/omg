@@ -285,6 +285,11 @@ impl SbomGenerator {
     }
 
     /// Generate SBOM for all installed packages
+    #[allow(
+        clippy::needless_return,
+        clippy::unused_async,
+        reason = "backend builds await vulnerability data while backend-free builds fail directly"
+    )]
     pub async fn generate_system_sbom(&self) -> Result<Sbom, SbomError> {
         #[cfg(not(any(feature = "arch", feature = "debian", feature = "debian-pure")))]
         {
@@ -318,8 +323,10 @@ impl SbomGenerator {
 
             // Build component list
             for pkg in &installed {
-                #[allow(clippy::implicit_clone)]
-                // Version is feature-gated type alias; .to_string() is the required conversion
+                #[allow(
+                    clippy::implicit_clone,
+                    reason = "the package version type varies by backend feature"
+                )]
                 let version = pkg.version.to_string();
                 let bom_ref = package_purl(&pkg.name, &version, debian_like);
 
@@ -366,6 +373,10 @@ impl SbomGenerator {
                 for issue in issues {
                     for pkg_name in &issue.packages {
                         if let Some(pkg) = installed.iter().find(|p| p.name == *pkg_name) {
+                            #[allow(
+                                clippy::implicit_clone,
+                                reason = "the package version type varies by backend feature"
+                            )]
                             let bom_ref =
                                 package_purl(&pkg.name, &pkg.version.to_string(), debian_like);
 
@@ -438,15 +449,18 @@ impl SbomGenerator {
         }
     }
 
-    /// Export SBOM to JSON file
+    /// Export SBOM to JSON file (atomic replace, so a crash mid-write can
+    /// never leave a truncated artifact)
     pub fn export_json<P: AsRef<Path>>(&self, sbom: &Sbom, path: P) -> Result<(), SbomError> {
         let path_str = path.as_ref().display().to_string();
         let json =
             serde_json::to_string_pretty(sbom).map_err(|source| SbomError::Serialize { source })?;
-        std::fs::write(&path, json).map_err(|source| SbomError::Write {
-            path: path_str,
-            source,
-        })?;
+        crate::core::safe_ops::atomic_write_file_sync(path.as_ref(), json.as_bytes()).map_err(
+            |error| SbomError::Write {
+                path: path_str,
+                source: io::Error::other(error),
+            },
+        )?;
         Ok(())
     }
 

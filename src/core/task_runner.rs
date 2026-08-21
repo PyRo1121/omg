@@ -1087,17 +1087,36 @@ pub fn run_task_watch(
     Ok(())
 }
 
-/// Run multiple tasks in parallel (comma-separated task names)
+const MAX_PARALLEL_TASKS: usize = 16;
+
+fn parse_parallel_task_names(tasks: &str) -> Result<Vec<String>> {
+    let task_names = tasks
+        .split(',')
+        .map(str::trim)
+        .map(str::to_string)
+        .collect::<Vec<_>>();
+    if task_names.iter().any(String::is_empty) {
+        anyhow::bail!("Parallel task names must not be empty");
+    }
+    if task_names.len() > MAX_PARALLEL_TASKS {
+        anyhow::bail!(
+            "At most {MAX_PARALLEL_TASKS} parallel tasks are allowed (received {})",
+            task_names.len()
+        );
+    }
+    Ok(task_names)
+}
+
+/// Run multiple tasks in parallel (comma-separated task names).
 pub async fn run_tasks_parallel(
     tasks_str: &str,
     extra_args: &[String],
     backend_override: Option<RuntimeBackend>,
 ) -> Result<()> {
-    let task_names: Vec<&str> = tasks_str.split(',').map(str::trim).collect();
+    let task_names = parse_parallel_task_names(tasks_str)?;
 
     if task_names.len() == 1 {
-        // Single task, just run normally
-        return run_task(tasks_str, extra_args, backend_override);
+        return run_task(&task_names[0], extra_args, backend_override);
     }
 
     println!(
@@ -1109,11 +1128,10 @@ pub async fn run_tasks_parallel(
 
     let handles: Vec<_> = task_names
         .into_iter()
-        .map(|task_name| {
-            let task = task_name.to_string();
+        .map(|task| {
             let args = extra_args.to_vec();
             let backend = backend_override;
-            tokio::spawn(async move {
+            tokio::task::spawn_blocking(move || {
                 let result = run_task(&task, &args, backend);
                 (task, result)
             })
@@ -1151,6 +1169,25 @@ mod tests {
     use super::*;
     use std::fs;
     use tempfile::TempDir;
+
+    #[test]
+    fn parallel_task_names_reject_empty_entries() {
+        let error = parse_parallel_task_names("build,,test")
+            .expect_err("empty parallel task must be rejected");
+        assert!(error.to_string().contains("must not be empty"));
+    }
+
+    #[test]
+    fn parallel_task_names_are_bounded() {
+        let tasks = (0..=MAX_PARALLEL_TASKS)
+            .map(|index| format!("task-{index}"))
+            .collect::<Vec<_>>()
+            .join(",");
+
+        let error = parse_parallel_task_names(&tasks)
+            .expect_err("unbounded parallel task fan-out must be rejected");
+        assert!(error.to_string().contains("At most 16"));
+    }
 
     #[test]
     fn test_ecosystem_priority() {

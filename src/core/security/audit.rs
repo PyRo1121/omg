@@ -54,6 +54,12 @@ pub enum AuditError {
     },
     #[error("Corrupt audit log '{path}' at line {line}: missing hash")]
     MissingHash { path: String, line: usize },
+    #[error("Failed to unlock audit log '{path}'")]
+    Unlock {
+        path: String,
+        #[source]
+        source: io::Error,
+    },
 }
 
 impl AuditError {
@@ -64,7 +70,10 @@ impl AuditError {
             | Self::Open { source, .. }
             | Self::Read { source, .. }
             | Self::Write { source, .. } => source.kind() == io::ErrorKind::NotFound,
-            Self::Serialize { .. } | Self::CorruptLine { .. } | Self::MissingHash { .. } => false,
+            Self::Serialize { .. }
+            | Self::CorruptLine { .. }
+            | Self::MissingHash { .. }
+            | Self::Unlock { .. } => false,
         }
     }
 }
@@ -210,15 +219,25 @@ pub struct AuditLogger {
 impl AuditLogger {
     /// Create a new audit logger
     pub fn new() -> Result<Self, AuditError> {
-        let log_dir = paths::data_dir().join("audit");
-        std::fs::create_dir_all(&log_dir).map_err(|source| AuditError::CreateDir {
+        Self::new_in(paths::data_dir().join("audit/audit.jsonl"))
+    }
+
+    /// Create an audit logger at an explicit path.
+    pub fn new_in(log_path: impl AsRef<Path>) -> Result<Self, AuditError> {
+        let log_path = log_path.as_ref().to_path_buf();
+        let log_dir = log_path.parent().ok_or_else(|| AuditError::CreateDir {
+            path: log_path.display().to_string(),
+            source: std::io::Error::new(
+                std::io::ErrorKind::InvalidInput,
+                "audit log path must have a parent directory",
+            ),
+        })?;
+        std::fs::create_dir_all(log_dir).map_err(|source| AuditError::CreateDir {
             path: log_dir.display().to_string(),
             source,
         })?;
 
-        let log_path = log_dir.join("audit.jsonl");
         let last_hash = get_last_hash(&log_path)?;
-
         Ok(Self {
             log_path,
             last_hash,
@@ -237,6 +256,12 @@ impl AuditLogger {
     }
 
     /// Log an audit event with additional metadata
+    /// Log an audit event with additional metadata
+    ///
+    /// Appends are serialized across processes with a lock file (the same
+    /// pattern as [`crate::core::history::HistoryManager`]) and the previous
+    /// entry hash is re-read inside the critical section, so concurrent CLI
+    /// and daemon writers cannot fork the integrity chain.
     pub fn log_with_metadata(
         &mut self,
         event: AuditEventType,
@@ -245,6 +270,47 @@ impl AuditLogger {
         description: &str,
         metadata: Option<serde_json::Value>,
     ) -> Result<(), AuditError> {
+        let lock_path = self.log_path.with_extension("lock");
+        let lock = OpenOptions::new()
+            .create(true)
+            .read(true)
+            .write(true)
+            .truncate(false)
+            .open(&lock_path)
+            .map_err(|source| AuditError::Open {
+                path: lock_path.display().to_string(),
+                source,
+            })?;
+        lock.lock().map_err(|source| AuditError::Open {
+            path: lock_path.display().to_string(),
+            source,
+        })?;
+
+        let result = self.log_locked(event, severity, resource, description, metadata);
+        if let Err(source) = lock.unlock() {
+            return match result {
+                Ok(()) => Err(AuditError::Unlock {
+                    path: self.log_path.display().to_string(),
+                    source,
+                }),
+                Err(operation_error) => Err(operation_error),
+            };
+        }
+        result
+    }
+
+    fn log_locked(
+        &mut self,
+        event: AuditEventType,
+        severity: AuditSeverity,
+        resource: &str,
+        description: &str,
+        metadata: Option<serde_json::Value>,
+    ) -> Result<(), AuditError> {
+        // Re-read the on-disk tail hash while holding the lock so entries
+        // written by another process since this logger was created chain
+        // correctly instead of sharing our stale prev_hash.
+        let prev_hash = get_last_hash(&self.log_path)?;
         let timestamp = jiff::Zoned::now()
             .strftime("%Y-%m-%dT%H:%M:%S%.3fZ")
             .to_string();
@@ -261,7 +327,7 @@ impl AuditLogger {
             resource: resource.to_string(),
             description: description.to_string(),
             metadata,
-            prev_hash: self.last_hash.clone(),
+            prev_hash,
             hash: None,
         };
 
@@ -269,7 +335,7 @@ impl AuditLogger {
         // entry is durably on disk. Otherwise a failed write leaves the next
         // event pointing at a hash that never landed.
         let hash = entry.compute_hash();
-        entry.hash = Some(hash.clone());
+        entry.hash = Some(hash);
 
         let mut file = OpenOptions::new()
             .create(true)
@@ -294,7 +360,7 @@ impl AuditLogger {
             path: path_str,
             source,
         })?;
-        self.last_hash = hash;
+        self.last_hash = entry.hash.clone().unwrap_or_default();
 
         match severity {
             AuditSeverity::Debug => {
@@ -589,7 +655,12 @@ mod tests {
                 "Removed firefox",
             )
             .expect_err("appending over a directory must fail");
-        assert!(matches!(error, AuditError::Open { .. }), "got: {error}");
+        // The failure surfaces either at the locked tail re-read (Read) or
+        // at the append open (Open); both must abort before the chain moves.
+        assert!(
+            matches!(error, AuditError::Open { .. } | AuditError::Read { .. }),
+            "got: {error}"
+        );
         assert_eq!(logger.last_hash, hash_after_first);
     }
 
@@ -715,5 +786,49 @@ mod tests {
         // Tamper with the entry
         entry.description = "Tampered".to_string();
         assert!(!entry.verify());
+    }
+
+    #[test]
+    fn concurrent_writers_keep_the_integrity_chain_valid() {
+        // Regression: each writer used to cache the tail hash at logger
+        // creation, so concurrent CLI + daemon writers forked the chain.
+        const WRITERS: usize = 8;
+        const EVENTS_PER_WRITER: usize = 4;
+        let temp = tempfile::TempDir::new().unwrap();
+        let log_path = temp.path().join("audit.jsonl");
+
+        let barrier = std::sync::Arc::new(std::sync::Barrier::new(WRITERS));
+        let mut writers = Vec::new();
+        for writer_index in 0..WRITERS {
+            let log_path = log_path.clone();
+            let barrier = std::sync::Arc::clone(&barrier);
+            writers.push(std::thread::spawn(move || {
+                let mut logger = AuditLogger::with_path(log_path).unwrap();
+                barrier.wait();
+                for event_index in 0..EVENTS_PER_WRITER {
+                    logger
+                        .log(
+                            AuditEventType::PackageInstall,
+                            AuditSeverity::Info,
+                            "firefox",
+                            &format!("concurrent writer {writer_index} event {event_index}"),
+                        )
+                        .unwrap();
+                }
+            }));
+        }
+        for writer in writers {
+            writer.join().expect("audit writer panicked");
+        }
+
+        let report = AuditLogger::with_path(log_path)
+            .unwrap()
+            .verify_integrity()
+            .unwrap();
+        assert_eq!(report.total_entries, WRITERS * EVENTS_PER_WRITER);
+        assert!(
+            report.is_valid(),
+            "chain broke under concurrency: {report:?}"
+        );
     }
 }

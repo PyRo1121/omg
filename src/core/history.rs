@@ -32,7 +32,17 @@ pub struct PackageChange {
     pub name: String,
     pub old_version: Option<String>,
     pub new_version: Option<String>,
-    pub source: String, // "official" or "aur"
+    pub source: String,
+}
+
+impl PackageChange {
+    /// Whether the system package manager can restore this change.
+    /// Official repository names vary (`core`, `extra`, `apt`, `pacman`), so
+    /// only sources that require a separate installation path are excluded.
+    #[must_use]
+    pub fn is_official_source(&self) -> bool {
+        !self.source.eq_ignore_ascii_case("aur") && !self.source.eq_ignore_ascii_case("local")
+    }
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
@@ -50,10 +60,7 @@ pub struct HistoryManager {
 
 impl HistoryManager {
     pub fn new() -> Result<Self> {
-        let log_dir = dirs::data_dir()
-            .context("Unable to determine the user data directory for package history")?
-            .join("omg");
-        Self::new_in(log_dir.join("history.json"))
+        Self::new_in(crate::core::paths::data_dir().join("history.json"))
     }
 
     pub fn new_in(log_path: impl AsRef<Path>) -> Result<Self> {
@@ -111,30 +118,77 @@ impl HistoryManager {
         Ok(())
     }
 
+    /// Persist the outcome of a package mutation without hiding either the
+    /// operation error or a history persistence failure.
+    pub fn finish_operation(
+        &self,
+        transaction_type: TransactionType,
+        changes: Vec<PackageChange>,
+        operation_result: Result<()>,
+    ) -> Result<()> {
+        let history_result = self
+            .add_transaction(transaction_type, changes, operation_result.is_ok())
+            .context("Failed to persist package operation history");
+
+        match (operation_result, history_result) {
+            (Ok(()), Ok(())) => Ok(()),
+            (Err(operation_error), Ok(())) => Err(operation_error),
+            (Ok(()), Err(history_error)) => Err(history_error
+                .context("Package operation succeeded but its history could not be persisted")),
+            (Err(operation_error), Err(history_error)) => Err(anyhow::anyhow!(
+                "Package operation failed: {operation_error}; history persistence also failed: {history_error}"
+            )),
+        }
+    }
+
     pub fn add_transaction(
         &self,
         transaction_type: TransactionType,
         changes: Vec<PackageChange>,
         success: bool,
     ) -> Result<()> {
-        let mut history = self.load()?;
+        let lock_path = self.log_path.with_extension("lock");
+        let lock = fs::OpenOptions::new()
+            .create(true)
+            .read(true)
+            .write(true)
+            .truncate(false)
+            .open(&lock_path)
+            .with_context(|| format!("Failed to open history lock: {}", lock_path.display()))?;
+        lock.lock()
+            .with_context(|| format!("Failed to lock package history: {}", lock_path.display()))?;
 
-        let transaction = Transaction {
+        let result = self.add_transaction_locked(transaction_type, changes, success);
+        if let Err(error) = lock.unlock() {
+            return match result {
+                Ok(()) => Err(error).context("Failed to unlock package history"),
+                Err(operation_error) => Err(operation_error.context(format!(
+                    "Package history update also failed to unlock its lock: {error}"
+                ))),
+            };
+        }
+        result
+    }
+
+    fn add_transaction_locked(
+        &self,
+        transaction_type: TransactionType,
+        changes: Vec<PackageChange>,
+        success: bool,
+    ) -> Result<()> {
+        let mut history = self.load()?;
+        history.push(Transaction {
             id: uuid::Uuid::new_v4().to_string(),
             timestamp: Timestamp::now(),
             transaction_type,
             changes,
             success,
-        };
+        });
 
-        history.push(transaction);
-
-        // Keep only last N transactions to prevent file bloat
         let excess = history.len().saturating_sub(MAX_HISTORY_TRANSACTIONS);
         if excess > 0 {
             history.drain(0..excess);
         }
-
         self.save(&history)
     }
 }
@@ -142,6 +196,53 @@ impl HistoryManager {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn official_repository_names_are_restorable() {
+        for source in ["official", "core", "extra", "apt", "pacman"] {
+            let change = PackageChange {
+                name: "example".to_string(),
+                old_version: Some("1.0".to_string()),
+                new_version: Some("2.0".to_string()),
+                source: source.to_string(),
+            };
+            assert!(change.is_official_source(), "source {source}");
+        }
+        for source in ["aur", "AUR", "local"] {
+            let change = PackageChange {
+                name: "example".to_string(),
+                old_version: Some("1.0".to_string()),
+                new_version: Some("2.0".to_string()),
+                source: source.to_string(),
+            };
+            assert!(!change.is_official_source(), "source {source}");
+        }
+    }
+
+    #[test]
+    fn finish_operation_persists_failed_mutations_and_returns_the_operation_error() -> Result<()> {
+        let directory = tempfile::tempdir()?;
+        let manager = HistoryManager::new_in(directory.path().join("history.json"))?;
+
+        let error = manager
+            .finish_operation(
+                TransactionType::Install,
+                vec![PackageChange {
+                    name: "example".to_string(),
+                    old_version: None,
+                    new_version: Some("1.0".to_string()),
+                    source: "official".to_string(),
+                }],
+                Err(anyhow::anyhow!("backend failed")),
+            )
+            .expect_err("operation failure must be returned");
+
+        assert!(error.to_string().contains("backend failed"));
+        let history = manager.load()?;
+        assert_eq!(history.len(), 1);
+        assert!(!history[0].success);
+        Ok(())
+    }
 
     #[test]
     fn malformed_history_is_rejected_without_data_loss() -> Result<()> {
@@ -156,6 +257,42 @@ mod tests {
 
         assert!(error.to_string().contains("Malformed history file"));
         assert_eq!(fs::read_to_string(path)?, "not valid JSON");
+        Ok(())
+    }
+
+    #[test]
+    fn concurrent_transactions_are_not_lost() -> Result<()> {
+        use std::sync::{Arc, Barrier};
+
+        const WRITERS: usize = 8;
+        let directory = tempfile::tempdir()?;
+        let path = directory.path().join("history.json");
+        let barrier = Arc::new(Barrier::new(WRITERS));
+        let mut writers = Vec::new();
+        for index in 0..WRITERS {
+            let path = path.clone();
+            let barrier = Arc::clone(&barrier);
+            writers.push(std::thread::spawn(move || -> Result<()> {
+                let manager = HistoryManager::new_in(path)?;
+                barrier.wait();
+                manager.add_transaction(
+                    TransactionType::Install,
+                    vec![PackageChange {
+                        name: format!("package-{index}"),
+                        old_version: None,
+                        new_version: Some("1.0.0".to_string()),
+                        source: "test".to_string(),
+                    }],
+                    true,
+                )
+            }));
+        }
+        for writer in writers {
+            writer.join().expect("history writer panicked")?;
+        }
+
+        let history = HistoryManager::new_in(path)?.load()?;
+        assert_eq!(history.len(), WRITERS);
         Ok(())
     }
 

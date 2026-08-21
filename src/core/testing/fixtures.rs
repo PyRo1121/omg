@@ -540,8 +540,17 @@ impl PackageFixture {
 mod tests {
     use super::*;
 
+    #[cfg(feature = "arch")]
+    fn version_text(version: &crate::package_managers::types::Version) -> String {
+        version.to_string()
+    }
+
+    #[cfg(not(feature = "arch"))]
+    const fn version_text(version: &crate::package_managers::types::Version) -> &str {
+        version.as_str()
+    }
+
     #[test]
-    #[allow(clippy::implicit_clone, clippy::redundant_clone)] // Version is feature-gated type alias; .to_string() is the required conversion
     fn test_package_fixture_builder() {
         let pkg = PackageFixture::new()
             .name("test")
@@ -552,28 +561,25 @@ mod tests {
             .build();
 
         assert_eq!(pkg.name, "test");
-        assert_eq!(pkg.version.to_string(), "1.0.0");
+        assert_eq!(version_text(&pkg.version), "1.0.0");
         assert!(pkg.installed);
     }
 
     #[test]
-    #[allow(clippy::implicit_clone, clippy::redundant_clone)] // Version is feature-gated type alias; .to_string() is the required conversion
     fn test_package_fixture_defaults() {
         let pkg = PackageFixture::new().build();
         assert_eq!(pkg.name, "test-package");
-        assert_eq!(pkg.version.to_string(), "1.0.0");
+        assert_eq!(version_text(&pkg.version), "1.0.0");
     }
 
     #[test]
-    #[allow(clippy::implicit_clone, clippy::redundant_clone)] // Version is feature-gated type alias; .to_string() is the required conversion
     fn test_package_fixture_firefox_preset() {
         let firefox = PackageFixture::firefox().build();
         assert_eq!(firefox.name, "firefox");
-        assert_eq!(firefox.version.to_string(), "122.0-1");
+        assert_eq!(version_text(&firefox.version), "122.0-1");
     }
 
     #[test]
-    #[allow(clippy::redundant_clone, clippy::implicit_clone)] // Version is feature-gated type; to_string() required for assertion
     fn test_package_fixture_custom() {
         let pkg = PackageFixture::new()
             .name("test")
@@ -581,7 +587,7 @@ mod tests {
             .installed(true)
             .build();
         assert_eq!(pkg.name, "test");
-        assert_eq!(pkg.version.to_string(), "1.0.0");
+        assert_eq!(version_text(&pkg.version), "1.0.0");
         assert!(pkg.installed);
     }
 

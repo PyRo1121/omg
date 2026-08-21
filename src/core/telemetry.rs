@@ -22,7 +22,7 @@ use std::sync::atomic::{AtomicI64, AtomicU32, Ordering};
 use std::sync::{Mutex, OnceLock};
 use std::time::Instant;
 
-use anyhow::Result;
+use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
 
 use crate::core::telemetry_client::{
@@ -164,10 +164,10 @@ fn create_marker(install_id: &str) -> Result<()> {
         version: env!("CARGO_PKG_VERSION").to_string(),
     };
 
-    let content = serde_json::to_string_pretty(&marker)?;
-    std::fs::write(marker_path, content)?;
-
-    Ok(())
+    let content =
+        serde_json::to_vec_pretty(&marker).context("Failed to serialize install marker")?;
+    crate::core::safe_ops::atomic_write_file_sync(&marker_path, content)
+        .with_context(|| format!("Failed to save install marker: {}", marker_path.display()))
 }
 
 /// Ping install telemetry endpoint
@@ -186,22 +186,31 @@ pub async fn ping_install() -> Result<()> {
 
     // Send ping with timeout
     let client = crate::core::http::shared_client();
-    let response = client.post(TELEMETRY_API_URL).json(&payload).send().await;
+    let response = client
+        .post(TELEMETRY_API_URL)
+        .json(&payload)
+        .timeout(std::time::Duration::from_secs(5))
+        .send()
+        .await;
 
-    // Create marker file on success or network error (don't block on failure)
     match response {
-        Ok(_) => {
+        Ok(response) if response.status().is_success() => {
             tracing::debug!("Install telemetry ping successful");
-            create_marker(&install_id)?;
         }
-        Err(e) => {
-            // Silent fail - create marker anyway to avoid retrying
-            tracing::debug!("Install telemetry ping failed (silent): {}", e);
-            create_marker(&install_id)?;
+        Ok(response) => {
+            tracing::debug!(
+                "Install telemetry ping rejected with status {}",
+                response.status()
+            );
+        }
+        Err(error) => {
+            tracing::debug!("Install telemetry ping failed: {error}");
         }
     }
 
-    Ok(())
+    // This is deliberately one-shot best-effort telemetry; do not retry on a
+    // later user command when the endpoint is unavailable.
+    create_marker(&install_id)
 }
 
 // =============================================================================
@@ -210,6 +219,8 @@ pub async fn ping_install() -> Result<()> {
 
 /// Global event queue for batching
 static EVENT_QUEUE: OnceLock<Mutex<EventQueue>> = OnceLock::new();
+/// Serialize network flushes so an older snapshot cannot remove newer events.
+static FLUSH_LOCK: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
 
 /// Global session state
 static SESSION_STATE: OnceLock<Mutex<TelemetrySession>> = OnceLock::new();
@@ -224,6 +235,7 @@ struct EventQueue {
     last_flush: i64,
     events_since_persist: AtomicU32,
     last_persist: AtomicI64,
+    persistence_enabled: bool,
 }
 
 impl Default for EventQueue {
@@ -233,6 +245,7 @@ impl Default for EventQueue {
             last_flush: jiff::Timestamp::now().as_second(),
             events_since_persist: AtomicU32::new(0),
             last_persist: AtomicI64::new(jiff::Timestamp::now().as_second()),
+            persistence_enabled: true,
         }
     }
 }
@@ -267,9 +280,13 @@ impl EventQueue {
         events_count >= PERSIST_EVERY_N_EVENTS || (now - last_persist) >= PERSIST_INTERVAL_SECS
     }
 
-    fn take_events(&mut self) -> Vec<TelemetryEvent> {
+    fn snapshot(&self) -> Vec<TelemetryEvent> {
+        self.events.iter().cloned().collect()
+    }
+
+    fn confirm_sent(&mut self, count: usize) {
         self.last_flush = jiff::Timestamp::now().as_second();
-        self.events.drain(..).collect()
+        self.events.drain(..count.min(self.events.len()));
     }
 
     fn path() -> Result<PathBuf> {
@@ -279,27 +296,55 @@ impl EventQueue {
     }
 
     fn load() -> Self {
-        Self::path()
-            .ok()
-            .and_then(|p| std::fs::read_to_string(p).ok())
-            .and_then(|s| {
-                let events: Vec<TelemetryEvent> = serde_json::from_str(&s).ok()?;
-                let now = jiff::Timestamp::now().as_second();
-                Some(Self {
-                    events: events.into(),
-                    last_flush: now,
-                    events_since_persist: AtomicU32::new(0),
-                    last_persist: AtomicI64::new(now),
-                })
-            })
-            .unwrap_or_default()
+        let result = Self::path().and_then(|path| Self::load_from(&path));
+        match result {
+            Ok(queue) => queue,
+            Err(error) => {
+                tracing::warn!(
+                    "Telemetry queue persistence disabled because its state is invalid: {error}"
+                );
+                Self {
+                    persistence_enabled: false,
+                    ..Self::default()
+                }
+            }
+        }
+    }
+
+    fn load_from(path: &std::path::Path) -> Result<Self> {
+        let content = match std::fs::read_to_string(path) {
+            Ok(content) => content,
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+                return Ok(Self::default());
+            }
+            Err(error) => {
+                return Err(error).with_context(|| {
+                    format!("Failed to read telemetry queue: {}", path.display())
+                });
+            }
+        };
+        let events = serde_json::from_str::<Vec<TelemetryEvent>>(&content)
+            .with_context(|| format!("Malformed telemetry queue: {}", path.display()))?;
+        let now = jiff::Timestamp::now().as_second();
+        Ok(Self {
+            events: events.into(),
+            last_flush: now,
+            events_since_persist: AtomicU32::new(0),
+            last_persist: AtomicI64::new(now),
+            persistence_enabled: true,
+        })
     }
 
     fn save(&self) -> Result<()> {
+        anyhow::ensure!(
+            self.persistence_enabled,
+            "telemetry queue persistence is disabled after a load failure"
+        );
         let path = Self::path()?;
         let events: Vec<&TelemetryEvent> = self.events.iter().collect();
-        let content = serde_json::to_string(&events)?;
-        std::fs::write(path, content)?;
+        let content = serde_json::to_vec(&events).context("Failed to serialize telemetry queue")?;
+        crate::core::safe_ops::atomic_write_file_sync(&path, content)
+            .with_context(|| format!("Failed to save telemetry queue: {}", path.display()))?;
 
         // Reset persist tracking
         self.events_since_persist.store(0, Ordering::Relaxed);
@@ -324,6 +369,7 @@ pub struct TelemetrySession {
     /// Persist tracking
     persist_counter: AtomicU32,
     last_persist: AtomicI64,
+    persistence_enabled: bool,
 }
 
 /// Serializable session state for persistence
@@ -353,6 +399,7 @@ impl TelemetrySession {
             last_activity: AtomicI64::new(now),
             persist_counter: AtomicU32::new(0),
             last_persist: AtomicI64::new(now),
+            persistence_enabled: true,
         }
     }
 
@@ -363,25 +410,52 @@ impl TelemetrySession {
     }
 
     fn load() -> Self {
-        Self::path()
-            .ok()
-            .and_then(|p| std::fs::read_to_string(p).ok())
-            .and_then(|s| {
-                let sess: SerializableSession = serde_json::from_str(&s).ok()?;
-                let now = jiff::Timestamp::now().as_second();
-                Some(Self {
-                    session_id: sess.session_id,
-                    started_at: sess.started_at,
-                    commands_run: AtomicU32::new(sess.commands_run),
-                    last_activity: AtomicI64::new(sess.last_activity),
-                    persist_counter: AtomicU32::new(0),
-                    last_persist: AtomicI64::new(now),
-                })
-            })
-            .unwrap_or_default()
+        let result = Self::path().and_then(|path| Self::load_from(&path));
+        match result {
+            Ok(session) => session,
+            Err(error) => {
+                tracing::warn!(
+                    "Telemetry session persistence disabled because its state is invalid: {error}"
+                );
+                Self {
+                    persistence_enabled: false,
+                    ..Self::default()
+                }
+            }
+        }
+    }
+
+    fn load_from(path: &std::path::Path) -> Result<Self> {
+        let content = match std::fs::read_to_string(path) {
+            Ok(content) => content,
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+                return Ok(Self::default());
+            }
+            Err(error) => {
+                return Err(error).with_context(|| {
+                    format!("Failed to read telemetry session: {}", path.display())
+                });
+            }
+        };
+        let session = serde_json::from_str::<SerializableSession>(&content)
+            .with_context(|| format!("Malformed telemetry session: {}", path.display()))?;
+        let now = jiff::Timestamp::now().as_second();
+        Ok(Self {
+            session_id: session.session_id,
+            started_at: session.started_at,
+            commands_run: AtomicU32::new(session.commands_run),
+            last_activity: AtomicI64::new(session.last_activity),
+            persist_counter: AtomicU32::new(0),
+            last_persist: AtomicI64::new(now),
+            persistence_enabled: true,
+        })
     }
 
     fn save(&self) -> Result<()> {
+        anyhow::ensure!(
+            self.persistence_enabled,
+            "telemetry session persistence is disabled after a load failure"
+        );
         let path = Self::path()?;
         let sess = SerializableSession {
             session_id: self.session_id.clone(),
@@ -389,8 +463,10 @@ impl TelemetrySession {
             commands_run: self.commands_run.load(Ordering::Relaxed),
             last_activity: self.last_activity.load(Ordering::Relaxed),
         };
-        let content = serde_json::to_string_pretty(&sess)?;
-        std::fs::write(path, content)?;
+        let content =
+            serde_json::to_vec_pretty(&sess).context("Failed to serialize telemetry session")?;
+        crate::core::safe_ops::atomic_write_file_sync(&path, content)
+            .with_context(|| format!("Failed to save telemetry session: {}", path.display()))?;
 
         // Reset persist tracking
         self.persist_counter.store(0, Ordering::Relaxed);
@@ -458,7 +534,7 @@ pub fn is_enhanced_telemetry_enabled() -> bool {
     if is_telemetry_opt_out() {
         return false;
     }
-    crate::core::license::load_license().is_some()
+    crate::core::license::load_license().is_some_and(|license| license.is_token_valid())
 }
 
 /// Record CLI startup time
@@ -674,30 +750,38 @@ pub async fn flush_events() {
         return;
     }
 
-    let events = {
-        if let Ok(mut queue) = get_event_queue().lock() {
-            let events = queue.take_events();
-            // A failed save here leaves the old queue on disk; the events are
-            // re-enqueued on the next load, so duplicates are possible. Log at
-            // warn because it is observable, unlike ordinary best-effort
-            // persistence.
-            if let Err(error) = queue.save() {
-                tracing::warn!("Failed to persist telemetry queue before flush: {error}");
-            }
-            events
-        } else {
+    let _flush_guard = FLUSH_LOCK.lock().await;
+    let events = match get_event_queue().lock() {
+        Ok(queue) => queue.snapshot(),
+        Err(error) => {
+            tracing::warn!("Failed to lock telemetry queue: {error}");
             return;
         }
     };
-
     if events.is_empty() {
         return;
     }
 
     tracing::debug!("Flushing {} telemetry events", events.len());
-
-    if let Err(e) = crate::core::telemetry_client::send_batch(events).await {
-        tracing::debug!("Failed to flush telemetry events: {e}");
+    match crate::core::telemetry_client::send_batch(events.clone()).await {
+        Ok(()) => {
+            if let Ok(mut queue) = get_event_queue().lock() {
+                queue.confirm_sent(events.len());
+                if let Err(error) = queue.save() {
+                    tracing::warn!("Failed to persist telemetry queue after flush: {error}");
+                }
+            }
+        }
+        Err(error) => {
+            tracing::debug!("Failed to flush telemetry events: {error}");
+            if let Ok(queue) = get_event_queue().lock()
+                && let Err(persist_error) = queue.save()
+            {
+                tracing::warn!(
+                    "Failed to preserve telemetry queue after send failure: {persist_error}"
+                );
+            }
+        }
     }
 }
 
@@ -834,6 +918,7 @@ mod tests {
             last_flush: now,
             events_since_persist: AtomicU32::new(0),
             last_persist: AtomicI64::new(now),
+            persistence_enabled: true,
         };
         // Queue should not need flush when empty and recently flushed
         assert!(!queue.needs_flush());
@@ -850,9 +935,45 @@ mod tests {
         // Queue should need flush when at max capacity
         assert!(queue.needs_flush());
 
-        let events = queue.take_events();
+        let events = queue.snapshot();
         assert_eq!(events.len(), MAX_QUEUED_EVENTS);
+        assert_eq!(queue.events.len(), MAX_QUEUED_EVENTS);
+
+        queue.confirm_sent(events.len());
         assert!(queue.events.is_empty());
+    }
+
+    #[test]
+    fn malformed_persisted_telemetry_is_rejected_without_modification() {
+        let directory = tempfile::tempdir().expect("create temporary directory");
+        let queue_path = directory.path().join("queue.json");
+        let session_path = directory.path().join("session.json");
+        std::fs::write(&queue_path, b"{bad-queue").expect("write malformed queue");
+        std::fs::write(&session_path, b"{bad-session").expect("write malformed session");
+
+        let queue_error =
+            EventQueue::load_from(&queue_path).expect_err("malformed queue must be rejected");
+        let session_error = TelemetrySession::load_from(&session_path)
+            .expect_err("malformed session must be rejected");
+
+        assert!(
+            queue_error
+                .to_string()
+                .contains("Malformed telemetry queue")
+        );
+        assert!(
+            session_error
+                .to_string()
+                .contains("Malformed telemetry session")
+        );
+        assert_eq!(
+            std::fs::read(&queue_path).expect("read malformed queue"),
+            b"{bad-queue"
+        );
+        assert_eq!(
+            std::fs::read(&session_path).expect("read malformed session"),
+            b"{bad-session"
+        );
     }
 
     #[test]
@@ -865,22 +986,17 @@ mod tests {
 
     #[test]
     fn backend_name_matches_compiled_features() {
-        #[cfg(any(feature = "debian", feature = "debian-pure"))]
-        if crate::core::env::distro::is_debian_like() {
-            assert_eq!(get_backend(), "debian");
-            return;
-        }
-        #[cfg(feature = "arch")]
+        let expected = if cfg!(any(feature = "debian", feature = "debian-pure"))
+            && crate::core::env::distro::is_debian_like()
         {
-            assert_eq!(get_backend(), "arch");
-            return;
-        }
-        #[cfg(any(feature = "debian", feature = "debian-pure"))]
-        {
-            assert_eq!(get_backend(), "debian");
-            return;
-        }
-        #[cfg(not(any(feature = "arch", feature = "debian", feature = "debian-pure")))]
-        assert_eq!(get_backend(), "none");
+            "debian"
+        } else if cfg!(feature = "arch") {
+            "arch"
+        } else if cfg!(any(feature = "debian", feature = "debian-pure")) {
+            "debian"
+        } else {
+            "none"
+        };
+        assert_eq!(get_backend(), expected);
     }
 }

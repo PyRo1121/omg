@@ -56,19 +56,22 @@ impl FastStatus {
         }
     }
 
-    /// Write status to file (atomic via temp + rename)
+    /// Write status to file (atomic via temp file + rename)
     pub fn write_to_file(&self, path: &Path) -> std::io::Result<()> {
-        let tmp_path = path.with_extension("tmp");
+        // A unique temporary file per writer avoids two processes writing
+        // through a shared fixed ".tmp" name and renaming interleaved bytes.
+        let parent = path
+            .parent()
+            .filter(|p| !p.as_os_str().is_empty())
+            .unwrap_or_else(|| Path::new("."));
+        let mut temporary = tempfile::NamedTempFile::new_in(parent)?;
 
         // Safe serialization using zerocopy - no unsafe needed
-        let bytes = self.as_bytes();
-
-        let mut file = File::create(&tmp_path)?;
-        file.write_all(bytes)?;
-        file.sync_all()?;
+        temporary.as_file_mut().write_all(self.as_bytes())?;
+        temporary.as_file_mut().sync_all()?;
 
         // Atomic rename
-        std::fs::rename(&tmp_path, path)?;
+        temporary.persist(path).map_err(|error| error.error)?;
         Ok(())
     }
 
@@ -95,25 +98,29 @@ impl FastStatus {
         Some(status)
     }
 
+    fn read_default() -> Option<Self> {
+        let path = paths::fast_status_path();
+        #[cfg(unix)]
+        paths::validate_socket_parent(&path).ok()?;
+        Self::read_from_file(&path)
+    }
+
     /// Read explicit count directly (fastest path)
     #[must_use]
     pub fn read_explicit_count() -> Option<usize> {
-        let path = paths::fast_status_path();
-        Self::read_from_file(&path).map(|s| s.explicit_packages as usize)
+        Self::read_default().map(|status| status.explicit_packages as usize)
     }
 
     /// Read orphan count directly (fastest path)
     #[must_use]
     pub fn read_orphan_count() -> Option<usize> {
-        let path = paths::fast_status_path();
-        Self::read_from_file(&path).map(|s| s.orphan_packages as usize)
+        Self::read_default().map(|status| status.orphan_packages as usize)
     }
 
     /// Read updates count directly (fastest path)
     #[must_use]
     pub fn read_updates_count() -> Option<usize> {
-        let path = paths::fast_status_path();
-        Self::read_from_file(&path).map(|s| s.updates_available as usize)
+        Self::read_default().map(|status| status.updates_available as usize)
     }
 
     /// Write status to default path

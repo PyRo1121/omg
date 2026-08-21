@@ -301,6 +301,13 @@ pub fn append_to_keyring(cert: &Cert, keyring_path: &Path) -> Result<(), Keyserv
         .map_err(|source| KeyserverError::Serialize { source })?;
     file.write_all(&buf)
         .map_err(|source| KeyserverError::KeyringWrite {
+            path: path_str.clone(),
+            source,
+        })?;
+    // Durability: a keyring entry lost to a crash would silently downgrade
+    // later signature verification.
+    file.sync_all()
+        .map_err(|source| KeyserverError::KeyringWrite {
             path: path_str,
             source,
         })?;

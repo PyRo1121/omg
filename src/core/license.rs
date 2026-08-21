@@ -17,16 +17,26 @@
 use anyhow::{Context, Result};
 use jsonwebtoken::{DecodingKey, Validation, decode};
 use serde::{Deserialize, Serialize};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::str::FromStr;
+use std::sync::OnceLock;
+use std::sync::atomic::{AtomicBool, Ordering};
 
 const LICENSE_API_URL: &str = "https://api.pyro1121.com/api/validate-license";
 
-/// Ed25519 Public Key for JWT verification (Enterprise-grade security)
-/// In production, this would be the actual public key from the licensing server.
-const JWT_VERIFICATION_KEY: &[u8] = b"-----BEGIN PUBLIC KEY-----
+/// Ed25519 public key used for JWT verification.
+///
+/// STUB: this is NOT a real licensing key — the base64 body is filler
+/// (`f9Of6Of6…`) and no token can ever verify against it. Until it is
+/// replaced by the production key (build-time injected), every paid-tier
+/// license fails closed to [`Tier::Free`]. The name keeps that stub status
+/// visible at every use site.
+const STUB_JWT_VERIFICATION_KEY: &[u8] = b"-----BEGIN PUBLIC KEY-----
 MCowBQYDK2VwAyEAf9Of6Of6Of6Of6Of6Of6Of6Of6Of6Of6Of6Of6Of6Of6
 -----END PUBLIC KEY-----";
+
+/// Emit the stub-key warning once per process instead of on every check.
+static STUB_KEY_WARNED: OnceLock<()> = OnceLock::new();
 
 /// License tiers (ordered by level)
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
@@ -350,28 +360,36 @@ pub struct AuditLogEntry {
 }
 
 impl StoredLicense {
+    fn verified_payload(&self) -> Option<JwtPayload> {
+        let payload = verify_jwt(self.token.as_deref()?)?;
+        if payload.lic != self.key {
+            return None;
+        }
+        if let Some(bound_machine_id) = payload.mid.as_deref()
+            && bound_machine_id != get_machine_id()
+        {
+            return None;
+        }
+        Some(payload)
+    }
+
+    /// Return the tier authorized by the signed, unexpired license token.
     #[must_use]
     pub fn tier_enum(&self) -> Tier {
-        Tier::parse(&self.tier)
+        self.verified_payload()
+            .map_or(Tier::Free, |payload| Tier::parse(&payload.tier))
     }
 
-    /// Check if the stored token is still valid
+    /// Check if the stored token and its license/machine bindings are valid.
     #[must_use]
     pub fn is_token_valid(&self) -> bool {
-        if let Some(token) = &self.token
-            && verify_jwt(token).is_some()
-        {
-            return true;
-        }
-        false
+        self.verified_payload().is_some()
     }
 
-    /// Check if token needs refresh (< 1 day remaining)
+    /// Check if token needs refresh (< 1 day remaining).
     #[must_use]
     pub fn needs_refresh(&self) -> bool {
-        if let Some(token) = &self.token
-            && let Some(payload) = verify_jwt(token)
-        {
+        if let Some(payload) = self.verified_payload() {
             let now = jiff::Timestamp::now().as_second();
             let one_day = 24 * 60 * 60;
             return payload.exp - now < one_day;
@@ -380,36 +398,55 @@ impl StoredLicense {
     }
 }
 
-/// Get machine fingerprint for license binding
+static MACHINE_ID: OnceLock<String> = OnceLock::new();
+static STUB_JWT_VERIFICATION_WARNED: AtomicBool = AtomicBool::new(false);
+
+/// Get machine fingerprint for license binding.
 #[must_use]
 pub fn get_machine_id() -> String {
-    // Combine multiple system identifiers for a stable fingerprint
-    let mut components = Vec::new();
+    MACHINE_ID.get_or_init(compute_machine_id).clone()
+}
 
-    // Machine ID (Linux) - primary stable identifier
-    if let Ok(id) = std::fs::read_to_string("/etc/machine-id") {
-        components.push(id.trim().to_string());
+fn compute_machine_id() -> String {
+    let mut components = ["/etc/machine-id", "/sys/class/dmi/id/product_uuid"]
+        .into_iter()
+        .filter_map(|path| std::fs::read_to_string(path).ok())
+        .map(|value| value.trim().to_string())
+        .filter(|value| !value.is_empty())
+        .collect::<Vec<_>>();
+
+    if components.is_empty()
+        && let Ok(hostname) = std::fs::read_to_string("/etc/hostname")
+        && !hostname.trim().is_empty()
+    {
+        components.push(hostname.trim().to_string());
     }
 
-    // Hardware UUID (fallback for systems without /etc/machine-id)
-    if let Ok(uuid) = std::fs::read_to_string("/sys/class/dmi/id/product_uuid") {
-        components.push(uuid.trim().to_string());
-    }
-
-    // Fallback: If no system IDs available, use a generated stable ID
     if components.is_empty() {
-        // Use a combination of hostname and a marker file
-        if let Ok(hostname) = std::fs::read_to_string("/etc/hostname") {
-            components.push(hostname.trim().to_string());
-        }
+        let fallback_path = crate::core::paths::data_dir().join("machine-id");
+        let fallback = std::fs::read_to_string(&fallback_path)
+            .ok()
+            .map(|value| value.trim().to_string())
+            .filter(|value| !value.is_empty())
+            .unwrap_or_else(|| {
+                let generated = uuid::Uuid::new_v4().to_string();
+                if let Some(parent) = fallback_path.parent()
+                    && let Err(error) = std::fs::create_dir_all(parent)
+                {
+                    tracing::warn!("Failed to create machine ID directory: {error}");
+                    return generated;
+                }
+                if let Err(error) = write_private_file(&fallback_path, generated.as_bytes()) {
+                    tracing::warn!("Failed to persist generated machine ID: {error}");
+                }
+                generated
+            });
+        components.push(fallback);
     }
 
-    // Hash the combined components
-    let combined = components.join(":");
-    let hash = sha256_hex(combined.as_bytes());
-    // Only log the hash, never the source components (no PII)
+    let hash = sha256_hex(components.join(":").as_bytes());
     tracing::debug!("Generated machine ID fingerprint: {}", &hash[..16]);
-    hash[..16].to_string() // First 16 chars of hash
+    hash[..16].to_string()
 }
 
 /// SHA256 hash as hex string
@@ -426,7 +463,18 @@ fn verify_jwt(token: &str) -> Option<JwtPayload> {
     let mut validation = Validation::new(jsonwebtoken::Algorithm::EdDSA);
     validation.validate_exp = true;
 
-    let key = DecodingKey::from_ed_der(JWT_VERIFICATION_KEY);
+    // Fail closed against the stub key, but say so once per process so the
+    // silent downgrade of every paid tier is observable.
+    let _ = STUB_KEY_WARNED.set(());
+    if STUB_KEY_WARNED.get().is_some() && !STUB_JWT_VERIFICATION_WARNED.load(Ordering::Relaxed) {
+        STUB_JWT_VERIFICATION_WARNED.store(true, Ordering::Relaxed);
+        tracing::warn!(
+            "License verification is running against a STUB public key; \
+             paid-tier licenses cannot verify and will degrade to Free"
+        );
+    }
+
+    let key = DecodingKey::from_ed_der(STUB_JWT_VERIFICATION_KEY);
 
     decode::<JwtPayload>(token, &key, &validation)
         .map(|data| data.claims)
@@ -435,26 +483,78 @@ fn verify_jwt(token: &str) -> Option<JwtPayload> {
 
 /// Get the license file path
 fn license_path() -> Result<PathBuf> {
-    let data_dir = dirs::data_dir()
-        .context("Could not find data directory")?
-        .join("omg");
+    let data_dir = crate::core::paths::data_dir();
     std::fs::create_dir_all(&data_dir)?;
     Ok(data_dir.join("license.json"))
 }
 
-/// Load stored license from disk
+/// Load stored license from disk.
+///
+/// A missing file is the normal no-license state (`None`, silently). A
+/// corrupt or unreadable file is integrity-relevant user state, so it is
+/// reported before degrading to `None` — never silently discarded.
 pub fn load_license() -> Option<StoredLicense> {
-    let path = license_path().ok()?;
-    let content = std::fs::read_to_string(path).ok()?;
-    serde_json::from_str(&content).ok()
+    let path = match license_path() {
+        Ok(path) => path,
+        Err(error) => {
+            tracing::warn!("Cannot locate license storage: {error:#}");
+            return None;
+        }
+    };
+    let content = match std::fs::read_to_string(&path) {
+        Ok(content) => content,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return None,
+        Err(error) => {
+            tracing::warn!(
+                "Failed to read license file {}: treating as no license ({error})",
+                path.display()
+            );
+            return None;
+        }
+    };
+    match serde_json::from_str(&content) {
+        Ok(license) => Some(license),
+        Err(error) => {
+            tracing::warn!(
+                "Discarding malformed license file {} as if no license existed: {error}",
+                path.display()
+            );
+            None
+        }
+    }
 }
 
-/// Save license to disk
+fn write_private_file(path: &Path, contents: &[u8]) -> Result<()> {
+    use std::io::Write;
+
+    let parent = path
+        .parent()
+        .context("Private state path must have a parent directory")?;
+    std::fs::create_dir_all(parent)?;
+    let mut temporary = tempfile::NamedTempFile::new_in(parent)?;
+    temporary.as_file_mut().write_all(contents)?;
+
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        temporary
+            .as_file_mut()
+            .set_permissions(std::fs::Permissions::from_mode(0o600))?;
+    }
+
+    temporary.as_file_mut().sync_all()?;
+    temporary
+        .persist(path)
+        .map_err(|error| error.error)
+        .with_context(|| format!("Failed to replace private state file {}", path.display()))?;
+    Ok(())
+}
+
+/// Save license to owner-only storage using atomic replacement.
 pub fn save_license(license: &StoredLicense) -> Result<()> {
     let path = license_path()?;
-    let content = serde_json::to_string_pretty(license)?;
-    std::fs::write(path, content)?;
-    Ok(())
+    let content = serde_json::to_vec_pretty(license)?;
+    write_private_file(&path, &content)
 }
 
 /// Remove stored license
@@ -537,13 +637,11 @@ pub async fn fetch_team_members() -> Result<Vec<TeamMember>> {
         anyhow::bail!("No license found. Activate with 'omg license activate <key>'");
     };
 
-    let url = format!(
-        "https://api.pyro1121.com/api/license/members?key={}",
-        license.key
-    );
+    let url = "https://api.pyro1121.com/api/license/members";
 
     let response = crate::core::http::shared_client()
-        .get(&url)
+        .get(url)
+        .bearer_auth(&license.key)
         .timeout(std::time::Duration::from_secs(10))
         .send()
         .await
@@ -573,13 +671,11 @@ pub async fn fetch_policies() -> Result<Vec<PolicyRule>> {
         anyhow::bail!("No license found. Activate with 'omg license activate <key>'");
     };
 
-    let url = format!(
-        "https://api.pyro1121.com/api/license/policies?key={}",
-        license.key
-    );
+    let url = "https://api.pyro1121.com/api/license/policies";
 
     let response = crate::core::http::shared_client()
-        .get(&url)
+        .get(url)
+        .bearer_auth(&license.key)
         .timeout(std::time::Duration::from_secs(10))
         .send()
         .await
@@ -606,13 +702,11 @@ pub async fn fetch_audit_logs() -> Result<Vec<AuditLogEntry>> {
         anyhow::bail!("No license found. Activate with 'omg license activate <key>'");
     };
 
-    let url = format!(
-        "https://api.pyro1121.com/api/license/audit?key={}",
-        license.key
-    );
+    let url = "https://api.pyro1121.com/api/license/audit";
 
     let response = crate::core::http::shared_client()
-        .get(&url)
+        .get(url)
+        .bearer_auth(&license.key)
         .timeout(std::time::Duration::from_secs(10))
         .send()
         .await
@@ -666,7 +760,14 @@ pub async fn propose_change(message: &str, state: &serde_json::Value) -> Result<
         .await
         .context("Failed to parse proposal response")?;
 
-    let proposal_id = res["proposal_id"].as_u64().unwrap_or(0);
+    parse_proposal_id(&res)
+}
+
+fn parse_proposal_id(response: &serde_json::Value) -> Result<u32> {
+    let proposal_id = response
+        .get("proposal_id")
+        .and_then(serde_json::Value::as_u64)
+        .context("Proposal response is missing a valid proposal_id")?;
     u32::try_from(proposal_id)
         .with_context(|| format!("Proposal ID {proposal_id} exceeds u32 range"))
 }
@@ -708,13 +809,11 @@ pub async fn fetch_proposals() -> Result<Vec<serde_json::Value>> {
         anyhow::bail!("No license found. Activate with 'omg license activate <key>'");
     };
 
-    let url = format!(
-        "https://api.pyro1121.com/api/team/proposals?key={}",
-        license.key
-    );
+    let url = "https://api.pyro1121.com/api/team/proposals";
 
     let response = crate::core::http::shared_client()
-        .get(&url)
+        .get(url)
+        .bearer_auth(&license.key)
         .timeout(std::time::Duration::from_secs(10))
         .send()
         .await
@@ -756,7 +855,7 @@ pub async fn activate_with_user(
 
     let stored = StoredLicense {
         key: key.to_string(),
-        tier: response.tier.unwrap_or_else(|| "pro".to_string()),
+        tier: response.tier.unwrap_or_else(|| "free".to_string()),
         features: response.features.unwrap_or_default(),
         customer: response.customer,
         expires_at: response.expires_at,
@@ -901,6 +1000,72 @@ mod tests {
         assert_eq!(Feature::Sbom.required_tier(), Tier::Pro);
         assert_eq!(Feature::TeamSync.required_tier(), Tier::Team);
         assert_eq!(Feature::Policy.required_tier(), Tier::Enterprise);
+    }
+
+    #[test]
+    fn unsigned_stored_tier_does_not_authorize_paid_features() {
+        let stored = StoredLicense {
+            key: "editable-key".to_string(),
+            tier: "enterprise".to_string(),
+            features: Vec::new(),
+            customer: None,
+            expires_at: None,
+            validated_at: 0,
+            token: None,
+            machine_id: None,
+        };
+
+        assert_eq!(stored.tier_enum(), Tier::Free);
+        assert!(!stored.is_token_valid());
+    }
+
+    #[test]
+    fn garbage_signed_token_fails_closed_to_free_tier() {
+        // Regression for the STUB verification key: a token that was never
+        // signed by the real licensing server must never authorize paid
+        // tiers, even when the stored file claims "enterprise".
+        let stored = StoredLicense {
+            key: "real-key".to_string(),
+            tier: "enterprise".to_string(),
+            features: vec!["policy".to_string()],
+            customer: Some("acme".to_string()),
+            expires_at: None,
+            validated_at: jiff::Timestamp::now().as_second(),
+            // Deliberately not a real JWT: verification must reject any
+            // token it cannot validate, whatever its shape.
+            token: Some("definitely-not-a-valid-license-token".to_string()),
+            machine_id: Some(get_machine_id()),
+        };
+
+        assert!(!stored.is_token_valid());
+        assert_eq!(stored.tier_enum(), Tier::Free);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn private_state_is_atomically_replaced_with_owner_only_permissions() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let directory = tempfile::tempdir().expect("temp dir");
+        let path = directory.path().join("license.json");
+        std::fs::write(&path, b"old").expect("write existing state");
+
+        write_private_file(&path, b"new").expect("replace private state");
+
+        assert_eq!(std::fs::read(&path).expect("read state"), b"new");
+        let mode = std::fs::metadata(path)
+            .expect("state metadata")
+            .permissions()
+            .mode()
+            & 0o777;
+        assert_eq!(mode, 0o600);
+    }
+
+    #[test]
+    fn malformed_proposal_response_is_rejected() {
+        let error = parse_proposal_id(&serde_json::json!({}))
+            .expect_err("missing proposal ID must be rejected");
+        assert!(error.to_string().contains("missing a valid proposal_id"));
     }
 
     #[test]

@@ -89,10 +89,19 @@ pub fn cache_dir() -> PathBuf {
             && crate::core::is_root()
             && is_valid_username(&sudo_user)
         {
-            let home = std::env::var("SUDO_HOME").ok().map_or_else(
-                || PathBuf::from(format!("/home/{sudo_user}")),
-                PathBuf::from,
-            );
+            // SUDO_HOME is environment-controlled and evaluated as root:
+            // apply the same charset/length rules as SUDO_USER before it
+            // becomes a path prefix.
+            let home = match std::env::var("SUDO_HOME") {
+                Ok(dir) if is_valid_username(&dir) => PathBuf::from(dir),
+                Ok(dir) => {
+                    tracing::warn!(
+                        "Ignoring unsafe SUDO_HOME {dir:?}; falling back to /home/{sudo_user}"
+                    );
+                    PathBuf::from(format!("/home/{sudo_user}"))
+                }
+                Err(_) => PathBuf::from(format!("/home/{sudo_user}")),
+            };
 
             return home.join(".cache/omg");
         }
@@ -145,10 +154,66 @@ pub fn pacman_local_dir() -> PathBuf {
     env_path("OMG_PACMAN_LOCAL_DIR").unwrap_or_else(|| pacman_db_dir().join("local"))
 }
 
-/// Pacman package cache directory (default: /var/cache/pacman/pkg).
+/// Pacman package cache directories in configured priority order.
+#[must_use]
+pub fn pacman_cache_dirs() -> Vec<PathBuf> {
+    if let Some(cache_dir) = env_path("OMG_PACMAN_CACHE_DIR") {
+        return vec![cache_dir];
+    }
+
+    let has_root_override = {
+        let guard = get_overrides()
+            .read()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        guard.pacman_root.is_some()
+    } || std::env::var_os("OMG_PACMAN_ROOT").is_some();
+
+    if !has_root_override
+        && let Some(cache_dirs) = configured_pacman_cache_dirs()
+        && !cache_dirs.is_empty()
+    {
+        return cache_dirs;
+    }
+
+    vec![pacman_root().join("var/cache/pacman/pkg")]
+}
+
+#[cfg(feature = "arch")]
+fn configured_pacman_cache_dirs() -> Option<Vec<PathBuf>> {
+    let config = crate::core::pacman_conf::PacmanConfig::parse(pacman_conf_path()).ok()?;
+    if config.cache_dirs.is_empty() {
+        return None;
+    }
+
+    let root = pacman_root();
+    Some(
+        config
+            .cache_dirs
+            .into_iter()
+            .map(|configured| {
+                let path = PathBuf::from(configured);
+                if path.is_absolute() {
+                    path
+                } else {
+                    root.join(path)
+                }
+            })
+            .collect(),
+    )
+}
+
+#[cfg(not(feature = "arch"))]
+fn configured_pacman_cache_dirs() -> Option<Vec<PathBuf>> {
+    None
+}
+
+/// Primary pacman package cache directory.
 #[must_use]
 pub fn pacman_cache_dir() -> PathBuf {
-    env_path("OMG_PACMAN_CACHE_DIR").unwrap_or_else(|| pacman_root().join("var/cache/pacman/pkg"))
+    pacman_cache_dirs()
+        .into_iter()
+        .next()
+        .unwrap_or_else(|| pacman_root().join("var/cache/pacman/pkg"))
 }
 
 /// Pacman cache root directory (default: /var/cache/pacman).
@@ -169,28 +234,101 @@ pub fn pacman_conf_path() -> PathBuf {
     env_path("OMG_PACMAN_CONF").unwrap_or_else(|| PathBuf::from("/etc/pacman.conf"))
 }
 
-/// Daemon socket path (default: $`XDG_RUNTIME_DIR/omg.sock`, /run/user/`<uid>`/omg.sock, or /tmp/omg.sock).
+/// Daemon socket path.
+///
+/// Falls back to a UID-specific private directory instead of the shared `/tmp`
+/// namespace. The daemon must call [`prepare_socket_parent`] before binding;
+/// clients call [`validate_socket_parent`] before connecting.
 #[must_use]
 pub fn socket_path() -> PathBuf {
     env_path("OMG_SOCKET_PATH").unwrap_or_else(|| {
-        // 1. Try XDG_RUNTIME_DIR
-        if let Ok(runtime_dir) = std::env::var("XDG_RUNTIME_DIR") {
-            return PathBuf::from(runtime_dir).join("omg.sock");
-        }
-
-        // 2. Try common system location (/run/user/<uid>) which is often missing from env under sudo
-        #[cfg(unix)]
+        if let Some(runtime_dir) = env_path("XDG_RUNTIME_DIR")
+            && !runtime_dir.as_os_str().is_empty()
         {
-            let uid = rustix::process::getuid().as_raw();
-            let system_run = PathBuf::from(format!("/run/user/{uid}/omg.sock"));
-            if system_run.exists() {
-                return system_run;
-            }
+            runtime_dir.join("omg.sock")
+        } else {
+            platform_socket_path()
         }
-
-        // 3. Fallback to /tmp
-        PathBuf::from("/tmp/omg.sock")
     })
+}
+
+#[cfg(unix)]
+fn platform_socket_path() -> PathBuf {
+    let uid = rustix::process::getuid().as_raw();
+    let system_runtime_dir = PathBuf::from(format!("/run/user/{uid}"));
+    if system_runtime_dir.is_dir() {
+        system_runtime_dir.join("omg.sock")
+    } else {
+        uid_temp_socket_path(uid)
+    }
+}
+
+#[cfg(unix)]
+fn uid_temp_socket_path(uid: u32) -> PathBuf {
+    PathBuf::from(format!("/tmp/omg-{uid}/omg.sock"))
+}
+
+#[cfg(not(unix))]
+fn platform_socket_path() -> PathBuf {
+    PathBuf::from("omg.sock")
+}
+
+#[cfg(unix)]
+pub fn validate_socket_parent(socket_path: &std::path::Path) -> std::io::Result<()> {
+    use std::os::unix::fs::{MetadataExt, PermissionsExt};
+
+    let parent = socket_path.parent().ok_or_else(|| {
+        std::io::Error::new(
+            std::io::ErrorKind::InvalidInput,
+            "daemon socket path must have a parent directory",
+        )
+    })?;
+    let metadata = std::fs::symlink_metadata(parent)?;
+    if metadata.file_type().is_symlink() || !metadata.is_dir() {
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::PermissionDenied,
+            format!(
+                "daemon runtime path is not a real directory: {}",
+                parent.display()
+            ),
+        ));
+    }
+
+    let expected_uid = rustix::process::getuid().as_raw();
+    if metadata.uid() != expected_uid {
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::PermissionDenied,
+            format!("daemon runtime directory is not owned by uid {expected_uid}"),
+        ));
+    }
+    if metadata.permissions().mode() & 0o077 != 0 {
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::PermissionDenied,
+            format!(
+                "daemon runtime directory must not be group/world accessible: {}",
+                parent.display()
+            ),
+        ));
+    }
+    Ok(())
+}
+
+#[cfg(unix)]
+pub fn prepare_socket_parent(socket_path: &std::path::Path) -> std::io::Result<()> {
+    use std::os::unix::fs::{DirBuilderExt, PermissionsExt};
+
+    let parent = socket_path.parent().ok_or_else(|| {
+        std::io::Error::new(
+            std::io::ErrorKind::InvalidInput,
+            "daemon socket path must have a parent directory",
+        )
+    })?;
+    if !parent.exists() {
+        let mut builder = std::fs::DirBuilder::new();
+        builder.mode(0o700).create(parent)?;
+        std::fs::set_permissions(parent, std::fs::Permissions::from_mode(0o700))?;
+    }
+    validate_socket_parent(socket_path)
 }
 
 /// Fast status file path for zero-IPC reads (daemon writes, CLI reads directly).
@@ -243,6 +381,50 @@ mod tests {
     fn test_socket_path_returns_path() {
         let path = socket_path();
         assert!(path.to_string_lossy().contains("omg.sock"));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn temp_socket_fallback_is_scoped_to_the_uid() {
+        assert_eq!(
+            uid_temp_socket_path(42),
+            PathBuf::from("/tmp/omg-42/omg.sock")
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn socket_parent_is_created_private_and_validated() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let directory = tempfile::tempdir().expect("temp dir");
+        let socket = directory.path().join("runtime/omg.sock");
+
+        prepare_socket_parent(&socket).expect("prepare socket parent");
+        validate_socket_parent(&socket).expect("validate socket parent");
+
+        let mode = std::fs::metadata(socket.parent().expect("socket parent"))
+            .expect("parent metadata")
+            .permissions()
+            .mode()
+            & 0o777;
+        assert_eq!(mode, 0o700);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn group_accessible_socket_parent_is_rejected() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let directory = tempfile::tempdir().expect("temp dir");
+        let parent = directory.path().join("runtime");
+        std::fs::create_dir(&parent).expect("create runtime dir");
+        std::fs::set_permissions(&parent, std::fs::Permissions::from_mode(0o750))
+            .expect("set insecure mode");
+
+        let error = validate_socket_parent(&parent.join("omg.sock"))
+            .expect_err("group-accessible runtime dir must be rejected");
+        assert_eq!(error.kind(), std::io::ErrorKind::PermissionDenied);
     }
 
     #[test]

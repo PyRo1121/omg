@@ -4,7 +4,6 @@
 //! Only available on Unix platforms (uses Unix domain sockets).
 
 use anyhow::{Context, Result};
-use std::fs::{File, OpenOptions};
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::Duration;
@@ -33,6 +32,12 @@ fn connect_sync_stream() -> Result<SyncUnixStream> {
     tracing::debug!("Connecting to daemon...");
 
     let socket_path = default_socket_path();
+    paths::validate_socket_parent(&socket_path).with_context(|| {
+        format!(
+            "Refusing insecure daemon socket directory for {}",
+            socket_path.display()
+        )
+    })?;
     let stream = SyncUnixStream::connect(&socket_path)
         .with_context(|| format!("Failed to connect to daemon at {}", socket_path.display()))?;
 
@@ -60,9 +65,6 @@ pub struct DaemonClient {
 }
 
 impl DaemonClient {
-    const SPAWN_POLL_INTERVAL: Duration = Duration::from_millis(100);
-    const SPAWN_WAIT_TIMEOUT: Duration = Duration::from_secs(5);
-
     fn daemon_disabled() -> bool {
         matches!(
             std::env::var("OMG_DISABLE_DAEMON").as_deref(),
@@ -87,6 +89,12 @@ impl DaemonClient {
         if Self::daemon_disabled() {
             anyhow::bail!("Daemon disabled by environment");
         }
+        paths::validate_socket_parent(&socket_path).with_context(|| {
+            format!(
+                "Refusing insecure daemon socket directory for {}",
+                socket_path.display()
+            )
+        })?;
         tracing::debug!("Connecting to daemon at {:?}", socket_path);
 
         const MAX_CONNECT_RETRIES: u32 = 2;
@@ -150,154 +158,6 @@ impl DaemonClient {
             "Failed to connect to daemon at {} after retries",
             socket_path.display()
         )))
-    }
-
-    /// Connect to the daemon, auto-spawning it if not running.
-    ///
-    /// 1. Tries `connect()` first (fast path).
-    /// 2. If that fails and `OMG_NO_AUTO_DAEMON` is not set, spawns the daemon.
-    /// 3. Polls up to 5 seconds for the daemon to become ready.
-    pub async fn connect_or_spawn() -> Result<Self> {
-        async fn wait_for_daemon_ready(socket_path: &std::path::Path) -> Result<DaemonClient> {
-            let start = tokio::time::Instant::now();
-            let mut last_error_kind = None;
-
-            while start.elapsed() < DaemonClient::SPAWN_WAIT_TIMEOUT {
-                match DaemonClient::connect().await {
-                    Ok(client) => {
-                        tracing::info!("Daemon ready after {}ms", start.elapsed().as_millis());
-                        return Ok(client);
-                    }
-                    Err(err) => {
-                        last_error_kind = err
-                            .downcast_ref::<std::io::Error>()
-                            .map(std::io::Error::kind);
-                    }
-                }
-
-                tokio::time::sleep(DaemonClient::SPAWN_POLL_INTERVAL).await;
-            }
-
-            let category = match last_error_kind {
-                Some(std::io::ErrorKind::PermissionDenied) => {
-                    "permission denied connecting to daemon socket"
-                }
-                Some(std::io::ErrorKind::ConnectionRefused) => {
-                    "daemon process not accepting connections yet"
-                }
-                Some(std::io::ErrorKind::NotFound) => "daemon socket missing",
-                Some(std::io::ErrorKind::TimedOut) => "daemon connect timed out",
-                Some(_) => "daemon did not become ready",
-                None => "daemon readiness check timed out",
-            };
-
-            anyhow::bail!(
-                "Daemon was not ready within {}ms ({category}, socket: {})",
-                DaemonClient::SPAWN_WAIT_TIMEOUT.as_millis(),
-                socket_path.display()
-            )
-        }
-
-        struct SpawnLockGuard {
-            path: PathBuf,
-            _file: File,
-        }
-
-        impl SpawnLockGuard {
-            fn acquire(path: PathBuf) -> Result<Self> {
-                let file = OpenOptions::new()
-                    .write(true)
-                    .create_new(true)
-                    .open(&path)
-                    .with_context(|| {
-                        format!("Failed to create daemon spawn lock: {}", path.display())
-                    })?;
-
-                Ok(Self { path, _file: file })
-            }
-        }
-
-        impl Drop for SpawnLockGuard {
-            fn drop(&mut self) {
-                if let Err(err) = std::fs::remove_file(&self.path)
-                    && err.kind() != std::io::ErrorKind::NotFound
-                {
-                    tracing::warn!(
-                        "Failed to remove daemon spawn lock {}: {}",
-                        self.path.display(),
-                        err
-                    );
-                }
-            }
-        }
-
-        // Fast path: try connecting directly
-        if let Ok(client) = Self::connect().await {
-            return Ok(client);
-        }
-
-        // Check if auto-spawn is disabled
-        if matches!(
-            std::env::var("OMG_NO_AUTO_DAEMON").as_deref(),
-            Ok("1" | "true" | "TRUE")
-        ) {
-            anyhow::bail!("Daemon is not running and auto-spawn is disabled (OMG_NO_AUTO_DAEMON)");
-        }
-
-        tracing::info!("Daemon not running, auto-spawning...");
-
-        let socket_path = default_socket_path();
-        let lock_path = socket_path.with_extension("lock");
-
-        let _spawn_lock = match SpawnLockGuard::acquire(lock_path.clone()) {
-            Ok(lock) => lock,
-            Err(err)
-                if err
-                    .downcast_ref::<std::io::Error>()
-                    .is_some_and(|io| io.kind() == std::io::ErrorKind::AlreadyExists) =>
-            {
-                tracing::debug!(
-                    "Daemon spawn lock exists, waiting for peer process to finish spawning"
-                );
-                return wait_for_daemon_ready(&socket_path).await.context(
-                    "Another omg process appears to be spawning the daemon, but readiness checks timed out",
-                );
-            }
-            Err(err) => return Err(err),
-        };
-
-        // Remove stale socket file if present
-        if let Err(e) = std::fs::remove_file(&socket_path)
-            && e.kind() != std::io::ErrorKind::NotFound
-        {
-            tracing::warn!("Failed to remove stale socket: {e}");
-        }
-
-        // Find the omgd binary (prefer sibling of current executable for version consistency)
-        let omgd_path = if let Ok(exe) = std::env::current_exe()
-            && let Some(dir) = exe.parent()
-        {
-            let local_omgd = dir.join("omgd");
-            if local_omgd.exists() {
-                local_omgd
-            } else {
-                PathBuf::from("omgd")
-            }
-        } else {
-            PathBuf::from("omgd")
-        };
-
-        // Spawn the daemon in background
-        std::process::Command::new(&omgd_path)
-            .arg("--")
-            .stdout(std::process::Stdio::null())
-            .stderr(std::process::Stdio::null())
-            .spawn()
-            .with_context(|| format!("Failed to spawn daemon: {}", omgd_path.display()))?;
-
-        wait_for_daemon_ready(&socket_path)
-            .await
-            .context("Daemon was spawned but did not become ready in time")
     }
 
     /// Connect to the daemon synchronously (sub-millisecond)
@@ -460,81 +320,6 @@ impl DaemonClient {
             ResponseResult::Explicit(res) => Ok(res.packages),
             _ => anyhow::bail!("Invalid response type"),
         }
-    }
-
-    /// Execute multiple requests in a single IPC round-trip
-    pub async fn batch(&mut self, requests: Vec<Request>) -> Result<Vec<Response>> {
-        let id = self.request_id.fetch_add(1, Ordering::SeqCst);
-        match self.call(Request::Batch { id, requests }).await? {
-            ResponseResult::Batch(responses) => Ok(responses),
-            _ => anyhow::bail!("Invalid response type"),
-        }
-    }
-
-    /// Search multiple queries in a single round-trip
-    pub async fn batch_search(
-        &mut self,
-        queries: &[&str],
-        limit: Option<usize>,
-    ) -> Result<Vec<SearchResult>> {
-        let requests: Vec<Request> = queries
-            .iter()
-            .enumerate()
-            .map(|(i, q)| Request::Search {
-                id: i as u64,
-                query: (*q).to_string(),
-                limit,
-            })
-            .collect();
-
-        let responses = self.batch(requests).await?;
-        let mut results = Vec::with_capacity(responses.len());
-
-        for resp in responses {
-            match resp {
-                Response::Success {
-                    result: ResponseResult::Search(sr),
-                    ..
-                } => results.push(sr),
-                Response::Error { message, .. } => {
-                    anyhow::bail!("Batch search error: {message}");
-                }
-                Response::Success { .. } => anyhow::bail!("Unexpected response type in batch"),
-            }
-        }
-
-        Ok(results)
-    }
-
-    /// Get info for multiple packages in a single round-trip
-    pub async fn batch_info(
-        &mut self,
-        packages: &[&str],
-    ) -> Result<Vec<Option<DetailedPackageInfo>>> {
-        let requests: Vec<Request> = packages
-            .iter()
-            .enumerate()
-            .map(|(i, p)| Request::Info {
-                id: i as u64,
-                package: (*p).to_string(),
-            })
-            .collect();
-
-        let responses = self.batch(requests).await?;
-        let mut results = Vec::with_capacity(responses.len());
-
-        for resp in responses {
-            match resp {
-                Response::Success {
-                    result: ResponseResult::Info(info),
-                    ..
-                } => results.push(Some(info)),
-                Response::Error { .. } => results.push(None),
-                Response::Success { .. } => anyhow::bail!("Unexpected response type in batch"),
-            }
-        }
-
-        Ok(results)
     }
 
     /// Get fuzzy suggestions for a package name

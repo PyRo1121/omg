@@ -2,7 +2,7 @@
 name = "omg"
 version = "0.1.215"
 edition = "2024"
-rust-version = "1.93"
+rust-version = "1.93.1"
 description = "The Fastest Unified Package Manager for Arch Linux + All Language Runtimes"
 authors = ["OMG Team"]
 license = "AGPL-3.0-or-later"
@@ -71,13 +71,6 @@ reqwest = { version = "0.13.1", features = [
   "zstd",
 ] }
 httpdate = "1.0.3"
-
-# Version Control
-# Pinned at 0.19: libscoop 0.1.0-beta.7 requires git2 ^0.19, and only one
-# libgit2-sys (links = "git2") may be linked. GHSA-j39j-6gw9-jw6h is low
-# severity and constrained by libscoop; re-evaluate when libscoop releases a
-# git2 0.20-compatible version.
-git2 = "0.19"
 
 # Filesystem
 tokio-util = { version = "0.7.18", features = ["io", "codec", "rt"] }
@@ -219,19 +212,11 @@ rusqlite = { version = "0.40", features = [
   "bundled",
 ], optional = true } # SQLite for RPM db
 
-# Windows-specific (conditional) - only compiled on Windows
-[target.'cfg(target_os = "windows")'.dependencies]
-winreg = { version = "0.56" } # Windows registry access
-libscoop = { version = "0.1.0-beta.7" } # Pure Rust Scoop implementation
-openssl-sys = { version = "0.9", features = [
-  "vendored",
-] } # Build OpenSSL from source on Windows
-
 [dev-dependencies]
 criterion = { version = "0.8", features = ["html_reports"] }
 assert_cmd = "2.1"
 proptest = "1.4"                                             # Property-based testing
-serial_test = "3.4"                                          # Serialize tests that modify global state
+serial_test = "4.0.1"                                          # Serialize tests that modify global state
 scopeguard = "1.2"
 temp-env = "0.3"
 zstd = "0.13"                                                # For decompression benchmarks
@@ -308,9 +293,6 @@ arch = [
   "alpm-pkginfo",
 ]
 pgp = ["sequoia-openpgp"] # Optional PGP verification (requires Rust 1.80+)
-
-# Windows support - pure Rust implementation (winreg auto-enabled on Windows via target cfg)
-windows = []
 
 # Debian/Ubuntu support - unified feature
 # Requires libapt-pkg-dev: `apt install libapt-pkg-dev`

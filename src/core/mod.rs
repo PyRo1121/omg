@@ -1,7 +1,7 @@
 //! Core module - shared types, database, and utilities
 
 pub mod analytics;
-pub mod archive;
+pub(crate) mod archive;
 pub mod caps;
 #[cfg(unix)]
 pub mod client;
@@ -37,10 +37,6 @@ pub mod testing;
 mod types;
 pub mod usage;
 
-pub use archive::{
-    extract_auto, extract_auto_strip, extract_tar_gz, extract_tar_gz_strip, extract_zip,
-    extract_zip_strip,
-};
 pub use caps::{can_write_pacman_db, has_package_caps, is_elevated, maybe_show_turbo_hint};
 pub use database::Database;
 pub use error::{OmgError, Result};

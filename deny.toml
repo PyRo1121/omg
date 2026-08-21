@@ -7,11 +7,7 @@
 unmaintained = "workspace"
 unsound = "workspace"
 ignore = [
-  { id = "RUSTSEC-2023-0018", reason = "Windows-only libscoop dependency; Scoop runs per-user and OMG does not call it from an elevated service" },
   { id = "RUSTSEC-2023-0071", reason = "No patched rsa release; OMG performs public-key signature verification only, never network-observable private-key decryption" },
-  { id = "RUSTSEC-2026-0008", reason = "git2 0.19 is pinned by libscoop's libgit2-sys links constraint; OMG does not dereference an empty git2 Buf" },
-  { id = "RUSTSEC-2026-0183", reason = "git2 0.19 is pinned by libscoop's libgit2-sys links constraint; OMG does not call Remote::list" },
-  { id = "RUSTSEC-2026-0184", reason = "git2 0.19 is pinned by libscoop's libgit2-sys links constraint; OMG does not call blame_buffer" },
 ]
 
 [licenses]
