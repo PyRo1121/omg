@@ -43,8 +43,10 @@ impl LocalCommandRunner for AuditCommands {
         ui::print_spacer();
         match self {
             AuditCommands::Scan => scan(ctx).await,
-            AuditCommands::Sbom { output, vulns } => {
-                generate_sbom(output.clone(), *vulns, ctx).await
+            AuditCommands::Sbom { output } => {
+                // SBOMs always include vulnerability data; the former `--vulns`
+                // flag was dead (a SetTrue bool defaulting to true).
+                generate_sbom(output.clone(), true, ctx).await
             }
             AuditCommands::Secrets { path } => scan_secrets(path.clone(), ctx),
             AuditCommands::Log {
@@ -125,7 +127,7 @@ pub async fn scan(_ctx: &CliContext) -> Result<()> {
             }
             ui::print_tip("Run 'omg audit sbom' to generate a full security report.");
         }
-        return Ok(());
+        Ok(())
     }
 
     #[cfg(not(unix))]

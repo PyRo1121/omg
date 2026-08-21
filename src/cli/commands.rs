@@ -11,7 +11,7 @@ use crate::package_managers::PackageManager;
 #[cfg(feature = "debian")]
 use crate::package_managers::{apt_get_system_status, apt_list_all_package_names};
 
-use crate::cli::{style, ui};
+use crate::cli::{TransactionTypeFilter, style, ui};
 use crate::core::env::distro::use_debian_backend;
 use dialoguer::{Confirm, Select};
 use owo_colors::OwoColorize;
@@ -20,10 +20,7 @@ use owo_colors::OwoColorize;
 use crate::package_managers::get_system_status;
 
 // Re-export moved commands
-pub use super::env::{capture as env_capture, check as env_check, share as env_share};
-pub use super::packages::{
-    clean, explicit, explicit_sync, info, info_sync, install, remove, search, sync, update,
-};
+pub use super::packages::{clean, info, info_sync, install, remove, search, sync, update};
 pub use super::runtimes::{list_versions, use_version};
 
 // Const slices for completion - avoids allocation on every call
@@ -120,7 +117,10 @@ async fn complete_package_names(
     }
 
     // Official lookup failures fail closed; AUR names remain optional enrichment.
-    #[allow(unused_mut)] // Mutated only inside feature-gated block
+    #[allow(
+        unused_mut,
+        reason = "mutated only when the Arch completion branch is compiled"
+    )]
     let mut names = get_package_names_with_fallback().await?;
 
     // Include AUR packages on Arch. Skip on Debian even if Arch is compiled in.
@@ -151,6 +151,10 @@ fn complete_installed_packages(
 }
 
 /// Get installed package names for remove completion
+#[allow(
+    clippy::needless_return,
+    reason = "additive backend feature branches return before compiled fallbacks"
+)]
 fn get_installed_package_names() -> Result<Vec<String>> {
     #[cfg(any(feature = "debian", feature = "debian-pure"))]
     if crate::core::env::distro::is_debian_like() {
@@ -161,12 +165,19 @@ fn get_installed_package_names() -> Result<Vec<String>> {
 
     #[cfg(feature = "arch")]
     {
+        #[allow(
+            clippy::needless_return,
+            reason = "required when additive backend features compile later fallback blocks"
+        )]
         return crate::package_managers::list_installed_fast()
             .map(|installed| installed.into_iter().map(|pkg| pkg.name).collect())
             .context("Failed to list installed packages for completion");
     }
 
-    #[cfg(any(feature = "debian", feature = "debian-pure"))]
+    #[cfg(all(
+        any(feature = "debian", feature = "debian-pure"),
+        not(feature = "arch")
+    ))]
     {
         return crate::package_managers::debian_db::list_installed_fast()
             .map(|installed| installed.into_iter().map(|pkg| pkg.name).collect())
@@ -178,6 +189,10 @@ fn get_installed_package_names() -> Result<Vec<String>> {
 }
 
 /// Get package names from daemon with fallback to direct access
+#[allow(
+    clippy::needless_return,
+    reason = "additive backend feature branches return before compiled fallbacks"
+)]
 async fn get_package_names_with_fallback() -> Result<Vec<String>> {
     #[cfg(feature = "debian")]
     if use_debian_backend() {
@@ -653,12 +668,16 @@ pub fn status_sync() -> Result<()> {
 /// Show system metrics in Prometheus format
 #[cfg(unix)]
 pub async fn metrics() -> Result<()> {
-    let mut client = crate::core::client::DaemonClient::connect().await?;
+    let response = tokio::time::timeout(std::time::Duration::from_secs(2), async {
+        let mut client = crate::core::client::DaemonClient::connect().await?;
+        client
+            .call(crate::daemon::protocol::Request::Metrics { id: 0 })
+            .await
+    })
+    .await
+    .context("Timed out waiting for daemon metrics")??;
 
-    match client
-        .call(crate::daemon::protocol::Request::Metrics { id: 0 })
-        .await?
-    {
+    match response {
         crate::daemon::protocol::ResponseResult::Metrics(snapshot) => {
             // Output in Prometheus text format
             println!("# HELP omg_requests_total Total number of requests handled");
@@ -762,6 +781,9 @@ pub fn daemon(foreground: bool) -> Result<()> {
             // Poll for daemon readiness: 30 attempts × 100ms = 3 seconds max.
             // The daemon needs time to build its in-memory index and bind the socket,
             // which can take >500ms on large package databases.
+            // NOTE: this is an intentional short synchronous block on the CLI's own
+            // current-thread runtime; the command does nothing else while waiting and
+            // the process exits right after, so no other task is starved.
             for _ in 0..30 {
                 std::thread::sleep(std::time::Duration::from_millis(100));
                 if socket_path.exists()
@@ -781,27 +803,20 @@ pub fn daemon(foreground: bool) -> Result<()> {
 
 #[cfg(unix)]
 fn daemon_start_result(spawn: Result<(), String>, ready: bool, socket_exists: bool) -> Result<()> {
+    // Failure branches report through the error return only; the top-level
+    // error handler prints it once (no duplicate println+bail reporting).
     match spawn {
         Ok(()) if ready => {
             println!("{} Daemon started", style::success("✓"));
             Ok(())
         }
         Ok(()) if socket_exists => {
-            println!(
-                "{} Daemon started but not responding (check logs)",
-                style::warning("⚠")
-            );
             anyhow::bail!("Daemon started but not responding (check logs)")
         }
         Ok(()) => {
-            println!(
-                "{} Daemon started but socket not created (check logs)",
-                style::warning("⚠")
-            );
             anyhow::bail!("Daemon started but socket not created (check logs)")
         }
         Err(e) => {
-            println!("{} Failed to start daemon: {}", style::error("✗"), e);
             anyhow::bail!("Failed to start daemon: {e}")
         }
     }
@@ -927,42 +942,35 @@ pub fn config(key: Option<&str>, value: Option<&str>) -> Result<()> {
     Ok(())
 }
 
+/// First 8 characters of a transaction ID, tolerating shorter persisted IDs.
+fn short_id(id: &str) -> &str {
+    id.get(..8).unwrap_or(id)
+}
+
 pub fn history(
     limit: usize,
     search: Option<&str>,
-    transaction_type: Option<&str>,
+    transaction_type: Option<TransactionTypeFilter>,
     from: Option<&str>,
     to: Option<&str>,
+    json: bool,
 ) -> Result<()> {
     let history_mgr = crate::core::history::HistoryManager::new()?;
     let entries = history_mgr.load()?;
 
-    // Parse optional transaction type filter
-    let type_filter = transaction_type.map(|t| match t.to_lowercase().as_str() {
-        "install" => crate::core::history::TransactionType::Install,
-        "remove" => crate::core::history::TransactionType::Remove,
-        "update" => crate::core::history::TransactionType::Update,
-        _ => crate::core::history::TransactionType::Sync,
+    let type_filter = transaction_type.map(|filter| match filter {
+        TransactionTypeFilter::Install => crate::core::history::TransactionType::Install,
+        TransactionTypeFilter::Remove => crate::core::history::TransactionType::Remove,
+        TransactionTypeFilter::Update => crate::core::history::TransactionType::Update,
+        TransactionTypeFilter::Sync => crate::core::history::TransactionType::Sync,
     });
 
-    // Parse date filters
-    let from_date = from.and_then(|d| jiff::civil::Date::strptime("%Y-%m-%d", d).ok());
-    let to_date = to.and_then(|d| jiff::civil::Date::strptime("%Y-%m-%d", d).ok());
-
-    // Build header
-    let header = if search.is_some() || transaction_type.is_some() || from.is_some() || to.is_some()
-    {
-        "Transaction History (filtered)".to_string()
-    } else {
-        format!("Transaction History (last {limit})")
+    let parse_date = |value: &str| {
+        jiff::civil::Date::strptime("%Y-%m-%d", value)
+            .with_context(|| format!("Invalid date '{value}'; expected YYYY-MM-DD"))
     };
-
-    println!("{} {}\n", style::header("OMG"), header);
-
-    if entries.is_empty() {
-        println!("  {}", style::dim("No transactions recorded yet"));
-        return Ok(());
-    }
+    let from_date = from.map(parse_date).transpose()?;
+    let to_date = to.map(parse_date).transpose()?;
 
     // Filter entries
     let filtered: Vec<_> = entries
@@ -1013,6 +1021,19 @@ pub fn history(
         .take(limit)
         .collect();
 
+    if json {
+        println!("{}", serde_json::to_string_pretty(&filtered)?);
+        return Ok(());
+    }
+
+    let header = if search.is_some() || transaction_type.is_some() || from.is_some() || to.is_some()
+    {
+        "Transaction History (filtered)".to_string()
+    } else {
+        format!("Transaction History (last {limit})")
+    };
+    println!("{} {}\n", style::header("OMG"), header);
+
     if filtered.is_empty() {
         println!("  {}", style::dim("No matching transactions found"));
         if search.is_some() {
@@ -1036,7 +1057,7 @@ pub fn history(
             "{} {} [{}] - {} {}",
             status,
             style::dim(&timestamp.to_string()),
-            style::info(&entry.id[..8]),
+            style::info(short_id(&entry.id)),
             style::warning(&entry.transaction_type.to_string()),
             style::dim(&format!("({} changes)", entry.changes.len()))
         );
@@ -1067,14 +1088,132 @@ pub fn history(
     Ok(())
 }
 
-#[allow(clippy::unused_async)] // Async required: feature-gated branches call .await; fallback stubs omit it
-pub async fn rollback(id: Option<String>, yes: bool) -> Result<()> {
-    if let Some(ref r_id) = id {
-        // SECURITY: Validate transaction ID
-        if r_id.chars().any(|c| !c.is_ascii_hexdigit()) {
-            anyhow::bail!("Invalid transaction ID format");
+#[derive(Debug, PartialEq, Eq)]
+enum RollbackAction {
+    Remove(Vec<String>),
+    Restore(Vec<(String, String)>),
+    None,
+}
+
+fn normalize_transaction_id(id: &str) -> Result<String> {
+    let normalized = id.to_ascii_lowercase();
+    let is_hex_prefix = (1..=32).contains(&normalized.len())
+        && normalized
+            .chars()
+            .all(|character| character.is_ascii_hexdigit());
+    let is_uuid = uuid::Uuid::parse_str(&normalized).is_ok();
+
+    if !is_hex_prefix && !is_uuid {
+        anyhow::bail!("Invalid transaction ID format");
+    }
+
+    Ok(normalized)
+}
+
+fn rollback_action(transaction: &crate::core::history::Transaction) -> Result<RollbackAction> {
+    anyhow::ensure!(
+        transaction.success,
+        "Cannot automatically roll back a failed or partially applied transaction"
+    );
+
+    match transaction.transaction_type {
+        crate::core::history::TransactionType::Install => Ok(RollbackAction::Remove(
+            transaction
+                .changes
+                .iter()
+                .map(|change| change.name.clone())
+                .collect(),
+        )),
+        crate::core::history::TransactionType::Remove
+        | crate::core::history::TransactionType::Update => {
+            let mut packages = Vec::with_capacity(transaction.changes.len());
+            for change in &transaction.changes {
+                anyhow::ensure!(
+                    change.is_official_source(),
+                    "Automatic rollback is unavailable for package '{}' from source '{}'",
+                    change.name,
+                    change.source
+                );
+                let version = change.old_version.clone().with_context(|| {
+                    format!(
+                        "Transaction does not record the old version of '{}'",
+                        change.name
+                    )
+                })?;
+                packages.push((change.name.clone(), version));
+            }
+            Ok(RollbackAction::Restore(packages))
+        }
+        crate::core::history::TransactionType::Sync => Ok(RollbackAction::None),
+    }
+}
+
+#[cfg(any(feature = "arch", test))]
+fn find_cached_arch_package_in(
+    cache_dir: &std::path::Path,
+    package: &str,
+    version: &str,
+) -> Result<std::path::PathBuf> {
+    let prefix = format!("{package}-{version}-");
+    let mut matches = Vec::new();
+    for entry in std::fs::read_dir(cache_dir)
+        .with_context(|| format!("Failed to read pacman cache: {}", cache_dir.display()))?
+    {
+        let entry = entry?;
+        if !entry.file_type()?.is_file() {
+            continue;
+        }
+        let filename = entry.file_name();
+        let filename = filename.to_string_lossy();
+        let is_package = [".pkg.tar.zst", ".pkg.tar.xz", ".pkg.tar.gz", ".pkg.tar.bz2"]
+            .iter()
+            .any(|extension| filename.ends_with(extension));
+        if is_package && filename.starts_with(&prefix) {
+            matches.push(entry.path());
         }
     }
+    matches.sort_unstable();
+    matches.into_iter().next().with_context(|| {
+        format!(
+            "Package {package} {version} is not available in the pacman cache at {}",
+            cache_dir.display()
+        )
+    })
+}
+
+#[cfg(feature = "arch")]
+fn find_cached_arch_package(package: &str, version: &str) -> Result<std::path::PathBuf> {
+    let cache_dirs = crate::core::paths::pacman_cache_dirs();
+    for cache_dir in &cache_dirs {
+        if !cache_dir.exists() {
+            continue;
+        }
+        std::fs::read_dir(cache_dir)
+            .with_context(|| format!("Failed to read pacman cache: {}", cache_dir.display()))?;
+        if let Ok(path) = find_cached_arch_package_in(cache_dir, package, version) {
+            return Ok(path);
+        }
+    }
+
+    anyhow::bail!(
+        "Package {package} {version} is not available in configured pacman caches: {}",
+        cache_dirs
+            .iter()
+            .map(|path| path.display().to_string())
+            .collect::<Vec<_>>()
+            .join(", ")
+    )
+}
+
+#[allow(
+    clippy::unused_async,
+    reason = "feature-gated implementations await while fallback builds do not"
+)]
+pub async fn rollback(id: Option<String>, yes: bool) -> Result<()> {
+    let id = match id {
+        Some(id) => Some(normalize_transaction_id(&id)?),
+        None => None,
+    };
 
     let history_mgr = crate::core::history::HistoryManager::new()?;
     let entries = history_mgr.load()?;
@@ -1101,7 +1240,7 @@ pub async fn rollback(id: Option<String>, yes: bool) -> Result<()> {
                 format!(
                     "{} [{}] - {:?} ({} changes)",
                     e.timestamp.strftime("%Y-%m-%d %H:%M"),
-                    &e.id[..8],
+                    short_id(&e.id),
                     e.transaction_type,
                     e.changes.len()
                 )
@@ -1122,7 +1261,7 @@ pub async fn rollback(id: Option<String>, yes: bool) -> Result<()> {
         "\n{} Rolling back to state from {} [{}]",
         style::warning("⚠"),
         target.timestamp.strftime("%Y-%m-%d %H:%M:%S"),
-        style::info(&target.id[..8])
+        style::info(short_id(&target.id))
     );
 
     // Check if we're in interactive mode
@@ -1144,60 +1283,83 @@ pub async fn rollback(id: Option<String>, yes: bool) -> Result<()> {
         );
     }
 
-    // Identify packages that were changed and build install list
-    let mut to_install = Vec::new();
-    for change in &target.changes {
-        if let Some(old_ver) = &change.old_version
-            && change.source == "official"
-        {
-            to_install.push(format!("{}={}", change.name, old_ver));
+    match rollback_action(target)? {
+        RollbackAction::None => {
+            println!("{}", style::success("Nothing to roll back"));
         }
-    }
-
-    if to_install.is_empty() {
-        println!(
-            "{}",
-            style::success(
-                "Nothing to roll back (already at target state or no versions recorded)"
-            )
-        );
-    } else {
-        #[cfg(any(feature = "debian", feature = "debian-pure"))]
-        if crate::core::env::distro::is_debian_like() {
-            #[cfg(feature = "debian")]
-            {
-                println!(
-                    "{} Rolling back {} packages...",
-                    style::info("→"),
-                    to_install.len()
-                );
-                let apt = crate::package_managers::AptPackageManager::new();
-                use crate::package_managers::PackageManager as _;
-                apt.install(&to_install).await?;
-                println!("{}", style::success("✓ Rollback completed successfully"));
-                return Ok(());
-            }
-            #[cfg(not(feature = "debian"))]
-            {
-                return rollback_requires_backend(&to_install);
-            }
+        RollbackAction::Remove(packages) if packages.is_empty() => {
+            println!("{}", style::success("Nothing to roll back"));
         }
-
-        #[cfg(feature = "arch")]
-        {
+        RollbackAction::Remove(packages) => {
             println!(
-                "{} Rolling back {} packages...",
+                "{} Removing {} package(s)...",
                 style::info("→"),
-                to_install.len()
+                packages.len()
             );
-            let pacman = crate::package_managers::ArchPackageManager::new();
-            pacman.install(&to_install).await?;
+            let package_manager = crate::package_managers::get_package_manager()?;
+            package_manager.remove(&packages).await?;
             println!("{}", style::success("✓ Rollback completed successfully"));
         }
+        RollbackAction::Restore(packages) if packages.is_empty() => {
+            println!("{}", style::success("Nothing to roll back"));
+        }
+        RollbackAction::Restore(packages) => {
+            #[cfg(any(feature = "debian", feature = "debian-pure"))]
+            if crate::core::env::distro::is_debian_like() {
+                #[cfg(feature = "debian")]
+                {
+                    let to_install: Vec<String> = packages
+                        .iter()
+                        .map(|(name, version)| format!("{name}={version}"))
+                        .collect();
+                    println!(
+                        "{} Restoring {} package(s)...",
+                        style::info("→"),
+                        to_install.len()
+                    );
+                    let apt = crate::package_managers::AptPackageManager::new();
+                    use crate::package_managers::PackageManager as _;
+                    apt.install(&to_install).await?;
+                    println!("{}", style::success("✓ Rollback completed successfully"));
+                    return Ok(());
+                }
+                #[cfg(not(feature = "debian"))]
+                {
+                    let names = packages
+                        .iter()
+                        .map(|(name, _)| name.clone())
+                        .collect::<Vec<_>>();
+                    return rollback_requires_backend(&names);
+                }
+            }
 
-        #[cfg(not(feature = "arch"))]
-        {
-            return rollback_requires_backend(&to_install);
+            #[cfg(feature = "arch")]
+            {
+                let cached_packages = packages
+                    .iter()
+                    .map(|(name, version)| {
+                        find_cached_arch_package(name, version)
+                            .map(|path| path.to_string_lossy().into_owned())
+                    })
+                    .collect::<Result<Vec<_>>>()?;
+                println!(
+                    "{} Restoring {} package(s) from the pacman cache...",
+                    style::info("→"),
+                    cached_packages.len()
+                );
+                let pacman = crate::package_managers::ArchPackageManager::new();
+                pacman.install(&cached_packages).await?;
+                println!("{}", style::success("✓ Rollback completed successfully"));
+            }
+
+            #[cfg(not(feature = "arch"))]
+            {
+                let names = packages
+                    .iter()
+                    .map(|(name, _)| name.clone())
+                    .collect::<Vec<_>>();
+                return rollback_requires_backend(&names);
+            }
         }
     }
 
@@ -1216,11 +1378,15 @@ fn rollback_requires_backend(packages: &[String]) -> Result<()> {
 }
 
 /// Show usage statistics
-pub fn stats() -> Result<()> {
+pub fn stats(json: bool) -> Result<()> {
     use crate::cli::style;
     use crate::core::usage::UsageStats;
 
-    let stats = UsageStats::load();
+    let stats = UsageStats::load().context("Failed to load usage statistics")?;
+    if json {
+        println!("{}", serde_json::to_string_pretty(&stats)?);
+        return Ok(());
+    }
 
     println!("\n{}", style::header("OMG Usage Statistics"));
     println!("{}", style::dim(&"─".repeat(50)));
@@ -1381,6 +1547,102 @@ mod tests {
             message.contains("bash=5.2"),
             "packages to restore must be in the error, got: {message}"
         );
+    }
+
+    fn transaction(
+        transaction_type: crate::core::history::TransactionType,
+        source: &str,
+        old_version: Option<&str>,
+        success: bool,
+    ) -> crate::core::history::Transaction {
+        crate::core::history::Transaction {
+            id: "test".to_string(),
+            timestamp: jiff::Timestamp::now(),
+            transaction_type,
+            changes: vec![crate::core::history::PackageChange {
+                name: "example".to_string(),
+                old_version: old_version.map(str::to_string),
+                new_version: Some("2.0-1".to_string()),
+                source: source.to_string(),
+            }],
+            success,
+        }
+    }
+
+    #[test]
+    fn rollback_plan_reverses_installs_and_restores_official_updates() -> Result<()> {
+        assert_eq!(
+            rollback_action(&transaction(
+                crate::core::history::TransactionType::Install,
+                "aur",
+                None,
+                true,
+            ))?,
+            RollbackAction::Remove(vec!["example".to_string()])
+        );
+        assert_eq!(
+            rollback_action(&transaction(
+                crate::core::history::TransactionType::Update,
+                "core",
+                Some("1.0-1"),
+                true,
+            ))?,
+            RollbackAction::Restore(vec![("example".to_string(), "1.0-1".to_string())])
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn rollback_accepts_displayed_prefixes_and_persisted_uuids() -> Result<()> {
+        assert_eq!(normalize_transaction_id("A1B2C3D4")?, "a1b2c3d4");
+        assert_eq!(
+            normalize_transaction_id("b69d428a-f73b-441c-8d8c-628550e063af")?,
+            "b69d428a-f73b-441c-8d8c-628550e063af"
+        );
+        assert!(normalize_transaction_id("").is_err());
+        assert!(normalize_transaction_id("../../history").is_err());
+        assert!(normalize_transaction_id("b69d428a-f73b-441c-8d8c").is_err());
+        Ok(())
+    }
+
+    #[test]
+    fn rollback_plan_rejects_failed_and_non_restorable_transactions() {
+        assert!(
+            rollback_action(&transaction(
+                crate::core::history::TransactionType::Update,
+                "core",
+                Some("1.0-1"),
+                false,
+            ))
+            .is_err()
+        );
+        assert!(
+            rollback_action(&transaction(
+                crate::core::history::TransactionType::Update,
+                "aur",
+                Some("1.0-1"),
+                true,
+            ))
+            .is_err()
+        );
+    }
+
+    #[test]
+    fn arch_rollback_requires_the_exact_cached_version() -> Result<()> {
+        let directory = tempfile::tempdir()?;
+        let expected = directory.path().join("example-1.0-1-x86_64.pkg.tar.zst");
+        std::fs::write(&expected, b"fixture")?;
+        std::fs::write(
+            directory.path().join("example-2.0-1-x86_64.pkg.tar.zst"),
+            b"wrong version",
+        )?;
+
+        assert_eq!(
+            find_cached_arch_package_in(directory.path(), "example", "1.0-1")?,
+            expected
+        );
+        assert!(find_cached_arch_package_in(directory.path(), "example", "3.0-1").is_err());
+        Ok(())
     }
 
     #[test]

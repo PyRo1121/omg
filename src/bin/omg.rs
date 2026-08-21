@@ -21,9 +21,9 @@ use omg_lib::cli::security;
 
 use omg_lib::cli::{
     CiCommands, Cli, Commands, ContainerCommands, LocalCommandRunner, MigrateCommands,
-    SnapshotCommands, commands,
+    SnapshotCommands, TransactionTypeFilter, commands,
 };
-use omg_lib::cli::{blame, ci, diff, migrate, outdated, pin, size, snapshot, why};
+use omg_lib::cli::{blame, ci, diff, migrate, outdated, size, snapshot, why};
 #[cfg(feature = "arch")]
 use omg_lib::core::is_elevated;
 use omg_lib::core::{is_root, set_yes_flag};
@@ -73,6 +73,24 @@ fn print_system_updated(suffix: &str) {
     println!();
 }
 
+/// Split an elevated re-exec invocation into its sub-command and trailing
+/// package tokens (`omg <command> ... -- <packages...>`).
+///
+/// Returns `None` when the invocation must fall through to full clap parsing:
+/// missing sub-command or `--` separator, or any flag-looking token after the
+/// separator. Flags after `--` (e.g. `update -- --check`) select behavior this
+/// minimal transaction path cannot honor, so they are never executed here.
+#[cfg(feature = "arch")]
+fn split_elevated_invocation(args: &[String]) -> Option<(&str, &[String])> {
+    let command = args.get(1)?;
+    let separator_pos = args.iter().position(|a| a == "--")?;
+    let packages = &args[separator_pos + 1..];
+    if packages.iter().any(|arg| arg.starts_with('-')) {
+        return None;
+    }
+    Some((command.as_str(), packages))
+}
+
 /// ULTRA-FAST elevated path - when we're re-exec'd with sudo, skip ALL initialization
 /// and go straight to the transaction. This eliminates ~150ms of startup overhead.
 #[cfg(feature = "arch")]
@@ -82,17 +100,18 @@ fn try_fast_elevated(args: &[String]) -> Option<Result<()>> {
         return None;
     }
 
-    // Minimum args: ["omg", "command", "--"]
-    if args.len() < 3 {
-        return None;
-    }
-
-    let command = args.get(1)?;
-    let separator_pos = args.iter().position(|a| a == "--")?;
-    let packages: Vec<String> = args[separator_pos + 1..].to_vec();
+    // Privileged re-exec entrypoints: "upgrade", "fullupdate", and "turboupdate"
+    // are NOT clap-defined user commands. They exist so internal privileged flows
+    // can re-exec `sudo omg …` and land directly on the minimal transaction path
+    // (see ALLOWED_ROOT_OPS in src/core/privilege.rs and the run_privileged_operation
+    // labels in src/cli/packages/update/arch.rs). They still require the literal `--`
+    // separator, and every token after it must be a package name; anything else
+    // falls through to clap via split_elevated_invocation.
+    let (command, package_tokens) = split_elevated_invocation(args)?;
+    let packages: Vec<String> = package_tokens.to_vec();
 
     // Handle commands that may have packages
-    match command.as_str() {
+    match command {
         "install" if !packages.is_empty() => {
             // Validate package names or local package files (security)
             omg_lib::core::security::validate_package_names_or_files(&packages).ok()?;
@@ -190,13 +209,20 @@ fn has_help_flag(args: &[String]) -> bool {
 }
 
 fn has_all_flag(args: &[String]) -> bool {
-    args.iter()
-        .any(|a| matches!(a.as_str(), "--all" | "--all-commands"))
+    // `--all` is a subcommand-scoped flag (clean/list), not a global flag;
+    // only the global `--all-commands` toggles full help output here.
+    args.iter().any(|a| a == "--all-commands")
+}
+
+/// True when the global `--json` flag appears anywhere in the raw arguments.
+/// Pre-parse fast paths that cannot render JSON must defer to clap when set.
+fn has_json_flag(args: &[String]) -> bool {
+    args.iter().any(|a| a == "--json")
 }
 
 /// Ultra-fast path for explicit --count (bypasses tokio entirely)
 fn try_fast_explicit_count(args: &[String]) -> bool {
-    if has_help_flag(args) {
+    if has_help_flag(args) || has_json_flag(args) {
         return false;
     }
 
@@ -218,7 +244,7 @@ fn try_fast_explicit_count(args: &[String]) -> bool {
 /// Ultra-fast path for simple search
 ///
 /// Handles: `omg search <query>`, `omg s <query>`, `omg search <query> --no-aur`
-/// Falls through to the async path for `--detailed`, `--interactive`, or `--json`.
+/// Falls through to the async path for `--detailed` or `--json`.
 fn try_fast_search(args: &[String]) -> bool {
     if has_help_flag(args) {
         return false;
@@ -283,7 +309,13 @@ fn try_fast_search(args: &[String]) -> bool {
         return false;
     };
 
-    packages::search_sync_cli_with_limit(query, false, false, no_aur, limit).unwrap_or_default()
+    match packages::search_sync_cli_with_limit(query, false, no_aur, limit) {
+        Ok(handled) => handled,
+        Err(error) => {
+            tracing::debug!("Fast search path failed, deferring to async path: {error}");
+            false
+        }
+    }
 }
 
 /// Ultra-fast path for simple info
@@ -297,9 +329,8 @@ fn try_fast_info(args: &[String]) -> bool {
         if package.starts_with('-') {
             return false;
         }
-        match packages::info_sync(package) {
-            Ok(true) => return true,
-            Ok(false) | Err(_) => {}
+        if matches!(packages::info_sync(package), Ok(true)) {
+            return true;
         }
     }
     false
@@ -335,7 +366,13 @@ fn try_fast_install_dry_run(args: &[String]) -> bool {
         return false;
     }
 
-    packages::install_dry_run_cli(&packages).unwrap_or_default()
+    match packages::install_dry_run_cli(&packages) {
+        Ok(handled) => handled,
+        Err(error) => {
+            tracing::debug!("Fast dry-run path failed, deferring to async path: {error}");
+            false
+        }
+    }
 }
 
 /// Ultra-fast path for completions
@@ -348,13 +385,10 @@ fn try_fast_completions(args: &[String]) -> Result<bool> {
 
         if has_help_flag(args) {
             let use_all = has_all_flag(args);
-            let cli = Cli::try_parse_from(args.iter()).unwrap_or(Cli {
-                verbose: 0,
-                quiet: false,
-                all: use_all,
-                json: false,
-                command: Commands::Status { fast: false },
-            });
+            // Defer malformed invocations to clap's own error/help rendering.
+            let Ok(cli) = Cli::try_parse_from(args.iter()) else {
+                return Ok(false);
+            };
             omg_lib::cli::help::print_help(&cli, use_all)?;
             return Ok(true);
         }
@@ -386,10 +420,32 @@ fn try_fast_which(args: &[String]) -> bool {
             return false;
         }
 
-        handle_which_command(runtime);
-        return true;
+        // On failure, defer so the standard error reporter owns the message and
+        // the process exits non-zero.
+        return handle_which_command(runtime).is_ok();
     }
     false
+}
+
+/// Parsed form of a pre-parse `omg list|ls` invocation tail: optional runtime
+/// plus whether the global `--json` flag was set. `None` means any token forces
+/// the full clap path (which also owns unknown-flag error reporting).
+fn parse_fast_list_tail(tail: &[String]) -> Option<(Option<&str>, bool)> {
+    let mut runtime = None;
+    let mut json = false;
+    for arg in tail {
+        match arg.as_str() {
+            "--json" => json = true,
+            s if s.starts_with('-') => return None,
+            s => {
+                if runtime.is_some() {
+                    return None;
+                }
+                runtime = Some(s);
+            }
+        }
+    }
+    Some((runtime, json))
 }
 
 /// Ultra-fast path for list command
@@ -406,18 +462,11 @@ fn try_fast_list(args: &[String]) -> bool {
             return false;
         }
 
-        let runtime = if args.len() == 3 {
-            let rt = &args[2];
-            if rt.starts_with('-') {
-                None
-            } else {
-                Some(rt.as_str())
-            }
-        } else {
-            None
+        let Some((runtime, json)) = parse_fast_list_tail(&args[2..]) else {
+            return false;
         };
 
-        if runtimes::list_versions_sync(runtime).is_ok() {
+        if runtimes::list_versions_sync(runtime, json).is_ok() {
             return true;
         }
     }
@@ -541,7 +590,7 @@ async fn async_main(args: Vec<String>) -> Result<()> {
     // Initialize logging
     init_logging(cli.verbose);
 
-    spawn_telemetry_ping();
+    let telemetry_ping = spawn_telemetry_ping();
 
     if matches!(
         &cli.command,
@@ -554,7 +603,7 @@ async fn async_main(args: Vec<String>) -> Result<()> {
         omg_lib::core::maybe_show_turbo_hint();
     }
 
-    let needs_root = matches!(&cli.command, Commands::Sync | Commands::Clean { .. });
+    let needs_root = command_requires_root(&cli.command);
     if needs_root && !is_root() {
         // Use run_self_sudo directly — elevate_if_needed creates a nested tokio
         // runtime which panics with "Cannot start a runtime from within a runtime"
@@ -570,16 +619,33 @@ async fn async_main(args: Vec<String>) -> Result<()> {
         no_color: !console::colors_enabled(),
     };
 
-    // Dispatch to command handlers
-    dispatch_command(&cli.command, &ctx, cli.json).await?;
-
-    // Track analytics
-    track_command_analytics(cmd_start).await;
-
-    Ok(())
+    let result = dispatch_command(&cli.command, &ctx, cli.json).await;
+    track_command_analytics(cmd_start, command_name(&cli.command), result.is_ok()).await;
+    if let Some(task) = telemetry_ping {
+        match task.await {
+            Ok(Ok(())) => {}
+            Ok(Err(error)) => tracing::debug!("Install telemetry ping failed: {error}"),
+            Err(error) => tracing::debug!("Install telemetry task failed: {error}"),
+        }
+    }
+    result
 }
 
 /// Validate package names for security
+fn command_requires_root(command: &Commands) -> bool {
+    match command {
+        Commands::Sync => true,
+        Commands::Clean {
+            orphans,
+            cache,
+            all,
+            dry_run,
+            ..
+        } => !dry_run && (*orphans || *cache || *all),
+        _ => false,
+    }
+}
+
 fn validate_package_security(command: &Commands) -> Result<()> {
     match command {
         Commands::Install { packages, .. } => {
@@ -601,16 +667,22 @@ fn validate_package_security(command: &Commands) -> Result<()> {
 
 /// Initialize tracing/logging subsystem
 fn init_logging(verbose: u8) {
-    let default_level = if verbose > 0 || std::env::var("RUST_LOG").is_ok() {
-        tracing::Level::INFO
+    let env_filter = if std::env::var("RUST_LOG").is_ok() {
+        // RUST_LOG owns filtering verbatim; do not override the user's choice.
+        tracing_subscriber::EnvFilter::from_default_env()
     } else {
-        tracing::Level::WARN
+        // Map -v counts to levels (0=WARN, 1=INFO, 2=DEBUG, 3+=TRACE).
+        let level = match verbose {
+            0 => tracing::Level::WARN,
+            1 => tracing::Level::INFO,
+            2 => tracing::Level::DEBUG,
+            _ => tracing::Level::TRACE,
+        };
+        tracing_subscriber::EnvFilter::new(level.to_string())
     };
 
     tracing_subscriber::fmt()
-        .with_env_filter(
-            tracing_subscriber::EnvFilter::from_default_env().add_directive(default_level.into()),
-        )
+        .with_env_filter(env_filter)
         .with_target(false)
         .with_ansi(console::colors_enabled())
         .without_time()
@@ -618,33 +690,86 @@ fn init_logging(verbose: u8) {
 }
 
 /// Spawn telemetry ping on first run
-fn spawn_telemetry_ping() {
-    if omg_lib::core::telemetry::is_first_run() && !omg_lib::core::telemetry::is_telemetry_opt_out()
-    {
-        tokio::spawn(async {
-            let _ = omg_lib::core::telemetry::ping_install().await;
-        });
-    }
+fn spawn_telemetry_ping() -> Option<tokio::task::JoinHandle<Result<()>>> {
+    (omg_lib::core::telemetry::is_first_run() && !omg_lib::core::telemetry::is_telemetry_opt_out())
+        .then(|| tokio::spawn(omg_lib::core::telemetry::ping_install()))
 }
 
 /// Track command analytics and flush
-async fn track_command_analytics(cmd_start: std::time::Instant) {
+/// Canonical command name for analytics, independent of user-facing aliases
+/// (`s`, `i`, `u`, `sy`, …) and of argument order.
+const fn command_name(command: &Commands) -> &'static str {
+    match command {
+        Commands::Search { .. } => "search",
+        Commands::Install { .. } => "install",
+        Commands::Remove { .. } => "remove",
+        Commands::Update { .. } => "update",
+        Commands::Info { .. } => "info",
+        Commands::Why { .. } => "why",
+        Commands::Outdated => "outdated",
+        Commands::Size { .. } => "size",
+        Commands::Blame { .. } => "blame",
+        Commands::Diff { .. } => "diff",
+        Commands::Snapshot { .. } => "snapshot",
+        Commands::Ci { .. } => "ci",
+        Commands::Migrate { .. } => "migrate",
+        Commands::Clean { .. } => "clean",
+        Commands::Explicit { .. } => "explicit",
+        Commands::Sync => "sync",
+        Commands::Use { .. } => "use",
+        Commands::List { .. } => "list",
+        Commands::Hook { .. } => "hook",
+        Commands::Hooks { .. } => "hooks",
+        Commands::Workspace { .. } => "workspace",
+        Commands::HookEnv { .. } => "hook-env",
+        #[cfg(unix)]
+        Commands::Daemon { .. } => "daemon",
+        Commands::Config { .. } => "config",
+        Commands::Privacy { .. } => "privacy",
+        Commands::SelfUpdate { .. } => "self-update",
+        Commands::Completions { .. } => "completions",
+        Commands::Which { .. } => "which",
+        Commands::Complete { .. } => "complete",
+        Commands::Status { .. } => "status",
+        Commands::Doctor { .. } => "doctor",
+        Commands::GenerateMan { .. } => "generate-man",
+        #[cfg(unix)]
+        Commands::DaemonStatus => "daemon-status",
+        Commands::Audit { .. } => "audit",
+        Commands::New { .. } => "new",
+        Commands::Run { .. } => "run",
+        Commands::Tool { .. } => "tool",
+        Commands::Env { .. } => "env",
+        Commands::Team { .. } => "team",
+        Commands::Container { .. } => "container",
+        #[cfg(feature = "license")]
+        Commands::License { .. } => "license",
+        Commands::Fleet { .. } => "fleet",
+        Commands::Enterprise { .. } => "enterprise",
+        Commands::History { .. } => "history",
+        Commands::Rollback { .. } => "rollback",
+        Commands::Dash => "dash",
+        Commands::Stats => "stats",
+        #[cfg(unix)]
+        Commands::Metrics => "metrics",
+        Commands::Init { .. } => "init",
+    }
+}
+
+async fn track_command_analytics(cmd_start: std::time::Instant, cmd_name: &str, success: bool) {
     let cmd_duration = omg_lib::core::analytics::end_timer(cmd_start);
-    let cmd_name = std::env::args().nth(1).unwrap_or_default();
-    let subcmd = std::env::args().nth(2);
     omg_lib::core::analytics::track_command(
-        &cmd_name,
-        subcmd.as_deref(),
+        cmd_name,
+        None,
         cmd_duration,
-        true,
+        success,
         Some(&omg_lib::core::telemetry::get_backend()),
     );
     omg_lib::core::analytics::maybe_heartbeat();
     omg_lib::core::analytics::maybe_flush().await;
-    omg_lib::core::usage::sync_usage_now().await;
-
-    // Flush enhanced telemetry events
     omg_lib::core::analytics::flush_events().await.ok();
+    omg_lib::core::telemetry::end_session_and_flush().await;
+    omg_lib::core::usage::sync_usage_now().await;
 }
 
 fn handle_hooks_command(command: &omg_lib::cli::HooksCommands) -> Result<()> {
@@ -795,7 +920,7 @@ async fn handle_doctor_command(network: bool, eol: bool, turbo: bool) -> Result<
     }
 }
 
-fn handle_which_command(runtime: &str) {
+fn handle_which_command(runtime: &str) -> Result<()> {
     match runtimes::resolve_active_version(runtime) {
         Ok(Some(version)) => {
             println!(
@@ -811,12 +936,13 @@ fn handle_which_command(runtime: &str) {
             );
         }
         Err(error) => {
-            eprintln!(
-                "{}: failed to resolve active version: {error}",
-                omg_lib::cli::style::runtime(runtime)
+            // Propagate instead of only printing so the process exits non-zero.
+            anyhow::bail!(
+                "failed to resolve active version for {runtime}: {error}; check that a version is set (.tool-versions, .nvmrc) or run `omg use {runtime} <version>`"
             );
         }
     }
+    Ok(())
 }
 
 async fn handle_audit_command(
@@ -860,16 +986,14 @@ async fn handle_info_command(package: &str, json: bool) -> Result<()> {
     packages::info_with_json(package, json).await
 }
 
-#[expect(clippy::fn_params_excessive_bools)] // Maps directly to CLI flags: --detailed, --interactive, --json, --no-aur
 async fn handle_search_command(
     query: &str,
     detailed: bool,
-    interactive: bool,
     json_flag: bool,
     no_aur: bool,
     limit: usize,
 ) -> Result<()> {
-    packages::search_with_json(query, detailed, interactive, json_flag, no_aur, limit).await
+    packages::search_with_json(query, detailed, json_flag, no_aur, limit).await
 }
 
 async fn handle_install_command(packages: &[String], yes: bool, dry_run: bool) -> Result<()> {
@@ -908,11 +1032,12 @@ async fn handle_complete_command(
 fn handle_history_command(
     limit: usize,
     search: Option<&str>,
-    transaction_type: Option<&str>,
+    transaction_type: Option<TransactionTypeFilter>,
     from: Option<&str>,
     to: Option<&str>,
+    json: bool,
 ) -> Result<()> {
-    commands::history(limit, search, transaction_type, from, to)
+    commands::history(limit, search, transaction_type, from, to, json)
 }
 
 /// Main command dispatcher - routes commands to appropriate handlers
@@ -923,23 +1048,40 @@ async fn dispatch_command(
     json_flag: bool,
 ) -> Result<()> {
     match command {
-        Commands::Run { .. }
-        | Commands::Tool { .. }
-        | Commands::Env { .. }
-        | Commands::Fleet { .. }
-        | Commands::Team { .. }
-        | Commands::Enterprise { .. } => {
-            command.execute(ctx).await?;
+        // Single dispatcher: each group runner is invoked directly here; there is
+        // deliberately no blanket `impl LocalCommandRunner for Commands` fallback.
+        Commands::Run {
+            task,
+            args,
+            runtime_backend,
+            watch,
+            parallel,
+            using,
+            all,
+        } => {
+            let run_cmd = omg_lib::cli::run::RunCommand {
+                task: task.clone(),
+                args: args.clone(),
+                runtime_backend: runtime_backend.clone(),
+                watch: *watch,
+                parallel: *parallel,
+                using: using.clone(),
+                all: *all,
+            };
+            run_cmd.execute(ctx).await?;
         }
+        Commands::Tool { command } => command.execute(ctx).await?,
+        Commands::Env { command } => command.execute(ctx).await?,
+        Commands::Fleet { command } => command.execute(ctx).await?,
+        Commands::Team { command } => command.execute(ctx).await?,
+        Commands::Enterprise { command } => command.execute(ctx).await?,
         Commands::Search {
             query,
             detailed,
-            interactive,
             no_aur,
             limit,
         } => {
-            handle_search_command(query, *detailed, *interactive, json_flag, *no_aur, *limit)
-                .await?;
+            handle_search_command(query, *detailed, json_flag, *no_aur, *limit).await?;
         }
         Commands::Install {
             packages,
@@ -985,7 +1127,7 @@ async fn dispatch_command(
             runtimes::use_version(runtime, version.as_deref()).await?;
         }
         Commands::List { runtime, available } => {
-            runtimes::list_versions(runtime.as_deref(), *available).await?;
+            runtimes::list_versions(runtime.as_deref(), *available, json_flag).await?;
         }
         Commands::Hook { shell } => {
             hooks::print_hook(shell)?;
@@ -1005,9 +1147,9 @@ async fn dispatch_command(
             omg_lib::cli::self_update::run(*force, version.clone()).await?;
         }
         Commands::Completions { shell, stdout } => {
-            hooks::completions::generate_completions(shell, *stdout)?;
+            hooks::completions::generate_completions(shell.as_str(), *stdout)?;
         }
-        Commands::Which { runtime } => handle_which_command(runtime),
+        Commands::Which { runtime } => handle_which_command(runtime)?,
         Commands::Complete {
             shell,
             current,
@@ -1050,9 +1192,10 @@ async fn dispatch_command(
             handle_history_command(
                 *limit,
                 search.as_deref(),
-                transaction_type.as_deref(),
+                *transaction_type,
                 from.as_deref(),
                 to.as_deref(),
+                json_flag,
             )?;
         }
         Commands::Rollback { id, yes } => {
@@ -1062,7 +1205,7 @@ async fn dispatch_command(
             omg_lib::cli::tui::run().await?;
         }
         Commands::Stats => {
-            commands::stats()?;
+            commands::stats(json_flag)?;
         }
         #[cfg(unix)]
         Commands::Metrics => {
@@ -1078,15 +1221,8 @@ async fn dispatch_command(
         Commands::Why { package, reverse } => {
             why::run(package, *reverse)?;
         }
-        Commands::Outdated { security } => {
-            outdated::run(*security, json_flag).await?;
-        }
-        Commands::Pin {
-            target,
-            unpin,
-            list,
-        } => {
-            pin::run(target, *unpin, *list)?;
+        Commands::Outdated => {
+            outdated::run(json_flag).await?;
         }
         Commands::Size { tree, limit } => {
             size::run(tree.as_deref(), *limit)?;
@@ -1103,4 +1239,151 @@ async fn dispatch_command(
     }
 
     Ok(())
+}
+
+#[cfg(test)]
+mod fast_path_tests {
+    use super::{has_all_flag, has_json_flag, parse_fast_list_tail, split_elevated_invocation};
+
+    #[cfg(feature = "arch")]
+    fn args(list: &[&str]) -> Vec<String> {
+        list.iter().map(std::string::ToString::to_string).collect()
+    }
+
+    #[cfg(feature = "arch")]
+    #[test]
+    fn elevated_flags_after_separator_fall_through_to_clap() {
+        // Regression for the blocker: `update -- --check` previously discarded
+        // the flag tokens and force-ran a full system upgrade.
+        assert!(
+            split_elevated_invocation(&args(&["omg", "update", "--", "--check"])).is_none(),
+            "check-only update must not take the transaction fast path"
+        );
+        assert!(
+            split_elevated_invocation(&args(&["omg", "update", "--", "--dry-run"])).is_none(),
+            "dry-run must not perform a real upgrade"
+        );
+        assert!(
+            split_elevated_invocation(&args(&["omg", "install", "--", "-y", "ripgrep"])).is_none(),
+            "flag-looking package tokens must defer to clap"
+        );
+    }
+
+    #[cfg(feature = "arch")]
+    #[test]
+    fn elevated_plain_package_lists_still_split() {
+        let argv = args(&["omg", "install", "extra", "--", "ripgrep", "jq"]);
+        let parsed = split_elevated_invocation(&argv)
+            .map(|(command, packages)| (command, packages.to_vec()));
+        assert_eq!(
+            parsed,
+            Some(("install", vec!["ripgrep".to_string(), "jq".to_string()]))
+        );
+    }
+
+    #[cfg(feature = "arch")]
+    #[test]
+    fn elevated_invocations_without_separator_or_command_are_rejected() {
+        assert!(split_elevated_invocation(&args(&["omg"])).is_none());
+        assert!(split_elevated_invocation(&args(&["omg", "update"])).is_none());
+        // `update --` with no trailing tokens stays on the fast path (empty
+        // package list), matching the original elevated behavior.
+        let argv = args(&["omg", "update", "--"]);
+        let parsed =
+            split_elevated_invocation(&argv).map(|(command, pkgs)| (command, pkgs.to_vec()));
+        assert_eq!(parsed, Some(("update", Vec::new())));
+    }
+
+    #[test]
+    fn list_tail_parses_runtime_and_json_flag() {
+        let args = args_or_panic(&["node"]);
+        assert_eq!(parse_fast_list_tail(&args), Some((Some("node"), false)));
+
+        let args = args_or_panic(&[]);
+        assert_eq!(parse_fast_list_tail(&args), Some((None, false)));
+    }
+
+    #[test]
+    fn list_json_flag_is_detected_instead_of_breaking_the_fast_path() {
+        // Regression: `omg list --json` previously rendered human output.
+        let args = args_or_panic(&["--json"]);
+        assert_eq!(parse_fast_list_tail(&args), Some((None, true)));
+
+        let args = args_or_panic(&["python", "--json"]);
+        assert_eq!(parse_fast_list_tail(&args), Some((Some("python"), true)));
+    }
+
+    #[test]
+    fn list_unknown_flags_and_extra_positionals_defer_to_clap() {
+        assert_eq!(parse_fast_list_tail(&args_or_panic(&["--jsonx"])), None);
+        assert_eq!(
+            parse_fast_list_tail(&args_or_panic(&["node", "python"])),
+            None
+        );
+    }
+
+    #[test]
+    fn json_flag_detector_matches_global_long_flag_only() {
+        assert!(has_json_flag(&args_or_panic(&[
+            "explicit", "--count", "--json"
+        ])));
+        assert!(!has_json_flag(&args_or_panic(&["explicit", "--count"])));
+    }
+
+    #[test]
+    fn all_commands_flag_is_the_only_global_all_toggle() {
+        // Regression: `--all` is a subcommand-scoped flag, not a global one.
+        assert!(has_all_flag(&args_or_panic(&[
+            "completions",
+            "bash",
+            "--all-commands"
+        ])));
+        assert!(!has_all_flag(&args_or_panic(&[
+            "completions",
+            "bash",
+            "--all"
+        ])));
+    }
+
+    fn args_or_panic(list: &[&str]) -> Vec<String> {
+        list.iter().map(std::string::ToString::to_string).collect()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn dry_run_clean_never_requires_root() {
+        let command = Commands::Clean {
+            orphans: true,
+            cache: true,
+            aur: true,
+            all: true,
+            dry_run: true,
+        };
+        assert!(!command_requires_root(&command));
+    }
+
+    #[test]
+    fn only_privileged_clean_actions_require_root() {
+        let aur_only = Commands::Clean {
+            orphans: false,
+            cache: false,
+            aur: true,
+            all: false,
+            dry_run: false,
+        };
+        let cache = Commands::Clean {
+            orphans: false,
+            cache: true,
+            aur: false,
+            all: false,
+            dry_run: false,
+        };
+        assert!(!command_requires_root(&aur_only));
+        assert!(command_requires_root(&cache));
+        assert!(command_requires_root(&Commands::Sync));
+    }
 }

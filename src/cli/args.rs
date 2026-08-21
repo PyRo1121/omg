@@ -48,9 +48,6 @@ pub enum Commands {
         /// Show detailed source metadata (votes, popularity where available)
         #[arg(short, long)]
         detailed: bool,
-        /// Interactive mode: select packages to install from results
-        #[arg(short, long)]
-        interactive: bool,
         /// Search official repositories only (skip community sources)
         #[arg(long)]
         no_aur: bool,
@@ -126,23 +123,7 @@ pub enum Commands {
     },
 
     /// Show what packages would be updated
-    Outdated {
-        /// Show security updates only
-        #[arg(short, long)]
-        security: bool,
-    },
-
-    /// Pin a package to prevent updates
-    Pin {
-        /// Package or runtime to pin (e.g., "node@20.10.0" or "gcc")
-        target: String,
-        /// Unpin instead of pin
-        #[arg(short, long)]
-        unpin: bool,
-        /// List all pins
-        #[arg(short, long)]
-        list: bool,
-    },
+    Outdated,
 
     /// Show disk usage by packages
     Size {
@@ -309,7 +290,8 @@ pub enum Commands {
     /// Generate shell completions
     Completions {
         /// Shell type (bash, zsh, fish, powershell, elvish)
-        shell: String,
+        #[arg(value_enum)]
+        shell: ShellKind,
         /// Print to stdout instead of installing
         #[arg(long)]
         stdout: bool,
@@ -464,8 +446,8 @@ pub enum Commands {
         #[arg(short, long)]
         search: Option<String>,
         /// Filter by transaction type (install, remove, update, sync)
-        #[arg(short = 't', long = "type")]
-        transaction_type: Option<String>,
+        #[arg(short = 't', long = "type", value_enum)]
+        transaction_type: Option<TransactionTypeFilter>,
         /// Filter transactions from this date (YYYY-MM-DD)
         #[arg(long)]
         from: Option<String>,
@@ -520,6 +502,39 @@ pub enum Commands {
         #[arg(long)]
         skip_daemon: bool,
     },
+}
+
+/// Transaction kinds accepted by `omg history --type`.
+#[derive(Copy, Clone, Debug, PartialEq, Eq, clap::ValueEnum)]
+pub enum TransactionTypeFilter {
+    Install,
+    Remove,
+    Update,
+    Sync,
+}
+
+/// Shells supported by `omg completions`.
+#[derive(Copy, Clone, Debug, PartialEq, Eq, clap::ValueEnum)]
+pub enum ShellKind {
+    Bash,
+    Zsh,
+    Fish,
+    #[value(alias = "pwsh")]
+    Powershell,
+    Elvish,
+}
+
+impl ShellKind {
+    /// Canonical shell name understood by `hooks::completions`.
+    pub fn as_str(self) -> &'static str {
+        match self {
+            ShellKind::Bash => "bash",
+            ShellKind::Zsh => "zsh",
+            ShellKind::Fish => "fish",
+            ShellKind::Powershell => "powershell",
+            ShellKind::Elvish => "elvish",
+        }
+    }
 }
 
 #[derive(Subcommand, Debug)]
@@ -717,15 +732,6 @@ pub enum TeamCommands {
     Members,
     /// Interactive team dashboard (TUI)
     Dashboard,
-    /// Generate team invite link
-    Invite {
-        /// Email address for the invite
-        #[arg(short, long)]
-        email: Option<String>,
-        /// Role for the invitee (admin, lead, developer, readonly)
-        #[arg(short, long, default_value = "developer")]
-        role: String,
-    },
     /// Manage team roles and permissions
     Roles {
         #[command(subcommand)]
@@ -771,29 +777,12 @@ pub enum TeamCommands {
         #[arg(short, long, default_value = "7")]
         days: u32,
     },
-    /// Manage webhook notifications
-    Notify {
-        #[command(subcommand)]
-        command: NotifyCommands,
-    },
 }
 
 #[derive(Subcommand, Debug)]
 pub enum TeamRoleCommands {
     /// List all roles
     List,
-    /// Assign a role to a member
-    Assign {
-        /// Member username or email
-        member: String,
-        /// Role to assign (admin, lead, developer, readonly)
-        role: String,
-    },
-    /// Remove a role from a member
-    Remove {
-        /// Member username or email
-        member: String,
-    },
 }
 
 #[derive(Subcommand, Debug)]
@@ -818,29 +807,6 @@ pub enum GoldenPathCommands {
     Delete {
         /// Template name
         name: String,
-    },
-}
-
-#[derive(Subcommand, Debug)]
-pub enum NotifyCommands {
-    /// Add a webhook notification
-    Add {
-        /// Notification type (slack, discord, webhook)
-        notify_type: String,
-        /// Webhook URL
-        url: String,
-    },
-    /// List configured notifications
-    List,
-    /// Remove a notification
-    Remove {
-        /// Notification ID
-        id: String,
-    },
-    /// Test a notification
-    Test {
-        /// Notification ID (or "all")
-        id: String,
     },
 }
 
@@ -965,9 +931,6 @@ pub enum AuditCommands {
         /// Output file path (default: ~/.local/share/omg/sbom/sbom-`<timestamp>`.json)
         #[arg(short, long)]
         output: Option<String>,
-        /// Include vulnerability data in SBOM
-        #[arg(long, default_value = "true")]
-        vulns: bool,
     },
     /// Scan for leaked secrets and credentials
     Secrets {
@@ -1114,15 +1077,6 @@ pub enum FleetCommands {
         #[arg(short, long)]
         message: Option<String>,
     },
-    /// Auto-remediate drift across fleet
-    Remediate {
-        /// Dry run - show what would change
-        #[arg(long)]
-        dry_run: bool,
-        /// Require confirmation
-        #[arg(long)]
-        confirm: bool,
-    },
 }
 
 #[derive(Subcommand, Debug)]
@@ -1168,45 +1122,16 @@ pub enum EnterpriseCommands {
 
 #[derive(Subcommand, Debug)]
 pub enum EnterprisePolicyCommands {
-    /// Set a policy rule
-    Set {
-        /// Scope (org, team:`<name>`, project)
-        #[arg(short, long)]
-        scope: String,
-        /// Rule to set
-        rule: String,
-    },
     /// Show current policies
     Show {
         /// Scope to show
         #[arg(short, long)]
         scope: Option<String>,
     },
-    /// Inherit policies from parent scope
-    Inherit {
-        /// Source scope
-        #[arg(long)]
-        from: String,
-        /// Target scope
-        #[arg(long)]
-        to: String,
-    },
 }
 
 #[derive(Subcommand, Debug)]
 pub enum ServerCommands {
-    /// Initialize a self-hosted OMG server
-    Init {
-        /// License key
-        #[arg(short, long)]
-        license: String,
-        /// Storage path
-        #[arg(short, long)]
-        storage: String,
-        /// Domain for the server
-        #[arg(short, long)]
-        domain: String,
-    },
     /// Sync/mirror packages from upstream
     Mirror {
         /// Upstream registry URL

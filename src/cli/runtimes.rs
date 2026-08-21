@@ -249,7 +249,90 @@ fn print_listed_versions(
     Ok(())
 }
 
-pub fn list_versions_sync(runtime: Option<&str>) -> Result<()> {
+/// Build one JSON object describing a runtime's installed versions.
+fn runtime_versions_value(
+    runtime: &str,
+    installed: Result<Vec<String>>,
+    current: Option<&str>,
+) -> Result<serde_json::Value> {
+    Ok(serde_json::json!({
+        "runtime": runtime,
+        "current": current,
+        "installed": installed
+            .with_context(|| format!("Failed to list installed {runtime} versions"))?,
+    }))
+}
+
+/// JSON entry for a natively supported runtime, or `None` when `runtime`
+/// is mise-managed (whose listing is unstructured text and cannot be
+/// represented as machine output).
+fn installed_json_entry(runtime: &str) -> Result<Option<serde_json::Value>> {
+    match runtime.to_lowercase().as_str() {
+        "node" | "nodejs" => {
+            let mgr = NodeManager::new();
+            let current = mgr.current_version();
+            runtime_versions_value("node", mgr.list_installed(), current.as_deref()).map(Some)
+        }
+        "python" => {
+            let mgr = PythonManager::new();
+            let current = mgr.current_version();
+            runtime_versions_value("python", mgr.list_installed(), current.as_deref()).map(Some)
+        }
+        "rust" => {
+            let mgr = RustManager::new();
+            let current = mgr.current_version();
+            runtime_versions_value("rust", mgr.list_installed(), current.as_deref()).map(Some)
+        }
+        "go" | "golang" => {
+            let mgr = GoManager::new();
+            let current = mgr.current_version();
+            runtime_versions_value("go", mgr.list_installed(), current.as_deref()).map(Some)
+        }
+        "ruby" => {
+            let mgr = RubyManager::new();
+            let current = mgr.current_version();
+            runtime_versions_value("ruby", mgr.list_installed(), current.as_deref()).map(Some)
+        }
+        "java" | "jdk" => {
+            let mgr = JavaManager::new();
+            let current = mgr.current_version();
+            runtime_versions_value("java", mgr.list_installed(), current.as_deref()).map(Some)
+        }
+        "bun" | "bunjs" => {
+            let mgr = BunManager::new();
+            let current = mgr.current_version();
+            runtime_versions_value("bun", mgr.list_installed(), current.as_deref()).map(Some)
+        }
+        _ => Ok(None),
+    }
+}
+
+/// JSON output for installed runtime versions. Requesting JSON for a
+/// mise-managed runtime fails explicitly instead of emitting partial data.
+fn list_installed_json(runtime: Option<&str>) -> Result<()> {
+    if let Some(rt) = runtime {
+        let Some(entry) = installed_json_entry(rt)? else {
+            anyhow::bail!("JSON version output is not supported for mise-managed runtime '{rt}'");
+        };
+        println!("{}", serde_json::to_string_pretty(&entry)?);
+        return Ok(());
+    }
+
+    let mut entries = Vec::new();
+    for rt in ["node", "python", "rust", "go", "ruby", "java", "bun"] {
+        if let Some(entry) = installed_json_entry(rt)? {
+            entries.push(entry);
+        }
+    }
+    println!("{}", serde_json::to_string_pretty(&entries)?);
+    Ok(())
+}
+
+pub fn list_versions_sync(runtime: Option<&str>, json: bool) -> Result<()> {
+    if json {
+        return list_installed_json(runtime);
+    }
+
     if let Some(rt) = runtime {
         ui::print_header("OMG", &format!("{rt} versions"));
         ui::print_spacer();
@@ -345,9 +428,13 @@ pub fn list_versions_sync(runtime: Option<&str>) -> Result<()> {
     Ok(())
 }
 
-pub async fn list_versions(runtime: Option<&str>, available: bool) -> Result<()> {
+pub async fn list_versions(runtime: Option<&str>, available: bool, json: bool) -> Result<()> {
     if !available {
-        return list_versions_sync(runtime);
+        return list_versions_sync(runtime, json);
+    }
+
+    if json {
+        anyhow::bail!("--json is not supported together with --available");
     }
 
     let Some(rt) = runtime else {
@@ -472,6 +559,29 @@ pub async fn list_versions(runtime: Option<&str>, available: bool) -> Result<()>
 #[cfg(test)]
 mod tests {
     use super::canonical_runtime_name;
+
+    #[test]
+    fn runtime_versions_value_is_valid_json_with_expected_fields() {
+        let current = "20.10.0".to_string();
+        let value = super::runtime_versions_value(
+            "node",
+            Ok(vec!["20.10.0".to_string(), "18.0.0".to_string()]),
+            Some(current.as_str()),
+        )
+        .expect("version payload must serialize");
+        assert_eq!(value["runtime"], "node");
+        assert_eq!(value["current"], "20.10.0");
+        assert_eq!(
+            value["installed"].as_array().map(|versions| versions.len()),
+            Some(2)
+        );
+    }
+
+    #[test]
+    fn installed_json_entry_rejects_mise_managed_runtimes() {
+        let entry = super::installed_json_entry("erlang").expect("probe must succeed");
+        assert!(entry.is_none(), "mise-managed runtimes have no JSON entry");
+    }
 
     #[test]
     fn runtime_aliases_normalize_before_dispatch() {

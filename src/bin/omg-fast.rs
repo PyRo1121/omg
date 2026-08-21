@@ -13,7 +13,10 @@
 //!   omg-fast i `<package>`  # package info
 
 // Allow pedantic lints that are too strict for this minimal binary
-#![allow(clippy::cast_possible_truncation)] // IPC message lengths are bounded
+#![allow(
+    clippy::cast_possible_truncation,
+    reason = "IPC message lengths are explicitly bounded"
+)]
 
 /// Maximum daemon response size to prevent memory exhaustion (10 MB)
 #[cfg(unix)]
@@ -49,7 +52,10 @@ fn main() {
             eprintln!("Invalid search query");
             std::process::exit(1);
         }
-        fast_search(query);
+        if let Err(error) = fast_search(query) {
+            eprintln!("Error: {error}");
+            std::process::exit(1);
+        }
         return;
     }
     if matches!(cmd, "i" | "info") && args.len() >= 3 {
@@ -63,32 +69,44 @@ fn main() {
             eprintln!("Invalid package name");
             std::process::exit(1);
         }
-        fast_info(package);
+        if let Err(error) = fast_info(package) {
+            eprintln!("Error: {error}");
+            std::process::exit(1);
+        }
         return;
     }
 
-    // Get status file path (same logic as daemon)
-    let path = std::env::var("XDG_RUNTIME_DIR").map_or_else(
-        |_| "/tmp/omg.status".to_string(),
-        |d| format!("{d}/omg.status"),
-    );
+    // Status file path: shared with the daemon via `omg_lib::core::paths`
+    // (socket dir, honors OMG_SOCKET_PATH/XDG_RUNTIME_DIR). Do not hardcode
+    // /tmp paths here; they would drift from paths.rs and miss permission
+    // hardening.
+    let path = omg_lib::core::paths::fast_status_path();
 
     // Read 32-byte status file
     let Ok(mut file) = File::open(&path) else {
-        eprintln!("0");
+        eprintln!(
+            "omg-fast: no status file at {} (is the omg daemon running? try 'omg daemon' or 'omg status')",
+            path.display()
+        );
         std::process::exit(1);
     };
 
     let mut buf = [0u8; 32];
-    if file.read_exact(&mut buf).is_err() {
-        eprintln!("0");
+    if let Err(error) = file.read_exact(&mut buf) {
+        eprintln!(
+            "omg-fast: failed to read status file {}: {error}",
+            path.display()
+        );
         std::process::exit(1);
     }
 
     // Validate magic (0x4F4D4753 = "OMGS")
     let magic = u32::from_le_bytes([buf[0], buf[1], buf[2], buf[3]]);
     if magic != 0x4F4D_4753 {
-        eprintln!("0");
+        eprintln!(
+            "omg-fast: status file {} has invalid magic bytes (stale or corrupt); rerun 'omg status'",
+            path.display()
+        );
         std::process::exit(1);
     }
 
@@ -122,44 +140,29 @@ fn main() {
     }
 }
 
-/// Get socket path
+/// Get socket path via the shared helper in `omg_lib::core::paths` so this
+/// binary and the daemon can never disagree about where the socket lives.
 #[cfg(unix)]
 fn socket_path() -> String {
-    std::env::var("OMG_SOCKET_PATH").unwrap_or_else(|_| {
-        std::env::var("XDG_RUNTIME_DIR")
-            .map_or_else(|_| "/tmp/omg.sock".to_string(), |d| format!("{d}/omg.sock"))
-    })
+    omg_lib::core::paths::socket_path().display().to_string()
 }
 
 /// Fast search via raw IPC (no serde, minimal parsing)
 #[cfg(unix)]
-fn fast_search(query: &str) {
-    let Ok(mut stream) = UnixStream::connect(socket_path()) else {
-        eprintln!("Daemon not running");
-        std::process::exit(1);
-    };
-
-    // Build minimal bitcode request manually
-    // Request::Search { id: 0, query, limit: Some(20) }
-    // We'll use the library for now since bitcode format is complex
-    if let Err(e) = send_search_request(&mut stream, query) {
-        eprintln!("Error: {e}");
-        std::process::exit(1);
-    }
+fn fast_search(query: &str) -> Result<()> {
+    let path = socket_path();
+    let mut stream = UnixStream::connect(&path)
+        .with_context(|| format!("daemon not running (no listener at {path})"))?;
+    send_search_request(&mut stream, query)
 }
 
 /// Fast info via raw IPC
 #[cfg(unix)]
-fn fast_info(package: &str) {
-    let Ok(mut stream) = UnixStream::connect(socket_path()) else {
-        eprintln!("Daemon not running");
-        std::process::exit(1);
-    };
-
-    if let Err(e) = send_info_request(&mut stream, package) {
-        eprintln!("Error: {e}");
-        std::process::exit(1);
-    }
+fn fast_info(package: &str) -> Result<()> {
+    let path = socket_path();
+    let mut stream = UnixStream::connect(&path)
+        .with_context(|| format!("daemon not running (no listener at {path})"))?;
+    send_info_request(&mut stream, package)
 }
 
 #[cfg(unix)]
@@ -209,7 +212,9 @@ fn send_search_request(stream: &mut UnixStream, query: &str) -> Result<()> {
             }
         }
         Response::Error { message, .. } => {
-            eprintln!("Error: {message}");
+            // Protocol-level failure must exit non-zero, not look like an
+            // empty result set.
+            anyhow::bail!(message)
         }
         Response::Success { .. } => {}
     }
@@ -259,7 +264,7 @@ fn send_info_request(stream: &mut UnixStream, package: &str) -> Result<()> {
             }
         }
         Response::Error { message, .. } => {
-            eprintln!("{message}");
+            anyhow::bail!(message)
         }
         Response::Success { .. } => {}
     }
