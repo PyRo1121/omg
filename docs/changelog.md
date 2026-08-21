@@ -120,6 +120,138 @@ was not linked from any doc; its command usage remains in docs/runtimes.md
 - **Ci**: Cross-platform install script and R2 release sync
 ### 🐛 Bug Fixes
 
+- **Cli**: Remaining audit-cli hardening across cli modules
+
+Companion to the earlier fast-path hardening commit: absolute-path
+
+validation for migrate/diff/privacy export, unknown config keys fail,
+
+JSON history/stats output, daemon timeouts, and removed unimplemented
+
+surfaces (pin, search --interactive, outdated --security, fleet
+
+remediation, team invite/roles/notifications, enterprise policy
+
+mutation, self-hosted init) with docs and tests updated.
+
+- **Backends**: Harden Arch/Debian/AUR transactions, daemon, and runtimes
+
+Fixes from audit-backends report (/tmp/omg-fleet/audit-backends.md):
+
+  - debian_db: data.tar extraction rewritten   - archive-controlled symlinks
+
+can no longer be traversed by later file entries; links are deferred,
+
+validated as root-relative, and recorded for rollback; special entries
+
+fail explicitly; directories tracked for reverse-order removal
+
+  - runtimes/debian_db: decompression bounded during streaming via
+
+BudgetedReader/BudgetedSink (xz/gzip/zstd), not after allocation
+
+  - aur: parallel builds serialize database mutations behind an install
+
+lock; build scratch moved from world-writable /tmp to cache dir 0700;
+
+root builds rejected up front with guidance
+
+  - daemon: backend errors on info return INTERNAL_ERROR instead of being
+
+masked as package-not-found; connection semaphore caps concurrent
+
+connections at 128; index search routed through spawn_blocking
+
+  - debian_pure/apt: fast-path disk I/O wrapped in spawn_blocking; status
+
+JoinError degrades with warning instead of failing the call
+
+  - mise: install failures capture stderr and bail instead of Ok(false);
+
+&PathBuf -> &Path
+
+  - content_store: hard_link guards short hashes like sibling methods
+
+  - transaction: unpack-pipeline channel-send failures propagate
+
+- **Core**: Harden security, licensing, persistence, and telemetry
+
+Fixes from audit-core report (/tmp/omg-fleet/audit-core.md):
+
+  - secrets: redact slices on char boundaries (no panic on multibyte
+
+matches); placeholder filter matches exact values/prefixes only so real
+
+keys containing 'test'/'123' substrings are still reported
+
+  - container: generate_dockerfile validates base image, runtime, and
+
+version before interpolation (injection neutralized)
+
+  - audit: hash-chain appends take a cross-process lock and re-read the
+
+tail hash inside the critical section; concurrent writers keep
+
+verify_integrity valid
+
+  - license: corrupt/unreadable license.json warns instead of silently
+
+degrading; stub verification key renamed STUB_* with one-shot warn and
+
+fail-closed test; activation no longer defaults missing tier to 'pro'
+
+  - fast_status: NamedTempFile+persist replaces fixed .tmp name
+
+  - usage: cross-process flock serializes load-modify-save cycles
+
+  - analytics: mutex-owned event queue closes push/flush lost-update window
+
+  - sbom/keyserver: atomic export writes; keyring appends fsync
+
+  - paths: SUDO_HOME validated like SUDO_USER; pacman cache dirs read from
+
+pacman.conf CacheDir entries (arch-gated)
+
+  - telemetry_client: half-open circuit probe is single-flight
+
+- **Cli**: Harden CLI fast paths, error exits, dispatch, and arg validation
+
+Fixes from audit-cli report (/tmp/omg-fleet/audit-cli.md):
+
+  - omg.rs: elevated re-exec path no longer executes transactions when any
+
+flag-looking token follows the '--' separator (update -  - --check no
+
+longer force-upgrades); undocumented privileged labels documented
+
+  - omg.rs: pre-parse fast paths honor --json (list threads json through
+
+runtimes; explicit defers); unknown flags defer to clap
+
+  - omg.rs/runtimes.rs: JSON output for installed runtime versions
+
+(list_versions_sync/list_versions take json flag)
+
+  - omg.rs: which failures exit non-zero with actionable context
+
+  - omg.rs: single dispatcher (blanket Commands runner impl removed);
+
+canonical analytics command names; RUST_LOG honored verbatim with
+
+-v mapped to WARN/INFO/DEBUG/TRACE; daemon-start errors reported once
+
+  - omg-fast.rs: protocol errors exit non-zero; shared socket/status paths
+
+via core::paths; actionable status-file diagnostics
+
+  - commands.rs: ValueEnum history --type filter; panic-safe short_id;
+
+dead config fn and unused re-exports removed
+
+  - args.rs/security.rs: dead --vulns flag removed; Completions shell as
+
+ShellKind ValueEnum with pwsh alias
+
 - Harden self-update integrity, credential safety, and fail-closed paths
 
 Verifies self-update archives against the pinned SHA-256 sidecar before
@@ -1093,6 +1225,38 @@ which newer clippy versions flag as an error with -D warnings.
 
 ### 👷 CI/CD
 
+- Fix workflows and installer; refresh docs for current CLI
+
+Fixes from audit-quality report (/tmp/omg-fleet/audit-quality.md):
+
+  - workflows: toolchain pins aligned to rust-toolchain.toml (1.93.1);
+
+benchmark gate checks the artifact benchmark-hyperfine.sh actually
+
+writes; benchmark triggers include benches/scripts; changelog push uses
+
+explicit ref; dead Windows-era zip glob and artifacts removed
+
+  - install.sh: interactive prompts read /dev/tty so curl|bash cannot
+
+consume script bytes; libarchive required only for arch builds with
+
+correct Debian package name; EXIT traps chained; tput guarded; fish
+
+PATH dedup fixed; unset SHELL guarded
+
+  - scripts: perf-regression gate fails closed on unreadable baseline and
+
+README matches the real interface; add debian-smoke-test.sh
+
+  - fuzz: MSRV aligned to 1.93.1
+
+  - docs: option tables for search/install/remove/update regenerated from
+
+--help; rollback/HoldPkg/IgnorePkg and multi-cache semantics documented
+
+across history/faq/cli
+
 - Harden release and mutation quality gates
 - Harden workflow credentials and release inputs
 - Enforce a valid supply-chain policy
@@ -1320,6 +1484,32 @@ dependency-type: indirect
 ...
 
 ### 🔒 Security
+
+- Align suites with current contracts and fix harness hazards
+
+Fixes from audit-quality report (/tmp/omg-fleet/audit-quality.md):
+
+  - delete tests of deliberately removed surfaces (outdated --security, pin)
+
+  - clear_license isolates through OMG_DATA_DIR (no longer deletes the
+
+developer's real license)
+
+  - run_omg harness drains pipes concurrently with timeout enforcement
+
+  - unsafe env mutation replaced with scoped guards in listed suites
+
+  - list --explicit test asserted broken fast-path behavior; now asserts
+
+the documented 'omg explicit' contract
+
+  - absolute_coverage uses per-group runner types after dispatch seam change
+
+  - telemetry platform allowlist drops removed windows target
+
+  - daemon lifecycle test replaces fixed sleep with bounded poll
+
+  - vacuous tick test and over-mocked distro detection test corrected
 
 - Merge pull request [#35](https://github.com/PyRo1121/omg/issues/35) from PyRo1121/renovate/crate-git2-vulnerability
 
@@ -3117,17 +3307,17 @@ Complete Documentation:
 
 Optimization Breakdown:
 
-  - Commit 362d40f: Arc + HTTP client (7-15% gain)
+  - Commit 42eb7ea: Arc + HTTP client (7-15% gain)
 
-  - Commit 8effd34: Cow<str> + const fn (3-8% gain)
+  - Commit c58b6be: Cow<str> + const fn (3-8% gain)
 
-  - Commit c429004: Clippy cleanup (0 warnings)
+  - Commit a4d5947: Clippy cleanup (0 warnings)
 
-  - Commit 02b2436: Inline hot paths (1-3% gain)
+  - Commit 52aaf4e: Inline hot paths (1-3% gain)
 
-  - Commit 18619cc: Benchmark documentation
+  - Commit fce4091: Benchmark documentation
 
-  - Commit 73966c0: Artifact management
+  - Commit 645151d: Artifact management
 
 Quality Metrics:
 
@@ -4309,7 +4499,6 @@ Next: Priority 3 (nice-to-have: cheat sheet, video tutorials, translations)
 
 ### 🔧 Maintenance
 
-- Sync site install script with main install.sh
 - Ignore benchmark_results directory
 
 Add benchmark_results/ to .gitignore since it contains generated
@@ -6138,7 +6327,7 @@ NEW FILES:
 
 Trivial change to trigger full CI with the cross-platform fixes and
 
-increased timeout. All code fixes from f9fc64a are ready for validation.
+increased timeout. All code fixes from 66ae023 are ready for validation.
 
 ### 🧪 Testing
 
@@ -8145,9 +8334,6 @@ Created BackgroundMesh component using Three.js to provide a flowing,
 
 glowing 3D wireframe background. Integrated it into the main App component.
 
-### 📚 Documentation
-
-- Add a detailed implementation plan for the pyro1121.com site redesign and update built frontend assets
 ### 🔧 Maintenance
 
 - Add dependencies for 3D, styling, and markdown
