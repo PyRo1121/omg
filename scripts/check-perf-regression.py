@@ -15,9 +15,10 @@ def extract_search_time_from_hyperfine(json_path):
         with open(json_path, 'r') as f:
             data = json.load(f)
         
-        # Find the "omg search" result
+        # Find the OMG search result (benchmark-hyperfine.sh exports it with
+        # --command-name "OMG (Daemon)")
         for result in data.get('results', []):
-            if 'omg search' in result.get('command', ''):
+            if 'omg' in result.get('command', '').lower():
                 # Convert seconds to milliseconds
                 return result['mean'] * 1000
         
@@ -58,8 +59,8 @@ def check_regression():
         with open(latest_path, 'r') as f:
             baseline = json.load(f)
     except Exception as e:
-        print(f"Error loading baseline: {e}")
-        return 0
+        print(f"Failing closed: could not load baseline {latest_path}: {e}")
+        return 1
 
     current_search_ms = None
     for json_path in hyperfine_json_paths:
@@ -72,10 +73,6 @@ def check_regression():
     
     if current_search_ms is None:
         print("❌ Could not extract current search time from any source.")
-        return 1
-
-    if current_search_ms is None:
-        print("Could not find search performance in current report.")
         return 1
 
     baseline_search_ms = baseline.get('search_ms')

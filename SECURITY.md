@@ -76,18 +76,9 @@ OMG relies on several third-party crates. We regularly audit dependencies for se
 
 **Current Known Issues:**
 
-1. **libscoop (Windows feature only):**
-   - Dependency: `remove_dir_all 0.7.0`
-   - Issue: Race condition (RUSTSEC-2023-0018)
-   - Impact: Only affects Windows builds with `--features windows`
-   - Mitigation: Waiting for upstream libscoop update
-   - Workaround: Use Linux/macOS, or avoid Windows feature
+No known dependency vulnerabilities are accepted. Release gates run `cargo audit`; yanked transitive packages are tracked separately from security advisories.
 
-2. **debian-packaging (Debian feature only):**
-   - Dependency: `async-std 1.13.2`
-   - Issue: Unmaintained (RUSTSEC-2025-0052)
-   - Impact: Only affects Debian/Ubuntu builds
-   - Mitigation: Monitoring for replacement or upstream fix
+Native Windows is not supported. Windows users should run OMG inside WSL, where the installed Linux distribution determines the package backend.
 
 ### Privilege Escalation
 

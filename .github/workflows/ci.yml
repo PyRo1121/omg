@@ -111,7 +111,7 @@ jobs:
       - name: Install Rust
         uses: dtolnay/rust-toolchain@4360b52568e2003a75bf9bc1d59f33a8e3fc893c # stable
         with:
-          toolchain: "1.93.0"
+          toolchain: "1.93.1"
           components: rustfmt, clippy
 
       - name: Setup cache
@@ -168,7 +168,7 @@ jobs:
             setup: |
               pacman -Syu --noconfirm
               pacman -S --noconfirm --needed base-devel git pkgconf openssl libarchive clang cmake curl
-              curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --profile minimal --default-toolchain 1.93.0
+              curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --profile minimal --default-toolchain 1.93.1
               echo "$HOME/.cargo/bin" >> $GITHUB_PATH
               "$HOME/.cargo/bin/rustup" component add clippy rustfmt
 
@@ -181,7 +181,7 @@ jobs:
               DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
                 ca-certificates curl git build-essential pkg-config \
                 libssl-dev libapt-pkg-dev clang cmake zlib1g-dev liblzma-dev libbz2-dev
-              curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --profile minimal --default-toolchain 1.93.0
+              curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --profile minimal --default-toolchain 1.93.1
               echo "$HOME/.cargo/bin" >> $GITHUB_PATH
               "$HOME/.cargo/bin/rustup" component add clippy
 
@@ -194,7 +194,7 @@ jobs:
               DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
                 ca-certificates curl git build-essential pkg-config \
                 libssl-dev libapt-pkg-dev clang cmake zlib1g-dev liblzma-dev libbz2-dev
-              curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --profile minimal --default-toolchain 1.93.0
+              curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --profile minimal --default-toolchain 1.93.1
               echo "$HOME/.cargo/bin" >> $GITHUB_PATH
               "$HOME/.cargo/bin/rustup" component add clippy
 
@@ -207,7 +207,7 @@ jobs:
                 rpm dnf sqlite yum-utils fedora-release
               rpm --initdb
               dnf makecache --refresh
-              curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --profile minimal --default-toolchain 1.93.0
+              curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --profile minimal --default-toolchain 1.93.1
               echo "$HOME/.cargo/bin" >> $GITHUB_PATH
               "$HOME/.cargo/bin/rustup" component add clippy rustfmt
 
@@ -314,7 +314,7 @@ jobs:
           if-no-files-found: error
 
   #############################################################################
-  # STAGE 2b: Native Platform Builds (macOS, Windows)
+  # STAGE 2b: Native Platform Build (macOS)
   #############################################################################
   macos:
     name: "macOS (ARM64)"
@@ -367,62 +367,6 @@ jobs:
           path: target/release/omg
           retention-days: 7
 
-  windows:
-    name: "Windows (x64)"
-    needs: quick-gate
-    if: needs.quick-gate.outputs.should-build == 'true' || github.event_name == 'workflow_dispatch' || github.event_name == 'merge_group'
-    runs-on: windows-latest
-    timeout-minutes: 60
-    steps:
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
-        with:
-          persist-credentials: false
-
-      - name: Install Rust
-        uses: dtolnay/rust-toolchain@4360b52568e2003a75bf9bc1d59f33a8e3fc893c # stable
-
-      - name: Setup cache
-        if: inputs.skip-cache != true
-        uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2
-        with:
-          prefix-key: "v1-windows"
-
-      # sccache temporarily disabled due to service outage
-
-      - name: Build
-        run: cargo build --release --no-default-features --features windows,license --locked
-
-      - name: Install nextest
-        uses: taiki-e/install-action@68250fb3d551d72befef105162372ebb3e8016e0 # nextest
-
-      - name: Run unit tests
-        run: cargo nextest run --lib --no-default-features --features windows,license --locked --profile ci
-
-      - name: Install Scoop
-        shell: pwsh
-        run: |
-          if (!(Get-Command scoop -ErrorAction SilentlyContinue)) {
-            irm get.scoop.sh -outfile 'install.ps1'
-            .\install.ps1 -RunAsAdmin
-          }
-
-      - name: Run Windows platform integration tests
-        shell: pwsh
-        run: |
-          cargo test --test windows_tests --no-default-features --features windows,license --locked -- --test-threads=1
-
-      - name: Verify binary
-        run: |
-          .\target\release\omg.exe --version
-          .\target\release\omg.exe --help | Select-Object -First 20
-
-      - name: Upload binary
-        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6
-        with:
-          name: omg-windows-x64
-          path: target/release/omg.exe
-          retention-days: 7
-
   #############################################################################
   # STAGE 2c: Code Coverage Per Platform
   #############################################################################
@@ -443,7 +387,7 @@ jobs:
             setup: |
               pacman -Syu --noconfirm
               pacman -S --noconfirm --needed base-devel git pkgconf openssl libarchive clang cmake curl
-              curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --profile minimal --default-toolchain 1.93.0 --component llvm-tools-preview
+              curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --profile minimal --default-toolchain 1.93.1 --component llvm-tools-preview
               echo "$HOME/.cargo/bin" >> $GITHUB_PATH
             test_args: "--lib --test arch_tests --test cross_platform_mock_tests"
 
@@ -456,7 +400,7 @@ jobs:
               DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
                 ca-certificates curl git build-essential pkg-config \
                 libssl-dev libapt-pkg-dev clang cmake zlib1g-dev liblzma-dev libbz2-dev
-              curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --profile minimal --default-toolchain 1.93.0 --component llvm-tools-preview
+              curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --profile minimal --default-toolchain 1.93.1 --component llvm-tools-preview
               echo "$HOME/.cargo/bin" >> $GITHUB_PATH
             test_args: "--lib --test debian_tests --test cross_platform_mock_tests"
 
@@ -470,7 +414,7 @@ jobs:
                 rpm dnf sqlite yum-utils fedora-release
               rpm --initdb
               dnf makecache --refresh
-              curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --profile minimal --default-toolchain 1.93.0 --component llvm-tools-preview
+              curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --profile minimal --default-toolchain 1.93.1 --component llvm-tools-preview
               echo "$HOME/.cargo/bin" >> $GITHUB_PATH
             test_args: "--lib --test fedora_tests --test cross_platform_mock_tests"
 
@@ -481,13 +425,6 @@ jobs:
               rustup component add llvm-tools-preview
               brew list wget &>/dev/null || brew install wget
             test_args: "--lib --test macos_tests --test cross_platform_mock_tests"
-
-          - platform: windows
-            os: windows-latest
-            features: windows,license
-            setup: |
-              rustup component add llvm-tools-preview
-            test_args: "--lib --test windows_tests --test cross_platform_mock_tests"
 
     container: ${{ matrix.container }}
 
@@ -513,15 +450,6 @@ jobs:
       - name: Setup environment (native)
         if: matrix.container == null
         run: ${{ matrix.setup }}
-
-      - name: Install Scoop (Windows)
-        if: matrix.platform == 'windows'
-        shell: pwsh
-        run: |
-          if (!(Get-Command scoop -ErrorAction SilentlyContinue)) {
-            irm get.scoop.sh -outfile 'install.ps1'
-            .\install.ps1 -RunAsAdmin
-          }
 
       - name: Install cargo-llvm-cov
         uses: taiki-e/install-action@3ee274a48739f9c49921feda61cb199dc7520e62 # cargo-llvm-cov
@@ -666,15 +594,7 @@ jobs:
   #############################################################################
   ci-success:
     name: "CI Success"
-    needs:
-      [
-        quick-gate,
-        linux-matrix,
-        macos,
-        windows,
-        coverage-aggregate,
-        integration,
-      ]
+    needs: [quick-gate, linux-matrix, macos, coverage-aggregate, integration]
     if: always()
     runs-on: ubuntu-latest
     timeout-minutes: 5
@@ -684,7 +604,6 @@ jobs:
           QUICK_GATE: ${{ needs.quick-gate.result }}
           LINUX_MATRIX: ${{ needs.linux-matrix.result }}
           MACOS: ${{ needs.macos.result }}
-          WINDOWS: ${{ needs.windows.result }}
           COVERAGE: ${{ needs.coverage-aggregate.result }}
           INTEGRATION: ${{ needs.integration.result }}
         run: |
@@ -695,7 +614,6 @@ jobs:
           echo "| Quick Gate | $QUICK_GATE |" >> $GITHUB_STEP_SUMMARY
           echo "| Linux Matrix | $LINUX_MATRIX |" >> $GITHUB_STEP_SUMMARY
           echo "| macOS | $MACOS |" >> $GITHUB_STEP_SUMMARY
-          echo "| Windows | $WINDOWS |" >> $GITHUB_STEP_SUMMARY
           echo "| Integration | $INTEGRATION |" >> $GITHUB_STEP_SUMMARY
           echo "| Coverage | $COVERAGE |" >> $GITHUB_STEP_SUMMARY
 
@@ -707,7 +625,6 @@ jobs:
           declare -A required_results=(
             ["Linux Matrix"]="$LINUX_MATRIX"
             ["macOS"]="$MACOS"
-            ["Windows"]="$WINDOWS"
             ["Integration"]="$INTEGRATION"
             ["Coverage"]="$COVERAGE"
           )

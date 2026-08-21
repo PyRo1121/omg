@@ -30,9 +30,6 @@ cargo clippy --all-targets --no-default-features --features fedora,license --loc
 
 # macOS
 cargo clippy --all-targets --no-default-features --features macos,license --locked -- -D warnings
-
-# Windows
-cargo clippy --all-targets --no-default-features --features windows,license --locked -- -D warnings
 ```
 
 ## 3) Platform Build Prerequisites
@@ -41,13 +38,12 @@ cargo clippy --all-targets --no-default-features --features windows,license --lo
 - Arch (`--features arch`): `libalpm` toolchain
 - Fedora (`--features fedora`): rpm/sqlite development stack
 - macOS: Xcode Command Line Tools
-- Windows: Visual Studio Build Tools
 
 ## 4) CI Expectations
 
 - Quick gate passes (`fmt`, portable `clippy`, `check`, portable tests)
 - Linux matrix passes (Arch, Debian, Fedora)
-- Native matrix passes (macOS, Windows)
+- Native macOS job passes; WSL is covered by the matching Linux distribution job
 - Coverage job completes and uploads merged report
 
 ## 5) Ship Criteria

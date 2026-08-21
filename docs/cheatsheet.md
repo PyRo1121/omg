@@ -13,7 +13,7 @@ description: Quick reference for all OMG commands
 ## 🚀 Installation & Setup
 
 ```bash
-# Install OMG (Linux/macOS/Windows)
+# Install OMG (Linux/macOS, including Linux inside WSL)
 curl -fsSL https://pyro1121.com/install.sh | bash
 
 # Shell integration (auto-switch runtimes)

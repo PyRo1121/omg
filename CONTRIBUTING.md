@@ -13,7 +13,7 @@ Thank you for your interest in contributing to OMG! This guide will help you get
   - **Arch Linux:** `base-devel`, `libalpm` (installed by default)
   - **Debian/Ubuntu:** `build-essential`, `libapt-pkg-dev`
   - **macOS:** Xcode Command Line Tools
-  - **Windows:** MSVC or MinGW-w64
+  - **WSL:** Use the prerequisites for the installed Linux distribution; native Windows development is unsupported
 
 ### Setup Development Environment
 

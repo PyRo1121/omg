@@ -36,7 +36,8 @@ Because of the reaction we want you to have when you see how fast it is. 12-24x 
 | Debian/Ubuntu | 🔶 Experimental | No AUR equivalent |
 | Fedora/RHEL | 🔜 Planned | Coming soon |
 | macOS | 🔜 Planned | Homebrew integration |
-| Windows | 🔜 Planned | Chocolatey/Winget |
+| WSL | ✅ Supported | Uses the installed Linux distribution backend |
+| Native Windows | ❌ Unsupported | Use WSL |
 
 ### How do I install OMG?
 
@@ -297,6 +298,7 @@ omg rollback abc123
 - Official packages only (AUR rollback planned)
 - Requires old package versions in cache
 - May need manual dependency resolution
+- `HoldPkg` and `IgnorePkg` entries in `pacman.conf` are enforced: held packages cannot be removed and ignored packages are excluded from updates
 
 ---
 

@@ -10,11 +10,15 @@ Complete installation instructions for OMG across all supported platforms.
 curl -fsSL https://pyro1121.com/install.sh | bash
 ```
 
-### Windows
+### Windows Subsystem for Linux
 
-```powershell
-irm https://pyro1121.com/install.ps1 | iex
+Run the Linux installer inside your WSL distribution:
+
+```bash
+curl -fsSL https://pyro1121.com/install.sh | bash
 ```
+
+Native Windows is not supported.
 
 ---
 
@@ -114,53 +118,15 @@ curl -fsSL https://pyro1121.com/install.sh | bash
 
 ---
 
-### 🪟 Windows
+### 🪟 Windows Subsystem for Linux
 
-OMG provides **three installation methods** for Windows:
+Run the universal Linux installer from inside the WSL distribution:
 
-#### Option 1: PowerShell Installer (Recommended)
-
-**One-line install:**
-```powershell
-irm https://pyro1121.com/install.ps1 | iex
+```bash
+curl -fsSL https://pyro1121.com/install.sh | bash
 ```
 
-**With options:**
-```powershell
-# Disable telemetry
-irm https://pyro1121.com/install.ps1 | iex -NoTelemetry
-
-# Skip shell integration
-irm https://pyro1121.com/install.ps1 | iex -SkipShell
-
-# Install to custom directory
-irm https://pyro1121.com/install.ps1 | iex -InstallDir "C:\Tools\omg"
-```
-
-#### Option 2: Scoop Package Manager
-
-```powershell
-# Add OMG bucket
-scoop bucket add omg https://github.com/PyRo1121/scoop-omg
-
-# Install OMG
-scoop install omg
-
-# Update OMG
-scoop update omg
-```
-
-#### Option 3: Windows Subsystem for Linux (WSL)
-
-```powershell
-wsl -- curl -fsSL https://pyro1121.com/install.sh | bash
-```
-
-**Features:**
-- Pure Rust Scoop integration via libscoop
-- 35-73x faster than traditional Scoop
-- Zero subprocess calls
-- Native Windows binaries
+OMG detects and uses the package backend for the installed Linux distribution. Native Windows, PowerShell, Scoop, and Winget are not supported.
 
 ---
 
@@ -172,7 +138,6 @@ wsl -- curl -fsSL https://pyro1121.com/install.sh | bash
   - Linux: `gcc`, `pkg-config`, `libssl-dev`
   - Debian/Ubuntu builds (`--features debian`): `libapt-pkg-dev`, `clang`, `cmake`
   - macOS: Xcode Command Line Tools
-  - Windows: Visual Studio Build Tools
 
 **Install via Cargo:**
 ```bash
@@ -205,9 +170,6 @@ cargo build --release --features fedora
 
 # macOS (Homebrew integration)
 cargo build --release --features macos
-
-# Windows (Scoop integration)
-cargo build --release --features windows
 ```
 
 ---
@@ -234,12 +196,6 @@ source ~/.zshrc
 ```fish
 echo 'omg hook fish | source' >> ~/.config/fish/config.fish
 source ~/.config/fish/config.fish
-```
-
-**PowerShell (Windows):**
-```powershell
-echo 'Invoke-Expression (& omg hook powershell)' >> $PROFILE
-. $PROFILE
 ```
 
 ### 2. Verify Installation
@@ -318,11 +274,6 @@ omg self-update
 yay -Syu omg-bin
 ```
 
-**Scoop (Windows):**
-```powershell
-scoop update omg
-```
-
 **Homebrew (macOS):**
 ```bash
 brew upgrade omg
@@ -356,19 +307,6 @@ yay -R omg-bin
 brew uninstall omg
 ```
 
-### Windows
-
-**Scoop:**
-```powershell
-scoop uninstall omg
-```
-
-**Manual (PowerShell installer):**
-```powershell
-Remove-Item -Recurse -Force "$env:LOCALAPPDATA\Programs\omg"
-Remove-Item -Recurse -Force "$env:APPDATA\omg"
-```
-
 ---
 
 ## Troubleshooting
@@ -383,11 +321,6 @@ echo $PATH | grep -o "$HOME/.local/bin"
 
 # Add to PATH if missing
 echo 'export PATH="$HOME/.local/bin:$PATH"' >> ~/.bashrc
-```
-
-**Windows:**
-```powershell
-$env:Path -split ';' | Select-String "omg"
 ```
 
 ### Permission denied

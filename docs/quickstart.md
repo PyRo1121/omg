@@ -46,12 +46,15 @@ brew install omg
 curl -fsSL https://pyro1121.com/install.sh | bash
 ```
 
-#### Windows (Scoop)
+#### Windows Subsystem for Linux
 
-```powershell
-# Coming soon - use WSL installer for now
-wsl -- curl -fsSL https://pyro1121.com/install.sh | bash
+Run inside your WSL distribution:
+
+```bash
+curl -fsSL https://pyro1121.com/install.sh | bash
 ```
+
+Native Windows is not supported.
 
 ### Build from Source
 

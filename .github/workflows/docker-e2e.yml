@@ -48,7 +48,7 @@ jobs:
             bash -c '
               pacman -Syu --noconfirm
               pacman -S --noconfirm --needed base-devel git pkgconf openssl libarchive clang cmake curl
-              curl --proto "=https" --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --profile minimal --default-toolchain 1.93.0
+              curl --proto "=https" --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --profile minimal --default-toolchain 1.93.1
               export PATH="$HOME/.cargo/bin:$PATH"
               cargo build --release --features arch --locked
             '

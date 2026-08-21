@@ -29,7 +29,8 @@ omg rollback
 ### Storage Location
 
 Transaction history is stored in JSON format:
-```
+
+```text
 ~/.local/share/omg/history.json
 ```
 
@@ -38,7 +39,7 @@ Transaction history is stored in JSON format:
 The history tracks four types of operations:
 
 | Type | Description | Icon in TUI |
-|------|-------------|-------------|
+| ------ | ------------- | ------------- |
 | `Install` | Package installations | Install |
 | `Remove` | Package removals | Remove |
 | `Update` | Package upgrades | Update |
@@ -70,7 +71,7 @@ pub struct PackageChange {
 - **Maximum entries**: 1000 transactions
 - **Automatic pruning**: When limit reached, oldest entries are removed
 - **Persistence**: JSON format for human readability and easy backup
-- **Corruption handling**: Gracefully handles corrupted files (returns empty history)
+- **Corruption handling**: Rejects malformed history and preserves the original file for recovery
 
 ## Viewing History
 
@@ -83,7 +84,7 @@ omg history --limit 10
 
 ### Output Format
 
-```
+```text
 📋 Transaction History (last 20)
 
 ┌─────────────────────────────────────────────────────────────────┐
@@ -98,6 +99,7 @@ omg history --limit 10
 ```
 
 Symbols used:
+
 - `+` New package installed
 - `-` Package removed
 - `↑` Package upgraded (shows old → new version)
@@ -109,9 +111,9 @@ Symbols used:
 Rollback reverses a transaction by performing the opposite operation:
 
 | Original Operation | Rollback Action |
-|-------------------|-----------------|
+| ------------------- | ----------------- |
 | Install | Remove the installed packages |
-| Remove | Reinstall the removed packages (at current version) |
+| Remove | Restore the recorded previous versions when available |
 | Update | Downgrade to previous versions (if available in cache) |
 | Sync | No action (database sync cannot be rolled back) |
 
@@ -123,10 +125,14 @@ omg rollback abc123
 ```
 
 The rollback will:
+
 1. Find the transaction matching the ID prefix
-2. Display what will be rolled back
-3. Ask for confirmation
-4. Execute the reverse operations
+2. Reject failed or partially applied transactions and unsupported sources such as AUR updates
+3. Display what will be rolled back
+4. Ask for confirmation
+5. Execute the reverse operation
+
+On Arch Linux, restoring a removed or updated package requires the exact old package archive in a configured pacman cache (`CacheDir` entries in `pacman.conf`). OMG fails before changing anything if any required archive is missing. Packages listed in `HoldPkg` cannot be removed by rollback, and rollback restores only official-repository packages.
 
 ### Interactive Rollback
 
@@ -135,6 +141,7 @@ omg rollback
 ```
 
 This presents an interactive selection of recent transactions using `dialoguer`:
+
 1. Shows the last 10 transactions
 2. Displays transaction details (type, time, packages)
 3. Allows selection via arrow keys
@@ -193,22 +200,25 @@ pub async fn rollback(id: Option<String>) -> Result<()> {
 2. **Downgrade availability**: Update rollback requires old package versions in pacman cache
 3. **No automatic dependency resolution**: May leave dependency inconsistencies
 4. **Sync cannot be rolled back**: Database sync is informational only
-5. **Remove reinstalls at current version**: Cannot restore the exact removed version
+5. **Failed transactions are not automatic**: Partially applied operations require manual recovery
 
 ### Downgrade Requirements
 
 For update rollback to work, previous versions must exist in:
-```
+
+```text
 /var/cache/pacman/pkg/
 ```
 
 Configure pacman to retain old versions:
+
 ```ini
 # /etc/pacman.conf
 CleanMethod = KeepCurrent
 ```
 
 Or use `paccache` to manage cache retention:
+
 ```bash
 # Keep last 3 versions of each package
 paccache -rk3
@@ -273,6 +283,7 @@ if let Ok(entries) = history_mgr.load() {
 ```
 
 Each entry shows:
+
 - Timestamp (time only: HH:MM:SS)
 - Transaction type
 - Success/failure status
@@ -283,6 +294,7 @@ Each entry shows:
 ### Regular Backups
 
 While history tracks changes, consider additional safeguards:
+
 - **System snapshots**: Use Btrfs/ZFS snapshots before major updates
 - **Package list export**: `pacman -Qqe > packages.txt`
 - **Config backups**: Keep `/etc` in version control
@@ -315,6 +327,7 @@ omg rollback
 ### History file not found
 
 The file is created automatically on first package operation. If missing:
+
 ```bash
 # Ensure directory exists
 mkdir -p ~/.local/share/omg
@@ -326,12 +339,14 @@ ls -la ~/.local/share/omg/
 ### Corrupted history file
 
 If `history.json` is corrupted, OMG gracefully handles it:
+
 ```rust
 let history: Vec<Transaction> = serde_json::from_str(&content)
     .unwrap_or_default();  // Returns empty Vec on error
 ```
 
 To manually reset:
+
 ```bash
 rm ~/.local/share/omg/history.json
 ```
@@ -339,11 +354,13 @@ rm ~/.local/share/omg/history.json
 ### Rollback fails
 
 1. **Check package cache**:
+
    ```bash
    ls /var/cache/pacman/pkg/ | grep <package>
    ```
 
 2. **Manual downgrade** (if cache has old version):
+
    ```bash
    sudo pacman -U /var/cache/pacman/pkg/<package>-<version>.pkg.tar.zst
    ```
@@ -353,7 +370,7 @@ rm ~/.local/share/omg/history.json
 ## Source Files
 
 | File | Purpose |
-|------|---------|
+| ------ | --------- |
 | [core/history.rs](file:///home/pyro1121/Documents/code/filemanager/omg/src/core/history.rs) | HistoryManager, Transaction, PackageChange structs |
 | [cli/commands.rs](file:///home/pyro1121/Documents/code/filemanager/omg/src/cli/commands.rs) | `history` and `rollback` command implementations |
 | [cli/tui/app.rs](file:///home/pyro1121/Documents/code/filemanager/omg/src/cli/tui/app.rs) | History loading for TUI display |

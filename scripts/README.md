@@ -5,7 +5,7 @@ Utility scripts for development, testing, and CI of the OMG project.
 ## Quick Reference
 
 | Script | Purpose | Usage |
-|--------|---------|-------|
+| -------- | --------- | ------- |
 | `check-perf-regression.py` | Verify no performance regressions | `python3 scripts/check-perf-regression.py` |
 | `generate-benchmark-chart.py` | Create benchmark visualizations | `python3 scripts/generate-benchmark-chart.py` |
 | `extract-release-notes.sh` | Extract release notes for GitHub releases | `./scripts/extract-release-notes.sh` |
@@ -17,13 +17,17 @@ Utility scripts for development, testing, and CI of the OMG project.
 **Purpose:** Automated performance regression detection for CI/CD
 
 **Usage:**
+
 ```bash
 python3 scripts/check-perf-regression.py
-python3 scripts/check-perf-regression.py --baseline 10.0
-python3 scripts/check-perf-regression.py benchmark_results/search.json
 ```
 
-**How it works:** Reads hyperfine JSON output, compares against a baseline threshold, and exits non-zero on regression.
+The script takes no arguments. It reads the baseline from
+`benchmarks/summary.json` and the current search time from
+`benchmark_results/search.json` (hyperfine export), falling back to
+`benchmark_results.json` or `benchmark_report.md`.
+
+**How it works:** Reads hyperfine JSON output, compares against a 2x baseline threshold, and exits non-zero on regression — or when the baseline is missing fields, unreadable, or corrupt (fail closed).
 
 **Used in:** `.github/workflows/benchmark.yml`
 
@@ -34,6 +38,7 @@ python3 scripts/check-perf-regression.py benchmark_results/search.json
 **Purpose:** Create visual benchmark comparison charts
 
 **Usage:**
+
 ```bash
 python3 scripts/generate-benchmark-chart.py
 python3 scripts/generate-benchmark-chart.py --data benchmark_results/
@@ -51,6 +56,7 @@ python3 scripts/generate-benchmark-chart.py --output docs/assets/
 **Purpose:** Extract release notes from the changelog for GitHub releases
 
 **Usage:**
+
 ```bash
 ./scripts/extract-release-notes.sh
 ./scripts/extract-release-notes.sh v0.1.204

@@ -15,8 +15,8 @@ This guide documents every OMG command with detailed explanations, examples, and
 ## 📋 Command Overview
 
 | Category | Commands |
-|----------|----------|
-| **Package Management** | `search`, `install`, `remove`, `update`, `info`, `clean`, `explicit`, `sync`, `why`, `outdated`, `pin`, `size`, `blame` |
+| ---------- | ---------- |
+| **Package Management** | `search`, `install`, `remove`, `update`, `info`, `clean`, `explicit`, `sync`, `why`, `outdated`, `size`, `blame` |
 | **Runtime Management** | `use`, `list`, `which` |
 | **Shell Integration** | `hook`, `completions` |
 | **Security & Audit** | `audit`, `status`, `doctor` |
@@ -44,24 +44,28 @@ omg search <query> [OPTIONS]
 ```
 
 **Options:**
+
 | Option | Short | Description |
 |--------|-------|-------------|
-| `--detailed` | `-d` | Show detailed AUR info (votes, popularity) |
-| `--interactive` | `-i` | Interactive mode — select packages to install |
+| `--detailed` | `-d` | Show detailed source metadata (votes, popularity where available) |
+| `--no-aur` | | Search official repositories only (skip community sources) |
+| `--limit <LIMIT>` | `-l` | Maximum number of results to display (default: 50) |
 
 **Examples:**
+
 ```bash
 # Basic search
 omg search firefox
 
-# Interactive search (select to install)
-omg search browser -i
-
 # Detailed search with AUR votes/popularity
 omg search spotify -d
+
+# Limit results
+omg search node --limit 10
 ```
 
 **Performance:**
+
 - With daemon: ~5-11ms
 - Without daemon: ~50-200ms
 
@@ -76,11 +80,14 @@ omg install <packages...> [OPTIONS]
 ```
 
 **Options:**
+
 | Option | Short | Description |
 |--------|-------|-------------|
 | `--yes` | `-y` | Skip confirmation prompt |
+| `--dry-run` | | Show what would be installed without making changes |
 
 **Examples:**
+
 ```bash
 # Install single package
 omg install neovim
@@ -96,6 +103,7 @@ omg install neovim -y
 ```
 
 **Security:**
+
 - Packages are graded (LOCKED, VERIFIED, COMMUNITY, RISK)
 - Policy enforcement applied before installation
 - PGP signatures verified for official packages
@@ -111,11 +119,15 @@ omg remove <packages...> [OPTIONS]
 ```
 
 **Options:**
+
 | Option | Short | Description |
 |--------|-------|-------------|
-| `--recursive` | `-r` | Also remove unneeded dependencies |
+| `--recursive` | `-r` | Also remove unused dependencies |
+| `--yes` | `-y` | Skip confirmation prompt |
+| `--dry-run` | | Show what would be removed without making changes |
 
 **Examples:**
+
 ```bash
 # Remove single package
 omg remove firefox
@@ -138,20 +150,30 @@ omg update [OPTIONS]
 ```
 
 **Options:**
+
 | Option | Short | Description |
 |--------|-------|-------------|
 | `--check` | `-c` | Only check for updates, don't install |
+| `--yes` | `-y` | Skip confirmation prompt |
+| `--dry-run` | | Show what would be updated without making changes |
+| `--fast` | `-f` | Fast mode: sync + upgrade in a single operation (no preview) |
+| `--turbo` | `-T` | Turbo mode: skip sync, use cached data, parallel extraction (fastest) |
 
 **Examples:**
+
 ```bash
 # Update all packages (official + AUR)
 omg update
 
 # Check for updates only
 omg update --check
+
+# Fast path without preview
+omg update --fast
 ```
 
 **Update Flow:**
+
 1. Sync package databases
 2. Update official packages first
 3. Build and update AUR packages
@@ -168,6 +190,7 @@ omg info <package>
 ```
 
 **Examples:**
+
 ```bash
 # Get info about a package
 omg info firefox
@@ -177,6 +200,7 @@ omg info visual-studio-code-bin
 ```
 
 **Output includes:**
+
 - Package name and version
 - Description
 - Repository (official/AUR)
@@ -185,6 +209,7 @@ omg info visual-studio-code-bin
 - Security grade
 
 **Performance:**
+
 - With daemon: ~3-6ms (cached)
 - Without daemon: ~50-200ms
 
@@ -199,14 +224,16 @@ omg clean [OPTIONS]
 ```
 
 **Options:**
+
 | Option | Short | Description |
-|--------|-------|-------------|
+| -------- | ------- | ------------- |
 | `--orphans` | `-o` | Remove orphaned packages |
 | `--cache` | `-c` | Clear package cache |
 | `--aur` | `-a` | Clear AUR build cache |
 | `--all` | | Clear everything |
 
 **Examples:**
+
 ```bash
 # Remove orphaned packages
 omg clean --orphans
@@ -232,11 +259,13 @@ omg explicit [OPTIONS]
 ```
 
 **Options:**
+
 | Option | Short | Description |
 |--------|-------|-------------|
 | `--count` | `-c` | Only show count |
 
 **Examples:**
+
 ```bash
 # List all explicit packages
 omg explicit
@@ -246,6 +275,7 @@ omg explicit --count
 ```
 
 **Performance:**
+
 - With daemon: <2ms
 - Without daemon: ~14ms
 
@@ -260,6 +290,7 @@ omg sync
 ```
 
 **Examples:**
+
 ```bash
 # Sync databases
 omg sync
@@ -276,11 +307,13 @@ omg why <package> [OPTIONS]
 ```
 
 **Options:**
+
 | Option | Short | Description |
 |--------|-------|-------------|
 | `--reverse` | `-r` | Show what depends on this package |
 
 **Examples:**
+
 ```bash
 # See why a package is installed
 omg why libxcb
@@ -290,6 +323,7 @@ omg why openssl --reverse
 ```
 
 **Output includes:**
+
 - Dependency chain from explicit packages
 - Whether safe to remove
 - Number of dependents
@@ -305,52 +339,19 @@ omg outdated [OPTIONS]
 ```
 
 **Options:**
+
 | Option | Short | Description |
 |--------|-------|-------------|
-| `--security` | `-s` | Show only security updates |
 | `--json` | | Output as JSON |
 
 **Examples:**
+
 ```bash
 # List all outdated packages
 omg outdated
 
-# Show only security updates
-omg outdated --security
-
 # Machine-readable output
 omg outdated --json
-```
-
----
-
-### omg pin
-
-Pin packages to prevent updates.
-
-```bash
-omg pin <target> [OPTIONS]
-```
-
-**Options:**
-| Option | Short | Description |
-|--------|-------|-------------|
-| `--unpin` | `-u` | Remove pin |
-| `--list` | `-l` | List all pins |
-
-**Examples:**
-```bash
-# Pin a system package
-omg pin gcc
-
-# Pin a runtime version
-omg pin node@20.10.0
-
-# List all pins
-omg pin --list
-
-# Remove a pin
-omg pin gcc --unpin
 ```
 
 ---
@@ -364,12 +365,14 @@ omg size [OPTIONS]
 ```
 
 **Options:**
+
 | Option | Short | Description |
 |--------|-------|-------------|
 | `--tree <package>` | `-t` | Show dependency tree for package |
 | `--limit <N>` | `-l` | Number of packages to show (default: 20) |
 
 **Examples:**
+
 ```bash
 # Show largest packages
 omg size
@@ -392,12 +395,14 @@ omg blame <package>
 ```
 
 **Examples:**
+
 ```bash
 # See installation history for a package
 omg blame firefox
 ```
 
 **Output includes:**
+
 - Installation date/time
 - Whether installed explicitly or as dependency
 - Which package pulled it in (if dependency)
@@ -416,8 +421,9 @@ omg use <runtime> [version]
 ```
 
 **Supported Runtimes:**
+
 | Runtime | Aliases | Version Files |
-|---------|---------|---------------|
+| --------- | --------- | --------------- |
 | `node` | `nodejs` | `.nvmrc`, `.node-version` |
 | `bun` | `bunjs` | `.bun-version` |
 | `python` | `python3` | `.python-version` |
@@ -427,9 +433,11 @@ omg use <runtime> [version]
 | `java` | | `.java-version` |
 
 **100+ Additional Runtimes** (via built-in mise):
+
 - Deno, Elixir, Erlang, Zig, Nim, Swift, Kotlin, .NET, PHP, Perl, Lua, Julia, R, and more
 
 **Examples:**
+
 ```bash
 # Install and use Node.js 20
 omg use node 20.10.0
@@ -454,6 +462,7 @@ omg use elixir 1.16.0
 ```
 
 **How It Works:**
+
 1. Checks if version is installed
 2. Downloads if not installed
 3. Creates/updates `current` symlink
@@ -470,11 +479,13 @@ omg list [runtime] [OPTIONS]
 ```
 
 **Options:**
+
 | Option | Short | Description |
 |--------|-------|-------------|
 | `--available` | `-a` | Show versions available for download |
 
 **Examples:**
+
 ```bash
 # List all installed versions for all runtimes
 omg list
@@ -500,6 +511,7 @@ omg which <runtime>
 ```
 
 **Examples:**
+
 ```bash
 # Check active Node.js version
 omg which node
@@ -512,6 +524,7 @@ omg which rust
 ```
 
 **Version Detection Order:**
+
 1. Project-level version file (`.nvmrc`, etc.)
 2. Parent directory version files (walking up)
 3. Global `current` symlink
@@ -529,11 +542,13 @@ omg hook <shell>
 ```
 
 **Supported Shells:**
+
 - `zsh`
 - `bash`
 - `fish`
 
 **Examples:**
+
 ```bash
 # Get Zsh hook
 omg hook zsh
@@ -549,6 +564,7 @@ omg hook fish | source
 ```
 
 **Hook Features:**
+
 - PATH modification on directory change
 - Runtime version detection
 - Ultra-fast package count functions
@@ -564,11 +580,13 @@ omg completions <shell> [OPTIONS]
 ```
 
 **Options:**
+
 | Option | Description |
 |--------|-------------|
 | `--stdout` | Print to stdout instead of installing |
 
 **Examples:**
+
 ```bash
 # Install Zsh completions
 omg completions zsh > ~/.zsh/completions/_omg
@@ -593,8 +611,9 @@ omg audit [SUBCOMMAND]
 ```
 
 **Subcommands:**
+
 | Subcommand | Description |
-|------------|-------------|
+| ------------ | ------------- |
 | `scan` | Scan for vulnerabilities (default) |
 | `sbom` | Generate CycloneDX 1.5 SBOM |
 | `secrets` | Scan for leaked credentials |
@@ -604,13 +623,15 @@ omg audit [SUBCOMMAND]
 | `slsa <pkg>` | Check SLSA provenance |
 
 **Options for `log`:**
+
 | Option | Short | Description |
-|--------|-------|-------------|
+| -------- | ------- | ------------- |
 | `--limit` | `-l` | Number of entries to show (default: 20) |
 | `--severity` | `-s` | Filter by severity (debug, info, warning, error, critical) |
 | `--export` | `-e` | Export logs to a file (CSV or JSON) |
 
 **Examples:**
+
 ```bash
 # Vulnerability scan (default)
 omg audit
@@ -654,6 +675,7 @@ omg status
 ```
 
 **Output includes:**
+
 - Package counts (total, explicit, orphans)
 - Available updates
 - Active runtime versions
@@ -671,6 +693,7 @@ omg doctor
 ```
 
 **Checks performed:**
+
 - PATH configuration
 - Shell hook installation
 - Daemon connectivity
@@ -691,15 +714,17 @@ omg run <task> [-- <args...>] [OPTIONS]
 ```
 
 **Options:**
+
 | Option | Short | Description |
-|--------|-------|-------------|
+| -------- | ------- | ------------- |
 | `--watch` | `-w` | Watch mode: re-run task on file changes |
 | `--parallel` | `-p` | Run multiple comma-separated tasks in parallel |
 | `--runtime-backend <backend>` | | Force runtime backend (native, mise, native-then-mise) |
 
 **Supported Project Files:**
+
 | File | Runtime | Example |
-|------|---------|---------|
+| ------ | --------- | --------- |
 | `package.json` | npm/yarn/pnpm/bun | `omg run dev` → `npm run dev` |
 | `deno.json` | deno | `omg run dev` → `deno task dev` |
 | `Cargo.toml` | cargo | `omg run test` → `cargo test` |
@@ -712,6 +737,7 @@ omg run <task> [-- <args...>] [OPTIONS]
 | `build.gradle` | gradle | `omg run test` → `gradle test` |
 
 **Examples:**
+
 ```bash
 # Run development server
 omg run dev
@@ -730,6 +756,7 @@ omg run --runtime-backend mise dev
 ```
 
 **JavaScript Package Manager Priority:**
+
 1. `packageManager` field in package.json
 2. Lockfile detection: `bun.lockb` → `pnpm-lock.yaml` → `yarn.lock` → `package-lock.json`
 3. Default: bun (if available) → npm
@@ -747,8 +774,9 @@ omg new <stack> <name>
 ```
 
 **Available Stacks:**
+
 | Stack | Description |
-|-------|-------------|
+| ------- | ------------- |
 | `rust` | Rust CLI project |
 | `react` | React + Vite + TypeScript |
 | `node` | Node.js project |
@@ -756,6 +784,7 @@ omg new <stack> <name>
 | `go` | Go project |
 
 **Examples:**
+
 ```bash
 # Create Rust CLI project
 omg new rust my-cli
@@ -778,8 +807,9 @@ omg tool <SUBCOMMAND>
 ```
 
 **Subcommands:**
+
 | Subcommand | Description |
-|------------|-------------|
+| ------------ | ------------- |
 | `install <name>` | Install a tool |
 | `list` | List installed tools |
 | `remove <name>` | Remove a tool |
@@ -788,6 +818,7 @@ omg tool <SUBCOMMAND>
 | `registry` | Show all available tools grouped by category |
 
 **Examples:**
+
 ```bash
 # Install ripgrep
 omg tool install ripgrep
@@ -814,6 +845,7 @@ omg tool registry
 **Tool Registry:**
 
 OMG includes a curated registry of 60+ popular developer tools across categories:
+
 - **search**: ripgrep, fd, fzf
 - **files**: bat, eza
 - **git**: delta, lazygit
@@ -826,6 +858,7 @@ OMG includes a curated registry of 60+ popular developer tools across categories
 - **deploy**: vercel, netlify-cli, wrangler
 
 **Tool Resolution:**
+
 1. Check the built-in registry for optimal source
 2. Fall back to interactive selection if not in registry
 3. Install to isolated `~/.local/share/omg/tools/`
@@ -841,13 +874,15 @@ omg init [OPTIONS]
 ```
 
 **Options:**
+
 | Option | Description |
-|--------|-------------|
+| -------- | ------------- |
 | `--defaults` | Use defaults, no prompts |
 | `--skip-shell` | Skip shell hook setup |
 | `--skip-daemon` | Skip daemon setup |
 
 **Examples:**
+
 ```bash
 # Interactive setup
 omg init
@@ -860,6 +895,7 @@ omg init --skip-shell
 ```
 
 **Setup includes:**
+
 1. Shell detection and hook installation
 2. Daemon startup preference
 3. Initial environment capture
@@ -876,11 +912,13 @@ omg self-update [aliases: up]
 ```
 
 **Features:**
+
 - **Atomic Binary Replacement**: Replaces the current binary with the latest version from `releases.pyro1121.com`.
 - **Progress Tracking**: Real-time progress bar showing download speed and estimated time remaining.
 - **Verification**: Automatically verifies the signature of the downloaded binary before installation.
 
 **Examples:**
+
 ```bash
 # Update OMG
 omg self-update
@@ -900,6 +938,7 @@ omg config [key] [value]
 ```
 
 **Examples:**
+
 ```bash
 # List all configuration
 omg config
@@ -912,6 +951,7 @@ omg config default_shell zsh
 ```
 
 **Configuration options:**
+
 - `data_dir` — Data directory path
 - `socket` — Daemon socket path
 - `default_shell` — Default shell for hooks
@@ -930,14 +970,16 @@ omg snapshot <SUBCOMMAND>
 ```
 
 **Subcommands:**
+
 | Subcommand | Description |
-|------------|-------------|
+| ------------ | ------------- |
 | `create` | Create a new snapshot |
 | `list` | List all snapshots |
 | `restore <id>` | Restore a snapshot |
 | `delete <id>` | Delete a snapshot |
 
 **Examples:**
+
 ```bash
 # Create snapshot with message
 omg snapshot create -m "Before major upgrade"
@@ -966,11 +1008,13 @@ omg diff [OPTIONS] <to>
 ```
 
 **Options:**
+
 | Option | Short | Description |
 |--------|-------|-------------|
 | `--from <file>` | `-f` | First file (default: current environment) |
 
 **Examples:**
+
 ```bash
 # Compare current env to a lock file
 omg diff teammate-omg.lock
@@ -980,6 +1024,7 @@ omg diff --from old.lock new.lock
 ```
 
 **Output shows:**
+
 - Packages added
 - Packages removed
 - Version changes
@@ -998,14 +1043,16 @@ omg env <SUBCOMMAND>
 ```
 
 **Subcommands:**
+
 | Subcommand | Description |
-|------------|-------------|
+| ------------ | ------------- |
 | `capture` | Capture current state to `omg.lock` |
 | `check` | Check for drift against `omg.lock` |
 | `share` | Share via GitHub Gist |
 | `sync <url>` | Sync from a shared Gist |
 
 **Examples:**
+
 ```bash
 # Capture current environment
 omg env capture
@@ -1032,8 +1079,9 @@ omg team <SUBCOMMAND>
 ```
 
 **Subcommands:**
+
 | Subcommand | Description |
-|------------|-------------|
+| ------------ | ------------- |
 | `init <team-id>` | Initialize team workspace |
 | `join <url>` | Join existing team |
 | `status` | Show team sync status |
@@ -1041,16 +1089,15 @@ omg team <SUBCOMMAND>
 | `pull` | Pull team environment |
 | `members` | List team members |
 | `dashboard` | Interactive team TUI |
-| `invite` | Generate invite link |
-| `roles` | Manage roles and permissions |
+| `roles list` | List available roles and permissions |
 | `propose` | Propose environment changes |
 | `review` | Review proposed changes |
 | `golden-path` | Manage setup templates |
 | `compliance` | Check compliance status |
 | `activity` | View team activity stream |
-| `notify` | Manage webhook notifications |
 
 **Examples:**
+
 ```bash
 # Initialize team workspace
 omg team init mycompany/frontend --name "Frontend Team"
@@ -1070,9 +1117,6 @@ omg team pull
 # List members
 omg team members
 
-# Generate invite
-omg team invite --email new@company.com --role developer
-
 # Propose a change
 omg team propose "Add Node.js 22 for new features"
 
@@ -1087,9 +1131,6 @@ omg team compliance --export json
 
 # View activity
 omg team activity --days 30
-
-# Add Slack notification
-omg team notify add slack https://hooks.slack.com/xxx
 ```
 
 **Roles:** admin, lead, developer, readonly
@@ -1107,8 +1148,9 @@ omg container <SUBCOMMAND>
 ```
 
 **Subcommands:**
+
 | Subcommand | Description |
-|------------|-------------|
+| ------------ | ------------- |
 | `status` | Show container runtime status |
 | `shell` | Interactive dev shell |
 | `run <image>` | Run command in container |
@@ -1121,6 +1163,7 @@ omg container <SUBCOMMAND>
 | `exec <container>` | Execute in container |
 
 **Examples:**
+
 ```bash
 # Check container runtime
 omg container status
@@ -1157,13 +1200,15 @@ omg ci <SUBCOMMAND>
 ```
 
 **Subcommands:**
+
 | Subcommand | Description |
-|------------|-------------|
+| ------------ | ------------- |
 | `init <provider>` | Generate CI config (github, gitlab, circleci) |
 | `validate` | Validate environment matches CI expectations |
 | `cache` | Show recommended cache paths |
 
 **Examples:**
+
 ```bash
 # Generate GitHub Actions workflow
 omg ci init github
@@ -1179,6 +1224,7 @@ omg ci cache
 ```
 
 **Generated config includes:**
+
 - OMG installation step
 - Cache configuration keyed to `omg.lock`
 - Environment validation
@@ -1195,12 +1241,14 @@ omg migrate <SUBCOMMAND>
 ```
 
 **Subcommands:**
+
 | Subcommand | Description |
 |------------|-------------|
 | `export` | Export environment to portable manifest |
 | `import <file>` | Import from manifest |
 
 **Examples:**
+
 ```bash
 # Export current environment
 omg migrate export -o my-setup.json
@@ -1213,6 +1261,7 @@ omg migrate import my-setup.json
 ```
 
 **Manifest includes:**
+
 - All installed packages with versions
 - Runtime versions
 - Configuration settings
@@ -1231,13 +1280,14 @@ omg fleet <SUBCOMMAND>
 ```
 
 **Subcommands:**
+
 | Subcommand | Description |
 |------------|-------------|
 | `status` | Show fleet health across machines |
 | `push` | Push configuration to fleet |
-| `remediate` | Auto-fix drift across fleet |
 
 **Examples:**
+
 ```bash
 # View fleet status
 omg fleet status
@@ -1247,15 +1297,10 @@ omg fleet push -m "Security update"
 
 # Push to specific team
 omg fleet push --team frontend
-
-# Preview remediation
-omg fleet remediate --dry-run
-
-# Apply remediation with confirmation
-omg fleet remediate --confirm
 ```
 
 **Status shows:**
+
 - Compliance percentage
 - Machines by state (compliant, drifted, offline)
 - Team breakdown
@@ -1271,8 +1316,9 @@ omg enterprise <SUBCOMMAND>
 ```
 
 **Subcommands:**
+
 | Subcommand | Description |
-|------------|-------------|
+| ------------ | ------------- |
 | `reports` | Generate executive reports |
 | `policy` | Manage hierarchical policies |
 | `audit-export` | Export compliance evidence |
@@ -1280,6 +1326,7 @@ omg enterprise <SUBCOMMAND>
 | `server` | Self-hosted server management |
 
 **Examples:**
+
 ```bash
 # Generate monthly report
 omg enterprise reports --type monthly --format pdf
@@ -1316,11 +1363,13 @@ omg history [OPTIONS]
 ```
 
 **Options:**
+
 | Option | Short | Description |
 |--------|-------|-------------|
 | `--limit <N>` | `-l` | Number of entries (default: 20) |
 
 **Examples:**
+
 ```bash
 # View recent history
 omg history
@@ -1340,6 +1389,7 @@ omg rollback [transaction-id]
 ```
 
 **Examples:**
+
 ```bash
 # Interactive rollback
 omg rollback
@@ -1361,6 +1411,7 @@ omg dash
 ```
 
 **Keyboard Controls:**
+
 | Key | Action |
 |-----|--------|
 | `q` | Quit |
@@ -1390,8 +1441,9 @@ omg license <SUBCOMMAND>
 ```
 
 **Subcommands:**
+
 | Subcommand | Description |
-|------------|-------------|
+| ------------ | ------------- |
 | `status` | Show license status |
 | `activate <key>` | Activate license |
 | `deactivate` | Deactivate license |
@@ -1408,6 +1460,7 @@ omg daemon
 ```
 
 For direct daemon control:
+
 ```bash
 omgd --foreground  # Run in foreground
 omgd --socket /path/to/socket  # Custom socket path
@@ -1426,8 +1479,9 @@ omg-fast <subcommand>
 ```
 
 **Subcommands:**
+
 | Subcommand | Description | Latency |
-|------------|-------------|---------|
+| ------------ | ------------- | --------- |
 | `status` | System status | 3ms |
 | `ec` | Explicit count | &lt;1ms |
 | `tc` | Total count | &lt;1ms |
@@ -1435,6 +1489,7 @@ omg-fast <subcommand>
 | `oc` | Orphan count | &lt;1ms |
 
 **Examples:**
+
 ```bash
 # Get package counts for shell prompt
 omg-fast ec

@@ -126,19 +126,14 @@ curl -fsSL https://pyro1121.com/install.sh | bash
 <tr>
 <td width="50%">
 
-**🪟 Windows**
+**🪟 Windows Subsystem for Linux**
 
-```powershell
-# PowerShell installer
-irm https://pyro1121.com/install.ps1 | iex
-
-# Scoop
-scoop bucket add omg https://github.com/PyRo1121/scoop-omg
-scoop install omg
-
-# WSL (Windows Subsystem for Linux)
-wsl -- curl -fsSL https://pyro1121.com/install.sh | bash
+```bash
+# Run inside your WSL distribution
+curl -fsSL https://pyro1121.com/install.sh | bash
 ```
+
+Native Windows is not supported.
 
 </td>
 <td width="50%">
@@ -214,9 +209,6 @@ echo 'eval "$(omg hook bash)"' >> ~/.bashrc  # or ~/.zshrc
 
 # Fish
 echo 'omg hook fish | source' >> ~/.config/fish/config.fish
-
-# PowerShell (Windows)
-echo 'Invoke-Expression (& omg hook powershell)' >> $PROFILE
 ```
 
 ---
@@ -236,7 +228,7 @@ OMG prioritizes your privacy with optional, transparent telemetry:
 
 ## 🌍 Platform Support
 
-OMG works seamlessly across all major operating systems with a single universal installer.
+OMG supports Linux distributions, macOS, and Windows Subsystem for Linux. Native Windows is not supported.
 
 | Platform | Architecture | Status | Package Manager Integration |
 |----------|--------------|--------|----------------------------|
@@ -245,9 +237,10 @@ OMG works seamlessly across all major operating systems with a single universal 
 | **Ubuntu** | x86_64 | ✅ Fully Supported | Native `rust-apt` (APT) |
 | **Fedora/RHEL** | x86_64 | ✅ Fully Supported | Pure Rust DNF/YUM |
 | **macOS** | ARM64 (Apple Silicon) | ✅ Fully Supported | Homebrew integration |
-| **Windows** | x64 | ✅ Fully Supported | Scoop integration (via WSL or native) |
+| **WSL** | x86_64 | ✅ Supported | Uses the installed Linux distribution backend |
+| **Native Windows** | — | ❌ Not Supported | Use WSL |
 
-**Installation** (works on all platforms):
+**Installation** (run inside the supported OS or WSL distribution):
 ```bash
 curl -fsSL https://pyro1121.com/install.sh | bash
 ```
@@ -433,7 +426,7 @@ We are building the last dev tool you'll ever need.
 - [x] **Debian/Ubuntu Support**: Full APT integration (59-483x faster than apt-cache/Nala)
 - [x] **Fedora/RPM Support**: Native DNF/YUM package manager integration with pure Rust implementation
 - [x] **macOS Support**: Homebrew integration for macOS ARM64 (Apple Silicon)
-- [x] **Windows Support**: Pure Rust Scoop integration via libscoop (35-73x faster, zero subprocess calls)
+- [x] **WSL Support**: Uses the normal Linux backend for the installed WSL distribution
 - [x] **Container Integration**: Docker/Podman support for containerized environments (`omg container shell/run/build/init`)
 - [ ] **GUI Dashboard**: Desktop application for visual package management
 - [x] **Team Features**: Shared environment locks with collaborative workflows (`omg team init/join/status/push/pull`)
