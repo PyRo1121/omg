@@ -20,10 +20,10 @@ use std::path::{Path, PathBuf};
 use tar::Archive;
 
 use super::common::{
-    activate_version, begin_staged_install, complete_staged_install, copy_regular_tree,
-    download_with_progress, get_current_version, is_valid_version_dir, list_installed_versions,
-    parse_sha256_digest, print_already_installed, print_installed, print_using,
-    remove_file_best_effort, replace_staged_install,
+    BudgetedSink, activate_version, begin_staged_install, complete_staged_install,
+    copy_regular_tree, download_with_progress, get_current_version, is_valid_version_dir,
+    list_installed_versions, parse_sha256_digest, print_already_installed, print_installed,
+    print_using, remove_file_best_effort, replace_staged_install,
 };
 use crate::core::archive::stripped_archive_path;
 use crate::core::http::download_client;
@@ -257,9 +257,13 @@ impl RustManager {
 
         if is_xz {
             let file = File::open(archive_path)?;
-            let mut decompressed = Vec::new();
-            lzma_rs::xz_decompress(&mut std::io::BufReader::new(file), &mut decompressed)
+            // lzma-rs only exposes a Read->Write API, so bound the output
+            // sink: it stops accepting bytes at the budget instead of letting
+            // the buffer grow for the whole archive.
+            let mut sink = BudgetedSink::with_default_budget();
+            lzma_rs::xz_decompress(&mut std::io::BufReader::new(file), &mut sink)
                 .context("Failed to decompress XZ archive")?;
+            let decompressed = sink.into_inner();
             let mut archive = Archive::new(decompressed.as_slice());
             Self::extract_component_entries(&mut archive, dest_dir, component, version, target)
         } else {

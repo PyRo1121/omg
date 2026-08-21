@@ -18,7 +18,7 @@ use std::fs::{self, File};
 use std::io::{self, Write};
 #[cfg(unix)]
 use std::os::unix::fs::PermissionsExt;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::process::Command;
 
 use crate::core::archive::stripped_archive_path;
@@ -183,7 +183,7 @@ impl MiseManager {
     }
 
     /// Extract mise tarball
-    fn extract_tarball(&self, tarball_path: &PathBuf) -> Result<()> {
+    fn extract_tarball(&self, tarball_path: &Path) -> Result<()> {
         let file = File::open(tarball_path)?;
         let decoder = flate2::read::GzDecoder::new(file);
         let mut archive = tar::Archive::new(decoder);
@@ -326,12 +326,28 @@ impl MiseManager {
         // SECURITY: Validate runtime name
         crate::core::security::validate_package_name(runtime)?;
 
-        let status = Command::new(self.mise_path())
+        // Capture output so a failed install can surface mise's stderr
+        // instead of being indistinguishable from "runtime not available".
+        let output = Command::new(self.mise_path())
             .args(["install", "--", runtime])
-            .status()
+            .output()
             .with_context(|| format!("Failed to run mise install {runtime}"))?;
 
-        Ok(status.success())
+        if !output.status.success() {
+            let stderr = String::from_utf8_lossy(&output.stderr);
+            let stderr = stderr.trim();
+            anyhow::bail!(
+                "mise failed to install {runtime} ({}): {}",
+                output.status,
+                if stderr.is_empty() {
+                    "no stderr output"
+                } else {
+                    stderr
+                }
+            );
+        }
+
+        Ok(true)
     }
 
     /// List installed runtimes via mise

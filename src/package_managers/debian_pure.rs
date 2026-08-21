@@ -32,7 +32,12 @@ impl PackageManager for PureDebianPackageManager {
         query: &str,
     ) -> Pin<Box<dyn Future<Output = Result<Vec<Package>>> + Send + '_>> {
         let query = query.to_string();
-        Box::pin(async move { debian_db::search_fast(&query) })
+        Box::pin(async move {
+            // Index/mmap loading performs disk I/O; keep it off the executor.
+            tokio::task::spawn_blocking(move || debian_db::search_fast(&query))
+                .await
+                .context("Debian search task failed")?
+        })
     }
 
     fn install(
@@ -138,7 +143,12 @@ impl PackageManager for PureDebianPackageManager {
 
             // Validate packages are installed
             for pkg in &packages {
-                if !debian_db::is_installed_fast(pkg)? {
+                let pkg_name = pkg.clone();
+                let installed =
+                    tokio::task::spawn_blocking(move || debian_db::is_installed_fast(&pkg_name))
+                        .await
+                        .context("Debian is_installed task failed")??;
+                if !installed {
                     anyhow::bail!(
                         "Package '{pkg}' is not installed.\n\
                         \u{1f4a1} Use 'omg list' to see installed packages"
@@ -275,12 +285,18 @@ impl PackageManager for PureDebianPackageManager {
         package: &str,
     ) -> Pin<Box<dyn Future<Output = Result<Option<Package>>> + Send + '_>> {
         let package = package.to_string();
-        Box::pin(async move { debian_db::get_info_fast(&package) })
+        Box::pin(async move {
+            tokio::task::spawn_blocking(move || debian_db::get_info_fast(&package))
+                .await
+                .context("Debian info task failed")?
+        })
     }
 
     fn list_installed(&self) -> Pin<Box<dyn Future<Output = Result<Vec<Package>>> + Send + '_>> {
         Box::pin(async move {
-            let installed = debian_db::list_installed_fast()?;
+            let installed = tokio::task::spawn_blocking(debian_db::list_installed_fast)
+                .await
+                .context("Debian list_installed task failed")??;
             Ok(installed
                 .into_iter()
                 .map(|p| Package {
@@ -298,71 +314,85 @@ impl PackageManager for PureDebianPackageManager {
         &self,
         _fast: bool,
     ) -> Pin<Box<dyn Future<Output = Result<(usize, usize, usize, usize)>> + Send + '_>> {
-        Box::pin(async move { debian_db::get_counts_fast() })
+        Box::pin(async move {
+            tokio::task::spawn_blocking(debian_db::get_counts_fast)
+                .await
+                .context("Debian status task failed")?
+        })
     }
 
     fn list_explicit(&self) -> Pin<Box<dyn Future<Output = Result<Vec<String>>> + Send + '_>> {
-        Box::pin(async move { debian_db::list_explicit_fast() })
+        Box::pin(async move {
+            tokio::task::spawn_blocking(debian_db::list_explicit_fast)
+                .await
+                .context("Debian list_explicit task failed")?
+        })
     }
 
     fn list_updates(&self) -> Pin<Box<dyn Future<Output = Result<Vec<UpdateInfo>>> + Send + '_>> {
         Box::pin(async move {
             use std::collections::HashMap;
 
-            // OPTIMIZATION: Get installed packages first (fast, from dpkg status)
-            let installed = debian_db::list_installed_fast()?;
-            if installed.is_empty() {
-                return Ok(Vec::new());
-            }
+            // Index/mmap loading plus rayon comparisons are blocking work;
+            // run the whole computation on the blocking pool.
+            tokio::task::spawn_blocking(move || -> Result<Vec<UpdateInfo>> {
+                // OPTIMIZATION: Get installed packages first (fast, from dpkg status)
+                let installed = debian_db::list_installed_fast()?;
+                if installed.is_empty() {
+                    return Ok(Vec::new());
+                }
 
-            // Build set of installed package names for O(1) lookup
-            let installed_map: HashMap<&str, &str> = installed
-                .iter()
-                .map(|pkg| (pkg.name.as_str(), pkg.version.as_str()))
-                .collect();
+                // Build set of installed package names for O(1) lookup
+                let installed_map: HashMap<&str, &str> = installed
+                    .iter()
+                    .map(|pkg| (pkg.name.as_str(), pkg.version.as_str()))
+                    .collect();
 
-            // ULTRA-FAST PATH: Use mmap index if available (zero-copy, no full index load)
-            // ensure_mmap_loaded() loads from disk if not yet in memory (nearly instant)
-            debian_db::ensure_mmap_loaded();
-            if debian_db::is_mmap_available()
-                && let Ok(updates) = debian_db::get_updates_from_mmap(&installed_map)
-            {
-                return Ok(updates
-                    .into_iter()
-                    .map(|(name, old_version, new_version)| UpdateInfo {
-                        name,
-                        old_version,
-                        new_version,
-                        repo: "official".to_string(),
+                // ULTRA-FAST PATH: Use mmap index if available (zero-copy, no full index load)
+                // ensure_mmap_loaded() loads from disk if not yet in memory (nearly instant)
+                debian_db::ensure_mmap_loaded();
+                if debian_db::is_mmap_available()
+                    && let Ok(updates) = debian_db::get_updates_from_mmap(&installed_map)
+                {
+                    return Ok(updates
+                        .into_iter()
+                        .map(|(name, old_version, new_version)| UpdateInfo {
+                            name,
+                            old_version,
+                            new_version,
+                            repo: "official".to_string(),
+                        })
+                        .collect());
+                }
+
+                // Fallback: Load full index and use parallel comparison
+                use crate::package_managers::types::parse_version_or_zero;
+                use rayon::prelude::*;
+
+                debian_db::ensure_index_loaded()?;
+                let index_pkgs = debian_db::get_detailed_packages()?;
+
+                // Parallel version comparisons using rayon
+                let updates: Vec<UpdateInfo> = index_pkgs
+                    .par_iter()
+                    .filter_map(|pkg| {
+                        let installed_ver = installed_map.get(pkg.name.as_str())?;
+                        let available_ver = parse_version_or_zero(&pkg.version);
+                        let installed_v = parse_version_or_zero(installed_ver);
+
+                        (available_ver > installed_v).then(|| UpdateInfo {
+                            name: pkg.name.clone(),
+                            old_version: (*installed_ver).to_string(),
+                            new_version: pkg.version.clone(),
+                            repo: "official".to_string(),
+                        })
                     })
-                    .collect());
-            }
+                    .collect();
 
-            // Fallback: Load full index and use parallel comparison
-            use crate::package_managers::types::parse_version_or_zero;
-            use rayon::prelude::*;
-
-            debian_db::ensure_index_loaded()?;
-            let index_pkgs = debian_db::get_detailed_packages()?;
-
-            // Parallel version comparisons using rayon
-            let updates: Vec<UpdateInfo> = index_pkgs
-                .par_iter()
-                .filter_map(|pkg| {
-                    let installed_ver = installed_map.get(pkg.name.as_str())?;
-                    let available_ver = parse_version_or_zero(&pkg.version);
-                    let installed_v = parse_version_or_zero(installed_ver);
-
-                    (available_ver > installed_v).then(|| UpdateInfo {
-                        name: pkg.name.clone(),
-                        old_version: (*installed_ver).to_string(),
-                        new_version: pkg.version.clone(),
-                        repo: "official".to_string(),
-                    })
-                })
-                .collect();
-
-            Ok(updates)
+                Ok(updates)
+            })
+            .await
+            .context("Debian list_updates task failed")?
         })
     }
 
@@ -370,8 +400,12 @@ impl PackageManager for PureDebianPackageManager {
         &self,
         package: &str,
     ) -> Pin<Box<dyn Future<Output = Result<bool>> + Send + '_>> {
-        let result = debian_db::is_installed_fast(package);
-        Box::pin(async move { result })
+        let package = package.to_string();
+        Box::pin(async move {
+            tokio::task::spawn_blocking(move || debian_db::is_installed_fast(&package))
+                .await
+                .context("Debian is_installed task failed")?
+        })
     }
 }
 

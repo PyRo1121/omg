@@ -13,7 +13,7 @@ use std::collections::HashMap;
 use std::fs::{self, File};
 use std::io::{Read, Write};
 use std::os::unix::fs::PermissionsExt;
-use std::path::{Path, PathBuf};
+use std::path::{Component, Path, PathBuf};
 use std::process::Command;
 use std::time::Duration;
 
@@ -26,6 +26,7 @@ use tempfile::TempDir;
 use super::content_store::ContentStore;
 use super::resolver::ResolutionResult;
 use super::validation::require_verified_deb;
+use crate::runtimes::common::{BudgetedReader, BudgetedSink};
 
 /// Transaction state
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -371,20 +372,30 @@ impl Transaction {
                     )
                     .await;
 
-                    match &result {
+                    match result {
                         Ok(path) => {
                             pb.set_message("✓ dl".green().to_string());
                             pb.finish();
                             downloads_complete.fetch_add(1, Ordering::Relaxed);
-                            // Send to unpack channel immediately
-                            let _ = tx.send((path.clone(), name.clone())).await;
+
+                            // Fail loudly if the unpack worker is gone; a silent
+                            // send failure would count the package as downloaded
+                            // while it is never unpacked or configured.
+                            tx.send((path.clone(), name.clone()))
+                                .await
+                                .map_err(|_| {
+                                    anyhow::anyhow!(
+                                        "unpack worker exited before receiving '{name}'; transaction aborted"
+                                    )
+                                })?;
+                            Ok((idx, path))
                         }
                         Err(e) => {
                             pb.set_message(format!("{e}").red().to_string());
                             pb.finish();
+                            Err(e)
                         }
                     }
-                    result.map(|path| (idx, path))
                 }
             })
             .collect();
@@ -598,7 +609,10 @@ impl Transaction {
             self.installed_files.len()
         );
 
-        for file in &self.installed_files {
+        // Reverse order: children were recorded before their parent
+        // directories, so unwinding backwards removes files first and then
+        // the (now empty) directories created for them.
+        for file in self.installed_files.iter().rev() {
             remove_file_if_present(file)?;
         }
 
@@ -641,7 +655,7 @@ impl Transaction {
     }
 
     /// Execute package removal
-    #[allow(clippy::unused_async)]
+    #[expect(clippy::unused_async)]
     pub async fn execute_removal(&mut self) -> Result<()> {
         if self.to_remove.is_empty() {
             return Ok(());
@@ -726,10 +740,25 @@ impl Transaction {
 }
 
 fn remove_file_if_present(path: &Path) -> Result<()> {
-    match fs::remove_file(path) {
-        Ok(()) => Ok(()),
+    // Rollback walks `installed_files` in reverse so children are removed
+    // before the directories created for them. A directory that still has
+    // content pre-dates this transaction and must not be deleted; surfacing
+    // that as an error keeps rollback honest instead of destroying foreign
+    // files.
+    match fs::symlink_metadata(path) {
+        Ok(metadata) if metadata.is_dir() => fs::remove_dir(path)
+            .with_context(|| format!("Failed to remove directory {}", path.display())),
+        Ok(_) => match fs::remove_file(path) {
+            Ok(()) => Ok(()),
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(()),
+            Err(error) => {
+                Err(error).with_context(|| format!("Failed to remove {}", path.display()))
+            }
+        },
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(()),
-        Err(error) => Err(error).with_context(|| format!("Failed to remove {}", path.display())),
+        Err(error) => {
+            Err(error).with_context(|| format!("Failed to inspect {} for removal", path.display()))
+        }
     }
 }
 
@@ -817,40 +846,120 @@ fn unpack_deb_standalone(
     Ok(installed_files)
 }
 
-/// Extract a tar archive with auto-detection of compression
-fn extract_tar_auto(data: &[u8], dest: &Path) -> Result<()> {
-    // OPTIMIZATION: Check zstd FIRST (2-3x faster decompression than xz)
-    // Modern Debian packages increasingly use zstd compression
-    if data.len() > 4 && data.starts_with(b"\x28\xb5\x2f\xfd") {
-        let mut decoder = ruzstd::decoding::StreamingDecoder::new(std::io::Cursor::new(data))
-            .map_err(|e| anyhow::anyhow!("Failed to create zstd decoder: {e}"))?;
-        let mut decompressed = Vec::new();
-        decoder.read_to_end(&mut decompressed)?;
-        return extract_tar(&decompressed, dest);
+/// Map a data.tar entry path onto an absolute path under `root`, rejecting
+/// anything that is not a plain relative path.
+///
+/// Debian data.tar entries are conventionally `./usr/bin/tool`; this accepts
+/// that form (and plain `usr/bin/tool`) while explicitly rejecting parent
+/// components and other non-normal components instead of letting the kernel
+/// resolve them at extraction time.
+fn data_tar_entry_path(root: &Path, entry_path: &Path) -> Result<PathBuf> {
+    let text = entry_path.to_string_lossy();
+    let rel = text.strip_prefix("./").unwrap_or(&text);
+
+    let mut resolved = root.to_path_buf();
+    for component in Path::new(rel).components() {
+        match component {
+            Component::Normal(part) => resolved.push(part),
+            Component::CurDir => {}
+            Component::ParentDir => {
+                anyhow::bail!(
+                    "Unsafe data.tar entry (parent component): {}",
+                    entry_path.display()
+                )
+            }
+            Component::RootDir | Component::Prefix(_) => {
+                anyhow::bail!(
+                    "Unsafe data.tar entry (absolute or prefixed): {}",
+                    entry_path.display()
+                )
+            }
+        }
     }
 
-    // Try xz (still common for Debian packages)
-    if data.len() > 6 && data.starts_with(b"\xfd7zXZ\x00") {
-        let mut decoder = Vec::new();
-        lzma_rs::xz_decompress(&mut std::io::Cursor::new(data), &mut decoder)?;
-        return extract_tar(&decoder, dest);
+    if resolved == root {
+        anyhow::bail!("data.tar entry resolves to the filesystem root");
     }
-
-    // Try gzip (legacy packages)
-    if data.len() > 2 && data[0] == 0x1f && data[1] == 0x8b {
-        let mut decoder = flate2::read::GzDecoder::new(data);
-        let mut decompressed = Vec::new();
-        decoder.read_to_end(&mut decompressed)?;
-        return extract_tar(&decompressed, dest);
-    }
-
-    // Assume uncompressed tar
-    extract_tar(data, dest)
+    Ok(resolved)
 }
 
-/// Extract a tar archive to a directory
-fn extract_tar(data: &[u8], dest: &Path) -> Result<()> {
-    let mut archive = tar::Archive::new(std::io::Cursor::new(data));
+/// Validate that a relative symlink target stays inside the extraction root.
+///
+/// The link's parent directory is expressed relative to `root`, then the
+/// target's components are applied with a depth counter: a `..` at depth zero
+/// (or any absolute target) is rejected. This treats the extraction root as
+/// the containment boundary regardless of where it lives on disk — for the
+/// production root of `/` the two coincide, but tests and future non-root
+/// extraction must not be able to pop above their own root.
+fn validate_root_relative_link_target(root: &Path, link_path: &Path, target: &Path) -> Result<()> {
+    let rel_parent = link_path.strip_prefix(root).unwrap_or(link_path);
+    let mut depth = rel_parent
+        .components()
+        .filter(|c| matches!(c, Component::Normal(_)))
+        .count();
+
+    for component in target.components() {
+        match component {
+            Component::Normal(_) => depth += 1,
+            Component::CurDir => {}
+            Component::ParentDir => {
+                anyhow::ensure!(
+                    depth > 0,
+                    "Archive symlink escapes the extraction directory: {} -> {}",
+                    link_path.display(),
+                    target.display()
+                );
+                depth -= 1;
+            }
+            Component::RootDir | Component::Prefix(_) => {
+                anyhow::bail!(
+                    "Archive symlink target must be relative: {} -> {}",
+                    link_path.display(),
+                    target.display()
+                )
+            }
+        }
+    }
+    Ok(())
+}
+
+/// A link whose creation is deferred until every regular file has been
+/// written, so no regular-file write can traverse a link from the archive.
+enum PendingRootLink {
+    Symbolic { path: PathBuf, target: PathBuf },
+    Hard { path: PathBuf, target: PathBuf },
+}
+
+fn create_root_links(links: Vec<PendingRootLink>) -> Result<()> {
+    for link in links {
+        match link {
+            PendingRootLink::Symbolic { path, target } => {
+                std::os::unix::fs::symlink(&target, &path).with_context(|| {
+                    format!(
+                        "Failed to create archive symlink {} -> {}",
+                        path.display(),
+                        target.display()
+                    )
+                })?;
+            }
+            PendingRootLink::Hard { path, target } => {
+                fs::hard_link(&target, &path).with_context(|| {
+                    format!(
+                        "Failed to create archive hard link {} -> {}",
+                        path.display(),
+                        target.display()
+                    )
+                })?;
+            }
+        }
+    }
+    Ok(())
+}
+
+/// Extract a tar stream to a directory, delegating traversal sanitization to
+/// the `tar` crate's hardened `unpack`.
+fn extract_tar_stream(reader: &mut dyn Read, dest: &Path) -> Result<()> {
+    let mut archive = tar::Archive::new(reader);
 
     for entry in archive.entries()? {
         let mut entry = entry?;
@@ -867,116 +976,170 @@ fn extract_tar(data: &[u8], dest: &Path) -> Result<()> {
     Ok(())
 }
 
-/// Extract a tar archive to the filesystem root
-/// OPTIMIZATION: Pre-allocated buffers to reduce memory usage
-fn extract_tar_to_root(data: &[u8]) -> Result<Vec<PathBuf>> {
-    // OPTIMIZATION: Conservative buffer pre-allocation to reduce memory usage
-    // Check compression format and allocate conservatively
-    let (decompressed, estimated_ratio) = if data.len() > 4 && data.starts_with(b"\x28\xb5\x2f\xfd")
-    {
+/// Detect the compression format of a `.tar.<ext>` payload and return a
+/// reader over the decompressed tar bytes. Every decoder is wrapped so the
+/// decompressed-size budget is enforced while bytes are produced; a bomb
+/// aborts mid-stream instead of exhausting memory.
+fn tar_payload_reader(data: &[u8]) -> Result<Box<dyn Read + '_>> {
+    tar_payload_reader_with_budget(data, BudgetedSink::max_budget())
+}
+
+/// [`tar_payload_reader`] with an explicit budget; tests use a small budget
+/// so the abort path is exercisable without gigabyte allocations.
+fn tar_payload_reader_with_budget(data: &[u8], budget: u64) -> Result<Box<dyn Read + '_>> {
+    if data.len() > 4 && data.starts_with(b"\x28\xb5\x2f\xfd") {
         // Zstd: Fast decompression, good compression
-        let mut decoder = ruzstd::decoding::StreamingDecoder::new(std::io::Cursor::new(data))
+        let decoder = ruzstd::decoding::StreamingDecoder::new(std::io::Cursor::new(data))
             .map_err(|e| anyhow::anyhow!("Failed to create zstd decoder: {e}"))?;
-        // Conservative allocation: 3x initial size, let Vec grow as needed
-        let mut decompressed = Vec::with_capacity(data.len() * 3);
-        decoder.read_to_end(&mut decompressed)?;
-        decompressed.shrink_to_fit(); // Release excess capacity immediately
-        (decompressed, 5)
-    } else if data.len() > 6 && data.starts_with(b"\xfd7zXZ\x00") {
-        // XZ: Slower decompression, best compression
-        // Conservative allocation: 4x initial size
-        let mut decoder = Vec::with_capacity(data.len() * 4);
-        lzma_rs::xz_decompress(&mut std::io::Cursor::new(data), &mut decoder)?;
-        decoder.shrink_to_fit(); // Release excess capacity immediately
-        (decoder, 7)
-    } else if data.len() > 2 && data[0] == 0x1f && data[1] == 0x8b {
-        // Gzip: Fast decompression, moderate compression
-        let mut decoder = flate2::read::GzDecoder::new(data);
-        let mut decompressed = Vec::with_capacity(data.len() * 3);
-        decoder.read_to_end(&mut decompressed)?;
-        decompressed.shrink_to_fit(); // Release excess capacity immediately
-        (decompressed, 4)
-    } else {
-        (data.to_vec(), 1)
-    };
+        return Ok(Box::new(BudgetedReader::new(decoder, budget)));
+    }
+
+    if data.len() > 6 && data.starts_with(b"\xfd7zXZ\x00") {
+        // XZ: lzma-rs only exposes a Read->Write API, so bound the output
+        // sink instead; it stops accepting bytes at the budget, which stops
+        // buffer growth during decompression rather than after it.
+        let mut sink = BudgetedSink::with_budget(budget);
+        lzma_rs::xz_decompress(&mut std::io::Cursor::new(data), &mut sink)
+            .map_err(|e| anyhow::anyhow!("Failed to decompress XZ payload: {e}"))?;
+        return Ok(Box::new(std::io::Cursor::new(sink.into_inner())));
+    }
+
+    if data.len() > 2 && data[0] == 0x1f && data[1] == 0x8b {
+        // Gzip: legacy packages
+        let decoder = flate2::read::GzDecoder::new(data);
+        return Ok(Box::new(BudgetedReader::new(decoder, budget)));
+    }
+
+    // Uncompressed tar
+    Ok(Box::new(std::io::Cursor::new(data.to_vec())))
+}
+
+/// Extract a tar archive with auto-detection of compression
+fn extract_tar_auto(data: &[u8], dest: &Path) -> Result<()> {
+    let mut reader = tar_payload_reader(data)?;
+    extract_tar_stream(reader.as_mut(), dest)
+}
+
+/// Extract a data.tar payload into the filesystem root with dpkg-like
+/// semantics and hardened handling of untrusted entries:
+///
+/// - regular files are written directly (streaming); their paths are
+///   normalized through [`data_tar_entry_path`], which rejects parent and
+///   absolute components;
+/// - directories are created and recorded so rollback can remove them;
+/// - symbolic links are validated (relative targets only, staying inside the
+///   extraction root) and created only after every regular file has been
+///   written, so a file entry can never traverse a link defined by the same
+///   archive;
+/// - hard links are re-created against the already-extracted tree after all
+///   files exist;
+/// - any other entry type (devices, FIFOs) fails the install explicitly.
+fn extract_tar_to_root(data: &[u8]) -> Result<Vec<PathBuf>> {
+    extract_tar_to_root_at(Path::new("/"), data)
+}
+
+/// [`extract_tar_to_root`] against an explicit root; tests use a temporary
+/// directory, production uses `/`.
+fn extract_tar_to_root_at(root: &Path, data: &[u8]) -> Result<Vec<PathBuf>> {
+    let mut reader = tar_payload_reader(data)?;
+    let mut archive = tar::Archive::new(reader.as_mut());
 
     tracing::debug!(
-        "Decompressed data.tar: {} bytes -> {} bytes ({}x ratio)",
+        "Extracting data.tar ({} compressed bytes) into {}",
         data.len(),
-        decompressed.len(),
-        estimated_ratio
+        root.display()
     );
 
-    let mut archive = tar::Archive::new(std::io::Cursor::new(&decompressed));
-
-    // OPTIMIZATION: Streaming extraction with minimal memory footprint
-    // Process files immediately instead of buffering all in memory
     let mut installed_files = Vec::new();
+    let mut pending_links = Vec::new();
 
     for entry in archive.entries()? {
         let mut entry = entry?;
-        let path = entry.path()?.into_owned();
+        let entry_path = data_tar_entry_path(root, &entry.path()?)?;
+        let entry_type = entry.header().entry_type();
 
-        // Convert to absolute path (strip leading ./)
-        let path_str = path.to_string_lossy();
-        let path_ref: &str = &path_str;
-        let abs_path = if path_str.starts_with("./") {
-            PathBuf::from("/").join(&path_ref[2..])
-        } else if path_str.starts_with('/') {
-            PathBuf::from(path_ref)
-        } else {
-            PathBuf::from("/").join(path_ref)
-        };
-
-        let is_dir = entry.header().entry_type().is_dir();
-        let mode = entry.header().mode()?;
-
-        if is_dir {
-            // Handle directories immediately
-            fs::create_dir_all(&abs_path)?;
-        } else {
-            // OPTIMIZATION: Stream file contents directly to disk without buffering
-            // Create parent directories
-            if let Some(parent) = abs_path.parent() {
-                fs::create_dir_all(parent).with_context(|| {
-                    format!("Failed to create parent dir for {}", abs_path.display())
-                })?;
-            }
-
-            // OPTIMIZATION: Use streaming copy with size-appropriate strategy
-            let size = entry.header().size()?;
-
-            if size < 1024 {
-                // Tiny files: read and write in one go
-                let mut contents = Vec::with_capacity(size as usize);
-                entry.read_to_end(&mut contents)?;
-                fs::write(&abs_path, contents)
-                    .with_context(|| format!("Failed to write file: {}", abs_path.display()))?;
-            } else if size < 65536 {
-                // Small-medium files: buffered copy
-                use std::io::BufWriter;
-                let file = File::create(&abs_path)
-                    .with_context(|| format!("Failed to create file: {}", abs_path.display()))?;
-                let mut writer = BufWriter::with_capacity(16384, file);
-                std::io::copy(&mut entry, &mut writer)
-                    .with_context(|| format!("Failed to copy to: {}", abs_path.display()))?;
-                writer.flush()?;
-            } else {
-                // Large files: direct unbuffered write (let OS optimize)
-                let mut file = File::create(&abs_path)
-                    .with_context(|| format!("Failed to create file: {}", abs_path.display()))?;
-                std::io::copy(&mut entry, &mut file)
-                    .with_context(|| format!("Failed to copy to: {}", abs_path.display()))?;
-            }
-
-            // Set permissions
-            let mut perms = fs::metadata(&abs_path)?.permissions();
-            perms.set_mode(mode);
-            fs::set_permissions(&abs_path, perms)?;
-
-            installed_files.push(abs_path);
+        if entry_type.is_dir() {
+            fs::create_dir_all(&entry_path)
+                .with_context(|| format!("Failed to create directory {}", entry_path.display()))?;
+            installed_files.push(entry_path);
+            continue;
         }
+
+        if entry_type.is_symlink() {
+            let target = entry
+                .link_name()?
+                .context("Archive symlink is missing its target")?
+                .into_owned();
+            validate_root_relative_link_target(root, &entry_path, &target)?;
+            // Recorded so rollback removes the link itself.
+            installed_files.push(entry_path.clone());
+            pending_links.push(PendingRootLink::Symbolic {
+                path: entry_path,
+                target,
+            });
+            continue;
+        }
+
+        if entry_type.is_hard_link() {
+            let target = entry
+                .link_name()?
+                .context("Archive hard link is missing its target")?
+                .into_owned();
+            let target = data_tar_entry_path(root, &target)?;
+            // Recorded so rollback removes the link itself.
+            installed_files.push(entry_path.clone());
+            pending_links.push(PendingRootLink::Hard {
+                path: entry_path,
+                target,
+            });
+            continue;
+        }
+
+        if !entry_type.is_file() {
+            anyhow::bail!(
+                "Unsupported special entry in package data.tar: {} ({entry_type:?})",
+                entry_path.display()
+            );
+        }
+
+        // Regular file: stream contents without buffering the whole payload.
+        if let Some(parent) = entry_path.parent() {
+            fs::create_dir_all(parent).with_context(|| {
+                format!("Failed to create parent dir for {}", entry_path.display())
+            })?;
+        }
+
+        let mode = entry.header().mode()?;
+        let size = entry.header().size()?;
+
+        if size < 1024 {
+            // Tiny files: read and write in one go
+            let mut contents = Vec::with_capacity(size as usize);
+            entry.read_to_end(&mut contents)?;
+            fs::write(&entry_path, contents)
+                .with_context(|| format!("Failed to write file: {}", entry_path.display()))?;
+        } else {
+            // Larger files: buffered copy
+            use std::io::BufWriter;
+            let file = File::create(&entry_path)
+                .with_context(|| format!("Failed to create file: {}", entry_path.display()))?;
+            let mut writer = BufWriter::with_capacity(16384, file);
+            std::io::copy(&mut entry, &mut writer)
+                .with_context(|| format!("Failed to copy to: {}", entry_path.display()))?;
+            writer.flush()?;
+        }
+
+        // Set permissions
+        let mut perms = fs::metadata(&entry_path)?.permissions();
+        perms.set_mode(mode);
+        fs::set_permissions(&entry_path, perms)?;
+
+        installed_files.push(entry_path);
     }
+
+    // Only now that every regular file exists may archive-controlled links be
+    // created; creation itself fails explicitly if a path collision remains.
+    create_root_links(pending_links)?;
 
     Ok(installed_files)
 }
@@ -1609,5 +1772,289 @@ mod tests {
         std::fs::write(&src, b"/etc/foo.conf\n").expect("conffiles");
         copy_conffile(&src, &dest).expect("copy");
         assert_eq!(std::fs::read(&dest).expect("copied"), b"/etc/foo.conf\n");
+    }
+
+    // ─── data.tar extraction hardening ───
+
+    /// Build an uncompressed tar with a callback so tests can append
+    /// arbitrary entries (files, links, special types).
+    fn build_tar(
+        append: impl FnOnce(&mut tar::Builder<Vec<u8>>) -> std::io::Result<()>,
+    ) -> Vec<u8> {
+        let mut builder = tar::Builder::new(Vec::new());
+        append(&mut builder).expect("tar fixture");
+        builder.into_inner().expect("tar finish")
+    }
+
+    fn append_regular_file(builder: &mut tar::Builder<Vec<u8>>, name: &str, body: &[u8]) {
+        let mut header = tar::Header::new_gnu();
+        header.set_size(body.len() as u64);
+        header.set_mode(0o644);
+        header.set_cksum();
+        builder
+            .append_data(&mut header, name, body)
+            .expect("append file");
+    }
+
+    #[test]
+    fn absolute_symlink_target_in_data_tar_is_rejected() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let victim = temp.path().join("victim.txt");
+
+        let data = build_tar(|builder| {
+            let mut header = tar::Header::new_gnu();
+            header.set_entry_type(tar::EntryType::Symlink);
+            header.set_size(0);
+            header.set_cksum();
+            builder.append_link(&mut header, "./lib", &victim)
+        });
+
+        let error = extract_tar_to_root_at(temp.path(), &data)
+            .expect_err("absolute symlink target must be rejected");
+
+        assert!(error.to_string().contains("must be relative"), "{error}");
+        assert!(!victim.exists(), "attack target must not be touched");
+    }
+
+    #[test]
+    fn relative_symlink_escaping_the_root_is_rejected() {
+        let temp = tempfile::tempdir().expect("tempdir");
+
+        // Link sits one directory below the root, so three `..` steps escape
+        // the extraction root even though every component is relative.
+        let data = build_tar(|builder| {
+            let mut header = tar::Header::new_gnu();
+            header.set_entry_type(tar::EntryType::Symlink);
+            header.set_size(0);
+            header.set_cksum();
+            builder.append_link(&mut header, "./out", "../../../outside")
+        });
+
+        let error = extract_tar_to_root_at(temp.path(), &data)
+            .expect_err("escaping symlink must be rejected");
+
+        assert!(
+            error.to_string().contains("escapes the extraction"),
+            "{error}"
+        );
+        assert!(!temp.path().join("outside").exists());
+        // Nothing was created outside the root either.
+        let outside = temp
+            .path()
+            .parent()
+            .expect("tempdir parent")
+            .join("outside");
+        assert!(!outside.exists());
+    }
+
+    #[test]
+    fn file_written_after_symlink_cannot_traverse_it() {
+        // The attack: ship `./lib -> <relative escape>` and `./lib/secret`.
+        // The escaping link is rejected during the scan, so nothing is
+        // written anywhere; a regular-file write can never traverse a link
+        // defined by the same archive because links are only created after
+        // every regular file exists.
+        let temp = tempfile::tempdir().expect("tempdir");
+
+        let data = build_tar(|builder| {
+            let mut link_header = tar::Header::new_gnu();
+            link_header.set_entry_type(tar::EntryType::Symlink);
+            link_header.set_size(0);
+            link_header.set_cksum();
+            // Relative target that resolves outside the extraction root:
+            // the link lives at <root>/lib, so two `..` steps leave the root.
+            builder.append_link(&mut link_header, "./lib", "../../pwned")?;
+
+            append_regular_file(builder, "./lib/secret", b"pwned");
+            Ok(())
+        });
+
+        let error = extract_tar_to_root_at(temp.path(), &data)
+            .expect_err("escaping symlink must fail the install loudly");
+
+        assert!(
+            error.to_string().contains("escapes the extraction"),
+            "{error}"
+        );
+        // Neither the escaped location nor the in-root payload exists.
+        let escaped = temp.path().parent().expect("tempdir parent").join("pwned");
+        assert!(!escaped.exists(), "nothing may land outside the root");
+        assert!(!temp.path().join("lib").exists());
+    }
+
+    #[test]
+    fn benign_links_are_recreated_and_recorded_for_rollback() {
+        let temp = tempfile::tempdir().expect("tempdir");
+
+        let data = build_tar(|builder| {
+            append_regular_file(builder, "./usr/share/doc/pkg/readme", b"hello");
+
+            let mut sym_header = tar::Header::new_gnu();
+            sym_header.set_entry_type(tar::EntryType::Symlink);
+            sym_header.set_size(0);
+            sym_header.set_cksum();
+            builder.append_link(&mut sym_header, "./usr/share/doc/pkg/latest", "readme")?;
+
+            let mut hard_header = tar::Header::new_gnu();
+            hard_header.set_entry_type(tar::EntryType::Link);
+            hard_header.set_size(0);
+            hard_header.set_cksum();
+            builder.append_link(
+                &mut hard_header,
+                "./usr/share/doc/pkg/dup",
+                "./usr/share/doc/pkg/readme",
+            )
+        });
+
+        let installed =
+            extract_tar_to_root_at(temp.path(), &data).expect("benign archive must extract");
+
+        let readme = temp.path().join("usr/share/doc/pkg/readme");
+        let latest = temp.path().join("usr/share/doc/pkg/latest");
+        let dup = temp.path().join("usr/share/doc/pkg/dup");
+
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::MetadataExt;
+            let link_metadata = std::fs::symlink_metadata(&latest).expect("symlink exists");
+            assert!(
+                link_metadata.file_type().is_symlink(),
+                "recreated as symlink"
+            );
+            assert_eq!(
+                std::fs::read_link(&latest).expect("link target"),
+                Path::new("readme")
+            );
+
+            // Hard link shares the inode of its target.
+            let meta = std::fs::metadata(&readme).expect("readme");
+            let dup_meta = std::fs::metadata(&dup).expect("dup");
+            assert_eq!((meta.dev(), meta.ino()), (dup_meta.dev(), dup_meta.ino()));
+        }
+
+        for path in [&readme, &latest, &dup] {
+            assert!(
+                installed.contains(path),
+                "{} must be recorded for rollback",
+                path.display()
+            );
+        }
+    }
+
+    #[test]
+    fn parent_component_in_data_tar_path_is_rejected() {
+        let temp = tempfile::tempdir().expect("tempdir");
+
+        // The tar Builder validates paths, so craft the hostile entry through
+        // a raw ustar header: an entry literally named `./share/../evil`.
+        let data = build_tar(|builder| {
+            let mut header = tar::Header::new_gnu();
+            {
+                // Bypass Builder path validation: this fixture needs an entry
+                // whose NAME carries a `..` component, which is exactly what
+                // the extractor must reject.
+                let old = header.as_old_mut();
+                let mut name = [0u8; 100];
+                let hostile = b"./share/../evil";
+                name[..hostile.len()].copy_from_slice(hostile);
+                old.name = name;
+            }
+            header.set_entry_type(tar::EntryType::Regular);
+            header.set_size(4);
+            header.set_mode(0o644);
+            header.set_cksum();
+            builder.append(&header, &b"nope"[..])
+        });
+
+        let error = extract_tar_to_root_at(temp.path(), &data)
+            .expect_err("parent components must be rejected");
+
+        assert!(error.to_string().contains("parent component"), "{error}");
+        assert!(!temp.path().join("evil").exists());
+    }
+
+    #[test]
+    fn special_entries_fail_the_install_explicitly() {
+        let temp = tempfile::tempdir().expect("tempdir");
+
+        let data = build_tar(|builder| {
+            let mut header = tar::Header::new_gnu();
+            header.set_entry_type(tar::EntryType::Fifo);
+            header.set_size(0);
+            header.set_mode(0o644);
+            header.set_cksum();
+            builder.append_data(&mut header, "./run/pipe", std::io::empty())
+        });
+
+        let error = extract_tar_to_root_at(temp.path(), &data).expect_err("FIFO must be rejected");
+
+        assert!(
+            error.to_string().contains("Unsupported special entry"),
+            "{error}"
+        );
+    }
+
+    #[test]
+    fn rollback_removal_handles_dirs_and_links() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let dir = temp.path().join("usr");
+        let nested = dir.join("bin");
+        std::fs::create_dir_all(&nested).expect("dirs");
+        let file = nested.join("tool");
+        std::fs::write(&file, b"x").expect("file");
+        #[cfg(unix)]
+        std::os::unix::fs::symlink("tool", nested.join("tool-link")).expect("link");
+
+        // Recorded order mirrors real archive entry order (parents appear
+        // before children in data.tar); removal walks in reverse so the
+        // deepest entries go first.
+        let mut recorded = vec![dir.clone(), nested.clone(), file.clone()];
+        #[cfg(unix)]
+        recorded.push(nested.join("tool-link"));
+
+        for path in recorded.iter().rev() {
+            remove_file_if_present(path).expect("reverse-order removal");
+        }
+
+        assert!(!nested.exists(), "nested dir removed after its children");
+        assert!(!dir.exists(), "top dir removed last");
+        // Re-running removal is a no-op (rollback idempotence).
+        remove_file_if_present(&file).expect("missing path tolerated");
+    }
+
+    #[test]
+    fn gzipped_payload_bomb_is_bounded_during_streaming() {
+        use flate2::write::GzEncoder;
+
+        // 64 MiB of zeros compresses to ~60 KiB.
+        let mut encoder = GzEncoder::new(Vec::new(), flate2::Compression::best());
+        std::io::copy(
+            &mut std::io::repeat(0u8).take(64 * 1024 * 1024),
+            &mut encoder,
+        )
+        .expect("compress");
+        let bomb = encoder.finish().expect("finish");
+
+        // A 1 MiB budget: far below the 64 MiB expansion, so the abort must
+        // fire mid-stream, long before the full payload is produced.
+        const TEST_BUDGET_BYTES: u64 = 1024 * 1024;
+        let mut reader =
+            tar_payload_reader_with_budget(&bomb, TEST_BUDGET_BYTES).expect("gzip detection");
+        let mut sink = Vec::new();
+        let error = reader
+            .read_to_end(&mut sink)
+            .expect_err("budget must abort the stream mid-decompression");
+
+        assert!(error.to_string().contains("exceeds"), "{error}");
+        assert!(
+            error.to_string().contains("maximum supported size"),
+            "{error}"
+        );
+        // The sink stopped at the budget instead of expanding to 64 MiB.
+        assert!(
+            sink.len() as u64 <= TEST_BUDGET_BYTES,
+            "sink grew to {} bytes, past the {TEST_BUDGET_BYTES}-byte budget",
+            sink.len()
+        );
     }
 }

@@ -4,8 +4,10 @@
 
 use std::cmp::Ordering;
 use std::fs::{self, File};
+#[cfg(any(feature = "debian", feature = "debian-pure"))]
+use std::io::Read;
 use std::io::{BufReader, Write};
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 use anyhow::{Context, Result};
 use indicatif::{ProgressBar, ProgressStyle};
@@ -13,6 +15,133 @@ use owo_colors::OwoColorize;
 use sha2::{Digest, Sha256};
 
 use crate::core::archive::stripped_archive_path;
+
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+// Bounded decompression
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+/// Maximum accepted decompressed size for untrusted archive payloads (2 GiB).
+///
+/// The bound is enforced *while* bytes are produced, so a decompression bomb
+/// aborts with an error instead of exhausting memory before a post-hoc size
+/// check can run.
+pub(crate) const MAX_DECOMPRESSED_BYTES: u64 = 2 * 1024 * 1024 * 1024;
+
+/// Reader that enforces a decompressed-size budget while streaming.
+///
+/// Every read that would push the cumulative output past `budget` fails with
+/// [`ErrorKind::InvalidData`], so downstream consumers never buffer more than
+/// the budget. Only Debian-side extraction consumes this today; runtime
+/// extraction uses [`BudgetedSink`] because xz has no streaming decoder.
+#[cfg(any(feature = "debian", feature = "debian-pure"))]
+pub(crate) struct BudgetedReader<R> {
+    inner: R,
+    remaining: u64,
+}
+
+#[cfg(any(feature = "debian", feature = "debian-pure"))]
+impl<R> BudgetedReader<R> {
+    pub(crate) fn with_default_budget(inner: R) -> Self {
+        Self::new(inner, MAX_DECOMPRESSED_BYTES)
+    }
+
+    /// Explicit budget: production callers pass [`MAX_DECOMPRESSED_BYTES`],
+    /// tests pass a small budget so the abort path is exercisable without
+    /// gigabyte allocations.
+    pub(crate) fn new(inner: R, budget: u64) -> Self {
+        Self {
+            inner,
+            remaining: budget,
+        }
+    }
+}
+
+#[cfg(any(feature = "debian", feature = "debian-pure"))]
+impl<R: Read> Read for BudgetedReader<R> {
+    fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
+        let read = self.inner.read(buf)?;
+        let read = u64::try_from(read).map_err(|_| {
+            std::io::Error::new(
+                std::io::ErrorKind::InvalidData,
+                "impossible read size while decompressing",
+            )
+        })?;
+        if read > self.remaining {
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::InvalidData,
+                format!(
+                    "decompressed data exceeds the maximum supported size of {MAX_DECOMPRESSED_BYTES} bytes"
+                ),
+            ));
+        }
+        self.remaining -= read;
+        Ok(read as usize)
+    }
+}
+
+/// In-memory sink that refuses to grow past a decompressed-size budget.
+///
+/// Used with compressors that only expose a `Read -> Write` API (xz), where a
+/// budgeted reader is not available: the sink errors as soon as the budget is
+/// exhausted, so the backing buffer stops growing at the cap instead of after
+/// decompression has completed.
+pub(crate) struct BudgetedSink {
+    buf: Vec<u8>,
+    remaining: u64,
+}
+
+impl BudgetedSink {
+    pub(crate) fn with_default_budget() -> Self {
+        Self {
+            buf: Vec::new(),
+            remaining: MAX_DECOMPRESSED_BYTES,
+        }
+    }
+
+    /// The configured maximum budget, for callers that delegate the choice.
+    /// Only Debian-side extraction delegates today.
+    #[cfg(any(feature = "debian", feature = "debian-pure"))]
+    pub(crate) fn max_budget() -> u64 {
+        MAX_DECOMPRESSED_BYTES
+    }
+
+    /// Explicit budget: production callers pass [`MAX_DECOMPRESSED_BYTES`],
+    /// tests pass a small budget so the abort path is exercisable without
+    /// gigabyte allocations. Only Debian-side extraction needs a custom
+    /// budget today.
+    #[cfg(any(feature = "debian", feature = "debian-pure"))]
+    pub(crate) fn with_budget(budget: u64) -> Self {
+        Self {
+            buf: Vec::new(),
+            remaining: budget,
+        }
+    }
+
+    pub(crate) fn into_inner(self) -> Vec<u8> {
+        self.buf
+    }
+}
+
+impl Write for BudgetedSink {
+    fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
+        let len = buf.len() as u64;
+        if len > self.remaining {
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::InvalidData,
+                format!(
+                    "decompressed data exceeds the maximum supported size of {MAX_DECOMPRESSED_BYTES} bytes"
+                ),
+            ));
+        }
+        self.remaining -= len;
+        self.buf.extend_from_slice(buf);
+        Ok(buf.len())
+    }
+
+    fn flush(&mut self) -> std::io::Result<()> {
+        Ok(())
+    }
+}
 
 /// Progress bar style for downloads
 #[expect(clippy::expect_used)] // Path operations on known-valid HOME directory; failure is unrecoverable
@@ -127,6 +256,71 @@ pub async fn download_with_progress(
     Ok(())
 }
 
+enum PendingArchiveLink {
+    Symbolic { path: PathBuf, target: PathBuf },
+    Hard { path: PathBuf, target: PathBuf },
+}
+
+fn validate_relative_symlink_target(link_path: &Path, target: &Path) -> Result<()> {
+    let mut resolved = link_path
+        .parent()
+        .map_or_else(PathBuf::new, Path::to_path_buf);
+    for component in target.components() {
+        match component {
+            std::path::Component::Normal(part) => resolved.push(part),
+            std::path::Component::CurDir => {}
+            std::path::Component::ParentDir => {
+                anyhow::ensure!(
+                    resolved.pop(),
+                    "Archive symlink escapes the extraction directory: {} -> {}",
+                    link_path.display(),
+                    target.display()
+                );
+            }
+            std::path::Component::RootDir | std::path::Component::Prefix(_) => {
+                anyhow::bail!(
+                    "Archive symlink target must be relative: {} -> {}",
+                    link_path.display(),
+                    target.display()
+                );
+            }
+        }
+    }
+    Ok(())
+}
+
+fn create_archive_links(links: Vec<PendingArchiveLink>) -> Result<()> {
+    for link in links {
+        match link {
+            PendingArchiveLink::Symbolic { path, target } => {
+                #[cfg(unix)]
+                std::os::unix::fs::symlink(&target, &path).with_context(|| {
+                    format!(
+                        "Failed to create archive symlink {} -> {}",
+                        path.display(),
+                        target.display()
+                    )
+                })?;
+                #[cfg(not(unix))]
+                anyhow::bail!(
+                    "Runtime archive contains a symbolic link unsupported on this platform: {}",
+                    path.display()
+                );
+            }
+            PendingArchiveLink::Hard { path, target } => {
+                fs::hard_link(&target, &path).with_context(|| {
+                    format!(
+                        "Failed to create archive hard link {} -> {}",
+                        path.display(),
+                        target.display()
+                    )
+                })?;
+            }
+        }
+    }
+    Ok(())
+}
+
 /// Extract a .tar.gz archive with progress
 pub async fn extract_tar_gz(
     archive_path: &Path,
@@ -148,6 +342,7 @@ pub async fn extract_tar_gz(
         pb.set_message("Extracting...");
 
         fs::create_dir_all(&dest_dir)?;
+        let mut pending_links = Vec::new();
 
         for entry in archive.entries()? {
             let mut entry = entry?;
@@ -168,13 +363,34 @@ pub async fn extract_tar_gz(
                 fs::create_dir_all(&dest_path)?;
             } else if entry_type.is_file() {
                 entry.unpack(&dest_path)?;
+            } else if entry_type.is_symlink() {
+                let target = entry
+                    .link_name()?
+                    .context("Archive symlink is missing its target")?
+                    .into_owned();
+                validate_relative_symlink_target(&stripped, &target)?;
+                pending_links.push(PendingArchiveLink::Symbolic {
+                    path: dest_path,
+                    target,
+                });
+            } else if entry_type.is_hard_link() {
+                let target = entry
+                    .link_name()?
+                    .context("Archive hard link is missing its target")?;
+                let target = stripped_archive_path(&target, strip_components)?
+                    .context("Archive hard link target was stripped away")?;
+                pending_links.push(PendingArchiveLink::Hard {
+                    path: dest_path,
+                    target: dest_dir.join(target),
+                });
             } else {
                 anyhow::bail!(
-                    "Unsupported link or special entry in runtime archive: {}",
+                    "Unsupported special entry in runtime archive: {}",
                     path.display()
                 );
             }
         }
+        create_archive_links(pending_links)?;
 
         pb.finish_and_clear();
         Ok(())
@@ -199,24 +415,20 @@ pub async fn extract_tar_xz(
         pb.set_style(extract_progress_style());
         pb.set_message("Decompressing XZ...");
 
-        // Pure Rust XZ decompression with size limit to prevent zip bombs
-        const MAX_DECOMPRESSED_SIZE: usize = 2 * 1024 * 1024 * 1024; // 2 GB limit for runtimes
-        let mut decompressed = Vec::new();
-        lzma_rs::xz_decompress(&mut BufReader::new(file), &mut decompressed)
+        // Pure Rust XZ decompression with the decompressed-size budget
+        // enforced during streaming: the sink stops accepting bytes at the
+        // budget, so a bomb aborts instead of exhausting memory before a
+        // post-hoc size check could run.
+        let mut sink = BudgetedSink::with_default_budget();
+        lzma_rs::xz_decompress(&mut BufReader::new(file), &mut sink)
             .context("Failed to decompress XZ archive")?;
-
-        if decompressed.len() > MAX_DECOMPRESSED_SIZE {
-            anyhow::bail!(
-                "Decompressed archive too large: {} bytes exceeds {} byte limit",
-                decompressed.len(),
-                MAX_DECOMPRESSED_SIZE
-            );
-        }
+        let decompressed = sink.into_inner();
 
         pb.set_message("Extracting...");
 
         let mut archive = tar::Archive::new(decompressed.as_slice());
         fs::create_dir_all(&dest_dir)?;
+        let mut pending_links = Vec::new();
 
         for entry in archive.entries()? {
             let mut entry = entry?;
@@ -237,13 +449,34 @@ pub async fn extract_tar_xz(
                 fs::create_dir_all(&dest_path)?;
             } else if entry_type.is_file() {
                 entry.unpack(&dest_path)?;
+            } else if entry_type.is_symlink() {
+                let target = entry
+                    .link_name()?
+                    .context("Archive symlink is missing its target")?
+                    .into_owned();
+                validate_relative_symlink_target(&stripped, &target)?;
+                pending_links.push(PendingArchiveLink::Symbolic {
+                    path: dest_path,
+                    target,
+                });
+            } else if entry_type.is_hard_link() {
+                let target = entry
+                    .link_name()?
+                    .context("Archive hard link is missing its target")?;
+                let target = stripped_archive_path(&target, strip_components)?
+                    .context("Archive hard link target was stripped away")?;
+                pending_links.push(PendingArchiveLink::Hard {
+                    path: dest_path,
+                    target: dest_dir.join(target),
+                });
             } else {
                 anyhow::bail!(
-                    "Unsupported link or special entry in runtime archive: {}",
+                    "Unsupported special entry in runtime archive: {}",
                     path.display()
                 );
             }
         }
+        create_archive_links(pending_links)?;
 
         pb.finish_and_clear();
         Ok(())
@@ -811,7 +1044,7 @@ macro_rules! impl_runtime_common {
 }
 
 #[cfg(test)]
-#[allow(clippy::unwrap_used, clippy::expect_used)] // Idiomatic in tests: panics on failure with clear error context
+#[expect(clippy::unwrap_used, clippy::expect_used)] // Idiomatic in tests: panics on failure with clear error context
 mod tests {
     use super::*;
     use tempfile::TempDir;
@@ -896,25 +1129,72 @@ mod tests {
         assert!(parse_sha256_digest(&"z".repeat(64), "nodejs.org").is_err());
     }
 
+    fn tar_archive_with_symlink(target: &str) -> anyhow::Result<Vec<u8>> {
+        let mut bytes = Vec::new();
+        let mut builder = tar::Builder::new(&mut bytes);
+
+        let mut file_header = tar::Header::new_gnu();
+        file_header.set_entry_type(tar::EntryType::Regular);
+        file_header.set_mode(0o755);
+        file_header.set_size(4);
+        file_header.set_cksum();
+        builder.append_data(&mut file_header, "runtime/lib/tool", &b"tool"[..])?;
+
+        let mut link_header = tar::Header::new_gnu();
+        link_header.set_entry_type(tar::EntryType::Symlink);
+        link_header.set_mode(0o755);
+        link_header.set_size(0);
+        link_header.set_link_name(target)?;
+        link_header.set_cksum();
+        builder.append_data(&mut link_header, "runtime/bin/tool", std::io::empty())?;
+        builder.finish()?;
+        drop(builder);
+        Ok(bytes)
+    }
+
     #[tokio::test]
-    async fn tar_gz_extraction_rejects_symlinks() -> anyhow::Result<()> {
+    async fn tar_gz_extraction_rejects_escaping_symlinks() -> anyhow::Result<()> {
         let temp = TempDir::new()?;
         let archive_path = temp.path().join("runtime.tar.gz");
         let gz = {
             let mut encoder =
                 flate2::write::GzEncoder::new(Vec::new(), flate2::Compression::default());
-            std::io::Write::write_all(&mut encoder, &tar_archive(tar::EntryType::symlink()))?;
+            std::io::Write::write_all(&mut encoder, &tar_archive_with_symlink("../../outside")?)?;
             encoder.finish()?
         };
         fs::write(&archive_path, gz)?;
 
         let error = extract_tar_gz(&archive_path, temp.path().join("out").as_path(), 1)
             .await
-            .expect_err("symlink entries must be rejected");
+            .expect_err("escaping symlink entries must be rejected");
         assert!(
             error
                 .to_string()
-                .contains("Unsupported link or special entry")
+                .contains("escapes the extraction directory")
+        );
+        Ok(())
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn tar_gz_extraction_accepts_internal_symlinks() -> anyhow::Result<()> {
+        let temp = TempDir::new()?;
+        let archive_path = temp.path().join("runtime.tar.gz");
+        let gz = {
+            let mut encoder =
+                flate2::write::GzEncoder::new(Vec::new(), flate2::Compression::default());
+            std::io::Write::write_all(&mut encoder, &tar_archive_with_symlink("../lib/tool")?)?;
+            encoder.finish()?
+        };
+        fs::write(&archive_path, gz)?;
+
+        let output = temp.path().join("out");
+        extract_tar_gz(&archive_path, &output, 1).await?;
+        assert_eq!(fs::read(output.join("bin/tool"))?, b"tool");
+        assert!(
+            fs::symlink_metadata(output.join("bin/tool"))?
+                .file_type()
+                .is_symlink()
         );
         Ok(())
     }
@@ -1190,5 +1470,52 @@ mod tests {
 
         assert!(error.to_string().contains("unsupported on this platform"));
         assert!(!temp.path().join("current").exists());
+    }
+
+    /// Build a gzip bomb: `expanded` bytes of zeros compress to a few KiB.
+    #[cfg(any(feature = "debian", feature = "debian-pure"))]
+    fn gzip_bomb(expanded: usize) -> Vec<u8> {
+        use flate2::Compression;
+        use flate2::write::GzEncoder;
+        use std::io::Read as _;
+
+        let mut encoder = GzEncoder::new(Vec::new(), Compression::best());
+        std::io::copy(
+            &mut std::io::repeat(0u8).take(expanded as u64),
+            &mut encoder,
+        )
+        .unwrap();
+        encoder.finish().unwrap()
+    }
+
+    #[test]
+    #[cfg(any(feature = "debian", feature = "debian-pure"))]
+    fn budgeted_reader_aborts_a_decompression_bomb_during_streaming() {
+        let bomb = gzip_bomb(64 * 1024 * 1024); // 64 MiB of zeros compresses to ~60 KiB
+        let decoder = flate2::read::GzDecoder::new(bomb.as_slice());
+        let mut reader = BudgetedReader::new(decoder, 1024 * 1024); // 1 MiB budget
+
+        let mut sink = Vec::new();
+        let error = reader
+            .read_to_end(&mut sink)
+            .expect_err("budget must abort the stream");
+
+        assert_eq!(error.kind(), std::io::ErrorKind::InvalidData);
+        assert!(error.to_string().contains("maximum supported size"));
+        // Allocation stopped at the budget instead of expanding to 64 MiB.
+        assert!(sink.len() <= 1024 * 1024 + 64 * 1024);
+    }
+
+    #[cfg(any(feature = "debian", feature = "debian-pure"))]
+    #[test]
+    fn budgeted_sink_stops_growing_at_the_budget() {
+        let mut sink = BudgetedSink::with_budget(16);
+
+        let ok = sink.write(&[0u8; 10]).unwrap();
+        let error = sink.write(&[0u8; 32]).expect_err("budget must abort");
+
+        assert_eq!(ok, 10);
+        assert_eq!(error.kind(), std::io::ErrorKind::InvalidData);
+        assert_eq!(sink.into_inner().len(), 10);
     }
 }

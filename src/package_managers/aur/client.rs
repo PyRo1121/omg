@@ -44,6 +44,13 @@ use crate::package_managers::{get_potential_aur_packages, pacman_db};
 const AUR_RPC_URL: &str = "https://aur.archlinux.org/rpc";
 const AUR_GIT_URL: &str = "https://aur.archlinux.org";
 const AUR_RPC_MAX_URI: usize = 4400;
+
+/// Process-wide lock around pacman database mutations (`pacman -U` or a
+/// direct ALPM transaction). Pacman serializes installs on
+/// `/var/lib/pacman/db.lck`, so concurrent installs — e.g. parallel AUR build
+/// waves finishing together — either fail spuriously on the lock or race the
+/// ALPM database. Builds stay parallel; installs are applied one at a time.
+static INSTALL_LOCK: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
 /// Pre-computed length of the AUR RPC info base URL (47 bytes)
 const AUR_RPC_INFO_BASE_LEN: usize = 47;
 
@@ -131,6 +138,18 @@ fn require_fetchable_pgp_key_id(key_id: &str) -> Result<()> {
             anyhow::bail!("Invalid PGP key ID (non-hex chars): {key_id}")
         }
     }
+}
+
+#[cfg(unix)]
+fn require_unprivileged_builder(package: &str, is_root: bool) -> Result<()> {
+    if is_root {
+        anyhow::bail!(
+            "AUR packages must not be built as root.\n  \
+             → Run omg as your regular user; it will request sudo only for dependency and package installation.\n  \
+             → Retry without sudo: omg install {package}"
+        );
+    }
+    Ok(())
 }
 
 /// AUR API client with build support
@@ -728,6 +747,9 @@ impl AurClient {
 
     pub async fn install(&self, package: &str) -> Result<()> {
         crate::core::security::validate_package_name(package)?;
+
+        #[cfg(unix)]
+        require_unprivileged_builder(package, crate::core::is_root())?;
 
         // Pre-acquire sudo credentials before starting the build.
         // This ensures the sudoloop has a valid timestamp to refresh,
@@ -1431,22 +1453,19 @@ impl AurClient {
 
             spinner.finish_and_clear();
         } else {
-            let url_clone = url.clone();
-            let dest_clone = dest.clone();
-            let result = tokio::task::spawn_blocking(move || {
-                let mut builder = git2::build::RepoBuilder::new();
-                builder.fetch_options({
-                    let mut fetch_opts = git2::FetchOptions::new();
-                    fetch_opts.depth(1);
-                    fetch_opts
-                });
-                builder.clone(&url_clone, &dest_clone)
-            })
-            .await?;
-
+            let status = Command::new("git")
+                .args(["clone", "--depth=1", "--filter=blob:none", "--"])
+                .arg(&url)
+                .arg(&dest)
+                .env("GIT_TERMINAL_PROMPT", "0")
+                .stdin(std::process::Stdio::null())
+                .status()
+                .await
+                .with_context(|| format!("Failed to run git clone for {url}"))?;
             spinner.finish_and_clear();
-
-            result.with_context(|| format!("Failed to clone {url}"))?;
+            if !status.success() {
+                anyhow::bail!("git clone failed for {url}");
+            }
         }
         Ok(())
     }
@@ -1528,63 +1547,25 @@ impl AurClient {
                         .unwrap_or("package")
                 );
             }
-            Ok(())
         } else {
-            let pkg_dir_clone = pkg_dir.to_path_buf();
-            let result = tokio::task::spawn_blocking(move || -> Result<()> {
-                let repo = git2::Repository::open(&pkg_dir_clone)
-                    .context("Failed to open git repository")?;
-
-                let mut remote = repo
-                    .find_remote("origin")
-                    .context("Failed to find origin remote")?;
-
-                remote
-                    .fetch(&["main", "master"], None, None)
-                    .context("Failed to fetch from remote")?;
-
-                let fetch_head = repo
-                    .find_reference("FETCH_HEAD")
-                    .context("Failed to find FETCH_HEAD")?;
-                let fetch_commit = repo
-                    .reference_to_annotated_commit(&fetch_head)
-                    .context("Failed to get fetch commit")?;
-
-                let (analysis, _) = repo
-                    .merge_analysis(&[&fetch_commit])
-                    .context("Failed to analyze merge")?;
-
-                if analysis.is_up_to_date() {
-                    return Ok(());
-                }
-
-                if analysis.is_fast_forward() {
-                    let refname = "refs/heads/master";
-                    let mut reference = repo
-                        .find_reference(refname)
-                        .or_else(|_| repo.find_reference("refs/heads/main"))
-                        .context("Failed to find branch reference")?;
-                    reference
-                        .set_target(fetch_commit.id(), "Fast-forward")
-                        .context("Failed to fast-forward")?;
-                    repo.set_head(refname)
-                        .or_else(|_| repo.set_head("refs/heads/main"))
-                        .context("Failed to set HEAD")?;
-                    repo.checkout_head(Some(git2::build::CheckoutBuilder::default().force()))
-                        .context("Failed to checkout HEAD")?;
-                    return Ok(());
-                }
-
-                anyhow::bail!(
-                    "Cannot fast-forward, manual merge required in {}",
-                    pkg_dir_clone.display()
-                )
-            })
-            .await?;
-
+            let status = Command::new("git")
+                .arg("-C")
+                .arg(pkg_dir)
+                .args(["pull", "--ff-only"])
+                .env("GIT_TERMINAL_PROMPT", "0")
+                .stdin(std::process::Stdio::null())
+                .status()
+                .await
+                .with_context(|| format!("Failed to run git pull in {}", pkg_dir.display()))?;
             spinner.finish_and_clear();
-            result
+            if !status.success() {
+                anyhow::bail!(
+                    "git pull failed in {}\n  → Try removing the cached AUR checkout and reinstalling",
+                    pkg_dir.display()
+                );
+            }
         }
+        Ok(())
     }
 
     async fn run_build(
@@ -2137,7 +2118,7 @@ impl AurClient {
     }
 
     #[cfg(not(feature = "pgp"))]
-    #[allow(clippy::unused_async)]
+    #[expect(clippy::unused_async)]
     async fn fetch_missing_pgp_keys(_pkgbuild_path: &Path) -> Result<()> {
         tracing::debug!("PGP feature disabled, skipping key fetch");
         Ok(())
@@ -2172,7 +2153,11 @@ impl AurClient {
             .clone()
             .unwrap_or_else(|| self.build_dir.join("_srcdest"));
 
-        let builddir = std::env::temp_dir().join("omg-build").join(
+        // Build scratch lives under the user's cache directory (created
+        // 0700, owned by the build user), never under world-writable /tmp:
+        // a predictable /tmp path would let a local attacker pre-plant a
+        // symlink and redirect the build through it.
+        let builddir = paths::cache_dir().join("build").join(
             pkg_dir
                 .file_name()
                 .and_then(|name| name.to_str())
@@ -2181,7 +2166,22 @@ impl AurClient {
 
         create_dir_as_user_sync(&pkgdest)?;
         create_dir_as_user_sync(&srcdest)?;
-        std::fs::create_dir_all(&builddir)?;
+        create_dir_as_user_sync(&builddir)?;
+        // makepkg runs de-escalated inside this directory; keep it private
+        // regardless of the creating process's umask. Best-effort: a failure
+        // here only widens permissions, and makepkg still runs unprivileged.
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            if let Err(error) =
+                std::fs::set_permissions(&builddir, std::fs::Permissions::from_mode(0o700))
+            {
+                tracing::debug!(
+                    "Failed to restrict AUR build directory {}: {error}",
+                    builddir.display()
+                );
+            }
+        }
 
         if crate::core::is_root()
             && let Some(build_user) = std::env::var("SUDO_USER")
@@ -2371,6 +2371,9 @@ impl AurClient {
         pkg_path: &Path,
         #[cfg(unix)] sudoloop: Option<&crate::core::sudoloop::SudoLoop>,
     ) -> Result<()> {
+        // Serialize database mutations across all concurrent builds.
+        let _install_guard = INSTALL_LOCK.lock().await;
+
         println!("{} Installing built package...", "→".blue());
 
         // Use direct ALPM if we have capabilities (turbo mode) or running as root
@@ -2700,8 +2703,13 @@ mod tests {
             .makepkg_env(&pkg_dir)
             .expect("makepkg env must be constructed");
         assert!(
-            env.builddir.to_string_lossy().contains("omg-build"),
-            "build dir must be under omg-build, got {}",
+            env.builddir.starts_with(paths::cache_dir()),
+            "build dir must live under the omg cache directory, got {}",
+            env.builddir.display()
+        );
+        assert!(
+            !env.builddir.starts_with(std::env::temp_dir()),
+            "build dir must never be under world-writable /tmp, got {}",
             env.builddir.display()
         );
         assert!(
@@ -2979,6 +2987,16 @@ mod tests {
             invalid.to_string().contains("non-hex chars"),
             "got: {invalid}"
         );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn aur_builds_reject_root_and_accept_an_unprivileged_user() {
+        require_unprivileged_builder("example", false).expect("regular user");
+        let error = require_unprivileged_builder("example", true)
+            .expect_err("root builds must be rejected");
+        assert!(error.to_string().contains("must not be built as root"));
+        assert!(error.to_string().contains("omg install example"));
     }
 
     #[test]

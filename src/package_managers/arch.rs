@@ -217,9 +217,15 @@ impl PackageManager for ArchPackageManager {
 
     fn get_status(
         &self,
-        _fast: bool,
+        fast: bool,
     ) -> Pin<Box<dyn Future<Output = AnyhowResult<(usize, usize, usize, usize)>> + Send + '_>> {
-        Box::pin(async move { get_system_status() })
+        Box::pin(async move {
+            if fast {
+                let (total, explicit, _) = super::pacman_db::get_counts_fast()?;
+                return Ok((total, explicit, 0, 0));
+            }
+            get_system_status()
+        })
     }
 
     #[inline]

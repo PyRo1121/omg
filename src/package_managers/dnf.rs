@@ -93,14 +93,11 @@ pub struct DnfPackageManager {
 
 /// Installed package information from RPM database
 #[derive(Debug, Clone)]
-#[allow(dead_code)] // Fields used for future RPM database implementation
 struct InstalledPackage {
     name: String,
     version: String,
     release: String,
     summary: String,
-    size: i64,
-    install_time: i64,
     reason: InstallReason,
 }
 
@@ -199,7 +196,7 @@ impl DnfPackageManager {
             .args([
                 "-qa",
                 "--queryformat",
-                "%{NAME}\t%{VERSION}\t%{RELEASE}\t%{SUMMARY}\t%{SIZE}\t%{INSTALLTIME}\t%{REASON}\n",
+                "%{NAME}\t%{VERSION}\t%{RELEASE}\t%{SUMMARY}\t%{REASON}\n",
             ])
             .output()
             .context("Failed to execute rpm -qa")?;
@@ -223,14 +220,14 @@ impl DnfPackageManager {
 
     fn parse_rpm_qa_line(line: &str) -> Result<InstalledPackage> {
         let fields: Vec<&str> = line.split('\t').collect();
-        if fields.len() < 7 {
+        if fields.len() < 5 {
             anyhow::bail!(
-                "malformed rpm -qa output: expected 7 fields, got {}",
+                "malformed rpm -qa output: expected 5 fields, got {}",
                 fields.len()
             );
         }
 
-        let reason = match fields[6] {
+        let reason = match fields[4] {
             "0" | "user" => InstallReason::User,
             _ => InstallReason::Dependency,
         };
@@ -240,8 +237,6 @@ impl DnfPackageManager {
             version: fields[1].to_string(),
             release: fields[2].to_string(),
             summary: fields[3].to_string(),
-            size: fields[4].parse().unwrap_or(0),
-            install_time: fields[5].parse().unwrap_or(0),
             reason,
         })
     }
@@ -337,8 +332,8 @@ impl DnfPackageManager {
 
     /// Parse an RPM blob into an `InstalledPackage`
     ///
-    /// Extracts name, version, release, summary, size, install time, and reason
-    /// from the RPM header blob format.
+    /// Extracts name, version, release, summary, and installation reason from
+    /// the RPM header blob format.
     #[cfg(feature = "fedora")]
     fn parse_package_from_blob(blob: &[u8]) -> Result<InstalledPackage> {
         let tags = Self::parse_rpm_header(blob)?;
@@ -383,8 +378,6 @@ impl DnfPackageManager {
             version: get_string(rpm_tags::VERSION),
             release: get_string(rpm_tags::RELEASE),
             summary: get_string(rpm_tags::SUMMARY),
-            size: get_i64(rpm_tags::SIZE),
-            install_time: get_i64(rpm_tags::INSTALL_TIME),
             reason,
         })
     }
@@ -596,7 +589,7 @@ impl DnfPackageManager {
     }
 
     /// Execute DNF command with privilege escalation if needed
-    #[allow(clippy::unused_async)] // May add async operations in future
+    #[expect(clippy::unused_async)] // May add async operations in future
     fn run_dnf(&self, args: &[&str]) -> Result<()> {
         let mut cmd = if is_root() {
             Command::new("dnf")
@@ -959,7 +952,7 @@ mod tests {
     #[test]
     fn test_parse_rpm_qa_line_reads_installed_package() {
         let pkg = DnfPackageManager::parse_rpm_qa_line(
-            "bash\t5.2.15\t1.fc39\tThe GNU Bourne Again shell\t1024\t1700000000\t0",
+            "bash\t5.2.15\t1.fc39\tThe GNU Bourne Again shell\t0",
         )
         .expect("valid rpm -qa line");
         assert_eq!(pkg.name, "bash");

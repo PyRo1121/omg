@@ -39,6 +39,7 @@ impl PackageBloomFilter {
         [h1 % self.num_bits, h2 % self.num_bits, h3 % self.num_bits]
     }
 
+    #[cfg(any(test, feature = "arch", feature = "debian", feature = "debian-pure"))]
     fn insert(&mut self, name: &str) {
         for pos in self.hash_positions(name) {
             let word_idx = pos / 64;
@@ -68,10 +69,12 @@ impl PackageBloomFilter {
 #[derive(Default)]
 struct StringPool {
     strings: Vec<Arc<str>>,
+    #[cfg(any(test, feature = "arch", feature = "debian", feature = "debian-pure"))]
     dedup: AHashMap<Arc<str>, u32>,
 }
 
 impl StringPool {
+    #[cfg(any(test, feature = "arch", feature = "debian", feature = "debian-pure"))]
     fn intern(&mut self, s: &str) -> u32 {
         if let Some(&handle) = self.dedup.get(s) {
             return handle;
@@ -110,6 +113,7 @@ impl TrigramIndex {
         }
     }
 
+    #[cfg(any(test, feature = "arch", feature = "debian", feature = "debian-pure"))]
     fn insert(&mut self, name_lower: &str, idx: u32) {
         let bytes = name_lower.as_bytes();
         if bytes.len() < 3 {

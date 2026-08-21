@@ -27,14 +27,9 @@ use crate::package_managers::aur_metadata::sync_aur_metadata;
 
 const MIRROR_CACHE_TTL_SECS: u64 = 6 * 60 * 60;
 
-fn get_configured_repos() -> Vec<String> {
-    crate::core::pacman_conf::get_configured_repos().unwrap_or_else(|_| {
-        vec![
-            "core".to_string(),
-            "extra".to_string(),
-            "multilib".to_string(),
-        ]
-    })
+fn get_configured_repos() -> Result<Vec<String>> {
+    crate::core::pacman_conf::get_configured_repos()
+        .context("Failed to load repositories from pacman.conf")
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -399,7 +394,7 @@ pub async fn sync_databases_parallel() -> Result<()> {
     };
 
     // Collect all repos to sync from pacman.conf
-    let configured_repos = get_configured_repos();
+    let configured_repos = get_configured_repos()?;
     let mut repos_to_sync: Vec<(String, Vec<String>, PathBuf)> =
         Vec::with_capacity(configured_repos.len());
 

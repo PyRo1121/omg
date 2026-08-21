@@ -988,7 +988,6 @@ fn extract_component_from_path(path: &Path) -> String {
     String::from("main")
 }
 
-#[allow(clippy::unnecessary_wraps)]
 fn find_info_from_apt_lists_fast(name: &str) -> Result<Option<Package>> {
     let lists_dir = Path::new("/var/lib/apt/lists");
     if !lists_dir.exists() {
@@ -1806,7 +1805,7 @@ pub fn is_mmap_available() -> bool {
 
 /// Get updates using the mmap index with parallel version comparison
 /// This is the ULTRA-FAST path that avoids loading the entire index into memory
-#[allow(clippy::implicit_hasher)]
+#[expect(clippy::implicit_hasher)]
 pub fn get_updates_from_mmap(
     installed_map: &std::collections::HashMap<&str, &str>,
 ) -> Result<Vec<(String, String, String)>> {
@@ -1935,11 +1934,9 @@ fn package_size_from_status(content: &str, package_name: &str) -> Result<Option<
             in_package = false;
         } else if let Some(pkg) = line.strip_prefix("Package: ") {
             in_package = pkg.trim() == package_name;
-        } else if in_package {
-            if let Some(size_str) = line.strip_prefix("Installed-Size: ") {
-                let size_kb = parse_installed_size_kb(size_str, package_name)?;
-                return Ok(Some(size_kb * 1024));
-            }
+        } else if in_package && let Some(size_str) = line.strip_prefix("Installed-Size: ") {
+            let size_kb = parse_installed_size_kb(size_str, package_name)?;
+            return Ok(Some(size_kb * 1024));
         }
     }
 

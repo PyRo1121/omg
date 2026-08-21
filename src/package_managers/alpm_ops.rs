@@ -16,8 +16,6 @@ use crate::core::paths;
 /// Compiled once at first use, then reused for all subsequent calls.
 static MIRRORLIST_REGEX: LazyLock<Regex> =
     LazyLock::new(|| Regex::new(r"^Server\s*=\s*([^#]+)").expect("valid regex pattern"));
-#[cfg(feature = "pgp")]
-use crate::core::security::pgp::PgpVerifier;
 use crate::package_managers::pacman_db;
 use crate::package_managers::types::{PackageInfo, UpdateInfo};
 
@@ -43,7 +41,11 @@ pub fn get_update_list() -> Result<Vec<UpdateInfo>> {
             .collect());
     }
 
-    crate::package_managers::alpm_direct::with_handle(|alpm| {
+    let pacman_config = crate::core::pacman_conf::PacmanConfig::parse(paths::pacman_conf_path())
+        .context("Failed to load update filters from pacman.conf")?;
+
+    crate::package_managers::alpm_direct::with_handle_mut(|alpm| {
+        configure_package_filters(alpm, &pacman_config)?;
         let localdb = alpm.localdb();
         let syncdbs = alpm.syncdbs();
         let local_pkg_count = localdb.pkgs().len();
@@ -56,6 +58,9 @@ pub fn get_update_list() -> Result<Vec<UpdateInfo>> {
         for db in syncdbs {
             let repo_name = db.name();
             for pkg in db.pkgs() {
+                if pkg.should_ignore() {
+                    continue;
+                }
                 // First repo wins (core > extra > multilib priority)
                 sync_map
                     .entry(pkg.name())
@@ -97,7 +102,11 @@ pub struct DownloadInfo {
 
 /// Get download information for all available updates - for parallel downloads
 pub fn get_update_download_list() -> Result<Vec<DownloadInfo>> {
-    crate::package_managers::alpm_direct::with_handle(|alpm| {
+    let pacman_config = crate::core::pacman_conf::PacmanConfig::parse(paths::pacman_conf_path())
+        .context("Failed to load update filters from pacman.conf")?;
+
+    crate::package_managers::alpm_direct::with_handle_mut(|alpm| {
+        configure_package_filters(alpm, &pacman_config)?;
         let localdb = alpm.localdb();
         let syncdbs = alpm.syncdbs();
         let local_pkg_count = localdb.pkgs().len();
@@ -110,6 +119,9 @@ pub fn get_update_download_list() -> Result<Vec<DownloadInfo>> {
         for db in syncdbs {
             let repo_name = db.name();
             for pkg in db.pkgs() {
+                if pkg.should_ignore() {
+                    continue;
+                }
                 sync_map.entry(pkg.name()).or_insert_with(|| {
                     (
                         pkg.version().as_str(),
@@ -197,23 +209,24 @@ pub fn get_pkg_info_from_db(alpm: &alpm::Alpm, name: &str) -> Result<Option<Pack
 
 /// Clean package cache using direct file system operations - FAST
 pub fn clean_cache(keep_versions: usize) -> Result<(usize, u64)> {
-    let cache_dir = paths::pacman_cache_dir();
-
-    if !cache_dir.exists() {
-        return Ok((0, 0));
-    }
-
     let mut packages: ahash::AHashMap<String, Vec<std::path::PathBuf>> = ahash::AHashMap::new();
 
-    for entry in std::fs::read_dir(&cache_dir)? {
-        let entry = entry?;
-        let path = entry.path();
-
-        if let Some(filename) = path.file_name().and_then(|n| n.to_str())
-            && (filename.ends_with(".pkg.tar.zst") || filename.ends_with(".pkg.tar.xz"))
-            && let Some(base) = filename.rsplitn(5, '-').last()
+    for cache_dir in paths::pacman_cache_dirs() {
+        if !cache_dir.exists() {
+            continue;
+        }
+        for entry in std::fs::read_dir(&cache_dir)
+            .with_context(|| format!("Failed to read pacman cache at {}", cache_dir.display()))?
         {
-            packages.entry(base.to_string()).or_default().push(path);
+            let entry = entry?;
+            let path = entry.path();
+
+            if let Some(filename) = path.file_name().and_then(|name| name.to_str())
+                && (filename.ends_with(".pkg.tar.zst") || filename.ends_with(".pkg.tar.xz"))
+                && let Some(base) = filename.rsplitn(5, '-').last()
+            {
+                packages.entry(base.to_string()).or_default().push(path);
+            }
         }
     }
 
@@ -222,16 +235,24 @@ pub fn clean_cache(keep_versions: usize) -> Result<(usize, u64)> {
 
     for (_, mut versions) in packages {
         versions.sort_by(|a, b| {
-            let a_time = a.metadata().and_then(|m| m.modified()).ok();
-            let b_time = b.metadata().and_then(|m| m.modified()).ok();
+            let a_time = a.metadata().and_then(|metadata| metadata.modified()).ok();
+            let b_time = b.metadata().and_then(|metadata| metadata.modified()).ok();
             b_time.cmp(&a_time)
         });
 
         for old in versions.into_iter().skip(keep_versions) {
-            if let Ok(meta) = old.metadata() {
-                freed += meta.len();
+            if let Ok(metadata) = old.metadata() {
+                freed = freed.saturating_add(metadata.len());
             }
             if std::fs::remove_file(&old).is_ok() {
+                removed += 1;
+            }
+
+            let signature = std::path::PathBuf::from(format!("{}.sig", old.display()));
+            if let Ok(metadata) = signature.metadata() {
+                freed = freed.saturating_add(metadata.len());
+            }
+            if signature.exists() && std::fs::remove_file(&signature).is_ok() {
                 removed += 1;
             }
         }
@@ -326,11 +347,16 @@ pub fn execute_transaction(
     sysupgrade: bool,
     handle: Option<&mut alpm::Alpm>,
 ) -> Result<()> {
+    let pacman_config = crate::core::pacman_conf::PacmanConfig::parse(paths::pacman_conf_path())
+        .context("Failed to load transaction options from pacman.conf")?;
+
     if let Some(alpm) = handle {
+        configure_transaction_options(alpm, &pacman_config)?;
         configure_mirrors(alpm)?;
         let mp = indicatif::MultiProgress::new();
         let main_pb = setup_alpm_callbacks(alpm, &mp);
-        let tx_guard = prepare_alpm_transaction(alpm, packages, remove, sysupgrade)?;
+        let tx_guard =
+            prepare_alpm_transaction(alpm, packages, remove, sysupgrade, &pacman_config)?;
         commit_alpm_transaction(tx_guard.0, &main_pb)?;
         return Ok(());
     }
@@ -339,17 +365,15 @@ pub fn execute_transaction(
     let db_path = paths::pacman_db_dir().to_string_lossy().into_owned();
     let mut alpm =
         alpm::Alpm::new(root, db_path).context("Failed to initialize ALPM (are you root?)")?;
+    configure_transaction_options(&mut alpm, &pacman_config)?;
 
-    let repos = crate::core::pacman_conf::get_configured_repos().unwrap_or_else(|_| {
-        vec![
-            "core".to_string(),
-            "extra".to_string(),
-            "multilib".to_string(),
-        ]
-    });
+    if pacman_config.repos.is_empty() {
+        anyhow::bail!("pacman configuration contains no repositories");
+    }
 
     let mut registered_syncdbs = 0usize;
-    for db_name in &repos {
+    for repo in &pacman_config.repos {
+        let db_name = &repo.name;
         if let Err(e) = alpm.register_syncdb(db_name.as_str(), alpm::SigLevel::USE_DEFAULT) {
             tracing::warn!("Failed to register sync database '{db_name}': {e}");
         } else {
@@ -365,7 +389,8 @@ pub fn execute_transaction(
 
     let mp = indicatif::MultiProgress::new();
     let main_pb = setup_alpm_callbacks(&alpm, &mp);
-    let tx_guard = prepare_alpm_transaction(&mut alpm, packages, remove, sysupgrade)?;
+    let tx_guard =
+        prepare_alpm_transaction(&mut alpm, packages, remove, sysupgrade, &pacman_config)?;
     commit_alpm_transaction(tx_guard.0, &main_pb)?;
 
     Ok(())
@@ -487,12 +512,13 @@ fn setup_alpm_callbacks(
 
 /// Prepare an ALPM transaction for execution
 #[inline]
-fn prepare_alpm_transaction(
-    alpm: &mut alpm::Alpm,
+fn prepare_alpm_transaction<'a>(
+    alpm: &'a mut alpm::Alpm,
     packages: Vec<String>,
     remove: bool,
     sysupgrade: bool,
-) -> Result<AlpmTransaction<'_>> {
+    pacman_config: &crate::core::pacman_conf::PacmanConfig,
+) -> Result<AlpmTransaction<'a>> {
     use alpm::TransFlag;
 
     let mut flags = TransFlag::NEEDED;
@@ -521,6 +547,11 @@ fn prepare_alpm_transaction(
     } else {
         for pkg_name in packages {
             if remove {
+                if pacman_config.hold_pkg.iter().any(|held| held == &pkg_name) {
+                    anyhow::bail!(
+                        "Package '{pkg_name}' is protected by HoldPkg in pacman.conf and cannot be removed"
+                    );
+                }
                 if let Ok(pkg) = tx_guard.0.localdb().pkg(pkg_name.as_str()) {
                     tx_guard.0.trans_remove_pkg(pkg).map_err(|e| {
                         anyhow::anyhow!("Failed to add {pkg_name} to removal list: {e}")
@@ -536,7 +567,7 @@ fn prepare_alpm_transaction(
 
                     let pkg = tx_guard
                         .0
-                        .pkg_load(canonical_str.to_string(), true, alpm::SigLevel::USE_DEFAULT)
+                        .pkg_load(canonical_str.to_string(), true, alpm::SigLevel::PACKAGE)
                         .map_err(|e| {
                             anyhow::anyhow!("Failed to load local package {pkg_name}: {e}")
                         })?;
@@ -574,71 +605,157 @@ fn prepare_alpm_transaction(
 }
 
 /// Commit an ALPM transaction
+fn pacman_option_path(
+    root: &std::path::Path,
+    configured: Option<&str>,
+    default: &str,
+) -> std::path::PathBuf {
+    let path = configured.map_or_else(
+        || std::path::PathBuf::from(default),
+        std::path::PathBuf::from,
+    );
+    if path.is_absolute() {
+        path
+    } else {
+        root.join(path)
+    }
+}
+
+fn configure_transaction_options(
+    alpm: &mut alpm::Alpm,
+    pacman_config: &crate::core::pacman_conf::PacmanConfig,
+) -> Result<()> {
+    // `Alpm::new` leaves transaction-critical pacman options empty. Configure
+    // them explicitly so downloads, signature verification, architecture
+    // checks, logging, and package hooks behave like a normal Arch transaction.
+    let root = paths::pacman_root();
+    let cache_dirs = paths::pacman_cache_dirs();
+    for cache_dir in &cache_dirs {
+        std::fs::create_dir_all(cache_dir).with_context(|| {
+            format!(
+                "Failed to create pacman package cache at {}",
+                cache_dir.display()
+            )
+        })?;
+    }
+    let cache_dirs = cache_dirs
+        .iter()
+        .map(|cache_dir| {
+            cache_dir
+                .to_str()
+                .context("Pacman package cache path contains invalid UTF-8")
+        })
+        .collect::<Result<Vec<_>>>()?;
+    alpm.set_cachedirs(cache_dirs.into_iter())
+        .context("Failed to configure pacman package caches")?;
+
+    let gpg_dir = pacman_option_path(
+        &root,
+        pacman_config.gpg_dir.as_deref(),
+        "etc/pacman.d/gnupg",
+    );
+    if !gpg_dir.is_dir() {
+        anyhow::bail!(
+            "Pacman keyring is unavailable at {}. Initialize it before installing packages.",
+            gpg_dir.display()
+        );
+    }
+    let gpg_dir = gpg_dir
+        .to_str()
+        .context("Pacman keyring path contains invalid UTF-8")?;
+    alpm.set_gpgdir(gpg_dir)
+        .context("Failed to configure pacman keyring")?;
+
+    let log_path = pacman_option_path(
+        &root,
+        pacman_config.log_file.as_deref(),
+        "var/log/pacman.log",
+    );
+    if let Some(parent) = log_path.parent() {
+        std::fs::create_dir_all(parent).with_context(|| {
+            format!(
+                "Failed to create pacman log directory at {}",
+                parent.display()
+            )
+        })?;
+    }
+    let log_path = log_path
+        .to_str()
+        .context("Pacman log path contains invalid UTF-8")?;
+    alpm.set_logfile(log_path)
+        .context("Failed to configure pacman transaction log")?;
+
+    // libalpm gives later hook directories precedence for duplicate hook
+    // names. Distribution hooks come first, followed by configured overrides.
+    let mut hook_dirs = vec![root.join("usr/share/libalpm/hooks")];
+    hook_dirs.extend(
+        pacman_config
+            .hook_dirs
+            .iter()
+            .map(|path| pacman_option_path(&root, Some(path), path)),
+    );
+    let hook_dirs = hook_dirs
+        .iter()
+        .filter(|path| path.is_dir())
+        .map(|path| {
+            path.to_str()
+                .context("Pacman hook path contains invalid UTF-8")
+        })
+        .collect::<Result<Vec<_>>>()?;
+    alpm.set_hookdirs(hook_dirs.into_iter())
+        .context("Failed to configure pacman hooks")?;
+
+    let architectures = pacman_config
+        .architecture
+        .as_deref()
+        .unwrap_or("auto")
+        .split_whitespace()
+        .map(|architecture| {
+            if architecture == "auto" {
+                std::env::consts::ARCH
+            } else {
+                architecture
+            }
+        });
+    alpm.set_architectures(architectures)
+        .context("Failed to configure package architecture validation")?;
+    alpm.set_check_space(true);
+    configure_package_filters(alpm, pacman_config)?;
+    alpm.set_noupgrades(pacman_config.no_upgrade.iter())
+        .context("Failed to configure protected upgrade paths")?;
+    alpm.set_noextracts(pacman_config.no_extract.iter())
+        .context("Failed to configure excluded extraction paths")?;
+
+    // Match Arch's secure repository default: package signatures are required
+    // and database signatures are checked when present. OMG is deliberately
+    // stricter for explicit local and remote package files: they must also be
+    // accompanied by a valid detached signature.
+    let package_siglevel = alpm::SigLevel::PACKAGE;
+    alpm.set_default_siglevel(
+        package_siglevel | alpm::SigLevel::DATABASE | alpm::SigLevel::DATABASE_OPTIONAL,
+    )
+    .context("Failed to configure package signature verification")?;
+    alpm.set_local_file_siglevel(package_siglevel)
+        .context("Failed to require signatures for local package files")?;
+    alpm.set_remote_file_siglevel(package_siglevel)
+        .context("Failed to require signatures for remote package files")
+}
+
+fn configure_package_filters(
+    alpm: &mut alpm::Alpm,
+    pacman_config: &crate::core::pacman_conf::PacmanConfig,
+) -> Result<()> {
+    alpm.set_ignorepkgs(pacman_config.ignore_pkg.iter())
+        .context("Failed to configure ignored packages")?;
+    alpm.set_ignoregroups(pacman_config.ignore_group.iter())
+        .context("Failed to configure ignored package groups")
+}
+
 fn commit_alpm_transaction(alpm: &mut alpm::Alpm, main_pb: &indicatif::ProgressBar) -> Result<()> {
     main_pb.set_message("Preparing transaction...");
 
     alpm.trans_prepare()
         .map_err(|e| anyhow::anyhow!(format_trans_prepare_error(&e.to_string())))?;
-
-    #[cfg(feature = "pgp")]
-    {
-        use rayon::prelude::*;
-        use std::sync::atomic::{AtomicBool, Ordering};
-
-        let verifier = PgpVerifier::new()?;
-        let pkgs_to_add = alpm.trans_add();
-
-        if !pkgs_to_add.is_empty() {
-            main_pb.set_message("Verifying package signatures in parallel...");
-
-            let verification_data: Vec<_> = {
-                let mut data = Vec::new();
-                for pkg in pkgs_to_add.iter() {
-                    let Some(filename) = pkg.filename() else {
-                        anyhow::bail!(
-                            "Package '{}' has no filename; cannot verify a PGP signature",
-                            pkg.name()
-                        );
-                    };
-                    let cache_path = paths::pacman_cache_dir().join(filename);
-                    let sig_path =
-                        std::path::PathBuf::from(format!("{}.sig", cache_path.display()));
-                    crate::core::security::pgp::require_detached_signature_files(
-                        pkg.name(),
-                        &cache_path,
-                        &sig_path,
-                    )?;
-                    data.push((pkg.name().to_string(), cache_path, sig_path));
-                }
-                data
-            };
-
-            let failed = AtomicBool::new(false);
-            let failure_msg = std::sync::Mutex::new(String::new());
-
-            verification_data.par_iter().for_each(|(pkg_name, cache_path, sig_path)| {
-                if failed.load(Ordering::Relaxed) {
-                    return;
-                }
-                if let Err(e) = verifier.verify_package(cache_path, sig_path) {
-                    failed.store(true, Ordering::Relaxed);
-                    // Use unwrap_or_else to recover from potential mutex poisoning
-                    let mut msg = failure_msg.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
-                    *msg = format!(
-                        "✗ SECURITY ALERT: PGP verification failed for {pkg_name}.\n  Error: {e}\n  The package may be corrupted or tampered with."
-                    );
-                }
-            });
-
-            if failed.load(Ordering::Relaxed) {
-                let msg = failure_msg
-                    .lock()
-                    .unwrap_or_else(std::sync::PoisonError::into_inner)
-                    .clone();
-                anyhow::bail!(msg);
-            }
-        }
-    }
 
     if alpm.trans_add().is_empty() && alpm.trans_remove().is_empty() {
         main_pb.finish_and_clear();

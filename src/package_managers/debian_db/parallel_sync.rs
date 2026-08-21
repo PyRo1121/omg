@@ -21,6 +21,8 @@ use owo_colors::OwoColorize;
 use reqwest::Client;
 use tempfile::NamedTempFile;
 
+use crate::runtimes::common::{BudgetedReader, BudgetedSink};
+
 use crate::core::paths;
 
 use super::sources::{Repository, get_enabled_binary_repos};
@@ -667,16 +669,20 @@ fn get_system_arch() -> &'static str {
 }
 
 /// Decompression functions
-/// OPTIMIZATION: Pre-allocate with estimated size (gzip stores uncompressed size in footer)
+///
+/// Both enforce the shared decompressed-size budget *while* bytes are
+/// produced, so a hostile repository archive aborts mid-stream instead of
+/// growing an unbounded buffer.
 fn decompress_gzip(data: &[u8]) -> Result<Vec<u8>> {
     use flate2::read::GzDecoder;
     use std::io::Read;
 
-    let mut decoder = GzDecoder::new(data);
-    // Pre-allocate with heuristic: compressed data typically 3-5x smaller
-    let estimated_size = data.len() * 4;
-    let mut decompressed = Vec::with_capacity(estimated_size);
-    decoder.read_to_end(&mut decompressed)?;
+    let decoder = GzDecoder::new(data);
+    let mut bounded = BudgetedReader::with_default_budget(decoder);
+    let mut decompressed = Vec::new();
+    bounded
+        .read_to_end(&mut decompressed)
+        .map_err(|e| anyhow::anyhow!("Gzip decompression failed or exceeded budget: {e}"))?;
     Ok(decompressed)
 }
 
@@ -684,11 +690,12 @@ fn decompress_xz(data: &[u8]) -> Result<Vec<u8>> {
     use lzma_rs::xz_decompress;
     use std::io::BufReader;
 
-    // OPTIMIZATION: XZ typically compresses 6-8x, pre-allocate
-    let estimated_size = data.len() * 7;
-    let mut output = Vec::with_capacity(estimated_size);
-    xz_decompress(&mut BufReader::new(data), &mut output)?;
-    Ok(output)
+    // lzma-rs has no streaming decoder; the bounded sink stops accepting
+    // bytes at the budget, so buffer growth halts during decompression.
+    let mut output = BudgetedSink::with_default_budget();
+    xz_decompress(&mut BufReader::new(data), &mut output)
+        .map_err(|e| anyhow::anyhow!("XZ decompression failed or exceeded budget: {e}"))?;
+    Ok(output.into_inner())
 }
 
 /// Force a full sync, ignoring cache

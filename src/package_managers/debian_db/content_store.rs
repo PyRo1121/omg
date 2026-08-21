@@ -91,6 +91,12 @@ impl ContentStore {
     /// between the content store and the target location. Changes to either
     /// affect both (but .deb files are read-only in practice).
     pub fn hard_link(&self, hash: &str, target: &Path) -> Result<()> {
+        // Same shard-length guard as `contains`/`get_path`: slicing `&hash[..2]`
+        // below would panic on a short or empty hash.
+        if hash.len() < 2 {
+            anyhow::bail!("Invalid content hash (too short): {hash:?}");
+        }
+
         let hash_dir = self.store_dir.join(&hash[..2]);
         let source = hash_dir.join(hash);
 

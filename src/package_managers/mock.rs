@@ -83,16 +83,6 @@ impl MockPackageDb {
         db
     }
 
-    pub fn windows_defaults() -> Self {
-        let db = Self::new();
-        db.add_package("scoop", "0.3.1", "Scoop package manager", "main");
-        db.add_package("git", "2.43.0.windows.1", "Version control", "main");
-        db.add_package("7zip", "23.01", "File archiver", "main");
-        db.add_package("wget", "1.21.4", "Network downloader", "main");
-        db.add_package("ripgrep", "14.0.3", "Fast search tool", "main");
-        db
-    }
-
     pub fn macos_defaults() -> Self {
         let db = Self::new();
         db.add_package("homebrew", "4.2.0", "Homebrew package manager", "homebrew");
@@ -117,7 +107,6 @@ pub fn backend_name_for_distro(distro: &str) -> &'static str {
         "arch" => "pacman",
         "debian" | "ubuntu" => "apt",
         "fedora" | "rhel" => "dnf",
-        "windows" => "scoop",
         "macos" | "darwin" => "homebrew",
         _ => "mock",
     }
@@ -138,7 +127,6 @@ impl MockPackageManager {
             "arch" => MockPackageDb::arch_defaults(),
             "debian" | "ubuntu" => MockPackageDb::debian_defaults(),
             "fedora" | "rhel" => MockPackageDb::fedora_defaults(),
-            "windows" => MockPackageDb::windows_defaults(),
             "macos" | "darwin" => MockPackageDb::macos_defaults(),
             _ => MockPackageDb::new(),
         };
@@ -159,10 +147,6 @@ impl MockPackageManager {
 
     pub fn fedora() -> Self {
         Self::new("fedora")
-    }
-
-    pub fn windows() -> Self {
-        Self::new("windows")
     }
 
     pub fn macos() -> Self {
@@ -259,8 +243,7 @@ impl MockPackageManager {
         crate::core::safe_ops::atomic_write_file_sync(path, data)
     }
 
-    // Used only when arch feature is disabled
-    #[allow(dead_code)] // Mock implementation field; used in test fixtures
+    #[cfg(not(feature = "arch"))]
     fn is_newer(old: &str, new: &str) -> bool {
         matches!(old.cmp(new), std::cmp::Ordering::Less)
     }
@@ -495,7 +478,6 @@ mod tests {
             ("ubuntu", "apt"),
             ("fedora", "dnf"),
             ("rhel", "dnf"),
-            ("windows", "scoop"),
             ("macos", "homebrew"),
             ("darwin", "homebrew"),
             ("unknown", "mock"),

@@ -43,14 +43,8 @@ fn create_alpm_handle() -> Result<Alpm> {
         )
     })?;
 
-    let repos = crate::core::pacman_conf::get_configured_repos().unwrap_or_else(|e| {
-        tracing::warn!("Failed to parse pacman.conf: {e}. Using default repos.");
-        vec![
-            "core".to_string(),
-            "extra".to_string(),
-            "multilib".to_string(),
-        ]
-    });
+    let repos = crate::core::pacman_conf::get_configured_repos()
+        .context("Failed to load repositories from pacman.conf")?;
 
     let mut registered = 0;
     for db_name in &repos {

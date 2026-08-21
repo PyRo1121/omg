@@ -50,8 +50,12 @@ impl crate::package_managers::PackageManager for AptPackageManager {
     ) -> Pin<Box<dyn Future<Output = Result<Vec<Package>>> + Send + '_>> {
         let query = query.to_string();
         Box::pin(async move {
-            // Try fast path first
-            let fast_results = super::debian_db::search_fast(&query);
+            // Try fast path first (index/mmap loading does disk I/O; keep it
+            // off the executor thread)
+            let fast_results =
+                tokio::task::spawn_blocking(move || super::debian_db::search_fast(&query))
+                    .await
+                    .context("Debian search task failed")?;
             if let Ok(results) = fast_results
                 && !results.is_empty()
             {
@@ -139,7 +143,11 @@ impl crate::package_managers::PackageManager for AptPackageManager {
             crate::core::security::validate_package_name(&package)?;
 
             // Try fast path first
-            if let Ok(Some(pkg)) = super::debian_db::get_info_fast(&package) {
+            if let Ok(Some(pkg)) =
+                tokio::task::spawn_blocking(move || super::debian_db::get_info_fast(&package))
+                    .await
+                    .context("Debian info task failed")?
+            {
                 return Ok(Some(pkg));
             }
 
@@ -159,7 +167,11 @@ impl crate::package_managers::PackageManager for AptPackageManager {
     fn list_installed(&self) -> Pin<Box<dyn Future<Output = Result<Vec<Package>>> + Send + '_>> {
         Box::pin(async move {
             // Try fast path first
-            if let Ok(installed) = super::debian_db::list_installed_fast() {
+            if let Ok(installed) =
+                tokio::task::spawn_blocking(super::debian_db::list_installed_fast)
+                    .await
+                    .context("Debian list_installed task failed")?
+            {
                 return Ok(installed
                     .into_iter()
                     .map(|p| Package {
@@ -180,17 +192,22 @@ impl crate::package_managers::PackageManager for AptPackageManager {
         fast: bool,
     ) -> Pin<Box<dyn Future<Output = Result<(usize, usize, usize, usize)>> + Send + '_>> {
         Box::pin(async move {
-            super::debian_db::resolve_status_counts(
-                fast,
-                super::debian_db::get_counts_fast(),
-                get_system_status,
-            )
+            let fast_counts = tokio::task::spawn_blocking(super::debian_db::get_counts_fast)
+                .await
+                .unwrap_or_else(|error| {
+                    tracing::warn!("Debian status task failed: {error}");
+                    Err(anyhow::anyhow!("Debian status task panicked"))
+                });
+            super::debian_db::resolve_status_counts(fast, &fast_counts, get_system_status)
         })
     }
 
     fn list_explicit(&self) -> Pin<Box<dyn Future<Output = Result<Vec<String>>> + Send + '_>> {
         Box::pin(async move {
-            if let Ok(explicit) = super::debian_db::list_explicit_fast() {
+            if let Ok(explicit) = tokio::task::spawn_blocking(super::debian_db::list_explicit_fast)
+                .await
+                .context("Debian list_explicit task failed")?
+            {
                 return Ok(explicit);
             }
             list_explicit()
@@ -226,8 +243,12 @@ impl crate::package_managers::PackageManager for AptPackageManager {
         &self,
         package: &str,
     ) -> Pin<Box<dyn Future<Output = Result<bool>> + Send + '_>> {
-        let result = super::debian_db::is_installed_fast(package);
-        Box::pin(async move { result })
+        let package = package.to_string();
+        Box::pin(async move {
+            tokio::task::spawn_blocking(move || super::debian_db::is_installed_fast(&package))
+                .await
+                .context("Debian is_installed task failed")?
+        })
     }
 }
 pub fn search_sync(query: &str) -> Result<Vec<SyncPackage>> {

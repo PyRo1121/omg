@@ -11,7 +11,7 @@ use governor::{Quota, RateLimiter};
 use super::cache::PackageCache;
 use super::index::PackageIndex;
 use super::protocol::{
-    DetailedPackageInfo, ExplicitResult, HealthStatus, PackageInfo, Request, RequestId, Response,
+    DetailedPackageInfo, ExplicitResult, HealthStatus, Request, RequestId, Response,
     ResponseResult, SearchResult, SecurityAuditResult, Vulnerability, error_codes,
 };
 use crate::core::metrics::GLOBAL_METRICS;
@@ -22,7 +22,6 @@ use crate::package_managers::{alpm_worker::AlpmWorker, search_detailed};
 use std::sync::RwLock;
 
 // Constants for package source strings to avoid repeated allocations
-#[cfg(any(feature = "debian", feature = "debian-pure"))]
 const SOURCE_APT: &str = "apt";
 const SOURCE_OFFICIAL: &str = "official";
 #[cfg(feature = "arch")]
@@ -265,44 +264,28 @@ async fn handle_debian_search(
     // METRICS: Cache miss - will perform search
     GLOBAL_METRICS.inc_cache_misses();
 
-    #[cfg(any(feature = "debian", feature = "debian-pure"))]
-    let query_clone = query.clone();
+    // The daemon index is the authoritative, already-loaded package catalog.
+    // Searching the package database again here duplicated I/O and made request
+    // behavior depend on process-global environment state.
+    // Like `handle_search`, run the (potentially large) index scan on the
+    // blocking pool instead of the executor thread.
+    let state_clone = Arc::clone(&state);
+    let query_for_task = query.clone();
+    let searched =
+        tokio::task::spawn_blocking(move || state_clone.index.search(&query_for_task, limit)).await;
 
-    // Run search in blocking task
-    let results = tokio::task::spawn_blocking(move || {
-        #[cfg(any(feature = "debian", feature = "debian-pure"))]
-        {
-            crate::package_managers::apt_search_fast(&query_clone).map(|pkgs| {
-                pkgs.into_iter()
-                    .map(|p| PackageInfo {
-                        name: p.name,
-                        #[expect(clippy::implicit_clone)] // Version is feature-gated type alias; .to_string() is the required conversion
-                        version: p.version.to_string(),
-                        description: p.description,
-                        source: SOURCE_APT.to_string(),
-                    })
-                    .collect::<Vec<PackageInfo>>()
-            })
-        }
-        #[cfg(not(any(feature = "debian", feature = "debian-pure")))]
-        {
-            Err::<Vec<PackageInfo>, _>(anyhow::anyhow!("Debian backend disabled"))
-        }
-    })
-    .await;
-
-    match results {
-        Ok(Ok(pkgs)) => {
-            let results: Vec<PackageInfo> = pkgs.into_iter().take(limit).collect();
-            let results = Arc::new(results);
-            state.cache.insert_debian_arc(query, Arc::clone(&results));
-            Response::Success {
-                id,
-                result: ResponseResult::DebianSearch(Arc::unwrap_or_clone(results)),
-            }
-        }
-        Ok(Err(e)) => internal_error(id, format!("Debian search failed: {e}")),
-        Err(e) => internal_error(id, format!("Debian search task panicked: {e}")),
+    let mut results = match searched {
+        Ok(results) => results,
+        Err(error) => return internal_error(id, format!("Debian search task failed: {error}")),
+    };
+    for package in &mut results {
+        package.source = SOURCE_APT.to_string();
+    }
+    let results = Arc::new(results);
+    state.cache.insert_debian_arc(query, Arc::clone(&results));
+    Response::Success {
+        id,
+        result: ResponseResult::DebianSearch(Arc::unwrap_or_clone(results)),
     }
 }
 
@@ -568,31 +551,55 @@ async fn handle_info(state: Arc<DaemonState>, id: RequestId, package: String) ->
         };
     }
 
-    // 3. Try Package Manager Backend
-    if let Ok(Ok(Some(info))) = tokio::time::timeout(
+    // 3. Try Package Manager Backend. Only a genuine `Ok(None)` falls through
+    // to the next source; backend errors and timeouts are reported explicitly
+    // instead of being silently converted into "package not found".
+    match tokio::time::timeout(
         DAEMON_INFO_BACKEND_TIMEOUT,
         state.package_manager.info(&package),
     )
     .await
     {
-        let detailed = Arc::new(DetailedPackageInfo {
-            name: info.name,
-            #[allow(clippy::implicit_clone)] // Version is feature-gated type alias; .to_string() is the required conversion
-            version: info.version.to_string(),
-            description: info.description,
-            url: String::new(), // info.url not in Package struct currently
-            size: 0,
-            download_size: 0,
-            repo: String::new(),
-            depends: Vec::new(),
-            licenses: Vec::new(),
-            source: SOURCE_OFFICIAL.to_string(),
-        });
-        state.cache.insert_info_arc(Arc::clone(&detailed));
-        return Response::Success {
-            id,
-            result: ResponseResult::Info(Arc::unwrap_or_clone(detailed)),
-        };
+        Ok(Ok(Some(info))) => {
+            let detailed = Arc::new(DetailedPackageInfo {
+                name: info.name,
+                #[allow(
+                    clippy::implicit_clone,
+                    reason = "the package version type varies by backend feature"
+                )]
+                version: info.version.to_string(),
+                description: info.description,
+                url: String::new(), // info.url not in Package struct currently
+                size: 0,
+                download_size: 0,
+                repo: String::new(),
+                depends: Vec::new(),
+                licenses: Vec::new(),
+                source: SOURCE_OFFICIAL.to_string(),
+            });
+            state.cache.insert_info_arc(Arc::clone(&detailed));
+            return Response::Success {
+                id,
+                result: ResponseResult::Info(Arc::unwrap_or_clone(detailed)),
+            };
+        }
+        Ok(Ok(None)) => {}
+        Ok(Err(error)) => {
+            tracing::warn!("Info backend error for {package}: {error:#}");
+            return internal_error(id, format!("Info backend failed for {package}: {error}"));
+        }
+        Err(_) => {
+            tracing::warn!(
+                "Info backend timed out after {DAEMON_INFO_BACKEND_TIMEOUT:?} for {package}"
+            );
+            return internal_error(
+                id,
+                format!(
+                    "Info backend timed out after {} seconds",
+                    DAEMON_INFO_BACKEND_TIMEOUT.as_secs()
+                ),
+            );
+        }
     }
 
     // 4. Try AUR (arch only)

@@ -37,6 +37,24 @@ const CLIENT_RATE_LIMIT_HZ: u32 = 50;
 /// Per-connection burst size
 const CLIENT_BURST_SIZE: u32 = 100;
 
+/// Upper bound on concurrently served client connections. Each connection
+/// holds framed buffers and a rate limiter; without a cap a local client can
+/// exhaust memory/file descriptors before the accept-loop EMFILE backoff
+/// ever triggers.
+const MAX_CONCURRENT_CONNECTIONS: usize = 128;
+
+async fn wait_for_termination_signal() -> Result<()> {
+    #[cfg(unix)]
+    {
+        let mut signal = tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate())?;
+        signal.recv().await;
+        Ok(())
+    }
+
+    #[cfg(not(unix))]
+    std::future::pending::<Result<()>>().await
+}
+
 /// Run the daemon server
 pub async fn run(
     listener: UnixListener,
@@ -44,6 +62,10 @@ pub async fn run(
     socket_path: PathBuf,
 ) -> Result<()> {
     let shutdown_token = CancellationToken::new();
+
+    // Budget for concurrent client connections; permits are released when a
+    // connection task ends.
+    let connection_permits = Arc::new(tokio::sync::Semaphore::new(MAX_CONCURRENT_CONNECTIONS));
 
     // START BACKGROUND WORKER
     let state_worker = Arc::clone(&state);
@@ -119,7 +141,7 @@ pub async fn run(
                         tracing::warn!("Vulnerability scan failed during status refresh: {error}");
                     }
                     let Some(vuln_count) =
-                        super::protocol::vulnerability_count_from_scan(scan, previous_vulns)
+                        super::protocol::vulnerability_count_from_scan(&scan, previous_vulns)
                     else {
                         tracing::warn!(
                             "No prior vulnerability count; not publishing a zero-vuln status"
@@ -253,7 +275,14 @@ pub async fn run(
             biased;
 
             _ = tokio::signal::ctrl_c() => {
-                tracing::info!("Shutdown signal received, cleaning up...");
+                tracing::info!("Interrupt signal received, cleaning up...");
+                shutdown_token.cancel();
+                break;
+            }
+
+            result = wait_for_termination_signal() => {
+                result?;
+                tracing::info!("Termination signal received, cleaning up...");
                 shutdown_token.cancel();
                 break;
             }
@@ -295,7 +324,19 @@ pub async fn run(
                 let state = Arc::clone(&state);
                 let client_token = shutdown_token.child_token();
 
+                // Acquire before spawning so the number of live connection
+                // tasks stays bounded; on saturation, refuse the connection
+                // (dropping the stream closes the socket).
+                let Ok(permit) = Arc::clone(&connection_permits).try_acquire_owned() else {
+                    tracing::warn!(
+                        "Connection limit of {MAX_CONCURRENT_CONNECTIONS} reached; refusing new client"
+                    );
+                    continue;
+                };
+
                 tokio::spawn(async move {
+                    // Held until the task completes; Drop releases the permit.
+                    let _permit = permit;
                     tokio::select! {
                         // biased: check cancellation first for prompt client shutdown
                         biased;

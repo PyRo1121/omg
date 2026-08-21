@@ -36,9 +36,7 @@ pub mod dnf;
 // macOS Homebrew support - can be enabled via feature or auto-detected on macOS
 #[cfg(any(feature = "macos", target_os = "macos"))]
 pub mod homebrew;
-/// Mock backend for integration tests. Debug/test builds only: production
-/// binaries must never silently substitute a fake package manager.
-#[cfg(any(test, debug_assertions))]
+/// Mock backend used only when the explicit `OMG_TEST_MODE` runtime switch is set.
 pub mod mock;
 #[cfg(feature = "arch")]
 pub mod pacman_db;
@@ -48,8 +46,6 @@ pub mod parallel_sync;
 pub mod pkgbuild;
 mod traits;
 pub mod types;
-#[cfg(feature = "windows")]
-pub mod windows;
 
 pub use types::{parse_version_or_zero, zero_version};
 
@@ -100,7 +96,7 @@ pub fn list_explicit_fast() -> anyhow::Result<Vec<String>> {
             let pm = get_package_manager()?;
             return futures::executor::block_on(pm.list_explicit());
         }
-        return alpm_direct::list_explicit_fast();
+        alpm_direct::list_explicit_fast()
     }
 
     #[cfg(all(
@@ -303,12 +299,15 @@ pub use types::{LocalPackage, SyncPackage};
 
 /// Get the appropriate package manager for the current distribution
 pub fn get_package_manager() -> anyhow::Result<Arc<dyn PackageManager>> {
-    #[allow(unused_imports)]
-    // Feature-gated re-exports; not all features compile the same subset
+    #[allow(
+        unused_imports,
+        reason = "the selected package-backend features use different subsets"
+    )]
     use crate::core::env::distro::{Distro, detect_distro};
 
-    // Test-mode mock substitution is compiled out of release binaries.
-    #[cfg(any(test, debug_assertions))]
+    // Test mode is an explicit runtime adapter and must behave consistently in
+    // debug and release builds; otherwise fast-path helpers can recurse into
+    // the real backend when release binaries are exercised in isolation.
     if crate::core::paths::test_mode() {
         let distro = std::env::var("OMG_TEST_DISTRO").unwrap_or_else(|_| "arch".to_string());
         return Ok(Arc::new(mock::MockPackageManager::new(&distro)));
@@ -331,9 +330,6 @@ pub fn get_package_manager() -> anyhow::Result<Arc<dyn PackageManager>> {
         // macOS provides HomebrewPackageManager
         #[cfg(any(feature = "macos", target_os = "macos"))]
         Distro::MacOS => Ok(Arc::new(homebrew::HomebrewPackageManager::new())),
-        // Windows provides WindowsPackageManager
-        #[cfg(feature = "windows")]
-        Distro::Windows => Ok(Arc::new(windows::WindowsPackageManager::new())),
         _ => {
             // Fallback or default
             #[cfg(feature = "arch")]
@@ -366,28 +362,20 @@ pub fn get_package_manager() -> anyhow::Result<Arc<dyn PackageManager>> {
             ))]
             return Ok(Arc::new(dnf::DnfPackageManager::new()));
 
-            #[cfg(all(
-                not(feature = "arch"),
-                not(feature = "debian"),
-                not(feature = "debian-pure"),
-                not(any(feature = "macos", target_os = "macos")),
-                not(feature = "fedora"),
-                feature = "windows"
-            ))]
-            return Ok(Arc::new(windows::WindowsPackageManager::new()));
-
             #[cfg(not(any(
                 feature = "arch",
                 feature = "debian",
                 feature = "debian-pure",
-                feature = "fedora",
-                feature = "windows"
+                feature = "fedora"
             )))]
             #[cfg(not(target_os = "macos"))]
-            #[allow(unreachable_code)]
+            #[allow(
+                unreachable_code,
+                reason = "additive backend feature returns above make this fallback unreachable"
+            )]
             {
                 anyhow::bail!(
-                    "No package manager backend enabled! Build with --features arch, debian, fedora, or windows"
+                    "No package manager backend enabled! Build with --features arch, debian, fedora, or macos"
                 );
             }
         }
@@ -454,7 +442,3 @@ pub use homebrew::HomebrewPackageManager;
 // DNF/RPM exports are available with fedora feature
 #[cfg(feature = "fedora")]
 pub use dnf::DnfPackageManager;
-
-// Windows exports are available with windows feature
-#[cfg(feature = "windows")]
-pub use windows::WindowsPackageManager;

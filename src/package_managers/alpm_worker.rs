@@ -39,14 +39,13 @@ impl AlpmWorker {
                 }
             };
 
-            let repos = crate::core::pacman_conf::get_configured_repos().unwrap_or_else(|e| {
-                tracing::warn!("Failed to parse pacman.conf: {e}. Using default repos.");
-                vec![
-                    "core".to_string(),
-                    "extra".to_string(),
-                    "multilib".to_string(),
-                ]
-            });
+            let repos = match crate::core::pacman_conf::get_configured_repos() {
+                Ok(repos) => repos,
+                Err(error) => {
+                    tracing::error!("Failed to load repositories from pacman.conf: {error}");
+                    return;
+                }
+            };
 
             let mut registered = 0;
             for db_name in &repos {

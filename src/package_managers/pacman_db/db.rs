@@ -1310,7 +1310,7 @@ pub fn search_sync_mmap(query: &str) -> Result<Vec<SyncDbPackage>> {
         if let Some(ref idx) = *mmap_guard
             && idx.mtime() == mtime_secs
         {
-            return Ok(convert_mmap_results(idx.search(query))?);
+            return convert_mmap_results(idx.search(query));
         }
     }
 
@@ -1501,7 +1501,7 @@ pub fn get_explicit_count() -> Result<usize> {
 }
 
 #[cfg(test)]
-#[allow(clippy::unwrap_used, clippy::expect_used)] // Idiomatic in tests: panics on failure with clear error context
+#[expect(clippy::unwrap_used, clippy::expect_used)] // Idiomatic in tests: panics on failure with clear error context
 mod tests {
     use super::*;
 
