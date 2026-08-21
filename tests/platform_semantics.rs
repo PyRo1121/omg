@@ -1,4 +1,3 @@
-#[allow(dead_code)]
 /// Assert output does not include Arch-specific terms.
 ///
 /// # Panics
@@ -14,7 +13,6 @@ pub fn assert_no_arch_terms(output: &str, context: &str) {
     );
 }
 
-#[allow(dead_code)]
 /// Assert output does not include Debian-specific terms.
 ///
 /// # Panics
@@ -29,7 +27,6 @@ pub fn assert_no_debian_terms(output: &str, context: &str) {
     );
 }
 
-#[allow(dead_code)]
 /// Assert output does not include Fedora-specific terms.
 ///
 /// # Panics
@@ -44,7 +41,6 @@ pub fn assert_no_fedora_terms(output: &str, context: &str) {
     );
 }
 
-#[allow(dead_code)]
 /// Assert output does not include macOS-specific terms.
 ///
 /// # Panics

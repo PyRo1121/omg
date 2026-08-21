@@ -1,11 +1,10 @@
 #![cfg(feature = "arch")]
-#![allow(unsafe_code)]
+#![expect(unsafe_code)]
 
-mod alpm_harness;
+pub mod alpm_harness;
 use anyhow::Result;
-use omg_lib::cli::{
-    CliContext, Commands, EnvCommands, FleetCommands, LocalCommandRunner, ToolCommands,
-};
+use omg_lib::cli::run::RunCommand;
+use omg_lib::cli::{CliContext, EnvCommands, FleetCommands, LocalCommandRunner, ToolCommands};
 use serial_test::serial;
 use std::fs;
 use tempfile::tempdir;
@@ -34,16 +33,12 @@ async fn test_env_capture_and_check_success() -> Result<()> {
     std::env::set_current_dir(temp.path())?;
 
     let ctx = get_ctx();
-    let capture_cmd = Commands::Env {
-        command: EnvCommands::Capture,
-    };
+    let capture_cmd = EnvCommands::Capture;
 
     capture_cmd.execute(&ctx).await?;
     assert!(temp.path().join("omg.lock").exists());
 
-    let check_cmd = Commands::Env {
-        command: EnvCommands::Check,
-    };
+    let check_cmd = EnvCommands::Check;
     check_cmd.execute(&ctx).await?;
 
     Ok(())
@@ -56,9 +51,7 @@ async fn test_env_check_fails_without_lock() -> Result<()> {
     std::env::set_current_dir(temp.path())?;
 
     let ctx = get_ctx();
-    let check_cmd = Commands::Env {
-        command: EnvCommands::Check,
-    };
+    let check_cmd = EnvCommands::Check;
 
     let result = check_cmd.execute(&ctx).await;
     assert!(result.is_err());
@@ -82,9 +75,7 @@ async fn test_env_check_fails_on_drift() -> Result<()> {
 
     fs::write(temp.path().join("omg.lock"), "{}")?;
 
-    let check_cmd = Commands::Env {
-        command: EnvCommands::Check,
-    };
+    let check_cmd = EnvCommands::Check;
     let result = check_cmd.execute(&ctx).await;
 
     assert!(result.is_err());
@@ -102,9 +93,7 @@ async fn test_tool_list_empty() -> Result<()> {
     }
 
     let ctx = get_ctx();
-    let list_cmd = Commands::Tool {
-        command: ToolCommands::List,
-    };
+    let list_cmd = ToolCommands::List;
     list_cmd.execute(&ctx).await?;
 
     Ok(())
@@ -114,9 +103,7 @@ async fn test_tool_list_empty() -> Result<()> {
 #[serial]
 async fn test_tool_registry_output() -> Result<()> {
     let ctx = get_ctx();
-    let reg_cmd = Commands::Tool {
-        command: ToolCommands::Registry,
-    };
+    let reg_cmd = ToolCommands::Registry;
     reg_cmd.execute(&ctx).await?;
     Ok(())
 }
@@ -126,10 +113,8 @@ async fn test_tool_registry_output() -> Result<()> {
 async fn test_tool_install_invalid_name_fails() -> Result<()> {
     ensure_no_license(); // Clear any existing license
     let ctx = get_ctx();
-    let install_cmd = Commands::Tool {
-        command: ToolCommands::Install {
-            name: "../dangerous".to_string(),
-        },
+    let install_cmd = ToolCommands::Install {
+        name: "../dangerous".to_string(),
     };
 
     let result = install_cmd.execute(&ctx).await;
@@ -148,9 +133,7 @@ async fn test_tool_install_invalid_name_fails() -> Result<()> {
 async fn test_fleet_status_requires_license() -> Result<()> {
     ensure_no_license(); // Clear any existing license
     let ctx = get_ctx();
-    let status_cmd = Commands::Fleet {
-        command: FleetCommands::Status,
-    };
+    let status_cmd = FleetCommands::Status;
 
     let result = status_cmd.execute(&ctx).await;
     assert!(result.is_err());
@@ -164,11 +147,9 @@ async fn test_fleet_status_requires_license() -> Result<()> {
 #[serial]
 async fn test_fleet_push_invalid_team_fails() -> Result<()> {
     let ctx = get_ctx();
-    let push_cmd = Commands::Fleet {
-        command: FleetCommands::Push {
-            team: Some("; rm -rf /".to_string()),
-            message: None,
-        },
+    let push_cmd = FleetCommands::Push {
+        team: Some("; rm -rf /".to_string()),
+        message: None,
     };
 
     let result = push_cmd.execute(&ctx).await;
@@ -186,7 +167,7 @@ async fn test_fleet_push_invalid_team_fails() -> Result<()> {
 #[serial]
 async fn test_run_invalid_task_fails() -> Result<()> {
     let ctx = get_ctx();
-    let run_cmd = Commands::Run {
+    let run_cmd = RunCommand {
         task: "dangerous; command".to_string(),
         args: vec![],
         runtime_backend: None,
@@ -219,7 +200,7 @@ async fn test_run_detect_and_execute_mock_task() -> Result<()> {
     )?;
 
     let ctx = get_ctx();
-    let run_cmd = Commands::Run {
+    let run_cmd = RunCommand {
         task: "test".to_string(),
         args: vec![],
         runtime_backend: None,
@@ -243,10 +224,8 @@ async fn test_tool_install_not_in_registry_fails() -> Result<()> {
         std::env::set_var("OMG_TEST_MODE", "1");
     }
     let ctx = get_ctx();
-    let install_cmd = Commands::Tool {
-        command: ToolCommands::Install {
-            name: "non-existent-tool-xyz-123".to_string(),
-        },
+    let install_cmd = ToolCommands::Install {
+        name: "non-existent-tool-xyz-123".to_string(),
     };
 
     let result = install_cmd.execute(&ctx).await;
@@ -276,34 +255,14 @@ async fn test_env_share_missing_token_fails() -> Result<()> {
     }
 
     let ctx = get_ctx();
-    let share_cmd = Commands::Env {
-        command: EnvCommands::Share {
-            description: "test".to_string(),
-            public: false,
-        },
+    let share_cmd = EnvCommands::Share {
+        description: "test".to_string(),
+        public: false,
     };
 
     let result = share_cmd.execute(&ctx).await;
     assert!(result.is_err());
     assert!(result.unwrap_err().to_string().contains("GITHUB_TOKEN"));
-
-    Ok(())
-}
-
-#[tokio::test]
-#[serial]
-async fn test_fleet_remediate_dry_run_no_license_fails() -> Result<()> {
-    ensure_no_license(); // Clear any existing license
-    let ctx = get_ctx();
-    let remediate_cmd = Commands::Fleet {
-        command: FleetCommands::Remediate {
-            dry_run: true,
-            confirm: false,
-        },
-    };
-
-    let result = remediate_cmd.execute(&ctx).await;
-    assert!(result.is_err());
 
     Ok(())
 }

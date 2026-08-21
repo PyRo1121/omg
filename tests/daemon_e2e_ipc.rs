@@ -1,10 +1,5 @@
 #![cfg(feature = "arch")]
-#![allow(
-    clippy::unwrap_used,
-    clippy::expect_used,
-    clippy::pedantic,
-    clippy::nursery
-)]
+#![expect(clippy::pedantic)]
 
 //! S-tier E2E Tests: IPC Communication
 //!
@@ -22,15 +17,6 @@ use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::{UnixListener, UnixStream};
 use tokio::time::{sleep, timeout};
 
-/// Helper to extract response ID
-#[expect(dead_code)]
-fn response_id(response: &Response) -> u64 {
-    match response {
-        Response::Success { id, .. } => *id,
-        Response::Error { id, .. } => *id,
-    }
-}
-
 /// Test fixture for IPC tests
 struct IpcTestFixture {
     _temp_dir: TempDir,
@@ -45,15 +31,20 @@ impl IpcTestFixture {
         let data_dir = temp_dir.path().join("data");
         std::fs::create_dir_all(&data_dir)?;
 
-        #[expect(unsafe_code)]
-        unsafe {
-            std::env::set_var("OMG_DAEMON_DATA_DIR", &data_dir);
-            std::env::set_var("OMG_DATA_DIR", &data_dir);
-        }
-
-        omg_lib::core::security::init_audit_logger()?;
-
-        let state = Arc::new(DaemonState::new()?);
+        // Scoped env: the audit logger and daemon state capture their
+        // data-dir paths during construction, so isolation holds after the
+        // guard restores the process environment. All tests using this
+        // fixture are #[serial]-marked.
+        let state = Arc::new(temp_env::with_vars(
+            [
+                ("OMG_DAEMON_DATA_DIR", Some(data_dir.as_os_str())),
+                ("OMG_DATA_DIR", Some(data_dir.as_os_str())),
+            ],
+            || {
+                omg_lib::core::security::init_audit_logger()?;
+                DaemonState::new()
+            },
+        )?);
 
         Ok(Self {
             _temp_dir: temp_dir,

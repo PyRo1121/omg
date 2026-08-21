@@ -8,11 +8,10 @@
 //! Environment variables:
 //!   OMG_RUN_SYSTEM_TESTS=1    - Enable tests requiring real system access
 
-#![allow(clippy::unwrap_used)]
-#![allow(clippy::pedantic)]
-#![allow(clippy::nursery)]
+#![expect(clippy::unwrap_used)]
+#![expect(clippy::pedantic)]
 
-mod common;
+pub mod common;
 
 use common::*;
 

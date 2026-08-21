@@ -18,13 +18,14 @@ impl PackageFixtureExt for PackageFixture {
         // Build the Package first to get defaults applied
         let pkg = self.clone().build();
 
+        #[cfg(feature = "arch")]
+        let version = pkg.version.to_string();
+        #[cfg(not(feature = "arch"))]
+        let version = pkg.version.clone();
+
         MockPackage {
             name: pkg.name,
-            // Cross-platform type handling: On Arch, Version is AlpmVersion (struct) where
-            // .to_string() is Display impl. On Debian/Fedora, Version is String where .to_string()
-            // is technically a clone. Clippy suggests .clone() but .to_string() works universally.
-            #[allow(clippy::implicit_clone)]
-            version: pkg.version.to_string(),
+            version,
             description: pkg.description,
             repo: "test".to_owned(),
             dependencies: vec![],

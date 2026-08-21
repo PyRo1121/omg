@@ -7,13 +7,11 @@
 //!
 //! Run with: `cargo bench --features debian-pure --bench io_bench`
 
-#![allow(clippy::unwrap_used)]
-#![allow(clippy::expect_used)]
-#![allow(clippy::cast_sign_loss)]
-#![allow(clippy::cast_possible_truncation)]
-#![allow(clippy::no_effect)]
-#![allow(clippy::match_same_arms)]
-#![allow(clippy::identity_op)]
+#![expect(clippy::unwrap_used)]
+#![expect(clippy::cast_sign_loss)]
+#![expect(clippy::cast_possible_truncation)]
+#![expect(clippy::match_same_arms)]
+#![expect(clippy::identity_op)]
 
 use criterion::{BenchmarkId, Criterion, Throughput, criterion_group, criterion_main};
 use std::fs::File;
@@ -193,7 +191,7 @@ fn bench_read_strategies(c: &mut Criterion) {
                 b.iter(|| {
                     let file = File::open(path).unwrap();
                     // SAFETY: File is opened read-only and mmap lifetime is bounded by this closure
-                    #[allow(unsafe_code)]
+                    #[expect(unsafe_code)]
                     let mmap = unsafe { memmap2::Mmap::map(&file).unwrap() };
                     let len = mmap.len();
                     std::hint::black_box(len)

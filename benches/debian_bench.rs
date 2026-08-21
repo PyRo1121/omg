@@ -3,9 +3,6 @@
 //! Measures performance of the pure Rust Debian implementation.
 //! Run with: `cargo bench --features debian-pure --bench debian_bench`
 
-#![allow(clippy::unwrap_used)]
-#![allow(clippy::expect_used)]
-
 #[cfg(any(feature = "debian", feature = "debian-pure"))]
 use criterion::{BenchmarkId, Criterion, criterion_group, criterion_main};
 

@@ -1,5 +1,5 @@
 #![cfg(feature = "arch")]
-#![allow(
+#![expect(
     clippy::unwrap_used,
     clippy::expect_used,
     clippy::pedantic,
@@ -14,7 +14,7 @@
 
 #![cfg(all(feature = "arch", target_os = "linux"))]
 
-mod common;
+pub mod common;
 
 use common::*;
 use std::collections::{HashMap, HashSet};

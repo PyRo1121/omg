@@ -3,13 +3,40 @@
 //! These tests verify the full update flow using dependency injection
 //! and mock implementations to avoid requiring root or system changes.
 
-#![allow(clippy::implicit_clone)]
-
 use omg_lib::core::packages::PackageService;
+use omg_lib::core::security::vulnerability::{
+    VulnerabilityError, VulnerabilityReport, VulnerabilitySource,
+};
 use omg_lib::core::testing::{TestPackageManager, UpdateFixture};
 use omg_lib::package_managers::PackageManager;
 use omg_lib::package_managers::types::UpdateInfo;
+use std::future::Future;
+use std::pin::Pin;
 use std::sync::Arc;
+
+#[cfg(feature = "arch")]
+fn version_text(version: &omg_lib::package_managers::types::Version) -> String {
+    version.to_string()
+}
+
+#[cfg(not(feature = "arch"))]
+const fn version_text(version: &omg_lib::package_managers::types::Version) -> &str {
+    version.as_str()
+}
+
+struct NoKnownVulnerabilities;
+
+impl VulnerabilitySource for NoKnownVulnerabilities {
+    fn scan_package<'a>(
+        &'a self,
+        _name: &'a str,
+        _version: &'a omg_lib::package_managers::types::Version,
+    ) -> Pin<
+        Box<dyn Future<Output = Result<Vec<VulnerabilityReport>, VulnerabilityError>> + Send + 'a>,
+    > {
+        Box::pin(async { Ok(Vec::new()) })
+    }
+}
 
 #[tokio::test]
 async fn test_update_with_no_updates() {
@@ -100,6 +127,7 @@ async fn test_install_package() {
     pm.add_package("test-package", "1.0.0", "A test package");
 
     let service = PackageService::builder(pm.clone())
+        .vulnerability_source(Arc::new(NoKnownVulnerabilities))
         .without_history()
         .build()
         .expect("history-disabled service should build");
@@ -189,7 +217,7 @@ async fn test_get_package_info() {
     assert!(info.is_some());
     let pkg = info.unwrap();
     assert_eq!(pkg.name, "git");
-    assert_eq!(pkg.version.to_string(), "2.43.0-1");
+    assert_eq!(version_text(&pkg.version), "2.43.0-1");
 
     // Get non-existing package info
     let info = service.info("nonexistent").await.unwrap();

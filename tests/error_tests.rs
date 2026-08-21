@@ -1,9 +1,4 @@
-#![allow(
-    clippy::unwrap_used,
-    clippy::expect_used,
-    clippy::pedantic,
-    clippy::nursery
-)]
+#![expect(clippy::unwrap_used, clippy::expect_used, clippy::pedantic)]
 //! Production-Ready Error Handling Tests
 //!
 //! Tests that errors are handled gracefully with helpful messages.
@@ -12,10 +7,10 @@
 //! Run:
 //!   cargo test --test error_tests --features arch
 
-#![allow(clippy::missing_panics_doc)]
-#![allow(clippy::missing_errors_doc)]
+#![expect(clippy::missing_panics_doc)]
+#![expect(clippy::missing_errors_doc)]
 
-mod common;
+pub mod common;
 
 use common::*;
 

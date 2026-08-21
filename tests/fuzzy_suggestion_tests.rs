@@ -1,9 +1,4 @@
-#![allow(
-    clippy::unwrap_used,
-    clippy::expect_used,
-    clippy::pedantic,
-    clippy::nursery
-)]
+#![expect(clippy::unwrap_used)]
 use omg_lib::daemon::handlers::{DaemonState, handle_request};
 use omg_lib::daemon::protocol::{Request, Response, ResponseResult};
 use serial_test::serial;
@@ -12,37 +7,33 @@ use tempfile::TempDir;
 
 #[tokio::test]
 #[serial]
-#[expect(unsafe_code)] // Test setup requires env var modification
 async fn test_fuzzy_suggestions() {
     // Setup
     let temp_dir = TempDir::new().unwrap();
-    // SAFETY: Test setup - modifying environment variables for isolated test execution.
-    // This test is marked with #[serial] to prevent concurrent access.
-    unsafe {
-        std::env::set_var("OMG_DAEMON_DATA_DIR", temp_dir.path());
-        std::env::set_var("OMG_DATA_DIR", temp_dir.path());
-    }
 
-    // Initialize
-    let _ = omg_lib::core::security::init_audit_logger();
-
-    // We need to initialize DaemonState.
+    // Initialize with scoped env: the daemon and audit logger capture their
+    // data-dir paths during construction, so isolation holds after the guard
+    // restores the process environment.
+    //
     // Note: This relies on the actual package manager backend or cache.
-    // Since we can't easily mock the backend in this integration test without
-    // more extensive refactoring, we'll try to rely on what's available or
-    // check if we can populate the index manually.
-    //
-    // However, PackageIndex is read-only from the backend.
-    //
-    // A better approach for this unit test is to test the index logic directly
-    // if we can create a mock index, but PackageIndex creation is coupled to backends.
-    //
-    // Let's try to initialize and see if we get any suggestions for a common package.
-    // If the environment has no packages (e.g. CI without apt/pacman setup), this might be empty.
-
-    let state = if let Ok(s) = DaemonState::new() {
-        Arc::new(s)
-    } else {
+    // PackageIndex is read-only from the backend, so we initialize and see if
+    // we get any suggestions for a common package. If the environment has no
+    // packages (e.g. CI without apt/pacman setup), this might be empty.
+    let data_dir = temp_dir.path().to_path_buf();
+    let state = temp_env::with_vars(
+        [
+            ("OMG_DAEMON_DATA_DIR", Some(data_dir.as_os_str())),
+            ("OMG_DATA_DIR", Some(data_dir.as_os_str())),
+        ],
+        || {
+            let _ = omg_lib::core::security::init_audit_logger();
+            match DaemonState::new() {
+                Ok(s) => Some(Arc::new(s)),
+                Err(_) => None,
+            }
+        },
+    );
+    let Some(state) = state else {
         println!("Skipping test: Could not initialize DaemonState (no package manager?)");
         return;
     };

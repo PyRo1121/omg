@@ -3,9 +3,6 @@
 //! Compares different compression formats for .deb data extraction.
 //! Run with: `cargo bench --features debian-pure --bench decompression_bench`
 
-#![allow(clippy::unwrap_used)]
-#![allow(clippy::expect_used)]
-
 #[cfg(any(feature = "debian", feature = "debian-pure"))]
 use criterion::{BenchmarkId, Criterion, Throughput, criterion_group, criterion_main};
 
@@ -162,11 +159,11 @@ fn bench_compression_formats_comparison(c: &mut Criterion) {
     group.measurement_time(Duration::from_secs(10));
 
     // Report compression ratios
-    #[allow(clippy::cast_precision_loss)]
+    #[expect(clippy::cast_precision_loss)]
     let xz_ratio = test_data.len() as f64 / xz_compressed.len() as f64;
-    #[allow(clippy::cast_precision_loss)]
+    #[expect(clippy::cast_precision_loss)]
     let zstd_ratio = test_data.len() as f64 / zstd_compressed.len() as f64;
-    #[allow(clippy::cast_precision_loss)]
+    #[expect(clippy::cast_precision_loss)]
     let gzip_ratio = test_data.len() as f64 / gzip_compressed.len() as f64;
 
     println!(

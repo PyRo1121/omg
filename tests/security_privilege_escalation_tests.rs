@@ -9,7 +9,7 @@
 //!
 //! Run: cargo test --test `security_privilege_escalation_tests`
 
-#![allow(clippy::unwrap_used, clippy::expect_used)]
+#![expect(clippy::unwrap_used)]
 
 use omg_lib::core::privilege::{PrivilegeChecker, SystemPrivilegeChecker};
 use omg_lib::core::security::audit::{AuditEventType, AuditLogger, AuditSeverity};
@@ -31,7 +31,7 @@ mod privilege_escalation {
     // These integration tests use the real SystemPrivilegeChecker
 
     #[test]
-    #[allow(unsafe_code)]
+    #[expect(unsafe_code)]
     fn test_elevation_whitelist_allowed_operations() {
         use omg_lib::core::privilege::elevate_for_operation;
 
@@ -406,16 +406,9 @@ mod sbom_audit {
     use std::io::Write;
 
     #[test]
-    #[allow(unsafe_code)]
     fn test_audit_logger_creation() {
-        // Should create in temp directory
         let temp_dir = TempDir::new().unwrap();
-        // SAFETY: Setting test-specific data directory; test isolation ensures no conflicts
-        unsafe {
-            std::env::set_var("OMG_DATA_DIR", temp_dir.path());
-        }
-
-        let result = AuditLogger::new();
+        let result = AuditLogger::new_in(temp_dir.path().join("audit/audit.jsonl"));
         assert!(result.is_ok(), "Should create audit logger");
     }
 
@@ -471,15 +464,9 @@ mod sbom_audit {
     }
 
     #[test]
-    #[allow(unsafe_code)]
     fn test_audit_chain_integrity() {
         let temp_dir = TempDir::new().unwrap();
-        // SAFETY: Setting test-specific data directory; test isolation ensures no conflicts
-        unsafe {
-            std::env::set_var("OMG_DATA_DIR", temp_dir.path());
-        }
-
-        let mut logger = AuditLogger::new().unwrap();
+        let mut logger = AuditLogger::new_in(temp_dir.path().join("audit/audit.jsonl")).unwrap();
 
         // Log multiple events
         logger
@@ -518,7 +505,6 @@ mod sbom_audit {
     }
 
     #[test]
-    #[allow(unsafe_code)]
     fn test_audit_tamper_detection() {
         use omg_lib::core::security::audit::AuditEntry;
         use std::io::Write;
@@ -565,11 +551,7 @@ mod sbom_audit {
         drop(file);
 
         // Verify should detect tampering
-        // SAFETY: Setting test-specific data directory; test isolation ensures no conflicts
-        unsafe {
-            std::env::set_var("OMG_DATA_DIR", temp_dir.path());
-        }
-        let logger = AuditLogger::new().unwrap();
+        let logger = AuditLogger::new_in(&log_path).unwrap();
         let report = logger.verify_integrity().unwrap();
 
         assert!(!report.is_valid(), "Should detect tampered entry");
@@ -855,15 +837,9 @@ mod integration {
     }
 
     #[test]
-    #[allow(unsafe_code)]
     fn test_audit_log_security_events() {
         let temp_dir = TempDir::new().unwrap();
-        // SAFETY: Setting test-specific data directory; test isolation ensures no conflicts
-        unsafe {
-            std::env::set_var("OMG_DATA_DIR", temp_dir.path());
-        }
-
-        let mut logger = AuditLogger::new().unwrap();
+        let mut logger = AuditLogger::new_in(temp_dir.path().join("audit/audit.jsonl")).unwrap();
 
         // Log security events
         logger
@@ -900,14 +876,9 @@ mod integration {
     }
 
     #[test]
-    #[allow(unsafe_code)]
     fn test_end_to_end_security_workflow() {
         // Simulate complete security workflow
         let temp_dir = TempDir::new().unwrap();
-        // SAFETY: Setting test-specific data directory; test isolation ensures no conflicts
-        unsafe {
-            std::env::set_var("OMG_DATA_DIR", temp_dir.path());
-        }
 
         // 1. Validate package name
         let pkg_name = "vim";
@@ -931,7 +902,7 @@ mod integration {
         );
 
         // 4. Audit the operation
-        let mut logger = AuditLogger::new().unwrap();
+        let mut logger = AuditLogger::new_in(temp_dir.path().join("audit/audit.jsonl")).unwrap();
         logger
             .log(
                 AuditEventType::PackageInstall,

@@ -5,9 +5,6 @@
 //!
 //! Run with: `cargo bench --features debian-pure --bench debian_core_bench`
 
-#![allow(clippy::unwrap_used)]
-#![allow(clippy::expect_used)]
-
 #[cfg(any(feature = "debian", feature = "debian-pure"))]
 use criterion::{BenchmarkId, Criterion, Throughput, criterion_group, criterion_main};
 
@@ -227,7 +224,7 @@ fn bench_list_installed_variants(c: &mut Criterion) {
 /// Benchmark update checks with realistic scenarios.
 /// Note: `check_updates_available` is not yet implemented in `debian_db`.
 #[cfg(any(feature = "debian", feature = "debian-pure"))]
-#[allow(clippy::missing_const_for_fn)]
+#[expect(clippy::missing_const_for_fn)]
 fn bench_update_check(_c: &mut Criterion) {
     // TODO: Implement when check_updates_available is added to debian_db
     // For now, this benchmark is a no-op

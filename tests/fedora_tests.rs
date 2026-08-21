@@ -3,8 +3,8 @@
 use anyhow::Result;
 use omg_lib::package_managers::{DnfPackageManager, PackageManager};
 
-mod common;
-mod platform_semantics;
+pub mod common;
+pub mod platform_semantics;
 
 use platform_semantics::{assert_no_arch_terms, assert_no_debian_terms, assert_no_macos_terms};
 

@@ -5,9 +5,6 @@
 //!
 //! Run with: `cargo bench --features debian-pure --bench install_bench`
 
-#![allow(clippy::unwrap_used)]
-#![allow(clippy::expect_used)]
-
 #[cfg(any(feature = "debian", feature = "debian-pure"))]
 use criterion::{BenchmarkId, Criterion, Throughput, criterion_group, criterion_main};
 
@@ -162,7 +159,7 @@ fn bench_install_batch_processing(c: &mut Criterion) {
     let batch_sizes = vec![1, 5, 10, 20, 50];
 
     for size in batch_sizes {
-        #[allow(clippy::cast_sign_loss)]
+        #[expect(clippy::cast_sign_loss)]
         group.throughput(Throughput::Elements(size as u64));
         group.bench_with_input(BenchmarkId::new("batch_collect", size), &size, |b, &n| {
             b.iter(|| {

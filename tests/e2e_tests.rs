@@ -1,9 +1,4 @@
-#![allow(
-    clippy::unwrap_used,
-    clippy::expect_used,
-    clippy::pedantic,
-    clippy::nursery
-)]
+#![expect(clippy::unwrap_used, clippy::expect_used, clippy::pedantic)]
 //! End-to-End Tests for OMG CLI
 //!
 //! Comprehensive E2E test infrastructure validating the complete user journey:
@@ -19,15 +14,12 @@
 //! - Network calls are mocked to avoid external dependencies
 //! - All error paths are explicitly tested
 
-#![allow(dead_code)] // Test utilities may not all be used immediately
-
-mod common;
+pub mod common;
 
 use anyhow::Result;
 use std::collections::HashMap;
 use std::fs;
 use std::path::{Path, PathBuf};
-use std::sync::atomic::{AtomicU16, Ordering};
 use std::time::Duration;
 use tempfile::TempDir;
 
@@ -35,55 +27,17 @@ use tempfile::TempDir;
 // TEST INFRASTRUCTURE
 // ═══════════════════════════════════════════════════════════════════════════════
 
-/// Unique port counter for mock servers to avoid conflicts in parallel tests
-static MOCK_PORT: AtomicU16 = AtomicU16::new(19000);
-
-/// Get the next available mock server port
-fn next_mock_port() -> u16 {
-    MOCK_PORT.fetch_add(1, Ordering::SeqCst)
-}
-
 /// Test environment with isolated filesystem
 struct E2ETestEnv {
     /// Temporary directory for test data (simulates ~/.local/share/omg)
     data_dir: TempDir,
-    /// Temporary directory for test config (simulates ~/.config/omg)
-    config_dir: TempDir,
-    /// Temporary directory for test cache
-    cache_dir: TempDir,
-    /// Environment variables to set for the test
-    env_vars: HashMap<String, String>,
 }
 
 impl E2ETestEnv {
     /// Create a new isolated test environment
     fn new() -> Result<Self> {
-        let data_dir = TempDir::new()?;
-        let config_dir = TempDir::new()?;
-        let cache_dir = TempDir::new()?;
-
-        let mut env_vars = HashMap::new();
-        env_vars.insert("OMG_TEST_MODE".to_string(), "1".to_string());
-        env_vars.insert("OMG_DISABLE_DAEMON".to_string(), "1".to_string());
-        env_vars.insert("OMG_DISABLE_TELEMETRY".to_string(), "1".to_string());
-        env_vars.insert(
-            "OMG_DATA_DIR".to_string(),
-            data_dir.path().to_string_lossy().to_string(),
-        );
-        env_vars.insert(
-            "OMG_CONFIG_DIR".to_string(),
-            config_dir.path().to_string_lossy().to_string(),
-        );
-        env_vars.insert(
-            "OMG_CACHE_DIR".to_string(),
-            cache_dir.path().to_string_lossy().to_string(),
-        );
-
         Ok(Self {
-            data_dir,
-            config_dir,
-            cache_dir,
-            env_vars,
+            data_dir: TempDir::new()?,
         })
     }
 
@@ -92,29 +46,9 @@ impl E2ETestEnv {
         self.data_dir.path()
     }
 
-    /// Get the config directory path
-    fn config_path(&self) -> &Path {
-        self.config_dir.path()
-    }
-
-    /// Get the cache directory path
-    fn cache_path(&self) -> &Path {
-        self.cache_dir.path()
-    }
-
     /// Create a file in the data directory
     fn create_data_file(&self, name: &str, content: &str) -> Result<PathBuf> {
         let path = self.data_dir.path().join(name);
-        if let Some(parent) = path.parent() {
-            fs::create_dir_all(parent)?;
-        }
-        fs::write(&path, content)?;
-        Ok(path)
-    }
-
-    /// Create a file in the config directory
-    fn create_config_file(&self, name: &str, content: &str) -> Result<PathBuf> {
-        let path = self.config_dir.path().join(name);
         if let Some(parent) = path.parent() {
             fs::create_dir_all(parent)?;
         }
@@ -131,19 +65,6 @@ impl E2ETestEnv {
     fn data_file_exists(&self, name: &str) -> bool {
         self.data_dir.path().join(name).exists()
     }
-
-    /// Set an environment variable for this test
-    fn set_env(&mut self, key: &str, value: &str) {
-        self.env_vars.insert(key.to_string(), value.to_string());
-    }
-
-    /// Get environment variables as a slice for command execution
-    fn env_slice(&self) -> Vec<(&str, &str)> {
-        self.env_vars
-            .iter()
-            .map(|(k, v)| (k.as_str(), v.as_str()))
-            .collect()
-    }
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
@@ -153,71 +74,26 @@ impl E2ETestEnv {
 /// Mock HTTP server for testing network-dependent features
 /// Uses a simple in-memory response map
 struct MockHttpServer {
-    /// Base URL of the mock server
-    base_url: String,
-    /// Registered responses keyed by path
-    responses: HashMap<String, MockHttpResponse>,
-    /// Request log for verification
-    requests: Vec<MockHttpRequest>,
-}
-
-#[derive(Clone, Debug)]
-struct MockHttpResponse {
-    status: u16,
-    content_type: String,
-    body: Vec<u8>,
-}
-
-#[derive(Clone, Debug)]
-struct MockHttpRequest {
-    method: String,
-    path: String,
-    body: Option<String>,
+    /// Registered status codes keyed by path.
+    responses: HashMap<String, u16>,
 }
 
 impl MockHttpServer {
     /// Create a new mock HTTP server
     fn new() -> Self {
-        let port = next_mock_port();
         Self {
-            base_url: format!("http://127.0.0.1:{port}"),
             responses: HashMap::new(),
-            requests: Vec::new(),
         }
     }
 
     /// Register a mock response for a path
-    fn mock_get(&mut self, path: &str, status: u16, body: &str) {
-        self.responses.insert(
-            path.to_string(),
-            MockHttpResponse {
-                status,
-                content_type: "application/json".to_string(),
-                body: body.as_bytes().to_vec(),
-            },
-        );
+    fn mock_get(&mut self, path: &str, status: u16, _body: &str) {
+        self.responses.insert(path.to_string(), status);
     }
 
-    /// Register a mock binary response (for downloads)
-    fn mock_get_binary(&mut self, path: &str, status: u16, body: Vec<u8>) {
-        self.responses.insert(
-            path.to_string(),
-            MockHttpResponse {
-                status,
-                content_type: "application/octet-stream".to_string(),
-                body,
-            },
-        );
-    }
-
-    /// Get the base URL for this mock server
-    fn url(&self) -> &str {
-        &self.base_url
-    }
-
-    /// Get a registered response
-    fn get_response(&self, path: &str) -> Option<&MockHttpResponse> {
-        self.responses.get(path)
+    /// Get a registered status code.
+    fn get_response(&self, path: &str) -> Option<u16> {
+        self.responses.get(path).copied()
     }
 }
 
@@ -470,7 +346,7 @@ mod self_update_tests {
 
         // Then: We should have a 500 response
         assert!(response.is_some(), "Response should be registered");
-        assert_eq!(response.unwrap().status, 500, "Should return 500 status");
+        assert_eq!(response, Some(500), "Should return 500 status");
     }
 
     /// Verify error handling when download fails
@@ -489,7 +365,7 @@ mod self_update_tests {
 
         // Then: We should have a 404 response
         assert!(response.is_some(), "Response should be registered");
-        assert_eq!(response.unwrap().status, 404, "Should return 404 status");
+        assert_eq!(response, Some(404), "Should return 404 status");
     }
 }
 

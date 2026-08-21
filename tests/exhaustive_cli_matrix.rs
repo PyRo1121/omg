@@ -1,9 +1,4 @@
-#![allow(
-    clippy::unwrap_used,
-    clippy::expect_used,
-    clippy::pedantic,
-    clippy::nursery
-)]
+#![expect(clippy::unwrap_used, clippy::expect_used, clippy::pedantic)]
 //! OMG Exhaustive CLI Matrix Test Suite
 //!
 //! This suite verifies every single CLI command across all supported OS flavors
@@ -11,7 +6,7 @@
 //!
 //! Goal: Test "absolute everything" without needing real root or real distros.
 
-mod common;
+pub mod common;
 
 use common::*;
 use serial_test::serial;
@@ -85,7 +80,7 @@ mod arch_matrix {
     fn test_explicit() {
         let res = run_arch(&["explicit"]);
         res.assert_success();
-        res.assert_stdout_contains("pacman");
+        res.assert_stdout_contains("Explicit Packages");
     }
 
     #[test]

@@ -1,9 +1,4 @@
-#![allow(
-    clippy::unwrap_used,
-    clippy::expect_used,
-    clippy::pedantic,
-    clippy::nursery
-)]
+#![expect(clippy::unwrap_used, clippy::expect_used, clippy::nursery)]
 //! Comprehensive test suite for Team Dashboard TUI functionality
 //!
 //! This module tests:
@@ -24,7 +19,7 @@ use tempfile::TempDir;
 /// Helper to create a test team workspace
 fn create_test_workspace() -> (TempDir, TeamWorkspace) {
     let temp_dir = TempDir::new().expect("Failed to create temp dir");
-    let workspace = TeamWorkspace::new(temp_dir.path());
+    let workspace = TeamWorkspace::new(temp_dir.path()).expect("create team workspace");
     (temp_dir, workspace)
 }
 
@@ -225,14 +220,14 @@ mod team_workspace_tests {
         let temp_dir = TempDir::new().expect("Failed to create temp dir");
 
         {
-            let mut workspace = TeamWorkspace::new(temp_dir.path());
+            let mut workspace = TeamWorkspace::new(temp_dir.path()).expect("create team workspace");
             workspace
                 .init("test-team", "Test Team")
                 .expect("Init failed");
         }
 
         // Create a new instance pointing to the same directory
-        let workspace = TeamWorkspace::new(temp_dir.path());
+        let workspace = TeamWorkspace::new(temp_dir.path()).expect("reload team workspace");
         assert!(workspace.is_team_workspace());
 
         let config = workspace.config().unwrap();
@@ -614,13 +609,19 @@ mod refresh_and_tick_tests {
     async fn test_tick_updates_metrics() {
         let mut app = App::new().await.unwrap();
 
-        // Wait a small amount of time
-        tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+        // Age the metrics timer deterministically so tick() must refresh it;
+        // this asserts the observable post-condition instead of relying on a
+        // wall-clock sleep.
+        app.last_update = std::time::Instant::now()
+            .checked_sub(std::time::Duration::from_secs(10))
+            .unwrap_or_else(std::time::Instant::now);
 
         app.tick().await.unwrap();
 
-        // last_update should have been refreshed if enough time passed
-        // Note: this is timing-dependent but should work in most cases
+        assert!(
+            app.last_update.elapsed() < std::time::Duration::from_secs(1),
+            "tick should refresh last_update once the metrics interval elapsed"
+        );
     }
 
     #[tokio::test]

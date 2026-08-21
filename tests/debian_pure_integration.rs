@@ -1,18 +1,11 @@
-#![allow(
-    clippy::unwrap_used,
-    clippy::expect_used,
-    clippy::pedantic,
-    clippy::nursery,
-    unsafe_code
-)]
+#![cfg(feature = "debian-pure")]
+#![expect(clippy::unwrap_used, clippy::expect_used, clippy::pedantic)]
 //! Integration tests for Pure Rust Debian implementation
 //!
 //! This verifies that the `PureDebianPackageManager` works correctly
 //! even without the C-based rust-apt dependency.
 
-#![cfg(feature = "debian-pure")]
-
-mod common;
+pub mod common;
 
 use common::*;
 use omg_lib::package_managers::PackageManager;
@@ -25,19 +18,17 @@ fn test_pure_debian_manager_name() {
 }
 
 #[test]
-fn test_pure_debian_detection() {
-    init_test_env();
-    // SAFETY: Test setup - modifying env vars in isolated test context before any threads spawn
-    unsafe {
-        std::env::set_var("OMG_TEST_MODE", "1");
-        std::env::set_var("OMG_TEST_DISTRO", "debian");
-    }
+fn test_debian_backend_decision() {
+    // Assert the resolver's backend decisions directly instead of exercising
+    // mock state wiring through process-global environment overrides.
+    use omg_lib::package_managers::mock::backend_name_for_distro;
 
-    let pm =
-        omg_lib::package_managers::get_package_manager().expect("Failed to get package manager");
-    // In test mode, it returns MockPackageManager, not PureDebianPackageManager.
-    // This is expected behavior for existing logic.
-    assert_eq!(pm.name(), "apt");
+    assert_eq!(backend_name_for_distro("debian"), "apt");
+    assert_eq!(backend_name_for_distro("ubuntu"), "apt");
+
+    // The pure backend keeps its own identity when selected for debian-pure.
+    let pure = omg_lib::package_managers::debian_pure::PureDebianPackageManager::new();
+    assert_eq!(pure.name(), "apt-pure");
 }
 
 #[test]

@@ -1,5 +1,5 @@
 #![cfg(feature = "arch")]
-#![allow(clippy::unwrap_used, clippy::expect_used)]
+#![expect(clippy::expect_used)]
 //! Production-Ready Version Tests
 //!
 //! Tests REAL version parsing and comparison logic from alpm_types::Version.
@@ -9,9 +9,6 @@
 //!
 //! Run:
 //!   cargo test --test version_tests --features arch
-
-#![allow(clippy::missing_panics_doc)]
-#![allow(clippy::missing_errors_doc)]
 
 use alpm_types::Version as AlpmVersion;
 use std::str::FromStr;
@@ -28,7 +25,6 @@ fn parse_version_or_panic(s: &str) -> AlpmVersion {
 // ═══════════════════════════════════════════════════════════════════════════════
 
 mod real_world_parsing {
-    #![allow(clippy::pedantic, clippy::nursery)]
     use super::*;
 
     /// Test actual version strings from Arch Linux packages
@@ -116,7 +112,6 @@ mod real_world_parsing {
 // ═══════════════════════════════════════════════════════════════════════════════
 
 mod version_comparison {
-    #![allow(clippy::pedantic, clippy::nursery)]
     use super::*;
 
     /// Test basic version comparison
@@ -242,7 +237,6 @@ mod version_comparison {
 // ═══════════════════════════════════════════════════════════════════════════════
 
 mod update_detection {
-    #![allow(clippy::pedantic, clippy::nursery)]
     use super::*;
 
     /// Test that update detection logic works with real version strings
@@ -341,7 +335,6 @@ mod update_detection {
 // ═══════════════════════════════════════════════════════════════════════════════
 
 mod parse_version_or_zero_tests {
-    #![allow(clippy::pedantic, clippy::nursery)]
     use super::*;
 
     /// Test that parse_version_or_zero returns a version or zero

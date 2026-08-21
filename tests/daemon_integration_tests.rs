@@ -1,9 +1,4 @@
-#![allow(
-    clippy::unwrap_used,
-    clippy::expect_used,
-    clippy::pedantic,
-    clippy::nursery
-)]
+#![expect(clippy::unwrap_used, clippy::expect_used, clippy::pedantic)]
 
 //! Comprehensive daemon integration tests
 //! Tests IPC protocol, caching, concurrency, error handling

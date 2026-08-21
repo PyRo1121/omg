@@ -8,14 +8,9 @@
 //!
 //! Tests use isolated project directories to avoid system contamination.
 
-#![allow(
-    clippy::unwrap_used,
-    clippy::expect_used,
-    clippy::pedantic,
-    clippy::nursery
-)]
+#![expect(clippy::unwrap_used, clippy::expect_used, clippy::pedantic)]
 
-mod common;
+pub mod common;
 
 use common::*;
 

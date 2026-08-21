@@ -1,7 +1,5 @@
 //! Custom assertions for OMG tests
 
-#![allow(dead_code)]
-
 use super::CommandResult;
 /// Assert that output matches expected patterns
 pub fn assert_output_matches(result: &CommandResult, patterns: &[&str]) {

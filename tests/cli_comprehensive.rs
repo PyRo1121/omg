@@ -4,7 +4,7 @@
 
 #![cfg(feature = "arch")]
 
-mod common;
+pub mod common;
 
 use common::*;
 
@@ -467,25 +467,6 @@ mod meta_tests {
 
 mod package_ops_tests {
     use super::*;
-
-    #[test]
-    fn test_pin_help() {
-        let result = run_omg(&["pin", "--help"]);
-        result.assert_success();
-        result.assert_stdout_contains("pin");
-    }
-
-    #[test]
-    fn test_pin_list() {
-        let result = run_omg(&["pin", "list"]);
-        let output = result.combined_output();
-        assert!(
-            result.success
-                || output.to_lowercase().contains("pin")
-                || output.to_lowercase().contains("error"),
-            "Pin list should succeed or explain its result: {output}"
-        );
-    }
 
     #[test]
     fn test_clean_cache() {

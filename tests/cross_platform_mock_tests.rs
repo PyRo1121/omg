@@ -1,13 +1,12 @@
 //! Cross-platform mock package manager tests.
 //!
-//! These tests verify that mock package managers for all platforms (Arch, Debian, Fedora,
-//! Windows, macOS) work correctly and maintain proper state isolation.
+//! These tests verify that mock package managers for supported platforms (Arch, Debian,
+//! Fedora, macOS) work correctly and maintain proper state isolation.
 //!
 //! ## State Isolation
 //!
 //! Each platform uses a separate state file (`mock_state_{platform}.json`) to prevent
-//! cross-contamination during tests. This ensures that installing a package on the
-//! Windows mock doesn't affect the Arch mock, etc.
+//! cross-contamination during tests.
 //!
 //! ## Test Organization
 //!
@@ -43,10 +42,6 @@ impl MockPackageManager {
 
     fn fedora() -> MockBackend {
         MockBackend::new_in("fedora", TEST_DATA_DIR.path())
-    }
-
-    fn windows() -> MockBackend {
-        MockBackend::new_in("windows", TEST_DATA_DIR.path())
     }
 
     fn macos() -> MockBackend {
@@ -92,21 +87,6 @@ mod all_platforms {
 
         let results = pm.search("rust").await?;
         assert!(results.iter().any(|p| p.name == "rust"));
-
-        Ok(())
-    }
-
-    #[tokio::test]
-    async fn test_windows_mock() -> Result<()> {
-        let pm = MockPackageManager::windows();
-        assert_eq!(pm.name(), "scoop");
-
-        let results = pm.search("git").await?;
-        assert!(!results.is_empty(), "Should find git in Windows mock");
-        assert!(results.iter().any(|p| p.name == "git"));
-
-        let results = pm.search("7zip").await?;
-        assert!(results.iter().any(|p| p.name == "7zip"));
 
         Ok(())
     }
@@ -171,24 +151,6 @@ mod install_remove_operations {
 
     #[tokio::test]
     #[serial]
-    async fn test_windows_install_remove() -> Result<()> {
-        let pm = MockPackageManager::windows();
-
-        pm.remove(&["ripgrep".to_string()]).await?;
-
-        assert!(!pm.is_installed("ripgrep").await.unwrap());
-
-        pm.install(&["ripgrep".to_string()]).await?;
-        assert!(pm.is_installed("ripgrep").await.unwrap());
-
-        pm.remove(&["ripgrep".to_string()]).await?;
-        assert!(!pm.is_installed("ripgrep").await.unwrap());
-
-        Ok(())
-    }
-
-    #[tokio::test]
-    #[serial]
     async fn test_macos_install_remove() -> Result<()> {
         let pm = MockPackageManager::macos();
 
@@ -208,9 +170,9 @@ mod install_remove_operations {
     #[tokio::test]
     #[serial]
     async fn test_multiple_package_operations() -> Result<()> {
-        let pm = MockPackageManager::windows();
+        let pm = MockPackageManager::macos();
 
-        let packages = vec!["git".to_string(), "wget".to_string(), "7zip".to_string()];
+        let packages = vec!["git".to_string(), "wget".to_string(), "node".to_string()];
 
         pm.install(&packages).await?;
 
@@ -261,21 +223,6 @@ mod update_scenarios {
 
     #[tokio::test]
     #[serial]
-    async fn test_windows_updates() -> Result<()> {
-        let pm = MockPackageManager::windows();
-
-        pm.set_installed_version("git", "2.42.0.windows.1")?;
-        pm.set_available_version("git", "2.44.0.windows.1")?;
-
-        let updates = pm.list_updates().await?;
-
-        assert!(!updates.is_empty(), "Should have updates: {updates:?}");
-
-        Ok(())
-    }
-
-    #[tokio::test]
-    #[serial]
     async fn test_macos_updates() -> Result<()> {
         let pm = MockPackageManager::macos();
 
@@ -299,7 +246,6 @@ mod search_functionality {
             MockPackageManager::arch(),
             MockPackageManager::debian(),
             MockPackageManager::fedora(),
-            MockPackageManager::windows(),
             MockPackageManager::macos(),
         ];
 
@@ -327,7 +273,7 @@ mod search_functionality {
 
     #[tokio::test]
     async fn test_empty_search() -> Result<()> {
-        let pm = MockPackageManager::windows();
+        let pm = MockPackageManager::arch();
 
         let results = pm.search("nonexistent-package-xyz-12345").await?;
         assert!(results.is_empty(), "Should not find nonexistent package");
@@ -345,7 +291,6 @@ mod package_info {
             (MockPackageManager::arch(), "git"),
             (MockPackageManager::debian(), "git"),
             (MockPackageManager::fedora(), "git"),
-            (MockPackageManager::windows(), "git"),
             (MockPackageManager::macos(), "git"),
         ];
 
@@ -385,7 +330,6 @@ mod status_reporting {
             MockPackageManager::arch(),
             MockPackageManager::debian(),
             MockPackageManager::fedora(),
-            MockPackageManager::windows(),
             MockPackageManager::macos(),
         ];
 
@@ -405,7 +349,7 @@ mod status_reporting {
     #[tokio::test]
     #[serial]
     async fn test_list_explicit() -> Result<()> {
-        let pm = MockPackageManager::windows();
+        let pm = MockPackageManager::macos();
 
         pm.install(&["git".to_string(), "wget".to_string()]).await?;
 
@@ -452,17 +396,17 @@ mod consistency_checks {
     #[serial]
     async fn test_platform_isolation() -> Result<()> {
         let pm_fedora = MockPackageManager::fedora();
-        let pm_windows = MockPackageManager::windows();
+        let pm_arch = MockPackageManager::arch();
 
         pm_fedora.remove(&["rust".to_string()]).await?;
-        pm_windows.remove(&["rust".to_string()]).await?;
+        pm_arch.remove(&["rust".to_string()]).await?;
 
         pm_fedora.install(&["rust".to_string()]).await?;
 
         assert!(pm_fedora.is_installed("rust").await.unwrap());
         assert!(
-            !pm_windows.is_installed("rust").await.unwrap(),
-            "Fedora installation should not affect Windows mock"
+            !pm_arch.is_installed("rust").await.unwrap(),
+            "Fedora installation should not affect Arch mock"
         );
 
         Ok(())

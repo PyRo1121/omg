@@ -1,10 +1,3 @@
-#![allow(
-    clippy::unwrap_used,
-    clippy::expect_used,
-    clippy::pedantic,
-    clippy::nursery,
-    unsafe_code
-)]
 #[cfg(any(feature = "debian", feature = "debian-pure"))]
 use omg_lib::daemon::handlers::DaemonState;
 #[cfg(any(feature = "debian", feature = "debian-pure"))]
@@ -141,9 +134,9 @@ fn maybe_check_baseline(report: &BenchReport) {
 }
 
 #[cfg(any(feature = "debian", feature = "debian-pure"))]
-#[tokio::test(flavor = "current_thread")]
+#[test]
 #[serial]
-async fn bench_debian_deterministic_matrix() {
+fn bench_debian_deterministic_matrix() {
     use omg_lib::daemon::handlers::handle_request;
     use omg_lib::package_managers::debian_db::resolver::DependencyResolver;
     use omg_lib::package_managers::debian_db::transaction;
@@ -153,124 +146,133 @@ async fn bench_debian_deterministic_matrix() {
     let temp_dir = tempfile::tempdir().unwrap();
     let temp_path = temp_dir.path().to_str().unwrap().to_string();
 
-    unsafe {
-        std::env::set_var("OMG_TEST_MODE", "true");
-        std::env::set_var("OMG_TEST_DISTRO", "debian");
-        std::env::set_var("OMG_DAEMON_DATA_DIR", &temp_path);
-    }
+    temp_env::with_vars(
+        [
+            ("OMG_TEST_MODE", Some("true")),
+            ("OMG_TEST_DISTRO", Some("debian")),
+            ("OMG_DAEMON_DATA_DIR", Some(temp_path.as_str())),
+        ],
+        || {
+            let runtime = tokio::runtime::Builder::new_current_thread()
+                .enable_all()
+                .build()
+                .unwrap();
+            runtime.block_on(async {
+                let state = Arc::new(DaemonState::new().unwrap());
 
-    let state = Arc::new(DaemonState::new().unwrap());
+                let mut cold_search = Vec::new();
+                let mut warm_search = Vec::new();
+                let mut cold_info = Vec::new();
+                let mut warm_info = Vec::new();
+                let mut cold_install_dry_run = Vec::new();
+                let mut warm_install_dry_run = Vec::new();
 
-    let mut cold_search = Vec::new();
-    let mut warm_search = Vec::new();
-    let mut cold_info = Vec::new();
-    let mut warm_info = Vec::new();
-    let mut cold_install_dry_run = Vec::new();
-    let mut warm_install_dry_run = Vec::new();
+                let start = Instant::now();
+                let req = Request::DebianSearch {
+                    id: 1,
+                    query: "apt".to_string(),
+                    limit: Some(10),
+                };
+                let _ = handle_request(state.clone(), req).await;
+                cold_search.push(start.elapsed().as_secs_f64() * 1000.0);
 
-    let start = Instant::now();
-    let req = Request::DebianSearch {
-        id: 1,
-        query: "apt".to_string(),
-        limit: Some(10),
-    };
-    let _ = handle_request(state.clone(), req).await;
-    cold_search.push(start.elapsed().as_secs_f64() * 1000.0);
+                for i in 0..WARM_ITERS {
+                    let start = Instant::now();
+                    let req = Request::DebianSearch {
+                        id: 1000 + u64::from(i),
+                        query: "apt".to_string(),
+                        limit: Some(10),
+                    };
+                    let _ = handle_request(state.clone(), req).await;
+                    warm_search.push(start.elapsed().as_secs_f64() * 1000.0);
+                }
 
-    for i in 0..WARM_ITERS {
-        let start = Instant::now();
-        let req = Request::DebianSearch {
-            id: 1000 + u64::from(i),
-            query: "apt".to_string(),
-            limit: Some(10),
-        };
-        let _ = handle_request(state.clone(), req).await;
-        warm_search.push(start.elapsed().as_secs_f64() * 1000.0);
-    }
+                let start = Instant::now();
+                let info_cold = debian_db::get_info_fast("apt").unwrap();
+                cold_info.push(start.elapsed().as_secs_f64() * 1000.0);
+                assert!(info_cold.is_some(), "Expected apt package info to exist");
 
-    let start = Instant::now();
-    let info_cold = debian_db::get_info_fast("apt").unwrap();
-    cold_info.push(start.elapsed().as_secs_f64() * 1000.0);
-    assert!(info_cold.is_some(), "Expected apt package info to exist");
+                for _ in 0..WARM_ITERS {
+                    let start = Instant::now();
+                    let info = debian_db::get_info_fast("apt").unwrap();
+                    assert!(info.is_some(), "Expected apt package info to exist");
+                    warm_info.push(start.elapsed().as_secs_f64() * 1000.0);
+                }
 
-    for _ in 0..WARM_ITERS {
-        let start = Instant::now();
-        let info = debian_db::get_info_fast("apt").unwrap();
-        assert!(info.is_some(), "Expected apt package info to exist");
-        warm_info.push(start.elapsed().as_secs_f64() * 1000.0);
-    }
+                let start = Instant::now();
+                let mut cold_resolver = DependencyResolver::new().unwrap();
+                cold_resolver.add_package("apt").unwrap();
+                let cold_result = cold_resolver.resolve().unwrap();
+                let _ = transaction::dry_run(&cold_result);
+                cold_install_dry_run.push(start.elapsed().as_secs_f64() * 1000.0);
 
-    let start = Instant::now();
-    let mut cold_resolver = DependencyResolver::new().unwrap();
-    cold_resolver.add_package("apt").unwrap();
-    let cold_result = cold_resolver.resolve().unwrap();
-    let _ = transaction::dry_run(&cold_result);
-    cold_install_dry_run.push(start.elapsed().as_secs_f64() * 1000.0);
+                for _ in 0..WARM_ITERS {
+                    let start = Instant::now();
+                    let mut resolver = DependencyResolver::new().unwrap();
+                    resolver.add_package("apt").unwrap();
+                    let result = resolver.resolve().unwrap();
+                    let _ = transaction::dry_run(&result);
+                    warm_install_dry_run.push(start.elapsed().as_secs_f64() * 1000.0);
+                }
 
-    for _ in 0..WARM_ITERS {
-        let start = Instant::now();
-        let mut resolver = DependencyResolver::new().unwrap();
-        resolver.add_package("apt").unwrap();
-        let result = resolver.resolve().unwrap();
-        let _ = transaction::dry_run(&result);
-        warm_install_dry_run.push(start.elapsed().as_secs_f64() * 1000.0);
-    }
+                let metrics = vec![
+                    summarize("search", "cold", &cold_search),
+                    summarize("search", "warm", &warm_search),
+                    summarize("info", "cold", &cold_info),
+                    summarize("info", "warm", &warm_info),
+                    summarize("install_dry_run", "cold", &cold_install_dry_run),
+                    summarize("install_dry_run", "warm", &warm_install_dry_run),
+                ];
 
-    let metrics = vec![
-        summarize("search", "cold", &cold_search),
-        summarize("search", "warm", &warm_search),
-        summarize("info", "cold", &cold_info),
-        summarize("info", "warm", &warm_info),
-        summarize("install_dry_run", "cold", &cold_install_dry_run),
-        summarize("install_dry_run", "warm", &warm_install_dry_run),
-    ];
+                for metric in &metrics {
+                    println!(
+                        "{}:{} avg={:.4}ms min={:.4}ms max={:.4}ms n={}",
+                        metric.operation,
+                        metric.mode,
+                        metric.avg_ms,
+                        metric.min_ms,
+                        metric.max_ms,
+                        metric.iterations
+                    );
+                }
 
-    for metric in &metrics {
-        println!(
-            "{}:{} avg={:.4}ms min={:.4}ms max={:.4}ms n={}",
-            metric.operation,
-            metric.mode,
-            metric.avg_ms,
-            metric.min_ms,
-            metric.max_ms,
-            metric.iterations
-        );
-    }
+                let report = BenchReport {
+                    distro: "debian".to_string(),
+                    iterations: WARM_ITERS,
+                    metrics,
+                };
+                maybe_write_report(&report);
+                maybe_check_baseline(&report);
 
-    let report = BenchReport {
-        distro: "debian".to_string(),
-        iterations: WARM_ITERS,
-        metrics,
-    };
-    maybe_write_report(&report);
-    maybe_check_baseline(&report);
+                let warm_search_avg = report
+                    .metrics
+                    .iter()
+                    .find(|m| m.operation == "search" && m.mode == "warm")
+                    .map_or(999.0, |m| m.avg_ms);
+                let warm_info_avg = report
+                    .metrics
+                    .iter()
+                    .find(|m| m.operation == "info" && m.mode == "warm")
+                    .map_or(999.0, |m| m.avg_ms);
+                let warm_dry_run_avg = report
+                    .metrics
+                    .iter()
+                    .find(|m| m.operation == "install_dry_run" && m.mode == "warm")
+                    .map_or(999.0, |m| m.avg_ms);
 
-    let warm_search_avg = report
-        .metrics
-        .iter()
-        .find(|m| m.operation == "search" && m.mode == "warm")
-        .map_or(999.0, |m| m.avg_ms);
-    let warm_info_avg = report
-        .metrics
-        .iter()
-        .find(|m| m.operation == "info" && m.mode == "warm")
-        .map_or(999.0, |m| m.avg_ms);
-    let warm_dry_run_avg = report
-        .metrics
-        .iter()
-        .find(|m| m.operation == "install_dry_run" && m.mode == "warm")
-        .map_or(999.0, |m| m.avg_ms);
-
-    assert!(
-        warm_search_avg < 40.0,
-        "Warm Debian search avg should be <40ms, got {warm_search_avg:.4}ms"
-    );
-    assert!(
-        warm_info_avg < 40.0,
-        "Warm Debian info avg should be <40ms, got {warm_info_avg:.4}ms"
-    );
-    assert!(
-        warm_dry_run_avg < 200.0,
-        "Warm Debian install dry-run avg should be <200ms, got {warm_dry_run_avg:.4}ms"
+                assert!(
+                    warm_search_avg < 40.0,
+                    "Warm Debian search avg should be <40ms, got {warm_search_avg:.4}ms"
+                );
+                assert!(
+                    warm_info_avg < 40.0,
+                    "Warm Debian info avg should be <40ms, got {warm_info_avg:.4}ms"
+                );
+                assert!(
+                    warm_dry_run_avg < 200.0,
+                    "Warm Debian install dry-run avg should be <200ms, got {warm_dry_run_avg:.4}ms"
+                );
+            });
+        },
     );
 }

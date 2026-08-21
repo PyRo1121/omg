@@ -5,7 +5,7 @@
 
 #![cfg(feature = "arch")]
 
-mod common;
+pub mod common;
 
 use common::*;
 use std::fs;
@@ -119,20 +119,23 @@ fn test_privacy_help() {
 
 #[test]
 fn test_privacy_export_without_license() {
-    // ===== ARRANGE =====
     init_test_env();
-    clear_license(); // Ensure no license is present
+    clear_license();
+    let project = TestProject::new();
+    let output_path = project.path().join("local-export.json");
 
-    // ===== ACT =====
-    let result = run_omg(&["privacy", "export"]);
+    let result = project.run(&[
+        "privacy",
+        "export",
+        "--output",
+        output_path.to_str().unwrap(),
+    ]);
 
-    // ===== ASSERT =====
-    // Should fail or show error message when no license is found
-    let output = result.combined_output();
-    assert!(
-        !result.success || output.contains("license") || output.contains("activate"),
-        "Export without license should fail or request activation: {output}"
-    );
+    result.assert_success();
+    let exported: serde_json::Value =
+        serde_json::from_slice(&std::fs::read(output_path).unwrap()).unwrap();
+    assert!(exported.get("local").is_some());
+    assert!(exported["remote"].is_null());
 }
 
 #[test]
@@ -152,11 +155,12 @@ fn test_privacy_export_with_output_flag() {
     ]);
 
     // ===== ASSERT =====
-    // Should attempt export (will fail due to no license, but should process the flag)
+    result.assert_success();
+    assert!(output_path.is_file(), "Export should honor the output path");
     let output = result.combined_output();
     assert!(
-        output.contains("export") || output.contains("license") || output.contains("activate"),
-        "Should process export command: {output}"
+        output.contains("export"),
+        "Should report export success: {output}"
     );
 }
 

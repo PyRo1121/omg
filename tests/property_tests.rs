@@ -1,8 +1,7 @@
-#![allow(
+#![expect(
     clippy::unwrap_used,
     clippy::expect_used,
     clippy::pedantic,
-    clippy::nursery,
     clippy::doc_markdown
 )]
 //! Property-Based and Fuzz Testing for OMG
@@ -12,7 +11,7 @@
 //! Run: cargo test --test property_tests
 //! Run fuzz: OMG_RUN_FUZZ_TESTS=1 cargo test --test property_tests
 
-mod common;
+pub mod common;
 
 use common::*;
 use proptest::prelude::*;

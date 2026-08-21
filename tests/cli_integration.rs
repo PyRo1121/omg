@@ -4,7 +4,7 @@
 
 #![cfg(feature = "arch")]
 
-mod common;
+pub mod common;
 
 use common::*;
 
@@ -99,7 +99,7 @@ fn test_list_explicit() {
     init_test_env();
 
     // ===== ACT =====
-    let result = run_omg(&["list", "--explicit"]);
+    let result = run_omg(&["explicit"]);
 
     // ===== ASSERT =====
     result.assert_success();

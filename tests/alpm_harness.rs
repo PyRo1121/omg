@@ -7,7 +7,6 @@
 //! are suppressed because the harness is only used in integration tests.
 
 #![cfg(feature = "arch")]
-#![allow(dead_code)]
 #![allow(clippy::doc_markdown)]
 #![allow(clippy::uninlined_format_args)]
 #![allow(clippy::must_use_candidate)]
@@ -64,7 +63,7 @@ impl AlpmHarness {
     fn create_fs_layout(&self) -> Result<()> {
         fs::create_dir_all(&self.db_path)?;
         fs::create_dir_all(self.root_path.join("var/cache/pacman/pkg"))?;
-        fs::create_dir_all(self.root_path.join("etc"))?;
+        fs::create_dir_all(self.root_path.join("etc/pacman.d/gnupg"))?;
         fs::create_dir_all(self.db_path.join("local"))?;
         fs::create_dir_all(self.db_path.join("sync"))?;
         Ok(())

@@ -1,9 +1,4 @@
-#![allow(
-    clippy::unwrap_used,
-    clippy::expect_used,
-    clippy::pedantic,
-    clippy::nursery
-)]
+#![expect(clippy::unwrap_used, clippy::expect_used, clippy::pedantic)]
 //! OMG World-Class Integration Test Suite
 //!
 //! Comprehensive testing of all OMG features with real assertions.
@@ -21,12 +16,12 @@
 //! Run destructive tests (actually installs packages - USE WITH CAUTION):
 //!   OMG_RUN_DESTRUCTIVE_TESTS=1 cargo test --test integration_suite --features arch
 
-#![allow(unused_variables)]
-#![allow(clippy::doc_markdown)] // Test file doc comments don't need strict formatting
-#![allow(clippy::missing_panics_doc)] // Test functions are expected to panic
-#![allow(clippy::missing_errors_doc)] // Test helpers don't need docs
+#![expect(unused_variables)]
+#![expect(clippy::doc_markdown)] // Test file doc comments don't need strict formatting
+#![expect(clippy::missing_panics_doc)] // Test functions are expected to panic
+#![expect(clippy::missing_errors_doc)] // Test helpers don't need docs
 
-mod common;
+pub mod common;
 
 use common::*;
 use std::env;
@@ -38,6 +33,38 @@ use tempfile::TempDir;
 // ═══════════════════════════════════════════════════════════════════════════════
 // TEST UTILITIES
 // ═══════════════════════════════════════════════════════════════════════════════
+
+#[cfg(feature = "arch")]
+const fn known_system_package() -> &'static str {
+    "pacman"
+}
+
+#[cfg(all(
+    not(feature = "arch"),
+    any(feature = "debian", feature = "debian-pure")
+))]
+const fn known_system_package() -> &'static str {
+    "apt"
+}
+
+#[cfg(not(any(feature = "arch", feature = "debian", feature = "debian-pure")))]
+const fn known_system_package() -> &'static str {
+    "test-package"
+}
+
+fn run_for_compiled_backend(args: &[&str]) -> CommandResult {
+    #[cfg(all(
+        not(feature = "arch"),
+        any(feature = "debian", feature = "debian-pure")
+    ))]
+    return run_omg_with_env(args, &[("OMG_TEST_DISTRO", "debian")]);
+
+    #[cfg(any(
+        feature = "arch",
+        not(any(feature = "debian", feature = "debian-pure"))
+    ))]
+    run_omg(args)
+}
 
 /// Create a temporary project directory with common config files
 fn create_test_project(dir: &Path, config_type: &str) {
@@ -215,7 +242,7 @@ mod package_management {
     #[test]
     #[ignore = "requires a configured system package database"]
     fn test_info_official_package() {
-        let result = run_omg(&["info", "pacman"]);
+        let result = run_for_compiled_backend(&["info", known_system_package()]);
         assert!(result.success, "Info for official package should succeed");
         assert!(result.stdout.contains("pacman"), "Should show package name");
         // Version is displayed as "pacman X.Y.Z" format
@@ -744,7 +771,7 @@ banned_packages = ["malware-pkg"]
     #[test]
     fn test_security_grade_display() {
         // When searching, security grades should be visible
-        let result = run_omg(&["info", "pacman"]);
+        let result = run_for_compiled_backend(&["info", known_system_package()]);
         assert!(result.success, "Info should succeed");
         // Note: Security grade display depends on implementation
     }
@@ -851,12 +878,11 @@ mod config {
     fn test_config_get_invalid_key() {
         // Use proper config get subcommand - invalid key reports error message
         let result = run_omg(&["config", "get", "nonexistent_key"]);
+        assert!(!result.success, "Invalid config keys must fail");
         assert!(
-            result.stdout.contains("Unknown")
-                || result.stdout.contains("not found")
-                || result.stdout.contains("invalid"),
+            result.stderr.contains("Unknown config key"),
             "Config get for invalid key should report error, got: {}",
-            result.stdout
+            result.stderr
         );
     }
 }
@@ -1104,11 +1130,12 @@ mod integration_scenarios {
         // May require daemon
 
         // 3. Search for a package to install
-        let result = run_omg(&["search", "firefox"]);
+        let package = known_system_package();
+        let result = run_for_compiled_backend(&["search", package]);
         assert!(result.success, "Search should work");
 
         // 4. Get info on package
-        let result = run_omg(&["info", "firefox"]);
+        let result = run_for_compiled_backend(&["info", package]);
         assert!(result.success, "Info should work");
     }
 
@@ -1395,7 +1422,7 @@ mod pacman_database {
     #[test]
     #[ignore = "requires a configured system package database"]
     fn test_info_shows_package_details() {
-        let result = run_omg(&["info", "pacman"]);
+        let result = run_for_compiled_backend(&["info", known_system_package()]);
         assert!(result.success, "Info should succeed for installed package");
         assert!(result.stdout.contains("pacman"), "Should show package name");
     }

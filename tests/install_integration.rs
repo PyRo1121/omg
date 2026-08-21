@@ -1,16 +1,10 @@
-#![allow(
-    clippy::unwrap_used,
-    clippy::expect_used,
-    clippy::pedantic,
-    clippy::nursery
-)]
+#![cfg(feature = "arch")]
+#![expect(clippy::unwrap_used, clippy::expect_used, clippy::pedantic)]
 //! Integration tests for omg install command
 //!
 //! Tests both official and AUR package installation on Arch Linux
 
-#![cfg(feature = "arch")]
-
-mod common;
+pub mod common;
 
 use common::*;
 use std::process::Command;

@@ -11,8 +11,8 @@
 //!
 //! These tests use extensive mocking to avoid requiring actual root privileges.
 
-#![allow(clippy::unwrap_used)]
-#![allow(clippy::pedantic)]
+#![expect(clippy::unwrap_used)]
+#![expect(clippy::pedantic)]
 
 use std::env;
 use std::process::{Command, Stdio};
@@ -139,17 +139,6 @@ impl TestResult {
         assert!(
             self.contains(pattern),
             "Expected output to contain '{}'. Got:\n{}",
-            pattern,
-            self.combined_output()
-        );
-        self
-    }
-
-    #[expect(dead_code)]
-    fn assert_not_contains(&self, pattern: &str) -> &Self {
-        assert!(
-            !self.contains(pattern),
-            "Expected output NOT to contain '{}'. Got:\n{}",
             pattern,
             self.combined_output()
         );

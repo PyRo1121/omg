@@ -1,9 +1,4 @@
-#![allow(
-    clippy::unwrap_used,
-    clippy::expect_used,
-    clippy::pedantic,
-    clippy::nursery
-)]
+#![expect(clippy::unwrap_used)]
 use omg_lib::core::metrics::GLOBAL_METRICS;
 use omg_lib::daemon::handlers::{DaemonState, handle_request};
 use omg_lib::daemon::protocol::{Request, Response, ResponseResult};
@@ -13,23 +8,28 @@ use tempfile::TempDir;
 
 #[tokio::test]
 #[serial]
-#[expect(unsafe_code)] // Test setup requires env var modification
 async fn test_metrics_collection() {
     // Setup
     let temp_dir = TempDir::new().unwrap();
-    // SAFETY: Test setup - modifying environment variables for isolated test execution.
-    // These are single-threaded test functions marked with #[serial] to prevent concurrent access.
-    unsafe {
-        std::env::set_var("OMG_DAEMON_DATA_DIR", temp_dir.path());
-        std::env::set_var("OMG_DATA_DIR", temp_dir.path());
-    }
 
-    // Initialize
-    let _ = omg_lib::core::security::init_audit_logger();
-    let state = match DaemonState::new() {
-        Ok(s) => Arc::new(s),
-        Err(_) => return,
-    };
+    // Initialize with scoped env: the daemon and audit logger capture their
+    // data-dir paths during construction, so isolation holds after the guard
+    // restores the process environment.
+    let data_dir = temp_dir.path().to_path_buf();
+    let state = temp_env::with_vars(
+        [
+            ("OMG_DAEMON_DATA_DIR", Some(data_dir.as_os_str())),
+            ("OMG_DATA_DIR", Some(data_dir.as_os_str())),
+        ],
+        || {
+            let _ = omg_lib::core::security::init_audit_logger();
+            match DaemonState::new() {
+                Ok(s) => Some(Arc::new(s)),
+                Err(_) => None,
+            }
+        },
+    );
+    let Some(state) = state else { return };
 
     // Get initial metrics
     let initial = GLOBAL_METRICS.snapshot();
@@ -93,18 +93,17 @@ async fn test_metrics_collection() {
 
 #[tokio::test]
 #[serial]
-#[expect(unsafe_code)] // Test setup requires env var modification
 async fn test_security_audit_metrics() {
     let temp_dir = TempDir::new().unwrap();
-    // SAFETY: Test setup - modifying environment variables for isolated test execution.
-    // This test is marked with #[serial] to prevent concurrent access.
-    unsafe {
-        std::env::set_var("OMG_DAEMON_DATA_DIR", temp_dir.path());
-    }
-    let state = match DaemonState::new() {
-        Ok(s) => Arc::new(s),
-        Err(_) => return,
-    };
+    let daemon_data_dir = temp_dir.path().to_path_buf();
+    let state = temp_env::with_vars(
+        [("OMG_DAEMON_DATA_DIR", Some(daemon_data_dir.as_os_str()))],
+        || match DaemonState::new() {
+            Ok(s) => Some(Arc::new(s)),
+            Err(_) => None,
+        },
+    );
+    let Some(state) = state else { return };
 
     let initial = GLOBAL_METRICS.snapshot();
 

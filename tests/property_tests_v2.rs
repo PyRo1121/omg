@@ -10,11 +10,11 @@
 //!
 //! For faster iteration: cargo test --test property_tests_v2 -- --test-threads=1
 
-#![allow(clippy::pedantic)]
+#![expect(clippy::pedantic)]
 
 use proptest::prelude::*;
 
-mod common;
+pub mod common;
 use common::*;
 
 // ═══════════════════════════════════════════════════════════════════════════════

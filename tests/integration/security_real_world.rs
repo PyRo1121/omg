@@ -292,6 +292,7 @@ fn test_pgp_verification_real_packages() {
 /// Verifies that repeated vulnerability queries use cache effectively
 /// and don't hammer external APIs.
 #[tokio::test]
+#[ignore = "requires a successful external OSV request; deterministic cache behavior is covered by the unit test"]
 async fn test_vulnerability_cache_effectiveness() {
     use std::time::Instant;
 

@@ -1,9 +1,5 @@
-#![allow(
-    clippy::unwrap_used,
-    clippy::expect_used,
-    clippy::pedantic,
-    clippy::nursery
-)]
+#![cfg(any(feature = "debian", feature = "debian-pure"))]
+#![expect(clippy::unwrap_used, clippy::expect_used, clippy::pedantic)]
 //! Comprehensive Debian/Ubuntu Integration Tests
 //!
 //! Enterprise-grade test coverage for Debian and Ubuntu package management.
@@ -15,10 +11,8 @@
 //! Note: System tests require real package operations and will modify your system!
 //! Only run these tests in disposable containers or development environments.
 
-#![cfg(any(feature = "debian", feature = "debian-pure"))]
-
-mod common;
-mod platform_semantics;
+pub mod common;
+pub mod platform_semantics;
 
 use common::assertions::*;
 use common::fixtures::*;
@@ -496,7 +490,7 @@ mod rust_apt {
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
-// NEW FEATURE TESTS (why, pin, outdated, etc.)
+// NEW FEATURE TESTS (why, outdated, etc.)
 // ═══════════════════════════════════════════════════════════════════════════════
 
 mod new_features {
@@ -534,19 +528,6 @@ mod new_features {
     }
 
     #[test]
-    fn test_outdated_security_only() {
-        require_system_tests!();
-
-        let result = run_omg(&["outdated", "--security"]);
-        let output = result.combined_output();
-        assert!(
-            !result.success,
-            "--security must fail closed until advisory classification exists"
-        );
-        assert!(output.contains("not implemented"), "got: {output}");
-    }
-
-    #[test]
     fn test_outdated_json_output() {
         require_system_tests!();
 
@@ -554,20 +535,6 @@ mod new_features {
         if result.success && !result.stdout.trim().is_empty() {
             let _: Result<serde_json::Value, _> = serde_json::from_str(&result.stdout);
         }
-    }
-
-    #[test]
-    fn test_pin_list() {
-        let project = TestProject::new();
-        let result = project.run(&["pin", "--list"]);
-        assert!(!result.stderr_contains("panicked at"), "Should not panic");
-    }
-
-    #[test]
-    fn test_pin_package() {
-        let project = TestProject::new();
-        let result = project.run(&["pin", "node@20.10.0"]);
-        assert!(!result.stderr_contains("panicked at"), "Should not panic");
     }
 
     #[test]

@@ -1,9 +1,4 @@
-#![allow(
-    clippy::unwrap_used,
-    clippy::expect_used,
-    clippy::pedantic,
-    clippy::nursery
-)]
+#![expect(clippy::unwrap_used, clippy::expect_used, clippy::pedantic)]
 //! Security and Compliance Test Suite
 //!
 //! Enterprise-grade security testing for Fortune 500 compliance.
@@ -11,9 +6,9 @@
 //! Run: cargo test --test security_tests
 //! With full security tests: OMG_RUN_SECURITY_TESTS=1 cargo test --test security_tests
 
-#![allow(clippy::doc_markdown)]
+#![expect(clippy::doc_markdown)]
 
-mod common;
+pub mod common;
 
 use common::fixtures::*;
 use common::*;

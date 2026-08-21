@@ -1,10 +1,4 @@
 #![cfg(feature = "arch")]
-#![allow(
-    clippy::unwrap_used,
-    clippy::expect_used,
-    clippy::pedantic,
-    clippy::nursery
-)]
 
 //! S-tier E2E Tests: Daemon Concurrency and Thread Safety
 //!
@@ -21,10 +15,9 @@ use tempfile::TempDir;
 use tokio::time::sleep;
 
 /// Helper to extract response ID
-fn response_id(response: &Response) -> u64 {
+const fn response_id(response: &Response) -> u64 {
     match response {
-        Response::Success { id, .. } => *id,
-        Response::Error { id, .. } => *id,
+        Response::Success { id, .. } | Response::Error { id, .. } => *id,
     }
 }
 
@@ -35,7 +28,7 @@ struct ConcurrencyTestFixture {
 }
 
 impl ConcurrencyTestFixture {
-    async fn new() -> Result<Self> {
+    fn new() -> Result<Self> {
         let temp_dir = TempDir::new()?;
         let data_dir = temp_dir.path().join("data");
         std::fs::create_dir_all(&data_dir)?;
@@ -64,7 +57,7 @@ impl ConcurrencyTestFixture {
 #[tokio::test]
 #[serial]
 async fn test_concurrent_search_requests() -> Result<()> {
-    let fixture = ConcurrencyTestFixture::new().await?;
+    let fixture = ConcurrencyTestFixture::new()?;
 
     // Spawn 50 concurrent search requests
     let mut handles = vec![];
@@ -96,10 +89,7 @@ async fn test_concurrent_search_requests() -> Result<()> {
         assert_eq!(response_id(&response), id);
     }
 
-    println!(
-        "Concurrent searches: {} success, {} errors",
-        success_count, error_count
-    );
+    println!("Concurrent searches: {success_count} success, {error_count} errors");
     assert!(success_count > 0, "At least some requests should succeed");
 
     Ok(())
@@ -108,7 +98,7 @@ async fn test_concurrent_search_requests() -> Result<()> {
 #[tokio::test]
 #[serial]
 async fn test_concurrent_status_requests() -> Result<()> {
-    let fixture = ConcurrencyTestFixture::new().await?;
+    let fixture = ConcurrencyTestFixture::new()?;
 
     // 20 concurrent status requests
     let mut handles = vec![];
@@ -160,7 +150,7 @@ async fn test_concurrent_status_requests() -> Result<()> {
 #[tokio::test]
 #[serial]
 async fn test_concurrent_read_and_cache_clear() -> Result<()> {
-    let fixture = ConcurrencyTestFixture::new().await?;
+    let fixture = ConcurrencyTestFixture::new()?;
 
     // Start continuous read requests
     let mut read_handles = vec![];
@@ -218,7 +208,7 @@ async fn test_concurrent_read_and_cache_clear() -> Result<()> {
 #[tokio::test]
 #[serial]
 async fn test_concurrent_cache_updates() -> Result<()> {
-    let fixture = ConcurrencyTestFixture::new().await?;
+    let fixture = ConcurrencyTestFixture::new()?;
 
     // Multiple threads updating cache with different queries
     let queries = ["query1", "query2", "query3", "query4", "query5"];
@@ -263,7 +253,7 @@ async fn test_concurrent_cache_updates() -> Result<()> {
 #[tokio::test]
 #[serial]
 async fn test_no_deadlock_with_batch_requests() -> Result<()> {
-    let fixture = ConcurrencyTestFixture::new().await?;
+    let fixture = ConcurrencyTestFixture::new()?;
 
     // Submit multiple batch requests concurrently
     let mut handles = vec![];
@@ -301,7 +291,7 @@ async fn test_no_deadlock_with_batch_requests() -> Result<()> {
 #[tokio::test]
 #[serial]
 async fn test_no_deadlock_with_recursive_locks() -> Result<()> {
-    let fixture = ConcurrencyTestFixture::new().await?;
+    let fixture = ConcurrencyTestFixture::new()?;
 
     // Scenario: Status request might internally lock cache, then query system
     // Multiple concurrent status requests should not deadlock
@@ -337,7 +327,7 @@ async fn test_no_deadlock_with_recursive_locks() -> Result<()> {
 #[tokio::test]
 #[serial]
 async fn test_no_race_in_cache_updates() -> Result<()> {
-    let fixture = ConcurrencyTestFixture::new().await?;
+    let fixture = ConcurrencyTestFixture::new()?;
 
     // Multiple threads updating same cache key
     let mut handles = vec![];
@@ -388,7 +378,7 @@ async fn test_no_race_in_cache_updates() -> Result<()> {
 #[tokio::test]
 #[serial]
 async fn test_no_race_in_metrics_updates() -> Result<()> {
-    let fixture = ConcurrencyTestFixture::new().await?;
+    let fixture = ConcurrencyTestFixture::new()?;
 
     // Submit many requests to increment metrics
     let mut handles = vec![];
@@ -434,7 +424,7 @@ async fn test_no_race_in_metrics_updates() -> Result<()> {
 #[tokio::test]
 #[serial]
 async fn test_shared_state_thread_safety() -> Result<()> {
-    let fixture = ConcurrencyTestFixture::new().await?;
+    let fixture = ConcurrencyTestFixture::new()?;
 
     // Mix of different request types accessing shared state
     let mut handles = vec![];

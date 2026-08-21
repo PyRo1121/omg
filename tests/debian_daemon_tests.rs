@@ -1,10 +1,3 @@
-#![allow(
-    clippy::unwrap_used,
-    clippy::expect_used,
-    clippy::pedantic,
-    clippy::nursery,
-    unsafe_code
-)]
 #[cfg(any(feature = "debian", feature = "debian-pure"))]
 use omg_lib::daemon::handlers::DaemonState;
 #[cfg(any(feature = "debian", feature = "debian-pure"))]
@@ -16,23 +9,14 @@ fn test_daemon_initialization_debian_mock() {
     let temp_dir = tempfile::tempdir().unwrap();
     let temp_path = temp_dir.path().to_str().unwrap().to_string();
 
-    // Set test mode to trigger mock paths
-    // SAFETY: Test setup requires modifying environment variables before daemon initialization.
-    // This is safe in tests as each test runs in isolation with its own process/thread.
-    // No other code reads these variables during this critical setup phase.
-    unsafe {
-        std::env::set_var("OMG_TEST_MODE", "true");
-        // Also set mock distro to debian to ensure correct package manager selection
-        std::env::set_var("OMG_TEST_DISTRO", "debian");
-        std::env::set_var("OMG_DAEMON_DATA_DIR", &temp_path);
-    }
-
-    // We expect this to succeed if integration is correct,
-    // but it currently fails because debian_db doesn't handle test mode in get_detailed_packages
-    // or PackageIndex::new_apt doesn't handle the error gracefully.
-
-    // Initialize daemon state
-    let state_result = DaemonState::new();
+    let state_result = temp_env::with_vars(
+        [
+            ("OMG_TEST_MODE", Some("true")),
+            ("OMG_TEST_DISTRO", Some("debian")),
+            ("OMG_DAEMON_DATA_DIR", Some(temp_path.as_str())),
+        ],
+        DaemonState::new,
+    );
 
     // Assert success
     assert!(
@@ -64,16 +48,16 @@ async fn test_handle_debian_search() {
     let temp_dir = tempfile::tempdir().unwrap();
     let temp_path = temp_dir.path().to_str().unwrap().to_string();
 
-    // SAFETY: Test setup requires modifying environment variables before daemon initialization.
-    // This is safe in tests as each test runs in isolation with its own process/thread.
-    // No other code reads these variables during this critical setup phase.
-    unsafe {
-        std::env::set_var("OMG_TEST_MODE", "true");
-        std::env::set_var("OMG_TEST_DISTRO", "debian");
-        std::env::set_var("OMG_DAEMON_DATA_DIR", &temp_path);
-    }
-
-    let state = Arc::new(DaemonState::new().unwrap());
+    let state = temp_env::with_vars(
+        [
+            ("OMG_TEST_MODE", Some("true")),
+            ("OMG_TEST_DISTRO", Some("debian")),
+            ("OMG_DAEMON_DATA_DIR", Some(temp_path.as_str())),
+        ],
+        DaemonState::new,
+    )
+    .unwrap();
+    let state = Arc::new(state);
 
     let req = Request::DebianSearch {
         id: 123,

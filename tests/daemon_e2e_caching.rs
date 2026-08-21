@@ -1,10 +1,4 @@
 #![cfg(feature = "arch")]
-#![allow(
-    clippy::unwrap_used,
-    clippy::expect_used,
-    clippy::pedantic,
-    clippy::nursery
-)]
 
 //! S-tier E2E Tests: Daemon Caching Layer
 //!
@@ -26,7 +20,7 @@ struct CacheTestFixture {
 }
 
 impl CacheTestFixture {
-    async fn new() -> Result<Self> {
+    fn new() -> Result<Self> {
         let temp_dir = TempDir::new()?;
         let data_dir = temp_dir.path().join("data");
         std::fs::create_dir_all(&data_dir)?;
@@ -68,7 +62,7 @@ impl CacheTestFixture {
 #[tokio::test]
 #[serial]
 async fn test_cache_hit_rate_tracking() -> Result<()> {
-    let fixture = CacheTestFixture::new().await?;
+    let fixture = CacheTestFixture::new()?;
     fixture.clear_cache();
 
     // Get initial metrics
@@ -129,7 +123,7 @@ async fn test_cache_hit_rate_tracking() -> Result<()> {
 #[tokio::test]
 #[serial]
 async fn test_explicit_cache_clear() -> Result<()> {
-    let fixture = CacheTestFixture::new().await?;
+    let fixture = CacheTestFixture::new()?;
 
     // Populate cache
     fixture
@@ -172,7 +166,7 @@ async fn test_explicit_cache_clear() -> Result<()> {
 #[tokio::test]
 #[serial]
 async fn test_status_cache_coherency() -> Result<()> {
-    let fixture = CacheTestFixture::new().await?;
+    let fixture = CacheTestFixture::new()?;
 
     // First status request
     let status1 = fixture.send_request(Request::Status { id: 1 }).await;
@@ -210,7 +204,7 @@ async fn test_status_cache_coherency() -> Result<()> {
 #[tokio::test]
 #[serial]
 async fn test_package_info_cache_coherency() -> Result<()> {
-    let fixture = CacheTestFixture::new().await?;
+    let fixture = CacheTestFixture::new()?;
 
     // First info request
     let info1 = fixture
@@ -274,7 +268,7 @@ async fn test_package_info_cache_coherency() -> Result<()> {
 #[tokio::test]
 #[serial]
 async fn test_missing_package_returns_error_consistently() -> Result<()> {
-    let fixture = CacheTestFixture::new().await?;
+    let fixture = CacheTestFixture::new()?;
     let nonexistent_package = "this-package-definitely-does-not-exist-12345";
 
     let response1 = fixture

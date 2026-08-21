@@ -1,5 +1,5 @@
 #![cfg(feature = "arch")]
-#![allow(
+#![expect(
     clippy::unwrap_used,
     clippy::expect_used,
     clippy::pedantic,
@@ -68,17 +68,6 @@ impl TestResult {
         assert!(
             self.combined().contains(pattern),
             "Output should contain '{}'. Got:\n{}",
-            pattern,
-            self.combined()
-        );
-        self
-    }
-
-    #[expect(dead_code)]
-    fn assert_not_contains(&self, pattern: &str) -> &Self {
-        assert!(
-            !self.combined().contains(pattern),
-            "Output should NOT contain '{}'. Got:\n{}",
             pattern,
             self.combined()
         );

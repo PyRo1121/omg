@@ -1,10 +1,5 @@
 #![cfg(feature = "arch")]
-#![allow(
-    clippy::unwrap_used,
-    clippy::expect_used,
-    clippy::pedantic,
-    clippy::nursery
-)]
+#![expect(clippy::unwrap_used, clippy::pedantic, clippy::nursery)]
 
 //! E2E Tests: Telemetry Pipeline
 //!
@@ -608,9 +603,9 @@ async fn test_platform_string_format() -> Result<()> {
     let parts: Vec<&str> = payload.platform.split('-').collect();
     assert_eq!(parts.len(), 2, "Platform should have exactly 2 parts");
 
-    // First part should be OS
+    // First part should be OS (native Windows is no longer a supported target)
     assert!(
-        ["linux", "macos", "windows"].contains(&parts[0]),
+        ["linux", "macos"].contains(&parts[0]),
         "Invalid OS: {}",
         parts[0]
     );

@@ -1,10 +1,10 @@
-#![allow(clippy::unwrap_used, clippy::expect_used)]
+#![expect(clippy::unwrap_used, clippy::expect_used)]
 //! Logic tests for package manager abstraction
 //!
 //! These tests verify that the package manager abstraction works across
 //! different simulated distributions using the `OMG_TEST_DISTRO` override.
 
-mod common;
+pub mod common;
 
 use crate::common::init_test_env;
 use omg_lib::package_managers::get_package_manager;
@@ -14,78 +14,58 @@ use std::sync::Mutex;
 static ENV_LOCK: Mutex<()> = Mutex::new(());
 
 #[test]
-#[expect(unsafe_code)] // Test requires env var modification
 fn test_distro_override_arch() {
     // ===== ARRANGE =====
     init_test_env();
     let _guard = ENV_LOCK.lock().unwrap();
-    // SAFETY: Test setup - modifying environment variable for isolated test execution.
-    // Protected by mutex guard to prevent concurrent access.
-    unsafe {
-        std::env::set_var("OMG_TEST_DISTRO", "arch");
-    }
 
-    // ===== ACT =====
-    let pm = get_package_manager().unwrap();
-
-    // ===== ASSERT =====
-    assert_eq!(pm.name(), "pacman");
+    // ===== ACT / ASSERT =====
+    common::with_test_env(&[("OMG_TEST_DISTRO", "arch")], || {
+        let pm = get_package_manager().unwrap();
+        assert_eq!(pm.name(), "pacman");
+    });
 }
 
 #[test]
 #[cfg(feature = "debian")]
-#[expect(unsafe_code)] // Test requires env var modification
 fn test_distro_override_debian() {
     // ===== ARRANGE =====
     init_test_env();
     let _guard = ENV_LOCK.lock().unwrap();
-    unsafe {
-        std::env::set_var("OMG_TEST_DISTRO", "debian");
-    }
 
-    // ===== ACT =====
-    let pm = get_package_manager().expect("should get debian package manager");
-
-    // ===== ASSERT =====
-    assert_eq!(pm.name(), "apt");
+    // ===== ACT / ASSERT =====
+    common::with_test_env(&[("OMG_TEST_DISTRO", "debian")], || {
+        let pm = get_package_manager().expect("should get debian package manager");
+        assert_eq!(pm.name(), "apt");
+    });
 }
 
 #[test]
 #[cfg(feature = "debian-pure")]
-#[expect(unsafe_code)] // Test requires env var modification
 fn test_distro_override_debian_pure() {
     // ===== ARRANGE =====
     init_test_env();
     let _guard = ENV_LOCK.lock().unwrap();
-    // SAFETY: Test setup - modifying environment variable for isolated test execution.
-    // Protected by mutex guard to prevent concurrent access.
-    unsafe {
-        std::env::set_var("OMG_TEST_DISTRO", "debian");
-    }
 
-    // ===== ACT =====
-    let pm = get_package_manager().expect("should get debian package manager (debian-pure)");
-
-    // ===== ASSERT =====
-    assert_eq!(pm.name(), "apt");
+    // ===== ACT / ASSERT =====
+    common::with_test_env(&[("OMG_TEST_DISTRO", "debian")], || {
+        let pm = get_package_manager().expect("should get debian package manager (debian-pure)");
+        assert_eq!(pm.name(), "apt");
+    });
 }
 
 #[test]
 #[cfg(feature = "debian")]
-#[expect(unsafe_code)] // Test requires env var modification
 fn test_distro_override_ubuntu() {
     // ===== ARRANGE =====
     init_test_env();
     let _guard = ENV_LOCK.lock().unwrap();
-    unsafe {
-        std::env::set_var("OMG_TEST_DISTRO", "ubuntu");
-    }
 
-    // ===== ACT =====
-    let pm = get_package_manager().expect("should get ubuntu package manager");
-
-    // ===== ASSERT =====
-    assert_eq!(pm.name(), "apt");
+    // ===== ACT / ASSERT =====
+    common::with_test_env(&[("OMG_TEST_DISTRO", "ubuntu")], || {
+        let pm = get_package_manager().expect("should get ubuntu package manager");
+        assert_eq!(pm.name(), "apt");
+    });
 }
 
 #[tokio::test]

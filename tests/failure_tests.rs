@@ -3,9 +3,9 @@
 //! Tests critical failure modes using the isolated ALPM harness.
 
 #![cfg(feature = "arch")]
-#![allow(clippy::uninlined_format_args)]
+#![expect(clippy::uninlined_format_args)]
 
-mod alpm_harness;
+pub mod alpm_harness;
 use alpm_harness::{AlpmHarness, HarnessPkg};
 use anyhow::Result;
 use omg_lib::package_managers::alpm_ops;

@@ -1,9 +1,3 @@
-#![allow(
-    clippy::unwrap_used,
-    clippy::expect_used,
-    clippy::pedantic,
-    clippy::nursery
-)]
 use omg_lib::daemon::cache::PackageCache;
 use omg_lib::daemon::protocol::PackageInfo;
 

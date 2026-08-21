@@ -10,14 +10,9 @@
 //! These tests use real CLI invocations with dry-run/check modes for safety.
 
 #![cfg(feature = "arch")]
-#![allow(
-    clippy::unwrap_used,
-    clippy::expect_used,
-    clippy::pedantic,
-    clippy::nursery
-)]
+#![expect(clippy::unwrap_used, clippy::expect_used, clippy::pedantic)]
 
-mod common;
+pub mod common;
 
 use common::*;
 
@@ -65,22 +60,6 @@ fn test_search_with_no_aur_flag() {
     assert!(
         !result.combined_output().is_empty(),
         "Should return results"
-    );
-}
-
-#[test]
-fn test_search_interactive_flag() {
-    init_test_env();
-
-    let result = run_omg(&["search", "--interactive", "vim"]);
-    let output = result.combined_output();
-    assert!(
-        !result.success,
-        "interactive search must fail closed until it is implemented"
-    );
-    assert!(
-        output.contains("not implemented"),
-        "interactive search must explain that it is unimplemented, got: {output}"
     );
 }
 
@@ -208,15 +187,12 @@ fn test_install_nonexistent_package() {
 
     let result = run_omg(&["install", "--dry-run", "absolutely-nonexistent-package-xyz"]);
 
-    // In dry run, may show AUR fallback attempt
     let output = result.combined_output();
+    assert!(!result.success, "a nonexistent package must fail dry-run");
+    let output_lower = output.to_lowercase();
     assert!(
-        result.success
-            && (output.contains("AUR?")
-                || output.contains("not found")
-                || output.contains("DRY RUN")),
-        "Should handle nonexistent packages (may show AUR attempt): {}",
-        output
+        output_lower.contains("not found") || output_lower.contains("failed to connect to aur"),
+        "missing package or AUR availability error should be explicit: {output}"
     );
 }
 

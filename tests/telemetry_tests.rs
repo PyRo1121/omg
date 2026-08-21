@@ -1,5 +1,5 @@
 #![cfg(feature = "arch")]
-#![allow(
+#![expect(
     clippy::unwrap_used,
     clippy::expect_used,
     clippy::pedantic,
@@ -39,48 +39,23 @@ struct TelemetryTestFixture {
     data_dir: PathBuf,
     queue_path: PathBuf,
     session_path: PathBuf,
-    #[allow(dead_code)]
-    license_path: PathBuf,
 }
 
 impl TelemetryTestFixture {
     fn new() -> Result<Self> {
         let temp_dir = TempDir::new()?;
         let data_dir = temp_dir.path().join("omg_data");
-        let config_dir = temp_dir.path().join("omg_config");
-
         std::fs::create_dir_all(&data_dir)?;
-        std::fs::create_dir_all(&config_dir)?;
 
         let queue_path = data_dir.join("telemetry_queue.json");
         let session_path = data_dir.join("telemetry_session.json");
-        let license_path = config_dir.join("license.json");
 
         Ok(Self {
             _temp_dir: temp_dir,
             data_dir,
             queue_path,
             session_path,
-            license_path,
         })
-    }
-
-    /// Create a mock license file for enhanced telemetry
-    #[allow(dead_code)]
-    fn create_mock_license(&self) -> Result<()> {
-        let license = json!({
-            "key": "test-license-key-12345",
-            "tier": "pro",
-            "features": ["sbom", "audit", "secrets"],
-            "customer": "Test User",
-            "expires_at": "2099-12-31T23:59:59.000Z",
-            "validated_at": jiff::Timestamp::now().as_second(),
-            "token": null,
-            "machine_id": "test-machine-123"
-        });
-
-        std::fs::write(&self.license_path, serde_json::to_string_pretty(&license)?)?;
-        Ok(())
     }
 
     /// Read queue file

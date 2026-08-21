@@ -138,12 +138,9 @@ struct CliResult {
     success: bool,
     stdout: String,
     stderr: String,
-    #[expect(dead_code)]
-    duration: std::time::Duration,
 }
 
 fn run_omg_cli(args: &[&str]) -> CliResult {
-    let start = Instant::now();
     let mut cmd = Command::new(env!("CARGO_BIN_EXE_omg"));
     cmd.args(args)
         .env("OMG_TEST_MODE", "1")
@@ -152,13 +149,10 @@ fn run_omg_cli(args: &[&str]) -> CliResult {
         .stderr(Stdio::piped());
 
     let output = cmd.output().expect("Failed to execute omg");
-    let duration = start.elapsed();
-
     CliResult {
         success: output.status.success(),
         stdout: String::from_utf8_lossy(&output.stdout).to_string(),
         stderr: String::from_utf8_lossy(&output.stderr).to_string(),
-        duration,
     }
 }
 

@@ -2,8 +2,11 @@
 //!
 //! Comprehensive testing utilities, fixtures, mocks, and helpers
 //! for enterprise-grade test coverage.
-
-#![allow(dead_code)] // Test utilities may not all be used in every test file
+// The single `unsafe` block in `init_test_env` is deliberate and documented
+// inline; this module-level expectation keeps the crate-wide
+// `unsafe_code = "warn"` lint from flagging it while still erroring if a new
+// unreviewed unsafe block appears here.
+#![expect(unsafe_code)]
 
 pub mod assertions;
 pub mod fixtures;
@@ -13,15 +16,16 @@ use anyhow::Result;
 use std::env;
 use std::fmt::Write as _;
 use std::fs;
+use std::io::Read as _;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 use std::sync::Once;
+use std::thread;
 use std::time::{Duration, Instant};
 
 use tempfile::TempDir;
 
-// Re-export serial_test for use in test files
-#[expect(unused_imports)]
+// Re-export serial_test for use in test files.
 pub use serial_test::serial;
 
 // ═══════════════════════════════════════════════════════════════════════════════
@@ -33,14 +37,18 @@ static INIT: Once = Once::new();
 /// Initialize test environment (called once per test run)
 ///
 /// Note: Environment variables are set once at initialization. Tests that need
-/// to modify environment variables should use the `#[serial]` attribute from
-/// the `serial_test` crate to prevent data races.
-#[expect(unsafe_code)] // Test initialization requires env var setup
+/// to modify environment variables should use [`with_test_env`] inside a
+/// `#[serial]`-marked test instead of mutating the process environment.
 pub fn init_test_env() {
     INIT.call_once(|| {
-        // SAFETY: We are in a single-threaded context during Once::call_once initialization.
-        // In Rust 2024, set_var is unsafe due to potential data races in multi-threaded programs.
-        // Since this is called at the very beginning of the test suite, it is safe.
+        // SAFETY: This is the suite's single deliberate process-environment
+        // mutation outside a scoped guard. The three constants are written
+        // exactly once via `Once::call_once`, each in one atomic `set_var`
+        // call, and every child process receives the same values explicitly
+        // via `Command::env` in `run_omg_with_options`. A concurrent reader
+        // can therefore observe either the unset default or the final
+        // constant — never a partial value — which every call site treats as
+        // equivalent.
         unsafe {
             std::env::set_var("OMG_TEST_MODE", "1");
             std::env::set_var("OMG_DISABLE_TELEMETRY", "1");
@@ -49,9 +57,26 @@ pub fn init_test_env() {
     });
 }
 
+/// Run `f` with scoped process environment variables.
+///
+/// Thin wrapper over `temp_env::with_vars` so individual tests never need
+/// `unsafe` blocks or manual restore logic; variables are restored when `f`
+/// returns. Use it within a `#[serial]`-marked test (or while holding the
+/// suite's environment lock) so no other thread observes the mutated values.
+pub fn with_test_env<R>(vars: &[(&str, &str)], f: impl FnOnce() -> R) -> R {
+    let owned: Vec<(String, String)> = vars
+        .iter()
+        .map(|(key, value)| ((*key).to_string(), (*value).to_string()))
+        .collect();
+    let refs: Vec<(&str, Option<&str>)> = owned
+        .iter()
+        .map(|(key, value)| (key.as_str(), Some(value.as_str())))
+        .collect();
+    temp_env::with_vars(refs, f)
+}
+
 /// Test configuration flags
 #[derive(Debug, Clone)]
-#[expect(dead_code)]
 #[expect(clippy::struct_excessive_bools)]
 pub struct TestConfig {
     pub run_system_tests: bool,
@@ -87,7 +112,6 @@ impl Default for TestConfig {
     }
 }
 
-#[expect(dead_code)]
 impl TestConfig {
     pub fn skip_if_no_system(&self, test_name: &str) -> bool {
         if self.run_system_tests {
@@ -141,14 +165,12 @@ impl TestConfig {
 #[derive(Debug, Clone)]
 pub struct CommandResult {
     pub success: bool,
-    #[allow(dead_code)]
     pub exit_code: i32,
     pub stdout: String,
     pub stderr: String,
     pub duration: Duration,
 }
 
-#[expect(dead_code)]
 impl CommandResult {
     pub fn combined_output(&self) -> String {
         format!("{}{}", self.stdout, self.stderr)
@@ -210,19 +232,13 @@ impl CommandResult {
     }
 }
 
-/// Remove the license file to test license-gated features without a license
-///
-/// This is needed because the license loader uses `dirs::data_dir()` directly,
-/// not the `OMG_DATA_DIR` environment variable used for test isolation.
-///
-/// TODO: Respect `OMG_DATA_DIR` for full isolation — refactor the license
-/// loader so it reads from `OMG_DATA_DIR` when set, eliminating the implicit
-/// dependency on the real user home directory during tests.
+/// Remove the license file from the isolated test data directory
 pub fn clear_license() {
-    if let Some(data_dir) = dirs::data_dir() {
-        let license_path = data_dir.join("omg").join("license.json");
-        let _ = fs::remove_file(&license_path);
-    }
+    let data_dir = match env::var("OMG_DATA_DIR") {
+        Ok(dir) if !dir.is_empty() => PathBuf::from(dir),
+        _ => return,
+    };
+    let _ = fs::remove_file(data_dir.join("license.json"));
 }
 
 /// Run an OMG command
@@ -284,8 +300,23 @@ pub fn run_omg_with_options(
     }
 
     let mut child = cmd.spawn().expect("Failed to execute omg");
-    let mut timed_out = false;
 
+    // Drain both pipes on dedicated threads so a chatty child can never fill
+    // the OS pipe buffer and block on write while we enforce the timeout.
+    let mut stdout_pipe = child.stdout.take().expect("invariant: stdout is piped");
+    let mut stderr_pipe = child.stderr.take().expect("invariant: stderr is piped");
+    let stdout_handle = thread::spawn(move || {
+        let mut buffer = Vec::new();
+        let _ = stdout_pipe.read_to_end(&mut buffer);
+        buffer
+    });
+    let stderr_handle = thread::spawn(move || {
+        let mut buffer = Vec::new();
+        let _ = stderr_pipe.read_to_end(&mut buffer);
+        buffer
+    });
+
+    let mut timed_out = false;
     loop {
         match child.try_wait() {
             Ok(Some(_)) => break,
@@ -302,12 +333,13 @@ pub fn run_omg_with_options(
         }
     }
 
-    let output = child
-        .wait_with_output()
-        .expect("Failed to collect omg output");
+    let output_status = child.wait().expect("Failed to reap omg process");
+    // Joining always succeeds unless a reader panicked (impossible: plain reads).
+    let stdout_bytes = stdout_handle.join().unwrap_or_default();
+    let stderr_bytes = stderr_handle.join().unwrap_or_default();
     let duration = start.elapsed();
 
-    let mut stderr = String::from_utf8_lossy(&output.stderr).to_string();
+    let mut stderr = String::from_utf8_lossy(&stderr_bytes).to_string();
     if timed_out {
         if !stderr.ends_with('\n') && !stderr.is_empty() {
             stderr.push('\n');
@@ -321,16 +353,15 @@ pub fn run_omg_with_options(
     }
 
     CommandResult {
-        success: output.status.success(),
-        exit_code: output.status.code().unwrap_or(-1),
-        stdout: String::from_utf8_lossy(&output.stdout).to_string(),
+        success: output_status.success(),
+        exit_code: output_status.code().unwrap_or(-1),
+        stdout: String::from_utf8_lossy(&stdout_bytes).to_string(),
         stderr,
         duration,
     }
 }
 
 /// Run a raw shell command
-#[allow(dead_code)]
 pub fn run_shell(cmd: &str) -> CommandResult {
     let start = Instant::now();
 
@@ -365,7 +396,6 @@ pub struct TestProject {
     pub config: TestConfig,
 }
 
-#[expect(dead_code)]
 impl TestProject {
     pub fn new() -> Self {
         init_test_env();

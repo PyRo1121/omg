@@ -10,7 +10,7 @@
 
 #![cfg(any(feature = "debian", feature = "debian-pure"))]
 
-mod platform_semantics;
+pub mod platform_semantics;
 
 use std::fs;
 use std::path::Path;

@@ -4,10 +4,10 @@
 //! and real system database for read-only validation.
 
 #![cfg(feature = "arch")]
-#![allow(clippy::unwrap_used, clippy::expect_used, clippy::pedantic)]
+#![expect(clippy::unwrap_used, clippy::expect_used, clippy::pedantic)]
 
-mod alpm_harness;
-mod common;
+pub mod alpm_harness;
+pub mod common;
 
 use alpm_harness::{AlpmHarness, HarnessPkg};
 use std::sync::Arc;

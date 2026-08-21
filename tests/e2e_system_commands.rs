@@ -10,14 +10,9 @@
 //!
 //! These tests validate the complete user experience for system operations.
 
-#![allow(
-    clippy::unwrap_used,
-    clippy::expect_used,
-    clippy::pedantic,
-    clippy::nursery
-)]
+#![expect(clippy::unwrap_used, clippy::expect_used, clippy::pedantic)]
 
-mod common;
+pub mod common;
 
 use common::*;
 
@@ -97,14 +92,13 @@ fn test_config_list_shows_settings() {
 fn test_config_get_specific_value() {
     init_test_env();
 
-    // Try to get a config value (may not exist)
     let result = run_omg(&["config", "get", "some.key"]);
 
-    // Should complete (success or not found)
     let output = result.combined_output();
+    assert!(!result.success, "Unknown keys must fail");
     assert!(
-        result.success || output.contains("not found") || output.contains("not set"),
-        "Should handle missing config gracefully"
+        output.contains("Unknown config key"),
+        "Should identify the invalid key: {output}"
     );
 }
 

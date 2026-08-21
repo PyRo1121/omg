@@ -5,7 +5,7 @@
 
 #![cfg(feature = "arch")]
 
-mod alpm_harness;
+pub mod alpm_harness;
 
 use alpm_harness::{AlpmHarness, HarnessPkg};
 use anyhow::Result;

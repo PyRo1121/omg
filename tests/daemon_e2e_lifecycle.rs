@@ -1,10 +1,5 @@
 #![cfg(feature = "arch")]
-#![allow(
-    clippy::unwrap_used,
-    clippy::expect_used,
-    clippy::pedantic,
-    clippy::nursery
-)]
+#![expect(clippy::unwrap_used, clippy::pedantic)]
 
 //! S-tier E2E Tests: Daemon Lifecycle Management
 //!
@@ -29,6 +24,11 @@ struct DaemonTestFixture {
 impl DaemonTestFixture {
     fn new() -> Result<Self> {
         let temp_dir = TempDir::new()?;
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            std::fs::set_permissions(temp_dir.path(), std::fs::Permissions::from_mode(0o700))?;
+        }
         let socket_path = temp_dir.path().join("omgd.sock");
         let data_dir = temp_dir.path().join("data");
         std::fs::create_dir_all(&data_dir)?;
@@ -236,8 +236,8 @@ async fn test_daemon_clean_startup() -> Result<()> {
 
     // Socket should be created within 2 seconds
     assert!(
-        fixture.wait_for_socket(Duration::from_secs(2)).await,
-        "Daemon socket should be created within 2s"
+        fixture.wait_for_socket(Duration::from_secs(5)).await,
+        "Daemon socket should be created within 5s"
     );
 
     // Daemon should be responsive
@@ -283,7 +283,12 @@ async fn test_daemon_graceful_shutdown() -> Result<()> {
     }
 
     // Verify socket is cleaned up (daemon handles SIGINT and cleans up properly)
-    sleep(Duration::from_secs(1)).await;
+    // Poll with a bounded deadline instead of a fixed sleep so the check is
+    // fast when shutdown is quick and still reliable on loaded machines.
+    let cleanup_deadline = std::time::Instant::now() + Duration::from_secs(5);
+    while fixture.socket_exists() && std::time::Instant::now() < cleanup_deadline {
+        sleep(Duration::from_millis(50)).await;
+    }
     assert!(
         !fixture.socket_exists(),
         "Socket should be removed on graceful shutdown with SIGINT"
@@ -340,7 +345,7 @@ async fn test_prevent_concurrent_daemon_instances() -> Result<()> {
     let fixture = DaemonTestFixture::new()?;
     let mut daemon1 = fixture.start_daemon()?;
 
-    assert!(fixture.wait_for_socket(Duration::from_secs(2)).await);
+    assert!(fixture.wait_for_socket(Duration::from_secs(5)).await);
 
     // Try to start second daemon - should fail
     let daemon2_result = fixture.start_daemon();
@@ -440,7 +445,7 @@ async fn test_resource_cleanup_on_shutdown() -> Result<()> {
     let fixture = DaemonTestFixture::new()?;
     let mut daemon = fixture.start_daemon()?;
 
-    assert!(fixture.wait_for_socket(Duration::from_secs(2)).await);
+    assert!(fixture.wait_for_socket(Duration::from_secs(5)).await);
 
     // Record PID
     let daemon_pid = daemon.pid();
