@@ -120,6 +120,10 @@ was not linked from any doc; its command usage remains in docs/runtimes.md
 - **Ci**: Cross-platform install script and R2 release sync
 ### 🐛 Bug Fixes
 
+- Wave-2 hardening across core, backends, daemon, runtimes, and CLI
+
+Second scrutiny wave (12 read-only reviewers, reports in /tmp/omg-fleet2):
+
 - **Cli**: Remaining audit-cli hardening across cli modules
 
 Companion to the earlier fast-path hardening commit: absolute-path
