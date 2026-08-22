@@ -37,12 +37,11 @@ struct GithubAsset {
 
 /// Python version info for available versions
 #[derive(Debug, Clone)]
-pub struct PythonVersion {
+pub(crate) struct PythonVersion {
     pub version: String,
-    pub prebuilt: bool,
 }
 
-pub struct PythonManager {
+pub(crate) struct PythonManager {
     versions_dir: PathBuf,
     current_link: PathBuf,
     client: reqwest::Client,
@@ -71,11 +70,9 @@ impl PythonManager {
             return Ok(vec![
                 PythonVersion {
                     version: "3.12.0".to_string(),
-                    prebuilt: true,
                 },
                 PythonVersion {
                     version: "3.11.0".to_string(),
-                    prebuilt: true,
                 },
             ]);
         }
@@ -107,10 +104,7 @@ impl PythonManager {
 
         let mut result: Vec<PythonVersion> = versions
             .into_iter()
-            .map(|v| PythonVersion {
-                version: v,
-                prebuilt: true,
-            })
+            .map(|version| PythonVersion { version })
             .collect();
 
         result.sort_unstable_by(|a, b| version_cmp(&b.version, &a.version));
@@ -225,8 +219,8 @@ impl PythonManager {
     }
 }
 
-// Generate common runtime manager methods (list_installed, current_version, uninstall)
-crate::impl_runtime_common!(PythonManager, "Python");
+// Generate common runtime manager methods (list_installed, current_version)
+crate::runtimes::common::impl_runtime_common!(PythonManager, "Python");
 
 fn python_target() -> Result<String> {
     let arch = match std::env::consts::ARCH {

@@ -48,11 +48,6 @@ pub struct AurJsonPackage {
     pub last_modified: Option<i64>,
 }
 
-#[derive(Debug)]
-pub struct AurMetadataResponse {
-    pub results: Vec<AurJsonPackage>,
-}
-
 /// Sync AUR metadata: Download if newer, update cache, rebuild index
 #[instrument(skip(client, settings))]
 pub async fn sync_aur_metadata(
@@ -125,11 +120,24 @@ pub async fn sync_aur_metadata(
     if response.status() == reqwest::StatusCode::NOT_MODIFIED {
         // Cache is still valid on server side
         // Touch the file to update mtime so we don't check again immediately
-        if cache_path.exists()
-            && let Ok(file) = File::options().write(true).open(&cache_path)
-            && let Err(error) = file.set_modified(SystemTime::now())
-        {
-            tracing::debug!("Failed to refresh AUR metadata mtime: {error}");
+        if cache_path.exists() {
+            let touched = tokio::task::spawn_blocking({
+                let cache_path = cache_path.clone();
+                move || -> std::io::Result<()> {
+                    let file = File::options().write(true).open(&cache_path)?;
+                    file.set_modified(SystemTime::now())
+                }
+            })
+            .await;
+            match touched {
+                Ok(Ok(())) => {}
+                Ok(Err(error)) => {
+                    tracing::debug!("Failed to refresh AUR metadata mtime: {error}");
+                }
+                Err(error) => {
+                    tracing::debug!("AUR metadata touch task failed: {error}");
+                }
+            }
         }
 
         // Ensure index exists
@@ -160,8 +168,9 @@ pub async fn sync_aur_metadata(
 
     let bytes = response.bytes().await?;
     {
+        // `reqwest::Bytes` is already owned and 'static; pass it straight
+        // through instead of copying the (potentially large) archive.
         let cache_path = cache_path.clone();
-        let bytes = bytes.to_vec();
         tokio::task::spawn_blocking(move || persist_file_atomically(&cache_path, &bytes)).await??;
     }
 
@@ -172,8 +181,18 @@ pub async fn sync_aur_metadata(
     };
     match serde_json::to_vec(&new_meta) {
         Ok(meta_bytes) => {
-            if let Err(error) = persist_file_atomically(&meta_path, &meta_bytes) {
-                tracing::warn!("Failed to persist AUR metadata sidecar: {error}");
+            let result = tokio::task::spawn_blocking(move || {
+                persist_file_atomically(&meta_path, &meta_bytes)
+            })
+            .await;
+            match result {
+                Ok(Ok(())) => {}
+                Ok(Err(error)) => {
+                    tracing::warn!("Failed to persist AUR metadata sidecar: {error}");
+                }
+                Err(error) => {
+                    tracing::warn!("AUR metadata sidecar task failed: {error}");
+                }
             }
         }
         Err(error) => tracing::warn!("Failed to serialize AUR metadata sidecar: {error}"),
@@ -201,14 +220,14 @@ pub fn read_metadata_archive(path: &Path) -> Result<Vec<AurJsonPackage>> {
     Ok(results)
 }
 
-pub fn get_metadata_path() -> PathBuf {
+pub fn metadata_path() -> PathBuf {
     paths::cache_dir()
         .join("aur")
         .join("_meta")
         .join("packages-meta-ext-v1.json.gz")
 }
 
-pub fn get_index_path() -> PathBuf {
+pub fn index_path() -> PathBuf {
     paths::cache_dir()
         .join("aur")
         .join("_meta")
@@ -259,6 +278,13 @@ mod tests {
         std::fs::create_dir(&dest).unwrap();
         let error = persist_file_atomically(&dest, b"archive")
             .expect_err("must refuse to persist over a directory");
-        assert!(!error.to_string().is_empty());
+        assert!(
+            error.to_string().contains("persist"),
+            "error must name the persist failure, got: {error}"
+        );
+        assert!(
+            dest.is_dir(),
+            "the existing directory must not have been clobbered"
+        );
     }
 }

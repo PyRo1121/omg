@@ -336,46 +336,6 @@ fn try_fast_info(args: &[String]) -> bool {
     false
 }
 
-fn try_fast_install_dry_run(args: &[String]) -> bool {
-    if has_help_flag(args) || args.len() < 4 {
-        return false;
-    }
-
-    let cmd = &args[1];
-    if cmd != "install" && cmd != "i" {
-        return false;
-    }
-
-    let mut dry_run = false;
-    let mut packages = Vec::new();
-
-    for arg in &args[2..] {
-        match arg.as_str() {
-            "--dry-run" => dry_run = true,
-            "--yes" | "-y" => {}
-            s if s.starts_with('-') => return false,
-            s => packages.push(s.to_string()),
-        }
-    }
-
-    if !dry_run || packages.is_empty() {
-        return false;
-    }
-
-    if omg_lib::core::security::validate_package_names_or_files(&packages).is_err() {
-        return false;
-    }
-
-    match packages::install_dry_run_cli(&packages) {
-        Ok(handled) => handled,
-        Err(error) => {
-            tracing::debug!("Fast dry-run path failed, deferring to async path: {error}");
-            false
-        }
-    }
-}
-
-/// Ultra-fast path for completions
 fn try_fast_completions(args: &[String]) -> Result<bool> {
     if args.len() >= 3 && args[1] == "completions" {
         let shell = &args[2];
@@ -519,10 +479,14 @@ fn try_fast_hooks(args: &[String]) -> bool {
 }
 
 fn try_fast_paths(args: &[String]) -> Result<bool> {
+    // NOTE(wave2): the former synchronous `install --dry-run` fast path was
+    // removed with `packages::install_dry_run_cli`, which could never report
+    // success (it validated inputs and always returned Ok(false), duplicating
+    // validation already performed here). Dry runs now flow through the normal
+    // clap dispatch into `packages::install(dry_run = true)`.
     if try_fast_explicit_count(args)
         || try_fast_search(args)
         || try_fast_info(args)
-        || try_fast_install_dry_run(args)
         || try_fast_which(args)
         || try_fast_list(args)
         || try_fast_status(args)

@@ -264,8 +264,20 @@ pub fn status() -> Result<()> {
     Ok(())
 }
 
+/// Hooks that OMG installs and can run manually.
+const MANAGED_HOOKS: &[&str] = &["pre-commit", "post-checkout", "post-merge"];
+
 /// Run a specific hook manually
 pub fn run_hook(hook_name: &str) -> Result<()> {
+    // SECURITY: only the hooks OMG manages may be executed; joining raw input
+    // onto the hooks directory would allow `omg hooks run ../../some/exec`
+    // to escape .git/hooks entirely.
+    anyhow::ensure!(
+        MANAGED_HOOKS.contains(&hook_name),
+        "Unknown hook '{hook_name}'. Managed hooks: {}",
+        MANAGED_HOOKS.join(", ")
+    );
+
     let hooks_dir = get_hooks_dir()?;
     let hook_path = hooks_dir.join(hook_name);
 

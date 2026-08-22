@@ -17,7 +17,7 @@ fn run_arch(args: &[&str]) -> CommandResult {
     run_omg_with_env(args, &[("OMG_TEST_DISTRO", "arch"), ("OMG_TEST_MODE", "1")])
 }
 
-#[cfg(feature = "debian")]
+#[cfg(any(feature = "debian", feature = "debian-pure"))]
 fn run_debian(args: &[&str]) -> CommandResult {
     run_omg_with_env(
         args,
@@ -29,7 +29,7 @@ fn run_debian(args: &[&str]) -> CommandResult {
 // ARCH LINUX MATRIX
 // ═══════════════════════════════════════════════════════════════════════════════
 
-#[cfg(all(test, feature = "arch"))]
+#[cfg(feature = "arch")]
 mod arch_matrix {
     use super::*;
 
@@ -120,7 +120,7 @@ mod arch_matrix {
 // DEBIAN MATRIX
 // ═══════════════════════════════════════════════════════════════════════════════
 
-#[cfg(all(test, feature = "debian"))]
+#[cfg(any(feature = "debian", feature = "debian-pure"))]
 mod debian_matrix {
     use super::*;
 
@@ -130,7 +130,12 @@ mod debian_matrix {
         let res = run_debian(&["search", "apt"]);
         res.assert_success();
         res.assert_stdout_contains("apt");
-        res.assert_stdout_contains("official");
+        // "Official" vs "official" depends on UI components
+        assert!(
+            res.stdout.to_lowercase().contains("official"),
+            "stdout does not contain 'official' (case-insensitive)\nstdout: {}",
+            res.stdout
+        );
     }
 
     #[test]
@@ -177,7 +182,6 @@ mod debian_matrix {
 // RUNTIME MATRIX (OS-Agnostic)
 // ═══════════════════════════════════════════════════════════════════════════════
 
-#[cfg(test)]
 mod runtime_matrix {
     use super::*;
 
@@ -301,7 +305,6 @@ mod runtime_matrix {
 // ERROR & BOUNDARY MATRIX
 // ═══════════════════════════════════════════════════════════════════════════════
 
-#[cfg(test)]
 mod boundary_matrix {
     use super::*;
 
@@ -334,7 +337,6 @@ mod boundary_matrix {
 // TEAM MATRIX
 // ═══════════════════════════════════════════════════════════════════════════════
 
-#[cfg(test)]
 mod team_matrix {
     use super::*;
 
@@ -368,7 +370,6 @@ mod team_matrix {
 // FLEET MATRIX
 // ═══════════════════════════════════════════════════════════════════════════════
 
-#[cfg(test)]
 mod fleet_matrix {
     use super::*;
 
@@ -400,7 +401,6 @@ mod fleet_matrix {
 // CONTAINER MATRIX
 // ═══════════════════════════════════════════════════════════════════════════════
 
-#[cfg(test)]
 mod container_matrix {
     use super::*;
 

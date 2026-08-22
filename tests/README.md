@@ -1,13 +1,20 @@
-# Production-Ready Tests for OMG
+# OMG Integration Test Suite
 
-These tests exercise **REAL code paths** with **REAL package managers**.
+These tests exercise the real binary and library seams. By default every CLI
+invocation runs against the **mock package-manager backend** (`OMG_TEST_MODE=1`)
+with fully isolated per-invocation data/config/cache directories, so a plain
+`cargo test` never touches your system. Tests that genuinely need a real
+package database are gated behind the environment flags below.
 
 ## Philosophy
 
-1. **NO MOCKS**: All tests use real implementations
-2. **Exercise Real Paths**: Database operations, version comparisons, IPC communication
-3. **Measure Performance**: Verify <10ms targets are met
-4. **Error Handling**: Verify graceful failures with helpful messages
+1. **Pin observable behavior**: assertions must be able to fail on a real
+   regression; panic-string greps alone are not coverage
+2. **Isolate everything**: unique data dirs per invocation; no test may
+   mutate process-global state without restoring it
+3. **No dishonest surfaces**: a test whose name promises a fault must inject
+   that fault, or it gets deleted
+4. **Real-system coverage is opt-in** via the environment flags below
 
 ## Running Tests
 
@@ -22,7 +29,7 @@ cargo test --test integration_suite
 
 # Run specific test file
 cargo test --test version_tests
-cargo test --test update_tests
+cargo test --test update_integration
 cargo test --test error_tests
 cargo bench --features arch
 ```
@@ -79,7 +86,7 @@ cargo bench --features arch
 cargo test --test version_tests --features arch
 ```
 
-### `update_tests.rs`
+### `update_integration.rs`
 
 **Purpose**: Test REAL update command functionality
 
@@ -100,7 +107,7 @@ cargo test --test version_tests --features arch
 **Running**:
 
 ```bash
-OMG_RUN_SYSTEM_TESTS=1 cargo test --test update_tests --features arch
+OMG_RUN_SYSTEM_TESTS=1 cargo test --test update_integration --features arch
 ```
 
 ### `error_tests.rs`
@@ -217,7 +224,7 @@ jobs:
         run: |
           cargo test --features arch --all
           cargo test --test version_tests --features arch
-          cargo test --test update_tests --features arch
+          cargo test --test update_integration --features arch
           cargo test --test error_tests --features arch
 ```
 
@@ -279,7 +286,7 @@ cargo test --test version_tests test_real_arch_package_versions -- --nocapture
 
 ```bash
 # Run tests with logging
-RUST_LOG=debug cargo test --test update_tests
+RUST_LOG=debug cargo test --test update_integration
 ```
 
 ### Use Rust Backtrace
@@ -296,12 +303,15 @@ RUST_BACKTRACE=1 cargo test --test error_tests
 1. **Determine test type**: Unit, integration, system, or performance
 2. **Choose appropriate file**:
    - Version parsing → `version_tests.rs`
-   - Update logic → `update_tests.rs`
+   - Update logic → `update_integration.rs`
    - Error scenarios → `error_tests.rs`
    - Performance → `benches/` Criterion targets
    - General integration → `integration_suite.rs`
-3. **Use REAL code paths**: No mocks, no stubs
-4. **Add helpful assertions**: Verify real behavior, not just "doesn't crash"
+3. **Drive real seams**: the shared `common::run_omg` runner (isolated dirs)
+   or direct `omg_lib` API calls — never a mock that only exists inside the
+   test
+4. **Add helpful assertions**: verify real behavior, not just "doesn't
+   panic"; assert the specific message/exit code
 5. **Document the test**: Explain what and why
 
 ### Test Naming Convention
@@ -370,6 +380,20 @@ Tests verify security aspects:
 4. **Path Safety**: Validates file paths
 
 ## Troubleshooting
+
+### Skip accounting
+
+Tests that skip themselves at runtime (missing system tests, non-Arch host,
+empty package index, …) print a `[omg-skip] <reason>` line. Recover the true
+skip count for a run with:
+
+```bash
+cargo test 2>&1 | grep -c '\[omg-skip\]'
+```
+
+A green run with a large skip count is **not** full coverage — wire this into
+CI so silent coverage loss is visible. Prefer `#[ignore = "reason"]` for
+statically-known skips so they appear in `cargo test -- --ignored` listings.
 
 ### "Skipping system test"
 

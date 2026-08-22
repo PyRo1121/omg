@@ -221,8 +221,13 @@ impl PackageManager for ArchPackageManager {
     ) -> Pin<Box<dyn Future<Output = AnyhowResult<(usize, usize, usize, usize)>> + Send + '_>> {
         Box::pin(async move {
             if fast {
-                let (total, explicit, _) = super::pacman_db::get_counts_fast()?;
-                return Ok((total, explicit, 0, 0));
+                // Fast still reports REAL values: both reads are served from
+                // the warm pure-Rust caches (<5ms). Fabricating zeros here
+                // previously made `omg status --fast --json` claim there were
+                // no updates while the slow path reported them.
+                let (total, explicit, orphans) = super::pacman_db::get_counts_fast()?;
+                let updates = super::pacman_db::check_updates_cached()?.len();
+                return Ok((total, explicit, orphans, updates));
             }
             get_system_status()
         })
@@ -257,7 +262,13 @@ impl PackageManager for ArchPackageManager {
         package: &str,
     ) -> Pin<Box<dyn Future<Output = AnyhowResult<bool>> + Send + '_>> {
         let package = package.to_string();
-        Box::pin(async move { crate::package_managers::is_installed_fast(&package) })
+        Box::pin(async move {
+            // Keep ALPM access off the executor thread like every other method.
+            tokio::task::spawn_blocking(move || {
+                crate::package_managers::is_installed_fast(&package)
+            })
+            .await?
+        })
     }
 }
 
@@ -279,9 +290,19 @@ pub async fn remove_orphans() -> AnyhowResult<()> {
         tracing::info!("  {} {}", "→".dimmed(), pkg);
     }
 
-    crate::package_managers::execute_transaction(orphans, true, false, None)?;
-    invalidate_caches()?;
-    Ok(())
+    // Reuse the standard privileged-operation path so non-root users get the
+    // same sudo elevation as install/remove instead of a raw ALPM failure.
+    run_privileged_operation("remove", &orphans, || {
+        let pkgs = orphans.clone();
+        async move {
+            tokio::task::spawn_blocking(move || {
+                crate::package_managers::execute_transaction(pkgs, true, false, None)
+            })
+            .await??;
+            Ok(())
+        }
+    })
+    .await
 }
 
 pub async fn list_explicit() -> AnyhowResult<Vec<String>> {
@@ -289,5 +310,7 @@ pub async fn list_explicit() -> AnyhowResult<Vec<String>> {
 }
 
 pub async fn is_installed(package: &str) -> AnyhowResult<bool> {
-    crate::package_managers::is_installed_fast(package)
+    let package = package.to_string();
+    tokio::task::spawn_blocking(move || crate::package_managers::is_installed_fast(&package))
+        .await?
 }

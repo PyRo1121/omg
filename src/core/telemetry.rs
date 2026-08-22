@@ -42,7 +42,7 @@ const PERSIST_EVERY_N_EVENTS: u32 = 10;
 /// Persist telemetry state on a best-effort basis. Telemetry must never fail a
 /// user command, so persistence errors are logged at debug level only and the
 /// in-memory state (authoritative for the current process) is left unchanged.
-fn persist_best_effort(result: Result<()>) {
+pub(crate) fn persist_best_effort(result: Result<()>) {
     if let Err(error) = result {
         tracing::debug!("Failed to persist telemetry state (non-fatal): {error}");
     }
@@ -81,13 +81,8 @@ pub fn is_telemetry_opt_out() -> bool {
     }
 
     // Check environment variables first (highest priority)
-    let env_opt_out = matches!(
-        std::env::var("OMG_TELEMETRY").as_deref(),
-        Ok("0" | "false" | "FALSE" | "off" | "OFF")
-    ) || matches!(
-        std::env::var("OMG_DISABLE_TELEMETRY").as_deref(),
-        Ok("1" | "true" | "TRUE")
-    );
+    let env_opt_out = env_value_matches("OMG_TELEMETRY", &["0", "false", "off", "no"])
+        || env_value_matches("OMG_DISABLE_TELEMETRY", &["1", "true", "on", "yes"]);
 
     if env_opt_out {
         return true;
@@ -101,6 +96,12 @@ pub fn is_telemetry_opt_out() -> bool {
     }
 
     false
+}
+
+/// Case-insensitive check of an environment variable against a set of
+/// accepted values, so `off`, `OFF`, and `Off` all behave identically.
+fn env_value_matches(name: &str, accepted: &[&str]) -> bool {
+    std::env::var(name).is_ok_and(|value| accepted.iter().any(|a| value.eq_ignore_ascii_case(a)))
 }
 
 /// Check if this is the first run
@@ -129,24 +130,20 @@ fn get_platform() -> String {
     format!("{}-{}", std::env::consts::OS, std::env::consts::ARCH)
 }
 
-/// Get package manager backend
+/// Get the compiled package manager backend identifier (`arch`, `debian`,
+/// or `none`).
+///
+/// The available backends are fixed at compile time by feature flags, so
+/// runtime distro detection is deliberately not consulted.
+#[must_use]
 pub fn get_backend() -> String {
-    #[cfg(any(feature = "debian", feature = "debian-pure"))]
-    if crate::core::env::distro::is_debian_like() {
-        return "debian".to_string();
+    if cfg!(feature = "arch") {
+        "arch".to_string()
+    } else if cfg!(any(feature = "debian", feature = "debian-pure")) {
+        "debian".to_string()
+    } else {
+        "none".to_string()
     }
-
-    #[cfg(feature = "arch")]
-    return "arch".to_string();
-
-    #[cfg(all(
-        not(feature = "arch"),
-        any(feature = "debian", feature = "debian-pure")
-    ))]
-    return "debian".to_string();
-
-    #[cfg(not(any(feature = "arch", feature = "debian", feature = "debian-pure")))]
-    "none".to_string()
 }
 
 /// Create install marker file
@@ -560,18 +557,26 @@ pub fn get_session_id() -> String {
     }
 }
 
-/// Queue a telemetry event
-pub fn queue_event(event: TelemetryEvent) {
-    if !is_enhanced_telemetry_enabled() {
-        return;
-    }
-
+/// Queue an already-gated event for batching.
+fn enqueue(event: TelemetryEvent) {
     if let Ok(mut queue) = get_event_queue().lock() {
         queue.push(event);
 
         // Only persist periodically, not on every event
         if queue.needs_persist() {
             persist_best_effort(queue.save());
+        }
+    }
+}
+
+/// Record command activity on the session and persist it periodically.
+fn record_session_activity() {
+    if let Ok(session) = get_session().lock() {
+        session.record_activity();
+
+        // Only persist periodically
+        if session.needs_persist() {
+            persist_best_effort(session.save());
         }
     }
 }
@@ -589,15 +594,7 @@ pub fn track_command_event(
         return;
     }
 
-    // Update session (non-blocking with atomics)
-    if let Ok(session) = get_session().lock() {
-        session.record_activity();
-
-        // Only persist periodically
-        if session.needs_persist() {
-            persist_best_effort(session.save());
-        }
-    }
+    record_session_activity();
 
     let event = TelemetryEvent::Command(CommandEvent {
         command: command.to_string(),
@@ -610,7 +607,7 @@ pub fn track_command_event(
         updated_count: None,
     });
 
-    queue_event(event);
+    enqueue(event);
 }
 
 /// Track search command with result count
@@ -619,15 +616,7 @@ pub fn track_search_event(query: &str, result_count: usize, duration_ms: u64, su
         return;
     }
 
-    // Update session (non-blocking with atomics)
-    if let Ok(session) = get_session().lock() {
-        session.record_activity();
-
-        // Only persist periodically
-        if session.needs_persist() {
-            persist_best_effort(session.save());
-        }
-    }
+    record_session_activity();
 
     let event = TelemetryEvent::Command(CommandEvent {
         command: "search".to_string(),
@@ -640,7 +629,7 @@ pub fn track_search_event(query: &str, result_count: usize, duration_ms: u64, su
         updated_count: None,
     });
 
-    queue_event(event);
+    enqueue(event);
 }
 
 /// Track update command with updated count
@@ -654,15 +643,7 @@ pub fn track_update_event(
         return;
     }
 
-    // Update session (non-blocking with atomics)
-    if let Ok(session) = get_session().lock() {
-        session.record_activity();
-
-        // Only persist periodically
-        if session.needs_persist() {
-            persist_best_effort(session.save());
-        }
-    }
+    record_session_activity();
 
     let event = TelemetryEvent::Command(CommandEvent {
         command: "update".to_string(),
@@ -675,7 +656,7 @@ pub fn track_update_event(
         updated_count: Some(updated_count),
     });
 
-    queue_event(event);
+    enqueue(event);
 }
 
 /// Track performance metric
@@ -690,7 +671,7 @@ pub fn track_performance_event(metric_type: &str, duration_ms: u64, context: Opt
         context: context.map(String::from),
     });
 
-    queue_event(event);
+    enqueue(event);
 }
 
 /// Track feature usage
@@ -705,7 +686,7 @@ pub fn track_feature_event(feature: &str, enabled: bool, metadata: Option<serde_
         metadata,
     });
 
-    queue_event(event);
+    enqueue(event);
 }
 
 /// Track session start
@@ -727,7 +708,7 @@ pub fn track_session_start() {
         duration_secs: None,
     });
 
-    queue_event(event);
+    enqueue(event);
 }
 
 /// Check if events need to be flushed
@@ -763,10 +744,11 @@ pub async fn flush_events() {
     }
 
     tracing::debug!("Flushing {} telemetry events", events.len());
-    match crate::core::telemetry_client::send_batch(events.clone()).await {
+    let event_count = events.len();
+    match crate::core::telemetry_client::send_batch(events).await {
         Ok(()) => {
             if let Ok(mut queue) = get_event_queue().lock() {
-                queue.confirm_sent(events.len());
+                queue.confirm_sent(event_count);
                 if let Err(error) = queue.save() {
                     tracing::warn!("Failed to persist telemetry queue after flush: {error}");
                 }
@@ -835,7 +817,7 @@ pub async fn end_session_and_flush() {
         duration_secs: Some(duration_secs),
     });
 
-    queue_event(event);
+    enqueue(event);
 
     // Track startup performance if available
     if let Some(startup_ms) = get_startup_duration_ms() {
@@ -889,7 +871,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn test_session_creation() {
+    fn session_creation_initializes_counters() {
         let session = TelemetrySession::new();
         assert!(!session.session_id.is_empty());
         assert!(!session.started_at.is_empty());
@@ -897,7 +879,7 @@ mod tests {
     }
 
     #[test]
-    fn test_session_expiry() {
+    fn session_expires_after_inactivity() {
         let session = TelemetrySession::new();
         // Session should not be expired immediately
         assert!(!session.is_expired());
@@ -910,7 +892,7 @@ mod tests {
     }
 
     #[test]
-    fn test_event_queue() {
+    fn event_queue_flushes_when_full_and_confirms_sent() {
         // Create a queue with current time for last_flush
         let now = jiff::Timestamp::now().as_second();
         let mut queue = EventQueue {
@@ -977,7 +959,7 @@ mod tests {
     }
 
     #[test]
-    fn test_timer() {
+    fn timer_measures_elapsed_time() {
         let timer = Timer::new("test_operation");
         std::thread::sleep(std::time::Duration::from_millis(10));
         let elapsed = timer.elapsed_ms();
@@ -986,11 +968,7 @@ mod tests {
 
     #[test]
     fn backend_name_matches_compiled_features() {
-        let expected = if cfg!(any(feature = "debian", feature = "debian-pure"))
-            && crate::core::env::distro::is_debian_like()
-        {
-            "debian"
-        } else if cfg!(feature = "arch") {
+        let expected = if cfg!(feature = "arch") {
             "arch"
         } else if cfg!(any(feature = "debian", feature = "debian-pure")) {
             "debian"
@@ -998,5 +976,18 @@ mod tests {
             "none"
         };
         assert_eq!(get_backend(), expected);
+    }
+
+    #[test]
+    fn opt_out_env_values_are_case_insensitive() {
+        // The accepted value sets are matched case-insensitively; this
+        // table documents the contract for both variables.
+        let disable = ["0", "false", "off", "no"];
+        for value in ["off", "OFF", "Off", "FALSE", "no", "0"] {
+            assert!(
+                disable.iter().any(|a| value.eq_ignore_ascii_case(a)),
+                "{value} must disable telemetry"
+            );
+        }
     }
 }

@@ -12,6 +12,7 @@ use thiserror::Error;
 
 use crate::core::paths;
 
+/// Failures from loading a security policy or checking a package against it.
 #[derive(Debug, Error)]
 pub enum PolicyError {
     #[error("Failed to read security policy: {path}")]
@@ -100,7 +101,11 @@ impl Default for SecurityPolicy {
 impl SecurityPolicy {
     /// Load policy from file. A missing file is not handled here; callers that
     /// want defaults for an absent policy should use [`Self::load_optional`].
-    pub fn load<P: AsRef<Path>>(path: P) -> Result<Self, PolicyError> {
+    ///
+    /// # Errors
+    /// Returns [`PolicyError::Read`] for unreadable files and
+    /// [`PolicyError::Parse`] for malformed TOML.
+    pub fn load(path: impl AsRef<Path>) -> Result<Self, PolicyError> {
         let path = path.as_ref();
         let content = fs::read_to_string(path).map_err(|source| PolicyError::Read {
             path: path.display().to_string(),
@@ -113,7 +118,7 @@ impl SecurityPolicy {
     }
 
     /// Load a policy file, using the built-in default only when the file is absent.
-    pub fn load_optional<P: AsRef<Path>>(path: P) -> Result<Self, PolicyError> {
+    pub fn load_optional(path: impl AsRef<Path>) -> Result<Self, PolicyError> {
         match Self::load(path) {
             Ok(policy) => Ok(policy),
             Err(PolicyError::Read { source, .. }) if source.kind() == io::ErrorKind::NotFound => {
@@ -207,7 +212,7 @@ impl SecurityPolicy {
 }
 
 /// SPDX-ish tokens from a license expression (operators and punctuation dropped).
-pub fn spdx_license_tokens(license: &str) -> Vec<String> {
+pub(crate) fn spdx_license_tokens(license: &str) -> Vec<String> {
     license
         .split(|c: char| !(c.is_ascii_alphanumeric() || matches!(c, '.' | '-' | '+')))
         .filter(|token| !token.is_empty())
@@ -222,7 +227,7 @@ pub fn spdx_license_tokens(license: &str) -> Vec<String> {
 }
 
 /// True when `license` contains an allowed SPDX identifier as a whole token.
-pub fn license_matches_allowlist(license: &str, allowed: &[String]) -> bool {
+pub(crate) fn license_matches_allowlist(license: &str, allowed: &[String]) -> bool {
     let tokens = spdx_license_tokens(license);
     allowed.iter().any(|allowed| {
         let needle = allowed.to_ascii_lowercase();

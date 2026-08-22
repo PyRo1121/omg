@@ -387,82 +387,128 @@ mod secrets_detection {
 
 mod policy_enforcement {
     use super::*;
+    use omg_lib::core::security::policy::{SecurityGrade, SecurityPolicy};
+
+    /// Parse a policy fixture through the real deserializer so these tests
+    /// fail if the fixture format drifts from `SecurityPolicy`.
+    fn parse_policy(toml_src: &str) -> SecurityPolicy {
+        toml::from_str(toml_src).expect("policy fixture must deserialize")
+    }
 
     #[test]
-    fn test_strict_policy_no_aur() {
+    fn strict_policy_blocks_aur_packages() {
+        let policy = parse_policy(policies::STRICT_POLICY);
+        assert!(!policy.allow_aur, "STRICT_POLICY must disable AUR");
+
+        let error = policy
+            .check_package("yay-bin", true, Some("MIT"), SecurityGrade::Verified)
+            .expect_err("AUR package must be blocked under strict policy");
+        assert!(
+            error.to_string().contains("AUR"),
+            "rejection must cite AUR, got: {error}"
+        );
+    }
+
+    #[test]
+    fn strict_policy_still_allows_verified_official_packages() {
+        let policy = parse_policy(policies::STRICT_POLICY);
+
+        policy
+            .check_package("pacman", false, Some("GPL-3.0"), SecurityGrade::Verified)
+            .expect("verified official package within allowlist must pass strict policy");
+    }
+
+    #[test]
+    fn banned_packages_are_rejected_by_name() {
+        let policy = parse_policy("banned_packages = [\"telnet\", \"ftp\", \"rsh\"]");
+
+        for name in ["telnet", "ftp", "rsh"] {
+            let error = policy
+                .check_package(name, false, None, SecurityGrade::Verified)
+                .expect_err("banned package must be rejected by exact name");
+            assert!(
+                error.to_string().contains("banned"),
+                "rejection must cite the ban, got: {error}"
+            );
+        }
+        // Spelled differently but semantically the same license/name still
+        // passes the name check — pin that only exact banned names match.
+        let banned = parse_policy("banned_packages = [\"telnet\"]");
+        banned
+            .check_package("telnetd", false, None, SecurityGrade::Verified)
+            .expect("prefix names must not be caught by exact-match ban");
+    }
+
+    #[test]
+    fn license_allowlist_rejects_unknown_and_disallowed_licenses() {
+        let policy = parse_policy("allowed_licenses = [\"MIT\", \"Apache-2.0\", \"BSD-3-Clause\"]");
+
+        let error = policy
+            .check_package("pkg", false, Some("GPL-3.0-only"), SecurityGrade::Verified)
+            .expect_err("license outside the allowlist must be rejected");
+        assert!(
+            error.to_string().contains("GPL-3.0-only"),
+            "rejection must cite the offending license, got: {error}"
+        );
+
+        let error = policy
+            .check_package("pkg", false, None, SecurityGrade::Verified)
+            .expect_err("unknown license must be rejected when an allowlist exists");
+        assert!(
+            error.to_string().to_lowercase().contains("unknown"),
+            "rejection must mark the license as unknown, got: {error}"
+        );
+    }
+
+    #[test]
+    fn require_pgp_blocks_everything_below_verified_grade() {
+        let policy = parse_policy("require_pgp = true");
+
+        for grade in [SecurityGrade::Risk, SecurityGrade::Community] {
+            let error = policy
+                .check_package("pkg", false, None, grade)
+                .expect_err("ungraded/unproven package must be blocked when PGP is required");
+            assert!(
+                error.to_string().contains("PGP")
+                    || error
+                        .to_string()
+                        .to_lowercase()
+                        .contains("below required minimum"),
+                "rejection must cite PGP or the grade gate, got: {error}"
+            );
+        }
+        policy
+            .check_package("pkg", false, None, SecurityGrade::Verified)
+            .expect("verified grade satisfies require_pgp");
+    }
+
+    #[test]
+    fn enterprise_minimum_grade_gates_community_packages() {
+        let policy = parse_policy(policies::ENTERPRISE_POLICY);
+        assert_eq!(
+            policy.minimum_grade,
+            SecurityGrade::Verified,
+            "ENTERPRISE_POLICY must demand Verified"
+        );
+
+        policy
+            .check_package("aur-pkg", true, Some("MIT"), SecurityGrade::Community)
+            .expect_err("community-grade package must fail enterprise minimum grade");
+
+        policy
+            .check_package("official-pkg", false, Some("MIT"), SecurityGrade::Verified)
+            .expect("verified official MIT package passes enterprise policy");
+    }
+
+    /// CLI smoke: the audit-policy command loads and reports a written
+    /// policy file (display only; enforcement is pinned above at the seam).
+    #[test]
+    fn cli_audit_policy_runs_with_written_strict_policy() {
         let project = TestProject::new();
         project.with_security_policy(policies::STRICT_POLICY);
 
         let result = project.run(&["audit", "policy"]);
-        let output = format!("{}{}", result.stdout, result.stderr);
-        assert!(
-            output.contains("AUR") || output.contains("Policy") || output.contains("Grade"),
-            "strict policy audit must show policy status, got: {output}"
-        );
-    }
-
-    #[test]
-    fn test_policy_banned_packages() {
-        let project = TestProject::new();
-        project.with_security_policy(
-            r#"
-banned_packages = ["telnet", "ftp", "rsh"]
-"#,
-        );
-
-        let result = project.run(&["audit", "policy"]);
-        let output = format!("{}{}", result.stdout, result.stderr);
-        assert!(
-            output.contains("telnet") || output.contains("Banned") || output.contains("Policy"),
-            "banned package policy must be visible, got: {output}"
-        );
-    }
-
-    #[test]
-    fn test_policy_license_restrictions() {
-        let project = TestProject::new();
-        project.with_security_policy(
-            r#"
-allowed_licenses = ["MIT", "Apache-2.0", "BSD-3-Clause"]
-"#,
-        );
-
-        let result = project.run(&["audit", "policy"]);
-        let output = format!("{}{}", result.stdout, result.stderr);
-        assert!(
-            output.contains("MIT") || output.contains("Allowed") || output.contains("Policy"),
-            "license allowlist must be visible, got: {output}"
-        );
-    }
-
-    #[test]
-    fn test_policy_require_pgp() {
-        let project = TestProject::new();
-        project.with_security_policy(
-            r"
-require_pgp = true
-",
-        );
-
-        let result = project.run(&["audit", "policy"]);
-        let output = format!("{}{}", result.stdout, result.stderr);
-        assert!(
-            output.contains("PGP") || output.contains("require_pgp") || output.contains("Policy"),
-            "policy audit must show the loaded policy, got: {output}"
-        );
-    }
-
-    #[test]
-    fn test_enterprise_policy() {
-        let project = TestProject::new();
-        project.with_security_policy(policies::ENTERPRISE_POLICY);
-
-        let result = project.run(&["audit", "policy"]);
-        let output = format!("{}{}", result.stdout, result.stderr);
-        assert!(
-            output.contains("Policy") || output.contains("Grade") || output.contains("AUR"),
-            "enterprise policy audit must show policy status, got: {output}"
-        );
+        result.assert_success();
     }
 }
 

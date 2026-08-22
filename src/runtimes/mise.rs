@@ -11,6 +11,8 @@
 //!
 //! The integration code in this file is part of OMG and licensed under AGPL-3.0.
 
+use crate::core::archive::stripped_archive_path;
+use crate::core::http::download_client;
 use anyhow::{Context, Result};
 use owo_colors::OwoColorize;
 use serde::Deserialize;
@@ -20,9 +22,6 @@ use std::io::{self, Write};
 use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
 use std::process::Command;
-
-use crate::core::archive::stripped_archive_path;
-use crate::core::http::download_client;
 
 use super::common::{download_with_progress, parse_sha256_digest, remove_file_best_effort};
 
@@ -43,7 +42,13 @@ struct GithubAsset {
 }
 
 /// Mise runtime manager - bundled with OMG
-pub struct MiseManager {
+///
+/// The blocking `mise` subprocess helpers ([`Self::current_version`],
+/// [`Self::install_runtime`], [`Self::list_installed`], [`Self::use_version`])
+/// must not be called from async contexts; use their `*_async` counterparts,
+/// which run the subprocess on tokio's blocking pool.
+#[derive(Clone)]
+pub(crate) struct MiseManager {
     /// Directory where mise binary is stored
     bin_dir: PathBuf,
     /// Path to the mise binary
@@ -410,17 +415,59 @@ impl MiseManager {
         Ok(())
     }
 
-    /// Get the bin directory for a mise-managed runtime
-    #[must_use]
-    pub fn runtime_bin_path(&self, runtime: &str, version: &str) -> Option<PathBuf> {
-        crate::core::security::validate_package_name(runtime).ok()?;
-        crate::core::security::validate_runtime_version(version).ok()?;
+    // --- Async wrappers --------------------------------------------------
+    //
+    // Every blocking `mise` subprocess helper above must not run on an async
+    // executor thread. The `*_async` counterparts below offload them onto
+    // tokio's blocking pool.
 
-        // mise installs to ~/.local/share/mise/installs/<runtime>/<version>/bin
-        let mise_data = dirs::data_dir()?.join("mise").join("installs");
-        let bin_path = mise_data.join(runtime).join(version).join("bin");
-        super::common::is_valid_version_dir(&bin_path).then_some(bin_path)
+    /// Async counterpart of [`Self::current_version`] that never blocks the
+    /// caller's executor thread.
+    // Call sites live in cli/runtimes.rs, outside this module's ownership;
+    // the wrappers are consumed there when the async switch happens.
+    #[allow(dead_code)]
+    pub async fn current_version_async(&self, runtime: &str) -> Result<Option<String>> {
+        let manager = self.clone();
+        let runtime = runtime.to_owned();
+        run_mise_blocking(move || manager.current_version(&runtime)).await
     }
+
+    /// Async counterpart of [`Self::install_runtime`] that never blocks the
+    /// caller's executor thread.
+    #[allow(dead_code)]
+    pub async fn install_runtime_async(&self, runtime: &str) -> Result<bool> {
+        let manager = self.clone();
+        let runtime = runtime.to_owned();
+        run_mise_blocking(move || manager.install_runtime(&runtime)).await
+    }
+
+    /// Async counterpart of [`Self::list_installed`] that never blocks the
+    /// caller's executor thread.
+    #[allow(dead_code)]
+    pub async fn list_installed_async(&self) -> Result<Vec<String>> {
+        let manager = self.clone();
+        run_mise_blocking(move || manager.list_installed()).await
+    }
+
+    /// Async counterpart of [`Self::use_version`] that never blocks the
+    /// caller's executor thread.
+    #[allow(dead_code)]
+    pub async fn use_version_async(&self, runtime: &str, version: &str) -> Result<()> {
+        let manager = self.clone();
+        let runtime = runtime.to_owned();
+        let version = version.to_owned();
+        run_mise_blocking(move || manager.use_version(&runtime, &version)).await
+    }
+}
+
+// Run a blocking `mise` subprocess helper on tokio's blocking pool.
+async fn run_mise_blocking<T>(task: impl FnOnce() -> Result<T> + Send + 'static) -> Result<T>
+where
+    T: Send + 'static,
+{
+    tokio::task::spawn_blocking(task)
+        .await
+        .context("mise task panicked")?
 }
 
 fn mise_platform() -> Result<String> {

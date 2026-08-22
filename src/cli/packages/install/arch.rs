@@ -14,7 +14,15 @@ use crate::core::usage::OperationTimer;
 use crate::package_managers::AurClient;
 use crate::package_managers::get_package_manager;
 
-pub async fn install(packages: &[String], yes: bool) -> Result<()> {
+/// Marker emitted by the ALPM transaction layer when a requested sync
+/// package is absent from every configured repository. This exact diagnostic
+/// is the only signal allowed to route a failed install into the AUR
+/// fallback; everything else propagates verbatim.
+const MISSING_FROM_REPOS_MARKER: &str = "not found in any configured repository";
+
+use super::MAX_REPLACEMENT_HOPS;
+
+pub async fn install(packages: &[String], yes: bool, replacement_hops: u32) -> Result<()> {
     let timer = OperationTimer::start_with_packages("install", packages);
     let resolution_start = Instant::now();
 
@@ -71,7 +79,7 @@ pub async fn install(packages: &[String], yes: bool) -> Result<()> {
                 let message = error.to_string();
                 if let Some(package_name) = extract_missing_package(&message, packages) {
                     missing_packages.push(package_name.clone());
-                    handle_missing_package(package_name, error, yes).await
+                    handle_missing_package(package_name, error, yes, replacement_hops).await
                 } else {
                     Err(error)
                 }
@@ -82,6 +90,7 @@ pub async fn install(packages: &[String], yes: bool) -> Result<()> {
             missing_packages[0].clone(),
             anyhow::anyhow!("Package not found in official repos"),
             yes,
+            replacement_hops,
         )
         .await
     } else {
@@ -102,6 +111,7 @@ pub async fn install(packages: &[String], yes: bool) -> Result<()> {
                     missing_pkg.clone(),
                     anyhow::anyhow!("Package not found in official repos"),
                     yes,
+                    replacement_hops,
                 )
                 .await?;
             }
@@ -301,16 +311,21 @@ pub async fn install_dry_run(packages: &[String]) -> Result<()> {
     Ok(())
 }
 
+/// Identify which requested package caused a transaction failure.
+///
+/// Only the transaction layer's canonical missing-package diagnostic
+/// ([`MISSING_FROM_REPOS_MARKER`]) may redirect an install into the AUR
+/// fallback. The package name is extracted from the quoted diagnostic and
+/// matched exactly against the request, so unrelated failures that merely
+/// mention a package name (conflicts, commit errors, disk-full) are never
+/// misrouted.
 fn extract_missing_package(msg: &str, packages: &[String]) -> Option<String> {
-    if msg.contains("not found in any repository") || msg.contains("Package not found:") {
-        for pkg in packages {
-            if msg.contains(pkg.as_str()) {
-                return Some(pkg.clone());
-            }
-        }
-    }
-
-    packages.iter().find(|p| msg.contains(p.as_str())).cloned()
+    let line = msg
+        .lines()
+        .find(|l| l.contains(MISSING_FROM_REPOS_MARKER))?;
+    let reported = line.split("Package '").nth(1)?;
+    let reported = reported.split("' not found").next()?;
+    packages.iter().find(|p| p.as_str() == reported).cloned()
 }
 
 #[cfg(unix)]
@@ -341,10 +356,18 @@ async fn lookup_official_package(
         .with_context(|| format!("Failed to look up {package} in official repositories"))
 }
 
+/// Handle a package that could not be resolved in the official repositories:
+/// try the AUR (preferring `-bin` builds), offer suggestions, or fail with the
+/// original error.
+///
+/// Returns a boxed future because accepting a suggestion recurses back into
+/// [`install`] through the public entry point; the box breaks the otherwise
+/// infinitely-sized future type.
 fn handle_missing_package(
     pkg_name: String,
     original_error: anyhow::Error,
     yes: bool,
+    replacement_hops: u32,
 ) -> BoxFuture<'static, Result<()>> {
     Box::pin(async move {
         match try_aur_package(&pkg_name).await {
@@ -369,13 +392,20 @@ fn handle_missing_package(
         println!();
 
         if !yes && console::user_attended() {
-            let selection = Select::with_theme(&ui::prompt_theme())
-                .with_prompt("Select a replacement (or Esc to abort)")
-                .default(0)
-                .items(&suggestions)
-                .interact_opt()?;
+            // The interactive picker performs blocking TTY reads; run it on a
+            // blocking thread so the async executor is never stalled.
+            let (selection, suggestions) = tokio::task::spawn_blocking(move || {
+                let selection = Select::with_theme(&ui::prompt_theme())
+                    .with_prompt("Select a replacement (or Esc to abort)")
+                    .default(0)
+                    .items(&suggestions)
+                    .interact_opt();
+                (selection, suggestions)
+            })
+            .await
+            .map_err(|error| anyhow::anyhow!("Suggestion prompt task failed: {error}"))?;
 
-            if let Some(index) = selection {
+            if let Some(index) = selection? {
                 let new_pkg = suggestions[index].clone();
                 println!();
                 println!(
@@ -385,7 +415,19 @@ fn handle_missing_package(
                     new_pkg.green().bold()
                 );
                 println!();
-                return super::install(&[new_pkg], yes, false).await;
+                if replacement_hops == 0 {
+                    anyhow::bail!(
+                        "Aborting after {MAX_REPLACEMENT_HOPS} replacement attempts; \
+                         install '{new_pkg}' explicitly if intended"
+                    );
+                }
+                return super::install_with_replacement_budget(
+                    &[new_pkg],
+                    yes,
+                    false,
+                    replacement_hops - 1,
+                )
+                .await;
             }
         } else {
             for (i, suggestion) in suggestions.iter().enumerate().take(5) {
@@ -453,15 +495,21 @@ async fn handle_aur_package(
         &aur_pkg.description,
     );
 
+    // The confirmation prompt performs blocking TTY reads; run it on a
+    // blocking thread so the async executor is never stalled.
     let should_install = if yes {
         modern_ui::print_info("Auto-accepting (--yes flag)");
         true
     } else if console::user_attended() {
-        use dialoguer::Confirm;
-        Confirm::with_theme(&ui::prompt_theme())
-            .with_prompt(format!("Install {} from AUR?", aur_pkg.name))
-            .default(false)
-            .interact()?
+        let prompt = format!("Install {} from AUR?", aur_pkg.name);
+        tokio::task::spawn_blocking(move || {
+            dialoguer::Confirm::with_theme(&ui::prompt_theme())
+                .with_prompt(prompt)
+                .default(false)
+                .interact()
+        })
+        .await
+        .map_err(|error| anyhow::anyhow!("Confirmation prompt task failed: {error}"))??
     } else {
         false
     };
@@ -479,4 +527,57 @@ async fn handle_aur_package(
     modern_ui::print_success(&format!("Built and installed {} from AUR", aur_pkg.name));
     crate::core::usage::track_install(std::slice::from_ref(&aur_pkg.name));
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn missing_target_is_extracted_from_canonical_diagnostic() {
+        let error = "✗ Package 'firefox' not found in any configured repository.\n  \
+                     → Run 'omg sync' to update package databases";
+        assert_eq!(
+            extract_missing_package(error, &["firefox".to_string()]).as_deref(),
+            Some("firefox")
+        );
+    }
+
+    #[test]
+    fn unrelated_failure_mentioning_a_package_never_triggers_aur_fallback() {
+        // Regression: previously ANY error containing a requested name was
+        // misrouted into the AUR/suggestion flow.
+        let error = "✗ Transaction preparation failed: conflicting files for firefox\n  \
+                     → Try running: omg update && omg install <package>";
+        assert_eq!(
+            extract_missing_package(error, &["firefox".to_string()]),
+            None
+        );
+    }
+
+    #[test]
+    fn diagnostic_naming_a_different_package_does_not_match() {
+        let error = "✗ Package 'firefox-esr' not found in any configured repository.";
+        assert_eq!(
+            extract_missing_package(error, &["firefox".to_string()]),
+            None
+        );
+    }
+
+    #[test]
+    fn empty_or_unrelated_errors_yield_none() {
+        assert_eq!(extract_missing_package("", &["vim".to_string()]), None);
+        assert_eq!(
+            extract_missing_package(
+                "Failed to initialize ALPM (are you root?)",
+                &["vim".to_string()]
+            ),
+            None
+        );
+    }
+
+    #[test]
+    fn replacement_budget_bounds_interactive_recursion() {
+        assert_eq!(MAX_REPLACEMENT_HOPS, 3);
+    }
 }

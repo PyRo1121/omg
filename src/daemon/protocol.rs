@@ -195,8 +195,8 @@ pub enum ResponseResult {
 
 // Error codes
 pub mod error_codes {
+    /// Malformed payload that could not be deserialized into a [`Request`].
     pub const PARSE_ERROR: i32 = -32700;
-    pub const METHOD_NOT_FOUND: i32 = -32601;
     pub const INVALID_PARAMS: i32 = -32602;
     pub const INTERNAL_ERROR: i32 = -32603;
     pub const PACKAGE_NOT_FOUND: i32 = -1001;
@@ -207,6 +207,9 @@ pub mod error_codes {
 #[derive(Archive, RkyvSerialize, RkyvDeserialize, Debug, Clone, Serialize, Deserialize)]
 pub struct SearchResult {
     pub packages: Vec<PackageInfo>,
+    /// Number of matches in the daemon's backing result set. This is capped
+    /// at the daemon's maximum search limit (1000), not the true total: a
+    /// query with 5000 hits reports `total <= 1000`.
     pub total: usize,
 }
 
@@ -239,42 +242,6 @@ impl StatusResult {
             None
         }
     }
-}
-
-/// Map a vulnerability scan onto a previously published count.
-///
-/// A failed scan keeps the previous count and must not invent a clean zero.
-pub fn vulnerability_count_from_scan<E>(
-    scan: &Result<usize, E>,
-    previous: Option<usize>,
-) -> Option<usize> {
-    match scan {
-        Ok(count) => Some(*count),
-        Err(_) => previous,
-    }
-}
-
-/// Build a status snapshot. Only a completed vulnerability scan may be cached.
-pub fn status_snapshot(
-    total_packages: usize,
-    explicit_packages: usize,
-    orphan_packages: usize,
-    updates_available: usize,
-    runtime_versions: Vec<(String, String)>,
-    scanned_vulnerabilities: Option<usize>,
-) -> (StatusResult, bool) {
-    (
-        StatusResult {
-            total_packages,
-            explicit_packages,
-            orphan_packages,
-            updates_available,
-            security_vulnerabilities: scanned_vulnerabilities.unwrap_or(0),
-            vulnerabilities_scanned: scanned_vulnerabilities.is_some(),
-            runtime_versions,
-        },
-        scanned_vulnerabilities.is_some(),
-    )
 }
 
 /// Package info for IPC (minimal)
@@ -339,9 +306,13 @@ pub struct MetricsSnapshot {
 pub struct HealthStatus {
     pub status: String,
     pub uptime_seconds: u64,
+    /// Resident memory of the daemon process, read from procfs `VmRSS`.
     pub memory_usage_mb: u64,
     pub cache_size: usize,
     pub active_connections: i64,
+    /// Times the singleton background status worker has died unexpectedly.
+    /// Non-zero means cached status/search data may be stale.
+    pub background_worker_failures: u64,
 }
 
 /// Update entry for IPC (matches `UpdateInfo` from `package_managers::types`)
@@ -357,9 +328,11 @@ pub struct UpdateEntry {
 // Synchronous framing helpers
 // ═══════════════════════════════════════════════════════════════════════════
 
-/// Maximum frame size accepted by [`read_frame`] (10 MiB). Matches the
-/// daemon's response budget and prevents a hostile or corrupt peer from
-/// triggering unbounded client-side allocation.
+/// Maximum frame size accepted by [`read_frame`] (10 MiB).
+///
+/// Bounds client-side allocation from a hostile or corrupt peer. The daemon
+/// imposes no matching response-size budget; this constant protects readers
+/// only.
 pub const MAX_FRAME_SIZE: usize = 10 * 1024 * 1024;
 
 /// Write a length-delimited frame: big-endian `u32` length prefix + payload.
@@ -403,51 +376,6 @@ pub fn read_frame<R: std::io::Read>(reader: &mut R) -> std::io::Result<Vec<u8>> 
 
 #[cfg(test)]
 mod tests {
-    use super::{status_snapshot, vulnerability_count_from_scan};
-
-    #[test]
-    fn successful_scan_replaces_the_previous_count() {
-        assert_eq!(
-            vulnerability_count_from_scan::<()>(&Ok(3), Some(5)),
-            Some(3)
-        );
-    }
-
-    #[test]
-    fn failed_scan_keeps_the_previous_count() {
-        assert_eq!(
-            vulnerability_count_from_scan(&Err("alsa unavailable"), Some(5)),
-            Some(5)
-        );
-    }
-
-    #[test]
-    fn failed_scan_without_a_prior_count_does_not_invent_zero() {
-        assert_eq!(
-            vulnerability_count_from_scan(&Err("alsa unavailable"), None),
-            None
-        );
-    }
-
-    #[test]
-    fn unscanned_status_is_not_cacheable() {
-        let (status, cacheable) = status_snapshot(10, 4, 1, 2, vec![], None);
-        assert!(!cacheable);
-        assert!(!status.vulnerabilities_scanned);
-        assert_eq!(status.scanned_vulnerability_count(), None);
-        assert_eq!(status.security_vulnerabilities, 0);
-        assert_eq!(status.total_packages, 10);
-    }
-
-    #[test]
-    fn scanned_status_is_cacheable() {
-        let (status, cacheable) = status_snapshot(10, 4, 1, 2, vec![], Some(7));
-        assert!(cacheable);
-        assert!(status.vulnerabilities_scanned);
-        assert_eq!(status.scanned_vulnerability_count(), Some(7));
-        assert_eq!(status.security_vulnerabilities, 7);
-    }
-
     #[test]
     fn heap_size_counts_string_payloads() {
         let request = super::Request::Search {

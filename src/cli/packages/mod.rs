@@ -11,7 +11,7 @@
 //! - Sync: Synchronize package databases
 
 mod clean;
-pub mod common;
+pub(crate) mod common;
 mod explicit;
 mod info;
 mod install;
@@ -26,7 +26,7 @@ mod update;
 pub use clean::clean;
 pub use explicit::{explicit, explicit_sync, explicit_sync_with_json};
 pub use info::{info, info_aur, info_sync, info_with_json};
-pub use install::{install, install_dry_run_cli};
+pub use install::install;
 pub use remove::remove;
 pub use search::{search, search_sync_cli, search_sync_cli_with_limit, search_with_json};
 pub use status::{status, status_with_json};
@@ -79,7 +79,7 @@ pub(crate) use dispatch_backend;
 ///
 /// This provides a simple println-based execution for reliability
 /// in CI/non-TTY environments where the Elm UI might not be available.
-pub fn execute_cmd(cmd: crate::cli::tea::Cmd<()>) {
+pub(crate) fn execute_cmd(cmd: crate::cli::tea::Cmd<()>) {
     use crate::cli::tea::Cmd;
     use std::io::Write;
 

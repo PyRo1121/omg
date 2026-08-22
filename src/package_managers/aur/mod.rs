@@ -5,7 +5,7 @@
 
 mod client;
 mod error;
-pub mod parallel_build;
+mod parallel_build;
 mod utils;
 
 pub use client::{AurClient, AurPackageDetail, search_detailed};

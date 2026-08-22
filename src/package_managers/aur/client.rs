@@ -24,14 +24,15 @@ use which::which;
 
 use super::error::AurError;
 use super::utils::{
-    create_dir_as_user, create_dir_as_user_sync, get_original_user, get_original_user_home,
-    has_word_boundary_match, is_root_owned, remove_dir_as_user, validate_build_dir,
+    build_user, create_dir_as_user, create_dir_as_user_sync, has_word_boundary_match,
+    is_root_owned, is_symlink, original_user, original_user_home, remove_dir_as_user,
+    validate_build_dir,
 };
 
 use super::super::aur_deps::check_dependencies;
 use super::super::aur_index::AurIndex;
 use super::super::aur_metadata::{
-    AurJsonPackage, get_metadata_path, read_metadata_archive, sync_aur_metadata,
+    AurJsonPackage, index_path, metadata_path, read_metadata_archive, sync_aur_metadata,
 };
 use super::super::aur_sources::{download_sources, parse_sources};
 #[cfg(feature = "pgp")]
@@ -87,15 +88,15 @@ pub enum PgpKeyIdStatus {
 /// - **Full fingerprints (40 chars)** are strongly recommended.
 ///
 /// # Returns
-/// - `PgpKeyIdStatus` indicating the validation result
-///
-/// # Examples
-/// ```ignore
-/// assert_eq!(validate_pgp_key_id("ABCDEF12"), PgpKeyIdStatus::ShortKeyId);
-/// assert_eq!(validate_pgp_key_id("ABCDEF1234567890"), PgpKeyIdStatus::LongKeyId);
-/// ```
+/// - `PgpKeyIdStatus` indicating the validation result:
+///   - `"ABCDEF1234567890ABCDEF1234567890ABCDEF12"` → `FullFingerprint`
+///   - `"ABCDEF1234567890"` → `LongKeyId`
+///   - `"ABCDEF12"` or any 1–15 hex chars → `ShortKeyId` (rejected)
+///   - `""` → `Empty`, `>64 chars` → `TooLong`, non-hex → `InvalidChars`,
+///     other hex lengths → `NonStandardLength`
 #[inline]
 #[cfg(any(feature = "pgp", test))]
+#[must_use]
 pub fn validate_pgp_key_id(key_id: &str) -> PgpKeyIdStatus {
     if key_id.is_empty() {
         return PgpKeyIdStatus::Empty;
@@ -140,7 +141,6 @@ fn require_fetchable_pgp_key_id(key_id: &str) -> Result<()> {
     }
 }
 
-#[cfg(unix)]
 fn require_unprivileged_builder(package: &str, is_root: bool) -> Result<()> {
     if is_root {
         anyhow::bail!(
@@ -157,6 +157,16 @@ fn require_unprivileged_builder(package: &str, is_root: bool) -> Result<()> {
 pub struct AurClient {
     build_dir: PathBuf,
     settings: Settings,
+}
+
+impl std::fmt::Debug for AurClient {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        // Deliberately excludes settings; they may carry user-specific paths.
+        f.debug_struct("AurClient")
+            .field("build_dir", &self.build_dir)
+            // `settings` deliberately omitted: may carry user-specific paths.
+            .finish_non_exhaustive()
+    }
 }
 
 struct MakepkgEnv {
@@ -391,158 +401,6 @@ impl AurClient {
         }))
     }
 
-    /// Get info for multiple AUR packages in batch (5-10x faster than individual calls)
-    ///
-    /// This method batches requests to stay under the AUR RPC URL limit (~4400 chars),
-    /// sending parallel chunked requests for maximum throughput.
-    #[instrument(skip(self, packages))]
-    pub async fn info_batch(
-        &self,
-        packages: &[String],
-    ) -> Result<std::collections::HashMap<String, Package>> {
-        use std::collections::HashMap;
-
-        if packages.is_empty() {
-            return Ok(HashMap::new());
-        }
-
-        // SECURITY: Validate all package names upfront
-        for pkg in packages {
-            crate::core::security::validate_package_name(pkg)?;
-        }
-
-        // Try fast binary index first
-        let index_path = Self::metadata_index_path();
-        let mut results = HashMap::with_capacity(packages.len());
-
-        let remaining = if index_path.exists() {
-            let packages_owned: Vec<String> = packages.to_vec();
-            let index_result = tokio::task::spawn_blocking(
-                move || -> Result<(HashMap<String, Package>, Vec<String>)> {
-                    let index = AurIndex::open(&index_path)?;
-                    let mut found = HashMap::new();
-                    let mut not_found = Vec::new();
-
-                    for name in packages_owned {
-                        if let Some(entry) = index.get(&name)? {
-                            found.insert(
-                                name,
-                                Package {
-                                    name: entry.name.as_str().to_string(),
-                                    version: crate::package_managers::parse_version_or_zero(
-                                        entry.version.as_str(),
-                                    ),
-                                    description: entry
-                                        .description
-                                        .as_ref()
-                                        .map(|s| s.as_str().to_string())
-                                        .unwrap_or_default(),
-                                    source: PackageSource::Aur,
-                                    installed: false,
-                                },
-                            );
-                        } else {
-                            not_found.push(name);
-                        }
-                    }
-                    Ok((found, not_found))
-                },
-            )
-            .await?;
-
-            let (found, not_found) =
-                index_result.context("Failed to read the AUR metadata index")?;
-            results = found;
-            not_found
-        } else {
-            packages.to_vec()
-        };
-
-        // If all packages found in index, return early
-        if remaining.is_empty() {
-            tracing::debug!("All {} packages found in binary index", results.len());
-            return Ok(results);
-        }
-
-        // Query remaining packages via RPC in parallel chunks
-        let chunked_names = Self::chunk_aur_names(&remaining);
-        let concurrency = self.settings.aur.build_concurrency.clamp(4, 16);
-
-        tracing::debug!(
-            "Querying {} packages in {} chunks (concurrency: {})",
-            remaining.len(),
-            chunked_names.len(),
-            concurrency
-        );
-
-        let mut stream = futures::stream::iter(chunked_names)
-            .map(|chunk| async move {
-                let mut url = format!("{AUR_RPC_URL}?v=5&type=info");
-                for name in &chunk {
-                    url.push_str("&arg[]=");
-                    url.push_str(name);
-                }
-
-                let mut last_error = None;
-                for retry in 0..3u32 {
-                    if retry > 0 {
-                        tokio::time::sleep(Duration::from_millis(100 * 2u64.pow(retry - 1))).await;
-                    }
-
-                    match shared_client().get(&url).send().await {
-                        Ok(resp) => {
-                            if resp.status().is_server_error() {
-                                last_error =
-                                    Some(anyhow::anyhow!("AUR server error: {}", resp.status()));
-                                continue;
-                            }
-                            return resp.json::<AurResponse>().await.map_err(Into::into);
-                        }
-                        Err(e) if e.is_timeout() || e.is_connect() => {
-                            last_error = Some(anyhow::anyhow!("Network error: {e}"));
-                        }
-                        Err(e) => return Err(e.into()),
-                    }
-                }
-                Err(last_error
-                    .unwrap_or_else(|| anyhow::anyhow!("AUR request failed after retries")))
-            })
-            .buffer_unordered(concurrency);
-
-        while let Some(res) = stream.next().await {
-            let response = res.map_err(|e| {
-                tracing::warn!("AUR batch info failed: {}", e);
-                anyhow::anyhow!("Failed to query AUR. Check your internet connection.")
-            })?;
-
-            for p in response.results {
-                // SECURITY: Validate package name from RPC response
-                if let Err(e) = crate::core::security::validate_package_name(&p.name) {
-                    tracing::warn!(
-                        "Rejecting invalid package name from AUR info_batch: {} ({})",
-                        p.name,
-                        e
-                    );
-                    continue;
-                }
-
-                results.insert(
-                    p.name.clone(),
-                    Package {
-                        name: p.name,
-                        version: crate::package_managers::parse_version_or_zero(&p.version),
-                        description: p.description.unwrap_or_default(),
-                        source: PackageSource::Aur,
-                        installed: false,
-                    },
-                );
-            }
-        }
-
-        tracing::debug!("Batch info complete: {} packages found", results.len());
-        Ok(results)
-    }
-
     /// Get list of upgradable AUR packages
     /// Queries AUR directly for all non-official packages (like yay/paru)
     #[instrument(skip(self))]
@@ -565,7 +423,7 @@ impl AurClient {
         let index_path = Self::metadata_index_path();
         if index_path.exists() {
             let result = tokio::task::spawn_blocking(
-                move || -> Result<Option<Vec<(String, Version, Version)>>> {
+                move || -> Result<Option<(Vec<(String, Version, Version)>, Vec<String>)>> {
                     let index = match AurIndex::open(&index_path) {
                         Ok(idx) => idx,
                         Err(e) => {
@@ -574,19 +432,25 @@ impl AurClient {
                         }
                     };
 
-                    Ok(Some(index.get_updates(&local_pkgs)?))
+                    Ok(Some(index.updates_for(&local_pkgs)?))
                 },
             )
             .await?;
 
-            if let Ok(Some(updates)) = result {
-                // Only return early if we actually found updates
-                // If index is stale and returned empty, continue to fallback
-                if !updates.is_empty() {
+            if let Ok(Some((mut updates, missing))) = result {
+                if missing.is_empty() {
                     tracing::debug!("AUR update check completed via binary index");
                     return Ok(updates);
                 }
-                tracing::debug!("Binary index returned empty, falling back to RPC");
+                // The index is partially stale: query the RPC for exactly the
+                // names it lacks instead of silently treating them as current.
+                tracing::debug!(
+                    "Binary index missing {} package(s); querying RPC for those",
+                    missing.len()
+                );
+                let rpc_updates = self.query_aur_updates(&missing).await?;
+                updates.extend(rpc_updates);
+                return Ok(updates);
             }
         }
 
@@ -629,6 +493,38 @@ impl AurClient {
     }
 
     /// Query AUR RPC for package updates (parallel chunked requests)
+    /// Query the AUR RPC `type=info` endpoint for one chunk of package names,
+    /// retrying transient failures with exponential backoff.
+    async fn rpc_info_chunk(chunk: &[String]) -> Result<AurResponse> {
+        let mut url = format!("{AUR_RPC_URL}?v=5&type=info");
+        for name in chunk {
+            url.push_str("&arg[]=");
+            url.push_str(name);
+        }
+
+        let mut last_error = None;
+        for retry in 0..3u32 {
+            if retry > 0 {
+                tokio::time::sleep(Duration::from_millis(100 * 2u64.pow(retry - 1))).await;
+            }
+
+            match shared_client().get(&url).send().await {
+                Ok(resp) => {
+                    if resp.status().is_server_error() {
+                        last_error = Some(anyhow::anyhow!("AUR server error: {}", resp.status()));
+                        continue;
+                    }
+                    return resp.json::<AurResponse>().await.map_err(Into::into);
+                }
+                Err(e) if e.is_timeout() || e.is_connect() => {
+                    last_error = Some(anyhow::anyhow!("Network error: {e}"));
+                }
+                Err(e) => return Err(e.into()),
+            }
+        }
+        Err(last_error.unwrap_or_else(|| anyhow::anyhow!("AUR request failed after retries")))
+    }
+
     async fn query_aur_updates(
         &self,
         packages: &[String],
@@ -639,37 +535,7 @@ impl AurClient {
         let concurrency = self.settings.aur.build_concurrency.clamp(4, 16);
 
         let mut stream = futures::stream::iter(chunked_names)
-            .map(|chunk| async move {
-                let mut url = format!("{AUR_RPC_URL}?v=5&type=info");
-                for name in &chunk {
-                    url.push_str("&arg[]=");
-                    url.push_str(name);
-                }
-
-                let mut last_error = None;
-                for retry in 0..3u32 {
-                    if retry > 0 {
-                        tokio::time::sleep(Duration::from_millis(100 * 2u64.pow(retry - 1))).await;
-                    }
-
-                    match shared_client().get(&url).send().await {
-                        Ok(resp) => {
-                            if resp.status().is_server_error() {
-                                last_error =
-                                    Some(anyhow::anyhow!("AUR server error: {}", resp.status()));
-                                continue;
-                            }
-                            return resp.json::<AurResponse>().await.map_err(Into::into);
-                        }
-                        Err(e) if e.is_timeout() || e.is_connect() => {
-                            last_error = Some(anyhow::anyhow!("Network error: {e}"));
-                        }
-                        Err(e) => return Err(e.into()),
-                    }
-                }
-                Err(last_error
-                    .unwrap_or_else(|| anyhow::anyhow!("AUR request failed after retries")))
-            })
+            .map(|chunk| async move { Self::rpc_info_chunk(&chunk).await })
             .buffer_unordered(concurrency);
 
         while let Some(res) = stream.next().await {
@@ -708,7 +574,7 @@ impl AurClient {
         // Sync metadata (this will be fast if already fresh)
         sync_aur_metadata(shared_client(), &self.settings, false).await?;
 
-        let path = get_metadata_path();
+        let path = metadata_path();
         if path.exists() {
             let results =
                 tokio::task::spawn_blocking(move || read_metadata_archive(&path)).await??;
@@ -719,9 +585,10 @@ impl AurClient {
     }
 
     fn metadata_index_path() -> PathBuf {
-        super::super::aur_metadata::get_index_path()
+        index_path()
     }
 
+    #[must_use]
     fn chunk_aur_names(names: &[String]) -> Vec<Vec<String>> {
         let mut chunks: Vec<Vec<String>> = Vec::with_capacity((names.len() / 100) + 1);
         let mut current: Vec<String> = Vec::with_capacity(100);
@@ -748,14 +615,12 @@ impl AurClient {
     pub async fn install(&self, package: &str) -> Result<()> {
         crate::core::security::validate_package_name(package)?;
 
-        #[cfg(unix)]
         require_unprivileged_builder(package, crate::core::is_root())?;
 
         // Pre-acquire sudo credentials before starting the build.
         // This ensures the sudoloop has a valid timestamp to refresh,
         // and the user is prompted for their password upfront rather
         // than mid-build when it would be confusing.
-        #[cfg(unix)]
         if !crate::core::caps::can_write_pacman_db() && !crate::core::is_root() {
             if !console::user_attended() {
                 let status = tokio::process::Command::new("sudo")
@@ -795,7 +660,6 @@ impl AurClient {
         // Start sudoloop for long build operations.
         // Now that credentials are pre-acquired, the loop will keep
         // them alive throughout the entire build+install cycle.
-        #[cfg(unix)]
         let sudoloop = if crate::core::sudoloop::can_use_sudoloop() {
             tracing::debug!("Starting sudoloop for AUR build");
             Some(crate::core::sudoloop::SudoLoop::start())
@@ -847,13 +711,9 @@ impl AurClient {
             self.git_clone(package).await.map_err(|e| {
                 crate::cli::modern_ui::finish_clear(&clone_pb);
                 tracing::warn!("Git clone failed for {}: {}", package, e);
-                // Provide helpful error that explains the failure
-                anyhow::anyhow!(
-                    "Failed to clone {package} from AUR.\n  \
-                     → Package may not exist: https://aur.archlinux.org/packages/{package}\n  \
-                     → Check your internet connection\n  \
-                     → Original error: {e}"
-                )
+                // Single source of user guidance lives in AurError; the
+                // underlying failure is logged above, not duplicated here.
+                AurError::GitCloneFailed(package.to_string())
             })?;
             crate::cli::modern_ui::finish_success(
                 &clone_pb,
@@ -877,12 +737,7 @@ impl AurClient {
                 "Installing AUR dependency for {package}: {dep}"
             ));
             let dep_pkg = self.build_only(&dep).await?;
-            Self::install_built_package(
-                &dep_pkg,
-                #[cfg(unix)]
-                sudoloop.as_ref(),
-            )
-            .await?;
+            Self::install_built_package(&dep_pkg, sudoloop.as_ref()).await?;
             crate::cli::modern_ui::print_success(&format!("Installed dependency: {dep}"));
         }
 
@@ -909,7 +764,7 @@ impl AurClient {
         let cache_key = self.cache_key(&pkg_dir, &env.makeflags)?;
 
         if self.settings.aur.review_pkgbuild {
-            Self::review_pkgbuild(&pkgbuild_path)?;
+            Self::review_pkgbuild(&pkgbuild_path).await?;
         }
 
         let pkg_file = if let Some(cached) = self
@@ -930,7 +785,6 @@ impl AurClient {
             let build_elapsed = build_start.elapsed();
 
             if !status.success() {
-                use owo_colors::OwoColorize;
                 println!();
                 println!("  {} Build failed for {}", "✗".red(), package);
                 println!("  {} Check log: {}", "→".dimmed(), log_path.display());
@@ -942,7 +796,6 @@ impl AurClient {
             }
 
             println!();
-            use owo_colors::OwoColorize;
             println!(
                 "  {} Built {} in {:.1}s",
                 "✓".green().bold(),
@@ -959,19 +812,14 @@ impl AurClient {
 
         println!();
         let install_pb = crate::cli::modern_ui::modern_spinner("Installing", package);
-        Self::install_built_package(
-            &pkg_file,
-            #[cfg(unix)]
-            sudoloop.as_ref(),
-        )
-        .await?;
+        Self::install_built_package(&pkg_file, sudoloop.as_ref()).await?;
         crate::cli::modern_ui::finish_success(&install_pb, "Installed", package);
 
         Ok(())
     }
 
     #[instrument(skip(self))]
-    pub async fn build_only(&self, package: &str) -> Result<PathBuf> {
+    async fn build_only(&self, package: &str) -> Result<PathBuf> {
         crate::core::security::validate_package_name(package)?;
 
         create_dir_as_user(&self.build_dir).await?;
@@ -1027,7 +875,7 @@ impl AurClient {
         let env = self.makepkg_env(&pkg_dir)?;
         let cache_key = self.cache_key(&pkg_dir, &env.makeflags)?;
         if self.settings.aur.review_pkgbuild {
-            Self::review_pkgbuild(&pkgbuild_path)?;
+            Self::review_pkgbuild(&pkgbuild_path).await?;
         }
         if let Some(cached) = self
             .cached_package(package, &env.pkgdest, &cache_key)
@@ -1076,7 +924,7 @@ impl AurClient {
 
             pkg_path.ok_or_else(|| {
                 anyhow::anyhow!(
-                    "No package archive found for '{expected_names:?}' after makepkg. Check ~/.cache/omg/aur/_logs/{}/.log",
+                    "No package archive found for '{expected_names:?}' after makepkg. Check ~/.cache/omg/aur/_logs/{}.log",
                     pkg_dir.file_name().and_then(|n| n.to_str()).unwrap_or("unknown")
                 )
             })
@@ -1233,191 +1081,14 @@ impl AurClient {
         Ok(aur_deps)
     }
 
-    /// Clone package from AUR (public for batch operations)
-    pub async fn git_clone_public(&self, package: &str) -> Result<()> {
-        self.git_clone(package).await
-    }
-
-    /// Update existing clone (public for batch operations)
-    pub async fn git_pull_public(&self, pkg_dir: &Path) -> Result<()> {
-        self.git_pull(pkg_dir).await
-    }
-
-    #[instrument(skip(self))]
-    pub async fn build_package_interactive(&self, package: &str) -> Result<PathBuf> {
-        create_dir_as_user(&self.build_dir).await?;
-
-        // SECURITY: Validate package directory is safe (prevents symlink attacks)
-        let pkg_dir = validate_build_dir(&self.build_dir, package)?;
-        let pkgbuild_path = pkg_dir.join("PKGBUILD");
-
-        if pkg_dir.exists() && pkgbuild_path.exists() {
-            self.git_pull(&pkg_dir).await.map_err(|e| {
-                tracing::warn!("Git pull failed for {}: {}", package, e);
-                AurError::GitPullFailed(package.to_string())
-            })?;
-        } else {
-            if pkg_dir.exists() {
-                // Surface cleanup failures: otherwise a stale directory that
-                // cannot be removed surfaces as a confusing clone failure.
-                if let Err(error) = remove_dir_as_user(&pkg_dir).await {
-                    tracing::warn!(
-                        "Failed to remove stale AUR directory {} before re-cloning: {}",
-                        pkg_dir.display(),
-                        error
-                    );
-                }
-            }
-            self.git_clone(package).await.map_err(|e| {
-                tracing::warn!("Git clone failed for {}: {}", package, e);
-                AurError::GitCloneFailed(package.to_string())
-            })?;
-        }
-
-        if !pkgbuild_path.exists() {
-            return Err(AurError::PkgbuildNotFound(package.to_string()).into());
-        }
-
-        Self::fetch_missing_pgp_keys(&pkgbuild_path).await?;
-
-        let env = self.makepkg_env(&pkg_dir)?;
-
-        let cache_key = self.cache_key(&pkg_dir, &env.makeflags)?;
-        if let Some(cached) = self
-            .cached_package(package, &env.pkgdest, &cache_key)
-            .await?
-        {
-            return Ok(cached);
-        }
-
-        let mut cmd = Command::new("makepkg");
-        cmd.args(["-s", "--noconfirm", "-f", "--needed"])
-            .env("MAKEFLAGS", &env.makeflags)
-            .env("PKGDEST", &env.pkgdest)
-            .env("SRCDEST", &env.srcdest)
-            .env("BUILDDIR", &env.builddir)
-            .stdin(std::process::Stdio::null())
-            .current_dir(&pkg_dir);
-
-        for (key, value) in &env.extra_env {
-            cmd.env(key, value);
-        }
-
-        let status = cmd.status().await.context("Failed to run makepkg")?;
-
-        if !status.success() {
-            let log_path = self.build_dir.join("_logs").join(format!("{package}.log"));
-            return Err(AurError::BuildFailed {
-                package: package.to_string(),
-                log_path: log_path.display().to_string(),
-            }
-            .into());
-        }
-
-        let pkg_file = Self::find_built_package(&pkg_dir, &env.pkgdest)
-            .await
-            .map_err(|_| AurError::PackageArchiveNotFound(package.to_string()))?;
-        self.write_cache_key(package, &cache_key).await?;
-        Ok(pkg_file)
-    }
-
-    #[instrument(skip(self))]
-    pub async fn build_only_nodeps(&self, package: &str) -> Result<PathBuf> {
-        let pkg_dir = self.build_dir.join(package);
-        let pkgbuild_path = pkg_dir.join("PKGBUILD");
-
-        if !pkgbuild_path.exists() {
-            return Err(AurError::PkgbuildNotFound(package.to_string()).into());
-        }
-
-        Self::fetch_missing_pgp_keys(&pkgbuild_path).await?;
-
-        let env = self.makepkg_env(&pkg_dir)?;
-        let cache_key = self.cache_key(&pkg_dir, &env.makeflags)?;
-
-        if let Some(cached) = self
-            .cached_package(package, &env.pkgdest, &cache_key)
-            .await?
-        {
-            return Ok(cached);
-        }
-
-        let log_path = self.build_dir.join("_logs").join(format!("{package}.log"));
-        let status = self
-            .run_build_nodeps(&pkg_dir, &env)
-            .await
-            .with_context(|| format!("Failed to run makepkg for '{package}'"))?;
-
-        if !status.success() {
-            return Err(AurError::BuildFailed {
-                package: package.to_string(),
-                log_path: log_path.display().to_string(),
-            }
-            .into());
-        }
-
-        let pkg_file = Self::find_built_package(&pkg_dir, &env.pkgdest)
-            .await
-            .map_err(|_| AurError::PackageArchiveNotFound(package.to_string()))?;
-        self.write_cache_key(package, &cache_key).await?;
-        Ok(pkg_file)
-    }
-
-    /// Run makepkg without --syncdeps (deps pre-installed)
-    async fn run_build_nodeps(
-        &self,
-        pkg_dir: &Path,
-        env: &MakepkgEnv,
-    ) -> Result<std::process::ExitStatus> {
-        let package_name = pkg_dir
-            .file_name()
-            .and_then(|name| name.to_str())
-            .unwrap_or("package");
-        let spinner = create_spinner(&format!("Building {package_name}..."));
-
-        let mut cmd = Command::new("makepkg");
-        cmd.args(["--noconfirm", "-f", "--nodeps"])
-            .env("MAKEFLAGS", &env.makeflags)
-            .env("PKGDEST", &env.pkgdest)
-            .env("SRCDEST", &env.srcdest)
-            .env("BUILDDIR", &env.builddir);
-
-        for (key, value) in &env.extra_env {
-            cmd.env(key, value);
-        }
-
-        spinner.finish_and_clear();
-        println!(
-            "{} Building {} (this may take several minutes for source packages)...",
-            "→".cyan().bold(),
-            package_name
-        );
-
-        // Spawn the process and wait for it to complete - show output in real-time
-        let status = cmd
-            .current_dir(pkg_dir)
-            .stdin(std::process::Stdio::null())
-            .stdout(std::process::Stdio::inherit())
-            .stderr(std::process::Stdio::inherit())
-            .status()
-            .await
-            .context("Failed to run makepkg")?;
-
-        if !status.success() {
-            tracing::error!(package = package_name, "Build failed");
-            println!("  {} Build failed", "✗".red());
-        }
-        Ok(status)
-    }
-
     async fn git_clone(&self, package: &str) -> Result<()> {
         let url = format!("{AUR_GIT_URL}/{package}.git");
         let dest = self.build_dir.join(package);
 
         let spinner = create_spinner("Cloning repository...");
 
-        if let Some(user) = get_original_user() {
-            let home = get_original_user_home();
+        if let Some(user) = original_user() {
+            let home = original_user_home();
             let dest_str = dest.to_string_lossy();
 
             let mut cmd = Command::new("sudo");
@@ -1510,8 +1181,8 @@ impl AurClient {
 
         let spinner = create_spinner("Pulling latest changes...");
 
-        if let Some(user) = get_original_user() {
-            let home = get_original_user_home();
+        if let Some(user) = original_user() {
+            let home = original_user_home();
             let pkg_dir_str = pkg_dir.to_string_lossy();
 
             let mut cmd = Command::new("sudo");
@@ -1608,9 +1279,7 @@ impl AurClient {
 
             // Install dependencies BEFORE entering sandbox (requires sudo)
             // If running as root, drop to original user or nobody
-            let build_user = std::env::var("SUDO_USER")
-                .ok()
-                .or_else(|| std::env::var("DOAS_USER").ok());
+            let build_user = build_user();
 
             let mut dep_cmd = if crate::core::is_root() {
                 let user = build_user.as_deref().unwrap_or("nobody");
@@ -1717,10 +1386,13 @@ impl AurClient {
             // Security: Canonicalize all writable paths to prevent symlink-based sandbox escapes
             // An attacker could create symlink: ~/.cache/omg/aur/evil -> /etc
             // Without this check, we'd bind /etc as writable inside the sandbox
-            use super::utils::{is_symlink, validate_path_inside};
+            use super::utils::validate_path_inside;
 
-            // Validate pkg_dir isn't a symlink and is inside build_dir
-            if is_symlink(pkg_dir) {
+            // Validate pkg_dir isn't a symlink and is inside build_dir.
+            // Fails closed: an uninspectable path is rejected, not trusted.
+            if is_symlink(pkg_dir)
+                .context("Security: Cannot inspect package directory (potential sandbox escape)")?
+            {
                 anyhow::bail!(
                     "Security: Package directory is a symlink (potential sandbox escape): {}",
                     pkg_dir.display()
@@ -1902,9 +1574,7 @@ impl AurClient {
                 .unwrap_or("package")
         ));
         // Get build user (original user from sudo/doas, or fallback to nobody)
-        let build_user = std::env::var("SUDO_USER")
-            .ok()
-            .or_else(|| std::env::var("DOAS_USER").ok());
+        let build_user = build_user();
 
         // If running as root, drop privileges to original user or nobody
         // makepkg refuses to run as root for security reasons
@@ -2048,16 +1718,25 @@ impl AurClient {
         args
     }
 
-    fn review_pkgbuild(pkgbuild_path: &Path) -> Result<()> {
+    /// Prompt the user to review the PKGBUILD before building.
+    ///
+    /// Runs the blocking `dialoguer` prompt inside `spawn_blocking` so a
+    /// user thinking at the confirmation prompt cannot stall the async
+    /// runtime while other parallel builds are in flight.
+    async fn review_pkgbuild(pkgbuild_path: &Path) -> Result<()> {
         println!(
             "{} Review PKGBUILD before building: {}",
             "→".blue(),
             pkgbuild_path.display()
         );
-        let proceed = Confirm::new()
-            .with_prompt("Proceed with build?")
-            .default(false)
-            .interact()?;
+        let proceed = tokio::task::spawn_blocking(|| {
+            Confirm::new()
+                .with_prompt("Proceed with build?")
+                .default(false)
+                .interact()
+        })
+        .await
+        .context("PKGBUILD review prompt task failed")??;
         if !proceed {
             anyhow::bail!("Build aborted by user after PKGBUILD review.");
         }
@@ -2170,7 +1849,6 @@ impl AurClient {
         // makepkg runs de-escalated inside this directory; keep it private
         // regardless of the creating process's umask. Best-effort: a failure
         // here only widens permissions, and makepkg still runs unprivileged.
-        #[cfg(unix)]
         {
             use std::os::unix::fs::PermissionsExt;
             if let Err(error) =
@@ -2184,9 +1862,7 @@ impl AurClient {
         }
 
         if crate::core::is_root()
-            && let Some(build_user) = std::env::var("SUDO_USER")
-                .ok()
-                .or_else(|| std::env::var("DOAS_USER").ok())
+            && let Some(build_user) = build_user()
         {
             let status = std::process::Command::new("chown")
                 .arg("-R")
@@ -2328,7 +2004,7 @@ impl AurClient {
         }
 
         let cache_key = cache_key.to_string();
-        if let Some(user) = get_original_user() {
+        if let Some(user) = original_user() {
             let mut child = Command::new("sudo")
                 .args(["-u", &user, "tee"])
                 .arg(&cache_path)
@@ -2369,7 +2045,7 @@ impl AurClient {
     /// expired during a long build.
     async fn install_built_package(
         pkg_path: &Path,
-        #[cfg(unix)] sudoloop: Option<&crate::core::sudoloop::SudoLoop>,
+        sudoloop: Option<&crate::core::sudoloop::SudoLoop>,
     ) -> Result<()> {
         // Serialize database mutations across all concurrent builds.
         let _install_guard = INSTALL_LOCK.lock().await;
@@ -2387,7 +2063,6 @@ impl AurClient {
             )?;
         } else {
             // Refresh sudo credentials right before install to prevent timeout
-            #[cfg(unix)]
             if let Some(sl) = sudoloop {
                 sl.refresh_now().await;
             }
@@ -2405,7 +2080,6 @@ impl AurClient {
                         MAX_INSTALL_RETRIES + 1
                     );
                     // Refresh credentials before retry
-                    #[cfg(unix)]
                     if let Some(sl) = sudoloop {
                         sl.refresh_now().await;
                     }
@@ -2440,34 +2114,9 @@ impl AurClient {
         Ok(())
     }
 
-    pub fn clean(&self, package: &str) -> Result<()> {
-        // SECURITY: Validate package directory is safe (prevents symlink attacks)
-        let pkg_dir = validate_build_dir(&self.build_dir, package)?;
-        if pkg_dir.exists() {
-            if let Some(user) = get_original_user() {
-                // Use OsStr directly to handle non-UTF8 paths correctly
-                let status = std::process::Command::new("sudo")
-                    .arg("-u")
-                    .arg(&user)
-                    .arg("rm")
-                    .arg("-rf")
-                    .arg("--")
-                    .arg(pkg_dir.as_os_str())
-                    .status()?;
-                if !status.success() {
-                    anyhow::bail!("Failed to clean directory as user '{user}'");
-                }
-            } else {
-                std::fs::remove_dir_all(&pkg_dir)?;
-            }
-            println!("{} Cleaned build directory for {}", "✓".green(), package);
-        }
-        Ok(())
-    }
-
     pub fn clean_all(&self) -> Result<()> {
         if self.build_dir.exists() {
-            if let Some(user) = get_original_user() {
+            if let Some(user) = original_user() {
                 let build_dir_str = self.build_dir.to_string_lossy();
                 let status = std::process::Command::new("sudo")
                     .args(["-u", &user, "rm", "-rf", "--", build_dir_str.as_ref()])
@@ -2630,9 +2279,15 @@ mod tests {
     use super::*;
     use std::path::PathBuf;
 
+    /// Verify that bubblewrap's read-only root bind blocks writes outside
+    /// the writable mounts our sandbox configures.
+    ///
+    /// This tests bwrap itself with representative args, NOT the production
+    /// argument list built by `run_sandboxed_makepkg` (which cannot be run
+    /// hermetically in a unit test). The production args are covered by the
+    /// path-validation unit tests (`validate_path_inside`, `is_symlink`).
     #[tokio::test]
-    async fn test_sandbox_security_isolation() {
-        // Verify that the sandbox arguments strictly isolate the build environment
+    async fn bwrap_readonly_root_blocks_arbitrary_writes() {
         let _client = AurClient::new().expect("test settings must load");
         let _pkg_dir = PathBuf::from("/tmp/pkg");
 
@@ -2644,9 +2299,8 @@ mod tests {
             extra_env: Vec::new(),
         };
 
-        // We can't call run_sandboxed_makepkg directly easily without mocking everything,
-        // but we can inspect the argument construction logic if we extract it.
-        // For now, let's verify if bwrap is available and test it if so.
+        // We can't call run_sandboxed_makepkg directly without a full build
+        // environment, so exercise bwrap's ro-bind guarantee directly.
 
         let bwrap_path = which::which("bwrap");
         if bwrap_path.is_err() {
@@ -2732,7 +2386,6 @@ mod tests {
             .expect("missing .SRCINFO is allowed");
     }
 
-    #[cfg(unix)]
     #[test]
     fn cache_key_fails_when_srcinfo_is_unreadable() {
         use std::os::unix::fs::PermissionsExt;
@@ -2989,7 +2642,6 @@ mod tests {
         );
     }
 
-    #[cfg(unix)]
     #[test]
     fn aur_builds_reject_root_and_accept_an_unprivileged_user() {
         require_unprivileged_builder("example", false).expect("regular user");

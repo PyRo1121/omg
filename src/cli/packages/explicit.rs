@@ -1,12 +1,11 @@
 //! Explicit package listing functionality
 
-use anyhow::{Context, Result};
-use serde::Serialize;
-
 #[cfg(unix)]
 use crate::core::client::DaemonClient;
 #[cfg(unix)]
 use crate::daemon::protocol::{Request, ResponseResult};
+use anyhow::{Context, Result};
+use serde::Serialize;
 
 #[derive(Serialize)]
 struct ExplicitJson {
@@ -16,6 +15,19 @@ struct ExplicitJson {
 
 pub fn explicit_sync(count: bool) -> Result<()> {
     explicit_sync_with_json(count, false)
+}
+
+/// Print a package count as JSON or plain text.
+fn print_count(count: usize, json: bool) -> Result<()> {
+    if json {
+        let value = serde_json::json!({ "count": count });
+        let json_str = serde_json::to_string_pretty(&value)
+            .context("Failed to serialize explicit package count as JSON")?;
+        println!("{json_str}");
+    } else {
+        println!("{count}");
+    }
+    Ok(())
 }
 
 #[allow(
@@ -31,23 +43,57 @@ pub fn explicit_sync_with_json(count: bool, json: bool) -> Result<()> {
             Request::Explicit { id: 0 }
         };
 
-        if let Ok(res) = client.call_sync(&request) {
-            match res {
+        match client.call_sync(&request) {
+            Ok(res) => match res {
                 ResponseResult::ExplicitCount(c) => {
-                    if json {
-                        println!(r#"{{"count": {c}}}"#);
-                    } else {
-                        println!("{c}");
-                    }
+                    print_count(c, json)?;
                     return Ok(());
                 }
                 ResponseResult::Explicit(res) => {
                     display_explicit_list(res.packages, json)?;
                     return Ok(());
                 }
-                _ => {}
+                // The daemon answered but not for this request; fall through
+                // to the direct backends instead of failing. Enumerated rather
+                // than `_` so a newly added response variant forces this
+                // decision point to be revisited.
+                ResponseResult::Search(_)
+                | ResponseResult::Info(_)
+                | ResponseResult::Status(_)
+                | ResponseResult::SecurityAudit(_)
+                | ResponseResult::Ping(_)
+                | ResponseResult::CacheStats { .. }
+                | ResponseResult::Metrics(_)
+                | ResponseResult::Suggest(_)
+                | ResponseResult::Message(_)
+                | ResponseResult::Batch(_)
+                | ResponseResult::DebianSearch(_)
+                | ResponseResult::Health(_)
+                | ResponseResult::ListUpdates(_) => {}
+            },
+            Err(error) => {
+                tracing::debug!("Daemon explicit-list call failed: {error}");
             }
         }
+    } else {
+        tracing::debug!("Daemon unavailable for explicit listing; using direct backend");
+    }
+
+    #[cfg(any(feature = "debian", feature = "debian-pure"))]
+    if crate::core::paths::test_mode() {
+        // Test mode must observe the isolated mock state, never the host
+        // dpkg database.
+        let packages = crate::package_managers::mock::MockPackageManager::new(
+            &std::env::var("OMG_TEST_DISTRO").unwrap_or_else(|_| "debian".to_string()),
+        )
+        .list_explicit_sync()
+        .context("Failed to list explicitly installed packages")?;
+        if count {
+            print_count(packages.len(), json)?;
+        } else {
+            display_explicit_list(packages, json)?;
+        }
+        return Ok(());
     }
 
     #[cfg(any(feature = "debian", feature = "debian-pure"))]
@@ -55,11 +101,7 @@ pub fn explicit_sync_with_json(count: bool, json: bool) -> Result<()> {
         let packages = crate::package_managers::debian_db::list_explicit_fast()
             .context("Failed to list explicitly installed packages")?;
         if count {
-            if json {
-                println!(r#"{{"count": {}}}"#, packages.len());
-            } else {
-                println!("{}", packages.len());
-            }
+            print_count(packages.len(), json)?;
         } else {
             display_explicit_list(packages, json)?;
         }
@@ -68,22 +110,14 @@ pub fn explicit_sync_with_json(count: bool, json: bool) -> Result<()> {
 
     if count {
         if let Some(c) = crate::core::fast_status::FastStatus::read_explicit_count() {
-            if json {
-                println!(r#"{{"count": {c}}}"#);
-            } else {
-                println!("{c}");
-            }
+            print_count(c, json)?;
             return Ok(());
         }
 
         #[cfg(feature = "arch")]
         {
             let count = crate::package_managers::pacman_db::get_explicit_count()?;
-            if json {
-                println!(r#"{{"count": {count}}}"#);
-            } else {
-                println!("{count}");
-            }
+            print_count(count, json)?;
             return Ok(());
         }
 
@@ -94,11 +128,7 @@ pub fn explicit_sync_with_json(count: bool, json: bool) -> Result<()> {
         {
             let packages = crate::package_managers::list_explicit_fast()
                 .context("Failed to list explicitly installed packages")?;
-            if json {
-                println!(r#"{{"count": {}}}"#, packages.len());
-            } else {
-                println!("{}", packages.len());
-            }
+            print_count(packages.len(), json)?;
             return Ok(());
         }
 
@@ -163,7 +193,8 @@ fn display_explicit_list(mut packages: Vec<String>, json: bool) -> Result<()> {
     use std::io::Write;
     let mut stdout = std::io::BufWriter::new(std::io::stdout());
 
-    // Modern header
+    // Modern header (written directly; the buffered writer only carries the
+    // package lines below and is flushed before the function returns).
     crate::cli::modern_ui::print_phase_header(
         "📦",
         "Explicit Packages",
@@ -173,9 +204,9 @@ fn display_explicit_list(mut packages: Vec<String>, json: bool) -> Result<()> {
 
     for pkg in &packages {
         if crate::cli::style::colors_enabled() {
-            println!("  {} {}", "·".cyan(), pkg.bold());
+            writeln!(stdout, "  {} {}", "·".cyan(), pkg.bold())?;
         } else {
-            println!("  · {pkg}");
+            writeln!(stdout, "  · {pkg}")?;
         }
     }
 
@@ -184,7 +215,9 @@ fn display_explicit_list(mut packages: Vec<String>, json: bool) -> Result<()> {
     Ok(())
 }
 
-/// List explicitly installed packages (Async fallback)
+/// List explicitly installed packages (async wrapper preserving the
+/// asynchronous command interface)
+#[allow(clippy::unused_async, reason = "preserves the async command interface")]
 pub async fn explicit(count: bool) -> Result<()> {
     explicit_sync(count)
 }

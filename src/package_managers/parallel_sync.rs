@@ -3,57 +3,45 @@
 //! Downloads all repository databases in parallel using async I/O,
 //! with progress bars and smart mirror selection.
 
-use alpm_types::Version;
-use std::fs;
-use std::io::Write;
 use std::path::{Path, PathBuf};
-use std::time::{Duration, SystemTime, UNIX_EPOCH};
+use std::time::Duration;
 
 use anyhow::{Context, Result};
 use indicatif::{MultiProgress, ProgressBar, ProgressStyle};
 use owo_colors::OwoColorize;
 use reqwest::Client;
-use reqwest::header::RANGE;
-use serde::{Deserialize, Serialize};
 use tokio::fs::File;
 use tokio::io::AsyncWriteExt;
 
 use crate::config::Settings;
-use crate::core::{
-    http::{download_client, shared_client},
-    paths,
-};
+use crate::core::{http::download_client, paths};
 use crate::package_managers::aur_metadata::sync_aur_metadata;
-
-const MIRROR_CACHE_TTL_SECS: u64 = 6 * 60 * 60;
 
 fn get_configured_repos() -> Result<Vec<String>> {
     crate::core::pacman_conf::get_configured_repos()
         .context("Failed to load repositories from pacman.conf")
 }
 
-#[derive(Debug, Serialize, Deserialize)]
-struct MirrorCache {
-    cached_at: u64,
-    mirrors: Vec<String>,
+/// Extract the URL from a `Server = <url>` mirrorlist line.
+fn parse_server_line(line: &str) -> Option<&str> {
+    let rest = line.strip_prefix("Server")?;
+    let rest = rest.trim_start();
+    rest.strip_prefix('=').map(str::trim)
 }
 
 /// Parse all mirrors from mirrorlist
 fn get_mirrors() -> Result<Vec<String>> {
     let mirrorlist_path = paths::pacman_mirrorlist_path();
-    let mirrorlist = fs::read_to_string(&mirrorlist_path)
+    let mirrorlist = std::fs::read_to_string(&mirrorlist_path)
         .with_context(|| format!("Failed to read {}", mirrorlist_path.display()))?;
 
     let mut mirrors = Vec::with_capacity(16);
-    for line in mirrorlist.lines() {
-        let line = line.trim();
+    for line in mirrorlist.lines().map(str::trim) {
         // Skip comments and empty lines
         if line.starts_with('#') || line.is_empty() {
             continue;
         }
-        // Parse "Server = https://..."
-        if let Some(url) = line.strip_prefix("Server") {
-            let url = url.trim().trim_start_matches('=').trim();
+        if let Some(url) = parse_server_line(line) {
             mirrors.push(url.to_string());
         }
     }
@@ -65,73 +53,9 @@ fn get_mirrors() -> Result<Vec<String>> {
     Ok(mirrors)
 }
 
-fn mirror_cache_path() -> PathBuf {
-    paths::cache_dir().join("mirrors.json")
-}
-
-fn load_cached_mirrors() -> Option<Vec<String>> {
-    let path = mirror_cache_path();
-    let content = std::fs::read_to_string(&path).ok()?;
-    let cache: MirrorCache = serde_json::from_str(&content).ok()?;
-
-    let now = SystemTime::now().duration_since(UNIX_EPOCH).ok()?.as_secs();
-    if now.saturating_sub(cache.cached_at) > MIRROR_CACHE_TTL_SECS {
-        return None;
-    }
-
-    if cache.mirrors.is_empty() {
-        None
-    } else {
-        Some(cache.mirrors)
-    }
-}
-
-fn save_cached_mirrors(mirrors: &[String]) {
-    if mirrors.is_empty() {
-        return;
-    }
-
-    let path = mirror_cache_path();
-    let cache = MirrorCache {
-        cached_at: SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .unwrap_or_default()
-            .as_secs(),
-        mirrors: mirrors.to_vec(),
-    };
-
-    if let Ok(content) = serde_json::to_string(&cache)
-        && let Err(error) = persist_file_atomically(&path, content.as_bytes())
-    {
-        tracing::debug!("Failed to persist mirror cache: {error}");
-    }
-}
-
-fn persist_file_atomically(dest: &Path, data: &[u8]) -> Result<()> {
-    let parent = dest.parent().unwrap_or_else(|| Path::new("."));
-    fs::create_dir_all(parent).with_context(|| {
-        format!(
-            "Failed to create download cache directory: {}",
-            parent.display()
-        )
-    })?;
-    let mut file = tempfile::NamedTempFile::new_in(parent).with_context(|| {
-        format!(
-            "Failed to create temporary download cache in {}",
-            parent.display()
-        )
-    })?;
-    file.write_all(data)?;
-    file.as_file_mut().sync_all()?;
-    file.persist(dest)
-        .map_err(|error| error.error)
-        .with_context(|| format!("Failed to persist download cache at {}", dest.display()))?;
-    Ok(())
-}
-
 fn begin_same_dir_temp(dest: &Path) -> Result<(std::fs::File, tempfile::TempPath)> {
     let parent = dest.parent().unwrap_or_else(|| Path::new("."));
-    fs::create_dir_all(parent)
+    std::fs::create_dir_all(parent)
         .with_context(|| format!("Failed to create download directory: {}", parent.display()))?;
     tempfile::Builder::new()
         .prefix(".download-")
@@ -369,7 +293,9 @@ pub async fn sync_databases_parallel() -> Result<()> {
     // Sync directory (we should already be root at this point)
     let sync_dir = paths::pacman_sync_dir();
     if !sync_dir.exists() {
-        fs::create_dir_all(&sync_dir)?;
+        tokio::fs::create_dir_all(&sync_dir)
+            .await
+            .with_context(|| format!("Failed to create {}", sync_dir.display()))?;
     }
 
     // Set up progress bars
@@ -424,9 +350,15 @@ pub async fn sync_databases_parallel() -> Result<()> {
 
     // Custom repos from pacman.conf (have their own Server= lines)
     if let Ok(custom_repos) = get_custom_repos() {
-        for (repo_name, repo_url) in custom_repos {
-            let urls = vec![format!("{}/{}.db", repo_url, repo_name)];
+        for (repo_name, mut urls) in custom_repos {
             let dest = sync_dir.join(format!("{repo_name}.db"));
+            for url in &mut urls {
+                if !url.ends_with('/') {
+                    url.push('/');
+                }
+                url.push_str(&repo_name);
+                url.push_str(".db");
+            }
             repos_to_sync.push((repo_name, urls, dest));
         }
     }
@@ -489,47 +421,49 @@ pub async fn sync_databases_parallel() -> Result<()> {
     }
 }
 
-/// Parse custom repositories from pacman.conf
-fn get_custom_repos() -> Result<Vec<(String, String)>> {
-    let pacman_conf = fs::read_to_string("/etc/pacman.conf")?;
+/// Repositories that are synced from the mirrorlist instead of their own
+/// `Server` entries. Keep in sync with `pacman_db::collect_sync_db_paths`.
+const MIRRORLIST_REPOS: [&str; 6] = [
+    "core",
+    "extra",
+    "multilib",
+    "core-testing",
+    "extra-testing",
+    "multilib-testing",
+];
+
+/// Resolve custom (non-mirrorlist) repositories from pacman.conf.
+///
+/// Uses the shared [`crate::core::pacman_conf::PacmanConfig`] parser and the
+/// configured pacman.conf path so custom repos honor path overrides and test
+/// mode, and `$repo`/`$arch` placeholders follow the running architecture.
+fn get_custom_repos() -> Result<Vec<(String, Vec<String>)>> {
+    let conf_path = paths::pacman_conf_path();
+    let config = crate::core::pacman_conf::PacmanConfig::parse(&conf_path)
+        .with_context(|| format!("Failed to parse {}", conf_path.display()))?;
+
     let mut repos = Vec::with_capacity(4);
-    let mut current_repo: Option<String> = None;
-
-    for line in pacman_conf.lines() {
-        let line = line.trim();
-
-        // Skip comments
-        if line.starts_with('#') || line.is_empty() {
+    let arch = std::env::consts::ARCH;
+    for repo in &config.repos {
+        if MIRRORLIST_REPOS.contains(&repo.name.as_str()) {
             continue;
         }
-
-        // Check for repo section
-        if line.starts_with('[') && line.ends_with(']') {
-            let name = &line[1..line.len() - 1];
-            // Skip standard repos (use mirrorlist) and options section
-            if [
-                "options",
-                "core",
-                "extra",
-                "multilib",
-                "core-testing",
-                "extra-testing",
-                "multilib-testing",
-            ]
-            .contains(&name)
-            {
-                current_repo = None;
-            } else {
-                current_repo = Some(name.to_string());
+        match config.resolve_servers(repo, arch) {
+            Ok(servers) if !servers.is_empty() => {
+                repos.push((repo.name.clone(), servers));
             }
-        } else if let Some(ref repo) = current_repo {
-            // Look for Server = line
-            if let Some(url) = line.strip_prefix("Server") {
-                let url = url.trim().trim_start_matches('=').trim();
-                // Substitute $repo and $arch placeholders (consistent with build_db_url)
-                let url = url.replace("$repo", repo).replace("$arch", "x86_64");
-                repos.push((repo.clone(), url));
-                current_repo = None;
+            Ok(_) => {
+                tracing::debug!(
+                    "Custom repo '{}' has no resolvable servers; skipping",
+                    repo.name
+                );
+            }
+            Err(error) => {
+                // One broken custom repo must not abort syncing the others.
+                tracing::warn!(
+                    "Failed to resolve servers for repo '{}': {error}",
+                    repo.name
+                );
             }
         }
     }
@@ -537,294 +471,58 @@ fn get_custom_repos() -> Result<Vec<(String, String)>> {
     Ok(repos)
 }
 
-/// Information about a package to download
-#[derive(Clone)]
-pub struct DownloadJob {
-    pub name: String,
-    pub version: Version,
-    pub repo: String,
-    pub filename: String,
-    pub size: u64,
-}
-
-impl DownloadJob {
-    #[must_use]
-    pub fn new(name: &str, version: &Version, repo: &str, filename: &str, size: u64) -> Self {
-        Self {
-            name: name.to_string(),
-            version: version.clone(),
-            repo: repo.to_string(),
-            filename: filename.to_string(),
-            size,
-        }
-    }
-}
-
-/// Build package URL from mirror template
-fn build_pkg_url(mirror_template: &str, repo: &str, filename: &str) -> String {
-    let base = mirror_template
-        .replace("$repo", repo)
-        .replace("$arch", "x86_64");
-    format!("{base}/{filename}")
-}
-
-/// Benchmark a mirror's latency by downloading a small file
-async fn benchmark_mirror(client: &Client, mirror: &str) -> Option<(String, Duration)> {
-    let test_url = build_db_url(mirror, "core");
-    let start = std::time::Instant::now();
-
-    // Use HEAD request for faster benchmarking
-    match client.head(&test_url).send().await {
-        Ok(resp) if resp.status().is_success() => Some((mirror.to_string(), start.elapsed())),
-        _ => {
-            let start = std::time::Instant::now();
-            match client
-                .get(&test_url)
-                .header(RANGE, "bytes=0-0")
-                .send()
-                .await
-            {
-                Ok(resp) if resp.status().is_success() => {
-                    Some((mirror.to_string(), start.elapsed()))
-                }
-                _ => None,
-            }
-        }
-    }
-}
-
-/// Select the fastest N mirrors by benchmarking latency
-pub async fn select_fastest_mirrors(count: usize) -> Result<Vec<String>> {
-    if let Some(cached) = load_cached_mirrors() {
-        return Ok(cached.into_iter().take(count).collect());
-    }
-
-    let all_mirrors = get_mirrors()?;
-    let client = shared_client().clone();
-
-    // Benchmark all mirrors in parallel using JoinSet
-    let mut tasks = tokio::task::JoinSet::new();
-    for mirror in all_mirrors.iter().take(20) {
-        let client = client.clone();
-        let mirror = mirror.clone();
-        tasks.spawn(async move { benchmark_mirror(&client, &mirror).await });
-    }
-
-    let mut results: Vec<(String, Duration)> = Vec::with_capacity(20);
-    while let Some(outcome) = tasks.join_next().await {
-        if let Ok(Some(result)) = outcome {
-            results.push(result);
-        }
-    }
-
-    // Sort by latency (fastest first)
-    results.sort_by_key(|(_, latency)| *latency);
-
-    // Return the fastest N mirrors
-    let mirrors: Vec<String> = results.into_iter().map(|(m, _)| m).collect();
-    save_cached_mirrors(&mirrors);
-    Ok(mirrors.into_iter().take(count).collect())
-}
-
-/// Download a single package file with progress, failover, and retry logic
-async fn download_package(
-    client: &Client,
-    job: DownloadJob,
-    mirrors: &[String],
-    cache_dir: &Path,
-    pb: &ProgressBar,
-) -> Result<PathBuf> {
-    pb.set_message(job.name.clone());
-
-    let dest = cache_dir.join(&job.filename);
-
-    // Skip if already cached
-    if dest.exists()
-        && let Ok(meta) = std::fs::metadata(&dest)
-        && (meta.len() == job.size || job.size == 0)
-    {
-        pb.set_message(format!("{} (cached)", job.name));
-        return Ok(dest);
-    }
-
-    let mut last_error = None;
-
-    for (mirror_idx, mirror) in mirrors.iter().enumerate() {
-        let url = build_pkg_url(mirror, &job.repo, &job.filename);
-
-        if mirror_idx > 0 {
-            pb.set_message(format!("{} (mirror {})", job.name, mirror_idx + 1));
-        }
-
-        for retry in 0..MAX_RETRIES {
-            if retry > 0 {
-                let backoff = Duration::from_millis(INITIAL_BACKOFF_MS * 2u64.pow(retry - 1));
-                pb.set_message(format!("{} (retry {})", job.name, retry));
-                tokio::time::sleep(backoff).await;
-            }
-
-            let response = match client.get(&url).send().await {
-                Ok(resp) => resp,
-                Err(e) => {
-                    last_error = Some(anyhow::anyhow!("Connection failed: {e}"));
-                    if e.is_timeout() || e.is_connect() {
-                        continue;
-                    }
-                    break;
-                }
-            };
-
-            if response.status().is_server_error() {
-                last_error = Some(anyhow::anyhow!("HTTP {}", response.status()));
-                continue;
-            }
-
-            if !response.status().is_success() {
-                last_error = Some(anyhow::anyhow!("HTTP {}", response.status()));
-                break;
-            }
-
-            let (std_file, temporary_path) = match begin_same_dir_temp(&dest) {
-                Ok(parts) => parts,
-                Err(error) => {
-                    last_error = Some(error);
-                    break;
-                }
-            };
-            let mut file = File::from_std(std_file);
-
-            let mut response = response;
-            let mut download_failed = false;
-            while let Some(chunk_result) = response.chunk().await.transpose() {
-                match chunk_result {
-                    Ok(chunk) => {
-                        if let Err(e) = file.write_all(&chunk).await {
-                            last_error = Some(anyhow::anyhow!("Write error: {e}"));
-                            download_failed = true;
-                            break;
-                        }
-                    }
-                    Err(e) => {
-                        last_error = Some(anyhow::anyhow!("Download interrupted: {e}"));
-                        download_failed = true;
-                        break;
-                    }
-                }
-            }
-
-            if download_failed {
-                continue;
-            }
-
-            if let Err(e) = persist_same_dir_temp(file, temporary_path, &dest).await {
-                last_error = Some(e);
-                continue;
-            }
-
-            return Ok(dest);
-        }
-    }
-    Err(last_error.unwrap_or_else(|| anyhow::anyhow!("No mirrors available")))
-}
-
-/// Download multiple packages in parallel
-#[expect(clippy::expect_used)] // Static indicatif template is always valid
-pub async fn download_packages_parallel(
-    jobs: Vec<DownloadJob>,
-    concurrency: usize,
-) -> Result<Vec<PathBuf>> {
-    use futures::stream::{self, StreamExt};
-
-    if jobs.is_empty() {
-        return Ok(Vec::new());
-    }
-
-    // Set up cache directory
-    let cache_dir = paths::cache_dir().join("packages");
-    std::fs::create_dir_all(&cache_dir)?;
-
-    // Get fastest mirrors
-    let mirrors = select_fastest_mirrors(5)
-        .await
-        .unwrap_or_else(|_| get_mirrors().unwrap_or_default());
-
-    if mirrors.is_empty() {
-        anyhow::bail!("No mirrors available");
-    }
-
-    // Wrap mirrors in Arc to avoid cloning Vec<String> for each job
-    // Arc clone is O(1) vs Vec clone which is O(n)
-    let mirrors = std::sync::Arc::new(mirrors);
-    let client = download_client().clone();
-
-    let total_count = jobs.len();
-
-    let main_pb = ProgressBar::new(total_count as u64);
-    main_pb.set_style(
-        ProgressStyle::default_spinner()
-            .template("\n  {spinner:.green} Downloading {pos}/{len} packages {msg}")
-            .expect("valid template")
-            .tick_chars("⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏"),
-    );
-
-    // Download in parallel with limited concurrency
-    let results: Vec<Result<PathBuf>> = stream::iter(jobs.into_iter().enumerate())
-        .map(|(_i, job)| {
-            let client = client.clone();
-            let mirrors = std::sync::Arc::clone(&mirrors);
-            let cache_dir = cache_dir.clone();
-            let main_pb = main_pb.clone();
-
-            async move {
-                let result = download_package(&client, job, &mirrors, &cache_dir, &main_pb).await;
-                main_pb.inc(1);
-                result
-            }
-        })
-        .buffer_unordered(concurrency)
-        .collect()
-        .await;
-
-    main_pb.finish_and_clear();
-
-    // Collect results
-    let results_len = results.len();
-    let mut paths = Vec::with_capacity(results_len);
-    let mut errors = Vec::with_capacity(results_len / 10 + 1);
-
-    for result in results {
-        match result {
-            Ok(path) => paths.push(path),
-            Err(e) => errors.push(e),
-        }
-    }
-
-    if !errors.is_empty() {
-        tracing::warn!("{} download(s) failed", errors.len());
-        for e in errors.iter().take(5) {
-            tracing::error!("Download error: {}", e);
-        }
-    }
-
-    Ok(paths)
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
 
     #[test]
-    fn test_parse_mirrors() {
-        // This will fail in CI but works on real systems
-        if let Ok(mirrors) = get_mirrors() {
-            assert!(!mirrors.is_empty());
-            assert!(mirrors[0].contains("http"));
-        }
+    fn server_line_parser_requires_literal_server_key() {
+        assert_eq!(
+            parse_server_line("Server = https://m.example.com/$repo/os/$arch"),
+            Some("https://m.example.com/$repo/os/$arch")
+        );
+        assert_eq!(
+            parse_server_line("Server=https://m.example.com"),
+            Some("https://m.example.com")
+        );
+        // Regression: a key merely *containing* "Server" must be rejected.
+        assert_eq!(parse_server_line("Serverless = https://nope"), None);
+        assert_eq!(parse_server_line("# Server = https://commented"), None);
     }
 
     #[test]
-    fn test_build_db_url() {
+    fn db_urls_substitute_repo_and_runtime_arch() {
+        let arch = std::env::consts::ARCH;
         let url = build_db_url("https://mirror.example.com/$repo/os/$arch", "core");
-        assert_eq!(url, "https://mirror.example.com/core/os/x86_64/core.db");
+        assert_eq!(
+            url,
+            format!("https://mirror.example.com/core/os/{arch}/core.db")
+        );
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn custom_repos_honor_configured_path_and_runtime_arch() {
+        let dir = tempfile::tempdir().expect("temp dir");
+        let conf = dir.path().join("pacman.conf");
+        std::fs::write(
+            &conf,
+            "[options]\n\n[extra]\nInclude = /etc/pacman.d/mirrorlist\n\n\
+             [chaotic-aur]\nServer = https://mirror.example.com/$repo/$arch\n",
+        )
+        .expect("write conf");
+
+        temp_env::with_var("OMG_PACMAN_CONF", Some(conf.as_os_str()), || {
+            let repos = get_custom_repos().expect("custom repos should resolve");
+            assert_eq!(repos.len(), 1, "mirrorlist-backed 'extra' must be excluded");
+            assert_eq!(repos[0].0, "chaotic-aur");
+            assert_eq!(
+                repos[0].1,
+                vec![format!(
+                    "https://mirror.example.com/chaotic-aur/{}",
+                    std::env::consts::ARCH
+                )]
+            );
+        });
     }
 }

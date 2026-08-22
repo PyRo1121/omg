@@ -119,6 +119,31 @@ pub fn cache() -> Result<()> {
     Ok(())
 }
 
+/// Write a generated config file, previewing instead of overwriting.
+fn write_config_file(path: &str, config: &str) -> Result<()> {
+    if let Some(parent) = std::path::Path::new(path).parent() {
+        fs::create_dir_all(parent)?;
+    }
+
+    if std::path::Path::new(path).exists() {
+        println!(
+            "  {} {} already exists - not overwriting",
+            style::maybe_color("⚠", |t| t.yellow().to_string()),
+            path
+        );
+        println!("  Here's what we'd generate:\n");
+        println!("{}", style::dim(config));
+    } else {
+        fs::write(path, config)?;
+        println!(
+            "  {} Created {}",
+            style::maybe_color("✓", |t| t.green().to_string()),
+            style::maybe_color(path, |t| t.cyan().to_string())
+        );
+    }
+    Ok(())
+}
+
 fn generate_github_actions(advanced: bool) -> Result<()> {
     let config = if advanced {
         r#"name: CI (Advanced)
@@ -273,27 +298,7 @@ jobs:
 "
     };
 
-    let path = ".github/workflows/ci.yml";
-    if let Some(parent) = std::path::Path::new(path).parent() {
-        fs::create_dir_all(parent)?;
-    }
-
-    if std::path::Path::new(path).exists() {
-        println!(
-            "  {} {} already exists - not overwriting",
-            style::maybe_color("⚠", |t| t.yellow().to_string()),
-            path
-        );
-        println!("  Here's what we'd generate:\n");
-        println!("{}", style::dim(config));
-    } else {
-        fs::write(path, config)?;
-        println!(
-            "  {} Created {}",
-            style::maybe_color("✓", |t| t.green().to_string()),
-            style::maybe_color(path, |t| t.cyan().to_string())
-        );
-    }
+    write_config_file(".github/workflows/ci.yml", config)?;
 
     println!();
     println!(
@@ -403,26 +408,7 @@ test:
 "#
     };
 
-    let path = ".gitlab-ci.yml";
-
-    if std::path::Path::new(path).exists() {
-        println!(
-            "  {} {} already exists - not overwriting",
-            style::maybe_color("⚠", |t| t.yellow().to_string()),
-            path
-        );
-        println!("  Here's what we'd generate:\n");
-        println!("{}", style::dim(config));
-    } else {
-        fs::write(path, config)?;
-        println!(
-            "  {} Created {}",
-            style::maybe_color("✓", |t| t.green().to_string()),
-            style::maybe_color(path, |t| t.cyan().to_string())
-        );
-    }
-
-    Ok(())
+    write_config_file(".gitlab-ci.yml", config)
 }
 
 fn generate_circleci(advanced: bool) -> Result<()> {
@@ -545,27 +531,5 @@ workflows:
 "#
     };
 
-    let path = ".circleci/config.yml";
-    if let Some(parent) = std::path::Path::new(path).parent() {
-        fs::create_dir_all(parent)?;
-    }
-
-    if std::path::Path::new(path).exists() {
-        println!(
-            "  {} {} already exists - not overwriting",
-            style::maybe_color("⚠", |t| t.yellow().to_string()),
-            path
-        );
-        println!("  Here's what we'd generate:\n");
-        println!("{}", style::dim(config));
-    } else {
-        fs::write(path, config)?;
-        println!(
-            "  {} Created {}",
-            style::maybe_color("✓", |t| t.green().to_string()),
-            style::maybe_color(path, |t| t.cyan().to_string())
-        );
-    }
-
-    Ok(())
+    write_config_file(".circleci/config.yml", config)
 }

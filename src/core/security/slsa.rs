@@ -1,7 +1,7 @@
 //! SLSA (Supply-chain Levels for Software Artifacts) provenance verification
 //!
-//! Verifies build provenance and determines SLSA levels (L0-L4) per SLSA v1.0
-//! specification for supply chain security attestation.
+//! Verifies build provenance evidence and classifies SLSA levels (L0-L3) per
+//! SLSA v1.0 specification for supply chain security attestation.
 
 use std::collections::HashMap;
 use std::io;
@@ -194,14 +194,21 @@ pub struct SlsaMaterial {
     pub digest: std::collections::HashMap<String, String>,
 }
 
-/// Verification result with detailed information
+/// Verification result with detailed information.
 #[derive(Debug, Clone)]
 pub struct VerificationResult {
+    /// True only after full cryptographic attestation verification; the
+    /// current evidence-based pipeline always reports `false`.
     pub verified: bool,
+    /// Classified SLSA build level for the artifact.
     pub slsa_level: SlsaLevel,
+    /// Rekor entry UUID when a transparency-log hit was found.
     pub transparency_log_entry: Option<String>,
+    /// Builder identity claimed by matched provenance, when present.
     pub builder_id: Option<String>,
+    /// Build timestamp from provenance metadata, when present.
     pub build_timestamp: Option<String>,
+    /// Human-readable reason the artifact is not verified.
     pub error: Option<String>,
 }
 
@@ -367,10 +374,17 @@ impl SlsaVerifier {
     }
 
     /// Verify SLSA provenance for a package
-    pub async fn verify_provenance<P: AsRef<Path>>(
+    /// Gather provenance *evidence* for an artifact and classify it.
+    ///
+    /// This queries the Rekor transparency log and optionally parses a local
+    /// provenance file, but neither is cryptographic verification: the
+    /// returned [`VerificationResult`] currently always reports
+    /// `verified: false` until full in-toto/SLSA verification lands. Callers
+    /// must not treat an `Ok` result as a verified attestation.
+    pub async fn verify_provenance(
         &self,
-        blob_path: P,
-        provenance_path: Option<P>,
+        blob_path: impl AsRef<Path>,
+        provenance_path: Option<impl AsRef<Path>>,
     ) -> Result<VerificationResult, SlsaError> {
         // Calculate artifact hash
         let artifact_hash = Self::calculate_hash(&blob_path)?;
@@ -425,14 +439,17 @@ impl SlsaVerifier {
         Ok(hex::encode(hasher.finalize()))
     }
 
-    /// Verify hash of a file against expected value
+    /// Verify the SHA-256 hash of a file against an expected hex digest.
+    ///
+    /// The comparison accepts either hex case so uppercase digests from
+    /// external attestations cannot silently mismatch.
     pub fn verify_hash<P: AsRef<Path>>(
         &self,
         path: P,
         expected_hash: &str,
     ) -> Result<bool, SlsaError> {
         let actual_hash = Self::calculate_hash(path)?;
-        Ok(actual_hash == expected_hash)
+        Ok(actual_hash.eq_ignore_ascii_case(expected_hash))
     }
 }
 

@@ -1,3 +1,10 @@
+//! Package transaction history
+//!
+//! Records package install/remove/update/sync outcomes to a single JSON
+//! file under the data directory. Writes are atomic (temp file + rename)
+//! and serialized across processes through a sibling `.lock` file so
+//! concurrent omg invocations cannot drop each other's transactions.
+
 use anyhow::{Context, Result};
 use jiff::Timestamp;
 use serde::{Deserialize, Serialize};
@@ -8,6 +15,7 @@ use std::path::{Path, PathBuf};
 /// Maximum number of transactions to retain in history
 const MAX_HISTORY_TRANSACTIONS: usize = 1000;
 
+/// Kind of package operation recorded in the history.
 #[derive(Debug, Serialize, Deserialize, Clone, Copy, PartialEq, Eq)]
 pub enum TransactionType {
     Install,
@@ -27,6 +35,7 @@ impl std::fmt::Display for TransactionType {
     }
 }
 
+/// One package affected by a transaction.
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct PackageChange {
     pub name: String,
@@ -45,6 +54,7 @@ impl PackageChange {
     }
 }
 
+/// A completed transaction: what changed, when, and whether it succeeded.
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct Transaction {
     pub id: String,
@@ -54,15 +64,23 @@ pub struct Transaction {
     pub success: bool,
 }
 
+/// Loads and appends package transactions under a cross-process file lock.
+///
+/// The log file is capped at [`MAX_HISTORY_TRANSACTIONS`] entries; every
+/// write atomically replaces the file via a temporary file and rename.
 pub struct HistoryManager {
     log_path: PathBuf,
 }
 
 impl HistoryManager {
+    /// Creates a manager backed by the default history file in the data
+    /// directory.
     pub fn new() -> Result<Self> {
         Self::new_in(crate::core::paths::data_dir().join("history.json"))
     }
 
+    /// Creates a manager backed by an explicit history file path (tests,
+    /// alternative stores).
     pub fn new_in(log_path: impl AsRef<Path>) -> Result<Self> {
         let log_path = log_path.as_ref().to_path_buf();
         let parent = log_path
@@ -77,6 +95,8 @@ impl HistoryManager {
         Ok(Self { log_path })
     }
 
+    /// Loads every recorded transaction. A missing file is an empty
+    /// history; malformed contents are rejected rather than truncated.
     pub fn load(&self) -> Result<Vec<Transaction>> {
         if !self.log_path.exists() {
             return Ok(Vec::new());
@@ -89,6 +109,7 @@ impl HistoryManager {
             .with_context(|| format!("Malformed history file: {}", self.log_path.display()))
     }
 
+    /// Atomically replaces the whole history with `history`.
     pub fn save(&self, history: &[Transaction]) -> Result<()> {
         let parent = self
             .log_path
@@ -141,6 +162,8 @@ impl HistoryManager {
         }
     }
 
+    /// Appends one transaction, holding the cross-process lock for the
+    /// full load-modify-save cycle.
     pub fn add_transaction(
         &self,
         transaction_type: TransactionType,

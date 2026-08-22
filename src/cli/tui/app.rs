@@ -42,6 +42,10 @@ pub struct App {
     // Last update time
     pub last_update: Instant,
 
+    // Previous cumulative CPU sample (total, idle) used to compute an
+    // instantaneous usage percentage instead of a since-boot average.
+    pub prev_cpu_sample: Option<(u64, u64)>,
+
     // Usage stats
     pub usage_stats: crate::core::usage::UsageStats,
 }
@@ -74,6 +78,7 @@ impl App {
             action_error: None,
             system_metrics: SystemMetrics::default(),
             last_update: Instant::now(),
+            prev_cpu_sample: None,
             usage_stats: crate::core::usage::UsageStats::load()
                 .context("Failed to load usage statistics")?,
         };
@@ -159,7 +164,8 @@ impl App {
                                 id: m.machine_id,
                                 name: m.hostname.unwrap_or_else(|| "Unknown".to_string()),
                                 env_hash: String::new(),
-                                last_sync: parse_timestamp(&m.last_seen_at),
+                                last_sync: crate::cli::parse_timestamp_opt(&m.last_seen_at)
+                                    .unwrap_or(0),
                                 in_sync: m.is_active,
                                 drift_summary: None,
                             })
@@ -174,8 +180,9 @@ impl App {
     fn update_system_metrics(&mut self) {
         // Get actual system metrics
         self.system_metrics = {
-            // CPU usage
-            let cpu_usage = Self::get_cpu_usage();
+            // CPU usage over the sampling interval (a single /proc/stat read
+            // yields a since-boot average, not current utilization).
+            let cpu_usage = Self::cpu_usage_delta(&mut self.prev_cpu_sample);
 
             // Memory usage
             let memory_usage = Self::get_memory_usage();
@@ -197,25 +204,43 @@ impl App {
         };
     }
 
-    fn get_cpu_usage() -> f32 {
-        // Read /proc/stat for CPU usage
-        if let Ok(stat) = std::fs::read_to_string("/proc/stat")
-            && let Some(line) = stat.lines().next()
-        {
-            let parts: Vec<&str> = line.split_whitespace().collect();
-            if parts.len() > 4 && parts.first() == Some(&"cpu") {
-                let user: u64 = parts.get(1).and_then(|s| s.parse().ok()).unwrap_or(0);
-                let nice: u64 = parts.get(2).and_then(|s| s.parse().ok()).unwrap_or(0);
-                let system: u64 = parts.get(3).and_then(|s| s.parse().ok()).unwrap_or(0);
-                let idle: u64 = parts.get(4).and_then(|s| s.parse().ok()).unwrap_or(0);
+    /// Read the cumulative `cpu` line of `/proc/stat` as `(total, idle)`.
+    fn sample_cpu_totals() -> Option<(u64, u64)> {
+        let stat = std::fs::read_to_string("/proc/stat").ok()?;
+        let line = stat.lines().next()?;
+        let parts: Vec<&str> = line.split_whitespace().collect();
+        if parts.len() <= 4 || parts.first() != Some(&"cpu") {
+            return None;
+        }
+        let fields: Vec<u64> = parts[1..].iter().filter_map(|s| s.parse().ok()).collect();
+        if fields.len() < 4 {
+            return None;
+        }
+        let idle = fields[3];
+        let total: u64 = fields.iter().sum();
+        Some((total, idle))
+    }
 
-                let total = user + nice + system + idle;
-                if total > 0 {
-                    return ((total - idle) as f32 / total as f32) * 100.0;
+    /// Usage percent since the previous sample; the very first sample only
+    /// establishes the baseline and reports the previous reading.
+    fn cpu_usage_delta(previous: &mut Option<(u64, u64)>) -> f32 {
+        let Some(sample) = Self::sample_cpu_totals() else {
+            return 0.0;
+        };
+        let usage = match *previous {
+            Some((prev_total, prev_idle)) => {
+                let d_total = sample.0.saturating_sub(prev_total);
+                let d_idle = sample.1.saturating_sub(prev_idle);
+                if d_total > 0 {
+                    (d_total - d_idle) as f32 / d_total as f32 * 100.0
+                } else {
+                    0.0
                 }
             }
-        }
-        0.0
+            None => 0.0,
+        };
+        *previous = Some(sample);
+        usage
     }
 
     fn get_memory_usage() -> f32 {
@@ -462,8 +487,8 @@ impl App {
 
     pub fn handle_key(&mut self, key: KeyCode) {
         match key {
-            // Navigation
-            KeyCode::Char('q') => std::process::exit(0),
+            // Navigation. Quit is handled by the main loop (which restores the
+            // terminal); an abrupt `process::exit` here would skip cleanup.
             KeyCode::Char('r') => {
                 // Trigger refresh - force it by setting last_tick to a past time
                 self.last_tick = Instant::now()
@@ -597,14 +622,5 @@ impl App {
             .unwrap_or_default();
         #[cfg(not(unix))]
         std::collections::HashMap::new()
-    }
-}
-
-fn parse_timestamp(s: &str) -> i64 {
-    use std::str::FromStr;
-    if let Ok(ts) = jiff::Timestamp::from_str(s) {
-        ts.as_second()
-    } else {
-        0
     }
 }

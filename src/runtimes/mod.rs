@@ -2,32 +2,35 @@ use std::path::PathBuf;
 
 use crate::core::paths;
 
-pub static DATA_DIR: std::sync::LazyLock<PathBuf> = std::sync::LazyLock::new(paths::data_dir);
+static DATA_DIR: std::sync::LazyLock<PathBuf> = std::sync::LazyLock::new(paths::data_dir);
 
-pub mod bun;
-pub mod common;
-pub mod go;
-pub mod java;
-pub mod mise;
-pub mod node;
-pub mod python;
-pub mod ruby;
-pub mod rust;
+pub(crate) mod bun;
+pub(crate) mod common;
+pub(crate) mod go;
+pub(crate) mod java;
+pub(crate) mod mise;
+pub(crate) mod node;
+pub(crate) mod python;
+pub(crate) mod ruby;
+pub(crate) mod rust;
 
-pub use bun::BunManager;
-pub use go::GoManager;
-pub use java::JavaManager;
-pub use mise::MiseManager;
-pub use node::NodeManager;
-pub use python::PythonManager;
-pub use ruby::RubyManager;
-pub use rust::RustManager;
+pub(crate) use bun::BunManager;
+pub(crate) use go::GoManager;
+pub(crate) use java::JavaManager;
+pub(crate) use mise::MiseManager;
+pub(crate) use node::NodeManager;
+pub(crate) use python::PythonManager;
+pub(crate) use ruby::RubyManager;
+pub(crate) use rust::RustManager;
 
-pub const SUPPORTED_RUNTIMES: &[&str] = &["node", "python", "go", "rust", "ruby", "java", "bun"];
+/// Runtimes managed natively by OMG (mise covers everything else).
+pub(crate) const SUPPORTED_RUNTIMES: &[&str] =
+    &["node", "python", "go", "rust", "ruby", "java", "bun"];
 
 /// Fast probing for active runtime versions. The current symlink must
 /// resolve to a real version directory inside the runtime versions tree;
 /// missing or external targets are not reported as active.
-pub fn probe_version(runtime: &str) -> Option<String> {
+#[must_use]
+pub(crate) fn probe_version(runtime: &str) -> Option<String> {
     common::get_current_version(&DATA_DIR.join("versions").join(runtime))
 }

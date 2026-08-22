@@ -185,6 +185,13 @@ impl MockPackageManager {
         Ok(())
     }
 
+    /// Synchronously list explicitly installed packages from the mock state.
+    /// Used by CLI paths that cannot await (test-mode `explicit`).
+    pub fn list_explicit_sync(&self) -> Result<Vec<String>> {
+        let state = self.load_state()?;
+        Ok(state.installed.keys().cloned().collect())
+    }
+
     fn state_path(&self) -> PathBuf {
         let file_name = format!("mock_state_{}.json", self.distro_name);
         match &self.state_dir {

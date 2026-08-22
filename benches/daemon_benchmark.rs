@@ -34,7 +34,7 @@ fn bench_cache_operations(c: &mut Criterion) {
         .collect();
 
     for (i, pkg) in test_packages.iter().enumerate() {
-        cache.insert(format!("query{i}"), vec![pkg.clone()]);
+        cache.insert_arc(format!("query{i}"), Arc::new(vec![pkg.clone()]));
     }
 
     // Benchmark cache hit (Arc clone - should be ~nanoseconds)
@@ -60,16 +60,6 @@ fn bench_cache_operations(c: &mut Criterion) {
             let key = format!("new_query{counter}");
             let data = Arc::new(test_packages.clone());
             cache.insert_arc(black_box(key), data);
-            counter += 1;
-        });
-    });
-
-    // Benchmark cache insert without Arc (sub-optimal for comparison)
-    group.bench_function("cache_insert_vec", |b| {
-        let mut counter = 100_000;
-        b.iter(|| {
-            let key = format!("new_query{counter}");
-            cache.insert(black_box(key), test_packages.clone());
             counter += 1;
         });
     });

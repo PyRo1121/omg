@@ -29,7 +29,7 @@ Website, docs site, and web workers now live in:
 ## The Numbers That Matter
 
 | Metric | Value |
-|--------|-------|
+| -------- | ------- |
 | **12-24x faster** | than pacman/yay (5-11ms vs 133ms searches) |
 | **59-483x faster** | than apt-cache/Nala on Debian/Ubuntu |
 | **Zero context switching** | system packages + 8 language runtimes in one CLI |
@@ -89,6 +89,7 @@ OMG_SKIP_SHELL=1 curl -fsSL https://pyro1121.com/install.sh | bash
 # Install specific version
 OMG_VERSION=v0.1.214 curl -fsSL https://pyro1121.com/install.sh | bash
 ```
+
 </details>
 
 ### Platform-Specific Methods
@@ -231,7 +232,7 @@ OMG prioritizes your privacy with optional, transparent telemetry:
 OMG supports Linux distributions, macOS, and Windows Subsystem for Linux. Native Windows is not supported.
 
 | Platform | Architecture | Status | Package Manager Integration |
-|----------|--------------|--------|----------------------------|
+| ---------- | -------------- | -------- | ---------------------------- |
 | **Arch Linux** | x86_64 | ✅ Fully Supported | Native `libalpm` (pacman/AUR) |
 | **Debian** | x86_64 | ✅ Fully Supported | Native `rust-apt` (APT) |
 | **Ubuntu** | x86_64 | ✅ Fully Supported | Native `rust-apt` (APT) |
@@ -241,6 +242,7 @@ OMG supports Linux distributions, macOS, and Windows Subsystem for Linux. Native
 | **Native Windows** | — | ❌ Not Supported | Use WSL |
 
 **Installation** (run inside the supported OS or WSL distribution):
+
 ```bash
 curl -fsSL https://pyro1121.com/install.sh | bash
 ```
@@ -252,24 +254,31 @@ The installer automatically detects your OS and architecture, then downloads the
 ## Why OMG?
 
 ### 🏎️ Performance
+
 Direct `libalpm`/`rust-apt` integration—no subprocess overhead. Persistent daemon with in-memory index. **50% faster AUR operations** through parallel downloads, smart dependency resolution, and sudoloop authentication. Your fingers move faster than OMG responds.
 
 ### 🛠️ Unified Runtimes
+
 Node.js, Bun, Python, Go, Rust, Ruby, Java—all native. Plus 100+ more via bundled mise. Auto-detects `.nvmrc`, `.python-version`, `rust-toolchain.toml`, `.tool-versions`.
 
 ### 🛡️ Enterprise Security
+
 SLSA provenance, PGP verification, CycloneDX SBOM, secret scanning, tamper-proof audit logs. Security grading on every install. Policy enforcement via `policy.toml`.
 
 ### 👥 Team Sync
+
 `omg.lock` captures your exact environment. `omg env check` detects drift. `omg env share` syncs your team instantly via GitHub Gist.
 
 ### 🏃 Task Runner
+
 `omg run build` auto-detects `package.json`, `Cargo.toml`, `Makefile`, `pyproject.toml`, `deno.json`—runs with the correct runtime version pre-loaded.
 
 ### 🐳 Container Integration
+
 `omg container shell` for dev shells, `omg container build` for images, `omg container init` to generate Dockerfiles from detected runtimes.
 
 ### 🧠 Intelligent Completions
+
 Fuzzy matching via Nucleo. Type `omg i frfx` → `firefox`. 80k+ AUR packages cached for lag-free completion.
 
 ---
@@ -277,12 +286,14 @@ Fuzzy matching via Nucleo. Type `omg i frfx` → `firefox`. 80k+ AUR packages ca
 ## ⚠️ When NOT to Use OMG
 
 **Stick with traditional tools if:**
+
 - You're on a minimal system (<2GB RAM) - daemon overhead may be noticeable
 - You need POSIX strict compatibility - OMG uses modern Rust patterns
 - Your team is deeply invested in tool-specific workflows - migration takes time
 - You're managing 1000+ servers centrally - use Ansible/Puppet/Chef instead
 
 **OMG works best for:**
+
 - Active development machines (where search speed matters)
 - Teams wanting unified tooling (reduce context switching)
 - CI/CD pipelines (faster, reproducible builds)
@@ -299,13 +310,14 @@ OMG achieves ~6ms performance on all core operations through a persistent daemon
 ### Arch Linux (pacman/yay)
 
 **Benchmark Environment:**
+
 - **CPU:** Intel i9-14900K (32 cores, 5.8GHz turbo)
 - **RAM:** 31GB
 - **Kernel:** Linux 6.18.3-arch1-1
 - **Iterations:** 10 (with 2 warmup runs)
 
 | Command | OMG (Daemon) | pacman | yay | Speedup |
-|---------|--------------|--------|-----|---------:|
+| --------- | -------------- | -------- | ----- | ---------: |
 | **search** | **5.4-11.1ms** ✨ | 133ms | 150ms | **12-24x faster** |
 | **info** | **3.4-6.1ms** ✨ | 138ms | 300ms | **21-38x faster** |
 | **status** | **< 10ms** ✨ | N/A | N/A | — |
@@ -319,11 +331,12 @@ OMG achieves ~6ms performance on all core operations through a persistent daemon
 ### Debian/Ubuntu (apt)
 
 **Benchmark Environment:**
+
 - **OS:** Ubuntu 24.04 (Docker)
 - **Iterations:** 5 (with 2 warmup runs)
 
 | Command | OMG (Daemon) | apt-cache | Nala | vs apt | vs Nala |
-|---------|--------------|-----------|------|-------:|--------:|
+| --------- | -------------- | ----------- | ------ | -------: | --------: |
 | **search** | **11ms** ✨ | 652ms | 1160ms | **59x** | **105x** |
 | **info** | **27ms** ✨ | 462ms | 788ms | **17x** | **29x** |
 | **explicit** | **2ms** ✨ | 601ms | 966ms | **300x** | **483x** |
@@ -336,6 +349,7 @@ OMG parses `/var/lib/dpkg/status` and APT's Packages files directly, bypassing s
 ### Why These Numbers Matter
 
 **Human Perception:**
+
 - < 100ms = feels instant
 - 100-500ms = noticeable delay
 - > 500ms = clearly slow
@@ -355,6 +369,7 @@ OMG operates in the imperceptible range. Your fingers literally move faster than
 
 **Verification**
 Want to reproduce these numbers?
+
 ```bash
 curl -fsSL https://raw.githubusercontent.com/PyRo1121/omg/main/benchmark.sh | bash
 ```
@@ -367,8 +382,9 @@ See the [latest benchmark report](benchmarks/latest.md) for comprehensive method
 ## 🛠️ Architecture
 
 OMG is split into two components:
-1.  **`omg`**: A thin, high-performance CLI client.
-2.  **`omgd`**: A persistent daemon that maintains an in-memory package index and handles redb persistence.
+
+1. **`omg`**: A thin, high-performance CLI client.
+2. **`omgd`**: A persistent daemon that maintains an in-memory package index and handles redb persistence.
 
 Communication happens over a high-speed Unix Domain Socket using a custom binary protocol (Length-Delimited framing + Bincode) for zero-latency communication.
 
@@ -379,7 +395,7 @@ Communication happens over a high-speed Unix Domain Socket using a custom binary
 **Full documentation**: [pyro1121.com/docs](https://pyro1121.com/docs) | [docs/](docs/index.md)
 
 | Guide | Description |
-|-------|-------------|
+| ------- | ------------- |
 | [Quick Start](docs/quickstart.md) | Install and first commands |
 | [CLI Reference](docs/cli.md) | All commands with examples |
 | [Configuration](docs/configuration.md) | Config files and policy |
@@ -416,6 +432,7 @@ omg dash                    # Interactive TUI
 We are building the last dev tool you'll ever need.
 
 ### Current Features ✅
+
 - [x] **`omg run <task>`**: Unified task runner. Detects 10+ project types (`package.json`, `Cargo.toml`, `Makefile`, `pyproject.toml`, etc.) and runs scripts with the correct runtime version pre-loaded.
 - [x] **`omg new <stack>`**: Instant project scaffolding. `omg new react`, `omg new rust-cli`, or `omg new python-flask` sets up a best-practice environment with locked runtime versions.
 - [x] **`omg doctor`**: System health check. Verifies PATHs, mirrors, PGP keys, and runtime integrity to debug environment issues instantly.
@@ -423,6 +440,7 @@ We are building the last dev tool you'll ever need.
 - [x] **`omg dash`**: Interactive TUI dashboard. Real-time visualization of system status, vulnerabilities, and runtime versions.
 
 ### Planned Features 🚧
+
 - [x] **Debian/Ubuntu Support**: Full APT integration (59-483x faster than apt-cache/Nala)
 - [x] **Fedora/RPM Support**: Native DNF/YUM package manager integration with pure Rust implementation
 - [x] **macOS Support**: Homebrew integration for macOS ARM64 (Apple Silicon)
@@ -441,6 +459,7 @@ OMG adheres to a strict **Test-Driven Development (TDD)** protocol to ensure "ab
 - **Hardware-Limited Performance**: Benchmarks are required for every hot-path change to prevent performance regressions.
 
 ### Run the Suite
+
 ```bash
 # Run all tests
 cargo test
@@ -465,12 +484,14 @@ make coverage
 OMG is free and open source under the **GNU Affero General Public License v3.0**.
 
 **You can use OMG for FREE if you:**
+
 - ✅ Use it for personal projects
 - ✅ Use it internally at your company (even for-profit companies)
 - ✅ Build open source products with OMG
 - ✅ Offer OMG as a service AND share source code with users
 
 **AGPL-3.0 requires:**
+
 - Keep derivative works open source (copyleft)
 - Share source code if you distribute OMG
 - Provide source code to users if you offer OMG as a network service
@@ -484,11 +505,13 @@ OMG is free and open source under the **GNU Affero General Public License v3.0**
 If you want to use OMG **without AGPL copyleft obligations**, purchase a commercial license.
 
 **Commercial licenses allow:**
+
 - Make proprietary modifications (no source sharing)
 - Embed OMG in proprietary products
 - Offer OMG-as-a-Service without sharing source
 
 **Pricing:**
+
 - 💰 **Team License:** $99/month or $999/year (up to 25 developers)
 - 💰 **Business License:** $199/month or $1,999/year (up to 75 developers)
 - 💰 **Enterprise License:** Custom pricing (unlimited developers)
@@ -498,11 +521,13 @@ If you want to use OMG **without AGPL copyleft obligations**, purchase a commerc
 ### Do I Need a Commercial License?
 
 **NO - Use AGPL-3.0 (FREE) if:**
+
 - You're okay with keeping your code open source (AGPL)
 - You're using OMG internally at your company
 - You're building open source products
 
 **YES - Buy Commercial License if:**
+
 - You want to make proprietary modifications
 - You're embedding OMG in closed-source products
 - You want to avoid AGPL copyleft requirements entirely
@@ -515,6 +540,7 @@ See **[COMMERCIAL-LICENSE](COMMERCIAL-LICENSE.md)** for commercial licensing det
 ### Third-Party Components
 
 OMG incorporates third-party open source software:
+
 - **[mise](https://github.com/jdx/mise)** - Runtime version management (MIT License, © 2025 Jeff Dickey)
 - Various Rust crates (MIT/Apache-2.0 licenses)
 
@@ -529,6 +555,6 @@ See [NOTICE](NOTICE) and [THIRD-PARTY-LICENSES.md](THIRD-PARTY-LICENSES.md) for 
 
 ### Contact for Licensing
 
-📧 Email: **olen@latham.cloud**
+📧 Email: **<olen@latham.cloud>**
 
 For questions about commercial licensing, pricing, or purchasing.

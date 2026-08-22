@@ -14,8 +14,15 @@ use crate::core::paths;
 /// Fast status structure - fixed size for mmap-friendly reads
 ///
 /// Uses zerocopy for safe serialization without unsafe transmute.
+///
+/// # Invariants
+/// [`magic`](FastStatus::magic) and [`version`](FastStatus::version) are set
+/// only by [`FastStatus::new`]; readers reject any file whose header does
+/// not match. Fields stay public because CLI callers read the counters of a
+/// value obtained from [`FastStatus::read_from_file`], which has already
+/// validated the header.
 #[repr(C)]
-#[derive(Debug, Clone, Copy, Default, FromBytes, IntoBytes, Immutable, KnownLayout)]
+#[derive(Debug, Clone, Copy, FromBytes, IntoBytes, Immutable, KnownLayout)]
 pub struct FastStatus {
     /// Magic number for validation (0x4F4D4753 = "OMGS")
     pub magic: u32,
@@ -136,7 +143,7 @@ mod tests {
     use tempfile::tempdir;
 
     #[test]
-    fn test_fast_status_roundtrip() {
+    fn fast_status_roundtrips_through_file() {
         let dir = tempdir().unwrap();
         let path = dir.path().join("status.bin");
 
@@ -153,7 +160,7 @@ mod tests {
     }
 
     #[test]
-    fn test_fast_status_invalid_magic() {
+    fn invalid_magic_is_rejected() {
         let dir = tempdir().unwrap();
         let path = dir.path().join("invalid.bin");
 
@@ -165,7 +172,7 @@ mod tests {
     }
 
     #[test]
-    fn test_fast_status_stale() {
+    fn stale_status_is_rejected() {
         let dir = tempdir().unwrap();
         let path = dir.path().join("stale.bin");
 

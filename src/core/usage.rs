@@ -11,7 +11,7 @@
 //! - Feature usage
 
 use std::collections::HashMap;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::time::Instant;
 
 use anyhow::{Context, Result};
@@ -34,6 +34,12 @@ pub mod time_saved {
     pub const RUNTIME_SWITCH_MS: u64 = 148;
     /// Install: OMG parallel vs sequential = ~30% time saved (estimated 5s per package)
     pub const INSTALL_MS: u64 = 1500;
+    /// Update: no dedicated benchmark yet; conservatively estimated at the
+    /// same per-package saving as install.
+    pub const UPDATE_MS: u64 = INSTALL_MS;
+    /// Remove: no dedicated benchmark yet; conservatively estimated at the
+    /// same per-package saving as install.
+    pub const REMOVE_MS: u64 = INSTALL_MS;
 }
 
 /// Achievement definitions
@@ -378,26 +384,20 @@ impl UsageStats {
         if !self.runtimes_used.contains(&runtime_lower) {
             self.runtimes_used.push(runtime_lower);
             self.check_achievements();
-            if let Err(e) = self.save() {
-                tracing::warn!("Failed to save usage stats: {}", e);
-            }
+            self.save_best_effort();
         }
     }
 
     /// Record SBOM generation
     pub fn record_sbom(&mut self) {
         self.sbom_generated += 1;
-        if let Err(e) = self.save() {
-            tracing::warn!("Failed to save usage stats: {}", e);
-        }
+        self.save_best_effort();
     }
 
     /// Record vulnerabilities found
     pub fn record_vulnerabilities(&mut self, count: u64) {
         self.vulnerabilities_found += count;
-        if let Err(e) = self.save() {
-            tracing::warn!("Failed to save usage stats: {}", e);
-        }
+        self.save_best_effort();
     }
 
     /// Get time saved as human-readable string
@@ -434,7 +434,11 @@ impl UsageStats {
     /// Check if immediate sync is needed (for important events)
     #[must_use]
     pub fn needs_immediate_sync(&self) -> bool {
-        // Sync immediately after first command, achievements, or milestones
+        // Sync immediately after first command, achievements, or milestones.
+        // An empty stats file must never trigger a sync.
+        if self.total_commands == 0 {
+            return false;
+        }
         self.total_commands == 1
             || self.total_commands.is_multiple_of(100)
             || (self.time_saved_ms >= 60_000 && self.last_sync == 0)
@@ -489,7 +493,12 @@ impl UsageStats {
             .context("Usage sync server rejected the update")?;
 
         self.last_sync = jiff::Timestamp::now().as_second();
-        self.save()?;
+        // Merge only the sync timestamp into freshly-loaded state under the
+        // cross-process lock: writing back this task's snapshot would clobber
+        // counters recorded by concurrent invocations while the network
+        // request was in flight.
+        let synced_at = self.last_sync;
+        update_locked(&Self::path()?, |stats| stats.last_sync = synced_at)?;
 
         Ok(())
     }
@@ -545,6 +554,23 @@ fn lock_file_at(lock_path: &std::path::Path) -> Option<std::fs::File> {
 fn with_usage_lock<T>(mutate: impl FnOnce() -> T) -> T {
     let _lock = lock_usage_file();
     mutate()
+}
+
+/// Run a mandatory load-modify-save cycle against `path` under the
+/// cross-process usage lock. Unlike [`with_usage_lock`] (used by fire-and-
+/// forget tracking), a failed lock acquisition is an error here because the
+/// caller is about to write persisted state and must not race a concurrent
+/// writer.
+fn update_locked<T>(path: &Path, f: impl FnOnce(&mut UsageStats) -> T) -> Result<T> {
+    let lock_path = path.with_extension("lock");
+    let lock = lock_file_at(&lock_path).ok_or_else(|| {
+        anyhow::anyhow!("Failed to acquire usage stats lock {}", lock_path.display())
+    })?;
+    let _lock_guard = lock;
+    let mut stats = UsageStats::load_from(path)?;
+    let out = f(&mut stats);
+    stats.save_to(path)?;
+    Ok(out)
 }
 
 /// Track a command execution (convenience function)
@@ -745,7 +771,10 @@ pub fn track_update_timed(
 ) {
     // Record to usage stats
     if success {
-        track("update", time_saved::INSTALL_MS * updated_count as u64);
+        track(
+            "update",
+            time_saved::UPDATE_MS.saturating_mul(u64::try_from(updated_count).unwrap_or(0)),
+        );
     }
 
     // Record to telemetry
@@ -763,7 +792,7 @@ pub fn track_remove_timed(
 ) {
     // Record to usage stats
     if success {
-        track("remove", time_saved::INSTALL_MS);
+        track("remove", time_saved::REMOVE_MS);
     }
 
     // Record to telemetry
@@ -793,13 +822,25 @@ pub fn track_feature_usage_with_metadata(
     crate::core::telemetry::track_feature_event(feature, enabled, Some(metadata));
 }
 
+/// Load the stored license only when its token is valid, mirroring the
+/// enhanced-telemetry gate so expired or unverifiable licenses stop syncing.
+fn licensed_for_sync() -> Option<crate::core::license::StoredLicense> {
+    crate::core::license::load_license().filter(super::license::StoredLicense::is_token_valid)
+}
+
 /// Sync usage in background if needed
 pub fn maybe_sync_background() {
-    // Only sync if we have a license and valid persisted usage state.
-    if let Some(license) = crate::core::license::load_license()
-        && let Some(mut stats) = load_for_tracking()
-        && (stats.needs_sync() || stats.needs_immediate_sync())
-    {
+    // Only sync if we have a valid license and persisted usage state.
+    if crate::core::paths::test_mode() {
+        return;
+    }
+    let Some(license) = licensed_for_sync() else {
+        return;
+    };
+    let Some(mut stats) = load_for_tracking() else {
+        return;
+    };
+    if stats.needs_sync() || stats.needs_immediate_sync() {
         tokio::spawn(async move {
             if let Err(e) = stats.sync(&license.key).await {
                 tracing::debug!("Usage sync failed: {e}");
@@ -810,15 +851,20 @@ pub fn maybe_sync_background() {
 
 /// Force immediate sync (for important events like achievements)
 pub fn force_sync_background() {
-    if let Some(license) = crate::core::license::load_license()
-        && let Some(mut stats) = load_for_tracking()
-    {
-        tokio::spawn(async move {
-            if let Err(e) = stats.sync(&license.key).await {
-                tracing::debug!("Force sync failed: {e}");
-            }
-        });
+    if crate::core::paths::test_mode() {
+        return;
     }
+    let Some(license) = licensed_for_sync() else {
+        return;
+    };
+    let Some(mut stats) = load_for_tracking() else {
+        return;
+    };
+    tokio::spawn(async move {
+        if let Err(e) = stats.sync(&license.key).await {
+            tracing::debug!("Force sync failed: {e}");
+        }
+    });
 }
 
 /// Track and sync immediately (for real-time dashboard updates)
@@ -837,11 +883,13 @@ pub async fn sync_usage_now() {
     if crate::core::paths::test_mode() {
         return;
     }
-    if let Some(license) = crate::core::license::load_license()
-        && let Some(mut stats) = load_for_tracking()
-        && (stats.needs_sync() || stats.needs_immediate_sync() || stats.total_commands > 0)
-        && let Err(e) = stats.sync(&license.key).await
-    {
+    let Some(license) = licensed_for_sync() else {
+        return;
+    };
+    let Some(mut stats) = load_for_tracking() else {
+        return;
+    };
+    if let Err(e) = stats.sync(&license.key).await {
         tracing::debug!("Usage sync failed: {e}");
     }
 }
@@ -851,7 +899,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn test_time_saved_human() {
+    fn time_saved_human_formats_units() {
         let stats = UsageStats {
             time_saved_ms: 500,
             ..Default::default()
@@ -961,7 +1009,7 @@ mod tests {
     }
 
     #[test]
-    fn test_record_command() {
+    fn record_command_accumulates_counts() {
         let today =
             jiff::civil::Date::strptime("%Y-%m-%d", "2025-04-10").expect("valid fixture date");
         let mut stats = UsageStats::default();
@@ -973,5 +1021,49 @@ mod tests {
         assert_eq!(stats.commands.get("search"), Some(&2));
         assert_eq!(stats.commands.get("info"), Some(&1));
         assert_eq!(stats.time_saved_ms, 127 + 127 + 132);
+    }
+
+    #[test]
+    fn locked_sync_timestamp_merge_does_not_lose_concurrent_counters() {
+        // Regression for the background-sync race: UsageStats::sync used to
+        // write its stale snapshot back without the cross-process lock,
+        // clobbering counters recorded while the network request was in
+        // flight. The timestamp-only merge must preserve them.
+        const WRITERS: usize = 4;
+        let directory = tempfile::tempdir().expect("create temporary directory");
+        let path = directory.path().join("usage.json");
+
+        let barrier = std::sync::Arc::new(std::sync::Barrier::new(WRITERS));
+        let mut writers = Vec::new();
+        for writer_index in 0..WRITERS {
+            let path = path.clone();
+            let barrier = std::sync::Arc::clone(&barrier);
+            writers.push(std::thread::spawn(move || {
+                barrier.wait();
+                if writer_index == 0 {
+                    // Background-sync side: merge only the timestamp.
+                    update_locked(&path, |stats| stats.last_sync = 42)
+                        .expect("timestamp merge must succeed");
+                } else {
+                    // Tracking side: record a full command.
+                    update_locked(&path, |stats| {
+                        stats.record_command_on(
+                            "search",
+                            1,
+                            jiff::civil::Date::strptime("%Y-%m-%d", "2025-04-10")
+                                .expect("valid fixture date"),
+                        );
+                    })
+                    .expect("counter write must succeed");
+                }
+            }));
+        }
+        for writer in writers {
+            writer.join().expect("usage writer panicked");
+        }
+
+        let stats = UsageStats::load_from(&path).expect("final stats must be valid");
+        assert_eq!(stats.total_commands, (WRITERS - 1) as u64);
+        assert_eq!(stats.last_sync, 42);
     }
 }

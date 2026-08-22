@@ -74,7 +74,7 @@ pub async fn run(
     // Clone the parent token so the health check can trigger a full shutdown
     let shutdown_trigger = shutdown_token.clone();
 
-    tokio::spawn(async move {
+    let worker_handle = tokio::spawn(async move {
         tracing::info!("Background status worker started");
 
         // OPTIMIZATION: Deduplicate status fetching logic into a helper function
@@ -140,86 +140,92 @@ pub async fn run(
                     if let Err(error) = &scan {
                         tracing::warn!("Vulnerability scan failed during status refresh: {error}");
                     }
-                    let Some(vuln_count) =
-                        super::protocol::vulnerability_count_from_scan(&scan, previous_vulns)
-                    else {
+                    // Publication only: a failed scan with no prior count
+                    // skips status publication; cache pre-warming below runs
+                    // unconditionally either way.
+                    if let Some(vuln_count) =
+                        super::status_policy::vulnerability_count_from_scan(&scan, previous_vulns)
+                    {
+                        let res = super::protocol::StatusResult {
+                            total_packages: total,
+                            explicit_packages: explicit,
+                            orphan_packages: orphans,
+                            updates_available: updates,
+                            security_vulnerabilities: vuln_count,
+                            vulnerabilities_scanned: true,
+                            runtime_versions: versions,
+                        };
+                        let res_arc = Arc::new(res);
+                        // Persist for faster restarts; the in-memory cache is
+                        // authoritative for this process, so a persistence failure
+                        // is logged, not fatal.
+                        if let Err(error) = state.persistent.set_status(&res_arc) {
+                            tracing::warn!("Failed to persist status cache: {error}");
+                        }
+                        state.cache.update_status(res_arc);
+                    } else {
                         tracing::warn!(
                             "No prior vulnerability count; not publishing a zero-vuln status"
                         );
-                        return;
-                    };
-
-                    let res = super::protocol::StatusResult {
-                        total_packages: total,
-                        explicit_packages: explicit,
-                        orphan_packages: orphans,
-                        updates_available: updates,
-                        security_vulnerabilities: vuln_count,
-                        vulnerabilities_scanned: true,
-                        runtime_versions: versions,
-                    };
-                    let res_arc = Arc::new(res);
-                    // Persist for faster restarts; the in-memory cache is
-                    // authoritative for this process, so a persistence failure
-                    // is logged, not fatal.
-                    if let Err(error) = state.persistent.set_status(&res_arc) {
-                        tracing::warn!("Failed to persist status cache: {error}");
                     }
-                    state.cache.update_status(res_arc);
                 } else if let Err(error) = status {
                     tracing::warn!("Failed to refresh package status: {error}");
                 }
             } else if let Err(e) = result {
                 tracing::error!("Status refresh panic: {e}");
             }
+        }
 
+        /// Pre-compute caches for instant first queries.
+        ///
+        /// Deliberately unconditional: it must run even when status
+        /// publication was skipped above (structural guarantee against the
+        /// early-return regression this replaces).
+        async fn prewarm_caches(state: &Arc<DaemonState>) {
             // Pre-compute explicit package list for instant first query
-            {
-                let pm_name = state.package_manager.name().to_string();
-                let state_explicit = Arc::clone(state);
-                if let Err(error) = tokio::task::spawn_blocking(move || {
-                    match super::handlers::explicit_packages_for_backend(&pm_name) {
-                        Ok(explicit_pkgs) => {
-                            state_explicit.cache.update_explicit(explicit_pkgs);
-                            tracing::debug!("Pre-warmed explicit package cache");
-                        }
-                        Err(error) => {
-                            tracing::warn!("Failed to pre-warm explicit package cache: {error}");
-                        }
+            let pm_name = state.package_manager.name().to_string();
+            let state_explicit = Arc::clone(state);
+            if let Err(error) = tokio::task::spawn_blocking(move || {
+                match super::handlers::explicit_packages_for_backend(&pm_name) {
+                    Ok(explicit_pkgs) => {
+                        state_explicit.cache.update_explicit(explicit_pkgs);
+                        tracing::debug!("Pre-warmed explicit package cache");
                     }
-                })
-                .await
-                {
-                    tracing::warn!("Explicit package cache pre-warm task failed: {error}");
+                    Err(error) => {
+                        tracing::warn!("Failed to pre-warm explicit package cache: {error}");
+                    }
                 }
+            })
+            .await
+            {
+                tracing::warn!("Explicit package cache pre-warm task failed: {error}");
             }
 
             // Pre-warm search cache with common queries for instant first searches
-            {
-                let state_search = Arc::clone(state);
-                if let Err(error) = tokio::task::spawn_blocking(move || {
-                    let common_queries = ["", "linux", "python", "node", "firefox", "git"];
-                    for query in common_queries {
-                        let results = state_search.index.search(query, 50);
-                        let results_arc = Arc::new(results);
-                        state_search
-                            .cache
-                            .insert_arc(query.to_string(), results_arc);
-                    }
-                    tracing::debug!(
-                        "Pre-warmed search cache with {} common queries",
-                        common_queries.len()
-                    );
-                })
-                .await
-                {
-                    tracing::warn!("Search cache pre-warm task failed: {error}");
+            let state_search = Arc::clone(state);
+            if let Err(error) = tokio::task::spawn_blocking(move || {
+                let common_queries = ["", "linux", "python", "node", "firefox", "git"];
+                for query in common_queries {
+                    let results = state_search.index.search(query, 50);
+                    let results_arc = Arc::new(results);
+                    state_search
+                        .cache
+                        .insert_arc(query.to_string(), results_arc);
                 }
+                tracing::debug!(
+                    "Pre-warmed search cache with {} common queries",
+                    common_queries.len()
+                );
+            })
+            .await
+            {
+                tracing::warn!("Search cache pre-warm task failed: {error}");
             }
         }
 
         // Initial refresh
         refresh_status(&state_worker).await;
+        prewarm_caches(&state_worker).await;
 
         // Track last cleanup time for periodic mmap cleanup
         let mut last_cleanup = std::time::Instant::now();
@@ -237,6 +243,9 @@ pub async fn run(
                 () = tokio::time::sleep(STATUS_REFRESH_INTERVAL) => {
                     tracing::debug!("Refreshing system status cache...");
                     refresh_status(&state_worker).await;
+                    // Independent of status publication: a failed scan must
+                    // not degrade first-query latency for unrelated paths.
+                    prewarm_caches(&state_worker).await;
                     tracing::debug!("Status cache refreshed");
 
                     // Periodic mmap cleanup (every 30 min) to prevent 500MB+ memory leaks
@@ -265,6 +274,23 @@ pub async fn run(
             }
         }
     });
+
+    // Observe the singleton worker: an unobserved panic would silently freeze
+    // every status-refresh and cache-pre-warm path, so count the failure and
+    // shut down cleanly rather than serving stale data forever.
+    {
+        let state_monitor = Arc::clone(&state);
+        let shutdown_monitor = shutdown_token.clone();
+        tokio::spawn(async move {
+            if worker_handle.await.is_err() {
+                state_monitor.inc_background_worker_failures();
+                tracing::error!(
+                    "Background status worker terminated unexpectedly; initiating shutdown"
+                );
+                shutdown_monitor.cancel();
+            }
+        });
+    }
 
     tracing::info!("Daemon ready, binary IPC enabled");
 
@@ -364,8 +390,11 @@ const MAX_REQUEST_SIZE: usize = 1024 * 1024;
 /// Maximum deserialized request size to prevent compression bomb attacks (10MB)
 const MAX_DESERIALIZED_SIZE: usize = 10 * 1024 * 1024;
 
-/// Maximum batch nesting depth to prevent recursion `DoS`
-const MAX_BATCH_DEPTH: usize = 3;
+/// Upper bound on Batch nesting walked by [`validate_batch_depth`] (and thus
+/// by `Request::heap_size`). `handle_batch` rejects any nested Batch outright,
+/// so 1 (top-level batch, flat children only) is the honest bound; this guard
+/// exists to bound recursion before attacker-controlled payloads are walked.
+const MAX_BATCH_DEPTH: usize = 1;
 
 /// Validate batch request depth to prevent recursion `DoS` attacks
 fn validate_batch_depth(request: &Request, depth: usize) -> Result<()> {
@@ -411,7 +440,8 @@ async fn handle_client(stream: tokio::net::UnixStream, state: Arc<DaemonState>) 
         .new_framed(stream);
 
     // Rate limit per connection to ensure fairness
-    // SAFETY: Both constants are known non-zero at compile time
+    // Const-eval guarantee: the literals above are non-zero; a violation is
+    // rejected at compile time, not at runtime.
     const RATE_LIMIT_NZ: NonZeroU32 = NonZeroU32::new(CLIENT_RATE_LIMIT_HZ).unwrap();
     const BURST_SIZE_NZ: NonZeroU32 = NonZeroU32::new(CLIENT_BURST_SIZE).unwrap();
     let quota = Quota::per_second(RATE_LIMIT_NZ).allow_burst(BURST_SIZE_NZ);
@@ -420,27 +450,59 @@ async fn handle_client(stream: tokio::net::UnixStream, state: Arc<DaemonState>) 
     tracing::debug!("New binary client connected");
 
     while let Some(request_bytes) = framed.next().await {
-        let bytes = request_bytes?;
+        // Transport/frame errors (oversize frame, I/O) tear down the
+        // connection: the length-prefix stream may be desynchronized, so
+        // answering on it would be unsafe.
+        let bytes = match request_bytes {
+            Ok(bytes) => bytes,
+            Err(error) => {
+                tracing::warn!("Frame decode failed; closing client connection: {error}");
+                GLOBAL_METRICS.inc_requests_failed();
+                break;
+            }
+        };
 
         // METRICS: Track bytes received
         GLOBAL_METRICS.add_bytes_received(bytes.len() as u64);
 
-        // SECURITY: Validate size before deserialization to prevent memory exhaustion
-        if bytes.len() > MAX_REQUEST_SIZE {
-            let msg = format!("Request exceeds maximum size: {} bytes", bytes.len());
-            tracing::warn!("{}", msg);
-            audit_log(
-                AuditEventType::PolicyViolation,
-                AuditSeverity::Warning,
-                "daemon_server",
-                &msg,
-            );
-            GLOBAL_METRICS.inc_requests_failed();
-            continue;
-        }
-
-        // Decode request
-        let request: Request = bitcode::deserialize(&bytes)?;
+        // SECURITY: A malformed payload means we cannot trust anything further
+        // from this client. Answer once with the protocol's parse-error code,
+        // then close cleanly instead of tearing down silently. Request id 0 is
+        // the reserved error-envelope id for requests that never decoded.
+        let request: Request = match bitcode::deserialize(&bytes) {
+            Ok(request) => request,
+            Err(error) => {
+                let msg = format!("Failed to deserialize request: {error}");
+                tracing::warn!("{msg}");
+                audit_log(
+                    AuditEventType::PolicyViolation,
+                    AuditSeverity::Warning,
+                    "daemon_server",
+                    &msg,
+                );
+                GLOBAL_METRICS.inc_validation_failures();
+                GLOBAL_METRICS.inc_requests_failed();
+                let response = Response::Error {
+                    id: 0,
+                    code: error_codes::PARSE_ERROR,
+                    message: msg,
+                };
+                match bitcode::serialize(&response) {
+                    Ok(response_bytes) => {
+                        GLOBAL_METRICS.add_bytes_sent(response_bytes.len() as u64);
+                        if let Err(send_error) = framed.send(response_bytes.into()).await {
+                            tracing::warn!("Failed to deliver parse-error response: {send_error}");
+                        }
+                    }
+                    Err(serialize_error) => {
+                        tracing::error!(
+                            "Failed to serialize parse-error response: {serialize_error}"
+                        );
+                    }
+                }
+                break;
+            }
+        };
 
         // SECURITY: Validate batch nesting depth before walking heap contents;
         // this bounds the recursion in both this check and `heap_size`.
@@ -531,4 +593,34 @@ async fn handle_client(stream: tokio::net::UnixStream, state: Arc<DaemonState>) 
 
     tracing::debug!("Client disconnected");
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{MAX_BATCH_DEPTH, validate_batch_depth};
+    use crate::daemon::protocol::Request;
+
+    fn flat_batch(id: u64) -> Request {
+        Request::Batch {
+            id,
+            requests: vec![Request::Ping { id }, Request::Status { id }],
+        }
+    }
+
+    #[test]
+    fn batch_depth_guard_accepts_top_level_and_flat_children() {
+        assert!(validate_batch_depth(&flat_batch(1), 0).is_ok());
+        assert!(validate_batch_depth(&Request::Ping { id: 2 }, 0).is_ok());
+    }
+
+    #[test]
+    fn batch_depth_guard_rejects_nesting_beyond_the_honest_bound() {
+        let nested = Request::Batch {
+            id: 1,
+            requests: vec![flat_batch(2)],
+        };
+        assert!(validate_batch_depth(&nested, 0).is_err());
+        // Directly past the bound at any depth.
+        assert!(validate_batch_depth(&Request::Ping { id: 3 }, MAX_BATCH_DEPTH + 1).is_err());
+    }
 }

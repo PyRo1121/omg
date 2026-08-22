@@ -1,10 +1,63 @@
 use std::time::Instant;
 
 use anyhow::{Context, Result};
-use dialoguer::Confirm;
 
+use crate::cli::packages::common::try_daemon_list_updates;
 use crate::cli::{modern_ui, style, ui};
 use crate::package_managers::{get_package_manager, types::UpdateInfo};
+
+/// Default AUR build concurrency when `OMG_AUR_PARALLEL` is unset.
+const DEFAULT_AUR_BUILD_CONCURRENCY: usize = 2;
+
+/// Hard bounds for `OMG_AUR_PARALLEL`: builds are process-heavy (makepkg
+/// spawns compilers), so fan-out beyond a handful helps nobody and starves
+/// the machine at the top end.
+const MIN_AUR_BUILD_CONCURRENCY: usize = 1;
+const MAX_AUR_BUILD_CONCURRENCY: usize = 8;
+
+/// Parse the `OMG_AUR_PARALLEL` override, clamping to `[1, 8]` and warning on
+/// invalid input instead of silently substituting the default.
+fn aur_build_concurrency(raw: Option<&str>) -> usize {
+    const fn clamp(value: usize) -> usize {
+        if value < MIN_AUR_BUILD_CONCURRENCY {
+            MIN_AUR_BUILD_CONCURRENCY
+        } else if value > MAX_AUR_BUILD_CONCURRENCY {
+            MAX_AUR_BUILD_CONCURRENCY
+        } else {
+            value
+        }
+    }
+
+    let Some(raw) = raw else {
+        return DEFAULT_AUR_BUILD_CONCURRENCY;
+    };
+    match raw.parse::<usize>() {
+        Ok(parsed) if (MIN_AUR_BUILD_CONCURRENCY..=MAX_AUR_BUILD_CONCURRENCY).contains(&parsed) => {
+            parsed
+        }
+        Ok(parsed) => {
+            let clamped = clamp(parsed);
+            tracing::warn!(
+                "OMG_AUR_PARALLEL={parsed} is outside {MIN_AUR_BUILD_CONCURRENCY}..={MAX_AUR_BUILD_CONCURRENCY}; clamping to {clamped}"
+            );
+            clamped
+        }
+        Err(error) => {
+            tracing::warn!(
+                "OMG_AUR_PARALLEL={raw:?} is not a valid number ({error}); using {DEFAULT_AUR_BUILD_CONCURRENCY}"
+            );
+            DEFAULT_AUR_BUILD_CONCURRENCY
+        }
+    }
+}
+
+/// Number of repositories configured in pacman.conf, for honest sync
+/// reporting; `0` means the configuration was unreadable and the count is
+/// omitted rather than guessed.
+fn configured_repo_count() -> usize {
+    crate::core::pacman_conf::PacmanConfig::parse(crate::core::paths::pacman_conf_path())
+        .map_or(0, |config| config.repos.len())
+}
 
 pub async fn update_fast() -> Result<()> {
     modern_ui::print_phase_header("⚡", "Fast System Update", "sync + upgrade");
@@ -79,11 +132,16 @@ pub async fn update(check_only: bool, yes: bool, dry_run: bool) -> Result<()> {
             let sync_start = std::time::Instant::now();
             pm.sync().await?;
             let sync_elapsed = sync_start.elapsed();
-            modern_ui::finish_success(
-                &pb,
-                "Synced",
-                &format!("3 databases in {:.2}s", sync_elapsed.as_secs_f64()),
-            );
+            let repo_count = configured_repo_count();
+            let detail = if repo_count > 0 {
+                format!(
+                    "{repo_count} repositories in {:.2}s",
+                    sync_elapsed.as_secs_f64()
+                )
+            } else {
+                format!("in {:.2}s", sync_elapsed.as_secs_f64())
+            };
+            modern_ui::finish_success(&pb, "Synced", &detail);
         }
     }
 
@@ -185,10 +243,14 @@ pub async fn update(check_only: bool, yes: bool, dry_run: bool) -> Result<()> {
 
     if !yes && console::user_attended() {
         println!();
-        if !Confirm::with_theme(&ui::prompt_theme())
-            .with_prompt("Proceed with upgrade?")
-            .default(true)
-            .interact()?
+        if !tokio::task::spawn_blocking(|| {
+            dialoguer::Confirm::with_theme(&ui::prompt_theme())
+                .with_prompt("Proceed with upgrade?")
+                .default(true)
+                .interact()
+        })
+        .await
+        .map_err(|error| anyhow::anyhow!("Confirmation prompt task failed: {error}"))??
         {
             println!();
             println!("  {} Upgrade cancelled", "✗".yellow());
@@ -254,10 +316,8 @@ pub async fn update(check_only: bool, yes: bool, dry_run: bool) -> Result<()> {
                 .iter()
                 .map(|pkg| BuildJob::new(pkg.clone(), Vec::new()))
                 .collect();
-            let max_concurrent = std::env::var("OMG_AUR_PARALLEL")
-                .ok()
-                .and_then(|v| v.parse().ok())
-                .unwrap_or(2);
+            let max_concurrent =
+                aur_build_concurrency(std::env::var("OMG_AUR_PARALLEL").ok().as_deref());
             let builder = ParallelBuilder::new(client, max_concurrent);
 
             if let Err(e) = builder.build_packages(jobs).await {
@@ -357,35 +417,34 @@ fn update_dry_run(updates: &[UpdateInfo]) -> Result<()> {
     Ok(())
 }
 
-#[cfg(unix)]
-async fn try_daemon_list_updates() -> Option<Vec<UpdateInfo>> {
-    let mut client = crate::core::client::DaemonClient::connect().await.ok()?;
-    let entries = client.list_updates().await.ok()?;
-    Some(
-        entries
-            .into_iter()
-            .map(|e| UpdateInfo {
-                name: e.name,
-                old_version: e.old_version,
-                new_version: e.new_version,
-                repo: e.repo,
-            })
-            .collect(),
-    )
-}
-
-#[cfg(not(unix))]
-#[allow(
-    clippy::unused_async,
-    reason = "the non-Unix implementation preserves the asynchronous command interface"
-)]
-async fn try_daemon_list_updates() -> Option<Vec<UpdateInfo>> {
-    None
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn aur_parallel_unset_uses_default() {
+        assert_eq!(aur_build_concurrency(None), 2);
+    }
+
+    #[test]
+    fn aur_parallel_in_range_is_honored() {
+        assert_eq!(aur_build_concurrency(Some("4")), 4);
+        assert_eq!(aur_build_concurrency(Some("1")), 1);
+        assert_eq!(aur_build_concurrency(Some("8")), 8);
+    }
+
+    #[test]
+    fn aur_parallel_out_of_range_is_clamped() {
+        assert_eq!(aur_build_concurrency(Some("0")), 1);
+        assert_eq!(aur_build_concurrency(Some("1000000")), 8);
+    }
+
+    #[test]
+    fn aur_parallel_invalid_falls_back_to_default() {
+        assert_eq!(aur_build_concurrency(Some("abc")), 2);
+        assert_eq!(aur_build_concurrency(Some("")), 2);
+        assert_eq!(aur_build_concurrency(Some("-2")), 2);
+    }
 
     #[test]
     fn update_history_preserves_versions_and_sources() {

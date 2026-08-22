@@ -309,13 +309,11 @@ mod config_errors {
         // ===== ASSERT =====
         result.assert_failure();
         let combined = result.combined_output();
+        // Must specifically report the lockfile problem, not just any
+        // failure text ("error"/"failed" matched everything before wave 2;
+        // hash-tamper behavior is pinned in tests/env_lockfile_integrity.rs).
         assert!(
-            combined.contains("lock")
-                || combined.contains("omg.lock")
-                || combined.contains("invalid")
-                || combined.contains("parse")
-                || combined.contains("error")
-                || combined.contains("failed"),
+            combined.contains("omg.lock") || combined.contains("parse"),
             "Invalid lock file should be detected. Got:\n{combined}"
         );
     }

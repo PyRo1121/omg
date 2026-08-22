@@ -20,8 +20,7 @@ fn test_debian_search_caching() {
         },
     ];
 
-    // These methods don't exist yet, so this will fail to compile
-    cache.insert_debian(query.clone(), results.clone());
+    cache.insert_debian_arc(query.clone(), std::sync::Arc::new(results.clone()));
 
     let cached = cache.get_debian(&query);
     assert!(cached.is_some());

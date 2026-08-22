@@ -16,7 +16,7 @@ use std::path::{Path, PathBuf};
 use super::common::{
     activate_version, begin_staged_install, complete_staged_install, download_with_progress,
     extract_zip, normalize_version, parse_sha256_digest, print_already_installed, print_installed,
-    print_using, remove_file_best_effort,
+    print_using, remove_file_best_effort, version_cmp,
 };
 use crate::core::http::download_client;
 
@@ -25,9 +25,9 @@ const BUN_API_URL: &str = "https://api.github.com/repos/oven-sh/bun/releases";
 
 /// Bun version info
 #[derive(Debug, Clone)]
-pub struct BunVersion {
-    pub version: String,
-    pub prerelease: bool,
+pub(crate) struct BunVersion {
+    pub(crate) version: String,
+    pub(crate) prerelease: bool,
 }
 
 #[derive(Debug, Deserialize)]
@@ -44,7 +44,7 @@ struct GithubAsset {
     digest: Option<String>,
 }
 
-pub struct BunManager {
+pub(crate) struct BunManager {
     versions_dir: PathBuf,
     current_link: PathBuf,
     client: reqwest::Client,
@@ -77,22 +77,7 @@ impl BunManager {
             .await
             .context("Failed to parse Bun release data")?;
 
-        Ok(releases
-            .into_iter()
-            .filter_map(|r| {
-                // Tags are like "bun-v1.0.0"
-                let version = r
-                    .tag_name
-                    .strip_prefix("bun-v")
-                    .or_else(|| r.tag_name.strip_prefix('v'))
-                    .unwrap_or(&r.tag_name);
-
-                (!version.is_empty()).then(|| BunVersion {
-                    version: version.to_owned(),
-                    prerelease: r.prerelease,
-                })
-            })
-            .collect())
+        Ok(parse_bun_versions(releases))
     }
 
     /// Resolve Bun alias (latest) to a concrete version
@@ -100,10 +85,7 @@ impl BunManager {
         let alias = normalize_version(alias);
         if alias == "latest" {
             let versions = self.list_available().await?;
-            versions
-                .first()
-                .map(|v| v.version.clone())
-                .context("No Bun versions found upstream")
+            pick_latest_stable(versions).context("No Bun versions found upstream")
         } else {
             Ok(alias)
         }
@@ -183,8 +165,38 @@ impl BunManager {
     }
 }
 
-// Generate common runtime manager methods (list_installed, current_version, uninstall)
-crate::impl_runtime_common!(BunManager, "Bun");
+// Generate common runtime manager methods (list_installed, current_version)
+crate::runtimes::common::impl_runtime_common!(BunManager, "Bun");
+
+/// Parse GitHub releases into deterministic newest-first Bun versions.
+fn parse_bun_versions(releases: Vec<GithubRelease>) -> Vec<BunVersion> {
+    let mut versions: Vec<BunVersion> = releases
+        .into_iter()
+        .filter_map(|r| {
+            // Tags are like "bun-v1.0.0"
+            let version = r
+                .tag_name
+                .strip_prefix("bun-v")
+                .or_else(|| r.tag_name.strip_prefix('v'))
+                .unwrap_or(&r.tag_name);
+
+            (!version.is_empty()).then(|| BunVersion {
+                version: version.to_owned(),
+                prerelease: r.prerelease,
+            })
+        })
+        .collect();
+    // The GitHub API orders rows by creation date, not by version; sort so
+    // "latest" and listing output are deterministic.
+    versions.sort_by(|a, b| version_cmp(&b.version, &a.version));
+    versions
+}
+
+/// Pick the newest non-prerelease version, so `latest` never pins an RC.
+fn pick_latest_stable(mut versions: Vec<BunVersion>) -> Option<String> {
+    versions.retain(|version| !version.prerelease);
+    versions.first().map(|version| version.version.clone())
+}
 
 fn bun_platform() -> Result<String> {
     let os = match std::env::consts::OS {
@@ -224,5 +236,46 @@ mod tests {
         } else {
             assert!(!platform.starts_with("linux-"));
         }
+    }
+
+    fn ver(version: &str, prerelease: bool) -> BunVersion {
+        BunVersion {
+            version: version.to_string(),
+            prerelease,
+        }
+    }
+
+    fn release(tag: &str, prerelease: bool) -> GithubRelease {
+        GithubRelease {
+            tag_name: tag.to_string(),
+            prerelease,
+            assets: Vec::new(),
+        }
+    }
+
+    #[test]
+    fn bun_versions_are_sorted_newest_first() {
+        let versions = parse_bun_versions(vec![
+            release("bun-v1.1.5", false),
+            release("bun-v1.0.0", false),
+            release("bun-v1.2.0", true),
+            release("bun-v1.1.18", false),
+        ]);
+
+        let names: Vec<&str> = versions.iter().map(|v| v.version.as_str()).collect();
+        assert_eq!(names, vec!["1.2.0", "1.1.18", "1.1.5", "1.0.0"]);
+    }
+
+    #[test]
+    fn latest_alias_never_picks_a_prerelease() {
+        let versions = parse_bun_versions(vec![
+            release("bun-v1.2.0", true),
+            release("bun-v1.1.5", false),
+            release("bun-v1.0.0", false),
+        ]);
+
+        assert_eq!(pick_latest_stable(versions), Some("1.1.5".to_string()));
+        assert_eq!(pick_latest_stable(Vec::new()), None);
+        assert_eq!(pick_latest_stable(vec![ver("1.2.0-rc.1", true)]), None);
     }
 }

@@ -14,8 +14,9 @@
 #![expect(clippy::unwrap_used)]
 #![expect(clippy::pedantic)]
 
-use std::env;
 use std::process::{Command, Stdio};
+
+pub mod common;
 
 // ═══════════════════════════════════════════════════════════════════════════════
 // TEST CONFIGURATION AND HELPERS
@@ -41,21 +42,29 @@ impl TestRunner {
         self
     }
 
-    /// Run the omg binary with test environment
+    /// Run the omg binary with test environment.
+    ///
+    /// Delegates to the shared isolated runner so each invocation gets unique
+    /// `OMG_DATA_DIR` / `OMG_CONFIG_DIR` / `OMG_CACHE_DIR`; the runner's own
+    /// `OMG_TEST_MODE` / `OMG_DISABLE_DAEMON` defaults match the values this
+    /// suite used to set by hand.
     fn run(&self, args: &[&str]) -> TestResult {
-        let mut cmd = Command::new(env!("CARGO_BIN_EXE_omg"));
-        cmd.args(args).stdout(Stdio::piped()).stderr(Stdio::piped());
+        let owned: Vec<(String, String)> = self
+            .env_vars
+            .iter()
+            .map(|(k, v)| (k.clone(), v.clone()))
+            .collect();
+        let refs: Vec<(&str, &str)> = owned
+            .iter()
+            .map(|(k, v)| (k.as_str(), v.as_str()))
+            .collect();
 
-        for (key, value) in &self.env_vars {
-            cmd.env(key, value);
-        }
-
-        let output = cmd.output().unwrap();
+        let result = common::run_omg_with_options(args, None, &refs);
         TestResult {
-            success: output.status.success(),
-            stdout: String::from_utf8_lossy(&output.stdout).to_string(),
-            stderr: String::from_utf8_lossy(&output.stderr).to_string(),
-            exit_code: output.status.code().unwrap_or(-1),
+            success: result.success,
+            stdout: result.stdout,
+            stderr: result.stderr,
+            exit_code: result.exit_code,
         }
     }
 

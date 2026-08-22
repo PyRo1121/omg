@@ -3,7 +3,7 @@
 use anyhow::Result;
 use serde::Serialize;
 
-use crate::cli::tea::Cmd;
+use crate::cli::tea::{Cmd, UpdateType};
 use crate::core::packages::PackageService;
 use crate::package_managers::get_package_manager;
 
@@ -14,23 +14,6 @@ pub struct OutdatedPackage {
     pub new_version: String,
     pub update_type: UpdateType,
     pub repo: String,
-}
-
-#[derive(Debug, Serialize)]
-pub enum UpdateType {
-    Major,
-    Minor,
-    Patch,
-}
-
-impl std::fmt::Display for UpdateType {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            Self::Major => write!(f, "major"),
-            Self::Minor => write!(f, "minor"),
-            Self::Patch => write!(f, "patch"),
-        }
-    }
 }
 
 /// Show outdated packages
@@ -68,22 +51,20 @@ pub async fn run(json: bool) -> Result<()> {
 
     outdated.sort_by(|a, b| a.name.cmp(&b.name));
 
-    let filtered = outdated;
-
     if json {
-        println!("{}", serde_json::to_string_pretty(&filtered)?);
+        println!("{}", serde_json::to_string_pretty(&outdated)?);
         return Ok(());
     }
 
-    let major: Vec<_> = filtered
+    let major: Vec<_> = outdated
         .iter()
         .filter(|p| matches!(p.update_type, UpdateType::Major))
         .collect();
-    let minor: Vec<_> = filtered
+    let minor: Vec<_> = outdated
         .iter()
         .filter(|p| matches!(p.update_type, UpdateType::Minor))
         .collect();
-    let patch: Vec<_> = filtered
+    let patch: Vec<_> = outdated
         .iter()
         .filter(|p| matches!(p.update_type, UpdateType::Patch))
         .collect();
@@ -92,7 +73,7 @@ pub async fn run(json: bool) -> Result<()> {
         Cmd::spacer(),
         Cmd::header(
             "Available Updates",
-            format!("{} packages total", filtered.len()),
+            format!("{} packages total", outdated.len()),
         ),
         Cmd::spacer(),
     ];
@@ -102,7 +83,12 @@ pub async fn run(json: bool) -> Result<()> {
             "Major Updates (may have breaking changes)".to_string(),
             major
                 .iter()
-                .map(|p| format!("{} {} → ({})", p.name, p.current_version, p.repo))
+                .map(|p| {
+                    format!(
+                        "{} {} → {} ({})",
+                        p.name, p.current_version, p.new_version, p.repo
+                    )
+                })
                 .collect(),
         ));
         commands.push(Cmd::spacer());
@@ -171,44 +157,10 @@ pub async fn run(json: bool) -> Result<()> {
     Ok(())
 }
 
+/// Classify an update by comparing the parsed versions; falls back to
+/// [`UpdateType::Unknown`] when either side is not valid semver.
 fn classify_update(old: &str, new: &str) -> UpdateType {
-    // Parse semver-like versions
-    let old_parts: Vec<_> = old.split('.').collect();
-    let new_parts: Vec<_> = new.split('.').collect();
-
-    if old_parts.is_empty() || new_parts.is_empty() {
-        return UpdateType::Minor;
-    }
-
-    // Extract first numeric part
-    let old_major = old_parts[0]
-        .chars()
-        .filter(char::is_ascii_digit)
-        .collect::<String>();
-    let new_major = new_parts[0]
-        .chars()
-        .filter(char::is_ascii_digit)
-        .collect::<String>();
-
-    if old_major != new_major {
-        return UpdateType::Major;
-    }
-
-    if old_parts.len() > 1 && new_parts.len() > 1 {
-        let old_minor = old_parts[1]
-            .chars()
-            .filter(char::is_ascii_digit)
-            .collect::<String>();
-        let new_minor = new_parts[1]
-            .chars()
-            .filter(char::is_ascii_digit)
-            .collect::<String>();
-        if old_minor != new_minor {
-            return UpdateType::Minor;
-        }
-    }
-
-    UpdateType::Patch
+    UpdateType::from_versions(old, new)
 }
 
 #[cfg(test)]

@@ -61,21 +61,38 @@ pub fn run(package: &str, reverse: bool) -> Result<()> {
 
 #[cfg(feature = "arch")]
 fn show_dependency_chain(package: &str) -> Result<Cmd<()>> {
-    use crate::cli::components::Components;
-    use alpm::Alpm;
-
-    let handle = Alpm::new("/", "/var/lib/pacman")
-        .map_err(|e| anyhow::anyhow!("Failed to open ALPM: {e}"))?;
+    let handle = crate::cli::open_local_alpm()?;
 
     let localdb = handle.localdb();
 
     // Check if package is installed
-    let Ok(pkg) = localdb.pkg(package) else {
-        return Ok(Components::error_with_suggestion(
-            format!("Package '{package}' is not installed"),
-            "Try 'omg search' to find available packages",
-        ));
-    };
+    match localdb.pkg(package) {
+        Ok(pkg) => Ok(show_dependency_chain_for_pkg(&handle, pkg, package)),
+        Err(alpm::Error::PkgNotFound) => Ok(not_installed(package)),
+        Err(error) => Err(anyhow::anyhow!(
+            "Failed to look up '{package}' in the local database: {error}"
+        )),
+    }
+}
+
+#[cfg(feature = "arch")]
+fn not_installed(package: &str) -> Cmd<()> {
+    use crate::cli::components::Components;
+    Components::error_with_suggestion(
+        format!("Package '{package}' is not installed"),
+        "Try 'omg search' to find available packages",
+    )
+}
+
+#[cfg(feature = "arch")]
+fn show_dependency_chain_for_pkg(
+    handle: &alpm::Alpm,
+    pkg: &alpm::Package,
+    package: &str,
+) -> Cmd<()> {
+    use crate::cli::components::Components;
+
+    let localdb = handle.localdb();
 
     // Check install reason
     let reason = pkg.reason();
@@ -99,15 +116,8 @@ fn show_dependency_chain(package: &str) -> Result<Cmd<()>> {
     ];
 
     if matches!(reason, alpm::PackageReason::Depend) {
-        // Find what requires this package
-        let mut required_by = Vec::new();
-        for db_pkg in localdb.pkgs() {
-            for dep in db_pkg.depends() {
-                if dep.name() == package {
-                    required_by.push(db_pkg.name().to_string());
-                }
-            }
-        }
+        // Find what requires this package (single shared scan).
+        let required_by = crate::cli::local_reverse_deps(handle, package);
 
         if required_by.is_empty() {
             commands.push(Cmd::info("Required by: (orphan - can be removed)"));
@@ -120,7 +130,7 @@ fn show_dependency_chain(package: &str) -> Result<Cmd<()>> {
 
             // Show one dependency chain
             if let Some(first_req) = required_by.first()
-                && let Some(path) = build_dependency_path(&handle, first_req, package)
+                && let Some(path) = build_dependency_path(handle, first_req, package)
             {
                 commands.push(Cmd::spacer());
                 commands.push(Components::kv_list(Some("Dependency Path Example"), path));
@@ -160,29 +170,30 @@ fn show_dependency_chain(package: &str) -> Result<Cmd<()>> {
 
     // Safety assessment
     commands.push(Cmd::spacer());
-    let required_by_count = count_reverse_deps(&handle, package);
-    let (safety_msg, safety_type) =
-        if required_by_count == 0 && matches!(reason, alpm::PackageReason::Depend) {
-            ("YES - orphan dependency".to_string(), "safe")
-        } else if required_by_count > 0 {
-            (
-                format!("NO - {required_by_count} packages depend on it"),
-                "unsafe",
-            )
-        } else {
-            (
-                "User decision - explicitly installed".to_string(),
-                "decision",
-            )
-        };
+    let required_by_count = crate::cli::local_reverse_deps(handle, package).len();
+    let safety = if required_by_count > 0 {
+        Safety::Unsafe(format!("NO - {required_by_count} packages depend on it"))
+    } else if matches!(reason, alpm::PackageReason::Depend) {
+        Safety::Safe("YES - orphan dependency".to_string())
+    } else {
+        Safety::UserDecision("User decision - explicitly installed".to_string())
+    };
 
-    match safety_type {
-        "safe" => commands.push(Cmd::success(format!("Safe to remove: {safety_msg}"))),
-        "unsafe" => commands.push(Cmd::warning(format!("Safe to remove: {safety_msg}"))),
-        _ => commands.push(Cmd::info(format!("Safe to remove: {safety_msg}"))),
+    match safety {
+        Safety::Safe(msg) => commands.push(Cmd::success(format!("Safe to remove: {msg}"))),
+        Safety::Unsafe(msg) => commands.push(Cmd::warning(format!("Safe to remove: {msg}"))),
+        Safety::UserDecision(msg) => commands.push(Cmd::info(format!("Safe to remove: {msg}"))),
     }
 
-    Ok(Cmd::batch(commands))
+    Cmd::batch(commands)
+}
+
+/// Whether a package is safe to remove, as rendered by `omg why`.
+#[cfg(feature = "arch")]
+enum Safety {
+    Safe(String),
+    Unsafe(String),
+    UserDecision(String),
 }
 
 #[cfg(feature = "arch")]
@@ -240,51 +251,33 @@ fn build_dependency_path(
 }
 
 #[cfg(feature = "arch")]
-fn count_reverse_deps(handle: &alpm::Alpm, package: &str) -> usize {
-    let localdb = handle.localdb();
-    let mut count = 0;
-
-    for pkg in localdb.pkgs() {
-        for dep in pkg.depends() {
-            if dep.name() == package {
-                count += 1;
-                break;
-            }
-        }
-    }
-
-    count
-}
-
-#[cfg(feature = "arch")]
 fn show_reverse_deps(package: &str) -> Result<Cmd<()>> {
     use crate::cli::components::Components;
-    use alpm::Alpm;
 
-    let handle = Alpm::new("/", "/var/lib/pacman")
-        .map_err(|e| anyhow::anyhow!("Failed to open ALPM: {e}"))?;
+    let handle = crate::cli::open_local_alpm()?;
 
     let localdb = handle.localdb();
 
     // Check if package is installed
-    if localdb.pkg(package).is_err() {
-        return Ok(Components::error_with_suggestion(
-            format!("Package '{package}' is not installed"),
-            "Try 'omg search' to find available packages",
-        ));
+    if let Err(error) = localdb.pkg(package) {
+        return if error == alpm::Error::PkgNotFound {
+            Ok(not_installed(package))
+        } else {
+            Err(anyhow::anyhow!(
+                "Failed to look up '{package}' in the local database: {error}"
+            ))
+        };
     }
 
-    let mut dependents: Vec<(String, bool)> = Vec::new();
-
-    for pkg in localdb.pkgs() {
-        for dep in pkg.depends() {
-            if dep.name() == package {
+    let mut dependents: Vec<(String, bool)> = crate::cli::local_reverse_deps(&handle, package)
+        .into_iter()
+        .filter_map(|name| {
+            localdb.pkg(name.as_bytes()).ok().map(|pkg| {
                 let is_explicit = matches!(pkg.reason(), alpm::PackageReason::Explicit);
-                dependents.push((pkg.name().to_string(), is_explicit));
-                break;
-            }
-        }
-    }
+                (name, is_explicit)
+            })
+        })
+        .collect();
 
     let mut commands = vec![
         Cmd::header(

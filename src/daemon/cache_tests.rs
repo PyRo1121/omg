@@ -13,7 +13,7 @@ fn test_cache_basic_ops() {
     };
 
     // Insert
-    cache.insert("query".to_string(), vec![pkg]);
+    cache.insert_arc("query".to_string(), Arc::new(vec![pkg]));
 
     // Get
     let res = cache.get("query").unwrap();

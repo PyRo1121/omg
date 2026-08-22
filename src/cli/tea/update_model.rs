@@ -31,13 +31,24 @@ pub struct UpdatePackage {
     pub update_type: UpdateType,
 }
 
-/// Type of update (for styling)
-#[derive(Debug, Clone, PartialEq, Eq)]
+/// Type of update (for styling and JSON output)
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize)]
 pub enum UpdateType {
     Major,
     Minor,
     Patch,
     Unknown,
+}
+
+impl std::fmt::Display for UpdateType {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Major => write!(f, "major"),
+            Self::Minor => write!(f, "minor"),
+            Self::Patch => write!(f, "patch"),
+            Self::Unknown => write!(f, "unknown"),
+        }
+    }
 }
 
 impl UpdateType {
@@ -179,14 +190,10 @@ impl Model for UpdateModel {
         match msg {
             UpdateMsg::Check => {
                 self.state = UpdateState::Checking;
-                // Emit a spinner command
-                Cmd::batch([
-                    Components::loading("Checking for updates..."),
-                    Cmd::Exec(Box::new(|| {
-                        // The actual check is running in the background via init
-                        UpdateMsg::Check // Placeholder, logic is in init
-                    })),
-                ])
+                // The actual check runs in `init`; this arm only reflects the
+                // state transition. It must NOT re-emit `Check`, which would
+                // loop forever in `Program`.
+                Components::loading("Checking for updates...")
             }
             UpdateMsg::UpdatesFound(updates) => {
                 self.updates = updates;
@@ -232,8 +239,12 @@ impl Model for UpdateModel {
                 }
             }
             UpdateMsg::Execute => {
-                self.state = UpdateState::Downloading;
-                Cmd::info("Executing system upgrade...")
+                // Honest failure: no upgrade executor is wired to this model.
+                // Claiming progress here would fabricate an upgrade that never
+                // happens; callers must drive the package manager directly.
+                self.state = UpdateState::Failed;
+                self.error = Some("upgrade execution is not implemented in this model".to_string());
+                Cmd::error("System upgrade execution is not implemented; nothing was installed")
             }
             UpdateMsg::DownloadProgress { percent } => {
                 self.download_percent = percent.min(100);

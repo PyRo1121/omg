@@ -55,24 +55,41 @@ pub fn validate_path_inside(base: &Path, target: &Path) -> Result<PathBuf> {
     Ok(target_canonical)
 }
 
-/// Check if a path is a symlink (for critical operations that shouldn't follow symlinks)
-pub fn is_symlink(path: &Path) -> bool {
-    path.symlink_metadata()
-        .map(|m| m.file_type().is_symlink())
-        .unwrap_or(false)
+/// Check if a path is a symlink (for critical operations that shouldn't follow symlinks).
+///
+/// Fails closed: a metadata error (permissions, loop, …) is returned as
+/// [`Err`] so security callers reject the path instead of treating an
+/// undecidable path as "not a symlink".
+///
+/// # Errors
+/// Returns the underlying [`std::io::Error`] when `symlink_metadata` fails.
+pub fn is_symlink(path: &Path) -> std::io::Result<bool> {
+    Ok(path.symlink_metadata()?.file_type().is_symlink())
 }
 
 /// Validate a package build directory is safe to use.
 /// Rejects symlinks and paths that escape the build root.
+/// Fails closed when the directory's type cannot be determined.
 pub fn validate_build_dir(build_root: &Path, package_name: &str) -> Result<PathBuf> {
     let pkg_dir = build_root.join(package_name);
 
-    // If pkg_dir exists, verify it's not a symlink
-    if pkg_dir.exists() && is_symlink(&pkg_dir) {
-        bail!(
+    // If pkg_dir exists, verify it's not a symlink; an unreadable directory
+    // is rejected rather than silently allowed through.
+    match std::fs::symlink_metadata(&pkg_dir) {
+        Ok(meta) if meta.file_type().is_symlink() => bail!(
             "Security: Package directory is a symlink (potential attack): {}",
             pkg_dir.display()
-        );
+        ),
+        Ok(_) => {}
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+        Err(error) => {
+            return Err(error).with_context(|| {
+                format!(
+                    "Security: Cannot inspect package directory (failing closed): {}",
+                    pkg_dir.display()
+                )
+            });
+        }
     }
 
     // Validate path stays inside build_root
@@ -84,6 +101,7 @@ pub fn validate_build_dir(build_root: &Path, package_name: &str) -> Result<PathB
 }
 
 #[inline]
+#[must_use]
 pub fn has_word_boundary_match(haystack: &str, needle: &str) -> bool {
     for (pos, _) in haystack.match_indices(needle) {
         if pos == 0
@@ -98,24 +116,34 @@ pub fn has_word_boundary_match(haystack: &str, needle: &str) -> bool {
     false
 }
 
-pub fn get_original_user() -> Option<String> {
-    if !crate::core::is_root() {
-        return None;
-    }
+/// User name of the original (pre-`sudo`/`doas`) invoker, regardless of
+/// whether we are currently running as root.
+///
+/// Distinct from [`original_user`], which only resolves when running as
+/// root and is used to decide whether de-escalation is needed at all.
+#[must_use]
+pub fn build_user() -> Option<String> {
     std::env::var("SUDO_USER")
         .ok()
         .or_else(|| std::env::var("DOAS_USER").ok())
 }
 
-pub fn get_original_user_home() -> Option<PathBuf> {
-    get_original_user().map(|user| {
+pub fn original_user() -> Option<String> {
+    if !crate::core::is_root() {
+        return None;
+    }
+    build_user()
+}
+
+pub fn original_user_home() -> Option<PathBuf> {
+    original_user().map(|user| {
         std::env::var("SUDO_HOME")
             .map_or_else(|_| PathBuf::from(format!("/home/{user}")), PathBuf::from)
     })
 }
 
 pub async fn create_dir_as_user(path: &Path) -> Result<()> {
-    if let Some(user) = get_original_user() {
+    if let Some(user) = original_user() {
         // Use OsStr directly to handle non-UTF8 paths correctly
         let status = Command::new("sudo")
             .arg("-u")
@@ -153,7 +181,7 @@ pub fn is_root_owned(path: &Path) -> bool {
 }
 
 pub async fn remove_dir_as_user(path: &Path) -> Result<()> {
-    if let Some(user) = get_original_user() {
+    if let Some(user) = original_user() {
         // Use OsStr directly to handle non-UTF8 paths correctly
         let status = Command::new("sudo")
             .arg("-u")
@@ -187,7 +215,7 @@ pub async fn remove_dir_as_user(path: &Path) -> Result<()> {
 }
 
 pub fn create_dir_as_user_sync(path: &Path) -> Result<()> {
-    if let Some(user) = get_original_user() {
+    if let Some(user) = original_user() {
         // Use OsStr directly to handle non-UTF8 paths correctly
         let status = std::process::Command::new("sudo")
             .arg("-u")
@@ -215,5 +243,64 @@ pub fn create_dir_as_user_sync(path: &Path) -> Result<()> {
     } else {
         std::fs::create_dir_all(path)
             .with_context(|| format!("Failed to create directory: {}", path.display()))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn is_symlink_detects_symlinks_and_regular_files() {
+        let temp = tempfile::tempdir().expect("temp dir");
+        let file = temp.path().join("regular.txt");
+        std::fs::write(&file, "x").expect("write");
+        let link = temp.path().join("link");
+
+        // Unix-only crate: symlinks are always available.
+        {
+            std::os::unix::fs::symlink(&file, &link).expect("symlink");
+            assert!(is_symlink(&link).expect("link must be inspected"));
+        }
+        assert!(!is_symlink(&file).expect("file must be inspected"));
+    }
+
+    #[test]
+    fn is_symlink_fails_closed_for_missing_path() {
+        // Fail-closed contract: an undecidable path is an Err, never `false`.
+        let missing = std::env::temp_dir().join("omg-is-symlink-does-not-exist");
+        let _ = std::fs::remove_file(&missing);
+        assert!(
+            is_symlink(&missing).is_err(),
+            "missing path must propagate an error instead of reporting 'not a symlink'"
+        );
+    }
+
+    #[test]
+    fn validate_build_dir_fails_closed_on_uninspectable_directory() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let temp = tempfile::tempdir().expect("temp dir");
+        let build_root = temp.path().join("root");
+        std::fs::create_dir_all(&build_root).expect("build root");
+        let pkg_dir = build_root.join("mypkg");
+        std::fs::create_dir(&pkg_dir).expect("pkg dir");
+
+        let meta = std::fs::metadata(&pkg_dir).expect("meta");
+        let mut perms = meta.permissions();
+        perms.set_mode(0o000);
+        std::fs::set_permissions(&pkg_dir, perms).expect("chmod");
+
+        let result = validate_build_dir(&build_root, "mypkg");
+        let unreadable = std::fs::symlink_metadata(&pkg_dir).is_err();
+
+        let mut restore = std::fs::metadata(&pkg_dir).expect("meta").permissions();
+        restore.set_mode(0o755);
+        std::fs::set_permissions(&pkg_dir, restore).expect("restore chmod");
+
+        if unreadable {
+            let error = result.expect_err("uninspectable directory must fail closed");
+            assert!(error.to_string().contains("fail"), "got: {error}");
+        }
     }
 }

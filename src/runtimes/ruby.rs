@@ -23,9 +23,8 @@ const RUBY_VERSIONS_URL: &str = "https://api.github.com/repos/ruby/ruby-builder/
 
 /// Ruby version info
 #[derive(Debug, Clone)]
-pub struct RubyVersion {
+pub(crate) struct RubyVersion {
     pub version: String,
-    pub prebuilt: bool,
 }
 
 #[derive(Debug, Deserialize)]
@@ -42,7 +41,7 @@ struct GithubAsset {
     digest: Option<String>,
 }
 
-pub struct RubyManager {
+pub(crate) struct RubyManager {
     versions_dir: PathBuf,
     current_link: PathBuf,
     client: reqwest::Client,
@@ -86,10 +85,7 @@ impl RubyManager {
 
         let mut result: Vec<_> = versions
             .into_iter()
-            .map(|version| RubyVersion {
-                version,
-                prebuilt: true,
-            })
+            .map(|version| RubyVersion { version })
             .collect();
 
         result.sort_by(|a, b| version_cmp(&b.version, &a.version));
@@ -183,8 +179,8 @@ impl RubyManager {
     }
 }
 
-// Generate common runtime manager methods (list_installed, current_version, uninstall)
-crate::impl_runtime_common!(RubyManager, "Ruby");
+// Generate common runtime manager methods (list_installed, current_version)
+crate::runtimes::common::impl_runtime_common!(RubyManager, "Ruby");
 
 fn parse_ruby_release_version(tag_name: &str) -> Option<String> {
     tag_name

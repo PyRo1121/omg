@@ -126,10 +126,8 @@ fn get_package_info(package: &str) -> Result<(bool, Option<String>, String)> {
     }
 
     use crate::cli::style;
-    use alpm::Alpm;
 
-    let handle = Alpm::new("/", "/var/lib/pacman")
-        .map_err(|e| anyhow::anyhow!("Failed to open ALPM: {e}"))?;
+    let handle = crate::cli::open_local_alpm()?;
 
     let localdb = handle.localdb();
 
@@ -141,7 +139,10 @@ fn get_package_info(package: &str) -> Result<(bool, Option<String>, String)> {
             };
             Ok((true, Some(pkg.version().to_string()), reason))
         }
-        Err(_) => Ok((false, None, "not installed".to_string())),
+        Err(alpm::Error::PkgNotFound) => Ok((false, None, "not installed".to_string())),
+        Err(error) => Err(anyhow::anyhow!(
+            "Failed to look up '{package}' in the local database: {error}"
+        )),
     }
 }
 
@@ -186,22 +187,8 @@ fn show_required_by(package: &str) -> Result<Cmd<()>> {
         return show_required_by_debian(package);
     }
 
-    use alpm::Alpm;
-
-    let handle = Alpm::new("/", "/var/lib/pacman")
-        .map_err(|e| anyhow::anyhow!("Failed to open ALPM: {e}"))?;
-
-    let localdb = handle.localdb();
-    let mut required_by = Vec::new();
-
-    for pkg in localdb.pkgs() {
-        for dep in pkg.depends() {
-            if dep.name() == package {
-                required_by.push(pkg.name().to_string());
-                break;
-            }
-        }
-    }
+    let handle = crate::cli::open_local_alpm()?;
+    let required_by = crate::cli::local_reverse_deps(&handle, package);
 
     if required_by.is_empty() {
         Ok(Cmd::info("Nothing depends on this package"))
@@ -247,19 +234,7 @@ fn show_required_by(_package: &str) -> Result<Cmd<()>> {
 }
 
 fn format_timestamp(ts: i64) -> String {
-    use jiff::Timestamp;
-
-    Timestamp::from_second(ts).map_or_else(
-        |_| "unknown".to_string(),
-        |dt| {
-            // Format as ISO-like but more readable
-            format!("{dt}")
-                .chars()
-                .take(16)
-                .collect::<String>()
-                .replace('T', " ")
-        },
-    )
+    crate::cli::format_short_timestamp(ts)
 }
 
 #[cfg(all(

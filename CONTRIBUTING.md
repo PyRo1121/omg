@@ -145,6 +145,7 @@ cargo clippy --all-targets --no-default-features --features arch,license -- -D w
 `cargo clippy --all-targets --all-features` will compile Debian FFI bindings and requires APT development headers (`libapt-pkg-dev`) to be installed.
 
 **Key clippy rules we follow:**
+
 - `-W clippy::pedantic` - Pedantic lints enabled
 - No `as any`, `@ts-ignore`, or type error suppression
 - No `.unwrap()` in production code (use `.expect()` with context)
@@ -206,6 +207,7 @@ pub trait PackageManager: Send + Sync {
 #### Performance Patterns
 
 **Arc over Clone in async contexts:**
+
 ```rust
 // ✅ Good: Arc for cheap refcounts
 let path = Arc::new(PathBuf::from("/usr/bin"));
@@ -221,6 +223,7 @@ tokio::task::spawn_blocking(move || {
 ```
 
 **Cow for conditional ownership:**
+
 ```rust
 // ✅ Good: Zero-copy when possible
 fn display_path(path: &Path) -> Cow<str> {
@@ -234,6 +237,7 @@ fn display_path(path: &Path) -> String {
 ```
 
 **Inline hot-path functions:**
+
 ```rust
 #[inline]
 pub fn shared_client() -> &'static Client {
@@ -267,6 +271,7 @@ cargo test --features arch --lib
 ### Writing Tests
 
 **Unit tests** (within module):
+
 ```rust
 #[cfg(test)]
 mod tests {
@@ -290,6 +295,7 @@ mod tests {
 ```
 
 **Integration tests** (`tests/` directory):
+
 ```rust
 // tests/cli_integration.rs
 use assert_cmd::Command;
@@ -339,6 +345,7 @@ python3 scripts/check-perf-regression.py
 - **Memory usage:** < 50MB (resident)
 
 **Before optimizing:**
+
 1. Profile first (`cargo flamegraph`)
 2. Benchmark baseline
 3. Apply optimization
@@ -352,6 +359,7 @@ python3 scripts/check-perf-regression.py
 ### Before Submitting
 
 1. **Run all checks:**
+
    ```bash
    cargo fmt -- --check
    cargo clippy --features arch -- -D warnings -W clippy::pedantic
@@ -382,6 +390,7 @@ We follow [Conventional Commits](https://www.conventionalcommits.org/):
 ```
 
 **Types:**
+
 - `feat`: New feature
 - `fix`: Bug fix
 - `perf`: Performance improvement
@@ -391,6 +400,7 @@ We follow [Conventional Commits](https://www.conventionalcommits.org/):
 - `chore`: Build scripts, dependencies, etc.
 
 **Examples:**
+
 ```
 feat(aur): add parallel download support
 
@@ -479,7 +489,9 @@ What actually happened.
 
 **Logs**
 ```
+
 Paste relevant logs here (use --verbose flag)
+
 ```
 
 **Additional context**
@@ -489,6 +501,7 @@ Any other relevant information.
 ### Feature Requests
 
 Use the GitHub Issues "Feature Request" template. Include:
+
 - **Use case:** Why do you need this?
 - **Proposed solution:** How should it work?
 - **Alternatives:** What other approaches did you consider?
@@ -500,7 +513,7 @@ Use the GitHub Issues "Feature Request" template. Include:
 If you discover a **security vulnerability**, please:
 
 1. **Do NOT** open a public issue
-2. Email: **olen@latham.cloud** with:
+2. Email: **<olen@latham.cloud>** with:
    - Description of the vulnerability
    - Steps to reproduce
    - Potential impact
@@ -520,6 +533,7 @@ Documentation lives in `docs/`:
 - **AI policy precedence:** `AGENTS.md` "AI Instruction Governance (Canonical)"
 
 **Updating docs:**
+
 ```bash
 # Generate API documentation
 cargo doc --no-deps --features arch --open
@@ -546,8 +560,47 @@ See [LICENSE](LICENSE) for details.
 
 ---
 
-## 🙏 Thank You!
+## 🙏 Thank You
 
 Every contribution makes OMG better. Whether it's code, documentation, bug reports, or feature ideas—we appreciate your help in building the last dev tool developers will ever need.
 
 **Happy coding!** 🚀
+
+---
+
+## 📦 Dependency & Feature Policy
+
+### Version pinning
+
+- **crates.io dependencies** use caret requirements (`"1.2.3"`). The committed
+  `Cargo.lock` is the reproducibility authority — CI builds with `--locked`.
+  Bump version *ranges* deliberately and review lockfile diffs for unexpected
+  duplicate major versions, new proc macros, or new build scripts.
+- **archlinux/alpm git family** (`alpm-types`, `alpm-srcinfo`, `alpm-db`,
+  `alpm-repo-db`, `alpm-pkginfo`) is pinned by exact version (`=`) **and**
+  full commit `rev` for supply-chain integrity. Updates require a deliberate
+  rev bump applied to **all five entries together** (they come from the same
+  repo commit), plus a lockfile review.
+- **sequoia-openpgp** is intentionally a pre-release (PQC) build with
+  `allow-experimental-crypto` / `allow-variable-time-crypto`. This is
+  acceptable because OMG uses it only for public-key **signature
+  verification**, never private-key decryption.
+- The MSRV is pinned in `rust-toolchain.toml`, `package.rust-version`, and CI;
+  all three must move together.
+
+### Release feature matrix (product decision)
+
+Release binaries are built with these feature sets (`.github/workflows/release.yml`):
+
+| Target | Features |
+| --- | --- |
+| Arch | defaults (`arch,license,pgp`) |
+| Fedora | `fedora,pgp,license` |
+| macOS | `macos,pgp,license` |
+| Debian/Ubuntu | `debian` only — **no `pgp`, no `license`** |
+
+The Debian omission is currently deliberate: keeping the `.deb`-distributed
+binary free of the GPL-encumbered `rust-apt`/PGP stack and subscription code,
+and it must stay in sync with the `debian` (no `license`) CI matrix leg.
+Changing shipped Debian features requires updating both `release.yml` and the
+CI matrix together, and should be an explicit maintainer decision.

@@ -5,10 +5,15 @@ use owo_colors::OwoColorize;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::fs;
+use std::sync::LazyLock;
 
 use crate::cli::style;
 use crate::core::env::distro::detect_distro;
 use crate::core::env::fingerprint::EnvironmentState;
+
+/// The only manifest format this build can import. Forward versions must be
+/// rejected explicitly instead of being silently misread field by field.
+const MANIFEST_FORMAT_VERSION: &str = "1.0";
 
 #[derive(Debug, Serialize, Deserialize)]
 pub struct MigrationManifest {
@@ -33,6 +38,8 @@ pub async fn export(output: &str) -> Result<()> {
 
     let state = EnvironmentState::capture().await?;
     let distro = format!("{:?}", detect_distro()).to_lowercase();
+    let runtime_count = state.runtimes.len();
+    let package_count = state.packages.len();
 
     let mut packages = Vec::new();
     for pkg_name in &state.packages {
@@ -41,10 +48,10 @@ pub async fn export(output: &str) -> Result<()> {
     }
 
     let manifest = MigrationManifest {
-        version: "1.0".to_string(),
+        version: MANIFEST_FORMAT_VERSION.to_string(),
         source_distro: distro.clone(),
         created_at: jiff::Timestamp::now().as_second(),
-        runtimes: state.runtimes.clone(),
+        runtimes: state.runtimes,
         packages,
     };
 
@@ -58,8 +65,8 @@ pub async fn export(output: &str) -> Result<()> {
     );
     println!();
     println!("  Source distro: {}", style::path(&distro));
-    println!("  Runtimes: {}", state.runtimes.len());
-    println!("  Packages: {}", state.packages.len());
+    println!("  Runtimes: {runtime_count}");
+    println!("  Packages: {package_count}");
     println!();
     println!(
         "  {}",
@@ -92,6 +99,15 @@ pub async fn import(manifest_path: &str, dry_run: bool) -> Result<()> {
     let content = fs::read_to_string(&manifest_path)?;
     let manifest: MigrationManifest = serde_json::from_str(&content)?;
 
+    // Reject unknown forward versions instead of misreading their fields.
+    anyhow::ensure!(
+        manifest.version == MANIFEST_FORMAT_VERSION,
+        "Unsupported migration manifest version '{}' (this build reads '{}'); \
+         regenerate the manifest with a matching omg version",
+        manifest.version,
+        MANIFEST_FORMAT_VERSION
+    );
+
     let target_distro = format!("{:?}", detect_distro()).to_lowercase();
 
     println!(
@@ -107,54 +123,28 @@ pub async fn import(manifest_path: &str, dry_run: bool) -> Result<()> {
         style::maybe_color("Package mapping:", |t| t.bold().to_string())
     );
 
-    let mut mapped = 0;
-    let mut unmapped = Vec::new();
     let mut to_install = Vec::new();
 
     for pkg in &manifest.packages {
         let target_pkg = map_package(&pkg.original_name, &manifest.source_distro, &target_distro);
 
-        if let Some(target) = target_pkg {
-            if target != pkg.original_name {
-                println!(
-                    "    {} {} → {}",
-                    style::maybe_color("✓", |t| t.green().to_string()),
-                    style::dim(&pkg.original_name),
-                    style::maybe_color(&target, |t| t.cyan().to_string())
-                );
-            }
-            to_install.push(target);
-            mapped += 1;
-        } else {
-            unmapped.push(&pkg.original_name);
+        if target_pkg != pkg.original_name {
+            println!(
+                "    {} {} → {}",
+                style::maybe_color("✓", |t| t.green().to_string()),
+                style::dim(&pkg.original_name),
+                style::maybe_color(&target_pkg, |t| t.cyan().to_string())
+            );
         }
+        to_install.push(target_pkg);
     }
 
     println!();
     println!(
         "  Mapped: {}/{} packages",
-        style::version(&mapped.to_string()),
+        style::version(&to_install.len().to_string()),
         manifest.packages.len()
     );
-
-    if !unmapped.is_empty() {
-        println!();
-        println!(
-            "  {} No direct mapping ({}):",
-            style::maybe_color("⚠", |t| t.yellow().to_string()),
-            unmapped.len()
-        );
-        for pkg in unmapped.iter().take(10) {
-            println!(
-                "    {} {}",
-                style::maybe_color("?", |t| t.yellow().to_string()),
-                pkg
-            );
-        }
-        if unmapped.len() > 10 {
-            println!("    ... and {} more", unmapped.len() - 10);
-        }
-    }
 
     // Runtimes
     println!();
@@ -264,58 +254,49 @@ fn categorize_package(name: &str) -> String {
 
 fn get_alternatives(name: &str) -> Vec<String> {
     // Common package name mappings between distros
-    let mappings: HashMap<&str, Vec<&str>> = [
-        ("vim", vec!["vim", "vim-nox", "neovim"]),
-        ("gcc", vec!["gcc", "build-essential"]),
-        ("make", vec!["make", "build-essential"]),
-        ("git", vec!["git"]),
-        ("curl", vec!["curl"]),
-        ("wget", vec!["wget"]),
-        ("python", vec!["python3", "python"]),
-        ("nodejs", vec!["nodejs", "node"]),
-    ]
-    .into_iter()
-    .collect();
+    static MAPPINGS: LazyLock<HashMap<&str, Vec<&str>>> = LazyLock::new(|| {
+        [
+            ("vim", vec!["vim", "vim-nox", "neovim"]),
+            ("gcc", vec!["gcc", "build-essential"]),
+            ("make", vec!["make", "build-essential"]),
+            ("git", vec!["git"]),
+            ("curl", vec!["curl"]),
+            ("wget", vec!["wget"]),
+            ("python", vec!["python3", "python"]),
+            ("nodejs", vec!["nodejs", "node"]),
+        ]
+        .into_iter()
+        .collect()
+    });
 
-    mappings
+    MAPPINGS
         .get(name)
         .map(|v| v.iter().map(std::string::ToString::to_string).collect())
         .unwrap_or_default()
 }
 
-fn map_package(name: &str, from: &str, to: &str) -> Option<String> {
-    // Direct mappings between distros
-    let arch_to_debian: HashMap<&str, &str> = [
-        ("base-devel", "build-essential"),
-        ("python", "python3"),
-        ("python-pip", "python3-pip"),
-        ("nodejs", "nodejs"),
-        ("linux-headers", "linux-headers-generic"),
-        ("lib32-glibc", "libc6-i386"),
-    ]
-    .into_iter()
-    .collect();
-
-    let debian_to_arch: HashMap<&str, &str> = [
-        ("build-essential", "base-devel"),
-        ("python3", "python"),
-        ("python3-pip", "python-pip"),
-        ("linux-headers-generic", "linux-headers"),
-    ]
-    .into_iter()
-    .collect();
-
+fn map_package(name: &str, from: &str, to: &str) -> String {
+    // Direct mappings between distros. The tables are tiny and static, so a
+    // plain match over the (from, to) pair avoids rebuilding maps per package.
     match (from, to) {
-        ("arch", "debian" | "ubuntu") => arch_to_debian
-            .get(name)
-            .map(std::string::ToString::to_string)
-            .or_else(|| Some(name.to_string())),
-        ("debian" | "ubuntu", "arch") => debian_to_arch
-            .get(name)
-            .map(std::string::ToString::to_string)
-            .or_else(|| Some(name.to_string())),
-        _ => Some(name.to_string()),
+        ("arch", "debian" | "ubuntu") => match name {
+            "base-devel" => "build-essential",
+            "python" => "python3",
+            "python-pip" => "python3-pip",
+            "linux-headers" => "linux-headers-generic",
+            "lib32-glibc" => "libc6-i386",
+            other => other,
+        },
+        ("debian" | "ubuntu", "arch") => match name {
+            "build-essential" => "base-devel",
+            "python3" => "python",
+            "python3-pip" => "python-pip",
+            "linux-headers-generic" => "linux-headers",
+            other => other,
+        },
+        _ => name,
     }
+    .to_string()
 }
 
 #[cfg(test)]
@@ -365,27 +346,59 @@ mod tests {
         // Arch to Debian
         assert_eq!(
             map_package("base-devel", "arch", "debian"),
-            Some("build-essential".to_string())
+            "build-essential"
         );
-        assert_eq!(
-            map_package("python", "arch", "ubuntu"),
-            Some("python3".to_string())
-        );
+        assert_eq!(map_package("python", "arch", "ubuntu"), "python3");
 
         // Debian to Arch
         assert_eq!(
             map_package("build-essential", "debian", "arch"),
-            Some("base-devel".to_string())
+            "base-devel"
         );
-        assert_eq!(
-            map_package("python3", "ubuntu", "arch"),
-            Some("python".to_string())
-        );
+        assert_eq!(map_package("python3", "ubuntu", "arch"), "python");
 
         // No mapping (identity)
         assert_eq!(
             map_package("my-custom-pkg", "arch", "debian"),
-            Some("my-custom-pkg".to_string())
+            "my-custom-pkg"
+        );
+    }
+
+    #[test]
+    fn import_rejects_unknown_manifest_versions() {
+        let manifest = |version: &str| {
+            format!(
+                r#"{{"version":"{version}","source_distro":"arch","created_at":0,
+                    "runtimes":{{}},"packages":[]}}"#
+            )
+        };
+        let dir = tempfile::tempdir().expect("temp dir");
+
+        let write_and_parse = |version: &str| {
+            let path = dir.path().join(format!("manifest-{version}.json"));
+            std::fs::write(&path, manifest(version)).expect("write manifest");
+            let content = std::fs::read_to_string(&path).expect("read manifest");
+            serde_json::from_str::<MigrationManifest>(&content).expect("fixture must deserialize")
+        };
+
+        let supported = write_and_parse("1.0");
+        assert_eq!(supported.version, MANIFEST_FORMAT_VERSION);
+
+        let future = write_and_parse("2.0");
+        let error = (|| -> Result<()> {
+            anyhow::ensure!(
+                future.version == MANIFEST_FORMAT_VERSION,
+                "Unsupported migration manifest version '{}' (this build reads '{}')",
+                future.version,
+                MANIFEST_FORMAT_VERSION
+            );
+            Ok(())
+        })()
+        .expect_err("forward versions must be rejected, not silently imported");
+        assert!(
+            error
+                .to_string()
+                .contains("Unsupported migration manifest version")
         );
     }
 }

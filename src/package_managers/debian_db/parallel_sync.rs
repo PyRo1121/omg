@@ -309,30 +309,27 @@ async fn sync_repository(
         }
     }
 
-    // Download Packages files for all components in FULL parallel
+    // Download Packages files for all components concurrently; each
+    // component tries gzip first and falls back to xz, so every index is
+    // fetched at most once instead of downloading both formats blindly.
     let arch = get_system_arch();
     let cache_dir_ref = cache_dir.clone(); // Clone for closure capture
 
-    // OPTIMIZATION: Try only the 2 most common formats to reduce wasted requests
-    // Modern Debian/Ubuntu repos use gzip (99%) or xz (1%)
     let component_downloads: Vec<_> = repo
         .components
         .iter()
-        .flat_map(|component| {
-            let formats = [
-                (".gz", decompress_gzip as fn(&[u8]) -> Result<Vec<u8>>),
-                (".xz", decompress_xz),
-            ];
+        .map(|component| {
+            let client = client.clone();
+            let cache_dir = cache_dir_ref.clone();
+            let component = component.clone();
+            let repo_uri = repo.uri.clone();
+            let repo_suite = repo.suite.clone();
 
-            let cache_dir_inner = cache_dir_ref.clone();
-            formats.into_iter().map(move |(ext, decompress)| {
-                let client = client.clone();
-                let cache_dir = cache_dir_inner.clone();
-                let component = component.clone();
-                let repo_uri = repo.uri.clone();
-                let repo_suite = repo.suite.clone();
-
-                async move {
+            async move {
+                for (ext, decompress) in [
+                    (".gz", decompress_gzip as fn(&[u8]) -> Result<Vec<u8>>),
+                    (".xz", decompress_xz),
+                ] {
                     let url = format!(
                         "{}/dists/{}/{}/binary-{}/Packages{ext}",
                         repo_uri.trim_end_matches('/'),
@@ -350,24 +347,24 @@ async fn sync_repository(
                                 tracing::debug!(
                                     "Successfully downloaded component {component} ({ext})"
                                 );
-                                Ok::<Option<(String, String)>, anyhow::Error>(Some((
-                                    component.clone(),
-                                    ext.to_string(),
-                                )))
+                                return Ok(Some((component, ext.to_string())));
                             }
                             Err(e) => {
                                 tracing::debug!("Decompression failed for {url}: {e}");
-                                Ok::<Option<(String, String)>, anyhow::Error>(None)
                             }
                         },
-                        Err(_) => Ok::<Option<(String, String)>, anyhow::Error>(None), // File not available in this format
+                        Err(e) => {
+                            tracing::debug!("Download failed for {url}: {e}");
+                        }
                     }
                 }
-            })
+
+                Ok::<Option<(String, String)>, anyhow::Error>(None)
+            }
         })
         .collect();
 
-    // Execute all downloads concurrently (try all formats at once)
+    // Execute all component downloads concurrently
     let results = futures::future::join_all(component_downloads).await;
 
     // Check that we got at least one success per component
@@ -414,18 +411,21 @@ enum DownloadResult {
     NotModified,
 }
 
-/// Download a file with conditional request (If-Modified-Since) support
-async fn conditional_download_with_retry(
+/// Shared bounded-retry GET core.
+///
+/// Returns the response body (`None` on 304 Not Modified) together with the
+/// server's `Last-Modified` header when present. Retries use exponential
+/// backoff; 404 fails immediately.
+async fn get_with_retry(
     client: &Client,
     url: &str,
-    dest: &Path,
     if_modified_since: Option<&str>,
-) -> Result<DownloadResult> {
+) -> Result<(Option<Vec<u8>>, Option<String>)> {
     let mut last_error = None;
 
     for attempt in 0..MAX_RETRIES {
         if attempt > 0 {
-            let backoff = Duration::from_millis(INITIAL_BACKOFF_MS << attempt);
+            let backoff = retry_backoff(attempt);
             tracing::debug!(
                 "Retry attempt {} for {} after {:?}",
                 attempt + 1,
@@ -444,14 +444,13 @@ async fn conditional_download_with_retry(
 
         match request.send().await {
             Ok(response) => {
-                // 304 Not Modified - use cached copy
+                // 304 Not Modified - caller uses its cached copy
                 if response.status() == reqwest::StatusCode::NOT_MODIFIED {
                     tracing::debug!("304 Not Modified for {url}");
-                    return Ok(DownloadResult::NotModified);
+                    return Ok((None, None));
                 }
 
                 if response.status().is_success() {
-                    // Extract Last-Modified header for future conditional requests
                     let last_modified = response
                         .headers()
                         .get("Last-Modified")
@@ -460,9 +459,8 @@ async fn conditional_download_with_retry(
 
                     match response.bytes().await {
                         Ok(bytes) => {
-                            atomic_write(dest, &bytes)?;
                             tracing::debug!("Downloaded {} bytes from {url}", bytes.len());
-                            return Ok(DownloadResult::Downloaded { last_modified });
+                            return Ok((Some(bytes.to_vec()), last_modified));
                         }
                         Err(e) => {
                             tracing::warn!("Failed to read response body from {url}: {e}");
@@ -489,82 +487,43 @@ async fn conditional_download_with_retry(
     }))
 }
 
-/// Download bytes with retry logic and HTTP conditional request support
-/// Returns None if server returns 304 Not Modified (use cached copy)
-async fn download_bytes_with_retry(client: &Client, url: &str) -> Result<Vec<u8>> {
-    download_bytes_conditional(client, url, None)
-        .await
-        .map(Option::unwrap_or_default)
+/// Exponential backoff for retry `attempt` (0-based); saturated so raising
+/// `MAX_RETRIES` can never overflow the shift.
+fn retry_backoff(attempt: u32) -> Duration {
+    Duration::from_millis(INITIAL_BACKOFF_MS.saturating_mul(1 << attempt.min(20)))
 }
 
-/// Download bytes with optional If-Modified-Since header
-/// Returns:
-/// - Ok(Some(bytes)) if content was downloaded
-/// - Ok(None) if 304 Not Modified (use cached copy)
-/// - Err if download failed
-async fn download_bytes_conditional(
+/// Download a file with conditional request (If-Modified-Since) support
+async fn conditional_download_with_retry(
     client: &Client,
     url: &str,
+    dest: &Path,
     if_modified_since: Option<&str>,
-) -> Result<Option<Vec<u8>>> {
-    let mut last_error = None;
+) -> Result<DownloadResult> {
+    let (body, last_modified) = get_with_retry(client, url, if_modified_since).await?;
 
-    for attempt in 0..MAX_RETRIES {
-        if attempt > 0 {
-            let backoff = Duration::from_millis(INITIAL_BACKOFF_MS << attempt);
-            tracing::debug!(
-                "Retry attempt {} for {} after {:?}",
-                attempt + 1,
-                url,
-                backoff
-            );
-            tokio::time::sleep(backoff).await;
+    match body {
+        None => {
+            tracing::debug!("304 Not Modified for {url}, using cached copy");
+            Ok(DownloadResult::NotModified)
         }
-
-        let mut request = client.get(url);
-
-        // Add If-Modified-Since header for conditional request
-        if let Some(last_modified) = if_modified_since {
-            request = request.header("If-Modified-Since", last_modified);
-        }
-
-        match request.send().await {
-            Ok(response) => {
-                // 304 Not Modified - use cached copy
-                if response.status() == reqwest::StatusCode::NOT_MODIFIED {
-                    tracing::debug!("304 Not Modified for {url} (cache hit)");
-                    return Ok(None);
-                }
-
-                if response.status().is_success() {
-                    match response.bytes().await {
-                        Ok(bytes) => {
-                            tracing::debug!("Downloaded {} bytes from {url}", bytes.len());
-                            return Ok(Some(bytes.to_vec()));
-                        }
-                        Err(e) => {
-                            tracing::warn!("Failed to read response body from {url}: {e}");
-                            last_error = Some(e.into());
-                        }
-                    }
-                } else if response.status() == reqwest::StatusCode::NOT_FOUND {
-                    anyhow::bail!("Resource not found: {url}");
-                } else {
-                    let status = response.status();
-                    tracing::warn!("HTTP {status} error for {url}");
-                    last_error = Some(anyhow::anyhow!("HTTP {status} for {url}"));
-                }
-            }
-            Err(e) => {
-                tracing::warn!("Network error downloading {url}: {e}");
-                last_error = Some(e.into());
-            }
+        Some(bytes) => {
+            atomic_write(dest, &bytes)?;
+            Ok(DownloadResult::Downloaded { last_modified })
         }
     }
+}
 
-    Err(last_error.unwrap_or_else(|| {
-        anyhow::anyhow!("Download failed after {MAX_RETRIES} retries for {url}")
-    }))
+/// Download bytes with bounded retries.
+///
+/// A 304 on an *unconditional* GET is server misbehavior and fails
+/// explicitly rather than yielding empty bytes that would masquerade as a
+/// decompression failure later.
+async fn download_bytes_with_retry(client: &Client, url: &str) -> Result<Vec<u8>> {
+    let (body, _last_modified) = get_with_retry(client, url, None).await?;
+    body.ok_or_else(|| {
+        anyhow::anyhow!("unexpected 304 Not Modified for unconditional request: {url}")
+    })
 }
 
 /// Get stored Last-Modified header for a URL (from metadata file)
@@ -659,13 +618,7 @@ fn repo_display_name(repo: &Repository) -> String {
 
 /// Get the system architecture in Debian format
 fn get_system_arch() -> &'static str {
-    match std::env::consts::ARCH {
-        "x86_64" => "amd64",
-        "aarch64" => "arm64",
-        "arm" => "armhf",
-        "x86" => "i386",
-        arch => arch,
-    }
+    super::db::debian_arch()
 }
 
 /// Decompression functions
@@ -732,6 +685,7 @@ fn invalidate_sync_timestamps(cache_base: &Path) -> Result<()> {
 }
 
 /// Check if any repositories need syncing
+#[must_use]
 pub fn needs_sync() -> bool {
     let Ok(repos) = get_enabled_binary_repos() else {
         return true;

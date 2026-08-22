@@ -27,10 +27,12 @@ use tempfile::{NamedTempFile, TempDir};
 // ═══════════════════════════════════════════════════════════════════════════
 
 mod privilege_escalation {
+    use serial_test::serial;
     // Note: MockPrivilegeChecker is only available in unit tests (cfg(test))
     // These integration tests use the real SystemPrivilegeChecker
 
     #[test]
+    #[serial]
     #[expect(unsafe_code)]
     fn test_elevation_whitelist_allowed_operations() {
         use omg_lib::core::privilege::elevate_for_operation;

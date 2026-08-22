@@ -28,7 +28,7 @@ const GO_VERSIONS_URL: &str = "https://go.dev/dl/?mode=json";
 
 /// Go version info from go.dev
 #[derive(Debug, Clone, Deserialize)]
-pub struct GoVersion {
+pub(crate) struct GoVersion {
     version: String,
     stable: bool,
 }
@@ -46,7 +46,7 @@ impl GoVersion {
     }
 }
 
-pub struct GoManager {
+pub(crate) struct GoManager {
     versions_dir: PathBuf,
     current_link: PathBuf,
     client: &'static reqwest::Client,
@@ -152,8 +152,8 @@ impl GoManager {
     }
 }
 
-// Generate common runtime manager methods (list_installed, current_version, uninstall)
-crate::impl_runtime_common!(GoManager, "Go");
+// Generate common runtime manager methods (list_installed, current_version)
+crate::runtimes::common::impl_runtime_common!(GoManager, "Go");
 
 fn go_platform() -> Result<String> {
     let os = match std::env::consts::OS {
@@ -178,30 +178,11 @@ impl Default for GoManager {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use tempfile::TempDir;
 
     #[test]
     fn test_go_manager_new() {
         let mgr = GoManager::new();
         assert!(mgr.versions_dir.ends_with("go"));
-    }
-
-    #[test]
-    fn uninstall_rejects_parent_directory_versions_before_deletion() -> Result<()> {
-        let temp = TempDir::new()?;
-        let versions_dir = temp.path().join("versions");
-        fs::create_dir(&versions_dir)?;
-        let sentinel = temp.path().join("sentinel");
-        fs::write(&sentinel, "preserve")?;
-
-        let mut manager = GoManager::new();
-        manager.versions_dir = versions_dir.clone();
-        manager.current_link = versions_dir.join("current");
-
-        assert!(manager.uninstall("..").is_err());
-        assert_eq!(fs::read_to_string(sentinel)?, "preserve");
-        assert!(versions_dir.is_dir());
-        Ok(())
     }
 
     #[tokio::test]

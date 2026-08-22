@@ -213,11 +213,15 @@ impl AuditEntry {
 /// Enterprise-grade audit logger with tamper detection
 pub struct AuditLogger {
     log_path: PathBuf,
+    /// Diagnostic mirror of the on-disk tail hash captured at creation and
+    /// after each successful append. `log_locked` always re-reads the
+    /// authoritative tail under the lock; this field exists so callers and
+    /// tests can assert that a failed append never advanced the chain.
     last_hash: String,
 }
 
 impl AuditLogger {
-    /// Create a new audit logger
+    /// Create a new audit logger writing to `<data dir>/audit/audit.jsonl`.
     pub fn new() -> Result<Self, AuditError> {
         Self::new_in(paths::data_dir().join("audit/audit.jsonl"))
     }
@@ -255,7 +259,6 @@ impl AuditLogger {
         self.log_with_metadata(event, severity, resource, description, None)
     }
 
-    /// Log an audit event with additional metadata
     /// Log an audit event with additional metadata
     ///
     /// Appends are serialized across processes with a lock file (the same
@@ -364,19 +367,19 @@ impl AuditLogger {
 
         match severity {
             AuditSeverity::Debug => {
-                tracing::debug!(target: "audit", "{}: {}", entry.event_type_str(), description);
+                tracing::debug!(target: "audit", "{}: {}", entry.event_type, description);
             }
             AuditSeverity::Info => {
-                tracing::info!(target: "audit", "{}: {}", entry.event_type_str(), description);
+                tracing::info!(target: "audit", "{}: {}", entry.event_type, description);
             }
             AuditSeverity::Warning => {
-                tracing::warn!(target: "audit", "{}: {}", entry.event_type_str(), description);
+                tracing::warn!(target: "audit", "{}: {}", entry.event_type, description);
             }
             AuditSeverity::Error => {
-                tracing::error!(target: "audit", "{}: {}", entry.event_type_str(), description);
+                tracing::error!(target: "audit", "{}: {}", entry.event_type, description);
             }
             AuditSeverity::Critical => {
-                tracing::error!(target: "audit", "CRITICAL - {}: {}", entry.event_type_str(), description);
+                tracing::error!(target: "audit", "CRITICAL - {}: {}", entry.event_type, description);
             }
         }
 
@@ -470,21 +473,6 @@ impl AuditLogger {
             .filter(|e| e.severity >= min_severity)
             .collect())
     }
-
-    #[cfg(test)]
-    fn with_path(log_path: PathBuf) -> Result<Self, AuditError> {
-        if let Some(parent) = log_path.parent() {
-            std::fs::create_dir_all(parent).map_err(|source| AuditError::CreateDir {
-                path: parent.display().to_string(),
-                source,
-            })?;
-        }
-        let last_hash = get_last_hash(&log_path)?;
-        Ok(Self {
-            log_path,
-            last_hash,
-        })
-    }
 }
 
 /// Read every JSONL entry. Missing files are empty; IO and parse failures are errors.
@@ -530,28 +518,6 @@ fn get_last_hash(path: &Path) -> Result<String, AuditError> {
     }
 }
 
-impl AuditEntry {
-    fn event_type_str(&self) -> &'static str {
-        match self.event_type {
-            AuditEventType::PackageInstall => "PACKAGE_INSTALL",
-            AuditEventType::PackageRemove => "PACKAGE_REMOVE",
-            AuditEventType::PackageUpgrade => "PACKAGE_UPGRADE",
-            AuditEventType::PackageDowngrade => "PACKAGE_DOWNGRADE",
-            AuditEventType::SecurityAudit => "SECURITY_AUDIT",
-            AuditEventType::VulnerabilityDetected => "VULNERABILITY_DETECTED",
-            AuditEventType::SignatureVerified => "SIGNATURE_VERIFIED",
-            AuditEventType::SignatureFailed => "SIGNATURE_FAILED",
-            AuditEventType::PolicyViolation => "POLICY_VIOLATION",
-            AuditEventType::PolicyChanged => "POLICY_CHANGED",
-            AuditEventType::ConfigChanged => "CONFIG_CHANGED",
-            AuditEventType::DaemonStarted => "DAEMON_STARTED",
-            AuditEventType::DaemonStopped => "DAEMON_STOPPED",
-            AuditEventType::SbomGenerated => "SBOM_GENERATED",
-            AuditEventType::SbomExported => "SBOM_EXPORTED",
-        }
-    }
-}
-
 /// Report from audit log integrity verification
 #[derive(Debug, Serialize, Deserialize)]
 pub struct AuditIntegrityReport {
@@ -573,11 +539,52 @@ impl AuditIntegrityReport {
 static AUDIT_LOGGER: std::sync::LazyLock<std::sync::Mutex<Option<AuditLogger>>> =
     std::sync::LazyLock::new(|| std::sync::Mutex::new(None));
 
-/// Initialize the global audit logger
+/// Initialize the global audit logger eagerly.
+///
+/// Optional: [`audit_log`] lazily self-initializes the same global on first
+/// use, so callers that never ran this function still persist events.
 pub fn init_audit_logger() -> Result<(), AuditError> {
     let logger = AuditLogger::new()?;
-    *AUDIT_LOGGER.lock().expect("lock poisoned") = Some(logger);
+    *AUDIT_LOGGER.lock().expect("audit logger mutex poisoned") = Some(logger);
     Ok(())
+}
+
+/// Persist one event through the global audit logger.
+///
+/// The global is lazily created on first use: daemon code paths call this
+/// without a prior `init_audit_logger`, and security events must reach the
+/// tamper-evident log rather than silently degrade to `tracing` output.
+fn record_global(
+    event: AuditEventType,
+    severity: AuditSeverity,
+    resource: &str,
+    description: &str,
+    metadata: Option<serde_json::Value>,
+) {
+    let mut guard = AUDIT_LOGGER.lock().expect("audit logger mutex poisoned");
+    if guard.is_none() {
+        match AuditLogger::new() {
+            Ok(logger) => *guard = Some(logger),
+            Err(error) => {
+                tracing::warn!(
+                    "Audit logger unavailable, dropping event {event} for {resource}: {error}"
+                );
+                return;
+            }
+        }
+    }
+    let Some(logger) = guard.as_mut() else {
+        return;
+    };
+    let result = match metadata {
+        Some(metadata) => {
+            logger.log_with_metadata(event, severity, resource, description, Some(metadata))
+        }
+        None => logger.log(event, severity, resource, description),
+    };
+    if let Err(error) = result {
+        tracing::warn!("Failed to persist audit event {event} for {resource}: {error}");
+    }
 }
 
 /// Log an audit event using the global logger
@@ -587,14 +594,7 @@ pub fn audit_log(
     resource: &str,
     description: &str,
 ) {
-    let mut guard = AUDIT_LOGGER.lock().expect("lock poisoned");
-    if let Some(logger) = guard.as_mut() {
-        if let Err(error) = logger.log(event, severity, resource, description) {
-            tracing::warn!("Failed to persist audit event {event} for {resource}: {error}");
-        }
-    } else {
-        tracing::warn!("Audit logger not available: {} - {}", event, description);
-    }
+    record_global(event, severity, resource, description, None);
 }
 
 /// Log an audit event with metadata using the global logger
@@ -605,22 +605,7 @@ pub fn audit_log_with_metadata(
     description: &str,
     metadata: serde_json::Value,
 ) {
-    let mut guard = AUDIT_LOGGER.lock().expect("lock poisoned");
-    if let Some(logger) = guard.as_mut() {
-        if let Err(error) =
-            logger.log_with_metadata(event, severity, resource, description, Some(metadata))
-        {
-            tracing::warn!("Failed to persist audit event {event} for {resource}: {error}");
-        }
-    } else {
-        // Fallback to tracing if audit logger is not available
-        tracing::warn!(
-            "Audit logger not available: {} - {} (metadata: {:?})",
-            event,
-            description,
-            metadata
-        );
-    }
+    record_global(event, severity, resource, description, Some(metadata));
 }
 
 #[cfg(test)]
@@ -631,7 +616,7 @@ mod tests {
     fn failed_audit_write_does_not_advance_the_chain() {
         let temp = tempfile::TempDir::new().unwrap();
         let log_path = temp.path().join("audit.jsonl");
-        let mut logger = AuditLogger::with_path(log_path.clone()).unwrap();
+        let mut logger = AuditLogger::new_in(log_path.clone()).unwrap();
 
         logger
             .log(
@@ -677,7 +662,7 @@ mod tests {
         let log_path = temp.path().join("audit.jsonl");
         std::fs::write(&log_path, "not-json\n").unwrap();
         let err = expect_audit_err(
-            AuditLogger::with_path(log_path),
+            AuditLogger::new_in(log_path),
             "corrupt log must not initialize a chain",
         );
         assert!(
@@ -697,7 +682,7 @@ mod tests {
         )
         .unwrap();
         let err = expect_audit_err(
-            AuditLogger::with_path(log_path),
+            AuditLogger::new_in(log_path),
             "entry without a hash must not initialize a chain",
         );
         assert!(
@@ -710,7 +695,7 @@ mod tests {
     fn get_recent_rejects_corrupt_lines() {
         let temp = tempfile::TempDir::new().unwrap();
         let log_path = temp.path().join("audit.jsonl");
-        let mut logger = AuditLogger::with_path(log_path.clone()).unwrap();
+        let mut logger = AuditLogger::new_in(log_path.clone()).unwrap();
         logger
             .log(
                 AuditEventType::PackageInstall,
@@ -803,7 +788,7 @@ mod tests {
             let log_path = log_path.clone();
             let barrier = std::sync::Arc::clone(&barrier);
             writers.push(std::thread::spawn(move || {
-                let mut logger = AuditLogger::with_path(log_path).unwrap();
+                let mut logger = AuditLogger::new_in(log_path).unwrap();
                 barrier.wait();
                 for event_index in 0..EVENTS_PER_WRITER {
                     logger
@@ -821,7 +806,7 @@ mod tests {
             writer.join().expect("audit writer panicked");
         }
 
-        let report = AuditLogger::with_path(log_path)
+        let report = AuditLogger::new_in(log_path)
             .unwrap()
             .verify_integrity()
             .unwrap();
@@ -830,5 +815,46 @@ mod tests {
             report.is_valid(),
             "chain broke under concurrency: {report:?}"
         );
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn audit_log_lazy_initializes_and_persists_events() {
+        // Regression: production daemons called `audit_log` without ever
+        // running `init_audit_logger`, so every security event degraded to a
+        // tracing warning and the tamper-evident log stayed empty.
+        let temp = tempfile::TempDir::new().unwrap();
+        // SAFETY: test-only environment override, serialized via #[serial]
+        #[expect(unsafe_code)]
+        unsafe {
+            std::env::set_var("OMG_DATA_DIR", temp.path());
+        }
+
+        audit_log(
+            AuditEventType::PolicyViolation,
+            AuditSeverity::Warning,
+            "daemon_handler",
+            "lazy-init regression event",
+        );
+
+        // SAFETY: test cleanup, serialized
+        #[expect(unsafe_code)]
+        unsafe {
+            std::env::remove_var("OMG_DATA_DIR");
+        }
+
+        let log_path = temp.path().join("audit/audit.jsonl");
+        let report = AuditLogger::new_in(&log_path)
+            .expect("lazy audit_log must have created the audit log")
+            .verify_integrity()
+            .unwrap();
+        assert_eq!(report.total_entries, 1, "event must be persisted");
+        assert!(report.is_valid(), "persisted event must chain: {report:?}");
+        let entries = AuditLogger::new_in(&log_path)
+            .unwrap()
+            .get_recent(10)
+            .unwrap();
+        assert_eq!(entries[0].description, "lazy-init regression event");
+        assert_eq!(entries[0].event_type, AuditEventType::PolicyViolation);
     }
 }

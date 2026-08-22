@@ -1,11 +1,17 @@
 //! Pure Rust Dependency Resolver for Debian/Ubuntu
 //!
-//! Resolves package dependencies using a SAT-solver inspired algorithm with:
+//! Resolves package dependencies with:
 //! - Debian version comparison (epoch:upstream-revision)
-//! - Virtual package resolution (Provides: field)
-//! - Conflict detection (Conflicts:, Breaks: fields)
-//! - Alternative dependency handling (pkg1 | pkg2)
-//! - Topological ordering for installation sequence
+//! - Alternative dependency handling (`pkg1 | pkg2`)
+//! - Topological ordering for the installation sequence
+//!
+//! Known limitations (fail explicitly rather than pretending):
+//!
+//! - `Provides:` virtual packages are NOT resolved;
+//! - `Conflicts:`/`Breaks:` are NOT checked.
+//!
+//! Both require parsing fields the repository index does not currently
+//! carry; see the `debian-pure` install flow for the resulting contract.
 
 #![cfg(any(feature = "debian", feature = "debian-pure"))]
 
@@ -80,8 +86,6 @@ pub struct DependencyResolver {
     available: HashMap<String, DebianPackage>,
     /// Currently installed packages
     installed: HashMap<String, String>, // name -> version
-    /// Virtual packages (Provides: field)
-    provides: HashMap<String, Vec<String>>, // virtual_name -> [real_packages]
     /// Packages selected for installation
     selected: HashSet<String>,
     /// Resolved dependency graph
@@ -95,16 +99,8 @@ impl DependencyResolver {
         let installed_list = list_installed_fast()?;
 
         let mut available = HashMap::with_capacity(packages.len());
-        let mut provides: HashMap<String, Vec<String>> = HashMap::new();
 
         for pkg in packages {
-            // Build provides map (would need to parse Provides field from package)
-            // For now, just map package name to itself
-            provides
-                .entry(pkg.name.clone())
-                .or_default()
-                .push(pkg.name.clone());
-
             available.insert(pkg.name.clone(), pkg);
         }
 
@@ -116,7 +112,6 @@ impl DependencyResolver {
         Ok(Self {
             available,
             installed,
-            provides,
             selected: HashSet::new(),
             dep_graph: HashMap::new(),
         })
@@ -131,7 +126,7 @@ impl DependencyResolver {
                 .keys()
                 .filter(|k| {
                     // Simple similarity check: starts with same prefix or contains substring
-                    k.starts_with(&name[..name.len().min(3)])
+                    k.starts_with(similarity_prefix(name))
                         || k.contains(name)
                         || name.contains(k.as_str())
                 })
@@ -213,6 +208,20 @@ impl DependencyResolver {
                     }
                 }
                 visited.extend(local_visited);
+            }
+
+            // The read-only parallel pass cannot mutate `dep_graph`; record
+            // the edges for the merged closure here so `topological_sort`
+            // can order dependencies before dependents across packages.
+            for name in &to_install {
+                if self.dep_graph.contains_key(name) {
+                    continue;
+                }
+                if let Some(pkg) = self.available.get(name) {
+                    let deps: HashSet<String> =
+                        pkg.depends.iter().map(|d| parse_dep_name(d)).collect();
+                    self.dep_graph.insert(name.clone(), deps);
+                }
             }
         } else {
             // Single package: use sequential resolution (no overhead)
@@ -389,20 +398,6 @@ impl DependencyResolver {
             return self.resolve_package_readonly(&dep.name, visited, to_install);
         }
 
-        // Check virtual packages (Provides:)
-        if let Some(providers) = self.provides.get(&dep.name).cloned() {
-            for provider in providers {
-                if provider != dep.name {
-                    if self.installed.contains_key(&provider) {
-                        return Ok(()); // Already satisfied
-                    }
-                    if self.available.contains_key(&provider) {
-                        return self.resolve_package_readonly(&provider, visited, to_install);
-                    }
-                }
-            }
-        }
-
         // Try alternatives
         for alt in &dep.alternatives {
             if self
@@ -418,20 +413,18 @@ impl DependencyResolver {
         let mut error_msg = format!("Cannot satisfy dependency: {}", dep.name);
         if !dep.alternatives.is_empty() {
             let alt_names: Vec<_> = dep.alternatives.iter().map(|a| a.name.as_str()).collect();
-            write!(
+            expect_infallible(write!(
                 &mut error_msg,
                 "\n  Tried alternatives: {}",
                 alt_names.join(", ")
-            )
-            .unwrap();
+            ));
         }
         if let Some(constraint) = &dep.version_constraint {
-            write!(
+            expect_infallible(write!(
                 &mut error_msg,
                 " (version: {:?} {})",
                 constraint.op, constraint.version
-            )
-            .unwrap();
+            ));
         }
         error_msg.push_str(
             "\n💡 This dependency is not available in any enabled repository.\n\
@@ -477,20 +470,6 @@ impl DependencyResolver {
             return self.resolve_package(&dep.name, visited, to_install);
         }
 
-        // Check virtual packages (Provides:)
-        if let Some(providers) = self.provides.get(&dep.name).cloned() {
-            for provider in providers {
-                if provider != dep.name {
-                    if self.installed.contains_key(&provider) {
-                        return Ok(()); // Already satisfied
-                    }
-                    if self.available.contains_key(&provider) {
-                        return self.resolve_package(&provider, visited, to_install);
-                    }
-                }
-            }
-        }
-
         // Try alternatives
         for alt in &dep.alternatives {
             if self.resolve_dependency(alt, visited, to_install).is_ok() {
@@ -503,20 +482,18 @@ impl DependencyResolver {
         let mut error_msg = format!("Cannot satisfy dependency: {}", dep.name);
         if !dep.alternatives.is_empty() {
             let alt_names: Vec<_> = dep.alternatives.iter().map(|a| a.name.as_str()).collect();
-            write!(
+            expect_infallible(write!(
                 &mut error_msg,
                 "\n  Tried alternatives: {}",
                 alt_names.join(", ")
-            )
-            .unwrap();
+            ));
         }
         if let Some(constraint) = &dep.version_constraint {
-            write!(
+            expect_infallible(write!(
                 &mut error_msg,
                 " (version: {:?} {})",
                 constraint.op, constraint.version
-            )
-            .unwrap();
+            ));
         }
         error_msg.push_str(
             "\n💡 This dependency is not available in any enabled repository.\n\
@@ -544,18 +521,20 @@ impl DependencyResolver {
     /// Topologically sort packages (dependencies first)
     /// Uses Kahn's algorithm with optimized data structures
     fn topological_sort(&self, packages: &[String]) -> Result<Vec<String>> {
-        use ahash::AHashMap;
+        use ahash::{AHashMap, AHashSet};
 
         // Use AHashMap for faster lookups (vs std HashMap)
         let mut in_degree: AHashMap<String, usize> = AHashMap::with_capacity(packages.len());
         let mut graph: AHashMap<String, Vec<String>> = AHashMap::with_capacity(packages.len());
+
+        let in_packages: AHashSet<&str> = packages.iter().map(String::as_str).collect();
 
         // Build reverse graph (package -> packages that depend on it)
         for pkg in packages {
             in_degree.entry(pkg.clone()).or_insert(0);
             if let Some(deps) = self.dep_graph.get(pkg) {
                 for dep in deps {
-                    if packages.contains(dep) {
+                    if in_packages.contains(dep.as_str()) {
                         graph.entry(dep.clone()).or_default().push(pkg.clone());
                         *in_degree.entry(pkg.clone()).or_insert(0) += 1;
                     }
@@ -588,7 +567,11 @@ impl DependencyResolver {
         }
 
         if result.len() != packages.len() {
-            let missing: Vec<_> = packages.iter().filter(|p| !result.contains(p)).collect();
+            let ordered: AHashSet<&str> = result.iter().map(String::as_str).collect();
+            let missing: Vec<_> = packages
+                .iter()
+                .filter(|p| !ordered.contains(p.as_str()))
+                .collect();
 
             tracing::error!("Circular dependency detected among packages: {:?}", missing);
 
@@ -608,16 +591,21 @@ impl DependencyResolver {
         );
         Ok(result)
     }
+}
 
-    /// Check for conflicts between packages
-    /// Returns packages that would conflict with the proposed installation
-    ///
-    /// # Future Enhancement
-    /// Full conflict detection would require parsing Conflicts: and Breaks: fields
-    /// from package metadata. Current implementation returns empty (no conflicts).
-    pub fn check_conflicts(&self, _packages: &[String]) -> Result<Vec<String>> {
-        Ok(Vec::new())
-    }
+/// `write!` into a `String` cannot fail; surface the invariant explicitly.
+fn expect_infallible(result: std::fmt::Result) {
+    result.expect("invariant: write! to a String cannot fail");
+}
+
+/// First up-to-3 characters of `name`, safe on multi-byte UTF-8 input.
+#[must_use]
+fn similarity_prefix(name: &str) -> &str {
+    let end = name
+        .char_indices()
+        .nth(3)
+        .map_or(name.len(), |(idx, _)| idx);
+    &name[..end]
 }
 
 /// Parse a dependency string like "libc6 (>= 2.38)"
@@ -732,9 +720,11 @@ fn parse_dep_name(s: &str) -> String {
 /// Compare two Debian version strings
 ///
 /// Format: `[epoch:]upstream_version[-debian_revision]`
-/// - Epoch: Optional integer, defaults to 0
-/// - Upstream version: The main version from upstream
-/// - Debian revision: Debian-specific changes
+///
+/// Lenient by design for comparator use: a malformed epoch (non-numeric or
+/// overflowing `u32`) compares as epoch `0` rather than failing, matching
+/// dpkg's tolerance of foreign version strings.
+#[must_use]
 pub fn compare_versions(a: &str, b: &str) -> std::cmp::Ordering {
     let (epoch_a, rest_a) = split_epoch(a);
     let (epoch_b, rest_b) = split_epoch(b);
@@ -781,95 +771,86 @@ fn split_revision(version: &str) -> (&str, &str) {
     }
 }
 
-/// Compare version parts using Debian's algorithm
+/// Compare version parts using Debian's algorithm.
+///
+/// Works on borrowed slices; numeric runs are compared as digit strings so
+/// arbitrarily long numbers cannot overflow or wrap around a `u64`.
 fn compare_version_part(a: &str, b: &str) -> std::cmp::Ordering {
-    let mut a_chars = a.chars().peekable();
-    let mut b_chars = b.chars().peekable();
+    let (mut a_rest, mut b_rest) = (a, b);
 
     loop {
-        // Collect non-digit prefix using peek to avoid consuming extra chars
-        let mut a_prefix = String::new();
-        while let Some(&c) = a_chars.peek() {
-            if c.is_ascii_digit() {
-                break;
-            }
-            a_prefix.push(a_chars.next().expect("peek() confirmed Some"));
-        }
+        let (a_non_digit, a_after) = split_at_digit_boundary(a_rest);
+        let (b_non_digit, b_after) = split_at_digit_boundary(b_rest);
 
-        let mut b_prefix = String::new();
-        while let Some(&c) = b_chars.peek() {
-            if c.is_ascii_digit() {
-                break;
-            }
-            b_prefix.push(b_chars.next().expect("peek() confirmed Some"));
-        }
-
-        match compare_non_digit(&a_prefix, &b_prefix) {
+        match compare_non_digit(a_non_digit, b_non_digit) {
             std::cmp::Ordering::Equal => {}
             other => return other,
         }
 
-        // Collect numeric parts using peek
-        let mut a_num = String::new();
-        while let Some(&c) = a_chars.peek() {
-            if !c.is_ascii_digit() {
-                break;
-            }
-            a_num.push(a_chars.next().expect("peek() confirmed Some"));
-        }
-
-        let mut b_num = String::new();
-        while let Some(&c) = b_chars.peek() {
-            if !c.is_ascii_digit() {
-                break;
-            }
-            b_num.push(b_chars.next().expect("peek() confirmed Some"));
-        }
+        let (a_num, a_next) = split_at_non_digit_boundary(a_after);
+        let (b_num, b_next) = split_at_non_digit_boundary(b_after);
 
         if a_num.is_empty() && b_num.is_empty() {
-            break;
+            return std::cmp::Ordering::Equal;
         }
 
-        let a_val: u64 = a_num.parse().unwrap_or(0);
-        let b_val: u64 = b_num.parse().unwrap_or(0);
-
-        match a_val.cmp(&b_val) {
+        match compare_numeric_strings(a_num, b_num) {
             std::cmp::Ordering::Equal => {}
             other => return other,
         }
-    }
 
-    std::cmp::Ordering::Equal
+        a_rest = a_next;
+        b_rest = b_next;
+    }
+}
+
+/// Split off the leading run of non-digit characters.
+fn split_at_digit_boundary(s: &str) -> (&str, &str) {
+    match s.find(|c: char| c.is_ascii_digit()) {
+        Some(idx) => s.split_at(idx),
+        None => (s, ""),
+    }
+}
+
+/// Split off the leading run of digit characters.
+fn split_at_non_digit_boundary(s: &str) -> (&str, &str) {
+    match s.find(|c: char| !c.is_ascii_digit()) {
+        Some(idx) => s.split_at(idx),
+        None => (s, ""),
+    }
+}
+
+/// Compare two digit-only strings by numeric value without parsing them,
+/// so inputs longer than `u64` still compare correctly.
+fn compare_numeric_strings(a: &str, b: &str) -> std::cmp::Ordering {
+    let a = a.trim_start_matches('0');
+    let b = b.trim_start_matches('0');
+    a.len().cmp(&b.len()).then_with(|| a.cmp(b))
 }
 
 /// Compare non-digit parts of version strings
 /// In Debian versioning, tilde sorts before everything including empty string
 fn compare_non_digit(a: &str, b: &str) -> std::cmp::Ordering {
-    let a_chars: Vec<char> = a.chars().collect();
-    let b_chars: Vec<char> = b.chars().collect();
+    let mut a_chars = a.chars();
+    let mut b_chars = b.chars();
 
-    let max_len = a_chars.len().max(b_chars.len());
-
-    for i in 0..max_len {
-        let ac = a_chars.get(i);
-        let bc = b_chars.get(i);
-
-        match (ac, bc) {
-            (None, None) => break,
+    loop {
+        match (a_chars.next(), b_chars.next()) {
+            (None, None) => return std::cmp::Ordering::Equal,
             // Empty string sorts after tilde but before everything else
-            (Some(&c), None) => {
+            (Some(c), None) => {
                 if c == '~' {
                     return std::cmp::Ordering::Less; // Tilde before empty
                 }
                 return std::cmp::Ordering::Greater; // Everything else after empty
             }
-            (None, Some(&c)) => {
+            (None, Some(c)) => {
                 if c == '~' {
                     return std::cmp::Ordering::Greater; // Empty after tilde
                 }
                 return std::cmp::Ordering::Less; // Empty before everything else
             }
-            (Some(&ac), Some(&bc)) => {
+            (Some(ac), Some(bc)) => {
                 let order = char_order(ac).cmp(&char_order(bc));
                 if order != std::cmp::Ordering::Equal {
                     return order;
@@ -877,8 +858,6 @@ fn compare_non_digit(a: &str, b: &str) -> std::cmp::Ordering {
             }
         }
     }
-
-    std::cmp::Ordering::Equal
 }
 
 /// Get the sort order for a character in Debian versioning
@@ -1006,5 +985,100 @@ mod tests {
         let vc = parse_version_constraint("<< 3.0").unwrap();
         assert_eq!(vc.op, VersionOp::Lt);
         assert_eq!(vc.version, "3.0");
+    }
+    #[test]
+    fn suggestions_handle_multibyte_names_without_panicking() {
+        // Regression: byte-slicing at name.len().min(3) panicked on
+        // multi-byte UTF-8 input whose 3rd byte split a character.
+        let mut resolver = DependencyResolver {
+            available: HashMap::new(),
+            installed: HashMap::new(),
+            selected: HashSet::new(),
+            dep_graph: HashMap::new(),
+        };
+        let error = resolver
+            .add_package("éé")
+            .expect_err("unknown package must error, not panic");
+        assert!(error.to_string().contains("not found"), "{error}");
+        assert_eq!(similarity_prefix("éé"), "éé");
+        assert_eq!(similarity_prefix("ééabc"), "ééa");
+    }
+
+    #[test]
+    fn parallel_resolution_orders_dependencies_before_dependents() {
+        // Regression: the parallel (>1 package) pass never populated
+        // `dep_graph`, so `topological_sort` emitted arbitrary order.
+        let mut resolver = DependencyResolver {
+            available: HashMap::from([
+                ("base".to_string(), test_package("base", "1.0", &[])),
+                ("pkg-a".to_string(), test_package("pkg-a", "1.0", &["base"])),
+                ("pkg-b".to_string(), test_package("pkg-b", "1.0", &["base"])),
+            ]),
+            installed: HashMap::new(),
+            selected: HashSet::new(),
+            dep_graph: HashMap::new(),
+        };
+        resolver.add_package("pkg-a").expect("known package");
+        resolver.add_package("pkg-b").expect("known package");
+
+        let resolution = resolver.resolve().expect("resolvable");
+
+        let base_pos = resolution
+            .to_install
+            .iter()
+            .position(|name| name == "base")
+            .expect("base in install set");
+        let a_pos = resolution
+            .to_install
+            .iter()
+            .position(|name| name == "pkg-a")
+            .expect("pkg-a in install set");
+        let b_pos = resolution
+            .to_install
+            .iter()
+            .position(|name| name == "pkg-b")
+            .expect("pkg-b in install set");
+        assert!(
+            base_pos < a_pos && base_pos < b_pos,
+            "dependency-first order violated: {:?}",
+            resolution.to_install
+        );
+    }
+
+    fn test_package(name: &str, version: &str, depends: &[&str]) -> DebianPackage {
+        DebianPackage {
+            name: name.to_string(),
+            version: version.to_string(),
+            description: String::new(),
+            section: String::new(),
+            priority: String::new(),
+            installed_size: 0,
+            maintainer: String::new(),
+            architecture: "amd64".to_string(),
+            depends: depends.iter().map(|d| (*d).to_string()).collect(),
+            filename: String::new(),
+            size: 0,
+            sha256: String::new(),
+            homepage: String::new(),
+            component: "main".to_string(),
+            suite: String::new(),
+        }
+    }
+
+    #[test]
+    fn numeric_version_segments_beyond_u64_still_compare() {
+        // "1" < huge (previously parsed as 0 and mis-ordered)
+        assert_eq!(
+            compare_versions("1.0-1", "1.99999999999999999999999999-1"),
+            std::cmp::Ordering::Less
+        );
+        assert_eq!(
+            compare_versions("1.99999999999999999999999999-1", "1.0-1"),
+            std::cmp::Ordering::Greater
+        );
+        assert_eq!(
+            compare_versions("1.0001-1", "1.1-1"),
+            std::cmp::Ordering::Equal
+        );
     }
 }

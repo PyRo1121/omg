@@ -63,10 +63,7 @@ pub async fn run(from: Option<&str>, to: &str) -> Result<()> {
 
     // Compare packages
     let package_diff = diff_packages(&from_state.packages, &to_state.packages);
-    if !package_diff.added.is_empty()
-        || !package_diff.removed.is_empty()
-        || !package_diff.changed.is_empty()
-    {
+    if !package_diff.added.is_empty() || !package_diff.removed.is_empty() {
         println!(
             "  {}",
             style::maybe_color("Package differences:", |t| t.bold().to_string())
@@ -112,10 +109,7 @@ pub async fn run(from: Option<&str>, to: &str) -> Result<()> {
     }
 
     // Summary
-    let total_changes = runtime_diff.len()
-        + package_diff.added.len()
-        + package_diff.removed.len()
-        + package_diff.changed.len();
+    let total_changes = runtime_diff.len() + package_diff.added.len() + package_diff.removed.len();
 
     println!(
         "  {}",
@@ -130,13 +124,10 @@ pub async fn run(from: Option<&str>, to: &str) -> Result<()> {
         }
     );
     println!(
-        "    Packages:  +{} -{} ~{}",
+        "    Packages:  +{} -{}",
         style::version(&package_diff.added.len().to_string()),
         style::maybe_color(&package_diff.removed.len().to_string(), |t| {
             t.red().to_string()
-        }),
-        style::maybe_color(&package_diff.changed.len().to_string(), |t| {
-            t.yellow().to_string()
         })
     );
     println!();
@@ -193,10 +184,11 @@ fn diff_runtimes(from: &HashMap<String, String>, to: &HashMap<String, String>) -
 struct PackageDiff {
     added: Vec<String>,
     removed: Vec<String>,
-    changed: Vec<String>,
 }
 
 fn diff_packages(from: &[String], to: &[String]) -> PackageDiff {
+    // Lock files record package names only, so a name-set difference is the
+    // entire honest comparison; per-package version changes cannot be derived.
     let from_set: HashSet<&str> = from.iter().map(String::as_str).collect();
     let to_set: HashSet<&str> = to.iter().map(String::as_str).collect();
 
@@ -210,9 +202,5 @@ fn diff_packages(from: &[String], to: &[String]) -> PackageDiff {
         .map(std::string::ToString::to_string)
         .collect();
 
-    PackageDiff {
-        added,
-        removed,
-        changed: Vec::new(), // Version changes would need more data
-    }
+    PackageDiff { added, removed }
 }

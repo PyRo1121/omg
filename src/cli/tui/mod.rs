@@ -77,8 +77,9 @@ async fn run_app(
                 continue;
             }
 
-            // Exit on 'q' - check this first for quick exit
-            if key.code == KeyCode::Char('q') {
+            // Exit on 'q' - check this first for quick exit, but only outside
+            // search mode so queries containing 'q' can still be typed.
+            if key.code == KeyCode::Char('q') && !app.search_mode {
                 return Ok(());
             }
 

@@ -9,7 +9,6 @@ use std::sync::Arc;
 use ahash::AHashMap;
 use anyhow::Result;
 
-use crate::daemon::db::PersistentCache;
 use crate::daemon::protocol::{DetailedPackageInfo, PackageInfo};
 
 #[derive(Debug, Clone)]
@@ -39,6 +38,7 @@ impl PackageBloomFilter {
         [h1 % self.num_bits, h2 % self.num_bits, h3 % self.num_bits]
     }
 
+    #[cfg(any(test, feature = "arch", feature = "debian", feature = "debian-pure"))]
     #[cfg(any(test, feature = "arch", feature = "debian", feature = "debian-pure"))]
     fn insert(&mut self, name: &str) {
         for pos in self.hash_positions(name) {
@@ -113,6 +113,7 @@ impl TrigramIndex {
         }
     }
 
+    #[cfg(any(test, feature = "arch", feature = "debian", feature = "debian-pure"))]
     #[cfg(any(test, feature = "arch", feature = "debian", feature = "debian-pure"))]
     fn insert(&mut self, name_lower: &str, idx: u32) {
         let bytes = name_lower.as_bytes();
@@ -316,17 +317,6 @@ impl PackageIndex {
 
         #[cfg(not(any(feature = "arch", feature = "debian", feature = "debian-pure")))]
         anyhow::bail!("No package backend enabled")
-    }
-
-    pub fn new_with_cache(_cache: &PersistentCache) -> Result<Self> {
-        let start = std::time::Instant::now();
-        let index = Self::new()?;
-        tracing::info!(
-            "Compact Index built in {:?} ({} packages)",
-            start.elapsed(),
-            index.items.len()
-        );
-        Ok(index)
     }
 
     #[cfg(any(feature = "debian", feature = "debian-pure"))]

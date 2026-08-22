@@ -1,5 +1,38 @@
 //! Shared package manager types
 
+/// Canonical orphan rule for pacman-based systems.
+///
+/// A package is an orphan when it was **not** installed explicitly and no
+/// other installed package requires or optionally requires it. All orphan
+/// listings and counts (libalpm-backed and pure-Rust cache-backed) MUST
+/// derive from this single predicate so the CLI, daemon, and status counts
+/// cannot diverge.
+#[must_use]
+pub fn is_orphan_package(
+    explicit: bool,
+    required_by_empty: bool,
+    optional_for_empty: bool,
+) -> bool {
+    !explicit && required_by_empty && optional_for_empty
+}
+
+/// Case-insensitive ASCII substring test without allocation.
+/// Only consumed by arch-gated search paths; kept for all feature combos.
+#[cfg_attr(not(feature = "arch"), allow(dead_code))]
+#[inline]
+pub(crate) fn contains_ignore_case(haystack: &str, needle: &str) -> bool {
+    if needle.is_empty() {
+        return true;
+    }
+    if needle.len() > haystack.len() {
+        return false;
+    }
+    haystack
+        .as_bytes()
+        .windows(needle.len())
+        .any(|window| window.eq_ignore_ascii_case(needle.as_bytes()))
+}
+
 #[cfg(feature = "arch")]
 use alpm_types::Version as AlpmVersion;
 #[cfg(feature = "arch")]
@@ -36,6 +69,27 @@ pub fn parse_version_or_zero(s: &str) -> Version {
 #[inline]
 pub fn parse_version_or_zero(s: &str) -> Version {
     s.to_string()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn orphan_rule_matches_canonical_definition() {
+        assert!(!is_orphan_package(false, false, false)); // explicit install
+        assert!(!is_orphan_package(false, true, false)); // required by another pkg
+        assert!(!is_orphan_package(false, false, true)); // optional for another pkg
+        assert!(is_orphan_package(false, true, true)); // true orphan
+        assert!(!is_orphan_package(true, true, true));
+    }
+
+    #[test]
+    fn contains_ignore_case_matches_ascii_and_rejects_non_ascii_queries() {
+        assert!(contains_ignore_case("Firefox Web Browser", "fireFox"));
+        assert!(contains_ignore_case("abc", ""));
+        assert!(!contains_ignore_case("ab", "abc"));
+    }
 }
 
 /// Returns a default zero version.

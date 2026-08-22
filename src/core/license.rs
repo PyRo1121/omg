@@ -23,6 +23,12 @@ use std::sync::OnceLock;
 use std::sync::atomic::{AtomicBool, Ordering};
 
 const LICENSE_API_URL: &str = "https://api.pyro1121.com/api/validate-license";
+const MEMBERS_API_URL: &str = "https://api.pyro1121.com/api/license/members";
+const POLICIES_API_URL: &str = "https://api.pyro1121.com/api/license/policies";
+const AUDIT_API_URL: &str = "https://api.pyro1121.com/api/license/audit";
+const TEAM_PROPOSE_API_URL: &str = "https://api.pyro1121.com/api/team/propose";
+const TEAM_REVIEW_API_URL: &str = "https://api.pyro1121.com/api/team/review";
+const TEAM_PROPOSALS_API_URL: &str = "https://api.pyro1121.com/api/team/proposals";
 
 /// Ed25519 public key used for JWT verification.
 ///
@@ -35,9 +41,6 @@ const STUB_JWT_VERIFICATION_KEY: &[u8] = b"-----BEGIN PUBLIC KEY-----
 MCowBQYDK2VwAyEAf9Of6Of6Of6Of6Of6Of6Of6Of6Of6Of6Of6Of6Of6Of6
 -----END PUBLIC KEY-----";
 
-/// Emit the stub-key warning once per process instead of on every check.
-static STUB_KEY_WARNED: OnceLock<()> = OnceLock::new();
-
 /// License tiers (ordered by level)
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
@@ -48,15 +51,27 @@ pub enum Tier {
     Enterprise,
 }
 
+/// Error returned when a tier string does not name a known tier.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct UnknownTier;
+
+impl std::fmt::Display for UnknownTier {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("unknown license tier")
+    }
+}
+
+impl std::error::Error for UnknownTier {}
+
 impl Tier {
+    /// Parses a tier name, returning `None` for unknown input instead of
+    /// silently coercing it to a tier.
     #[must_use]
-    pub fn parse(s: &str) -> Self {
-        s.parse().unwrap_or(Self::Free)
+    pub fn parse(s: &str) -> Option<Self> {
+        s.parse().ok()
     }
 
     /// Returns the string representation of this tier
-    ///
-    /// # Rust 2026: const fn for compile-time evaluation
     #[must_use]
     pub const fn as_str(&self) -> &'static str {
         match self {
@@ -68,8 +83,6 @@ impl Tier {
     }
 
     /// Returns the display name of this tier
-    ///
-    /// # Rust 2026: const fn for compile-time evaluation
     #[must_use]
     pub const fn display_name(&self) -> &'static str {
         match self {
@@ -81,8 +94,6 @@ impl Tier {
     }
 
     /// Returns the pricing string for this tier
-    ///
-    /// # Rust 2026: const fn for compile-time evaluation
     #[must_use]
     pub const fn price(&self) -> &'static str {
         match self {
@@ -95,7 +106,7 @@ impl Tier {
 }
 
 impl FromStr for Tier {
-    type Err = ();
+    type Err = UnknownTier;
 
     fn from_str(s: &str) -> Result<Self, Self::Err> {
         match s.to_lowercase().as_str() {
@@ -103,7 +114,7 @@ impl FromStr for Tier {
             "pro" => Ok(Self::Pro),
             "team" => Ok(Self::Team),
             "enterprise" => Ok(Self::Enterprise),
-            _ => Err(()),
+            _ => Err(UnknownTier),
         }
     }
 }
@@ -140,8 +151,6 @@ pub enum Feature {
 
 impl Feature {
     /// Returns the minimum tier required for this feature
-    ///
-    /// # Rust 2026: const fn for compile-time tier validation
     #[must_use]
     pub const fn required_tier(&self) -> Tier {
         match self {
@@ -201,8 +210,6 @@ impl Feature {
     }
 
     /// Returns the string representation of this feature
-    ///
-    /// # Rust 2026: const fn for compile-time evaluation
     #[must_use]
     pub const fn as_str(&self) -> &'static str {
         match self {
@@ -231,8 +238,6 @@ impl Feature {
     }
 
     /// Returns the display name of this feature
-    ///
-    /// # Rust 2026: const fn for compile-time evaluation
     #[must_use]
     pub const fn display_name(&self) -> &'static str {
         match self {
@@ -377,7 +382,8 @@ impl StoredLicense {
     #[must_use]
     pub fn tier_enum(&self) -> Tier {
         self.verified_payload()
-            .map_or(Tier::Free, |payload| Tier::parse(&payload.tier))
+            .and_then(|payload| Tier::parse(&payload.tier))
+            .unwrap_or(Tier::Free)
     }
 
     /// Check if the stored token and its license/machine bindings are valid.
@@ -399,6 +405,7 @@ impl StoredLicense {
 }
 
 static MACHINE_ID: OnceLock<String> = OnceLock::new();
+/// Emit the stub-key warning once per process instead of on every check.
 static STUB_JWT_VERIFICATION_WARNED: AtomicBool = AtomicBool::new(false);
 
 /// Get machine fingerprint for license binding.
@@ -465,9 +472,7 @@ fn verify_jwt(token: &str) -> Option<JwtPayload> {
 
     // Fail closed against the stub key, but say so once per process so the
     // silent downgrade of every paid tier is observable.
-    let _ = STUB_KEY_WARNED.set(());
-    if STUB_KEY_WARNED.get().is_some() && !STUB_JWT_VERIFICATION_WARNED.load(Ordering::Relaxed) {
-        STUB_JWT_VERIFICATION_WARNED.store(true, Ordering::Relaxed);
+    if !STUB_JWT_VERIFICATION_WARNED.swap(true, Ordering::Relaxed) {
         tracing::warn!(
             "License verification is running against a STUB public key; \
              paid-tier licenses cannot verify and will degrade to Free"
@@ -571,6 +576,16 @@ pub async fn validate_license(key: &str) -> Result<LicenseResponse> {
     validate_license_with_user(key, None, None).await
 }
 
+/// Redact a license key for logging. Only a short prefix of plain-ASCII
+/// keys is kept; any other input degrades to a fixed placeholder so
+/// logging can never panic on multi-byte keys or leak their shape.
+fn redact_key(key: &str) -> String {
+    match key.get(..8) {
+        Some(prefix) if key.len() > 8 && prefix.is_ascii() => format!("{prefix}..."),
+        _ => "***".to_string(),
+    }
+}
+
 /// Validate a license key with optional user info for team identification
 pub async fn validate_license_with_user(
     key: &str,
@@ -587,11 +602,7 @@ pub async fn validate_license_with_user(
     });
 
     // Redact key and PII
-    let redacted_key = if key.len() > 8 {
-        format!("{}...", &key[..8])
-    } else {
-        "***".to_string()
-    };
+    let redacted_key = redact_key(key);
     tracing::debug!(
         "Validating license. Key: {}, MachineID: {}, HasUser: {}, HasEmail: {}",
         redacted_key,
@@ -631,13 +642,21 @@ pub async fn validate_license_with_user(
     Ok(resp)
 }
 
-/// Fetch team members associated with this license
-pub async fn fetch_team_members() -> Result<Vec<TeamMember>> {
-    let Some(license) = load_license() else {
-        anyhow::bail!("No license found. Activate with 'omg license activate <key>'");
-    };
+/// Load the stored license or fail with the standard activation hint.
+fn require_license() -> Result<StoredLicense> {
+    load_license().ok_or_else(|| {
+        anyhow::anyhow!("No license found. Activate with 'omg license activate <key>'")
+    })
+}
 
-    let url = "https://api.pyro1121.com/api/license/members";
+/// GET a licensed endpoint with bearer authentication, mapping 403 to
+/// `forbidden_message` and other failures to a status error.
+async fn licensed_get<T: serde::de::DeserializeOwned>(
+    url: &str,
+    forbidden_message: &str,
+    parse_context: &str,
+) -> Result<T> {
+    let license = require_license()?;
 
     let response = crate::core::http::shared_client()
         .get(url)
@@ -645,98 +664,57 @@ pub async fn fetch_team_members() -> Result<Vec<TeamMember>> {
         .timeout(std::time::Duration::from_secs(10))
         .send()
         .await
-        .context("Failed to connect to team server")?;
+        .context("Failed to connect to license server")?;
 
     if !response.status().is_success() {
         if response.status() == reqwest::StatusCode::FORBIDDEN {
-            anyhow::bail!("Team features require Team or Enterprise tier");
+            anyhow::bail!("{forbidden_message}");
         }
-        anyhow::bail!(
-            "Failed to fetch team members (status: {})",
-            response.status()
-        );
+        anyhow::bail!("Request failed (status: {})", response.status());
     }
 
-    let members: Vec<TeamMember> = response
+    response
         .json()
         .await
-        .context("Failed to parse team members response")?;
+        .with_context(|| format!("Failed to parse {parse_context} response"))
+}
 
-    Ok(members)
+/// Fetch team members associated with this license
+pub async fn fetch_team_members() -> Result<Vec<TeamMember>> {
+    licensed_get(
+        MEMBERS_API_URL,
+        "Team features require Team or Enterprise tier",
+        "team members",
+    )
+    .await
 }
 
 /// Fetch enterprise policies associated with this license
 pub async fn fetch_policies() -> Result<Vec<PolicyRule>> {
-    let Some(license) = load_license() else {
-        anyhow::bail!("No license found. Activate with 'omg license activate <key>'");
-    };
-
-    let url = "https://api.pyro1121.com/api/license/policies";
-
-    let response = crate::core::http::shared_client()
-        .get(url)
-        .bearer_auth(&license.key)
-        .timeout(std::time::Duration::from_secs(10))
-        .send()
-        .await
-        .context("Failed to connect to policy server")?;
-
-    if !response.status().is_success() {
-        if response.status() == reqwest::StatusCode::FORBIDDEN {
-            anyhow::bail!("Policy features require Enterprise tier");
-        }
-        anyhow::bail!("Failed to fetch policies (status: {})", response.status());
-    }
-
-    let policies: Vec<PolicyRule> = response
-        .json()
-        .await
-        .context("Failed to parse policies response")?;
-
-    Ok(policies)
+    licensed_get(
+        POLICIES_API_URL,
+        "Policy features require Enterprise tier",
+        "policies",
+    )
+    .await
 }
 
 /// Fetch audit logs associated with this license
 pub async fn fetch_audit_logs() -> Result<Vec<AuditLogEntry>> {
-    let Some(license) = load_license() else {
-        anyhow::bail!("No license found. Activate with 'omg license activate <key>'");
-    };
-
-    let url = "https://api.pyro1121.com/api/license/audit";
-
-    let response = crate::core::http::shared_client()
-        .get(url)
-        .bearer_auth(&license.key)
-        .timeout(std::time::Duration::from_secs(10))
-        .send()
-        .await
-        .context("Failed to connect to audit server")?;
-
-    if !response.status().is_success() {
-        if response.status() == reqwest::StatusCode::FORBIDDEN {
-            anyhow::bail!("Audit logs require Team or Enterprise tier");
-        }
-        anyhow::bail!("Failed to fetch audit logs (status: {})", response.status());
-    }
-
-    let logs: Vec<AuditLogEntry> = response
-        .json()
-        .await
-        .context("Failed to parse audit logs response")?;
-
-    Ok(logs)
+    licensed_get(
+        AUDIT_API_URL,
+        "Audit logs require Team or Enterprise tier",
+        "audit logs",
+    )
+    .await
 }
 
 /// Propose an environment change to the team
 pub async fn propose_change(message: &str, state: &serde_json::Value) -> Result<u32> {
-    let Some(license) = load_license() else {
-        anyhow::bail!("No license found. Activate with 'omg license activate <key>'");
-    };
-
-    let url = "https://api.pyro1121.com/api/team/propose";
+    let license = require_license()?;
 
     let response = crate::core::http::shared_client()
-        .post(url)
+        .post(TEAM_PROPOSE_API_URL)
         .json(&serde_json::json!({
             "key": license.key,
             "message": message,
@@ -774,14 +752,10 @@ fn parse_proposal_id(response: &serde_json::Value) -> Result<u32> {
 
 /// Review a team proposal
 pub async fn review_proposal(proposal_id: u32, status: &str) -> Result<()> {
-    let Some(license) = load_license() else {
-        anyhow::bail!("No license found. Activate with 'omg license activate <key>'");
-    };
-
-    let url = "https://api.pyro1121.com/api/team/review";
+    let license = require_license()?;
 
     let response = crate::core::http::shared_client()
-        .post(url)
+        .post(TEAM_REVIEW_API_URL)
         .json(&serde_json::json!({
             "key": license.key,
             "proposal_id": proposal_id,
@@ -805,30 +779,12 @@ pub async fn review_proposal(proposal_id: u32, status: &str) -> Result<()> {
 
 /// Fetch team proposals
 pub async fn fetch_proposals() -> Result<Vec<serde_json::Value>> {
-    let Some(license) = load_license() else {
-        anyhow::bail!("No license found. Activate with 'omg license activate <key>'");
-    };
-
-    let url = "https://api.pyro1121.com/api/team/proposals";
-
-    let response = crate::core::http::shared_client()
-        .get(url)
-        .bearer_auth(&license.key)
-        .timeout(std::time::Duration::from_secs(10))
-        .send()
-        .await
-        .context("Failed to connect to team server")?;
-
-    if !response.status().is_success() {
-        anyhow::bail!("Failed to fetch proposals (status: {})", response.status());
-    }
-
-    let proposals: Vec<serde_json::Value> = response
-        .json()
-        .await
-        .context("Failed to parse proposals response")?;
-
-    Ok(proposals)
+    licensed_get(
+        TEAM_PROPOSALS_API_URL,
+        "Failed to fetch proposals",
+        "proposals",
+    )
+    .await
 }
 
 /// Activate a license key
@@ -987,15 +943,29 @@ mod tests {
     use super::*;
 
     #[test]
-    fn test_tier_hierarchy() {
-        assert!(matches!(Tier::parse("pro"), Tier::Pro));
-        assert!(matches!(Tier::parse("team"), Tier::Team));
-        assert!(matches!(Tier::parse("enterprise"), Tier::Enterprise));
-        assert!(matches!(Tier::parse("unknown"), Tier::Free));
+    fn tier_parsing_covers_hierarchy() {
+        assert!(matches!(Tier::parse("pro"), Some(Tier::Pro)));
+        assert!(matches!(Tier::parse("team"), Some(Tier::Team)));
+        assert!(matches!(Tier::parse("enterprise"), Some(Tier::Enterprise)));
+        // Unknown input must be rejected, not coerced to a tier.
+        assert_eq!(Tier::parse("unknown"), None);
+        assert_eq!("nope".parse::<Tier>(), Err(UnknownTier));
     }
 
     #[test]
-    fn test_feature_tiers() {
+    fn key_redaction_never_panics_on_multibyte_input() {
+        // Regression: slicing &key[..8] panicked when byte 8 was not a
+        // char boundary (e.g. multi-byte license keys).
+        assert_eq!(redact_key("abcdefgh12345678"), "abcdefgh...");
+        assert_eq!(redact_key("short"), "***");
+        // 3-byte CJK characters straddling byte 8 must not panic.
+        assert_eq!(redact_key("\u{4e2d}\u{65ad}\u{6d4b}\u{8bd5}key"), "***");
+        assert_eq!(redact_key("\u{4e2d}\u{65ad}\u{6d4b}key-more"), "***");
+        assert_eq!(redact_key(""), "***");
+    }
+
+    #[test]
+    fn feature_tiers_match_tier_levels() {
         assert_eq!(Feature::Packages.required_tier(), Tier::Free);
         assert_eq!(Feature::Sbom.required_tier(), Tier::Pro);
         assert_eq!(Feature::TeamSync.required_tier(), Tier::Team);
@@ -1069,7 +1039,7 @@ mod tests {
     }
 
     #[test]
-    fn test_free_features_available() {
+    fn free_features_available_without_license() {
         // Free features should always be available (no license)
         assert!(has_feature("packages"));
         assert!(has_feature("runtimes"));
@@ -1077,7 +1047,7 @@ mod tests {
     }
 
     #[test]
-    fn test_unknown_feature_is_denied() {
+    fn unknown_feature_is_denied() {
         assert!(!has_feature("not-a-real-feature"));
         match require_feature("not-a-real-feature") {
             Ok(()) => panic!("unknown feature must be denied"),

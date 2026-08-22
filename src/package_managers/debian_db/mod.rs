@@ -11,6 +11,14 @@
 //! - [`resolver`]: Dependency resolution with version comparison
 //! - [`transaction`]: Pure Rust transaction engine for .deb installation
 //! - [`validation`]: Pre-flight checks and error validation
+//!
+//! ## Error-type decision
+//!
+//! This module intentionally returns `anyhow::Result` throughout: it is an
+//! application-internal backend (never consumed as an independent library),
+//! every failure is reported with context strings, and callers only branch on
+//! success/failure. A typed error enum would add surface without a current
+//! consumer; revisit if this module is ever extracted into a crate.
 
 pub mod content_store;
 pub mod db;
@@ -22,12 +30,12 @@ pub mod validation;
 
 pub use content_store::ContentStore;
 pub use db::{
-    DebianMmapIndex, DebianPackage, DebianPackageIndex, LocalPackage, clean_package_cache,
-    cleanup_expired_mmaps, ensure_index_loaded, ensure_mmap_loaded, get_all_packages_with_sizes,
-    get_counts_fast, get_detailed_packages, get_info_fast, get_installed_info_fast,
-    get_package_dependencies, get_package_size, get_package_version, get_updates_from_mmap,
-    is_installed_fast, is_mmap_available, is_package_auto_installed, list_explicit_fast,
-    list_installed_fast, list_orphans_fast, search_fast,
+    DebianMmapIndex, DebianPackage, DebianPackageIndex, DpkgPackageEntry, clean_package_cache,
+    cleanup_expired_mmaps, debian_arch, ensure_index_loaded, ensure_mmap_loaded,
+    get_all_packages_with_sizes, get_counts_fast, get_detailed_packages, get_info_fast,
+    get_installed_info_fast, get_package_dependencies, get_package_size, get_package_version,
+    get_updates_from_mmap, is_installed_fast, is_mmap_available, is_package_auto_installed,
+    list_explicit_fast, list_installed_fast, list_orphans_fast, search_fast,
 };
 
 pub use parallel_sync::{force_sync_all, needs_sync, sync_all_repositories};
@@ -36,7 +44,7 @@ pub use sources::{
     RepoType, Repository, get_enabled_binary_repos, parse_all_sources, parse_deb822_content,
     parse_sources_list_content,
 };
-pub use transaction::{Transaction, TransactionState, dry_run};
+pub use transaction::{PackageAction, Transaction, TransactionState};
 pub use validation::{check_disk_space, require_verified_deb};
 
 /// Fast status may omit orphans/updates. A failed accurate query must not

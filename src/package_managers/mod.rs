@@ -273,11 +273,9 @@ pub fn get_system_status() -> anyhow::Result<(usize, usize, usize, usize)> {
 #[cfg(feature = "arch")]
 pub use alpm_direct::clear_alpm_cache;
 #[cfg(feature = "arch")]
-pub use alpm_ops::DownloadInfo;
-#[cfg(feature = "arch")]
 pub use alpm_ops::{
-    clean_cache, display_pkg_info, execute_transaction, get_sync_pkg_info,
-    get_update_download_list, get_update_list, list_orphans_direct, sync_dbs,
+    clean_cache, display_pkg_info, execute_transaction, get_sync_pkg_info, get_update_list,
+    list_orphans_direct,
 };
 #[cfg(feature = "arch")]
 pub use arch::{ArchPackageManager, is_installed, list_explicit, list_orphans, remove_orphans};
@@ -286,12 +284,9 @@ pub use aur::{AurClient, AurPackageDetail, search_detailed};
 #[cfg(feature = "arch")]
 pub use pacman_db::{
     check_updates_cached, get_local_package, get_potential_aur_packages, invalidate_caches,
-    preload_caches,
 };
 #[cfg(feature = "arch")]
-pub use parallel_sync::{
-    DownloadJob, download_packages_parallel, select_fastest_mirrors, sync_databases_parallel,
-};
+pub use parallel_sync::sync_databases_parallel;
 pub use traits::PackageManager;
 #[cfg(feature = "arch")]
 pub use types::PackageInfo as SyncPkgInfo;

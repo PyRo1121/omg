@@ -666,6 +666,29 @@ pub fn get_package_version(name: &str) -> Option<String> {
         _ => None,
     }
 }
+// ===========================================================================
+// SKIP ACCOUNTING
+// ===========================================================================
+
+/// Number of tests silently skipped at runtime via the `require_*!` /
+/// `skip_if!` macros in this process. Each skip is also announced as a
+/// `[omg-skip]` line, so CI can recover the true skip count with
+/// `cargo test 2>&1 | grep -c '\[omg-skip\]'` and fail on unexpected
+/// coverage loss instead of reading a green run as full coverage.
+static SKIPPED_TESTS: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+
+/// Record and announce a runtime skip with its reason. Prefer
+/// `#[ignore = "reason"]` for statically-known skips; use this only for
+/// conditions discoverable at runtime.
+pub fn report_skip(reason: &str) {
+    SKIPPED_TESTS.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+    eprintln!("[omg-skip] {reason}");
+}
+
+/// Skips recorded so far in this test binary (see [`report_skip`]).
+pub fn skipped_tests_count() -> usize {
+    SKIPPED_TESTS.load(std::sync::atomic::Ordering::Relaxed)
+}
 
 // ═══════════════════════════════════════════════════════════════════════════════
 // TEST MACROS
@@ -676,7 +699,7 @@ pub fn get_package_version(name: &str) -> Option<String> {
 macro_rules! skip_if {
     ($cond:expr, $reason:expr) => {
         if $cond {
-            eprintln!("⏭️  Skipping test: {}", $reason);
+            $crate::common::report_skip(&$reason);
             return;
         }
     };
@@ -688,6 +711,7 @@ macro_rules! require_system_tests {
     () => {
         let config = $crate::common::TestConfig::default();
         if config.skip_if_no_system(module_path!()) {
+            $crate::common::report_skip("system tests disabled (set OMG_RUN_SYSTEM_TESTS=1)");
             return;
         }
     };
@@ -699,6 +723,7 @@ macro_rules! require_network_tests {
     () => {
         let config = $crate::common::TestConfig::default();
         if config.skip_if_no_network(module_path!()) {
+            $crate::common::report_skip("network tests disabled (set OMG_RUN_NETWORK_TESTS=1)");
             return;
         }
     };
@@ -710,6 +735,9 @@ macro_rules! require_destructive_tests {
     () => {
         let config = $crate::common::TestConfig::default();
         if config.skip_if_no_destructive(module_path!()) {
+            $crate::common::report_skip(
+                "destructive tests disabled (set OMG_RUN_DESTRUCTIVE_TESTS=1)",
+            );
             return;
         }
     };
@@ -721,7 +749,7 @@ macro_rules! require_arch {
     () => {
         let config = $crate::common::TestConfig::default();
         if !config.is_arch() {
-            eprintln!("⏭️  Skipping test: requires Arch Linux");
+            $crate::common::report_skip("requires Arch Linux");
             return;
         }
     };
@@ -733,7 +761,7 @@ macro_rules! require_debian {
     () => {
         let config = $crate::common::TestConfig::default();
         if !config.is_debian() {
-            eprintln!("⏭️  Skipping test: requires Debian");
+            $crate::common::report_skip("requires Debian");
             return;
         }
     };
@@ -745,7 +773,7 @@ macro_rules! require_ubuntu {
     () => {
         let config = $crate::common::TestConfig::default();
         if !config.is_ubuntu() {
-            eprintln!("⏭️  Skipping test: requires Ubuntu");
+            $crate::common::report_skip("requires Ubuntu");
             return;
         }
     };

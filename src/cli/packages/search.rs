@@ -69,6 +69,7 @@ pub async fn search(query: &str, detailed: bool, no_aur: bool) -> Result<()> {
     search_internal(query, detailed, false, no_aur, 50).await
 }
 
+#[allow(clippy::unused_async, reason = "preserves the async command interface")]
 pub async fn search_with_json(
     query: &str,
     detailed: bool,
@@ -117,12 +118,13 @@ async fn search_internal(
         }
         Err(error) => return Err(error).context("Failed to search AUR packages"),
     };
-    // Deduplicate: skip AUR packages already present in official results
-    let official_names: std::collections::HashSet<String> =
-        display_packages.iter().map(|p| p.name.clone()).collect();
+    // Deduplicate: skip AUR packages already present in official results.
+    // Borrow the names instead of cloning them; this runs on every search.
+    let official_names: std::collections::HashSet<&str> =
+        display_packages.iter().map(|p| p.name.as_str()).collect();
     let deduped_aur: Vec<DisplayPackage> = aur_packages
         .into_iter()
-        .filter(|p: &DisplayPackage| !official_names.contains(&p.name))
+        .filter(|p| !official_names.contains(p.name.as_str()))
         .collect();
     display_packages.extend(deduped_aur);
 
@@ -150,7 +152,7 @@ async fn search_internal(
     writeln!(stdout, "{}", style::header("Search Results"))?;
 
     for pkg in display_packages.iter().take(limit) {
-        write_package_cached(&mut stdout, pkg, desc_width)?;
+        write_package_line(&mut stdout, pkg, desc_width)?;
     }
 
     if display_packages.len() > limit {
@@ -248,7 +250,6 @@ async fn search_aur_packages(query: &str, detailed: bool) -> Result<Vec<DisplayP
 pub fn search_sync_cli(query: &str, detailed: bool, no_aur: bool) -> Result<bool> {
     search_sync_cli_with_limit(query, detailed, no_aur, 50)
 }
-
 pub fn search_sync_cli_with_limit(
     query: &str,
     detailed: bool,
@@ -328,7 +329,7 @@ fn search_sync_official_only(query: &str, limit: usize) -> Result<bool> {
 }
 
 #[inline]
-fn write_package_cached<W: Write>(
+fn write_package_line<W: Write>(
     w: &mut W,
     pkg: &DisplayPackage,
     desc_width: usize,
@@ -386,21 +387,16 @@ fn write_daemon_package<W: Write>(
 
 #[cfg(test)]
 mod tests {
-    fn format_package(pkg: &super::DisplayPackage) -> String {
-        let source_style = match pkg.source.as_str() {
-            "AUR" => super::style::warning(&pkg.source),
-            _ => super::style::info(&pkg.source),
-        };
-
-        format!(
-            "  {} {} ({}) - {}",
-            super::style::package(&pkg.name),
-            super::style::version(&pkg.version),
-            source_style,
-            super::style::dim(&truncate(&pkg.description, 50))
-        )
-    }
     use super::*;
+
+    /// Format a package through the real production writer so the tests
+    /// assert the exact output users see instead of a duplicated format
+    /// string.
+    fn format_package(pkg: &super::DisplayPackage) -> String {
+        let mut buf = Vec::new();
+        write_package_line(&mut buf, pkg, 50).expect("in-memory writer cannot fail");
+        String::from_utf8(buf).expect("writer only emits UTF-8")
+    }
 
     #[test]
     #[cfg(feature = "arch")]

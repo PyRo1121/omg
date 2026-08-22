@@ -13,6 +13,7 @@ pub struct BuildJob {
 }
 
 impl BuildJob {
+    #[must_use]
     pub fn new(package: String, dependencies: Vec<String>) -> Self {
         Self {
             package,
@@ -27,10 +28,16 @@ pub struct ParallelBuilder {
 }
 
 impl ParallelBuilder {
+    /// # Panics
+    /// Never panics; a `max_concurrent` of 0 is clamped to 1 so a wave can
+    /// never silently skip every package.
+    #[must_use]
     pub fn new(client: Arc<AurClient>, max_concurrent: usize) -> Self {
         Self {
             client,
-            max_concurrent,
+            // Clamp to >=1: a zero limit would spawn no tasks per wave and
+            // report success without building anything.
+            max_concurrent: max_concurrent.max(1),
         }
     }
 
@@ -42,7 +49,6 @@ impl ParallelBuilder {
         // Start a shared sudoloop for the entire parallel build session.
         // This keeps credentials alive across all waves and prevents
         // individual builds from each trying to prompt for sudo.
-        #[cfg(unix)]
         let _sudoloop = if crate::core::sudoloop::can_use_sudoloop() {
             tracing::debug!("Starting shared sudoloop for parallel AUR builds");
             Some(crate::core::sudoloop::SudoLoop::start())
@@ -68,6 +74,7 @@ impl ParallelBuilder {
         Ok(())
     }
 
+    #[must_use]
     pub fn build_dependency_graph(jobs: &[BuildJob]) -> HashMap<String, HashSet<String>> {
         let mut graph: HashMap<String, HashSet<String>> = HashMap::new();
 
@@ -123,6 +130,13 @@ impl ParallelBuilder {
         Ok(levels)
     }
 
+    /// Wave concurrency for a level. Clamped to >= 1: a zero limit would
+    /// spawn no tasks and silently report success without building anything.
+    #[must_use]
+    fn concurrency_for_level(max_concurrent: usize, level_len: usize) -> usize {
+        max_concurrent.max(1).min(level_len)
+    }
+
     async fn build_level(
         &self,
         level_num: usize,
@@ -146,7 +160,7 @@ impl ParallelBuilder {
         );
         println!();
 
-        let concurrency = packages.len().min(self.max_concurrent);
+        let concurrency = Self::concurrency_for_level(self.max_concurrent, packages.len());
 
         let mut tasks = JoinSet::new();
         let mut package_iter = packages.iter();
@@ -245,6 +259,15 @@ mod tests {
 
         assert_eq!(levels.len(), 1);
         assert_eq!(levels[0].len(), 3);
+    }
+
+    #[test]
+    fn test_zero_max_concurrent_is_clamped_to_one() {
+        // Regression: max_concurrent == 0 used to spawn zero tasks per wave,
+        // silently skipping every package while reporting success.
+        assert_eq!(ParallelBuilder::concurrency_for_level(0, 5), 1);
+        assert_eq!(ParallelBuilder::concurrency_for_level(2, 5), 2);
+        assert_eq!(ParallelBuilder::concurrency_for_level(8, 3), 3);
     }
 
     #[test]

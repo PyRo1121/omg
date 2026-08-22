@@ -4,6 +4,12 @@ use anyhow::Result;
 
 use super::dispatch_backend;
 
+/// Maximum number of user-selected AUR replacement hops before aborting.
+/// Each accepted suggestion re-enters the install flow for one package; the
+/// bound turns a pathological suggestion chain into a clean error instead of
+/// an unbounded interactive loop.
+pub(crate) const MAX_REPLACEMENT_HOPS: u32 = 3;
+
 #[cfg(feature = "arch")]
 mod arch;
 #[cfg(any(feature = "debian", feature = "debian-pure"))]
@@ -21,6 +27,19 @@ mod generic;
 /// * `yes` - Skip confirmation prompts
 /// * `dry_run` - Show what would be installed without actually installing
 pub async fn install(packages: &[String], yes: bool, dry_run: bool) -> Result<()> {
+    install_with_replacement_budget(packages, yes, dry_run, MAX_REPLACEMENT_HOPS).await
+}
+
+/// Entry point with an explicit interactive-replacement budget.
+///
+/// Each user-accepted suggestion re-enters the install flow for one package;
+/// the budget turns a pathological suggestion chain into a clean error.
+pub(crate) async fn install_with_replacement_budget(
+    packages: &[String],
+    yes: bool,
+    dry_run: bool,
+    replacement_hops: u32,
+) -> Result<()> {
     if packages.is_empty() {
         anyhow::bail!("No packages specified");
     }
@@ -30,17 +49,10 @@ pub async fn install(packages: &[String], yes: bool, dry_run: bool) -> Result<()
     }
 
     dispatch_backend! {
-        debian: { let _ = yes; debian::install(packages).await },
-        arch: { arch::install(packages, yes).await },
-        generic: { let _ = yes; generic::install(packages).await },
+        debian: { let _ = (yes, replacement_hops); debian::install(packages).await },
+        arch: { arch::install(packages, yes, replacement_hops).await },
+        generic: { let _ = (yes, replacement_hops); generic::install(packages).await },
     }
-}
-
-pub fn install_dry_run_cli(packages: &[String]) -> Result<bool> {
-    crate::core::security::validate_package_names_or_files(packages)?;
-    // Source resolution can require an AUR request, so the synchronous startup
-    // fast path must defer to the normal asynchronous command implementation.
-    Ok(false)
 }
 
 #[cfg(feature = "arch")]

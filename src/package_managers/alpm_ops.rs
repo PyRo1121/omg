@@ -1,11 +1,9 @@
-//! Direct libalpm operations - LIGHTNING FAST
+//! Direct libalpm operations.
 //!
-//! Pure libalpm transactions - no pacman subprocess.
-//! Install/remove/update operations at native C library speed.
+//! Pure libalpm queries and transactions without spawning a pacman subprocess.
 
 use std::sync::LazyLock;
 
-use alpm_types::Version;
 use anyhow::{Context, Result};
 use owo_colors::OwoColorize;
 use regex::Regex;
@@ -32,11 +30,11 @@ pub fn get_update_list() -> Result<Vec<UpdateInfo>> {
         let updates = crate::package_managers::pacman_db::check_updates_cached()?;
         return Ok(updates
             .into_iter()
-            .map(|(name, old_ver, new_ver, repo, _, _)| UpdateInfo {
-                name,
-                old_version: old_ver.to_string(),
-                new_version: new_ver.to_string(),
-                repo,
+            .map(|update| UpdateInfo {
+                name: update.name,
+                old_version: update.old_version.to_string(),
+                new_version: update.new_version.to_string(),
+                repo: update.repo,
             })
             .collect());
     }
@@ -46,114 +44,58 @@ pub fn get_update_list() -> Result<Vec<UpdateInfo>> {
 
     crate::package_managers::alpm_direct::with_handle_mut(|alpm| {
         configure_package_filters(alpm, &pacman_config)?;
-        let localdb = alpm.localdb();
-        let syncdbs = alpm.syncdbs();
-        let local_pkg_count = localdb.pkgs().len();
-
-        // Build HashMap of sync packages: name -> (version_str, repo_name)
-        // This converts O(n×m) lookups to O(n+m) with single HashMap lookup per package
-        let mut sync_map: ahash::AHashMap<&str, (&str, &str)> =
-            ahash::AHashMap::with_capacity(local_pkg_count);
-
-        for db in syncdbs {
-            let repo_name = db.name();
-            for pkg in db.pkgs() {
-                if pkg.should_ignore() {
-                    continue;
-                }
-                // First repo wins (core > extra > multilib priority)
-                sync_map
-                    .entry(pkg.name())
-                    .or_insert_with(|| (pkg.version().as_str(), repo_name));
-            }
-        }
-
-        let mut updates = Vec::with_capacity(local_pkg_count / 20); // ~5% typically have updates
-
-        for pkg in localdb.pkgs() {
-            let name = pkg.name();
-            let local_ver_str = pkg.version().as_str();
-
-            if let Some(&(sync_ver_str, repo)) = sync_map.get(name)
-                && alpm::vercmp(sync_ver_str, local_ver_str) == std::cmp::Ordering::Greater
-            {
-                updates.push(UpdateInfo {
-                    name: name.to_string(),
-                    old_version: local_ver_str.to_string(),
-                    new_version: sync_ver_str.to_string(),
-                    repo: repo.to_string(),
-                });
-            }
-        }
-
-        Ok(updates)
+        Ok(collect_updates(alpm))
     })
 }
 
-/// Information needed for downloading a package
-#[derive(Debug, Clone)]
-pub struct DownloadInfo {
-    pub name: String,
-    pub version: Version,
-    pub repo: String,
-    pub filename: String,
-    pub size: u64,
-}
+/// Collect available updates from an ALPM handle whose ignore filters are
+/// already configured.
+///
+/// Single authoritative update-collection implementation: shared by the CLI
+/// (`get_update_list`) and the daemon worker (`alpm_worker`) so both honor
+/// `IgnorePkg`/`IgnoreGroup`/`Replacement` handling identically.
+pub(crate) fn collect_updates(alpm: &alpm::Alpm) -> Vec<UpdateInfo> {
+    let localdb = alpm.localdb();
+    let syncdbs = alpm.syncdbs();
+    let local_pkg_count = localdb.pkgs().len();
 
-/// Get download information for all available updates - for parallel downloads
-pub fn get_update_download_list() -> Result<Vec<DownloadInfo>> {
-    let pacman_config = crate::core::pacman_conf::PacmanConfig::parse(paths::pacman_conf_path())
-        .context("Failed to load update filters from pacman.conf")?;
+    // Build HashMap of sync packages: name -> (version_str, repo_name)
+    // This converts O(n×m) lookups to O(n+m) with single HashMap lookup per package
+    let mut sync_map: ahash::AHashMap<&str, (&str, &str)> =
+        ahash::AHashMap::with_capacity(local_pkg_count);
 
-    crate::package_managers::alpm_direct::with_handle_mut(|alpm| {
-        configure_package_filters(alpm, &pacman_config)?;
-        let localdb = alpm.localdb();
-        let syncdbs = alpm.syncdbs();
-        let local_pkg_count = localdb.pkgs().len();
-
-        // Build HashMap of sync packages: name -> (version_str, repo_name, filename, dl_size)
-        // Converts O(n*m) nested loop to O(n+m) with single HashMap lookup per package
-        let mut sync_map: ahash::AHashMap<&str, (&str, &str, &str, u64)> =
-            ahash::AHashMap::with_capacity(local_pkg_count);
-
-        for db in syncdbs {
-            let repo_name = db.name();
-            for pkg in db.pkgs() {
-                if pkg.should_ignore() {
-                    continue;
-                }
-                sync_map.entry(pkg.name()).or_insert_with(|| {
-                    (
-                        pkg.version().as_str(),
-                        repo_name,
-                        pkg.filename().unwrap_or_default(),
-                        pkg.download_size() as u64,
-                    )
-                });
+    for db in syncdbs {
+        let repo_name = db.name();
+        for pkg in db.pkgs() {
+            if pkg.should_ignore() {
+                continue;
             }
+            // First repo wins (core > extra > multilib priority)
+            sync_map
+                .entry(pkg.name())
+                .or_insert_with(|| (pkg.version().as_str(), repo_name));
         }
+    }
 
-        let mut downloads = Vec::with_capacity(local_pkg_count / 20);
+    let mut updates = Vec::with_capacity(local_pkg_count / 20); // ~5% typically have updates
 
-        for pkg in localdb.pkgs() {
-            let name = pkg.name();
-            let local_ver = pkg.version().as_str();
+    for pkg in localdb.pkgs() {
+        let name = pkg.name();
+        let local_ver_str = pkg.version().as_str();
 
-            if let Some(&(sync_ver, repo, filename, dl_size)) = sync_map.get(name)
-                && alpm::vercmp(sync_ver, local_ver) == std::cmp::Ordering::Greater
-            {
-                downloads.push(DownloadInfo {
-                    name: name.to_string(),
-                    version: super::types::parse_version_or_zero(sync_ver),
-                    repo: repo.to_string(),
-                    filename: filename.to_string(),
-                    size: dl_size,
-                });
-            }
+        if let Some(&(sync_ver_str, repo)) = sync_map.get(name)
+            && alpm::vercmp(sync_ver_str, local_ver_str) == std::cmp::Ordering::Greater
+        {
+            updates.push(UpdateInfo {
+                name: name.to_string(),
+                old_version: local_ver_str.to_string(),
+                new_version: sync_ver_str.to_string(),
+                repo: repo.to_string(),
+            });
         }
+    }
 
-        Ok(downloads)
-    })
+    updates
 }
 
 /// Get package info from sync DBs - INSTANT (<1ms)
@@ -207,6 +149,28 @@ pub fn get_pkg_info_from_db(alpm: &alpm::Alpm, name: &str) -> Result<Option<Pack
     Ok(None)
 }
 
+/// Extract the package base name from a pacman cache filename.
+///
+/// Cache files are named `{pkgname}-{version}-{release}-{arch}.pkg.tar.{zst,xz}`.
+/// Neither `version` nor `release` may contain a dash (Arch packaging rules),
+/// so exactly the last three dash-separated components are stripped; any
+/// dashes inside the package name survive. Returns `None` for files without
+/// the expected shape.
+fn package_base_name(filename: &str) -> Option<&str> {
+    let stem = filename
+        .strip_suffix(".pkg.tar.zst")
+        .or_else(|| filename.strip_suffix(".pkg.tar.xz"))?;
+    // Strip exactly the trailing -arch, -release, -version components;
+    // everything to the left (including any dashes in the pkgbase) stays.
+    let (rest, _arch) = stem.rsplit_once('-')?;
+    let (rest, _release) = rest.rsplit_once('-')?;
+    let (name, version) = rest.rsplit_once('-')?;
+    if name.is_empty() || version.is_empty() {
+        return None;
+    }
+    Some(name)
+}
+
 /// Clean package cache using direct file system operations - FAST
 pub fn clean_cache(keep_versions: usize) -> Result<(usize, u64)> {
     let mut packages: ahash::AHashMap<String, Vec<std::path::PathBuf>> = ahash::AHashMap::new();
@@ -222,8 +186,7 @@ pub fn clean_cache(keep_versions: usize) -> Result<(usize, u64)> {
             let path = entry.path();
 
             if let Some(filename) = path.file_name().and_then(|name| name.to_str())
-                && (filename.ends_with(".pkg.tar.zst") || filename.ends_with(".pkg.tar.xz"))
-                && let Some(base) = filename.rsplitn(5, '-').last()
+                && let Some(base) = package_base_name(filename)
             {
                 packages.entry(base.to_string()).or_default().push(path);
             }
@@ -241,19 +204,34 @@ pub fn clean_cache(keep_versions: usize) -> Result<(usize, u64)> {
         });
 
         for old in versions.into_iter().skip(keep_versions) {
-            if let Ok(metadata) = old.metadata() {
-                freed = freed.saturating_add(metadata.len());
-            }
+            // Only credit bytes that were actually freed; failed removals are
+            // reported so callers are not told space was reclaimed when it
+            // was not.
+            let mut failures = 0usize;
+
+            let pkg_len = std::fs::metadata(&old).map(|metadata| metadata.len());
             if std::fs::remove_file(&old).is_ok() {
                 removed += 1;
+                freed = freed.saturating_add(pkg_len.unwrap_or(0));
+            } else {
+                failures += 1;
             }
 
             let signature = std::path::PathBuf::from(format!("{}.sig", old.display()));
-            if let Ok(metadata) = signature.metadata() {
-                freed = freed.saturating_add(metadata.len());
-            }
-            if signature.exists() && std::fs::remove_file(&signature).is_ok() {
+            let sig_len = std::fs::metadata(&signature).map(|metadata| metadata.len());
+            if std::fs::remove_file(&signature).is_ok() {
                 removed += 1;
+                freed = freed.saturating_add(sig_len.unwrap_or(0));
+            } else if signature.exists() {
+                failures += 1;
+            }
+
+            if failures > 0 {
+                tracing::warn!(
+                    "Failed to remove {} cache file(s) under {}",
+                    failures,
+                    old.display()
+                );
             }
         }
     }
@@ -267,36 +245,17 @@ pub fn list_orphans_direct() -> Result<Vec<String>> {
         let mut orphans = Vec::with_capacity(32);
 
         for pkg in alpm.localdb().pkgs() {
-            if pkg.reason() != alpm::PackageReason::Explicit
-                && pkg.required_by().is_empty()
-                && pkg.optional_for().is_empty()
-            {
+            if crate::package_managers::types::is_orphan_package(
+                pkg.reason() == alpm::PackageReason::Explicit,
+                pkg.required_by().is_empty(),
+                pkg.optional_for().is_empty(),
+            ) {
                 orphans.push(pkg.name().to_string());
             }
         }
 
         Ok(orphans)
     })
-}
-
-/// Synchronize package databases from mirrors - FAST
-pub fn sync_dbs() -> Result<()> {
-    let result = crate::package_managers::alpm_direct::with_handle_mut(|alpm| {
-        alpm.syncdbs_mut()
-            .update(false)
-            .map_err(|e| {
-                anyhow::anyhow!(
-                    "✗ Sync Error: Failed to update package databases: {e}.\n  Check your internet connection or run 'omg sync' with sudo."
-                )
-            })?;
-
-        Ok(())
-    });
-
-    if result.is_ok() {
-        crate::package_managers::alpm_direct::clear_alpm_cache();
-    }
-    result
 }
 
 /// Display package info beautifully
@@ -339,8 +298,17 @@ impl Drop for AlpmTransaction<'_> {
     }
 }
 
-/// Execute a libalpm transaction (install/remove/sysupgrade)
-#[inline]
+/// Execute a libalpm transaction (install/remove/sysupgrade).
+///
+/// The `handle` parameter exists for callers that already own a configured
+/// ALPM handle (e.g. an elevated fast path); every current caller passes
+/// [`None`], which creates and configures a fresh handle. NOTE(wave2): the
+/// `Some(handle)` branch skips repository registration that the `None`
+/// branch performs — if you ever pass a handle, it must already have sync
+/// databases registered. Collapsing the `Option` and the boolean flags into
+/// a `TransactionKind` enum is deferred to the orchestrator because the
+/// signature is consumed by out-of-scope callers (`src/bin/omg.rs`,
+/// `src/package_managers/aur/client.rs`).
 pub fn execute_transaction(
     packages: Vec<String>,
     remove: bool,
@@ -422,20 +390,11 @@ fn setup_alpm_callbacks(
             let uid = q.uid();
             tracing::info!("PGP key required: {fingerprint} ({uid})");
 
-            #[cfg(feature = "pgp")]
-            {
-                // Skip automatic key fetching during ALPM callbacks to avoid runtime issues
-                // User should import keys manually before package operations
-                tracing::warn!("PGP key not trusted: {fingerprint} ({uid})");
-                tracing::info!("Import key manually: omg key import {fingerprint}");
-                q.set_import(false);
-            }
-
-            #[cfg(not(feature = "pgp"))]
-            {
-                tracing::warn!("PGP feature disabled, cannot fetch key");
-                q.set_import(false);
-            }
+            // Never fetch keys from inside an ALPM callback: the user should
+            // import and trust keys deliberately before package operations.
+            tracing::warn!("PGP key not trusted: {fingerprint} ({uid})");
+            tracing::info!("Import key manually: omg key import {fingerprint}");
+            q.set_import(false);
         }
         alpm::Question::Corrupted(mut q) => {
             tracing::error!("Corrupted package detected! This may indicate tampering.");
@@ -463,16 +422,17 @@ fn setup_alpm_callbacks(
             alpm::Progress::KeyringStart => "Checking keyring",
         };
         main_pb_clone.set_message(format!("{msg}: {name}"));
-        main_pb_clone.set_position(percent as u64);
+        main_pb_clone.set_position(u64::try_from(percent).unwrap_or(0));
     });
 
+    const MAX_CONCURRENT_DOWNLOAD_BARS: usize = 4;
     let dl_pb_map = std::sync::Arc::new(dashmap::DashMap::<String, indicatif::ProgressBar>::new());
     let mp_clone = mp.clone();
 
     alpm.set_dl_cb(dl_pb_map, move |filename, event, map| {
         match event.event() {
             alpm::DownloadEvent::Init(_) => {
-                if map.len() < 4 {
+                if map.len() < MAX_CONCURRENT_DOWNLOAD_BARS {
                     let pb = mp_clone.add(indicatif::ProgressBar::new_spinner());
                     pb.set_style(
                         indicatif::ProgressStyle::default_spinner()
@@ -486,7 +446,7 @@ fn setup_alpm_callbacks(
             alpm::DownloadEvent::Progress(prog) => {
                 if let Some(pb) = map.get(filename) {
                     if pb.length().is_none() && prog.total > 0 {
-                        pb.set_length(prog.total as u64);
+                        pb.set_length(u64::try_from(prog.total).unwrap_or(0));
                         pb.set_style(
                             indicatif::ProgressStyle::default_bar()
                                 .template("  {{spinner:.cyan}} {{msg:30}} {{bar:30.cyan/blue}} {{bytes}}/{{total_bytes}}")
@@ -495,7 +455,7 @@ fn setup_alpm_callbacks(
                         );
                         pb.set_message(format!("⬇ {filename}"));
                     }
-                    pb.set_position(prog.downloaded as u64);
+                    pb.set_position(u64::try_from(prog.downloaded).unwrap_or(0));
                 }
             }
             alpm::DownloadEvent::Retry(_) => {}
@@ -511,7 +471,6 @@ fn setup_alpm_callbacks(
 }
 
 /// Prepare an ALPM transaction for execution
-#[inline]
 fn prepare_alpm_transaction<'a>(
     alpm: &'a mut alpm::Alpm,
     packages: Vec<String>,
@@ -720,6 +679,11 @@ fn configure_transaction_options(
     alpm.set_architectures(architectures)
         .context("Failed to configure package architecture validation")?;
     alpm.set_check_space(true);
+    // Native libalpm parallel downloads during transaction commit. Mirrors
+    // pacman's own `ParallelDownloads = 5` default; pacman.conf plumbing can
+    // be added once the shared parser exposes the option.
+    const PARALLEL_DOWNLOADS: u32 = 5;
+    alpm.set_parallel_downloads(PARALLEL_DOWNLOADS);
     configure_package_filters(alpm, pacman_config)?;
     alpm.set_noupgrades(pacman_config.no_upgrade.iter())
         .context("Failed to configure protected upgrade paths")?;
@@ -741,7 +705,7 @@ fn configure_transaction_options(
         .context("Failed to require signatures for remote package files")
 }
 
-fn configure_package_filters(
+pub(crate) fn configure_package_filters(
     alpm: &mut alpm::Alpm,
     pacman_config: &crate::core::pacman_conf::PacmanConfig,
 ) -> Result<()> {
@@ -869,7 +833,42 @@ fn configure_mirrors(alpm: &mut alpm::Alpm) -> Result<()> {
 
 #[cfg(test)]
 mod tests {
-    use super::{format_no_syncdb_error, format_trans_prepare_error, is_keyring_related_error};
+    use super::{
+        format_no_syncdb_error, format_trans_prepare_error, is_keyring_related_error,
+        package_base_name,
+    };
+
+    #[test]
+    fn base_name_parses_simple_and_dash_containing_pkgbases() {
+        assert_eq!(
+            package_base_name("linux-6.7.0-1-x86_64.pkg.tar.zst"),
+            Some("linux")
+        );
+        // Regression: pkgbases containing dashes must stay one group.
+        assert_eq!(
+            package_base_name("python-pip-24.0-1-any.pkg.tar.zst"),
+            Some("python-pip")
+        );
+        assert_eq!(
+            package_base_name("haskell-aeson-2.1.2.1-269-x86_64.pkg.tar.zst"),
+            Some("haskell-aeson")
+        );
+        assert_eq!(
+            package_base_name("foo-1.2-2-x86_64.pkg.tar.xz"),
+            Some("foo")
+        );
+        assert_eq!(
+            package_base_name("lib32-mesa-1:24.0.1-1-x86_64.pkg.tar.zst"),
+            Some("lib32-mesa")
+        );
+    }
+
+    #[test]
+    fn base_name_rejects_unexpected_shapes() {
+        assert_eq!(package_base_name("not-a-package-file.tar.zst"), None);
+        assert_eq!(package_base_name("linux-6.7.0-1-x86_64.pkg.tar.gz"), None);
+        assert_eq!(package_base_name("-1-2-x86_64.pkg.tar.zst"), None);
+    }
 
     #[test]
     fn keyring_error_detection_matches_expected_keywords() {

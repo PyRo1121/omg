@@ -43,24 +43,8 @@ pub struct Repository {
 }
 
 impl Repository {
-    /// Get the base URL for fetching package indices
-    pub fn packages_url(&self, arch: &str) -> String {
-        if self.components.is_empty() {
-            // Flat repository layout
-            format!("{}/Packages", self.uri.trim_end_matches('/'))
-        } else {
-            // Standard repository layout
-            format!(
-                "{}/dists/{}/{}/binary-{}/Packages",
-                self.uri.trim_end_matches('/'),
-                self.suite,
-                self.components.first().map_or("main", String::as_str),
-                arch
-            )
-        }
-    }
-
     /// Get the Release file URL
+    #[must_use]
     pub fn release_url(&self) -> String {
         format!(
             "{}/dists/{}/InRelease",
@@ -221,24 +205,32 @@ pub fn parse_sources_list_content(content: &str, source_file: &Path) -> Result<V
 fn parse_source_line(line: &str, source_file: &Path, enabled: bool) -> Option<Repository> {
     let line = line.trim();
 
-    // Determine type
-    let (repo_type, rest) = if let Some(rest) = line.strip_prefix("deb-src") {
-        (RepoType::Source, rest.trim())
-    } else if let Some(rest) = line.strip_prefix("deb") {
-        (RepoType::Binary, rest.trim())
-    } else {
-        return None; // Not a valid source line
+    // Determine type. The type must be a complete word so lines like
+    // "debsomething ..." are rejected instead of parsing "something" as URI.
+    let (type_token, rest) = match line.split_once(char::is_whitespace) {
+        Some((token, rest)) => (token, rest.trim_start()),
+        None => return None,
+    };
+    let repo_type = match type_token {
+        "deb" => RepoType::Binary,
+        "deb-src" => RepoType::Source,
+        _ => return None,
     };
 
-    // Parse options in brackets [arch=amd64 signed-by=/path]
-    let (options, rest) = if rest.starts_with('[') {
-        if let Some(end) = rest.find(']') {
-            let opts_str = &rest[1..end];
-            let rest = rest[end + 1..].trim();
-            (parse_options(opts_str), rest)
-        } else {
-            (HashMap::new(), rest)
-        }
+    // Parse options in brackets [arch=amd64 signed-by=/path]. An
+    // unterminated bracket is malformed and rejects the whole line rather
+    // than silently dropping security-relevant options like `signed-by`.
+    let (options, rest) = if let Some(body) = rest.strip_prefix('[') {
+        // An unterminated bracket is malformed and rejects the whole line
+        // rather than silently dropping security-relevant options like
+        // `signed-by`.
+        let Some(end) = body.find(']') else {
+            tracing::debug!("Rejected source line with unterminated '[' options: {line}");
+            return None;
+        };
+        let opts_str = &body[..end];
+        let rest = body[end + 1..].trim();
+        (parse_options(opts_str), rest)
     } else {
         (HashMap::new(), rest)
     };
@@ -305,28 +297,44 @@ pub fn parse_deb822_content(content: &str, source_file: &Path) -> Result<Vec<Rep
     let mut repos = Vec::new();
     let mut current_stanza: HashMap<String, String> = HashMap::new();
 
-    for line in content.lines() {
-        let line = line.trim();
+    let mut last_key: Option<String> = None;
+
+    for raw_line in content.lines() {
+        let trimmed = raw_line.trim();
 
         // Empty line separates stanzas
-        if line.is_empty() {
+        if trimmed.is_empty() {
             if !current_stanza.is_empty() {
                 repos.extend(expand_deb822_stanza(&current_stanza, source_file));
                 current_stanza.clear();
             }
+            last_key = None;
             continue;
         }
 
         // Skip comments
-        if line.starts_with('#') {
+        if trimmed.starts_with('#') {
+            continue;
+        }
+
+        // Continuation lines (leading whitespace) extend the previous value,
+        // e.g. multi-line `Signed-By` key blocks.
+        if raw_line.starts_with(' ') || raw_line.starts_with('\t') {
+            if let Some(key) = &last_key
+                && let Some(value) = current_stanza.get_mut(key.as_str())
+            {
+                value.push('\n');
+                value.push_str(trimmed);
+            }
             continue;
         }
 
         // Parse key: value
-        if let Some((key, value)) = line.split_once(':') {
+        if let Some((key, value)) = trimmed.split_once(':') {
             let key = key.trim().to_lowercase();
             let value = value.trim().to_string();
-            current_stanza.insert(key, value);
+            current_stanza.insert(key.clone(), value);
+            last_key = Some(key);
         }
     }
 
@@ -440,14 +448,6 @@ pub fn get_enabled_binary_repos() -> Result<Vec<Repository>> {
         .collect())
 }
 
-/// Get repository for a specific suite (e.g., "bookworm", "noble")
-pub fn get_repos_for_suite(suite: &str) -> Result<Vec<Repository>> {
-    Ok(parse_all_sources()?
-        .into_iter()
-        .filter(|r| r.suite == suite || r.suite.starts_with(suite))
-        .collect())
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -521,26 +521,6 @@ Enabled: no
         let repos = parse_deb822_content(content, Path::new("/test.sources")).unwrap();
         assert_eq!(repos.len(), 1);
         assert!(!repos[0].enabled);
-    }
-
-    #[test]
-    fn test_packages_url() {
-        let repo = Repository {
-            repo_type: RepoType::Binary,
-            uri: "http://deb.debian.org/debian".to_string(),
-            suite: "bookworm".to_string(),
-            components: vec!["main".to_string()],
-            arch: None,
-            signed_by: None,
-            enabled: true,
-            source_file: PathBuf::new(),
-            options: HashMap::new(),
-        };
-
-        assert_eq!(
-            repo.packages_url("amd64"),
-            "http://deb.debian.org/debian/dists/bookworm/main/binary-amd64/Packages"
-        );
     }
 
     #[test]
@@ -664,6 +644,52 @@ random text here
                 .to_string()
                 .contains("Failed to read APT sources directory entry"),
             "got: {error}"
+        );
+    }
+    #[test]
+    fn source_line_type_must_be_a_complete_word() {
+        assert!(
+            parse_source_line(
+                "debsomething http://example.com stable main",
+                Path::new("/t"),
+                true
+            )
+            .is_none()
+        );
+        assert!(parse_source_line("deb", Path::new("/t"), true).is_none());
+        let repo = parse_source_line("deb http://example.com stable main", Path::new("/t"), true)
+            .expect("valid line");
+        assert_eq!(repo.uri, "http://example.com");
+    }
+
+    #[test]
+    fn unterminated_option_bracket_rejects_the_line() {
+        // signed-by would be silently dropped otherwise
+        assert!(
+            parse_source_line(
+                "deb [arch=amd64 signed-by=/key.gpg https://example.com stable main",
+                Path::new("/t"),
+                true,
+            )
+            .is_none(),
+            "malformed bracket must reject the line, not drop its options"
+        );
+    }
+
+    #[test]
+    fn deb822_multiline_values_are_preserved() {
+        let content = "Types: deb\nURIs: http://example.com\nSuites: stable\nComponents: main\nSigned-By:\n -----BEGIN KEY-----\n abcdef\n -----END KEY-----\n";
+
+        let repos = parse_deb822_content(content, Path::new("/t.sources")).expect("parse");
+        assert_eq!(repos.len(), 1);
+        let signed_by = repos[0]
+            .signed_by
+            .as_ref()
+            .expect("signed-by must populate the typed field");
+        let signed_by = signed_by.to_string_lossy();
+        assert!(
+            signed_by.contains("BEGIN KEY") && signed_by.contains("abcdef"),
+            "continuation lines must be kept: {signed_by:?}"
         );
     }
 }

@@ -69,9 +69,6 @@ fn extract_with_pure_rust(path: &Path) -> Result<LocalPackageInfo> {
     let file = File::open(path).context("Failed to open package file")?;
     let reader = BufReader::new(file);
 
-    // Identify compression by extension
-    let _filename = path.file_name().and_then(|n| n.to_str()).unwrap_or("");
-
     // Decoder setup
     let decoder: Box<dyn Read> = if path
         .extension()
@@ -90,10 +87,14 @@ fn extract_with_pure_rust(path: &Path) -> Result<LocalPackageInfo> {
         .extension()
         .is_some_and(|e| e.eq_ignore_ascii_case("xz"))
     {
-        let mut output = Vec::new();
-        lzma_rs::xz_decompress(&mut std::io::BufReader::new(reader), &mut output)
+        // xz has no streaming decoder here, so decompress through the shared
+        // in-memory budget (crate::runtimes::common::BudgetedSink): a crafted
+        // .tar.xz aborts at the cap instead of exhausting memory while we
+        // scan for .PKGINFO.
+        let mut sink = crate::runtimes::common::BudgetedSink::with_default_budget();
+        lzma_rs::xz_decompress(&mut std::io::BufReader::new(reader), &mut sink)
             .context("Failed to decompress xz")?;
-        Box::new(std::io::Cursor::new(output))
+        Box::new(std::io::Cursor::new(sink.into_inner()))
     } else {
         Box::new(reader)
     };
@@ -107,25 +108,27 @@ fn extract_with_pure_rust(path: &Path) -> Result<LocalPackageInfo> {
         let mut entry: tar::Entry<Box<dyn Read>> = entry?;
         let entry_path = entry.path()?;
 
-        // SECURITY: Validate path to prevent path traversal attacks
-        // Only allow .PKGINFO at the root of the archive
-        if let Some(path_str) = entry_path.to_str() {
-            // Reject any path containing:
-            // - Parent directory references (..)
-            // - Absolute paths (starting with /)
-            // - Symlinks or special characters
-            if path_str.contains("..") || path_str.starts_with('/') {
-                anyhow::bail!("Security: Rejecting malicious path in package archive: {path_str}");
-            }
+        // SECURITY: Only a regular, root-level ".PKGINFO" entry is honored.
+        // Entries containing parent-directory references (..) or absolute
+        // paths are rejected outright; symlink and hardlink entries are
+        // skipped so a malicious archive cannot redirect the read.
+        let Some(path_str) = entry_path.to_str() else {
+            continue;
+        };
 
-            if path_str == ".PKGINFO" {
-                entry
-                    .read_to_string(&mut pkginfo_content)
-                    .context("Failed to read .PKGINFO")?;
-                found = true;
-                break;
-            }
+        if path_str.contains("..") || path_str.starts_with('/') {
+            anyhow::bail!("Security: Rejecting malicious path in package archive: {path_str}");
         }
+
+        if path_str != ".PKGINFO" || !entry.header().entry_type().is_file() {
+            continue;
+        }
+
+        entry
+            .read_to_string(&mut pkginfo_content)
+            .context("Failed to read .PKGINFO")?;
+        found = true;
+        break;
     }
 
     if !found {

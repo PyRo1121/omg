@@ -56,6 +56,61 @@ pub use args::{
     TeamCommands, TeamRoleCommands, ToolCommands, TransactionTypeFilter, WorkspaceCommands,
 };
 
+/// Parse an API timestamp string into Unix seconds.
+///
+/// Returns `None` when the value cannot be parsed so callers can surface the
+/// gap explicitly instead of silently treating bad data as "1970-01-01".
+pub(crate) fn parse_timestamp_opt(raw: &str) -> Option<i64> {
+    use std::str::FromStr;
+    jiff::Timestamp::from_str(raw)
+        .ok()
+        .map(jiff::Timestamp::as_second)
+}
+
+/// Format a Unix timestamp as a compact `YYYY-MM-DD HH:MM` string, or
+/// `"unknown"` when the value is out of range.
+pub(crate) fn format_short_timestamp(ts: i64) -> String {
+    jiff::Timestamp::from_second(ts).map_or_else(
+        |_| "unknown".to_string(),
+        |dt| dt.strftime("%Y-%m-%d %H:%M").to_string(),
+    )
+}
+
+/// Open an ALPM handle using the pacman root and DB path resolved by
+/// `core::paths` (which honors `pacman.conf`), instead of hardcoding
+/// `/` and `/var/lib/pacman` at every call site.
+#[cfg(feature = "arch")]
+pub(crate) fn open_local_alpm() -> Result<alpm::Alpm> {
+    // `Alpm::new` takes `S: Into<Vec<u8>>`; own the strings so the owned
+    // `PathBuf`s stay available for the error message below.
+    let root = crate::core::paths::pacman_root();
+    let db_path = crate::core::paths::pacman_db_dir();
+    alpm::Alpm::new(
+        root.to_string_lossy().into_owned(),
+        db_path.to_string_lossy().into_owned(),
+    )
+    .map_err(|e| {
+        anyhow::anyhow!(
+            "Failed to open ALPM (root: {}, db: {}): {e}",
+            root.display(),
+            db_path.display()
+        )
+    })
+}
+
+/// Names of locally installed packages whose depends list references `package`.
+#[cfg(feature = "arch")]
+pub(crate) fn local_reverse_deps(handle: &alpm::Alpm, package: &str) -> Vec<String> {
+    let localdb = handle.localdb();
+    let mut required_by = Vec::new();
+    for pkg in localdb.pkgs() {
+        if pkg.depends().iter().any(|dep| dep.name() == package) {
+            required_by.push(pkg.name().to_string());
+        }
+    }
+    required_by
+}
+
 /// Global context for CLI command execution
 pub struct CliContext {
     pub verbose: u8,

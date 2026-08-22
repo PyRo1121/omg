@@ -178,17 +178,52 @@ async fn test_batch_request_handles_mixed_success_and_failure() {
 #[serial]
 async fn test_cache_clear_invalidates_cache() {
     let (_temp, state) = setup_test_env();
-    state.cache.insert("fixture".to_string(), Vec::new());
-    state.cache.sync();
 
-    let stats_before = handle_request(Arc::clone(&state), Request::CacheStats { id: 500 }).await;
-    let Response::Success {
-        id: 500,
-        result: ResponseResult::CacheStats { size: 1, .. },
-    } = stats_before
-    else {
-        panic!("expected one cached entry before clear, got {stats_before:?}");
-    };
+    // Populate the search cache through the public IPC seam: `DaemonState`
+    // no longer exposes its cache field outside the daemon subtree.
+    async fn cache_misses(state: &Arc<DaemonState>, id: u64) -> u64 {
+        match handle_request(Arc::clone(state), Request::Metrics { id }).await {
+            Response::Success {
+                result: ResponseResult::Metrics(m),
+                ..
+            } => m.cache_misses,
+            response => panic!("Metrics request failed: {response:?}"),
+        }
+    }
+
+    async fn search_git(state: &Arc<DaemonState>, id: u64) {
+        let response = handle_request(
+            Arc::clone(state),
+            Request::Search {
+                id,
+                query: "git".to_string(),
+                limit: Some(10),
+            },
+        )
+        .await;
+        assert!(
+            matches!(response, Response::Success { .. }),
+            "search must succeed, got {response:?}"
+        );
+    }
+
+    // Populate the search cache through the public IPC seam: `DaemonState`
+    // no longer exposes its cache field outside the daemon subtree, and moka
+    // stats are eventually consistent — so invalidation is pinned through
+    // observable request semantics instead of internal counters.
+    let misses_before = cache_misses(&state, 500).await;
+    search_git(&state, 498).await;
+    let misses_after_first = cache_misses(&state, 499).await;
+    assert!(
+        misses_after_first > misses_before,
+        "first search must be a cache miss"
+    );
+    search_git(&state, 502).await;
+    let misses_after_repeat = cache_misses(&state, 503).await;
+    assert_eq!(
+        misses_after_repeat, misses_after_first,
+        "repeat search must be served from cache"
+    );
 
     let clear_response = handle_request(Arc::clone(&state), Request::CacheClear { id: 501 }).await;
     assert!(matches!(
@@ -199,14 +234,13 @@ async fn test_cache_clear_invalidates_cache() {
         } if message == "cleared"
     ));
 
-    let stats_after = handle_request(state, Request::CacheStats { id: 502 }).await;
-    assert!(matches!(
-        stats_after,
-        Response::Success {
-            id: 502,
-            result: ResponseResult::CacheStats { size: 0, .. },
-        }
-    ));
+    // The same query must be a cache miss again after the clear.
+    search_git(&state, 504).await;
+    let misses_after_clear = cache_misses(&state, 505).await;
+    assert!(
+        misses_after_clear > misses_after_repeat,
+        "search after CacheClear must be a cache miss again"
+    );
 }
 
 // ============================================================================

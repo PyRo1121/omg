@@ -8,49 +8,6 @@ use criterion::{Criterion, criterion_group, criterion_main};
 #[cfg(feature = "arch")]
 use omg_lib::package_managers;
 
-/// Benchmark package search operations
-#[cfg(feature = "arch")]
-fn bench_search(c: &mut Criterion) {
-    let mut group = c.benchmark_group("search");
-    group.measurement_time(std::time::Duration::from_secs(10));
-
-    // Test various search patterns
-    let search_terms = vec!["rust", "python", "vim", "gcc", "kernel"];
-
-    for term in search_terms {
-        group.bench_with_input(
-            criterion::BenchmarkId::new("search_sync_fast", term),
-            &term,
-            |b, &term| {
-                b.iter(|| {
-                    let _ = std::hint::black_box(package_managers::pacman_db::search_sync_fast(
-                        std::hint::black_box(term),
-                    ));
-                });
-            },
-        );
-
-        group.bench_with_input(
-            criterion::BenchmarkId::new("search_local_cached", term),
-            &term,
-            |b, &term| {
-                b.iter(|| {
-                    let _ = std::hint::black_box(package_managers::pacman_db::search_local_cached(
-                        std::hint::black_box(term),
-                    ));
-                });
-            },
-        );
-    }
-
-    group.finish();
-}
-
-#[cfg(not(feature = "arch"))]
-fn bench_search(_c: &mut Criterion) {
-    eprintln!("Skipping search benchmarks - arch feature not enabled");
-}
-
 /// Benchmark explicit package listing
 #[cfg(feature = "arch")]
 fn bench_explicit(c: &mut Criterion) {
@@ -101,10 +58,5 @@ fn bench_unified_search(_c: &mut Criterion) {
     eprintln!("Skipping unified search benchmarks - arch feature not enabled");
 }
 
-criterion_group!(
-    package_ops,
-    bench_search,
-    bench_explicit,
-    bench_unified_search,
-);
+criterion_group!(package_ops, bench_explicit, bench_unified_search,);
 criterion_main!(package_ops);

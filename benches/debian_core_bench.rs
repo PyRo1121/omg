@@ -4,6 +4,12 @@
 //! to identify performance bottlenecks and optimization opportunities.
 //!
 //! Run with: `cargo bench --features debian-pure --bench debian_core_bench`
+//!
+//! Shared scenario data lives in `benches/debian_common/mod.rs`.
+
+#[cfg(any(feature = "debian", feature = "debian-pure"))]
+#[path = "debian_common/mod.rs"]
+mod debian_common;
 
 #[cfg(any(feature = "debian", feature = "debian-pure"))]
 use criterion::{BenchmarkId, Criterion, Throughput, criterion_group, criterion_main};
@@ -24,7 +30,7 @@ fn bench_search_patterns(c: &mut Criterion) {
     group.sample_size(100);
 
     // Warm up the index
-    let _ = search_fast("vim");
+    debian_common::warm_index();
 
     let test_queries = vec![
         // Short exact matches
@@ -70,7 +76,7 @@ fn bench_info_package_types(c: &mut Criterion) {
     group.sample_size(100);
 
     // Warm up
-    let _ = get_info_fast("vim");
+    debian_common::warm_index();
 
     let package_types = vec![
         // Small packages
@@ -103,42 +109,15 @@ fn bench_info_package_types(c: &mut Criterion) {
     group.finish();
 }
 
-/// Benchmark version comparison with realistic version strings
+/// Benchmark version comparison with realistic version strings.
+/// Scenarios are shared with `debian_bench` via `debian_common`.
 #[cfg(any(feature = "debian", feature = "debian-pure"))]
 fn bench_version_comparison_realistic(c: &mut Criterion) {
     let mut group = c.benchmark_group("debian_version_realistic");
     group.measurement_time(Duration::from_secs(5));
     group.sample_size(200);
 
-    let version_comparisons = vec![
-        // Simple version bumps
-        ("simple_patch", "1.0.0", "1.0.1"),
-        ("simple_minor", "1.0.0", "1.1.0"),
-        ("simple_major", "1.0.0", "2.0.0"),
-        // Epoch handling
-        ("epoch_vs_no_epoch", "1.0", "1:0.9"),
-        ("epoch_same", "2:1.5", "2:1.6"),
-        ("epoch_different", "1:2.0", "2:1.0"),
-        // Debian revisions
-        ("debian_rev", "1.0-1", "1.0-2"),
-        ("debian_rev_ubuntu", "1.0-1ubuntu1", "1.0-1ubuntu2"),
-        (
-            "debian_rev_complex",
-            "2:7.4.052-1ubuntu3.1",
-            "2:7.4.052-1ubuntu4",
-        ),
-        // Tilde (pre-release) handling
-        ("tilde_beta", "1.0~beta", "1.0~rc"),
-        ("tilde_vs_release", "1.0~rc1", "1.0"),
-        ("tilde_complex", "1.0~alpha1", "1.0~alpha2"),
-        // Real-world examples
-        ("real_vim", "2:8.2.3995-1", "2:8.2.4659-1"),
-        ("real_gcc", "4:11.2.0-1ubuntu1", "4:12.1.0-2ubuntu1"),
-        ("real_systemd", "249.11-0ubuntu3.7", "249.11-0ubuntu3.9"),
-        ("real_kernel", "5.15.0-60.66", "5.15.0-67.74"),
-    ];
-
-    for (name, v1, v2) in version_comparisons {
+    for (name, v1, v2) in debian_common::VERSION_SCENARIOS {
         group.bench_with_input(
             BenchmarkId::new("compare", name),
             &(v1, v2),
@@ -161,17 +140,10 @@ fn bench_dependencies_complexity(c: &mut Criterion) {
     group.measurement_time(Duration::from_secs(15));
     group.sample_size(50);
 
-    let packages = vec![
-        ("no_deps", "hello"),
-        ("few_deps", "htop"),
-        ("moderate_deps", "vim"),
-        ("many_deps", "gcc"),
-        ("complex_deps", "build-essential"),
-        ("deep_tree", "firefox-esr"),
-    ];
+    let packages = debian_common::RESOLVE_SCENARIOS;
 
     for (name, pkg) in packages {
-        group.bench_with_input(BenchmarkId::new("get_deps", name), &pkg, |b, &p| {
+        group.bench_with_input(BenchmarkId::new("get_deps", *name), pkg, |b, &p| {
             b.iter(|| {
                 let deps = get_package_dependencies(p);
                 std::hint::black_box(deps)
@@ -221,35 +193,23 @@ fn bench_list_installed_variants(c: &mut Criterion) {
     group.finish();
 }
 
-/// Benchmark update checks with realistic scenarios.
-/// Note: `check_updates_available` is not yet implemented in `debian_db`.
+/// Benchmark FST-backed index lookups through the full `search_fast`
+/// pipeline. This measures the complete search path (FST lookup + result
+/// assembly), not the FST lookup in isolation.
 #[cfg(any(feature = "debian", feature = "debian-pure"))]
-#[expect(clippy::missing_const_for_fn)]
-fn bench_update_check(_c: &mut Criterion) {
-    // TODO: Implement when check_updates_available is added to debian_db
-    // For now, this benchmark is a no-op
-}
-
-/// Benchmark FST index operations if available
-#[cfg(any(feature = "debian", feature = "debian-pure"))]
-fn bench_index_operations(c: &mut Criterion) {
-    let mut group = c.benchmark_group("debian_index");
+fn bench_search_fast_end_to_end(c: &mut Criterion) {
+    let mut group = c.benchmark_group("debian_search_fast");
     group.measurement_time(Duration::from_secs(10));
     group.sample_size(100);
-
-    // These benchmarks measure the index lookup performance
-    // which is critical for fast search operations
 
     let queries = vec![
         "a", "ab", "abc", "vim", "python", "lib", "libssl", "gcc", "systemd", "firefox",
     ];
 
     for query in queries {
-        group.bench_with_input(BenchmarkId::new("index_lookup", query), &query, |b, &q| {
+        group.bench_with_input(BenchmarkId::new("search_fast", query), &query, |b, &q| {
             b.iter(|| {
-                // search_fast uses FST index internally
                 let results = search_fast(q).expect("search should succeed");
-                // Measure just the index lookup by only checking count
                 std::hint::black_box(results.len())
             });
         });
@@ -362,8 +322,7 @@ criterion_group!(
     bench_version_comparison_realistic,
     bench_dependencies_complexity,
     bench_list_installed_variants,
-    bench_update_check,
-    bench_index_operations,
+    bench_search_fast_end_to_end,
     bench_parallel_version_compare,
     bench_memory_patterns
 );

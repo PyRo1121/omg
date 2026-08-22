@@ -45,13 +45,12 @@ impl CacheTestFixture {
         handle_request(Arc::clone(&self.state), request).await
     }
 
-    fn get_cache_stats(&self) -> (usize, usize) {
-        let stats = self.state.cache.stats();
-        (stats.size, stats.max_size)
-    }
-
-    fn clear_cache(&self) {
-        self.state.cache.clear();
+    async fn clear_cache(&self) {
+        let response = self.send_request(Request::CacheClear { id: 0 }).await;
+        assert!(
+            matches!(response, Response::Success { .. }),
+            "CacheClear request failed: {response:?}"
+        );
     }
 }
 
@@ -63,7 +62,7 @@ impl CacheTestFixture {
 #[serial]
 async fn test_cache_hit_rate_tracking() -> Result<()> {
     let fixture = CacheTestFixture::new()?;
-    fixture.clear_cache();
+    fixture.clear_cache().await;
 
     // Get initial metrics
     let metrics1 = fixture.send_request(Request::Metrics { id: 100 }).await;
@@ -125,36 +124,58 @@ async fn test_cache_hit_rate_tracking() -> Result<()> {
 async fn test_explicit_cache_clear() -> Result<()> {
     let fixture = CacheTestFixture::new()?;
 
-    // Populate cache
-    fixture
-        .send_request(Request::Search {
-            id: 1,
-            query: "test".to_string(),
-            limit: Some(10),
-        })
-        .await;
+    async fn cache_misses(fixture: &CacheTestFixture, id: u64) -> u64 {
+        match fixture.send_request(Request::Metrics { id }).await {
+            Response::Success {
+                result: ResponseResult::Metrics(m),
+                ..
+            } => m.cache_misses,
+            response => panic!("Metrics request failed: {response:?}"),
+        }
+    }
 
-    // Sync cache operations (moka cache is eventually consistent)
-    fixture.state.cache.sync();
+    async fn search(fixture: &CacheTestFixture, id: u64) {
+        fixture
+            .send_request(Request::Search {
+                id,
+                query: "test".to_string(),
+                limit: Some(10),
+            })
+            .await;
+    }
 
-    // Verify cache has entries
-    let (size_before, _) = fixture.get_cache_stats();
-    assert!(size_before > 0, "Cache should have entries");
+    // Populate the cache and observe the miss.
+    let misses_before = cache_misses(&fixture, 1).await;
+    search(&fixture, 2).await;
+    let misses_after_first = cache_misses(&fixture, 3).await;
+    assert!(
+        misses_after_first > misses_before,
+        "first search must be a cache miss"
+    );
+
+    // Repeat: served from cache (no new miss).
+    search(&fixture, 4).await;
+    let misses_after_repeat = cache_misses(&fixture, 5).await;
+    assert_eq!(
+        misses_after_repeat, misses_after_first,
+        "repeat search must be served from cache"
+    );
 
     // Clear cache
-    let clear_response = fixture.send_request(Request::CacheClear { id: 2 }).await;
-
+    let clear_response = fixture.send_request(Request::CacheClear { id: 6 }).await;
     assert!(
         matches!(clear_response, Response::Success { .. }),
         "Cache clear should succeed"
     );
 
-    // Sync cache operations
-    fixture.state.cache.sync();
-
-    // Verify cache is empty
-    let (size_after, _) = fixture.get_cache_stats();
-    assert_eq!(size_after, 0, "Cache should be empty after clear");
+    // The same query must now be a miss again: invalidation is observable
+    // through request semantics, not only through internal stats.
+    search(&fixture, 7).await;
+    let misses_after_clear = cache_misses(&fixture, 8).await;
+    assert!(
+        misses_after_clear > misses_after_repeat,
+        "search after CacheClear must be a cache miss again"
+    );
 
     Ok(())
 }
@@ -320,9 +341,9 @@ async fn test_lru_eviction_behavior() -> Result<()> {
     let cache = PackageCache::new(3, 300);
 
     // Insert 3 entries
-    cache.insert("query-1".to_string(), vec![]);
-    cache.insert("query-2".to_string(), vec![]);
-    cache.insert("query-3".to_string(), vec![]);
+    cache.insert_arc("query-1".to_string(), Arc::new(vec![]));
+    cache.insert_arc("query-2".to_string(), Arc::new(vec![]));
+    cache.insert_arc("query-3".to_string(), Arc::new(vec![]));
     cache.sync();
 
     // Access query-1 to mark it as recently used
@@ -330,7 +351,7 @@ async fn test_lru_eviction_behavior() -> Result<()> {
     cache.sync();
 
     // Insert query-4 (should evict LRU, which is query-2)
-    cache.insert("query-4".to_string(), vec![]);
+    cache.insert_arc("query-4".to_string(), Arc::new(vec![]));
     cache.sync();
 
     // query-1 should still be cached (recently accessed), while query-2 is the LRU entry.

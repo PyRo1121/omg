@@ -526,6 +526,7 @@ pub enum ShellKind {
 
 impl ShellKind {
     /// Canonical shell name understood by `hooks::completions`.
+    #[must_use]
     pub fn as_str(self) -> &'static str {
         match self {
             ShellKind::Bash => "bash",
@@ -1086,8 +1087,8 @@ pub enum EnterpriseCommands {
         /// Report type (monthly, quarterly, custom)
         #[arg(short, long, default_value = "monthly")]
         report_type: String,
-        /// Output format (pdf, html, json)
-        #[arg(short, long, default_value = "pdf")]
+        /// Output format (json)
+        #[arg(short, long, default_value = "json")]
         format: String,
     },
     /// Manage hierarchical policies
@@ -1109,7 +1110,7 @@ pub enum EnterpriseCommands {
     },
     /// Scan for license compliance issues
     LicenseScan {
-        /// Export format (spdx, csv, json)
+        /// Export file format (json, csv)
         #[arg(long)]
         export: Option<String>,
     },

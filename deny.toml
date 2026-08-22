@@ -1,5 +1,10 @@
 # deny.toml - Supply chain security policy for OMG
 # https://embarkstudios.github.io/cargo-deny/
+#
+# AUTHORITY for advisory ignores: the [advisories] ignore list below is the
+# single source of truth. .cargo/audit.toml (cargo-audit) mirrors it because
+# cargo-audit does not read this file — when adding/removing an advisory
+# ignore, update BOTH files in the same change.
 
 [advisories]
 # Escalate unmaintained and unsound advisories only when they affect a direct

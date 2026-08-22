@@ -7,6 +7,7 @@ use omg_lib::cli::run::RunCommand;
 use omg_lib::cli::{CliContext, EnvCommands, FleetCommands, LocalCommandRunner, ToolCommands};
 use serial_test::serial;
 use std::fs;
+use std::path::{Path, PathBuf};
 use tempfile::tempdir;
 
 const fn get_ctx() -> CliContext {
@@ -18,11 +19,64 @@ const fn get_ctx() -> CliContext {
     }
 }
 
-/// Remove license file to test license-gated features
-fn ensure_no_license() {
-    if let Some(data_dir) = dirs::data_dir() {
-        let license_path = data_dir.join("omg").join("license.json");
-        let _ = fs::remove_file(&license_path);
+/// RAII guard that sets an environment variable and restores its previous
+/// value (or removes it if previously unset) on drop. Every mutation is
+/// paired with a restore, so tests can no longer corrupt process state for
+/// concurrently running or later tests.
+struct EnvGuard {
+    key: &'static str,
+    previous: Option<String>,
+}
+
+impl EnvGuard {
+    fn set(key: &'static str, value: &str) -> Self {
+        let previous = std::env::var(key).ok();
+        // SAFETY: guarded tests are #[serial]; the Drop impl restores the
+        // previous value, so no mutation outlives the test.
+        unsafe { std::env::set_var(key, value) };
+        Self { key, previous }
+    }
+
+    /// Remove a variable for the guarded scope, restoring any previous value
+    /// on drop. Needed when the code under test distinguishes "set but empty"
+    /// from "unset".
+    fn remove(key: &'static str) -> Self {
+        let previous = std::env::var(key).ok();
+        // SAFETY: see EnvGuard::set.
+        unsafe { std::env::remove_var(key) };
+        Self { key, previous }
+    }
+}
+
+impl Drop for EnvGuard {
+    fn drop(&mut self) {
+        // SAFETY: see EnvGuard::set.
+        unsafe {
+            match &self.previous {
+                Some(value) => std::env::set_var(self.key, value),
+                None => std::env::remove_var(self.key),
+            }
+        }
+    }
+}
+
+/// RAII guard restoring the process current directory on drop; the former
+/// bare `set_current_dir` calls leaked the temp CWD into sibling tests.
+struct CurrentDirGuard {
+    previous: PathBuf,
+}
+
+impl CurrentDirGuard {
+    fn change_to(path: &Path) -> Self {
+        let previous = std::env::current_dir().expect("process must have a CWD");
+        std::env::set_current_dir(path).expect("change to test CWD");
+        Self { previous }
+    }
+}
+
+impl Drop for CurrentDirGuard {
+    fn drop(&mut self) {
+        std::env::set_current_dir(&self.previous).expect("restore original CWD");
     }
 }
 
@@ -30,7 +84,7 @@ fn ensure_no_license() {
 #[serial]
 async fn test_env_capture_and_check_success() -> Result<()> {
     let temp = tempdir()?;
-    std::env::set_current_dir(temp.path())?;
+    let _cwd = CurrentDirGuard::change_to(temp.path());
 
     let ctx = get_ctx();
     let capture_cmd = EnvCommands::Capture;
@@ -48,7 +102,7 @@ async fn test_env_capture_and_check_success() -> Result<()> {
 #[serial]
 async fn test_env_check_fails_without_lock() -> Result<()> {
     let temp = tempdir()?;
-    std::env::set_current_dir(temp.path())?;
+    let _cwd = CurrentDirGuard::change_to(temp.path());
 
     let ctx = get_ctx();
     let check_cmd = EnvCommands::Check;
@@ -69,7 +123,7 @@ async fn test_env_check_fails_without_lock() -> Result<()> {
 #[serial]
 async fn test_env_check_fails_on_drift() -> Result<()> {
     let temp = tempdir()?;
-    std::env::set_current_dir(temp.path())?;
+    let _cwd = CurrentDirGuard::change_to(temp.path());
 
     let ctx = get_ctx();
 
@@ -86,11 +140,12 @@ async fn test_env_check_fails_on_drift() -> Result<()> {
 #[serial]
 async fn test_tool_list_empty() -> Result<()> {
     let temp = tempdir()?;
-    // SAFETY: Test setup - modifying environment variable for isolated test execution.
-    // This test is marked with #[serial] to prevent concurrent access.
-    unsafe {
-        std::env::set_var("HOME", temp.path());
-    }
+    // The guard restores HOME on drop; the former bare set_var leaked a fake
+    // HOME into every sibling test for the rest of the binary's lifetime.
+    let _home = EnvGuard::set(
+        "HOME",
+        temp.path().to_str().expect("temp paths are valid UTF-8"),
+    );
 
     let ctx = get_ctx();
     let list_cmd = ToolCommands::List;
@@ -111,7 +166,11 @@ async fn test_tool_registry_output() -> Result<()> {
 #[tokio::test]
 #[serial]
 async fn test_tool_install_invalid_name_fails() -> Result<()> {
-    ensure_no_license(); // Clear any existing license
+    let data = tempdir()?;
+    let _isolated = EnvGuard::set(
+        "OMG_DATA_DIR",
+        data.path().to_str().expect("temp paths are valid UTF-8"),
+    );
     let ctx = get_ctx();
     let install_cmd = ToolCommands::Install {
         name: "../dangerous".to_string(),
@@ -131,7 +190,11 @@ async fn test_tool_install_invalid_name_fails() -> Result<()> {
 #[tokio::test]
 #[serial]
 async fn test_fleet_status_requires_license() -> Result<()> {
-    ensure_no_license(); // Clear any existing license
+    let data = tempdir()?;
+    let _isolated = EnvGuard::set(
+        "OMG_DATA_DIR",
+        data.path().to_str().expect("temp paths are valid UTF-8"),
+    );
     let ctx = get_ctx();
     let status_cmd = FleetCommands::Status;
 
@@ -192,7 +255,7 @@ async fn test_run_invalid_task_fails() -> Result<()> {
 #[serial]
 async fn test_run_detect_and_execute_mock_task() -> Result<()> {
     let temp = tempdir()?;
-    std::env::set_current_dir(temp.path())?;
+    let _cwd = CurrentDirGuard::change_to(temp.path());
 
     fs::write(
         temp.path().join("Makefile"),
@@ -218,22 +281,15 @@ async fn test_run_detect_and_execute_mock_task() -> Result<()> {
 #[tokio::test]
 #[serial]
 async fn test_tool_install_not_in_registry_fails() -> Result<()> {
-    // SAFETY: Test setup - modifying environment variable for isolated test execution.
-    // This test is marked with #[serial] to prevent concurrent access.
-    unsafe {
-        std::env::set_var("OMG_TEST_MODE", "1");
-    }
+    // The guard restores the previous OMG_TEST_MODE value on drop instead of
+    // removing it unconditionally (the suite-wide init relies on it staying set).
+    let _test_mode = EnvGuard::set("OMG_TEST_MODE", "1");
     let ctx = get_ctx();
     let install_cmd = ToolCommands::Install {
         name: "non-existent-tool-xyz-123".to_string(),
     };
 
     let result = install_cmd.execute(&ctx).await;
-    // SAFETY: Test cleanup - removing environment variable after test execution.
-    // This test is marked with #[serial] to prevent concurrent access.
-    unsafe {
-        std::env::remove_var("OMG_TEST_MODE");
-    }
 
     assert!(result.is_err());
     assert!(result.unwrap_err().to_string().contains("not in registry"));
@@ -245,14 +301,13 @@ async fn test_tool_install_not_in_registry_fails() -> Result<()> {
 #[serial]
 async fn test_env_share_missing_token_fails() -> Result<()> {
     let temp = tempdir()?;
-    std::env::set_current_dir(temp.path())?;
+    let _cwd = CurrentDirGuard::change_to(temp.path());
     fs::write(temp.path().join("omg.lock"), "{}")?;
 
-    // SAFETY: Test setup - removing environment variable to test failure case.
-    // This test is marked with #[serial] to prevent concurrent access.
-    unsafe {
-        std::env::remove_var("GITHUB_TOKEN");
-    }
+    // The guard restores any previously set GITHUB_TOKEN on drop instead of
+    // removing it for the rest of the process lifetime. `remove` (not
+    // `set("")`) because the code under test distinguishes unset from empty.
+    let _token = EnvGuard::remove("GITHUB_TOKEN");
 
     let ctx = get_ctx();
     let share_cmd = EnvCommands::Share {

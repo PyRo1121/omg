@@ -560,7 +560,7 @@ jobs:
       - name: Setup
         run: |
           pacman -Syu --noconfirm
-          pacman -S --noconfirm --needed base-devel git rust cargo clang cmake
+          pacman -S --noconfirm --needed base-devel git rust cargo clippy clang cmake
 
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
@@ -581,6 +581,12 @@ jobs:
 
       - name: Install nextest
         uses: taiki-e/install-action@68250fb3d551d72befef105162372ebb3e8016e0 # nextest
+
+      # Lint the DEFAULT feature set (arch + license + pgp). Every matrix leg
+      # passes --no-default-features, so without this step the exact
+      # configuration shipped by release.yml for Arch is never clippy-checked.
+      - name: Clippy (default features)
+        run: cargo clippy --all-targets --locked -- -D warnings
 
       - name: Run integration tests
         env:

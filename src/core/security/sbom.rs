@@ -11,6 +11,14 @@ use thiserror::Error;
 
 use crate::core::paths;
 
+/// Private bridge for upstream errors reported as `anyhow::Error` by the
+/// package backends. Keeps [`SbomError`] variants fully typed while
+/// preserving the source error's `Display` and `source()` chain.
+#[derive(Debug, Error)]
+#[error(transparent)]
+#[doc(hidden)]
+pub struct PackageSource(#[from] anyhow::Error);
+
 /// `CycloneDX` SBOM format (industry standard for enterprise)
 /// Compliant with `CycloneDX` 1.5 specification
 #[derive(Debug, Serialize, Deserialize, Clone)]
@@ -83,10 +91,10 @@ pub struct SbomComponent {
 /// Failures generating or exporting a CycloneDX SBOM.
 #[derive(Debug, Error)]
 pub enum SbomError {
-    #[error("Failed to list packages")]
+    #[error("Failed to list installed packages")]
     ListPackages {
         #[source]
-        source: anyhow::Error,
+        source: PackageSource,
     },
     #[error("Failed to fetch vulnerability data")]
     FetchVulnerabilities {
@@ -254,7 +262,6 @@ fn os_sbom_identity(debian_like: bool) -> OsSbomIdentity {
 /// SBOM Generator for enterprise compliance
 pub struct SbomGenerator {
     include_vulns: bool,
-    include_deps: bool,
 }
 
 impl Default for SbomGenerator {
@@ -268,19 +275,13 @@ impl SbomGenerator {
     pub fn new() -> Self {
         Self {
             include_vulns: true,
-            include_deps: true,
         }
     }
 
+    /// Include vulnerability matching from Arch Linux security advisory data.
     #[must_use]
     pub const fn with_vulnerabilities(mut self, include: bool) -> Self {
         self.include_vulns = include;
-        self
-    }
-
-    #[must_use]
-    pub const fn with_dependencies(mut self, include: bool) -> Self {
-        self.include_deps = include;
         self
     }
 
@@ -300,14 +301,21 @@ impl SbomGenerator {
         #[cfg(any(feature = "arch", feature = "debian", feature = "debian-pure"))]
         {
             #[cfg(feature = "arch")]
-            let installed = crate::package_managers::list_installed_fast()
-                .map_err(|source| SbomError::ListPackages { source })?;
+            let installed = crate::package_managers::list_installed_fast().map_err(|source| {
+                SbomError::ListPackages {
+                    source: PackageSource(source),
+                }
+            })?;
             #[cfg(all(
                 any(feature = "debian", feature = "debian-pure"),
                 not(feature = "arch")
             ))]
-            let installed = crate::package_managers::apt_list_installed_fast()
-                .map_err(|source| SbomError::ListPackages { source })?;
+            let installed =
+                crate::package_managers::apt_list_installed_fast().map_err(|source| {
+                    SbomError::ListPackages {
+                        source: PackageSource(source),
+                    }
+                })?;
 
             let timestamp = jiff::Zoned::now()
                 .strftime("%Y-%m-%dT%H:%M:%SZ")
@@ -319,7 +327,6 @@ impl SbomGenerator {
 
             let mut components = Vec::with_capacity(installed.len());
             let mut vulnerabilities = Vec::new();
-            let mut dependencies = Vec::new();
 
             // Build component list
             for pkg in &installed {
@@ -348,15 +355,11 @@ impl SbomGenerator {
                 };
 
                 components.push(component);
-
-                // Add dependency info if enabled
-                if self.include_deps {
-                    dependencies.push(SbomDependency {
-                        dep_ref: bom_ref,
-                        depends_on: vec![], // Would need to resolve actual deps
-                    });
-                }
             }
+            // Dependency edges are intentionally not emitted: real
+            // `dependsOn` resolution does not exist yet, and a CycloneDX
+            // document full of empty dependency entries misstates the
+            // system, so the `dependencies` array stays empty.
 
             // Scan for vulnerabilities if enabled. A failed fetch must not look like
             // a clean bill of materials. ALSA is Arch-specific; matching it against
@@ -443,7 +446,7 @@ impl SbomGenerator {
                     }),
                 },
                 components,
-                dependencies,
+                dependencies: Vec::new(),
                 vulnerabilities,
             })
         }

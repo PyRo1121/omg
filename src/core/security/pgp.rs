@@ -9,11 +9,21 @@ use std::path::Path;
 use openpgp::Cert;
 use openpgp::Packet;
 use openpgp::cert::CertParser;
+use openpgp::crypto::hash::Context;
 use openpgp::parse::Parse;
 use openpgp::parse::{PacketParser, PacketParserResult};
 use openpgp::policy::StandardPolicy;
 use sequoia_openpgp as openpgp;
 use thiserror::Error;
+
+/// Private bridge for upstream errors that Sequoia reports as
+/// `anyhow::Error`. Keeps the public [`PgpError`]/[`SignatureFileError`]
+/// variants fully typed while preserving the source error's `Display` and
+/// `source()` chain.
+#[derive(Debug, Error)]
+#[error(transparent)]
+#[doc(hidden)]
+pub struct SequoiaSource(#[from] anyhow::Error);
 
 #[derive(Debug, Error)]
 pub enum SignatureFileError {
@@ -23,6 +33,7 @@ pub enum SignatureFileError {
     SignatureMissing { package_name: String, path: String },
 }
 
+/// Failures loading a keyring or verifying a detached signature.
 /// Failures loading a keyring or verifying a detached signature.
 #[derive(Debug, Error)]
 pub enum PgpError {
@@ -40,7 +51,7 @@ pub enum PgpError {
     KeyringParse {
         path: String,
         #[source]
-        source: anyhow::Error,
+        source: SequoiaSource,
     },
     #[error("Failed to open signature '{path}'")]
     SignatureOpen {
@@ -52,12 +63,12 @@ pub enum PgpError {
     SignatureParse {
         path: String,
         #[source]
-        source: anyhow::Error,
+        source: SequoiaSource,
     },
     #[error("Failed to parse signature bytes")]
     SignatureBytesParse {
         #[source]
-        source: anyhow::Error,
+        source: SequoiaSource,
     },
     #[error("Failed to open package '{path}'")]
     PackageOpen {
@@ -65,10 +76,16 @@ pub enum PgpError {
         #[source]
         source: io::Error,
     },
+    #[error("Failed to read package '{path}'")]
+    PackageRead {
+        path: String,
+        #[source]
+        source: io::Error,
+    },
     #[error("Failed to initialize signature hash")]
     HashContext {
         #[source]
-        source: anyhow::Error,
+        source: SequoiaSource,
     },
     #[error("No valid signature found")]
     NoValidSignature,
@@ -128,14 +145,14 @@ impl PgpVerifier {
         let parser =
             CertParser::from_reader(&mut file).map_err(|source| PgpError::KeyringParse {
                 path: path_str.clone(),
-                source,
+                source: source.into(),
             })?;
         let certs =
             parser
                 .collect::<Result<Vec<_>, _>>()
                 .map_err(|source| PgpError::KeyringParse {
                     path: path_str.clone(),
-                    source,
+                    source: source.into(),
                 })?;
         if certs.is_empty() {
             return Err(PgpError::KeyringEmpty { path: path_str });
@@ -149,9 +166,10 @@ impl PgpVerifier {
 
     /// Verify a file against a detached signature using the loaded keyring.
     pub fn verify_detached(&self, file_path: &Path, sig_path: &Path) -> Result<(), PgpError> {
+        let path = file_path.display().to_string();
         let mut data_file =
             std::fs::File::open(file_path).map_err(|source| PgpError::PackageOpen {
-                path: file_path.display().to_string(),
+                path: path.clone(),
                 source,
             })?;
         let mut sig_file =
@@ -160,150 +178,125 @@ impl PgpVerifier {
                 source,
             })?;
 
-        let mut valid_signature_found = false;
         let mut ppr = PacketParser::from_reader(&mut sig_file).map_err(|source| {
             PgpError::SignatureParse {
                 path: sig_path.display().to_string(),
-                source,
+                source: source.into(),
             }
         })?;
 
         while let PacketParserResult::Some(pp) = ppr {
             if let Packet::Signature(sig) = &pp.packet {
-                let algo = sig.hash_algo();
-                let issuers = sig.get_issuers();
-
-                let mut hasher = algo
-                    .context()
-                    .map_err(|source| PgpError::HashContext { source })?
-                    .for_signature(sig.version());
+                let mut hasher = Self::signature_hasher(sig)?;
                 data_file
                     .seek(io::SeekFrom::Start(0))
-                    .map_err(|source| PgpError::PackageOpen {
-                        path: file_path.display().to_string(),
+                    .map_err(|source| PgpError::PackageRead {
+                        path: path.clone(),
                         source,
                     })?;
                 std::io::copy(&mut data_file, &mut hasher).map_err(|source| {
-                    PgpError::PackageOpen {
-                        path: file_path.display().to_string(),
+                    PgpError::PackageRead {
+                        path: path.clone(),
                         source,
                     }
                 })?;
 
-                for cert in &self.certs {
-                    let mut relevant_cert = issuers.is_empty();
-                    if !relevant_cert {
-                        for issuer_id in &issuers {
-                            if cert.keys().any(|k| k.key().key_handle().aliases(issuer_id)) {
-                                relevant_cert = true;
-                                break;
-                            }
-                        }
-                    }
-
-                    if relevant_cert {
-                        for key in cert
-                            .keys()
-                            .with_policy(&self.policy, None)
-                            .alive()
-                            .revoked(false)
-                            .for_signing()
-                        {
-                            if sig.verify_hash(key.key(), hasher.clone()).is_ok() {
-                                valid_signature_found = true;
-                                break;
-                            }
-                        }
-                    }
-                    if valid_signature_found {
-                        break;
-                    }
+                if self.matches_any_trusted_cert(sig, &hasher) {
+                    return Ok(());
                 }
-            }
-            if valid_signature_found {
-                break;
             }
             ppr = pp
                 .next()
                 .map_err(|source| PgpError::SignatureParse {
                     path: sig_path.display().to_string(),
-                    source,
+                    source: source.into(),
                 })?
                 .1;
         }
 
-        if valid_signature_found {
-            Ok(())
-        } else {
-            Err(PgpError::NoValidSignature)
-        }
+        Err(PgpError::NoValidSignature)
     }
 
     /// Verify data against a detached signature (memory-based)
     pub fn verify_memory(&self, data: &[u8], signature: &[u8]) -> Result<(), PgpError> {
-        let mut ppr = PacketParser::from_reader(Cursor::new(signature))
-            .map_err(|source| PgpError::SignatureBytesParse { source })?;
-        let mut valid_signature_found = false;
+        let mut ppr = PacketParser::from_reader(Cursor::new(signature)).map_err(|source| {
+            PgpError::SignatureBytesParse {
+                source: source.into(),
+            }
+        })?;
 
         while let PacketParserResult::Some(pp) = ppr {
             if let Packet::Signature(sig) = &pp.packet {
-                let algo = sig.hash_algo();
-                let issuers = sig.get_issuers();
-
-                let mut hasher = algo
-                    .context()
-                    .map_err(|source| PgpError::HashContext { source })?
-                    .for_signature(sig.version());
+                let mut hasher = Self::signature_hasher(sig)?;
                 hasher.update(data);
 
-                for cert in &self.certs {
-                    let mut relevant_cert = issuers.is_empty();
-                    if !relevant_cert {
-                        for issuer_id in &issuers {
-                            if cert.keys().any(|k| k.key().key_handle().aliases(issuer_id)) {
-                                relevant_cert = true;
-                                break;
-                            }
-                        }
-                    }
-
-                    if relevant_cert {
-                        for key in cert
-                            .keys()
-                            .with_policy(&self.policy, None)
-                            .alive()
-                            .revoked(false)
-                            .for_signing()
-                        {
-                            if sig.verify_hash(key.key(), hasher.clone()).is_ok() {
-                                valid_signature_found = true;
-                                break;
-                            }
-                        }
-                    }
-                    if valid_signature_found {
-                        break;
-                    }
+                if self.matches_any_trusted_cert(sig, &hasher) {
+                    return Ok(());
                 }
-            }
-            if valid_signature_found {
-                break;
             }
             ppr = pp
                 .next()
-                .map_err(|source| PgpError::SignatureBytesParse { source })?
+                .map_err(|source| PgpError::SignatureBytesParse {
+                    source: source.into(),
+                })?
                 .1;
         }
 
-        if valid_signature_found {
-            Ok(())
-        } else {
-            Err(PgpError::NoValidSignature)
-        }
+        Err(PgpError::NoValidSignature)
     }
 
-    /// Verify an Arch Linux package signature (`.sig`)
-    pub fn verify_package<P: AsRef<Path>>(&self, pkg_path: P, sig_path: P) -> Result<(), PgpError> {
+    /// Build the hash context for one signature packet.
+    ///
+    /// # Errors
+    /// Returns [`PgpError::HashContext`] when the signature's hash algorithm
+    /// has no usable context (unsupported or disabled algorithm).
+    fn signature_hasher(sig: &openpgp::packet::Signature) -> Result<Context, PgpError> {
+        Ok(sig
+            .hash_algo()
+            .context()
+            .map_err(|source| PgpError::HashContext {
+                source: SequoiaSource(source),
+            })?
+            .for_signature(sig.version()))
+    }
+
+    /// Try `sig` against every signing-capable key of every cert that
+    /// plausibly issued it. Shared by [`Self::verify_detached`] and
+    /// [`Self::verify_memory`]; returns true on the first successful check.
+    fn matches_any_trusted_cert(&self, sig: &openpgp::packet::Signature, hasher: &Context) -> bool {
+        let issuers = sig.get_issuers();
+        for cert in &self.certs {
+            let relevant_cert = issuers.is_empty()
+                || issuers
+                    .iter()
+                    .any(|issuer| cert.keys().any(|k| k.key().key_handle().aliases(issuer)));
+            if !relevant_cert {
+                continue;
+            }
+
+            for key in cert
+                .keys()
+                .with_policy(&self.policy, None)
+                .alive()
+                .revoked(false)
+                .for_signing()
+            {
+                if sig.verify_hash(key.key(), hasher.clone()).is_ok() {
+                    return true;
+                }
+            }
+        }
+        false
+    }
+
+    /// Detached-signature verification for a package file and its `.sig`
+    /// sidecar. Distro-agnostic; a thin convenience wrapper over
+    /// [`Self::verify_detached`].
+    pub fn verify_package(
+        &self,
+        pkg_path: impl AsRef<Path>,
+        sig_path: impl AsRef<Path>,
+    ) -> Result<(), PgpError> {
         self.verify_detached(pkg_path.as_ref(), sig_path.as_ref())
     }
 }
@@ -436,7 +429,7 @@ mod tests {
         sig.flush().unwrap();
 
         let err = verifier
-            .verify_package(pkg.path(), sig.path())
+            .verify_detached(pkg.path(), sig.path())
             .expect_err("garbage signature must fail verification");
         assert!(matches!(err, PgpError::SignatureParse { .. }), "got: {err}");
     }

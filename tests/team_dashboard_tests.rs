@@ -242,6 +242,7 @@ mod app_state_tests {
     use super::*;
 
     #[tokio::test]
+    #[serial]
     async fn test_app_creation() {
         let result = App::new().await;
         assert!(result.is_ok());
@@ -255,6 +256,7 @@ mod app_state_tests {
     }
 
     #[tokio::test]
+    #[serial]
     async fn test_app_with_team_tab() {
         let result = App::new().await;
         assert!(result.is_ok());
@@ -264,6 +266,7 @@ mod app_state_tests {
     }
 
     #[tokio::test]
+    #[serial]
     async fn test_app_initial_state() {
         let app = App::new().await.unwrap();
 
@@ -280,6 +283,7 @@ mod tab_navigation_tests {
     use crossterm::event::KeyCode;
 
     #[tokio::test]
+    #[serial]
     async fn test_numeric_tab_switching() {
         let mut app = App::new().await.unwrap();
 
@@ -304,6 +308,7 @@ mod tab_navigation_tests {
     }
 
     #[tokio::test]
+    #[serial]
     async fn test_tab_key_navigation_forward() {
         let mut app = App::new().await.unwrap();
 
@@ -329,6 +334,7 @@ mod tab_navigation_tests {
     }
 
     #[tokio::test]
+    #[serial]
     async fn test_backtab_navigation_backward() {
         let mut app = App::new().await.unwrap();
 
@@ -440,6 +446,7 @@ mod search_and_selection_tests {
     use crossterm::event::KeyCode;
 
     #[tokio::test]
+    #[serial]
     async fn test_search_mode_activation() {
         let mut app = App::new().await.unwrap();
         app.current_tab = Tab::Packages;
@@ -452,6 +459,7 @@ mod search_and_selection_tests {
     }
 
     #[tokio::test]
+    #[serial]
     async fn test_search_query_input() {
         let mut app = App::new().await.unwrap();
         app.current_tab = Tab::Packages;
@@ -466,6 +474,7 @@ mod search_and_selection_tests {
     }
 
     #[tokio::test]
+    #[serial]
     async fn test_search_backspace() {
         let mut app = App::new().await.unwrap();
         app.current_tab = Tab::Packages;
@@ -486,6 +495,7 @@ mod search_and_selection_tests {
     }
 
     #[tokio::test]
+    #[serial]
     async fn test_escape_exits_search_mode() {
         let mut app = App::new().await.unwrap();
         app.current_tab = Tab::Packages;
@@ -499,6 +509,7 @@ mod search_and_selection_tests {
     }
 
     #[tokio::test]
+    #[serial]
     async fn test_enter_exits_search_mode() {
         let mut app = App::new().await.unwrap();
         app.current_tab = Tab::Packages;
@@ -509,6 +520,7 @@ mod search_and_selection_tests {
     }
 
     #[tokio::test]
+    #[serial]
     async fn test_list_navigation() {
         let mut app = App::new().await.unwrap();
         app.current_tab = Tab::Packages;
@@ -567,6 +579,7 @@ mod search_and_selection_tests {
     }
 
     #[tokio::test]
+    #[serial]
     async fn test_vim_navigation_keys() {
         let mut app = App::new().await.unwrap();
         app.current_tab = Tab::Packages;
@@ -606,6 +619,7 @@ mod refresh_and_tick_tests {
     use super::*;
 
     #[tokio::test]
+    #[serial]
     async fn test_tick_updates_metrics() {
         let mut app = App::new().await.unwrap();
 
@@ -625,6 +639,7 @@ mod refresh_and_tick_tests {
     }
 
     #[tokio::test]
+    #[serial]
     async fn test_refresh_command() {
         let mut app = App::new().await.unwrap();
 
@@ -643,6 +658,7 @@ mod popup_tests {
     use crossterm::event::KeyCode;
 
     #[tokio::test]
+    #[serial]
     async fn test_popup_show_hide() {
         let mut app = App::new().await.unwrap();
 
@@ -656,6 +672,7 @@ mod popup_tests {
     }
 
     #[tokio::test]
+    #[serial]
     async fn test_popup_on_package_selection() {
         let mut app = App::new().await.unwrap();
         app.current_tab = Tab::Packages;
@@ -674,6 +691,7 @@ mod popup_tests {
     }
 
     #[tokio::test]
+    #[serial]
     async fn test_popup_not_shown_on_empty_results() {
         let mut app = App::new().await.unwrap();
         app.current_tab = Tab::Packages;
@@ -690,6 +708,7 @@ mod system_metrics_tests {
     use super::*;
 
     #[tokio::test]
+    #[serial]
     async fn test_system_metrics_initialized() {
         let app = App::new().await.unwrap();
 
@@ -700,6 +719,7 @@ mod system_metrics_tests {
     }
 
     #[tokio::test]
+    #[serial]
     async fn test_metrics_within_bounds() {
         let app = App::new().await.unwrap();
 
@@ -713,30 +733,35 @@ mod app_getter_tests {
     use super::*;
 
     #[tokio::test]
+    #[serial]
     async fn test_get_total_packages() {
         let app = App::new().await.unwrap();
         let _total = app.get_total_packages();
     }
 
     #[tokio::test]
+    #[serial]
     async fn test_get_orphan_packages() {
         let app = App::new().await.unwrap();
         let _orphans = app.get_orphan_packages();
     }
 
     #[tokio::test]
+    #[serial]
     async fn test_get_updates_available() {
         let app = App::new().await.unwrap();
         let _updates = app.get_updates_available();
     }
 
     #[tokio::test]
+    #[serial]
     async fn test_get_security_vulnerabilities() {
         let app = App::new().await.unwrap();
         let _vulns = app.get_security_vulnerabilities();
     }
 
     #[tokio::test]
+    #[serial]
     async fn test_get_runtime_versions() {
         let app = App::new().await.unwrap();
         let _runtimes = app.get_runtime_versions();
@@ -748,6 +773,7 @@ mod edge_cases_tests {
     use crossterm::event::KeyCode;
 
     #[tokio::test]
+    #[serial]
     async fn test_navigation_with_empty_lists() {
         let mut app = App::new().await.unwrap();
         app.current_tab = Tab::Packages;
@@ -764,6 +790,7 @@ mod edge_cases_tests {
     }
 
     #[tokio::test]
+    #[serial]
     async fn test_search_mode_only_on_packages_tab() {
         let mut app = App::new().await.unwrap();
 

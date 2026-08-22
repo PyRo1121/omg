@@ -30,13 +30,20 @@ pub async fn clean(orphans: bool, cache: bool, aur: bool, all: bool, dry_run: bo
     }
     println!();
 
+    // AUR cleanup requires the Arch backend no matter where we run: fail
+    // before any distro-specific routing can produce a less precise error.
+    #[cfg(all(
+        any(feature = "debian", feature = "debian-pure"),
+        not(feature = "arch")
+    ))]
+    if aur {
+        anyhow::bail!("AUR cleanup is not available without the Arch backend");
+    }
+
     #[cfg(any(feature = "debian", feature = "debian-pure"))]
     if is_debian_like() {
         #[cfg(feature = "debian-pure")]
         {
-            if aur {
-                anyhow::bail!("AUR cleanup is not available without the Arch backend");
-            }
             return handle_debian_pure_clean(orphans, cache, all, dry_run).await;
         }
 
@@ -53,12 +60,16 @@ pub async fn clean(orphans: bool, cache: bool, aur: bool, all: bool, dry_run: bo
         }
     }
 
+    // Compiled with only the Debian backends but running somewhere that is
+    // not Debian-like: there is no Debian package database here to clean.
+    // (With the Arch backend also compiled in, execution continues into the
+    // Arch-capable block below instead.)
     #[cfg(all(feature = "debian-pure", not(feature = "arch")))]
     {
-        if aur {
-            anyhow::bail!("AUR cleanup is not available without the Arch backend");
-        }
-        return handle_debian_pure_clean(orphans, cache, all, dry_run).await;
+        anyhow::bail!(
+            "Clean requires a Debian-like system (or an Arch-enabled build); \
+             no supported package database was found"
+        );
     }
 
     #[cfg(any(feature = "arch", not(feature = "debian-pure")))]

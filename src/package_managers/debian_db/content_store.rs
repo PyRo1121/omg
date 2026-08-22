@@ -12,7 +12,6 @@ use std::fs;
 use std::path::{Path, PathBuf};
 
 use anyhow::{Context, Result};
-use sha2::{Digest, Sha256};
 
 use crate::core::paths;
 
@@ -29,6 +28,7 @@ pub struct ContentStore {
 
 impl ContentStore {
     /// Create a new content store at the default cache location
+    #[must_use]
     pub fn new() -> Self {
         Self {
             store_dir: paths::cache_dir().join("debian_content_store"),
@@ -36,6 +36,7 @@ impl ContentStore {
     }
 
     /// Create a content store at a custom location
+    #[must_use]
     pub fn with_path(path: PathBuf) -> Self {
         Self { store_dir: path }
     }
@@ -54,13 +55,14 @@ impl ContentStore {
     ///
     /// Returns the hash for later retrieval. If the file already exists in the
     /// store, it's not copied again (deduplication).
+    /// Returns the hash for later retrieval. If the file already exists in the
+    /// store, it's not copied again (deduplication).
+    #[allow(clippy::too_many_lines)] // single cohesive store operation
     pub fn store(&self, deb_path: &Path) -> Result<String> {
-        // Calculate SHA256 hash
-        let mut hasher = Sha256::new();
-        let data = fs::read(deb_path)
+        // Calculate SHA256 hash by streaming: .deb archives can be hundreds
+        // of megabytes and must not be buffered whole in memory.
+        let hash = super::validation::sha256_file(deb_path)
             .with_context(|| format!("Failed to read .deb file: {}", deb_path.display()))?;
-        hasher.update(&data);
-        let hash = hex::encode(hasher.finalize());
 
         // Store under sharded directory (first 2 chars)
         let hash_dir = self.store_dir.join(&hash[..2]);
@@ -133,6 +135,7 @@ impl ContentStore {
 
     /// Check if a package exists in the content store by its hash
     #[inline]
+    #[must_use]
     pub fn contains(&self, hash: &str) -> bool {
         if hash.len() < 2 {
             return false;
@@ -144,6 +147,7 @@ impl ContentStore {
     /// Get the path to a package in the content store
     ///
     /// Returns `None` if the package doesn't exist.
+    #[must_use]
     pub fn get_path(&self, hash: &str) -> Option<PathBuf> {
         if hash.len() < 2 {
             return None;
@@ -158,11 +162,8 @@ impl ContentStore {
     /// Useful for checking if a package is already in the store before
     /// downloading or copying it.
     pub fn hash_file(path: &Path) -> Result<String> {
-        let mut hasher = Sha256::new();
-        let data =
-            fs::read(path).with_context(|| format!("Failed to read file: {}", path.display()))?;
-        hasher.update(&data);
-        Ok(hex::encode(hasher.finalize()))
+        super::validation::sha256_file(path)
+            .with_context(|| format!("Failed to read file: {}", path.display()))
     }
 
     /// Get the total size of the content store in bytes

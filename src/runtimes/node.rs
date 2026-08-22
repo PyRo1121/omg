@@ -23,16 +23,63 @@ use crate::core::http::download_client;
 
 const NODE_DIST_URL: &str = "https://nodejs.org/dist";
 
-/// Node.js version info from nodejs.org
+/// Node.js version info from nodejs.org.
+///
+/// Parsed once at the network boundary; `lts` is decoded into [`LtsStatus`]
+/// instead of leaking the vendor's bool-or-string JSON shape.
 #[derive(Debug, Deserialize)]
-pub struct NodeVersion {
-    pub version: String,
-    pub date: String,
-    pub lts: serde_json::Value,
+pub(crate) struct NodeVersion {
+    pub(crate) version: String,
+    lts: LtsStatus,
+}
+
+/// The `lts` field of a nodejs.org index entry: a codename string for LTS
+/// releases, or `false` otherwise. Parsed explicitly so the vendor's
+/// bool-or-string shape never leaks past the boundary.
+#[derive(Debug)]
+enum LtsStatus {
+    Lts(String),
+    NotLts,
+}
+
+impl<'de> Deserialize<'de> for LtsStatus {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        struct LtsVisitor;
+
+        impl serde::de::Visitor<'_> for LtsVisitor {
+            type Value = LtsStatus;
+
+            fn expecting(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+                formatter.write_str("an LTS codename string or false")
+            }
+
+            fn visit_bool<E: serde::de::Error>(self, _flag: bool) -> Result<Self::Value, E> {
+                Ok(LtsStatus::NotLts)
+            }
+
+            fn visit_str<E: serde::de::Error>(self, name: &str) -> Result<Self::Value, E> {
+                Ok(LtsStatus::Lts(name.to_owned()))
+            }
+        }
+
+        deserializer.deserialize_any(LtsVisitor)
+    }
+}
+
+impl LtsStatus {
+    fn codename(&self) -> Option<&str> {
+        match self {
+            LtsStatus::Lts(name) => Some(name),
+            LtsStatus::NotLts => None,
+        }
+    }
 }
 
 /// Node.js runtime manager
-pub struct NodeManager {
+pub(crate) struct NodeManager {
     versions_dir: PathBuf,
     current_link: PathBuf,
     client: reqwest::Client,
@@ -68,7 +115,8 @@ impl NodeManager {
             .context("Failed to parse Node.js version list from nodejs.org")
     }
 
-    /// Resolve version alias (latest, lts) to actual version number
+    /// Resolve version alias (latest, lts, lts/<codename>) to an actual
+    /// version number
     pub async fn resolve_alias(&self, alias: &str) -> Result<String> {
         let alias = normalize_version(alias);
 
@@ -84,11 +132,21 @@ impl NodeManager {
                 let versions = self.list_available().await?;
                 versions
                     .iter()
-                    .find(|v| v.lts.is_string())
+                    .find(|v| v.lts.codename().is_some())
                     .map(|v| v.version.trim_start_matches('v').to_string())
                     .ok_or_else(|| anyhow::anyhow!("No LTS version found"))?
             }
-            _ => alias,
+            _ => match alias.strip_prefix("lts/") {
+                Some(codename) => {
+                    let versions = self.list_available().await?;
+                    find_lts_codename(&versions, codename)
+                        .map(str::to_owned)
+                        .ok_or_else(|| {
+                            anyhow::anyhow!("No Node.js LTS release with codename '{codename}'")
+                        })?
+                }
+                None => alias,
+            },
         };
 
         Ok(result)
@@ -164,8 +222,8 @@ impl NodeManager {
     }
 }
 
-// Generate common runtime manager methods (list_installed, current_version, uninstall)
-crate::impl_runtime_common!(NodeManager, "Node.js");
+// Generate common runtime manager methods (list_installed, current_version)
+crate::runtimes::common::impl_runtime_common!(NodeManager, "Node.js");
 
 fn node_platform() -> Result<String> {
     let os = match std::env::consts::OS {
@@ -187,10 +245,23 @@ impl Default for NodeManager {
     }
 }
 
+/// Find the newest release carrying an LTS codename matching `codename`
+/// (case-insensitive), returning its unprefixed version number.
+fn find_lts_codename<'a>(versions: &'a [NodeVersion], codename: &str) -> Option<&'a str> {
+    versions
+        .iter()
+        .find(|v| {
+            v.lts
+                .codename()
+                .is_some_and(|name| name.eq_ignore_ascii_case(codename))
+        })
+        .map(|v| v.version.trim_start_matches('v'))
+}
+
 /// Get LTS version name if applicable
 #[must_use]
-pub fn get_lts_name(version: &NodeVersion) -> Option<String> {
-    version.lts.as_str().map(String::from)
+pub(crate) fn get_lts_name(version: &NodeVersion) -> Option<String> {
+    version.lts.codename().map(String::from)
 }
 
 #[cfg(test)]
@@ -207,17 +278,60 @@ mod tests {
     fn test_get_lts_name() {
         let lts_version = NodeVersion {
             version: "v20.0.0".to_string(),
-            date: "2024-01-01".to_string(),
-            lts: serde_json::Value::String("Iron".to_string()),
+            lts: LtsStatus::Lts("Iron".to_string()),
         };
         assert_eq!(get_lts_name(&lts_version), Some("Iron".to_string()));
 
         let non_lts = NodeVersion {
             version: "v21.0.0".to_string(),
-            date: "2024-01-01".to_string(),
-            lts: serde_json::Value::Bool(false),
+            lts: LtsStatus::NotLts,
         };
         assert_eq!(get_lts_name(&non_lts), None);
+    }
+
+    #[test]
+    fn lts_codename_alias_resolves_case_insensitively() {
+        let versions = vec![
+            NodeVersion {
+                version: "v21.0.0".to_string(),
+                lts: LtsStatus::NotLts,
+            },
+            NodeVersion {
+                version: "v20.1.0".to_string(),
+                lts: LtsStatus::Lts("Iron".to_string()),
+            },
+            NodeVersion {
+                version: "v20.0.0".to_string(),
+                lts: LtsStatus::Lts("Iron".to_string()),
+            },
+            NodeVersion {
+                version: "v18.19.0".to_string(),
+                lts: LtsStatus::Lts("Hydrogen".to_string()),
+            },
+        ];
+
+        // Newest matching release wins; matching is case-insensitive.
+        assert_eq!(find_lts_codename(&versions, "iron"), Some("20.1.0"));
+        assert_eq!(find_lts_codename(&versions, "IRON"), Some("20.1.0"));
+        assert_eq!(find_lts_codename(&versions, "hydrogen"), Some("18.19.0"));
+        assert_eq!(find_lts_codename(&versions, "unknown"), None);
+    }
+
+    #[test]
+    fn lts_field_parses_vendor_json_shapes() {
+        #[derive(Deserialize)]
+        struct Wire {
+            lts: LtsStatus,
+        }
+
+        let named: Wire = serde_json::from_str(r#"{ "lts": "Iron" }"#).unwrap();
+        assert_eq!(named.lts.codename(), Some("Iron"));
+
+        let not_lts: Wire = serde_json::from_str(r#"{ "lts": false }"#).unwrap();
+        assert_eq!(not_lts.lts.codename(), None);
+
+        // Anything else is rejected at the boundary instead of leaking through.
+        assert!(serde_json::from_str::<Wire>(r#"{ "lts": 42 }"#).is_err());
     }
 
     #[test]

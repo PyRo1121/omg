@@ -25,7 +25,11 @@ pub fn get(key: &str) -> Result<()> {
         "aur.enable_ccache" => settings.aur.enable_ccache.to_string(),
         "aur.enable_sccache" => settings.aur.enable_sccache.to_string(),
         "aur.secure_makepkg" => settings.aur.secure_makepkg.to_string(),
-        "aur.makeflags" => settings.aur.makeflags.unwrap_or_default(),
+        "aur.makeflags" => settings
+            .aur
+            .makeflags
+            .as_deref()
+            .map_or_else(|| "(not set)".to_string(), str::to_string),
         "runtime_backend" => format!("{:?}", settings.runtime_backend).to_lowercase(),
         "default_shell" => settings.default_shell,
         _ => anyhow::bail!("Unknown config key: '{key}'"),
@@ -75,8 +79,10 @@ pub fn set(key: &str, value: &str) -> Result<()> {
             settings.aur.makeflags = if value.is_empty() {
                 None
             } else {
-                // Security: Validate MAKEFLAGS to prevent command injection
-                // Only allow safe characters: alphanumeric, -, =, spaces
+                // Security: allowlist MAKEFLAGS characters to prevent command
+                // injection. The allowlist is the enforcement point: it already
+                // excludes every shell metacharacter, so no separate denylist
+                // is needed.
                 let is_safe = value.chars().all(|c| {
                     c.is_ascii_alphanumeric()
                         || c == '-'
@@ -87,19 +93,8 @@ pub fn set(key: &str, value: &str) -> Result<()> {
                 });
                 if !is_safe {
                     anyhow::bail!(
-                        "Invalid MAKEFLAGS: contains unsafe characters. \
-                         Only alphanumeric, -, =, space, comma, period allowed."
-                    );
-                }
-                // Block shell metacharacters explicitly for defense-in-depth
-                const FORBIDDEN: &[char] = &[
-                    ';', '|', '&', '$', '`', '(', ')', '{', '}', '<', '>', '\\', '\n', '\r', '\'',
-                    '"',
-                ];
-                if value.chars().any(|c| FORBIDDEN.contains(&c)) {
-                    anyhow::bail!(
-                        "Invalid MAKEFLAGS: contains shell metacharacters. \
-                         Example safe value: '-j8' or '-j$(nproc)' is NOT allowed."
+                        "Invalid MAKEFLAGS: only alphanumeric, '-', '=', space, comma, and '.' \
+                         are allowed (e.g. '-j8'). Shell metacharacters such as '$()' are rejected."
                     );
                 }
                 Some(value.to_string())

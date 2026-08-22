@@ -11,29 +11,32 @@ use std::time::Duration;
 
 fn omg_binary() -> String {
     std::env::var("OMG_BINARY").unwrap_or_else(|_| {
-        let path = std::env::current_dir().unwrap().join("target/release/omg");
-        path.to_str().unwrap().to_string()
+        let path = std::env::current_dir()
+            .expect("current dir must be readable")
+            .join("target/release/omg");
+        path.to_str()
+            .expect("binary path must be valid UTF-8")
+            .to_string()
     })
 }
 
-fn run_omg(args: &[&str]) -> (bool, Duration) {
-    let start = std::time::Instant::now();
+/// Run `omg` and report success. Timing is criterion's job — it measures the
+/// whole iteration, so no internal stopwatch is needed.
+fn run_omg(args: &[&str]) -> bool {
     let output = Command::new(omg_binary())
         .args(args)
         .output()
-        .expect("Failed to run omg");
-    let duration = start.elapsed();
-    (output.status.success(), duration)
+        .expect("Failed to spawn omg; build it first or set OMG_BINARY");
+    output.status.success()
 }
 
-fn run_pacman(args: &[&str]) -> (bool, Duration) {
-    let start = std::time::Instant::now();
+/// Run `pacman` and report success.
+fn run_pacman(args: &[&str]) -> bool {
     let output = Command::new("pacman")
         .args(args)
         .output()
-        .expect("Failed to run pacman");
-    let duration = start.elapsed();
-    (output.status.success(), duration)
+        .expect("Failed to spawn pacman");
+    output.status.success()
 }
 
 fn bench_search(c: &mut Criterion) {
@@ -47,8 +50,7 @@ fn bench_search(c: &mut Criterion) {
         // OMG search
         group.bench_with_input(BenchmarkId::new("omg", query), query, |b, q| {
             b.iter(|| {
-                let (success, _duration) = run_omg(&["search", q]);
-                assert!(success, "OMG search should succeed");
+                assert!(run_omg(&["search", q]), "OMG search should succeed");
                 black_box(());
             });
         });
@@ -56,8 +58,7 @@ fn bench_search(c: &mut Criterion) {
         // Pacman search
         group.bench_with_input(BenchmarkId::new("pacman", query), query, |b, q| {
             b.iter(|| {
-                let (success, _duration) = run_pacman(&["-Ss", q]);
-                assert!(success, "Pacman search should succeed");
+                assert!(run_pacman(&["-Ss", q]), "Pacman search should succeed");
                 black_box(());
             });
         });
@@ -77,8 +78,7 @@ fn bench_info(c: &mut Criterion) {
         // OMG info
         group.bench_with_input(BenchmarkId::new("omg", pkg), pkg, |b, p| {
             b.iter(|| {
-                let (success, _duration) = run_omg(&["info", p]);
-                assert!(success, "OMG info should succeed");
+                assert!(run_omg(&["info", p]), "OMG info should succeed");
                 black_box(());
             });
         });
@@ -86,8 +86,7 @@ fn bench_info(c: &mut Criterion) {
         // Pacman info
         group.bench_with_input(BenchmarkId::new("pacman", pkg), pkg, |b, p| {
             b.iter(|| {
-                let (success, _duration) = run_pacman(&["-Si", p]);
-                assert!(success, "Pacman info should succeed");
+                assert!(run_pacman(&["-Si", p]), "Pacman info should succeed");
                 black_box(());
             });
         });
@@ -104,8 +103,7 @@ fn bench_list(c: &mut Criterion) {
     // OMG explicit packages
     group.bench_function("omg_explicit", |b| {
         b.iter(|| {
-            let (success, _duration) = run_omg(&["explicit"]);
-            assert!(success, "OMG explicit should succeed");
+            assert!(run_omg(&["explicit"]), "OMG explicit should succeed");
             black_box(());
         });
     });
@@ -113,8 +111,7 @@ fn bench_list(c: &mut Criterion) {
     // Pacman explicit packages
     group.bench_function("pacman_explicit", |b| {
         b.iter(|| {
-            let (success, _duration) = run_pacman(&["-Qe"]);
-            assert!(success, "Pacman -Qe should succeed");
+            assert!(run_pacman(&["-Qe"]), "Pacman -Qe should succeed");
             black_box(());
         });
     });
@@ -130,8 +127,7 @@ fn bench_status(c: &mut Criterion) {
     // OMG status
     group.bench_function("omg_status", |b| {
         b.iter(|| {
-            let (success, _duration) = run_omg(&["status"]);
-            assert!(success, "OMG status should succeed");
+            assert!(run_omg(&["status"]), "OMG status should succeed");
             black_box(());
         });
     });
@@ -139,8 +135,7 @@ fn bench_status(c: &mut Criterion) {
     // Pacman list count
     group.bench_function("pacman_list_count", |b| {
         b.iter(|| {
-            let (success, _duration) = run_pacman(&["-Q"]);
-            assert!(success, "Pacman -Q should succeed");
+            assert!(run_pacman(&["-Q"]), "Pacman -Q should succeed");
             black_box(());
         });
     });
@@ -156,8 +151,10 @@ fn bench_update_check(c: &mut Criterion) {
     // OMG update check
     group.bench_function("omg_update_check", |b| {
         b.iter(|| {
-            let (success, _duration) = run_omg(&["update", "--check"]);
-            assert!(success, "OMG update check should succeed");
+            assert!(
+                run_omg(&["update", "--check"]),
+                "OMG update check should succeed"
+            );
             black_box(());
         });
     });
@@ -166,9 +163,11 @@ fn bench_update_check(c: &mut Criterion) {
     if Command::new("checkupdates").output().is_ok() {
         group.bench_function("checkupdates", |b| {
             b.iter(|| {
-                let start = std::time::Instant::now();
-                let _ = Command::new("checkupdates").output();
-                black_box(start.elapsed())
+                let output = Command::new("checkupdates")
+                    .output()
+                    .expect("Failed to spawn checkupdates");
+                assert!(output.status.success(), "checkupdates should succeed");
+                black_box(output);
             });
         });
     }

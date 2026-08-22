@@ -32,7 +32,7 @@ fn test_daemon_initialization_debian_mock() {
     // But PackageIndex::new_apt builds from get_detailed_packages.
     // We expect get_detailed_packages to return mock data in test mode.
     assert!(
-        !state.index.is_empty(),
+        !state.index_is_empty(),
         "Package index should not be empty in mock mode"
     );
 }

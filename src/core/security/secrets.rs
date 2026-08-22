@@ -1,7 +1,7 @@
 //! Secret detection using regex patterns and entropy analysis
 //!
 //! Scans files and content for accidentally committed secrets like API keys,
-//! tokens, private keys, and credentials across 20+ secret types.
+//! tokens, private keys, and credentials across 20 secret types.
 
 use std::io;
 use std::path::Path;
@@ -64,14 +64,20 @@ impl std::fmt::Display for SecretType {
     }
 }
 
-/// A detected secret finding
+/// A detected secret finding.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SecretFinding {
+    /// Category of credential detected.
     pub secret_type: SecretType,
+    /// File the match came from (or the caller-provided source label).
     pub file_path: String,
+    /// 1-based line number of the match.
     pub line_number: usize,
+    /// Raw matched text. Treat as sensitive; do not print.
     pub matched_text: String,
+    /// Masked form safe for display and reports.
     pub redacted: String,
+    /// Severity assigned by the pattern that matched.
     pub severity: SecretSeverity,
 }
 
@@ -329,6 +335,8 @@ pub enum SecretError {
         #[source]
         source: io::Error,
     },
+    #[error("Directory nesting exceeds the maximum scan depth of {max} at '{path}'")]
+    DepthExceeded { path: String, max: usize },
 }
 
 /// Secret scanner for detecting leaked credentials
@@ -393,22 +401,38 @@ impl SecretScanner {
     }
 
     /// Scan a directory recursively for secrets
+    ///
+    /// Symlinked directories are never followed (a cyclic symlink would
+    /// otherwise recurse forever), and nesting deeper than
+    /// [`MAX_SCAN_DEPTH`] fails closed rather than silently skipping files.
     pub fn scan_directory<P: AsRef<Path>>(
         &self,
         path: P,
     ) -> Result<Vec<SecretFinding>, SecretError> {
         let mut findings = Vec::new();
 
-        self.scan_directory_recursive(path.as_ref(), &mut findings)?;
+        self.scan_directory_recursive(path.as_ref(), &mut findings, 0)?;
 
         Ok(findings)
     }
+
+    /// Maximum directory nesting followed during a scan. Deep enough for
+    /// real source trees (after `node_modules`/`target` pruning) while
+    /// bounding attacker-controlled recursion work.
+    const MAX_SCAN_DEPTH: usize = 64;
 
     fn scan_directory_recursive(
         &self,
         path: &Path,
         findings: &mut Vec<SecretFinding>,
+        depth: usize,
     ) -> Result<(), SecretError> {
+        if depth > Self::MAX_SCAN_DEPTH {
+            return Err(SecretError::DepthExceeded {
+                path: path.display().to_string(),
+                max: Self::MAX_SCAN_DEPTH,
+            });
+        }
         let path_str = path.display().to_string();
         for entry in std::fs::read_dir(path).map_err(|source| SecretError::Read {
             path: path_str.clone(),
@@ -419,6 +443,19 @@ impl SecretScanner {
                 source,
             })?;
             let entry_path = entry.path();
+            // DirEntry::file_type does not traverse symlinks, so symlinked
+            // directories and files are skipped outright instead of being
+            // descended into via the cycle-prone `Path::is_dir`.
+            if entry
+                .file_type()
+                .map_err(|source| SecretError::Read {
+                    path: path_str.clone(),
+                    source,
+                })?
+                .is_symlink()
+            {
+                continue;
+            }
 
             // Skip common non-text directories
             if entry_path.is_dir() {
@@ -441,7 +478,7 @@ impl SecretScanner {
                     continue;
                 }
 
-                self.scan_directory_recursive(&entry_path, findings)?;
+                self.scan_directory_recursive(&entry_path, findings, depth + 1)?;
             } else if Self::is_scannable_file(&entry_path) {
                 findings.extend(self.scan_file(&entry_path)?);
             }
@@ -590,6 +627,9 @@ pub struct SecretScanResult {
 }
 
 impl SecretScanResult {
+    /// Summarize findings by severity. `#[must_use]`: dropping the summary
+    /// defeats the critical/high counts callers rely on.
+    #[must_use]
     pub fn from_findings(findings: Vec<SecretFinding>) -> Self {
         let critical_count = findings
             .iter()
@@ -636,9 +676,11 @@ mod tests {
         let findings = scanner.scan_content(content, "key.pem");
 
         assert!(!findings.is_empty(), "Should detect private key");
-        assert!(findings
-            .iter()
-            .any(|f| matches!(f.secret_type, SecretType::PrivateKey)));
+        assert!(
+            findings
+                .iter()
+                .any(|f| matches!(f.secret_type, SecretType::PrivateKey))
+        );
     }
 
     #[test]
@@ -652,7 +694,6 @@ mod tests {
 
     #[test]
     fn test_redaction() {
-        let _scanner = SecretScanner::new();
         let redacted = SecretScanner::redact("secret_token_1234567890abcdef");
 
         assert!(redacted.contains('*'), "Should contain asterisks");
@@ -673,14 +714,78 @@ mod tests {
             redacted.contains('*'),
             "redacted output must mask the secret"
         );
-        assert_eq!(
-            SecretScanner::redact(
-                "\u{5bc2}\u{9759}\u{5bc6}\u{7801}\u{5b8c}\u{6574}\u{7684}\u{957f}\u{5ea6}"
-            ),
-            SecretScanner::redact(
-                "\u{5bc2}\u{9759}\u{5bc6}\u{7801}\u{5b8c}\u{6574}\u{7684}\u{957f}\u{5ea6}"
-            )
+        // The masked form keeps only a short prefix/suffix window and never
+        // the full secret.
+        assert!(redacted.contains('*'), "got: {redacted}");
+        assert!(redacted.contains("..."), "got: {redacted}");
+        assert!(
+            !redacted.contains("\u{5bc2}\u{9759}\u{5bc6}"),
+            "middle leaked: {redacted}"
         );
+    }
+
+    #[test]
+    fn scan_directory_survives_symlink_cycles() {
+        // Regression: `entry_path.is_dir()` follows symlinks, so a cyclic
+        // symlink (`sub/loop -> root`) recursed forever and crashed the
+        // scanner with a stack overflow.
+        let temp = tempfile::TempDir::new().unwrap();
+        let root = temp.path().join("root");
+        std::fs::create_dir_all(root.join("sub")).unwrap();
+        std::os::unix::fs::symlink(&root, root.join("sub").join("loop")).unwrap();
+        std::fs::write(
+            root.join("secrets.txt"),
+            "-----BEGIN RSA PRIVATE KEY-----\nMIIE...",
+        )
+        .unwrap();
+
+        let findings = SecretScanner::new().scan_directory(temp.path()).unwrap();
+        assert!(
+            findings
+                .iter()
+                .any(|f| matches!(f.secret_type, SecretType::PrivateKey)),
+            "real file inside the cycle must still be scanned"
+        );
+    }
+
+    #[test]
+    fn scan_directory_fails_closed_beyond_max_depth() {
+        let temp = tempfile::TempDir::new().unwrap();
+        let mut deep = temp.path().to_path_buf();
+        for level in 0..SecretScanner::MAX_SCAN_DEPTH + 2 {
+            deep = deep.join(format!("level-{level}"));
+        }
+        std::fs::create_dir_all(&deep).unwrap();
+
+        let error = SecretScanner::new()
+            .scan_directory(temp.path())
+            .expect_err("nesting beyond the scan-depth bound must fail closed");
+        assert!(
+            matches!(
+                error,
+                SecretError::DepthExceeded {
+                    max: SecretScanner::MAX_SCAN_DEPTH,
+                    ..
+                }
+            ),
+            "got: {error}"
+        );
+    }
+
+    #[test]
+    fn scan_directory_skips_symlinked_files_without_error() {
+        let temp = tempfile::TempDir::new().unwrap();
+        let real = temp.path().join("real.env");
+        std::fs::write(&real, "password = super-secret-value-123").unwrap();
+        std::os::unix::fs::symlink(&real, temp.path().join("link.env")).unwrap();
+
+        let findings = SecretScanner::new().scan_directory(temp.path()).unwrap();
+        assert_eq!(
+            findings.len(),
+            1,
+            "symlink duplicates must not be scanned twice"
+        );
+        assert_eq!(findings[0].file_path, real.display().to_string());
     }
 
     #[test]
@@ -752,8 +857,10 @@ mod tests {
         let path = temp.path().join("key.pem");
         std::fs::write(&path, "-----BEGIN RSA PRIVATE KEY-----\nMIIE...").unwrap();
         let findings = SecretScanner::new().scan_file(&path).unwrap();
-        assert!(findings
-            .iter()
-            .any(|f| matches!(f.secret_type, SecretType::PrivateKey)));
+        assert!(
+            findings
+                .iter()
+                .any(|f| matches!(f.secret_type, SecretType::PrivateKey))
+        );
     }
 }

@@ -42,22 +42,23 @@ impl LocalCommandRunner for EnterpriseCommands {
 pub async fn reports(report_type: &str, format: &str, _ctx: &CliContext) -> Result<()> {
     use crate::cli::packages::execute_cmd;
 
-    // SECURITY: Validate report type and format
+    // Only JSON is implemented; the other formats previously wrote JSON bytes
+    // into .pdf/.html/.csv files, which misrepresented the artifact.
+    if !format.eq_ignore_ascii_case("json") {
+        anyhow::bail!(
+            "Unsupported report format '{format}'. Only 'json' is implemented; \
+             PDF/HTML/CSV rendering is not available"
+        );
+    }
+
+    // SECURITY: Validate report type
     let valid_types = ["monthly", "quarterly", "custom"];
-    let valid_formats = ["json", "csv", "html", "pdf"];
     if !valid_types.contains(&report_type.to_lowercase().as_str()) {
         execute_cmd(Components::error_with_suggestion(
             format!("Invalid report type: {report_type}"),
             "Valid types: monthly, quarterly, custom",
         ));
         anyhow::bail!("Invalid report type: {report_type}");
-    }
-    if !valid_formats.contains(&format.to_lowercase().as_str()) {
-        execute_cmd(Components::error_with_suggestion(
-            format!("Invalid report format: {format}"),
-            "Valid formats: json, csv, html, pdf",
-        ));
-        anyhow::bail!("Invalid report format: {format}");
     }
 
     license::require_feature("enterprise-reports")?;
@@ -68,13 +69,11 @@ pub async fn reports(report_type: &str, format: &str, _ctx: &CliContext) -> Resu
 
     let report = generate_report(report_type).await?;
     let filename = format!(
-        "omg-report-{}-{}.{}",
+        "omg-report-{}-{}.json",
         report_type,
-        jiff::Timestamp::now().as_second(),
-        format
+        jiff::Timestamp::now().as_second()
     );
 
-    // For now, output to JSON (PDF would require additional dependencies)
     let content = serde_json::to_string_pretty(&report)?;
     fs::write(&filename, &content)?;
 
@@ -94,7 +93,7 @@ pub async fn reports(report_type: &str, format: &str, _ctx: &CliContext) -> Resu
             Some("Report Details"),
             vec![
                 ("Type", report_type),
-                ("Format", format),
+                ("Format", "json"),
                 ("File", &filename),
             ],
         ),
@@ -184,14 +183,10 @@ pub fn license_scan(export: Option<&str>, _ctx: &CliContext) -> Result<()> {
     use crate::cli::packages::execute_cmd;
 
     if let Some(fmt) = export {
-        // SECURITY: Validate export format
-        let valid_formats = ["json", "csv", "spdx"];
-        if !valid_formats.contains(&fmt.to_lowercase().as_str()) {
-            execute_cmd(Components::error_with_suggestion(
-                format!("Invalid license export format: {fmt}"),
-                "Valid formats: json, csv, spdx",
-            ));
-            anyhow::bail!("Invalid license export format: {fmt}");
+        // Only formats with real serializers are offered; 'spdx' previously
+        // emitted JSON under an .spdx name, misrepresenting the artifact.
+        if !matches!(fmt.to_lowercase().as_str(), "json" | "csv") {
+            anyhow::bail!("Unsupported license export format '{fmt}'. Valid formats: json, csv");
         }
     }
 
@@ -243,9 +238,10 @@ pub fn license_scan(export: Option<&str>, _ctx: &CliContext) -> Result<()> {
                     jiff::Timestamp::now().as_second(),
                     format
                 );
-                let content = match format {
-                    "csv" => generate_license_csv(&scan),
-                    _ => serde_json::to_string_pretty(&scan)?,
+                let content = if format.eq_ignore_ascii_case("csv") {
+                    generate_license_csv(&scan)
+                } else {
+                    serde_json::to_string_pretty(&scan)?
                 };
                 fs::write(&filename, content)?;
                 Cmd::success(format!("Exported to {filename}"))
@@ -340,7 +336,25 @@ pub mod server {
 
         license::require_feature("self-hosted")?;
 
-        execute_cmd(Components::loading("Syncing from upstream..."));
+        execute_cmd(Components::loading(
+            "Checking upstream and syncing local databases...",
+        ));
+
+        // The upstream must actually participate: verify it is reachable
+        // instead of accepting the URL and only running a local sync.
+        let reachability = crate::core::http::shared_client()
+            .get(upstream)
+            .timeout(std::time::Duration::from_secs(10))
+            .send()
+            .await;
+        let upstream_reachable = matches!(&reachability, Ok(res) if res.status().is_success());
+        if !upstream_reachable {
+            let detail = match reachability {
+                Ok(res) => format!("upstream returned {}", res.status()),
+                Err(e) => format!("could not reach upstream: {e}"),
+            };
+            anyhow::bail!("Mirror sync aborted: {detail}");
+        }
 
         let pm = crate::package_managers::get_package_manager()?;
         pm.sync().await?;
@@ -351,31 +365,24 @@ pub mod server {
             .await
             .context("Failed to list available updates after mirror sync")?;
 
-        if updates.is_empty() {
-            execute_cmd(Cmd::batch([
-                Cmd::success("Mirror check complete!"),
-                Components::kv_list(
-                    Some("Sync Status"),
-                    vec![
-                        ("Upstream", upstream),
-                        ("Status", "Up to date"),
-                        ("Last sync", "Just now"),
-                    ],
-                ),
-            ]));
-        } else {
-            execute_cmd(Cmd::batch([
-                Cmd::success("Mirror check complete!"),
-                Components::kv_list(
-                    Some("Sync Status"),
-                    vec![
-                        ("Upstream", upstream),
-                        ("Updates available", &updates.len().to_string()),
-                        ("Last sync", "Just now"),
-                    ],
-                ),
-            ]));
-        }
+        let status = vec![
+            ("Upstream", upstream.to_string()),
+            ("Upstream reachable", "Yes".to_string()),
+            ("Local databases", "Synced".to_string()),
+            (
+                "Updates available",
+                if updates.is_empty() {
+                    "0".to_string()
+                } else {
+                    updates.len().to_string()
+                },
+            ),
+        ];
+
+        execute_cmd(Cmd::batch([
+            Cmd::success("Mirror check complete!"),
+            Components::kv_list(Some("Sync Status"), status),
+        ]));
 
         Ok(())
     }

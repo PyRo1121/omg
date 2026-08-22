@@ -15,10 +15,7 @@ fn test_parallel_builder_dependency_graph() {
         BuildJob::new("top".to_string(), vec!["middle".to_string()]),
     ];
 
-    let graph =
-        omg_lib::package_managers::aur::parallel_build::ParallelBuilder::build_dependency_graph(
-            &jobs,
-        );
+    let graph = omg_lib::package_managers::aur::ParallelBuilder::build_dependency_graph(&jobs);
 
     assert_eq!(graph.get("base").unwrap().len(), 0);
     assert!(graph.get("middle").unwrap().contains("base"));
@@ -33,13 +30,9 @@ fn test_parallel_builder_independent_packages() {
         BuildJob::new("pkg-c".to_string(), vec![]),
     ];
 
-    let graph =
-        omg_lib::package_managers::aur::parallel_build::ParallelBuilder::build_dependency_graph(
-            &jobs,
-        );
+    let graph = omg_lib::package_managers::aur::ParallelBuilder::build_dependency_graph(&jobs);
     let levels =
-        omg_lib::package_managers::aur::parallel_build::ParallelBuilder::topological_levels(&graph)
-            .unwrap();
+        omg_lib::package_managers::aur::ParallelBuilder::topological_levels(&graph).unwrap();
 
     assert_eq!(levels.len(), 1);
     assert_eq!(levels[0].len(), 3);
@@ -63,8 +56,7 @@ fn test_parallel_builder_circular_dependency_detection() {
         std::iter::once("a".to_string()).collect::<HashSet<_>>(),
     );
 
-    let result =
-        omg_lib::package_managers::aur::parallel_build::ParallelBuilder::topological_levels(&graph);
+    let result = omg_lib::package_managers::aur::ParallelBuilder::topological_levels(&graph);
 
     assert!(result.is_err());
     assert!(
@@ -90,8 +82,7 @@ fn test_parallel_builder_complex_dependency_tree() {
     graph.insert("e".to_string(), std::iter::once("d".to_string()).collect());
 
     let levels =
-        omg_lib::package_managers::aur::parallel_build::ParallelBuilder::topological_levels(&graph)
-            .unwrap();
+        omg_lib::package_managers::aur::ParallelBuilder::topological_levels(&graph).unwrap();
 
     assert_eq!(levels.len(), 4);
     assert_eq!(levels[0], vec!["a"]);
@@ -106,10 +97,7 @@ fn test_parallel_builder_complex_dependency_tree() {
 fn test_parallel_builder_empty_jobs() {
     let jobs: Vec<BuildJob> = vec![];
 
-    let graph =
-        omg_lib::package_managers::aur::parallel_build::ParallelBuilder::build_dependency_graph(
-            &jobs,
-        );
+    let graph = omg_lib::package_managers::aur::ParallelBuilder::build_dependency_graph(&jobs);
 
     assert!(graph.is_empty());
 }
@@ -118,88 +106,72 @@ fn test_parallel_builder_empty_jobs() {
 fn test_parallel_builder_self_dependency_filtered() {
     let jobs = vec![BuildJob::new("pkg".to_string(), vec!["pkg".to_string()])];
 
-    let graph =
-        omg_lib::package_managers::aur::parallel_build::ParallelBuilder::build_dependency_graph(
-            &jobs,
-        );
+    let graph = omg_lib::package_managers::aur::ParallelBuilder::build_dependency_graph(&jobs);
 
     assert!(graph.contains_key("pkg"));
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
-// CLI-LEVEL ERROR RECOVERY E2E TESTS
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// CLI ERROR HANDLING
+//
+// These tests run the real binary through the shared isolated runner
+// (`common::run_omg`), which provisions unique `OMG_DATA_DIR`,
+// `OMG_CONFIG_DIR`, and `OMG_CACHE_DIR` per invocation. Every expectation
+// below was verified against actual CLI behavior in test mode; none of them
+// rely on panic-string greps alone.
+//
+// Deleted during wave 2 (dishonest surfaces, see review-tests.md M1):
+// network-timeout recovery, SIGINT handling, Ctrl-C simulation, disk-full,
+// command timeout, permission-denied, corrupted-cache, and AUR build-failure
+// "tests" that injected no fault and only grepped for "panicked". Real
+// fault-injection for those paths needs injectable failure seams in
+// `core/http.rs` / cache layout — tracked as a src-side handoff.
 // ═══════════════════════════════════════════════════════════════════════════════
 
-use std::process::{Command, Stdio};
-use std::time::Instant;
+pub mod common;
 
-#[derive(Debug)]
-struct CliResult {
-    success: bool,
-    stdout: String,
-    stderr: String,
-}
-
-fn run_omg_cli(args: &[&str]) -> CliResult {
-    let mut cmd = Command::new(env!("CARGO_BIN_EXE_omg"));
-    cmd.args(args)
-        .env("OMG_TEST_MODE", "1")
-        .env("OMG_DISABLE_DAEMON", "1")
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped());
-
-    let output = cmd.output().expect("Failed to execute omg");
-    CliResult {
-        success: output.status.success(),
-        stdout: String::from_utf8_lossy(&output.stdout).to_string(),
-        stderr: String::from_utf8_lossy(&output.stderr).to_string(),
-    }
-}
+use common::{run_omg, run_omg_with_env};
 
 #[test]
-fn test_cli_handles_network_timeout_gracefully() {
-    // Test that CLI properly handles network timeouts without panicking
-    let result = run_omg_cli(&["install", "--dry-run", "nonexistent-pkg-xyz-12345"]);
+fn test_dry_run_missing_package_fails_with_reason() {
+    let result = run_omg(&["install", "--dry-run", "nonexistent-pkg-xyz-12345"]);
+    let combined = result.combined_output();
 
-    let combined = format!("{}{}", result.stdout, result.stderr);
-    assert!(
-        combined.contains("not found") || combined.contains("error") || combined.contains("AUR"),
-        "CLI must report the missing package, got: {combined}"
-    );
     assert!(
         !result.success,
-        "nonexistent package dry-run must not succeed"
+        "dry run of a missing package must fail, got exit {}: {combined}",
+        result.exit_code
     );
-}
-
-#[test]
-fn test_cli_install_nonexistent_package_shows_helpful_error() {
-    let result = run_omg_cli(&["install", "-y", "this-pkg-definitely-does-not-exist-xyz"]);
-
-    let combined = format!("{}{}", result.stdout, result.stderr);
     assert!(
-        combined.contains("not found") || combined.contains("error") || combined.contains("AUR"),
-        "Should show helpful error message, got: {combined}"
+        combined.contains("not found"),
+        "CLI must report the missing package explicitly, got: {combined}"
     );
-    assert!(!result.success, "Should fail for nonexistent package");
 }
 
 #[test]
-fn test_cli_update_with_network_error_recovery() {
-    // Test that update command handles network errors gracefully
-    let result = run_omg_cli(&["update", "--check"]);
-
-    let combined = format!("{}{}", result.stdout, result.stderr);
+fn test_install_missing_packages_fails_without_corrupting_state() {
+    let result = run_omg(&["install", "-y", "fake-package-xyz", "fake-pkg-2"]);
+    let combined = result.combined_output();
     assert!(
-        !combined.contains("panicked") && !combined.contains("RUST_BACKTRACE"),
-        "Should handle network errors gracefully"
+        !result.success && combined.contains("not found"),
+        "installing missing packages must fail with an explicit error: {combined}"
+    );
+
+    // The failed transaction must not poison subsequent operations: a dry run
+    // of an existing package still succeeds afterwards.
+    let recovery = run_omg(&["install", "--dry-run", "vim"]);
+    assert!(
+        recovery.success,
+        "state after a failed install must stay usable: {}{}",
+        recovery.stdout, recovery.stderr
     );
 }
 
 #[test]
-fn test_cli_install_with_invalid_package_name_characters() {
-    // Test handling of package names with special characters
-    let test_cases = vec![
+fn test_malicious_package_names_are_rejected_with_reason() {
+    let malicious = [
         "pkg; rm -rf /",
         "pkg && echo evil",
         "pkg | cat /etc/passwd",
@@ -207,249 +179,103 @@ fn test_cli_install_with_invalid_package_name_characters() {
         "pkg`whoami`",
     ];
 
-    for pkg_name in test_cases {
-        let result = run_omg_cli(&["install", "--dry-run", pkg_name]);
-        let combined = format!("{}{}", result.stdout, result.stderr);
-
+    for name in malicious {
+        let result = run_omg(&["install", "--dry-run", name]);
+        let combined = result.combined_output();
         assert!(
-            !combined.contains("panicked"),
-            "Should handle malicious input safely for: {pkg_name}"
+            !result.success,
+            "malicious package name '{name}' must be rejected"
+        );
+        assert!(
+            combined.contains("Invalid")
+                || combined.contains("invalid")
+                || combined.contains("not found")
+                || combined.contains("cannot start with")
+                || combined.contains("path traversal"),
+            "rejection of '{name}' must explain why, got: {combined}"
+        );
+        assert!(
+            !combined.contains("panicked at"),
+            "validation errors must be graceful, got: {combined}"
         );
     }
 }
 
 #[test]
-fn test_cli_concurrent_install_requests() {
+fn test_cli_error_message_names_the_package() {
+    let result = run_omg(&[
+        "install",
+        "--dry-run",
+        "definitely-nonexistent-package-xyz123",
+    ]);
+    let combined = result.combined_output();
+    assert!(
+        combined.contains("definitely-nonexistent-package-xyz123"),
+        "error output must echo the offending package name, got: {combined}"
+    );
+}
+
+#[test]
+fn test_concurrent_dry_runs_are_isolated_and_deterministic() {
     use std::thread;
 
-    // Spawn multiple install requests concurrently to test race conditions
-    let handles: Vec<_> = (0..3)
-        .map(|i| {
-            thread::spawn(move || run_omg_cli(&["install", "--dry-run", &format!("test-pkg-{i}")]))
+    // With per-invocation data dirs, concurrent invocations cannot observe
+    // each other's mock state; every missing package must fail identically.
+    let handles: [_; 3] = std::array::from_fn(|i| {
+        thread::spawn(move || {
+            run_omg(&["install", "--dry-run", &format!("isolated-missing-pkg-{i}")])
         })
-        .collect();
+    });
 
-    for handle in handles {
-        let result = handle.join().expect("Thread panicked");
-        let combined = format!("{}{}", result.stdout, result.stderr);
+    for (i, handle) in handles.into_iter().enumerate() {
+        let result = handle.join().expect("worker thread panicked");
+        let combined = result.combined_output();
         assert!(
-            !combined.contains("panicked"),
-            "Concurrent requests should not cause panics"
+            !result.success && combined.contains("not found"),
+            "concurrent dry run {i} must deterministically report the missing package: {combined}"
         );
     }
 }
 
 #[test]
-fn test_cli_install_after_failed_transaction() {
-    // First attempt: install nonexistent package (should fail)
-    let result1 = run_omg_cli(&["install", "-y", "fake-package-xyz"]);
-    assert!(!result1.success, "First install should fail");
-
-    // Second attempt: should still work (no corrupted state)
-    let result2 = run_omg_cli(&["install", "--dry-run", "vim"]);
-    let combined = format!("{}{}", result2.stdout, result2.stderr);
+fn test_update_check_succeeds_in_test_mode() {
+    let result = run_omg(&["update", "--check"]);
     assert!(
-        !combined.contains("corrupted") && !combined.contains("panicked"),
-        "Should recover from failed transaction"
+        result.success,
+        "`update --check` should complete against the mock backend: {}{}",
+        result.stdout, result.stderr
+    );
+    assert!(
+        !result.stderr.contains("panicked at"),
+        "update check must not panic: {}",
+        result.stderr
     );
 }
 
 #[test]
-fn test_cli_handles_sigint_gracefully() {
-    // This test verifies that the CLI sets up signal handlers properly
-    // We can't easily send SIGINT in a test, but we can verify the code compiles
-    // and doesn't panic during initialization
-    let result = run_omg_cli(&["--help"]);
-    assert!(result.success);
-}
-
-#[test]
-fn test_cli_error_message_contains_context() {
-    let result = run_omg_cli(&["install", "definitely-nonexistent-package-xyz123"]);
-
-    let combined = format!("{}{}", result.stdout, result.stderr);
-
-    // Error should be informative, not just "error occurred"
-    let has_context = combined.len() > 20
-        && (combined.contains("not found")
-            || combined.contains("available")
-            || combined.contains("search"));
+fn test_ci_mode_dry_run_succeeds_without_prompts() {
+    let result = run_omg_with_env(
+        &["install", "--dry-run", "vim"],
+        &[("CI", "1"), ("OMG_NON_INTERACTIVE", "1")],
+    );
+    let combined = result.combined_output();
 
     assert!(
-        has_context,
-        "Error message should provide context, got: {combined}"
+        result.success,
+        "CI dry run of an existing package should succeed: {combined}"
     );
-}
-
-#[test]
-fn test_cli_install_with_ctrl_c_simulation() {
-    // Test that we handle early termination gracefully
-    // This is simulated by ensuring cleanup code paths work
-    let result = run_omg_cli(&["install", "--dry-run", "vim"]);
-
-    // If dry-run works, cleanup is functioning
-    let combined = format!("{}{}", result.stdout, result.stderr);
-    assert!(
-        !combined.contains("failed to clean"),
-        "Cleanup should work properly"
-    );
-}
-
-#[test]
-fn test_cli_multiple_failed_packages_in_single_command() {
-    let result = run_omg_cli(&["install", "-y", "fake-pkg-1", "fake-pkg-2", "fake-pkg-3"]);
-
-    let combined = format!("{}{}", result.stdout, result.stderr);
-
-    // Should handle all failures gracefully
-    assert!(
-        !combined.contains("panicked"),
-        "Should handle multiple failures gracefully"
-    );
-
-    // Should report which packages failed
-    assert!(
-        combined.contains("fake-pkg") || combined.contains("not found"),
-        "Should report failed packages"
-    );
-}
-
-#[test]
-fn test_cli_install_timeout_handling() {
-    // Use environment variable to simulate timeout
-    let start = Instant::now();
-    let result = run_omg_cli(&["install", "--dry-run", "vim"]);
-    let elapsed = start.elapsed();
-
-    // Command should complete reasonably quickly (not hang)
-    assert!(
-        elapsed.as_secs() < 30,
-        "Command should not hang indefinitely"
-    );
-
-    let combined = format!("{}{}", result.stdout, result.stderr);
-    assert!(
-        !combined.contains("panicked"),
-        "Should not panic on timeout"
-    );
-}
-
-#[test]
-fn test_cli_handles_disk_full_scenario() {
-    // While we can't easily trigger real disk full, we can test
-    // that the CLI handles write errors gracefully
-    let result = run_omg_cli(&["status"]);
-
-    let combined = format!("{}{}", result.stdout, result.stderr);
-    assert!(
-        !combined.contains("panicked"),
-        "Should handle filesystem errors gracefully"
-    );
-}
-
-#[test]
-fn test_cli_update_with_corrupted_cache() {
-    // The CLI should handle corrupted cache files gracefully
-    // by recreating or skipping them
-    let result = run_omg_cli(&["update", "--check"]);
-
-    let combined = format!("{}{}", result.stdout, result.stderr);
-    assert!(
-        !combined.contains("panicked"),
-        "Should handle cache issues gracefully"
-    );
-}
-
-#[cfg(feature = "arch")]
-#[test]
-fn test_cli_aur_package_build_failure_recovery() {
-    // Test that failed AUR builds are handled gracefully
-    let result = run_omg_cli(&["install", "--dry-run", "visual-studio-code-bin"]);
-
-    let combined = format!("{}{}", result.stdout, result.stderr);
-    assert!(
-        !combined.contains("panicked"),
-        "Should handle AUR package resolution gracefully"
-    );
-}
-
-#[cfg(feature = "arch")]
-#[test]
-fn test_cli_parallel_aur_builds_error_handling() {
-    // Test parallel builds with potential failures
-    let result = run_omg_cli(&["install", "--dry-run", "visual-studio-code-bin"]);
-
-    let combined = format!("{}{}", result.stdout, result.stderr);
-    assert!(
-        !combined.contains("deadlock") && !combined.contains("panicked"),
-        "Parallel builds should not deadlock or panic"
-    );
-}
-
-#[test]
-fn test_cli_respects_non_interactive_mode() {
-    use std::env;
-
-    let mut cmd = Command::new(env!("CARGO_BIN_EXE_omg"));
-    cmd.args(["install", "vim"])
-        .env("OMG_TEST_MODE", "1")
-        .env("OMG_DISABLE_DAEMON", "1")
-        .env("CI", "1")
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped());
-
-    let output = cmd.output().expect("Failed to execute");
-    let combined = format!(
-        "{}{}",
-        String::from_utf8_lossy(&output.stdout),
-        String::from_utf8_lossy(&output.stderr)
-    );
-
     assert!(
         !combined.contains("Press") && !combined.contains("Continue?"),
-        "Should not prompt in CI environment"
+        "must not prompt in CI environment: {combined}"
     );
 }
 
 #[test]
-fn test_cli_handles_permission_denied_errors() {
-    // Test that permission errors are reported clearly
-    let result = run_omg_cli(&["install", "-y", "vim"]);
-
-    let combined = format!("{}{}", result.stdout, result.stderr);
-
-    // If it fails due to permissions, error should be clear
-    if !result.success && combined.contains("permission") {
-        assert!(
-            combined.contains("sudo")
-                || combined.contains("root")
-                || combined.contains("privilege"),
-            "Permission error should suggest solution"
-        );
-    }
-}
-
-#[test]
-fn test_cli_dry_run_never_requires_sudo() {
-    let result = run_omg_cli(&["install", "--dry-run", "vim"]);
-
-    let combined = format!("{}{}", result.stdout, result.stderr);
+fn test_dry_run_never_prompts_for_password() {
+    let result = run_omg(&["install", "--dry-run", "vim"]);
+    let combined = result.combined_output();
     assert!(
         !combined.contains("[sudo]") && !combined.contains("Password:"),
-        "Dry run should never prompt for password"
+        "Dry run should never prompt for password: {combined}"
     );
-}
-
-#[test]
-fn test_cli_error_recovery_stress_test() {
-    // Rapidly fire requests to test error handling under load
-    for i in 0..10 {
-        let result = run_omg_cli(&["install", "--dry-run", &format!("fake-pkg-{i}")]);
-        let combined = format!("{}{}", result.stdout, result.stderr);
-
-        assert!(
-            !combined.contains("panicked"),
-            "Should handle rapid requests without panicking on iteration {i}"
-        );
-    }
 }

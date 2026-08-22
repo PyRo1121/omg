@@ -27,7 +27,9 @@
 //!   OMG_RUN_DESTRUCTIVE_TESTS=1 - Enable tests that modify the system
 
 use std::env;
-use std::process::{Command, Stdio};
+use std::process::Command;
+
+pub mod common;
 
 // ═══════════════════════════════════════════════════════════════════════════════
 // TEST INFRASTRUCTURE
@@ -101,25 +103,16 @@ fn run_omg(args: &[&str]) -> TestResult {
     run_omg_with_env(args, &[])
 }
 
+/// Delegate to the shared isolated runner so every invocation gets unique
+/// `OMG_DATA_DIR` / `OMG_CONFIG_DIR` / `OMG_CACHE_DIR` instead of writing
+/// mock state into the real user data directory.
 fn run_omg_with_env(args: &[&str], env_vars: &[(&str, &str)]) -> TestResult {
-    let mut cmd = Command::new(env!("CARGO_BIN_EXE_omg"));
-    cmd.args(args)
-        .env("OMG_TEST_MODE", "1")
-        .env("OMG_DISABLE_DAEMON", "1")
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped());
-
-    for (key, value) in env_vars {
-        cmd.env(key, value);
-    }
-
-    let output = cmd.output().expect("Failed to execute omg");
-
+    let result = common::run_omg_with_options(args, None, env_vars);
     TestResult {
-        success: output.status.success(),
-        stdout: String::from_utf8_lossy(&output.stdout).to_string(),
-        stderr: String::from_utf8_lossy(&output.stderr).to_string(),
-        exit_code: output.status.code().unwrap_or(-1),
+        success: result.success,
+        stdout: result.stdout,
+        stderr: result.stderr,
+        exit_code: result.exit_code,
     }
 }
 
@@ -226,7 +219,6 @@ mod install_resolution_tests {
     }
 
     #[test]
-    #[cfg(feature = "arch")]
     fn test_install_detects_aur_package() {
         if !system_tests_enabled() {
             return;
@@ -400,7 +392,6 @@ mod update_ci_tests {
 // AUR-SPECIFIC TESTS
 // ═══════════════════════════════════════════════════════════════════════════════
 
-#[cfg(feature = "arch")]
 mod aur_tests {
     use super::*;
 
@@ -439,7 +430,6 @@ mod aur_tests {
 // PARALLEL BUILD TESTS
 // ═══════════════════════════════════════════════════════════════════════════════
 
-#[cfg(feature = "arch")]
 mod parallel_build_tests {
     #[test]
     fn test_build_job_creation() {
@@ -467,7 +457,7 @@ mod parallel_build_tests {
 
     #[test]
     fn test_topological_sort() {
-        use omg_lib::package_managers::aur::parallel_build::ParallelBuilder;
+        use omg_lib::package_managers::aur::ParallelBuilder;
         use std::collections::{HashMap, HashSet};
 
         let mut graph = HashMap::new();
@@ -484,7 +474,7 @@ mod parallel_build_tests {
 
     #[test]
     fn test_circular_dependency_detection() {
-        use omg_lib::package_managers::aur::parallel_build::ParallelBuilder;
+        use omg_lib::package_managers::aur::ParallelBuilder;
         use std::collections::HashMap;
 
         let mut graph = HashMap::new();
@@ -501,38 +491,15 @@ mod parallel_build_tests {
 // BATCH ALPM QUERY TESTS
 // ═══════════════════════════════════════════════════════════════════════════════
 
-#[cfg(feature = "arch")]
-mod batch_query_tests {
-    use super::system_tests_enabled;
-
-    #[test]
-    fn test_batch_query_exists() {
-        use omg_lib::package_managers::alpm_direct::get_package_info_batch;
-        let _ = get_package_info_batch;
-    }
-
-    #[test]
-    fn test_batch_query_returns_results() {
-        if !system_tests_enabled() {
-            return;
-        }
-        use omg_lib::package_managers::alpm_direct::get_package_info_batch;
-
-        let packages = ["pacman", "glibc", "nonexistent-xyz"];
-        let results = get_package_info_batch(&packages.map(|s| s)).unwrap();
-
-        assert_eq!(results.len(), 3);
-        assert!(results[0].is_some());
-        assert!(results[1].is_some());
-        assert!(results[2].is_none());
-    }
-}
+// `batch_query_tests` was removed in wave 2: the underlying
+// `alpm_direct::get_package_info_batch` API no longer exists upstream, and
+// per RUST-CODING-STANDARDS §9 tests must not pin removed surfaces. If a
+// batch query returns, pin it here again with behavioral assertions.
 
 // ═══════════════════════════════════════════════════════════════════════════════
 // DESTRUCTIVE TESTS (REQUIRE OMG_RUN_DESTRUCTIVE_TESTS=1)
 // ═══════════════════════════════════════════════════════════════════════════════
 
-#[cfg(feature = "arch")]
 mod destructive_tests {
     use super::*;
 
@@ -906,7 +873,6 @@ mod edge_case_tests {
 // REAL SYSTEM STATE TESTS (SAFE, NON-DESTRUCTIVE)
 // ═══════════════════════════════════════════════════════════════════════════════
 
-#[cfg(feature = "arch")]
 mod system_state_tests {
     use super::*;
 

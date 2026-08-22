@@ -5,7 +5,6 @@
 use anyhow::{Context, Result};
 use std::process::{Command, Stdio};
 
-use crate::core::paths;
 #[cfg(feature = "arch")]
 use crate::package_managers::PackageManager;
 #[cfg(feature = "debian")]
@@ -18,10 +17,6 @@ use owo_colors::OwoColorize;
 
 #[cfg(feature = "arch")]
 use crate::package_managers::get_system_status;
-
-// Re-export moved commands
-pub use super::packages::{clean, info, info_sync, install, remove, search, sync, update};
-pub use super::runtimes::{list_versions, use_version};
 
 // Const slices for completion - avoids allocation on every call
 const TOOL_COMMANDS: &[&str] = &["install", "list", "remove"];
@@ -44,7 +39,8 @@ const SHELL_COMPLETIONS: &[&str] = &["bash", "zsh", "fish", "powershell", "elvis
 ///
 /// Maps short names like "node" to proper branding like "Node.js".
 #[inline]
-pub fn runtime_display_name(name: &str) -> &str {
+#[must_use]
+fn runtime_display_name(name: &str) -> &str {
     match name {
         "node" => "Node.js",
         "python" => "Python",
@@ -880,68 +876,6 @@ mod daemon_start_tests {
     }
 }
 
-/// Get or set configuration
-pub fn config(key: Option<&str>, value: Option<&str>) -> Result<()> {
-    if let Some(k) = key {
-        // SECURITY: Validate config key
-        if k.chars()
-            .any(|c| !c.is_ascii_alphanumeric() && c != '.' && c != '_')
-        {
-            anyhow::bail!("Invalid configuration key: {k}");
-        }
-    }
-
-    match (key, value) {
-        (Some(k), Some(v)) => {
-            // SECURITY: Basic validation for values
-            if v.len() > 1024 {
-                anyhow::bail!("Configuration value too long");
-            }
-
-            println!(
-                "{} Setting {} = {}",
-                style::header("OMG"),
-                style::success(k),
-                style::warning(v)
-            );
-        }
-        (Some(k), None) => {
-            println!(
-                "{} Config key '{}':",
-                style::header("OMG"),
-                style::success(k)
-            );
-            match k {
-                "shims.enabled" => println!("  {}", style::warning("false")),
-                "data_dir" => println!(
-                    "  {}",
-                    style::warning(&paths::data_dir().display().to_string())
-                ),
-                _ => println!("  {}", style::dim("(not set)")),
-            }
-        }
-        (None, _) => {
-            println!("{} Configuration:\n", style::header("OMG"));
-            println!(
-                "  {} = {}",
-                style::success("shims.enabled"),
-                style::warning("false")
-            );
-            println!(
-                "  {} = {}",
-                style::success("data_dir"),
-                style::warning(&paths::data_dir().display().to_string())
-            );
-            println!(
-                "  {} = {}",
-                style::success("socket"),
-                style::warning(&paths::socket_path().display().to_string())
-            );
-        }
-    }
-    Ok(())
-}
-
 /// First 8 characters of a transaction ID, tolerating shorter persisted IDs.
 fn short_id(id: &str) -> &str {
     id.get(..8).unwrap_or(id)
@@ -984,7 +918,7 @@ pub fn history(
                 return false;
             }
 
-            // Filter by search term (package name)
+            // Filter by search term (package name); lowercase the query once.
             if let Some(query) = search {
                 let query_lower = query.to_lowercase();
                 let matches = entry
@@ -1062,10 +996,11 @@ pub fn history(
             style::dim(&format!("({} changes)", entry.changes.len()))
         );
 
-        // If searching, highlight matching packages
+        // If searching, highlight matching packages; lowercase the query once.
+        let search_lower = search.map(str::to_lowercase);
         for change in &entry.changes {
-            let pkg_display = if let Some(query) = search {
-                if change.name.to_lowercase().contains(&query.to_lowercase()) {
+            let pkg_display = if let Some(ref query_lower) = search_lower {
+                if change.name.to_lowercase().contains(query_lower) {
                     style::success(&change.name)
                 } else {
                     style::package(&change.name)
@@ -1092,7 +1027,8 @@ pub fn history(
 enum RollbackAction {
     Remove(Vec<String>),
     Restore(Vec<(String, String)>),
-    None,
+    /// Nothing to reverse (e.g. a database sync transaction).
+    NothingToDo,
 }
 
 fn normalize_transaction_id(id: &str) -> Result<String> {
@@ -1144,7 +1080,7 @@ fn rollback_action(transaction: &crate::core::history::Transaction) -> Result<Ro
             }
             Ok(RollbackAction::Restore(packages))
         }
-        crate::core::history::TransactionType::Sync => Ok(RollbackAction::None),
+        crate::core::history::TransactionType::Sync => Ok(RollbackAction::NothingToDo),
     }
 }
 
@@ -1284,7 +1220,7 @@ pub async fn rollback(id: Option<String>, yes: bool) -> Result<()> {
     }
 
     match rollback_action(target)? {
-        RollbackAction::None => {
+        RollbackAction::NothingToDo => {
             println!("{}", style::success("Nothing to roll back"));
         }
         RollbackAction::Remove(packages) if packages.is_empty() => {
@@ -1381,6 +1317,11 @@ fn rollback_requires_backend(packages: &[String]) -> Result<()> {
 pub fn stats(json: bool) -> Result<()> {
     use crate::cli::style;
     use crate::core::usage::UsageStats;
+
+    // Value-estimate model: average software-engineer compensation spread over
+    // a standard 2080-hour work year. Presentation-only estimate.
+    const ASSUMED_ANNUAL_SALARY_USD: f64 = 150_000.0;
+    const ASSUMED_WORK_HOURS_PER_YEAR: f64 = 2080.0;
 
     let stats = UsageStats::load().context("Failed to load usage statistics")?;
     if json {
@@ -1482,7 +1423,7 @@ pub fn stats(json: bool) -> Result<()> {
 
     // Dollar savings calculation
     let time_saved_hours = stats.time_saved_ms as f64 / 3_600_000.0;
-    let hourly_rate = 150_000.0 / 2080.0; // $150k/year, 2080 work hours
+    let hourly_rate = ASSUMED_ANNUAL_SALARY_USD / ASSUMED_WORK_HOURS_PER_YEAR;
     let dollar_savings = time_saved_hours * hourly_rate;
 
     if dollar_savings > 0.01 {

@@ -14,6 +14,14 @@ use thiserror::Error;
 
 use crate::core::http::shared_client;
 
+/// Private bridge for upstream errors that Sequoia reports as
+/// `anyhow::Error`. Keeps public [`KeyserverError`] variants fully typed
+/// while preserving the source error's `Display` and `source()` chain.
+#[derive(Debug, Error)]
+#[error(transparent)]
+#[doc(hidden)]
+pub struct SequoiaSource(#[from] anyhow::Error);
+
 const DEFAULT_KEYSERVER: &str = "hkps://keyserver.ubuntu.com";
 const KEYSERVER_TIMEOUT: Duration = Duration::from_secs(10);
 const MAX_KEY_RESPONSE_BYTES: usize = 8 * 1024 * 1024;
@@ -26,13 +34,13 @@ pub enum KeyserverError {
     InvalidKeyId {
         key_id: String,
         #[source]
-        source: anyhow::Error,
+        source: SequoiaSource,
     },
     #[error("Invalid keyserver URL: {url}")]
     InvalidUrl {
         url: String,
         #[source]
-        source: anyhow::Error,
+        source: SequoiaSource,
     },
     #[error("Keyserver URL must use hkps or https: {url}")]
     InsecureTransport { url: String },
@@ -66,7 +74,7 @@ pub enum KeyserverError {
     ParseResponse {
         key_id: String,
         #[source]
-        source: anyhow::Error,
+        source: SequoiaSource,
     },
     #[error("No certificates found for {key_id}")]
     NoCertificates { key_id: String },
@@ -74,7 +82,7 @@ pub enum KeyserverError {
     ParseCertificate {
         key_id: String,
         #[source]
-        source: anyhow::Error,
+        source: SequoiaSource,
     },
     #[error("Keyserver returned a certificate that does not match {key_id}")]
     KeyMismatch { key_id: String },
@@ -83,17 +91,17 @@ pub enum KeyserverError {
     #[error("Invalid key ID")]
     InvalidLookupKeyId {
         #[source]
-        source: anyhow::Error,
+        source: SequoiaSource,
     },
     #[error("Failed to parse keyring")]
     KeyringParse {
         #[source]
-        source: anyhow::Error,
+        source: SequoiaSource,
     },
     #[error("Failed to parse certificate in keyring")]
     KeyringCertificate {
         #[source]
-        source: anyhow::Error,
+        source: SequoiaSource,
     },
     #[error("Failed to open keyring: {path}")]
     KeyringOpen {
@@ -104,7 +112,7 @@ pub enum KeyserverError {
     #[error("Failed to serialize certificate")]
     Serialize {
         #[source]
-        source: anyhow::Error,
+        source: SequoiaSource,
     },
     #[error("Failed to write keyring: {path}")]
     KeyringWrite {
@@ -114,16 +122,21 @@ pub enum KeyserverError {
     },
 }
 
+/// Fetch a key from the default Ubuntu keyserver.
 pub async fn fetch_key(key_id: &str) -> Result<Cert, KeyserverError> {
     fetch_key_from(key_id, DEFAULT_KEYSERVER).await
 }
 
+/// Fetch a key from an explicit keyserver URL (`hkps://` or `https://`).
+///
+/// The response is bounded in size, matched against the requested key
+/// handle, and the whole fetch is bounded by a hard timeout.
 pub async fn fetch_key_from(key_id: &str, keyserver_url: &str) -> Result<Cert, KeyserverError> {
     let key_handle: KeyHandle = key_id
         .parse()
         .map_err(|source| KeyserverError::InvalidKeyId {
             key_id: key_id.to_string(),
-            source,
+            source: SequoiaSource(source),
         })?;
     let lookup_url = keyserver_lookup_url(keyserver_url, &key_handle)?;
 
@@ -172,7 +185,7 @@ pub async fn fetch_key_from(key_id: &str, keyserver_url: &str) -> Result<Cert, K
         let mut certs = sequoia_openpgp::cert::CertParser::from_bytes(&body).map_err(|source| {
             KeyserverError::ParseResponse {
                 key_id: key_id.to_string(),
-                source,
+                source: SequoiaSource(source),
             }
         })?;
         let cert = certs.next().ok_or_else(|| KeyserverError::NoCertificates {
@@ -180,7 +193,7 @@ pub async fn fetch_key_from(key_id: &str, keyserver_url: &str) -> Result<Cert, K
         })?;
         let cert = cert.map_err(|source| KeyserverError::ParseCertificate {
             key_id: key_id.to_string(),
-            source,
+            source: SequoiaSource(source),
         })?;
 
         if !cert
@@ -214,7 +227,7 @@ fn keyserver_lookup_url(
     };
     let mut url = Url::parse(&normalized).map_err(|source| KeyserverError::InvalidUrl {
         url: keyserver_url.to_string(),
-        source: source.into(),
+        source: SequoiaSource(source.into()),
     })?;
 
     if url.scheme() != "https" {
@@ -241,6 +254,10 @@ fn keyserver_lookup_url(
     Ok(url)
 }
 
+/// Fetch many keys concurrently (bounded), keeping each key's result
+/// separate. Discarding the returned results silently is almost always a
+/// bug, hence `#[must_use]`.
+#[must_use]
 pub async fn fetch_keys(key_ids: &[String]) -> Vec<(String, Result<Cert, KeyserverError>)> {
     stream::iter(key_ids.iter().cloned())
         .map(|key_id| async move {
@@ -252,24 +269,36 @@ pub async fn fetch_keys(key_ids: &[String]) -> Vec<(String, Result<Cert, Keyserv
         .await
 }
 
+/// Check whether a keyring file contains a certificate matching `key_id`.
+///
+/// A missing keyring is a miss (`Ok(false)`); a corrupt keyring fails
+/// closed with an error instead of looking like a miss.
 pub fn is_key_in_keyring(key_id: &str, keyring_path: &Path) -> Result<bool, KeyserverError> {
     if !keyring_path.exists() {
         return Ok(false);
     }
 
-    let key_handle: KeyHandle = key_id
-        .parse()
-        .map_err(|source| KeyserverError::InvalidLookupKeyId { source })?;
+    let key_handle: KeyHandle =
+        key_id
+            .parse()
+            .map_err(|source| KeyserverError::InvalidLookupKeyId {
+                source: SequoiaSource(source),
+            })?;
     let mut file =
         std::fs::File::open(keyring_path).map_err(|source| KeyserverError::KeyringOpen {
             path: keyring_path.display().to_string(),
             source,
         })?;
-    let certs = sequoia_openpgp::cert::CertParser::from_reader(&mut file)
-        .map_err(|source| KeyserverError::KeyringParse { source })?;
+    let certs = sequoia_openpgp::cert::CertParser::from_reader(&mut file).map_err(|source| {
+        KeyserverError::KeyringParse {
+            source: SequoiaSource(source),
+        }
+    })?;
 
     for cert in certs {
-        let cert = cert.map_err(|source| KeyserverError::KeyringCertificate { source })?;
+        let cert = cert.map_err(|source| KeyserverError::KeyringCertificate {
+            source: SequoiaSource(source),
+        })?;
         if cert
             .keys()
             .any(|k| k.key().key_handle().aliases(&key_handle))
@@ -281,6 +310,10 @@ pub fn is_key_in_keyring(key_id: &str, keyring_path: &Path) -> Result<bool, Keys
     Ok(false)
 }
 
+/// Append a certificate to a local keyring file, durably.
+///
+/// A keyring entry lost to a crash would silently downgrade later
+/// signature verification, so the append is flushed with `sync_all`.
 pub fn append_to_keyring(cert: &Cert, keyring_path: &Path) -> Result<(), KeyserverError> {
     use sequoia_openpgp::serialize::Serialize;
     use std::fs::OpenOptions;
@@ -298,7 +331,9 @@ pub fn append_to_keyring(cert: &Cert, keyring_path: &Path) -> Result<(), Keyserv
 
     let mut buf = Vec::new();
     cert.serialize(&mut buf)
-        .map_err(|source| KeyserverError::Serialize { source })?;
+        .map_err(|source| KeyserverError::Serialize {
+            source: SequoiaSource(source),
+        })?;
     file.write_all(&buf)
         .map_err(|source| KeyserverError::KeyringWrite {
             path: path_str.clone(),
@@ -315,6 +350,8 @@ pub fn append_to_keyring(cert: &Cert, keyring_path: &Path) -> Result<(), Keyserv
     Ok(())
 }
 
+/// Extract display information (fingerprint, user IDs) from a certificate.
+#[must_use]
 pub fn get_key_info(cert: &Cert) -> KeyInfo {
     let fingerprint = cert.fingerprint().to_hex();
     let user_ids: Vec<String> = cert
@@ -328,9 +365,12 @@ pub fn get_key_info(cert: &Cert) -> KeyInfo {
     }
 }
 
+/// Display information about an OpenPGP certificate.
 #[derive(Debug, Clone)]
 pub struct KeyInfo {
+    /// Hex-encoded certificate fingerprint.
     pub fingerprint: String,
+    /// User IDs attached to the certificate, lossily decoded as UTF-8.
     pub user_ids: Vec<String>,
 }
 

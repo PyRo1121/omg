@@ -38,12 +38,12 @@ struct AdoptiumPackage {
 
 /// Java version info
 #[derive(Debug, Clone)]
-pub struct JavaVersion {
+pub(crate) struct JavaVersion {
     pub version: String,
     pub lts: bool,
 }
 
-pub struct JavaManager {
+pub(crate) struct JavaManager {
     versions_dir: PathBuf,
     current_link: PathBuf,
     client: reqwest::Client,
@@ -181,8 +181,8 @@ impl JavaManager {
     }
 }
 
-// Generate common runtime manager methods (list_installed, current_version, uninstall)
-crate::impl_runtime_common!(JavaManager, "Java");
+// Generate common runtime manager methods (list_installed, current_version)
+crate::runtimes::common::impl_runtime_common!(JavaManager, "Java");
 
 fn java_platform() -> Result<(&'static str, &'static str)> {
     let os = match std::env::consts::OS {

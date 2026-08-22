@@ -2,10 +2,13 @@
 //!
 //! Handles package installation, removal, and upgrades using pure Rust:
 //! - .deb archive extraction (ar + tar.xz/tar.gz)
-//! - dpkg database updates
+//! - dpkg database updates (atomic rewrite; pre-transaction backup)
 //! - Pre/post-install script execution
-//! - Atomic transactions with rollback support
-//! - File conflict detection
+//! - Rollback of newly installed files, directories, and dpkg status
+//!
+//! Known limitation: files that a package *overwrites* are removed on
+//! rollback but not restored from backup; the dpkg status database is
+//! backed up and restored, but prior file contents are not.
 
 #![cfg(any(feature = "debian", feature = "debian-pure"))]
 
@@ -151,27 +154,6 @@ impl Transaction {
         })
     }
 
-    /// Check for file conflicts before installation
-    /// Returns a list of conflicting files owned by other packages
-    pub fn check_file_conflicts(&self) -> Result<Vec<(PathBuf, String)>> {
-        let conflicts = Vec::new();
-
-        // Future enhancement: Full conflict detection system
-        // Would require parsing data.tar file lists and comparing with dpkg database
-        // Current implementation relies on dpkg's built-in conflict detection
-        //
-        // Implementation plan:
-        // 1. Parse file lists from data.tar for each package
-        // 2. Check against /var/lib/dpkg/info/*.list files
-        // 3. Detect overlapping files from different packages
-
-        tracing::debug!(
-            "File conflict check: {} potential conflicts detected",
-            conflicts.len()
-        );
-        Ok(conflicts)
-    }
-
     /// Create an empty transaction
     pub fn new() -> Result<Self> {
         let content_store = ContentStore::new();
@@ -261,7 +243,6 @@ impl Transaction {
         let client = reqwest::Client::builder()
             .timeout(Duration::from_secs(300))
             .connect_timeout(Duration::from_secs(10))
-            // Reduce connection pool to save memory (24 vs 96 connections)
             .pool_max_idle_per_host(MAX_CONCURRENT_PACKAGE_DOWNLOADS * 2)
             .pool_idle_timeout(Duration::from_secs(60)) // Shorter timeout to release faster
             .tcp_keepalive(Duration::from_secs(60))
@@ -527,18 +508,18 @@ impl Transaction {
 
     /// Configure all unpacked packages
     ///
-    /// OPTIMIZATION: Batches dpkg status updates into a single write operation
-    /// instead of opening/closing the file for each package.
-    fn configure_packages(&self) -> Result<()> {
-        use std::io::BufWriter;
-
+    /// dpkg status updates are merged and written atomically: existing
+    /// paragraphs for the same package are *replaced* (an upgrade must not
+    /// leave two entries), and a pre-transaction copy of the status file is
+    /// recorded for rollback before the first write.
+    fn configure_packages(&mut self) -> Result<()> {
         let temp_dir = self
             .temp_dir
             .as_ref()
             .map_or_else(|| PathBuf::from("/tmp"), |t| t.path().to_path_buf());
 
         // Collect all status entries for batched write
-        let mut status_entries = Vec::new();
+        let mut status_entries: Vec<(String, String)> = Vec::new();
         let mut conffiles_to_copy = Vec::new();
 
         for action in self.to_install.iter().chain(self.to_upgrade.iter()) {
@@ -548,15 +529,17 @@ impl Transaction {
             // Run postinst script if exists (must be sequential for dependencies)
             let postinst = control_dir.join("postinst");
             if postinst.exists() {
-                run_maintainer_script(&postinst, "configure")?;
+                run_maintainer_script(&postinst, &action.name, "configure")?;
             }
 
-            // Prepare dpkg status entry for batched write
+            // Prepare dpkg status entry for batched write. A failure here is
+            // fatal: an unpacked-but-unregistered package would be invisible
+            // to dpkg tooling.
             let control_file = control_dir.join("control");
-            if control_file.exists()
-                && let Ok(entry) = prepare_status_entry(&control_file)
-            {
-                status_entries.push(entry);
+            if control_file.exists() {
+                let entry = prepare_status_entry(&control_file)
+                    .with_context(|| format!("preparing dpkg status entry for {}", action.name))?;
+                status_entries.push((action.name.clone(), entry));
             }
 
             // Collect conffiles for batched copy
@@ -566,27 +549,8 @@ impl Transaction {
             }
         }
 
-        // OPTIMIZATION: Batch write all status entries with large buffer
         if !status_entries.is_empty() {
-            let status_path = Path::new("/var/lib/dpkg/status");
-            let file = fs::OpenOptions::new()
-                .append(true)
-                .open(status_path)
-                .context("Failed to open dpkg status file")?;
-
-            // OPTIMIZATION: Larger buffer (256KB) for dpkg status file
-            // Typical control file is 1-2KB, so 256KB can hold 128-256 packages
-            let mut writer = BufWriter::with_capacity(256 * 1024, file);
-            for entry in &status_entries {
-                writer.write_all(b"\n")?;
-                writer.write_all(entry.as_bytes())?;
-            }
-            writer.flush()?;
-
-            tracing::debug!(
-                "Batched {} dpkg status entries in single write (256KB buffer)",
-                status_entries.len()
-            );
+            self.record_dpkg_status_entries(&status_entries, &temp_dir)?;
         }
 
         // Copy conffiles (can be done in parallel with rayon)
@@ -602,7 +566,47 @@ impl Transaction {
         Ok(())
     }
 
+    /// Merge `entries` into `/var/lib/dpkg/status` atomically.
+    ///
+    /// Takes a rollback backup first (registered in `self.backups`), replaces
+    /// any existing paragraph for the same package, and persists via
+    /// temp-file + rename so a crash cannot truncate the database.
+    fn record_dpkg_status_entries(
+        &mut self,
+        entries: &[(String, String)],
+        temp_dir: &Path,
+    ) -> Result<()> {
+        let status_path = Path::new("/var/lib/dpkg/status");
+        let current = match fs::read_to_string(status_path) {
+            Ok(content) => content,
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => String::new(),
+            Err(error) => {
+                return Err(error).context("Failed to read dpkg status file");
+            }
+        };
+
+        // Integrity-bound persisted data: snapshot for rollback before the
+        // first mutation of this transaction.
+        let backup_path = temp_dir.join("dpkg-status.pre-transaction");
+        fs::write(&backup_path, &current).with_context(|| {
+            format!("Failed to back up dpkg status to {}", backup_path.display())
+        })?;
+        self.backups.insert(status_path.to_path_buf(), backup_path);
+
+        let updated = merge_status_entries(&current, entries);
+        write_atomic(status_path, updated.as_bytes())
+            .context("Failed to persist updated dpkg status")?;
+
+        tracing::debug!("Merged {} dpkg status entries atomically", entries.len());
+        Ok(())
+    }
+
     /// Rollback the transaction
+    ///
+    /// Removes files/directories installed by this transaction and restores
+    /// the pre-transaction dpkg status database. Files that a package
+    /// *overwrote* are removed but their previous contents are not restored;
+    /// see the module docs for the full contract.
     pub fn rollback(&mut self) -> Result<()> {
         tracing::warn!(
             "Rolling back transaction ({} files installed)",
@@ -739,6 +743,64 @@ impl Transaction {
     }
 }
 
+/// Merge new dpkg status paragraphs into `current`.
+///
+/// Existing paragraphs whose `Package:` name appears in `entries` are
+/// replaced by the new entry; all other paragraphs are preserved verbatim.
+/// New entries are appended in the given order. The result keeps dpkg's
+/// one-blank-line paragraph separation and a trailing newline.
+fn merge_status_entries(current: &str, entries: &[(String, String)]) -> String {
+    let mut pending: std::collections::HashMap<&str, &str> = entries
+        .iter()
+        .map(|(name, entry)| (name.as_str(), entry.as_str()))
+        .collect();
+
+    let mut out = String::with_capacity(current.len() + 512);
+    for paragraph in current.split("\n\n") {
+        if paragraph.trim().is_empty() {
+            continue;
+        }
+        let name = paragraph
+            .lines()
+            .find_map(|line| line.strip_prefix("Package: "))
+            .map(str::trim);
+        let replaced = name.and_then(|name| pending.remove(name));
+        if let Some(entry) = replaced {
+            out.push_str(entry);
+        } else {
+            out.push_str(paragraph);
+            out.push('\n');
+        }
+        out.push('\n');
+    }
+
+    for (name, entry) in entries {
+        if pending.remove(name.as_str()).is_some() {
+            out.push_str(entry);
+            out.push('\n');
+        }
+    }
+
+    out
+}
+
+/// Atomically replace `dest` with `data` via temp file + fsync + rename.
+fn write_atomic(dest: &Path, data: &[u8]) -> Result<()> {
+    use tempfile::NamedTempFile;
+
+    let parent = dest.parent().unwrap_or_else(|| Path::new("."));
+    let mut temp = NamedTempFile::new_in(parent)
+        .with_context(|| format!("Failed to create temporary file in {}", parent.display()))?;
+    temp.write_all(data)?;
+    temp.as_file_mut()
+        .sync_all()
+        .context("Failed to sync temporary file")?;
+    temp.persist(dest)
+        .map_err(|error| error.error)
+        .with_context(|| format!("Failed to persist {}", dest.display()))?;
+    Ok(())
+}
+
 fn remove_file_if_present(path: &Path) -> Result<()> {
     // Rollback walks `installed_files` in reverse so children are removed
     // before the directories created for them. A directory that still has
@@ -832,7 +894,7 @@ fn unpack_deb_standalone(
         // Run preinst script if exists
         let preinst = control_dir.join("preinst");
         if preinst.exists() {
-            run_maintainer_script(&preinst, "install")?;
+            run_maintainer_script(&preinst, package_name, "install")?;
         }
     }
 
@@ -958,6 +1020,11 @@ fn create_root_links(links: Vec<PendingRootLink>) -> Result<()> {
 
 /// Extract a tar stream to a directory, delegating traversal sanitization to
 /// the `tar` crate's hardened `unpack`.
+///
+/// Trust note: unlike [`extract_tar_to_root_at`] (which validates every entry
+/// explicitly), this path relies on `tar::Entry::unpack` refusing paths that
+/// escape `dest`. Acceptable because control.tar carries only the small
+/// maintainer-script set, but revisit before exposing non-root extraction.
 fn extract_tar_stream(reader: &mut dyn Read, dest: &Path) -> Result<()> {
     let mut archive = tar::Archive::new(reader);
 
@@ -1145,7 +1212,7 @@ fn extract_tar_to_root_at(root: &Path, data: &[u8]) -> Result<Vec<PathBuf>> {
 }
 
 /// Run a maintainer script (preinst, postinst, prerm, postrm)
-fn run_maintainer_script(script: &Path, arg: &str) -> Result<()> {
+fn run_maintainer_script(script: &Path, package_name: &str, arg: &str) -> Result<()> {
     // Make executable
     let mut perms = fs::metadata(script)?.permissions();
     perms.set_mode(0o755);
@@ -1153,8 +1220,8 @@ fn run_maintainer_script(script: &Path, arg: &str) -> Result<()> {
 
     let status = Command::new(script)
         .arg(arg)
-        .env("DPKG_MAINTSCRIPT_PACKAGE", "")
-        .env("DPKG_MAINTSCRIPT_ARCH", std::env::consts::ARCH)
+        .env("DPKG_MAINTSCRIPT_PACKAGE", package_name)
+        .env("DPKG_MAINTSCRIPT_ARCH", super::debian_arch())
         .status()
         .with_context(|| format!("Failed to run {}", script.display()))?;
 
@@ -1257,7 +1324,8 @@ async fn download_package_streaming(
     // Retry path (only if first attempt failed)
     let mut last_error = None;
     for attempt in 1..MAX_DOWNLOAD_RETRIES {
-        let backoff = Duration::from_millis(INITIAL_BACKOFF_MS << attempt);
+        let backoff =
+            Duration::from_millis(INITIAL_BACKOFF_MS.saturating_mul(1 << attempt.min(20)));
         progress.set_message(format!("retry {}/{}", attempt + 1, MAX_DOWNLOAD_RETRIES));
         tokio::time::sleep(backoff).await;
 
@@ -1402,7 +1470,7 @@ fn run_removal_maintainer_script(package_name: &str, kind: &str) -> Result<()> {
         tracing::debug!("No {kind} script found for {package_name}");
         return Ok(());
     };
-    run_maintainer_script(&script, "remove")
+    run_maintainer_script(&script, package_name, "remove")
 }
 
 /// Remove package files from the filesystem
@@ -2055,6 +2123,55 @@ mod tests {
             sink.len() as u64 <= TEST_BUDGET_BYTES,
             "sink grew to {} bytes, past the {TEST_BUDGET_BYTES}-byte budget",
             sink.len()
+        );
+    }
+    #[test]
+    fn merge_status_entries_replaces_existing_paragraph() {
+        let current = "Package: vim\nStatus: install ok installed\nVersion: 1.0\n\nPackage: git\nStatus: install ok installed\nVersion: 2.0\n";
+        let entries = vec![(
+            "vim".to_string(),
+            "Package: vim\nStatus: install ok installed\nVersion: 9.9\n".to_string(),
+        )];
+
+        let merged = merge_status_entries(current, &entries);
+
+        assert!(merged.contains("Version: 9.9"), "{merged}");
+        assert!(
+            !merged.contains("Version: 1.0\n"),
+            "old paragraph must be replaced: {merged}"
+        );
+        // Untouched package survives exactly once.
+        assert_eq!(merged.matches("Package: git").count(), 1);
+        assert_eq!(merged.matches("Package: vim").count(), 1);
+        assert!(merged.ends_with('\n'));
+    }
+
+    #[test]
+    fn merge_status_entries_appends_new_packages() {
+        let current = "Package: git\nStatus: install ok installed\nVersion: 2.0\n";
+        let entries = vec![(
+            "curl".to_string(),
+            "Package: curl\nStatus: install ok installed\nVersion: 8.0\n".to_string(),
+        )];
+
+        let merged = merge_status_entries(current, &entries);
+
+        assert!(merged.contains("Package: curl"), "{merged}");
+        assert!(merged.contains("Package: git"), "{merged}");
+        assert_eq!(merged.matches("Package: ").count(), 2);
+    }
+
+    #[test]
+    fn merge_status_entries_into_empty_status_writes_only_new_entries() {
+        let entries = vec![(
+            "curl".to_string(),
+            "Package: curl\nStatus: install ok installed\nVersion: 8.0\n".to_string(),
+        )];
+
+        let merged = merge_status_entries("", &entries);
+        assert_eq!(
+            merged,
+            "Package: curl\nStatus: install ok installed\nVersion: 8.0\n\n"
         );
     }
 }

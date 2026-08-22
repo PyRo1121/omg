@@ -57,11 +57,9 @@ fn save_index(index: &SnapshotIndex) -> Result<()> {
             format!("Failed to create snapshot directory: {}", parent.display())
         })?;
     }
-    let content =
-        serde_json::to_string_pretty(index).context("Failed to serialize snapshot index")?;
-    fs::write(&path, &content)
-        .with_context(|| format!("Failed to write snapshot index: {}", path.display()))?;
-    Ok(())
+    // Atomic replace so a crash cannot leave a truncated index behind.
+    crate::core::safe_ops::atomic_write_file_sync(&path, serde_json::to_string_pretty(index)?)
+        .with_context(|| format!("Failed to write snapshot index: {}", path.display()))
 }
 
 /// Create a new snapshot
@@ -76,22 +74,30 @@ pub async fn create(message: Option<String>) -> Result<()> {
     println!("{} Creating snapshot...\n", "OMG".cyan().bold());
 
     let state = EnvironmentState::capture().await?;
+
+    // UUID-backed IDs make collisions practically impossible; still refuse to
+    // overwrite an existing snapshot instead of silently replacing it.
     let id = generate_snapshot_id();
+    let snapshot_path = snapshots_dir().join(format!("{id}.json"));
+    anyhow::ensure!(
+        !snapshot_path.exists(),
+        "Snapshot '{id}' already exists; refusing to overwrite it"
+    );
 
     let snapshot = Snapshot {
         id: id.clone(),
         message: message.clone(),
         created_at: jiff::Timestamp::now().as_second(),
-        state: state.clone(),
+        state,
     };
 
-    // Save snapshot file
-    let snapshot_path = snapshots_dir().join(format!("{id}.json"));
+    // Save snapshot file (atomic replace, like the index below).
     fs::create_dir_all(snapshots_dir()).context("Failed to create snapshots directory")?;
-    let content =
-        serde_json::to_string_pretty(&snapshot).context("Failed to serialize snapshot")?;
-    fs::write(&snapshot_path, &content)
-        .with_context(|| format!("Failed to write snapshot: {}", snapshot_path.display()))?;
+    crate::core::safe_ops::atomic_write_file_sync(
+        &snapshot_path,
+        serde_json::to_string_pretty(&snapshot)?,
+    )
+    .with_context(|| format!("Failed to write snapshot: {}", snapshot_path.display()))?;
 
     // Update index
     let mut index = load_index()?;
@@ -99,7 +105,7 @@ pub async fn create(message: Option<String>) -> Result<()> {
         id: id.clone(),
         message: message.clone(),
         created_at: snapshot.created_at,
-        hash: state.hash,
+        hash: snapshot.state.hash.clone(),
     });
     save_index(&index)?;
 
@@ -108,8 +114,8 @@ pub async fn create(message: Option<String>) -> Result<()> {
     if let Some(msg) = &message {
         println!("  Message: {msg}");
     }
-    println!("  Runtimes: {}", state.runtimes.len());
-    println!("  Packages: {}", state.packages.len());
+    println!("  Runtimes: {}", snapshot.state.runtimes.len());
+    println!("  Packages: {}", snapshot.state.packages.len());
     println!();
     println!(
         "  Restore with: {}",
@@ -356,38 +362,36 @@ pub fn delete(id: &str) -> Result<()> {
 fn generate_snapshot_id() -> String {
     let now = jiff::Timestamp::now();
     let date = format!("{now}").chars().take(10).collect::<String>();
-    let random: String = (0..6)
-        .map(|_| {
-            let idx = rand_byte() % 36;
-            if idx < 10 {
-                (b'0' + idx) as char
-            } else {
-                (b'a' + idx - 10) as char
-            }
-        })
-        .collect();
+    let random = uuid::Uuid::new_v4().simple().to_string()[..8].to_string();
     format!("snap-{date}-{random}")
 }
 
-fn rand_byte() -> u8 {
-    use std::time::{Duration, SystemTime, UNIX_EPOCH};
-    let nanos = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .unwrap_or(Duration::ZERO)
-        .subsec_nanos();
-    (nanos % 256) as u8
+fn format_timestamp(ts: i64) -> String {
+    crate::cli::format_short_timestamp(ts)
 }
 
-fn format_timestamp(ts: i64) -> String {
-    use jiff::Timestamp;
-    Timestamp::from_second(ts).map_or_else(
-        |_| "unknown".to_string(),
-        |dt| {
-            format!("{dt}")
-                .chars()
-                .take(16)
-                .collect::<String>()
-                .replace('T', " ")
-        },
-    )
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn generated_ids_are_unique_and_wellformed() {
+        let first = generate_snapshot_id();
+        let second = generate_snapshot_id();
+        assert_ne!(first, second, "IDs must not collide within a session");
+        for id in [first, second] {
+            let rest = id.strip_prefix("snap-").expect("snap- prefix");
+            assert_eq!(rest.len(), 19, "YYYY-MM-DD-8hex, got {id}");
+            assert!(
+                rest.chars().all(|c| c.is_ascii_hexdigit() || c == '-'),
+                "filesystem-safe ID, got {id}"
+            );
+        }
+    }
+
+    #[test]
+    fn timestamps_render_as_compact_strings_or_unknown() {
+        assert_eq!(format_timestamp(0).len(), 16);
+        assert_eq!(format_timestamp(i64::MAX), "unknown");
+    }
 }

@@ -30,11 +30,12 @@ proptest! {
         prop_assert!(!result.stderr.contains("panicked at"));
 
         if result.success && !result.stdout.is_empty() {
+            // Successful searches must show a recognizable results header or
+            // an explicit empty-result notice — not arbitrary prose (the old
+            // "git"/"pacman" alternatives matched any mention).
             let has_valid_output = result.stdout.contains("Search Results") ||
                                   result.stdout.contains("Package") ||
-                                  result.stdout.contains("No results") ||
-                                  result.stdout.contains("git") ||
-                                  result.stdout.contains("pacman");
+                                  result.stdout.contains("No results");
             prop_assert!(
                 has_valid_output,
                 "Search output should contain results, got: {}",

@@ -32,14 +32,22 @@ use crate::core::{Package, PackageSource};
 /// TTL for cache eviction safety net (30 minutes)
 const CACHE_TTL_SECS: u64 = 30 * 60;
 
-/// Check if cache is expired based on TTL (30-minute safety net)
-fn is_cache_expired(last_accessed: Option<std::time::SystemTime>) -> bool {
-    if let Some(last_access) = last_accessed
-        && let Ok(elapsed) = std::time::SystemTime::now().duration_since(last_access)
-    {
-        return elapsed.as_secs() > CACHE_TTL_SECS;
-    }
-    false
+/// Current time as unix seconds (`0` if the clock is before the epoch).
+fn unix_now_secs() -> u64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_secs()
+}
+
+/// TTL check for `unix_now_secs()`-stamped access times (`0` = never accessed).
+fn is_access_expired(last_accessed: u64) -> bool {
+    let last = if last_accessed == 0 {
+        return false; // never accessed: nothing to expire yet
+    } else {
+        last_accessed
+    };
+    unix_now_secs().saturating_sub(last) > CACHE_TTL_SECS
 }
 
 /// Global cache for Debian package index
@@ -67,18 +75,18 @@ struct DebianIndexCache {
     package_offsets: Vec<usize>,
     /// Cached set of installed package names
     installed_set: AHashSet<String>,
-    /// Last access time for TTL-based eviction (30-minute safety net)
-    last_accessed: Option<std::time::SystemTime>,
+    /// Last access time for TTL-based eviction (unix seconds; `0` = never)
+    last_accessed: u64,
 }
 
 /// Cache for /var/lib/dpkg/status to avoid expensive reparsing
 struct DpkgStatusCache {
-    packages: Vec<LocalPackage>,
+    packages: Vec<DpkgPackageEntry>,
     installed_set: AHashSet<String>,
     status_mtime: std::time::SystemTime,
     extended_states_mtime: Option<std::time::SystemTime>,
-    /// Last access time for TTL-based eviction (30-minute safety net)
-    last_accessed: Option<std::time::SystemTime>,
+    /// Last access time for TTL-based eviction (unix seconds; `0` = never)
+    last_accessed: u64,
 }
 
 impl Default for DpkgStatusCache {
@@ -88,9 +96,22 @@ impl Default for DpkgStatusCache {
             installed_set: AHashSet::new(),
             status_mtime: std::time::UNIX_EPOCH,
             extended_states_mtime: None,
-            last_accessed: None,
+            last_accessed: 0,
         }
     }
+}
+
+/// Answer an install query from the cache only when the cache holds a
+/// **complete** dpkg/status parse.
+///
+/// A partial population (e.g. a single-name insert left behind by a scan
+/// fallback) must never answer queries: treating `{curl}` as the full set
+/// would report every other installed package as absent.
+fn cached_installed_state(cache: &DpkgStatusCache, name: &str) -> Option<bool> {
+    if cache.packages.is_empty() {
+        return None;
+    }
+    Some(cache.installed_set.contains(name))
 }
 
 /// Global mmap-based index for zero-copy access (optional, used when available)
@@ -123,35 +144,20 @@ impl FstIndex {
 
         let map = Map::new(mmap).map_err(|e| anyhow::anyhow!("Corrupted FST index: {e}"))?;
 
-        let now = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .unwrap_or_default()
-            .as_secs();
-
         Ok(Self {
             map,
-            last_accessed: AtomicU64::new(now),
+            last_accessed: AtomicU64::new(unix_now_secs()),
         })
     }
 
     /// Check if expired based on TTL
     fn is_expired(&self) -> bool {
-        let last = self.last_accessed.load(Ordering::Relaxed);
-        let now = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .unwrap_or_default()
-            .as_secs();
-
-        now.saturating_sub(last) > CACHE_TTL_SECS
+        is_access_expired(self.last_accessed.load(Ordering::Relaxed))
     }
 
     /// Update last accessed time
     fn touch(&self) {
-        let now = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .unwrap_or_default()
-            .as_secs();
-        self.last_accessed.store(now, Ordering::Relaxed);
+        self.last_accessed.store(unix_now_secs(), Ordering::Relaxed);
     }
 }
 
@@ -180,15 +186,9 @@ impl DebianMmapIndex {
         #[expect(unsafe_code)]
         let mmap = unsafe { Mmap::map(&file)? };
 
-        // Initialize last_accessed to current time
-        let now = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .unwrap_or_default()
-            .as_secs();
-
         Ok(Self {
             mmap,
-            last_accessed: AtomicU64::new(now),
+            last_accessed: AtomicU64::new(unix_now_secs()),
         })
     }
 
@@ -216,23 +216,14 @@ impl DebianMmapIndex {
     }
 
     /// Check if the mmap is expired based on TTL (30 minutes)
+    #[must_use]
     pub fn is_expired(&self) -> bool {
-        let last = self.last_accessed.load(Ordering::Relaxed);
-        let now = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .unwrap_or_default()
-            .as_secs();
-
-        now.saturating_sub(last) > CACHE_TTL_SECS
+        is_access_expired(self.last_accessed.load(Ordering::Relaxed))
     }
 
     /// Update last accessed time (called on each access)
     pub fn touch(&self) {
-        let now = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .unwrap_or_default()
-            .as_secs();
-        self.last_accessed.store(now, Ordering::Relaxed);
+        self.last_accessed.store(unix_now_secs(), Ordering::Relaxed);
     }
 }
 
@@ -248,6 +239,10 @@ impl Drop for DebianMmapIndex {
 }
 
 /// A Debian package entry optimized for zero-copy access
+///
+/// `suite` records the distribution the entry was parsed from (derived from
+/// the `*_dists_<suite>_*_Packages` lists filename) so download URLs can be
+/// built against the repository that actually publishes the package.
 #[derive(rkyv::Archive, rkyv::Serialize, rkyv::Deserialize, Debug, Clone)]
 pub struct DebianPackage {
     pub name: String,
@@ -264,11 +259,13 @@ pub struct DebianPackage {
     pub sha256: String,
     pub homepage: String,
     pub component: String,
+    pub suite: String,
 }
 
 use crate::package_managers::types::parse_version_or_zero;
 
 impl DebianPackage {
+    #[must_use]
     pub fn to_package(&self) -> Package {
         Package {
             name: self.name.clone(),
@@ -280,21 +277,33 @@ impl DebianPackage {
     }
 }
 
+/// In-memory Debian package index with name/arch/component lookup maps.
+///
+/// Fields are private by design: the lookup maps must only ever be mutated
+/// through [`DebianPackageIndex::add_package`], which keeps them consistent
+/// with `packages`. Note that the maps deliberately use std `HashMap` for
+/// direct rkyv serialization compatibility.
 #[derive(rkyv::Archive, rkyv::Serialize, rkyv::Deserialize, Debug, Default, Clone)]
 pub struct DebianPackageIndex {
-    pub packages: Vec<DebianPackage>,
-    /// Note: Uses std `HashMap` for rkyv serialization compatibility
-    /// Converted to `AHashMap` at runtime for faster lookups
-    pub name_to_idx: HashMap<String, usize>,
-    pub name_arch_to_idx: HashMap<String, usize>,
-    pub name_arch_component_to_idx: HashMap<String, usize>,
-    pub updated_at: i64,
+    packages: Vec<DebianPackage>,
+    name_to_idx: HashMap<String, usize>,
+    name_arch_to_idx: HashMap<String, usize>,
+    name_arch_component_to_idx: HashMap<String, usize>,
+    updated_at: i64,
 }
 
 impl DebianPackageIndex {
+    #[must_use]
     pub fn new() -> Self {
         Self::default()
     }
+
+    /// All indexed packages in insertion order.
+    #[must_use]
+    pub fn packages(&self) -> &[DebianPackage] {
+        &self.packages
+    }
+
     pub fn add_package(&mut self, pkg: DebianPackage) {
         let idx = self.packages.len();
         let name = pkg.name.clone();
@@ -328,10 +337,12 @@ impl DebianPackageIndex {
         self.packages.push(pkg);
     }
 
+    #[must_use]
     pub fn get(&self, name: &str) -> Option<&DebianPackage> {
         self.name_to_idx.get(name).map(|&idx| &self.packages[idx])
     }
 
+    #[must_use]
     pub fn get_name_arch(&self, name: &str, arch: &str) -> Option<&DebianPackage> {
         let key = format!("{name}:{arch}");
         self.name_arch_to_idx
@@ -339,6 +350,7 @@ impl DebianPackageIndex {
             .map(|&idx| &self.packages[idx])
     }
 
+    #[must_use]
     pub fn get_name_arch_component(
         &self,
         name: &str,
@@ -351,6 +363,7 @@ impl DebianPackageIndex {
             .map(|&idx| &self.packages[idx])
     }
 
+    #[must_use]
     pub fn get_query(&self, query: &str) -> Option<&DebianPackage> {
         if let Some((name, rest)) = query.split_once(':') {
             if let Some((arch, component)) = rest.split_once(':') {
@@ -368,6 +381,14 @@ impl DebianPackageIndex {
 }
 
 fn native_debian_arch() -> &'static str {
+    debian_arch()
+}
+
+/// The Debian architecture name for the running binary (e.g. `x86_64` ->
+/// `amd64`). Single source of truth for index scoring, sync URLs, and
+/// maintainer-script environments.
+#[must_use]
+pub fn debian_arch() -> &'static str {
     match std::env::consts::ARCH {
         "x86_64" => "amd64",
         "aarch64" => "arm64",
@@ -470,7 +491,7 @@ pub fn ensure_index_loaded() -> Result<()> {
         let mut cache = DEBIAN_INDEX_CACHE.write().expect("lock poisoned");
 
         // Clear cache if TTL expired (safety net for unbounded growth)
-        if is_cache_expired(cache.last_accessed) {
+        if is_access_expired(cache.last_accessed) {
             *cache = DebianIndexCache::default();
             true
         } else if cache.index.is_none() {
@@ -480,7 +501,7 @@ pub fn ensure_index_loaded() -> Result<()> {
             let needs_update = cache.file_mtimes != current_files;
             if !needs_update {
                 // Cache hit - update last accessed
-                cache.last_accessed = Some(std::time::SystemTime::now());
+                cache.last_accessed = unix_now_secs();
             }
             needs_update
         }
@@ -490,8 +511,10 @@ pub fn ensure_index_loaded() -> Result<()> {
         return Ok(());
     }
 
-    // Determine which files changed
-    let (changed_files, mut index): (Vec<PathBuf>, Option<DebianPackageIndex>) = {
+    // Determine which files changed. The rebuild below always repopulates the
+    // index from scratch, so cloning the cached index here would be discarded
+    // work; only the changed-path list is needed.
+    let changed_files: Vec<PathBuf> = {
         let cache = DEBIAN_INDEX_CACHE.read().expect("lock poisoned");
         let mut changed: Vec<PathBuf> = Vec::new();
 
@@ -500,28 +523,21 @@ pub fn ensure_index_loaded() -> Result<()> {
                 changed.push(path.clone());
             }
         }
-
-        // If we have a cached index and only some files changed, do incremental update
-        if !changed.is_empty() && changed.len() < current_files.len() / 2 && cache.index.is_some() {
-            (changed, cache.index.clone())
-        } else {
-            // Too many changes or no cached index - full rebuild
-            (
-                current_files.keys().cloned().collect::<Vec<PathBuf>>(),
-                None,
-            )
-        }
+        changed
     };
 
-    // Load or create index (with LZ4 compression support)
-    let cache_path = paths::cache_dir().join("debian_index_v6.lz4");
-    let mmap_path = paths::cache_dir().join("debian_index_v6.mmap");
+    // Load or create index (with LZ4 compression support).
+    // v7 adds per-package `suite` provenance used for download-URL construction;
+    // v6 caches cannot answer it and are ignored (treated as a cold cache).
+    let cache_path = paths::cache_dir().join("debian_index_v7.lz4");
+    let mmap_path = paths::cache_dir().join("debian_index_v7.mmap");
 
     // Check if LZ4 cache is fresher than all Packages files.
     // On cold process start, file_mtimes is empty so all files appear "changed".
     // But if the cache file is newer than every Packages file, it's already up-to-date.
+    let mut index: Option<DebianPackageIndex> = None;
     let mut cache_is_fresh = false;
-    if index.is_none() && cache_path.exists() {
+    if cache_path.exists() {
         // Check if cache file is newer than all Packages files
         if let Ok(cache_meta) = fs::metadata(&cache_path)
             && let Ok(cache_mtime) = cache_meta.modified()
@@ -558,8 +574,7 @@ pub fn ensure_index_loaded() -> Result<()> {
         }
     }
 
-    let mut index = index.unwrap_or_else(DebianPackageIndex::new);
-
+    let mut index = index.unwrap_or_default();
     // Skip rebuild if cache file is fresh (newer than all Packages files).
     // This avoids re-parsing 94k packages on every cold process start.
     if !changed_files.is_empty() && cache_is_fresh && !index.packages.is_empty() {
@@ -571,7 +586,7 @@ pub fn ensure_index_loaded() -> Result<()> {
         let mut cache = DEBIAN_INDEX_CACHE.write().expect("lock poisoned");
         cache.index = Some(index);
         cache.file_mtimes = current_files;
-        cache.last_accessed = Some(std::time::SystemTime::now());
+        cache.last_accessed = unix_now_secs();
         return Ok(());
     }
 
@@ -633,7 +648,7 @@ pub fn ensure_index_loaded() -> Result<()> {
             .context("Failed to persist compressed cache file")?;
 
         // Also save uncompressed version for zero-copy mmap access
-        let mmap_path = paths::cache_dir().join("debian_index_v6.mmap");
+        // (same path as the outer `mmap_path`; kept in sync by construction)
 
         // Atomic write for mmap index
         // CRITICAL: Must use atomic rename to avoid crashing readers holding an mmap
@@ -665,7 +680,7 @@ pub fn ensure_index_loaded() -> Result<()> {
 
         // Build FST index for O(query_len) prefix searches
         // FST requires sorted input, so we need to sort packages by name
-        let fst_path = paths::cache_dir().join("debian_index_v6.fst");
+        let fst_path = paths::cache_dir().join("debian_index_v7.fst");
         let fst_build_start = std::time::Instant::now();
 
         let mut lower_name_to_idx: HashMap<String, usize> =
@@ -764,7 +779,7 @@ pub fn ensure_index_loaded() -> Result<()> {
     cache.search_buffer = search_buffer;
     cache.package_offsets = package_offsets;
     cache.installed_set = installed_set;
-    cache.last_accessed = Some(std::time::SystemTime::now());
+    cache.last_accessed = unix_now_secs();
 
     Ok(())
 }
@@ -790,7 +805,7 @@ fn ensure_fst_loaded() {
     }
 
     // Try to load from disk
-    let fst_path = paths::cache_dir().join("debian_index_v6.fst");
+    let fst_path = paths::cache_dir().join("debian_index_v7.fst");
     if !fst_path.exists() {
         return; // FST not available yet, will fall back to SIMD search
     }
@@ -806,6 +821,7 @@ fn ensure_fst_loaded() {
 ///
 /// This is nearly instant (just a syscall, no decompression) unlike `ensure_index_loaded()`.
 /// Used by the ultra-fast search and update paths to avoid loading the full index.
+#[must_use]
 pub fn ensure_mmap_loaded() -> bool {
     // Check if already loaded
     {
@@ -823,7 +839,7 @@ pub fn ensure_mmap_loaded() -> bool {
     }
 
     // Try to load from disk
-    let mmap_path = paths::cache_dir().join("debian_index_v6.mmap");
+    let mmap_path = paths::cache_dir().join("debian_index_v7.mmap");
     if !mmap_path.exists() {
         return false;
     }
@@ -840,6 +856,7 @@ pub fn ensure_mmap_loaded() -> bool {
 
 fn parse_packages_file_sync(path: &Path) -> Result<Vec<DebianPackage>> {
     let component = extract_component_from_path(path);
+    let suite = extract_suite_from_path(path);
     let content = read_packages_file_content(path)?;
 
     // Collect paragraph byte ranges first
@@ -863,23 +880,31 @@ fn parse_packages_file_sync(path: &Path) -> Result<Vec<DebianPackage>> {
     let packages = if paragraph_ranges.len() > 100 {
         paragraph_ranges
             .par_iter()
-            .map(|(start, end)| parse_packages_paragraph(&content[*start..*end], &component))
+            .map(|(start, end)| {
+                parse_packages_paragraph(&content[*start..*end], &component, &suite)
+            })
             .collect::<Result<Vec<_>>>()?
     } else {
         paragraph_ranges
             .iter()
-            .map(|(start, end)| parse_packages_paragraph(&content[*start..*end], &component))
+            .map(|(start, end)| {
+                parse_packages_paragraph(&content[*start..*end], &component, &suite)
+            })
             .collect::<Result<Vec<_>>>()?
     };
 
     Ok(packages.into_iter().flatten().collect())
 }
 
-fn parse_packages_paragraph(paragraph: &str, component: &str) -> Result<Option<DebianPackage>> {
+fn parse_packages_paragraph(
+    paragraph: &str,
+    component: &str,
+    suite: &str,
+) -> Result<Option<DebianPackage>> {
     if paragraph.trim().is_empty() {
         Ok(None)
     } else {
-        parse_paragraph_str(paragraph, component).map(Some)
+        parse_paragraph_str(paragraph, component, suite).map(Some)
     }
 }
 
@@ -988,6 +1013,24 @@ fn extract_component_from_path(path: &Path) -> String {
     String::from("main")
 }
 
+/// Extract the distribution suite from a lists filename like
+/// `deb.debian.org_debian_dists_bookworm_main_binary-amd64_Packages`.
+/// Returns an empty string for flat layouts without a `_dists_` marker.
+fn extract_suite_from_path(path: &Path) -> String {
+    let filename = path
+        .file_name()
+        .and_then(|n| n.to_str())
+        .unwrap_or_default();
+
+    filename
+        .split("_dists_")
+        .nth(1)
+        .and_then(|rest| rest.split('_').next())
+        .filter(|suite| !suite.is_empty())
+        .unwrap_or_default()
+        .to_string()
+}
+
 fn find_info_from_apt_lists_fast(name: &str) -> Result<Option<Package>> {
     let lists_dir = Path::new("/var/lib/apt/lists");
     if !lists_dir.exists() {
@@ -1069,7 +1112,7 @@ fn append_dependencies(value: &str, dependencies: &mut Vec<String>) {
 }
 
 #[inline]
-fn parse_paragraph_str(paragraph: &str, component: &str) -> Result<DebianPackage> {
+fn parse_paragraph_str(paragraph: &str, component: &str, suite: &str) -> Result<DebianPackage> {
     let mut name = String::new();
     let mut version = String::new();
     let mut description = String::with_capacity(128); // Pre-allocate for description
@@ -1154,6 +1197,7 @@ fn parse_paragraph_str(paragraph: &str, component: &str) -> Result<DebianPackage
         sha256,
         homepage,
         component: component.to_string(),
+        suite: suite.to_string(),
     })
 }
 
@@ -1174,6 +1218,7 @@ pub fn get_detailed_packages() -> Result<Vec<DebianPackage>> {
             sha256: "hash".to_string(),
             homepage: "https://debian.org".to_string(),
             component: "main".to_string(),
+            suite: "bookworm".to_string(),
         }]);
     }
     ensure_index_loaded()?;
@@ -1204,10 +1249,16 @@ pub fn search_fast(query: &str) -> Result<Vec<Package>> {
             let fst_index = fst_guard.as_ref().expect("checked is_some() above");
             fst_index.touch();
             let query_lower = query.to_lowercase();
+            let installed_set = installed_names()?;
             let mmap_guard = DEBIAN_MMAP_INDEX.read().expect("lock poisoned");
             if let Some(ref mmap) = *mmap_guard {
                 mmap.touch();
-                return Ok(fst_mmap_search(&fst_index.map, mmap, &query_lower));
+                return Ok(fst_mmap_search(
+                    &fst_index.map,
+                    mmap,
+                    &query_lower,
+                    &installed_set,
+                ));
             }
         }
         drop(fst_guard);
@@ -1271,7 +1322,13 @@ pub fn search_fast(query: &str) -> Result<Vec<Package>> {
         &query_lower,
         &guard.search_buffer,
         &guard.package_offsets,
+        &guard.installed_set,
     ))
+}
+
+/// Names of all installed packages from the dpkg-status cache.
+fn installed_names() -> Result<AHashSet<String>> {
+    Ok(list_installed_fast()?.into_iter().map(|p| p.name).collect())
 }
 
 /// FST-based search: `O(query_len)` prefix matching
@@ -1347,7 +1404,12 @@ fn fst_search(
 /// FST+mmap search: completely bypasses `ensure_index_loaded()`
 /// Uses FST for name matching and mmap for zero-copy package details
 #[inline]
-fn fst_mmap_search(fst_map: &Map<Mmap>, mmap: &DebianMmapIndex, query_lower: &str) -> Vec<Package> {
+fn fst_mmap_search(
+    fst_map: &Map<Mmap>,
+    mmap: &DebianMmapIndex,
+    query_lower: &str,
+    installed_set: &AHashSet<String>,
+) -> Vec<Package> {
     let query_bytes = query_lower.as_bytes();
 
     // 1. Try exact match first
@@ -1379,7 +1441,7 @@ fn fst_mmap_search(fst_map: &Map<Mmap>, mmap: &DebianMmapIndex, query_lower: &st
                 version: parse_version_or_zero(pkg.version.as_str()),
                 description: pkg.description.to_string(),
                 source: PackageSource::Official,
-                installed: false,
+                installed: installed_set.contains(pkg.name.as_str()),
             });
         }
         if results.len() >= 100 {
@@ -1404,7 +1466,7 @@ fn fst_mmap_search(fst_map: &Map<Mmap>, mmap: &DebianMmapIndex, query_lower: &st
                 version: parse_version_or_zero(pkg.version.as_str()),
                 description: pkg.description.to_string(),
                 source: PackageSource::Official,
-                installed: false,
+                installed: installed_set.contains(pkg.name.as_str()),
             });
         }
         if results.len() >= 100 {
@@ -1415,56 +1477,13 @@ fn fst_mmap_search(fst_map: &Map<Mmap>, mmap: &DebianMmapIndex, query_lower: &st
     results
 }
 
-fn is_package_installed_scan(name: &str) -> Result<bool> {
-    let status_path = Path::new("/var/lib/dpkg/status");
-    if !status_path.exists() {
-        anyhow::bail!("dpkg status file not found: {}", status_path.display());
-    }
-
-    let status_content = fs::read_to_string(status_path)?;
-    let start_pattern = format!("Package: {name}\n");
-    let mid_pattern = format!("\nPackage: {name}\n");
-    let bytes = status_content.as_bytes();
-
-    let mut start_positions = Vec::with_capacity(2);
-    if bytes.starts_with(start_pattern.as_bytes()) {
-        start_positions.push(0usize);
-    }
-    for pos in memmem::find_iter(bytes, mid_pattern.as_bytes()) {
-        start_positions.push(pos + 1);
-    }
-
-    for match_pos in start_positions {
-        let mut paragraph_start = match_pos;
-        while paragraph_start >= 2 {
-            if bytes[paragraph_start - 2] == b'\n' && bytes[paragraph_start - 1] == b'\n' {
-                break;
-            }
-            paragraph_start -= 1;
-        }
-        if paragraph_start < 2 {
-            paragraph_start = 0;
-        }
-
-        let paragraph_end =
-            memmem::find(&bytes[match_pos..], b"\n\n").map_or(bytes.len(), |rel| match_pos + rel);
-        let paragraph = &bytes[paragraph_start..paragraph_end];
-
-        if STATUS_INSTALLED_FINDER.find(paragraph).is_some() {
-            return Ok(true);
-        }
-    }
-
-    Ok(false)
-}
-
-/// SIMD-based search fallback (used when FST not available)
 #[inline]
 fn simd_search_fallback(
     index: &DebianPackageIndex,
     query_lower: &str,
     search_buffer: &[u8],
     package_offsets: &[usize],
+    installed_set: &AHashSet<String>,
 ) -> Vec<Package> {
     let finder = memmem::Finder::new(query_lower.as_bytes());
     let mut exact_matches = Vec::with_capacity(4);
@@ -1481,7 +1500,7 @@ fn simd_search_fallback(
             && let Some(pkg) = index.packages.get(pkg_idx)
         {
             let mut p = pkg.to_package();
-            p.installed = false;
+            p.installed = installed_set.contains(&p.name);
 
             // Categorize by match type for better relevance
             let name_lower = p.name.to_lowercase();
@@ -1557,8 +1576,12 @@ pub fn get_info_fast(name: &str) -> Result<Option<Package>> {
     }
 }
 
+/// One installed-package entry parsed from `/var/lib/dpkg/status`.
+///
+/// Distinct from [`crate::package_managers::types::LocalPackage`], which is
+/// the normalized cross-backend view (parsed `Version`, install size).
 #[derive(serde::Serialize, serde::Deserialize, Debug, Clone)]
-pub struct LocalPackage {
+pub struct DpkgPackageEntry {
     pub name: String,
     pub version: String,
     pub description: String,
@@ -1566,7 +1589,7 @@ pub struct LocalPackage {
     pub is_explicit: bool,
 }
 
-/// Parse a dpkg status paragraph into `LocalPackage` fields
+/// Parse a dpkg status paragraph into `DpkgPackageEntry` fields
 #[inline]
 fn parse_status_paragraph(paragraph: &str) -> Option<(String, String, String, String)> {
     let mut name = String::new();
@@ -1597,9 +1620,9 @@ fn parse_status_paragraph(paragraph: &str) -> Option<(String, String, String, St
     }
 }
 
-pub fn list_installed_fast() -> Result<Vec<LocalPackage>> {
+pub fn list_installed_fast() -> Result<Vec<DpkgPackageEntry>> {
     if crate::core::paths::test_mode() {
-        return Ok(vec![LocalPackage {
+        return Ok(vec![DpkgPackageEntry {
             name: "apt".to_string(),
             version: "2.6.1".to_string(),
             description: "Debian package manager".to_string(),
@@ -1623,14 +1646,14 @@ pub fn list_installed_fast() -> Result<Vec<LocalPackage>> {
         let mut cache = DPKG_STATUS_CACHE.write().expect("lock poisoned");
 
         // Clear cache if TTL expired (safety net for unbounded growth)
-        if is_cache_expired(cache.last_accessed) {
+        if is_access_expired(cache.last_accessed) {
             *cache = DpkgStatusCache::default();
         } else if cache.status_mtime == status_mtime
             && cache.extended_states_mtime == extended_states_mtime
             && !cache.packages.is_empty()
         {
             // Cache hit! Update last accessed
-            cache.last_accessed = Some(std::time::SystemTime::now());
+            cache.last_accessed = unix_now_secs();
             return Ok(cache.packages.clone());
         }
     }
@@ -1645,14 +1668,7 @@ pub fn list_installed_fast() -> Result<Vec<LocalPackage>> {
     let mut packages = Vec::with_capacity(status_content.len() / 300);
     let mut installed_set = AHashSet::new();
 
-    // Use memchr for faster paragraph splitting
-    let finder = memmem::Finder::new(b"\n\n");
-    let mut start = 0;
-
-    for end in finder.find_iter(status_content.as_bytes()) {
-        let paragraph = &status_content[start..end];
-        start = end + 2;
-
+    for paragraph in status_paragraphs(&status_content) {
         // Quick check if package is installed using SIMD-accelerated finder
         if STATUS_INSTALLED_FINDER.find(paragraph.as_bytes()).is_none() {
             continue;
@@ -1661,25 +1677,7 @@ pub fn list_installed_fast() -> Result<Vec<LocalPackage>> {
         if let Some((name, version, description, arch)) = parse_status_paragraph(paragraph) {
             let is_explicit = !auto_installed.contains(&name);
             installed_set.insert(name.clone());
-            packages.push(LocalPackage {
-                name,
-                version,
-                description,
-                architecture: arch,
-                is_explicit,
-            });
-        }
-    }
-
-    // Handle last paragraph
-    if start < status_content.len() {
-        let paragraph = &status_content[start..];
-        if STATUS_INSTALLED_FINDER.find(paragraph.as_bytes()).is_some()
-            && let Some((name, version, description, arch)) = parse_status_paragraph(paragraph)
-        {
-            let is_explicit = !auto_installed.contains(&name);
-            installed_set.insert(name.clone());
-            packages.push(LocalPackage {
+            packages.push(DpkgPackageEntry {
                 name,
                 version,
                 description,
@@ -1696,7 +1694,7 @@ pub fn list_installed_fast() -> Result<Vec<LocalPackage>> {
         cache.installed_set = installed_set;
         cache.status_mtime = status_mtime;
         cache.extended_states_mtime = extended_states_mtime;
-        cache.last_accessed = Some(std::time::SystemTime::now());
+        cache.last_accessed = unix_now_secs();
     }
 
     Ok(packages)
@@ -1704,9 +1702,9 @@ pub fn list_installed_fast() -> Result<Vec<LocalPackage>> {
 
 /// Get info about an installed package from dpkg/status
 #[inline]
-pub fn get_installed_info_fast(name: &str) -> Result<Option<LocalPackage>> {
+pub fn get_installed_info_fast(name: &str) -> Result<Option<DpkgPackageEntry>> {
     if crate::core::paths::test_mode() {
-        return Ok(Some(LocalPackage {
+        return Ok(Some(DpkgPackageEntry {
             name: name.to_string(),
             version: "1.0.0".to_string(),
             description: "Mock package".to_string(),
@@ -1728,31 +1726,22 @@ pub fn is_installed_fast(name: &str) -> Result<bool> {
         return Ok(matches!(name, "apt" | "git"));
     }
 
-    // Check dpkg status cache first for O(1) lookup
+    // Answer from the cache only when it holds a complete dpkg/status parse;
+    // a partial population must never answer queries (false negatives).
     {
         let cache = DPKG_STATUS_CACHE.read().expect("lock poisoned");
-        if !cache.installed_set.is_empty() {
-            return Ok(cache.installed_set.contains(name));
+        if let Some(installed) = cached_installed_state(&cache, name) {
+            return Ok(installed);
         }
     }
 
-    match is_package_installed_scan(name) {
-        Ok(installed) => {
-            if installed {
-                let mut cache = DPKG_STATUS_CACHE.write().expect("lock poisoned");
-                cache.installed_set.insert(name.to_string());
-                cache.last_accessed = Some(std::time::SystemTime::now());
-            }
-            Ok(installed)
-        }
-        Err(scan_error) => {
-            list_installed_fast().with_context(|| {
-                format!("failed to determine whether '{name}' is installed: {scan_error}")
-            })?;
-            let cache = DPKG_STATUS_CACHE.read().expect("lock poisoned");
-            Ok(cache.installed_set.contains(name))
-        }
-    }
+    // Cold or partial cache: atomically populate the complete installed set
+    // once instead of answering from a single-name scan. The cache writer
+    // builds the full state and swaps it in under one lock acquisition.
+    list_installed_fast()
+        .with_context(|| format!("failed to determine whether '{name}' is installed"))?;
+    let cache = DPKG_STATUS_CACHE.read().expect("lock poisoned");
+    Ok(cache.installed_set.contains(name))
 }
 
 pub fn list_explicit_fast() -> Result<Vec<String>> {
@@ -1767,6 +1756,13 @@ pub fn list_explicit_fast() -> Result<Vec<String>> {
         .collect())
 }
 
+/// Fast installed/explicit counts from the dpkg-status cache.
+///
+/// The orphan and update counts are **always `0`**: computing them requires
+/// the full index and a reverse-dependency walk. Callers that must not
+/// present zeros as real values should route through
+/// [`crate::package_managers::debian_db::resolve_status_counts`] with an
+/// accurate fallback (see `apt.rs::get_system_status`).
 pub fn get_counts_fast() -> Result<(usize, usize, usize, usize)> {
     let installed = list_installed_fast()?;
 
@@ -1798,14 +1794,21 @@ pub fn cleanup_expired_mmaps() {
 }
 
 /// Check if the mmap index is available (avoids loading full index into memory)
+#[must_use]
 pub fn is_mmap_available() -> bool {
     let guard = DEBIAN_MMAP_INDEX.read().expect("lock poisoned");
     guard.is_some()
 }
 
-/// Get updates using the mmap index with parallel version comparison
-/// This is the ULTRA-FAST path that avoids loading the entire index into memory
+/// Get updates using the mmap index with parallel version comparison.
+///
+/// This is the ultra-fast path that avoids loading the entire index into
+/// memory: installed versions are compared against the mmap index with rayon.
 #[expect(clippy::implicit_hasher)]
+///
+/// # Errors
+/// Fails when the mmap index is not loaded (call [`ensure_mmap_loaded`]
+/// first) or the archived index fails validation.
 pub fn get_updates_from_mmap(
     installed_map: &std::collections::HashMap<&str, &str>,
 ) -> Result<Vec<(String, String, String)>> {
@@ -1844,68 +1847,58 @@ pub fn get_updates_from_mmap(
     Ok(updates)
 }
 
+/// Split a dpkg-style control file into paragraphs separated by blank lines.
+/// The final paragraph needs no trailing blank line.
+fn status_paragraphs(content: &str) -> impl Iterator<Item = &str> {
+    content.split("\n\n")
+}
+
 fn dependencies_from_status(content: &str, package_name: &str) -> (Vec<String>, Vec<String>) {
     let mut dependencies = Vec::new();
     let mut reverse_deps = Vec::new();
-    let mut current_pkg = String::new();
-    let mut current_deps = Vec::new();
-    let mut in_target = false;
 
-    for line in content.lines() {
-        if line.is_empty() {
-            close_dependency_paragraph(
-                package_name,
-                &mut dependencies,
-                &mut reverse_deps,
-                &mut current_pkg,
-                &mut current_deps,
-                &mut in_target,
-            );
-        } else if let Some(pkg) = line.strip_prefix("Package: ") {
-            current_pkg = pkg.trim().to_string();
-            in_target = current_pkg == package_name;
-        } else if let Some(deps_str) = line.strip_prefix("Depends: ") {
-            for dep in deps_str.split(',') {
-                let dep_name = dep.split_whitespace().next().unwrap_or("");
-                if !dep_name.is_empty() {
-                    current_deps.push(dep_name.to_string());
-                }
+    for paragraph in status_paragraphs(content) {
+        let mut current_pkg = String::new();
+        let mut current_deps = Vec::new();
+
+        for line in paragraph.lines() {
+            if let Some(pkg) = line.strip_prefix("Package: ") {
+                current_pkg = pkg.trim().to_string();
+            } else if let Some(deps_str) = line.strip_prefix("Depends: ") {
+                append_dependency_names(deps_str, &mut current_deps);
             }
         }
-    }
 
-    close_dependency_paragraph(
-        package_name,
-        &mut dependencies,
-        &mut reverse_deps,
-        &mut current_pkg,
-        &mut current_deps,
-        &mut in_target,
-    );
+        if current_pkg == package_name {
+            dependencies = current_deps;
+        } else if !current_pkg.is_empty() && current_deps.iter().any(|dep| dep == package_name) {
+            reverse_deps.push(current_pkg);
+        }
+    }
 
     (dependencies, reverse_deps)
 }
 
-fn close_dependency_paragraph(
-    package_name: &str,
-    dependencies: &mut Vec<String>,
-    reverse_deps: &mut Vec<String>,
-    current_pkg: &mut String,
-    current_deps: &mut Vec<String>,
-    in_target: &mut bool,
-) {
-    if *in_target {
-        *dependencies = std::mem::take(current_deps);
-    } else if !current_pkg.is_empty() && current_deps.iter().any(|dep| dep == package_name) {
-        reverse_deps.push(std::mem::take(current_pkg));
+/// Extract dependency package names from a `Depends:`/`Pre-Depends:` value,
+/// stripping version constraints and multi-arch qualifiers and taking the
+/// first alternative of `|` groups.
+fn append_dependency_names(value: &str, out: &mut Vec<String>) {
+    for dep in value.split(',') {
+        let dep = dep.split('|').next().unwrap_or("");
+        if let Some(dep_name) = dep.split_whitespace().next() {
+            let dep_name = dep_name.split(':').next().unwrap_or(dep_name);
+            if !dep_name.is_empty() {
+                out.push(dep_name.to_string());
+            }
+        }
     }
-    current_pkg.clear();
-    current_deps.clear();
-    *in_target = false;
 }
 
-/// Get package dependencies from `/var/lib/dpkg/status`
-/// Returns `(dependencies, reverse_dependencies)` for the specified package
+/// Get package dependencies from `/var/lib/dpkg/status`.
+///
+/// Returns `(dependencies, reverse_dependencies)` for the specified package.
+///
+/// # Errors
 pub fn get_package_dependencies(package_name: &str) -> Result<(Vec<String>, Vec<String>)> {
     if crate::core::paths::test_mode() {
         return Ok((vec!["libc6".to_string()], vec![]));
@@ -1927,20 +1920,50 @@ fn parse_installed_size_kb(size_str: &str, package_name: &str) -> Result<i64> {
         .with_context(|| format!("invalid Installed-Size for {package_name}: {size_str}"))
 }
 
+/// Installed-Size is recorded in KiB; convert to bytes with overflow checks.
+fn status_size_bytes(size_str: &str, package_name: &str) -> Result<i64> {
+    let size_kb = parse_installed_size_kb(size_str, package_name)?;
+    size_kb
+        .checked_mul(1024)
+        .with_context(|| format!("Installed-Size overflow for {package_name}: {size_str}"))
+}
+
 fn package_size_from_status(content: &str, package_name: &str) -> Result<Option<i64>> {
-    let mut in_package = false;
-    for line in content.lines() {
-        if line.is_empty() {
-            in_package = false;
-        } else if let Some(pkg) = line.strip_prefix("Package: ") {
-            in_package = pkg.trim() == package_name;
-        } else if in_package && let Some(size_str) = line.strip_prefix("Installed-Size: ") {
-            let size_kb = parse_installed_size_kb(size_str, package_name)?;
-            return Ok(Some(size_kb * 1024));
+    for paragraph in status_paragraphs(content) {
+        let mut in_package = false;
+        for line in paragraph.lines() {
+            if let Some(pkg) = line.strip_prefix("Package: ") {
+                in_package = pkg.trim() == package_name;
+            } else if in_package && let Some(size_str) = line.strip_prefix("Installed-Size: ") {
+                return Ok(Some(status_size_bytes(size_str, package_name)?));
+            }
         }
     }
 
     Ok(None)
+}
+
+fn packages_with_sizes_from_status(content: &str) -> Result<Vec<(String, i64)>> {
+    let mut results = Vec::new();
+
+    for paragraph in status_paragraphs(content) {
+        let mut current_pkg = String::new();
+        let mut current_size: i64 = 0;
+
+        for line in paragraph.lines() {
+            if let Some(pkg) = line.strip_prefix("Package: ") {
+                current_pkg = pkg.trim().to_string();
+            } else if let Some(size_str) = line.strip_prefix("Installed-Size: ") {
+                current_size = status_size_bytes(size_str, &current_pkg)?;
+            }
+        }
+
+        if !current_pkg.is_empty() && current_size > 0 {
+            results.push((current_pkg, current_size));
+        }
+    }
+
+    Ok(results)
 }
 
 /// Get package size from `/var/lib/dpkg/status`.
@@ -1957,33 +1980,6 @@ pub fn get_package_size(package_name: &str) -> Result<Option<i64>> {
 
     let content = fs::read_to_string(status_path)?;
     package_size_from_status(&content, package_name)
-}
-
-fn packages_with_sizes_from_status(content: &str) -> Result<Vec<(String, i64)>> {
-    let mut results = Vec::new();
-    let mut current_pkg = String::new();
-    let mut current_size: i64 = 0;
-
-    for line in content.lines() {
-        if line.is_empty() {
-            if !current_pkg.is_empty() && current_size > 0 {
-                results.push((std::mem::take(&mut current_pkg), current_size));
-            }
-            current_pkg.clear();
-            current_size = 0;
-        } else if let Some(pkg) = line.strip_prefix("Package: ") {
-            current_pkg = pkg.trim().to_string();
-        } else if let Some(size_str) = line.strip_prefix("Installed-Size: ") {
-            let size_kb = parse_installed_size_kb(size_str, &current_pkg)?;
-            current_size = size_kb * 1024;
-        }
-    }
-
-    if !current_pkg.is_empty() && current_size > 0 {
-        results.push((current_pkg, current_size));
-    }
-
-    Ok(results)
 }
 
 /// Get all packages with their sizes from `/var/lib/dpkg/status`
@@ -2005,39 +2001,8 @@ pub fn get_all_packages_with_sizes() -> Result<Vec<(String, i64)>> {
     packages_with_sizes_from_status(&content)
 }
 
-fn installed_version_from_status(content: &str, package_name: &str) -> Option<String> {
-    let mut in_package = false;
-    let mut is_installed = false;
-    let mut version = None;
-
-    for line in content.lines() {
-        if line.is_empty() {
-            if in_package && is_installed {
-                return version;
-            }
-            in_package = false;
-            is_installed = false;
-            version = None;
-        } else if let Some(pkg) = line.strip_prefix("Package: ") {
-            in_package = pkg.trim() == package_name;
-        } else if in_package {
-            if let Some(ver) = line.strip_prefix("Version: ") {
-                version = Some(ver.trim().to_string());
-            } else if line.starts_with("Status: ") && line.contains("installed") {
-                is_installed = true;
-            }
-        }
-    }
-
-    if in_package && is_installed {
-        version
-    } else {
-        None
-    }
-}
-
 /// Get package version from /var/lib/dpkg/status
-/// Returns None if package is not installed
+/// Returns None if the package is not installed
 pub fn get_package_version(package_name: &str) -> Result<Option<String>> {
     if crate::core::paths::test_mode() {
         return Ok(Some("1.0.0".to_string()));
@@ -2050,6 +2015,32 @@ pub fn get_package_version(package_name: &str) -> Result<Option<String>> {
 
     let content = fs::read_to_string(status_path)?;
     Ok(installed_version_from_status(&content, package_name))
+}
+
+fn installed_version_from_status(content: &str, package_name: &str) -> Option<String> {
+    for paragraph in status_paragraphs(content) {
+        let mut in_package = false;
+        let mut is_installed = false;
+        let mut version = None;
+
+        for line in paragraph.lines() {
+            if let Some(pkg) = line.strip_prefix("Package: ") {
+                in_package = pkg.trim() == package_name;
+            } else if in_package {
+                if let Some(ver) = line.strip_prefix("Version: ") {
+                    version = Some(ver.trim().to_string());
+                } else if line.starts_with("Status: ") && line.contains("installed") {
+                    is_installed = true;
+                }
+            }
+        }
+
+        if in_package && is_installed {
+            return version;
+        }
+    }
+
+    None
 }
 
 /// Load APT Auto-Installed names from `extended_states`.
@@ -2163,52 +2154,27 @@ fn build_dependency_map() -> Result<HashMap<String, Vec<String>>> {
     let content = fs::read_to_string(status_path)?;
     let mut dep_map = HashMap::new();
 
-    let mut current_pkg = String::new();
-    let mut current_deps = Vec::new();
-    let mut is_installed = false;
+    for paragraph in status_paragraphs(&content) {
+        let mut current_pkg = String::new();
+        let mut current_deps: Vec<String> = Vec::new();
+        let mut is_installed = false;
 
-    for line in content.lines() {
-        if line.is_empty() {
-            // End of paragraph
-            if is_installed && !current_pkg.is_empty() && !current_deps.is_empty() {
-                dep_map.insert(current_pkg.clone(), std::mem::take(&mut current_deps));
-            }
-            current_pkg.clear();
-            current_deps.clear();
-            is_installed = false;
-        } else if let Some(pkg) = line.strip_prefix("Package: ") {
-            current_pkg = pkg.trim().to_string();
-        } else if line.starts_with("Status: ") && line.contains("installed") {
-            is_installed = true;
-        } else if line.starts_with("Depends: ") || line.starts_with("Pre-Depends: ") {
-            // Extract dependency names (strip versions and multi-arch qualifiers)
-            let deps_str = if let Some(stripped) = line.strip_prefix("Depends: ") {
-                stripped
-            } else if let Some(stripped) = line.strip_prefix("Pre-Depends: ") {
-                stripped
-            } else {
-                continue;
-            };
-
-            for dep in deps_str.split(',') {
-                // Split on '|' for alternative dependencies (take first alternative)
-                let dep = dep.split('|').next().unwrap_or("");
-
-                // Extract package name (before version constraint or arch qualifier)
-                if let Some(dep_name) = dep.split_whitespace().next() {
-                    // Strip multi-arch qualifiers like :amd64, :any, :native
-                    let dep_name = dep_name.split(':').next().unwrap_or(dep_name);
-                    if !dep_name.is_empty() {
-                        current_deps.push(dep_name.to_string());
-                    }
-                }
+        for line in paragraph.lines() {
+            if let Some(pkg) = line.strip_prefix("Package: ") {
+                current_pkg = pkg.trim().to_string();
+            } else if line.starts_with("Status: ") && line.contains("installed") {
+                is_installed = true;
+            } else if let Some(deps_str) = line
+                .strip_prefix("Depends: ")
+                .or_else(|| line.strip_prefix("Pre-Depends: "))
+            {
+                append_dependency_names(deps_str, &mut current_deps);
             }
         }
-    }
 
-    // Handle last package
-    if is_installed && !current_pkg.is_empty() && !current_deps.is_empty() {
-        dep_map.insert(current_pkg, current_deps);
+        if is_installed && !current_pkg.is_empty() && !current_deps.is_empty() {
+            dep_map.insert(current_pkg, current_deps);
+        }
     }
 
     Ok(dep_map)
@@ -2268,11 +2234,15 @@ fn remove_deb_files(dir: &Path) -> Result<(usize, u64)> {
 mod tests {
     use super::*;
 
+    /// Serializes every test that mutates process-global `OMG_TEST_MODE`;
+    /// env vars are shared by all parallel test threads.
+    static ENV_LOCK: LazyLock<std::sync::Mutex<()>> = LazyLock::new(|| std::sync::Mutex::new(()));
+
     #[test]
     fn parse_paragraph_reads_required_and_numeric_fields() -> Result<()> {
         let paragraph = "Package: vim\nVersion: 2:9.1.0-1\nDescription: Vi IMproved - enhanced vi editor\nSection: editors\nPriority: optional\nInstalled-Size: 3500\n";
 
-        let package = parse_paragraph_str(paragraph, "main")?;
+        let package = parse_paragraph_str(paragraph, "main", "bookworm")?;
 
         assert_eq!(package.name, "vim");
         assert_eq!(package.version, "2:9.1.0-1");
@@ -2285,7 +2255,7 @@ mod tests {
     fn parse_paragraph_preserves_description_continuations() -> Result<()> {
         let paragraph = "Package: curl\nVersion: 8.5.0-1\nDescription: command line tool for transferring data\n curl is a tool to transfer data from or to a server\n .\n using one of the supported protocols.\nSection: net\n";
 
-        let package = parse_paragraph_str(paragraph, "main")?;
+        let package = parse_paragraph_str(paragraph, "main", "bookworm")?;
 
         assert_eq!(
             package.description,
@@ -2296,12 +2266,12 @@ mod tests {
 
     #[test]
     fn parse_paragraph_rejects_missing_package_name() {
-        assert!(parse_paragraph_str("Version: 1.0\n", "main").is_err());
+        assert!(parse_paragraph_str("Version: 1.0\n", "main", "bookworm").is_err());
     }
 
     #[test]
     fn parse_paragraph_rejects_invalid_numeric_fields() {
-        let error = parse_paragraph_str("Package: curl\nSize: many\n", "main")
+        let error = parse_paragraph_str("Package: curl\nSize: many\n", "main", "bookworm")
             .expect_err("a nonnumeric package size must be rejected");
 
         assert!(error.to_string().contains("Invalid Size value"));
@@ -2311,7 +2281,7 @@ mod tests {
     fn parse_paragraph_reads_multiline_dependencies() -> Result<()> {
         let paragraph = "Package: bash\nDepends: libc6 (>= 2.38),\n libreadline8 (>= 8.1), libtinfo6 | ncurses-term\n";
 
-        let package = parse_paragraph_str(paragraph, "main")?;
+        let package = parse_paragraph_str(paragraph, "main", "bookworm")?;
 
         assert_eq!(package.depends, ["libc6", "libreadline8", "libtinfo6"]);
         Ok(())
@@ -2364,6 +2334,7 @@ mod tests {
 
     #[test]
     fn test_clean_package_cache_test_mode() {
+        let _env = ENV_LOCK.lock().expect("env lock");
         // Enable test mode
         // SAFETY: Test-only code, no concurrent access to environment
         #[expect(unsafe_code)]
@@ -2384,6 +2355,7 @@ mod tests {
 
     #[test]
     fn test_list_orphans_test_mode() {
+        let _env = ENV_LOCK.lock().expect("env lock");
         // Enable test mode
         // SAFETY: Test-only code, no concurrent access to environment
         #[expect(unsafe_code)]
@@ -2537,6 +2509,7 @@ mod tests {
             sha256: "x".to_string(),
             homepage: "https://example.org".to_string(),
             component: "main".to_string(),
+            suite: "bookworm".to_string(),
         });
 
         idx.add_package(DebianPackage {
@@ -2554,6 +2527,7 @@ mod tests {
             sha256: "x".to_string(),
             homepage: "https://example.org".to_string(),
             component: "contrib".to_string(),
+            suite: "bookworm".to_string(),
         });
 
         idx.add_package(DebianPackage {
@@ -2571,6 +2545,7 @@ mod tests {
             sha256: "x".to_string(),
             homepage: "https://example.org".to_string(),
             component: "main".to_string(),
+            suite: "bookworm".to_string(),
         });
 
         let by_name = idx.get_query("bash").expect("name lookup");
@@ -2588,6 +2563,7 @@ mod tests {
 
     #[test]
     fn is_installed_fast_test_mode_returns_ok_for_known_and_unknown() {
+        let _env = ENV_LOCK.lock().expect("env lock");
         // SAFETY: Test-only code, no concurrent access to environment
         #[expect(unsafe_code)]
         unsafe {
@@ -2781,5 +2757,38 @@ mod tests {
         assert_eq!(freed, 3);
         assert!(!deb.exists());
         assert!(other.exists());
+    }
+    #[test]
+    fn partial_installed_set_must_not_answer_queries() {
+        // Regression: a single-name scan insert used to poison the cache and
+        // make every other installed package report as not installed.
+        let mut cache = DpkgStatusCache::default();
+        cache.installed_set.insert("curl".to_string());
+        assert_eq!(
+            cached_installed_state(&cache, "vim"),
+            None,
+            "partial cache must fall through to a full population"
+        );
+
+        cache.packages.push(DpkgPackageEntry {
+            name: "curl".to_string(),
+            version: "1.0".to_string(),
+            description: String::new(),
+            architecture: "amd64".to_string(),
+            is_explicit: true,
+        });
+        assert_eq!(cached_installed_state(&cache, "curl"), Some(true));
+        assert_eq!(cached_installed_state(&cache, "vim"), Some(false));
+    }
+
+    #[test]
+    fn extract_suite_from_lists_filename() {
+        let p = Path::new(
+            "/var/lib/apt/lists/deb.debian.org_debian_dists_bookworm-updates_main_binary-amd64_Packages",
+        );
+        assert_eq!(extract_suite_from_path(p), "bookworm-updates");
+
+        let flat = Path::new("/var/lib/apt/lists/some-repo_amd64_Packages");
+        assert_eq!(extract_suite_from_path(flat), "");
     }
 }

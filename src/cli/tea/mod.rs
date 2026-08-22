@@ -56,7 +56,7 @@
 //!     fn update(&mut self, msg: MyMsg) -> Cmd<MyMsg> {
 //!         match msg {
 //!             MyMsg::Increment => self.count += 1,
-//!             MyMsg::Decrement => self.count -= 1,
+//!             MyMsg::Decrement => self.count = self.count.saturating_sub(1),
 //!         }
 //!         Cmd::none()
 //!     }
@@ -82,7 +82,7 @@ mod status_model;
 mod update_model;
 mod wrappers;
 
-pub use cmd::{Cmd, cmd};
+pub use cmd::Cmd;
 pub use renderer::Renderer;
 
 // Re-export configuration types for convenience
@@ -185,29 +185,12 @@ impl<M: Model> Program<M> {
         // Render final view
         self.render()?;
 
-        // Process any pending commands
-        while let Some(cmd) = self.next_cmd()? {
-            self.process_cmd(cmd)?;
-            self.render()?;
-        }
-
         Ok(())
-    }
-
-    /// Run the program with a custom renderer
-    pub fn run_with_renderer(mut self, renderer: Renderer) -> io::Result<()> {
-        self.renderer = renderer;
-        self.run()
     }
 
     /// Get a mutable reference to the model
     pub fn model(&mut self) -> &mut M {
         &mut self.model
-    }
-
-    /// Get a reference to the model
-    pub const fn get_model(&self) -> &M {
-        &self.model
     }
 
     /// Process a single command
@@ -253,32 +236,32 @@ impl<M: Model> Program<M> {
             Cmd::Card(title, content) => {
                 self.renderer.card(&title, &content)?;
             }
-            Cmd::Progress(_config) => {
-                // Progress bars are handled by the renderer's progress tracking
-                // For now, we just acknowledge them - the renderer manages the state
-            }
-            Cmd::Spinner(_config) => {
-                // Spinners are handled by the renderer's progress tracking
-                // For now, we just acknowledge them - the renderer manages the state
+            Cmd::Progress(_) | Cmd::Spinner(_) => {
+                // NOT SUPPORTED by this synchronous renderer: progress bars and
+                // spinners require an event loop this runtime does not have.
+                // Models must use `Cmd::Info`/`Cmd::Card` for progress feedback.
+                tracing::debug!("Progress/Spinner command ignored by synchronous renderer");
             }
             Cmd::Table(config) => {
-                // Tables would need specialized handling in the renderer
-                // For now, fall back to simple rendering
-                tracing::debug!("Table config: {:?}", config);
+                // No table renderer exists; emit rows as plain lines so the
+                // content is never silently swallowed.
+                self.renderer.header(&config.headers.join(" | "), "")?;
+                for row in &config.rows {
+                    self.renderer.println(&row.join(" | "))?;
+                }
             }
             Cmd::StyledText(config) => {
-                // Styled text would need the LipGlossRenderer
-                // For now, just print the text
-                tracing::debug!("Styled text: {}", config.text);
+                // No style renderer in this path; print the text so it is not
+                // silently dropped (matches the fallback renderer behavior).
+                self.renderer.println(&config.text)?;
             }
             Cmd::Panel(config) => {
-                // Panels would need specialized handling in the renderer
-                // For now, fall back to simple rendering
                 if let Some(title) = &config.title {
-                    tracing::debug!("Panel: {}", title);
+                    self.renderer.println(title)?;
                 }
+                let pad = " ".repeat(config.padding);
                 for line in &config.content {
-                    tracing::debug!("{}{}", " ".repeat(config.padding), line);
+                    self.renderer.println(&format!("{pad}{line}"))?;
                 }
             }
             Cmd::Spacer => {
@@ -286,14 +269,6 @@ impl<M: Model> Program<M> {
             }
         }
         Ok(())
-    }
-
-    /// Check if there are more commands to process
-    #[expect(clippy::unnecessary_wraps, clippy::unused_self)] // Placeholder: signature matches Tea trait contract for future command queue
-    fn next_cmd(&self) -> io::Result<Option<Cmd<M::Msg>>> {
-        // For now, we process commands synchronously
-        // In the future, this could check a queue or channel
-        Ok(None)
     }
 
     /// Render the current view

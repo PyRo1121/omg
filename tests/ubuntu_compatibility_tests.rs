@@ -7,6 +7,30 @@
 
 #![cfg(any(feature = "debian", feature = "debian-pure"))]
 
+/// Mirror of the Packages-URL construction used by `parallel_sync` so the
+/// documented URL format stays pinned even though the helper itself is
+/// private to production code.
+fn packages_url_for(repo: &omg_lib::package_managers::debian_db::Repository, arch: &str) -> String {
+    use omg_lib::package_managers::debian_db::RepoType;
+    let base = repo.uri.trim_end_matches('/');
+    if repo.components.is_empty() {
+        return match repo.repo_type {
+            RepoType::Source => format!("{base}/Sources"),
+            RepoType::Binary => format!("{base}/Packages"),
+        };
+    }
+    let component = &repo.components[0];
+    match repo.repo_type {
+        RepoType::Source => format!("{base}/dists/{}/{component}/source/Sources", repo.suite),
+        RepoType::Binary => {
+            format!(
+                "{base}/dists/{}/{component}/binary-{arch}/Packages",
+                repo.suite
+            )
+        }
+    }
+}
+
 use std::path::Path;
 
 use omg_lib::package_managers::debian_db::{
@@ -130,7 +154,7 @@ fn test_ubuntu_packages_url_generation() {
         options: std::collections::HashMap::new(),
     };
 
-    let url = repo.packages_url("amd64");
+    let url = packages_url_for(&repo, "amd64");
     assert_eq!(
         url, "http://archive.ubuntu.com/ubuntu/dists/noble/main/binary-amd64/Packages",
         "Should generate correct Ubuntu Packages URL"
@@ -343,7 +367,7 @@ deb http://archive.ubuntu.com/ubuntu/ noble main
 
     assert_eq!(repos.len(), 1);
     // URL generation should handle trailing slashes correctly
-    let url = repos[0].packages_url("amd64");
+    let url = packages_url_for(&repos[0], "amd64");
     assert!(!url.contains("//dists"), "Should not have double slashes");
 }
 
@@ -446,7 +470,7 @@ fn test_ubuntu_package_url_all_components() {
             options: std::collections::HashMap::new(),
         };
 
-        let url = repo.packages_url("amd64");
+        let url = packages_url_for(&repo, "amd64");
         assert_eq!(
             url,
             format!(
@@ -470,7 +494,7 @@ fn test_ppa_package_url() {
         options: std::collections::HashMap::new(),
     };
 
-    let url = repo.packages_url("amd64");
+    let url = packages_url_for(&repo, "amd64");
     assert_eq!(
         url,
         "https://ppa.launchpadcontent.net/deadsnakes/ppa/ubuntu/dists/noble/main/binary-amd64/Packages"

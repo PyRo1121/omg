@@ -29,6 +29,70 @@ path = "src/bin/omgd.rs"
 name = "omg-fast"
 path = "src/bin/omg-fast.rs"
 
+# Criterion benchmarks. Each target defines its own entry point via
+# `criterion_main!`, so every one MUST declare `harness = false`; with the
+# default libtest harness rustc skips its injected main and criterion never
+# executes (cargo bench would silently run 0 benchmarks).
+[[bench]]
+name = "bloom_filter_bench"
+harness = false
+
+[[bench]]
+name = "count_bench"
+harness = false
+
+[[bench]]
+name = "daemon_benchmark"
+harness = false
+
+[[bench]]
+name = "debian_bench"
+harness = false
+
+[[bench]]
+name = "debian_core_bench"
+harness = false
+
+[[bench]]
+name = "decompression_bench"
+harness = false
+
+[[bench]]
+name = "install_bench"
+harness = false
+
+[[bench]]
+name = "io_bench"
+harness = false
+
+[[bench]]
+name = "package_operations"
+harness = false
+
+[[bench]]
+name = "pacman_comparison"
+harness = false
+
+[[bench]]
+name = "parallel_bench"
+harness = false
+
+[[bench]]
+name = "real_world_benchmark"
+harness = false
+
+# ----------------------------------------------------------------------------
+# Version pinning policy
+# - crates.io deps use caret requirements; the committed Cargo.lock is the
+#   reproducibility authority. Bump ranges deliberately and review lockfile
+#   diffs (unexpected duplicates, new proc macros, new build scripts).
+# - The archlinux/alpm git family is pinned by exact version (`=`) AND full
+#   commit rev for supply-chain integrity. Updates require a deliberate rev
+#   bump applied to ALL five alpm-* entries together (same repo commit).
+# - sequoia-openpgp is intentionally a pre-release (PQC) build with
+#   experimental/variable-time crypto enabled: acceptable because OMG uses it
+#   only for public-key SIGNATURE VERIFICATION, never private-key decryption.
+# ----------------------------------------------------------------------------
 [dependencies]
 
 # CLI Framework
@@ -282,6 +346,23 @@ debug = true
 incremental = true
 split-debuginfo = "unpacked" # Faster linking on Linux
 
+# ----------------------------------------------------------------------------
+# Feature policy
+#
+# Platform features (arch / debian / debian-pure / fedora / macos) are additive
+# and designed to compose. `pgp` gates signature verification
+# (sequoia-openpgp); `license` gates subscription-tier features.
+#
+# PRODUCT DECISION (Wave-2 review F03): release.yml currently ships the Debian
+# binary with `--no-default-features --features debian`, i.e. WITHOUT `pgp`
+# and WITHOUT `license`, while Fedora/macOS ship both and Arch inherits the
+# full default set. This is intentional only if Debian packages must stay
+# free of the GPL/AGPL-heavy PGP stack or subscription code; it is documented
+# here rather than silently changed. To give Debian parity, change the two
+# Debian build lines in .github/workflows/release.yml to
+#   --no-default-features --features debian,pgp,license
+# and add `license` to the debian entries in .github/workflows/ci.yml.
+# ----------------------------------------------------------------------------
 [features]
 default = ["arch", "license", "pgp"]
 arch = [
@@ -292,7 +373,9 @@ arch = [
   "alpm-repo-db",
   "alpm-pkginfo",
 ]
-pgp = ["sequoia-openpgp"] # Optional PGP verification (requires Rust 1.80+)
+# Optional PGP verification of package signatures (sequoia-openpgp).
+# Built against the MSRV pinned in rust-toolchain.toml / package.rust-version.
+pgp = ["sequoia-openpgp"]
 
 # Debian/Ubuntu support - unified feature
 # Requires libapt-pkg-dev: `apt install libapt-pkg-dev`
@@ -311,16 +394,17 @@ license = [
 ] # Enable license/subscription features (Pro, Team, Enterprise tiers)
 proptest = [] # Enable property-based tests
 docker_tests = [] # Enable tests that require running as root (e.g. in Docker)
-sequoia-openpgp = ["dep:sequoia-openpgp"]
 
 # ============================================================================
-# Rust 1.93 / Edition 2024 Lint Configuration
+# Lint Configuration (Rust 1.93 / Edition 2024)
 # ============================================================================
 [lints.rust]
-# Warn on unsafe code blocks to encourage review
+# Kept at "warn" instead of "forbid": src/ contains a small amount of reviewed
+# unsafe (memmap2 Mmap::map in package_managers/debian_db/db.rs and similar
+# zero-copy read paths). Each site carries a SAFETY contract; raising to
+# "forbid" requires isolating that unsafe behind a dedicated low-level module
+# (RUST-CODING-STANDARDS §7) and is tracked for a source-scope wave.
 unsafe_code = "warn"
-# Prepare for Edition 2024 migration
-rust_2024_compatibility = { level = "warn", priority = -1 }
 
 [lints.clippy]
 # Enable pedantic lints as warnings (production-ready baseline)

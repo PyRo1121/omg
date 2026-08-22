@@ -7,7 +7,10 @@
 //! Features:
 //! - Async with tokio
 //! - Graceful error handling with retry queue
-//! - Only sends when user has opted in (license key exists)
+//! - Only sends when the user has a signed, unexpired license token
+//!
+//! Retry pacing is enforced by the circuit breaker plus a bounded flush
+//! budget ([`RETRY_FLUSH_BUDGET`]); there is no per-attempt sleep.
 
 use std::collections::VecDeque;
 use std::sync::Mutex;
@@ -22,17 +25,18 @@ use crate::core::license::get_machine_id;
 const EVENT_API_URL: &str = "https://api.pyro1121.com/api/cli/event";
 const BATCH_API_URL: &str = "https://api.pyro1121.com/api/cli/batch";
 const MAX_RETRY_QUEUE_SIZE: usize = 500;
-const REQUEST_TIMEOUT: Duration = Duration::from_secs(5); // Reduced for faster failure detection
+const REQUEST_TIMEOUT: Duration = Duration::from_secs(5);
 const MAX_RETRIES: u32 = 3;
 
 // Circuit breaker constants
 const CIRCUIT_FAILURE_THRESHOLD: u32 = 5; // Open circuit after 5 consecutive failures
 const CIRCUIT_OPEN_DURATION_SECS: u64 = 300; // Stay open for 5 minutes (300s)
 
-// Exponential backoff constants
-const BASE_DELAY_MS: u64 = 1000; // 1 second base delay
-const MAX_DELAY_MS: u64 = 60000; // 60 seconds max delay
-const JITTER_PERCENT: u64 = 25; // ±25% jitter
+/// Upper bound on time spent draining the retry queue per flush. Flushing
+/// runs on CLI-exit paths (`end_session_and_flush`), so the drain must stay
+/// far shorter than a user's patience; events that do not fit stay queued
+/// for the next flush.
+const RETRY_FLUSH_BUDGET: Duration = Duration::from_secs(2);
 
 /// Circuit breaker states: 0 = Closed, 1 = Open, 2 = Half-Open
 static CIRCUIT_STATE: AtomicU32 = AtomicU32::new(0);
@@ -259,31 +263,8 @@ fn record_failure() {
     }
 }
 
-/// Calculate exponential backoff delay with jitter
-/// Formula: `min(BASE_DELAY * 2^attempt, MAX_DELAY) ± jitter`
-fn calculate_backoff_delay(attempt: u32) -> Duration {
-    // Calculate base delay: 1s * 2^attempt
-    let base_delay = BASE_DELAY_MS.saturating_mul(2_u64.saturating_pow(attempt));
-
-    // Cap at max delay
-    let capped_delay = base_delay.min(MAX_DELAY_MS);
-
-    // Add jitter: ±25% of the delay
-    let jitter_range = capped_delay * JITTER_PERCENT / 100;
-    let jitter = fastrand::u64(0..=jitter_range * 2); // 0 to 2*jitter_range
-    let jitter_offset = jitter.saturating_sub(jitter_range); // -jitter_range to +jitter_range
-
-    let final_delay = capped_delay.saturating_add(jitter_offset as u64);
-
-    tracing::debug!(
-        "Backoff attempt {attempt}: {final_delay}ms (base={capped_delay}ms, jitter=±{jitter_range}ms)"
-    );
-    Duration::from_millis(final_delay)
-}
-
-/// Check if telemetry should be sent (user opted in via license)
-#[must_use]
-pub fn should_send_telemetry() -> bool {
+/// Check if telemetry should be sent (signed license token present)
+fn should_send_telemetry() -> bool {
     // Only send telemetry if:
     // 1. User has a license (opted in)
     // 2. Telemetry is not explicitly disabled
@@ -300,32 +281,19 @@ pub fn should_send_telemetry() -> bool {
     crate::core::license::load_license().is_some_and(|license| license.is_token_valid())
 }
 
-/// Send a single telemetry event
-pub async fn send_event(event: TelemetryEvent) -> Result<()> {
-    if !should_send_telemetry() {
-        return Ok(());
-    }
-
-    let payload = TelemetryPayload::new(event);
-    send_event_internal(payload).await
-}
-
-/// Internal event sending with retry logic, circuit breaker, and exponential backoff
-async fn send_event_internal(payload: TelemetryPayload) -> Result<()> {
+/// Attempt to send one telemetry event.
+///
+/// This is deliberately infallible: telemetry failures are never propagated
+/// as errors. Every failure path updates the circuit breaker and queues the
+/// payload for a later retry instead.
+async fn send_event_internal(payload: TelemetryPayload) {
     // Check circuit breaker state
     let circuit_state = check_circuit_breaker();
 
     if circuit_state == CircuitState::Open {
         tracing::debug!("Circuit breaker is open, queuing event locally");
         queue_for_retry(payload);
-        return Ok(());
-    }
-
-    // Apply exponential backoff if this is a retry
-    if payload.retries > 0 {
-        let delay = calculate_backoff_delay(payload.retries);
-        tracing::debug!("Applying backoff delay: {}ms", delay.as_millis());
-        tokio::time::sleep(delay).await;
+        return;
     }
 
     let client = crate::core::http::shared_client();
@@ -341,19 +309,16 @@ async fn send_event_internal(payload: TelemetryPayload) -> Result<()> {
         Ok(resp) if resp.status().is_success() => {
             tracing::debug!("Telemetry event sent successfully");
             record_success();
-            Ok(())
         }
         Ok(resp) => {
             tracing::debug!("Telemetry event failed with status: {}", resp.status());
             record_failure();
             queue_for_retry(payload);
-            Ok(())
         }
         Err(e) => {
             tracing::debug!("Telemetry event send error: {e}");
             record_failure();
             queue_for_retry(payload);
-            Ok(())
         }
     }
 }
@@ -374,6 +339,70 @@ fn queue_for_retry(mut payload: TelemetryPayload) {
         }
         queue.push_back(payload);
     }
+}
+
+/// Remove the oldest queued payload.
+fn pop_retry_queue() -> Option<TelemetryPayload> {
+    RETRY_QUEUE
+        .lock()
+        .ok()
+        .and_then(|mut queue| queue.pop_front())
+}
+
+/// Return a payload to the front of the retry queue with its retry count
+/// preserved. Used when the flush budget runs out so un-sent events are
+/// retried first on the next flush.
+fn push_retry_queue_front(payload: TelemetryPayload) {
+    if let Ok(mut queue) = RETRY_QUEUE.lock() {
+        if queue.len() >= MAX_RETRY_QUEUE_SIZE {
+            return; // Queue is full; drop rather than evict newer events.
+        }
+        queue.push_front(payload);
+    }
+}
+
+/// Drain queued retry events within [`RETRY_FLUSH_BUDGET`].
+///
+/// Events are sent one at a time, each capped at the remaining budget. When
+/// the budget is exhausted (or a single request would exceed it), the
+/// un-sent event is returned to the *front* of the queue with its retry
+/// count preserved and the rest of the queue is left untouched. At most one
+/// event can be duplicated in the rare case where a request succeeds
+/// server-side but exceeds the time budget.
+async fn drain_retry_queue_within_budget() {
+    let deadline = tokio::time::Instant::now() + RETRY_FLUSH_BUDGET;
+    loop {
+        if check_circuit_breaker() == CircuitState::Open {
+            tracing::debug!("Circuit breaker is open; leaving retry queue untouched");
+            return;
+        }
+        let Some(payload) = pop_retry_queue() else {
+            return;
+        };
+        let remaining = deadline.saturating_duration_since(tokio::time::Instant::now());
+        if remaining.is_zero() {
+            push_retry_queue_front(payload);
+            return;
+        }
+        match tokio::time::timeout(remaining, send_event_internal(payload.clone())).await {
+            Ok(()) => {}
+            Err(_elapsed) => {
+                tracing::debug!("Retry flush budget exhausted; returning event to queue");
+                push_retry_queue_front(payload);
+                return;
+            }
+        }
+    }
+}
+
+/// Flush retry queue (called periodically or on exit)
+pub async fn flush_retry_queue() -> Result<()> {
+    if !should_send_telemetry() {
+        return Ok(());
+    }
+
+    drain_retry_queue_within_budget().await;
+    Ok(())
 }
 
 /// Send batched telemetry events with circuit breaker support
@@ -431,174 +460,12 @@ pub async fn send_batch(events: Vec<TelemetryEvent>) -> Result<()> {
     }
 }
 
-/// Flush retry queue (called periodically or on exit)
-pub async fn flush_retry_queue() -> Result<()> {
-    if !should_send_telemetry() {
-        return Ok(());
-    }
-
-    let payloads: Vec<TelemetryPayload> = {
-        if let Ok(mut queue) = RETRY_QUEUE.lock() {
-            queue.drain(..).collect()
-        } else {
-            Vec::new()
-        }
-    };
-
-    if payloads.is_empty() {
-        return Ok(());
-    }
-
-    tracing::debug!("Flushing {} events from retry queue", payloads.len());
-    for payload in payloads {
-        send_event_internal(payload).await?;
-    }
-    Ok(())
-}
-
-/// Send command telemetry event
-#[inline]
-pub async fn track_command(
-    command: &str,
-    subcommand: Option<&str>,
-    packages: Option<&[String]>,
-    duration_ms: u64,
-    success: bool,
-    error: Option<&str>,
-) {
-    let event = TelemetryEvent::Command(CommandEvent {
-        command: command.to_string(),
-        subcommand: subcommand.map(String::from),
-        packages: packages.map(<[String]>::to_vec),
-        duration_ms,
-        success,
-        error: error.map(String::from),
-        result_count: None,
-        updated_count: None,
-    });
-
-    if let Err(e) = send_event(event).await {
-        tracing::debug!("Failed to send command telemetry: {e}");
-    }
-}
-
-/// Send search telemetry event
-#[inline]
-pub async fn track_search(query: &str, result_count: usize, duration_ms: u64, success: bool) {
-    let event = TelemetryEvent::Command(CommandEvent {
-        command: "search".to_string(),
-        subcommand: None,
-        packages: Some(vec![query.to_string()]),
-        duration_ms,
-        success,
-        error: None,
-        result_count: Some(result_count),
-        updated_count: None,
-    });
-
-    if let Err(e) = send_event(event).await {
-        tracing::debug!("Failed to send search telemetry: {e}");
-    }
-}
-
-/// Send update telemetry event
-#[inline]
-pub async fn track_update(
-    updated_count: usize,
-    duration_ms: u64,
-    success: bool,
-    error: Option<&str>,
-) {
-    let event = TelemetryEvent::Command(CommandEvent {
-        command: "update".to_string(),
-        subcommand: None,
-        packages: None,
-        duration_ms,
-        success,
-        error: error.map(String::from),
-        result_count: None,
-        updated_count: Some(updated_count),
-    });
-
-    if let Err(e) = send_event(event).await {
-        tracing::debug!("Failed to send update telemetry: {e}");
-    }
-}
-
-/// Send performance telemetry event
-#[inline]
-pub async fn track_performance(metric_type: &str, duration_ms: u64, context: Option<&str>) {
-    let event = TelemetryEvent::Performance(PerformanceEvent {
-        metric_type: metric_type.to_string(),
-        duration_ms,
-        context: context.map(String::from),
-    });
-
-    if let Err(e) = send_event(event).await {
-        tracing::debug!("Failed to send performance telemetry: {e}");
-    }
-}
-
-/// Send feature usage telemetry event
-#[inline]
-pub async fn track_feature(feature: &str, enabled: bool, metadata: Option<serde_json::Value>) {
-    let event = TelemetryEvent::Feature(FeatureEvent {
-        feature: feature.to_string(),
-        enabled,
-        metadata,
-    });
-
-    if let Err(e) = send_event(event).await {
-        tracing::debug!("Failed to send feature telemetry: {e}");
-    }
-}
-
-/// Send session start event
-pub async fn track_session_start(session_id: &str) {
-    let event = TelemetryEvent::Session(SessionEvent {
-        session_id: session_id.to_string(),
-        event_type: "start".to_string(),
-        start_time: Some(
-            jiff::Timestamp::now()
-                .strftime("%Y-%m-%dT%H:%M:%S%.3fZ")
-                .to_string(),
-        ),
-        end_time: None,
-        commands_run: None,
-        duration_secs: None,
-    });
-
-    if let Err(e) = send_event(event).await {
-        tracing::debug!("Failed to send session start telemetry: {e}");
-    }
-}
-
-/// Send session end event
-pub async fn track_session_end(session_id: &str, commands_run: u32, duration_secs: u64) {
-    let event = TelemetryEvent::Session(SessionEvent {
-        session_id: session_id.to_string(),
-        event_type: "end".to_string(),
-        start_time: None,
-        end_time: Some(
-            jiff::Timestamp::now()
-                .strftime("%Y-%m-%dT%H:%M:%S%.3fZ")
-                .to_string(),
-        ),
-        commands_run: Some(commands_run),
-        duration_secs: Some(duration_secs),
-    });
-
-    if let Err(e) = send_event(event).await {
-        tracing::debug!("Failed to send session end telemetry: {e}");
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
 
     #[test]
-    fn test_telemetry_payload_creation() {
+    fn payload_creation_fills_metadata() {
         let event = TelemetryEvent::Command(CommandEvent {
             command: "install".to_string(),
             subcommand: None,
@@ -620,7 +487,7 @@ mod tests {
     #[test]
     #[serial_test::serial]
     fn retry_queue_preserves_attempt_count() {
-        RETRY_QUEUE.lock().expect("retry queue").clear();
+        reset_retry_queue();
         let payload = TelemetryPayload {
             event: TelemetryEvent::Feature(FeatureEvent {
                 feature: "test".to_string(),
@@ -643,7 +510,7 @@ mod tests {
     }
 
     #[test]
-    fn test_command_event_serialization() {
+    fn command_event_serializes_payload_fields() {
         let event = CommandEvent {
             command: "search".to_string(),
             subcommand: None,
@@ -662,7 +529,7 @@ mod tests {
     }
 
     #[test]
-    fn test_session_event_serialization() {
+    fn session_event_serializes_session_fields() {
         let event = SessionEvent {
             session_id: "test-session-123".to_string(),
             event_type: "start".to_string(),
@@ -678,7 +545,7 @@ mod tests {
     }
 
     #[test]
-    fn test_circuit_breaker_state_transitions() {
+    fn circuit_breaker_state_transitions_match_threshold() {
         // Reset state
         CIRCUIT_STATE.store(CircuitState::Closed as u32, Ordering::Relaxed);
         FAILURE_COUNT.store(0, Ordering::Relaxed);
@@ -706,28 +573,101 @@ mod tests {
     }
 
     #[test]
-    fn test_exponential_backoff_calculation() {
-        // Attempt 0: 1s ± 25%
-        let delay0 = calculate_backoff_delay(0);
-        assert!(delay0.as_millis() >= 750 && delay0.as_millis() <= 1250);
+    #[serial_test::serial]
+    fn retry_queue_front_push_preserves_order_and_retries() {
+        reset_retry_queue();
+        let first = sample_payload(0);
+        let second = sample_payload(2);
+        queue_for_retry(first);
+        queue_for_retry(second);
 
-        // Attempt 1: 2s ± 25%
-        let delay1 = calculate_backoff_delay(1);
-        assert!(delay1.as_millis() >= 1500 && delay1.as_millis() <= 2500);
+        let head = sample_payload(9);
+        push_retry_queue_front(head);
 
-        // Attempt 2: 4s ± 25%
-        let delay2 = calculate_backoff_delay(2);
-        assert!(delay2.as_millis() >= 3000 && delay2.as_millis() <= 5000);
+        // Copy observations out under the guard so a failing assert cannot
+        // poison the shared mutex for the other serial tests.
+        let (front, back, len) = {
+            let queue = RETRY_QUEUE
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner);
+            (
+                queue.front().map(|p| p.retries),
+                queue.back().map(|p| p.retries),
+                queue.len(),
+            )
+        };
+        assert_eq!(front, Some(9));
+        assert_eq!(back, Some(3));
+        assert_eq!(len, 3);
+        reset_retry_queue();
+    }
 
-        // Attempt 10: Should be capped at 60s ± 25%
-        let delay10 = calculate_backoff_delay(10);
-        assert!(delay10.as_millis() >= 45000 && delay10.as_millis() <= 75000);
+    /// Clear the shared retry queue, recovering from poisoning so one
+    /// panicking test cannot break its serial successors.
+    fn reset_retry_queue() {
+        RETRY_QUEUE
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .clear();
     }
 
     #[test]
-    fn test_backoff_max_delay_cap() {
-        // Very high attempt number should be capped at MAX_DELAY_MS
-        let delay = calculate_backoff_delay(20);
-        assert!(delay.as_millis() <= u128::from(MAX_DELAY_MS) * 125 / 100); // Max + 25% jitter
+    #[serial_test::serial]
+    fn drain_leaves_queue_untouched_when_circuit_is_open() {
+        // Regression for the bounded retry flush: an open circuit must end
+        // the drain immediately without consuming or altering queued events.
+        reset_retry_queue();
+        CIRCUIT_STATE.store(CircuitState::Open as u32, Ordering::Relaxed);
+        FAILURE_COUNT.store(CIRCUIT_FAILURE_THRESHOLD, Ordering::Relaxed);
+        LAST_FAILURE.store(
+            u64::try_from(jiff::Timestamp::now().as_second()).unwrap_or(0),
+            Ordering::Relaxed,
+        );
+        HALF_OPEN_PROBE_IN_FLIGHT.store(false, Ordering::Relaxed);
+        queue_for_retry(sample_payload(1));
+        queue_for_retry(sample_payload(1));
+
+        let started = std::time::Instant::now();
+        // A current-thread runtime guarantees the drain observes this
+        // thread's circuit-breaker setup (Relaxed atomics are only
+        // same-thread coherent); a multi-thread runtime could poll the
+        // future on a worker with a stale view and hit the real network.
+        let runtime = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .expect("test runtime");
+        runtime.block_on(drain_retry_queue_within_budget());
+        let elapsed = started.elapsed();
+
+        let remaining = RETRY_QUEUE
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .len();
+        assert_eq!(remaining, 2);
+        assert!(
+            elapsed < RETRY_FLUSH_BUDGET,
+            "drain must return promptly when the circuit is open, took {elapsed:?}"
+        );
+
+        // Restore closed state and clear the queue for other tests.
+        record_success();
+        reset_retry_queue();
+    }
+
+    /// A minimal valid payload for retry-queue tests.
+    fn sample_payload(retries: u32) -> TelemetryPayload {
+        TelemetryPayload {
+            event: TelemetryEvent::Feature(FeatureEvent {
+                feature: "test".to_string(),
+                enabled: true,
+                metadata: None,
+            }),
+            timestamp: String::new(),
+            machine_id: String::new(),
+            version: String::new(),
+            platform: String::new(),
+            license_key: None,
+            retries,
+        }
     }
 }

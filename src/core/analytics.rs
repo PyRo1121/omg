@@ -18,6 +18,8 @@ use std::time::Instant;
 
 use std::sync::RwLock;
 
+use crate::core::telemetry::persist_best_effort;
+
 const ANALYTICS_API_URL: &str = "https://api.pyro1121.com/api/analytics";
 const MAX_RETRIES: u32 = 5;
 /// Maximum events in queue before oldest are drained
@@ -26,6 +28,10 @@ const MAX_EVENT_QUEUE_SIZE: usize = 1000;
 const EVENT_DRAIN_COUNT: usize = 500;
 /// Session inactivity timeout in seconds (30 minutes)
 const SESSION_TIMEOUT_SECS: i64 = 1800;
+/// Persist the queue after this many queued events
+const PERSIST_EVERY_N_EVENTS: u32 = 10;
+/// Persist the queue after this many seconds regardless of event count
+const PERSIST_INTERVAL_SECS: i64 = 30;
 
 /// Global state caches to avoid redundant disk I/O
 static SESSION_CACHE: OnceLock<RwLock<SessionState>> = OnceLock::new();
@@ -36,34 +42,11 @@ static SESSION_CACHE: OnceLock<RwLock<SessionState>> = OnceLock::new();
 static EVENT_QUEUE_STATE: OnceLock<RwLock<EventQueue>> = OnceLock::new();
 static FLUSH_LOCK: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
 
-/// Persist analytics state on a best-effort basis. Analytics must never fail a
-/// user command, so persistence errors are logged at debug level and the
-/// in-memory state (authoritative for the current process) is left unchanged.
-fn persist_best_effort(result: Result<()>) {
-    if let Err(error) = result {
-        tracing::debug!("Failed to persist analytics state (non-fatal): {error}");
-    }
-}
-
 /// Format timestamp consistently for analytics
 fn format_timestamp(ts: jiff::Timestamp) -> String {
     // Use RFC 3339 format with millisecond precision for consistency
     ts.strftime("%Y-%m-%dT%H:%M:%S%.3fZ").to_string()
 }
-
-/// Parse timestamp from analytics format
-fn parse_timestamp(s: &str) -> Result<jiff::Timestamp> {
-    // Try parsing with fractional seconds
-    if let Ok(ts) = jiff::Timestamp::strptime("%Y-%m-%dT%H:%M:%S%.fZ", s) {
-        return Ok(ts);
-    }
-    // Fallback to parsing without fractional seconds
-    jiff::Timestamp::strptime("%Y-%m-%dT%H:%M:%SZ", s)
-        .map_err(|e| anyhow::anyhow!("Failed to parse timestamp: {e}"))
-}
-
-/// Global session start time
-static SESSION_START: OnceLock<Instant> = OnceLock::new();
 
 /// Event types for tracking
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -74,6 +57,8 @@ pub enum EventType {
     /// Session heartbeat (every 5 minutes of activity)
     Heartbeat,
     /// Session ended
+    /// Session ended (kept as a wire variant: persisted queue files may
+    /// still contain `session_end` events and must keep deserializing).
     SessionEnd,
     /// Command executed
     Command,
@@ -270,6 +255,10 @@ pub struct EventQueue {
     pub last_flush: i64,
     #[serde(skip, default = "persistence_enabled")]
     persistence_enabled: bool,
+    #[serde(skip)]
+    events_since_persist: u32,
+    #[serde(skip)]
+    last_persist: i64,
 }
 
 impl Default for EventQueue {
@@ -278,6 +267,8 @@ impl Default for EventQueue {
             events: Vec::new(),
             last_flush: 0,
             persistence_enabled: true,
+            events_since_persist: 0,
+            last_persist: jiff::Timestamp::now().as_second(),
         }
     }
 }
@@ -318,6 +309,11 @@ impl EventQueue {
             }
         };
         serde_json::from_str(&content)
+            .map(|mut queue: Self| {
+                queue.events_since_persist = 0;
+                queue.last_persist = jiff::Timestamp::now().as_second();
+                queue
+            })
             .with_context(|| format!("Malformed analytics queue: {}", path.display()))
     }
 
@@ -332,12 +328,24 @@ impl EventQueue {
             .with_context(|| format!("Failed to save analytics queue: {}", path.display()))
     }
 
+    /// Persist the queue periodically (every [`PERSIST_EVERY_N_EVENTS`]
+    /// events or [`PERSIST_INTERVAL_SECS`] seconds) instead of on every
+    /// push, so a burst of tracked commands does not serialize a disk write
+    /// per event.
     pub fn push(&mut self, event: AnalyticsEvent) {
         self.events.push(event);
         if self.events.len() > MAX_EVENT_QUEUE_SIZE {
             self.events.drain(0..EVENT_DRAIN_COUNT);
         }
-        persist_best_effort(self.save());
+        self.events_since_persist += 1;
+        let now = jiff::Timestamp::now().as_second();
+        if self.events_since_persist >= PERSIST_EVERY_N_EVENTS
+            || now - self.last_persist >= PERSIST_INTERVAL_SECS
+        {
+            self.events_since_persist = 0;
+            self.last_persist = now;
+            persist_best_effort(self.save());
+        }
     }
 
     #[must_use]
@@ -377,12 +385,6 @@ fn get_session() -> SessionState {
         }
     }
     session
-}
-
-/// Get current session ID
-#[must_use]
-pub fn session_id() -> String {
-    get_session().session_id
 }
 
 /// Create an analytics event
@@ -427,9 +429,8 @@ fn create_event(
     }
 }
 
-/// Queue an event for sending
-#[expect(clippy::implicit_hasher)] // Public API: callers pass HashMap directly; specifying hasher would break ergonomics
-pub fn queue_event(
+/// Queue an event for sending (callers must have checked [`is_enabled`]).
+fn queue_event(
     event_type: EventType,
     event_name: &str,
     properties: HashMap<String, serde_json::Value>,
@@ -491,66 +492,9 @@ pub fn track_command(
     session.heartbeat();
 }
 
-/// Track a feature usage
-#[expect(clippy::implicit_hasher)] // Public API: callers pass HashMap directly; specifying hasher would break ergonomics
-pub fn track_feature(feature: &str, properties: HashMap<String, serde_json::Value>) {
-    if !is_enabled() {
-        return;
-    }
-
-    queue_event(EventType::Feature, feature, properties, None);
-
-    let mut session = SessionState::load();
-    if !session.features_used.contains(&feature.to_string()) {
-        session.features_used.push(feature.to_string());
-        persist_best_effort(session.save());
-    }
-}
-
-/// Track an error
-#[cold]
-pub fn track_error(error_type: &str, message: &str, context: Option<&str>) {
-    if !is_enabled() {
-        return;
-    }
-
-    let mut props = HashMap::with_capacity(3);
-    props.insert("error_type".to_string(), serde_json::json!(error_type));
-    props.insert("message".to_string(), serde_json::json!(message));
-    if let Some(ctx) = context {
-        props.insert("context".to_string(), serde_json::json!(ctx));
-    }
-
-    queue_event(EventType::Error, error_type, props, None);
-
-    let mut session = SessionState::load();
-    session.errors_this_session += 1;
-    persist_best_effort(session.save());
-}
-
-/// Track performance metric
-#[expect(clippy::implicit_hasher)] // Public API: callers pass HashMap directly; specifying hasher would break ergonomics
-pub fn track_performance(
-    operation: &str,
-    duration_ms: u64,
-    metadata: HashMap<String, serde_json::Value>,
-) {
-    if !is_enabled() {
-        return;
-    }
-
-    queue_event(
-        EventType::Performance,
-        operation,
-        metadata,
-        Some(duration_ms),
-    );
-}
-
-/// Start timing an operation
+/// Start timing an operation.
 #[must_use]
 pub fn start_timer() -> Instant {
-    SESSION_START.get_or_init(Instant::now);
     Instant::now()
 }
 
@@ -684,189 +628,6 @@ pub async fn maybe_flush() {
     }
 }
 
-/// Flush events in background
-pub fn flush_background() {
-    if !is_enabled() {
-        return;
-    }
-
-    tokio::spawn(async {
-        persist_best_effort(flush_events().await);
-    });
-}
-
-/// End session (call on CLI exit)
-pub fn end_session() {
-    if !is_enabled() {
-        return;
-    }
-
-    let session = SessionState::load();
-    let mut props = HashMap::new();
-    props.insert(
-        "commands_run".to_string(),
-        serde_json::json!(session.commands_this_session),
-    );
-    props.insert(
-        "errors".to_string(),
-        serde_json::json!(session.errors_this_session),
-    );
-    props.insert(
-        "features_used".to_string(),
-        serde_json::json!(session.features_used),
-    );
-
-    // Calculate session duration
-    if let Ok(started) = parse_timestamp(&session.started_at) {
-        let duration = jiff::Timestamp::now().as_second() - started.as_second();
-        props.insert("duration_seconds".to_string(), serde_json::json!(duration));
-    }
-
-    queue_event(EventType::SessionEnd, "session_end", props, None);
-}
-
-/// Aggregate stats for admin dashboard
-#[derive(Debug, Clone, Serialize, Deserialize, Default)]
-pub struct AggregateStats {
-    /// Total sessions today
-    pub sessions_today: u32,
-    /// Active users today (unique machines)
-    pub active_users_today: u32,
-    /// Commands by type
-    pub commands_by_type: HashMap<String, u64>,
-    /// Features by usage
-    pub features_by_usage: HashMap<String, u64>,
-    /// Errors by type
-    pub errors_by_type: HashMap<String, u64>,
-    /// Average session duration (seconds)
-    pub avg_session_duration: u64,
-    /// Average commands per session
-    pub avg_commands_per_session: f64,
-    /// Performance percentiles (p50, p95, p99)
-    pub performance_percentiles: HashMap<String, PerformanceStats>,
-    /// Retention (users active in last 7 days who were active 7-14 days ago)
-    pub retention_7d: f64,
-    /// Churn signals (users inactive for 7+ days)
-    pub churned_users: u32,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, Default)]
-pub struct PerformanceStats {
-    pub p50_ms: u64,
-    pub p95_ms: u64,
-    pub p99_ms: u64,
-    pub count: u64,
-}
-
-/// User journey stages for funnel tracking
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum UserStage {
-    /// Just installed
-    Installed,
-    /// Activated license
-    Activated,
-    /// Ran first command
-    FirstCommand,
-    /// Used 3+ different commands
-    Exploring,
-    /// 7+ days of usage
-    Engaged,
-    /// 30+ days, 100+ commands
-    PowerUser,
-    /// Inactive 14+ days
-    AtRisk,
-    /// Inactive 30+ days
-    Churned,
-}
-
-impl UserStage {
-    #[must_use]
-    pub fn as_str(&self) -> &'static str {
-        match self {
-            Self::Installed => "installed",
-            Self::Activated => "activated",
-            Self::FirstCommand => "first_command",
-            Self::Exploring => "exploring",
-            Self::Engaged => "engaged",
-            Self::PowerUser => "power_user",
-            Self::AtRisk => "at_risk",
-            Self::Churned => "churned",
-        }
-    }
-}
-
-/// Track user journey stage transitions
-pub fn track_stage_transition(from: Option<UserStage>, to: UserStage) {
-    if !is_enabled() {
-        return;
-    }
-
-    let mut props = HashMap::new();
-    if let Some(from_stage) = from {
-        props.insert(
-            "from_stage".to_string(),
-            serde_json::json!(from_stage.as_str()),
-        );
-    }
-    props.insert("to_stage".to_string(), serde_json::json!(to.as_str()));
-
-    queue_event(EventType::Feature, "stage_transition", props, None);
-}
-
-/// Calculate current user stage based on usage
-#[must_use]
-pub fn calculate_user_stage(stats: &super::usage::UsageStats) -> UserStage {
-    let days_since_first_use = if stats.first_use_date.is_empty() {
-        0
-    } else if let Ok(first_date) = jiff::civil::Date::strptime("%Y-%m-%d", &stats.first_use_date) {
-        let today = jiff::Zoned::now().date();
-        (today - first_date).get_days().max(0) as u32
-    } else {
-        0
-    };
-
-    let days_since_last_use = if stats.last_query_date.is_empty() {
-        999
-    } else if let Ok(last_date) = jiff::civil::Date::strptime("%Y-%m-%d", &stats.last_query_date) {
-        let today = jiff::Zoned::now().date();
-        (today - last_date).get_days().max(0) as u32
-    } else {
-        999
-    };
-
-    let unique_commands = stats.commands.len();
-
-    // Churn detection
-    if days_since_last_use >= 30 {
-        return UserStage::Churned;
-    }
-    if days_since_last_use >= 14 {
-        return UserStage::AtRisk;
-    }
-
-    // Progression
-    if stats.total_commands >= 100 && days_since_first_use >= 30 {
-        return UserStage::PowerUser;
-    }
-    if days_since_first_use >= 7 && stats.total_commands >= 20 {
-        return UserStage::Engaged;
-    }
-    if unique_commands >= 3 {
-        return UserStage::Exploring;
-    }
-    if stats.total_commands >= 1 {
-        return UserStage::FirstCommand;
-    }
-
-    // Check if license is activated
-    if crate::core::license::load_license().is_some() {
-        return UserStage::Activated;
-    }
-
-    UserStage::Installed
-}
-
 /// Track geographic info (country only, privacy-respecting)
 pub fn track_geo_info() {
     if !is_enabled() {
@@ -892,7 +653,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn test_session_needs_new() {
+    fn session_needs_new_when_empty_or_stale() {
         let mut session = SessionState::default();
         assert!(session.needs_new_session());
 
@@ -935,11 +696,13 @@ mod tests {
     }
 
     #[test]
-    fn test_event_queue() {
+    fn event_queue_flushes_at_threshold() {
         let mut queue = EventQueue {
             events: Vec::new(),
             last_flush: jiff::Timestamp::now().as_second(), // Set to now to avoid time-based flush
             persistence_enabled: true,
+            events_since_persist: 0,
+            last_persist: jiff::Timestamp::now().as_second(),
         };
         assert!(!queue.needs_flush());
 

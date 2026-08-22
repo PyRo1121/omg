@@ -98,10 +98,12 @@ impl DaemonClient {
         tracing::debug!("Connecting to daemon at {:?}", socket_path);
 
         const MAX_CONNECT_RETRIES: u32 = 2;
-        const CONNECT_BACKOFF_MS: &[u64] = &[25, 50, 100];
+        // Indexed by `attempt`; `attempt < MAX_CONNECT_RETRIES == len()`
+        // whenever a sleep happens, so indexing is in-bounds.
+        const CONNECT_BACKOFF_MS: &[u64] = &[25, 50];
 
-        let mut last_err = None;
-        for attempt in 0..=MAX_CONNECT_RETRIES {
+        let mut attempt: u32 = 0;
+        loop {
             match UnixStream::connect(&socket_path).await {
                 Ok(stream) => {
                     if attempt > 0 {
@@ -126,18 +128,19 @@ impl DaemonClient {
                         e.kind(),
                         std::io::ErrorKind::ConnectionRefused | std::io::ErrorKind::WouldBlock
                     );
-
-                    if !retryable || attempt == MAX_CONNECT_RETRIES {
+                    if !retryable || attempt >= MAX_CONNECT_RETRIES {
+                        let suffix = if attempt >= MAX_CONNECT_RETRIES {
+                            " after retries"
+                        } else {
+                            ""
+                        };
                         return Err(anyhow::Error::new(e).context(format!(
-                            "Failed to connect to daemon at {}",
+                            "Failed to connect to daemon at {}{suffix}",
                             socket_path.display()
                         )));
                     }
 
-                    let backoff_ms = CONNECT_BACKOFF_MS
-                        .get(attempt as usize)
-                        .copied()
-                        .unwrap_or(100);
+                    let backoff_ms = CONNECT_BACKOFF_MS[attempt as usize];
                     tracing::debug!(
                         "Connect attempt {} failed ({}), retrying in {}ms",
                         attempt + 1,
@@ -145,19 +148,10 @@ impl DaemonClient {
                         backoff_ms
                     );
                     tokio::time::sleep(std::time::Duration::from_millis(backoff_ms)).await;
-                    last_err = Some(e);
+                    attempt += 1;
                 }
             }
         }
-
-        let final_err = last_err.unwrap_or_else(|| {
-            std::io::Error::other("daemon connection retries exhausted with no captured error")
-        });
-
-        Err(anyhow::Error::new(final_err).context(format!(
-            "Failed to connect to daemon at {} after retries",
-            socket_path.display()
-        )))
     }
 
     /// Connect to the daemon synchronously (sub-millisecond)
@@ -228,114 +222,91 @@ impl DaemonClient {
     /// Get package info synchronously
     pub fn info_sync(&mut self, package: &str) -> Result<DetailedPackageInfo> {
         let id = self.request_id.fetch_add(1, Ordering::SeqCst);
-        match self.call_sync(&Request::Info {
+        let response = self.call_sync(&Request::Info {
             id,
             package: package.to_string(),
-        })? {
-            ResponseResult::Info(res) => Ok(res),
-            _ => anyhow::bail!("Invalid response type"),
-        }
+        })?;
+        extract_response(&response, id, as_info)
     }
 
     /// Ping the daemon
     pub async fn ping(&mut self) -> Result<String> {
         let id = self.request_id.fetch_add(1, Ordering::SeqCst);
-        match self.call(Request::Ping { id }).await? {
-            ResponseResult::Ping(s) => Ok(s),
-            _ => anyhow::bail!("Invalid response type"),
-        }
+        let response = self.call(Request::Ping { id }).await?;
+        extract_response(&response, id, as_ping)
     }
 
     /// Ping the daemon synchronously
     pub fn ping_sync(&mut self) -> Result<String> {
         let id = self.request_id.fetch_add(1, Ordering::SeqCst);
-        match self.call_sync(&Request::Ping { id })? {
-            ResponseResult::Ping(s) => Ok(s),
-            _ => anyhow::bail!("Invalid response type"),
-        }
+        let response = self.call_sync(&Request::Ping { id })?;
+        extract_response(&response, id, as_ping)
     }
 
     /// Search for packages
     pub async fn search(&mut self, query: &str, limit: Option<usize>) -> Result<SearchResult> {
         let id = self.request_id.fetch_add(1, Ordering::SeqCst);
-        match self
+        let response = self
             .call(Request::Search {
                 id,
                 query: query.to_string(),
                 limit,
             })
-            .await?
-        {
-            ResponseResult::Search(res) => Ok(res),
-            _ => anyhow::bail!("Invalid response type"),
-        }
+            .await?;
+        extract_response(&response, id, as_search)
     }
 
     /// Get package info
     pub async fn info(&mut self, package: &str) -> Result<DetailedPackageInfo> {
         let id = self.request_id.fetch_add(1, Ordering::SeqCst);
-        match self
+        let response = self
             .call(Request::Info {
                 id,
                 package: package.to_string(),
             })
-            .await?
-        {
-            ResponseResult::Info(res) => Ok(res),
-            _ => anyhow::bail!("Invalid response type"),
-        }
+            .await?;
+        extract_response(&response, id, as_info)
     }
 
     /// Get system status
     pub async fn status(&mut self) -> Result<StatusResult> {
         let id = self.request_id.fetch_add(1, Ordering::SeqCst);
-        match self.call(Request::Status { id }).await? {
-            ResponseResult::Status(res) => Ok(res),
-            _ => anyhow::bail!("Invalid response type"),
-        }
+        let response = self.call(Request::Status { id }).await?;
+        extract_response(&response, id, as_status)
     }
 
     /// List available package updates via daemon (uses hot ALPM worker)
     pub async fn list_updates(&mut self) -> Result<Vec<UpdateEntry>> {
         let id = self.request_id.fetch_add(1, Ordering::SeqCst);
-        match self.call(Request::ListUpdates { id }).await? {
-            ResponseResult::ListUpdates(updates) => Ok(updates),
-            _ => anyhow::bail!("Invalid response type"),
-        }
+        let response = self.call(Request::ListUpdates { id }).await?;
+        extract_response(&response, id, as_updates)
     }
 
     /// Trigger a security audit
     pub async fn security_audit(&mut self) -> Result<SecurityAuditResult> {
         let id = self.request_id.fetch_add(1, Ordering::SeqCst);
-        match self.call(Request::SecurityAudit { id }).await? {
-            ResponseResult::SecurityAudit(res) => Ok(res),
-            _ => anyhow::bail!("Invalid response type"),
-        }
+        let response = self.call(Request::SecurityAudit { id }).await?;
+        extract_response(&response, id, as_audit)
     }
 
     /// List explicitly installed packages
     pub async fn list_explicit(&mut self) -> Result<Vec<String>> {
         let id = self.request_id.fetch_add(1, Ordering::SeqCst);
-        match self.call(Request::Explicit { id }).await? {
-            ResponseResult::Explicit(res) => Ok(res.packages),
-            _ => anyhow::bail!("Invalid response type"),
-        }
+        let response = self.call(Request::Explicit { id }).await?;
+        extract_response(&response, id, as_explicit)
     }
 
     /// Get fuzzy suggestions for a package name
     pub async fn suggest(&mut self, query: &str, limit: Option<usize>) -> Result<Vec<String>> {
         let id = self.request_id.fetch_add(1, Ordering::SeqCst);
-        match self
+        let response = self
             .call(Request::Suggest {
                 id,
                 query: query.to_string(),
                 limit,
             })
-            .await?
-        {
-            ResponseResult::Suggest(res) => Ok(res),
-            _ => anyhow::bail!("Invalid response type"),
-        }
+            .await?;
+        extract_response(&response, id, as_suggest)
     }
 
     /// Search for Debian packages via daemon
@@ -345,17 +316,107 @@ impl DaemonClient {
         limit: Option<usize>,
     ) -> Result<Vec<PackageInfo>> {
         let id = self.request_id.fetch_add(1, Ordering::SeqCst);
-        match self
+        let response = self
             .call(Request::DebianSearch {
                 id,
                 query: query.to_string(),
                 limit,
             })
-            .await?
-        {
-            ResponseResult::DebianSearch(res) => Ok(res),
-            _ => anyhow::bail!("Invalid response type"),
-        }
+            .await?;
+        extract_response(&response, id, as_debian_search)
+    }
+}
+
+/// The single conversion point from a daemon response to a typed client
+/// result. Every accessor on [`DaemonClient`] and [`PooledSyncClient`]
+/// funnels through here, so a protocol mismatch surfaces as one canonical
+/// error instead of a dozen ad-hoc bail sites.
+fn extract_response<T>(
+    response: &ResponseResult,
+    request_id: u64,
+    extract: fn(&ResponseResult) -> Option<T>,
+) -> Result<T> {
+    extract(response)
+        .ok_or_else(|| anyhow::anyhow!("Invalid response type for request {request_id}"))
+}
+
+fn as_ping(response: &ResponseResult) -> Option<String> {
+    if let ResponseResult::Ping(value) = response {
+        Some(value.clone())
+    } else {
+        None
+    }
+}
+
+fn as_info(response: &ResponseResult) -> Option<DetailedPackageInfo> {
+    if let ResponseResult::Info(value) = response {
+        Some(value.clone())
+    } else {
+        None
+    }
+}
+
+fn as_search(response: &ResponseResult) -> Option<SearchResult> {
+    if let ResponseResult::Search(value) = response {
+        Some(value.clone())
+    } else {
+        None
+    }
+}
+
+fn as_status(response: &ResponseResult) -> Option<StatusResult> {
+    if let ResponseResult::Status(value) = response {
+        Some(value.clone())
+    } else {
+        None
+    }
+}
+
+fn as_updates(response: &ResponseResult) -> Option<Vec<UpdateEntry>> {
+    if let ResponseResult::ListUpdates(value) = response {
+        Some(value.clone())
+    } else {
+        None
+    }
+}
+
+fn as_audit(response: &ResponseResult) -> Option<SecurityAuditResult> {
+    if let ResponseResult::SecurityAudit(value) = response {
+        Some(value.clone())
+    } else {
+        None
+    }
+}
+
+fn as_explicit(response: &ResponseResult) -> Option<Vec<String>> {
+    if let ResponseResult::Explicit(value) = response {
+        Some(value.packages.clone())
+    } else {
+        None
+    }
+}
+
+fn as_suggest(response: &ResponseResult) -> Option<Vec<String>> {
+    if let ResponseResult::Suggest(value) = response {
+        Some(value.clone())
+    } else {
+        None
+    }
+}
+
+fn as_debian_search(response: &ResponseResult) -> Option<Vec<PackageInfo>> {
+    if let ResponseResult::DebianSearch(value) = response {
+        Some(value.clone())
+    } else {
+        None
+    }
+}
+
+fn as_explicit_count(response: &ResponseResult) -> Option<usize> {
+    if let ResponseResult::ExplicitCount(value) = response {
+        Some(*value)
+    } else {
+        None
     }
 }
 
@@ -420,44 +481,36 @@ impl PooledSyncClient {
     /// Get package info
     pub fn info(&mut self, package: &str) -> Result<DetailedPackageInfo> {
         let id = self.request_id.fetch_add(1, Ordering::SeqCst);
-        match self.call(&Request::Info {
+        let response = self.call(&Request::Info {
             id,
             package: package.to_string(),
-        })? {
-            ResponseResult::Info(res) => Ok(res),
-            _ => anyhow::bail!("Invalid response type"),
-        }
+        })?;
+        extract_response(&response, id, as_info)
     }
 
     /// Search packages
     pub fn search(&mut self, query: &str, limit: Option<usize>) -> Result<SearchResult> {
         let id = self.request_id.fetch_add(1, Ordering::SeqCst);
-        match self.call(&Request::Search {
+        let response = self.call(&Request::Search {
             id,
             query: query.to_string(),
             limit,
-        })? {
-            ResponseResult::Search(res) => Ok(res),
-            _ => anyhow::bail!("Invalid response type"),
-        }
+        })?;
+        extract_response(&response, id, as_search)
     }
 
     /// Get explicit package count
     pub fn explicit_count(&mut self) -> Result<usize> {
         let id = self.request_id.fetch_add(1, Ordering::SeqCst);
-        match self.call(&Request::ExplicitCount { id })? {
-            ResponseResult::ExplicitCount(count) => Ok(count),
-            _ => anyhow::bail!("Invalid response type"),
-        }
+        let response = self.call(&Request::ExplicitCount { id })?;
+        extract_response(&response, id, as_explicit_count)
     }
 
     /// Get system status
     pub fn status(&mut self) -> Result<StatusResult> {
         let id = self.request_id.fetch_add(1, Ordering::SeqCst);
-        match self.call(&Request::Status { id })? {
-            ResponseResult::Status(res) => Ok(res),
-            _ => anyhow::bail!("Invalid response type"),
-        }
+        let response = self.call(&Request::Status { id })?;
+        extract_response(&response, id, as_status)
     }
 }
 

@@ -135,14 +135,17 @@ pub async fn info_aur(package: &str) -> Result<()> {
     Ok(())
 }
 
-/// Show AUR package information - no-op fallback for non-Arch systems
+/// AUR information stub for builds without the Arch backend.
+///
+/// The async signature is preserved so callers compile uniformly across
+/// feature combinations, but no AUR lookup can be performed here.
 #[cfg(not(feature = "arch"))]
 #[allow(
     clippy::unused_async,
     reason = "the non-Arch implementation preserves the asynchronous command interface"
 )]
 pub async fn info_aur(package: &str) -> Result<()> {
-    anyhow::bail!("Package '{package}' not found. Try: omg search {package}");
+    anyhow::bail!("AUR information requires an Arch-enabled build; '{package}' was not resolved");
 }
 
 /// Helper to display detailed info from daemon
@@ -333,7 +336,7 @@ async fn info_fallback(package: &str) -> Result<()> {
 #[cfg(feature = "debian")]
 fn display_package_info(info: &crate::package_managers::types::PackageInfo) {
     ui::print_kv("Package", &style::package(&info.name));
-    ui::print_kv("Version", &style::version(&info.version.clone()));
+    ui::print_kv("Version", &style::version(&info.version));
     ui::print_kv(
         "Status",
         if info.installed {

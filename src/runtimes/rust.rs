@@ -34,9 +34,9 @@ const RUST_METADATA_FILE: &str = ".omg-toolchain.toml";
 
 /// Rust version info
 #[derive(Debug, Clone)]
-pub struct RustVersion {
-    pub version: String,
-    pub channel: String,
+pub(crate) struct RustVersion {
+    pub(crate) version: String,
+    pub(crate) channel: String,
 }
 
 fn manifest_component_version(manifest: &toml::Value, component: &str) -> Result<String> {
@@ -59,35 +59,36 @@ fn is_date_parts(year: &str, month: &str, day: &str) -> bool {
 }
 
 #[derive(Debug, Clone)]
-pub struct RustToolchainSpec {
-    pub channel: String,
-    pub date: Option<String>,
-    pub host: String,
+pub(crate) struct RustToolchainSpec {
+    pub(crate) channel: String,
+    pub(crate) date: Option<String>,
+    pub(crate) host: String,
 }
 
 #[derive(Debug, Clone, Default)]
-pub struct RustToolchainRequest {
-    pub channel: String,
-    pub profile: Option<String>,
-    pub components: Vec<String>,
-    pub targets: Vec<String>,
+pub(crate) struct RustToolchainRequest {
+    pub(crate) channel: String,
+    pub(crate) profile: Option<String>,
+    pub(crate) components: Vec<String>,
+    pub(crate) targets: Vec<String>,
 }
 
 #[derive(Debug, Clone)]
-pub struct RustToolchainStatus {
-    pub name: String,
-    pub needs_install: bool,
-    pub missing_components: Vec<String>,
-    pub missing_targets: Vec<String>,
+pub(crate) struct RustToolchainStatus {
+    pub(crate) name: String,
+    pub(crate) needs_install: bool,
+    pub(crate) missing_components: Vec<String>,
+    pub(crate) missing_targets: Vec<String>,
 }
 
+// Wire types for rust-toolchain.toml; internal to `parse_toolchain_file`.
 #[derive(Debug, Deserialize)]
-pub struct RustToolchainFile {
+struct RustToolchainFile {
     toolchain: RustToolchainSection,
 }
 
 #[derive(Debug, Deserialize)]
-pub struct RustToolchainSection {
+struct RustToolchainSection {
     channel: String,
     components: Option<Vec<String>>,
     targets: Option<Vec<String>>,
@@ -100,7 +101,7 @@ struct RustToolchainMetadata {
     targets: BTreeSet<String>,
 }
 
-pub struct RustManager {
+pub(crate) struct RustManager {
     versions_dir: PathBuf,
     current_link: PathBuf,
     client: reqwest::Client,
@@ -331,50 +332,6 @@ impl RustManager {
         print_using("Rust", &toolchain_name, &self.bin_dir());
         Ok(())
     }
-
-    /// Uninstall a version
-    pub fn uninstall(&self, version: &str) -> Result<()> {
-        let toolchain = RustToolchainSpec::parse(version)?;
-        let version_dir = self.toolchain_dir(&toolchain);
-
-        match fs::symlink_metadata(&version_dir) {
-            Ok(metadata) if metadata.is_dir() => {}
-            Ok(_) => {
-                anyhow::bail!(
-                    "Refusing to remove non-directory Rust toolchain path: {}",
-                    version_dir.display()
-                );
-            }
-            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
-                tracing::info!(
-                    "{} Rust {} is not installed",
-                    "→".dimmed(),
-                    toolchain.name()
-                );
-                return Ok(());
-            }
-            Err(error) => {
-                return Err(error).with_context(|| {
-                    format!(
-                        "Failed to inspect Rust toolchain path: {}",
-                        version_dir.display()
-                    )
-                });
-            }
-        }
-
-        if let Some(current) = self.current_version()
-            && current == toolchain.name()
-        {
-            // Best-effort: the toolchain directory is removed next. A leftover
-            // current symlink is repaired by the next successful use_version.
-            remove_file_best_effort(&self.current_link, "Rust current symlink");
-        }
-
-        fs::remove_dir_all(&version_dir)?;
-        tracing::info!("{} Rust {} uninstalled", "✓".green(), toolchain.name());
-        Ok(())
-    }
 }
 
 impl RustManager {
@@ -415,18 +372,24 @@ impl RustManager {
         required_components.sort_unstable();
         required_components.dedup();
 
+        // The manifest depends only on channel + date, so it is fetched once
+        // per install and shared by every component and target download.
+        let manifest = self
+            .fetch_manifest(&toolchain.channel, toolchain.date.as_deref())
+            .await?;
+
         // First-time installs extract into a same-filesystem staging directory
         // and publish only after every component and the metadata file land.
         let staging = begin_staged_install(&self.versions_dir)?;
         let dest_dir = staging.path();
 
         for component in &required_components {
-            self.install_component(toolchain, dest_dir, component, &toolchain.host)
+            self.install_component(dest_dir, component, &toolchain.host, &manifest)
                 .await?;
         }
 
         for target in targets {
-            self.install_component(toolchain, dest_dir, "rust-std", target)
+            self.install_component(dest_dir, "rust-std", target, &manifest)
                 .await?;
         }
 
@@ -458,12 +421,16 @@ impl RustManager {
         let staging = begin_staged_install(&self.versions_dir)?;
         copy_regular_tree(&version_dir, staging.path())?;
 
+        // Same as fresh installs: one manifest fetch serves every addition.
+        let manifest = self
+            .fetch_manifest(&toolchain.channel, toolchain.date.as_deref())
+            .await?;
         for component in components {
-            self.install_component(toolchain, staging.path(), component, &toolchain.host)
+            self.install_component(staging.path(), component, &toolchain.host, &manifest)
                 .await?;
         }
         for target in targets {
-            self.install_component(toolchain, staging.path(), "rust-std", target)
+            self.install_component(staging.path(), "rust-std", target, &manifest)
                 .await?;
         }
 
@@ -476,22 +443,19 @@ impl RustManager {
 
     async fn install_component(
         &self,
-        toolchain: &RustToolchainSpec,
         dest_dir: &Path,
         component: &str,
         target: &str,
+        manifest: &toml::Value,
     ) -> Result<()> {
         tracing::info!("{} Downloading {}...", "→".blue(), component);
-        let manifest = self
-            .fetch_manifest(&toolchain.channel, toolchain.date.as_deref())
-            .await?;
-        let component_version = manifest_component_version(&manifest, component)?;
-        let url = manifest_component_url(&manifest, component, target)?;
+        let component_version = manifest_component_version(manifest, component)?;
+        let url = manifest_component_url(manifest, component, target)?;
         let filename = url
             .rsplit('/')
             .next()
             .ok_or_else(|| anyhow::anyhow!("Invalid download URL for {component}"))?;
-        let checksum = manifest_component_checksum(&manifest, component, target, &url)?;
+        let checksum = manifest_component_checksum(manifest, component, target, &url)?;
         let download_path = self.versions_dir.join(filename);
 
         download_with_progress(&self.client, &url, &download_path, Some(&checksum)).await?;
@@ -973,5 +937,36 @@ mod tests {
         assert!(
             triple.contains("linux") || triple.contains("darwin") || triple.contains("windows")
         );
+    }
+
+    /// The manifest is fetched once per install and shared by every
+    /// component/target download; this pins the extraction helpers that
+    /// consume that single shared manifest.
+    #[test]
+    fn manifest_helpers_resolve_a_single_shared_manifest() -> Result<()> {
+        let hash = "a".repeat(64);
+        let manifest_text = format!(
+            r#"
+[pkg.rustc]
+version = "1.78.0 (2024-05-02)"
+
+[pkg.rustc.target.x86_64-unknown-linux-gnu]
+xz_url = "https://static.rust-lang.org/dist/2024-05-02/rust-1.78.0-x86_64-unknown-linux-gnu.tar.xz"
+xz_hash = "{hash}"
+"#
+        );
+        let manifest: toml::Value = toml::from_str(&manifest_text)?;
+
+        assert_eq!(manifest_version(&manifest).as_deref(), Some("1.78.0"));
+        assert_eq!(manifest_component_version(&manifest, "rustc")?, "1.78.0");
+
+        let url = manifest_component_url(&manifest, "rustc", "x86_64-unknown-linux-gnu")?;
+        assert!(url.ends_with("rust-1.78.0-x86_64-unknown-linux-gnu.tar.xz"));
+
+        // XZ URLs select the xz_hash field, parsed through the strict digest validator.
+        let checksum =
+            manifest_component_checksum(&manifest, "rustc", "x86_64-unknown-linux-gnu", &url)?;
+        assert_eq!(checksum, hash);
+        Ok(())
     }
 }

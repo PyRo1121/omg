@@ -55,25 +55,62 @@ impl LocalCommandRunner for ContainerCommands {
     }
 }
 
-/// Parse environment variables from KEY=VALUE format
-fn parse_env_vars(env: &[String]) -> Vec<(String, String)> {
+/// Parse environment variables from strict `KEY=VALUE` entries.
+///
+/// Malformed entries are rejected instead of being silently dropped.
+fn parse_env_vars(env: &[String]) -> Result<Vec<(String, String)>> {
     env.iter()
-        .filter_map(|e| {
-            let parts: Vec<&str> = e.splitn(2, '=').collect();
-            (parts.len() == 2).then(|| (parts[0].to_string(), parts[1].to_string()))
+        .map(|e| {
+            let (key, value) = e.split_once('=').ok_or_else(|| {
+                anyhow::anyhow!("Invalid environment variable '{e}': expected KEY=VALUE")
+            })?;
+            if key.is_empty() {
+                anyhow::bail!("Invalid environment variable '{e}': empty KEY");
+            }
+            Ok((key.to_string(), value.to_string()))
         })
         .collect()
 }
 
-/// Parse volume mounts from host:container format
-fn parse_volumes(volumes: &[String]) -> Vec<(String, String)> {
+/// Parse volume mounts from `host:container` entries.
+///
+/// Suffix modes such as `host:container:ro` are NOT supported and are
+/// rejected explicitly instead of being silently truncated to read-write.
+fn parse_volumes(volumes: &[String]) -> Result<Vec<(String, String)>> {
     volumes
         .iter()
-        .filter_map(|v| {
-            let parts: Vec<&str> = v.splitn(2, ':').collect();
-            (parts.len() == 2).then(|| (parts[0].to_string(), parts[1].to_string()))
+        .map(|v| {
+            let parts: Vec<&str> = v.split(':').collect();
+            match parts.as_slice() {
+                [host, container] if !host.is_empty() && !container.is_empty() => {
+                    Ok(((*host).to_string(), (*container).to_string()))
+                }
+                [_, _, mode, ..] => Err(anyhow::anyhow!(
+                    "Volume mount options ('{mode}') are not supported in '{v}'"
+                )),
+                _ => Err(anyhow::anyhow!(
+                    "Invalid volume mount '{v}': expected HOST:CONTAINER"
+                )),
+            }
         })
         .collect()
+}
+
+/// Validate a container image reference or user-provided container name.
+fn validate_container_ref(kind: &str, value: &str) -> Result<()> {
+    use crate::cli::packages::execute_cmd;
+
+    if value
+        .chars()
+        .any(|c| c.is_control() || matches!(c, ';' | '|' | '&'))
+    {
+        execute_cmd(crate::cli::components::Components::error_with_suggestion(
+            format!("Invalid {kind} name"),
+            "Names must not contain control characters or shell operators",
+        ));
+        anyhow::bail!("Invalid {kind} name");
+    }
+    Ok(())
 }
 
 /// Show container runtime status
@@ -143,13 +180,7 @@ pub fn run(
     use crate::cli::packages::execute_cmd;
 
     // SECURITY: Validate image name and container name
-    if image.chars().any(|c| c.is_control() || c == ';') {
-        execute_cmd(Components::error_with_suggestion(
-            "Invalid image name",
-            "Image names must not contain control characters or semicolons",
-        ));
-        anyhow::bail!("Invalid image name");
-    }
+    validate_container_ref("image", image)?;
     if let Some(ref n) = name
         && n.chars()
             .any(|c| !c.is_ascii_alphanumeric() && c != '-' && c != '_')
@@ -167,8 +198,8 @@ pub fn run(
         "Running in {image} container..."
     )));
 
-    let env_pairs = parse_env_vars(env);
-    let volume_pairs = parse_volumes(volumes);
+    let env_pairs = parse_env_vars(env)?;
+    let volume_pairs = parse_volumes(volumes)?;
 
     let config = ContainerConfig {
         image: image.to_string(),
@@ -203,8 +234,8 @@ pub fn shell(
     let manager = ContainerManager::new()?;
     let cwd = std::env::current_dir()?;
 
-    let mut env_pairs = parse_env_vars(env);
-    let mut volume_pairs = parse_volumes(volumes);
+    let mut env_pairs = parse_env_vars(env)?;
+    let mut volume_pairs = parse_volumes(volumes)?;
 
     let mut config = if let Some(img) = image {
         ContainerConfig {
@@ -413,16 +444,7 @@ pub fn images() -> Result<()> {
 pub fn pull(image: &str) -> Result<()> {
     use crate::cli::packages::execute_cmd;
 
-    if image
-        .chars()
-        .any(|c| c.is_control() || c == ';' || c == '|' || c == '&')
-    {
-        execute_cmd(Components::error_with_suggestion(
-            "Invalid image name",
-            "Image names must not contain control characters or shell operators",
-        ));
-        anyhow::bail!("Invalid image name");
-    }
+    validate_container_ref("image", image)?;
 
     let manager = ContainerManager::new()?;
 
@@ -441,16 +463,7 @@ pub fn pull(image: &str) -> Result<()> {
 pub fn stop(container: &str) -> Result<()> {
     use crate::cli::packages::execute_cmd;
 
-    if container
-        .chars()
-        .any(|c| c.is_control() || c == ';' || c == '|' || c == '&')
-    {
-        execute_cmd(Components::error_with_suggestion(
-            "Invalid container name",
-            "Container names must not contain control characters or shell operators",
-        ));
-        anyhow::bail!("Invalid container name");
-    }
+    validate_container_ref("container", container)?;
 
     let manager = ContainerManager::new()?;
 
@@ -469,18 +482,7 @@ pub fn stop(container: &str) -> Result<()> {
 
 /// Execute a command in a running container
 pub fn exec(container: &str, command: &[String]) -> Result<()> {
-    use crate::cli::packages::execute_cmd;
-
-    if container
-        .chars()
-        .any(|c| c.is_control() || c == ';' || c == '|' || c == '&')
-    {
-        execute_cmd(Components::error_with_suggestion(
-            "Invalid container name",
-            "Container names must not contain control characters or shell operators",
-        ));
-        anyhow::bail!("Invalid container name");
-    }
+    validate_container_ref("container", container)?;
 
     let manager = ContainerManager::new()?;
 
@@ -552,4 +554,59 @@ pub fn init(base_image: Option<String>) -> Result<()> {
     ]));
 
     Ok(())
+}
+
+#[cfg(test)]
+#[expect(clippy::expect_used)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn env_vars_parse_strict_key_value_pairs() {
+        let parsed = parse_env_vars(&["A=1".to_string(), "B=".to_string()])
+            .expect("valid entries must parse");
+        assert_eq!(
+            parsed,
+            vec![
+                ("A".to_string(), "1".to_string()),
+                ("B".to_string(), String::new())
+            ]
+        );
+
+        let err = parse_env_vars(&["NO_SEPARATOR".to_string()])
+            .expect_err("malformed entries must be rejected, not dropped");
+        assert!(err.to_string().contains("expected KEY=VALUE"), "got: {err}");
+
+        let err =
+            parse_env_vars(&["=novalue".to_string()]).expect_err("empty keys must be rejected");
+        assert!(err.to_string().contains("empty KEY"), "got: {err}");
+    }
+
+    #[test]
+    fn volumes_reject_mode_suffixes_instead_of_truncating() {
+        let parsed = parse_volumes(&["/tmp:/data".to_string()]).expect("plain mount must parse");
+        assert_eq!(parsed, vec![("/tmp".to_string(), "/data".to_string())]);
+
+        // A ':ro' suffix must never be silently truncated into a read-write mount.
+        let err = parse_volumes(&["/tmp:/data:ro".to_string()])
+            .expect_err("mount options are unsupported and must fail loudly");
+        assert!(err.to_string().contains("not supported"), "got: {err}");
+
+        let err = parse_volumes(&["just-a-path".to_string()])
+            .expect_err("malformed mounts must be rejected, not dropped");
+        assert!(
+            err.to_string().contains("expected HOST:CONTAINER"),
+            "got: {err}"
+        );
+    }
+
+    #[test]
+    fn container_refs_reject_shell_operators_and_control_chars() {
+        assert!(validate_container_ref("image", "ubuntu:24.04").is_ok());
+        assert!(validate_container_ref("container", "my-app_1").is_ok());
+        assert!(validate_container_ref("image", "evil;rm").is_err());
+        assert!(validate_container_ref("container", "a|b").is_err());
+        assert!(validate_container_ref("image", "a&b").is_err());
+        assert!(validate_container_ref("image", "a\u{0}b").is_err());
+    }
 }

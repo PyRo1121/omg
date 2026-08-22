@@ -1,17 +1,19 @@
 //! Pure Rust DNF/Fedora package manager backend
 //!
-//! Provides direct database access for ultra-fast queries without CLI overhead.
-//! Uses `SQLite` for RPM database and parses repository metadata.
-//!
-//! ## Performance Targets
-//! - Search: <100ms (vs DNF's 3-5s)
-//! - List installed: <50ms (vs DNF's 2s)
+//! Reads installed packages directly from the RPM `SQLite` database for
+//! fast queries without CLI overhead.
 //!
 //! ## Architecture
 //! 1. Read installed packages from `/var/lib/rpm/rpmdb.sqlite`
+//!    (`rpm -qa` subprocess fallback for BDB/NDB systems)
 //! 2. Parse RPM header blobs for metadata extraction
-//! 3. Parse repository metadata from `/etc/yum.repos.d/`
-//! 4. Cache parsed metadata in binary format using `bitcode`
+//!
+//! ## Known limitation
+//!
+//! Repository metadata download (repomd/primary.xml) is NOT implemented:
+//! `search` covers installed packages only, and `list_updates`/`get_status`
+//! fail with an explicit "not implemented" error instead of pretending to
+//! have an empty catalog. Transactions delegate to the `dnf` CLI.
 
 use std::future::Future;
 use std::pin::Pin;
@@ -30,7 +32,6 @@ use crate::core::{Package, PackageSource, is_root};
 use crate::package_managers::PackageManager;
 use crate::package_managers::types::{UpdateInfo, parse_version_or_zero};
 
-#[cfg(feature = "fedora")]
 use rusqlite::{Connection, OpenFlags};
 
 /// RPM header magic bytes
@@ -55,18 +56,16 @@ mod rpm_types {
 }
 
 /// Cached repository package metadata
+///
+/// Currently unreachable in practice: [`DnfPackageManager::fetch_repo_packages`]
+/// always fails until remote metadata download is implemented.
 #[derive(Debug, Clone, Serialize, Deserialize, bitcode::Encode, bitcode::Decode)]
 struct RepoPackage {
     name: String,
     version: String,
     release: String,
-    arch: String,
     summary: String,
-    description: String,
     repo: String,
-    url: Option<String>,
-    size: u64,
-    license: Vec<String>,
 }
 
 /// Repository metadata index
@@ -182,12 +181,6 @@ impl DnfPackageManager {
         Self::read_rpm_via_query()
     }
 
-    /// Read RPM database via subprocess (non-fedora feature fallback)
-    #[cfg(not(feature = "fedora"))]
-    fn read_rpm_database(_db_path: &Path) -> Result<Vec<InstalledPackage>> {
-        Self::read_rpm_via_query()
-    }
-
     /// Parse installed packages using `rpm -qa` subprocess
     ///
     /// Fallback for systems without `SQLite` RPM database (`BerkeleyDB`, `NDB`).
@@ -259,11 +252,20 @@ impl DnfPackageManager {
         let num_entries = u32::from_be_bytes([blob[8], blob[9], blob[10], blob[11]]) as usize;
         let data_size = u32::from_be_bytes([blob[12], blob[13], blob[14], blob[15]]) as usize;
 
-        let index_start = 16;
-        let index_size = num_entries * 16; // Each entry is 16 bytes
-        let data_start = index_start + index_size;
+        let index_start: usize = 16;
+        // Checked arithmetic: num_entries/data_size come from the archive and
+        // must not overflow the offsets on any target.
+        let index_size = num_entries
+            .checked_mul(16)
+            .ok_or_else(|| anyhow::anyhow!("RPM header index size overflow"))?;
+        let data_start = index_start
+            .checked_add(index_size)
+            .ok_or_else(|| anyhow::anyhow!("RPM header index size overflow"))?;
+        let expected_len = data_start
+            .checked_add(data_size)
+            .ok_or_else(|| anyhow::anyhow!("RPM header data size overflow"))?;
 
-        if blob.len() < data_start + data_size {
+        if blob.len() < expected_len {
             anyhow::bail!("RPM header truncated");
         }
 
@@ -310,11 +312,19 @@ impl DnfPackageManager {
                         blob[data_offset..data_offset + end].to_vec()
                     }
                     rpm_types::STRING_ARRAY => {
-                        // Array of null-terminated strings
+                        // Array of null-terminated strings; `count` comes from
+                        // the archive, so every read is bounds-checked — a
+                        // hostile count must error, never panic.
                         let mut strings = Vec::new();
                         let mut pos = data_offset;
                         for _ in 0..count {
-                            let end = blob[pos..].iter().position(|&b| b == 0).unwrap_or(0);
+                            if pos >= blob.len() {
+                                anyhow::bail!("RPM STRING_ARRAY exceeds payload bounds");
+                            }
+                            let end = blob[pos..]
+                                .iter()
+                                .position(|&b| b == 0)
+                                .unwrap_or(blob.len() - pos);
                             strings.extend_from_slice(&blob[pos..pos + end]);
                             strings.push(b'\n');
                             pos += end + 1;
@@ -334,7 +344,6 @@ impl DnfPackageManager {
     ///
     /// Extracts name, version, release, summary, and installation reason from
     /// the RPM header blob format.
-    #[cfg(feature = "fedora")]
     fn parse_package_from_blob(blob: &[u8]) -> Result<InstalledPackage> {
         let tags = Self::parse_rpm_header(blob)?;
 
@@ -387,7 +396,6 @@ impl DnfPackageManager {
     /// Opens `/var/lib/rpm/rpmdb.sqlite` in read-only mode and parses
     /// RPM header blobs from the `Packages` table. This is 50-100x faster
     /// than spawning `rpm -qa`.
-    #[cfg(feature = "fedora")]
     fn read_rpm_sqlite(db_path: &Path) -> Result<Vec<InstalledPackage>> {
         let conn = Connection::open_with_flags(
             db_path,
@@ -588,16 +596,24 @@ impl DnfPackageManager {
         );
     }
 
-    /// Execute DNF command with privilege escalation if needed
+    /// A handle sharing this manager's caches, so blocking workers mutate
+    /// the same state as the caller instead of a throwaway copy.
+    #[must_use]
+    fn cache_handle(&self) -> Self {
+        Self {
+            rpm_db_path: self.rpm_db_path.clone(),
+            repos_dir: self.repos_dir.clone(),
+            repo_cache: Arc::clone(&self.repo_cache),
+            installed_cache: Arc::clone(&self.installed_cache),
+            cache_dir: self.cache_dir.clone(),
+        }
+    }
+
+    /// Execute the `dnf` CLI as root (callers escalate via
+    /// `run_self_sudo` first) and invalidate caches on success.
     #[expect(clippy::unused_async)] // May add async operations in future
     fn run_dnf(&self, args: &[&str]) -> Result<()> {
-        let mut cmd = if is_root() {
-            Command::new("dnf")
-        } else {
-            let mut c = Command::new("sudo");
-            c.arg("dnf");
-            c
-        };
+        let mut cmd = Command::new("dnf");
 
         let status = cmd.args(args).arg("-y").status()?;
 
@@ -680,8 +696,13 @@ impl PackageManager for DnfPackageManager {
                 results.extend(repo_results);
             }
 
-            // Deduplicate by name
-            results.sort_by(|a, b| a.name.cmp(&b.name));
+            // Deduplicate by name; sort installed rows first within a name
+            // so dedup keeps the entry carrying `installed: true`.
+            results.sort_by(|a, b| {
+                a.name
+                    .cmp(&b.name)
+                    .then_with(|| b.installed.cmp(&a.installed))
+            });
             results.dedup_by(|a, b| a.name == b.name);
 
             Ok(results)
@@ -696,10 +717,16 @@ impl PackageManager for DnfPackageManager {
         Box::pin(async move {
             crate::core::security::validate_package_names(&packages)?;
 
+            if !is_root() {
+                crate::core::privilege::run_self_sudo(&["install", "--"]).await?;
+                return Ok(());
+            }
+
             tokio::task::spawn_blocking({
-                let manager = Self::new();
+                // Share caches so post-install invalidation reaches the caller.
+                let manager = self.cache_handle();
                 move || {
-                    let mut args = vec!["install"];
+                    let mut args = vec!["install", "--"];
                     let pkg_refs: Vec<&str> = packages.iter().map(String::as_str).collect();
                     args.extend_from_slice(&pkg_refs);
                     manager.run_dnf(&args)
@@ -714,10 +741,15 @@ impl PackageManager for DnfPackageManager {
         Box::pin(async move {
             crate::core::security::validate_package_names(&packages)?;
 
+            if !is_root() {
+                crate::core::privilege::run_self_sudo(&["remove", "--"]).await?;
+                return Ok(());
+            }
+
             tokio::task::spawn_blocking({
-                let manager = Self::new();
+                let manager = self.cache_handle();
                 move || {
-                    let mut args = vec!["remove"];
+                    let mut args = vec!["remove", "--"];
                     let pkg_refs: Vec<&str> = packages.iter().map(String::as_str).collect();
                     args.extend_from_slice(&pkg_refs);
                     manager.run_dnf(&args)
@@ -729,8 +761,13 @@ impl PackageManager for DnfPackageManager {
 
     fn update(&self) -> Pin<Box<dyn Future<Output = Result<()>> + Send + '_>> {
         Box::pin(async move {
+            if !is_root() {
+                crate::core::privilege::run_self_sudo(&["upgrade"]).await?;
+                return Ok(());
+            }
+
             tokio::task::spawn_blocking({
-                let manager = Self::new();
+                let manager = self.cache_handle();
                 move || manager.run_dnf(&["upgrade"])
             })
             .await?
@@ -754,8 +791,13 @@ impl PackageManager for DnfPackageManager {
                 Self::invalidate_repo_cache_file(fs::remove_file(cache_file).await)?;
             }
 
+            if !is_root() {
+                crate::core::privilege::run_self_sudo(&["sync"]).await?;
+                return Ok(());
+            }
+
             tokio::task::spawn_blocking({
-                let manager = Self::new();
+                let manager = self.cache_handle();
                 move || manager.run_dnf(&["makecache"])
             })
             .await?
@@ -826,8 +868,9 @@ impl PackageManager for DnfPackageManager {
                 .filter(|p| p.reason == InstallReason::User)
                 .count();
 
-            // Count orphans (dependencies with no dependents)
-            // This requires dependency graph analysis - simplified for now
+            // Orphan detection needs an installed-package reverse-dependency
+            // graph that this backend does not build; report zero rather than
+            // guessing. Documented as unsupported in the backend docs.
             let orphans = 0;
 
             // Count available updates
@@ -1067,7 +1110,6 @@ mod tests {
         );
     }
 
-    #[cfg(feature = "fedora")]
     fn minimal_named_rpm_header(name: &[u8]) -> Vec<u8> {
         let mut header = Vec::new();
         header.extend_from_slice(&RPM_HEADER_MAGIC);
@@ -1081,7 +1123,6 @@ mod tests {
         header
     }
 
-    #[cfg(feature = "fedora")]
     fn write_packages_db(blobs: &[&[u8]]) -> tempfile::TempDir {
         let dir = tempfile::TempDir::new().expect("temp dir");
         let db = dir.path().join("rpmdb.sqlite");
@@ -1095,7 +1136,6 @@ mod tests {
         dir
     }
 
-    #[cfg(feature = "fedora")]
     #[test]
     fn test_read_rpm_sqlite_malformed_blob_is_error() {
         let dir = write_packages_db(&[&[0u8; 32]]);
@@ -1108,7 +1148,6 @@ mod tests {
         );
     }
 
-    #[cfg(feature = "fedora")]
     #[test]
     fn test_read_rpm_sqlite_mixed_blobs_do_not_drop_corrupt_row() {
         let valid = minimal_named_rpm_header(b"bash\0");

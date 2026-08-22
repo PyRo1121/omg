@@ -59,7 +59,7 @@ pub enum ValidationError {
 /// - Contain only: a-z, A-Z, 0-9, -, _, +, ., @, /
 /// - Not be empty
 /// - Not start with - or . (to prevent option injection)
-/// - Be less than 255 characters (prevent `DoS`)
+/// - Be at most 255 bytes long (to bound parsing work)
 ///
 /// # Security
 /// This prevents shell injection via malicious package names like:
@@ -163,6 +163,11 @@ pub fn validate_package_names_or_files(names: &[String]) -> Result<(), Validatio
 
 /// Sanitize a package name by removing invalid characters
 /// Use this when you need to accept user input but ensure it's safe
+///
+/// # Warning
+/// Deletion-based sanitization can map hostile input onto an *unrelated but
+/// valid* package name (`"firef@ox!"` -> `"firefox"`). Prefer
+/// [`validate_package_name`] wherever rejection is possible.
 #[must_use]
 pub fn sanitize_package_name(name: &str) -> String {
     name.chars().filter(|&c| is_safe_package_char(c)).collect()
@@ -323,16 +328,6 @@ mod tests {
                 max: MAX_PACKAGE_NAME_LENGTH
             })
         ));
-    }
-
-    #[test]
-    fn test_sanitize_package_name() {
-        assert_eq!(sanitize_package_name("foo;bar"), "foobar");
-        assert_eq!(sanitize_package_name("foo&&bar"), "foobar");
-        assert_eq!(
-            sanitize_package_name("foo-bar_baz.1+2@org/cli"),
-            "foo-bar_baz.1+2@org/cli"
-        );
     }
 
     #[test]

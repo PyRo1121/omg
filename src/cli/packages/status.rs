@@ -26,6 +26,7 @@ pub async fn status(fast: bool) -> Result<()> {
     status_with_json(fast, false).await
 }
 
+#[allow(clippy::unused_async, reason = "preserves the async command interface")]
 pub async fn status_with_json(fast: bool, json: bool) -> Result<()> {
     if json {
         return status_json(fast).await;
@@ -54,7 +55,12 @@ async fn status_json(fast: bool) -> Result<()> {
             let mut client = DaemonClient::connect().await.ok()?;
             match client.call(Request::Status { id: 0 }).await.ok()? {
                 ResponseResult::Status(status) => Some(status),
-                _ => None,
+                // Any other response means the daemon answered but not for
+                // this request; fall back to the direct package manager.
+                other => {
+                    tracing::debug!("Unexpected daemon status response: {other:?}");
+                    None
+                }
             }
         })
         .await
@@ -104,7 +110,12 @@ async fn status_fallback(fast: bool) -> Result<()> {
         let mut client = DaemonClient::connect().await.ok()?;
         match client.call(Request::Status { id: 0 }).await.ok()? {
             ResponseResult::Status(status) => Some(status),
-            _ => None,
+            // Any other response means the daemon answered but not for this
+            // request; fall back to the direct package manager.
+            other => {
+                tracing::debug!("Unexpected daemon status response: {other:?}");
+                None
+            }
         }
     })
     .await
@@ -192,11 +203,6 @@ fn display_status_report(
         "\n  {} Environment Status:",
         style::maybe_color("🌍", |t| t.bold().to_string())
     )?;
-    // Add runtime versions if available
-    #[cfg(feature = "arch")]
-    {
-        // For now, just a placeholder for runtimes in status
-    }
 
     writeln!(
         stdout,

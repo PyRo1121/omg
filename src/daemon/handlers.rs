@@ -12,7 +12,7 @@ use super::cache::PackageCache;
 use super::index::PackageIndex;
 use super::protocol::{
     DetailedPackageInfo, ExplicitResult, HealthStatus, Request, RequestId, Response,
-    ResponseResult, SearchResult, SecurityAuditResult, Vulnerability, error_codes,
+    ResponseResult, SearchResult, SecurityAuditResult, UpdateEntry, Vulnerability, error_codes,
 };
 use crate::core::metrics::GLOBAL_METRICS;
 use crate::core::security::{AuditEventType, AuditSeverity, audit_log};
@@ -20,6 +20,7 @@ use crate::package_managers::{PackageManager, get_package_manager};
 #[cfg(feature = "arch")]
 use crate::package_managers::{alpm_worker::AlpmWorker, search_detailed};
 use std::sync::RwLock;
+use std::sync::atomic::{AtomicU64, Ordering};
 
 // Constants for package source strings to avoid repeated allocations
 const SOURCE_APT: &str = "apt";
@@ -53,30 +54,35 @@ impl SystemBackendAccess {
     }
 }
 
-/// Daemon state shared across handlers
+/// Daemon state shared across handlers.
+///
+/// Fields are visible only to the daemon subtree (`server`, worker tasks);
+/// external consumers go through `DaemonState::new` and IPC responses.
 pub struct DaemonState {
-    pub cache: PackageCache,
-    pub persistent: super::db::PersistentCache,
-    pub package_manager: Arc<dyn PackageManager>,
-    pub index: Arc<PackageIndex>,
+    pub(super) cache: PackageCache,
+    pub(super) persistent: super::db::PersistentCache,
+    pub(super) package_manager: Arc<dyn PackageManager>,
+    pub(super) index: Arc<PackageIndex>,
     system_backends: SystemBackendAccess,
-    pub runtime_versions: Arc<RwLock<Vec<(String, String)>>>,
-    pub rate_limiter: Arc<RateLimiter<NotKeyed, InMemoryState, DefaultClock>>,
-    pub start_time: std::time::Instant,
+    pub(super) runtime_versions: Arc<RwLock<Vec<(String, String)>>>,
+    pub(super) rate_limiter: Arc<RateLimiter<NotKeyed, InMemoryState, DefaultClock>>,
+    pub(super) start_time: std::time::Instant,
+    background_worker_failures: AtomicU64,
 }
 
 impl DaemonState {
+    /// Whether the package index has no entries. Intended for tests and
+    /// health reporting that must not reach into private state.
+    pub fn index_is_empty(&self) -> bool {
+        self.index.is_empty()
+    }
+
     pub fn new() -> anyhow::Result<Self> {
         let data_dir = crate::core::paths::daemon_data_dir();
         let persistent = Self::open_persistent_cache(&data_dir)?;
-        let index = PackageIndex::new_with_cache(&persistent)
-            .or_else(|error| {
-                tracing::warn!("Failed to load cached index: {error}, building fresh index...");
-                PackageIndex::new()
-            })
-            .with_context(|| {
-                "Failed to build package index. Ensure package databases are synced (run 'omg sync')."
-            })?;
+        let index = PackageIndex::new().with_context(|| {
+            "Failed to build package index. Ensure package databases are synced (run 'omg sync')."
+        })?;
 
         let package_manager = get_package_manager()?;
         Ok(Self::from_index(
@@ -168,7 +174,19 @@ impl DaemonState {
             runtime_versions: Arc::new(RwLock::new(Vec::new())),
             rate_limiter,
             start_time: std::time::Instant::now(),
+            background_worker_failures: AtomicU64::new(0),
         }
+    }
+
+    /// Record one unexpected termination of the singleton status worker.
+    pub(super) fn inc_background_worker_failures(&self) {
+        self.background_worker_failures
+            .fetch_add(1, Ordering::Relaxed);
+    }
+
+    #[must_use]
+    pub(super) fn background_worker_failures(&self) -> u64 {
+        self.background_worker_failures.load(Ordering::Relaxed)
     }
 }
 
@@ -299,6 +317,10 @@ const MAX_QUERY_LENGTH: usize = 500;
 const DEFAULT_SEARCH_LIMIT: usize = 50;
 /// Maximum search limit
 const MAX_SEARCH_LIMIT: usize = 1000;
+/// Default number of suggestions returned
+const DEFAULT_SUGGEST_LIMIT: usize = 10;
+/// Maximum number of suggestions returned
+const MAX_SUGGEST_LIMIT: usize = 50;
 /// Concurrency for vulnerability scanning
 const SCAN_CONCURRENCY: usize = 32;
 /// Cache size threshold for "degraded" health status
@@ -352,7 +374,9 @@ async fn handle_suggest(
         };
     }
 
-    let limit = limit.unwrap_or(10).min(50);
+    let limit = limit
+        .unwrap_or(DEFAULT_SUGGEST_LIMIT)
+        .min(MAX_SUGGEST_LIMIT);
     let state_clone = Arc::clone(&state);
 
     // Run fuzzy search in blocking thread
@@ -427,7 +451,11 @@ async fn handle_batch(state: Arc<DaemonState>, id: RequestId, requests: Vec<Requ
         };
     }
 
-    // Process requests concurrently with a limit to prevent DoS
+    // Process requests concurrently with a limit to prevent DoS.
+    // NOTE: each sub-request flows through `handle_request`, so it consumes
+    // one global rate-limiter token and increments request metrics; a
+    // max-size batch therefore burns half of the global burst budget by
+    // design.
     let responses: Vec<_> = stream::iter(requests)
         .map(|req| {
             let state = Arc::clone(&state);
@@ -602,32 +630,53 @@ async fn handle_info(state: Arc<DaemonState>, id: RequestId, package: String) ->
         }
     }
 
-    // 4. Try AUR (arch only)
+    // 4. Try AUR (arch only). AUR is best-effort for availability, but a
+    // failed or timed-out lookup is surfaced loudly (mirroring step 3's
+    // backend semantics) instead of silently masquerading as "not found".
+    // Only a genuine miss (empty results or no exact name match) falls
+    // through to the negative cache.
     #[cfg(feature = "arch")]
-    if state.system_backends.is_production()
-        && state.package_manager.name() == "pacman"
-        && let Ok(Ok(details)) =
-            tokio::time::timeout(DAEMON_INFO_AUR_TIMEOUT, search_detailed(&package)).await
-        && let Some(pkg) = details.into_iter().find(|p| p.name == package)
-    {
-        let detailed = Arc::new(DetailedPackageInfo {
-            name: pkg.name,
-            version: pkg.version.clone(),
-            description: pkg.description.unwrap_or_default(),
-            url: pkg.url.unwrap_or_default(),
-            size: 0,
-            download_size: 0,
-            repo: SOURCE_AUR.to_string(),
-            depends: pkg.depends.unwrap_or_default(),
-            licenses: pkg.license.unwrap_or_default(),
-            source: SOURCE_AUR.to_string(),
-        });
+    if state.system_backends.is_production() && state.package_manager.name() == "pacman" {
+        match tokio::time::timeout(DAEMON_INFO_AUR_TIMEOUT, search_detailed(&package)).await {
+            Ok(Ok(details)) => {
+                if let Some(pkg) = details.into_iter().find(|p| p.name == package) {
+                    let detailed = Arc::new(DetailedPackageInfo {
+                        name: pkg.name,
+                        version: pkg.version.clone(),
+                        description: pkg.description.unwrap_or_default(),
+                        url: pkg.url.unwrap_or_default(),
+                        size: 0,
+                        download_size: 0,
+                        repo: SOURCE_AUR.to_string(),
+                        depends: pkg.depends.unwrap_or_default(),
+                        licenses: pkg.license.unwrap_or_default(),
+                        source: SOURCE_AUR.to_string(),
+                    });
 
-        state.cache.insert_info_arc(Arc::clone(&detailed));
-        return Response::Success {
-            id,
-            result: ResponseResult::Info(Arc::unwrap_or_clone(detailed)),
-        };
+                    state.cache.insert_info_arc(Arc::clone(&detailed));
+                    return Response::Success {
+                        id,
+                        result: ResponseResult::Info(Arc::unwrap_or_clone(detailed)),
+                    };
+                }
+            }
+            Ok(Err(error)) => {
+                tracing::warn!("AUR lookup failed for {package}: {error:#}");
+                return internal_error(id, format!("AUR lookup failed for {package}: {error}"));
+            }
+            Err(_) => {
+                tracing::warn!(
+                    "AUR lookup timed out after {DAEMON_INFO_AUR_TIMEOUT:?} for {package}"
+                );
+                return internal_error(
+                    id,
+                    format!(
+                        "AUR lookup timed out after {} seconds",
+                        DAEMON_INFO_AUR_TIMEOUT.as_secs()
+                    ),
+                );
+            }
+        }
     }
 
     state.cache.insert_info_miss(&package);
@@ -640,66 +689,72 @@ async fn handle_info(state: Arc<DaemonState>, id: RequestId, package: String) ->
 }
 
 /// Query native status counts for a production package-manager backend.
+/// Dispatch a native backend query, keeping every feature-gated arm in one
+/// place. Disabled branches collapse to a single canonical error so the two
+/// query shapes can never drift apart. Adding a native backend means adding
+/// an arm here and updating the feature gates below.
+macro_rules! native_backend_query {
+    ($pm_name:expr, $debian:expr, $debian_pure:expr, $arch:expr) => {
+        match $pm_name {
+            "apt" => {
+                #[cfg(feature = "debian")]
+                {
+                    $debian
+                }
+                #[cfg(not(feature = "debian"))]
+                {
+                    Err(backend_disabled("Debian"))
+                }
+            }
+            "apt-pure" => {
+                #[cfg(any(feature = "debian", feature = "debian-pure"))]
+                {
+                    $debian_pure
+                }
+                #[cfg(not(any(feature = "debian", feature = "debian-pure")))]
+                {
+                    Err(backend_disabled("Debian"))
+                }
+            }
+            "pacman" => {
+                #[cfg(feature = "arch")]
+                {
+                    $arch
+                }
+                #[cfg(not(feature = "arch"))]
+                {
+                    Err(backend_disabled("Arch"))
+                }
+            }
+            other => Err(anyhow::anyhow!("Unsupported package manager: {other}")),
+        }
+    };
+}
+
+#[cold]
+fn backend_disabled(backend: &str) -> anyhow::Error {
+    anyhow::anyhow!("{backend} backend disabled")
+}
+
+/// Query native status counts for a production package-manager backend.
 pub(crate) fn system_status_for_backend(
     pm_name: &str,
 ) -> anyhow::Result<(usize, usize, usize, usize)> {
-    match pm_name {
-        "apt" => {
-            #[cfg(feature = "debian")]
-            {
-                crate::package_managers::apt_get_system_status()
-            }
-            #[cfg(not(feature = "debian"))]
-            Err(anyhow::anyhow!("Debian backend disabled"))
-        }
-        "apt-pure" => {
-            #[cfg(any(feature = "debian", feature = "debian-pure"))]
-            {
-                crate::package_managers::debian_db::get_counts_fast()
-            }
-            #[cfg(not(any(feature = "debian", feature = "debian-pure")))]
-            Err(anyhow::anyhow!("Debian backend disabled"))
-        }
-        "pacman" => {
-            #[cfg(feature = "arch")]
-            {
-                crate::package_managers::get_system_status()
-            }
-            #[cfg(not(feature = "arch"))]
-            Err(anyhow::anyhow!("Arch backend disabled"))
-        }
-        other => Err(anyhow::anyhow!("Unsupported package manager: {other}")),
-    }
+    native_backend_query!(
+        pm_name,
+        crate::package_managers::apt_get_system_status(),
+        crate::package_managers::debian_db::get_counts_fast(),
+        crate::package_managers::get_system_status()
+    )
 }
 
 pub(crate) fn explicit_packages_for_backend(pm_name: &str) -> anyhow::Result<Vec<String>> {
-    match pm_name {
-        "apt" => {
-            #[cfg(feature = "debian")]
-            {
-                crate::package_managers::apt_list_explicit()
-            }
-            #[cfg(not(feature = "debian"))]
-            Err(anyhow::anyhow!("Debian backend disabled"))
-        }
-        "apt-pure" => {
-            #[cfg(any(feature = "debian", feature = "debian-pure"))]
-            {
-                crate::package_managers::debian_db::list_explicit_fast()
-            }
-            #[cfg(not(any(feature = "debian", feature = "debian-pure")))]
-            Err(anyhow::anyhow!("Debian backend disabled"))
-        }
-        "pacman" => {
-            #[cfg(feature = "arch")]
-            {
-                crate::package_managers::list_explicit_fast()
-            }
-            #[cfg(not(feature = "arch"))]
-            Err(anyhow::anyhow!("Arch backend disabled"))
-        }
-        other => Err(anyhow::anyhow!("Unsupported package manager: {other}")),
-    }
+    native_backend_query!(
+        pm_name,
+        crate::package_managers::apt_list_explicit(),
+        crate::package_managers::debian_db::list_explicit_fast(),
+        crate::package_managers::list_explicit_fast()
+    )
 }
 
 /// Handle status request
@@ -767,7 +822,7 @@ async fn handle_status(state: Arc<DaemonState>, id: RequestId) -> Response {
 
     match status_result {
         Ok((total, explicit, orphans, updates)) => {
-            let (res, cacheable) = super::protocol::status_snapshot(
+            let (res, cacheable) = super::status_policy::status_snapshot(
                 total,
                 explicit,
                 orphans,
@@ -977,13 +1032,23 @@ fn validation_error(id: RequestId, message: impl Into<String>) -> Response {
     }
 }
 
+/// Resident memory of the daemon process in MiB, parsed from procfs.
+/// `/proc/self/status` is a kernel virtual file served from memory (no
+/// device I/O), so the synchronous read is effectively free.
+fn process_rss_mb() -> Option<u64> {
+    let status = std::fs::read_to_string("/proc/self/status").ok()?;
+    let line = status.lines().find(|line| line.starts_with("VmRSS:"))?;
+    let kb: u64 = line.split_whitespace().nth(1)?.parse().ok()?;
+    Some(kb / 1024)
+}
+
 fn handle_health(state: &Arc<DaemonState>, id: RequestId) -> Response {
     let uptime_seconds = state.start_time.elapsed().as_secs();
     let cache_size = state.cache.stats().size;
     let metrics = GLOBAL_METRICS.snapshot();
     let active_connections = metrics.active_connections;
 
-    let memory_usage_mb = 0u64;
+    let memory_usage_mb = process_rss_mb().unwrap_or(0);
 
     let status = if cache_size > HEALTH_UNHEALTHY_CACHE_THRESHOLD
         || metrics.requests_failed > HEALTH_UNHEALTHY_FAILURES_THRESHOLD
@@ -1003,8 +1068,35 @@ fn handle_health(state: &Arc<DaemonState>, id: RequestId) -> Response {
             memory_usage_mb,
             cache_size,
             active_connections,
+            background_worker_failures: state.background_worker_failures(),
         }),
     }
+}
+
+/// Names listed in pacman.conf `IgnorePkg` must never appear in update lists.
+///
+/// The hot ALPM worker owns a bare `Alpm` handle without
+/// `configure_package_filters`, so unlike the CLI path
+/// (`alpm_ops::get_update_list`, which relies on `should_ignore()` at the
+/// source) it would report ignored packages as updatable. This replicates
+/// the name-level filter on the daemon side so both surfaces agree.
+/// Group-based ignores (`IgnoreGroup`) need ALPM group membership and are
+/// still only applied on the direct CLI path.
+#[cfg(feature = "arch")]
+fn filter_ignored_updates<T>(
+    updates: Vec<T>,
+    ignored_pkgs: &[String],
+    name: impl Fn(&T) -> &str,
+) -> Vec<T> {
+    if ignored_pkgs.is_empty() {
+        return updates;
+    }
+    let ignored: std::collections::HashSet<&str> =
+        ignored_pkgs.iter().map(String::as_str).collect();
+    updates
+        .into_iter()
+        .filter(|update| !ignored.contains(name(update)))
+        .collect()
 }
 
 /// Handle list updates request using the hot ALPM worker (zero ALPM init overhead)
@@ -1018,9 +1110,33 @@ async fn handle_list_updates(state: Arc<DaemonState>, id: RequestId) -> Response
     #[cfg(not(feature = "arch"))]
     let updates_result = state.package_manager.list_updates().await;
 
+    // `mut` is only consumed by the arch-gated IgnorePkg filter below.
+    #[cfg_attr(not(feature = "arch"), allow(unused_mut))]
     match updates_result {
-        Ok(updates) => {
-            use super::protocol::UpdateEntry;
+        Ok(mut updates) => {
+            // PARITY: apply the same IgnorePkg filter as the CLI path; a
+            // pacman.conf parse failure is an error, mirroring
+            // `alpm_ops::get_update_list`.
+            #[cfg(feature = "arch")]
+            if state.system_backends.is_production() && state.package_manager.name() == "pacman" {
+                match crate::core::pacman_conf::PacmanConfig::parse(
+                    crate::core::paths::pacman_conf_path(),
+                ) {
+                    Ok(pacman_config) => {
+                        updates =
+                            filter_ignored_updates(updates, &pacman_config.ignore_pkg, |update| {
+                                update.name.as_str()
+                            });
+                    }
+                    Err(error) => {
+                        return internal_error(
+                            id,
+                            format!("Failed to load update filters from pacman.conf: {error}"),
+                        );
+                    }
+                }
+            }
+
             Response::Success {
                 id,
                 result: ResponseResult::ListUpdates(
@@ -1107,5 +1223,47 @@ mod tests {
             error.to_string().contains("Debian backend disabled"),
             "got: {error}"
         );
+    }
+
+    #[cfg(feature = "arch")]
+    fn update_entry(name: &str) -> UpdateEntry {
+        UpdateEntry {
+            name: name.to_string(),
+            old_version: "1.0".to_string(),
+            new_version: "2.0".to_string(),
+            repo: "core".to_string(),
+        }
+    }
+
+    /// PARITY: the daemon's update list must exclude pacman.conf IgnorePkg
+    /// names exactly like the CLI path (`should_ignore()` at the ALPM source).
+    #[test]
+    #[cfg(feature = "arch")]
+    fn update_list_filters_ignored_packages_like_the_cli() {
+        let ignored = vec!["linux".to_string(), "linux-lts".to_string()];
+        let updates = vec![
+            update_entry("linux"),
+            update_entry("firefox"),
+            update_entry("linux-lts"),
+            update_entry("git"),
+        ];
+
+        let kept = filter_ignored_updates(updates, &ignored, |update| update.name.as_str());
+        let names: Vec<&str> = kept.iter().map(|update| update.name.as_str()).collect();
+        assert_eq!(names, ["firefox", "git"]);
+    }
+
+    #[test]
+    #[cfg(feature = "arch")]
+    fn update_list_without_ignores_is_passed_through() {
+        let updates = vec![update_entry("firefox"), update_entry("linux")];
+        let kept = filter_ignored_updates(updates, &[], |update| update.name.as_str());
+        assert_eq!(kept.len(), 2);
+    }
+
+    #[test]
+    fn health_reports_resident_memory_from_procfs() {
+        let rss_mb = process_rss_mb().expect("VmRSS must be readable on Linux");
+        assert!(rss_mb > 0, "a running test process has non-zero RSS");
     }
 }

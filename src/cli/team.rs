@@ -304,12 +304,13 @@ pub async fn members(_ctx: &CliContext) -> Result<()> {
 
     let mut member_list = vec![];
     for member in &members {
-        let last_seen_ts = parse_timestamp(&member.last_seen_at);
-        let in_sync = now - last_seen_ts < one_hour;
+        let last_seen_ts = crate::cli::parse_timestamp_opt(&member.last_seen_at);
+        let in_sync = last_seen_ts.is_some_and(|ts| now.saturating_sub(ts) < one_hour);
 
         let sync_icon = if in_sync { "✓" } else { "⚠" };
         let hostname = member.hostname.as_deref().unwrap_or(&member.machine_id);
-        let last_sync = format_timestamp(last_seen_ts);
+        let last_sync =
+            last_seen_ts.map_or_else(|| "unknown".to_string(), crate::cli::format_short_timestamp);
         let platform = format!(
             "{} {}",
             member.os.as_deref().unwrap_or("unknown"),
@@ -329,8 +330,8 @@ pub async fn members(_ctx: &CliContext) -> Result<()> {
     let in_sync_count = members
         .iter()
         .filter(|m| {
-            let ts = parse_timestamp(&m.last_seen_at);
-            now - ts < one_hour
+            crate::cli::parse_timestamp_opt(&m.last_seen_at)
+                .is_some_and(|ts| now.saturating_sub(ts) < one_hour)
         })
         .count();
 
@@ -344,31 +345,6 @@ pub async fn members(_ctx: &CliContext) -> Result<()> {
     ]));
 
     Ok(())
-}
-
-fn parse_timestamp(s: &str) -> i64 {
-    use std::str::FromStr;
-    // Basic parser for various formats
-    if let Ok(ts) = jiff::Timestamp::from_str(s) {
-        ts.as_second()
-    } else {
-        0
-    }
-}
-
-fn format_timestamp(ts: i64) -> String {
-    let now = jiff::Timestamp::now().as_second();
-    let diff = now - ts;
-
-    if diff < 60 {
-        "just now".to_string()
-    } else if diff < 3600 {
-        format!("{} minutes ago", diff / 60)
-    } else if diff < 86400 {
-        format!("{} hours ago", diff / 3600)
-    } else {
-        format!("{} days ago", diff / 86400)
-    }
 }
 
 fn extract_team_id(url: &str) -> String {
@@ -716,38 +692,36 @@ pub mod golden_path {
     }
 }
 
-/// Check compliance status
+/// Check compliance status.
+///
+/// Honest surface: this CLI has no local compliance-evaluation engine, so the
+/// command reports exactly that instead of displaying fabricated scores.
 pub fn compliance(export: Option<&str>, enforce: bool, _ctx: &CliContext) -> Result<()> {
     use crate::cli::packages::execute_cmd;
 
     license::require_feature("team-sync")?;
 
-    let compliance_items = vec![
-        ("Compliance Score", "94%"),
-        ("Valid SPDX licenses", "All packages"),
-        ("Critical CVEs", "None"),
-        ("Member sync", "Within 7 days"),
-        ("SBOM metadata", "2 packages missing"),
-        ("Unapproved versions", "1 machine"),
-    ];
+    if enforce {
+        execute_cmd(Cmd::warning(
+            "Enforcement mode requested, but no compliance evaluation engine \
+             exists locally; nothing can be enforced yet",
+        ));
+    }
+
+    if let Some(path) = export {
+        anyhow::bail!(
+            "No compliance data is available to export to '{path}'; \
+             compliance evidence requires an evaluated report"
+        );
+    }
 
     execute_cmd(Cmd::batch([
-        Cmd::header("Compliance Status", "Overall score: 94%"),
+        Cmd::header("Compliance Status", "No local data"),
         Cmd::spacer(),
-        Components::status_summary(compliance_items),
-        if enforce {
-            Cmd::batch([
-                Cmd::spacer(),
-                Cmd::warning("Enforcement mode enabled - Non-compliant operations will be blocked"),
-            ])
-        } else {
-            Cmd::none()
-        },
-        if let Some(path) = export {
-            Cmd::batch([Cmd::spacer(), Cmd::success(format!("Exported to {path}"))])
-        } else {
-            Cmd::none()
-        },
+        Cmd::info(
+            "Compliance scoring is not computed locally; \
+             view evaluated results on the dashboard",
+        ),
     ]));
 
     Ok(())
@@ -761,7 +735,19 @@ pub async fn activity(days: u32, _ctx: &CliContext) -> Result<()> {
 
     let logs = license::fetch_audit_logs().await?;
 
-    if logs.is_empty() {
+    // Apply the requested window honestly: events older than `days` are
+    // excluded rather than only relabeling the header.
+    let cutoff = jiff::Timestamp::now()
+        .as_second()
+        .saturating_sub(i64::from(days).saturating_mul(24 * 60 * 60));
+    let recent: Vec<_> = logs
+        .iter()
+        .filter(|log| {
+            crate::cli::parse_timestamp_opt(&log.created_at).is_some_and(|ts| ts >= cutoff)
+        })
+        .collect();
+
+    if recent.is_empty() {
         execute_cmd(Cmd::batch([
             Cmd::header(
                 format!("Team Activity (last {days} days)"),
@@ -772,10 +758,13 @@ pub async fn activity(days: u32, _ctx: &CliContext) -> Result<()> {
         return Ok(());
     }
 
-    let event_count = logs.len();
+    let event_count = recent.len();
     let mut activity_list = vec![];
-    for log in &logs {
-        let timestamp = format_timestamp(parse_timestamp(&log.created_at));
+    for log in &recent {
+        let timestamp = log.created_at.parse::<jiff::Timestamp>().map_or_else(
+            |_| "unknown time".to_string(),
+            |ts| ts.strftime("%Y-%m-%d %H:%M").to_string(),
+        );
         let resource = log.resource_type.as_deref().unwrap_or("-").to_string();
         activity_list.push(format!("{} {} ({})", timestamp, log.action, resource));
     }

@@ -1,6 +1,7 @@
-//! Direct ALPM (Arch Linux Package Manager) integration
+//! Direct ALPM (Arch Linux Package Manager) integration.
 //!
-//! Uses libalpm directly for 10-100x faster queries compared to spawning pacman.
+//! Queries libalpm through a cached per-thread handle instead of spawning a
+//! pacman subprocess for each query.
 
 use alpm::{Alpm, PackageReason, SigLevel};
 use anyhow::{Context, Result};
@@ -10,19 +11,9 @@ use std::sync::atomic::{AtomicU64, Ordering};
 
 use crate::core::paths;
 use crate::package_managers::pacman_db;
-use crate::package_managers::types::{LocalPackage, PackageInfo, SyncPackage};
-
-/// Zero-allocation case-insensitive substring search (ASCII-only)
-#[inline]
-fn contains_ignore_ascii_case(haystack: &str, needle: &str) -> bool {
-    if needle.len() > haystack.len() {
-        return false;
-    }
-    haystack
-        .as_bytes()
-        .windows(needle.len())
-        .any(|window| window.eq_ignore_ascii_case(needle.as_bytes()))
-}
+use crate::package_managers::types::{
+    LocalPackage, PackageInfo, SyncPackage, contains_ignore_case, is_orphan_package,
+};
 
 static CACHE_EPOCH: AtomicU64 = AtomicU64::new(0);
 
@@ -75,19 +66,10 @@ fn create_alpm_handle() -> Result<Alpm> {
     Ok(alpm)
 }
 
-/// Execute a function with a provided ALPM handle.
-/// This is pub(crate) for testing purposes, allowing injection of a mock handle.
-pub(crate) fn with_alpm_handle<F, R>(alpm: &Alpm, f: F) -> Result<R>
-where
-    F: FnOnce(&Alpm) -> Result<R>,
-{
-    f(alpm)
-}
-
 /// Get a cached ALPM handle or create a new one for this thread
 ///
-/// SAFETY: Uses `catch_unwind` to ensure `RefCell` is properly released even if
-/// the closure panics, preventing the thread-local from becoming poisoned.
+/// Panic safety: uses `catch_unwind` to ensure the `RefCell` borrow is properly
+/// released even if the closure panics, preventing a poisoned thread-local.
 #[expect(clippy::expect_used)] // ALPM handle initialization; failure indicates system misconfiguration
 pub fn with_handle<F, R>(f: F) -> Result<R>
 where
@@ -106,12 +88,9 @@ where
             .as_ref()
             .expect("ALPM handle initialized above");
 
-        // Execute user function with panic safety
-        // SAFETY: We wrap in catch_unwind to ensure RefCell is properly released
-        // even if f panics. This prevents the thread-local from becoming poisoned.
-        let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-            with_alpm_handle(handle_ref, f)
-        }));
+        // Execute user function with panic safety: catch_unwind ensures the
+        // RefCell borrow is released even if f panics.
+        let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| f(handle_ref)));
 
         // Drop the borrow before handling panic
         drop(maybe_handle);
@@ -128,8 +107,8 @@ where
 
 /// Get a mutable cached ALPM handle
 ///
-/// SAFETY: Uses `catch_unwind` to ensure `RefCell` is properly released even if
-/// the closure panics, preventing the thread-local from becoming poisoned.
+/// Panic safety: uses `catch_unwind` to ensure the `RefCell` borrow is properly
+/// released even if the closure panics, preventing a poisoned thread-local.
 #[expect(clippy::expect_used)] // ALPM handle initialization; failure indicates system misconfiguration
 pub fn with_handle_mut<F, R>(f: F) -> Result<R>
 where
@@ -168,7 +147,6 @@ pub fn clear_alpm_cache() {
 }
 
 /// Search sync databases (available packages) - FAST (<10ms)
-#[inline]
 pub fn search_sync(query: &str) -> Result<Vec<SyncPackage>> {
     with_handle(|handle| {
         let query_lower = query.to_ascii_lowercase();
@@ -176,10 +154,10 @@ pub fn search_sync(query: &str) -> Result<Vec<SyncPackage>> {
 
         for db in handle.syncdbs() {
             for pkg in db.pkgs() {
-                if pkg.name().contains(&query_lower)
+                if contains_ignore_case(pkg.name(), &query_lower)
                     || pkg
                         .desc()
-                        .is_some_and(|d| contains_ignore_ascii_case(d, &query_lower))
+                        .is_some_and(|d| contains_ignore_case(d, &query_lower))
                 {
                     let installed = handle.localdb().pkg(pkg.name()).is_ok();
 
@@ -200,7 +178,6 @@ pub fn search_sync(query: &str) -> Result<Vec<SyncPackage>> {
 }
 
 /// Get package info - INSTANT (<1ms)
-#[inline]
 pub fn get_package_info(name: &str) -> Result<Option<PackageInfo>> {
     with_handle(|handle| {
         // Try local first
@@ -248,67 +225,6 @@ pub fn get_package_info(name: &str) -> Result<Option<PackageInfo>> {
         }
 
         Ok(None)
-    })
-}
-
-/// Batch get package info for multiple packages - 10-50x faster than individual lookups
-/// Single ALPM handle call amortizes overhead across all packages
-#[inline]
-pub fn get_package_info_batch(names: &[&str]) -> Result<Vec<Option<PackageInfo>>> {
-    with_handle(|handle| {
-        let localdb = handle.localdb();
-        let syncdbs: Vec<_> = handle.syncdbs().iter().collect();
-
-        let results = names
-            .iter()
-            .map(|name| {
-                if let Ok(pkg) = localdb.pkg(*name) {
-                    return Some(PackageInfo {
-                        name: pkg.name().to_string(),
-                        version: super::types::parse_version_or_zero(pkg.version()),
-                        description: pkg.desc().unwrap_or("").to_string(),
-                        url: pkg.url().map(std::string::ToString::to_string),
-                        size: pkg.isize().try_into().unwrap_or(0),
-                        install_size: Some(pkg.isize()),
-                        download_size: None,
-                        repo: "local".to_string(),
-                        depends: pkg.depends().iter().map(|d| d.name().to_string()).collect(),
-                        licenses: pkg
-                            .licenses()
-                            .iter()
-                            .map(std::string::ToString::to_string)
-                            .collect(),
-                        installed: true,
-                    });
-                }
-
-                for db in &syncdbs {
-                    if let Ok(pkg) = db.pkg(*name) {
-                        return Some(PackageInfo {
-                            name: pkg.name().to_string(),
-                            version: super::types::parse_version_or_zero(pkg.version()),
-                            description: pkg.desc().unwrap_or("").to_string(),
-                            url: pkg.url().map(std::string::ToString::to_string),
-                            size: pkg.isize().try_into().unwrap_or(0),
-                            install_size: Some(pkg.isize()),
-                            download_size: Some(pkg.download_size().try_into().unwrap_or(0)),
-                            repo: db.name().to_string(),
-                            depends: pkg.depends().iter().map(|d| d.name().to_string()).collect(),
-                            licenses: pkg
-                                .licenses()
-                                .iter()
-                                .map(std::string::ToString::to_string)
-                                .collect(),
-                            installed: false,
-                        });
-                    }
-                }
-
-                None
-            })
-            .collect();
-
-        Ok(results)
     })
 }
 
@@ -366,7 +282,15 @@ pub fn list_orphans_fast() -> Result<Vec<String>> {
             .localdb()
             .pkgs()
             .iter()
-            .filter(|pkg| pkg.reason() == PackageReason::Depend && pkg.required_by().is_empty())
+            // Canonical orphan rule (`types::is_orphan_package`): a dependency
+            // that no other installed package requires or optionally requires.
+            .filter(|pkg| {
+                is_orphan_package(
+                    pkg.reason() == PackageReason::Explicit,
+                    pkg.required_by().is_empty(),
+                    pkg.optional_for().is_empty(),
+                )
+            })
             .map(|pkg| pkg.name().to_string())
             .collect();
 
@@ -404,9 +328,15 @@ pub fn list_installed_with_licenses() -> Result<Vec<(String, String, String)>> {
 /// Check if a package has an available update
 pub fn has_update(package: &str) -> Result<bool> {
     with_handle(|handle| {
-        // Get local version
-        let localdb = handle.localdb();
-        let local_pkg = localdb.pkg(package)?;
+        // Get local version; an uninstalled package simply has no update.
+        let local_pkg = match handle.localdb().pkg(package) {
+            Ok(pkg) => pkg,
+            Err(alpm::Error::PkgNotFound) => return Ok(false),
+            Err(e) => {
+                return Err(anyhow::anyhow!(e))
+                    .with_context(|| format!("Failed to query local package '{package}'"));
+            }
+        };
         let local_ver = local_pkg.version();
 
         // Check sync databases for newer version
@@ -432,17 +362,21 @@ pub fn is_installed_fast(name: &str) -> Result<bool> {
 }
 
 /// Get counts - INSTANT (<1ms, single pass over packages)
-#[inline]
 pub fn get_counts() -> Result<(usize, usize, usize)> {
     with_handle(|handle| {
         let pkgs = handle.localdb().pkgs();
         let total = pkgs.len();
 
-        // Single-pass counting for cache efficiency
+        // Single-pass counting for cache efficiency; orphans follow the
+        // canonical rule (`types::is_orphan_package`).
         let (explicit, orphans) = pkgs.iter().fold((0, 0), |(mut exp, mut orp), pkg| {
             if pkg.reason() == PackageReason::Explicit {
                 exp += 1;
-            } else if pkg.required_by().is_empty() {
+            } else if is_orphan_package(
+                false,
+                pkg.required_by().is_empty(),
+                pkg.optional_for().is_empty(),
+            ) {
                 orp += 1;
             }
             (exp, orp)
@@ -494,35 +428,45 @@ pub fn list_all_package_names() -> Result<Vec<String>> {
 mod tests {
     use super::*;
 
+    /// The libalpm-backed queries read the real system database; skip them in
+    /// environments without an installed pacman local db (CI containers).
+    fn real_pacman_db_available() -> bool {
+        paths::pacman_local_dir().exists()
+    }
+
     #[test]
-    fn test_search_sync_returns_results() {
+    fn search_sync_returns_results() {
+        if !real_pacman_db_available() {
+            return;
+        }
         let result = search_sync("linux");
         assert!(result.is_ok());
     }
 
     #[test]
-    fn test_get_package_info_existing() {
-        let result = get_package_info("pacman");
-        assert!(result.is_ok());
-        let info = result.unwrap();
-        assert!(info.is_some(), "pacman should be installed");
-        let pkg = info.unwrap();
+    fn get_package_info_finds_installed_pacman() {
+        if !real_pacman_db_available() {
+            return;
+        }
+        let info = get_package_info("pacman").expect("query should succeed");
+        let pkg = info.expect("pacman should be installed");
         assert_eq!(pkg.name, "pacman");
     }
 
     #[test]
-    fn test_get_package_info_nonexistent() {
+    fn get_package_info_returns_none_for_nonexistent() {
         let result = get_package_info("this-package-definitely-does-not-exist-12345");
         assert!(result.is_ok());
         assert!(result.unwrap().is_none());
     }
 
     #[test]
-    fn test_list_installed_fast() {
-        let result = list_installed_fast();
-        assert!(result.is_ok());
-        let packages = result.unwrap();
-        assert!(!packages.is_empty(), "Should have installed packages");
+    fn list_installed_fast_includes_pacman() {
+        if !real_pacman_db_available() {
+            return;
+        }
+        let packages = list_installed_fast().expect("list should succeed");
+        assert!(!packages.is_empty(), "should have installed packages");
         assert!(
             packages.iter().any(|p| p.name == "pacman"),
             "pacman should be installed"
@@ -530,77 +474,85 @@ mod tests {
     }
 
     #[test]
-    fn test_list_explicit_fast() {
-        let result = list_explicit_fast();
-        assert!(result.is_ok());
-        let packages = result.unwrap();
-        assert!(!packages.is_empty(), "Should have explicit packages");
+    fn list_explicit_fast_is_nonempty_on_real_systems() {
+        if !real_pacman_db_available() {
+            return;
+        }
+        let packages = list_explicit_fast().expect("list should succeed");
+        assert!(!packages.is_empty(), "should have explicit packages");
     }
 
     #[test]
-    fn test_list_orphans_fast() {
+    fn list_orphans_fast_succeeds() {
         let result = list_orphans_fast();
         assert!(result.is_ok());
     }
 
     #[test]
-    fn test_is_installed_fast_pacman() {
-        let result = is_installed_fast("pacman");
-        assert!(result.is_ok());
-        assert!(result.unwrap(), "pacman should be installed");
+    fn is_installed_fast_detects_pacman() {
+        if !real_pacman_db_available() {
+            return;
+        }
+        assert!(
+            is_installed_fast("pacman").expect("query should succeed"),
+            "pacman should be installed"
+        );
     }
 
     #[test]
-    fn test_is_installed_fast_nonexistent() {
+    fn is_installed_fast_rejects_nonexistent() {
         let result = is_installed_fast("this-package-definitely-does-not-exist-12345");
         assert!(result.is_ok());
         assert!(!result.unwrap());
     }
 
     #[test]
-    fn test_get_counts() {
-        let result = get_counts();
-        assert!(result.is_ok());
-        let (total, explicit, _orphans) = result.unwrap();
-        assert!(total > 0, "Should have installed packages");
-        assert!(explicit > 0, "Should have explicit packages");
-        assert!(explicit <= total, "Explicit should be <= total");
+    fn counts_are_consistent() {
+        if !real_pacman_db_available() {
+            return;
+        }
+        let (total, explicit, _orphans) = get_counts().expect("counts should succeed");
+        assert!(total > 0, "should have installed packages");
+        assert!(explicit > 0, "should have explicit packages");
+        assert!(explicit <= total, "explicit should be <= total");
     }
 
     #[test]
-    fn test_list_all_package_names() {
-        let result = list_all_package_names();
-        assert!(result.is_ok());
-        let names = result.unwrap();
+    fn all_package_names_are_sorted_and_include_pacman() {
+        if !real_pacman_db_available() {
+            return;
+        }
+        let names = list_all_package_names().expect("names should succeed");
         assert!(!names.is_empty());
         assert!(names.contains(&"pacman".to_string()));
         let is_sorted = names.windows(2).all(|w| w[0] <= w[1]);
-        assert!(is_sorted, "Package names should be sorted");
+        assert!(is_sorted, "package names should be sorted");
     }
 
     #[test]
-    fn test_local_package_has_valid_fields() {
-        let result = list_installed_fast();
-        assert!(result.is_ok());
-        let packages = result.unwrap();
+    fn local_packages_have_valid_fields() {
+        if !real_pacman_db_available() {
+            return;
+        }
+        let packages = list_installed_fast().expect("list should succeed");
 
         for pkg in packages.iter().take(5) {
-            assert!(!pkg.name.is_empty(), "Package name should not be empty");
+            assert!(!pkg.name.is_empty(), "package name should not be empty");
             assert!(
                 pkg.reason == "explicit" || pkg.reason == "dependency",
-                "Reason should be explicit or dependency"
+                "reason should be explicit or dependency"
             );
         }
     }
 
     #[test]
-    fn test_sync_package_has_repo() {
-        let result = search_sync("linux");
-        assert!(result.is_ok());
-        let packages = result.unwrap();
-
+    fn sync_results_carry_repo_names() {
+        if !real_pacman_db_available() {
+            return;
+        }
+        let packages = search_sync("linux").expect("search should succeed");
         for pkg in packages.iter().take(5) {
-            assert!(!pkg.repo.is_empty(), "Repo should not be empty");
+            assert!(!pkg.repo.is_empty(), "repo should not be empty");
         }
     }
 }

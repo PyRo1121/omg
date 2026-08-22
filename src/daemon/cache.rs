@@ -99,7 +99,10 @@ impl PackageCache {
         self.system_status.get(KEY_STATUS)
     }
 
-    /// Update system status cache (accepts Arc to avoid double-wrapping)
+    /// Update system status cache (accepts Arc to avoid double-wrapping).
+    ///
+    /// Also refreshes the explicit-count cache: both values belong to the
+    /// same status-refresh epoch and are published together by the worker.
     pub fn update_status(&self, result: Arc<StatusResult>) {
         self.explicit_count
             .insert(KEY_EXPLICIT_COUNT, result.explicit_packages);
@@ -147,11 +150,6 @@ impl PackageCache {
         self.cache.get(query)
     }
 
-    /// Store results in cache
-    pub fn insert(&self, query: String, packages: Vec<PackageInfo>) {
-        self.cache.insert(query, Arc::new(packages));
-    }
-
     /// Store Arc'd results in cache (avoids double-wrapping)
     pub fn insert_arc(&self, query: String, packages: Arc<Vec<PackageInfo>>) {
         self.cache.insert(query, packages);
@@ -164,21 +162,30 @@ impl PackageCache {
         self.debian_cache.get(query)
     }
 
-    /// Store Debian search results in cache
-    pub fn insert_debian(&self, query: String, packages: Vec<PackageInfo>) {
-        self.debian_cache.insert(query, Arc::new(packages));
-    }
-
     /// Store Arc'd Debian search results in cache (avoids double-wrapping)
     pub fn insert_debian_arc(&self, query: String, packages: Arc<Vec<PackageInfo>>) {
         self.debian_cache.insert(query, packages);
     }
 
-    /// Get cache statistics
+    /// Get cache statistics.
+    ///
+    /// `size` is the total live entry count across all sub-caches (search,
+    /// Debian search, detailed info, negative-info, status, explicit list and
+    /// count). `max_size` is the per-sub-cache capacity configured at
+    /// construction, not a global budget.
     #[must_use]
     pub fn stats(&self) -> CacheStats {
+        let total = self
+            .cache
+            .entry_count()
+            .saturating_add(self.debian_cache.entry_count())
+            .saturating_add(self.detailed_cache.entry_count())
+            .saturating_add(self.info_miss_cache.entry_count())
+            .saturating_add(self.system_status.entry_count())
+            .saturating_add(self.explicit_packages.entry_count())
+            .saturating_add(self.explicit_count.entry_count());
         CacheStats {
-            size: self.cache.entry_count().min(usize::MAX as u64) as usize,
+            size: usize::try_from(total).unwrap_or(usize::MAX),
             max_size: self.max_size,
         }
     }

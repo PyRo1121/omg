@@ -104,10 +104,21 @@ fn test_use_node_lts() {
     init_test_env();
 
     let result = run_omg(&["use", "node", "lts"]);
-
-    // Should handle 'lts' keyword
     let output = result.combined_output();
-    assert!(!output.is_empty(), "Should process 'lts' keyword");
+
+    // The command must deterministically either apply/resolve 'lts' or fail
+    // with an explicit message naming it — never silently succeed with no
+    // output and never panic.
+    assert!(
+        !output.contains("panicked at"),
+        "'lts' handling must not panic: {output}"
+    );
+    assert!(
+        result.success
+            || output.to_lowercase().contains("lts")
+            || output.to_lowercase().contains("not"),
+        "'use node lts' must resolve the alias or explain why not:\n{output}"
+    );
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
@@ -125,16 +136,13 @@ fn test_list_all_runtimes() {
     // and produces some output.
     let output = result.combined_output();
     assert!(
-        result.success
-            || output.contains("node")
-            || output.contains("python")
-            || output.contains("Runtime")
-            || output.contains("No")
-            || output.contains("error")
-            || output.contains("not")
-            || !output.is_empty()
-            || std::env::var("CI").is_ok(),
-        "Should list runtimes or report status: {output}"
+        result.success,
+        "`omg list` should succeed in test mode, got exit {}:\n{output}",
+        result.exit_code
+    );
+    assert!(
+        output.to_lowercase().contains("runtime") || output.to_lowercase().contains("no runtimes"),
+        "`omg list` should report runtime status:\n{output}"
     );
 }
 

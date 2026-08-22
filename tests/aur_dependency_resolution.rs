@@ -21,7 +21,7 @@ use std::collections::{HashMap, HashSet};
 use std::process::Command;
 
 // Import the parallel build types directly
-use omg_lib::package_managers::aur::parallel_build::{BuildJob, ParallelBuilder};
+use omg_lib::package_managers::aur::{BuildJob, ParallelBuilder};
 
 // ============================================================================
 // DEPENDENCY GRAPH CONSTRUCTION TESTS

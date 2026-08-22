@@ -145,7 +145,7 @@ impl Write for BudgetedSink {
 
 /// Progress bar style for downloads
 #[expect(clippy::expect_used)] // Path operations on known-valid HOME directory; failure is unrecoverable
-pub fn download_progress_style() -> ProgressStyle {
+fn download_progress_style() -> ProgressStyle {
     ProgressStyle::default_bar()
         .template(
             "{spinner:.green} [{bar:40.cyan/blue}] {bytes}/{total_bytes} ({bytes_per_sec}, {eta})",
@@ -156,7 +156,7 @@ pub fn download_progress_style() -> ProgressStyle {
 
 /// Progress bar style for extraction
 #[expect(clippy::expect_used)] // Path operations on known-valid HOME directory; failure is unrecoverable
-pub fn extract_progress_style() -> ProgressStyle {
+fn extract_progress_style() -> ProgressStyle {
     ProgressStyle::default_spinner()
         .template("{spinner:.green} {msg}")
         .expect("valid template")
@@ -209,7 +209,7 @@ pub async fn download_with_progress(
 
     let mut stream = response.bytes_stream();
     let mut downloaded: u64 = 0;
-    let mut hasher = expected_sha256.is_some().then(Sha256::new);
+    let mut hasher = Sha256::new();
 
     while let Some(item) = stream.next().await {
         let chunk = item.context("Error downloading chunk")?;
@@ -217,9 +217,7 @@ pub async fn download_with_progress(
             .await
             .context("Error writing to file")?;
 
-        if let Some(h) = &mut hasher {
-            h.update(&chunk);
-        }
+        hasher.update(&chunk);
 
         downloaded += chunk.len() as u64;
         pb.set_position(downloaded);
@@ -235,9 +233,7 @@ pub async fn download_with_progress(
 
     // Verify checksum before publishing the download to its final path.
     if let Some(expected) = expected_sha256 {
-        let actual = hasher
-            .map(|hasher| hex::encode(hasher.finalize()))
-            .ok_or_else(|| anyhow::anyhow!("Checksum verifier was not initialized"))?;
+        let actual = hex::encode(hasher.finalize());
         let expected = expected.trim();
 
         if !actual.eq_ignore_ascii_case(expected) {
@@ -321,8 +317,71 @@ fn create_archive_links(links: Vec<PendingArchiveLink>) -> Result<()> {
     Ok(())
 }
 
+/// Process every tar entry into `dest_dir`, deferring symlink/hard-link
+/// creation until all regular content exists.
+///
+/// Shared by [`extract_tar_gz`] and [`extract_tar_xz`]; the decompression
+/// strategy differs, the entry handling must not.
+fn extract_tar_entries<R: std::io::Read>(
+    archive: &mut tar::Archive<R>,
+    dest_dir: &Path,
+    strip_components: usize,
+    pb: &ProgressBar,
+) -> Result<()> {
+    pb.set_message("Extracting...");
+    let mut pending_links = Vec::new();
+
+    for entry in archive.entries()? {
+        let mut entry = entry?;
+        let path = entry.path()?;
+        let Some(stripped) = stripped_archive_path(&path, strip_components)? else {
+            continue;
+        };
+
+        let dest_path = dest_dir.join(&stripped);
+        pb.set_message(format!("Extracting: {}", stripped.display()));
+
+        if let Some(parent) = dest_path.parent() {
+            fs::create_dir_all(parent)?;
+        }
+
+        let entry_type = entry.header().entry_type();
+        if entry_type.is_dir() {
+            fs::create_dir_all(&dest_path)?;
+        } else if entry_type.is_file() {
+            entry.unpack(&dest_path)?;
+        } else if entry_type.is_symlink() {
+            let target = entry
+                .link_name()?
+                .context("Archive symlink is missing its target")?
+                .into_owned();
+            validate_relative_symlink_target(&stripped, &target)?;
+            pending_links.push(PendingArchiveLink::Symbolic {
+                path: dest_path,
+                target,
+            });
+        } else if entry_type.is_hard_link() {
+            let target = entry
+                .link_name()?
+                .context("Archive hard link is missing its target")?;
+            let target = stripped_archive_path(&target, strip_components)?
+                .context("Archive hard link target was stripped away")?;
+            pending_links.push(PendingArchiveLink::Hard {
+                path: dest_path,
+                target: dest_dir.join(target),
+            });
+        } else {
+            anyhow::bail!(
+                "Unsupported special entry in runtime archive: {}",
+                path.display()
+            );
+        }
+    }
+    create_archive_links(pending_links)
+}
+
 /// Extract a .tar.gz archive with progress
-pub async fn extract_tar_gz(
+pub(crate) async fn extract_tar_gz(
     archive_path: &Path,
     dest_dir: &Path,
     strip_components: usize,
@@ -339,58 +398,9 @@ pub async fn extract_tar_gz(
 
         let pb = ProgressBar::new_spinner();
         pb.set_style(extract_progress_style());
-        pb.set_message("Extracting...");
 
         fs::create_dir_all(&dest_dir)?;
-        let mut pending_links = Vec::new();
-
-        for entry in archive.entries()? {
-            let mut entry = entry?;
-            let path = entry.path()?;
-            let Some(stripped) = stripped_archive_path(&path, strip_components)? else {
-                continue;
-            };
-
-            let dest_path = dest_dir.join(&stripped);
-            pb.set_message(format!("Extracting: {}", stripped.display()));
-
-            if let Some(parent) = dest_path.parent() {
-                fs::create_dir_all(parent)?;
-            }
-
-            let entry_type = entry.header().entry_type();
-            if entry_type.is_dir() {
-                fs::create_dir_all(&dest_path)?;
-            } else if entry_type.is_file() {
-                entry.unpack(&dest_path)?;
-            } else if entry_type.is_symlink() {
-                let target = entry
-                    .link_name()?
-                    .context("Archive symlink is missing its target")?
-                    .into_owned();
-                validate_relative_symlink_target(&stripped, &target)?;
-                pending_links.push(PendingArchiveLink::Symbolic {
-                    path: dest_path,
-                    target,
-                });
-            } else if entry_type.is_hard_link() {
-                let target = entry
-                    .link_name()?
-                    .context("Archive hard link is missing its target")?;
-                let target = stripped_archive_path(&target, strip_components)?
-                    .context("Archive hard link target was stripped away")?;
-                pending_links.push(PendingArchiveLink::Hard {
-                    path: dest_path,
-                    target: dest_dir.join(target),
-                });
-            } else {
-                anyhow::bail!(
-                    "Unsupported special entry in runtime archive: {}",
-                    path.display()
-                );
-            }
-        }
-        create_archive_links(pending_links)?;
+        extract_tar_entries(&mut archive, &dest_dir, strip_components, &pb)?;
 
         pb.finish_and_clear();
         Ok(())
@@ -399,7 +409,7 @@ pub async fn extract_tar_gz(
 }
 
 /// Extract a .tar.xz archive with progress (pure Rust)
-pub async fn extract_tar_xz(
+pub(crate) async fn extract_tar_xz(
     archive_path: &Path,
     dest_dir: &Path,
     strip_components: usize,
@@ -424,59 +434,9 @@ pub async fn extract_tar_xz(
             .context("Failed to decompress XZ archive")?;
         let decompressed = sink.into_inner();
 
-        pb.set_message("Extracting...");
-
         let mut archive = tar::Archive::new(decompressed.as_slice());
         fs::create_dir_all(&dest_dir)?;
-        let mut pending_links = Vec::new();
-
-        for entry in archive.entries()? {
-            let mut entry = entry?;
-            let path = entry.path()?;
-
-            let Some(stripped) = stripped_archive_path(&path, strip_components)? else {
-                continue;
-            };
-
-            let dest_path = dest_dir.join(&stripped);
-
-            if let Some(parent) = dest_path.parent() {
-                fs::create_dir_all(parent)?;
-            }
-
-            let entry_type = entry.header().entry_type();
-            if entry_type.is_dir() {
-                fs::create_dir_all(&dest_path)?;
-            } else if entry_type.is_file() {
-                entry.unpack(&dest_path)?;
-            } else if entry_type.is_symlink() {
-                let target = entry
-                    .link_name()?
-                    .context("Archive symlink is missing its target")?
-                    .into_owned();
-                validate_relative_symlink_target(&stripped, &target)?;
-                pending_links.push(PendingArchiveLink::Symbolic {
-                    path: dest_path,
-                    target,
-                });
-            } else if entry_type.is_hard_link() {
-                let target = entry
-                    .link_name()?
-                    .context("Archive hard link is missing its target")?;
-                let target = stripped_archive_path(&target, strip_components)?
-                    .context("Archive hard link target was stripped away")?;
-                pending_links.push(PendingArchiveLink::Hard {
-                    path: dest_path,
-                    target: dest_dir.join(target),
-                });
-            } else {
-                anyhow::bail!(
-                    "Unsupported special entry in runtime archive: {}",
-                    path.display()
-                );
-            }
-        }
-        create_archive_links(pending_links)?;
+        extract_tar_entries(&mut archive, &dest_dir, strip_components, &pb)?;
 
         pb.finish_and_clear();
         Ok(())
@@ -485,7 +445,7 @@ pub async fn extract_tar_xz(
 }
 
 /// Extract a .zip archive with progress
-pub async fn extract_zip(
+pub(crate) async fn extract_zip(
     archive_path: &Path,
     dest_dir: &Path,
     strip_components: usize,
@@ -552,7 +512,7 @@ const INSTALL_MARKER: &str = ".omg-install-complete";
 /// Best-effort file removal for leftover archives and stale current links.
 /// Failure only wastes cache space or leaves a dangling symlink; the next
 /// successful install or activation repairs it.
-pub fn remove_file_best_effort(path: &Path, kind: &str) {
+pub(crate) fn remove_file_best_effort(path: &Path, kind: &str) {
     if let Err(error) = fs::remove_file(path) {
         tracing::debug!("Failed to remove {kind} {}: {error}", path.display());
     }
@@ -564,7 +524,7 @@ pub fn remove_file_best_effort(path: &Path, kind: &str) {
 /// the final version directory when [`complete_staged_install`] publishes it
 /// after a successful extraction. An interrupted install therefore never
 /// leaves a version directory that looks installed.
-pub fn begin_staged_install(versions_dir: &Path) -> Result<tempfile::TempDir> {
+pub(crate) fn begin_staged_install(versions_dir: &Path) -> Result<tempfile::TempDir> {
     fs::create_dir_all(versions_dir).with_context(|| {
         format!(
             "Failed to create runtime versions directory: {}",
@@ -587,7 +547,7 @@ pub fn begin_staged_install(versions_dir: &Path) -> Result<tempfile::TempDir> {
 /// Writes the completion marker, then renames the staging directory into its
 /// final path on the same filesystem. Fails if the final path appeared during
 /// staging (for example, a concurrent install).
-pub fn complete_staged_install(
+pub(crate) fn complete_staged_install(
     staging: &tempfile::TempDir,
     version_dir: &Path,
     version: &str,
@@ -614,7 +574,7 @@ pub fn complete_staged_install(
 /// fails, the previous directory is restored. A crash after the old tree is
 /// moved aside leaves no published version directory, which is fail-closed:
 /// the next lookup treats the toolchain as uninstalled instead of half-updated.
-pub fn replace_staged_install(
+pub(crate) fn replace_staged_install(
     staging: &tempfile::TempDir,
     version_dir: &Path,
     version: &str,
@@ -684,7 +644,7 @@ pub fn replace_staged_install(
 ///
 /// Symlinks and special files are rejected so a staged replacement cannot
 /// inherit a link that later escapes the published version directory.
-pub fn copy_regular_tree(src: &Path, dest: &Path) -> Result<()> {
+pub(crate) fn copy_regular_tree(src: &Path, dest: &Path) -> Result<()> {
     let metadata = fs::symlink_metadata(src)
         .with_context(|| format!("Failed to inspect source path: {}", src.display()))?;
     if !metadata.is_dir() {
@@ -750,12 +710,12 @@ fn write_install_marker(version_dir: &Path, version: &str) -> Result<()> {
 
 /// Return whether a runtime version path is a real directory, not a symlink or file.
 #[must_use]
-pub fn is_valid_version_dir(version_dir: &Path) -> bool {
+pub(crate) fn is_valid_version_dir(version_dir: &Path) -> bool {
     fs::symlink_metadata(version_dir).is_ok_and(|metadata| metadata.is_dir())
 }
 
 /// Require a regular file at `path`. Symlinks, directories, and missing paths fail closed.
-pub fn require_regular_file(path: &Path) -> Result<()> {
+pub(crate) fn require_regular_file(path: &Path) -> Result<()> {
     match fs::symlink_metadata(path) {
         Ok(metadata) if metadata.is_file() => Ok(()),
         Ok(_) => anyhow::bail!(
@@ -771,13 +731,17 @@ pub fn require_regular_file(path: &Path) -> Result<()> {
 }
 
 /// Activate a runtime version only after its expected binary is a regular file.
-pub fn activate_version(versions_dir: &Path, version: &str, expected_binary: &Path) -> Result<()> {
+pub(crate) fn activate_version(
+    versions_dir: &Path,
+    version: &str,
+    expected_binary: &Path,
+) -> Result<()> {
     require_regular_file(&versions_dir.join(version).join(expected_binary))?;
     set_current_version(versions_dir, version)
 }
 
 /// Create or update the "current" symlink
-pub fn set_current_version(versions_dir: &Path, version: &str) -> Result<()> {
+pub(crate) fn set_current_version(versions_dir: &Path, version: &str) -> Result<()> {
     crate::core::security::validate_runtime_version(version)?;
 
     let current_link = versions_dir.join("current");
@@ -847,7 +811,7 @@ pub fn set_current_version(versions_dir: &Path, version: &str) -> Result<()> {
 }
 
 /// Get the current version from the "current" symlink
-pub fn get_current_version(versions_dir: &Path) -> Option<String> {
+pub(crate) fn get_current_version(versions_dir: &Path) -> Option<String> {
     let current_link = versions_dir.join("current");
     let target = fs::read_link(&current_link).ok()?;
     let version = target.file_name()?.to_string_lossy().into_owned();
@@ -867,7 +831,7 @@ pub fn get_current_version(versions_dir: &Path) -> Option<String> {
 }
 
 /// List installed versions in a directory
-pub fn list_installed_versions(versions_dir: &Path) -> Result<Vec<String>> {
+pub(crate) fn list_installed_versions(versions_dir: &Path) -> Result<Vec<String>> {
     if !versions_dir.exists() {
         return Ok(Vec::new());
     }
@@ -889,8 +853,13 @@ pub fn list_installed_versions(versions_dir: &Path) -> Result<Vec<String>> {
     Ok(versions)
 }
 
-/// Compare semantic version strings (descending order)
-pub fn version_cmp(a: &str, b: &str) -> Ordering {
+/// Compare version strings by numeric dot-separated parts (ascending).
+///
+/// Non-numeric segments are ignored, so pre-release suffixes compare equal to
+/// their release ("1.0.0-beta" == "1.0.0"); callers produce descending order
+/// by swapping arguments (`sort_by(|a, b| version_cmp(b, a))`).
+#[must_use]
+pub(crate) fn version_cmp(a: &str, b: &str) -> Ordering {
     let parse_parts = |s: &str| -> Vec<u32> {
         s.split(|c: char| !c.is_ascii_digit())
             .filter_map(|p| p.parse().ok())
@@ -912,15 +881,17 @@ pub fn version_cmp(a: &str, b: &str) -> Ordering {
 }
 
 /// Normalize version string (remove leading 'v' if present)
-pub fn normalize_version(version: &str) -> String {
-    version.trim_start_matches('v').to_owned()
+/// Normalize a version string by stripping a single leading 'v' prefix.
+#[must_use]
+pub(crate) fn normalize_version(version: &str) -> String {
+    version.strip_prefix('v').unwrap_or(version).to_owned()
 }
 
 /// Parse and validate a SHA-256 digest returned by a runtime vendor.
 ///
 /// Vendors may serve the digest alone or as `"<hex>  <filename>"`; only the
 /// digest is returned. Rejects anything that is not exactly 64 hex characters.
-pub fn parse_sha256_digest(value: &str, source: &str) -> Result<String> {
+pub(crate) fn parse_sha256_digest(value: &str, source: &str) -> Result<String> {
     let digest = value
         .split_whitespace()
         .next()
@@ -939,7 +910,7 @@ fn extract_domain(url: &str) -> &str {
 }
 
 /// Print installation success message
-pub fn print_installed(runtime: &str, version: &str) {
+pub(crate) fn print_installed(runtime: &str, version: &str) {
     let check_green = "✓".green();
     let check = check_green.bold();
     let rt = runtime.cyan();
@@ -948,7 +919,7 @@ pub fn print_installed(runtime: &str, version: &str) {
 }
 
 /// Print version switch message
-pub fn print_using(runtime: &str, version: &str, bin_path: &Path) {
+pub(crate) fn print_using(runtime: &str, version: &str, bin_path: &Path) {
     // Bind styled temporaries to avoid Rust 2024 drop order issues
     let check = "✓".green();
     let rt = runtime.cyan();
@@ -961,7 +932,7 @@ pub fn print_using(runtime: &str, version: &str, bin_path: &Path) {
 }
 
 /// Print already installed message
-pub fn print_already_installed(runtime: &str, version: &str) {
+pub(crate) fn print_already_installed(runtime: &str, version: &str) {
     tracing::info!(
         "{} {} {} is already installed",
         "✓".green(),
@@ -970,10 +941,9 @@ pub fn print_already_installed(runtime: &str, version: &str) {
     );
 }
 
-/// Macro to generate common runtime manager methods
-///
-/// Eliminates ~300 lines of duplicated code across runtime managers
-#[macro_export]
+/// Implement the shared runtime-manager methods (list_installed,
+/// current_version) for a manager with `versions_dir` and `current_link`
+/// fields.
 macro_rules! impl_runtime_common {
     ($manager_type:ty, $runtime_name:expr) => {
         impl $manager_type {
@@ -987,61 +957,10 @@ macro_rules! impl_runtime_common {
             pub fn current_version(&self) -> Option<String> {
                 $crate::runtimes::common::get_current_version(&self.versions_dir)
             }
-
-            /// Uninstall a specific version of this runtime
-            pub fn uninstall(&self, version: &str) -> Result<()> {
-                use anyhow::Context;
-                use owo_colors::OwoColorize;
-                use std::fs;
-
-                let version = $crate::runtimes::common::normalize_version(version);
-                $crate::core::security::validate_runtime_version(&version)?;
-                let version_dir = self.versions_dir.join(&version);
-
-                match fs::symlink_metadata(&version_dir) {
-                    Ok(metadata) if metadata.is_dir() => {}
-                    Ok(_) => {
-                        anyhow::bail!(
-                            "Refusing to remove non-directory runtime path: {}",
-                            version_dir.display()
-                        );
-                    }
-                    Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
-                        println!(
-                            "{} {} {} is not installed",
-                            "→".dimmed(),
-                            $runtime_name,
-                            version
-                        );
-                        return Ok(());
-                    }
-                    Err(error) => {
-                        return Err(error).with_context(|| {
-                            format!("Failed to inspect runtime path: {}", version_dir.display())
-                        });
-                    }
-                }
-
-                // Clear current link if uninstalling the active version
-                if let Some(current) = self.current_version()
-                    && current == version
-                {
-                    $crate::runtimes::common::remove_file_best_effort(
-                        &self.current_link,
-                        "current runtime symlink",
-                    );
-                }
-
-                fs::remove_dir_all(&version_dir).with_context(|| {
-                    format!("Failed to remove {} directory", version_dir.display())
-                })?;
-
-                println!("{} {} {} uninstalled", "✓".green(), $runtime_name, version);
-                Ok(())
-            }
         }
     };
 }
+pub(crate) use impl_runtime_common;
 
 #[cfg(test)]
 #[expect(clippy::unwrap_used, clippy::expect_used)] // Idiomatic in tests: panics on failure with clear error context

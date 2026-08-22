@@ -205,6 +205,7 @@ pub struct MockNetworkClient {
     request_log: Arc<Mutex<Vec<String>>>,
 }
 
+#[derive(Clone)]
 pub struct MockResponse {
     pub status: u16,
     pub body: String,
@@ -238,15 +239,6 @@ impl MockNetworkClient {
 
     pub fn requests(&self) -> Vec<String> {
         self.request_log.lock().unwrap().clone()
-    }
-}
-
-impl Clone for MockResponse {
-    fn clone(&self) -> Self {
-        Self {
-            status: self.status,
-            body: self.body.clone(),
-        }
     }
 }
 

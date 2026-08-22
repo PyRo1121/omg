@@ -2,6 +2,12 @@
 //!
 //! Measures performance of the pure Rust Debian implementation.
 //! Run with: `cargo bench --features debian-pure --bench debian_bench`
+//!
+//! Shared scenario data lives in `benches/debian_common/mod.rs`.
+
+#[cfg(any(feature = "debian", feature = "debian-pure"))]
+#[path = "debian_common/mod.rs"]
+mod debian_common;
 
 #[cfg(any(feature = "debian", feature = "debian-pure"))]
 use criterion::{BenchmarkId, Criterion, criterion_group, criterion_main};
@@ -22,7 +28,7 @@ fn bench_search(c: &mut Criterion) {
     group.sample_size(100);
 
     // Ensure index is loaded once
-    let _ = search_fast("vim");
+    debian_common::warm_index();
 
     let queries = vec![
         "vim", "gcc", "python", "lib", "x11", "systemd", "kernel", "firefox",
@@ -46,8 +52,7 @@ fn bench_info(c: &mut Criterion) {
     group.measurement_time(Duration::from_secs(5));
     group.sample_size(100);
 
-    // Ensure index is loaded
-    let _ = get_info_fast("vim");
+    debian_common::warm_index();
 
     let packages = vec![
         "vim",
@@ -94,10 +99,8 @@ fn bench_dependencies(c: &mut Criterion) {
     group.measurement_time(Duration::from_secs(10));
     group.sample_size(50);
 
-    let packages = vec!["vim", "gcc", "firefox-esr", "libreoffice", "gimp"];
-
-    for pkg in packages {
-        group.bench_with_input(BenchmarkId::new("get_dependencies", pkg), &pkg, |b, &p| {
+    for (name, pkg) in debian_common::RESOLVE_SCENARIOS {
+        group.bench_with_input(BenchmarkId::new("get_dependencies", *name), pkg, |b, &p| {
             b.iter(|| {
                 let deps = get_package_dependencies(p);
                 std::hint::black_box(deps)
@@ -161,20 +164,10 @@ fn bench_version_comparison(c: &mut Criterion) {
     group.measurement_time(Duration::from_secs(5));
     group.sample_size(200);
 
-    let version_pairs = [
-        ("1.0", "2.0"),
-        ("1:1.0", "2.0"),
-        ("1.0-1", "1.0-2"),
-        ("1.0~beta", "1.0"),
-        ("2:1.0.5-1ubuntu1", "2:1.0.5-1ubuntu2"),
-        ("1.2.3-4", "1.2.3-5"),
-        ("3.14.159", "3.14.160"),
-    ];
-
-    for (i, (v1, v2)) in version_pairs.iter().enumerate() {
+    for (name, v1, v2) in debian_common::VERSION_SCENARIOS {
         group.bench_with_input(
-            BenchmarkId::new("compare_versions", i),
-            &(v1, v2),
+            BenchmarkId::new("compare_versions", *name),
+            &(*v1, *v2),
             |bencher, &(ver1, ver2)| {
                 bencher.iter(|| {
                     let result = compare_versions(ver1, ver2);

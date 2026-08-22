@@ -378,14 +378,6 @@ impl<M> Cmd<M> {
     }
 }
 
-/// Helper function to create commands
-///
-/// This allows ergonomic `cmd(Cmd::none())` syntax
-/// or `cmd(msg)` to convert a message to a command.
-pub fn cmd<M>(c: Cmd<M>) -> Cmd<M> {
-    c
-}
-
 /// Convert a message directly to a command
 impl<M> From<M> for Cmd<M> {
     fn from(msg: M) -> Self {

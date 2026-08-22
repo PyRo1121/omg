@@ -13,6 +13,23 @@ use crossterm::{
 use std::io::{self, IsTerminal, Write};
 use std::process::Command;
 
+/// RAII guard restoring terminal state even when a menu exits via `?` or an
+/// early error; without it a failed `event::read()` leaves the tty in raw mode.
+struct RawModeGuard;
+
+impl RawModeGuard {
+    fn enable() -> Result<Self> {
+        terminal::enable_raw_mode()?;
+        Ok(Self)
+    }
+}
+
+impl Drop for RawModeGuard {
+    fn drop(&mut self) {
+        let _ = terminal::disable_raw_mode();
+    }
+}
+
 /// Write a single menu option line in raw mode.
 ///
 /// In raw mode, `\n` only moves the cursor down — it does NOT carriage-return
@@ -208,9 +225,6 @@ pub async fn run_interactive(skip_shell: bool, skip_daemon: bool) -> Result<()> 
 }
 
 fn select_telemetry_consent(stdout: &mut io::Stdout) -> Result<bool> {
-    let options = [true, false];
-    let mut selected = 0;
-
     execute!(
         stdout,
         SetForegroundColor(Color::Cyan),
@@ -228,53 +242,11 @@ fn select_telemetry_consent(stdout: &mut io::Stdout) -> Result<bool> {
     )?;
     println!();
 
-    terminal::enable_raw_mode()?;
-
-    loop {
-        let labels = [
-            "  ▸ Yes, I'd like to help improve OMG (anonymous)",
-            "    No, keep everything local",
-        ];
-        for (i, _) in labels.iter().enumerate() {
-            let display = if i == 0 {
-                if selected == 0 {
-                    "  ▸ Yes, I'd like to help improve OMG (anonymous)"
-                } else {
-                    "    Yes, I'd like to help improve OMG (anonymous)"
-                }
-            } else if selected == 1 {
-                "  ▸ No, keep everything local"
-            } else {
-                "    No, keep everything local"
-            };
-
-            write_menu_line(stdout, display, i == selected)?;
-        }
-
-        stdout.flush()?;
-
-        if let Event::Key(key) = event::read()? {
-            if key.kind != KeyEventKind::Press {
-                continue;
-            }
-            match key.code {
-                KeyCode::Up | KeyCode::Down => {
-                    selected = 1 - selected;
-                }
-                KeyCode::Enter => {
-                    terminal::disable_raw_mode()?;
-                    return Ok(options[selected]);
-                }
-                KeyCode::Char('q') => {
-                    terminal::disable_raw_mode()?;
-                    anyhow::bail!("Setup cancelled");
-                }
-                _ => {}
-            }
-        }
-
-        execute!(stdout, cursor::MoveUp(2))?;
-    }
+    select_binary_menu(
+        stdout,
+        "Yes, I'd like to help improve OMG (anonymous)",
+        "No, keep everything local",
+    )
 }
 
 fn apply_telemetry_config(stdout: &mut io::Stdout, enabled: bool) -> Result<()> {
@@ -330,8 +302,18 @@ pub async fn run_defaults() -> Result<()> {
         install_shell_hook(&mut stdout, s, false)?;
     }
 
-    // Start daemon
-    configure_daemon_startup(&mut stdout, DaemonStartup::OnDemand)?;
+    // Start daemon unless explicitly disabled or running under tests; spawned
+    // daemons must never inherit this process's stdio (it is short-lived).
+    let daemon_disabled =
+        std::env::var_os("OMG_DISABLE_DAEMON").is_some() || crate::core::paths::test_mode();
+    configure_daemon_startup(
+        &mut stdout,
+        if daemon_disabled {
+            DaemonStartup::Manual
+        } else {
+            DaemonStartup::OnDemand
+        },
+    )?;
 
     // Capture environment
     capture_environment(&mut stdout).await?;
@@ -342,11 +324,12 @@ pub async fn run_defaults() -> Result<()> {
         SetForegroundColor(Color::Green),
         Print("✓"),
         ResetColor,
-        Print(" Setup complete! Restart your shell or run: "),
-        SetForegroundColor(Color::Yellow),
-        Print("source ~/.zshrc\n"),
+        Print(" Setup complete! Restart your shell to activate the hook."),
         ResetColor
     )?;
+    if let Some(shell) = shell {
+        println!("  Config updated: {}", shell.config_file());
+    }
 
     Ok(())
 }
@@ -422,13 +405,16 @@ fn parse_shell_path(path: &str) -> Option<Shell> {
     }
 }
 
-/// Detect shell from parent process (for actual running shell, not default)
+/// Detect shell from the parent process (the actual running shell, not the
+/// login default).
 #[cfg(unix)]
 fn detect_shell_from_parent_process() -> Option<Shell> {
     use std::fs;
 
-    // Get parent process ID
-    let ppid = std::process::id();
+    // Get the PARENT process id; std::process::id() would read our own
+    // /proc entry, which is always "omg" and can never match a shell.
+    let ppid = rustix::process::getppid()?;
+    let ppid = rustix::process::Pid::as_raw(Some(ppid));
 
     // Try to read /proc/{ppid}/comm or /proc/{ppid}/cmdline
     if let Ok(comm) = fs::read_to_string(format!("/proc/{ppid}/comm"))
@@ -475,7 +461,7 @@ fn select_shell(stdout: &mut io::Stdout) -> Result<Shell> {
     }
     println!();
 
-    terminal::enable_raw_mode()?;
+    let _raw = RawModeGuard::enable()?;
 
     loop {
         // Clear and redraw options
@@ -507,14 +493,8 @@ fn select_shell(stdout: &mut io::Stdout) -> Result<Shell> {
                         selected += 1;
                     }
                 }
-                KeyCode::Enter => {
-                    terminal::disable_raw_mode()?;
-                    return Ok(shells[selected]);
-                }
-                KeyCode::Char('q') => {
-                    terminal::disable_raw_mode()?;
-                    anyhow::bail!("Setup cancelled");
-                }
+                KeyCode::Enter => return Ok(shells[selected]),
+                KeyCode::Char('q') => anyhow::bail!("Setup cancelled"),
                 _ => {}
             }
         }
@@ -548,7 +528,7 @@ fn select_daemon_startup(stdout: &mut io::Stdout) -> Result<DaemonStartup> {
     )?;
     println!();
 
-    terminal::enable_raw_mode()?;
+    let _raw = RawModeGuard::enable()?;
 
     loop {
         for (i, opt) in options.iter().enumerate() {
@@ -573,14 +553,8 @@ fn select_daemon_startup(stdout: &mut io::Stdout) -> Result<DaemonStartup> {
                         selected += 1;
                     }
                 }
-                KeyCode::Enter => {
-                    terminal::disable_raw_mode()?;
-                    return Ok(options[selected]);
-                }
-                KeyCode::Char('q') => {
-                    terminal::disable_raw_mode()?;
-                    anyhow::bail!("Setup cancelled");
-                }
+                KeyCode::Enter => return Ok(options[selected]),
+                KeyCode::Char('q') => anyhow::bail!("Setup cancelled"),
                 _ => {}
             }
         }
@@ -653,65 +627,21 @@ fn select_build_config(stdout: &mut io::Stdout) -> Result<BuildRecommendation> {
     println!();
 
     // Confirm
-    let options = [true, false];
-    let mut selected = 0;
+    let applies = select_binary_menu(stdout, "Apply recommended settings", "Skip (use defaults)")?;
 
-    terminal::enable_raw_mode()?;
-
-    loop {
-        let labels = ["  ▸ Apply recommended settings", "    Skip (use defaults)"];
-        for (i, _) in labels.iter().enumerate() {
-            let display = if i == 0 {
-                if selected == 0 {
-                    "  ▸ Apply recommended settings"
-                } else {
-                    "    Apply recommended settings"
-                }
-            } else if selected == 1 {
-                "  ▸ Skip (use defaults)"
-            } else {
-                "    Skip (use defaults)"
-            };
-
-            write_menu_line(stdout, display, i == selected)?;
+    Ok(if applies {
+        recommendation
+    } else {
+        // Default: no optimizations
+        BuildRecommendation {
+            makeflags: String::new(),
+            enable_ccache: false,
+            enable_sccache: false,
+            disable_secure_makepkg: false,
+            build_concurrency: 1,
+            explanation: Vec::new(),
         }
-
-        stdout.flush()?;
-
-        if let Event::Key(key) = event::read()? {
-            if key.kind != KeyEventKind::Press {
-                continue;
-            }
-            match key.code {
-                KeyCode::Up | KeyCode::Down => {
-                    selected = 1 - selected;
-                }
-                KeyCode::Enter => {
-                    terminal::disable_raw_mode()?;
-                    return Ok(if options[selected] {
-                        recommendation
-                    } else {
-                        // Return default (no optimizations)
-                        BuildRecommendation {
-                            makeflags: String::new(),
-                            enable_ccache: false,
-                            enable_sccache: false,
-                            disable_secure_makepkg: false,
-                            build_concurrency: 1,
-                            explanation: Vec::new(),
-                        }
-                    });
-                }
-                KeyCode::Char('q') => {
-                    terminal::disable_raw_mode()?;
-                    anyhow::bail!("Setup cancelled");
-                }
-                _ => {}
-            }
-        }
-
-        execute!(stdout, cursor::MoveUp(2))?;
-    }
+    })
 }
 
 fn apply_build_config(stdout: &mut io::Stdout, config: &BuildRecommendation) -> Result<()> {
@@ -754,9 +684,6 @@ fn apply_build_config(stdout: &mut io::Stdout, config: &BuildRecommendation) -> 
 }
 
 fn confirm_env_capture(stdout: &mut io::Stdout) -> Result<bool> {
-    let options = [true, false];
-    let mut selected = 0;
-
     execute!(
         stdout,
         SetForegroundColor(Color::Cyan),
@@ -772,27 +699,32 @@ fn confirm_env_capture(stdout: &mut io::Stdout) -> Result<bool> {
     )?;
     println!();
 
-    terminal::enable_raw_mode()?;
+    select_binary_menu(
+        stdout,
+        "Yes, capture my environment",
+        "No, I'll do it later",
+    )
+}
+
+/// Run a two-option raw-mode menu; returns `true` when the first option is
+/// chosen. Terminal raw mode is restored by [`RawModeGuard`] on every exit
+/// path, including errors.
+fn select_binary_menu(
+    stdout: &mut io::Stdout,
+    first_label: &str,
+    second_label: &str,
+) -> Result<bool> {
+    let _raw = RawModeGuard::enable()?;
+    let mut selected = 0usize;
 
     loop {
-        let labels = [
-            "  ▸ Yes, capture my environment",
-            "    No, I'll do it later",
-        ];
-        for (i, _label) in labels.iter().enumerate() {
-            let display = if i == 0 {
-                if selected == 0 {
-                    "  ▸ Yes, capture my environment"
-                } else {
-                    "    Yes, capture my environment"
-                }
-            } else if selected == 1 {
-                "  ▸ No, I'll do it later"
+        for (i, label) in [first_label, second_label].iter().enumerate() {
+            let text = if i == selected {
+                format!("  ▸ {label}")
             } else {
-                "    No, I'll do it later"
+                format!("    {label}")
             };
-
-            write_menu_line(stdout, display, i == selected)?;
+            write_menu_line(stdout, &text, i == selected)?;
         }
 
         stdout.flush()?;
@@ -805,14 +737,8 @@ fn confirm_env_capture(stdout: &mut io::Stdout) -> Result<bool> {
                 KeyCode::Up | KeyCode::Down => {
                     selected = 1 - selected;
                 }
-                KeyCode::Enter => {
-                    terminal::disable_raw_mode()?;
-                    return Ok(options[selected]);
-                }
-                KeyCode::Char('q') => {
-                    terminal::disable_raw_mode()?;
-                    anyhow::bail!("Setup cancelled");
-                }
+                KeyCode::Enter => return Ok(selected == 0),
+                KeyCode::Char('q') => anyhow::bail!("Setup cancelled"),
                 _ => {}
             }
         }
@@ -906,8 +832,21 @@ fn configure_daemon_startup(stdout: &mut io::Stdout, startup: DaemonStartup) -> 
             )?;
         }
         DaemonStartup::OnDemand => {
-            Command::new("omg")
-                .args(["daemon", "--"])
+            // Prefer the omgd binary shipped next to the running omg so a
+            // PATH shadowing an older install cannot start a version-mismatched
+            // daemon (same strategy as `commands::daemon`).
+            let omgd_path = std::env::current_exe()
+                .ok()
+                .and_then(|exe| exe.parent().map(|dir| dir.join("omgd")))
+                .filter(|path| path.is_file())
+                .unwrap_or_else(|| std::path::PathBuf::from("omgd"));
+            Command::new(omgd_path)
+                .arg("--")
+                // Detach stdio: the daemon outlives this process, and an
+                // inherited pipe would keep the parent's readers open forever.
+                .stdin(std::process::Stdio::null())
+                .stdout(std::process::Stdio::null())
+                .stderr(std::process::Stdio::null())
                 .spawn()
                 .context("Failed to start the OMG daemon")?;
             execute!(

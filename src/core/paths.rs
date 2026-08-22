@@ -1,23 +1,34 @@
-//! Shared filesystem paths with test-friendly overrides.
+//! Shared filesystem paths.
+//!
+//! Pacman root/db paths honor in-process test overrides, but only in test and
+//! debug builds: the override machinery is compiled out of release binaries so
+//! production path resolution cannot be redirected at runtime.
 
 use std::path::PathBuf;
 use std::sync::OnceLock;
+#[cfg(any(test, debug_assertions))]
 use std::sync::RwLock;
 
+#[cfg(any(test, debug_assertions))]
 #[derive(Default, Debug)]
 struct PathOverrides {
     pacman_root: Option<PathBuf>,
     pacman_db_dir: Option<PathBuf>,
 }
 
+#[cfg(any(test, debug_assertions))]
 static OVERRIDES: OnceLock<RwLock<PathOverrides>> = OnceLock::new();
 
+#[cfg(any(test, debug_assertions))]
 #[inline]
 fn get_overrides() -> &'static RwLock<PathOverrides> {
     OVERRIDES.get_or_init(|| RwLock::new(PathOverrides::default()))
 }
 
-/// Set path overrides for testing. Safe and thread-safe.
+/// Set pacman path overrides for testing. Safe and thread-safe.
+///
+/// Only available in test and debug builds (`cfg(any(test, debug_assertions))`);
+/// release binaries ship without this API.
 pub fn set_test_overrides(root: Option<PathBuf>, db_dir: Option<PathBuf>) {
     let mut guard = get_overrides()
         .write()
@@ -26,7 +37,7 @@ pub fn set_test_overrides(root: Option<PathBuf>, db_dir: Option<PathBuf>) {
     guard.pacman_db_dir = db_dir;
 }
 
-/// Reset all path overrides.
+/// Reset all path overrides. Test/debug builds only; see [`set_test_overrides`].
 pub fn reset_test_overrides() {
     let mut guard = get_overrides()
         .write()
@@ -52,7 +63,8 @@ pub fn data_dir() -> PathBuf {
     })
 }
 
-/// Daemon data directory (default: /var/lib/omg).
+/// Daemon data directory (default: XDG data dir/omg, falling back to
+/// `/var/lib/omg` when no XDG data directory can be resolved).
 #[must_use]
 pub fn daemon_data_dir() -> PathBuf {
     env_path("OMG_DAEMON_DATA_DIR").unwrap_or_else(|| {
@@ -118,28 +130,54 @@ pub fn cache_dir() -> PathBuf {
     })
 }
 
-/// Pacman root directory (default: /).
-#[must_use]
-pub fn pacman_root() -> PathBuf {
+#[cfg(any(test, debug_assertions))]
+fn overridden_pacman_root() -> Option<PathBuf> {
     let guard = get_overrides()
         .read()
         .unwrap_or_else(std::sync::PoisonError::into_inner);
-    if let Some(ref root) = guard.pacman_root {
-        return root.clone();
-    }
-    env_path("OMG_PACMAN_ROOT").unwrap_or_else(|| PathBuf::from("/"))
+    guard.pacman_root.clone()
 }
 
-/// Pacman database directory (default: /var/lib/pacman).
+/// Whether the pacman root was redirected via a test override or an explicit,
+/// non-empty `OMG_PACMAN_ROOT`. When set, pacman.conf `CacheDir` resolution is
+/// skipped so harness runs stay self-contained.
+fn pacman_root_overridden() -> bool {
+    #[cfg(any(test, debug_assertions))]
+    if overridden_pacman_root().is_some() {
+        return true;
+    }
+    std::env::var_os("OMG_PACMAN_ROOT").is_some_and(|value| !value.is_empty())
+}
+
+/// Pacman root directory (default: /). Honors [`set_test_overrides`] in test
+/// and debug builds only.
+#[must_use]
+pub fn pacman_root() -> PathBuf {
+    #[cfg(any(test, debug_assertions))]
+    if let Some(root) = overridden_pacman_root() {
+        return root;
+    }
+    env_path("OMG_PACMAN_ROOT")
+        .filter(|path| !path.as_os_str().is_empty())
+        .unwrap_or_else(|| PathBuf::from("/"))
+}
+
+/// Pacman database directory (default: /var/lib/pacman). Honors
+/// [`set_test_overrides`] in test and debug builds only.
 #[must_use]
 pub fn pacman_db_dir() -> PathBuf {
-    let guard = get_overrides()
-        .read()
-        .unwrap_or_else(std::sync::PoisonError::into_inner);
-    if let Some(ref db) = guard.pacman_db_dir {
-        return db.clone();
+    #[cfg(any(test, debug_assertions))]
+    {
+        let guard = get_overrides()
+            .read()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        if let Some(ref db) = guard.pacman_db_dir {
+            return db.clone();
+        }
     }
-    env_path("OMG_PACMAN_DB_DIR").unwrap_or_else(|| pacman_root().join("var/lib/pacman"))
+    env_path("OMG_PACMAN_DB_DIR")
+        .filter(|path| !path.as_os_str().is_empty())
+        .unwrap_or_else(|| pacman_root().join("var/lib/pacman"))
 }
 
 /// Pacman sync database directory (default: /var/lib/pacman/sync).
@@ -157,18 +195,13 @@ pub fn pacman_local_dir() -> PathBuf {
 /// Pacman package cache directories in configured priority order.
 #[must_use]
 pub fn pacman_cache_dirs() -> Vec<PathBuf> {
-    if let Some(cache_dir) = env_path("OMG_PACMAN_CACHE_DIR") {
+    if let Some(cache_dir) =
+        env_path("OMG_PACMAN_CACHE_DIR").filter(|path| !path.as_os_str().is_empty())
+    {
         return vec![cache_dir];
     }
 
-    let has_root_override = {
-        let guard = get_overrides()
-            .read()
-            .unwrap_or_else(std::sync::PoisonError::into_inner);
-        guard.pacman_root.is_some()
-    } || std::env::var_os("OMG_PACMAN_ROOT").is_some();
-
-    if !has_root_override
+    if !pacman_root_overridden()
         && let Some(cache_dirs) = configured_pacman_cache_dirs()
         && !cache_dirs.is_empty()
     {
@@ -207,13 +240,15 @@ fn configured_pacman_cache_dirs() -> Option<Vec<PathBuf>> {
     None
 }
 
-/// Primary pacman package cache directory.
+/// Primary pacman package cache directory (the first of [`pacman_cache_dirs`]).
 #[must_use]
 pub fn pacman_cache_dir() -> PathBuf {
     pacman_cache_dirs()
         .into_iter()
         .next()
-        .unwrap_or_else(|| pacman_root().join("var/cache/pacman/pkg"))
+        // Local invariant: every branch of `pacman_cache_dirs` ends in a
+        // non-empty `vec![...]`, so the first element always exists.
+        .expect("invariant: pacman_cache_dirs is non-empty by construction")
 }
 
 /// Pacman cache root directory (default: /var/cache/pacman).
@@ -273,6 +308,15 @@ fn platform_socket_path() -> PathBuf {
     PathBuf::from("omg.sock")
 }
 
+/// Validate that the parent directory of `socket_path` is safe to connect to.
+///
+/// The directory must be a real directory (not a symlink), owned by the current
+/// uid, and not group/world accessible. Clients MUST call this before
+/// connecting; daemons must have called [`prepare_socket_parent`] before binding.
+///
+/// # Errors
+/// Returns `PermissionDenied` for symlinked, foreign-owned, or group/world
+/// accessible parents, and `InvalidInput` when the socket path has no parent.
 #[cfg(unix)]
 pub fn validate_socket_parent(socket_path: &std::path::Path) -> std::io::Result<()> {
     use std::os::unix::fs::{MetadataExt, PermissionsExt};
@@ -313,6 +357,13 @@ pub fn validate_socket_parent(socket_path: &std::path::Path) -> std::io::Result<
     Ok(())
 }
 
+/// Create the parent directory of `socket_path` (mode `0700`) if missing and
+/// validate it with [`validate_socket_parent`]. The daemon MUST call this
+/// before binding the socket.
+///
+/// # Errors
+/// Propagates I/O errors from directory creation and permission setup, plus
+/// every [`validate_socket_parent`] failure condition.
 #[cfg(unix)]
 pub fn prepare_socket_parent(socket_path: &std::path::Path) -> std::io::Result<()> {
     use std::os::unix::fs::{DirBuilderExt, PermissionsExt};
@@ -360,27 +411,29 @@ mod tests {
     use super::*;
 
     #[test]
-    fn test_data_dir_returns_path() {
+    fn data_dir_is_non_empty() {
         let path = data_dir();
         assert!(!path.as_os_str().is_empty());
     }
 
     #[test]
-    fn test_config_dir_returns_path() {
+    fn config_dir_is_non_empty() {
         let path = config_dir();
         assert!(!path.as_os_str().is_empty());
     }
 
     #[test]
-    fn test_cache_dir_returns_path() {
+    fn cache_dir_is_non_empty() {
         let path = cache_dir();
         assert!(!path.as_os_str().is_empty());
     }
 
     #[test]
-    fn test_socket_path_returns_path() {
-        let path = socket_path();
-        assert!(path.to_string_lossy().contains("omg.sock"));
+    fn socket_path_names_the_socket_file() {
+        temp_env::with_var_unset("OMG_SOCKET_PATH", || {
+            let path = socket_path();
+            assert!(path.to_string_lossy().contains("omg.sock"));
+        });
     }
 
     #[cfg(unix)]
@@ -428,44 +481,56 @@ mod tests {
     }
 
     #[test]
-    fn test_fast_status_path_derives_from_socket() {
-        let status = fast_status_path();
-        assert!(status.to_string_lossy().contains("omg.status"));
+    fn fast_status_path_sits_next_to_the_socket() {
+        temp_env::with_var_unset("OMG_SOCKET_PATH", || {
+            let status = fast_status_path();
+            assert!(status.to_string_lossy().contains("omg.status"));
+        });
     }
 
     #[test]
-    fn test_installed_marker_in_data_dir() {
+    fn installed_marker_lives_in_the_data_dir() {
         let marker = installed_marker_path();
         assert!(marker.to_string_lossy().contains(".installed"));
     }
 
     #[test]
-    fn test_pacman_root_default() {
-        let root = pacman_root();
-        assert!(root.to_string_lossy().starts_with('/'));
+    fn pacman_root_default_is_absolute() {
+        temp_env::with_var_unset("OMG_PACMAN_ROOT", || {
+            let root = pacman_root();
+            assert_eq!(root, PathBuf::from("/"));
+        });
     }
 
     #[test]
-    fn test_pacman_db_dir_under_root() {
-        let db = pacman_db_dir();
-        assert!(db.to_string_lossy().contains("pacman"));
+    fn pacman_db_dir_defaults_under_the_root() {
+        temp_env::with_var_unset("OMG_PACMAN_DB_DIR", || {
+            let db = pacman_db_dir();
+            assert_eq!(db, PathBuf::from("/var/lib/pacman"));
+        });
     }
 
     #[test]
-    fn test_pacman_sync_dir_under_db() {
-        let sync = pacman_sync_dir();
-        assert!(sync.to_string_lossy().contains("sync"));
+    fn pacman_sync_dir_defaults_under_the_db_dir() {
+        temp_env::with_var_unset("OMG_PACMAN_SYNC_DIR", || {
+            let sync = pacman_sync_dir();
+            assert_eq!(sync, pacman_db_dir().join("sync"));
+        });
     }
 
     #[test]
-    fn test_pacman_local_dir_under_db() {
-        let local = pacman_local_dir();
-        assert!(local.to_string_lossy().contains("local"));
+    fn pacman_local_dir_defaults_under_the_db_dir() {
+        temp_env::with_var_unset("OMG_PACMAN_LOCAL_DIR", || {
+            let local = pacman_local_dir();
+            assert_eq!(local, pacman_db_dir().join("local"));
+        });
     }
 
     #[test]
-    fn test_pacman_cache_dir() {
-        let cache = pacman_cache_dir();
-        assert!(cache.to_string_lossy().contains("cache"));
+    fn pacman_cache_dir_is_a_cache_location() {
+        temp_env::with_var_unset("OMG_PACMAN_CACHE_DIR", || {
+            let cache = pacman_cache_dir();
+            assert!(cache.to_string_lossy().contains("cache"));
+        });
     }
 }

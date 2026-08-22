@@ -3,10 +3,8 @@
 use crate::cli::components::Components;
 use crate::cli::tea::Cmd;
 use crate::cli::{CliContext, FleetCommands, LocalCommandRunner};
-use anyhow::{Context, Result};
-use serde::{Deserialize, Serialize};
-
 use crate::core::license;
+use anyhow::{Context, Result};
 
 impl LocalCommandRunner for FleetCommands {
     async fn execute(&self, ctx: &CliContext) -> Result<()> {
@@ -19,16 +17,6 @@ impl LocalCommandRunner for FleetCommands {
     }
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct MachineStatus {
-    pub id: String,
-    pub hostname: String,
-    pub team: String,
-    pub last_seen: i64,
-    pub is_compliant: bool,
-    pub drift_summary: Option<String>,
-}
-
 /// Show fleet status
 pub async fn status(_ctx: &CliContext) -> Result<()> {
     use crate::cli::packages::execute_cmd;
@@ -39,29 +27,27 @@ pub async fn status(_ctx: &CliContext) -> Result<()> {
 
     let total_machines = members.len();
     let now = jiff::Timestamp::now().as_second();
-    let one_day = 24 * 60 * 60;
+    let one_day: i64 = 24 * 60 * 60;
 
     let active_machines = members.iter().filter(|m| m.is_active).count();
     let online_machines = members
         .iter()
         .filter(|m| {
-            jiff::Timestamp::from_second(parse_timestamp(&m.last_seen_at))
-                .is_ok_and(|ts| now - ts.as_second() < one_day)
+            crate::cli::parse_timestamp_opt(&m.last_seen_at)
+                .is_some_and(|ts| now.saturating_sub(ts) < one_day)
         })
         .count();
 
-    // Online in the last day is an availability signal, not policy compliance.
-    let online = online_machines;
-    let offline = total_machines.saturating_sub(active_machines);
-
     let online_pct = if total_machines > 0 {
-        (online as f32 / total_machines as f32) * 100.0
+        (online_machines as f32 / total_machines as f32) * 100.0
     } else {
         0.0
     };
 
     let health_bar = generate_health_bar(online_pct);
 
+    // Report availability and activation as the distinct signals they are;
+    // "inactive" is a license/roster state, not an offline state.
     let status_items = vec![
         ("Total Machines", total_machines.to_string()),
         (
@@ -69,7 +55,10 @@ pub async fn status(_ctx: &CliContext) -> Result<()> {
             format!("{}% {}", online_pct as u32, health_bar),
         ),
         ("Active", active_machines.to_string()),
-        ("Offline", offline.to_string()),
+        (
+            "Inactive",
+            total_machines.saturating_sub(active_machines).to_string(),
+        ),
     ];
 
     let mut machine_list = vec![];
@@ -101,12 +90,6 @@ pub async fn status(_ctx: &CliContext) -> Result<()> {
     ]));
 
     Ok(())
-}
-
-fn parse_timestamp(s: &str) -> i64 {
-    // Simple parser for "YYYY-MM-DD HH:MM:SS" or ISO
-    s.parse::<jiff::Timestamp>()
-        .map_or(0, jiff::Timestamp::as_second)
 }
 
 /// Push configuration to fleet
@@ -189,8 +172,7 @@ pub async fn push(team: Option<&str>, message: Option<&str>, _ctx: &CliContext) 
             Some("Push Summary"),
             vec![
                 ("Target", target.to_string()),
-                ("Applied immediately", count.to_string()),
-                ("Scheduled for next login", "0".to_string()),
+                ("Machines in fleet", count.to_string()),
                 ("Message", msg.to_string()),
             ],
         ),
@@ -210,7 +192,7 @@ fn fleet_push_http_outcome(status: u16) -> Result<()> {
 }
 
 fn generate_health_bar(pct: f32) -> String {
-    let filled = (pct / 10.0) as usize;
+    let filled = ((pct / 10.0).round() as usize).min(10);
     let empty = 10 - filled;
     format!("{}{}", "█".repeat(filled), "░".repeat(empty))
 }

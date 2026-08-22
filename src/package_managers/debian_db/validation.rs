@@ -21,7 +21,9 @@ pub fn check_disk_space(download_size: u64, installed_size: u64, temp_dir: &Path
         temp_dir.parent().unwrap_or(temp_dir)
     };
     let available = available_bytes(download_path)?;
-    let required = download_size + (download_size / 10);
+    // Saturating headroom math: absurd sizes degrade to "needs everything"
+    // instead of wrapping into a false pass.
+    let required = download_size.saturating_add(download_size / 10);
 
     if available < required {
         anyhow::bail!(
@@ -38,7 +40,7 @@ pub fn check_disk_space(download_size: u64, installed_size: u64, temp_dir: &Path
     }
 
     let available = available_bytes(Path::new("/"))?;
-    let required = installed_size + (installed_size / 5);
+    let required = installed_size.saturating_add(installed_size / 5);
 
     if available < required {
         anyhow::bail!(
@@ -58,30 +60,16 @@ pub fn check_disk_space(download_size: u64, installed_size: u64, temp_dir: &Path
 fn available_bytes(path: &Path) -> Result<u64> {
     let stat = nix::sys::statvfs::statvfs(path)
         .with_context(|| format!("Failed to check disk space at {}", path.display()))?;
-    Ok(stat.blocks_available() * stat.block_size())
+    stat.blocks_available()
+        .checked_mul(stat.block_size())
+        .ok_or_else(|| anyhow::anyhow!("disk space calculation overflow at {}", path.display()))
 }
 
 /// Verify SHA256 hash of a downloaded file
 ///
 /// Returns an error with suggestions if the hash doesn't match.
 fn verify_package_hash(file_path: &Path, expected_hash: &str, package_name: &str) -> Result<()> {
-    use sha2::{Digest, Sha256};
-    use std::fs::File;
-    use std::io::Read as _;
-
-    let mut file = File::open(file_path)?;
-    let mut hasher = Sha256::new();
-    let mut buffer = vec![0u8; 8192];
-
-    loop {
-        let n = file.read(&mut buffer)?;
-        if n == 0 {
-            break;
-        }
-        hasher.update(&buffer[..n]);
-    }
-
-    let computed_hash = hex::encode(hasher.finalize());
+    let computed_hash = sha256_file(file_path)?;
 
     if computed_hash != expected_hash {
         anyhow::bail!(
@@ -109,6 +97,28 @@ fn verify_package_hash(file_path: &Path, expected_hash: &str, package_name: &str
         &computed_hash[..16]
     );
     Ok(())
+}
+
+/// Streaming SHA256 of a file (8 KiB chunks), so large `.deb` archives are
+/// never buffered whole in memory.
+pub(crate) fn sha256_file(path: &Path) -> Result<String> {
+    use sha2::{Digest, Sha256};
+    use std::fs::File;
+    use std::io::Read as _;
+
+    let mut file = File::open(path)?;
+    let mut hasher = Sha256::new();
+    let mut buffer = vec![0u8; 8192];
+
+    loop {
+        let n = file.read(&mut buffer)?;
+        if n == 0 {
+            break;
+        }
+        hasher.update(&buffer[..n]);
+    }
+
+    Ok(hex::encode(hasher.finalize()))
 }
 
 /// Rejects a `.deb` unless a SHA256 digest is present and matches the file bytes.

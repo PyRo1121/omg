@@ -494,7 +494,7 @@ mod security {
         require_arch!();
 
         let result = run_omg(&["audit", "scan"]);
-        assert_audit_output(&result);
+        assert_audit_scan_completed(&result);
     }
 
     #[test]

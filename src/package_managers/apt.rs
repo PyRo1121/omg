@@ -10,7 +10,9 @@ use anyhow::{Context, Result};
 
 use crate::core::is_root;
 use crate::core::{Package, PackageSource};
-use crate::package_managers::types::{LocalPackage, PackageInfo, SyncPackage};
+use crate::package_managers::types::{
+    LocalPackage, PackageInfo, SyncPackage, parse_version_or_zero,
+};
 
 // Import rust-apt for full package management
 use rust_apt::Cache;
@@ -176,7 +178,9 @@ impl crate::package_managers::PackageManager for AptPackageManager {
                     .into_iter()
                     .map(|p| Package {
                         name: p.name,
-                        version: p.version,
+                        // debian_db entries carry raw version strings; the
+                        // cross-backend Package expects the parsed type.
+                        version: parse_version_or_zero(&p.version),
                         description: p.description,
                         source: PackageSource::Official,
                         installed: true,
@@ -251,6 +255,9 @@ impl crate::package_managers::PackageManager for AptPackageManager {
         })
     }
 }
+/// Search the APT cache via FFI (fallback when the pure index misses).
+///
+/// Returns at most 100 matches ordered by package iteration order.
 pub fn search_sync(query: &str) -> Result<Vec<SyncPackage>> {
     let cache = open_cache(&[])?;
     let mut results = Vec::with_capacity(64);
@@ -266,11 +273,13 @@ pub fn search_sync(query: &str) -> Result<Vec<SyncPackage>> {
 
         if matched {
             let candidate = pkg.candidate();
-            let version = candidate
-                .as_ref()
-                .map(|c| c.version().to_string())
-                .or_else(|| pkg.installed().map(|i| i.version().to_string()))
-                .unwrap_or_else(|| "unknown".to_string());
+            let version = parse_version_or_zero(
+                &candidate
+                    .as_ref()
+                    .map(|c| c.version().to_string())
+                    .or_else(|| pkg.installed().map(|i| i.version().to_string()))
+                    .unwrap_or_else(|| "unknown".to_string()),
+            );
 
             let download_size = candidate
                 .as_ref()
@@ -296,6 +305,7 @@ pub fn search_sync(query: &str) -> Result<Vec<SyncPackage>> {
     Ok(results)
 }
 
+/// Detailed metadata for one package from the APT cache, if present.
 pub fn get_sync_pkg_info(name: &str) -> Result<Option<PackageInfo>> {
     let cache = open_cache(&[])?;
     let Some(pkg) = cache.get(name) else {
@@ -321,6 +331,7 @@ pub fn get_sync_pkg_info(name: &str) -> Result<Option<PackageInfo>> {
     }))
 }
 
+/// Installed packages from the APT cache (`rust-apt` FFI path).
 pub fn list_installed_fast() -> Result<Vec<LocalPackage>> {
     let cache = open_cache(&[])?;
     let mut packages = Vec::with_capacity(512);
@@ -334,6 +345,7 @@ pub fn list_installed_fast() -> Result<Vec<LocalPackage>> {
     Ok(packages)
 }
 
+/// Explicitly installed (non-auto) packages, sorted alphabetically.
 pub fn list_explicit() -> Result<Vec<String>> {
     let cache = open_cache(&[])?;
     let mut explicit = Vec::with_capacity(256);
@@ -349,6 +361,8 @@ pub fn list_explicit() -> Result<Vec<String>> {
 }
 
 /// List all available package names
+/// All available package names across configured repositories, sorted and
+/// deduplicated.
 pub fn list_all_package_names() -> Result<Vec<String>> {
     let cache = open_cache(&[])?;
     let mut names = Vec::with_capacity(4096);
@@ -363,6 +377,8 @@ pub fn list_all_package_names() -> Result<Vec<String>> {
 }
 
 /// List orphaned packages
+/// Auto-installed packages that no longer have dependents
+/// (`apt-get autoremove` candidates).
 pub fn list_orphans() -> Result<Vec<String>> {
     let cache = open_cache(&[])?;
     let mut orphans = Vec::with_capacity(32);
@@ -374,6 +390,7 @@ pub fn list_orphans() -> Result<Vec<String>> {
     Ok(orphans)
 }
 
+/// Remove all auto-removable orphan packages via the APT FFI.
 pub fn remove_orphans() -> Result<()> {
     let orphans = list_orphans()?;
     if orphans.is_empty() {
@@ -383,6 +400,7 @@ pub fn remove_orphans() -> Result<()> {
 }
 
 /// List packages with available updates
+/// Upgradable packages as `(name, installed_version, candidate_version)`.
 pub fn list_updates() -> Result<Vec<(String, String, String)>> {
     let cache = open_cache(&[])?;
     let mut updates = Vec::with_capacity(64);
@@ -405,6 +423,12 @@ pub fn list_updates() -> Result<Vec<(String, String, String)>> {
     Ok(updates)
 }
 
+/// Accurate system status:
+/// `(installed, explicit, orphans, upgradable)`.
+///
+/// Walks the full APT cache; pair it with [`crate::package_managers::debian_db::get_counts_fast`]
+/// through [`crate::package_managers::debian_db::resolve_status_counts`] so a
+/// failed accurate query never masquerades as zero orphans/updates.
 pub fn get_system_status() -> Result<(usize, usize, usize, usize)> {
     let cache = open_cache(&[])?;
     let mut installed_count = 0;
@@ -439,7 +463,7 @@ pub fn get_system_status() -> Result<(usize, usize, usize, usize)> {
 
 fn open_cache(local_files: &[String]) -> Result<Cache> {
     let files: Vec<&str> = local_files.iter().map(String::as_str).collect();
-    Cache::new(&files).map_err(|e| anyhow::anyhow!(format!("APT cache error: {e:?}")))
+    Cache::new(&files).map_err(|e| anyhow!("APT cache error: {e:?}"))
 }
 
 fn install_blocking(packages: &[String]) -> Result<()> {
@@ -462,13 +486,13 @@ fn install_blocking(packages: &[String]) -> Result<()> {
 
     cache
         .resolve(true)
-        .map_err(|e| anyhow::anyhow!(format!("APT resolve error: {e:?}")))?;
+        .map_err(|e| anyhow!("APT resolve error: {e:?}"))?;
 
     let mut acquire_progress = AcquireProgress::apt();
     let mut install_progress = InstallProgress::apt();
     cache
         .commit(&mut acquire_progress, &mut install_progress)
-        .map_err(|e| anyhow::anyhow!(format!("APT commit error: {e:?}")))?;
+        .map_err(|e| anyhow!("APT commit error: {e:?}"))?;
 
     Ok(())
 }
@@ -484,13 +508,13 @@ fn remove_blocking(packages: &[String]) -> Result<()> {
 
     cache
         .resolve(true)
-        .map_err(|e| anyhow::anyhow!(format!("APT resolve error: {e:?}")))?;
+        .map_err(|e| anyhow!("APT resolve error: {e:?}"))?;
 
     let mut acquire_progress = AcquireProgress::apt();
     let mut install_progress = InstallProgress::apt();
     cache
         .commit(&mut acquire_progress, &mut install_progress)
-        .map_err(|e| anyhow::anyhow!(format!("APT commit error: {e:?}")))?;
+        .map_err(|e| anyhow!("APT commit error: {e:?}"))?;
 
     Ok(())
 }
@@ -500,16 +524,16 @@ fn update_blocking() -> Result<()> {
     let cache = open_cache(&[])?;
     cache
         .upgrade(Upgrade::FullUpgrade)
-        .map_err(|e| anyhow::anyhow!(format!("APT upgrade error: {e:?}")))?;
+        .map_err(|e| anyhow!("APT upgrade error: {e:?}"))?;
     cache
         .resolve(true)
-        .map_err(|e| anyhow::anyhow!(format!("APT resolve error: {e:?}")))?;
+        .map_err(|e| anyhow!("APT resolve error: {e:?}"))?;
 
     let mut acquire_progress = AcquireProgress::apt();
     let mut install_progress = InstallProgress::apt();
     cache
         .commit(&mut acquire_progress, &mut install_progress)
-        .map_err(|e| anyhow::anyhow!(format!("APT commit error: {e:?}")))?;
+        .map_err(|e| anyhow!("APT commit error: {e:?}"))?;
 
     Ok(())
 }
@@ -519,7 +543,7 @@ fn sync_databases_blocking() -> Result<()> {
     let mut progress = AcquireProgress::apt();
     cache
         .update(&mut progress)
-        .map_err(|e| anyhow::anyhow!(format!("APT update error: {e:?}")))?;
+        .map_err(|e| anyhow!("APT update error: {e:?}"))?;
     Ok(())
 }
 

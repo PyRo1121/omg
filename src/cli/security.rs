@@ -681,6 +681,12 @@ pub fn scan_licenses(
 ) -> Result<()> {
     license::require_feature("license-scan")?;
 
+    // Validate the requested format up front instead of silently rendering any
+    // unknown value with the table renderer.
+    if !matches!(format, "table" | "json" | "csv") {
+        anyhow::bail!("Unsupported output format '{format}'. Valid formats: table, json, csv");
+    }
+
     println!(
         "{} Scanning installed packages for license information...\n",
         style::runtime("OMG")
@@ -1146,23 +1152,21 @@ pub async fn export_compliance(
                 config_path.display()
             );
         }
-        "iso27001" => {
-            // ISO 27001 requires similar but with different structure
-            println!("  {} ISO 27001 export format", style::dim("•"));
-            // Similar to SOC2 but with different categorization
-        }
-        "hipaa" | "pci-dss" | "fedramp" => {
-            println!(
-                "  {} {} compliance export is available in Enterprise tier",
-                style::warning("⚠"),
+        "iso27001" | "hipaa" | "pci-dss" | "fedramp" => {
+            // Honest failure: no evidence generator exists for these frameworks
+            // yet. Falling through to the success message below would claim an
+            // export that never happened.
+            anyhow::bail!(
+                "{} compliance evidence export is not implemented in this build; \
+                 only 'soc2' generates evidence files",
                 framework.to_uppercase()
             );
         }
-        _ => {
-            println!(
-                "{} Unknown framework: {}. Supported: soc2, iso27001, hipaa, pci-dss, fedramp",
-                style::error("✗"),
-                framework
+        other => {
+            // Unreachable when reached through the CLI (validated upstream),
+            // but must not fall through to a success message.
+            anyhow::bail!(
+                "Unknown compliance framework: {other}. Supported: soc2, iso27001, hipaa, pci-dss, fedramp"
             );
         }
     }
@@ -1186,33 +1190,52 @@ fn parse_eol_timestamp(eol_date: &str) -> Result<jiff::Timestamp> {
     Ok(zoned.timestamp())
 }
 
+/// Numeric components of a version string: `"3.13.1-1"` → `[3, 13, 1]`,
+/// `"1.20"` → `[1, 20]`. Non-numeric segments stop the parse.
+fn version_components(version: &str) -> Vec<u64> {
+    // A single leading 'v' is conventional version decoration ("v22"), not
+    // part of the numeric components.
+    let numeric_prefix = version
+        .strip_prefix(['v', 'V'])
+        .unwrap_or(version)
+        .split(|c: char| !c.is_ascii_digit() && c != '.')
+        .next()
+        .unwrap_or("");
+    numeric_prefix
+        .split('.')
+        .map_while(|part| part.parse::<u64>().ok())
+        .collect()
+}
+
 /// Check end-of-life status for installed runtimes
 pub fn check_eol(_ctx: &CliContext) -> Result<()> {
     println!("{} Checking runtime EOL status...\n", style::runtime("OMG"));
 
-    // EOL dates from endoflife.date API (cached)
-    let eol_data: &[(&str, &str, &str, &str)] = &[
-        // (runtime, version_prefix, eol_date, lts_until)
-        ("node", "16", "2023-09-11", "N/A"),
-        ("node", "18", "2025-04-30", "2023-10-18"),
-        ("node", "19", "2023-06-01", "N/A"),
-        ("node", "20", "2026-04-30", "2024-10-22"),
-        ("node", "21", "2024-06-01", "N/A"),
-        ("node", "22", "2027-04-30", "2025-10-21"),
-        ("python", "3.7", "2023-06-27", "N/A"),
-        ("python", "3.8", "2024-10-31", "N/A"),
-        ("python", "3.9", "2025-10-31", "N/A"),
-        ("python", "3.10", "2026-10-31", "N/A"),
-        ("python", "3.11", "2027-10-31", "N/A"),
-        ("python", "3.12", "2028-10-31", "N/A"),
-        ("go", "1.20", "2024-02-06", "N/A"),
-        ("go", "1.21", "2024-08-06", "N/A"),
-        ("go", "1.22", "2025-02-06", "N/A"),
-        ("ruby", "3.0", "2024-03-31", "N/A"),
-        ("ruby", "3.1", "2025-03-31", "N/A"),
-        ("ruby", "3.2", "2026-03-31", "N/A"),
-        ("java", "17", "2029-09-30", "LTS"),
-        ("java", "21", "2031-09-30", "LTS"),
+    // Hardcoded EOL snapshot (sourced from endoflife.date; last reviewed
+    // 2026-02). This is NOT a live API cache — refresh manually when adding
+    // runtime versions.
+    let eol_data: &[(&str, &[u64], &str, &str)] = &[
+        // (runtime, version components, eol_date, lts_until)
+        ("node", &[16], "2023-09-11", "N/A"),
+        ("node", &[18], "2025-04-30", "2023-10-18"),
+        ("node", &[19], "2023-06-01", "N/A"),
+        ("node", &[20], "2026-04-30", "2024-10-22"),
+        ("node", &[21], "2024-06-01", "N/A"),
+        ("node", &[22], "2027-04-30", "2025-10-21"),
+        ("python", &[3, 7], "2023-06-27", "N/A"),
+        ("python", &[3, 8], "2024-10-31", "N/A"),
+        ("python", &[3, 9], "2025-10-31", "N/A"),
+        ("python", &[3, 10], "2026-10-31", "N/A"),
+        ("python", &[3, 11], "2027-10-31", "N/A"),
+        ("python", &[3, 12], "2028-10-31", "N/A"),
+        ("go", &[1, 20], "2024-02-06", "N/A"),
+        ("go", &[1, 21], "2024-08-06", "N/A"),
+        ("go", &[1, 22], "2025-02-06", "N/A"),
+        ("ruby", &[3, 0], "2024-03-31", "N/A"),
+        ("ruby", &[3, 1], "2025-03-31", "N/A"),
+        ("ruby", &[3, 2], "2026-03-31", "N/A"),
+        ("java", &[17], "2029-09-30", "LTS"),
+        ("java", &[21], "2031-09-30", "LTS"),
     ];
 
     let now = jiff::Timestamp::now();
@@ -1221,36 +1244,46 @@ pub fn check_eol(_ctx: &CliContext) -> Result<()> {
 
     for runtime in &runtimes {
         if let Some(version) = crate::runtimes::probe_version(runtime) {
+            let installed_components = version_components(&version);
             let mut status = "Active";
             let mut eol_date_str = "Unknown";
             let mut is_eol = false;
             let mut is_warning = false;
 
-            // Check EOL status
+            // Check EOL status: match on full numeric component prefix so that,
+            // e.g., Python 3.13 can never match a future `3.1` row.
             for (rt, ver_prefix, eol_date, _lts) in eol_data {
-                if *rt == *runtime && version.starts_with(ver_prefix) {
-                    eol_date_str = eol_date;
-                    let eol_timestamp = parse_eol_timestamp(eol_date).with_context(|| {
-                        format!("Invalid EOL date '{eol_date}' for {runtime} {ver_prefix}")
-                    })?;
-
-                    if now > eol_timestamp {
-                        status = "EOL";
-                        is_eol = true;
-                        issues += 1;
-                    } else {
-                        let six_months = jiff::Span::new().months(6);
-                        let warning_ts = now
-                            .checked_add(six_months)
-                            .context("Failed to compute EOL warning window")?;
-                        if warning_ts > eol_timestamp {
-                            status = "Ending Soon";
-                            is_warning = true;
-                            issues += 1;
-                        }
-                    }
-                    break;
+                if rt != runtime || !installed_components.starts_with(ver_prefix) {
+                    continue;
                 }
+                eol_date_str = eol_date;
+                let eol_timestamp = parse_eol_timestamp(eol_date).with_context(|| {
+                    format!(
+                        "Invalid EOL date '{eol_date}' for {runtime} {}",
+                        ver_prefix
+                            .iter()
+                            .map(std::string::ToString::to_string)
+                            .collect::<Vec<_>>()
+                            .join(".")
+                    )
+                })?;
+
+                if now > eol_timestamp {
+                    status = "EOL";
+                    is_eol = true;
+                    issues += 1;
+                } else {
+                    let six_months = jiff::Span::new().months(6);
+                    let warning_ts = now
+                        .checked_add(six_months)
+                        .context("Failed to compute EOL warning window")?;
+                    if warning_ts > eol_timestamp {
+                        status = "Ending Soon";
+                        is_warning = true;
+                        issues += 1;
+                    }
+                }
+                break;
             }
 
             let status_display = if is_eol {
@@ -1353,6 +1386,28 @@ mod tests {
             require_audit_integrity(false).expect_err("broken audit chain must fail the command");
         assert!(err.to_string().contains("integrity FAILED"), "got: {err}");
         assert!(require_audit_integrity(true).is_ok());
+    }
+
+    #[test]
+    fn version_components_parse_numeric_prefixes_only() {
+        assert_eq!(version_components("3.13.1-1"), vec![3, 13, 1]);
+        assert_eq!(version_components("1.20"), vec![1, 20]);
+        assert_eq!(version_components("20.10.0"), vec![20, 10, 0]);
+        assert_eq!(version_components("v22"), vec![22]);
+        assert_eq!(version_components("lts/hydrogen"), Vec::<u64>::new());
+    }
+
+    #[test]
+    fn eol_prefix_match_never_confuses_component_boundaries() {
+        // Python 3.13 must not match a hypothetical [3, 1] row, and Go 1.30
+        // must not match a [1, 3] row: component-wise starts_with is exact.
+        let installed = version_components("3.13.2");
+        assert!(installed.starts_with(&[3, 13][..]));
+        assert!(!installed.starts_with(&[3, 1][..]));
+
+        let go = version_components("1.30.1");
+        assert!(go.starts_with(&[1, 30][..]));
+        assert!(!go.starts_with(&[1, 3][..]));
     }
 
     #[test]

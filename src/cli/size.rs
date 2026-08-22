@@ -2,6 +2,7 @@
 
 use anyhow::Result;
 
+#[cfg(any(feature = "arch", feature = "debian", feature = "debian-pure"))]
 use crate::cli::tea::Cmd;
 
 /// Show disk usage analysis
@@ -25,24 +26,7 @@ pub fn run(tree: Option<&str>, limit: usize) -> Result<()> {
         return Ok(());
     }
 
-    #[cfg(all(
-        any(feature = "debian", feature = "debian-pure"),
-        not(feature = "arch")
-    ))]
-    {
-        let cmd = if let Some(package) = tree {
-            show_package_tree_debian(package)?
-        } else {
-            show_top_packages_debian(limit)?
-        };
-        crate::cli::packages::execute_cmd(cmd);
-        return Ok(());
-    }
-
-    #[cfg(any(
-        feature = "arch",
-        not(any(feature = "arch", feature = "debian", feature = "debian-pure"))
-    ))]
+    #[cfg(feature = "arch")]
     {
         let cmd = if let Some(package) = tree {
             show_package_tree(package)?
@@ -50,17 +34,21 @@ pub fn run(tree: Option<&str>, limit: usize) -> Result<()> {
             show_top_packages(limit)?
         };
         crate::cli::packages::execute_cmd(cmd);
-        Ok(())
+        return Ok(());
+    }
+
+    #[cfg(not(feature = "arch"))]
+    {
+        let _ = (tree, limit);
+        anyhow::bail!("size command requires the arch feature");
     }
 }
 
 #[cfg(feature = "arch")]
 fn show_top_packages(limit: usize) -> Result<Cmd<()>> {
     use crate::cli::components::Components;
-    use alpm::Alpm;
 
-    let handle = Alpm::new("/", "/var/lib/pacman")
-        .map_err(|e| anyhow::anyhow!("Failed to open ALPM: {e}"))?;
+    let handle = crate::cli::open_local_alpm()?;
 
     let localdb = handle.localdb();
     let mut packages: Vec<(String, i64)> = localdb
@@ -73,17 +61,13 @@ fn show_top_packages(limit: usize) -> Result<Cmd<()>> {
 
     let total: i64 = packages.iter().map(|(_, s)| s).sum();
 
-    let mut content = Vec::new();
-    for (i, (name, size)) in packages.iter().take(limit).enumerate() {
-        let size_str = format_size(*size);
-        let bar = generate_bar(*size, packages[0].1, 20);
-        content.push(format!("{:>3}. {} {:>10}  {}", i + 1, bar, size_str, name));
-    }
-
     let mut commands = vec![
         Cmd::header("Disk Usage Analysis", "by installed size"),
         Cmd::spacer(),
-        Cmd::card(format!("Top {limit} Packages"), content),
+        Cmd::card(
+            format!("Top {limit} Packages"),
+            top_packages_content(&packages, limit),
+        ),
         Cmd::spacer(),
         Components::kv_list(
             Some("Summary"),
@@ -109,11 +93,9 @@ fn show_top_packages(limit: usize) -> Result<Cmd<()>> {
 #[cfg(feature = "arch")]
 fn show_package_tree(package: &str) -> Result<Cmd<()>> {
     use crate::cli::components::Components;
-    use alpm::Alpm;
     use std::collections::HashSet;
 
-    let handle = Alpm::new("/", "/var/lib/pacman")
-        .map_err(|e| anyhow::anyhow!("Failed to open ALPM: {e}"))?;
+    let handle = crate::cli::open_local_alpm()?;
 
     let localdb = handle.localdb();
 
@@ -195,6 +177,22 @@ fn show_package_tree(package: &str) -> Result<Cmd<()>> {
     Ok(Cmd::batch(commands))
 }
 
+#[cfg(any(feature = "arch", feature = "debian", feature = "debian-pure"))]
+fn top_packages_content(packages: &[(String, i64)], limit: usize) -> Vec<String> {
+    // An empty package list must render an empty card, not panic on [0].
+    let max_size = packages.first().map_or(0, |&(_, size)| size);
+    packages
+        .iter()
+        .take(limit)
+        .enumerate()
+        .map(|(i, (name, size))| {
+            let size_str = format_size(*size);
+            let bar = generate_bar(*size, max_size, 20);
+            format!("{:>3}. {} {:>10}  {}", i + 1, bar, size_str, name)
+        })
+        .collect()
+}
+
 #[cfg(any(feature = "debian", feature = "debian-pure"))]
 fn show_top_packages_debian(limit: usize) -> Result<Cmd<()>> {
     use crate::cli::components::Components;
@@ -206,17 +204,13 @@ fn show_top_packages_debian(limit: usize) -> Result<Cmd<()>> {
 
     let total: i64 = packages.iter().map(|(_, s)| s).sum();
 
-    let mut content = Vec::new();
-    for (i, (name, size)) in packages.iter().take(limit).enumerate() {
-        let size_str = format_size(*size);
-        let bar = generate_bar(*size, packages[0].1, 20);
-        content.push(format!("{:>3}. {} {:>10}  {}", i + 1, bar, size_str, name));
-    }
-
     Ok(Cmd::batch(vec![
         Cmd::header("Disk Usage Analysis", "by installed size"),
         Cmd::spacer(),
-        Cmd::card(format!("Top {limit} Packages"), content),
+        Cmd::card(
+            format!("Top {limit} Packages"),
+            top_packages_content(&packages, limit),
+        ),
         Cmd::spacer(),
         Components::kv_list(
             Some("Summary"),
@@ -288,21 +282,8 @@ fn show_package_tree_debian(package: &str) -> Result<Cmd<()>> {
     Ok(Cmd::batch(commands))
 }
 
-#[cfg(not(any(feature = "arch", feature = "debian", feature = "debian-pure")))]
-fn show_top_packages(_limit: usize) -> Result<Cmd<()>> {
-    size_requires_backend()
-}
-
-#[cfg(not(any(feature = "arch", feature = "debian", feature = "debian-pure")))]
-fn show_package_tree(_package: &str) -> Result<Cmd<()>> {
-    size_requires_backend()
-}
-
-#[cfg(any(
-    not(any(feature = "arch", feature = "debian", feature = "debian-pure")),
-    test
-))]
-fn size_requires_backend() -> Result<Cmd<()>> {
+#[cfg(test)]
+fn size_requires_backend() -> anyhow::Result<()> {
     anyhow::bail!("Size analysis is not available without an Arch or Debian package backend")
 }
 
@@ -370,6 +351,31 @@ mod tests {
                 .to_string()
                 .contains("not available without an Arch or Debian package backend"),
             "got: {error}"
+        );
+    }
+
+    #[cfg(any(feature = "arch", feature = "debian", feature = "debian-pure"))]
+    #[test]
+    fn empty_package_list_renders_empty_content_instead_of_panicking() {
+        let content = top_packages_content(&[], 20);
+        assert!(
+            content.is_empty(),
+            "no packages must not index out of bounds"
+        );
+    }
+
+    #[cfg(any(feature = "arch", feature = "debian", feature = "debian-pure"))]
+    #[test]
+    fn top_packages_content_ranks_and_truncates() {
+        let packages = vec![
+            ("a".to_string(), 3_000_000_000_i64),
+            ("b".to_string(), 2_000),
+        ];
+        let content = top_packages_content(&packages, 1);
+        assert_eq!(content.len(), 1, "limit must truncate the listing");
+        assert!(
+            content[0].contains('a'),
+            "largest package first, got {content:?}"
         );
     }
 }

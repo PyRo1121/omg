@@ -100,21 +100,6 @@ impl PackageManager for PureDebianPackageManager {
                 "Failed to resolve package URLs. Repository configuration may be invalid.",
             )?;
 
-            // 4. Check for conflicts
-            let conflicts = tx.check_file_conflicts()?;
-            if !conflicts.is_empty() {
-                tracing::warn!("Found {} file conflicts", conflicts.len());
-                for (path, owner) in conflicts.iter().take(5) {
-                    tracing::warn!("  {} owned by {}", path.display(), owner);
-                }
-                anyhow::bail!(
-                    "File conflicts detected with {} files. Aborting installation.\n\
-                    \u{1f4a1} Some files would be overwritten by this installation.\n\
-                    This usually means package conflicts that should be resolved first.",
-                    conflicts.len()
-                );
-            }
-
             // 5. Execute transaction (downloads, unpacks, configures)
             tx.execute().await
                 .context("Transaction failed. System may be in inconsistent state. Try: omg install --fix-broken")?;
@@ -196,11 +181,7 @@ impl PackageManager for PureDebianPackageManager {
                 return Ok(());
             }
 
-            tracing::info!(
-                "Found {} packages to upgrade (total: {} MB)",
-                updates.len(),
-                updates.iter().map(|_| 0).sum::<usize>() / 1_048_576 // Placeholder size
-            );
+            tracing::info!("Found {} packages to upgrade", updates.len());
 
             // Create resolver and add all packages to upgrade
             let mut resolver = debian_db::DependencyResolver::new()
@@ -312,12 +293,20 @@ impl PackageManager for PureDebianPackageManager {
 
     fn get_status(
         &self,
-        _fast: bool,
+        fast: bool,
     ) -> Pin<Box<dyn Future<Output = Result<(usize, usize, usize, usize)>> + Send + '_>> {
         Box::pin(async move {
-            tokio::task::spawn_blocking(debian_db::get_counts_fast)
+            let fast_counts = tokio::task::spawn_blocking(debian_db::get_counts_fast)
                 .await
-                .context("Debian status task failed")?
+                .unwrap_or_else(|error| {
+                    tracing::warn!("Debian status task failed: {error}");
+                    Err(anyhow::anyhow!("Debian status task panicked"))
+                });
+            tokio::task::spawn_blocking(move || {
+                debian_db::resolve_status_counts(fast, &fast_counts, accurate_status_counts)
+            })
+            .await
+            .context("Debian status task failed")?
         })
     }
 
@@ -331,68 +320,11 @@ impl PackageManager for PureDebianPackageManager {
 
     fn list_updates(&self) -> Pin<Box<dyn Future<Output = Result<Vec<UpdateInfo>>> + Send + '_>> {
         Box::pin(async move {
-            use std::collections::HashMap;
-
             // Index/mmap loading plus rayon comparisons are blocking work;
             // run the whole computation on the blocking pool.
-            tokio::task::spawn_blocking(move || -> Result<Vec<UpdateInfo>> {
-                // OPTIMIZATION: Get installed packages first (fast, from dpkg status)
-                let installed = debian_db::list_installed_fast()?;
-                if installed.is_empty() {
-                    return Ok(Vec::new());
-                }
-
-                // Build set of installed package names for O(1) lookup
-                let installed_map: HashMap<&str, &str> = installed
-                    .iter()
-                    .map(|pkg| (pkg.name.as_str(), pkg.version.as_str()))
-                    .collect();
-
-                // ULTRA-FAST PATH: Use mmap index if available (zero-copy, no full index load)
-                // ensure_mmap_loaded() loads from disk if not yet in memory (nearly instant)
-                debian_db::ensure_mmap_loaded();
-                if debian_db::is_mmap_available()
-                    && let Ok(updates) = debian_db::get_updates_from_mmap(&installed_map)
-                {
-                    return Ok(updates
-                        .into_iter()
-                        .map(|(name, old_version, new_version)| UpdateInfo {
-                            name,
-                            old_version,
-                            new_version,
-                            repo: "official".to_string(),
-                        })
-                        .collect());
-                }
-
-                // Fallback: Load full index and use parallel comparison
-                use crate::package_managers::types::parse_version_or_zero;
-                use rayon::prelude::*;
-
-                debian_db::ensure_index_loaded()?;
-                let index_pkgs = debian_db::get_detailed_packages()?;
-
-                // Parallel version comparisons using rayon
-                let updates: Vec<UpdateInfo> = index_pkgs
-                    .par_iter()
-                    .filter_map(|pkg| {
-                        let installed_ver = installed_map.get(pkg.name.as_str())?;
-                        let available_ver = parse_version_or_zero(&pkg.version);
-                        let installed_v = parse_version_or_zero(installed_ver);
-
-                        (available_ver > installed_v).then(|| UpdateInfo {
-                            name: pkg.name.clone(),
-                            old_version: (*installed_ver).to_string(),
-                            new_version: pkg.version.clone(),
-                            repo: "official".to_string(),
-                        })
-                    })
-                    .collect();
-
-                Ok(updates)
-            })
-            .await
-            .context("Debian list_updates task failed")?
+            tokio::task::spawn_blocking(compute_updates)
+                .await
+                .context("Debian list_updates task failed")?
         })
     }
 
@@ -409,9 +341,97 @@ impl PackageManager for PureDebianPackageManager {
     }
 }
 
-/// Populate package URLs in a transaction by looking up package info from the database
+/// Accurate status counts with real orphan and update numbers. The fast path
+/// (`debian_db::get_counts_fast`) omits both rather than reporting fake zeros;
+/// this is the fallback [`debian_db::resolve_status_counts`] uses when callers
+/// ask for accurate values.
+fn accurate_status_counts() -> Result<(usize, usize, usize, usize)> {
+    let installed = debian_db::list_installed_fast()?;
+    let total = installed.len();
+    let explicit = installed.iter().filter(|p| p.is_explicit).count();
+    let orphans = debian_db::list_orphans_fast()?.len();
+    let updates = compute_updates()?.len();
+    Ok((total, explicit, orphans, updates))
+}
+
+/// Packages with an available version newer than the installed one.
+///
+/// Uses the zero-copy mmap index when loaded, falling back to the full
+/// in-memory index; mmap failures are logged instead of silently swallowed.
+fn compute_updates() -> Result<Vec<UpdateInfo>> {
+    use std::collections::HashMap;
+
+    // OPTIMIZATION: Get installed packages first (fast, from dpkg status)
+    let installed = debian_db::list_installed_fast()?;
+    if installed.is_empty() {
+        return Ok(Vec::new());
+    }
+
+    // Build map of installed package names for O(1) lookup
+    let installed_map: HashMap<&str, &str> = installed
+        .iter()
+        .map(|pkg| (pkg.name.as_str(), pkg.version.as_str()))
+        .collect();
+
+    // ULTRA-FAST PATH: mmap index (zero-copy, no full index load)
+    let _preload_result = debian_db::ensure_mmap_loaded();
+    if debian_db::is_mmap_available() {
+        match debian_db::get_updates_from_mmap(&installed_map) {
+            Ok(updates) => {
+                return Ok(updates
+                    .into_iter()
+                    .map(|(name, old_version, new_version)| UpdateInfo {
+                        name,
+                        old_version,
+                        new_version,
+                        repo: "official".to_string(),
+                    })
+                    .collect());
+            }
+            Err(error) => {
+                tracing::debug!(
+                    "mmap update comparison failed, falling back to full index: {error}"
+                );
+            }
+        }
+    }
+
+    // Fallback: Load full index and use parallel comparison
+    use crate::package_managers::types::parse_version_or_zero;
+    use rayon::prelude::*;
+
+    debian_db::ensure_index_loaded()?;
+    let index_pkgs = debian_db::get_detailed_packages()?;
+
+    // Parallel version comparisons using rayon
+    let updates: Vec<UpdateInfo> = index_pkgs
+        .par_iter()
+        .filter_map(|pkg| {
+            let installed_ver = installed_map.get(pkg.name.as_str())?;
+            let available_ver = parse_version_or_zero(&pkg.version);
+            let installed_v = parse_version_or_zero(installed_ver);
+
+            (available_ver > installed_v).then(|| UpdateInfo {
+                name: pkg.name.clone(),
+                old_version: (*installed_ver).to_string(),
+                new_version: pkg.version.clone(),
+                repo: "official".to_string(),
+            })
+        })
+        .collect();
+
+    Ok(updates)
+}
+
+/// Populate package URLs in a transaction by looking up package info from the
+/// database.
+///
+/// Each package is matched against the repository that actually publishes it
+/// (suite + component recorded per index entry), so security/custom mirrors
+/// are not silently rewritten to the first enabled repo. Failures are fatal:
+/// an action without URL/SHA256 would be skipped by the downloader and the
+/// package would silently never be installed.
 fn populate_package_urls(tx: &mut debian_db::Transaction) -> Result<()> {
-    // Get repository information
     let repos = debian_db::get_enabled_binary_repos()?;
     if repos.is_empty() {
         anyhow::bail!("No enabled repositories found");
@@ -424,48 +444,89 @@ fn populate_package_urls(tx: &mut debian_db::Transaction) -> Result<()> {
         .map(|pkg| (pkg.name.clone(), pkg))
         .collect();
 
-    // Primary repository for URL construction (use first enabled repo)
-    let primary_repo = &repos[0];
-    let base_url = primary_repo.uri.trim_end_matches('/');
-
-    // Populate URLs for packages to install
     for action in &mut tx.to_install {
-        if let Some(pkg) = package_map.get(&action.name) {
-            action.version.clone_from(&pkg.version);
-            action.size = pkg.size;
-            action.sha256 = Some(pkg.sha256.clone());
-            // Construct full URL: base_url + filename
-            // filename is typically like "pool/main/v/vim/vim_9.0.1234-1_amd64.deb"
-            let url = format!("{}/{}", base_url, pkg.filename);
-            tracing::debug!(
-                "Package {} v{}: {} bytes from {}",
-                action.name,
-                action.version,
-                action.size,
-                url
-            );
-            action.url = Some(url);
-        } else {
-            tracing::warn!("Package {} not found in database", action.name);
-        }
+        populate_action_url(action, &package_map, &repos)
+            .with_context(|| format!("resolving download URL for {}", action.name))?;
+        tracing::debug!(
+            "Package {name} v{version}: {size} bytes from {url}",
+            name = action.name,
+            version = action.version,
+            size = action.size,
+            url = action.url.as_deref().unwrap_or("")
+        );
     }
 
-    // Populate URLs for packages to upgrade
     for action in &mut tx.to_upgrade {
-        if let Some(pkg) = package_map.get(&action.name) {
-            action.size = pkg.size;
-            action.sha256 = Some(pkg.sha256.clone());
-            let url = format!("{}/{}", base_url, pkg.filename);
-            tracing::debug!(
-                "Upgrade {} to v{}: {} bytes from {}",
-                action.name,
-                action.version,
-                action.size,
-                url
-            );
-            action.url = Some(url);
-        }
+        populate_action_url(action, &package_map, &repos)
+            .with_context(|| format!("resolving download URL for upgrade {}", action.name))?;
+        tracing::debug!(
+            "Upgrade {} to v{}: {} bytes from {}",
+            action.name,
+            action.version,
+            action.size,
+            action.url.as_deref().unwrap_or("")
+        );
     }
 
+    Ok(())
+}
+
+/// Resolve one action's `version`/`size`/`sha256`/`url`.
+///
+/// Repository selection: exact suite+component match first, then suite-only
+/// (for flat or componentless entries), then any repo publishing the
+/// component. An empty index `suite` degrades to component matching.
+fn populate_action_url(
+    action: &mut debian_db::PackageAction,
+    package_map: &std::collections::HashMap<String, debian_db::DebianPackage>,
+    repos: &[debian_db::Repository],
+) -> Result<()> {
+    let Some(pkg) = package_map.get(&action.name) else {
+        anyhow::bail!("package {} not found in database", action.name);
+    };
+    if pkg.sha256.is_empty() {
+        anyhow::bail!(
+            "package {} has no SHA256 in repository metadata; refusing unverified install",
+            action.name
+        );
+    }
+    if pkg.filename.is_empty() {
+        anyhow::bail!(
+            "package {} has no Filename in repository metadata",
+            action.name
+        );
+    }
+
+    let repo = repos
+        .iter()
+        .find(|r| r.suite == pkg.suite && r.components.iter().any(|c| c == &pkg.component))
+        .or_else(|| {
+            repos
+                .iter()
+                .find(|r| !pkg.suite.is_empty() && r.suite == pkg.suite)
+        })
+        .or_else(|| repos.iter().find(|r| r.components.contains(&pkg.component)));
+    let Some(repo) = repo else {
+        anyhow::bail!(
+            "no enabled repository provides suite {:?} / component {:?} for package {}",
+            pkg.suite,
+            pkg.component,
+            action.name
+        );
+    };
+
+    // Upgrades already carry their target version; installs get the index's.
+    if action.version.is_empty() {
+        action.version.clone_from(&pkg.version);
+    }
+    action.size = pkg.size;
+    action.sha256 = Some(pkg.sha256.clone());
+    // filename is relative to the repo root:
+    // "pool/main/v/vim/vim_9.0.1234-1_amd64.deb"
+    action.url = Some(format!(
+        "{}/{}",
+        repo.uri.trim_end_matches('/'),
+        pkg.filename
+    ));
     Ok(())
 }
