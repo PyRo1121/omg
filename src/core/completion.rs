@@ -1,6 +1,6 @@
 //! Intelligent completions with fuzzy matching and context awareness.
 
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 use anyhow::{Context, Result};
 use jiff::Timestamp;
@@ -9,17 +9,59 @@ use nucleo_matcher::{
     pattern::{CaseMatching, Normalization, Pattern},
 };
 
-use crate::core::Database;
+use crate::core::paths;
+
+/// File-backed completion cache (single atomically-replaced JSON document).
+///
+/// Replaces the former redb table: the cache holds two keys, which does not
+/// justify an embedded transactional database.
+#[derive(serde::Serialize, serde::Deserialize)]
+struct PersistedCompletionCache {
+    format_version: u32,
+    entries: std::collections::HashMap<String, String>,
+}
+
+impl PersistedCompletionCache {
+    const FORMAT_VERSION: u32 = 1;
+
+    fn path() -> PathBuf {
+        paths::data_dir().join("completion-cache.json")
+    }
+
+    fn load() -> Self {
+        match std::fs::read_to_string(Self::path()) {
+            Ok(content) => serde_json::from_str(&content).unwrap_or_else(|error| {
+                tracing::debug!("Discarding malformed completion cache: {error}");
+                Self::default()
+            }),
+            Err(_) => Self::default(),
+        }
+    }
+
+    fn save(&self) -> Result<()> {
+        let content = serde_json::to_vec(self).context("Failed to serialize completion cache")?;
+        crate::core::safe_ops::atomic_write_file_sync(Self::path(), content)
+            .with_context(|| format!("Failed to write {}", Self::path().display()))
+    }
+}
+
+impl Default for PersistedCompletionCache {
+    fn default() -> Self {
+        Self {
+            format_version: Self::FORMAT_VERSION,
+            entries: std::collections::HashMap::new(),
+        }
+    }
+}
 
 /// Intelligent completion engine
-pub struct CompletionEngine {
-    db: Database,
-}
+#[derive(Default)]
+pub struct CompletionEngine;
 
 impl CompletionEngine {
     #[must_use]
-    pub const fn new(db: Database) -> Self {
-        Self { db }
+    pub const fn new() -> Self {
+        Self
     }
 
     /// Perform fuzzy matching on a list of candidates (10x faster with nucleo)
@@ -116,30 +158,30 @@ impl CompletionEngine {
 
     /// Get AUR package names from cache or refresh if needed
     pub async fn get_aur_package_names(&self) -> Result<Vec<String>> {
-        // Check last refresh using redb-based Database
-        if let Some(last_refresh) = self.db.get_completion("aur_last_refresh")?
-            && let Ok(last) = last_refresh.parse::<Timestamp>()
+        let cache = PersistedCompletionCache::load();
+        if let Some(last_refresh) = cache
+            .entries
+            .get("aur_last_refresh")
+            .and_then(|value| value.parse::<Timestamp>().ok())
         {
-            let now = Timestamp::now();
-            let hours_since = now.as_second() - last.as_second();
-
+            let hours_since = Timestamp::now().as_second() - last_refresh.as_second();
             if hours_since < 24 * 3600
-                && let Some(data) = self.db.get_completion("aur_packages")?
+                && let Some(data) = cache.entries.get("aur_packages")
             {
-                return Ok(data
-                    .split(',')
-                    .map(std::string::ToString::to_string)
-                    .collect());
+                return Ok(data.split(',').map(String::from).collect());
             }
         }
 
         // Refresh cache
         let names = self.fetch_aur_names().await?;
-        let data = names.join(",");
-
-        self.db.set_completion("aur_packages", &data)?;
-        self.db
-            .set_completion("aur_last_refresh", &Timestamp::now().to_string())?;
+        let mut cache = PersistedCompletionCache::load();
+        cache
+            .entries
+            .insert("aur_packages".to_string(), names.join(","));
+        cache
+            .entries
+            .insert("aur_last_refresh".to_string(), Timestamp::now().to_string());
+        cache.save()?;
 
         Ok(names)
     }
@@ -175,9 +217,7 @@ mod tests {
 
     #[test]
     fn fuzzy_match_returns_matches() {
-        let temp_dir = TempDir::new().unwrap();
-        let db = Database::open(temp_dir.path().join("test.redb")).unwrap();
-        let engine = CompletionEngine::new(db);
+        let engine = CompletionEngine::new();
 
         let candidates = vec![
             "firefox".to_string(),
@@ -191,9 +231,7 @@ mod tests {
 
     #[test]
     fn fuzzy_match_empty_pattern_returns_all() {
-        let temp_dir = TempDir::new().unwrap();
-        let db = Database::open(temp_dir.path().join("test.redb")).unwrap();
-        let engine = CompletionEngine::new(db);
+        let engine = CompletionEngine::new();
 
         let candidates = vec!["a".to_string(), "b".to_string()];
         let results = engine.fuzzy_match("", candidates.clone());

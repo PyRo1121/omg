@@ -54,8 +54,7 @@ fn runtime_display_name(name: &str) -> &str {
 }
 
 pub async fn complete(_shell: &str, current: &str, last: &str, full: Option<&str>) -> Result<()> {
-    let db = crate::core::Database::open(crate::core::Database::default_path()?)?;
-    let engine = crate::core::completion::CompletionEngine::new(db);
+    let engine = crate::core::completion::CompletionEngine::new();
 
     let full = full.unwrap_or_default();
     let in_tool = full.split_whitespace().any(|token| token == "tool");
@@ -324,10 +323,7 @@ fn complete_runtime_versions(
     let mut suggestions = engine.probe_context(runtime)?;
 
     // Priority 2: Installed versions
-    let data_dir = crate::core::Database::default_path()?
-        .parent()
-        .ok_or_else(|| anyhow::anyhow!("Invalid database path"))?
-        .to_path_buf();
+    let data_dir = crate::core::paths::data_dir();
     let runtime_dir = data_dir.join("versions").join(runtime);
     let installed_versions = crate::runtimes::common::list_installed_versions(&runtime_dir)
         .with_context(|| format!("Failed to list installed {runtime} versions for completion"))?;

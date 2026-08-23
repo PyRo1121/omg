@@ -204,7 +204,6 @@ jiff = { version = "0.2.21", features = ["serde"] }
 # Random number generation (for jitter)
 
 # Database (PURE RUST embedded DB - replaces LMDB)
-redb = "3.1"
 
 # Direct libalpm bindings (for transactions - install/remove/upgrade)
 alpm = { version = "5.0.2", optional = true }
@@ -242,7 +241,9 @@ nucleo-matcher = "0.3.1"
 dirs = "6.0.0"
 ahash = "0.8.12"
 uuid = { version = "1.21", features = ["v4"] }
-ratatui = "0.30"
+# crossterm is the only backend in use; default features would additionally
+# pull termwiz (and its transitive yanked `spin` chain flagged by cargo-audit).
+ratatui = { version = "0.30", default-features = false, features = ["crossterm"] }
 crossterm = "0.29"
 rust-apt = { version = "0.10.0", optional = true }
 rustix = { version = "1.1", features = ["fs", "process", "thread"] }

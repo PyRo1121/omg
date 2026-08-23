@@ -1,67 +1,67 @@
-//! Persistent metadata cache using redb (pure Rust)
+//! Persistent metadata cache for the daemon.
 //!
-//! Stores the system status snapshot so it survives daemon restarts.
+//! Stores the system status snapshot as a single atomically-replaced JSON
+//! file so it survives daemon restarts. A single-key snapshot does not
+//! justify an embedded transactional database; [`crate::core::safe_ops`]
+//! provides the same crash-safety (no truncated files, owner-only mode).
 
 use anyhow::{Context, Result};
-use redb::{Database, ReadableDatabase, TableDefinition};
-use std::path::Path;
+use serde::{Deserialize, Serialize};
+use std::path::{Path, PathBuf};
 
 use super::protocol::StatusResult;
 
-const STATUS_TABLE: TableDefinition<&str, &[u8]> = TableDefinition::new("status");
+/// Current on-disk status snapshot format.
+const STATUS_FORMAT_VERSION: u32 = 1;
+
+#[derive(Serialize, Deserialize)]
+struct PersistedStatus {
+    format_version: u32,
+    status: StatusResult,
+}
 
 pub(crate) struct PersistentCache {
-    db: Database,
+    path: PathBuf,
 }
 
 impl PersistentCache {
-    pub(crate) fn new(path: &Path) -> Result<Self> {
-        std::fs::create_dir_all(path)?;
-        let db_path = path.join("cache.redb");
-
-        let db = Database::create(&db_path).with_context(|| {
-            format!(
-                "Failed to open redb database at {}. \
-                 This usually means another daemon instance is already running. \
-                 Try: killall omgd && rm -f {}",
-                db_path.display(),
-                db_path.display()
-            )
-        })?;
-
-        Ok(Self { db })
+    pub(crate) fn new(dir: &Path) -> Result<Self> {
+        std::fs::create_dir_all(dir)?;
+        Ok(Self {
+            path: dir.join("status-cache.json"),
+        })
     }
 
     pub(crate) fn get_status(&self) -> Result<Option<StatusResult>> {
-        let read_txn = self.db.begin_read()?;
-        let table = match read_txn.open_table(STATUS_TABLE) {
-            Ok(t) => t,
-            Err(redb::TableError::TableDoesNotExist(_)) => return Ok(None),
-            Err(e) => return Err(anyhow::Error::new(e).context("failed to open status table")),
+        let content = match std::fs::read_to_string(&self.path) {
+            Ok(content) => content,
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+            Err(error) => {
+                return Err(error).context(format!(
+                    "Failed to read daemon status cache {}",
+                    self.path.display()
+                ));
+            }
         };
-
-        let Some(guard) = table.get("current")? else {
-            return Ok(None);
-        };
-
-        // Zero-copy access with validation
-        let archived =
-            rkyv::access::<rkyv::Archived<StatusResult>, rkyv::rancor::Error>(guard.value())
-                .context("cached status failed validation")?;
-        let status = rkyv::deserialize::<StatusResult, rkyv::rancor::Error>(archived)
-            .context("failed to deserialize cached status")?;
-        Ok(Some(status))
+        let persisted: PersistedStatus = serde_json::from_str(&content)
+            .with_context(|| format!("Malformed daemon status cache: {}", self.path.display()))?;
+        anyhow::ensure!(
+            persisted.format_version == STATUS_FORMAT_VERSION,
+            "Unsupported daemon status cache format version {} (expected {})",
+            persisted.format_version,
+            STATUS_FORMAT_VERSION
+        );
+        Ok(Some(persisted.status))
     }
 
     pub(crate) fn set_status(&self, status: &StatusResult) -> Result<()> {
-        let data = rkyv::to_bytes::<rkyv::rancor::Error>(status)
-            .context("failed to serialize status for persistence")?;
-        let write_txn = self.db.begin_write()?;
-        {
-            let mut table = write_txn.open_table(STATUS_TABLE)?;
-            table.insert("current", data.as_slice())?;
-        }
-        write_txn.commit()?;
-        Ok(())
+        let persisted = PersistedStatus {
+            format_version: STATUS_FORMAT_VERSION,
+            status: status.clone(),
+        };
+        let content =
+            serde_json::to_vec(&persisted).context("Failed to serialize daemon status cache")?;
+        crate::core::safe_ops::atomic_write_file_sync(&self.path, content)
+            .with_context(|| format!("Failed to write {}", self.path.display()))
     }
 }

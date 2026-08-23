@@ -49,13 +49,15 @@ struct Args {
 async fn main() -> Result<()> {
     let args = Args::parse();
 
-    // Initialize Sentry
-    // DSN is loaded from OMG_SENTRY_DSN environment variable
+    // Initialize Sentry (opt-in via OMG_SENTRY_DSN; no-op when unset)
     let _guard = sentry::init((
         std::env::var("OMG_SENTRY_DSN").ok(),
         sentry::ClientOptions::new()
             .maybe_release(sentry::release_name!())
-            .attach_stacktrace(true),
+            .attach_stacktrace(true)
+            // A daemon must not stall shutdown waiting for the telemetry
+            // transport; events that cannot flush in 200ms are dropped.
+            .shutdown_timeout(std::time::Duration::from_millis(200)),
     ));
 
     // Initialize tracing with Sentry integration

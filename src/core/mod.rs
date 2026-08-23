@@ -6,7 +6,6 @@ pub mod caps;
 pub mod client;
 pub mod completion;
 pub mod container;
-mod database;
 pub mod env;
 pub mod error;
 pub mod fast_status;
@@ -37,7 +36,6 @@ mod types;
 pub mod usage;
 
 pub use caps::{can_write_pacman_db, has_package_caps, is_elevated, maybe_show_turbo_hint};
-pub use database::Database;
 pub use privilege::{is_root, set_yes_flag};
 // Explicit names only (no globs): one discoverable path per concept.
 // Canonical paths: `core::types` items live at `core::{Package, PackageSource,

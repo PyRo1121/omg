@@ -3,7 +3,6 @@
 //! Uses bitcode for maximum performance (fastest Rust serializer).
 //! Uses serde integration to avoid recursion limit issues with recursive types.
 
-use rkyv::{Archive, Deserialize as RkyvDeserialize, Serialize as RkyvSerialize};
 use serde::{Deserialize, Serialize};
 
 /// Wire-protocol version. Bump on any change to `Request`/`Response` shape.
@@ -260,7 +259,7 @@ pub mod error_codes {
 }
 
 /// Search result
-#[derive(Archive, RkyvSerialize, RkyvDeserialize, Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SearchResult {
     pub packages: Vec<PackageInfo>,
     /// Number of matches in the daemon's backing result set. This is capped
@@ -270,13 +269,13 @@ pub struct SearchResult {
 }
 
 /// Explicit packages result
-#[derive(Archive, RkyvSerialize, RkyvDeserialize, Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ExplicitResult {
     pub packages: Vec<String>,
 }
 
 /// Status result
-#[derive(Archive, RkyvSerialize, RkyvDeserialize, Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct StatusResult {
     pub total_packages: usize,
     pub explicit_packages: usize,
@@ -301,7 +300,7 @@ impl StatusResult {
 }
 
 /// Package info for IPC (minimal)
-#[derive(Archive, RkyvSerialize, RkyvDeserialize, Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PackageInfo {
     pub name: String,
     pub version: String,
@@ -310,7 +309,7 @@ pub struct PackageInfo {
 }
 
 /// Detailed package info for IPC
-#[derive(Archive, RkyvSerialize, RkyvDeserialize, Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct DetailedPackageInfo {
     pub name: String,
     pub version: String,
@@ -325,7 +324,7 @@ pub struct DetailedPackageInfo {
 }
 
 /// Vulnerability info for IPC
-#[derive(Archive, RkyvSerialize, RkyvDeserialize, Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Vulnerability {
     pub id: String,
     pub summary: String,
@@ -333,7 +332,7 @@ pub struct Vulnerability {
 }
 
 /// Security audit result
-#[derive(Archive, RkyvSerialize, RkyvDeserialize, Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SecurityAuditResult {
     pub total_vulnerabilities: usize,
     pub high_severity: usize,
@@ -341,7 +340,7 @@ pub struct SecurityAuditResult {
 }
 
 /// System metrics snapshot
-#[derive(Archive, RkyvSerialize, RkyvDeserialize, Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct MetricsSnapshot {
     pub requests_total: u64,
     pub requests_failed: u64,
@@ -358,7 +357,7 @@ pub struct MetricsSnapshot {
     pub status_requests: u64,
 }
 
-#[derive(Archive, RkyvSerialize, RkyvDeserialize, Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct HealthStatus {
     pub status: String,
     pub uptime_seconds: u64,
@@ -372,7 +371,7 @@ pub struct HealthStatus {
 }
 
 /// Update entry for IPC (matches `UpdateInfo` from `package_managers::types`)
-#[derive(Archive, RkyvSerialize, RkyvDeserialize, Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct UpdateEntry {
     pub name: String,
     pub old_version: String,
