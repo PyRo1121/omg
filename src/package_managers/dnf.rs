@@ -10,23 +10,20 @@
 //!
 //! ## Known limitation
 //!
-//! Repository metadata download (repomd/primary.xml) is NOT implemented:
-//! `search` covers installed packages only, and `list_updates`/`get_status`
-//! fail with an explicit "not implemented" error instead of pretending to
-//! have an empty catalog. Transactions delegate to the `dnf` CLI.
+//! Repository metadata access (repomd/primary.xml) is not integrated:
+//! `search` and `info` cover installed packages only, and `list_updates`
+//! fails explicitly instead of reporting a fake empty update set.
+//! Transactions delegate to the `dnf` CLI.
 
 use std::future::Future;
 use std::pin::Pin;
 
 use anyhow::{Context, Result};
 use dashmap::DashMap;
-use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::sync::Arc;
-use std::sync::RwLock;
-use tokio::fs;
 
 use crate::core::{Package, PackageSource, is_root};
 use crate::package_managers::PackageManager;
@@ -53,39 +50,14 @@ mod rpm_types {
     pub const STRING_ARRAY: u32 = 8;
 }
 
-/// Cached repository package metadata
-///
-/// Currently unreachable in practice: [`DnfPackageManager::fetch_repo_packages`]
-/// always fails until remote metadata download is implemented.
-#[derive(Debug, Clone, Serialize, Deserialize, bitcode::Encode, bitcode::Decode)]
-struct RepoPackage {
-    name: String,
-    version: String,
-    release: String,
-    summary: String,
-    repo: String,
-}
-
-/// Repository metadata index
-#[derive(Debug, Clone, Serialize, Deserialize, bitcode::Encode, bitcode::Decode)]
-struct RepoIndex {
-    packages: Vec<RepoPackage>,
-    last_updated: u64,
-}
-
 /// DNF Package Manager implementation
 pub struct DnfPackageManager {
     /// Path to RPM `SQLite` database
     rpm_db_path: PathBuf,
-    /// Path to yum repository configuration
+    /// Path to yum repository configuration (used by the `dnf` CLI)
     repos_dir: PathBuf,
-    /// In-memory repository index cache
-    repo_cache: Arc<RwLock<Option<Vec<RepoPackage>>>>,
     /// Installed packages cache (name -> package info)
     installed_cache: Arc<DashMap<String, InstalledPackage>>,
-    /// Cache directory for binary metadata (`None` when no user cache
-    /// directory can be determined, e.g. `$HOME` unset)
-    cache_dir: Option<PathBuf>,
 }
 
 /// Installed package information from RPM database
@@ -112,26 +84,12 @@ impl Default for DnfPackageManager {
 }
 
 impl DnfPackageManager {
-    /// Create a new DNF package manager instance.
-    ///
-    /// When no user cache directory can be determined (e.g. `$HOME` unset),
-    /// the on-disk metadata cache is disabled instead of panicking; queries
-    /// fall back to parsing sources directly.
     #[must_use]
     pub fn new() -> Self {
-        let cache_dir = dirs::cache_dir().map(|dir| dir.join("omg").join("dnf"));
-        if cache_dir.is_none() {
-            tracing::warn!(
-                "Cannot determine user cache directory ($HOME unset); DNF metadata cache disabled"
-            );
-        }
-
         Self {
             rpm_db_path: PathBuf::from("/var/lib/rpm/rpmdb.sqlite"),
             repos_dir: PathBuf::from("/etc/yum.repos.d"),
-            repo_cache: Arc::new(RwLock::new(None)),
             installed_cache: Arc::new(DashMap::new()),
-            cache_dir,
         }
     }
 
@@ -422,178 +380,6 @@ impl DnfPackageManager {
         Ok(packages)
     }
 
-    /// Path to the on-disk repository index, if a cache directory exists
-    fn repo_cache_file(&self) -> Option<PathBuf> {
-        self.cache_dir
-            .as_ref()
-            .map(|dir| dir.join("repo_index.bin"))
-    }
-
-    /// Load repository metadata from yum.repos.d configuration
-    async fn load_repo_metadata(&self) -> Result<Vec<RepoPackage>> {
-        // Check in-memory cache first
-        if let Some(ref packages) = *self
-            .repo_cache
-            .read()
-            .unwrap_or_else(std::sync::PoisonError::into_inner)
-        {
-            return Ok(packages.clone());
-        }
-
-        // Check binary cache on disk (skipped when no cache directory exists)
-        if let Some(cache_file) = self.repo_cache_file()
-            && let Ok(cached) = self.load_cached_index(&cache_file).await
-        {
-            *self
-                .repo_cache
-                .write()
-                .unwrap_or_else(std::sync::PoisonError::into_inner) = Some(cached.packages.clone());
-            return Ok(cached.packages);
-        }
-
-        // Parse repository metadata from scratch
-        let packages = self.parse_repo_metadata().await?;
-
-        // Save to binary cache and update in-memory cache
-        if let Some(cache_file) = self.repo_cache_file() {
-            self.save_cached_index(&cache_file, &packages).await?;
-        }
-        *self
-            .repo_cache
-            .write()
-            .unwrap_or_else(std::sync::PoisonError::into_inner) = Some(packages.clone());
-
-        Ok(packages)
-    }
-
-    /// Load cached repository index from disk
-    async fn load_cached_index(&self, path: &Path) -> Result<RepoIndex> {
-        let data = fs::read(path).await?;
-        let index: RepoIndex = bitcode::decode(&data)?;
-        Ok(index)
-    }
-
-    fn invalidate_repo_cache_file(result: std::io::Result<()>) -> Result<()> {
-        match result {
-            Ok(()) => Ok(()),
-            Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(()),
-            Err(error) => Err(error).context("Failed to invalidate DNF repository cache"),
-        }
-    }
-
-    /// Save repository index to binary cache
-    async fn save_cached_index(&self, path: &Path, packages: &[RepoPackage]) -> Result<()> {
-        if let Some(cache_dir) = &self.cache_dir {
-            fs::create_dir_all(cache_dir).await?;
-        }
-
-        let index = RepoIndex {
-            packages: packages.to_vec(),
-            last_updated: std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)?
-                .as_secs(),
-        };
-
-        let data = bitcode::encode(&index);
-        fs::write(path, data).await?;
-        Ok(())
-    }
-
-    /// Parse enabled repository configuration from `/etc/yum.repos.d/*.repo`.
-    /// Remote `repomd.xml` / `primary.xml.gz` fetching is not implemented.
-    async fn parse_repo_metadata(&self) -> Result<Vec<RepoPackage>> {
-        let repos = self.discover_repositories().await?;
-        let mut all_packages = Vec::new();
-
-        for repo in repos {
-            let mut packages = Self::fetch_repo_packages(&repo)?;
-            all_packages.append(&mut packages);
-        }
-
-        Ok(all_packages)
-    }
-
-    /// Discover enabled repositories from /etc/yum.repos.d
-    async fn discover_repositories(&self) -> Result<Vec<RepoConfig>> {
-        Self::discover_repositories_in(&self.repos_dir).await
-    }
-
-    async fn discover_repositories_in(repos_dir: &Path) -> Result<Vec<RepoConfig>> {
-        let mut repos = Vec::new();
-
-        let mut entries = fs::read_dir(repos_dir).await?;
-        while let Some(entry) = entries.next_entry().await? {
-            let path = entry.path();
-            if path.extension().and_then(|s| s.to_str()) != Some("repo") {
-                continue;
-            }
-            let repo_configs = Self::parse_repo_file(&path)
-                .await
-                .with_context(|| format!("Failed to parse repository file {}", path.display()))?;
-            repos.extend(repo_configs);
-        }
-
-        Ok(repos)
-    }
-
-    /// Parse a .repo file for repository configuration
-    async fn parse_repo_file(path: &Path) -> Result<Vec<RepoConfig>> {
-        let content = fs::read_to_string(path).await?;
-        let mut repos = Vec::new();
-        let mut current_repo: Option<RepoConfig> = None;
-
-        for line in content.lines() {
-            let line = line.trim();
-            if line.is_empty() || line.starts_with('#') {
-                continue;
-            }
-
-            if line.starts_with('[') && line.ends_with(']') {
-                if let Some(repo) = current_repo.take().filter(|r| r.enabled) {
-                    repos.push(repo);
-                }
-
-                let name = line[1..line.len() - 1].to_string();
-                current_repo = Some(RepoConfig {
-                    name,
-                    enabled: true,
-                    baseurl: None,
-                    metalink: None,
-                    mirrorlist: None,
-                });
-            } else if let Some(ref mut repo) = current_repo
-                && let Some((key, value)) = line.split_once('=')
-            {
-                match key.trim() {
-                    "enabled" => repo.enabled = value.trim() == "1",
-                    "baseurl" => repo.baseurl = Some(value.trim().to_string()),
-                    "metalink" => repo.metalink = Some(value.trim().to_string()),
-                    "mirrorlist" => repo.mirrorlist = Some(value.trim().to_string()),
-                    _ => {}
-                }
-            }
-        }
-
-        if let Some(repo) = current_repo
-            && repo.enabled
-        {
-            repos.push(repo);
-        }
-
-        Ok(repos)
-    }
-
-    /// Fetch packages from a repository.
-    ///
-    /// Remote metadata download is not implemented; an empty list would look like
-    /// a successful empty catalog.
-    fn fetch_repo_packages(repo: &RepoConfig) -> Result<Vec<RepoPackage>> {
-        anyhow::bail!(
-            "DNF repository metadata fetch is not implemented (repo: {})",
-            repo.name
-        );
-    }
-
     /// A handle sharing this manager's caches, so blocking workers mutate
     /// the same state as the caller instead of a throwaway copy.
     #[must_use]
@@ -601,9 +387,7 @@ impl DnfPackageManager {
         Self {
             rpm_db_path: self.rpm_db_path.clone(),
             repos_dir: self.repos_dir.clone(),
-            repo_cache: Arc::clone(&self.repo_cache),
             installed_cache: Arc::clone(&self.installed_cache),
-            cache_dir: self.cache_dir.clone(),
         }
     }
 
@@ -615,28 +399,12 @@ impl DnfPackageManager {
         let status = cmd.args(args).arg("-y").status()?;
 
         if status.success() {
-            // Invalidate caches after mutations
             self.installed_cache.clear();
-            let mut cache = self
-                .repo_cache
-                .write()
-                .unwrap_or_else(std::sync::PoisonError::into_inner);
-            *cache = None;
             Ok(())
         } else {
             anyhow::bail!("dnf command failed with status {status}")
         }
     }
-}
-
-/// Repository configuration
-#[derive(Debug, Clone)]
-struct RepoConfig {
-    name: String,
-    enabled: bool,
-    baseurl: Option<String>,
-    metalink: Option<String>,
-    mirrorlist: Option<String>,
 }
 
 impl PackageManager for DnfPackageManager {
@@ -667,31 +435,9 @@ impl PackageManager for DnfPackageManager {
                 })
                 .collect();
 
-            // Search repository metadata
-            if let Ok(repo_packages) = self.load_repo_metadata().await {
-                let repo_results: Vec<Package> = repo_packages
-                    .iter()
-                    .filter(|pkg| {
-                        pkg.name.to_lowercase().contains(&query_lower)
-                            || pkg.summary.to_lowercase().contains(&query_lower)
-                    })
-                    .map(|pkg| {
-                        let is_installed = installed.iter().any(|i| i.name == pkg.name);
-                        Package {
-                            name: pkg.name.clone(),
-                            version: parse_version_or_zero(&format!(
-                                "{}-{}",
-                                pkg.version, pkg.release
-                            )),
-                            description: pkg.summary.clone(),
-                            source: PackageSource::Official,
-                            installed: is_installed,
-                        }
-                    })
-                    .collect();
-
-                results.extend(repo_results);
-            }
+            // Repository search is unavailable until DNF repo metadata is
+            // integrated; only installed packages match here.
+            tracing::debug!("DNF repository search unavailable; returning installed matches only");
 
             // Deduplicate by name; sort installed rows first within a name
             // so dedup keeps the entry carrying `installed: true`.
@@ -773,20 +519,8 @@ impl PackageManager for DnfPackageManager {
 
     fn sync(&self) -> Pin<Box<dyn Future<Output = Result<()>> + Send + '_>> {
         Box::pin(async move {
-            // Clear caches and trigger metadata refresh
+            // Clear caches and let the dnf CLI refresh its metadata
             self.installed_cache.clear();
-            {
-                let mut cache = self
-                    .repo_cache
-                    .write()
-                    .unwrap_or_else(std::sync::PoisonError::into_inner);
-                *cache = None;
-            }
-
-            // Remove binary cache to force re-parsing
-            if let Some(cache_file) = self.repo_cache_file() {
-                Self::invalidate_repo_cache_file(fs::remove_file(cache_file).await)?;
-            }
 
             if !is_root() {
                 crate::core::privilege::run_self_sudo(&["sync"]).await?;
@@ -819,18 +553,9 @@ impl PackageManager for DnfPackageManager {
                 }));
             }
 
-            // Search repository metadata
-            if let Ok(repo_packages) = self.load_repo_metadata().await
-                && let Some(pkg) = repo_packages.iter().find(|p| p.name == package)
-            {
-                return Ok(Some(Package {
-                    name: pkg.name.clone(),
-                    version: parse_version_or_zero(&format!("{}-{}", pkg.version, pkg.release)),
-                    description: pkg.summary.clone(),
-                    source: PackageSource::Official,
-                    installed: false,
-                }));
-            }
+            // Repository lookups are unavailable until DNF repo metadata is
+            // integrated; report an honest miss instead of pretending.
+            tracing::debug!("DNF repository info unavailable for {package}");
 
             Ok(None)
         })
@@ -891,44 +616,15 @@ impl PackageManager for DnfPackageManager {
 
     fn list_updates(&self) -> Pin<Box<dyn Future<Output = Result<Vec<UpdateInfo>>> + Send + '_>> {
         Box::pin(async move {
-            // Optimization: Fetch installed packages and repo metadata in parallel
-            // These are independent I/O operations - ~2x speedup on update checks
-            let (installed, repo_packages) =
-                tokio::try_join!(self.load_installed_packages(), self.load_repo_metadata())?;
-
-            let mut installed_map = HashMap::new();
-            for pkg in &installed {
-                installed_map.insert(&pkg.name, pkg);
-            }
-
-            let mut updates = Vec::new();
-
-            for repo_pkg in &repo_packages {
-                if let Some(installed_pkg) = installed_map.get(&repo_pkg.name) {
-                    let installed_ver = parse_version_or_zero(&format!(
-                        "{}-{}",
-                        installed_pkg.version, installed_pkg.release
-                    ));
-                    let available_ver = parse_version_or_zero(&format!(
-                        "{}-{}",
-                        repo_pkg.version, repo_pkg.release
-                    ));
-
-                    if available_ver > installed_ver {
-                        updates.push(UpdateInfo {
-                            name: repo_pkg.name.clone(),
-                            old_version: format!(
-                                "{}-{}",
-                                installed_pkg.version, installed_pkg.release
-                            ),
-                            new_version: format!("{}-{}", repo_pkg.version, repo_pkg.release),
-                            repo: repo_pkg.repo.clone(),
-                        });
-                    }
-                }
-            }
-
-            Ok(updates)
+            // Update detection compares installed versions against repository
+            // metadata. Remote repomd/primary.xml access is not implemented,
+            // so update checks fail explicitly rather than reporting a fake
+            // empty update set.
+            let _installed = self.load_installed_packages().await?;
+            anyhow::bail!(
+                "DNF repository metadata access is not implemented; \
+                 update checks require dnf repoquery integration"
+            );
         })
     }
 
@@ -1007,103 +703,6 @@ mod tests {
         assert!(
             error.to_string().contains("malformed rpm -qa output"),
             "got: {error}"
-        );
-    }
-
-    #[test]
-    fn test_invalidate_repo_cache_file_allows_missing() {
-        DnfPackageManager::invalidate_repo_cache_file(Err(std::io::Error::new(
-            std::io::ErrorKind::NotFound,
-            "no cache",
-        )))
-        .expect("missing cache file is not an error");
-        DnfPackageManager::invalidate_repo_cache_file(Ok(())).expect("removed cache file");
-    }
-
-    #[test]
-    fn test_invalidate_repo_cache_file_rejects_other_io_errors() {
-        let error = DnfPackageManager::invalidate_repo_cache_file(Err(std::io::Error::new(
-            std::io::ErrorKind::PermissionDenied,
-            "denied",
-        )))
-        .expect_err("stale cache must not be left in place");
-        assert!(
-            error
-                .to_string()
-                .contains("Failed to invalidate DNF repository cache"),
-            "got: {error}"
-        );
-    }
-
-    #[test]
-    fn test_fetch_repo_packages_is_unimplemented_error() {
-        let repo = RepoConfig {
-            name: "fedora".to_string(),
-            enabled: true,
-            baseurl: None,
-            metalink: None,
-            mirrorlist: None,
-        };
-        let error = DnfPackageManager::fetch_repo_packages(&repo)
-            .expect_err("unimplemented fetch must not look like an empty catalog");
-        assert!(
-            error
-                .to_string()
-                .contains("DNF repository metadata fetch is not implemented"),
-            "got: {error}"
-        );
-        assert!(error.to_string().contains("fedora"), "got: {error}");
-    }
-
-    #[tokio::test]
-    async fn test_discover_repositories_missing_dir_is_error() {
-        let error = DnfPackageManager::discover_repositories_in(Path::new("/no/such/yum.repos.d"))
-            .await
-            .expect_err("missing repos dir must not look like an empty catalog");
-        assert!(
-            error.to_string().contains("No such file")
-                || error
-                    .chain()
-                    .any(|cause| cause.to_string().contains("No such file")),
-            "got: {error:?}"
-        );
-    }
-
-    #[tokio::test]
-    async fn test_discover_repositories_unreadable_repo_file_is_error() {
-        let dir = tempfile::TempDir::new().expect("temp dir");
-        let broken = dir.path().join("broken.repo");
-        std::fs::create_dir(&broken).expect("directory named .repo is not a readable file");
-
-        let error = DnfPackageManager::discover_repositories_in(dir.path())
-            .await
-            .expect_err("unreadable .repo must not be skipped");
-        let message = format!("{error:#}");
-        assert!(
-            message.contains("Failed to parse repository file"),
-            "got: {message}"
-        );
-        assert!(message.contains("broken.repo"), "got: {message}");
-    }
-
-    #[tokio::test]
-    async fn test_discover_repositories_parses_enabled_repo() {
-        let dir = tempfile::TempDir::new().expect("temp dir");
-        std::fs::write(
-            dir.path().join("fedora.repo"),
-            "[fedora]\nenabled=1\nbaseurl=https://example.test/fedora\n",
-        )
-        .expect("write repo file");
-        std::fs::write(dir.path().join("readme.txt"), "not a repo\n").expect("write ignored file");
-
-        let repos = DnfPackageManager::discover_repositories_in(dir.path())
-            .await
-            .expect("valid .repo must parse");
-        assert_eq!(repos.len(), 1);
-        assert_eq!(repos[0].name, "fedora");
-        assert_eq!(
-            repos[0].baseurl.as_deref(),
-            Some("https://example.test/fedora")
         );
     }
 
