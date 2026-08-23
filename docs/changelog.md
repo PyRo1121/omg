@@ -2071,6 +2071,7 @@ the documented 'omg explicit' contract
 chore(deps): update rust crate git2 to 0.20 [security]
 ### 🔧 Maintenance
 
+- Ignore local TODO-mise-removal.md planning note
 - Capture lockfile and remaining wave-3 stragglers
 - Align repo with enterprise governance standard
 
