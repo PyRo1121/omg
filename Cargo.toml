@@ -357,15 +357,10 @@ split-debuginfo = "unpacked" # Faster linking on Linux
 # every combination — see Wave-3 review F5. Gating them is a pending product
 # decision, not an oversight this comment can paper over.
 #
-# PRODUCT DECISION (Wave-2 review F03): release.yml currently ships the Debian
-# binary with `--no-default-features --features debian`, i.e. WITHOUT `pgp`
-# and WITHOUT `license`, while Fedora/macOS ship both and Arch inherits the
-# full default set. This is intentional only if Debian packages must stay
-# free of the GPL/AGPL-heavy PGP stack or subscription code; it is documented
-# here rather than silently changed. To give Debian parity, change the two
-# Debian build lines in .github/workflows/release.yml to
-#   --no-default-features --features debian,pgp,license
-# and add `license` to the debian entries in .github/workflows/ci.yml.
+# RELEASE FEATURE POLICY: every platform artifact explicitly enables its
+# backend plus `pgp,license`. PGP uses the pure-Rust Sequoia backend above, so
+# no platform requires a reduced-security artifact. The primary CI platform
+# matrix uses the exact same feature sets as release.yml.
 # ----------------------------------------------------------------------------
 [features]
 default = ["arch", "license", "pgp"]

@@ -164,7 +164,7 @@ jobs:
         include:
           - platform: arch
             image: archlinux:latest@sha256:b0deabeb3d283da2c7f7dbf0eea051b7b2cd0554e0b737cc457fd21683bdcdd1
-            features: arch,license
+            features: arch,pgp,license
             setup: |
               pacman -Syu --noconfirm
               pacman -S --noconfirm --needed base-devel git pkgconf openssl libarchive clang cmake curl
@@ -174,7 +174,7 @@ jobs:
 
           - platform: debian
             image: debian:bookworm@sha256:813017f3d62be4b5891a7acca6a01bdcd4b8513daa81b1ab99d3a50385b26931
-            features: debian
+            features: debian,pgp,license
             experimental: false
             setup: |
               apt-get update
@@ -187,7 +187,7 @@ jobs:
 
           - platform: debian-trixie
             image: debian:trixie@sha256:34cd9e9fd437c0a095ec39cb2e73422c9f30821b0d0848ed74fd0d43bae4d958
-            features: debian
+            features: debian,pgp,license
             experimental: true
             setup: |
               apt-get update
@@ -200,7 +200,7 @@ jobs:
 
           - platform: fedora
             image: fedora:latest@sha256:6c75d5bf57cb0fa5aa4b92c6a83c86c791644496d9ac230de7711f5b8ec3b898
-            features: fedora,license
+            features: fedora,pgp,license
             setup: |
               dnf install -y --setopt=install_weak_deps=False \
                 git clang cmake openssl-devel pkgconfig findutils curl \
@@ -427,13 +427,13 @@ jobs:
       # sccache temporarily disabled due to service outage
 
       - name: Build
-        run: cargo build --release --no-default-features --features macos,license --locked
+        run: cargo build --release --no-default-features --features macos,pgp,license --locked
 
       - name: Install nextest
         uses: taiki-e/install-action@68250fb3d551d72befef105162372ebb3e8016e0 # nextest
 
       - name: Run unit tests
-        run: cargo nextest run --lib --no-default-features --features macos,license --locked --profile ci
+        run: cargo nextest run --lib --no-default-features --features macos,pgp,license --locked --profile ci
 
       - name: Install Homebrew test packages
         run: |
@@ -441,7 +441,7 @@ jobs:
 
       - name: Run macOS platform integration tests
         run: |
-          cargo test --test macos_tests --no-default-features --features macos,license --locked -- --test-threads=1
+          cargo test --test macos_tests --no-default-features --features macos,pgp,license --locked -- --test-threads=1
 
       - name: Verify binary
         run: |

@@ -44,8 +44,6 @@ mod rpm_tags {
     pub const VERSION: u32 = 1001;
     pub const RELEASE: u32 = 1002;
     pub const SUMMARY: u32 = 1004;
-    pub const SIZE: u32 = 1009;
-    pub const INSTALL_TIME: u32 = 1008;
     pub const REASON: u32 = 1160; // User/Dependency
 }
 
@@ -611,7 +609,6 @@ impl DnfPackageManager {
 
     /// Execute the `dnf` CLI as root (callers escalate via
     /// `run_self_sudo` first) and invalidate caches on success.
-    #[expect(clippy::unused_async)] // May add async operations in future
     fn run_dnf(&self, args: &[&str]) -> Result<()> {
         let mut cmd = Command::new("dnf");
 
