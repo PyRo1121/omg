@@ -161,6 +161,36 @@ was not linked from any doc; its command usage remains in docs/runtimes.md
 - Move performance checks to benchmarks
 ### ✨ New Features
 
+- Refresh daemon package index after database sync
+
+  - add explicit RefreshIndex IPC request and typed IndexRefreshed response
+
+  - notify a running daemon after successful ; daemon absence remains
+
+normal, but a connected daemon refresh failure is reported
+
+  - build replacement indexes off-thread and atomically swap immutable Arc
+
+snapshots without blocking in-flight searches
+
+  - invalidate derived caches while holding the index write lock
+
+  - prevent old in-flight snapshots from repopulating cache after a refresh by
+
+validating pointer identity under a read lock during cache publication
+
+  - update daemon search/info/prewarm paths to use cloned snapshots
+
+  - reject index refresh in isolated daemons and batch requests
+
+  - add atomic publication, stale-snapshot, cache invalidation, isolation, and
+
+batch regression coverage
+
+  - make two behavior-neutral validation names/types explicit to clear stale
+
+analyzer inference
+
 - **Ci**: Cross-platform install script and R2 release sync
 ### 🐛 Bug Fixes
 
