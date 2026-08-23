@@ -1738,6 +1738,7 @@ across history/faq/cli
 - Run Docker E2E tests explicitly
 ### 📚 Documentation
 
+- Fold wave-13 research verdicts into fedora plan + SpacetimeDB backend evaluation
 - Fedora engine plan — research verdicts (raw-rust RPM via zerocopy, rpmrepo_metadata, dnf5 bar)
 - Wave-12 blocker remediation roadmap (citation-backed audit)
 - Re-link AUR support page from package docs
