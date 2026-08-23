@@ -13,6 +13,28 @@ OMG is the fastest unified package manager for Linux, replacing pacman, yay, nvm
 ## [Unreleased]
 ### ♻️  Refactoring
 
+- Delete unreachable telemetry retry pipeline
+
+The persisted batch queue in core::telemetry is the canonical retry path.
+
+The separate in-memory single-event queue had no production producer: its
+
+send function was reachable only from its own drain, so it could never hold
+
+a real event.
+
+  - remove the dead individual endpoint, retry queue, budget, retry counters,
+
+drain implementation, and queue-only tests (310 lines)
+
+  - keep the batch sender and cancellation-safe circuit breaker
+
+  - fix half-open semantics: the caller that wins the probe slot may now make
+
+the probe request; non-owners still fail closed
+
+  - add a complete circuit permit matrix regression test
+
 - Unify Debian dependency resolution paths
 
   - delete duplicated mutable/read-only recursive resolver implementations
