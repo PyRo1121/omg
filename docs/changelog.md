@@ -124,6 +124,24 @@ was not linked from any doc; its command usage remains in docs/runtimes.md
 - **Ci**: Cross-platform install script and R2 release sync
 ### 🐛 Bug Fixes
 
+- Schema-version persisted formats — omg.lock and team-status.json
+
+Completes the wave-6 format-verifier findings (S4/S5):
+
+  - omg.lock (EnvironmentState) carries schema_version: stamped on save,
+
+files from NEWER schemas are rejected with an upgrade hint before any
+
+best-effort field matching; regression test covers the rejection
+
+  - team-status.json carries format_version: same newer-version
+
+rejection on load; all constructors updated
+
+Backward compatibility: files without a version field default to the
+
+current version, so every existing checkout keeps working.
+
 - Wave-7b — AUR history accuracy, boundary polish
 
   - AUR installs record the actual installed identity: name and version are
