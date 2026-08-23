@@ -13,6 +13,24 @@ OMG is the fastest unified package manager for Linux, replacing pacman, yay, nvm
 ## [Unreleased]
 ### ♻️  Refactoring
 
+- Unify Debian dependency resolution paths
+
+  - delete duplicated mutable/read-only recursive resolver implementations
+
+  - use one immutable resolution algorithm for sequential and parallel roots
+
+  - populate dependency-graph edges once after either collection strategy
+
+  - remove an unused merged visited set and a redundant linear membership scan
+
+  - replace guarded expect calls with Option::is_none_or
+
+  - add sequential dependency-first ordering coverage alongside the existing
+
+parallel regression test
+
+  - clear two schema-versioning Clippy findings
+
 - Remove unwired tea install/remove models
 
 InstallModel/RemoveModel (and their Msg/State types) were exported from
