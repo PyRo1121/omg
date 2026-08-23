@@ -189,9 +189,9 @@ pub async fn update(check_only: bool, yes: bool, dry_run: bool) -> Result<()> {
     let official_count = official_updates.len();
     all_updates.extend(official_updates);
 
-    let (_aur_count, aur_packages) = {
+    let aur_packages = {
         if crate::core::paths::test_mode() || crate::core::env::distro::is_debian_like() {
-            (0, Vec::new())
+            Vec::new()
         } else {
             let aur_pb = modern_ui::modern_spinner("Checking", "AUR packages");
             let aur_start = std::time::Instant::now();
@@ -225,7 +225,7 @@ pub async fn update(check_only: bool, yes: bool, dry_run: bool) -> Result<()> {
                             ),
                         );
                     }
-                    (count, packages)
+                    packages
                 }
                 Err(e) => {
                     modern_ui::finish_clear(&aur_pb);
@@ -369,10 +369,6 @@ pub async fn update(check_only: bool, yes: bool, dry_run: bool) -> Result<()> {
     )
 }
 
-#[allow(
-    clippy::unnecessary_wraps,
-    reason = "signature is shared with fallible backend dry-run implementations"
-)]
 fn update_dry_run(updates: &[UpdateInfo]) -> Result<()> {
     ui::print_header("OMG", "Dry Run - Update Preview");
     ui::print_spacer();

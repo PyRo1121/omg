@@ -15,11 +15,6 @@ pub enum AurError {
     GitPullFailed(String),
 
     #[error(
-        "Network error connecting to AUR\n  → Check your internet connection\n  → AUR may be temporarily unavailable\n  → Try again in a few minutes"
-    )]
-    NetworkError(#[from] reqwest::Error),
-
-    #[error(
         "Sandbox build failed\n  → bubblewrap is not installed\n  → Install: sudo pacman -S bubblewrap\n  → Or enable unsafe builds: omg config set aur.allow_unsafe_builds true"
     )]
     SandboxUnavailable,

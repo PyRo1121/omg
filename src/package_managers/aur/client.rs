@@ -212,7 +212,7 @@ impl AurClient {
 
         // Try fast binary index first if enabled and available
         if self.settings.aur.use_metadata_archive {
-            let index_path = Self::metadata_index_path();
+            let index_path = index_path();
             if index_path.exists() {
                 let query_owned = query.to_string();
                 let result = tokio::task::spawn_blocking(move || -> Result<Vec<Package>> {
@@ -334,7 +334,7 @@ impl AurClient {
         crate::core::security::validate_package_name(package)?;
 
         // Try fast binary index first
-        let index_path = Self::metadata_index_path();
+        let index_path = index_path();
         if index_path.exists() {
             let package_owned = package.to_string();
             let result = tokio::task::spawn_blocking(move || -> Result<Option<Package>> {
@@ -420,7 +420,7 @@ impl AurClient {
         }
 
         // 2. Try fast binary index first
-        let index_path = Self::metadata_index_path();
+        let index_path = index_path();
         if index_path.exists() {
             let result = tokio::task::spawn_blocking(
                 move || -> Result<Option<(Vec<(String, Version, Version)>, Vec<String>)>> {
@@ -582,10 +582,6 @@ impl AurClient {
         } else {
             Ok(None)
         }
-    }
-
-    fn metadata_index_path() -> PathBuf {
-        index_path()
     }
 
     #[must_use]
@@ -1696,24 +1692,19 @@ impl AurClient {
         Ok(status)
     }
 
-    fn makepkg_args(&self) -> Vec<String> {
-        let mut args = vec![
-            "-s".to_string(),
-            "--noconfirm".to_string(),
-            "-f".to_string(),
-            "--needed".to_string(),
-        ];
+    fn makepkg_args(&self) -> Vec<&'static str> {
+        let mut args = vec!["-s", "--noconfirm", "-f", "--needed"];
         if self.settings.aur.secure_makepkg {
-            args.push("--cleanbuild".to_string());
+            args.push("--cleanbuild");
         }
         args
     }
 
     /// Makepkg args for sandboxed builds (no -s since deps are pre-installed)
-    fn makepkg_args_sandbox(&self) -> Vec<String> {
-        let mut args = vec!["--noconfirm".to_string(), "-f".to_string()];
+    fn makepkg_args_sandbox(&self) -> Vec<&'static str> {
+        let mut args = vec!["--noconfirm", "-f"];
         if self.settings.aur.secure_makepkg {
-            args.push("--cleanbuild".to_string());
+            args.push("--cleanbuild");
         }
         args
     }
@@ -2155,13 +2146,7 @@ fn create_spinner(msg: &str) -> ProgressBar {
 }
 
 fn dependency_name(dep: &str) -> &str {
-    for (idx, ch) in dep.char_indices() {
-        if matches!(ch, '>' | '<' | '=') {
-            return &dep[..idx];
-        }
-    }
-
-    dep
+    dep.find(['>', '<', '=']).map_or(dep, |idx| &dep[..idx])
 }
 
 /// Search AUR with detailed info
@@ -2171,13 +2156,12 @@ pub async fn search_detailed(query: &str) -> Result<Vec<AurPackageDetail>> {
         anyhow::bail!("Search query too long");
     }
 
-    let client = shared_client().clone();
     let url = format!(
         "{AUR_RPC_URL}?v=5&type=search&arg={}",
         urlencoding::encode(query)
     );
 
-    let response: AurDetailedResponse = client
+    let response: AurDetailedResponse = shared_client()
         .get(&url)
         .send()
         .await
@@ -2277,7 +2261,6 @@ pub struct AurPackageDetail {
 #[expect(clippy::unwrap_used)] // Idiomatic in tests: panics on failure with clear error context
 mod tests {
     use super::*;
-    use std::path::PathBuf;
 
     /// Verify that bubblewrap's read-only root bind blocks writes outside
     /// the writable mounts our sandbox configures.
@@ -2288,17 +2271,6 @@ mod tests {
     /// path-validation unit tests (`validate_path_inside`, `is_symlink`).
     #[tokio::test]
     async fn bwrap_readonly_root_blocks_arbitrary_writes() {
-        let _client = AurClient::new().expect("test settings must load");
-        let _pkg_dir = PathBuf::from("/tmp/pkg");
-
-        let _env = MakepkgEnv {
-            makeflags: String::new(),
-            pkgdest: PathBuf::from("/tmp/pkgdest"),
-            srcdest: PathBuf::from("/tmp/srcdest"),
-            builddir: PathBuf::from("/tmp/builddir"),
-            extra_env: Vec::new(),
-        };
-
         // We can't call run_sandboxed_makepkg directly without a full build
         // environment, so exercise bwrap's ro-bind guarantee directly.
 

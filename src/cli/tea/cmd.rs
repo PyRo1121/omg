@@ -193,24 +193,10 @@ pub struct StyledTextConfig {
 /// Text styling options
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum TextStyle {
-    /// Plain text
-    Plain,
     /// Bold text
     Bold,
-    /// Dimmed/faint text
-    Dim,
-    /// Italic text
-    Italic,
-    /// Underlined text
-    Underline,
-    /// Primary color (accent)
-    Primary,
     /// Success color (green)
     Success,
-    /// Warning color (yellow)
-    Warning,
-    /// Error color (red)
-    Error,
     /// Info color (blue)
     Info,
     /// Muted color (gray)
@@ -258,12 +244,6 @@ impl<M> Cmd<M> {
         Self::Exec(Box::new(f))
     }
 
-    /// Print raw output
-    #[must_use]
-    pub fn print(s: impl Into<String>) -> Self {
-        Self::Print(s.into())
-    }
-
     /// Print with newline
     #[must_use]
     pub fn println(s: impl Into<String>) -> Self {
@@ -306,50 +286,6 @@ impl<M> Cmd<M> {
         Self::Card(title.into(), content)
     }
 
-    /// Create or update a progress bar
-    #[must_use]
-    pub fn progress(config: ProgressConfig) -> Self {
-        Self::Progress(config)
-    }
-
-    /// Create a simple progress bar
-    #[must_use]
-    pub fn simple_progress(
-        id: impl Into<String>,
-        message: impl Into<String>,
-        percent: usize,
-    ) -> Self {
-        Self::Progress(ProgressConfig {
-            id: id.into(),
-            message: message.into(),
-            percent,
-            length: None,
-            style: ProgressStyle::Default,
-        })
-    }
-
-    /// Create a temporary spinner
-    #[must_use]
-    pub fn spinner(config: SpinnerConfig) -> Self {
-        Self::Spinner(config)
-    }
-
-    /// Create a simple spinner
-    #[must_use]
-    pub fn simple_spinner(id: impl Into<String>, message: impl Into<String>) -> Self {
-        Self::Spinner(SpinnerConfig {
-            id: id.into(),
-            message: message.into(),
-            style: SpinnerStyle::Dots,
-        })
-    }
-
-    /// Render a styled table
-    #[must_use]
-    pub fn table(config: TableConfig) -> Self {
-        Self::Table(config)
-    }
-
     /// Render styled text
     #[must_use]
     pub fn styled_text(config: StyledTextConfig) -> Self {
@@ -365,23 +301,10 @@ impl<M> Cmd<M> {
         })
     }
 
-    /// Render a bordered panel
-    #[must_use]
-    pub fn panel(config: PanelConfig) -> Self {
-        Self::Panel(config)
-    }
-
     /// Print a blank line (spacer)
     #[must_use]
     pub fn spacer() -> Self {
         Self::Spacer
-    }
-}
-
-/// Convert a message directly to a command
-impl<M> From<M> for Cmd<M> {
-    fn from(msg: M) -> Self {
-        Self::Msg(msg)
     }
 }
 
@@ -402,14 +325,8 @@ mod tests {
     }
 
     #[test]
-    fn test_cmd_from() {
-        let cmd: Cmd<String> = "hello".to_string().into();
-        assert!(matches!(cmd, Cmd::Msg(_)));
-    }
-
-    #[test]
     fn test_cmd_batch() {
-        let cmd: Cmd<()> = Cmd::batch([Cmd::print("a"), Cmd::print("b"), Cmd::none()]);
+        let cmd: Cmd<()> = Cmd::batch([Cmd::println("a"), Cmd::println("b"), Cmd::none()]);
         assert!(matches!(cmd, Cmd::Batch(_)));
     }
 
@@ -421,7 +338,6 @@ mod tests {
 
     #[test]
     fn test_cmd_print_variants() {
-        let _: Cmd<()> = Cmd::print("test");
         let _: Cmd<()> = Cmd::println("test");
         let _: Cmd<()> = Cmd::info("test");
         let _: Cmd<()> = Cmd::success("test");

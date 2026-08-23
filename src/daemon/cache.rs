@@ -1,9 +1,11 @@
 //! In-memory package cache with LRU eviction
 
-use moka::policy::EvictionPolicy;
-use moka::sync::Cache;
+use std::hash::Hash;
 use std::sync::Arc;
 use std::time::Duration;
+
+use moka::policy::EvictionPolicy;
+use moka::sync::Cache;
 
 use super::protocol::{DetailedPackageInfo, PackageInfo, StatusResult};
 
@@ -11,6 +13,18 @@ use super::protocol::{DetailedPackageInfo, PackageInfo, StatusResult};
 const KEY_STATUS: &str = "status";
 const KEY_EXPLICIT: &str = "explicit";
 const KEY_EXPLICIT_COUNT: &str = "explicit_count";
+
+fn build_cache<K, V>(max_capacity: u64, ttl: Duration) -> Cache<K, V>
+where
+    K: Eq + Hash + Send + Sync + 'static,
+    V: Clone + Send + Sync + 'static,
+{
+    Cache::builder()
+        .max_capacity(max_capacity)
+        .eviction_policy(EvictionPolicy::lru())
+        .time_to_live(ttl)
+        .build()
+}
 
 /// LRU cache for package search results
 pub struct PackageCache {
@@ -44,50 +58,17 @@ impl PackageCache {
     pub fn new_with_ttls(max_size: usize, ttl_secs: u64, status_ttl_secs: u64) -> Self {
         let ttl = Duration::from_secs(ttl_secs);
         let status_ttl = Duration::from_secs(status_ttl_secs);
-        let cache = Cache::builder()
-            .max_capacity(max_size as u64)
-            .eviction_policy(EvictionPolicy::lru())
-            .time_to_live(ttl)
-            .build();
-        let debian_cache = Cache::builder()
-            .max_capacity(max_size as u64)
-            .eviction_policy(EvictionPolicy::lru())
-            .time_to_live(ttl)
-            .build();
-        let detailed_cache = Cache::builder()
-            .max_capacity(max_size as u64)
-            .eviction_policy(EvictionPolicy::lru())
-            .time_to_live(ttl)
-            .build();
-        let info_miss_cache = Cache::builder()
-            .max_capacity(max_size as u64)
-            .eviction_policy(EvictionPolicy::lru())
-            .time_to_live(ttl)
-            .build();
-        let system_status = Cache::builder()
-            .max_capacity(1)
-            .eviction_policy(EvictionPolicy::lru())
-            .time_to_live(status_ttl)
-            .build();
-        let explicit_packages = Cache::builder()
-            .max_capacity(1)
-            .eviction_policy(EvictionPolicy::lru())
-            .time_to_live(status_ttl)
-            .build();
+        let capacity = max_size as u64;
 
         Self {
-            cache,
-            debian_cache,
-            detailed_cache,
-            info_miss_cache,
+            cache: build_cache(capacity, ttl),
+            debian_cache: build_cache(capacity, ttl),
+            detailed_cache: build_cache(capacity, ttl),
+            info_miss_cache: build_cache(capacity, ttl),
             max_size,
-            system_status,
-            explicit_packages,
-            explicit_count: Cache::builder()
-                .max_capacity(1)
-                .eviction_policy(EvictionPolicy::lru())
-                .time_to_live(ttl)
-                .build(),
+            system_status: build_cache(1, status_ttl),
+            explicit_packages: build_cache(1, status_ttl),
+            explicit_count: build_cache(1, ttl),
         }
     }
 
@@ -125,10 +106,7 @@ impl PackageCache {
 
     /// Update explicit package cache
     pub fn update_explicit(&self, packages: Vec<String>) {
-        self.explicit_count
-            .insert(KEY_EXPLICIT_COUNT, packages.len());
-        self.explicit_packages
-            .insert(KEY_EXPLICIT, Arc::new(packages));
+        self.update_explicit_arc(Arc::new(packages));
     }
 
     pub fn update_explicit_arc(&self, packages: Arc<Vec<String>>) {
@@ -233,9 +211,7 @@ impl PackageCache {
 
     /// Store detailed info in cache (optimized to clone name once)
     pub fn insert_info(&self, info: DetailedPackageInfo) {
-        let name = info.name.clone();
-        self.info_miss_cache.invalidate(&name);
-        self.detailed_cache.insert(name, Arc::new(info));
+        self.insert_info_arc(Arc::new(info));
     }
 
     /// Store Arc'd detailed info in cache (avoids double-wrapping)

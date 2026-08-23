@@ -43,23 +43,15 @@ struct GithubAsset {
 
 pub(crate) struct RubyManager {
     versions_dir: PathBuf,
-    current_link: PathBuf,
-    client: reqwest::Client,
+    client: &'static reqwest::Client,
 }
 
 impl RubyManager {
     pub fn new() -> Self {
-        let versions_dir = super::DATA_DIR.join("versions").join("ruby");
         Self {
-            current_link: versions_dir.join("current"),
-            versions_dir,
-            client: download_client().clone(),
+            versions_dir: super::DATA_DIR.join("versions/ruby"),
+            client: download_client(),
         }
-    }
-
-    #[must_use]
-    pub fn bin_dir(&self) -> PathBuf {
-        self.current_link.join("bin")
     }
 
     /// List available Ruby versions from ruby-builder releases
@@ -145,10 +137,10 @@ impl RubyManager {
         let download_path = self.versions_dir.join(&asset.name);
 
         download_with_progress(
-            &self.client,
+            self.client,
             &asset.browser_download_url,
             &download_path,
-            Some(&checksum),
+            &checksum,
         )
         .await
         .with_context(|| {
@@ -174,13 +166,13 @@ impl RubyManager {
     pub fn use_version(&self, version: &str) -> Result<()> {
         let version = normalize_version(version);
         activate_version(&self.versions_dir, &version, Path::new("bin/ruby"))?;
-        print_using("Ruby", &version, &self.bin_dir());
+        print_using("Ruby", &version, &self.versions_dir.join("current/bin"));
         Ok(())
     }
 }
 
 // Generate common runtime manager methods (list_installed, current_version)
-crate::runtimes::common::impl_runtime_common!(RubyManager, "Ruby");
+crate::runtimes::common::impl_runtime_common!(RubyManager);
 
 fn parse_ruby_release_version(tag_name: &str) -> Option<String> {
     tag_name
@@ -202,12 +194,6 @@ fn ruby_platform() -> Result<&'static str> {
         "linux" => Ok("ubuntu-22.04"),
         "macos" => Ok("darwin"),
         other => anyhow::bail!("Unsupported operating system for pre-built Ruby: {other}"),
-    }
-}
-
-impl Default for RubyManager {
-    fn default() -> Self {
-        Self::new()
     }
 }
 

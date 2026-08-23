@@ -66,7 +66,6 @@ static STATUS_INSTALLED_FINDER: LazyLock<memmem::Finder<'static>> =
 #[derive(Default)]
 struct DebianIndexCache {
     index: Option<DebianPackageIndex>,
-    last_modified: Option<std::time::SystemTime>,
     /// Track individual file mtimes for incremental updates
     file_mtimes: HashMap<PathBuf, std::time::SystemTime>,
     /// Contiguous search buffer for SIMD search: "name desc\0name desc\0..."
@@ -312,6 +311,28 @@ impl DebianPackage {
     }
 }
 
+fn package_with_installed_state(
+    package: &DebianPackage,
+    installed_set: &AHashSet<String>,
+) -> Package {
+    let mut result = package.to_package();
+    result.installed = installed_set.contains(package.name.as_str());
+    result
+}
+
+fn archived_package_to_package(
+    package: &rkyv::Archived<DebianPackage>,
+    installed: bool,
+) -> Package {
+    Package {
+        name: package.name.to_string(),
+        version: parse_version_or_zero(package.version.as_str()),
+        description: package.description.to_string(),
+        source: PackageSource::Official,
+        installed,
+    }
+}
+
 /// In-memory Debian package index with name/arch/component lookup maps.
 ///
 /// Fields are private by design: the lookup maps must only ever be mutated
@@ -415,10 +436,6 @@ impl DebianPackageIndex {
     }
 }
 
-fn native_debian_arch() -> &'static str {
-    debian_arch()
-}
-
 /// The Debian architecture name for the running binary (e.g. `x86_64` ->
 /// `amd64`). Single source of truth for index scoring, sync URLs, and
 /// maintainer-script environments.
@@ -435,7 +452,7 @@ pub fn debian_arch() -> &'static str {
 
 fn name_candidate_score(pkg: &DebianPackage) -> u8 {
     let mut score = 0u8;
-    if pkg.architecture == native_debian_arch() {
+    if pkg.architecture == debian_arch() {
         score += 4;
     } else if pkg.architecture == "all" {
         score += 2;
@@ -546,19 +563,13 @@ pub fn ensure_index_loaded() -> Result<()> {
         return Ok(());
     }
 
-    // Determine which files changed. The rebuild below always repopulates the
-    // index from scratch, so cloning the cached index here would be discarded
-    // work; only the changed-path list is needed.
-    let changed_files: Vec<PathBuf> = {
+    // The rebuild below repopulates the full index, so only whether a file
+    // changed matters; retaining cloned paths would be discarded work.
+    let has_changed_files = {
         let cache = DEBIAN_INDEX_CACHE.read().expect("lock poisoned");
-        let mut changed: Vec<PathBuf> = Vec::new();
-
-        for (path, mtime) in &current_files {
-            if cache.file_mtimes.get(path) != Some(mtime) {
-                changed.push(path.clone());
-            }
-        }
-        changed
+        current_files
+            .iter()
+            .any(|(path, mtime)| cache.file_mtimes.get(path) != Some(mtime))
     };
 
     // Load or create index (with LZ4 compression support).
@@ -588,14 +599,13 @@ pub fn ensure_index_loaded() -> Result<()> {
                 .all(|pkg_mtime| cache_mtime >= *pkg_mtime);
         }
 
-        if let Ok(mut compressed) = fs::read(&cache_path)
+        if let Ok(compressed) = fs::read(&cache_path)
             && compressed.len() >= 8
             && compressed[0..4] == CACHE_MAGIC
             && u32::from_le_bytes([compressed[4], compressed[5], compressed[6], compressed[7]])
                 == CACHE_FORMAT_VERSION
         {
-            compressed.drain(0..8);
-            if let Ok(bytes) = lz4_flex::decompress_size_prepended(&compressed)
+            if let Ok(bytes) = lz4_flex::decompress_size_prepended(&compressed[8..])
                 && let Ok(idx) = rkyv::from_bytes::<DebianPackageIndex, rkyv::rancor::Error>(&bytes)
             {
                 index = Some(idx);
@@ -629,7 +639,7 @@ pub fn ensure_index_loaded() -> Result<()> {
     let mut index = index.unwrap_or_default();
     // Skip rebuild if cache file is fresh (newer than all Packages files).
     // This avoids re-parsing 94k packages on every cold process start.
-    if !changed_files.is_empty() && cache_is_fresh && !index.packages.is_empty() {
+    if has_changed_files && cache_is_fresh && !index.packages.is_empty() {
         tracing::debug!(
             "LZ4 cache is fresh (newer than all {} Packages files), skipping rebuild",
             current_files.len()
@@ -644,7 +654,7 @@ pub fn ensure_index_loaded() -> Result<()> {
 
     // Parse all files when any have changed (incremental update was broken)
     // The mtime check above still avoids unnecessary rebuilds when nothing changed
-    if !changed_files.is_empty() {
+    if has_changed_files {
         // Get all current Packages files
         let all_files: Vec<PathBuf> = current_files.keys().cloned().collect();
 
@@ -823,15 +833,8 @@ pub fn ensure_index_loaded() -> Result<()> {
 
     let installed_set = list_installed_fast()?.into_iter().map(|p| p.name).collect();
 
-    let newest_mtime = current_files
-        .values()
-        .max()
-        .copied()
-        .unwrap_or(std::time::SystemTime::UNIX_EPOCH);
-
     let mut cache = DEBIAN_INDEX_CACHE.write().expect("lock poisoned");
     cache.index = Some(index);
-    cache.last_modified = Some(newest_mtime);
     cache.file_mtimes = current_files;
     cache.search_buffer = search_buffer;
     cache.package_offsets = package_offsets;
@@ -1336,28 +1339,26 @@ pub fn search_fast(query: &str) -> Result<Vec<Package>> {
         return Ok(index
             .packages
             .iter()
-            .map(|pkg| {
-                let mut p = pkg.to_package();
-                p.installed = guard.installed_set.contains(&p.name);
-                p
-            })
+            .map(|pkg| package_with_installed_state(pkg, &guard.installed_set))
             .collect());
     }
 
     // Fast path: check for exact package name match first
     if let Some(exact_pkg) = index.get_query(query) {
-        let mut p = exact_pkg.to_package();
-        p.installed = guard.installed_set.contains(&p.name);
-        return Ok(vec![p]);
+        return Ok(vec![package_with_installed_state(
+            exact_pkg,
+            &guard.installed_set,
+        )]);
     }
 
     let query_lower = query.to_lowercase();
     if query_lower != query
         && let Some(exact_pkg) = index.get_query(&query_lower)
     {
-        let mut p = exact_pkg.to_package();
-        p.installed = guard.installed_set.contains(&p.name);
-        return Ok(vec![p]);
+        return Ok(vec![package_with_installed_state(
+            exact_pkg,
+            &guard.installed_set,
+        )]);
     }
 
     // FST search with in-memory index
@@ -1398,9 +1399,7 @@ fn fst_search(
     if let Some(idx) = fst_map.get(query_bytes)
         && let Some(pkg) = index.packages.get(idx as usize)
     {
-        let mut p = pkg.to_package();
-        p.installed = installed_set.contains(&p.name);
-        return vec![p];
+        return vec![package_with_installed_state(pkg, installed_set)];
     }
 
     // 2. Prefix search (very fast - early termination)
@@ -1414,9 +1413,7 @@ fn fst_search(
         }
 
         if let Some(pkg) = index.packages.get(idx as usize) {
-            let mut p = pkg.to_package();
-            p.installed = installed_set.contains(&p.name);
-            prefix_matches.push(p);
+            prefix_matches.push(package_with_installed_state(pkg, installed_set));
         }
 
         if prefix_matches.len() >= 100 {
@@ -1439,9 +1436,7 @@ fn fst_search(
         // Check if query appears anywhere in the name
         if finder.find(name_bytes).is_some() {
             if let Some(pkg) = index.packages.get(idx as usize) {
-                let mut p = pkg.to_package();
-                p.installed = installed_set.contains(&p.name);
-                substring_matches.push(p);
+                substring_matches.push(package_with_installed_state(pkg, installed_set));
             }
 
             if substring_matches.len() >= 100 {
@@ -1468,13 +1463,10 @@ fn fst_mmap_search(
     if let Some(_idx) = fst_map.get(query_bytes)
         && let Ok(Some(pkg)) = mmap.get(query_lower)
     {
-        return vec![Package {
-            name: pkg.name.to_string(),
-            version: parse_version_or_zero(pkg.version.as_str()),
-            description: pkg.description.to_string(),
-            source: PackageSource::Official,
-            installed: installed_set.contains(pkg.name.as_str()),
-        }];
+        return vec![archived_package_to_package(
+            pkg,
+            installed_set.contains(pkg.name.as_str()),
+        )];
     }
 
     // 2. Prefix search
@@ -1488,13 +1480,10 @@ fn fst_mmap_search(
         if let Ok(name_str) = std::str::from_utf8(name_bytes)
             && let Ok(Some(pkg)) = mmap.get(name_str)
         {
-            results.push(Package {
-                name: pkg.name.to_string(),
-                version: parse_version_or_zero(pkg.version.as_str()),
-                description: pkg.description.to_string(),
-                source: PackageSource::Official,
-                installed: installed_set.contains(pkg.name.as_str()),
-            });
+            results.push(archived_package_to_package(
+                pkg,
+                installed_set.contains(pkg.name.as_str()),
+            ));
         }
         if results.len() >= 100 {
             break;
@@ -1513,13 +1502,10 @@ fn fst_mmap_search(
             && let Ok(name_str) = std::str::from_utf8(name_bytes)
             && let Ok(Some(pkg)) = mmap.get(name_str)
         {
-            results.push(Package {
-                name: pkg.name.to_string(),
-                version: parse_version_or_zero(pkg.version.as_str()),
-                description: pkg.description.to_string(),
-                source: PackageSource::Official,
-                installed: installed_set.contains(pkg.name.as_str()),
-            });
+            results.push(archived_package_to_package(
+                pkg,
+                installed_set.contains(pkg.name.as_str()),
+            ));
         }
         if results.len() >= 100 {
             break;
@@ -1551,17 +1537,16 @@ fn simd_search_fallback(
         if seen_indices.insert(pkg_idx)
             && let Some(pkg) = index.packages.get(pkg_idx)
         {
-            let mut p = pkg.to_package();
-            p.installed = installed_set.contains(&p.name);
+            let package = package_with_installed_state(pkg, installed_set);
 
             // Categorize by match type for better relevance
-            let name_lower = p.name.to_lowercase();
+            let name_lower = package.name.to_lowercase();
             if name_lower == query_lower {
-                exact_matches.push(p);
+                exact_matches.push(package);
             } else if name_lower.starts_with(query_lower) {
-                prefix_matches.push(p);
+                prefix_matches.push(package);
             } else {
-                substring_matches.push(p);
+                substring_matches.push(package);
             }
         }
         if exact_matches.len() + prefix_matches.len() + substring_matches.len() >= 100 {
@@ -1592,14 +1577,10 @@ pub fn get_info_fast(name: &str) -> Result<Option<Package>> {
         if let Some(ref mmap) = *mmap_guard {
             mmap.touch();
             if let Ok(Some(pkg)) = mmap.get(name) {
-                let installed = is_installed_fast(name)?;
-                return Ok(Some(Package {
-                    name: pkg.name.to_string(),
-                    version: parse_version_or_zero(pkg.version.as_str()),
-                    description: pkg.description.to_string(),
-                    source: PackageSource::Official,
-                    installed,
-                }));
+                return Ok(Some(archived_package_to_package(
+                    pkg,
+                    is_installed_fast(name)?,
+                )));
             }
             // Package not in mmap - still return None without loading full index
             return Ok(None);
@@ -1613,16 +1594,16 @@ pub fn get_info_fast(name: &str) -> Result<Option<Package>> {
         return Ok(Some(pkg));
     }
 
-    // Fallback: load full index
     ensure_index_loaded()?;
     let guard = DEBIAN_INDEX_CACHE.read().expect("lock poisoned");
     let index = guard.index.as_ref().context(
         "Debian package index not loaded. Run 'omg sync' to refresh the package database",
     )?;
     if let Some(pkg) = index.get_query(name) {
-        let mut p = pkg.to_package();
-        p.installed = guard.installed_set.contains(&p.name);
-        Ok(Some(p))
+        Ok(Some(package_with_installed_state(
+            pkg,
+            &guard.installed_set,
+        )))
     } else {
         Ok(None)
     }
@@ -1972,17 +1953,12 @@ pub fn get_package_dependencies(package_name: &str) -> Result<(Vec<String>, Vec<
     Ok(dependencies_from_status(&content, package_name))
 }
 
-fn parse_installed_size_kb(size_str: &str, package_name: &str) -> Result<i64> {
+/// Installed-Size is recorded in KiB; convert to bytes with overflow checks.
+fn status_size_bytes(size_str: &str, package_name: &str) -> Result<i64> {
     size_str
         .trim()
         .parse::<i64>()
-        .with_context(|| format!("invalid Installed-Size for {package_name}: {size_str}"))
-}
-
-/// Installed-Size is recorded in KiB; convert to bytes with overflow checks.
-fn status_size_bytes(size_str: &str, package_name: &str) -> Result<i64> {
-    let size_kb = parse_installed_size_kb(size_str, package_name)?;
-    size_kb
+        .with_context(|| format!("invalid Installed-Size for {package_name}: {size_str}"))?
         .checked_mul(1024)
         .with_context(|| format!("Installed-Size overflow for {package_name}: {size_str}"))
 }
@@ -2276,7 +2252,11 @@ fn remove_deb_files(dir: &Path) -> Result<(usize, u64)> {
         let Some(filename) = path.file_name().and_then(|n| n.to_str()) else {
             continue;
         };
-        if !filename.to_ascii_lowercase().ends_with(".deb") || !path.is_file() {
+        if !filename
+            .rsplit_once('.')
+            .is_some_and(|(_, ext)| ext.eq_ignore_ascii_case("deb"))
+            || !path.is_file()
+        {
             continue;
         }
         let meta = fs::metadata(&path)

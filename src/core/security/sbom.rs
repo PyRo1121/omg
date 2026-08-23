@@ -11,13 +11,7 @@ use thiserror::Error;
 
 use crate::core::paths;
 
-/// Private bridge for upstream errors reported as `anyhow::Error` by the
-/// package backends. Keeps [`SbomError`] variants fully typed while
-/// preserving the source error's `Display` and `source()` chain.
-#[derive(Debug, Error)]
-#[error(transparent)]
-#[doc(hidden)]
-pub struct PackageSource(#[from] anyhow::Error);
+use super::vulnerability::PackageSource;
 
 /// `CycloneDX` SBOM format (industry standard for enterprise)
 /// Compliant with `CycloneDX` 1.5 specification
@@ -491,28 +485,7 @@ mod tests {
 
     #[test]
     fn test_sbom_serialization() {
-        let sbom = Sbom {
-            bom_format: "CycloneDX".to_string(),
-            spec_version: "1.5".to_string(),
-            serial_number: "urn:uuid:test".to_string(),
-            version: 1,
-            metadata: SbomMetadata {
-                timestamp: "2026-01-16T00:00:00Z".to_string(),
-                tools: vec![SbomTool {
-                    vendor: "OMG".to_string(),
-                    name: "omg".to_string(),
-                    version: "0.1.0".to_string(),
-                }],
-                component: None,
-                manufacture: None,
-                supplier: None,
-            },
-            components: vec![],
-            dependencies: vec![],
-            vulnerabilities: vec![],
-        };
-
-        let json = serde_json::to_string(&sbom).unwrap();
+        let json = serde_json::to_string(&sample_sbom()).unwrap();
         assert!(json.contains("CycloneDX"));
         assert!(json.contains("1.5"));
     }

@@ -7,7 +7,7 @@
 
 use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::fs;
 use std::path::{Path, PathBuf};
 
@@ -58,13 +58,12 @@ impl Default for Workspace {
 impl Workspace {
     /// Load workspace from file
     pub fn load() -> Result<Self> {
-        let path = PathBuf::from(WORKSPACE_FILE);
-        if !path.exists() {
+        if !Path::new(WORKSPACE_FILE).exists() {
             anyhow::bail!("No workspace found. Run 'omg workspace init' first.");
         }
 
-        let content = fs::read_to_string(&path).context("Failed to read workspace file")?;
-
+        let content =
+            fs::read_to_string(WORKSPACE_FILE).context("Failed to read workspace file")?;
         toml::from_str(&content).context("Failed to parse workspace file")
     }
 
@@ -80,43 +79,39 @@ impl Workspace {
     /// Get topologically sorted projects (respecting dependencies)
     pub fn sorted_projects(&self) -> Result<Vec<String>> {
         let mut result = Vec::new();
-        let mut visited = HashMap::new();
-        let mut temp_mark = HashMap::new();
+        let mut visited = HashSet::new();
+        let mut temp_mark = HashSet::new();
 
         for name in self.projects.keys() {
-            if !visited.contains_key(name) {
-                self.visit_project(name, &mut visited, &mut temp_mark, &mut result)?;
-            }
+            self.visit_project(name, &mut visited, &mut temp_mark, &mut result)?;
         }
 
         Ok(result)
     }
 
-    fn visit_project(
-        &self,
-        name: &str,
-        visited: &mut HashMap<String, bool>,
-        temp_mark: &mut HashMap<String, bool>,
+    fn visit_project<'a>(
+        &'a self,
+        name: &'a str,
+        visited: &mut HashSet<&'a str>,
+        temp_mark: &mut HashSet<&'a str>,
         result: &mut Vec<String>,
     ) -> Result<()> {
-        if temp_mark.get(name).copied().unwrap_or_default() {
+        if visited.contains(name) {
+            return Ok(());
+        }
+        if !temp_mark.insert(name) {
             anyhow::bail!("Circular dependency detected involving project: {name}");
         }
 
-        if !visited.contains_key(name) {
-            temp_mark.insert(name.to_string(), true);
-
-            if let Some(project) = self.projects.get(name) {
-                for dep in &project.depends_on {
-                    self.visit_project(dep, visited, temp_mark, result)?;
-                }
+        if let Some(project) = self.projects.get(name) {
+            for dep in &project.depends_on {
+                self.visit_project(dep, visited, temp_mark, result)?;
             }
-
-            temp_mark.insert(name.to_string(), false);
-            visited.insert(name.to_string(), true);
-            result.push(name.to_string());
         }
 
+        temp_mark.remove(name);
+        visited.insert(name);
+        result.push(name.to_string());
         Ok(())
     }
 }
@@ -129,8 +124,7 @@ pub fn init(name: &str) -> Result<()> {
         name
     );
 
-    let path = PathBuf::from(WORKSPACE_FILE);
-    if path.exists() {
+    if Path::new(WORKSPACE_FILE).exists() {
         anyhow::bail!("Workspace already exists. Delete {WORKSPACE_FILE} to reinitialize.");
     }
 
@@ -161,14 +155,9 @@ pub fn add(path: &str, name: Option<&str>) -> Result<()> {
 
     // Determine project name
     let project_name = name
-        .map(String::from)
-        .or_else(|| {
-            project_path
-                .file_name()
-                .and_then(|n| n.to_str())
-                .map(String::from)
-        })
-        .unwrap_or_else(|| "project".to_string());
+        .or_else(|| project_path.file_name().and_then(|name| name.to_str()))
+        .unwrap_or("project")
+        .to_string();
 
     if workspace.projects.contains_key(&project_name) {
         anyhow::bail!("Project '{project_name}' already exists in workspace");
@@ -359,18 +348,15 @@ async fn run_parallel(
 
     for name in projects {
         if let Some(project) = workspace.projects.get(*name) {
-            let path = project.path.clone();
-            let proj = project.clone();
-            let cmd = command.to_string();
-            let cmd_args = args.to_vec();
-            let proj_name = (*name).to_string();
+            let project = project.clone();
+            let command = command.to_string();
+            let args = args.to_vec();
+            let project_name = (*name).to_string();
 
-            let handle = task::spawn_blocking(move || {
-                let result = run_project_command(&path, &proj, &cmd, &cmd_args);
-                (proj_name, result)
-            });
-
-            handles.push(handle);
+            handles.push(task::spawn_blocking(move || {
+                let result = run_project_command(&project.path, &project, &command, &args);
+                (project_name, result)
+            }));
         }
     }
 

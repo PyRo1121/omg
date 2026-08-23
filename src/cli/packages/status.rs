@@ -26,7 +26,6 @@ pub async fn status(fast: bool) -> Result<()> {
     status_with_json(fast, false).await
 }
 
-#[allow(clippy::unused_async, reason = "preserves the async command interface")]
 pub async fn status_with_json(fast: bool, json: bool) -> Result<()> {
     if json {
         return status_json(fast).await;

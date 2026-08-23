@@ -12,16 +12,6 @@
 //!   omg-fast s `<query>`    # search packages
 //!   omg-fast i `<package>`  # package info
 
-// Allow pedantic lints that are too strict for this minimal binary
-#![allow(
-    clippy::cast_possible_truncation,
-    reason = "IPC message lengths are explicitly bounded"
-)]
-
-/// Maximum daemon response size to prevent memory exhaustion (10 MB)
-#[cfg(unix)]
-const MAX_RESPONSE_SIZE: usize = 10 * 1024 * 1024;
-
 // Use mimalloc for even faster startup and allocations
 #[cfg(unix)]
 #[global_allocator]
@@ -30,14 +20,18 @@ static GLOBAL: mimalloc::MiMalloc = mimalloc::MiMalloc;
 #[cfg(unix)]
 use std::fs::File;
 #[cfg(unix)]
-use std::io::{Read, Write};
+use std::io::Read;
 #[cfg(unix)]
 use std::os::unix::net::UnixStream;
 
 #[cfg(unix)]
 use anyhow::{Context, Result};
 #[cfg(unix)]
-use omg_lib::core::format::truncate;
+use omg_lib::core::{fast_status::FastStatus, format::truncate};
+#[cfg(unix)]
+use omg_lib::daemon::protocol::{read_frame, write_frame};
+#[cfg(unix)]
+use zerocopy::FromBytes as _;
 
 #[cfg(unix)]
 fn main() {
@@ -82,7 +76,7 @@ fn main() {
     // hardening.
     let path = omg_lib::core::paths::fast_status_path();
 
-    // Read 32-byte status file
+    // Read the fixed-size status file.
     let Ok(mut file) = File::open(&path) else {
         eprintln!(
             "omg-fast: no status file at {} (is the omg daemon running? try 'omg daemon' or 'omg status')",
@@ -91,7 +85,7 @@ fn main() {
         std::process::exit(1);
     };
 
-    let mut buf = [0u8; 32];
+    let mut buf = [0u8; std::mem::size_of::<FastStatus>()];
     if let Err(error) = file.read_exact(&mut buf) {
         eprintln!(
             "omg-fast: failed to read status file {}: {error}",
@@ -100,9 +94,16 @@ fn main() {
         std::process::exit(1);
     }
 
+    let Ok(status) = FastStatus::read_from_bytes(&buf) else {
+        eprintln!(
+            "omg-fast: status file {} has invalid layout (stale or corrupt); rerun 'omg status'",
+            path.display()
+        );
+        std::process::exit(1);
+    };
+
     // Validate magic (0x4F4D4753 = "OMGS")
-    let magic = u32::from_le_bytes([buf[0], buf[1], buf[2], buf[3]]);
-    if magic != 0x4F4D_4753 {
+    if status.magic != 0x4F4D_4753 {
         eprintln!(
             "omg-fast: status file {} has invalid magic bytes (stale or corrupt); rerun 'omg status'",
             path.display()
@@ -110,11 +111,10 @@ fn main() {
         std::process::exit(1);
     }
 
-    // Extract values
-    let total = u32::from_le_bytes([buf[8], buf[9], buf[10], buf[11]]);
-    let explicit = u32::from_le_bytes([buf[12], buf[13], buf[14], buf[15]]);
-    let orphans = u32::from_le_bytes([buf[16], buf[17], buf[18], buf[19]]);
-    let updates = u32::from_le_bytes([buf[20], buf[21], buf[22], buf[23]]);
+    let total = status.total_packages;
+    let explicit = status.explicit_packages;
+    let orphans = status.orphan_packages;
+    let updates = status.updates_available;
 
     match cmd {
         "tc" | "total" => println!("{total}"),
@@ -140,36 +140,27 @@ fn main() {
     }
 }
 
-/// Get socket path via the shared helper in `omg_lib::core::paths` so this
-/// binary and the daemon can never disagree about where the socket lives.
-#[cfg(unix)]
-fn socket_path() -> String {
-    omg_lib::core::paths::socket_path().display().to_string()
-}
-
 /// Fast search via raw IPC (no serde, minimal parsing)
 #[cfg(unix)]
 fn fast_search(query: &str) -> Result<()> {
-    let path = socket_path();
+    let path = omg_lib::core::paths::socket_path();
     let mut stream = UnixStream::connect(&path)
-        .with_context(|| format!("daemon not running (no listener at {path})"))?;
+        .with_context(|| format!("daemon not running (no listener at {})", path.display()))?;
     send_search_request(&mut stream, query)
 }
 
 /// Fast info via raw IPC
 #[cfg(unix)]
 fn fast_info(package: &str) -> Result<()> {
-    let path = socket_path();
+    let path = omg_lib::core::paths::socket_path();
     let mut stream = UnixStream::connect(&path)
-        .with_context(|| format!("daemon not running (no listener at {path})"))?;
+        .with_context(|| format!("daemon not running (no listener at {})", path.display()))?;
     send_info_request(&mut stream, package)
 }
 
 #[cfg(unix)]
 fn send_search_request(stream: &mut UnixStream, query: &str) -> Result<()> {
     use omg_lib::daemon::protocol::{Request, Response, ResponseResult};
-    // Compile-time guarantee: u32 response lengths fit in usize on all supported targets.
-    const { assert!(usize::BITS >= 32, "omg-fast requires at least 32-bit usize") };
 
     let request = Request::Search {
         id: 0,
@@ -178,21 +169,8 @@ fn send_search_request(stream: &mut UnixStream, query: &str) -> Result<()> {
     };
 
     let request_bytes = omg_lib::daemon::protocol::encode_frame(&request)?;
-    let len = u32::try_from(request_bytes.len())
-        .context("Search request too large for protocol framing")?;
-
-    stream.write_all(&len.to_be_bytes())?;
-    stream.write_all(&request_bytes)?;
-
-    let mut len_buf = [0u8; 4];
-    stream.read_exact(&mut len_buf)?;
-    let resp_len = u32::from_be_bytes(len_buf) as usize;
-    if resp_len > MAX_RESPONSE_SIZE {
-        anyhow::bail!("Response too large: {resp_len} bytes exceeds {MAX_RESPONSE_SIZE}");
-    }
-
-    let mut resp_bytes = vec![0u8; resp_len];
-    stream.read_exact(&mut resp_bytes)?;
+    write_frame(stream, &request_bytes)?;
+    let resp_bytes = read_frame(stream)?;
 
     let (_, payload) = omg_lib::daemon::protocol::split_frame(&resp_bytes)?;
     let response: Response = bitcode::deserialize(payload)?;
@@ -226,8 +204,6 @@ fn send_search_request(stream: &mut UnixStream, query: &str) -> Result<()> {
 #[cfg(unix)]
 fn send_info_request(stream: &mut UnixStream, package: &str) -> Result<()> {
     use omg_lib::daemon::protocol::{Request, Response, ResponseResult};
-    // Compile-time guarantee: u32 response lengths fit in usize on all supported targets.
-    const { assert!(usize::BITS >= 32, "omg-fast requires at least 32-bit usize") };
 
     let request = Request::Info {
         id: 0,
@@ -235,21 +211,8 @@ fn send_info_request(stream: &mut UnixStream, package: &str) -> Result<()> {
     };
 
     let request_bytes = omg_lib::daemon::protocol::encode_frame(&request)?;
-    let len = u32::try_from(request_bytes.len())
-        .context("Info request too large for protocol framing")?;
-
-    stream.write_all(&len.to_be_bytes())?;
-    stream.write_all(&request_bytes)?;
-
-    let mut len_buf = [0u8; 4];
-    stream.read_exact(&mut len_buf)?;
-    let resp_len = u32::from_be_bytes(len_buf) as usize;
-    if resp_len > MAX_RESPONSE_SIZE {
-        anyhow::bail!("Response too large: {resp_len} bytes exceeds {MAX_RESPONSE_SIZE}");
-    }
-
-    let mut resp_bytes = vec![0u8; resp_len];
-    stream.read_exact(&mut resp_bytes)?;
+    write_frame(stream, &request_bytes)?;
+    let resp_bytes = read_frame(stream)?;
 
     let (_, payload) = omg_lib::daemon::protocol::split_frame(&resp_bytes)?;
     let response: Response = bitcode::deserialize(payload)?;

@@ -1,18 +1,9 @@
 use anyhow::{Context, Result};
 
-use crate::cli::packages::common;
 use crate::cli::{style, ui};
-
-pub async fn remove(packages: &[String]) -> Result<()> {
-    common::remove_via_service(packages).await
-}
 
 /// Arch dry run: accurate, because the ALPM transaction always sets
 /// `RECURSE | UNNEEDED`, so orphaned dependencies really are removed.
-#[allow(
-    clippy::unnecessary_wraps,
-    reason = "signature is shared with fallible backend dry-run implementations"
-)]
 pub fn remove_dry_run(packages: &[String], recursive: bool) -> Result<()> {
     let package_info = packages
         .iter()

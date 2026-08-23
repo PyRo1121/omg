@@ -209,8 +209,7 @@ impl TaskDetector {
 
     fn detect_rust_tasks(&self, tasks: &mut Vec<Task>) {
         if self.current_dir.join("Cargo.toml").exists() {
-            let standard_tasks = vec!["build", "test", "check", "run", "clippy", "fmt"];
-            for t in standard_tasks {
+            for t in ["build", "test", "check", "run", "clippy", "fmt"] {
                 tasks.push(Task {
                     name: t.to_string(),
                     command: "cargo".to_string(),
@@ -233,7 +232,7 @@ impl TaskDetector {
             if line.starts_with('\t') || line.trim_start().starts_with('#') {
                 continue;
             }
-            let Some((_targets, after_colon)) = line.split_once(':') else {
+            let Some((targets, after_colon)) = line.split_once(':') else {
                 continue;
             };
             // Colon-style variable assignments (`A := b`, `A ::= b`) have `=`
@@ -245,12 +244,7 @@ impl TaskDetector {
                 // whose left side is not a plain runnable target.
                 continue;
             }
-            for target in line
-                .split(':')
-                .next()
-                .unwrap_or_default()
-                .split_whitespace()
-            {
+            for target in targets.split_whitespace() {
                 let is_target_like = !target.is_empty()
                     && !target.contains('=')
                     && !target.contains('.')
@@ -259,7 +253,7 @@ impl TaskDetector {
                     && !target.starts_with('#');
                 // Deduplicate repeated targets so `resolve` does not present
                 // identical duplicates as an ambiguous multi-match.
-                if is_target_like && seen.insert(target.to_string()) {
+                if is_target_like && seen.insert(target) {
                     tasks.push(Task {
                         name: target.to_string(),
                         command: "make".to_string(),
@@ -411,16 +405,12 @@ impl TaskDetector {
         }
 
         // 2. Filter by .omg.toml mapping
-        if let Some(preferred_ecosystem) = self.config.scripts.get(task_name) {
-            let filtered: Vec<Task> = matches
+        if let Some(preferred_ecosystem) = self.config.scripts.get(task_name)
+            && matches
                 .iter()
-                .filter(|t| t.ecosystem.matches(preferred_ecosystem))
-                .cloned()
-                .collect();
-
-            if !filtered.is_empty() {
-                matches = filtered;
-            }
+                .any(|task| task.ecosystem.matches(preferred_ecosystem))
+        {
+            matches.retain(|task| task.ecosystem.matches(preferred_ecosystem));
         }
 
         // 3. If --all, return all matches
@@ -470,10 +460,9 @@ pub fn detect_tasks() -> Result<Vec<Task>> {
 /// Package managers that consume flags meant for the underlying script unless
 /// the flags follow a `--` separator.
 fn needs_arg_separator(command: &str) -> bool {
-    matches!(
-        command.to_lowercase().as_str(),
-        "npm" | "pnpm" | "yarn" | "composer"
-    )
+    ["npm", "pnpm", "yarn", "composer"]
+        .iter()
+        .any(|manager| command.eq_ignore_ascii_case(manager))
 }
 
 /// Execute a task with advanced options.
@@ -803,13 +792,10 @@ fn execute_process(
 
     // Auto-activate python virtual environment if present
     // Check for .venv or venv in current directory
-    let venv_path = if current_dir.join(".venv").exists() {
-        Some(current_dir.join(".venv"))
-    } else if current_dir.join("venv").exists() {
-        Some(current_dir.join("venv"))
-    } else {
-        None
-    };
+    let venv_path = [".venv", "venv"]
+        .into_iter()
+        .map(|name| current_dir.join(name))
+        .find(|path| path.exists());
 
     let mut command = Command::new(cmd);
     // SECURITY: Use -- to prevent argument injection if the command supports it
@@ -869,8 +855,8 @@ fn execute_process(
     Ok(())
 }
 
-fn find_rust_toolchain_file(start: &std::path::Path) -> Option<PathBuf> {
-    let mut current = Some(start.to_path_buf());
+fn find_rust_toolchain_file(start: &Path) -> Option<PathBuf> {
+    let mut current = Some(start);
     while let Some(dir) = current {
         let rust_toml = dir.join("rust-toolchain.toml");
         if rust_toml.exists() {
@@ -880,7 +866,7 @@ fn find_rust_toolchain_file(start: &std::path::Path) -> Option<PathBuf> {
         if rust_plain.exists() {
             return Some(rust_plain);
         }
-        current = dir.parent().map(std::path::Path::to_path_buf);
+        current = dir.parent();
     }
     None
 }

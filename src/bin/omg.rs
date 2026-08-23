@@ -21,7 +21,7 @@ use omg_lib::cli::security;
 
 use omg_lib::cli::{
     CiCommands, Cli, Commands, ContainerCommands, LocalCommandRunner, MigrateCommands,
-    SnapshotCommands, TransactionTypeFilter, commands,
+    SnapshotCommands, commands,
 };
 use omg_lib::cli::{blame, ci, diff, migrate, outdated, size, snapshot, why};
 #[cfg(feature = "arch")]
@@ -34,12 +34,11 @@ use omg_lib::hooks;
 fn print_fast_success(packages: &[String], action: &str) {
     use owo_colors::OwoColorize;
 
-    let action_text = if packages.len() == 1 {
-        action.to_string()
+    let msg = if packages.len() == 1 {
+        format!("  ✓ 1 {action}!  ")
     } else {
-        format!("packages {action}")
+        format!("  ✓ {} packages {action}!  ", packages.len())
     };
-    let msg = format!("  ✓ {} {}!  ", packages.len(), action_text);
 
     println!();
     println!(
@@ -71,6 +70,15 @@ fn print_system_updated(suffix: &str) {
         "✓".green().bold()
     );
     println!();
+}
+
+#[cfg(feature = "arch")]
+fn execute_fast_system_update(suffix: &str) -> Result<()> {
+    let result = omg_lib::package_managers::execute_transaction(Vec::new(), false, true, None);
+    if result.is_ok() {
+        print_system_updated(suffix);
+    }
+    result
 }
 
 /// Split an elevated re-exec invocation into its sub-command and trailing
@@ -147,14 +155,7 @@ fn try_fast_elevated(args: &[String]) -> Option<Result<()>> {
             }
             Some(result)
         }
-        "update" | "upgrade" => {
-            let result =
-                omg_lib::package_managers::execute_transaction(Vec::new(), false, true, None);
-            if result.is_ok() {
-                print_system_updated("");
-            }
-            Some(result)
-        }
+        "update" | "upgrade" => Some(execute_fast_system_update("")),
         "fullupdate" => {
             use owo_colors::OwoColorize;
             println!();
@@ -173,12 +174,7 @@ fn try_fast_elevated(args: &[String]) -> Option<Result<()>> {
             println!("  {} Upgrading system...", "→".cyan().bold());
             println!();
 
-            let result =
-                omg_lib::package_managers::execute_transaction(Vec::new(), false, true, None);
-            if result.is_ok() {
-                print_system_updated("");
-            }
-            Some(result)
+            Some(execute_fast_system_update(""))
         }
         "turboupdate" => {
             use owo_colors::OwoColorize;
@@ -186,12 +182,7 @@ fn try_fast_elevated(args: &[String]) -> Option<Result<()>> {
                 "\n  {} Turbo upgrade (skipping sync)...\n",
                 "🚀".bright_magenta().bold()
             );
-            let result =
-                omg_lib::package_managers::execute_transaction(Vec::new(), false, true, None);
-            if result.is_ok() {
-                print_system_updated(" (turbo)");
-            }
-            Some(result)
+            Some(execute_fast_system_update(" (turbo)"))
         }
         "sync" => {
             // Database sync - run in blocking context
@@ -514,11 +505,6 @@ fn try_fast_hooks(args: &[String]) -> bool {
 }
 
 fn try_fast_paths(args: &[String]) -> Result<bool> {
-    // NOTE(wave2): the former synchronous `install --dry-run` fast path was
-    // removed with `packages::install_dry_run_cli`, which could never report
-    // success (it validated inputs and always returned Ok(false), duplicating
-    // validation already performed here). Dry runs now flow through the normal
-    // clap dispatch into `packages::install(dry_run = true)`.
     if try_fast_explicit_count(args)
         || try_fast_search(args)
         || try_fast_info(args)
@@ -621,8 +607,7 @@ async fn async_main(args: Vec<String>) -> Result<()> {
         omg_lib::core::maybe_show_turbo_hint();
     }
 
-    let needs_root = command_requires_root(&cli.command);
-    if needs_root && !is_root() {
+    if command_requires_root(&cli.command) && !is_root() {
         // Use run_self_sudo directly — elevate_if_needed creates a nested tokio
         // runtime which panics with "Cannot start a runtime from within a runtime"
         let args_refs: Vec<&str> = args.iter().skip(1).map(String::as_str).collect();
@@ -637,7 +622,7 @@ async fn async_main(args: Vec<String>) -> Result<()> {
         no_color: !console::colors_enabled(),
     };
 
-    let result = dispatch_command(&cli.command, &ctx, cli.json).await;
+    let result = dispatch_command(&cli.command, &ctx).await;
     finish_command_telemetry(cmd_start, command_name(&cli.command), result.is_ok()).await;
     if let Some(task) = telemetry_ping {
         match task.await {
@@ -1014,75 +999,13 @@ async fn handle_migrate_command(command: &MigrateCommands) -> Result<()> {
     }
 }
 
-async fn handle_info_command(package: &str, json: bool) -> Result<()> {
-    packages::info_with_json(package, json).await
-}
-
-async fn handle_search_command(
-    query: &str,
-    detailed: bool,
-    json_flag: bool,
-    no_aur: bool,
-    limit: usize,
-) -> Result<()> {
-    packages::search_with_json(query, detailed, json_flag, no_aur, limit).await
-}
-
-async fn handle_install_command(packages: &[String], yes: bool, dry_run: bool) -> Result<()> {
-    packages::install(packages, yes, dry_run).await
-}
-
-async fn handle_remove_command(
-    packages: &[String],
-    recursive: bool,
-    yes: bool,
-    dry_run: bool,
-) -> Result<()> {
-    packages::remove(packages, recursive, yes, dry_run).await
-}
-
-#[expect(clippy::fn_params_excessive_bools)] // Maps directly to CLI flags: --orphans, --cache, --aur, --all
-async fn handle_clean_command(
-    orphans: bool,
-    cache: bool,
-    aur: bool,
-    all: bool,
-    dry_run: bool,
-) -> Result<()> {
-    packages::clean(orphans, cache, aur, all, dry_run).await
-}
-
-async fn handle_complete_command(
-    shell: &str,
-    current: &str,
-    last: &str,
-    full: Option<&str>,
-) -> Result<()> {
-    commands::complete(shell, current, last, full).await
-}
-
-fn handle_history_command(
-    limit: usize,
-    search: Option<&str>,
-    transaction_type: Option<TransactionTypeFilter>,
-    from: Option<&str>,
-    to: Option<&str>,
-    json: bool,
-) -> Result<()> {
-    commands::history(limit, search, transaction_type, from, to, json)
-}
-
 /// Main command dispatcher - routes commands to appropriate handlers
 #[expect(clippy::too_many_lines)]
-async fn dispatch_command(
-    command: &Commands,
-    ctx: &omg_lib::cli::CliContext,
-    json_flag: bool,
-) -> Result<()> {
+async fn dispatch_command(command: &Commands, ctx: &omg_lib::cli::CliContext) -> Result<()> {
     // Global --json contract: reject unsupported combinations explicitly instead
     // of silently emitting human-readable output (wave-5 F3). `privacy` is
     // accepted because `privacy status` is the scripted JSON entrypoint.
-    if json_flag
+    if ctx.json
         && !matches!(
             command,
             Commands::Search { .. }
@@ -1136,14 +1059,14 @@ async fn dispatch_command(
             no_aur,
             limit,
         } => {
-            handle_search_command(query, *detailed, json_flag, *no_aur, *limit).await?;
+            packages::search_with_json(query, *detailed, ctx.json, *no_aur, *limit).await?;
         }
         Commands::Install {
-            packages,
+            packages: pkgs,
             yes,
             dry_run,
         } => {
-            handle_install_command(packages, *yes, *dry_run).await?;
+            packages::install(pkgs, *yes, *dry_run).await?;
         }
         Commands::Remove {
             packages: pkgs,
@@ -1151,7 +1074,7 @@ async fn dispatch_command(
             yes,
             dry_run,
         } => {
-            handle_remove_command(pkgs, *recursive, *yes, *dry_run).await?;
+            packages::remove(pkgs, *recursive, *yes, *dry_run).await?;
         }
         Commands::Update {
             check,
@@ -1162,7 +1085,7 @@ async fn dispatch_command(
         } => {
             handle_update_command(*check, *yes, *dry_run, *fast, *turbo).await?;
         }
-        Commands::Info { package } => handle_info_command(package, json_flag).await?,
+        Commands::Info { package } => packages::info_with_json(package, ctx.json).await?,
         Commands::Clean {
             orphans,
             cache,
@@ -1170,10 +1093,10 @@ async fn dispatch_command(
             all,
             dry_run,
         } => {
-            handle_clean_command(*orphans, *cache, *aur, *all, *dry_run).await?;
+            packages::clean(*orphans, *cache, *aur, *all, *dry_run).await?;
         }
         Commands::Explicit { count } => {
-            packages::explicit_sync_with_json(*count, json_flag)?;
+            packages::explicit_sync_with_json(*count, ctx.json)?;
         }
         Commands::Sync => {
             packages::sync().await?;
@@ -1182,7 +1105,7 @@ async fn dispatch_command(
             runtimes::use_version(runtime, version.as_deref()).await?;
         }
         Commands::List { runtime, available } => {
-            runtimes::list_versions(runtime.as_deref(), *available, json_flag).await?;
+            runtimes::list_versions(runtime.as_deref(), *available, ctx.json).await?;
         }
         Commands::Hook { shell } => {
             hooks::print_hook(shell.as_str())?;
@@ -1211,10 +1134,10 @@ async fn dispatch_command(
             last,
             full,
         } => {
-            handle_complete_command(shell.as_str(), current, last, full.as_deref()).await?;
+            commands::complete(shell.as_str(), current, last, full.as_deref()).await?;
         }
         Commands::Status { fast } => {
-            packages::status_with_json(*fast, json_flag).await?;
+            packages::status_with_json(*fast, ctx.json).await?;
         }
         Commands::Doctor {
             network,
@@ -1244,13 +1167,13 @@ async fn dispatch_command(
             from,
             to,
         } => {
-            handle_history_command(
+            commands::history(
                 *limit,
                 search.as_deref(),
                 *transaction_type,
                 from.as_deref(),
                 to.as_deref(),
-                json_flag,
+                ctx.json,
             )?;
         }
         Commands::Rollback { id, yes } => {
@@ -1260,7 +1183,7 @@ async fn dispatch_command(
             omg_lib::cli::tui::run().await?;
         }
         Commands::Stats => {
-            commands::stats(json_flag)?;
+            commands::stats(ctx.json)?;
         }
         #[cfg(unix)]
         Commands::Metrics => {
@@ -1277,7 +1200,7 @@ async fn dispatch_command(
             why::run(package, *reverse)?;
         }
         Commands::Outdated => {
-            outdated::run(json_flag).await?;
+            outdated::run(ctx.json).await?;
         }
         Commands::Size { tree, limit } => {
             size::run(tree.as_deref(), *limit)?;

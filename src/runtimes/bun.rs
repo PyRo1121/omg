@@ -46,23 +46,15 @@ struct GithubAsset {
 
 pub(crate) struct BunManager {
     versions_dir: PathBuf,
-    current_link: PathBuf,
-    client: reqwest::Client,
+    client: &'static reqwest::Client,
 }
 
 impl BunManager {
     pub fn new() -> Self {
-        let versions_dir = super::DATA_DIR.join("versions").join("bun");
         Self {
-            current_link: versions_dir.join("current"),
-            versions_dir,
-            client: download_client().clone(),
+            versions_dir: super::DATA_DIR.join("versions/bun"),
+            client: download_client(),
         }
-    }
-
-    #[must_use]
-    pub fn bin_dir(&self) -> &PathBuf {
-        &self.current_link
     }
 
     /// List available Bun versions from GitHub releases
@@ -116,7 +108,7 @@ impl BunManager {
 
         println!("{} Downloading Bun v{}...", "→".blue(), version);
         let download_path = self.versions_dir.join(&filename);
-        download_with_progress(&self.client, &url, &download_path, Some(&checksum)).await?;
+        download_with_progress(self.client, &url, &download_path, &checksum).await?;
 
         println!("{} Extracting (pure Rust)...", "→".blue());
         let staging = begin_staged_install(&self.versions_dir)?;
@@ -160,13 +152,13 @@ impl BunManager {
     pub fn use_version(&self, version: &str) -> Result<()> {
         let version = normalize_version(version);
         activate_version(&self.versions_dir, &version, Path::new("bun"))?;
-        print_using("Bun", &version, self.bin_dir());
+        print_using("Bun", &version, &self.versions_dir.join("current"));
         Ok(())
     }
 }
 
 // Generate common runtime manager methods (list_installed, current_version)
-crate::runtimes::common::impl_runtime_common!(BunManager, "Bun");
+crate::runtimes::common::impl_runtime_common!(BunManager);
 
 /// Parse GitHub releases into deterministic newest-first Bun versions.
 fn parse_bun_versions(releases: Vec<GithubRelease>) -> Vec<BunVersion> {
@@ -193,9 +185,11 @@ fn parse_bun_versions(releases: Vec<GithubRelease>) -> Vec<BunVersion> {
 }
 
 /// Pick the newest non-prerelease version, so `latest` never pins an RC.
-fn pick_latest_stable(mut versions: Vec<BunVersion>) -> Option<String> {
-    versions.retain(|version| !version.prerelease);
-    versions.first().map(|version| version.version.clone())
+fn pick_latest_stable(versions: Vec<BunVersion>) -> Option<String> {
+    versions
+        .into_iter()
+        .find(|version| !version.prerelease)
+        .map(|version| version.version)
 }
 
 fn bun_platform() -> Result<String> {
@@ -210,12 +204,6 @@ fn bun_platform() -> Result<String> {
         arch => anyhow::bail!("Unsupported architecture for Bun: {arch}"),
     };
     Ok(format!("{os}-{arch}"))
-}
-
-impl Default for BunManager {
-    fn default() -> Self {
-        Self::new()
-    }
 }
 
 #[cfg(test)]

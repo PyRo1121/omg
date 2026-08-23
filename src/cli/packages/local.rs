@@ -70,23 +70,15 @@ fn extract_with_pure_rust(path: &Path) -> Result<LocalPackageInfo> {
     let reader = BufReader::new(file);
 
     // Decoder setup
-    let decoder: Box<dyn Read> = if path
-        .extension()
-        .is_some_and(|e| e.eq_ignore_ascii_case("zst"))
-    {
+    let extension = path.extension();
+    let decoder: Box<dyn Read> = if extension.is_some_and(|e| e.eq_ignore_ascii_case("zst")) {
         Box::new(
             ruzstd::decoding::StreamingDecoder::new(reader)
                 .context("Failed to init zstd decoder")?,
         )
-    } else if path
-        .extension()
-        .is_some_and(|e| e.eq_ignore_ascii_case("gz"))
-    {
+    } else if extension.is_some_and(|e| e.eq_ignore_ascii_case("gz")) {
         Box::new(flate2::read::GzDecoder::new(reader))
-    } else if path
-        .extension()
-        .is_some_and(|e| e.eq_ignore_ascii_case("xz"))
-    {
+    } else if extension.is_some_and(|e| e.eq_ignore_ascii_case("xz")) {
         // xz has no streaming decoder here, so decompress through the shared
         // in-memory budget (crate::runtimes::common::BudgetedSink): a crafted
         // .tar.xz aborts at the cap instead of exhausting memory while we
@@ -153,15 +145,15 @@ fn parse_pkginfo_manual(content: &str) -> Result<LocalPackageInfo> {
 
         if let Some((key, value)) = line.split_once('=') {
             let key = key.trim();
-            let value = value.trim().to_string();
+            let value = value.trim();
 
             match key {
-                "pkgname" => name = value,
-                "pkgver" => version = value,
-                "pkgdesc" => description = Some(value),
-                "url" => url = Some(value),
-                "license" => licenses.push(value),
-                "packager" => packager = Some(value),
+                "pkgname" => name = value.to_string(),
+                "pkgver" => version = value.to_string(),
+                "pkgdesc" => description = Some(value.to_string()),
+                "url" => url = Some(value.to_string()),
+                "license" => licenses.push(value.to_string()),
+                "packager" => packager = Some(value.to_string()),
                 _ => {}
             }
         }

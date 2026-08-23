@@ -17,7 +17,6 @@ use crate::package_managers::apt_remove_orphans;
 use crate::package_managers::debian_db::{clean_package_cache, list_orphans_fast};
 
 /// Clean up orphans and caches
-#[expect(clippy::fn_params_excessive_bools)] // Parameters map directly to CLI boolean flags (orphans, cache, aur, all, dry_run)
 #[allow(
     clippy::needless_return,
     reason = "additive backend feature branches return before compiled fallbacks"
@@ -296,7 +295,6 @@ pub async fn clean(orphans: bool, cache: bool, aur: bool, all: bool, dry_run: bo
 
 /// Handle clean operations for debian-pure backend
 #[cfg(feature = "debian-pure")]
-#[expect(clippy::fn_params_excessive_bools)]
 async fn handle_debian_pure_clean(
     orphans: bool,
     cache: bool,

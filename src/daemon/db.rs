@@ -40,21 +40,17 @@ impl PersistentCache {
             Err(e) => return Err(anyhow::Error::new(e).context("failed to open status table")),
         };
 
-        match table.get("current")? {
-            Some(guard) => {
-                // Zero-copy access with validation
-                let bytes = guard.value();
-                let archived =
-                    rkyv::access::<rkyv::Archived<StatusResult>, rkyv::rancor::Error>(bytes)
-                        .context("cached status failed validation")?;
+        let Some(guard) = table.get("current")? else {
+            return Ok(None);
+        };
 
-                let status: StatusResult =
-                    rkyv::deserialize::<StatusResult, rkyv::rancor::Error>(archived)
-                        .context("failed to deserialize cached status")?;
-                Ok(Some(status))
-            }
-            None => Ok(None),
-        }
+        // Zero-copy access with validation
+        let archived =
+            rkyv::access::<rkyv::Archived<StatusResult>, rkyv::rancor::Error>(guard.value())
+                .context("cached status failed validation")?;
+        let status = rkyv::deserialize::<StatusResult, rkyv::rancor::Error>(archived)
+            .context("failed to deserialize cached status")?;
+        Ok(Some(status))
     }
 
     pub(crate) fn set_status(&self, status: &StatusResult) -> Result<()> {

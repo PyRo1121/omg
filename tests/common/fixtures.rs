@@ -1,153 +1,40 @@
-//! Test fixtures for OMG testing
-//!
-//! Pre-defined test data and scenarios for consistent testing.
+//! Shared integration-test fixtures.
 
-// Re-export library fixtures
 pub use omg_lib::core::testing::fixtures::*;
 
 use crate::common::mocks::MockPackage;
 
-/// Extension trait to convert `PackageFixture` to `MockPackage` for testing
+/// Convert a package fixture into the mock representation used by logic tests.
 pub trait PackageFixtureExt {
-    /// Convert a `PackageFixture` into a `MockPackage` for use in tests
-    fn to_mock_package(&self) -> MockPackage;
+    fn to_mock_package(self) -> MockPackage;
 }
 
 impl PackageFixtureExt for PackageFixture {
-    fn to_mock_package(&self) -> MockPackage {
-        // Build the Package first to get defaults applied
-        let pkg = self.clone().build();
+    fn to_mock_package(self) -> MockPackage {
+        let package = self.build();
 
         #[cfg(feature = "arch")]
-        let version = pkg.version.to_string();
+        let version = package.version.to_string();
         #[cfg(not(feature = "arch"))]
-        let version = pkg.version.clone();
+        let version = package.version;
 
         MockPackage {
-            name: pkg.name,
+            name: package.name,
             version,
-            description: pkg.description,
-            repo: "test".to_owned(),
-            dependencies: vec![],
-            installed_size: 100,
+            description: package.description,
         }
     }
 }
 
-/// Common package names for testing across distros
 pub mod packages {
-    /// Packages that exist on all supported distros
-    pub const UNIVERSAL: &[&str] = &[
-        "git", "curl", "wget", "vim", "nano", "make", "gcc", "python3",
-    ];
-
-    /// Arch-specific packages
-    pub const ARCH_ONLY: &[&str] = &[
-        "pacman",
-        "yay",
-        "paru",
-        "base-devel",
-        "linux",
-        "linux-headers",
-    ];
-
-    /// Debian/Ubuntu-specific packages
-    pub const DEBIAN_ONLY: &[&str] = &["apt", "dpkg", "build-essential", "linux-image-generic"];
-
-    /// Packages that definitely don't exist
+    /// Package names guaranteed not to exist in supported repositories.
     pub const NONEXISTENT: &[&str] = &[
         "this-package-does-not-exist-12345",
         "fake-package-xyz-99999",
         "nonexistent-lib-abc",
     ];
-
-    /// Popular packages for search testing
-    pub const POPULAR: &[&str] = &["firefox", "chromium", "vlc", "gimp", "libreoffice"];
-
-    /// Development tools
-    pub const DEV_TOOLS: &[&str] = &["nodejs", "python", "ruby", "golang", "rustup"];
 }
 
-/// Runtime version fixtures
-pub mod runtimes {
-    pub const NODE_VERSIONS: &[&str] = &["18.0.0", "20.10.0", "21.0.0", "lts", "latest"];
-    pub const PYTHON_VERSIONS: &[&str] = &["3.10.0", "3.11.0", "3.12.0"];
-    pub const GO_VERSIONS: &[&str] = &["1.20", "1.21", "1.22"];
-    pub const RUST_CHANNELS: &[&str] = &["stable", "beta", "nightly"];
-    pub const RUBY_VERSIONS: &[&str] = &["3.1.0", "3.2.0", "3.3.0"];
-    pub const JAVA_VERSIONS: &[&str] = &["17", "21", "22"];
-    pub const BUN_VERSIONS: &[&str] = &["1.0.0", "1.1.0"];
-}
-
-/// Version file content fixtures
-pub mod version_files {
-    pub const NVMRC_SIMPLE: &str = "20.10.0";
-    pub const NVMRC_LTS: &str = "lts/*";
-    pub const NVMRC_WITH_V: &str = "v20.10.0";
-    pub const NVMRC_WITH_COMMENT: &str = "# Node version\n20.10.0";
-    pub const NVMRC_WITH_WHITESPACE: &str = "  20.10.0  \n";
-
-    pub const PYTHON_VERSION_SIMPLE: &str = "3.11.0";
-    pub const PYTHON_VERSION_MAJOR_MINOR: &str = "3.11";
-
-    pub const TOOL_VERSIONS_MULTI: &str = r"nodejs 20.10.0
-python 3.11.0
-ruby 3.2.0
-golang 1.21";
-
-    pub const MISE_TOML_SIMPLE: &str = r#"[tools]
-node = "20.10.0"
-python = "3.11.0"
-"#;
-
-    pub const MISE_TOML_COMPLEX: &str = r#"[tools]
-node = "20.10.0"
-python = "3.11.0"
-ruby = "3.2.0"
-go = "1.21"
-
-[env]
-NODE_ENV = "development"
-
-[tasks.build]
-run = "npm run build"
-"#;
-
-    pub const RUST_TOOLCHAIN_SIMPLE: &str = "[toolchain]\nchannel = \"stable\"";
-    pub const RUST_TOOLCHAIN_NIGHTLY: &str = "[toolchain]\nchannel = \"nightly\"";
-    pub const RUST_TOOLCHAIN_SPECIFIC: &str = r#"[toolchain]
-channel = "1.75.0"
-components = ["rustfmt", "clippy"]
-"#;
-
-    pub const GO_MOD_SIMPLE: &str = "module test\n\ngo 1.21";
-    pub const GO_MOD_WITH_DEPS: &str = r"module test
-
-go 1.21
-
-require (
-    github.com/gin-gonic/gin v1.9.0
-)
-";
-
-    pub const PACKAGE_JSON_WITH_ENGINES: &str = r#"{
-  "name": "test-project",
-  "version": "1.0.0",
-  "engines": {
-    "node": ">=18.0.0"
-  }
-}"#;
-
-    pub const PACKAGE_JSON_WITH_VOLTA: &str = r#"{
-  "name": "test-project",
-  "version": "1.0.0",
-  "volta": {
-    "node": "20.10.0"
-  }
-}"#;
-}
-
-/// Security policy fixtures
 pub mod policies {
     pub const STRICT_POLICY: &str = r#"
 allow_aur = false
@@ -155,13 +42,6 @@ require_pgp = true
 minimum_grade = "Verified"
 banned_packages = ["telnet", "ftp"]
 allowed_licenses = ["MIT", "Apache-2.0", "BSD-3-Clause", "GPL-3.0"]
-"#;
-
-    pub const PERMISSIVE_POLICY: &str = r#"
-allow_aur = true
-require_pgp = false
-minimum_grade = "Unverified"
-banned_packages = []
 "#;
 
     pub const ENTERPRISE_POLICY: &str = r#"
@@ -176,7 +56,6 @@ max_cve_age_days = 30
 "#;
 }
 
-/// Lock file fixtures
 pub mod locks {
     pub const VALID_LOCK: &str = r#"[environment]
 hash = "abc123def456"
@@ -190,78 +69,10 @@ python = "3.11.0"
 git = "2.43.0"
 curl = "8.5.0"
 "#;
-
-    pub const INVALID_LOCK_TOML: &str = "this is not valid toml {{{{";
-
-    pub const WRONG_SCHEMA_LOCK: &str = r#"[wrong_section]
-key = "value"
-"#;
-
-    pub const EMPTY_LOCK: &str = r#"[environment]
-hash = ""
-captured_at = ""
-"#;
 }
 
-/// Team configuration fixtures
-pub mod team {
-    pub const TEAM_CONFIG: &str = r#"[team]
-id = "acme/frontend"
-name = "ACME Frontend Team"
-remote = "https://github.com/acme/frontend-env"
-
-[members]
-alice = { role = "admin", email = "alice@acme.com" }
-bob = { role = "developer", email = "bob@acme.com" }
-"#;
-
-    pub const GOLDEN_PATH_REACT: &str = r#"[template]
-name = "react-app"
-description = "React application template"
-
-[runtimes]
-node = "20.10.0"
-
-[packages]
-required = ["git", "curl"]
-
-[npm_packages]
-global = ["typescript", "eslint", "prettier"]
-"#;
-}
-
-/// CI/CD fixtures
-pub mod ci {
-    pub const GITHUB_ACTIONS: &str = r"name: CI
-
-on:
-  push:
-    branches: [main]
-
-jobs:
-  build:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - name: Install OMG
-        run: curl -fsSL https://omg.dev/install.sh | sh
-";
-
-    pub const GITLAB_CI: &str = r"stages:
-  - build
-  - test
-
-build:
-  stage: build
-  script:
-    - omg env sync omg.lock
-    - omg run build
-";
-}
-
-/// Input validation test cases
 pub mod validation {
-    /// Potentially dangerous inputs for security testing
+    /// Potentially dangerous inputs for security testing.
     pub const INJECTION_ATTEMPTS: &[&str] = &[
         "; rm -rf /",
         "$(cat /etc/passwd)",
@@ -274,7 +85,7 @@ pub mod validation {
         "/etc/passwd%00.txt",
     ];
 
-    /// Unicode edge cases (excluding null bytes which cause Command errors)
+    /// Unicode edge cases (excluding null bytes, which `Command` rejects).
     pub const UNICODE_INPUTS: &[&str] = &[
         "unicode-package",
         "пакет",
@@ -284,82 +95,29 @@ pub mod validation {
         "Ñoño",
     ];
 
-    /// Long inputs for buffer testing
     pub fn very_long_input(len: usize) -> String {
         "a".repeat(len)
     }
 
-    /// Empty and whitespace inputs
     pub const EMPTY_INPUTS: &[&str] = &["", " ", "\t", "\n", "   \t\n   "];
 }
 
-/// Error test helpers
 pub mod error_conditions {
     use crate::common::TestProject;
-    use std::fs::File;
-    use std::io::Write;
+    use std::fs;
 
-    /// Create a project with a corrupted database file
+    /// Create a project with a corrupted database file.
     pub fn corrupted_database() -> TestProject {
         let project = TestProject::new();
         let db_path = project.data_dir.path().join("corrupted.db");
-        let mut f = File::create(&db_path).unwrap();
-        writeln!(f, "corrupted database data {{{{").unwrap();
+        fs::write(db_path, "corrupted database data {{{{\n").unwrap();
         project
     }
 
-    /// Create a project with an invalid lock file
+    /// Create a project with an invalid lock file.
     pub fn invalid_lock_file() -> TestProject {
         let project = TestProject::new();
         project.create_file("omg.lock", "invalid toml {{{{");
         project
-    }
-
-    /// Create a project with very deep directory nesting
-    pub fn deep_nested_dirs(depth: usize) -> TestProject {
-        let project = TestProject::new();
-        let deep_path = (0..depth)
-            .map(|i| format!("d{i}"))
-            .collect::<Vec<_>>()
-            .join("/");
-        project.create_dir(&deep_path);
-        project
-    }
-}
-
-/// Test scenarios combining multiple fixtures
-pub mod scenarios {
-    /// Full-stack Node.js project
-    pub struct NodeProject;
-    impl NodeProject {
-        pub const NVMRC: &'static str = "20.10.0";
-        pub const PACKAGE_JSON: &'static str = r#"{
-  "name": "test-node-project",
-  "version": "1.0.0",
-  "engines": { "node": ">=18.0.0" },
-  "scripts": { "build": "echo build", "test": "echo test" }
-}"#;
-    }
-
-    /// Full-stack Python project
-    pub struct PythonProject;
-    impl PythonProject {
-        pub const PYTHON_VERSION: &'static str = "3.11.0";
-        pub const REQUIREMENTS: &'static str = "requests==2.31.0\npytest==7.4.0";
-        pub const PYPROJECT: &'static str = r#"[project]
-name = "test"
-version = "0.1.0"
-requires-python = ">=3.11"
-"#;
-    }
-
-    /// Monorepo with multiple runtimes
-    pub struct Monorepo;
-    impl Monorepo {
-        pub const TOOL_VERSIONS: &'static str = r"nodejs 20.10.0
-python 3.11.0
-ruby 3.2.0
-golang 1.21
-";
     }
 }

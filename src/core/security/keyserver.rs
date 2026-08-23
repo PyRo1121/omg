@@ -14,13 +14,7 @@ use thiserror::Error;
 
 use crate::core::http::shared_client;
 
-/// Private bridge for upstream errors that Sequoia reports as
-/// `anyhow::Error`. Keeps public [`KeyserverError`] variants fully typed
-/// while preserving the source error's `Display` and `source()` chain.
-#[derive(Debug, Error)]
-#[error(transparent)]
-#[doc(hidden)]
-pub struct SequoiaSource(#[from] anyhow::Error);
+use super::pgp::SequoiaSource;
 
 const DEFAULT_KEYSERVER: &str = "hkps://keyserver.ubuntu.com";
 const KEYSERVER_TIMEOUT: Duration = Duration::from_secs(10);

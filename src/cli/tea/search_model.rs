@@ -178,7 +178,7 @@ impl Model for SearchModel {
         if query.is_empty() {
             return Cmd::none();
         }
-        Cmd::Exec(Box::new(move || SearchMsg::Search(query)))
+        Cmd::exec(move || SearchMsg::Search(query))
     }
 
     fn update(&mut self, msg: Self::Msg) -> Cmd<Self::Msg> {
@@ -189,16 +189,16 @@ impl Model for SearchModel {
 
                 if query.is_empty() {
                     self.state = SearchState::Idle;
-                    return Cmd::Info("Enter a search query".to_string());
+                    return Cmd::info("Enter a search query");
                 }
 
                 let q = query;
-                Cmd::Exec(Box::new(move || {
+                Cmd::exec(move || {
                     crate::cli::tea::async_bridge::run_blocking_future(async move {
                         fetch_search_results(&q).await
                     })
                     .unwrap_or_else(|err| SearchMsg::Error(err.to_string()))
-                }))
+                })
             }
             SearchMsg::ResultsFound(results) => {
                 self.official_count = results
@@ -218,26 +218,27 @@ impl Model for SearchModel {
 
                 if self.state == SearchState::NoResults {
                     Cmd::batch([
-                        Cmd::PrintLn(String::new()),
-                        Cmd::Warning(format!("No packages found for '{}'", self.query)),
-                        Cmd::PrintLn(String::new()),
+                        Cmd::println(""),
+                        Cmd::warning(format!("No packages found for '{}'", self.query)),
+                        Cmd::println(""),
                     ])
                 } else {
-                    Cmd::PrintLn(String::new())
+                    Cmd::println("")
                 }
             }
             SearchMsg::NoResults => {
                 self.state = SearchState::NoResults;
                 Cmd::batch([
-                    Cmd::PrintLn(String::new()),
-                    Cmd::Warning(format!("No packages found for '{}'", self.query)),
-                    Cmd::PrintLn(String::new()),
+                    Cmd::println(""),
+                    Cmd::warning(format!("No packages found for '{}'", self.query)),
+                    Cmd::println(""),
                 ])
             }
             SearchMsg::Error(err) => {
                 self.state = SearchState::Failed;
-                self.error = Some(err.clone());
-                Cmd::Error(format!("Search failed: {err}"))
+                let message = format!("Search failed: {err}");
+                self.error = Some(err);
+                Cmd::error(message)
             }
         }
     }
@@ -259,35 +260,41 @@ impl Model for SearchModel {
                     ),
                 ));
 
-                // Group results by source
-                let official: Vec<_> = self
+                let has_official = self
                     .results
                     .iter()
-                    .filter(|r| r.source == PackageSource::Official)
-                    .collect();
-
-                let aur: Vec<_> = self
+                    .any(|result| result.source == PackageSource::Official);
+                let has_aur = self
                     .results
                     .iter()
-                    .filter(|r| r.source == PackageSource::Aur)
-                    .collect();
+                    .any(|result| result.source == PackageSource::Aur);
 
                 // Display official packages
-                if !official.is_empty() {
+                if has_official {
                     let _ = writeln!(output, "{}", "Official Repositories".cyan().bold());
-                    for (i, result) in official.iter().enumerate() {
+                    for (i, result) in self
+                        .results
+                        .iter()
+                        .filter(|result| result.source == PackageSource::Official)
+                        .enumerate()
+                    {
                         output.push_str(&Self::render_result(result, i));
                         output.push('\n');
                     }
-                    if !aur.is_empty() {
+                    if has_aur {
                         output.push('\n');
                     }
                 }
 
                 // Display AUR packages
-                if !aur.is_empty() {
+                if has_aur {
                     let _ = writeln!(output, "{}", "AUR (Arch User Repository)".cyan().bold());
-                    for (i, result) in aur.iter().enumerate() {
+                    for (i, result) in self
+                        .results
+                        .iter()
+                        .filter(|result| result.source == PackageSource::Aur)
+                        .enumerate()
+                    {
                         output.push_str(&Self::render_result(result, i));
                         output.push('\n');
                     }
@@ -428,9 +435,9 @@ impl From<SyncPackage> for SearchResult {
 )]
 impl From<Package> for SearchResult {
     fn from(pkg: Package) -> Self {
-        let source = match pkg.source {
-            crate::core::PackageSource::Official => PackageSource::Official,
-            crate::core::PackageSource::Aur => PackageSource::Aur,
+        let (source, repo) = match pkg.source {
+            crate::core::PackageSource::Official => (PackageSource::Official, "official"),
+            crate::core::PackageSource::Aur => (PackageSource::Aur, "aur"),
         };
 
         Self {
@@ -438,7 +445,7 @@ impl From<Package> for SearchResult {
             version: pkg.version.to_string(),
             description: pkg.description,
             source,
-            repo: pkg.source.to_string().to_lowercase(),
+            repo: repo.to_string(),
             installed: pkg.installed,
             #[cfg(feature = "arch")]
             votes: None,

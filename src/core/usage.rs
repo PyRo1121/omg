@@ -254,13 +254,12 @@ impl UsageStats {
         operation: DailyOperation,
         today: jiff::civil::Date,
     ) {
-        self.rollover_for(today);
+        self.record_command_on(command, time_saved_ms, today);
         match operation {
             DailyOperation::Install => self.installs_today += 1,
             DailyOperation::Search => self.searches_today += 1,
             DailyOperation::RuntimeSwitch => self.runtimes_today += 1,
         }
-        self.record_command_on(command, time_saved_ms, today);
     }
 
     fn record_command_on(&mut self, command: &str, time_saved_ms: u64, today: jiff::civil::Date) {
@@ -314,60 +313,26 @@ impl UsageStats {
         }
     }
 
-    /// Check and unlock achievements
-    fn check_achievements(&mut self) {
-        let mut new_achievements = Vec::new();
-
-        // Command milestones
-        if self.total_commands >= 1 && !self.achievements.contains(&Achievement::FirstStep) {
-            new_achievements.push(Achievement::FirstStep);
-        }
-        if self.total_commands >= 100 && !self.achievements.contains(&Achievement::Centurion) {
-            new_achievements.push(Achievement::Centurion);
-        }
-        if self.total_commands >= 1000 && !self.achievements.contains(&Achievement::PowerUser) {
-            new_achievements.push(Achievement::PowerUser);
-        }
-        if self.total_commands >= 10000 && !self.achievements.contains(&Achievement::Legend) {
-            new_achievements.push(Achievement::Legend);
-        }
-
-        // Time saved milestones
-        if self.time_saved_ms >= 60_000 && !self.achievements.contains(&Achievement::MinuteSaver) {
-            new_achievements.push(Achievement::MinuteSaver);
-        }
-        if self.time_saved_ms >= 3_600_000 && !self.achievements.contains(&Achievement::HourSaver) {
-            new_achievements.push(Achievement::HourSaver);
-        }
-        if self.time_saved_ms >= 86_400_000 && !self.achievements.contains(&Achievement::DaySaver) {
-            new_achievements.push(Achievement::DaySaver);
-        }
-
-        // Streak milestones
-        if self.current_streak >= 7 && !self.achievements.contains(&Achievement::WeekStreak) {
-            new_achievements.push(Achievement::WeekStreak);
-        }
-        if self.current_streak >= 30 && !self.achievements.contains(&Achievement::MonthStreak) {
-            new_achievements.push(Achievement::MonthStreak);
-        }
-
-        // Security milestones
-        if self.sbom_generated >= 1 && !self.achievements.contains(&Achievement::SecurityFirst) {
-            new_achievements.push(Achievement::SecurityFirst);
-        }
-        if self.vulnerabilities_found >= 1 && !self.achievements.contains(&Achievement::BugHunter) {
-            new_achievements.push(Achievement::BugHunter);
-        }
-
-        // Polyglot (7 runtimes)
-        if self.runtimes_used.len() >= 7 && !self.achievements.contains(&Achievement::Polyglot) {
-            new_achievements.push(Achievement::Polyglot);
-        }
-
-        // Add new achievements
-        for achievement in new_achievements {
+    fn unlock(&mut self, achievement: Achievement, earned: bool) {
+        if earned && !self.achievements.contains(&achievement) {
             self.achievements.push(achievement);
         }
+    }
+
+    /// Check and unlock achievements.
+    fn check_achievements(&mut self) {
+        self.unlock(Achievement::FirstStep, self.total_commands >= 1);
+        self.unlock(Achievement::Centurion, self.total_commands >= 100);
+        self.unlock(Achievement::PowerUser, self.total_commands >= 1_000);
+        self.unlock(Achievement::Legend, self.total_commands >= 10_000);
+        self.unlock(Achievement::MinuteSaver, self.time_saved_ms >= 60_000);
+        self.unlock(Achievement::HourSaver, self.time_saved_ms >= 3_600_000);
+        self.unlock(Achievement::DaySaver, self.time_saved_ms >= 86_400_000);
+        self.unlock(Achievement::WeekStreak, self.current_streak >= 7);
+        self.unlock(Achievement::MonthStreak, self.current_streak >= 30);
+        self.unlock(Achievement::SecurityFirst, self.sbom_generated >= 1);
+        self.unlock(Achievement::BugHunter, self.vulnerabilities_found >= 1);
+        self.unlock(Achievement::Polyglot, self.runtimes_used.len() >= 7);
     }
 
     /// Record runtime usage (for Polyglot achievement)
@@ -378,18 +343,6 @@ impl UsageStats {
             self.check_achievements();
             self.save_best_effort();
         }
-    }
-
-    /// Record SBOM generation
-    pub fn record_sbom(&mut self) {
-        self.sbom_generated += 1;
-        self.save_best_effort();
-    }
-
-    /// Record vulnerabilities found
-    pub fn record_vulnerabilities(&mut self, count: u64) {
-        self.vulnerabilities_found += count;
-        self.save_best_effort();
     }
 
     /// Get time saved as human-readable string
@@ -448,7 +401,7 @@ impl UsageStats {
                 let mut hasher = Sha256::new();
                 hasher.update(hostname_raw.trim().as_bytes());
                 let result = hasher.finalize();
-                Some(hex::encode(result)[..16].to_string()) // First 16 chars of hash
+                Some(hex::encode(&result[..8])) // First 16 chars of hash
             } else {
                 None
             };
@@ -675,11 +628,6 @@ pub fn track_remove_result(success: bool) {
         track("remove", time_saved::REMOVE_MS);
     }
     maybe_sync_background();
-}
-
-/// Track feature usage (daemon, parallel, sbom, fleet, aur)
-pub fn track_feature_usage(feature: &str, enabled: bool) {
-    crate::core::telemetry::track_feature_event(feature, enabled);
 }
 
 /// Load the stored license only when its token is valid, mirroring the

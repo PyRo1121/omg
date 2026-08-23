@@ -48,24 +48,15 @@ impl GoVersion {
 
 pub(crate) struct GoManager {
     versions_dir: PathBuf,
-    current_link: PathBuf,
     client: &'static reqwest::Client,
 }
 
 impl GoManager {
     pub fn new() -> Self {
-        let versions_dir = super::DATA_DIR.join("versions/go");
-
         Self {
-            current_link: versions_dir.join("current"),
-            versions_dir,
+            versions_dir: super::DATA_DIR.join("versions/go"),
             client: download_client(),
         }
-    }
-
-    #[must_use]
-    pub fn bin_dir(&self) -> PathBuf {
-        self.current_link.join("bin")
     }
 
     /// List available Go versions from go.dev
@@ -107,7 +98,7 @@ impl GoManager {
 
         println!("{} Downloading {filename}...", "→".blue());
         let download_path = self.versions_dir.join(&filename);
-        download_with_progress(self.client, &url, &download_path, Some(&checksum)).await?;
+        download_with_progress(self.client, &url, &download_path, &checksum).await?;
 
         println!("{} Extracting (pure Rust)...", "→".blue());
         let staging = begin_staged_install(&self.versions_dir)?;
@@ -141,7 +132,8 @@ impl GoManager {
         let version_dir = self.versions_dir.join(&version);
         activate_version(&self.versions_dir, &version, Path::new("bin/go"))?;
 
-        Self::print_version_info(&version, &version_dir, &self.bin_dir());
+        let bin_dir = self.versions_dir.join("current/bin");
+        Self::print_version_info(&version, &version_dir, &bin_dir);
         Ok(())
     }
 
@@ -153,7 +145,7 @@ impl GoManager {
 }
 
 // Generate common runtime manager methods (list_installed, current_version)
-crate::runtimes::common::impl_runtime_common!(GoManager, "Go");
+crate::runtimes::common::impl_runtime_common!(GoManager);
 
 fn go_platform() -> Result<String> {
     let os = match std::env::consts::OS {
@@ -167,12 +159,6 @@ fn go_platform() -> Result<String> {
         arch => anyhow::bail!("Unsupported architecture for Go: {arch}"),
     };
     Ok(format!("{os}-{arch}"))
-}
-
-impl Default for GoManager {
-    fn default() -> Self {
-        Self::new()
-    }
 }
 
 #[cfg(test)]

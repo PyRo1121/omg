@@ -21,7 +21,7 @@ use crate::package_managers::aur_index::build_index;
 
 const AUR_META_URL: &str = "https://aur.archlinux.org/packages-meta-ext-v1.json.gz";
 
-#[derive(Debug, Deserialize, Serialize)]
+#[derive(Debug, Default, Deserialize, Serialize)]
 struct AurMetaCache {
     etag: Option<String>,
     last_modified: Option<String>,
@@ -59,12 +59,9 @@ pub async fn sync_aur_metadata(
         return Ok(());
     }
 
-    let build_dir = paths::cache_dir().join("aur");
-    let cache_path = build_dir.join("_meta").join("packages-meta-ext-v1.json.gz");
-    let meta_path = build_dir
-        .join("_meta")
-        .join("packages-meta-ext-v1.json.gz.meta");
-    let index_path = build_dir.join("_meta").join("packages-meta-ext-v1.rkyv");
+    let cache_path = metadata_path();
+    let meta_path = cache_path.with_extension("gz.meta");
+    let index_path = index_path();
 
     // Check TTL if not forced
     if !force && cache_path.exists() {
@@ -81,12 +78,7 @@ pub async fn sync_aur_metadata(
             // Ensure index exists even if cache is fresh
             if !index_path.exists() {
                 info!("AUR cache is fresh but index is missing. Rebuilding index...");
-                let cache_path_clone = cache_path.clone();
-                let index_path_clone = index_path.clone();
-                tokio::task::spawn_blocking(move || {
-                    build_index(&cache_path_clone, &index_path_clone)
-                })
-                .await??;
+                rebuild_index(&cache_path, &index_path).await?;
             }
             return Ok(());
         }
@@ -97,10 +89,7 @@ pub async fn sync_aur_metadata(
         .await
         .ok()
         .and_then(|bytes| serde_json::from_slice::<AurMetaCache>(&bytes).ok())
-        .unwrap_or(AurMetaCache {
-            etag: None,
-            last_modified: None,
-        });
+        .unwrap_or_default();
 
     if let Some(parent) = cache_path.parent() {
         tokio_fs::create_dir_all(parent).await?;
@@ -143,10 +132,7 @@ pub async fn sync_aur_metadata(
         // Ensure index exists
         if !index_path.exists() && cache_path.exists() {
             info!("Rebuilding missing AUR index...");
-            let cache_path_clone = cache_path.clone();
-            let index_path_clone = index_path.clone();
-            tokio::task::spawn_blocking(move || build_index(&cache_path_clone, &index_path_clone))
-                .await??;
+            rebuild_index(&cache_path, &index_path).await?;
         }
 
         return Ok(());
@@ -200,11 +186,7 @@ pub async fn sync_aur_metadata(
 
     // Rebuild index
     info!("Building AUR binary index...");
-    let cache_path_clone = cache_path.clone();
-    let index_path_clone = index_path.clone();
-
-    tokio::task::spawn_blocking(move || build_index(&cache_path_clone, &index_path_clone))
-        .await??;
+    rebuild_index(&cache_path, &index_path).await?;
 
     info!("AUR metadata synced and indexed");
     Ok(())
@@ -216,8 +198,7 @@ pub fn read_metadata_archive(path: &Path) -> Result<Vec<AurJsonPackage>> {
     let file = File::open(path)?;
     let reader = BufReader::new(file);
     let decoder = GzDecoder::new(reader);
-    let results: Vec<AurJsonPackage> = serde_json::from_reader(decoder)?;
-    Ok(results)
+    serde_json::from_reader(decoder).map_err(Into::into)
 }
 
 pub fn metadata_path() -> PathBuf {
@@ -232,6 +213,12 @@ pub fn index_path() -> PathBuf {
         .join("aur")
         .join("_meta")
         .join("packages-meta-ext-v1.rkyv")
+}
+
+async fn rebuild_index(archive_path: &Path, index_path: &Path) -> Result<()> {
+    let archive_path = archive_path.to_owned();
+    let index_path = index_path.to_owned();
+    tokio::task::spawn_blocking(move || build_index(&archive_path, &index_path)).await?
 }
 
 fn persist_file_atomically(dest: &Path, data: &[u8]) -> Result<()> {

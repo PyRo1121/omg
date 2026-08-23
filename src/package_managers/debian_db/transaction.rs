@@ -241,8 +241,6 @@ impl Transaction {
     /// OPTIMIZATION: Uses batched parallel unpacking with rayon for CPU-bound decompression.
     /// Downloads complete packages are collected and unpacked in parallel batches.
     async fn download_and_unpack_pipelined(&mut self) -> Result<()> {
-        use std::sync::Arc;
-        use std::sync::atomic::{AtomicUsize, Ordering};
         use tokio::sync::mpsc;
 
         // OPTIMIZATION: Memory-conscious HTTP client configuration
@@ -324,9 +322,6 @@ impl Transaction {
         let (tx, mut rx) = mpsc::channel::<(PathBuf, String)>(MAX_CONCURRENT_UNPACKS);
         let content_store = self.content_store.clone();
 
-        // Track completed downloads for parallel unpacking
-        let downloads_complete = Arc::new(AtomicUsize::new(0));
-
         // Pre-create the download task futures with their own sender clones
         let download_futures: Vec<_> = packages_to_download
             .into_iter()
@@ -335,7 +330,6 @@ impl Transaction {
                 let temp_dir = temp_dir.clone();
                 let content_store = content_store.clone();
                 let tx = tx.clone();
-                let downloads_complete = Arc::clone(&downloads_complete);
                 let pb = multi.add(ProgressBar::new(0));
                 pb.set_style(
                     ProgressStyle::default_bar()
@@ -365,7 +359,6 @@ impl Transaction {
                         Ok(path) => {
                             pb.set_message("✓ dl".green().to_string());
                             pb.finish();
-                            downloads_complete.fetch_add(1, Ordering::Relaxed);
 
                             // Fail loudly if the unpack worker is gone; a silent
                             // send failure would count the package as downloaded
@@ -395,11 +388,9 @@ impl Transaction {
         // Spawn unpack worker thread
         let temp_dir_unpack = temp_dir.clone();
         let unpack_handle = tokio::task::spawn_blocking(move || {
-            use std::sync::Mutex;
-
             let rt = tokio::runtime::Handle::current();
-            let installed_files = Mutex::new(Vec::new());
-            let unpack_errors = Mutex::new(Vec::new());
+            let mut installed_files = Vec::new();
+            let mut unpack_errors = Vec::new();
 
             // OPTIMIZATION: Process packages immediately instead of batching
             // This reduces memory pressure from holding multiple .deb files in memory
@@ -407,14 +398,12 @@ impl Transaction {
                 tracing::debug!("Unpacking {} immediately", name);
                 match unpack_deb_standalone(&deb_path, &name, &temp_dir_unpack) {
                     Ok(files) => {
-                        let mut guard = installed_files.lock().expect("lock poisoned");
-                        guard.extend(files);
+                        installed_files.extend(files);
                         tracing::debug!("Unpacked {} successfully", name);
                     }
                     Err(e) => {
                         tracing::error!("Failed to unpack {}: {}", name, e);
-                        let mut guard = unpack_errors.lock().expect("lock poisoned");
-                        guard.push((name.clone(), e));
+                        unpack_errors.push((name.clone(), e));
                     }
                 }
 
@@ -422,23 +411,11 @@ impl Transaction {
                 // This reduces disk I/O and frees up temp space quickly
                 if let Err(e) = remove_file_if_present(&deb_path) {
                     tracing::error!("Failed to delete unpacked {}: {}", deb_path.display(), e);
-                    let mut guard = unpack_errors
-                        .lock()
-                        .unwrap_or_else(std::sync::PoisonError::into_inner);
-                    guard.push((name.clone(), e));
+                    unpack_errors.push((name.clone(), e));
                 }
             }
 
-            // into_inner on a poisoned mutex still carries the data;
-            // into_inner's Err variant must not be swapped for a default,
-            // or installed-file tracking would be lost and rollback broken.
-            let files = installed_files
-                .into_inner()
-                .unwrap_or_else(std::sync::PoisonError::into_inner);
-            let errors = unpack_errors
-                .into_inner()
-                .unwrap_or_else(std::sync::PoisonError::into_inner);
-            (files, errors)
+            (installed_files, unpack_errors)
         });
 
         // Run downloads concurrently
@@ -776,7 +753,7 @@ fn remove_packages_sequentially(
 
         pb.set_message("prerm");
         pb.inc(1);
-        run_prerm_script(package_name).map_err(|error| {
+        run_removal_maintainer_script(package_name, "prerm").map_err(|error| {
             removal_step_failed(&pb, overall, package_name, "prerm script", error)
         })?;
 
@@ -788,7 +765,7 @@ fn remove_packages_sequentially(
 
         pb.set_message("postrm");
         pb.inc(1);
-        run_postrm_script(package_name).map_err(|error| {
+        run_removal_maintainer_script(package_name, "postrm").map_err(|error| {
             removal_step_failed(&pb, overall, package_name, "postrm script", error)
         })?;
 
@@ -1152,7 +1129,7 @@ fn tar_payload_reader_with_budget(data: &[u8], budget: u64) -> Result<Box<dyn Re
     }
 
     // Uncompressed tar
-    Ok(Box::new(std::io::Cursor::new(data.to_vec())))
+    Ok(Box::new(std::io::Cursor::new(data)))
 }
 
 /// Create any missing ancestor directories between `root` and `path`,
@@ -1359,29 +1336,18 @@ fn run_maintainer_script(script: &Path, package_name: &str, arg: &str) -> Result
 /// Prepare a status entry from a control file (for batched writing)
 fn prepare_status_entry(control_file: &Path) -> Result<String> {
     let control_content = fs::read_to_string(control_file)?;
-
-    // Parse control file and add Status field
-    let found_status = control_content
+    let has_status = control_content
         .lines()
         .any(|line| line.starts_with("Status:"));
-
     let mut result = String::new();
-    if found_status {
-        // Replace existing Status line
-        for line in control_content.lines() {
-            if line.starts_with("Status:") {
-                result.push_str("Status: install ok installed\n");
-            } else {
-                result.push_str(line);
-                result.push('\n');
-            }
-        }
-    } else {
-        // Insert Status field after Package field
-        for line in control_content.lines() {
+
+    for line in control_content.lines() {
+        if line.starts_with("Status:") {
+            result.push_str("Status: install ok installed\n");
+        } else {
             result.push_str(line);
             result.push('\n');
-            if line.starts_with("Package:") {
+            if !has_status && line.starts_with("Package:") {
                 result.push_str("Status: install ok installed\n");
             }
         }
@@ -1609,16 +1575,6 @@ fn existing_dpkg_info_file(package_name: &str, extension: &str) -> Option<PathBu
         .find(|path| path.exists())
 }
 
-/// Run prerm script for package removal
-fn run_prerm_script(package_name: &str) -> Result<()> {
-    run_removal_maintainer_script(package_name, "prerm")
-}
-
-/// Run postrm script for package removal
-fn run_postrm_script(package_name: &str) -> Result<()> {
-    run_removal_maintainer_script(package_name, "postrm")
-}
-
 fn run_removal_maintainer_script(package_name: &str, kind: &str) -> Result<()> {
     let Some(script) = existing_dpkg_info_file(package_name, kind) else {
         tracing::debug!("No {kind} script found for {package_name}");
@@ -1706,8 +1662,6 @@ fn is_conffile(package_name: &str, file_path: &Path) -> Result<bool> {
 
 /// Update /var/lib/dpkg/status to mark package as removed (config-files state)
 fn update_dpkg_status_for_removal(package_name: &str) -> Result<()> {
-    use tempfile::NamedTempFile;
-
     let status_path = Path::new("/var/lib/dpkg/status");
     if !status_path.exists() {
         anyhow::bail!("dpkg status file not found: {}", status_path.display());
@@ -1747,23 +1701,7 @@ fn update_dpkg_status_for_removal(package_name: &str) -> Result<()> {
         anyhow::bail!("Package {package_name} not found in dpkg status");
     }
 
-    // Atomic write using temp file + rename
-    let parent = status_path
-        .parent()
-        .unwrap_or_else(|| Path::new("/var/lib/dpkg"));
-    let mut temp_file =
-        NamedTempFile::new_in(parent).context("Failed to create temporary status file")?;
-
-    temp_file
-        .write_all(updated_content.as_bytes())
-        .context("Failed to write updated status")?;
-    temp_file
-        .as_file_mut()
-        .sync_all()
-        .context("Failed to sync updated dpkg status")?;
-    temp_file
-        .persist(status_path)
-        .map_err(|error| error.error)
+    write_atomic(status_path, updated_content.as_bytes())
         .context("Failed to persist updated status file")?;
 
     tracing::debug!(

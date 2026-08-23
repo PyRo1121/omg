@@ -18,19 +18,17 @@ use super::{RuntimeBackend, paths};
 ///
 /// Supported runtimes: node, python, go, ruby, java, bun, rust
 pub fn native_runtime_bin_path(runtime: &str, version: &str) -> Option<PathBuf> {
-    let data_dir = paths::data_dir();
+    let versions_dir = paths::data_dir().join("versions");
     let bin_path = match runtime {
-        "node" => data_dir.join("versions/node").join(version).join("bin"),
-        "python" => data_dir.join("versions/python").join(version).join("bin"),
-        "go" => data_dir.join("versions/go").join(version).join("bin"),
-        "ruby" => data_dir.join("versions/ruby").join(version).join("bin"),
-        "java" => data_dir.join("versions/java").join(version).join("bin"),
-        "bun" => data_dir.join("versions/bun").join(version),
+        "node" | "python" | "go" | "ruby" | "java" => {
+            versions_dir.join(runtime).join(version).join("bin")
+        }
+        "bun" => versions_dir.join("bun").join(version),
         "rust" => {
             let toolchain = crate::runtimes::rust::RustToolchainSpec::parse(version)
                 .ok()?
                 .name();
-            data_dir.join("versions/rust").join(toolchain).join("bin")
+            versions_dir.join("rust").join(toolchain).join("bin")
         }
         _ => return None,
     };

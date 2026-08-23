@@ -22,7 +22,6 @@ use std::time::SystemTime;
 use tracing::instrument;
 
 use crate::core::paths;
-use crate::package_managers::types::contains_ignore_case;
 
 /// TTL for cache eviction safety net (30 minutes)
 const CACHE_TTL_SECS: u64 = 30 * 60;
@@ -287,7 +286,7 @@ macro_rules! sync_pkg_from_desc {
     ($desc:expr, $repo:expr) => {
         SyncDbPackage {
             name: $desc.name.to_string(),
-            version: require_package_version(&$desc.version.to_string())?,
+            version: $desc.version.into(),
             desc: $desc.description.to_string(),
             filename: $desc.file_name.to_string(),
             csize: $desc.compressed_size,
@@ -487,7 +486,7 @@ fn parse_local_desc(path: &Path) -> Result<LocalDbPackage> {
     let mut pkg = if let Ok(desc) = alpm_db::desc::DbDescFileV1::from_str(&content) {
         LocalDbPackage {
             name: desc.name.to_string(),
-            version: require_package_version(&desc.version.to_string())?,
+            version: desc.version.into(),
             desc: desc.description.to_string(),
             install_date: desc.installdate.to_string(),
             licenses: desc.license.iter().map(ToString::to_string).collect(),
@@ -498,7 +497,7 @@ fn parse_local_desc(path: &Path) -> Result<LocalDbPackage> {
         // V2 (has XDATA support)
         LocalDbPackage {
             name: desc.name.to_string(),
-            version: require_package_version(&desc.version.to_string())?,
+            version: desc.version.into(),
             desc: desc.description.to_string(),
             install_date: desc.installdate.to_string(),
             licenses: desc.license.iter().map(ToString::to_string).collect(),
@@ -597,14 +596,9 @@ fn parse_local_desc_manual(content: &str) -> Result<LocalDbPackage> {
     })
 }
 
-/// Get the cache directory for OMG
-fn get_cache_dir() -> PathBuf {
-    paths::cache_dir()
-}
-
 /// Save cache to disk in binary format
 fn save_cache_to_disk<T: Serialize>(cache: &T, name: &str) -> Result<()> {
-    save_cache_to_disk_in(cache, &get_cache_dir(), name)
+    save_cache_to_disk_in(cache, &paths::cache_dir(), name)
 }
 
 fn save_cache_to_disk_in<T: Serialize>(cache: &T, cache_dir: &Path, name: &str) -> Result<()> {
@@ -638,7 +632,7 @@ fn persist_cache_best_effort<T: Serialize>(cache: &T, name: &str) {
 
 /// Load cache from disk
 fn load_cache_from_disk<T: for<'de> Deserialize<'de>>(name: &str) -> Result<T> {
-    load_cache_from_disk_in(&get_cache_dir(), name)
+    load_cache_from_disk_in(&paths::cache_dir(), name)
 }
 
 fn load_cache_from_disk_in<T: for<'de> Deserialize<'de>>(
@@ -901,7 +895,7 @@ pub fn invalidate_caches() -> Result<()> {
     }
     super::super::alpm_direct::clear_alpm_cache();
 
-    let cache_dir = get_cache_dir();
+    let cache_dir = paths::cache_dir();
     remove_cache_file(&cache_dir.join("sync_db.bin"))?;
     remove_cache_file(&cache_dir.join("local_db.bin"))?;
     Ok(())
@@ -934,9 +928,6 @@ pub struct CachedUpdate {
     pub old_version: Version,
     pub new_version: Version,
     pub repo: String,
-    pub filename: String,
-    /// Download size in bytes.
-    pub csize: u64,
 }
 
 /// Cached update check across all configured repositories.
@@ -976,8 +967,6 @@ pub fn check_updates_cached() -> Result<Vec<CachedUpdate>> {
                 old_version: local_pkg.version.clone(),
                 new_version: sync_pkg.version.clone(),
                 repo: sync_pkg.repo.clone(),
-                filename: sync_pkg.filename.clone(),
-                csize: sync_pkg.csize,
             }
         })
         .collect();
@@ -1009,37 +998,15 @@ pub fn get_sync_package(name: &str) -> Result<Option<SyncDbPackage>> {
     Ok(cache.packages.get(name).cloned())
 }
 
-/// Internal unified implementation for listing/searching local packages
-fn list_local_cached_filtered(query: Option<&str>) -> Result<Vec<LocalDbPackage>> {
+/// List all local packages using cache - FAST (<1ms)
+pub fn list_local_cached() -> Result<Vec<LocalDbPackage>> {
     let local_dir = paths::pacman_local_dir();
     ensure_local_cache_loaded(&local_dir)?;
 
     let cache = LOCAL_DB_CACHE
         .read()
         .unwrap_or_else(std::sync::PoisonError::into_inner);
-
-    let results = match query {
-        None => cache.packages.values().cloned().collect(),
-        Some(q) => {
-            let query_lower = q.to_lowercase();
-            cache
-                .packages
-                .values()
-                .filter(|pkg| {
-                    contains_ignore_case(&pkg.name, &query_lower)
-                        || contains_ignore_case(&pkg.desc, &query_lower)
-                })
-                .cloned()
-                .collect()
-        }
-    };
-
-    Ok(results)
-}
-
-/// List all local packages using cache - FAST (<1ms)
-pub fn list_local_cached() -> Result<Vec<LocalDbPackage>> {
-    list_local_cached_filtered(None)
+    Ok(cache.packages.values().cloned().collect())
 }
 
 /// Identify potential AUR packages (installed but not in any sync database).

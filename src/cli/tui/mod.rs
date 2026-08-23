@@ -20,7 +20,7 @@ const REFRESH_INTERVAL_SECS: u64 = 5;
 const SEARCH_DEBOUNCE_MS: u64 = 250;
 
 /// Outcome of a background action: `(label, Ok(summary-or-empty))`.
-type ActionResult = (String, anyhow::Result<String>);
+type ActionResult = (&'static str, anyhow::Result<String>);
 
 pub async fn run() -> Result<()> {
     let app = app::App::new().await?;
@@ -91,7 +91,7 @@ async fn run_app(
         // and never race with the render pass.
         while let Ok((label, result)) = action_rx.try_recv() {
             app.action_in_flight = false;
-            report_action_result(app, result, &label);
+            report_action_result(app, result, label);
         }
 
         // Draw UI
@@ -125,11 +125,11 @@ async fn run_app(
                     if app.last_query_change.elapsed() >= Duration::from_millis(SEARCH_DEBOUNCE_MS)
                     {
                         last_search.clone_from(&app.search_query);
-                        run_search(app, &last_search.clone()).await;
+                        run_search(app, &last_search).await;
                     }
                 } else if committed {
                     last_search.clone_from(&app.search_query);
-                    run_search(app, &last_search.clone()).await;
+                    run_search(app, &last_search).await;
                 }
             }
         }
@@ -167,7 +167,7 @@ fn spawn_action(
     let sender = action_tx.clone();
     tokio::spawn(async move {
         let outcome = fut.await;
-        let _ = sender.send((label.to_string(), outcome));
+        let _ = sender.send((label, outcome));
     });
 }
 

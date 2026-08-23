@@ -57,32 +57,21 @@ impl EnvironmentState {
             task::spawn_blocking(|| BunManager::new().current_version()),
         );
 
-        if let Some(v) = join_probed_version(node, "node")? {
-            runtimes.insert("node".to_string(), v.trim().to_string());
-        }
-        if let Some(v) = join_probed_version(python, "python")? {
-            runtimes.insert("python".to_string(), v.trim().to_string());
-        }
-        if let Some(v) = join_probed_version(rust, "rust")? {
-            runtimes.insert("rust".to_string(), v.trim().to_string());
-        }
-        if let Some(v) = join_probed_version(go, "go")? {
-            runtimes.insert("go".to_string(), v.trim().to_string());
-        }
-        if let Some(v) = join_probed_version(ruby, "ruby")? {
-            runtimes.insert("ruby".to_string(), v.trim().to_string());
-        }
-        if let Some(v) = join_probed_version(java, "java")? {
-            runtimes.insert("java".to_string(), v.trim().to_string());
-        }
-        if let Some(v) = join_probed_version(bun, "bun")? {
-            runtimes.insert("bun".to_string(), v.trim().to_string());
+        for (runtime, result) in [
+            ("node", node),
+            ("python", python),
+            ("rust", rust),
+            ("go", go),
+            ("ruby", ruby),
+            ("java", java),
+            ("bun", bun),
+        ] {
+            if let Some(version) = join_probed_version(result, runtime)? {
+                runtimes.insert(runtime.to_string(), version.trim().to_string());
+            }
         }
 
-        // Capture system packages
-        let mut packages = explicit_packages_for_fingerprint().await?;
-        packages.sort_unstable();
-        packages.dedup();
+        let packages = explicit_packages_for_fingerprint().await?;
 
         let timestamp = jiff::Timestamp::now().as_second();
 
@@ -211,14 +200,9 @@ fn join_probed_version(
 async fn explicit_packages_for_fingerprint() -> Result<Vec<String>> {
     #[cfg(any(feature = "arch", feature = "debian", feature = "debian-pure"))]
     {
-        let packages = tokio::task::spawn_blocking(crate::package_managers::list_explicit_fast)
+        tokio::task::spawn_blocking(crate::package_managers::list_explicit_fast)
             .await
-            .context("Explicit package probe task failed")??;
-        Ok(packages
-            .into_iter()
-            .map(|package| package.trim().to_string())
-            .filter(|package| !package.is_empty())
-            .collect())
+            .context("Explicit package probe task failed")?
     }
 
     #[cfg(not(any(feature = "arch", feature = "debian", feature = "debian-pure")))]

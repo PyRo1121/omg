@@ -76,9 +76,8 @@ pub fn info_sync(package: &str) -> Result<bool> {
     }
 
     let pm = get_package_manager()?;
-    let pm_name = pm.name();
 
-    if pm_name == "pacman" {
+    if pm.name() == "pacman" {
         #[cfg(feature = "arch")]
         {
             if let Some(info) = crate::package_managers::get_sync_pkg_info(package)

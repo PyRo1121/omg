@@ -9,7 +9,6 @@ use anyhow::{Context, Result};
 use jiff::Timestamp;
 use serde::{Deserialize, Serialize};
 use std::fs;
-use std::io::Write;
 use std::path::{Path, PathBuf};
 
 /// Maximum number of transactions to retain in history
@@ -145,32 +144,10 @@ impl HistoryManager {
 
     /// Atomically replaces the whole history with `history`.
     pub fn save(&self, history: &[Transaction]) -> Result<()> {
-        let parent = self
-            .log_path
-            .parent()
-            .context("Package history path must have a parent directory")?;
-        let mut temporary = tempfile::NamedTempFile::new_in(parent)
-            .context("Failed to create temporary history file")?;
-        serde_json::to_writer_pretty(temporary.as_file_mut(), history)
-            .context("Failed to serialize history")?;
-        temporary
-            .as_file_mut()
-            .write_all(b"\n")
-            .context("Failed to finalize history file")?;
-        temporary
-            .as_file_mut()
-            .sync_all()
-            .context("Failed to sync history file")?;
-        temporary
-            .persist(&self.log_path)
-            .map_err(|error| error.error)
-            .with_context(|| {
-                format!(
-                    "Failed to replace history file: {}",
-                    self.log_path.display()
-                )
-            })?;
-        Ok(())
+        let mut content =
+            serde_json::to_vec_pretty(history).context("Failed to serialize history")?;
+        content.push(b'\n');
+        crate::core::safe_ops::atomic_write_file_sync(&self.log_path, content)
     }
 
     /// Persist the outcome of a package mutation without hiding either the

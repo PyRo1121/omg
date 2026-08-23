@@ -162,12 +162,12 @@ fn extract_progress_style() -> ProgressStyle {
         .expect("valid template")
 }
 
-/// Download a file with progress bar and optional checksum verification
+/// Download a file with progress bar and checksum verification.
 pub async fn download_with_progress(
     client: &reqwest::Client,
     url: &str,
     dest: &Path,
-    expected_sha256: Option<&str>,
+    expected_sha256: &str,
 ) -> Result<()> {
     use futures::StreamExt;
     use tokio::io::AsyncWriteExt;
@@ -232,17 +232,14 @@ pub async fn download_with_progress(
     drop(file);
 
     // Verify checksum before publishing the download to its final path.
-    if let Some(expected) = expected_sha256 {
-        let actual = hex::encode(hasher.finalize());
-        let expected = expected.trim();
-
-        if !actual.eq_ignore_ascii_case(expected) {
-            anyhow::bail!(
-                "Checksum mismatch!\n  Expected: {expected}\n  Got: {actual}\n\nThis could indicate a corrupted download or security issue."
-            );
-        }
-        pb.println(format!("  {} Checksum verified", "✓".green()));
+    let actual = hex::encode(hasher.finalize());
+    let expected = expected_sha256.trim();
+    if !actual.eq_ignore_ascii_case(expected) {
+        anyhow::bail!(
+            "Checksum mismatch!\n  Expected: {expected}\n  Got: {actual}\n\nThis could indicate a corrupted download or security issue."
+        );
     }
+    pb.println(format!("  {} Checksum verified", "✓".green()));
 
     temporary_path
         .persist(dest)
@@ -860,23 +857,20 @@ pub(crate) fn list_installed_versions(versions_dir: &Path) -> Result<Vec<String>
 /// by swapping arguments (`sort_by(|a, b| version_cmp(b, a))`).
 #[must_use]
 pub(crate) fn version_cmp(a: &str, b: &str) -> Ordering {
-    let parse_parts = |s: &str| -> Vec<u32> {
-        s.split(|c: char| !c.is_ascii_digit())
-            .filter_map(|p| p.parse().ok())
-            .collect()
-    };
+    let a_parts = a
+        .split(|c: char| !c.is_ascii_digit())
+        .filter_map(|part| part.parse::<u32>().ok());
+    let b_parts = b
+        .split(|c: char| !c.is_ascii_digit())
+        .filter_map(|part| part.parse::<u32>().ok());
+    let max_len = a_parts.clone().count().max(b_parts.clone().count());
 
-    let a_parts = parse_parts(a);
-    let b_parts = parse_parts(b);
-    let max_len = a_parts.len().max(b_parts.len());
-
-    (0..max_len)
-        .map(|i| {
-            let a_part = a_parts.get(i).copied().unwrap_or(0);
-            let b_part = b_parts.get(i).copied().unwrap_or(0);
-            a_part.cmp(&b_part)
-        })
-        .find(|&ord| ord != Ordering::Equal)
+    a_parts
+        .chain(std::iter::repeat(0))
+        .zip(b_parts.chain(std::iter::repeat(0)))
+        .take(max_len)
+        .map(|(a_part, b_part)| a_part.cmp(&b_part))
+        .find(|&ordering| ordering != Ordering::Equal)
         .unwrap_or(Ordering::Equal)
 }
 
@@ -941,11 +935,10 @@ pub(crate) fn print_already_installed(runtime: &str, version: &str) {
     );
 }
 
-/// Implement the shared runtime-manager methods (list_installed,
-/// current_version) for a manager with `versions_dir` and `current_link`
-/// fields.
+/// Implement the shared runtime-manager methods for a manager with a
+/// `versions_dir` field.
 macro_rules! impl_runtime_common {
-    ($manager_type:ty, $runtime_name:expr) => {
+    ($manager_type:ty) => {
         impl $manager_type {
             /// List all installed versions of this runtime
             pub fn list_installed(&self) -> Result<Vec<String>> {

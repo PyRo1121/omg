@@ -48,11 +48,6 @@ impl<W: Write> Renderer<W> {
         }
     }
 
-    /// Set whether to disable colors
-    pub fn set_no_color(&mut self, no_color: bool) {
-        self.no_color = no_color;
-    }
-
     /// Flush the buffer
     pub fn flush(&mut self) -> io::Result<()> {
         self.writer.flush()
@@ -148,80 +143,6 @@ impl<W: Write> Renderer<W> {
             table.add_row(vec![line.clone()]);
         }
         writeln!(self.writer, "\n{table}")
-    }
-
-    /// Print a spacer (blank line)
-    pub fn spacer(&mut self) -> io::Result<()> {
-        writeln!(self.writer)
-    }
-
-    /// Print a step in a process
-    pub fn step(&mut self, step: usize, total: usize, msg: &str) -> io::Result<()> {
-        let step_str = format!(" {step:02}/{total:02} ");
-        if self.no_color {
-            return writeln!(self.writer, "{step_str} {msg}");
-        }
-        let step_style = crate::cli::ui::Style::new()
-            .background(crate::cli::ui::Color::Gray)
-            .foreground(crate::cli::ui::Color::White);
-        let msg_style = crate::cli::ui::Style::new().foreground(crate::cli::ui::Color::Gray);
-        writeln!(
-            self.writer,
-            "{} {}",
-            step_style.render(&step_str),
-            msg_style.render(msg)
-        )
-    }
-
-    /// Print a key-value pair
-    pub fn kv(&mut self, key: &str, value: &str) -> io::Result<()> {
-        if self.no_color {
-            return writeln!(self.writer, "  {key:>12}: {value}");
-        }
-        let key_style = crate::cli::ui::Style::new().foreground(crate::cli::ui::Color::Gray);
-        writeln!(self.writer, "  {:>12}: {}", key_style.render(key), value)
-    }
-
-    /// Print a list item
-    pub fn list_item(&mut self, item: &str, metadata: Option<&str>) -> io::Result<()> {
-        if self.no_color {
-            return match metadata {
-                Some(meta) => writeln!(self.writer, "  \u{2022} {item} {meta}"),
-                None => writeln!(self.writer, "  \u{2022} {item}"),
-            };
-        }
-        let bullet = crate::cli::ui::Style::new()
-            .foreground(crate::cli::ui::Color::Cyan)
-            .bold(true)
-            .render("\u{2022}");
-        match metadata {
-            Some(meta) => {
-                let meta_style =
-                    crate::cli::ui::Style::new().foreground(crate::cli::ui::Color::Gray);
-                writeln!(self.writer, "  {bullet} {item} {}", meta_style.render(meta))
-            }
-            None => writeln!(self.writer, "  {bullet} {item}"),
-        }
-    }
-
-    /// Print a tip
-    pub fn tip(&mut self, msg: &str) -> io::Result<()> {
-        if self.no_color {
-            return writeln!(self.writer, "\n  Tip: {msg}");
-        }
-        let style = crate::cli::ui::Style::new()
-            .foreground(crate::cli::ui::Color::Gray)
-            .italic(true);
-        let label_style = crate::cli::ui::Style::new()
-            .foreground(crate::cli::ui::Color::Gray)
-            .italic(true)
-            .bold(true);
-        writeln!(
-            self.writer,
-            "\n  {} {}",
-            label_style.render("Tip:"),
-            style.render(msg)
-        )
     }
 }
 

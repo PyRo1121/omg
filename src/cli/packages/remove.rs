@@ -41,11 +41,7 @@ pub async fn remove(packages: &[String], recursive: bool, _yes: bool, dry_run: b
         return remove_dry_run(packages, recursive);
     }
 
-    dispatch_backend! {
-        debian: { debian::remove(packages).await },
-        arch: { arch::remove(packages).await },
-        generic: { generic::remove(packages).await },
-    }
+    super::common::remove_via_service(packages).await
 }
 
 #[allow(
@@ -61,7 +57,7 @@ pub async fn remove(packages: &[String], recursive: bool, _yes: bool, dry_run: b
 )]
 fn remove_dry_run(packages: &[String], recursive: bool) -> Result<()> {
     dispatch_backend! {
-        debian: { debian::remove_dry_run(packages) },
+        debian: { debian::remove_dry_run(packages); Ok(()) },
         arch: { arch::remove_dry_run(packages, recursive) },
         generic: { generic::remove_dry_run(packages) },
     }

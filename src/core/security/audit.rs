@@ -215,8 +215,7 @@ pub struct AuditLogger {
     log_path: PathBuf,
     /// Diagnostic mirror of the on-disk tail hash captured at creation and
     /// after each successful append. `log_locked` always re-reads the
-    /// authoritative tail under the lock; this field exists so callers and
-    /// tests can assert that a failed append never advanced the chain.
+    /// authoritative tail under the lock.
     last_hash: String,
 }
 
@@ -248,7 +247,7 @@ impl AuditLogger {
         })
     }
 
-    /// Log an audit event
+    /// Log an audit event.
     pub fn log(
         &mut self,
         event: AuditEventType,
@@ -256,22 +255,17 @@ impl AuditLogger {
         resource: &str,
         description: &str,
     ) -> Result<(), AuditError> {
-        self.log_with_metadata(event, severity, resource, description, None)
+        self.log_event(event, severity, resource, description)
     }
 
-    /// Log an audit event with additional metadata
-    ///
-    /// Appends are serialized across processes with a lock file (the same
-    /// pattern as [`crate::core::history::HistoryManager`]) and the previous
-    /// entry hash is re-read inside the critical section, so concurrent CLI
-    /// and daemon writers cannot fork the integrity chain.
-    pub fn log_with_metadata(
+    /// Appends are serialized across processes and the previous hash is read
+    /// under the lock, so concurrent writers cannot fork the integrity chain.
+    fn log_event(
         &mut self,
         event: AuditEventType,
         severity: AuditSeverity,
         resource: &str,
         description: &str,
-        metadata: Option<serde_json::Value>,
     ) -> Result<(), AuditError> {
         let lock_path = self.log_path.with_extension("lock");
         let lock = OpenOptions::new()
@@ -289,7 +283,7 @@ impl AuditLogger {
             source,
         })?;
 
-        let result = self.log_locked(event, severity, resource, description, metadata);
+        let result = self.log_locked(event, severity, resource, description);
         if let Err(source) = lock.unlock() {
             return match result {
                 Ok(()) => Err(AuditError::Unlock {
@@ -308,7 +302,6 @@ impl AuditLogger {
         severity: AuditSeverity,
         resource: &str,
         description: &str,
-        metadata: Option<serde_json::Value>,
     ) -> Result<(), AuditError> {
         // Re-read the on-disk tail hash while holding the lock so entries
         // written by another process since this logger was created chain
@@ -329,14 +322,11 @@ impl AuditLogger {
             user,
             resource: resource.to_string(),
             description: description.to_string(),
-            metadata,
+            metadata: None,
             prev_hash,
             hash: None,
         };
 
-        // Compute the hash, but do not advance the in-memory chain until the
-        // entry is durably on disk. Otherwise a failed write leaves the next
-        // event pointing at a hash that never landed.
         let hash = entry.compute_hash();
         entry.hash = Some(hash);
 
@@ -363,7 +353,7 @@ impl AuditLogger {
             path: path_str,
             source,
         })?;
-        self.last_hash = entry.hash.clone().unwrap_or_default();
+        self.last_hash = entry.hash.take().unwrap_or_default();
 
         // Structured fields keep the tracing output queryable (event_type,
         // severity, hash-chain linkage) without touching the on-disk JSONL
@@ -375,7 +365,7 @@ impl AuditLogger {
                     target: "audit",
                     event_type = %entry.event_type,
                     severity = ?severity,
-                    chain_hash = %entry.hash.as_deref().unwrap_or_default(),
+                    chain_hash = %self.last_hash,
                     "{description}"
                 );
             }
@@ -384,7 +374,7 @@ impl AuditLogger {
                     target: "audit",
                     event_type = %entry.event_type,
                     severity = ?severity,
-                    chain_hash = %entry.hash.as_deref().unwrap_or_default(),
+                    chain_hash = %self.last_hash,
                     "{description}"
                 );
             }
@@ -393,7 +383,7 @@ impl AuditLogger {
                     target: "audit",
                     event_type = %entry.event_type,
                     severity = ?severity,
-                    chain_hash = %entry.hash.as_deref().unwrap_or_default(),
+                    chain_hash = %self.last_hash,
                     "{description}"
                 );
             }
@@ -402,7 +392,7 @@ impl AuditLogger {
                     target: "audit",
                     event_type = %entry.event_type,
                     severity = ?severity,
-                    chain_hash = %entry.hash.as_deref().unwrap_or_default(),
+                    chain_hash = %self.last_hash,
                     "{description}"
                 );
             }
@@ -411,7 +401,7 @@ impl AuditLogger {
                     target: "audit",
                     event_type = %entry.event_type,
                     severity = ?severity,
-                    chain_hash = %entry.hash.as_deref().unwrap_or_default(),
+                    chain_hash = %self.last_hash,
                     critical = true,
                     "{description}"
                 );
@@ -483,18 +473,6 @@ impl AuditLogger {
         entries.reverse();
         entries.truncate(limit);
         Ok(entries)
-    }
-
-    /// Filter entries by event type
-    pub fn filter_by_type(
-        &self,
-        event_type: &AuditEventType,
-    ) -> Result<Vec<AuditEntry>, AuditError> {
-        let entries = read_all_entries(&self.log_path)?;
-        Ok(entries
-            .into_iter()
-            .filter(|e| &e.event_type == event_type)
-            .collect())
     }
 
     /// Filter entries by severity (and above)
@@ -594,7 +572,6 @@ fn record_global(
     severity: AuditSeverity,
     resource: &str,
     description: &str,
-    metadata: Option<serde_json::Value>,
 ) {
     let mut guard = AUDIT_LOGGER.lock().expect("audit logger mutex poisoned");
     if guard.is_none() {
@@ -611,13 +588,7 @@ fn record_global(
     let Some(logger) = guard.as_mut() else {
         return;
     };
-    let result = match metadata {
-        Some(metadata) => {
-            logger.log_with_metadata(event, severity, resource, description, Some(metadata))
-        }
-        None => logger.log(event, severity, resource, description),
-    };
-    if let Err(error) = result {
+    if let Err(error) = logger.log(event, severity, resource, description) {
         tracing::warn!("Failed to persist audit event {event} for {resource}: {error}");
     }
 }
@@ -629,18 +600,7 @@ pub fn audit_log(
     resource: &str,
     description: &str,
 ) {
-    record_global(event, severity, resource, description, None);
-}
-
-/// Log an audit event with metadata using the global logger
-pub fn audit_log_with_metadata(
-    event: AuditEventType,
-    severity: AuditSeverity,
-    resource: &str,
-    description: &str,
-    metadata: serde_json::Value,
-) {
-    record_global(event, severity, resource, description, Some(metadata));
+    record_global(event, severity, resource, description);
 }
 
 #[cfg(test)]

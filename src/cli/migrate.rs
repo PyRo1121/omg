@@ -5,7 +5,6 @@ use owo_colors::OwoColorize;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::fs;
-use std::sync::LazyLock;
 
 use crate::cli::style;
 use crate::core::env::distro::detect_distro;
@@ -41,15 +40,15 @@ pub async fn export(output: &str) -> Result<()> {
     let runtime_count = state.runtimes.len();
     let package_count = state.packages.len();
 
-    let mut packages = Vec::new();
-    for pkg_name in &state.packages {
-        let mapping = create_package_mapping(pkg_name);
-        packages.push(mapping);
-    }
+    let packages = state
+        .packages
+        .iter()
+        .map(|name| create_package_mapping(name))
+        .collect();
 
     let manifest = MigrationManifest {
         version: MANIFEST_FORMAT_VERSION.to_string(),
-        source_distro: distro.clone(),
+        source_distro: distro,
         created_at: jiff::Timestamp::now().as_second(),
         runtimes: state.runtimes,
         packages,
@@ -64,7 +63,7 @@ pub async fn export(output: &str) -> Result<()> {
         style::maybe_color(output, |t| t.cyan().to_string())
     );
     println!();
-    println!("  Source distro: {}", style::path(&distro));
+    println!("  Source distro: {}", style::path(&manifest.source_distro));
     println!("  Runtimes: {runtime_count}");
     println!("  Packages: {package_count}");
     println!();
@@ -229,50 +228,36 @@ fn finish_apply(runtime_failures: usize, package_failed: bool) -> Result<()> {
 }
 
 fn create_package_mapping(name: &str) -> PackageMapping {
-    // Categorize package
-    let category = categorize_package(name);
-
     PackageMapping {
         original_name: name.to_string(),
-        category,
+        category: categorize_package(name).to_string(),
         description: None,
         alternatives: get_alternatives(name),
     }
 }
 
-fn categorize_package(name: &str) -> String {
+fn categorize_package(name: &str) -> &'static str {
     if name.contains("lib") {
-        "library".to_string()
+        "library"
     } else if name.contains("dev") || name.contains("devel") {
-        "development".to_string()
+        "development"
     } else if name.ends_with("-doc") || name.ends_with("-docs") {
-        "documentation".to_string()
+        "documentation"
     } else {
-        "application".to_string()
+        "application"
     }
 }
 
 fn get_alternatives(name: &str) -> Vec<String> {
-    // Common package name mappings between distros
-    static MAPPINGS: LazyLock<HashMap<&str, Vec<&str>>> = LazyLock::new(|| {
-        [
-            ("vim", vec!["vim", "vim-nox", "neovim"]),
-            ("gcc", vec!["gcc", "build-essential"]),
-            ("make", vec!["make", "build-essential"]),
-            ("git", vec!["git"]),
-            ("curl", vec!["curl"]),
-            ("wget", vec!["wget"]),
-            ("python", vec!["python3", "python"]),
-            ("nodejs", vec!["nodejs", "node"]),
-        ]
-        .into_iter()
-        .collect()
-    });
-
-    MAPPINGS
-        .get(name)
-        .map(|v| v.iter().map(std::string::ToString::to_string).collect())
-        .unwrap_or_default()
+    let alternatives: &[&str] = match name {
+        "vim" => &["vim", "vim-nox", "neovim"],
+        "gcc" | "make" => &[name, "build-essential"],
+        "git" | "curl" | "wget" => &[name],
+        "python" => &["python3", "python"],
+        "nodejs" => &["nodejs", "node"],
+        _ => &[],
+    };
+    alternatives.iter().map(ToString::to_string).collect()
 }
 
 fn map_package(name: &str, from: &str, to: &str) -> String {

@@ -32,15 +32,6 @@ pub struct Dependency {
     pub alternatives: Vec<Dependency>,
 }
 
-/// Conflict specification (Conflicts:, Breaks: fields)
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct Conflict {
-    /// Package name that conflicts
-    pub name: String,
-    /// Version constraint (optional)
-    pub version_constraint: Option<VersionConstraint>,
-}
-
 /// Version constraint types
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct VersionConstraint {
@@ -256,7 +247,6 @@ impl DependencyResolver {
         let pkg = self
             .available
             .get(name)
-            .cloned()
             .with_context(|| format!("Package '{name}' not found in repository"))?;
 
         tracing::debug!(
@@ -384,43 +374,43 @@ impl DependencyResolver {
     fn topological_sort(&self, packages: &[String]) -> Result<Vec<String>> {
         use ahash::{AHashMap, AHashSet};
 
-        // Use AHashMap for faster lookups (vs std HashMap)
-        let mut in_degree: AHashMap<String, usize> = AHashMap::with_capacity(packages.len());
-        let mut graph: AHashMap<String, Vec<String>> = AHashMap::with_capacity(packages.len());
-
         let in_packages: AHashSet<&str> = packages.iter().map(String::as_str).collect();
+        let mut in_degree: AHashMap<&str, usize> = in_packages
+            .iter()
+            .copied()
+            .map(|package| (package, 0))
+            .collect();
+        let mut graph: AHashMap<&str, Vec<&str>> = AHashMap::with_capacity(packages.len());
 
         // Build reverse graph (package -> packages that depend on it)
-        for pkg in packages {
-            in_degree.entry(pkg.clone()).or_insert(0);
-            if let Some(deps) = self.dep_graph.get(pkg) {
-                for dep in deps {
-                    if in_packages.contains(dep.as_str()) {
-                        graph.entry(dep.clone()).or_default().push(pkg.clone());
-                        *in_degree.entry(pkg.clone()).or_insert(0) += 1;
+        for package in packages {
+            let package = package.as_str();
+            if let Some(dependencies) = self.dep_graph.get(package) {
+                for dependency in dependencies {
+                    if let Some(dependency) = in_packages.get(dependency.as_str()) {
+                        graph.entry(*dependency).or_default().push(package);
+                        *in_degree.entry(package).or_default() += 1;
                     }
                 }
             }
         }
 
         // Kahn's algorithm
-        let mut queue: VecDeque<String> = in_degree
+        let mut queue: VecDeque<&str> = in_degree
             .iter()
-            .filter(|&(_, deg)| *deg == 0)
-            .map(|(pkg, _)| pkg.clone())
+            .filter_map(|(&package, &degree)| (degree == 0).then_some(package))
             .collect();
-
         let mut result = Vec::with_capacity(packages.len());
 
-        while let Some(pkg) = queue.pop_front() {
-            result.push(pkg.clone());
+        while let Some(package) = queue.pop_front() {
+            result.push(package);
 
-            if let Some(dependents) = graph.get(&pkg) {
-                for dependent in dependents {
-                    if let Some(deg) = in_degree.get_mut(dependent) {
-                        *deg -= 1;
-                        if *deg == 0 {
-                            queue.push_back(dependent.clone());
+            if let Some(dependents) = graph.get(package) {
+                for &dependent in dependents {
+                    if let Some(degree) = in_degree.get_mut(dependent) {
+                        *degree -= 1;
+                        if *degree == 0 {
+                            queue.push_back(dependent);
                         }
                     }
                 }
@@ -428,21 +418,17 @@ impl DependencyResolver {
         }
 
         if result.len() != packages.len() {
-            let ordered: AHashSet<&str> = result.iter().map(String::as_str).collect();
+            let ordered: AHashSet<&str> = result.iter().copied().collect();
             let missing: Vec<_> = packages
                 .iter()
-                .filter(|p| !ordered.contains(p.as_str()))
+                .map(String::as_str)
+                .filter(|package| !ordered.contains(package))
                 .collect();
 
             tracing::error!("Circular dependency detected among packages: {:?}", missing);
-
             anyhow::bail!(
                 "Circular dependency detected. Unable to determine installation order for: {}",
-                missing
-                    .iter()
-                    .map(|s| s.as_str())
-                    .collect::<Vec<_>>()
-                    .join(", ")
+                missing.join(", ")
             );
         }
 
@@ -450,7 +436,7 @@ impl DependencyResolver {
             "Topological sort complete: {} packages ordered",
             result.len()
         );
-        Ok(result)
+        Ok(result.into_iter().map(str::to_owned).collect())
     }
 }
 
@@ -471,21 +457,10 @@ fn similarity_prefix(name: &str) -> &str {
 
 /// Parse a dependency string like "libc6 (>= 2.38)"
 fn parse_dependency(s: &str) -> Dependency {
-    let s = s.trim();
-
-    // Check for alternatives (|)
-    if s.contains('|') {
-        let parts: Vec<&str> = s.split('|').collect();
-        let first = parse_single_dep(parts[0].trim());
-        let mut dep = first;
-        dep.alternatives = parts[1..]
-            .iter()
-            .map(|p| parse_single_dep(p.trim()))
-            .collect();
-        return dep;
-    }
-
-    parse_single_dep(s)
+    let mut parts = s.trim().split('|').map(str::trim);
+    let mut dependency = parse_single_dep(parts.next().unwrap_or_default());
+    dependency.alternatives = parts.map(parse_single_dep).collect();
+    dependency
 }
 
 /// Parse a single dependency without alternatives

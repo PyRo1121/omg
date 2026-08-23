@@ -6,34 +6,27 @@ use super::dispatch_backend;
 
 #[cfg(feature = "arch")]
 mod arch;
-#[cfg(any(feature = "debian", feature = "debian-pure"))]
-mod debian;
-#[cfg(all(
-    not(feature = "arch"),
-    not(any(feature = "debian", feature = "debian-pure"))
-))]
-mod generic;
 
 pub async fn update_fast() -> Result<()> {
     dispatch_backend! {
-        debian: { debian::update_fast().await },
+        debian: { super::common::update_official_only(false, true, false).await },
         arch: { arch::update_fast().await },
-        generic: { generic::update_fast().await },
+        generic: { super::common::update_official_only(false, true, false).await },
     }
 }
 
 pub async fn update_turbo() -> Result<()> {
     dispatch_backend! {
-        debian: { debian::update_turbo().await },
+        debian: { super::common::update_official_only(false, true, false).await },
         arch: { arch::update_turbo().await },
-        generic: { generic::update_turbo().await },
+        generic: { super::common::update_official_only(false, true, false).await },
     }
 }
 
 pub async fn update(check_only: bool, yes: bool, dry_run: bool) -> Result<()> {
     dispatch_backend! {
-        debian: { debian::update(check_only, yes, dry_run).await },
+        debian: { super::common::update_official_only(check_only, yes, dry_run).await },
         arch: { arch::update(check_only, yes, dry_run).await },
-        generic: { generic::update(check_only, yes, dry_run).await },
+        generic: { super::common::update_official_only(check_only, yes, dry_run).await },
     }
 }

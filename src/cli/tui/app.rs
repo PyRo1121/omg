@@ -107,15 +107,17 @@ impl App {
         // Check if daemon is connected
         #[cfg(unix)]
         {
-            self.daemon_connected = crate::core::client::DaemonClient::connect().await.is_ok();
-
-            // 1. Fetch status from daemon
-            if let Ok(mut client) = crate::core::client::DaemonClient::connect().await
-                && let Ok(crate::daemon::protocol::ResponseResult::Status(status)) = client
-                    .call(crate::daemon::protocol::Request::Status { id: 0 })
-                    .await
-            {
-                self.status = Some(status);
+            match crate::core::client::DaemonClient::connect().await {
+                Ok(mut client) => {
+                    self.daemon_connected = true;
+                    if let Ok(crate::daemon::protocol::ResponseResult::Status(status)) = client
+                        .call(crate::daemon::protocol::Request::Status { id: 0 })
+                        .await
+                    {
+                        self.status = Some(status);
+                    }
+                }
+                Err(_) => self.daemon_connected = false,
             }
         }
         #[cfg(not(unix))]
@@ -190,29 +192,19 @@ impl App {
     }
 
     fn update_system_metrics(&mut self) {
-        // Get actual system metrics
-        self.system_metrics = {
-            // CPU usage over the sampling interval (a single /proc/stat read
-            // yields a since-boot average, not current utilization).
-            let cpu_usage = Self::cpu_usage_delta(&mut self.prev_cpu_sample);
+        // A single /proc/stat read yields a since-boot average, so CPU usage
+        // must be derived from consecutive cumulative samples.
+        let cpu_usage = Self::cpu_usage_delta(&mut self.prev_cpu_sample);
+        let (disk_usage, disk_free) = Self::get_disk_usage_sync();
+        let (network_rx, network_tx) = Self::get_network_stats();
 
-            // Memory usage
-            let memory_usage = Self::get_memory_usage();
-
-            // Disk usage - use sync version
-            let (disk_used, disk_free) = Self::get_disk_usage_sync();
-
-            // Network stats
-            let (network_rx, network_tx) = Self::get_network_stats();
-
-            SystemMetrics {
-                cpu_usage,
-                memory_usage,
-                disk_usage: disk_used,
-                disk_free,
-                network_rx,
-                network_tx,
-            }
+        self.system_metrics = SystemMetrics {
+            cpu_usage,
+            memory_usage: Self::get_memory_usage(),
+            disk_usage,
+            disk_free,
+            network_rx,
+            network_tx,
         };
     }
 
@@ -220,17 +212,21 @@ impl App {
     fn sample_cpu_totals() -> Option<(u64, u64)> {
         let stat = std::fs::read_to_string("/proc/stat").ok()?;
         let line = stat.lines().next()?;
-        let parts: Vec<&str> = line.split_whitespace().collect();
-        if parts.len() <= 4 || parts.first() != Some(&"cpu") {
+        let mut fields = line.split_whitespace();
+        if fields.next()? != "cpu" {
             return None;
         }
-        let fields: Vec<u64> = parts[1..].iter().filter_map(|s| s.parse().ok()).collect();
-        if fields.len() < 4 {
-            return None;
+
+        let mut total = 0u64;
+        let mut idle = None;
+        for (index, field) in fields.enumerate() {
+            let value = field.parse::<u64>().ok()?;
+            total = total.checked_add(value)?;
+            if index == 3 {
+                idle = Some(value);
+            }
         }
-        let idle = fields[3];
-        let total: u64 = fields.iter().sum();
-        Some((total, idle))
+        Some((total, idle?))
     }
 
     /// Usage percent since the previous sample; the very first sample only
@@ -274,7 +270,7 @@ impl App {
             }
 
             if total > 0 {
-                return ((total - available) as f32 / total as f32) * 100.0;
+                return (total.saturating_sub(available) as f32 / total as f32) * 100.0;
             }
         }
         0.0
@@ -288,7 +284,7 @@ impl App {
                 let block_size = stat.f_frsize;
                 let total_blocks = stat.f_blocks;
                 let free_blocks = stat.f_bfree;
-                let used = (total_blocks - free_blocks) * block_size / 1024; // KB
+                let used = total_blocks.saturating_sub(free_blocks) * block_size / 1024; // KB
                 let free = free_blocks * block_size / 1024; // KB
                 return (used, free);
             }
@@ -303,14 +299,19 @@ impl App {
             let mut total_tx = 0u64;
 
             for line in netdev.lines().skip(2) {
-                let parts: Vec<&str> = line.split_whitespace().collect();
-                if parts.len() > 9
-                    && parts.first().is_some_and(|s| !s.starts_with("lo"))
-                    && let (Some(rx_str), Some(tx_str)) = (parts.get(1), parts.get(9))
-                    && let (Ok(rx), Ok(tx)) = (rx_str.parse::<u64>(), tx_str.parse::<u64>())
-                {
-                    total_rx += rx;
-                    total_tx += tx;
+                let mut fields = line.split_whitespace();
+                let Some(interface) = fields.next() else {
+                    continue;
+                };
+                if interface.starts_with("lo") {
+                    continue;
+                }
+                let (Some(rx), Some(tx)) = (fields.next(), fields.nth(7)) else {
+                    continue;
+                };
+                if let (Ok(rx), Ok(tx)) = (rx.parse::<u64>(), tx.parse::<u64>()) {
+                    total_rx = total_rx.saturating_add(rx);
+                    total_tx = total_tx.saturating_add(tx);
                 }
             }
 
@@ -658,15 +659,14 @@ impl App {
         None
     }
 
-    pub fn get_runtime_versions(&self) -> std::collections::HashMap<String, String> {
+    pub fn get_runtime_versions(&self) -> &[(String, String)] {
         #[cfg(unix)]
         return self
             .status
             .as_ref()
-            .map(|s| s.runtime_versions.iter().cloned().collect())
-            .unwrap_or_default();
+            .map_or(&[], |status| status.runtime_versions.as_slice());
         #[cfg(not(unix))]
-        std::collections::HashMap::new()
+        &[]
     }
 }
 

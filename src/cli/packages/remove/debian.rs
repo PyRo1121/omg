@@ -1,16 +1,8 @@
-use anyhow::Result;
-
-use crate::cli::packages::common;
 use crate::cli::{style, ui};
-
-pub async fn remove(packages: &[String]) -> Result<()> {
-    common::remove_via_service(packages).await
-}
 
 /// Debian dry run: the APT backend never cleans orphaned dependencies, so no
 /// recursion claim is printed.
-#[expect(clippy::unnecessary_wraps)]
-pub fn remove_dry_run(packages: &[String]) -> Result<()> {
+pub fn remove_dry_run(packages: &[String]) {
     crate::cli::modern_ui::print_phase_header("🗑️", "Remove Preview", "dry run");
     println!();
 
@@ -41,5 +33,4 @@ pub fn remove_dry_run(packages: &[String]) -> Result<()> {
     ui::print_spacer();
     println!("  {} Space that would be freed: unknown", style::info("→"));
     ui::print_dry_run_footer();
-    Ok(())
 }

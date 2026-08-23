@@ -57,9 +57,9 @@ pub async fn complete(_shell: &str, current: &str, last: &str, full: Option<&str
     let db = crate::core::Database::open(crate::core::Database::default_path()?)?;
     let engine = crate::core::completion::CompletionEngine::new(db);
 
-    let full_tokens: Vec<&str> = full.unwrap_or_default().split_whitespace().collect();
-    let in_tool = full_tokens.contains(&"tool");
-    let in_env = full_tokens.contains(&"env");
+    let full = full.unwrap_or_default();
+    let in_tool = full.split_whitespace().any(|token| token == "tool");
+    let in_env = full.split_whitespace().any(|token| token == "env");
 
     // Fast path: empty current means show top suggestions only (limit 50 for speed)
     let limit = if current.is_empty() { 50 } else { 200 };
@@ -77,11 +77,11 @@ pub async fn complete(_shell: &str, current: &str, last: &str, full: Option<&str
             results
         }
         "use" | "ls" | "list" | "which" => complete_runtime_names(&engine, current),
-        "tool" => complete_tool_commands(&engine, current),
-        "env" => complete_env_commands(&engine, current),
+        "tool" => complete_static_candidates(&engine, current, TOOL_COMMANDS),
+        "env" => complete_static_candidates(&engine, current, ENV_COMMANDS),
         "run" => complete_task_names(&engine, current)?,
-        "new" => complete_templates(&engine, current),
-        "completions" => complete_shells(&engine, current),
+        "new" => complete_static_candidates(&engine, current, NEW_TEMPLATES),
+        "completions" => complete_static_candidates(&engine, current, SHELL_COMPLETIONS),
         _ => {
             let mut results = complete_fallback(&engine, current, last, in_tool, in_env)?;
             results.truncate(limit);
@@ -89,7 +89,9 @@ pub async fn complete(_shell: &str, current: &str, last: &str, full: Option<&str
         }
     };
 
-    output_suggestions(&engine, current, suggestions);
+    for suggestion in suggestions {
+        println!("{suggestion}");
+    }
     Ok(())
 }
 
@@ -104,14 +106,6 @@ async fn complete_package_names(
     if in_tool && last == "install" {
         return Ok(engine.fuzzy_match(current, crate::cli::tool::registry_tool_names()));
     }
-    if in_tool && last == "remove" {
-        return Ok(engine.fuzzy_match(
-            current,
-            crate::cli::tool::installed_tool_names()
-                .context("Failed to list installed tools for completion")?,
-        ));
-    }
-
     // Official lookup failures fail closed; AUR names remain optional enrichment.
     #[allow(
         unused_mut,
@@ -264,33 +258,14 @@ fn complete_runtime_names(
     engine.fuzzy_match(current, runtimes)
 }
 
-/// Complete tool subcommands
-#[inline]
-fn complete_tool_commands(
+fn complete_static_candidates(
     engine: &crate::core::completion::CompletionEngine,
     current: &str,
+    candidates: &[&str],
 ) -> Vec<String> {
     engine.fuzzy_match(
         current,
-        TOOL_COMMANDS
-            .iter()
-            .map(std::string::ToString::to_string)
-            .collect(),
-    )
-}
-
-/// Complete env subcommands
-#[inline]
-fn complete_env_commands(
-    engine: &crate::core::completion::CompletionEngine,
-    current: &str,
-) -> Vec<String> {
-    engine.fuzzy_match(
-        current,
-        ENV_COMMANDS
-            .iter()
-            .map(std::string::ToString::to_string)
-            .collect(),
+        candidates.iter().map(ToString::to_string).collect(),
     )
 }
 
@@ -304,36 +279,6 @@ fn complete_task_names(
         .context("Failed to detect project tasks for completion")?;
     let names = tasks.into_iter().map(|task| task.name).collect();
     Ok(engine.fuzzy_match(current, names))
-}
-
-/// Complete new project templates
-#[inline]
-fn complete_templates(
-    engine: &crate::core::completion::CompletionEngine,
-    current: &str,
-) -> Vec<String> {
-    engine.fuzzy_match(
-        current,
-        NEW_TEMPLATES
-            .iter()
-            .map(std::string::ToString::to_string)
-            .collect(),
-    )
-}
-
-/// Complete shell names for completion generation
-#[inline]
-fn complete_shells(
-    engine: &crate::core::completion::CompletionEngine,
-    current: &str,
-) -> Vec<String> {
-    engine.fuzzy_match(
-        current,
-        SHELL_COMPLETIONS
-            .iter()
-            .map(std::string::ToString::to_string)
-            .collect(),
-    )
 }
 
 /// Fallback completion for runtime versions and other contexts
@@ -360,22 +305,10 @@ fn complete_fallback(
 
     // Fallback to tool/env subcommands if in those contexts
     if in_env {
-        return Ok(engine.fuzzy_match(
-            current,
-            ENV_COMMANDS
-                .iter()
-                .map(std::string::ToString::to_string)
-                .collect(),
-        ));
+        return Ok(complete_static_candidates(engine, current, ENV_COMMANDS));
     }
     if in_tool {
-        return Ok(engine.fuzzy_match(
-            current,
-            TOOL_COMMANDS
-                .iter()
-                .map(std::string::ToString::to_string)
-                .collect(),
-        ));
+        return Ok(complete_static_candidates(engine, current, TOOL_COMMANDS));
     }
 
     Ok(Vec::new())
@@ -402,23 +335,7 @@ fn complete_runtime_versions(
     let fuzzy_installed = engine.fuzzy_match(current, installed_versions);
     suggestions.extend(fuzzy_installed);
     suggestions.dedup();
-    Ok(suggestions)
-}
-
-fn output_suggestions(
-    engine: &crate::core::completion::CompletionEngine,
-    current: &str,
-    suggestions: Vec<String>,
-) {
-    let filtered = if current.is_empty() {
-        suggestions
-    } else {
-        engine.fuzzy_match(current, suggestions)
-    };
-
-    for suggestion in filtered {
-        println!("{suggestion}");
-    }
+    Ok(engine.fuzzy_match(current, suggestions))
 }
 
 type StatusSnapshot = (
@@ -460,74 +377,45 @@ fn read_status_snapshot() -> Result<StatusSnapshot> {
         }
     }
 
-    // Try daemon (Unix only), then fallback to a direct query
+    // Try the daemon on Unix, then fall back to the platform's direct query.
     #[cfg(unix)]
+    if let Ok(mut client) = crate::core::client::DaemonClient::connect_sync()
+        && let Ok(crate::daemon::protocol::ResponseResult::Status(res)) =
+            client.call_sync(&crate::daemon::protocol::Request::Status { id: 0 })
     {
-        if let Ok(mut client) = crate::core::client::DaemonClient::connect_sync()
-            && let Ok(crate::daemon::protocol::ResponseResult::Status(res)) =
-                client.call_sync(&crate::daemon::protocol::Request::Status { id: 0 })
-        {
-            return Ok((
-                res.total_packages,
-                res.explicit_packages,
-                res.orphan_packages,
-                res.updates_available,
-                res.scanned_vulnerability_count(),
-                Some(res.runtime_versions),
-            ));
-        }
-
-        #[cfg(any(feature = "debian", feature = "debian-pure"))]
-        if crate::core::env::distro::is_debian_like() {
-            let s = crate::package_managers::debian_db::get_counts_fast()
-                .context("Failed to query system status from the Debian package database")?;
-            return Ok((s.0, s.1, s.2, s.3, None, None));
-        }
-
-        #[cfg(feature = "arch")]
-        {
-            let s = get_system_status().context("Failed to query system status via ALPM")?;
-            Ok((s.0, s.1, s.2, s.3, None, None))
-        }
-        #[cfg(all(
-            any(feature = "debian", feature = "debian-pure"),
-            not(feature = "arch")
-        ))]
-        {
-            let s = crate::package_managers::debian_db::get_counts_fast()
-                .context("Failed to query system status from the Debian package database")?;
-            Ok((s.0, s.1, s.2, s.3, None, None))
-        }
-        #[cfg(not(any(feature = "arch", feature = "debian", feature = "debian-pure")))]
-        status_requires_backend()
+        return Ok((
+            res.total_packages,
+            res.explicit_packages,
+            res.orphan_packages,
+            res.updates_available,
+            res.scanned_vulnerability_count(),
+            Some(res.runtime_versions),
+        ));
     }
 
-    #[cfg(not(unix))]
-    {
-        #[cfg(any(feature = "debian", feature = "debian-pure"))]
-        if crate::core::env::distro::is_debian_like() {
-            let s = crate::package_managers::debian_db::get_counts_fast()
-                .context("Failed to query system status from the Debian package database")?;
-            return Ok((s.0, s.1, s.2, s.3, None, None));
-        }
-
-        #[cfg(feature = "arch")]
-        {
-            let s = get_system_status().context("Failed to query system status via ALPM")?;
-            return Ok((s.0, s.1, s.2, s.3, None, None));
-        }
-        #[cfg(all(
-            any(feature = "debian", feature = "debian-pure"),
-            not(feature = "arch")
-        ))]
-        {
-            let s = crate::package_managers::debian_db::get_counts_fast()
-                .context("Failed to query system status from the Debian package database")?;
-            return Ok((s.0, s.1, s.2, s.3, None, None));
-        }
-        #[cfg(not(any(feature = "arch", feature = "debian", feature = "debian-pure")))]
-        status_requires_backend()
+    #[cfg(any(feature = "debian", feature = "debian-pure"))]
+    if crate::core::env::distro::is_debian_like() {
+        let s = crate::package_managers::debian_db::get_counts_fast()
+            .context("Failed to query system status from the Debian package database")?;
+        return Ok((s.0, s.1, s.2, s.3, None, None));
     }
+
+    #[cfg(feature = "arch")]
+    {
+        let s = get_system_status().context("Failed to query system status via ALPM")?;
+        Ok((s.0, s.1, s.2, s.3, None, None))
+    }
+    #[cfg(all(
+        any(feature = "debian", feature = "debian-pure"),
+        not(feature = "arch")
+    ))]
+    {
+        let s = crate::package_managers::debian_db::get_counts_fast()
+            .context("Failed to query system status from the Debian package database")?;
+        Ok((s.0, s.1, s.2, s.3, None, None))
+    }
+    #[cfg(not(any(feature = "arch", feature = "debian", feature = "debian-pure")))]
+    status_requires_backend()
 }
 
 #[cfg(any(
@@ -539,8 +427,6 @@ fn status_requires_backend() -> Result<StatusSnapshot> {
 }
 
 pub fn status_sync() -> Result<()> {
-    let _start = std::time::Instant::now();
-
     // Modern header without old styling
     use crate::cli::modern_ui;
     modern_ui::print_phase_header("📊", "System Status", "overview");
@@ -905,6 +791,7 @@ pub fn history(
     };
     let from_date = from.map(parse_date).transpose()?;
     let to_date = to.map(parse_date).transpose()?;
+    let search_lower = search.map(str::to_lowercase);
 
     // Filter entries
     let filtered: Vec<_> = entries
@@ -918,13 +805,12 @@ pub fn history(
                 return false;
             }
 
-            // Filter by search term (package name); lowercase the query once.
-            if let Some(query) = search {
-                let query_lower = query.to_lowercase();
+            // Filter by search term (package name).
+            if let Some(query_lower) = &search_lower {
                 let matches = entry
                     .changes
                     .iter()
-                    .any(|c| c.name.to_lowercase().contains(&query_lower));
+                    .any(|c| c.name.to_lowercase().contains(query_lower));
                 if !matches {
                     return false;
                 }
@@ -996,8 +882,7 @@ pub fn history(
             style::dim(&format!("({} changes)", entry.changes.len()))
         );
 
-        // If searching, highlight matching packages; lowercase the query once.
-        let search_lower = search.map(str::to_lowercase);
+        // If searching, highlight matching packages.
         for change in &entry.changes {
             let pkg_display = if let Some(ref query_lower) = search_lower {
                 if change.name.to_lowercase().contains(query_lower) {

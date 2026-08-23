@@ -5,29 +5,9 @@
 //! throughout the codebase while maintaining performance and ergonomics.
 
 use anyhow::{Context, Result};
-use std::num::{NonZeroU32, NonZeroU64, NonZeroUsize};
+use std::num::{NonZeroU32, NonZeroU64};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
-use thiserror::Error;
-
-/// Error types for safe operations
-#[derive(Error, Debug)]
-pub enum SafeOpError {
-    #[error("Zero value provided for NonZero{0}: expected value > 0")]
-    ZeroValue(&'static str),
-
-    #[error("Invalid path: {0}")]
-    InvalidPath(String),
-
-    #[error("File operation failed: {0}")]
-    FileOperation(String),
-
-    #[error("Database transaction failed: {0}")]
-    TransactionFailed(String),
-
-    #[error("Value out of range: {0}")]
-    OutOfRange(String),
-}
 
 /// Safe constructor for `NonZeroU32` with context
 pub fn nonzero_u32(value: u32, context: &str) -> Result<NonZeroU32> {
@@ -43,13 +23,6 @@ pub fn nonzero_u64(value: u64, context: &str) -> Result<NonZeroU64> {
         .with_context(|| format!("Failed to create NonZeroU64 for {context}"))
 }
 
-/// Safe constructor for `NonZeroUsize` with context
-pub fn nonzero_usize(value: usize, context: &str) -> Result<NonZeroUsize> {
-    NonZeroUsize::new(value)
-        .ok_or_else(|| anyhow::anyhow!("{context}: value must be > 0, got {value}"))
-        .with_context(|| format!("Failed to create NonZeroUsize for {context}"))
-}
-
 /// Create a `NonZeroU32` with a default fallback value.
 ///
 /// If both `value` and `default` are zero, falls back to `NonZeroU32::MIN` (1).
@@ -62,11 +35,6 @@ pub fn nonzero_u32_or_default(value: u32, default: u32) -> NonZeroU32 {
 /// Safe alternative to `expect()` with better error context
 pub fn expect_or<T>(option: Option<T>, context: &str) -> Result<T> {
     option.ok_or_else(|| anyhow::anyhow!("Expected value for {context} but found None"))
-}
-
-/// Safe alternative to `unwrap()` that returns a default value
-pub fn unwrap_or_default<T: Default>(option: Option<T>) -> T {
-    option.unwrap_or_default()
 }
 
 /// Validate that a path is safe for file operations
@@ -131,7 +99,6 @@ pub fn atomic_write_file_sync<P: AsRef<Path>, C: AsRef<[u8]>>(path: P, contents:
 /// Database transaction helper with automatic rollback on error
 pub struct TransactionGuard<T> {
     inner: Option<T>,
-    committed: bool,
 }
 
 // SAFETY: The expects below guard a logical invariant — `inner` is `Some` until
@@ -143,7 +110,6 @@ impl<T> TransactionGuard<T> {
     pub fn new(transaction: T) -> Self {
         Self {
             inner: Some(transaction),
-            committed: false,
         }
     }
 
@@ -160,14 +126,13 @@ impl<T> TransactionGuard<T> {
 
     /// Commit the transaction (preventing rollback)
     pub fn commit(mut self) -> T {
-        self.committed = true;
         self.inner.take().expect("Transaction already consumed")
     }
 }
 
 impl<T> Drop for TransactionGuard<T> {
     fn drop(&mut self) {
-        if !self.committed && self.inner.is_some() {
+        if self.inner.is_some() {
             // Transaction will be dropped without explicit commit
             // The underlying transaction implementation should handle rollback
             tracing::warn!("Transaction dropped without commit - rollback will occur");
@@ -299,20 +264,6 @@ mod tests {
                 .to_string()
                 .contains("Expected value for test value")
         );
-    }
-
-    #[test]
-    fn test_unwrap_or_default_some() {
-        let option = Some(42);
-        let result = unwrap_or_default(option);
-        assert_eq!(result, 42);
-    }
-
-    #[test]
-    fn test_unwrap_or_default_none() {
-        let option: Option<i32> = None;
-        let result = unwrap_or_default(option);
-        assert_eq!(result, 0); // Default for i32
     }
 
     #[test]

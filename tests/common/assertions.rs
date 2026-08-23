@@ -31,7 +31,7 @@ pub fn assert_package_info(result: &CommandResult, package_name: &str) {
     );
     let has_version_token = result.stdout.split_whitespace().any(|token| {
         let digits = token.chars().filter(char::is_ascii_digit).count();
-        digits >= 2 && token.contains('.') && token.chars().any(|c| c.is_ascii_digit())
+        digits >= 2 && token.contains('.')
     });
     assert!(
         has_version_token,

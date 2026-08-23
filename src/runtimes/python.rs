@@ -43,25 +43,15 @@ pub(crate) struct PythonVersion {
 
 pub(crate) struct PythonManager {
     versions_dir: PathBuf,
-    current_link: PathBuf,
-    client: reqwest::Client,
+    client: &'static reqwest::Client,
 }
 
 impl PythonManager {
     pub fn new() -> Self {
-        let data_dir = &*super::DATA_DIR;
-        let versions_dir = data_dir.join("versions").join("python");
-
         Self {
-            current_link: versions_dir.join("current"),
-            versions_dir,
-            client: download_client().clone(),
+            versions_dir: super::DATA_DIR.join("versions/python"),
+            client: download_client(),
         }
-    }
-
-    #[must_use]
-    pub fn bin_dir(&self) -> PathBuf {
-        self.current_link.join("bin")
     }
 
     /// List available Python versions from python-build-standalone
@@ -114,10 +104,9 @@ impl PythonManager {
     fn extract_cpython_version(name: &str) -> Option<String> {
         let (_, tail) = name.split_once("cpython-")?;
         let version = tail
-            .chars()
-            .take_while(|c| c.is_ascii_digit() || *c == '.')
-            .collect::<String>();
-        Self::is_semver_like(&version).then_some(version)
+            .split(|character: char| !character.is_ascii_digit() && character != '.')
+            .next()?;
+        Self::is_semver_like(version).then(|| version.to_owned())
     }
 
     fn is_semver_like(value: &str) -> bool {
@@ -195,7 +184,7 @@ impl PythonManager {
 
         println!("{} Downloading {}...", "→".blue(), asset_name);
         let download_path = self.versions_dir.join(asset_name);
-        download_with_progress(&self.client, url, &download_path, Some(&checksum)).await?;
+        download_with_progress(self.client, url, &download_path, &checksum).await?;
 
         println!("{} Extracting (pure Rust)...", "→".blue());
         let staging = begin_staged_install(&self.versions_dir)?;
@@ -214,13 +203,13 @@ impl PythonManager {
     pub fn use_version(&self, version: &str) -> Result<()> {
         let version = normalize_version(version);
         activate_version(&self.versions_dir, &version, Path::new("bin/python3"))?;
-        print_using("Python", &version, &self.bin_dir());
+        print_using("Python", &version, &self.versions_dir.join("current/bin"));
         Ok(())
     }
 }
 
 // Generate common runtime manager methods (list_installed, current_version)
-crate::runtimes::common::impl_runtime_common!(PythonManager, "Python");
+crate::runtimes::common::impl_runtime_common!(PythonManager);
 
 fn python_target() -> Result<String> {
     let arch = match std::env::consts::ARCH {
@@ -231,12 +220,6 @@ fn python_target() -> Result<String> {
         "linux" => Ok(format!("{arch}-unknown-linux-gnu")),
         "macos" => Ok(format!("{arch}-apple-darwin")),
         other => anyhow::bail!("Unsupported operating system for Python: {other}"),
-    }
-}
-
-impl Default for PythonManager {
-    fn default() -> Self {
-        Self::new()
     }
 }
 

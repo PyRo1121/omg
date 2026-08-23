@@ -23,7 +23,7 @@ use thiserror::Error;
 #[derive(Debug, Error)]
 #[error(transparent)]
 #[doc(hidden)]
-pub struct SequoiaSource(#[from] anyhow::Error);
+pub struct SequoiaSource(#[from] pub(super) anyhow::Error);
 
 #[derive(Debug, Error)]
 pub enum SignatureFileError {
@@ -33,7 +33,6 @@ pub enum SignatureFileError {
     SignatureMissing { package_name: String, path: String },
 }
 
-/// Failures loading a keyring or verifying a detached signature.
 /// Failures loading a keyring or verifying a detached signature.
 #[derive(Debug, Error)]
 pub enum PgpError {

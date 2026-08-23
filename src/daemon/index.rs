@@ -11,7 +11,6 @@ use anyhow::Result;
 
 use crate::daemon::protocol::{DetailedPackageInfo, PackageInfo};
 
-#[derive(Debug, Clone)]
 struct PackageBloomFilter {
     bits: Vec<u64>,
     num_bits: usize,
@@ -60,11 +59,10 @@ impl PackageBloomFilter {
     }
 }
 
-/// String interner using `Arc<str>` for zero-copy returns.
+/// String interner sharing each allocation between its pool and dedup map.
 ///
-/// Each unique string is stored once as an `Arc<str>`. The returned handle
-/// is an index into a flat vec, giving O(1) lookup with zero allocation
-/// on retrieval (just an Arc clone = pointer copy + refcount bump).
+/// The returned handle indexes a flat vector, giving O(1), allocation-free
+/// borrowed lookup.
 #[derive(Default)]
 struct StringPool {
     strings: Vec<Arc<str>>,
@@ -88,11 +86,6 @@ impl StringPool {
     #[inline]
     fn get(&self, handle: u32) -> &str {
         &self.strings[handle as usize]
-    }
-
-    #[inline]
-    fn get_arc(&self, handle: u32) -> Arc<str> {
-        Arc::clone(&self.strings[handle as usize])
     }
 }
 
@@ -178,7 +171,7 @@ struct CompactPackageInfo {
 /// - Higher rank values are better (4 > 3 > 2 > 1 > 0)
 /// - Lower `name_len` is better (shorter = more specific)
 /// - Lower idx is better (stable sort tiebreaker)
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 struct RelevanceScore {
     /// Primary rank: exact name match > prefix match > word boundary > substring
     rank: u8,
@@ -206,37 +199,53 @@ impl RelevanceScore {
     }
 }
 
-impl PartialOrd for RelevanceScore {
-    fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
-        Some(self.cmp(other))
-    }
-}
-
-impl Ord for RelevanceScore {
-    fn cmp(&self, other: &Self) -> std::cmp::Ordering {
-        // Compare by (rank, name_len_rev, idx_rev) - all in descending order
-        // Higher values are better for all three fields
-        (self.rank, self.name_len_rev, self.idx_rev).cmp(&(
-            other.rank,
-            other.name_len_rev,
-            other.idx_rev,
-        ))
-    }
-}
-
 impl PackageIndex {
+    fn with_capacity(capacity: usize) -> Self {
+        Self {
+            items: Vec::with_capacity(capacity),
+            pool: StringPool::default(),
+            name_to_idx: AHashMap::with_capacity(capacity),
+            bloom: PackageBloomFilter::new(capacity),
+            trigrams: TrigramIndex::new(capacity),
+        }
+    }
+
+    #[cfg(any(test, feature = "arch", feature = "debian", feature = "debian-pure"))]
+    fn push(
+        &mut self,
+        name: &str,
+        version: &str,
+        description: &str,
+        url: &str,
+        size: u64,
+        download_size: u64,
+        repo: &str,
+    ) {
+        let name_lower = name.to_ascii_lowercase();
+        let idx = self.items.len();
+        self.items.push(CompactPackageInfo {
+            name_offset: self.pool.intern(name),
+            name_lower_offset: self.pool.intern(&name_lower),
+            version_offset: self.pool.intern(version),
+            description_offset: self.pool.intern(description),
+            description_lower_offset: self.pool.intern(&description.to_ascii_lowercase()),
+            url_offset: self.pool.intern(url),
+            size,
+            download_size,
+            repo_offset: self.pool.intern(repo),
+            source_offset: self.pool.intern("official"),
+        });
+        self.trigrams.insert(&name_lower, idx as u32);
+        self.name_to_idx.insert(name.to_owned(), idx);
+        self.bloom.insert(name);
+    }
+
     /// Create an empty index for isolated handler tests and explicitly empty states.
     ///
     /// Production startup should use [`Self::new`] so a missing or unsynced package
     /// database remains an actionable error outside hermetic test mode.
     pub fn empty() -> Self {
-        Self {
-            items: Vec::new(),
-            pool: StringPool::default(),
-            name_to_idx: AHashMap::new(),
-            bloom: PackageBloomFilter::new(0),
-            trigrams: TrigramIndex::new(0),
-        }
+        Self::with_capacity(0)
     }
 
     /// Build a hermetic index from explicit package records.
@@ -245,46 +254,11 @@ impl PackageIndex {
     /// reading the host package database.
     #[cfg(test)]
     pub(crate) fn from_records(records: &[(&str, &str, &str)]) -> Self {
-        let pkg_count = records.len();
-        let mut pool = StringPool::default();
-        let mut items = Vec::with_capacity(pkg_count);
-        let mut name_to_idx = AHashMap::with_capacity(pkg_count);
-        let mut bloom = PackageBloomFilter::new(pkg_count);
-        let mut trigrams = TrigramIndex::new(pkg_count);
-
-        for (name, version, description) in records {
-            let name_lower = name.to_ascii_lowercase();
-            let name_offset = pool.intern(name);
-            let name_lower_offset = pool.intern(&name_lower);
-            let description_offset = pool.intern(description);
-            let description_lower_offset = pool.intern(&description.to_ascii_lowercase());
-            let idx = items.len();
-
-            items.push(CompactPackageInfo {
-                name_offset,
-                name_lower_offset,
-                version_offset: pool.intern(version),
-                description_offset,
-                description_lower_offset,
-                url_offset: pool.intern(""),
-                size: 0,
-                download_size: 0,
-                repo_offset: pool.intern("extra"),
-                source_offset: pool.intern("official"),
-            });
-
-            trigrams.insert(&name_lower, idx as u32);
-            name_to_idx.insert((*name).to_string(), idx);
-            bloom.insert(name);
+        let mut index = Self::with_capacity(records.len());
+        for &(name, version, description) in records {
+            index.push(name, version, description, "", 0, 0, "extra");
         }
-
-        Self {
-            items,
-            pool,
-            name_to_idx,
-            bloom,
-            trigrams,
-        }
+        index
     }
 
     pub fn new() -> Result<Self> {
@@ -323,94 +297,38 @@ impl PackageIndex {
         debian_db::ensure_index_loaded()?;
 
         let db_packages = debian_db::get_detailed_packages()?;
-        let pkg_count = db_packages.len();
-
-        let mut pool = StringPool::default();
-        let mut items = Vec::with_capacity(pkg_count);
-        let mut name_to_idx = AHashMap::with_capacity(pkg_count);
-        let mut bloom = PackageBloomFilter::new(pkg_count);
-        let mut trigrams = TrigramIndex::new(pkg_count);
-
+        let mut index = Self::with_capacity(db_packages.len());
         for pkg in db_packages {
-            let name_lower = pkg.name.to_ascii_lowercase();
-            let name_offset = pool.intern(&pkg.name);
-            let name_lower_offset = pool.intern(&name_lower);
-            let description_offset = pool.intern(&pkg.description);
-            let description_lower_offset = pool.intern(&pkg.description.to_ascii_lowercase());
-            let idx = items.len();
-
-            items.push(CompactPackageInfo {
-                name_offset,
-                name_lower_offset,
-                version_offset: pool.intern(&pkg.version),
-                description_offset,
-                description_lower_offset,
-                url_offset: pool.intern(&pkg.homepage),
-                size: pkg.installed_size,
-                download_size: pkg.size,
-                repo_offset: pool.intern(&pkg.section),
-                source_offset: pool.intern("official"),
-            });
-
-            trigrams.insert(&name_lower, idx as u32);
-            name_to_idx.insert(pkg.name.clone(), idx);
-            bloom.insert(&pkg.name);
+            index.push(
+                &pkg.name,
+                &pkg.version,
+                &pkg.description,
+                &pkg.homepage,
+                pkg.installed_size,
+                pkg.size,
+                &pkg.section,
+            );
         }
-
-        Ok(Self {
-            items,
-            pool,
-            name_to_idx,
-            bloom,
-            trigrams,
-        })
+        Ok(index)
     }
 
     #[cfg(feature = "arch")]
     fn new_alpm() -> Result<Self> {
         use crate::package_managers::pacman_db;
         let db_packages = pacman_db::get_detailed_packages()?;
-        let pkg_count = db_packages.len();
-
-        let mut pool = StringPool::default();
-        let mut items = Vec::with_capacity(pkg_count);
-        let mut name_to_idx = AHashMap::with_capacity(pkg_count);
-        let mut bloom = PackageBloomFilter::new(pkg_count);
-        let mut trigrams = TrigramIndex::new(pkg_count);
-
+        let mut index = Self::with_capacity(db_packages.len());
         for pkg in db_packages {
-            let name_lower = pkg.name.to_ascii_lowercase();
-            let name_offset = pool.intern(&pkg.name);
-            let name_lower_offset = pool.intern(&name_lower);
-            let description_offset = pool.intern(&pkg.desc);
-            let description_lower_offset = pool.intern(&pkg.desc.to_ascii_lowercase());
-            let idx = items.len();
-
-            items.push(CompactPackageInfo {
-                name_offset,
-                name_lower_offset,
-                version_offset: pool.intern(&pkg.version.to_string()),
-                description_offset,
-                description_lower_offset,
-                url_offset: pool.intern(&pkg.url),
-                size: pkg.isize,
-                download_size: pkg.csize,
-                repo_offset: pool.intern(&pkg.repo),
-                source_offset: pool.intern("official"),
-            });
-
-            trigrams.insert(&name_lower, idx as u32);
-            name_to_idx.insert(pkg.name.clone(), idx);
-            bloom.insert(&pkg.name);
+            index.push(
+                &pkg.name,
+                &pkg.version.to_string(),
+                &pkg.desc,
+                &pkg.url,
+                pkg.isize,
+                pkg.csize,
+                &pkg.repo,
+            );
         }
-
-        Ok(Self {
-            items,
-            pool,
-            name_to_idx,
-            bloom,
-            trigrams,
-        })
+        Ok(index)
     }
 
     pub fn search(&self, query: &str, limit: usize) -> Vec<PackageInfo> {
@@ -495,10 +413,10 @@ impl PackageIndex {
             .filter_map(|(_, idx)| {
                 let item = self.items.get(idx as usize)?;
                 Some(PackageInfo {
-                    name: self.pool.get_arc(item.name_offset).to_string(),
-                    version: self.pool.get_arc(item.version_offset).to_string(),
-                    description: self.pool.get_arc(item.description_offset).to_string(),
-                    source: self.pool.get_arc(item.source_offset).to_string(),
+                    name: self.pool.get(item.name_offset).to_string(),
+                    version: self.pool.get(item.version_offset).to_string(),
+                    description: self.pool.get(item.description_offset).to_string(),
+                    source: self.pool.get(item.source_offset).to_string(),
                 })
             })
             .collect()
@@ -592,24 +510,6 @@ impl PackageIndex {
 
         suggestions
     }
-
-    pub fn all_packages(&self) -> Vec<DetailedPackageInfo> {
-        self.items
-            .iter()
-            .map(|item| DetailedPackageInfo {
-                name: self.pool.get(item.name_offset).to_string(),
-                version: self.pool.get(item.version_offset).to_string(),
-                description: self.pool.get(item.description_offset).to_string(),
-                url: self.pool.get(item.url_offset).to_string(),
-                size: item.size,
-                download_size: item.download_size,
-                repo: self.pool.get(item.repo_offset).to_string(),
-                depends: Vec::new(),
-                licenses: Vec::new(),
-                source: self.pool.get(item.source_offset).to_string(),
-            })
-            .collect()
-    }
 }
 
 #[cfg(test)]
@@ -627,7 +527,6 @@ mod tests {
         assert!(index.search("", 10).is_empty());
         assert!(index.suggest("anything", 10).is_empty());
         assert!(index.get("anything").is_none());
-        assert!(index.all_packages().is_empty());
     }
 
     fn fixture_index() -> PackageIndex {

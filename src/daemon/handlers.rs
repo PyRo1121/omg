@@ -598,11 +598,11 @@ async fn handle_search(
     // with different limits are served correctly from cache.
     let index = state.index_snapshot();
     let task_index = Arc::clone(&index);
-    let query_arc: Arc<str> = Arc::from(query.as_str());
-    let query_for_cache = query;
+    let query_for_task = query.clone();
 
     let official =
-        tokio::task::spawn_blocking(move || task_index.search(&query_arc, MAX_SEARCH_LIMIT)).await;
+        tokio::task::spawn_blocking(move || task_index.search(&query_for_task, MAX_SEARCH_LIMIT))
+            .await;
 
     let official = match official {
         Ok(res) => res,
@@ -613,9 +613,7 @@ async fn handle_search(
     let official = Arc::new(official);
     let total = official.len();
     state.with_current_index(&index, || {
-        state
-            .cache
-            .insert_arc(query_for_cache, Arc::clone(&official));
+        state.cache.insert_arc(query, Arc::clone(&official));
     });
 
     let packages: Vec<_> = official.iter().take(limit).cloned().collect();
@@ -732,7 +730,7 @@ async fn handle_info(state: Arc<DaemonState>, id: RequestId, package: String) ->
                 if let Some(pkg) = details.into_iter().find(|p| p.name == package) {
                     let detailed = Arc::new(DetailedPackageInfo {
                         name: pkg.name,
-                        version: pkg.version.clone(),
+                        version: pkg.version,
                         description: pkg.description.unwrap_or_default(),
                         url: pkg.url.unwrap_or_default(),
                         size: 0,
@@ -771,11 +769,7 @@ async fn handle_info(state: Arc<DaemonState>, id: RequestId, package: String) ->
 
     state.cache.insert_info_miss(&package);
 
-    Response::Error {
-        id,
-        code: error_codes::PACKAGE_NOT_FOUND,
-        message: format!("Package not found: {package}"),
-    }
+    not_found_error(id, format!("Package not found: {package}"))
 }
 
 /// Query native status counts for a production package-manager backend.
@@ -943,42 +937,35 @@ async fn handle_security_audit(state: Arc<DaemonState>, id: RequestId) -> Respon
     GLOBAL_METRICS.inc_security_audit_requests();
     use crate::core::security::vulnerability::VulnerabilityScanner;
 
-    let scanner = VulnerabilityScanner::new();
-    let installed = state.package_manager.list_installed().await;
-
-    let installed = match installed {
-        Ok(pkgs) => pkgs,
-        Err(e) => {
+    let scanner = Arc::new(VulnerabilityScanner::new());
+    let installed = match state.package_manager.list_installed().await {
+        Ok(packages) => packages,
+        Err(error) => {
             return Response::Error {
                 id,
                 code: error_codes::INTERNAL_ERROR,
-                message: format!("Failed to list packages: {e}"),
+                message: format!("Failed to list packages: {error}"),
             };
         }
     };
 
-    // OPTIMIZATION: Pre-allocate with expected capacity (assume ~10% hit rate)
     let mut vulnerabilities = Vec::with_capacity(installed.len() / 10);
     let mut total_vulns = 0;
     let mut high_severity = 0;
 
-    let scanner = Arc::new(scanner);
-
-    // Use bounded concurrency instead of limiting the count
     use futures::stream::{self, StreamExt};
 
     let mut stream = stream::iter(installed)
         .map(|pkg| {
-            let scanner = Arc::clone(&scanner); // Use Arc::clone for clarity
+            let scanner = Arc::clone(&scanner);
             async move {
-                // Avoid clones by moving pkg if possible, but here we just need name/version
                 let name = pkg.name;
                 let version = pkg.version;
-                let res = scanner.scan_package(&name, &version).await;
-                (name, res)
+                let result = scanner.scan_package(&name, &version).await;
+                (name, result)
             }
         })
-        .buffer_unordered(SCAN_CONCURRENCY); // Scan up to 32 packages concurrently
+        .buffer_unordered(SCAN_CONCURRENCY);
 
     while let Some((name, res)) = stream.next().await {
         let vulns = match res {

@@ -30,29 +30,6 @@ pub enum Distro {
     Unknown,
 }
 
-impl Distro {
-    /// Returns the package manager name for this distro
-    #[must_use]
-    pub const fn package_manager_name(&self) -> &'static str {
-        match self {
-            Self::Arch => "pacman",
-            Self::Debian | Self::Ubuntu => "apt",
-            Self::Fedora => "dnf",
-            Self::MacOS => "brew",
-            Self::Unknown => "unknown",
-        }
-    }
-
-    /// Returns true if this is a Linux distribution
-    #[must_use]
-    pub const fn is_linux(&self) -> bool {
-        matches!(
-            self,
-            Self::Arch | Self::Debian | Self::Ubuntu | Self::Fedora
-        )
-    }
-}
-
 /// Detect the current operating system/distribution
 #[must_use]
 pub fn detect_distro() -> Distro {
@@ -97,28 +74,10 @@ pub fn detect_distro() -> Distro {
     })
 }
 
-/// Returns true if running on Arch Linux or derivatives
-#[must_use]
-pub fn is_arch_like() -> bool {
-    matches!(detect_distro(), Distro::Arch)
-}
-
 /// Returns true if running on Debian or Ubuntu
 #[must_use]
 pub fn is_debian_like() -> bool {
     matches!(detect_distro(), Distro::Debian | Distro::Ubuntu)
-}
-
-/// Returns true if running on Fedora or RHEL-family (`CentOS`, Rocky, Alma)
-#[must_use]
-pub fn is_fedora_like() -> bool {
-    matches!(detect_distro(), Distro::Fedora)
-}
-
-/// Returns true if running on macOS
-#[must_use]
-pub fn is_macos() -> bool {
-    matches!(detect_distro(), Distro::MacOS)
 }
 
 /// Check if we should use Debian backend based on current distro and features

@@ -149,22 +149,20 @@ fn record_install_history(
     let changes = packages
         .iter()
         .filter(|package| !aur_packages.contains(*package))
-        .map(|package| {
-            Ok(PackageChange {
-                name: history_package_name(package),
-                old_version: None,
-                new_version: None,
-                // AUR candidates never reach this recorder: they are
-                // handled (and recorded) by record_aur_history.
-                source: if is_local_package_file(package) {
-                    "local"
-                } else {
-                    "pacman"
-                }
-                .to_string(),
-            })
+        .map(|package| PackageChange {
+            name: history_package_name(package),
+            old_version: None,
+            new_version: None,
+            // AUR candidates never reach this recorder: they are
+            // handled (and recorded) by record_aur_history.
+            source: if is_local_package_file(package) {
+                "local"
+            } else {
+                "pacman"
+            }
+            .to_string(),
         })
-        .collect::<Result<Vec<_>>>()?;
+        .collect();
 
     HistoryManager::new()?.finish_operation(TransactionType::Install, changes, operation_result)
 }
@@ -203,10 +201,6 @@ fn try_local_package_name(package: &str) -> Result<String> {
     Ok(loaded.name().to_string())
 }
 
-#[allow(
-    clippy::unnecessary_wraps,
-    reason = "signature is shared with fallible backend dry-run implementations"
-)]
 pub async fn install_dry_run(packages: &[String]) -> Result<()> {
     use comfy_table::{Table, modifiers::UTF8_ROUND_CORNERS, presets::UTF8_FULL};
     use owo_colors::OwoColorize;
@@ -372,7 +366,7 @@ fn handle_missing_package(
 ) -> BoxFuture<'static, Result<()>> {
     Box::pin(async move {
         match try_aur_package(&pkg_name).await {
-            Ok(aur_pkg) => return handle_aur_package(&pkg_name, aur_pkg, yes).await,
+            Ok(aur_pkg) => return handle_aur_package(aur_pkg, yes).await,
             Err(error) if is_aur_not_found(&error) => {}
             Err(error) => {
                 return Err(error).with_context(|| {
@@ -485,11 +479,7 @@ async fn try_aur_package(pkg_name: &str) -> Result<crate::core::Package> {
         .ok_or_else(|| anyhow::anyhow!("Package not found in AUR"))
 }
 
-async fn handle_aur_package(
-    _pkg_name: &str,
-    aur_pkg: crate::core::Package,
-    yes: bool,
-) -> Result<()> {
+async fn handle_aur_package(aur_pkg: crate::core::Package, yes: bool) -> Result<()> {
     modern_ui::print_aur_package_info(
         &aur_pkg.name,
         &aur_pkg.version.to_string(),

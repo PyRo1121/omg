@@ -58,7 +58,7 @@ impl DisplayPackage {
             source: "AUR".to_string(),
             votes: Some(p.num_votes),
             popularity: Some(p.popularity),
-            maintainer: p.maintainer.clone(),
+            maintainer: p.maintainer,
             out_of_date: Some(p.out_of_date.is_some()),
         }
     }
@@ -68,7 +68,6 @@ pub async fn search(query: &str, detailed: bool, no_aur: bool) -> Result<()> {
     search_internal(query, detailed, false, no_aur, 50).await
 }
 
-#[allow(clippy::unused_async, reason = "preserves the async command interface")]
 pub async fn search_with_json(
     query: &str,
     detailed: bool,
@@ -204,7 +203,7 @@ async fn search_official_packages(query: &str) -> Result<Vec<DisplayPackage>> {
         .collect())
 }
 
-#[cfg_attr(not(feature = "arch"), expect(clippy::unused_async))]
+#[cfg(feature = "arch")]
 async fn search_aur_packages(query: &str, detailed: bool) -> Result<Vec<DisplayPackage>> {
     if crate::core::paths::test_mode() {
         return Ok(Vec::new());
@@ -212,34 +211,32 @@ async fn search_aur_packages(query: &str, detailed: bool) -> Result<Vec<DisplayP
 
     #[cfg(any(feature = "debian", feature = "debian-pure"))]
     if crate::core::env::distro::is_debian_like() {
-        let _ = (query, detailed);
         return Ok(Vec::new());
     }
 
-    #[cfg(feature = "arch")]
-    {
-        if detailed {
-            return crate::package_managers::search_detailed(query)
-                .await
-                .map(|pkgs| {
-                    pkgs.into_iter()
-                        .map(DisplayPackage::from_aur_detail)
-                        .collect()
-                })
-                .with_context(|| format!("Failed to search AUR for {query}"));
-        }
-        let aur = AurClient::new()?;
-        return aur
-            .search(query)
+    if detailed {
+        return crate::package_managers::search_detailed(query)
             .await
-            .map(|pkgs| pkgs.into_iter().map(DisplayPackage::from_package).collect())
+            .map(|pkgs| {
+                pkgs.into_iter()
+                    .map(DisplayPackage::from_aur_detail)
+                    .collect()
+            })
             .with_context(|| format!("Failed to search AUR for {query}"));
     }
-    #[cfg(not(feature = "arch"))]
-    {
-        let _ = (query, detailed);
-        Ok(Vec::new())
-    }
+    let aur = AurClient::new()?;
+    aur.search(query)
+        .await
+        .map(|pkgs| pkgs.into_iter().map(DisplayPackage::from_package).collect())
+        .with_context(|| format!("Failed to search AUR for {query}"))
+}
+
+#[cfg(not(feature = "arch"))]
+fn search_aur_packages(
+    _query: &str,
+    _detailed: bool,
+) -> std::future::Ready<Result<Vec<DisplayPackage>>> {
+    std::future::ready(Ok(Vec::new()))
 }
 
 pub fn search_sync_cli(query: &str, detailed: bool, no_aur: bool) -> Result<bool> {

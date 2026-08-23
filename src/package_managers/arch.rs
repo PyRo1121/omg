@@ -49,8 +49,7 @@ where
     // FALLBACK: Elevate via sudo (uses ultra-fast elevated path)
     tracing::debug!("Elevating privileges for {command}");
     let mut args = vec![command, "--"];
-    let pkg_refs: Vec<&str> = packages.iter().map(String::as_str).collect();
-    args.extend_from_slice(&pkg_refs);
+    args.extend(packages.iter().map(String::as_str));
     privilege::run_self_sudo(&args).await?;
     invalidate_caches()?;
     Ok(())
@@ -140,8 +139,7 @@ impl PackageManager for ArchPackageManager {
     fn update(&self) -> Pin<Box<dyn Future<Output = AnyhowResult<()>> + Send + '_>> {
         Box::pin(async move {
             run_privileged_operation("update", &[], || async {
-                let prefix = "OMG".cyan().bold().to_string();
-                tracing::info!("{prefix} Starting full system upgrade...");
+                tracing::info!("{} Starting full system upgrade...", "OMG".cyan().bold());
                 tokio::task::spawn_blocking(move || {
                     crate::package_managers::execute_transaction(Vec::new(), false, true, None)
                 })
@@ -283,9 +281,8 @@ pub async fn remove_orphans() -> AnyhowResult<()> {
         return Ok(());
     }
 
-    let prefix = "OMG".cyan().bold().to_string();
     let count = orphans.len();
-    tracing::info!("{prefix} Found {count} orphan package(s):");
+    tracing::info!("{} Found {count} orphan package(s):", "OMG".cyan().bold());
     for pkg in &orphans {
         tracing::info!("  {} {}", "→".dimmed(), pkg);
     }

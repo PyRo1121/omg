@@ -11,9 +11,9 @@ use anyhow::{Context, Result};
 use flate2::read::GzDecoder;
 use memmap2::Mmap;
 use rkyv::{Archive, Deserialize as RkyvDeserialize, Serialize as RkyvSerialize};
-use serde::Deserialize;
 use tempfile::NamedTempFile;
 
+use crate::package_managers::aur_metadata::AurJsonPackage;
 use crate::package_managers::parse_version_or_zero;
 
 /// Minimal AUR package metadata stored in the index.
@@ -158,27 +158,6 @@ impl AurIndex {
     }
 }
 
-/// Helper struct for parsing the raw AUR JSON (which has Capitalized keys)
-#[derive(Deserialize)]
-struct RawAurPackage {
-    #[serde(rename = "Name")]
-    name: String,
-    #[serde(rename = "Version")]
-    version: String,
-    #[serde(rename = "Maintainer")]
-    maintainer: Option<String>,
-    #[serde(rename = "LastModified")]
-    last_modified: Option<i64>,
-    #[serde(rename = "Description")]
-    description: Option<String>,
-    #[serde(rename = "NumVotes")]
-    num_votes: Option<i32>,
-    #[serde(rename = "Popularity")]
-    popularity: Option<f64>,
-    #[serde(rename = "OutOfDate")]
-    out_of_date: Option<i64>,
-}
-
 /// Build the binary index from the AUR JSON archive
 pub fn build_index(json_path: &Path, output_path: &Path) -> Result<()> {
     let file = File::open(json_path).context("Failed to open AUR JSON")?;
@@ -186,7 +165,7 @@ pub fn build_index(json_path: &Path, output_path: &Path) -> Result<()> {
     let decoder = GzDecoder::new(reader);
 
     // Parse the JSON array. AUR's metadata is a large array of objects.
-    let mut raw_entries: Vec<RawAurPackage> =
+    let mut raw_entries: Vec<AurJsonPackage> =
         serde_json::from_reader(decoder).context("Failed to parse AUR JSON metadata")?;
 
     // Sort by name for binary search (critical for zero-copy lookups)
@@ -232,29 +211,27 @@ pub fn build_index(json_path: &Path, output_path: &Path) -> Result<()> {
 mod tests {
     use super::*;
 
-    #[test]
-    fn test_build_index() -> Result<()> {
+    fn open_test_index(data: &str) -> Result<(tempfile::TempDir, AurIndex)> {
         let temp_dir = tempfile::tempdir()?;
         let json_path = temp_dir.path().join("metadata.json.gz");
         let index_path = temp_dir.path().join("metadata.rkyv");
+        let file = File::create(&json_path)?;
+        let mut encoder = flate2::write::GzEncoder::new(file, flate2::Compression::default());
+        std::io::Write::write_all(&mut encoder, data.as_bytes())?;
+        encoder.finish()?;
+        build_index(&json_path, &index_path)?;
+        let index = AurIndex::open(&index_path)?;
+        Ok((temp_dir, index))
+    }
 
-        // Create a mock Gzip JSON
+    #[test]
+    fn test_build_index() -> Result<()> {
         let data = r#"[
             {"Name": "pkg-a", "Version": "1.0", "Maintainer": "user1", "LastModified": 100, "Description": "desc a", "NumVotes": 10, "Popularity": 0.5},
             {"Name": "pkg-b", "Version": "2.0", "Maintainer": null, "LastModified": 200, "Description": null, "NumVotes": 5, "Popularity": 0.1},
             {"Name": "Another-Pkg", "Version": "0.1", "Maintainer": "user2", "LastModified": 300, "Description": "another", "NumVotes": 0, "Popularity": 0.0}
         ]"#;
-
-        let file = File::create(&json_path)?;
-        let mut encoder = flate2::write::GzEncoder::new(file, flate2::Compression::default());
-        std::io::Write::write_all(&mut encoder, data.as_bytes())?;
-        encoder.finish()?;
-
-        // Build index
-        build_index(&json_path, &index_path)?;
-
-        // Verify index
-        let index = AurIndex::open(&index_path)?;
+        let (_temp_dir, index) = open_test_index(data)?;
         assert!(index.get("pkg-a")?.is_some());
         assert!(index.get("pkg-b")?.is_some());
         assert!(index.get("Another-Pkg")?.is_some());
@@ -283,23 +260,12 @@ mod tests {
     /// exactly those names instead of treating them as up-to-date.
     #[test]
     fn test_updates_for_reports_missing_packages() -> Result<()> {
-        let temp_dir = tempfile::tempdir()?;
-        let json_path = temp_dir.path().join("metadata.json.gz");
-        let index_path = temp_dir.path().join("metadata.rkyv");
-
         // Index contains only pkg-a and pkg-b
         let data = r#"[
             {"Name": "pkg-a", "Version": "1.0", "Maintainer": "user1", "LastModified": 100, "Description": "desc a", "NumVotes": 10, "Popularity": 0.5},
             {"Name": "pkg-b", "Version": "2.0", "Maintainer": null, "LastModified": 200, "Description": null, "NumVotes": 5, "Popularity": 0.1}
         ]"#;
-
-        let file = File::create(&json_path)?;
-        let mut encoder = flate2::write::GzEncoder::new(file, flate2::Compression::default());
-        std::io::Write::write_all(&mut encoder, data.as_bytes())?;
-        encoder.finish()?;
-        build_index(&json_path, &index_path)?;
-
-        let index = AurIndex::open(&index_path)?;
+        let (_temp_dir, index) = open_test_index(data)?;
 
         // Query for packages NOT in the index — simulates a stale index
         // that doesn't contain the user's installed AUR packages
@@ -327,20 +293,10 @@ mod tests {
     /// names the entries it is missing, instead of truncating results.
     #[test]
     fn test_updates_for_partial_staleness_keeps_updates_and_missing() -> Result<()> {
-        let temp_dir = tempfile::tempdir()?;
-        let json_path = temp_dir.path().join("metadata.json.gz");
-        let index_path = temp_dir.path().join("metadata.rkyv");
-
         let data = r#"[
             {"Name": "pkg-a", "Version": "2.0", "Maintainer": null, "LastModified": 100, "Description": null, "NumVotes": 1, "Popularity": 0.1}
         ]"#;
-        let file = File::create(&json_path)?;
-        let mut encoder = flate2::write::GzEncoder::new(file, flate2::Compression::default());
-        std::io::Write::write_all(&mut encoder, data.as_bytes())?;
-        encoder.finish()?;
-        build_index(&json_path, &index_path)?;
-
-        let index = AurIndex::open(&index_path)?;
+        let (_temp_dir, index) = open_test_index(data)?;
         let local_pkgs = vec![
             ("pkg-a".to_string(), parse_version_or_zero("1.0")), // in index, newer remote
             ("stale-only".to_string(), parse_version_or_zero("0.5")), // absent from index
@@ -362,22 +318,11 @@ mod tests {
     /// is newer than the local version.
     #[test]
     fn test_updates_for_detects_newer_version() -> Result<()> {
-        let temp_dir = tempfile::tempdir()?;
-        let json_path = temp_dir.path().join("metadata.json.gz");
-        let index_path = temp_dir.path().join("metadata.rkyv");
-
         let data = r#"[
             {"Name": "pkg-a", "Version": "2.0", "Maintainer": "user1", "LastModified": 100, "Description": "desc a", "NumVotes": 10, "Popularity": 0.5},
             {"Name": "pkg-b", "Version": "1.0", "Maintainer": null, "LastModified": 200, "Description": null, "NumVotes": 5, "Popularity": 0.1}
         ]"#;
-
-        let file = File::create(&json_path)?;
-        let mut encoder = flate2::write::GzEncoder::new(file, flate2::Compression::default());
-        std::io::Write::write_all(&mut encoder, data.as_bytes())?;
-        encoder.finish()?;
-        build_index(&json_path, &index_path)?;
-
-        let index = AurIndex::open(&index_path)?;
+        let (_temp_dir, index) = open_test_index(data)?;
 
         let local_pkgs = vec![
             ("pkg-a".to_string(), parse_version_or_zero("1.0")), // remote 2.0 > local 1.0
@@ -396,21 +341,10 @@ mod tests {
     /// already at or ahead of the index versions (no updates available).
     #[test]
     fn test_updates_for_no_updates_when_current() -> Result<()> {
-        let temp_dir = tempfile::tempdir()?;
-        let json_path = temp_dir.path().join("metadata.json.gz");
-        let index_path = temp_dir.path().join("metadata.rkyv");
-
         let data = r#"[
             {"Name": "pkg-a", "Version": "1.0", "Maintainer": "user1", "LastModified": 100, "Description": "desc a", "NumVotes": 10, "Popularity": 0.5}
         ]"#;
-
-        let file = File::create(&json_path)?;
-        let mut encoder = flate2::write::GzEncoder::new(file, flate2::Compression::default());
-        std::io::Write::write_all(&mut encoder, data.as_bytes())?;
-        encoder.finish()?;
-        build_index(&json_path, &index_path)?;
-
-        let index = AurIndex::open(&index_path)?;
+        let (_temp_dir, index) = open_test_index(data)?;
 
         // Local version matches remote — no update
         let local_same = vec![("pkg-a".to_string(), parse_version_or_zero("1.0"))];

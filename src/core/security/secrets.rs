@@ -32,7 +32,6 @@ pub enum SecretType {
     NpmToken,
     PypiToken,
     DockerHubToken,
-    AzureKey,
     HerokuApiKey,
     DigitalOceanToken,
 }
@@ -57,7 +56,6 @@ impl std::fmt::Display for SecretType {
             Self::NpmToken => write!(f, "NPM Token"),
             Self::PypiToken => write!(f, "PyPI Token"),
             Self::DockerHubToken => write!(f, "Docker Hub Token"),
-            Self::AzureKey => write!(f, "Azure Key"),
             Self::HerokuApiKey => write!(f, "Heroku API Key"),
             Self::DigitalOceanToken => write!(f, "DigitalOcean Token"),
         }
@@ -105,226 +103,101 @@ impl std::fmt::Display for SecretSeverity {
 /// Pattern definition for secret detection
 struct SecretPattern {
     secret_type: SecretType,
-    pattern: &'static Regex,
+    pattern: &'static LazyLock<Regex>,
     severity: SecretSeverity,
 }
 
-// Static regex patterns compiled once at first use
-#[expect(clippy::expect_used)] // Static LazyLock<Regex> with compile-time-verified pattern
+macro_rules! secret_pattern {
+    ($secret_type:ident, $pattern:ident, $severity:ident) => {
+        SecretPattern {
+            secret_type: SecretType::$secret_type,
+            pattern: &$pattern,
+            severity: SecretSeverity::$severity,
+        }
+    };
+}
+
+// Static regex patterns compiled once at first use.
+fn compile_pattern(pattern: &str) -> Regex {
+    match Regex::new(pattern) {
+        Ok(regex) => regex,
+        Err(error) => panic!("invalid built-in secret regex: {error}"),
+    }
+}
+
 static RE_AWS_ACCESS_KEY: LazyLock<Regex> =
-    LazyLock::new(|| Regex::new(r"(AKIA[0-9A-Z]{16})").expect("valid AWS access key regex"));
-
-#[expect(clippy::expect_used)] // Static LazyLock<Regex> with compile-time-verified pattern
+    LazyLock::new(|| compile_pattern(r"(AKIA[0-9A-Z]{16})"));
 static RE_AWS_SECRET_KEY: LazyLock<Regex> = LazyLock::new(|| {
-    Regex::new(r#"(?i)aws[_-]?secret[_-]?access[_-]?key['"]?\s*[:=]\s*['"]?([A-Za-z0-9/+=]{40})"#)
-        .expect("valid AWS secret key regex")
+    compile_pattern(
+        r#"(?i)aws[_-]?secret[_-]?access[_-]?key['"]?\s*[:=]\s*['"]?([A-Za-z0-9/+=]{40})"#,
+    )
 });
-
-#[expect(clippy::expect_used)] // Static LazyLock<Regex> with compile-time-verified pattern
 static RE_GITHUB_TOKEN: LazyLock<Regex> = LazyLock::new(|| {
-    Regex::new(r"(ghp_[a-zA-Z0-9]{36}|github_pat_[a-zA-Z0-9]{22}_[a-zA-Z0-9]{59}|gho_[a-zA-Z0-9]{36}|ghu_[a-zA-Z0-9]{36}|ghs_[a-zA-Z0-9]{36}|ghr_[a-zA-Z0-9]{36})")
-        .expect("valid GitHub token regex")
+    compile_pattern(
+        r"(ghp_[a-zA-Z0-9]{36}|github_pat_[a-zA-Z0-9]{22}_[a-zA-Z0-9]{59}|gho_[a-zA-Z0-9]{36}|ghu_[a-zA-Z0-9]{36}|ghs_[a-zA-Z0-9]{36}|ghr_[a-zA-Z0-9]{36})",
+    )
 });
-
-#[expect(clippy::expect_used)] // Static LazyLock<Regex> with compile-time-verified pattern
 static RE_GITLAB_TOKEN: LazyLock<Regex> =
-    LazyLock::new(|| Regex::new(r"(glpat-[a-zA-Z0-9\-]{20,})").expect("valid GitLab token regex"));
-
-#[expect(clippy::expect_used)] // Static LazyLock<Regex> with compile-time-verified pattern
-static RE_SLACK_TOKEN: LazyLock<Regex> = LazyLock::new(|| {
-    Regex::new(r"(xox[baprs]-[0-9]{10,13}-[0-9]{10,13}[a-zA-Z0-9-]*)")
-        .expect("valid Slack token regex")
-});
-
-#[expect(clippy::expect_used)] // Static LazyLock<Regex> with compile-time-verified pattern
+    LazyLock::new(|| compile_pattern(r"(glpat-[a-zA-Z0-9\-]{20,})"));
+static RE_SLACK_TOKEN: LazyLock<Regex> =
+    LazyLock::new(|| compile_pattern(r"(xox[baprs]-[0-9]{10,13}-[0-9]{10,13}[a-zA-Z0-9-]*)"));
 static RE_SLACK_WEBHOOK: LazyLock<Regex> = LazyLock::new(|| {
-    Regex::new(r"https://hooks\.slack\.com/services/T[a-zA-Z0-9_]+/B[a-zA-Z0-9_]+/[a-zA-Z0-9_]+")
-        .expect("valid Slack webhook regex")
+    compile_pattern(
+        r"https://hooks\.slack\.com/services/T[a-zA-Z0-9_]+/B[a-zA-Z0-9_]+/[a-zA-Z0-9_]+",
+    )
 });
-
-#[expect(clippy::expect_used)] // Static LazyLock<Regex> with compile-time-verified pattern
-static RE_PRIVATE_KEY: LazyLock<Regex> = LazyLock::new(|| {
-    Regex::new(r"-----BEGIN (RSA |EC |DSA |OPENSSH )?PRIVATE KEY-----")
-        .expect("valid private key regex")
-});
-
-#[expect(clippy::expect_used)] // Static LazyLock<Regex> with compile-time-verified pattern
-static RE_JWT: LazyLock<Regex> = LazyLock::new(|| {
-    Regex::new(r"eyJ[a-zA-Z0-9_-]*\.eyJ[a-zA-Z0-9_-]*\.[a-zA-Z0-9_-]*")
-        .expect("valid JWT token regex")
-});
-
-#[expect(clippy::expect_used)] // Static LazyLock<Regex> with compile-time-verified pattern
+static RE_PRIVATE_KEY: LazyLock<Regex> =
+    LazyLock::new(|| compile_pattern(r"-----BEGIN (RSA |EC |DSA |OPENSSH )?PRIVATE KEY-----"));
+static RE_JWT: LazyLock<Regex> =
+    LazyLock::new(|| compile_pattern(r"eyJ[a-zA-Z0-9_-]*\.eyJ[a-zA-Z0-9_-]*\.[a-zA-Z0-9_-]*"));
 static RE_GOOGLE_API_KEY: LazyLock<Regex> =
-    LazyLock::new(|| Regex::new(r"AIza[0-9A-Za-z\-_]{35}").expect("valid Google API key regex"));
-
-#[expect(clippy::expect_used)] // Static LazyLock<Regex> with compile-time-verified pattern
-static RE_STRIPE_KEY: LazyLock<Regex> = LazyLock::new(|| {
-    Regex::new(r"(sk_live_[0-9a-zA-Z]{24}|rk_live_[0-9a-zA-Z]{24})")
-        .expect("valid Stripe key regex")
-});
-
-#[expect(clippy::expect_used)] // Static LazyLock<Regex> with compile-time-verified pattern
-static RE_TWILIO_KEY: LazyLock<Regex> =
-    LazyLock::new(|| Regex::new(r"SK[0-9a-fA-F]{32}").expect("valid Twilio key regex"));
-
-#[expect(clippy::expect_used)] // Static LazyLock<Regex> with compile-time-verified pattern
-static RE_SENDGRID_KEY: LazyLock<Regex> = LazyLock::new(|| {
-    Regex::new(r"SG\.[a-zA-Z0-9_-]{22}\.[a-zA-Z0-9_-]{43}").expect("valid SendGrid key regex")
-});
-
-#[expect(clippy::expect_used)] // Static LazyLock<Regex> with compile-time-verified pattern
-static RE_NPM_TOKEN: LazyLock<Regex> =
-    LazyLock::new(|| Regex::new(r"npm_[a-zA-Z0-9]{36}").expect("valid NPM token regex"));
-
-#[expect(clippy::expect_used)] // Static LazyLock<Regex> with compile-time-verified pattern
-static RE_PYPI_TOKEN: LazyLock<Regex> = LazyLock::new(|| {
-    Regex::new(r"pypi-AgEIcHlwaS5vcmc[A-Za-z0-9\-_]{50,}").expect("valid PyPI token regex")
-});
-
-#[expect(clippy::expect_used)] // Static LazyLock<Regex> with compile-time-verified pattern
-static RE_DOCKER_HUB_TOKEN: LazyLock<Regex> = LazyLock::new(|| {
-    Regex::new(r"dckr_pat_[a-zA-Z0-9_-]{27}").expect("valid Docker Hub token regex")
-});
-
-#[expect(clippy::expect_used)] // Static LazyLock<Regex> with compile-time-verified pattern
+    LazyLock::new(|| compile_pattern(r"AIza[0-9A-Za-z\-_]{35}"));
+static RE_STRIPE_KEY: LazyLock<Regex> =
+    LazyLock::new(|| compile_pattern(r"(sk_live_[0-9a-zA-Z]{24}|rk_live_[0-9a-zA-Z]{24})"));
+static RE_TWILIO_KEY: LazyLock<Regex> = LazyLock::new(|| compile_pattern(r"SK[0-9a-fA-F]{32}"));
+static RE_SENDGRID_KEY: LazyLock<Regex> =
+    LazyLock::new(|| compile_pattern(r"SG\.[a-zA-Z0-9_-]{22}\.[a-zA-Z0-9_-]{43}"));
+static RE_NPM_TOKEN: LazyLock<Regex> = LazyLock::new(|| compile_pattern(r"npm_[a-zA-Z0-9]{36}"));
+static RE_PYPI_TOKEN: LazyLock<Regex> =
+    LazyLock::new(|| compile_pattern(r"pypi-AgEIcHlwaS5vcmc[A-Za-z0-9\-_]{50,}"));
+static RE_DOCKER_HUB_TOKEN: LazyLock<Regex> =
+    LazyLock::new(|| compile_pattern(r"dckr_pat_[a-zA-Z0-9_-]{27}"));
 static RE_HEROKU_API_KEY: LazyLock<Regex> = LazyLock::new(|| {
-    Regex::new(r#"(?i)heroku[_-]?api[_-]?key['"]?\s*[:=]\s*['"]?([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12})"#)
-        .expect("valid Heroku API key regex")
+    compile_pattern(
+        r#"(?i)heroku[_-]?api[_-]?key['"]?\s*[:=]\s*['"]?([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12})"#,
+    )
 });
-
-#[expect(clippy::expect_used)] // Static LazyLock<Regex> with compile-time-verified pattern
 static RE_DIGITALOCEAN_TOKEN: LazyLock<Regex> =
-    LazyLock::new(|| Regex::new(r"dop_v1_[a-f0-9]{64}").expect("valid DigitalOcean token regex"));
-
-#[expect(clippy::expect_used)] // Static LazyLock<Regex> with compile-time-verified pattern
+    LazyLock::new(|| compile_pattern(r"dop_v1_[a-f0-9]{64}"));
 static RE_GENERIC_API_KEY: LazyLock<Regex> = LazyLock::new(|| {
-    Regex::new(r#"(?i)(api[_-]?key|apikey)['"]?\s*[:=]\s*['"]?([a-zA-Z0-9_-]{20,})"#)
-        .expect("valid generic API key regex")
+    compile_pattern(r#"(?i)(api[_-]?key|apikey)['"]?\s*[:=]\s*['"]?([a-zA-Z0-9_-]{20,})"#)
 });
-
-#[expect(clippy::expect_used)] // Static LazyLock<Regex> with compile-time-verified pattern
 static RE_GENERIC_PASSWORD: LazyLock<Regex> = LazyLock::new(|| {
-    Regex::new(r#"(?i)(password|passwd|pwd)['"]?\s*[:=]\s*['"]?([^\s'"]{8,})"#)
-        .expect("valid generic password regex")
+    compile_pattern(r#"(?i)(password|passwd|pwd)['"]?\s*[:=]\s*['"]?([^\s'"]{8,})"#)
 });
 
-/// Static list of all secret patterns
-static PATTERNS: LazyLock<Vec<SecretPattern>> = LazyLock::new(|| {
-    vec![
-        // AWS
-        SecretPattern {
-            secret_type: SecretType::AwsAccessKey,
-            pattern: &RE_AWS_ACCESS_KEY,
-            severity: SecretSeverity::Critical,
-        },
-        SecretPattern {
-            secret_type: SecretType::AwsSecretKey,
-            pattern: &RE_AWS_SECRET_KEY,
-            severity: SecretSeverity::Critical,
-        },
-        // GitHub
-        SecretPattern {
-            secret_type: SecretType::GithubToken,
-            pattern: &RE_GITHUB_TOKEN,
-            severity: SecretSeverity::Critical,
-        },
-        // GitLab
-        SecretPattern {
-            secret_type: SecretType::GitlabToken,
-            pattern: &RE_GITLAB_TOKEN,
-            severity: SecretSeverity::Critical,
-        },
-        // Slack
-        SecretPattern {
-            secret_type: SecretType::SlackToken,
-            pattern: &RE_SLACK_TOKEN,
-            severity: SecretSeverity::High,
-        },
-        SecretPattern {
-            secret_type: SecretType::SlackWebhook,
-            pattern: &RE_SLACK_WEBHOOK,
-            severity: SecretSeverity::High,
-        },
-        // Private Keys
-        SecretPattern {
-            secret_type: SecretType::PrivateKey,
-            pattern: &RE_PRIVATE_KEY,
-            severity: SecretSeverity::Critical,
-        },
-        // JWT
-        SecretPattern {
-            secret_type: SecretType::JwtToken,
-            pattern: &RE_JWT,
-            severity: SecretSeverity::Medium,
-        },
-        // Google
-        SecretPattern {
-            secret_type: SecretType::GoogleApiKey,
-            pattern: &RE_GOOGLE_API_KEY,
-            severity: SecretSeverity::High,
-        },
-        // Stripe
-        SecretPattern {
-            secret_type: SecretType::StripeKey,
-            pattern: &RE_STRIPE_KEY,
-            severity: SecretSeverity::Critical,
-        },
-        // Twilio
-        SecretPattern {
-            secret_type: SecretType::TwilioKey,
-            pattern: &RE_TWILIO_KEY,
-            severity: SecretSeverity::High,
-        },
-        // SendGrid
-        SecretPattern {
-            secret_type: SecretType::SendgridKey,
-            pattern: &RE_SENDGRID_KEY,
-            severity: SecretSeverity::High,
-        },
-        // NPM
-        SecretPattern {
-            secret_type: SecretType::NpmToken,
-            pattern: &RE_NPM_TOKEN,
-            severity: SecretSeverity::High,
-        },
-        // PyPI
-        SecretPattern {
-            secret_type: SecretType::PypiToken,
-            pattern: &RE_PYPI_TOKEN,
-            severity: SecretSeverity::High,
-        },
-        // Docker Hub
-        SecretPattern {
-            secret_type: SecretType::DockerHubToken,
-            pattern: &RE_DOCKER_HUB_TOKEN,
-            severity: SecretSeverity::High,
-        },
-        // Heroku
-        SecretPattern {
-            secret_type: SecretType::HerokuApiKey,
-            pattern: &RE_HEROKU_API_KEY,
-            severity: SecretSeverity::High,
-        },
-        // DigitalOcean
-        SecretPattern {
-            secret_type: SecretType::DigitalOceanToken,
-            pattern: &RE_DIGITALOCEAN_TOKEN,
-            severity: SecretSeverity::High,
-        },
-        // Generic patterns (lower priority)
-        SecretPattern {
-            secret_type: SecretType::GenericApiKey,
-            pattern: &RE_GENERIC_API_KEY,
-            severity: SecretSeverity::Medium,
-        },
-        SecretPattern {
-            secret_type: SecretType::GenericPassword,
-            pattern: &RE_GENERIC_PASSWORD,
-            severity: SecretSeverity::Medium,
-        },
-    ]
-});
+/// Static list of all secret patterns.
+static PATTERNS: [SecretPattern; 19] = [
+    secret_pattern!(AwsAccessKey, RE_AWS_ACCESS_KEY, Critical),
+    secret_pattern!(AwsSecretKey, RE_AWS_SECRET_KEY, Critical),
+    secret_pattern!(GithubToken, RE_GITHUB_TOKEN, Critical),
+    secret_pattern!(GitlabToken, RE_GITLAB_TOKEN, Critical),
+    secret_pattern!(SlackToken, RE_SLACK_TOKEN, High),
+    secret_pattern!(SlackWebhook, RE_SLACK_WEBHOOK, High),
+    secret_pattern!(PrivateKey, RE_PRIVATE_KEY, Critical),
+    secret_pattern!(JwtToken, RE_JWT, Medium),
+    secret_pattern!(GoogleApiKey, RE_GOOGLE_API_KEY, High),
+    secret_pattern!(StripeKey, RE_STRIPE_KEY, Critical),
+    secret_pattern!(TwilioKey, RE_TWILIO_KEY, High),
+    secret_pattern!(SendgridKey, RE_SENDGRID_KEY, High),
+    secret_pattern!(NpmToken, RE_NPM_TOKEN, High),
+    secret_pattern!(PypiToken, RE_PYPI_TOKEN, High),
+    secret_pattern!(DockerHubToken, RE_DOCKER_HUB_TOKEN, High),
+    secret_pattern!(HerokuApiKey, RE_HEROKU_API_KEY, High),
+    secret_pattern!(DigitalOceanToken, RE_DIGITALOCEAN_TOKEN, High),
+    secret_pattern!(GenericApiKey, RE_GENERIC_API_KEY, Medium),
+    secret_pattern!(GenericPassword, RE_GENERIC_PASSWORD, Medium),
+];
 
 /// Failures reading files or directories while scanning for secrets.
 #[derive(Debug, Error)]
@@ -371,7 +244,7 @@ impl SecretScanner {
         let mut findings = Vec::new();
 
         for (line_num, line) in content.lines().enumerate() {
-            for pattern in PATTERNS.iter() {
+            for pattern in &PATTERNS {
                 if let Some(captures) = pattern.pattern.captures(line) {
                     let matched = captures.get(0).map_or("", |m| m.as_str());
 
@@ -446,19 +319,16 @@ impl SecretScanner {
             // DirEntry::file_type does not traverse symlinks, so symlinked
             // directories and files are skipped outright instead of being
             // descended into via the cycle-prone `Path::is_dir`.
-            if entry
-                .file_type()
-                .map_err(|source| SecretError::Read {
-                    path: path_str.clone(),
-                    source,
-                })?
-                .is_symlink()
-            {
+            let file_type = entry.file_type().map_err(|source| SecretError::Read {
+                path: path_str.clone(),
+                source,
+            })?;
+            if file_type.is_symlink() {
                 continue;
             }
 
             // Skip common non-text directories
-            if entry_path.is_dir() {
+            if file_type.is_dir() {
                 let dir_name = entry_path
                     .file_name()
                     .and_then(|n| n.to_str())
@@ -631,22 +501,11 @@ impl SecretScanResult {
     /// defeats the critical/high counts callers rely on.
     #[must_use]
     pub fn from_findings(findings: Vec<SecretFinding>) -> Self {
-        let critical_count = findings
-            .iter()
-            .filter(|f| f.severity == SecretSeverity::Critical)
-            .count();
-        let high_count = findings
-            .iter()
-            .filter(|f| f.severity == SecretSeverity::High)
-            .count();
-        let medium_count = findings
-            .iter()
-            .filter(|f| f.severity == SecretSeverity::Medium)
-            .count();
-        let low_count = findings
-            .iter()
-            .filter(|f| f.severity == SecretSeverity::Low)
-            .count();
+        let [low_count, medium_count, high_count, critical_count] =
+            findings.iter().fold([0; 4], |mut counts, finding| {
+                counts[finding.severity as usize] += 1;
+                counts
+            });
 
         Self {
             total_findings: findings.len(),

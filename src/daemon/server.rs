@@ -70,21 +70,17 @@ pub async fn run(
     // START BACKGROUND WORKER
     let state_worker = Arc::clone(&state);
     let worker_token = shutdown_token.child_token();
-    let socket_path_worker = socket_path;
     // Clone the parent token so the health check can trigger a full shutdown
     let shutdown_trigger = shutdown_token.clone();
 
     let worker_handle = tokio::spawn(async move {
         tracing::info!("Background status worker started");
 
-        // OPTIMIZATION: Deduplicate status fetching logic into a helper function
         async fn refresh_status(state: &Arc<DaemonState>) {
             let pm_name = state.package_manager.name().to_string();
-            // Offload heavy I/O and CPU work to a blocking thread
             let result = tokio::task::spawn_blocking(move || {
                 use crate::cli::runtimes::{ensure_active_version, known_runtimes};
 
-                // 1. Probe Runtimes (Fast but sync I/O)
                 let mut versions = Vec::new();
                 match known_runtimes() {
                     Ok(runtimes) => {
@@ -92,88 +88,78 @@ pub async fn run(
                             match ensure_active_version(&runtime) {
                                 Ok(Some(v)) => versions.push((runtime, v)),
                                 Ok(None) => {}
-                                Err(error) => {
-                                    tracing::warn!(
-                                        "Failed to resolve active {runtime} version: {error}"
-                                    );
-                                }
+                                Err(error) => tracing::warn!(
+                                    "Failed to resolve active {runtime} version: {error}"
+                                ),
                             }
                         }
                     }
-                    Err(error) => {
-                        tracing::warn!("Failed to list known runtimes: {error}");
-                    }
+                    Err(error) => tracing::warn!("Failed to list known runtimes: {error}"),
                 }
 
-                // 2. Refresh Package Status (Heavy sync I/O)
-                let status_result = super::handlers::system_status_for_backend(&pm_name);
-
-                (versions, status_result)
+                (
+                    versions,
+                    super::handlers::system_status_for_backend(&pm_name),
+                )
             })
             .await;
 
-            if let Ok((versions, status)) = result {
-                // Update runtime versions safely
-                state
-                    .runtime_versions
-                    .write()
-                    .unwrap_or_else(std::sync::PoisonError::into_inner)
-                    .clone_from(&versions);
-
-                if let Ok((total, explicit, orphans, updates)) = status {
-                    // Write fast status file for zero-IPC CLI reads
-                    let fast_status = crate::core::fast_status::FastStatus::new(
-                        total, explicit, orphans, updates,
-                    );
-                    if let Err(e) = fast_status.write_default() {
-                        tracing::warn!("Failed to write fast status file: {e}");
-                    }
-
-                    // 3. Scan for Vulnerabilities (async, done in background)
-                    // This is already async, so we run it here in the async context
-                    let scanner = crate::core::security::VulnerabilityScanner::new();
-                    let previous_vulns = state
-                        .cache
-                        .get_status()
-                        .and_then(|status| status.scanned_vulnerability_count());
-                    let scan = scanner.scan_system().await;
-                    if let Err(error) = &scan {
-                        tracing::warn!("Vulnerability scan failed during status refresh: {error}");
-                    }
-                    // Publication only: a failed scan with no prior count
-                    // skips status publication; cache pre-warming below runs
-                    // unconditionally either way.
-                    if let Some(vuln_count) =
-                        super::status_policy::vulnerability_count_from_scan(&scan, previous_vulns)
-                    {
-                        let res = super::protocol::StatusResult {
-                            total_packages: total,
-                            explicit_packages: explicit,
-                            orphan_packages: orphans,
-                            updates_available: updates,
-                            security_vulnerabilities: vuln_count,
-                            vulnerabilities_scanned: true,
-                            runtime_versions: versions,
-                        };
-                        let res_arc = Arc::new(res);
-                        // Persist for faster restarts; the in-memory cache is
-                        // authoritative for this process, so a persistence failure
-                        // is logged, not fatal.
-                        if let Err(error) = state.persistent.set_status(&res_arc) {
-                            tracing::warn!("Failed to persist status cache: {error}");
-                        }
-                        state.cache.update_status(res_arc);
-                    } else {
-                        tracing::warn!(
-                            "No prior vulnerability count; not publishing a zero-vuln status"
-                        );
-                    }
-                } else if let Err(error) = status {
-                    tracing::warn!("Failed to refresh package status: {error}");
+            let (versions, status) = match result {
+                Ok(result) => result,
+                Err(error) => {
+                    tracing::error!("Status refresh panic: {error}");
+                    return;
                 }
-            } else if let Err(e) = result {
-                tracing::error!("Status refresh panic: {e}");
+            };
+            state
+                .runtime_versions
+                .write()
+                .unwrap_or_else(std::sync::PoisonError::into_inner)
+                .clone_from(&versions);
+
+            let (total, explicit, orphans, updates) = match status {
+                Ok(status) => status,
+                Err(error) => {
+                    tracing::warn!("Failed to refresh package status: {error}");
+                    return;
+                }
+            };
+            let fast_status =
+                crate::core::fast_status::FastStatus::new(total, explicit, orphans, updates);
+            if let Err(error) = fast_status.write_default() {
+                tracing::warn!("Failed to write fast status file: {error}");
             }
+
+            let scanner = crate::core::security::VulnerabilityScanner::new();
+            let previous_vulns = state
+                .cache
+                .get_status()
+                .and_then(|status| status.scanned_vulnerability_count());
+            let scan = scanner.scan_system().await;
+            if let Err(error) = &scan {
+                tracing::warn!("Vulnerability scan failed during status refresh: {error}");
+            }
+            let Some(vuln_count) =
+                super::status_policy::vulnerability_count_from_scan(&scan, previous_vulns)
+            else {
+                tracing::warn!("No prior vulnerability count; not publishing a zero-vuln status");
+                return;
+            };
+            let res = super::status_policy::status_snapshot(
+                total,
+                explicit,
+                orphans,
+                updates,
+                versions,
+                Some(vuln_count),
+            )
+            .0;
+            let res_arc = Arc::new(res);
+            // The in-memory cache is authoritative, so persistence is best-effort.
+            if let Err(error) = state.persistent.set_status(&res_arc) {
+                tracing::warn!("Failed to persist status cache: {error}");
+            }
+            state.cache.update_status(res_arc);
         }
 
         /// Pre-compute caches for instant first queries.
@@ -184,21 +170,21 @@ pub async fn run(
         async fn prewarm_caches(state: &Arc<DaemonState>) {
             // Pre-compute explicit package list for instant first query
             let pm_name = state.package_manager.name().to_string();
-            let state_explicit = Arc::clone(state);
-            if let Err(error) = tokio::task::spawn_blocking(move || {
-                match super::handlers::explicit_packages_for_backend(&pm_name) {
-                    Ok(explicit_pkgs) => {
-                        state_explicit.cache.update_explicit(explicit_pkgs);
-                        tracing::debug!("Pre-warmed explicit package cache");
-                    }
-                    Err(error) => {
-                        tracing::warn!("Failed to pre-warm explicit package cache: {error}");
-                    }
-                }
+            let explicit = tokio::task::spawn_blocking(move || {
+                super::handlers::explicit_packages_for_backend(&pm_name)
             })
-            .await
-            {
-                tracing::warn!("Explicit package cache pre-warm task failed: {error}");
+            .await;
+            match explicit {
+                Ok(Ok(packages)) => {
+                    state.cache.update_explicit(packages);
+                    tracing::debug!("Pre-warmed explicit package cache");
+                }
+                Ok(Err(error)) => {
+                    tracing::warn!("Failed to pre-warm explicit package cache: {error}");
+                }
+                Err(error) => {
+                    tracing::warn!("Explicit package cache pre-warm task failed: {error}");
+                }
             }
 
             // Pre-warm search cache with common queries for instant first searches
@@ -263,10 +249,10 @@ pub async fn run(
 
                     // Socket health check: verify socket file still exists
                     if last_socket_check.elapsed() >= SOCKET_HEALTH_CHECK_INTERVAL {
-                        if !socket_path_worker.exists() {
+                        if !socket_path.exists() {
                             tracing::error!(
                                 "Socket file {} has been removed externally! Initiating shutdown.",
-                                socket_path_worker.display()
+                                socket_path.display()
                             );
                             // Cancel the parent shutdown token to stop the accept loop
                             shutdown_trigger.cancel();

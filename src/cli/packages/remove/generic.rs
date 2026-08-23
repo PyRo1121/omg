@@ -1,18 +1,9 @@
 use anyhow::Result;
 
-use crate::cli::packages::common;
 use crate::cli::{style, ui};
-
-pub async fn remove(packages: &[String]) -> Result<()> {
-    common::remove_via_service(packages).await
-}
 
 /// Generic dry run: this backend never cleans orphaned dependencies, so no
 /// recursion claim is printed.
-#[allow(
-    clippy::unnecessary_wraps,
-    reason = "signature is shared with fallible backend dry-run implementations"
-)]
 pub fn remove_dry_run(packages: &[String]) -> Result<()> {
     crate::core::security::validate_package_names(packages)?;
 

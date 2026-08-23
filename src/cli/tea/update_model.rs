@@ -11,12 +11,9 @@ use semver::Version;
 /// Update state machine
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum UpdateState {
-    Idle,
     Checking,
     ShowingUpdates,
     Confirming,
-    Downloading,
-    Installing,
     Complete,
     Failed,
 }
@@ -25,10 +22,8 @@ pub enum UpdateState {
 #[derive(Debug, Clone)]
 pub struct UpdatePackage {
     pub name: String,
-    pub repo: String,
     pub old_version: String,
     pub new_version: String,
-    pub update_type: UpdateType,
 }
 
 /// Type of update (for styling and JSON output)
@@ -70,19 +65,7 @@ impl UpdateType {
             _ => Self::Unknown,
         }
     }
-
-    /// Get styled label for this update type
-    pub fn styled_label(&self) -> String {
-        match self {
-            Self::Major => "MAJOR".red().bold().to_string(),
-            Self::Minor => "minor".yellow().bold().to_string(),
-            Self::Patch => "patch".green().bold().to_string(),
-            Self::Unknown => "update".dimmed().to_string(),
-        }
-    }
 }
-
-use owo_colors::OwoColorize;
 
 /// Update messages
 #[derive(Debug, Clone)]
@@ -90,10 +73,7 @@ pub enum UpdateMsg {
     Check,
     UpdatesFound(Vec<UpdatePackage>),
     NoUpdates,
-    Confirm(bool),
     Execute,
-    DownloadProgress { percent: usize },
-    InstallProgress { package: String },
     Complete,
     Error(String),
 }
@@ -106,8 +86,6 @@ pub struct UpdateModel {
     pub error: Option<String>,
     pub check_only: bool,
     pub yes: bool,
-    pub download_percent: usize,
-    pub current_installing: Option<String>,
 }
 
 impl Default for UpdateModel {
@@ -118,8 +96,6 @@ impl Default for UpdateModel {
             error: None,
             check_only: false,
             yes: false,
-            download_percent: 0,
-            current_installing: None,
         }
     }
 }
@@ -150,7 +126,7 @@ impl Model for UpdateModel {
     type Msg = UpdateMsg;
 
     fn init(&self) -> Cmd<Self::Msg> {
-        Cmd::Exec(Box::new(|| {
+        Cmd::exec(|| {
             let updates_result = crate::cli::tea::async_bridge::run_blocking_future(async {
                 let pm = get_package_manager()?;
                 let service = PackageService::new(pm)?;
@@ -159,23 +135,16 @@ impl Model for UpdateModel {
             .and_then(std::convert::identity);
 
             match updates_result {
-                Ok(updates_list) => {
-                    let updates: Vec<crate::package_managers::types::UpdateInfo> = updates_list;
+                Ok(updates) => {
                     if updates.is_empty() {
                         UpdateMsg::NoUpdates
                     } else {
                         let packages: Vec<UpdatePackage> = updates
                             .into_iter()
-                            .map(|u| {
-                                let old = u.old_version.clone();
-                                let new = u.new_version.clone();
-                                UpdatePackage {
-                                    name: u.name,
-                                    repo: u.repo,
-                                    old_version: old.clone(),
-                                    new_version: new.clone(),
-                                    update_type: UpdateType::from_versions(&old, &new),
-                                }
+                            .map(|u| UpdatePackage {
+                                name: u.name,
+                                old_version: u.old_version,
+                                new_version: u.new_version,
                             })
                             .collect();
                         UpdateMsg::UpdatesFound(packages)
@@ -183,7 +152,7 @@ impl Model for UpdateModel {
                 }
                 Err(err) => UpdateMsg::Error(format!("Failed to check updates: {err}")),
             }
-        }))
+        })
     }
 
     fn update(&mut self, msg: Self::Msg) -> Cmd<Self::Msg> {
@@ -220,7 +189,7 @@ impl Model for UpdateModel {
                         Cmd::info("Run 'omg update' to install"),
                     ])
                 } else if self.yes {
-                    Cmd::batch([summary_cmd, Cmd::Exec(Box::new(|| UpdateMsg::Execute))])
+                    Cmd::batch([summary_cmd, Cmd::exec(|| UpdateMsg::Execute)])
                 } else {
                     self.state = UpdateState::Confirming;
                     Cmd::batch([summary_cmd, Components::confirm("System Upgrade", "Enter")])
@@ -230,14 +199,6 @@ impl Model for UpdateModel {
                 self.state = UpdateState::Complete;
                 Components::up_to_date()
             }
-            UpdateMsg::Confirm(should_proceed) => {
-                if should_proceed {
-                    Cmd::Exec(Box::new(|| UpdateMsg::Execute))
-                } else {
-                    self.state = UpdateState::Complete;
-                    Cmd::warning("Upgrade cancelled.")
-                }
-            }
             UpdateMsg::Execute => {
                 // Honest failure: no upgrade executor is wired to this model.
                 // Claiming progress here would fabricate an upgrade that never
@@ -246,44 +207,21 @@ impl Model for UpdateModel {
                 self.error = Some("upgrade execution is not implemented in this model".to_string());
                 Cmd::error("System upgrade execution is not implemented; nothing was installed")
             }
-            UpdateMsg::DownloadProgress { percent } => {
-                self.download_percent = percent.min(100);
-                if self.download_percent >= 100 {
-                    self.state = UpdateState::Installing;
-                }
-                // Fallback to info message as progress component is missing
-                Cmd::info(format!("Downloading... {}%", self.download_percent))
-            }
-            UpdateMsg::InstallProgress { package } => {
-                self.current_installing = Some(package.clone());
-                // Fallback to info message
-                Cmd::info(format!("Installing {package}..."))
-            }
             UpdateMsg::Complete => {
                 self.state = UpdateState::Complete;
                 Components::complete("System upgrade complete!")
             }
             UpdateMsg::Error(err) => {
                 self.state = UpdateState::Failed;
-                self.error = Some(err.clone());
-                Cmd::error(format!("Update failed: {err}"))
+                let message = format!("Update failed: {err}");
+                self.error = Some(err);
+                Cmd::error(message)
             }
         }
     }
 
     fn view(&self) -> String {
-        // View is now minimal as Components handle the output via side-effects (Cmds)
-        // We only use view for static prompts if not handled by Cmds
-        match self.state {
-            UpdateState::Confirming => {
-                // The confirmation prompt is printed via Cmd::batch, but we might need
-                // to render the prompt line here if we want it to persist at the bottom
-                // "Proceed? [Y/n]" is usually handled by the input loop (wrappers.rs)
-                // which prints the prompt.
-                String::new()
-            }
-            _ => String::new(),
-        }
+        String::new()
     }
 }
 

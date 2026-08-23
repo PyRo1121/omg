@@ -39,16 +39,6 @@ pub(crate) struct RustVersion {
     pub(crate) channel: String,
 }
 
-fn manifest_component_version(manifest: &toml::Value, component: &str) -> Result<String> {
-    let value = manifest
-        .get("pkg")
-        .and_then(|pkg| pkg.get(component))
-        .and_then(|pkg| pkg.get("version"))
-        .and_then(toml::Value::as_str)
-        .ok_or_else(|| anyhow::anyhow!("Missing version for component '{component}'"))?;
-    Ok(value.split_whitespace().next().unwrap_or(value).to_owned())
-}
-
 fn is_date_parts(year: &str, month: &str, day: &str) -> bool {
     year.len() == 4
         && month.len() == 2
@@ -103,25 +93,15 @@ struct RustToolchainMetadata {
 
 pub(crate) struct RustManager {
     versions_dir: PathBuf,
-    current_link: PathBuf,
-    client: reqwest::Client,
+    client: &'static reqwest::Client,
 }
 
 impl RustManager {
     pub fn new() -> Self {
-        let data_dir = &*super::DATA_DIR;
-        let versions_dir = data_dir.join("versions").join("rust");
-
         Self {
-            current_link: versions_dir.join("current"),
-            versions_dir,
-            client: download_client().clone(),
+            versions_dir: super::DATA_DIR.join("versions/rust"),
+            client: download_client(),
         }
-    }
-
-    #[must_use]
-    pub fn bin_dir(&self) -> PathBuf {
-        self.current_link.join("bin")
     }
 
     /// List available Rust versions (stable, beta, nightly + recent releases)
@@ -192,41 +172,57 @@ impl RustManager {
         let toolchain = RustToolchainSpec::parse(&request.channel)?;
         let version_dir = self.toolchain_dir(&toolchain);
         Self::reject_invalid_toolchain_path(&version_dir)?;
-        let needs_install = !is_valid_version_dir(&version_dir);
-        let missing_components = self.missing_components(&toolchain, &request.components)?;
-        let missing_targets = self.missing_targets(&toolchain, &request.targets)?;
+        let metadata = Self::read_metadata(&version_dir)?;
+        let missing_components = request
+            .components
+            .iter()
+            .filter(|component| !metadata.components.contains(*component))
+            .cloned()
+            .collect();
+        let missing_targets = request
+            .targets
+            .iter()
+            .filter(|target| !metadata.targets.contains(*target))
+            .cloned()
+            .collect();
 
         Ok(RustToolchainStatus {
             name: toolchain.name(),
-            needs_install,
+            needs_install: !is_valid_version_dir(&version_dir),
             missing_components,
             missing_targets,
         })
     }
 
     pub async fn ensure_toolchain(&self, request: &RustToolchainRequest) -> Result<()> {
-        let toolchain = RustToolchainSpec::parse(&request.channel)?;
-        let profile = request.profile.as_deref().unwrap_or("default");
-        let version_dir = self.toolchain_dir(&toolchain);
-        Self::reject_invalid_toolchain_path(&version_dir)?;
-        let needs_install = !is_valid_version_dir(&version_dir);
-        let needs_components = self.missing_components(&toolchain, &request.components)?;
-        let needs_targets = self.missing_targets(&toolchain, &request.targets)?;
-
-        if !needs_install && needs_components.is_empty() && needs_targets.is_empty() {
+        let status = self.toolchain_status(request)?;
+        if !status.needs_install
+            && status.missing_components.is_empty()
+            && status.missing_targets.is_empty()
+        {
             return Ok(());
         }
 
-        if needs_install {
-            self.install_with_profile(&toolchain, profile, &request.components, &request.targets)
-                .await
+        let toolchain = RustToolchainSpec::parse(&request.channel)?;
+        if status.needs_install {
+            self.install_with_profile(
+                &toolchain,
+                request.profile.as_deref().unwrap_or("default"),
+                &request.components,
+                &request.targets,
+            )
+            .await
         } else {
-            self.apply_incremental_updates(&toolchain, &needs_components, &needs_targets)
-                .await
+            self.apply_incremental_updates(
+                &toolchain,
+                &status.missing_components,
+                &status.missing_targets,
+            )
+            .await
         }
     }
 
-    pub fn toolchain_dir(&self, toolchain: &RustToolchainSpec) -> PathBuf {
+    fn toolchain_dir(&self, toolchain: &RustToolchainSpec) -> PathBuf {
         self.versions_dir.join(toolchain.name())
     }
 
@@ -244,13 +240,7 @@ impl RustManager {
         }
     }
 
-    fn extract_component(
-        archive_path: &Path,
-        dest_dir: &Path,
-        component: &str,
-        version: &str,
-        target: &str,
-    ) -> Result<()> {
+    fn extract_component(archive_path: &Path, dest_dir: &Path) -> Result<()> {
         let is_xz = archive_path
             .extension()
             .and_then(|ext| ext.to_str())
@@ -266,24 +256,19 @@ impl RustManager {
                 .context("Failed to decompress XZ archive")?;
             let decompressed = sink.into_inner();
             let mut archive = Archive::new(decompressed.as_slice());
-            Self::extract_component_entries(&mut archive, dest_dir, component, version, target)
+            Self::extract_component_entries(&mut archive, dest_dir)
         } else {
             let file = File::open(archive_path)?;
             let decoder = GzDecoder::new(file);
             let mut archive = Archive::new(decoder);
-            Self::extract_component_entries(&mut archive, dest_dir, component, version, target)
+            Self::extract_component_entries(&mut archive, dest_dir)
         }
     }
 
     fn extract_component_entries<R: std::io::Read>(
         archive: &mut Archive<R>,
         dest_dir: &Path,
-        component: &str,
-        version: &str,
-        target: &str,
     ) -> Result<()> {
-        let _prefix = format!("{component}-{version}-{target}");
-
         for entry in archive.entries()? {
             let mut entry = entry?;
             let path = entry.path()?.into_owned();
@@ -329,7 +314,8 @@ impl RustManager {
         let toolchain = RustToolchainSpec::parse(version)?;
         let toolchain_name = toolchain.name();
         activate_version(&self.versions_dir, &toolchain_name, Path::new("bin/rustc"))?;
-        print_using("Rust", &toolchain_name, &self.bin_dir());
+        let bin_dir = self.versions_dir.join("current/bin");
+        print_using("Rust", &toolchain_name, &bin_dir);
         Ok(())
     }
 }
@@ -449,24 +435,17 @@ impl RustManager {
         manifest: &toml::Value,
     ) -> Result<()> {
         tracing::info!("{} Downloading {}...", "→".blue(), component);
-        let component_version = manifest_component_version(manifest, component)?;
         let url = manifest_component_url(manifest, component, target)?;
         let filename = url
             .rsplit('/')
             .next()
             .ok_or_else(|| anyhow::anyhow!("Invalid download URL for {component}"))?;
-        let checksum = manifest_component_checksum(manifest, component, target, &url)?;
+        let checksum = manifest_component_checksum(manifest, component, target, url)?;
         let download_path = self.versions_dir.join(filename);
 
-        download_with_progress(&self.client, &url, &download_path, Some(&checksum)).await?;
+        download_with_progress(self.client, url, &download_path, &checksum).await?;
         tracing::info!("{} Extracting {}...", "→".blue(), component);
-        Self::extract_component(
-            &download_path,
-            dest_dir,
-            component,
-            &component_version,
-            target,
-        )?;
+        Self::extract_component(&download_path, dest_dir)?;
         remove_file_best_effort(&download_path, "Rust component archive");
         Ok(())
     }
@@ -526,32 +505,6 @@ impl RustManager {
         Ok(())
     }
 
-    fn missing_components(
-        &self,
-        toolchain: &RustToolchainSpec,
-        requested: &[String],
-    ) -> Result<Vec<String>> {
-        let metadata = Self::read_metadata(&self.toolchain_dir(toolchain))?;
-        Ok(requested
-            .iter()
-            .filter(|component| !metadata.components.contains(*component))
-            .cloned()
-            .collect())
-    }
-
-    fn missing_targets(
-        &self,
-        toolchain: &RustToolchainSpec,
-        requested: &[String],
-    ) -> Result<Vec<String>> {
-        let metadata = Self::read_metadata(&self.toolchain_dir(toolchain))?;
-        Ok(requested
-            .iter()
-            .filter(|target| !metadata.targets.contains(*target))
-            .cloned()
-            .collect())
-    }
-
     async fn fetch_manifest(&self, channel: &str, date: Option<&str>) -> Result<toml::Value> {
         let filename = format!("{RUST_MANIFEST_PREFIX}-{channel}.toml");
         let url = match date {
@@ -570,12 +523,6 @@ impl RustManager {
             .context("Failed to read Rust version manifest")?;
 
         toml::from_str(&manifest).map_err(Into::into)
-    }
-}
-
-impl Default for RustManager {
-    fn default() -> Self {
-        Self::new()
     }
 }
 
@@ -677,7 +624,11 @@ fn manifest_component_target<'a>(
         .ok_or_else(|| anyhow::anyhow!("Target '{target}' not found for component '{component}'"))
 }
 
-fn manifest_component_url(manifest: &toml::Value, component: &str, target: &str) -> Result<String> {
+fn manifest_component_url<'a>(
+    manifest: &'a toml::Value,
+    component: &str,
+    target: &str,
+) -> Result<&'a str> {
     let target_info = manifest_component_target(manifest, component, target)?;
     let url = target_info
         .get("xz_url")
@@ -685,7 +636,7 @@ fn manifest_component_url(manifest: &toml::Value, component: &str, target: &str)
         .or_else(|| target_info.get("url").and_then(toml::Value::as_str))
         .ok_or_else(|| anyhow::anyhow!("No download URL for {component} on {target}"))?;
 
-    Ok(url.to_string())
+    Ok(url)
 }
 
 fn manifest_component_checksum(
@@ -792,13 +743,7 @@ mod tests {
         let mut archive = Archive::new(Cursor::new(bytes));
         let destination = TempDir::new()?;
 
-        RustManager::extract_component_entries(
-            &mut archive,
-            destination.path(),
-            "rustc",
-            "1.0.0",
-            "target",
-        )?;
+        RustManager::extract_component_entries(&mut archive, destination.path())?;
 
         assert_eq!(fs::read(destination.path().join("bin/rustc"))?, b"runtime");
         Ok(())
@@ -814,13 +759,7 @@ mod tests {
         let mut archive = Archive::new(Cursor::new(bytes));
         let destination = TempDir::new()?;
 
-        let result = RustManager::extract_component_entries(
-            &mut archive,
-            destination.path(),
-            "rustc",
-            "1.0.0",
-            "target",
-        );
+        let result = RustManager::extract_component_entries(&mut archive, destination.path());
 
         assert!(result.is_err());
         assert!(!destination.path().join("bin/rustc").exists());
@@ -958,14 +897,13 @@ xz_hash = "{hash}"
         let manifest: toml::Value = toml::from_str(&manifest_text)?;
 
         assert_eq!(manifest_version(&manifest).as_deref(), Some("1.78.0"));
-        assert_eq!(manifest_component_version(&manifest, "rustc")?, "1.78.0");
 
         let url = manifest_component_url(&manifest, "rustc", "x86_64-unknown-linux-gnu")?;
         assert!(url.ends_with("rust-1.78.0-x86_64-unknown-linux-gnu.tar.xz"));
 
         // XZ URLs select the xz_hash field, parsed through the strict digest validator.
         let checksum =
-            manifest_component_checksum(&manifest, "rustc", "x86_64-unknown-linux-gnu", &url)?;
+            manifest_component_checksum(&manifest, "rustc", "x86_64-unknown-linux-gnu", url)?;
         assert_eq!(checksum, hash);
         Ok(())
     }

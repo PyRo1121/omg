@@ -101,47 +101,6 @@ pub struct RekorEntry {
     pub body: String,
 }
 
-/// Sigstore bundle for verification
-#[derive(Debug, Serialize, Deserialize, Clone)]
-pub struct SigstoreBundle {
-    pub media_type: String,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub verification_material: Option<VerificationMaterial>,
-}
-
-#[derive(Debug, Serialize, Deserialize, Clone)]
-#[serde(rename_all = "camelCase")]
-pub struct VerificationMaterial {
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub tlog_entries: Option<Vec<TlogEntry>>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub certificate: Option<String>,
-}
-
-#[derive(Debug, Serialize, Deserialize, Clone)]
-#[serde(rename_all = "camelCase")]
-pub struct TlogEntry {
-    pub log_index: String,
-    pub log_id: LogId,
-    pub integrated_time: String,
-    pub inclusion_proof: Option<InclusionProof>,
-}
-
-#[derive(Debug, Serialize, Deserialize, Clone)]
-#[serde(rename_all = "camelCase")]
-pub struct LogId {
-    pub key_id: String,
-}
-
-#[derive(Debug, Serialize, Deserialize, Clone)]
-#[serde(rename_all = "camelCase")]
-pub struct InclusionProof {
-    pub log_index: String,
-    pub root_hash: String,
-    pub tree_size: String,
-    pub hashes: Vec<String>,
-}
-
 /// SLSA provenance attestation
 #[derive(Debug, Serialize, Deserialize, Clone)]
 #[serde(rename_all = "camelCase")]

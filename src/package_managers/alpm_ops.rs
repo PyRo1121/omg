@@ -15,7 +15,7 @@ use crate::core::paths;
 static MIRRORLIST_REGEX: LazyLock<Regex> =
     LazyLock::new(|| Regex::new(r"^Server\s*=\s*([^#]+)").expect("valid regex pattern"));
 use crate::package_managers::pacman_db;
-use crate::package_managers::types::{PackageInfo, UpdateInfo};
+use crate::package_managers::types::{PackageInfo, UpdateInfo, contains_ignore_case};
 
 /// Get comprehensive system status (counts + updates) in a single pass - FAST
 pub fn get_system_status() -> Result<(usize, usize, usize, usize)> {
@@ -104,7 +104,7 @@ pub fn get_sync_pkg_info(name: &str) -> Result<Option<PackageInfo>> {
         if let Some(pkg) = pacman_db::get_sync_package(name)? {
             return Ok(Some(PackageInfo {
                 name: pkg.name,
-                version: pkg.version.clone(),
+                version: pkg.version,
                 description: pkg.desc,
                 url: Some(pkg.url),
                 size: pkg.isize,
@@ -240,23 +240,7 @@ pub fn clean_cache(keep_versions: usize) -> Result<(usize, u64)> {
 }
 
 /// List orphaned packages - INSTANT
-pub fn list_orphans_direct() -> Result<Vec<String>> {
-    crate::package_managers::alpm_direct::with_handle(|alpm| {
-        let mut orphans = Vec::with_capacity(32);
-
-        for pkg in alpm.localdb().pkgs() {
-            if crate::package_managers::types::is_orphan_package(
-                pkg.reason() == alpm::PackageReason::Explicit,
-                pkg.required_by().is_empty(),
-                pkg.optional_for().is_empty(),
-            ) {
-                orphans.push(pkg.name().to_string());
-            }
-        }
-
-        Ok(orphans)
-    })
-}
+pub use crate::package_managers::alpm_direct::list_orphans_fast as list_orphans_direct;
 
 /// Display package info beautifully
 pub fn display_pkg_info(info: &PackageInfo) {
@@ -743,20 +727,17 @@ fn commit_alpm_transaction(alpm: &mut alpm::Alpm, main_pb: &indicatif::ProgressB
 }
 
 fn is_keyring_related_error(err: &str) -> bool {
-    let lower = err.to_ascii_lowercase();
-    lower.contains("keyring")
-        || lower.contains("signature")
-        || lower.contains("pgp")
-        || lower.contains("corrupt")
+    ["keyring", "signature", "pgp", "corrupt"]
+        .iter()
+        .any(|keyword| contains_ignore_case(err, keyword))
 }
 
-fn format_no_syncdb_error() -> String {
+fn format_no_syncdb_error() -> &'static str {
     "✗ Failed to register any package repositories.\n  \
      → This is commonly caused by an uninitialized Arch keyring or broken pacman configuration.\n  \
      → Try: sudo pacman -Sy archlinux-keyring\n  \
      → Then: sudo pacman-key --init && sudo pacman-key --populate archlinux\n  \
      → Finally retry: omg sync && omg install <package>"
-        .to_string()
 }
 
 fn format_trans_prepare_error(err: &str) -> String {

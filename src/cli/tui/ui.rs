@@ -13,13 +13,14 @@ use ratatui::{
         Block, BorderType, Borders, Cell, Clear, Gauge, List, ListItem, Paragraph, Row, Table, Tabs,
     },
 };
+use std::borrow::Cow;
 use unicode_width::{UnicodeWidthChar, UnicodeWidthStr};
 
 /// Truncate `text` to at most `max_width` display columns (wide glyphs count
 /// as 2), appending an ellipsis when truncation occurs.
-fn truncate_width(text: &str, max_width: usize) -> String {
+fn truncate_width(text: &str, max_width: usize) -> Cow<'_, str> {
     if text.width() <= max_width {
-        return text.to_string();
+        return Cow::Borrowed(text);
     }
     let mut out = String::new();
     let mut used = 0usize;
@@ -32,16 +33,16 @@ fn truncate_width(text: &str, max_width: usize) -> String {
         used += w;
     }
     out.push('\u{2026}');
-    out
+    Cow::Owned(out)
 }
 
-/// Left-pad/truncate `text` to exactly `min_width` display columns.
-fn pad_display_width(text: &str, min_width: usize) -> String {
-    let w = text.width();
-    if w >= min_width {
+/// Right-pad/truncate `text` to exactly `min_width` display columns.
+fn pad_display_width(text: &str, min_width: usize) -> Cow<'_, str> {
+    let width = text.width();
+    if width >= min_width {
         truncate_width(text, min_width)
     } else {
-        format!("{}{}", text, " ".repeat(min_width - w))
+        Cow::Owned(format!("{}{}", text, " ".repeat(min_width - width)))
     }
 }
 
@@ -657,7 +658,8 @@ fn draw_recent_activity(f: &mut Frame, area: Rect, app: &App) {
         .take(5)
         .map(|t| {
             let time = t.timestamp.strftime("%H:%M").to_string();
-            let type_color = match t.transaction_type.to_string().as_str() {
+            let transaction_type = t.transaction_type.to_string();
+            let type_color = match transaction_type.as_str() {
                 "Install" => colors::ACCENT_GREEN,
                 "Remove" => colors::ACCENT_RED,
                 "Update" => colors::ACCENT_YELLOW,
@@ -665,7 +667,7 @@ fn draw_recent_activity(f: &mut Frame, area: Rect, app: &App) {
                 _ => colors::FG_MUTED,
             };
 
-            let icon = match t.transaction_type.to_string().as_str() {
+            let icon = match transaction_type.as_str() {
                 "Install" | "Remove" | "Update" => "",
                 "Sync" => "󰓦",
                 _ => "•",
@@ -675,7 +677,7 @@ fn draw_recent_activity(f: &mut Frame, area: Rect, app: &App) {
                 Span::styled(format!("{time} "), Style::default().fg(colors::FG_MUTED)),
                 Span::styled(format!("{icon} "), Style::default().fg(type_color)),
                 Span::styled(
-                    t.transaction_type.to_string(),
+                    transaction_type,
                     Style::default().fg(type_color).add_modifier(Modifier::BOLD),
                 ),
                 if t.success {
@@ -778,7 +780,7 @@ fn draw_packages(f: &mut Frame, area: Rect, app: &App) {
 
             Row::new(vec![
                 Cell::from(Span::styled(
-                    pkg.name.clone(),
+                    pkg.name.as_str(),
                     base_style
                         .fg(colors::FG_PRIMARY)
                         .add_modifier(if is_selected {
@@ -795,7 +797,7 @@ fn draw_packages(f: &mut Frame, area: Rect, app: &App) {
                     pkg.version.to_string(),
                     base_style.fg(colors::ACCENT_GREEN),
                 )),
-                Cell::from(Span::styled(pkg.repo.clone(), base_style.fg(source_color))),
+                Cell::from(Span::styled(pkg.repo.as_str(), base_style.fg(source_color))),
                 Cell::from(Span::styled(
                     truncate_width(&pkg.description, 50),
                     base_style.fg(colors::FG_MUTED),
@@ -850,28 +852,22 @@ fn draw_packages(f: &mut Frame, area: Rect, app: &App) {
 }
 
 fn draw_runtimes(f: &mut Frame, area: Rect, app: &App) {
-    let runtimes = app.get_runtime_versions();
-
-    let runtime_icons: std::collections::HashMap<&str, &str> = [
-        ("node", ""),
-        ("python", ""),
-        ("rust", ""),
-        ("go", ""),
-        ("ruby", ""),
-        ("java", ""),
-        ("bun", "󰟈"),
-        ("deno", "󰛦"),
-        ("zig", ""),
-    ]
-    .into_iter()
-    .collect();
-
-    let items: Vec<ListItem> = runtimes
+    let items: Vec<ListItem> = app
+        .get_runtime_versions()
         .iter()
         .map(|(name, version)| {
-            let icon = runtime_icons
-                .get(name.to_lowercase().as_str())
-                .unwrap_or(&"󰏗");
+            let icon = if name.eq_ignore_ascii_case("bun") {
+                "󰟈"
+            } else if name.eq_ignore_ascii_case("deno") {
+                "󰛦"
+            } else if ["node", "python", "rust", "go", "ruby", "java", "zig"]
+                .iter()
+                .any(|runtime| name.eq_ignore_ascii_case(runtime))
+            {
+                ""
+            } else {
+                "󰏗"
+            };
             ListItem::new(Line::from(vec![
                 Span::styled(
                     format!(" {icon} "),
@@ -1038,8 +1034,9 @@ fn draw_activity(f: &mut Frame, area: Rect, app: &App) {
         .take(20)
         .map(|t| {
             let time = t.timestamp.strftime("%H:%M:%S").to_string();
+            let transaction_type = t.transaction_type.to_string();
 
-            let type_color = match t.transaction_type.to_string().as_str() {
+            let type_color = match transaction_type.as_str() {
                 "Install" => colors::ACCENT_GREEN,
                 "Remove" => colors::ACCENT_RED,
                 "Update" => colors::ACCENT_YELLOW,
@@ -1047,7 +1044,7 @@ fn draw_activity(f: &mut Frame, area: Rect, app: &App) {
                 _ => colors::FG_MUTED,
             };
 
-            let icon = match t.transaction_type.to_string().as_str() {
+            let icon = match transaction_type.as_str() {
                 "Install" | "Remove" | "Update" => "",
                 "Sync" => "󰓦",
                 _ => "•",
@@ -1057,7 +1054,7 @@ fn draw_activity(f: &mut Frame, area: Rect, app: &App) {
                 Span::styled(format!(" {time} "), Style::default().fg(colors::FG_MUTED)),
                 Span::styled(format!("{icon} "), Style::default().fg(type_color)),
                 Span::styled(
-                    format!("{:<8}", t.transaction_type),
+                    format!("{transaction_type:<8}"),
                     Style::default().fg(type_color).add_modifier(Modifier::BOLD),
                 ),
                 if t.success {
@@ -1105,6 +1102,7 @@ fn draw_activity(f: &mut Frame, area: Rect, app: &App) {
 
 fn draw_team(f: &mut Frame, area: Rect, app: &App) {
     if let Some(status) = &app.team_status {
+        let all_in_sync = status.in_sync_count() == status.members.len();
         let chunks = Layout::default()
             .direction(Direction::Horizontal)
             .constraints([Constraint::Percentage(30), Constraint::Percentage(70)])
@@ -1157,12 +1155,12 @@ fn draw_team(f: &mut Frame, area: Rect, app: &App) {
             Line::from(vec![
                 Span::styled("  Status: ", Style::default().fg(colors::FG_MUTED)),
                 Span::styled(
-                    if status.in_sync_count() == status.members.len() {
+                    if all_in_sync {
                         "All Systems Operational"
                     } else {
                         "Drift Detected"
                     },
-                    Style::default().fg(if status.in_sync_count() == status.members.len() {
+                    Style::default().fg(if all_in_sync {
                         colors::ACCENT_GREEN
                     } else {
                         colors::ACCENT_YELLOW
@@ -1186,6 +1184,11 @@ fn draw_team(f: &mut Frame, area: Rect, app: &App) {
                 } else {
                     colors::ACCENT_YELLOW
                 };
+                let member_status = if member.in_sync {
+                    "Synced"
+                } else {
+                    member.drift_summary.as_deref().unwrap_or_default()
+                };
 
                 Row::new(vec![
                     Cell::from(Span::styled(
@@ -1203,11 +1206,7 @@ fn draw_team(f: &mut Frame, area: Rect, app: &App) {
                         Style::default().fg(colors::FG_MUTED),
                     )),
                     Cell::from(Span::styled(
-                        if member.in_sync {
-                            "Synced".to_string()
-                        } else {
-                            member.drift_summary.clone().unwrap_or_default()
-                        },
+                        member_status,
                         Style::default().fg(status_color),
                     )),
                 ])
@@ -1283,30 +1282,30 @@ fn draw_team(f: &mut Frame, area: Rect, app: &App) {
 
 fn draw_status_bar(f: &mut Frame, area: Rect, app: &App) {
     // Key hints based on current tab
-    let hints = match app.current_tab {
-        Tab::Dashboard => vec![
+    let hints: &[(&str, &str)] = match app.current_tab {
+        Tab::Dashboard => &[
             ("q", "Quit"),
             ("u", "Update"),
             ("c", "Clean"),
             ("r", "Refresh"),
             ("1-5", "Tabs"),
         ],
-        Tab::Packages => vec![
+        Tab::Packages => &[
             ("q", "Quit"),
             ("/", "Search"),
             ("↑↓", "Navigate"),
             ("Enter", "Install"),
             ("Esc", "Cancel"),
         ],
-        Tab::Runtimes => vec![
+        Tab::Runtimes => &[
             ("q", "Quit"),
             ("u", "Use"),
             ("i", "Install"),
             ("r", "Remove"),
         ],
-        Tab::Security => vec![("q", "Quit"), ("a", "Audit"), ("f", "Fix"), ("p", "Policy")],
-        Tab::Activity => vec![("q", "Quit"), ("r", "Refresh"), ("c", "Clear")],
-        Tab::Team => vec![
+        Tab::Security => &[("q", "Quit"), ("a", "Audit"), ("f", "Fix"), ("p", "Policy")],
+        Tab::Activity => &[("q", "Quit"), ("r", "Refresh"), ("c", "Clear")],
+        Tab::Team => &[
             ("q", "Quit"),
             ("r", "Refresh"),
             ("p", "Pull"),
@@ -1361,51 +1360,21 @@ fn draw_popup(f: &mut Frame, app: &App) {
 
     f.render_widget(Clear, popup_area);
 
-    let (title, content) = match app.current_tab {
-        Tab::Packages => {
-            if !app.search_results.is_empty() && app.selected_index < app.search_results.len() {
-                let pkg = app.search_results.get(app.selected_index);
-                let name = pkg.map_or("package", |p| p.name.as_str());
-                (
-                    "󰏗 Install Package",
-                    vec![
-                        Line::from(""),
-                        Line::from(vec![
-                            Span::styled("Install ", Style::default().fg(colors::FG_PRIMARY)),
-                            Span::styled(
-                                name,
-                                Style::default()
-                                    .fg(colors::ACCENT_CYAN)
-                                    .add_modifier(Modifier::BOLD),
-                            ),
-                            Span::styled("?", Style::default().fg(colors::FG_PRIMARY)),
-                        ]),
-                        Line::from(""),
-                        Line::from(vec![
-                            Span::styled(
-                                " Enter ",
-                                Style::default()
-                                    .bg(colors::ACCENT_GREEN)
-                                    .fg(colors::BG_DARK),
-                            ),
-                            Span::styled(" Confirm  ", Style::default().fg(colors::FG_MUTED)),
-                            Span::styled(
-                                " Esc ",
-                                Style::default().bg(colors::ACCENT_RED).fg(colors::BG_DARK),
-                            ),
-                            Span::styled(" Cancel", Style::default().fg(colors::FG_MUTED)),
-                        ]),
-                    ],
-                )
-            } else {
-                ("󰀨 No Selection", vec![Line::from("No package selected")])
-            }
-        }
-        _ => (
-            "󰀨 Confirm",
+    let (title, content) = if let Some(pkg) = app.search_results.get(app.selected_index) {
+        (
+            "󰏗 Install Package",
             vec![
                 Line::from(""),
-                Line::from("Confirm this action?"),
+                Line::from(vec![
+                    Span::styled("Install ", Style::default().fg(colors::FG_PRIMARY)),
+                    Span::styled(
+                        pkg.name.as_str(),
+                        Style::default()
+                            .fg(colors::ACCENT_CYAN)
+                            .add_modifier(Modifier::BOLD),
+                    ),
+                    Span::styled("?", Style::default().fg(colors::FG_PRIMARY)),
+                ]),
                 Line::from(""),
                 Line::from(vec![
                     Span::styled(
@@ -1414,15 +1383,17 @@ fn draw_popup(f: &mut Frame, app: &App) {
                             .bg(colors::ACCENT_GREEN)
                             .fg(colors::BG_DARK),
                     ),
-                    Span::styled(" Yes  ", Style::default().fg(colors::FG_MUTED)),
+                    Span::styled(" Confirm  ", Style::default().fg(colors::FG_MUTED)),
                     Span::styled(
                         " Esc ",
                         Style::default().bg(colors::ACCENT_RED).fg(colors::BG_DARK),
                     ),
-                    Span::styled(" No", Style::default().fg(colors::FG_MUTED)),
+                    Span::styled(" Cancel", Style::default().fg(colors::FG_MUTED)),
                 ]),
             ],
-        ),
+        )
+    } else {
+        ("󰀨 No Selection", vec![Line::from("No package selected")])
     };
 
     let popup = Paragraph::new(content).alignment(Alignment::Center).block(

@@ -81,7 +81,7 @@ pub fn install_dry_run(packages: &[String]) -> Result<()> {
 
                 table.add_row(vec![
                     info.name.bold().to_string(),
-                    info.version.clone().cyan().to_string(),
+                    info.version.cyan().to_string(),
                     "--".to_string(),
                     status,
                 ]);

@@ -97,7 +97,6 @@ pub(crate) async fn update_official_only(check_only: bool, yes: bool, dry_run: b
     use owo_colors::OwoColorize;
 
     let pm = crate::package_managers::get_package_manager()?;
-    let skip_sync = check_only || dry_run;
 
     if check_only || dry_run {
         crate::cli::modern_ui::print_phase_header(
@@ -111,16 +110,14 @@ pub(crate) async fn update_official_only(check_only: bool, yes: bool, dry_run: b
         );
     } else {
         crate::cli::modern_ui::print_phase_header("🔄", "Update", "Checking for updates");
-        if !skip_sync {
-            let pb = crate::cli::modern_ui::modern_spinner("Syncing", "package databases");
-            let sync_start = std::time::Instant::now();
-            pm.sync().await?;
-            crate::cli::modern_ui::finish_success(
-                &pb,
-                "Synced",
-                &format!("in {:.2}s", sync_start.elapsed().as_secs_f64()),
-            );
-        }
+        let pb = crate::cli::modern_ui::modern_spinner("Syncing", "package databases");
+        let sync_start = std::time::Instant::now();
+        pm.sync().await?;
+        crate::cli::modern_ui::finish_success(
+            &pb,
+            "Synced",
+            &format!("in {:.2}s", sync_start.elapsed().as_secs_f64()),
+        );
     }
 
     let pb = crate::cli::modern_ui::modern_spinner("Checking", "official repositories");
@@ -213,8 +210,9 @@ async fn confirm_proceed_with_upgrade() -> Result<bool> {
 /// `debian`/`debian-pure`) or the generic module (when Arch is absent).
 #[cfg(any(feature = "debian", feature = "debian-pure", not(feature = "arch")))]
 pub(crate) fn update_official_only_dry_run(updates: &[UpdateInfo]) -> Result<()> {
-    let names: Vec<String> = updates.iter().map(|update| update.name.clone()).collect();
-    crate::core::security::validate_package_names(&names)?;
+    updates
+        .iter()
+        .try_for_each(|update| crate::core::security::validate_package_name(&update.name))?;
 
     crate::cli::ui::print_header("OMG", "Dry Run - Update Preview");
     crate::cli::ui::print_spacer();
@@ -256,8 +254,8 @@ pub(crate) fn update_official_only_dry_run(updates: &[UpdateInfo]) -> Result<()>
     Ok(())
 }
 
-/// Removal orchestration shared by every compiled backend: timing, history,
-/// usage tracking, and success reporting around `PackageService::remove`.
+/// Removal orchestration shared by every compiled backend: usage tracking
+/// and success reporting around `PackageService::remove`.
 pub(crate) async fn remove_via_service(packages: &[String]) -> Result<()> {
     use crate::core::packages::PackageService;
 

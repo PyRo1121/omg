@@ -34,7 +34,7 @@
 //! ## Example
 //!
 //! ```rust,no_run
-//! use omg_lib::cli::tea::{Program, Model, Msg, Cmd};
+//! use omg_lib::cli::tea::{Program, Model, Cmd};
 //!
 //! struct MyModel {
 //!     count: usize,
@@ -106,7 +106,6 @@ pub use update_model::{UpdateModel, UpdateMsg, UpdatePackage, UpdateState, Updat
 // Re-export wrappers for easy integration
 pub use wrappers::{run_info_elm, run_status_elm};
 
-use std::fmt;
 use std::io;
 
 /// The core Model trait - implements the Elm Architecture
@@ -115,7 +114,7 @@ use std::io;
 /// how it responds to messages and renders itself.
 pub trait Model: Sized {
     /// The message type for this model
-    type Msg: Msg;
+    type Msg: Send + std::fmt::Debug + 'static;
 
     /// Initialize the model - return an optional command to run
     #[must_use]
@@ -131,22 +130,7 @@ pub trait Model: Sized {
 
     /// Render the model to a string for display
     fn view(&self) -> String;
-
-    /// Optional subscription for continuous events (e.g., timers, file watchers)
-    #[must_use]
-    fn subscription(&self) -> Cmd<Self::Msg> {
-        Cmd::none()
-    }
 }
-
-/// Message trait - all messages must implement this
-///
-/// This is a marker trait to ensure type safety and enable
-/// downcasting in the future if needed.
-pub trait Msg: Send + fmt::Debug + 'static {}
-
-// Blanket implementation for all types that meet the requirements
-impl<T> Msg for T where T: Send + fmt::Debug + 'static {}
 
 /// A Bubble Tea-inspired Program
 ///
@@ -184,19 +168,10 @@ impl<M: Model> Program<M> {
 
         self.process_cmd(init_cmd)?;
 
-        // Process subscriptions
-        let sub_cmd = self.model.subscription();
-        self.process_cmd(sub_cmd)?;
-
         // Render final view
         self.render()?;
 
         Ok(())
-    }
-
-    /// Get a mutable reference to the model
-    pub fn model(&mut self) -> &mut M {
-        &mut self.model
     }
 
     /// Process a single command

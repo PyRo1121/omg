@@ -206,7 +206,6 @@ pub fn pacman_cache_dirs() -> Vec<PathBuf> {
 
     if !pacman_root_overridden()
         && let Some(cache_dirs) = configured_pacman_cache_dirs()
-        && !cache_dirs.is_empty()
     {
         return cache_dirs;
     }
@@ -241,17 +240,6 @@ fn configured_pacman_cache_dirs() -> Option<Vec<PathBuf>> {
 #[cfg(not(feature = "arch"))]
 fn configured_pacman_cache_dirs() -> Option<Vec<PathBuf>> {
     None
-}
-
-/// Primary pacman package cache directory (the first of [`pacman_cache_dirs`]).
-#[must_use]
-pub fn pacman_cache_dir() -> PathBuf {
-    pacman_cache_dirs()
-        .into_iter()
-        .next()
-        // Local invariant: every branch of `pacman_cache_dirs` ends in a
-        // non-empty `vec![...]`, so the first element always exists.
-        .expect("invariant: pacman_cache_dirs is non-empty by construction")
 }
 
 /// Pacman cache root directory (default: /var/cache/pacman).
@@ -369,7 +357,7 @@ pub fn validate_socket_parent(socket_path: &std::path::Path) -> std::io::Result<
 /// every [`validate_socket_parent`] failure condition.
 #[cfg(unix)]
 pub fn prepare_socket_parent(socket_path: &std::path::Path) -> std::io::Result<()> {
-    use std::os::unix::fs::{DirBuilderExt, PermissionsExt};
+    use std::os::unix::fs::DirBuilderExt;
 
     let parent = socket_path.parent().ok_or_else(|| {
         std::io::Error::new(
@@ -380,7 +368,6 @@ pub fn prepare_socket_parent(socket_path: &std::path::Path) -> std::io::Result<(
     if !parent.exists() {
         let mut builder = std::fs::DirBuilder::new();
         builder.mode(0o700).create(parent)?;
-        std::fs::set_permissions(parent, std::fs::Permissions::from_mode(0o700))?;
     }
     validate_socket_parent(socket_path)
 }
@@ -526,14 +513,6 @@ mod tests {
         temp_env::with_var_unset("OMG_PACMAN_LOCAL_DIR", || {
             let local = pacman_local_dir();
             assert_eq!(local, pacman_db_dir().join("local"));
-        });
-    }
-
-    #[test]
-    fn pacman_cache_dir_is_a_cache_location() {
-        temp_env::with_var_unset("OMG_PACMAN_CACHE_DIR", || {
-            let cache = pacman_cache_dir();
-            assert!(cache.to_string_lossy().contains("cache"));
         });
     }
 }

@@ -24,7 +24,6 @@ const AUR_INFO_TIMEOUT: Duration = Duration::from_secs(8);
 pub enum InfoSource {
     Official,
     Aur,
-    Flatpak,
 }
 
 impl InfoSource {
@@ -32,7 +31,6 @@ impl InfoSource {
         match self {
             Self::Official => "Official Repository".cyan().to_string(),
             Self::Aur => "AUR (Arch User Repository)".yellow().to_string(),
-            Self::Flatpak => "Flatpak".blue().to_string(),
         }
     }
 }
@@ -119,7 +117,7 @@ impl Model for InfoModel {
 
     fn init(&self) -> Cmd<Self::Msg> {
         let pkg = self.package_name.clone();
-        Cmd::Exec(Box::new(move || InfoMsg::Fetch(pkg)))
+        Cmd::exec(move || InfoMsg::Fetch(pkg))
     }
 
     fn update(&mut self, msg: Self::Msg) -> Cmd<Self::Msg> {
@@ -128,14 +126,14 @@ impl Model for InfoModel {
                 self.package_name.clone_from(&pkg);
                 self.state = InfoState::Loading;
 
-                Cmd::Exec(Box::new(move || {
+                Cmd::exec(move || {
                     let pkg_name = pkg;
 
                     crate::cli::tea::async_bridge::run_blocking_future(async move {
                         fetch_info(&pkg_name).await
                     })
                     .unwrap_or_else(|err| InfoMsg::Error(err.to_string()))
-                }))
+                })
             }
             InfoMsg::InfoReceived(info) => {
                 self.info = Some(info);
@@ -149,8 +147,9 @@ impl Model for InfoModel {
             }
             InfoMsg::Error(err) => {
                 self.state = InfoState::Failed;
-                self.error = Some(err.clone());
-                Cmd::error(format!("Failed to fetch info: {err}"))
+                let message = format!("Failed to fetch info: {err}");
+                self.error = Some(err);
+                Cmd::error(message)
             }
         }
     }
@@ -334,7 +333,7 @@ async fn fetch_info(package: &str) -> InfoMsg {
                 Ok(Some(info)) => {
                     return InfoMsg::InfoReceived(PackageInfo {
                         name: info.name,
-                        version: info.version.clone(),
+                        version: info.version,
                         description: info.description,
                         source: InfoSource::Official,
                         repo: "apt".to_string(),

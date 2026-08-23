@@ -64,28 +64,20 @@ pub fn init_test_env() {
 /// returns. Use it within a `#[serial]`-marked test (or while holding the
 /// suite's environment lock) so no other thread observes the mutated values.
 pub fn with_test_env<R>(vars: &[(&str, &str)], f: impl FnOnce() -> R) -> R {
-    let owned: Vec<(String, String)> = vars
+    let vars: Vec<(&str, Option<&str>)> = vars
         .iter()
-        .map(|(key, value)| ((*key).to_string(), (*value).to_string()))
+        .map(|&(key, value)| (key, Some(value)))
         .collect();
-    let refs: Vec<(&str, Option<&str>)> = owned
-        .iter()
-        .map(|(key, value)| (key.as_str(), Some(value.as_str())))
-        .collect();
-    temp_env::with_vars(refs, f)
+    temp_env::with_vars(vars, f)
 }
 
 /// Test configuration flags
 #[derive(Debug, Clone)]
-#[expect(clippy::struct_excessive_bools)]
 pub struct TestConfig {
     pub run_system_tests: bool,
     pub run_network_tests: bool,
     pub run_destructive_tests: bool,
-    pub run_fuzz_tests: bool,
-    pub run_stress_tests: bool,
     pub target_distro: Option<String>,
-    pub timeout: Duration,
 }
 
 impl Default for TestConfig {
@@ -100,14 +92,7 @@ impl Default for TestConfig {
             run_destructive_tests: env::var("OMG_RUN_DESTRUCTIVE_TESTS")
                 .map(|v| v == "1")
                 .unwrap_or(cfg!(feature = "docker_tests")),
-            run_fuzz_tests: env::var("OMG_RUN_FUZZ_TESTS")
-                .map(|v| v == "1")
-                .unwrap_or(false),
-            run_stress_tests: env::var("OMG_RUN_STRESS_TESTS")
-                .map(|v| v == "1")
-                .unwrap_or(false),
             target_distro: env::var("OMG_TEST_DISTRO").ok(),
-            timeout: Duration::from_secs(30),
         }
     }
 }
@@ -168,7 +153,6 @@ pub struct CommandResult {
     pub exit_code: i32,
     pub stdout: String,
     pub stderr: String,
-    pub duration: Duration,
 }
 
 impl CommandResult {
@@ -219,15 +203,6 @@ impl CommandResult {
             "stderr does not contain '{}'\nstderr: {}",
             needle,
             self.stderr
-        );
-    }
-
-    pub fn assert_duration_under(&self, max: Duration) {
-        assert!(
-            self.duration < max,
-            "Command took {:?}, expected under {:?}",
-            self.duration,
-            max
         );
     }
 }
@@ -337,8 +312,6 @@ pub fn run_omg_with_options(
     // Joining always succeeds unless a reader panicked (impossible: plain reads).
     let stdout_bytes = stdout_handle.join().unwrap_or_default();
     let stderr_bytes = stderr_handle.join().unwrap_or_default();
-    let duration = start.elapsed();
-
     let mut stderr = String::from_utf8_lossy(&stderr_bytes).to_string();
     if timed_out {
         if !stderr.ends_with('\n') && !stderr.is_empty() {
@@ -357,14 +330,11 @@ pub fn run_omg_with_options(
         exit_code: output_status.code().unwrap_or(-1),
         stdout: String::from_utf8_lossy(&stdout_bytes).to_string(),
         stderr,
-        duration,
     }
 }
 
 /// Run a raw shell command
-pub fn run_shell(cmd: &str) -> CommandResult {
-    let start = Instant::now();
-
+fn run_shell(cmd: &str) -> CommandResult {
     let output = Command::new("sh")
         .args(["-c", cmd])
         .stdout(Stdio::piped())
@@ -372,14 +342,11 @@ pub fn run_shell(cmd: &str) -> CommandResult {
         .output()
         .expect("Failed to execute shell command");
 
-    let duration = start.elapsed();
-
     CommandResult {
         success: output.status.success(),
         exit_code: output.status.code().unwrap_or(-1),
         stdout: String::from_utf8_lossy(&output.stdout).to_string(),
         stderr: String::from_utf8_lossy(&output.stderr).to_string(),
-        duration,
     }
 }
 
@@ -409,22 +376,9 @@ impl TestProject {
     }
 
     pub fn for_distro(distro: &str) -> Self {
-        let config = TestConfig {
-            target_distro: Some(distro.to_string()),
-            ..TestConfig::default()
-        };
-        Self::with_config(config)
-    }
-
-    pub fn with_config(config: TestConfig) -> Self {
-        init_test_env();
-        Self {
-            dir: TempDir::new().expect("Failed to create temp dir"),
-            data_dir: TempDir::new().expect("Failed to create data dir"),
-            config_dir: TempDir::new().expect("Failed to create config dir"),
-            pacman_root: TempDir::new().expect("Failed to create pacman root"),
-            config,
-        }
+        let mut project = Self::new();
+        project.config.target_distro = Some(distro.to_string());
+        project
     }
 
     pub fn path(&self) -> &Path {
@@ -441,22 +395,7 @@ impl TestProject {
     }
 
     pub fn run(&self, args: &[&str]) -> CommandResult {
-        let data_dir = Self::utf8_path(self.data_dir.path());
-        let config_dir = Self::utf8_path(self.config_dir.path());
-        let pacman_root = Self::utf8_path(self.pacman_root.path());
-        let cache_dir = self.data_dir.path().join("cache");
-        let cache_dir = Self::utf8_path(&cache_dir);
-        run_omg_with_options(
-            args,
-            Some(self.path()),
-            &[
-                ("OMG_DATA_DIR", data_dir),
-                ("OMG_CONFIG_DIR", config_dir),
-                ("OMG_CACHE_DIR", cache_dir),
-                ("OMG_PACMAN_ROOT", pacman_root),
-                ("OMG_TEST_DISTRO", self.distro()),
-            ],
-        )
+        self.run_with_env(args, &[])
     }
 
     pub fn run_with_env(&self, args: &[&str], env_vars: &[(&str, &str)]) -> CommandResult {
@@ -536,20 +475,6 @@ impl TestProject {
         self
     }
 
-    pub fn with_rust_project(&self) -> &Self {
-        self.create_file("rust-toolchain.toml", "[toolchain]\nchannel = \"stable\"");
-        self.create_file(
-            "Cargo.toml",
-            "[package]\nname = \"test\"\nversion = \"0.1.0\"",
-        );
-        self
-    }
-
-    pub fn with_go_project(&self) -> &Self {
-        self.create_file("go.mod", "module test\n\ngo 1.21");
-        self
-    }
-
     pub fn with_tool_versions(&self, versions: &[(&str, &str)]) -> &Self {
         let content: String = versions
             .iter()
@@ -583,15 +508,6 @@ impl TestProject {
         fs::write(&path, policy).unwrap();
         self
     }
-
-    pub fn with_team_config(&self, team_id: &str) -> &Self {
-        self.create_dir(".omg");
-        self.create_file(
-            ".omg/team.toml",
-            &format!("[team]\nid = \"{team_id}\"\nname = \"Test Team\""),
-        );
-        self
-    }
 }
 
 impl Default for TestProject {
@@ -605,7 +521,7 @@ impl Default for TestProject {
 // ═══════════════════════════════════════════════════════════════════════════════
 
 /// Detect the current distro's package manager
-pub fn detect_package_manager() -> Option<&'static str> {
+fn detect_package_manager() -> Option<&'static str> {
     if Path::new("/usr/bin/pacman").exists() {
         Some("pacman")
     } else if Path::new("/usr/bin/apt").exists() {
@@ -642,36 +558,12 @@ fn update_mock_state(
     }
 }
 
-/// Get installed package version (distro-agnostic)
-pub fn get_package_version(name: &str) -> Option<String> {
-    match detect_package_manager() {
-        Some("pacman") => {
-            let result = run_shell(&format!("pacman -Q {name} 2>/dev/null | cut -d' ' -f2"));
-            if result.success {
-                Some(result.stdout.trim().to_string())
-            } else {
-                None
-            }
-        }
-        Some("apt") => {
-            let result = run_shell(&format!(
-                "dpkg-query -W -f='${{Version}}' {name} 2>/dev/null"
-            ));
-            if result.success {
-                Some(result.stdout.trim().to_string())
-            } else {
-                None
-            }
-        }
-        _ => None,
-    }
-}
 // ===========================================================================
 // SKIP ACCOUNTING
 // ===========================================================================
 
-/// Number of tests silently skipped at runtime via the `require_*!` /
-/// `skip_if!` macros in this process. Each skip is also announced as a
+/// Number of tests silently skipped at runtime via the `require_*!` macros in
+/// this process. Each skip is also announced as a
 /// `[omg-skip]` line, so CI can recover the true skip count with
 /// `cargo test 2>&1 | grep -c '\[omg-skip\]'` and fail on unexpected
 /// coverage loss instead of reading a green run as full coverage.
@@ -685,25 +577,9 @@ pub fn report_skip(reason: &str) {
     eprintln!("[omg-skip] {reason}");
 }
 
-/// Skips recorded so far in this test binary (see [`report_skip`]).
-pub fn skipped_tests_count() -> usize {
-    SKIPPED_TESTS.load(std::sync::atomic::Ordering::Relaxed)
-}
-
 // ═══════════════════════════════════════════════════════════════════════════════
 // TEST MACROS
 // ═══════════════════════════════════════════════════════════════════════════════
-
-/// Skip test if condition is met
-#[macro_export]
-macro_rules! skip_if {
-    ($cond:expr, $reason:expr) => {
-        if $cond {
-            $crate::common::report_skip(&$reason);
-            return;
-        }
-    };
-}
 
 /// Require system tests to be enabled
 #[macro_export]

@@ -84,7 +84,7 @@ impl Model for StatusModel {
     type Msg = StatusMsg;
 
     fn init(&self) -> Cmd<Self::Msg> {
-        Cmd::Exec(Box::new(|| StatusMsg::Load))
+        Cmd::exec(|| StatusMsg::Load)
     }
 
     fn update(&mut self, msg: Self::Msg) -> Cmd<Self::Msg> {
@@ -93,7 +93,7 @@ impl Model for StatusModel {
                 self.state = StatusState::Loading;
                 let fast = self.fast_mode;
 
-                Cmd::Exec(Box::new(move || {
+                Cmd::exec(move || {
                     // This logic mirrors the original status.rs logic
                     let start = std::time::Instant::now();
 
@@ -148,7 +148,7 @@ impl Model for StatusModel {
                         }),
                         Err(e) => StatusMsg::Error(e.to_string()),
                     }
-                }))
+                })
             }
             StatusMsg::Loaded(data) => {
                 self.data = Some(data);
@@ -157,8 +157,9 @@ impl Model for StatusModel {
             }
             StatusMsg::Error(err) => {
                 self.state = StatusState::Failed;
-                self.error = Some(err.clone());
-                Cmd::Error(format!("Status check failed: {err}"))
+                let message = format!("Status check failed: {err}");
+                self.error = Some(err);
+                Cmd::error(message)
             }
         }
     }

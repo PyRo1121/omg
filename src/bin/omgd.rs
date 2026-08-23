@@ -128,7 +128,6 @@ async fn main() -> Result<()> {
         // Only remove the stale node if it actually looks like ours: a
         // socket owned by this user (or root). Anything else means someone
         // placed a foreign object at our path - refuse rather than delete.
-        #[cfg(unix)]
         match std::fs::metadata(&socket_path) {
             Ok(meta)
                 if {
@@ -157,7 +156,6 @@ async fn main() -> Result<()> {
     // 3. Create Unix socket listener. The node is created owner-only
     // (umask tightened around bind) so there is no window where the socket
     // accepts connections from other users before the explicit 0600 below.
-    #[cfg(unix)]
     let listener = {
         use nix::sys::stat::{Mode, umask};
         let previous = umask(Mode::S_IRWXG | Mode::S_IRWXO);
@@ -165,8 +163,6 @@ async fn main() -> Result<()> {
         umask(previous);
         listener?
     };
-    #[cfg(not(unix))]
-    let listener = UnixListener::bind(&socket_path)?;
     // RAII cleanup: removes the socket file on every exit path from here on
     // (graceful shutdown, fatal accept error, or panic caught below), so a
     // dead daemon never leaves a stale socket behind.
@@ -176,7 +172,6 @@ async fn main() -> Result<()> {
     tracing::info!("Listening on {:?}", socket_path);
 
     // Set socket permissions (user only)
-    #[cfg(unix)]
     {
         use std::os::unix::fs::PermissionsExt;
         let mut perms = std::fs::metadata(&socket_path)?.permissions();
@@ -195,15 +190,12 @@ async fn main() -> Result<()> {
     match result {
         Ok(run_result) => run_result?,
         Err(e) => {
-            #[expect(clippy::option_if_let_else)]
-            // Multiple downcast_ref checks; map_or_else cannot chain successive type attempts
-            let msg = if let Some(s) = e.downcast_ref::<&str>() {
-                format!("Daemon panicked: {s}")
-            } else if let Some(s) = e.downcast_ref::<String>() {
-                format!("Daemon panicked: {s}")
-            } else {
-                "Daemon panicked: unknown error".to_string()
-            };
+            let panic_message = e
+                .downcast_ref::<&str>()
+                .copied()
+                .or_else(|| e.downcast_ref::<String>().map(String::as_str))
+                .unwrap_or("unknown error");
+            let msg = format!("Daemon panicked: {panic_message}");
 
             tracing::error!("{msg}");
             anyhow::bail!(msg);

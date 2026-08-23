@@ -87,117 +87,82 @@ impl PkgBuild {
 
     /// Parse PKGBUILD content - handles multi-line arrays
     pub fn parse_content(content: &str) -> Result<Self> {
-        let mut pkg = Self::default();
         let mut vars: HashMap<String, String> = HashMap::new();
 
-        // First pass: Extract all variables including multi-line arrays
-        let lines: Vec<&str> = content.lines().collect();
-        let mut i = 0;
-        while i < lines.len() {
-            let Some(line_ref) = lines.get(i) else { break };
-            let line = line_ref.trim();
-
-            // Skip empty lines and comments
+        // First pass: Extract all variables including multi-line arrays.
+        let mut lines = content.lines();
+        while let Some(line) = lines.next() {
+            let line = line.trim();
             if line.is_empty() || line.starts_with('#') {
-                i += 1;
                 continue;
             }
 
-            // Look for variable assignment
-            if let Some((key, val)) = line.split_once('=') {
-                let key = key.trim();
-                let val = val.trim();
-
-                // Validate key is a valid bash variable name
-                if !key
-                    .chars()
-                    .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '_')
-                {
-                    i += 1;
-                    continue;
-                }
-
-                // Check if this is a multi-line array
-                if val.starts_with('(') && !val.ends_with(')') {
-                    // Multi-line array - collect until closing paren
-                    let mut array_content = val.to_string();
-                    i += 1;
-                    while i < lines.len() {
-                        let Some(next_line) = lines.get(i) else { break };
-                        let next_line = *next_line;
-                        array_content.push(' ');
-                        array_content.push_str(next_line);
-                        if next_line.contains(')') {
-                            break;
-                        }
-                        i += 1;
-                    }
-                    vars.insert(key.to_string(), array_content);
-                } else {
-                    // Single-line value
-                    let val = val.trim_matches('"').trim_matches('\'').to_string();
-                    vars.insert(key.to_string(), val);
-                }
+            let Some((key, val)) = line.split_once('=') else {
+                continue;
+            };
+            let key = key.trim();
+            let val = val.trim();
+            if !key
+                .chars()
+                .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '_')
+            {
+                continue;
             }
-            i += 1;
+
+            if val.starts_with('(') && !val.ends_with(')') {
+                let mut array_content = val.to_string();
+                for next_line in lines.by_ref() {
+                    array_content.push(' ');
+                    array_content.push_str(next_line);
+                    if next_line.contains(')') {
+                        break;
+                    }
+                }
+                vars.insert(key.to_string(), array_content);
+            } else {
+                vars.insert(
+                    key.to_string(),
+                    val.trim_matches('"').trim_matches('\'').to_string(),
+                );
+            }
         }
 
-        // Second pass: Perform variable substitution
-        let substitute = |val: &str, vars: &HashMap<String, String>| -> String {
+        // Sort substitution sources once, longest first, so shorter variable
+        // names cannot partially replace longer names.
+        let mut substitutions: Vec<_> = vars.iter().collect();
+        substitutions.sort_by_key(|(key, _)| std::cmp::Reverse(key.len()));
+        let substitute = |val: &str| -> String {
             let mut result = val.to_string();
-            let mut keys: Vec<_> = vars.keys().collect();
-            keys.sort_by_key(|k| std::cmp::Reverse(k.len()));
-
-            for k in keys {
-                let Some(v) = vars.get(k) else { continue };
-                let pattern1 = format!("${k}");
-                let pattern2 = format!("${{{k}}}");
-                result = result.replace(&pattern1, v);
-                result = result.replace(&pattern2, v);
+            for (key, value) in &substitutions {
+                result = result.replace(&format!("${key}"), value);
+                result = result.replace(&format!("${{{key}}}"), value);
             }
             result
         };
+        let scalar = |key: &str| vars.get(key).map_or_else(String::new, |v| substitute(v));
+        let array = |key: &str| {
+            vars.get(key)
+                .map_or_else(Vec::new, |v| parse_array(&substitute(v)))
+        };
 
-        if let Some(v) = vars.get("pkgname") {
-            pkg.name = substitute(v, &vars);
-        }
-        if let Some(v) = vars.get("pkgver") {
-            pkg.version = super::types::parse_version_or_zero(&substitute(v, &vars));
-        }
-        if let Some(v) = vars.get("pkgrel") {
-            pkg.release = substitute(v, &vars);
-        }
-        if let Some(v) = vars.get("pkgdesc") {
-            pkg.description = substitute(v, &vars);
-        }
-        if let Some(v) = vars.get("url") {
-            pkg.url = substitute(v, &vars);
-        }
-
-        // Process arrays with substitution
-        if let Some(v) = vars.get("depends") {
-            pkg.depends = parse_array(&substitute(v, &vars));
-        }
-        if let Some(v) = vars.get("makedepends") {
-            pkg.makedepends = parse_array(&substitute(v, &vars));
-        }
-        if let Some(v) = vars.get("checkdepends") {
-            pkg.checkdepends = parse_array(&substitute(v, &vars));
-        }
-        if let Some(v) = vars.get("source") {
-            pkg.sources = parse_array(&substitute(v, &vars));
-        }
-        if let Some(v) = vars.get("sha256sums") {
-            pkg.sha256sums = parse_array(&substitute(v, &vars));
-        }
-        if let Some(v) = vars.get("license") {
-            pkg.license = parse_array(&substitute(v, &vars));
-        }
-        if let Some(v) = vars.get("validpgpkeys") {
-            pkg.validpgpkeys = parse_array(&substitute(v, &vars));
-        }
-
-        Ok(pkg)
+        Ok(Self {
+            name: scalar("pkgname"),
+            version: vars
+                .get("pkgver")
+                .map_or_else(super::types::zero_version, |v| {
+                    super::types::parse_version_or_zero(&substitute(v))
+                }),
+            release: scalar("pkgrel"),
+            description: scalar("pkgdesc"),
+            url: scalar("url"),
+            license: array("license"),
+            depends: array("depends"),
+            makedepends: array("makedepends"),
+            checkdepends: array("checkdepends"),
+            sources: array("source"),
+            sha256sums: array("sha256sums"),
+            validpgpkeys: array("validpgpkeys"),
+        })
     }
 }
 

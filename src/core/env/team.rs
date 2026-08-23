@@ -507,44 +507,6 @@ fi
     }
 }
 
-/// Detect if omg.lock has changed in git
-pub fn detect_lock_changes() -> Result<bool> {
-    use std::process::Command;
-
-    let output = Command::new("git")
-        .args(["diff", "--name-only", "HEAD~1", "HEAD"])
-        .output()
-        .context("Failed to run git diff for omg.lock change detection")?;
-
-    // A non-zero git status (not a repo, shallow clone, single-commit repo)
-    // must surface as an error: silently answering "no changes" would swallow
-    // a missed drift notification.
-    anyhow::ensure!(
-        output.status.success(),
-        "git diff failed while detecting lock changes: {}",
-        String::from_utf8_lossy(&output.stderr).trim()
-    );
-
-    let stdout = String::from_utf8_lossy(&output.stdout);
-    Ok(stdout.lines().any(|line| line.trim() == "omg.lock"))
-}
-
-/// Get the git remote URL for the current repo
-pub fn get_git_remote() -> Result<Option<String>> {
-    use std::process::Command;
-
-    let output = Command::new("git")
-        .args(["remote", "get-url", "origin"])
-        .output()?;
-
-    if output.status.success() {
-        let url = String::from_utf8_lossy(&output.stdout).trim().to_string();
-        Ok(Some(url))
-    } else {
-        Ok(None)
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;

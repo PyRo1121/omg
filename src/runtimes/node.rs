@@ -81,25 +81,15 @@ impl LtsStatus {
 /// Node.js runtime manager
 pub(crate) struct NodeManager {
     versions_dir: PathBuf,
-    current_link: PathBuf,
-    client: reqwest::Client,
+    client: &'static reqwest::Client,
 }
 
 impl NodeManager {
     pub fn new() -> Self {
-        let data_dir = &*super::DATA_DIR;
-        let versions_dir = data_dir.join("versions").join("node");
-
         Self {
-            current_link: versions_dir.join("current"),
-            versions_dir,
-            client: download_client().clone(),
+            versions_dir: super::DATA_DIR.join("versions/node"),
+            client: download_client(),
         }
-    }
-
-    #[must_use]
-    pub fn bin_dir(&self) -> PathBuf {
-        self.current_link.join("bin")
     }
 
     pub async fn list_available(&self) -> Result<Vec<NodeVersion>> {
@@ -179,7 +169,7 @@ impl NodeManager {
 
         println!("{} Downloading {}...", "→".blue(), filename);
         let download_path = self.versions_dir.join(&filename);
-        download_with_progress(&self.client, &url, &download_path, Some(&checksum)).await?;
+        download_with_progress(self.client, &url, &download_path, &checksum).await?;
 
         println!("{} Extracting (pure Rust)...", "→".blue());
         let staging = begin_staged_install(&self.versions_dir)?;
@@ -217,13 +207,13 @@ impl NodeManager {
     pub fn use_version(&self, version: &str) -> Result<()> {
         let version = normalize_version(version);
         activate_version(&self.versions_dir, &version, Path::new("bin/node"))?;
-        print_using("Node.js", &version, &self.bin_dir());
+        print_using("Node.js", &version, &self.versions_dir.join("current/bin"));
         Ok(())
     }
 }
 
 // Generate common runtime manager methods (list_installed, current_version)
-crate::runtimes::common::impl_runtime_common!(NodeManager, "Node.js");
+crate::runtimes::common::impl_runtime_common!(NodeManager);
 
 fn node_platform() -> Result<String> {
     let os = match std::env::consts::OS {
@@ -237,12 +227,6 @@ fn node_platform() -> Result<String> {
         arch => anyhow::bail!("Unsupported architecture for Node.js: {arch}"),
     };
     Ok(format!("{os}-{arch}"))
-}
-
-impl Default for NodeManager {
-    fn default() -> Self {
-        Self::new()
-    }
 }
 
 /// Find the newest release carrying an LTS codename matching `codename`
@@ -260,8 +244,8 @@ fn find_lts_codename<'a>(versions: &'a [NodeVersion], codename: &str) -> Option<
 
 /// Get LTS version name if applicable
 #[must_use]
-pub(crate) fn get_lts_name(version: &NodeVersion) -> Option<String> {
-    version.lts.codename().map(String::from)
+pub(crate) fn get_lts_name(version: &NodeVersion) -> Option<&str> {
+    version.lts.codename()
 }
 
 #[cfg(test)]
@@ -280,7 +264,7 @@ mod tests {
             version: "v20.0.0".to_string(),
             lts: LtsStatus::Lts("Iron".to_string()),
         };
-        assert_eq!(get_lts_name(&lts_version), Some("Iron".to_string()));
+        assert_eq!(get_lts_name(&lts_version), Some("Iron"));
 
         let non_lts = NodeVersion {
             version: "v21.0.0".to_string(),

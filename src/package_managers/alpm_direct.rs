@@ -66,11 +66,7 @@ fn create_alpm_handle() -> Result<Alpm> {
     Ok(alpm)
 }
 
-/// Get a cached ALPM handle or create a new one for this thread
-///
-/// Panic safety: uses `catch_unwind` to ensure the `RefCell` borrow is properly
-/// released even if the closure panics, preventing a poisoned thread-local.
-#[expect(clippy::expect_used)] // ALPM handle initialization; failure indicates system misconfiguration
+/// Get a cached ALPM handle or create a new one for this thread.
 pub fn with_handle<F, R>(f: F) -> Result<R>
 where
     F: FnOnce(&Alpm) -> Result<R>,
@@ -83,33 +79,14 @@ where
             *maybe_handle = Some((create_alpm_handle()?, current_epoch));
         }
 
-        // Get reference to handle
-        let (handle_ref, _) = maybe_handle
+        let (handle, _) = maybe_handle
             .as_ref()
-            .expect("ALPM handle initialized above");
-
-        // Execute user function with panic safety: catch_unwind ensures the
-        // RefCell borrow is released even if f panics.
-        let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| f(handle_ref)));
-
-        // Drop the borrow before handling panic
-        drop(maybe_handle);
-
-        match result {
-            Ok(r) => r,
-            Err(panic_payload) => {
-                // Re-throw the panic after RefCell is released
-                std::panic::resume_unwind(panic_payload)
-            }
-        }
+            .context("ALPM handle initialization failed")?;
+        f(handle)
     })
 }
 
-/// Get a mutable cached ALPM handle
-///
-/// Panic safety: uses `catch_unwind` to ensure the `RefCell` borrow is properly
-/// released even if the closure panics, preventing a poisoned thread-local.
-#[expect(clippy::expect_used)] // ALPM handle initialization; failure indicates system misconfiguration
+/// Get a mutable cached ALPM handle.
 pub fn with_handle_mut<F, R>(f: F) -> Result<R>
 where
     F: FnOnce(&mut Alpm) -> Result<R>,
@@ -122,18 +99,10 @@ where
             *maybe_handle = Some((create_alpm_handle()?, current_epoch));
         }
 
-        let (handle_ref, _) = maybe_handle
+        let (handle, _) = maybe_handle
             .as_mut()
-            .expect("ALPM handle initialized above");
-
-        let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| f(handle_ref)));
-
-        drop(maybe_handle);
-
-        match result {
-            Ok(r) => r,
-            Err(panic_payload) => std::panic::resume_unwind(panic_payload),
-        }
+            .context("ALPM handle initialization failed")?;
+        f(handle)
     })
 }
 
@@ -149,15 +118,12 @@ pub fn clear_alpm_cache() {
 /// Search sync databases (available packages) - FAST (<10ms)
 pub fn search_sync(query: &str) -> Result<Vec<SyncPackage>> {
     with_handle(|handle| {
-        let query_lower = query.to_ascii_lowercase();
         let mut results = Vec::with_capacity(64);
 
         for db in handle.syncdbs() {
             for pkg in db.pkgs() {
-                if contains_ignore_case(pkg.name(), &query_lower)
-                    || pkg
-                        .desc()
-                        .is_some_and(|d| contains_ignore_case(d, &query_lower))
+                if contains_ignore_case(pkg.name(), query)
+                    || pkg.desc().is_some_and(|d| contains_ignore_case(d, query))
                 {
                     let installed = handle.localdb().pkg(pkg.name()).is_ok();
 

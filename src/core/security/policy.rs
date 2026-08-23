@@ -211,16 +211,15 @@ impl SecurityPolicy {
     }
 }
 
-/// SPDX-ish tokens from a license expression (operators and punctuation dropped).
+/// Lowercase SPDX-ish tokens from a license expression.
 pub(crate) fn spdx_license_tokens(license: &str) -> Vec<String> {
     license
         .split(|c: char| !(c.is_ascii_alphanumeric() || matches!(c, '.' | '-' | '+')))
         .filter(|token| !token.is_empty())
         .filter(|token| {
-            !matches!(
-                token.to_ascii_uppercase().as_str(),
-                "AND" | "OR" | "WITH" | "TO"
-            )
+            !["AND", "OR", "WITH", "TO"]
+                .iter()
+                .any(|operator| token.eq_ignore_ascii_case(operator))
         })
         .map(str::to_ascii_lowercase)
         .collect()
@@ -230,11 +229,14 @@ pub(crate) fn spdx_license_tokens(license: &str) -> Vec<String> {
 pub(crate) fn license_matches_allowlist(license: &str, allowed: &[String]) -> bool {
     let tokens = spdx_license_tokens(license);
     allowed.iter().any(|allowed| {
-        let needle = allowed.to_ascii_lowercase();
         tokens.iter().any(|token| {
-            token == &needle
-                || token.strip_suffix('+') == Some(needle.as_str())
-                || needle.strip_suffix('+') == Some(token.as_str())
+            token.eq_ignore_ascii_case(allowed)
+                || token
+                    .strip_suffix('+')
+                    .is_some_and(|token| token.eq_ignore_ascii_case(allowed))
+                || allowed
+                    .strip_suffix('+')
+                    .is_some_and(|allowed| token.eq_ignore_ascii_case(allowed))
         })
     })
 }

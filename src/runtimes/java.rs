@@ -45,24 +45,15 @@ pub(crate) struct JavaVersion {
 
 pub(crate) struct JavaManager {
     versions_dir: PathBuf,
-    current_link: PathBuf,
-    client: reqwest::Client,
+    client: &'static reqwest::Client,
 }
 
 impl JavaManager {
     pub fn new() -> Self {
-        let versions_dir = super::DATA_DIR.join("versions/java");
-
         Self {
-            current_link: versions_dir.join("current"),
-            versions_dir,
-            client: download_client().clone(),
+            versions_dir: super::DATA_DIR.join("versions/java"),
+            client: download_client(),
         }
-    }
-
-    #[must_use]
-    pub fn bin_dir(&self) -> PathBuf {
-        self.current_link.join("bin")
     }
 
     /// List available Java versions from Adoptium
@@ -141,13 +132,8 @@ impl JavaManager {
         println!("{} Downloading {}...", "→".blue(), binary.package.name);
         let download_path = self.versions_dir.join(&binary.package.name);
         let checksum = parse_sha256_digest(&binary.package.checksum, "Adoptium")?;
-        download_with_progress(
-            &self.client,
-            &binary.package.link,
-            &download_path,
-            Some(&checksum),
-        )
-        .await?;
+        download_with_progress(self.client, &binary.package.link, &download_path, &checksum)
+            .await?;
 
         println!("{} Extracting (pure Rust)...", "→".blue());
         let staging = begin_staged_install(&self.versions_dir)?;
@@ -174,7 +160,7 @@ impl JavaManager {
         println!(
             "  {} {}",
             "PATH:".dimmed(),
-            self.bin_dir().display().dimmed()
+            self.versions_dir.join("current/bin").display().dimmed()
         );
 
         Ok(())
@@ -182,7 +168,7 @@ impl JavaManager {
 }
 
 // Generate common runtime manager methods (list_installed, current_version)
-crate::runtimes::common::impl_runtime_common!(JavaManager, "Java");
+crate::runtimes::common::impl_runtime_common!(JavaManager);
 
 fn java_platform() -> Result<(&'static str, &'static str)> {
     let os = match std::env::consts::OS {
@@ -196,12 +182,6 @@ fn java_platform() -> Result<(&'static str, &'static str)> {
         arch => anyhow::bail!("Unsupported architecture for Java: {arch}"),
     };
     Ok((os, arch))
-}
-
-impl Default for JavaManager {
-    fn default() -> Self {
-        Self::new()
-    }
 }
 
 #[cfg(test)]
