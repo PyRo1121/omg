@@ -26,7 +26,7 @@ Seven different tools. Seven different syntaxes. Seven different config files. S
 
 ---
 
-## One Tool. Everything You Need.
+## One Tool. Everything You Need
 
 ```bash
 omg install some-aur-package   # System + AUR packages
@@ -44,10 +44,10 @@ Same syntax. Same tool. Same config. **And it's 12-24x faster than pacman.**
 
 ## Why Developers Switch to OMG
 
-### It's Fast. Really Fast.
+### It's Fast. Really Fast
 
 | Operation | OMG | pacman/yay | How much faster |
-|-----------|-----|------------|-----------------|
+| ----------- | ----- | ------------ | ----------------- |
 | Package search | 5-11ms | 133ms | **12-24x** |
 | Package info | 3-6ms | 138ms | **21-38x** |
 | List installed | <2ms | 14ms | **7-14x** |
@@ -67,8 +67,9 @@ omg env capture
 # Commit omg.lock to your repo
 git add omg.lock && git commit -m "Lock environment"
 
-# Teammates sync with one command
-omg env sync
+# Teammates verify their machine matches the lock
+omg env check
+# (to restore a shared environment from a Gist: omg env sync <gist-url>)
 ```
 
 No more "what version of Node are you running?" No more "did you install the dependencies?" Everyone has the exact same environment.
@@ -126,24 +127,31 @@ Fleet management across thousands of machines. Hierarchical policy enforcement. 
 ## What Can OMG Do?
 
 ### Package Management
+
 Search, install, update, and remove system packages from official repositories and AUR. Handles dependencies automatically. Shows security grades for every package.
 
 ### Runtime Version Management
+
 Install and switch between versions of Node.js, Python, Rust, Go, Ruby, Java, and Bun. Detects `.nvmrc`, `.python-version`, and similar files automatically. Plus 100+ additional runtimes through built-in mise integration.
 
 ### Environment Synchronization
+
 Capture your complete environment to a lockfile. Share it with teammates. Detect drift. Sync instantly. Never debug "works on my machine" again.
 
 ### Security & Compliance
+
 Scan for vulnerabilities. Generate SBOMs. Detect leaked secrets. Verify package signatures. Maintain tamper-proof audit logs. Export compliance evidence.
 
 ### Task Running
+
 Run project tasks with automatic runtime detection. Works with npm, Cargo, Make, Go, Python, and more. One command, any project.
 
 ### Container Integration
+
 Generate Dockerfiles from your project. Run dev shells in containers. Build images. Integrate with Docker and Podman.
 
 ### Interactive Dashboard
+
 Full-screen TUI showing system status, packages, runtimes, security alerts, and activity. Real-time monitoring at your fingertips.
 
 ---
@@ -179,11 +187,13 @@ omg run dev                 # Run your project
 ## Documentation
 
 ### Getting Started
+
 - **[Quick Start](./quickstart.md)** — Install and run your first commands
 - **[CLI Reference](./cli.md)** — Every command explained
 - **[Configuration](./configuration.md)** — Customize OMG for your workflow
 
 ### Core Features
+
 - **[Package Management](./packages.md)** — Search, install, update, remove
 - **[Runtime Management](./runtimes.md)** — Node, Python, Rust, Go, Ruby, Java, Bun
 - **[Shell Integration](./shell-integration.md)** — Hooks, completions, PATH management
@@ -191,12 +201,14 @@ omg run dev                 # Run your project
 - **[Enterprise & Fleet](./enterprise.md)** — Fleet control and compliance at scale
 
 ### Advanced Features
+
 - **[Security & Compliance](./security.md)** — Vulnerability scanning, SBOM, audit logs
 - **[Team Collaboration](./team.md)** — Environment lockfiles, drift detection
 - **[Container Support](./containers.md)** — Docker/Podman integration
 - **[TUI Dashboard](./tui.md)** — Interactive terminal dashboard
 
 ### Help & Resources
+
 - **[FAQ](./faq.md)** — Frequently asked questions (start here!)
 - **[Cheat Sheet](./cheatsheet.md)** — Quick reference for all commands (print this!)
 - **[Troubleshooting](./troubleshooting.md)** — Common issues and fixes
@@ -204,10 +216,12 @@ omg run dev                 # Run your project
 - **[Integrations](./integrations.md)** — Use OMG with fzf, ripgrep, VS Code, CI/CD, and more
 
 ### Deep Dives
+
 - **[Architecture](./architecture.md)** — How OMG works under the hood
 - **[Daemon Internals](./daemon.md)** — The secret to OMG's speed
 
 ### Contributing
+
 - **[Contributing Guide](../CONTRIBUTING.md)** — How to contribute to OMG development
 
 ---

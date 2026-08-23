@@ -23,7 +23,7 @@ omg dash
 ## 🎹 Keyboard Controls
 
 | Key | Action |
-|-----|--------|
+| ----- | -------- |
 | `q` | Quit the dashboard |
 | `r` | Refresh all data |
 | `Tab` | Switch between views |
@@ -77,7 +77,7 @@ omg dash
 Displays core system metrics:
 
 | Metric | Description | Color Coding |
-|--------|-------------|--------------|
+| -------- | ------------- | -------------- |
 | **Total** | All installed packages | White |
 | **Explicit** | Explicitly installed (not deps) | Cyan |
 | **Orphans** | Unused dependencies | Yellow if > 0 |
@@ -88,6 +88,7 @@ Displays core system metrics:
 ### Active Runtimes Section
 
 Shows currently active version for each runtime:
+
 - **Node.js** — From `.nvmrc` or `current` symlink
 - **Python** — From `.python-version` or `current` symlink
 - **Rust** — From `rust-toolchain.toml` or `current` symlink
@@ -100,7 +101,7 @@ Runtimes without an active version are dimmed.
 Shows the last 10 package transactions:
 
 | Field | Format |
-|-------|--------|
+| ------- | -------- |
 | **Time** | HH:MM:SS |
 | **Type** | Install, Remove, Update, Sync |
 | **Status** | ✓ (success) or ✗ (failure) |
@@ -119,6 +120,7 @@ let status = client.call(Request::Status { id: 0 }).await?;
 ```
 
 Contains:
+
 - Package counts
 - Update availability
 - Vulnerability counts
@@ -158,7 +160,7 @@ Manual refresh with `r` key is instant.
 ### Status Colors
 
 | Color | Meaning |
-|-------|---------|
+| ------- | --------- |
 | 🟢 Green | Healthy / No issues |
 | 🟡 Yellow | Warning / Action recommended |
 | 🔴 Red | Critical / Immediate attention |
@@ -168,7 +170,7 @@ Manual refresh with `r` key is instant.
 ### Icons
 
 | Icon | Meaning |
-|------|---------|
+| ------ | --------- |
 | ✓ | Success |
 | ✗ | Failure |
 | • | List item |
@@ -182,7 +184,7 @@ Manual refresh with `r` key is instant.
 ### Technology Stack
 
 | Component | Technology |
-|-----------|------------|
+| ----------- | ------------ |
 | **TUI Framework** | ratatui v0.29 |
 | **Terminal Backend** | crossterm v0.28 |
 | **Layout** | Constraint-based (40%/60%) |
@@ -238,7 +240,7 @@ async fn run_app(terminal: &mut Terminal, app: &mut App) -> Result<()> {
 ### Minimum Requirements
 
 | Requirement | Details |
-|-------------|---------|
+| ------------- | --------- |
 | **Terminal** | Any modern terminal (xterm, alacritty, kitty, wezterm) |
 | **Alternate Screen** | Must support alternate screen buffer |
 | **Colors** | 256 colors recommended |
@@ -279,7 +281,7 @@ tput rmcup
 ### Display Issues
 
 | Issue | Solution |
-|-------|----------|
+| ------- | ---------- |
 | Garbled characters | Use Unicode-capable font |
 | Wrong colors | Set `TERM=xterm-256color` |
 | Layout broken | Resize terminal window |
@@ -345,5 +347,4 @@ omg audit scan 2>&1 | grep -q "high_severity" && notify-send "OMG: Security Aler
 - [History & Rollback](./history.md) — Transaction history
 - [Troubleshooting](./troubleshooting.md) — Common issues
 - [Security](./security.md) — Security features in TUI dashboard
-- [Fleet Management](./fleet.md) — Fleet dashboard for enterprises
 - [Packages](./packages.md) — Package management features

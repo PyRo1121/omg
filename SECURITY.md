@@ -17,9 +17,10 @@ We take security seriously. If you discover a security vulnerability in OMG, ple
 
 **Do NOT open a public issue for security vulnerabilities.**
 
-Instead, please email: **olen@latham.cloud**
+Instead, please email: **<olen@latham.cloud>**
 
 Include:
+
 - Description of the vulnerability
 - Steps to reproduce
 - Potential impact
@@ -83,11 +84,13 @@ Native Windows is not supported. Windows users should run OMG inside WSL, where 
 ### Privilege Escalation
 
 OMG requires sudo access for:
+
 - Installing/removing system packages
 - Modifying system files
 - Running AUR builds (when not in user-space)
 
 **Mitigation:**
+
 - Sudoloop limits password prompts
 - Dry-run mode (`--dry-run`) shows what would happen
 - Policy enforcement prevents unauthorized operations
@@ -98,15 +101,17 @@ OMG requires sudo access for:
 AUR packages are community-maintained and not officially verified.
 
 **Built-in Protections:**
+
 - Security grading (COMMUNITY level)
 - Optional PKGBUILD review before build
 - Sandboxed builds (bubblewrap/chroot)
 - PGP verification where available
 
 **Best Practices:**
+
 - Review PKGBUILDs before installation
 - Use `--dry-run` to preview changes
-- Enable `review_pkgbuild = true` in config
+- Enable `review_pkgbuild = true` under `[aur]` in `~/.config/omg/config.toml`
 - Check package popularity and votes
 
 ## Security Best Practices
@@ -114,11 +119,13 @@ AUR packages are community-maintained and not officially verified.
 ### For Users
 
 1. **Keep OMG Updated:**
+
    ```bash
    omg self-update
    ```
 
 2. **Enable Security Features:**
+
    ```toml
    # ~/.config/omg/policy.toml
    minimum_grade = "Verified"  # Require PGP signatures
@@ -127,12 +134,14 @@ AUR packages are community-maintained and not officially verified.
    ```
 
 3. **Review Audit Logs:**
+
    ```bash
    omg audit log
    omg audit verify  # Check for tampering
    ```
 
 4. **Scan for Vulnerabilities:**
+
    ```bash
    omg audit scan
    omg audit fix  # Auto-upgrade vulnerable packages
@@ -141,18 +150,21 @@ AUR packages are community-maintained and not officially verified.
 ### For Developers
 
 1. **Run Security Audits:**
+
    ```bash
    cargo audit
    cargo clippy -- -D warnings
    ```
 
 2. **Review Dependencies:**
+
    ```bash
    cargo tree
    cargo machete  # Find unused dependencies
    ```
 
 3. **Test Security Features:**
+
    ```bash
    cargo test --features arch security
    ```
@@ -166,26 +178,29 @@ AUR packages are community-maintained and not officially verified.
 ## Security Updates
 
 Security updates are announced via:
+
 - GitHub Security Advisories
 - Release notes (CHANGELOG.md)
-- Email to security@pyro1121.com subscribers
+- Email to <security@pyro1121.com> subscribers
 
 ## Compliance
 
 OMG supports compliance requirements for:
+
 - SOC2
 - ISO27001
 - FedRAMP (future)
 
 Features:
-- Audit log export (`omg enterprise export-evidence`)
+
+- Audit log export (`omg enterprise audit-export`)
 - SBOM generation (`omg audit sbom`)
-- Vulnerability reporting (`omg audit scan --format json`)
+- Vulnerability reporting (`omg --json audit scan`)
 - Policy enforcement (`policy.toml`)
 
 ## Contact
 
-Security Team: **olen@latham.cloud**  
+Security Team: **<olen@latham.cloud>**
 General Support: **GitHub Issues**
 
 ## Acknowledgments

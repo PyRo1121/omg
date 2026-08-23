@@ -314,6 +314,94 @@ jobs:
           if-no-files-found: error
 
   #############################################################################
+  # STAGE 2a: Feature-intersection compile checks
+  #
+  # The per-platform legs above each enable exactly ONE backend feature, so
+  # code paths that only exist under backend INTERSECTIONS are never
+  # type-checked anywhere (Wave-3 review F2). These two legs close the gap:
+  #   - arch+pgp+license: pgp was previously only ever compiled backend-free
+  #     (quick gate), so nothing exercised sequoia together with backend code.
+  #   - debian+pgp: exercises the rust-apt FFI stack against a different
+  #     optional-dependency combination.
+  # Compile/clippy only — no tests, no release build — to keep wall time near
+  # the per-leg quick-gate budget.
+  #############################################################################
+  feature-intersections:
+    name: "Intersections (${{ matrix.platform }})"
+    needs: quick-gate
+    if: needs.quick-gate.outputs.should-build == 'true' || github.event_name == 'workflow_dispatch' || github.event_name == 'merge_group'
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - platform: arch-pgp-license
+            image: archlinux:latest@sha256:b0deabeb3d283da2c7f7dbf0eea051b7b2cd0554e0b737cc457fd21683bdcdd1
+            features: arch,pgp,license
+            setup: |
+              pacman -Syu --noconfirm
+              pacman -S --noconfirm --needed base-devel git pkgconf openssl libarchive clang cmake curl
+              curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --profile minimal --default-toolchain 1.93.1
+              echo "$HOME/.cargo/bin" >> $GITHUB_PATH
+              "$HOME/.cargo/bin/rustup" component add clippy
+
+          - platform: debian-pgp
+            image: debian:bookworm@sha256:813017f3d62be4b5891a7acca6a01bdcd4b8513daa81b1ab99d3a50385b26931
+            features: debian,pgp
+            setup: |
+              apt-get update
+              DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
+                ca-certificates curl git build-essential pkg-config \
+                libssl-dev libapt-pkg-dev clang cmake zlib1g-dev liblzma-dev libbz2-dev
+              curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --profile minimal --default-toolchain 1.93.1
+              echo "$HOME/.cargo/bin" >> $GITHUB_PATH
+              "$HOME/.cargo/bin/rustup" component add clippy
+
+    container:
+      image: ${{ matrix.image }}
+
+    steps:
+      - name: Setup environment
+        run: ${{ matrix.setup }}
+
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+
+      - name: Fix git permissions
+        run: git config --global --add safe.directory "$GITHUB_WORKSPACE"
+
+      - name: Cache cargo registry
+        uses: actions/cache@caa296126883cff596d87d8935842f9db880ef25 # v5
+        with:
+          path: |
+            ~/.cargo/registry/index/
+            ~/.cargo/registry/cache/
+            ~/.cargo/git/db/
+          key: v1-xsec-${{ matrix.platform }}-registry-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: v1-xsec-${{ matrix.platform }}-registry-
+
+      - name: Cache target
+        uses: actions/cache@caa296126883cff596d87d8935842f9db880ef25 # v5
+        with:
+          path: target
+          key: v1-xsec-${{ matrix.platform }}-target-${{ hashFiles('**/Cargo.lock') }}-${{ hashFiles('src/**/*.rs') }}
+          restore-keys: |
+            v1-xsec-${{ matrix.platform }}-target-
+
+      - name: Check all targets
+        run: cargo check --all-targets --no-default-features --features ${{ matrix.features }} --locked
+
+      # Clippy on the arch intersection leg; the debian leg is check-only by
+      # design (see job comment) to bound total CI time.
+      - name: Clippy
+        if: matrix.features == 'arch,pgp,license'
+        run: |
+          cargo clippy --all-targets --no-default-features --features ${{ matrix.features }} \
+            --locked -- -D warnings
+
+  #############################################################################
   # STAGE 2b: Native Platform Build (macOS)
   #############################################################################
   macos:

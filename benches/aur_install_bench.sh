@@ -24,9 +24,9 @@ NC='\033[0m' # No Color
 
 # Test packages - chosen for variety
 PACKAGES=(
-    "yay-bin"           # Binary package, minimal dependencies
-    "paru-bin"          # Binary package, some dependencies
-    "ttf-meslo"         # Font package with downloads
+    "yay-bin"   # Binary package, minimal dependencies
+    "paru-bin"  # Binary package, some dependencies
+    "ttf-meslo" # Font package with downloads
 )
 
 echo -e "${BLUE}╔══════════════════════════════════════════════════════╗${NC}"
@@ -44,7 +44,7 @@ echo ""
 uninstall_package() {
     local pkg=$1
     if pacman -Q "$pkg" &>/dev/null; then
-        echo "  Uninstalling $pkg..."
+        echo "  Uninstalling $pkg..." >&2
         sudo pacman -Rns --noconfirm "$pkg" 2>/dev/null || true
     fi
 }
@@ -54,7 +54,7 @@ benchmark_install() {
     local tool=$1
     local package=$2
 
-    echo -e "${YELLOW}Testing $tool: $package${NC}"
+    echo -e "${YELLOW}Testing $tool: $package${NC}" >&2
 
     # Ensure package is not installed
     uninstall_package "$package"
@@ -70,6 +70,14 @@ benchmark_install() {
 
     local end=$(date +%s.%N)
     local duration=$(echo "$end - $start" | bc)
+
+    # Fail loudly on non-numeric timings instead of corrupting later bc math.
+    case "$duration" in
+    '' | *[!0-9.]*)
+        echo "error: invalid timing measured for $tool/$package: '$duration'" >&2
+        return 1
+        ;;
+    esac
 
     # Uninstall after test
     uninstall_package "$package"

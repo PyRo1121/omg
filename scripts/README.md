@@ -67,6 +67,32 @@ python3 scripts/generate-benchmark-chart.py --output docs/assets/
 
 ---
 
+## Release Artifact Naming (canonical scheme)
+
+All release pipelines and the installer MUST use this single naming convention.
+`.github/workflows/release.yml` is the source of truth that produces these
+assets; `install.sh` consumes them via the GitHub releases API.
+
+| Platform | Archive name |
+| -------- | ------------ |
+| Arch Linux | `omg-v<version>-<arch>-linux-arch.tar.gz` |
+| Debian | `omg-v<version>-<arch>-linux-debian.tar.gz` |
+| Ubuntu | `omg-v<version>-<arch>-linux-ubuntu.tar.gz` |
+| Fedora / unknown Linux distro fallback | `omg-v<version>-<arch>-linux-fedora.tar.gz` |
+| macOS | `omg-v<version>-<arch>-darwin.tar.gz` |
+
+- `<version>` is the release tag without the leading `v` (e.g. `0.1.204`).
+- `<arch>` is one of `x86_64`, `aarch64`, `i686`, `armv7l` (see `detect_arch`
+  in `install.sh`).
+- Every archive MUST have a sidecar `<archive-name>.sha256` containing standard
+  `sha256sum` output; `install.sh` verifies it when present and warns when a
+  release omits it.
+- Any new release pipeline (local or CI) must emit exactly these names plus
+  checksum sidecars; do not invent alternate schemes such as Rust target-triple
+  names (`x86_64-unknown-linux-gnu`) — the installer will not select them.
+
+---
+
 ## Script Conventions
 
 - **Shell scripts:** shebang `#!/usr/bin/env bash`, `set -euo pipefail`, marked `+x`

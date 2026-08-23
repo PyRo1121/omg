@@ -70,6 +70,7 @@ omg env check
 ```
 
 Output:
+
 ```
 ✓ Environment matches omg.lock
 
@@ -94,6 +95,7 @@ omg env share
 ```
 
 Output:
+
 ```
 ✓ Environment shared!
   URL: https://gist.github.com/username/abc123def456
@@ -109,6 +111,7 @@ omg env sync https://gist.github.com/username/abc123def456
 ```
 
 This will:
+
 1. Download the lockfile
 2. Compare against local environment
 3. Prompt to install missing runtimes/packages
@@ -129,6 +132,7 @@ omg team init mycompany/frontend --name "Frontend Team"
 ```
 
 This creates:
+
 - Team configuration file
 - Git hooks for environment checking
 - Initial environment lock
@@ -190,8 +194,11 @@ git commit -m "chore: add environment configuration"
 git pull
 omg env check  # Check for drift
 
-# If drift detected
-omg env sync   # Sync to project environment
+# If drift detected, pull the team lock:
+omg team pull   # Pull team lock and check drift
+
+# Or restore from a shared Gist:
+# omg env sync <gist-url>
 
 # Work...
 # ...
@@ -218,8 +225,8 @@ source ~/.zshrc
 git clone git@github.com:company/project.git
 cd project
 
-# 4. Sync environment
-omg env sync
+# 4. Verify against the committed lockfile
+omg env check
 
 # 5. Verify
 omg env check
@@ -234,24 +241,23 @@ omg which python
 ### How Fingerprints Work
 
 The environment fingerprint is a SHA256 hash of:
+
 - All active runtime versions
 - Explicit package list (sorted)
 
 This allows quick comparison without sending full package lists.
 
-### Check Fingerprint
+### Compare Environments
+
+There is no separate fingerprint subcommand; compare environments with the
+commands that exist today:
 
 ```bash
-omg env fingerprint
-# a1b2c3d4e5f6789...
-```
+# Check the local machine against omg.lock
+omg env check
 
-### Compare Fingerprints
-
-```bash
-# Quickly check if teammate's environment matches
-omg env fingerprint
-# Compare with teammate's output
+# Compare two lock files directly
+omg diff --from teammate-omg.lock omg.lock
 ```
 
 ---
@@ -331,6 +337,7 @@ echo 'export GITHUB_TOKEN=ghp_xxxx' >> ~/.zshrc
 ```
 
 Required scopes:
+
 - `gist` (for creating Gists)
 
 ### Team Settings
@@ -368,7 +375,10 @@ export GITHUB_TOKEN=ghp_xxxxxxxxxxxx
 omg env capture
 
 # Check what's different
-diff <(cat omg.lock | jq '.runtimes') <(omg env fingerprint --json | jq '.runtimes')
+# Check what's different against the lock
+diff <(cat omg.lock | jq '.runtimes') <(omg which node; omg which python) || true
+# Or simply:
+omg env check
 ```
 
 ### Sync Fails
@@ -389,7 +399,6 @@ omg env check
 - [Workflows](./workflows.md) — Team onboarding workflow
 - [Configuration](./configuration.md) — Environment settings and patterns
 - [Quick Start](./quickstart.md) — Initial setup
-- [Fleet Management](./fleet.md) — Enterprise-scale team management
 - [Security](./security.md) — Secure environment sharing and compliance
 - [Integrations](./integrations.md) — CI/CD integration for team workflows
 - [Runtimes](./runtimes.md) — Runtime version management for teams

@@ -85,6 +85,12 @@ mod wrappers;
 pub use cmd::Cmd;
 pub use renderer::Renderer;
 
+/// Upper bound on command steps (`update` transitions, batch entries) a
+/// single program run may process, so a model that echoes `Cmd::Msg` in a
+/// cycle fails with an explicit error instead of hanging or overflowing the
+/// stack.
+const MAX_CMD_STEPS: usize = 100_000;
+
 // Re-export configuration types for convenience
 pub use cmd::{
     BorderStyle, PanelConfig, ProgressConfig, ProgressStyle, SpinnerConfig, SpinnerStyle,
@@ -194,78 +200,32 @@ impl<M: Model> Program<M> {
     }
 
     /// Process a single command
+    ///
+    /// Iterative with an explicit work stack and a step budget: message
+    /// cycles surface as [`MAX_CMD_STEPS`] errors rather than unbounded
+    /// recursion.
     fn process_cmd(&mut self, cmd: Cmd<M::Msg>) -> io::Result<()> {
-        match cmd {
-            Cmd::None => {}
-            Cmd::Msg(msg) => {
-                let next_cmd = self.model.update(msg);
-                self.process_cmd(next_cmd)?;
+        let mut steps = 0usize;
+        let mut queue = vec![cmd];
+
+        while let Some(cmd) = queue.pop() {
+            steps += 1;
+            if steps > MAX_CMD_STEPS {
+                return Err(io::Error::other(
+                    "command step budget exceeded (model update cycle?)",
+                ));
             }
-            Cmd::Batch(cmds) => {
-                for cmd in cmds {
-                    self.process_cmd(cmd)?;
+            match cmd {
+                Cmd::None => {}
+                Cmd::Msg(msg) => queue.push(self.model.update(msg)),
+                Cmd::Batch(cmds) => {
+                    // Reversed pushes keep the original batch order (LIFO).
+                    for cmd in cmds.into_iter().rev() {
+                        queue.push(cmd);
+                    }
                 }
-            }
-            Cmd::Exec(f) => {
-                let msg = f();
-                let next_cmd = self.model.update(msg);
-                self.process_cmd(next_cmd)?;
-            }
-            Cmd::Print(output) => {
-                self.renderer.print(&output)?;
-            }
-            Cmd::PrintLn(output) => {
-                self.renderer.println(&output)?;
-            }
-            Cmd::Info(msg) => {
-                self.renderer.info(&msg)?;
-            }
-            Cmd::Success(msg) => {
-                self.renderer.success(&msg)?;
-            }
-            Cmd::Warning(msg) => {
-                self.renderer.warning(&msg)?;
-            }
-            Cmd::Error(msg) => {
-                self.renderer.error(&msg)?;
-                return Err(io::Error::other(msg));
-            }
-            Cmd::Header(title, body) => {
-                self.renderer.header(&title, &body)?;
-            }
-            Cmd::Card(title, content) => {
-                self.renderer.card(&title, &content)?;
-            }
-            Cmd::Progress(_) | Cmd::Spinner(_) => {
-                // NOT SUPPORTED by this synchronous renderer: progress bars and
-                // spinners require an event loop this runtime does not have.
-                // Models must use `Cmd::Info`/`Cmd::Card` for progress feedback.
-                tracing::debug!("Progress/Spinner command ignored by synchronous renderer");
-            }
-            Cmd::Table(config) => {
-                // No table renderer exists; emit rows as plain lines so the
-                // content is never silently swallowed.
-                self.renderer.header(&config.headers.join(" | "), "")?;
-                for row in &config.rows {
-                    self.renderer.println(&row.join(" | "))?;
-                }
-            }
-            Cmd::StyledText(config) => {
-                // No style renderer in this path; print the text so it is not
-                // silently dropped (matches the fallback renderer behavior).
-                self.renderer.println(&config.text)?;
-            }
-            Cmd::Panel(config) => {
-                if let Some(title) = &config.title {
-                    self.renderer.println(title)?;
-                }
-                let pad = " ".repeat(config.padding);
-                for line in &config.content {
-                    self.renderer.println(&format!("{pad}{line}"))?;
-                }
-            }
-            Cmd::Spacer => {
-                self.renderer.println("")?;
+                Cmd::Exec(f) => queue.push(self.model.update(f())),
+                other => execute_output_cmd(&mut self.renderer, other)?,
             }
         }
         Ok(())
@@ -280,6 +240,98 @@ impl<M: Model> Program<M> {
             self.renderer.render(&view)
         }
     }
+}
+
+/// Execute the output-only variants of [`Cmd`] against a renderer.
+///
+/// Control-flow variants (`None`/`Msg`/`Batch`/`Exec`) are left to the caller.
+/// `Cmd::Error` prints the styled error **and** yields `Err`, so programs that
+/// report user errors exit non-zero instead of swallowing them into logs.
+fn execute_output_cmd<M>(renderer: &mut Renderer, cmd: Cmd<M>) -> io::Result<()> {
+    match cmd {
+        Cmd::None | Cmd::Msg(_) | Cmd::Batch(_) | Cmd::Exec(_) => {}
+        Cmd::Print(output) => {
+            renderer.print(&output)?;
+        }
+        Cmd::PrintLn(output) => {
+            renderer.println(&output)?;
+        }
+        Cmd::Info(msg) => {
+            renderer.info(&msg)?;
+        }
+        Cmd::Success(msg) => {
+            renderer.success(&msg)?;
+        }
+        Cmd::Warning(msg) => {
+            renderer.warning(&msg)?;
+        }
+        Cmd::Error(msg) => {
+            renderer.error(&msg)?;
+            return Err(io::Error::other(msg));
+        }
+        Cmd::Header(title, body) => {
+            renderer.header(&title, &body)?;
+        }
+        Cmd::Card(title, content) => {
+            renderer.card(&title, &content)?;
+        }
+        Cmd::Progress(_) | Cmd::Spinner(_) => {
+            // NOT SUPPORTED by this synchronous renderer: progress bars and
+            // spinners require an event loop this runtime does not have.
+            // Models must use `Cmd::Info`/`Cmd::Card` for progress feedback.
+            tracing::debug!("Progress/Spinner command ignored by synchronous renderer");
+        }
+        Cmd::Table(config) => {
+            // No table renderer exists; emit rows as plain lines so the
+            // content is never silently swallowed.
+            renderer.header(&config.headers.join(" | "), "")?;
+            for row in &config.rows {
+                renderer.println(&row.join(" | "))?;
+            }
+        }
+        Cmd::StyledText(config) => {
+            // No style renderer in this path; print the text so it is not
+            // silently dropped (matches the fallback renderer behavior).
+            renderer.println(&config.text)?;
+        }
+        Cmd::Panel(config) => {
+            if let Some(title) = &config.title {
+                renderer.println(title)?;
+            }
+            let pad = " ".repeat(config.padding);
+            for line in &config.content {
+                renderer.println(&format!("{pad}{line}"))?;
+            }
+        }
+        Cmd::Spacer => {
+            renderer.println("")?;
+        }
+    }
+    Ok(())
+}
+
+/// Run a pre-built command tree against a fresh renderer without a model.
+///
+/// Unlike the println-based fallback executor, this honors the Elm rendering
+/// path and treats `Cmd::Error` as program failure: the styled message is
+/// printed and the returned error propagates so the CLI exits non-zero.
+/// Control-flow commands (`None`/`Msg`/`Batch`/`Exec`) carry no output here
+/// and are ignored, matching the fallback executor's contract.
+pub fn run_report(cmd: Cmd<()>) -> io::Result<()> {
+    let mut renderer = Renderer::new();
+    let mut queue = vec![cmd];
+    while let Some(cmd) = queue.pop() {
+        match cmd {
+            // Unwrap batches so nested commands are processed in order.
+            Cmd::Batch(cmds) => {
+                for cmd in cmds.into_iter().rev() {
+                    queue.push(cmd);
+                }
+            }
+            other => execute_output_cmd(&mut renderer, other)?,
+        }
+    }
+    renderer.flush()
 }
 
 #[cfg(test)]
@@ -408,5 +460,55 @@ mod tests {
             err.to_string().contains("package not found"),
             "original command error must be preserved, got: {err}"
         );
+    }
+
+    /// A model that echoes `Cmd::Msg` forever must hit the step budget and
+    /// fail explicitly instead of recursing until the stack overflows.
+    struct EchoModel;
+
+    impl Model for EchoModel {
+        type Msg = ();
+
+        fn init(&self) -> Cmd<Self::Msg> {
+            // Seed the cycle: every update re-emits the same message.
+            Cmd::msg(())
+        }
+
+        fn update(&mut self, (): Self::Msg) -> Cmd<Self::Msg> {
+            Cmd::msg(())
+        }
+
+        fn view(&self) -> String {
+            String::new()
+        }
+    }
+
+    #[test]
+    fn message_cycle_fails_with_budget_error_instead_of_overflowing() {
+        let err = Program::new(EchoModel)
+            .run()
+            .expect_err("a Cmd::Msg cycle must be bounded, not hang or crash");
+        assert!(
+            err.to_string().contains("step budget"),
+            "expected budget error, got: {err}"
+        );
+    }
+
+    #[test]
+    fn run_report_fails_on_cmd_error() {
+        let err = run_report(Cmd::<()>::error("package 'x' is not installed"))
+            .expect_err("run_report must propagate Cmd::Error as failure");
+        assert!(err.to_string().contains("not installed"));
+    }
+
+    #[test]
+    fn run_report_batches_stop_after_first_error() {
+        // The suggestion after the error must not suppress the failure.
+        let err = run_report(Cmd::<()>::batch([
+            Cmd::error("Package 'x' is not installed"),
+            Cmd::success("this line never runs"),
+        ]))
+        .expect_err("first Cmd::Error in a batch must fail the run");
+        assert!(err.to_string().contains("not installed"));
     }
 }

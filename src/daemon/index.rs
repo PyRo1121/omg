@@ -39,7 +39,6 @@ impl PackageBloomFilter {
     }
 
     #[cfg(any(test, feature = "arch", feature = "debian", feature = "debian-pure"))]
-    #[cfg(any(test, feature = "arch", feature = "debian", feature = "debian-pure"))]
     fn insert(&mut self, name: &str) {
         for pos in self.hash_positions(name) {
             let word_idx = pos / 64;
@@ -113,7 +112,6 @@ impl TrigramIndex {
         }
     }
 
-    #[cfg(any(test, feature = "arch", feature = "debian", feature = "debian-pure"))]
     #[cfg(any(test, feature = "arch", feature = "debian", feature = "debian-pure"))]
     fn insert(&mut self, name_lower: &str, idx: u32) {
         let bytes = name_lower.as_bytes();

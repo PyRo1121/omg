@@ -11,10 +11,11 @@ OMG provides a unified, high-performance interface for managing multiple program
 ## 🚀 Supported Runtimes
 
 ### Native Runtimes
+
 OMG features native, pure Rust implementations for the most popular language ecosystems. These implementations are optimized for speed and require no external dependencies.
 
 | Runtime | Auto-detect File | Install Command | Switch Command | Binaries |
-|---------|------------------|-----------------|----------------|----------|
+| --------- | ------------------ | ----------------- | ---------------- | ---------- |
 | **Node.js** | `.nvmrc`, `.node-version`, `package.json#engines` | `omg use node 20` | `omg use node 18` | `node`, `npm`, `npx` |
 | **Python** | `.python-version`, `pyproject.toml`, `runtime.txt` | `omg use python 3.12` | `omg use python 3.11` | `python3`, `pip` |
 | **Go** | `.go-version`, `go.mod` | `omg use go 1.21` | `omg use go 1.20` | `go` |
@@ -24,6 +25,7 @@ OMG features native, pure Rust implementations for the most popular language eco
 | **Bun** | `.bun-version` | `omg use bun latest` | `omg use bun 1.0` | `bun`, `bunx` |
 
 ### Extended Universe (Built-in Mise)
+
 For everything else, OMG includes a **built-in mise manager**. If you request a runtime that isn't natively handled, OMG automatically leverages the `mise` ecosystem to provide support for over **100 additional languages and tools**, including Deno, Elixir, Zig, PHP, and more.
 
 ```bash
@@ -32,11 +34,11 @@ omg tool install bat
 omg tool install ripgrep
 omg tool install terraform
 
-# List available tools
-omg tool list --available
+# Browse available tools in the registry
+omg tool registry
 
-# Update all tools
-omg tool update
+# Update all installed tools
+omg tool update all
 ```
 
 ---
@@ -128,8 +130,9 @@ omg use rust stable
 # Captured in omg.lock for team sync
 omg env capture
 
-# Team member syncs instantly
-omg env sync
+# Team member verifies against the lock
+omg env check
+# (restore from a shared Gist with: omg env sync <gist-url>)
 ```
 
 ---
@@ -147,16 +150,19 @@ cd /my/project  # Shell hook runs on directory change
 OMG scans for version files in priority order:
 
 **Node.js Priority:**
+
 1. `.nvmrc`
 2. `package.json#engines.node`
 3. `.node-version`
 
 **Python Priority:**
+
 1. `.python-version`
 2. `pyproject.toml`
 3. `runtime.txt`
 
 **Rust Priority:**
+
 1. `rust-toolchain.toml`
 2. `rust-toolchain`
 3. `.rust-version`
@@ -187,11 +193,13 @@ tmux new-session "node server.js"
 When multiple version files exist in the same directory:
 
 ### Node.js
+
 1. `.nvmrc` (highest priority)
 2. `package.json#engines.node`
 3. `.node-version`
 
 ### Python
+
 1. `.python-version` (highest priority)
 2. `pyproject.toml`
 3. `runtime.txt`
@@ -220,17 +228,21 @@ omg tool install fd
 omg tool install terraform
 omg tool install elixir
 
-# List all available tools
-omg tool list --available
+# List installed tools
+omg tool list
+
+# Browse available tools in the registry
+omg tool registry
 
 # Update all installed tools
-omg tool update
+omg tool update all
 
 # Remove a tool
-omg tool uninstall bat
+omg tool remove bat
 ```
 
 **Supported via mise:**
+
 - Deno, Elixir, Zig, PHP, Lua
 - Terraform, kubectl, helm
 - And 90+ more languages/tools
@@ -241,17 +253,14 @@ See [Tool Runner docs](task-runner.md) for details.
 
 ## 🚀 Migration from Other Tools
 
+> **Note:** There are no automatic migration subcommands (`omg migrate from-nvm`
+> and similar do not exist — `omg migrate` only supports `export`/`import` of a
+> portable manifest). Migration is manual: note your versions with the old tool,
+> then install them with OMG as shown below.
+
 ### From nvm (Node Version Manager)
 
 ```bash
-# Automatic migration
-omg migrate from-nvm
-
-# What gets imported:
-# - All installed Node.js versions
-# - Current/default version
-# - Global npm packages
-
 # Manual migration
 nvm list  # Note your versions
 omg use node 20
@@ -262,14 +271,6 @@ npm install -g $(npm list -g --depth=0 --json | jq -r '.dependencies | keys[]')
 ### From pyenv (Python Version Manager)
 
 ```bash
-# Automatic migration
-omg migrate from-pyenv
-
-# What gets imported:
-# - All installed Python versions
-# - Global/system version
-# - Virtual environments (symlinked)
-
 # Manual migration
 pyenv versions  # Note your versions
 omg use python 3.12
@@ -279,14 +280,6 @@ omg use python 3.11
 ### From rustup (Rust Toolchain Manager)
 
 ```bash
-# Automatic migration
-omg migrate from-rustup
-
-# What gets imported:
-# - Installed toolchains (stable, nightly, beta)
-# - Default toolchain
-# - Installed components (clippy, rustfmt, etc.)
-
 # Manual migration
 rustup show  # Note your toolchains
 omg use rust stable
@@ -300,7 +293,7 @@ omg use rust nightly
 ## 📊 Performance Comparison
 
 | Operation | OMG | nvm | pyenv | rustup |
-|-----------|-----|-----|-------|--------|
+| ----------- | ----- | ----- | ------- | -------- |
 | **Version switch** | <10ms | 100-200ms | 150-300ms | 50-100ms |
 | **Auto-detect** | <5ms | 50-100ms | 100-200ms | 30-60ms |
 | **Install** | 10-60s | Similar | Similar | Similar |
@@ -323,6 +316,7 @@ Safety is a first-class citizen in OMG's runtime management:
 ### Cryptographic Verification
 
 **Every download is verified:**
+
 - **Node.js**: SHA256 checksums from `SHASUMS256.txt`
 - **Python**: GPG signatures from python.org
 - **Rust**: SHA256 from rust-lang.org manifests
@@ -338,6 +332,7 @@ Safety is a first-class citizen in OMG's runtime management:
 ### Sandboxed Installations
 
 All runtimes installed in user-local directory:
+
 ```
 ~/.local/share/omg/versions/
 ├── node/
@@ -352,6 +347,7 @@ All runtimes installed in user-local directory:
 ```
 
 **Benefits:**
+
 - **No Sudo Required** - Never need administrative privileges
 - **Isolation** - Versions cannot interfere with each other
 - **Easy Cleanup** - `rm -rf ~/.local/share/omg/versions/node/20.10.0`
@@ -359,6 +355,7 @@ All runtimes installed in user-local directory:
 ### Isolated Build Paths
 
 For runtimes requiring compilation (Python, Ruby):
+
 - Builds happen in temporary directories
 - No environment pollution
 - Clean failure recovery
@@ -372,11 +369,13 @@ For runtimes requiring compilation (Python, Ruby):
 **Symptom:** Running `omg use node 20` but `node --version` shows old version.
 
 **Check shell hook:**
+
 ```bash
 type omg  # Should show it's a function, not a binary
 ```
 
 **Fix: Re-source shell config:**
+
 ```bash
 exec $SHELL  # Restart shell
 # OR
@@ -391,16 +390,19 @@ source ~/.bashrc  # For bash
 **Symptom:** `.nvmrc` exists but version doesn't auto-switch.
 
 **Check version file:**
+
 ```bash
 cat .nvmrc  # Should contain version like "20.10.0" or "20"
 ```
 
 **Force specific version:**
+
 ```bash
 omg use node 20 --force
 ```
 
 **Verify shell hook is installed:**
+
 ```bash
 grep "omg hook" ~/.zshrc  # Should exist
 ```
@@ -412,16 +414,19 @@ grep "omg hook" ~/.zshrc  # Should exist
 **Symptom:** `omg use node 20` fails with network error.
 
 **Check network connectivity:**
+
 ```bash
 curl -I https://nodejs.org/dist/
 ```
 
 **Try different mirror:**
+
 ```bash
 omg config set node.mirror "https://npmmirror.com/mirrors/node"
 ```
 
 **Check disk space:**
+
 ```bash
 df -h ~/.local/share/omg
 ```
@@ -433,17 +438,20 @@ df -h ~/.local/share/omg
 **Symptom:** `node: command not found` after `omg use node 20`.
 
 **Check PATH:**
+
 ```bash
 echo $PATH | grep omg  # Should contain omg shims directory
 ```
 
 **Verify installation:**
+
 ```bash
 omg which node
 ls -la ~/.local/share/omg/versions/node/20.*/bin/node
 ```
 
 **Fix: Restart shell or re-source config:**
+
 ```bash
 exec $SHELL
 ```
@@ -457,6 +465,7 @@ exec $SHELL
 **Explanation:** Global packages are version-specific in OMG (by design for isolation).
 
 **Solution 1: Install per version:**
+
 ```bash
 omg use node 20
 npm install -g typescript
@@ -466,6 +475,7 @@ npm install -g typescript  # Separate install for Node 18
 ```
 
 **Solution 2: Use project-local packages:**
+
 ```bash
 npm install --save-dev typescript  # Better practice
 npx tsc  # Run without global install

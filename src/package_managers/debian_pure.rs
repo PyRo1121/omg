@@ -51,54 +51,63 @@ impl PackageManager for PureDebianPackageManager {
             let start = Instant::now();
             tracing::info!("Starting pure Rust install for {} packages", packages.len());
 
-            // 1. Resolve dependencies
-            let mut resolver = debian_db::DependencyResolver::new()
-                .context("Failed to initialize dependency resolver. Try: omg sync")?;
+            // 1-3. Resolve, pre-flight, and URL population are all blocking
+            // work (index/mmap loads, statvfs, full index reads); run the
+            // whole preparation stage on the blocking pool and only the
+            // download/unpack/configure pipeline stays async.
+            let package_count = packages.len();
+            let mut tx =
+                tokio::task::spawn_blocking(move || -> anyhow::Result<_> {
+                    let mut resolver = debian_db::DependencyResolver::new().context(
+                        "Failed to initialize dependency resolver. Try: omg sync",
+                    )?;
 
-            for pkg in &packages {
-                resolver.add_package(pkg).with_context(|| {
-                    format!(
-                        "Package '{pkg}' not found in repositories.\n\
-                        \u{1f4a1} Try:\n\
-                        - omg search {pkg} (find similar packages)\n\
-                        - omg sync (refresh package database)\n\
-                        - Check package name spelling"
+                    for pkg in &packages {
+                        resolver.add_package(pkg).with_context(|| {
+                            format!(
+                                "Package '{pkg}' not found in repositories.\n\
+                                \u{1f4a1} Try:\n\
+                                - omg search {pkg} (find similar packages)\n\
+                                - omg sync (refresh package database)\n\
+                                - Check package name spelling"
+                            )
+                        })?;
+                    }
+
+                    let resolution = resolver.resolve().context(
+                        "Dependency resolution failed. Some required dependencies may not be available.",
+                    )?;
+
+                    tracing::debug!(
+                        "Dependency resolution complete in {:.2}ms: {} to install, {} to upgrade",
+                        start.elapsed().as_secs_f64() * 1000.0,
+                        resolution.to_install.len(),
+                        resolution.to_upgrade.len()
+                    );
+
+                    // Check disk space before starting
+                    tracing::debug!(
+                        "Pre-flight checks: download={} bytes, installed={} bytes",
+                        resolution.download_size,
+                        resolution.installed_size
+                    );
+                    debian_db::check_disk_space(
+                        resolution.download_size,
+                        resolution.installed_size,
+                        &std::env::temp_dir(),
                     )
-                })?;
-            }
+                    .context("Insufficient disk space for installation")?;
 
-            let resolution = resolver.resolve().context(
-                "Dependency resolution failed. Some required dependencies may not be available.",
-            )?;
-
-            tracing::debug!(
-                "Dependency resolution complete in {:.2}ms: {} to install, {} to upgrade",
-                start.elapsed().as_secs_f64() * 1000.0,
-                resolution.to_install.len(),
-                resolution.to_upgrade.len()
-            );
-
-            // 2. Pre-flight checks
-            tracing::debug!(
-                "Pre-flight checks: download={} bytes, installed={} bytes",
-                resolution.download_size,
-                resolution.installed_size
-            );
-
-            // Check disk space before starting
-            let temp_dir = std::env::temp_dir();
-            debian_db::check_disk_space(
-                resolution.download_size,
-                resolution.installed_size,
-                &temp_dir,
-            )
-            .context("Insufficient disk space for installation")?;
-
-            // 3. Create transaction and populate URLs
-            let mut tx = debian_db::Transaction::from_resolution(resolution)?;
-            populate_package_urls(&mut tx).context(
-                "Failed to resolve package URLs. Repository configuration may be invalid.",
-            )?;
+                    // Create transaction and populate URLs; a missing URL/SHA256
+                    // is fatal here rather than a silent skip downstream.
+                    let mut tx = debian_db::Transaction::from_resolution(resolution)?;
+                    populate_package_urls(&mut tx).context(
+                        "Failed to resolve package URLs. Repository configuration may be invalid.",
+                    )?;
+                    Ok(tx)
+                })
+                .await
+                .context("Debian transaction preparation task failed")??;
 
             // 5. Execute transaction (downloads, unpacks, configures)
             tx.execute().await
@@ -108,7 +117,7 @@ impl PackageManager for PureDebianPackageManager {
             tracing::info!(
                 "Pure Rust install completed in {:.2}s ({} packages)",
                 elapsed.as_secs_f64(),
-                packages.len()
+                package_count
             );
 
             Ok(())
@@ -141,8 +150,11 @@ impl PackageManager for PureDebianPackageManager {
                 }
             }
 
-            // Create transaction
-            let mut tx = debian_db::Transaction::new()?;
+            // Create transaction on the blocking pool: content-store init
+            // touches the filesystem.
+            let mut tx = tokio::task::spawn_blocking(debian_db::Transaction::new)
+                .await
+                .context("Debian removal preparation task failed")??;
             for pkg in &packages {
                 tx.add_remove(pkg.clone());
             }
@@ -183,42 +195,49 @@ impl PackageManager for PureDebianPackageManager {
 
             tracing::info!("Found {} packages to upgrade", updates.len());
 
-            // Create resolver and add all packages to upgrade
-            let mut resolver = debian_db::DependencyResolver::new()
-                .context("Failed to initialize dependency resolver")?;
+            // Resolution + URL population are blocking index work; keep them
+            // off the executor thread.
+            let update_count = updates.len();
+            let mut tx =
+                tokio::task::spawn_blocking(move || -> anyhow::Result<_> {
+                    let mut resolver = debian_db::DependencyResolver::new()
+                        .context("Failed to initialize dependency resolver")?;
 
-            for update in &updates {
-                resolver.add_package(&update.name).with_context(|| {
-                    format!(
-                        "Package '{}' not found during upgrade resolution.\n\
-                        \u{1f4a1} The package may have been removed from repositories.\n\
-                        Try: omg sync to refresh package database",
-                        update.name
+                    for update in &updates {
+                        resolver.add_package(&update.name).with_context(|| {
+                            format!(
+                                "Package '{}' not found during upgrade resolution.\n\
+                                \u{1f4a1} The package may have been removed from repositories.\n\
+                                Try: omg sync to refresh package database",
+                                update.name
+                            )
+                        })?;
+                    }
+
+                    let resolution = resolver.resolve().context(
+                        "Failed to resolve upgrade dependencies. Some packages may have unmet dependencies.",
+                    )?;
+
+                    tracing::debug!(
+                        "Upgrade resolution complete in {:.2}ms: {} packages",
+                        start.elapsed().as_secs_f64() * 1000.0,
+                        resolution.to_upgrade.len()
+                    );
+
+                    debian_db::check_disk_space(
+                        resolution.download_size,
+                        resolution.installed_size,
+                        &std::env::temp_dir(),
                     )
-                })?;
-            }
+                    .context("Insufficient disk space for upgrade")?;
 
-            let resolution = resolver.resolve()
-                .context("Failed to resolve upgrade dependencies. Some packages may have unmet dependencies.")?;
-
-            tracing::debug!(
-                "Upgrade resolution complete in {:.2}ms: {} packages",
-                start.elapsed().as_secs_f64() * 1000.0,
-                resolution.to_upgrade.len()
-            );
-
-            // Check disk space before upgrade
-            let temp_dir = std::env::temp_dir();
-            debian_db::check_disk_space(
-                resolution.download_size,
-                resolution.installed_size,
-                &temp_dir,
-            )
-            .context("Insufficient disk space for upgrade")?;
-
-            // Execute upgrade transaction
-            let mut tx = debian_db::Transaction::from_resolution(resolution)?;
-            populate_package_urls(&mut tx).context("Failed to resolve package URLs for upgrade")?;
+                    let mut tx = debian_db::Transaction::from_resolution(resolution)?;
+                    populate_package_urls(&mut tx)
+                        .context("Failed to resolve package URLs for upgrade")?;
+                    Ok(tx)
+                })
+                .await
+                .context("Debian upgrade preparation task failed")??;
 
             tx.execute().await.context(
                 "Upgrade transaction failed. System may need repair. Try: omg install --fix-broken",
@@ -228,7 +247,7 @@ impl PackageManager for PureDebianPackageManager {
             tracing::info!(
                 "Pure Rust upgrade completed in {:.2}s ({} packages)",
                 elapsed.as_secs_f64(),
-                updates.len()
+                update_count
             );
 
             Ok(())

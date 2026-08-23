@@ -8,6 +8,8 @@ description: Quick reference for all OMG commands
 
 **Quick reference for the most common OMG commands.** Print this page or bookmark it for fast access.
 
+Every command below matches the current `omg --help` output. When in doubt, run `omg <command> --help`.
+
 ---
 
 ## 🚀 Installation & Setup
@@ -29,36 +31,87 @@ omg doctor
 
 ---
 
+## 🌍 Global Options
+
+These flags work with any command:
+
+| Option | Short | Description |
+| -------- | ------- | ------------- |
+| `--verbose` | `-v` | Increase verbosity (`-v`, `-vv`, `-vvv`) |
+| `--quiet` | `-q` | Suppress all output except errors |
+| `--json` | | Output in JSON format (for scripting) |
+| `--all-commands` | | Show all commands including advanced ones |
+
+---
+
 ## 📦 Package Management
 
 ### Search & Info
+
 ```bash
-omg search <query>          # Search packages (5-11ms!)
-omg search <query> -i       # Interactive selection
-omg info <package>          # Package details
+omg search <query>              # Search official repos + AUR (5-11ms with daemon)
+omg search <query> -d           # Detailed source metadata (votes, popularity)
+omg search <query> --no-aur     # Official repositories only
+omg search <query> -l 10        # Limit results (default: 50)
+omg info <package>              # Package details
 ```
 
 ### Install & Remove
+
 ```bash
-omg install <pkg>           # Install package
-omg install <pkg1> <pkg2>   # Install multiple
-omg install -y <pkg>        # Skip confirmation
-omg remove <pkg>            # Remove package
-omg remove -r <pkg>         # Remove + dependencies
+omg install <pkg> [<pkg>...]    # Install packages (system + AUR auto-detected)
+omg install -y <pkg>            # Skip confirmation
+omg install --dry-run <pkg>     # Preview without installing
+omg remove <pkg>                # Remove package
+omg remove -r <pkg>             # Also remove unused dependencies
+omg remove --dry-run <pkg>      # Preview without removing
 ```
 
-### Update & Upgrade
+### Update & Sync
+
 ```bash
-omg update                  # Update all packages
-omg update --check          # Check without installing
-omg upgrade <pkg>           # Upgrade specific package
+omg update                      # Update all packages (official + AUR)
+omg update --check              # Check for updates without installing
+omg update --fast               # Sync + upgrade in one step (no preview)
+omg update -T                   # Turbo mode: cached data, parallel extraction
+omg update --dry-run            # Preview what would be updated
+omg sync                        # Sync package databases only
+omg outdated                    # Show packages with available updates
 ```
 
-### Query
+### Query & Inspect
+
 ```bash
-omg list                    # List installed packages
-omg list --explicit         # Explicitly installed only
-omg which <pkg>             # Check if installed
+omg explicit                    # List explicitly installed packages
+omg explicit -c                 # Print only the count
+omg why <package>               # Show why a package is installed
+omg why <package> -r            # Show reverse dependencies
+omg size                        # Disk usage by package (top 20)
+omg size -t firefox             # Dependency tree for a package
+omg blame <package>             # When and why a package was installed
+```
+
+### Clean
+
+```bash
+omg clean -o                    # Remove orphaned packages
+omg clean -c                    # Clear package cache
+omg clean --aur                 # Clear AUR build directories
+omg clean -a                    # Everything above (--all)
+omg clean --dry-run -a          # Preview what would be cleaned
+```
+
+### Snapshots & Diff
+
+```bash
+omg snapshot create -m "Before major upgrade"
+omg snapshot list
+omg snapshot restore <id> --dry-run   # Preview restore
+omg snapshot restore <id>
+omg snapshot delete <id>
+
+omg diff <lock-file>                  # Compare current env to a lock file
+omg diff --from old.lock new.lock     # Compare two lock files
 ```
 
 ---
@@ -66,100 +119,136 @@ omg which <pkg>             # Check if installed
 ## 🔧 Runtime Management
 
 ### Install & Switch Versions
+
 ```bash
-omg use node 20             # Install & use Node.js 20
-omg use node lts            # Use latest LTS
-omg use python 3.12         # Python 3.12
-omg use rust stable         # Rust stable
-omg use rust nightly        # Rust nightly
-omg use go 1.21             # Go 1.21
-omg use ruby 3.3            # Ruby 3.3
-omg use java 21             # Java 21
-omg use bun latest          # Bun latest
+omg use node 20                 # Install & use Node.js 20
+omg use node lts                # Use latest LTS (or omit version to detect from file)
+omg use python 3.12
+omg use rust stable
+omg use rust nightly
+omg use go 1.21
+omg use ruby 3.3
+omg use java 21
+omg use bun latest
 ```
 
+Native runtimes: `node`, `python`, `go`, `rust`, `ruby`, `java`, `bun`. Additional runtimes are resolved through mise when configured.
+
 ### Query Versions
+
 ```bash
-omg which node              # Show active Node.js version
-omg list node               # List installed versions
-omg list node --available   # Show available versions
-omg list                    # List all installed runtimes
+omg which node                  # Which version would be used right now
+omg list                        # All installed runtime versions
+omg list node                   # Installed Node.js versions
+omg list node -a                # Available versions for download
 ```
 
 ### Version Files (Auto-Detection)
-```bash
-# Create version files (auto-detected by OMG)
-echo "20.10.0" > .nvmrc                 # Node.js
-echo "3.12.0" > .python-version         # Python
-echo "stable" > rust-toolchain          # Rust
-echo "1.21.0" > .go-version             # Go
 
-# OMG auto-switches when you cd into directory
-cd .  # Trigger auto-detect
+Create a version file and OMG switches automatically via the shell hook:
+
+```bash
+echo "20.10.0" > .nvmrc             # Node.js (.node-version also works)
+echo "3.12.0" > .python-version     # Python
+echo "1.21.0" > .go-version         # Go
+echo "stable" > rust-toolchain.toml # Rust ([toolchain] channel = "stable")
+echo "3.3.0" > .ruby-version        # Ruby
+echo "21" > .java-version           # Java
+echo "1.0.25" > .bun-version        # Bun
+
+cd .    # Trigger auto-detect after creating a file
 ```
 
 ---
 
-## 🌍 Environment Management
-
-### Lock & Sync
-```bash
-omg env capture             # Capture environment → omg.lock
-omg env sync                # Sync from omg.lock
-omg env check               # Check for drift
-omg env diff                # Show differences
-```
-
-### Share with Team
-```bash
-omg env share               # Upload to GitHub Gist
-omg env share --public      # Public Gist
-omg env download <url>      # Download shared environment
-```
-
----
-
-## ▶️ Task Runner
+## 🏃 Task Runner
 
 ```bash
-omg run dev                 # Run dev script (auto-detects)
-omg run build               # Run build script
-omg run test                # Run tests
-omg run <task>              # Run any task
-
-# Project types supported:
-# - package.json (npm/yarn/pnpm/bun)
-# - Cargo.toml (Rust)
-# - Makefile (Make)
-# - pyproject.toml (Python)
-# - go.mod (Go)
-# - deno.json (Deno)
+omg run dev                     # Run dev script (auto-detects project type)
+omg run build                   # Run build script
+omg run test -- --verbose       # Pass arguments after --
+omg run build,test -p           # Run multiple tasks in parallel (comma-separated)
+omg run build -w                # Watch mode: re-run on file changes
+omg run build -u rust           # Force an ecosystem
+omg run build -a                # Run across all detected ecosystems
 ```
+
+Detected project files include `package.json`, `deno.json`, `Cargo.toml`, `Makefile`,
+`pyproject.toml`, `Pipfile`, `composer.json`, `pom.xml`, `build.gradle`, and more.
 
 ---
 
 ## 🔐 Security
 
 ### Vulnerability Scanning
+
 ```bash
-omg audit                   # Scan for vulnerabilities
-omg audit scan              # Full security scan
-omg audit fix               # Auto-fix vulnerabilities
-omg scan <package>          # Scan specific package
+omg audit                       # Scan for vulnerabilities (default subcommand)
+omg audit scan                  # Same, explicitly
+omg audit fix --dry-run         # Preview vulnerability fixes
+omg audit fix -y                # Auto-fix by upgrading packages
+omg audit eol                   # Check end-of-life runtimes
 ```
 
-### SBOM Generation
+### SBOM & Secrets
+
 ```bash
-omg sbom generate           # Generate SBOM
-omg sbom --format json      # JSON format
-omg sbom --format cyclonedx # CycloneDX format
+omg audit sbom                  # Generate CycloneDX 1.5 SBOM
+omg audit sbom -o sbom.json     # Write to a specific file
+omg audit secrets               # Scan current directory for leaked credentials
+omg audit secrets -p ./src      # Scan a specific path
 ```
 
-### Audit Logs
+### Audit Logs & Policy
+
 ```bash
-omg audit log               # View audit log
-omg audit log --tail 50     # Last 50 entries
-omg audit export            # Export for compliance
+omg audit log                   # View audit log entries (default: last 20)
+omg audit log -l 50             # More entries
+omg audit log -s error          # Filter by severity
+omg audit verify                # Check audit log for tampering
+omg audit policy                # Show security policy status
+omg audit slsa <package-file>   # Check SLSA provenance
+```
+
+---
+
+## 🤝 Environment & Team
+
+```bash
+omg env capture                 # Capture environment -> omg.lock
+omg env check                   # Check for drift against omg.lock
+omg env share                   # Upload environment to a secret GitHub Gist
+omg env share --public          # Public Gist instead
+omg env share -d "Team env"     # Custom Gist description
+export GITHUB_TOKEN=...         # Required for share/sync
+omg env sync https://gist.github.com/user/abc123   # Restore from a shared Gist
+```
+
+### Team Workspace
+
+```bash
+omg team init mycompany/frontend --name "Frontend Team"
+omg team join <url>             # Join a team by remote URL
+omg team status                 # Team sync status
+omg team push                   # Push local environment to team lock
+omg team pull                   # Pull team lock and check drift
+omg team members                # List members and sync state
+omg team dashboard              # Interactive team TUI
+omg team propose "Add Node 22"  # Propose environment changes
+omg team proposals              # List pending proposals
+omg team review 42 --approve    # Approve a proposal
+omg team golden-path create frontend-setup --node 20 --packages "eslint prettier"
+omg team golden-path list
+omg team compliance             # Check compliance status
+omg team activity --days 30     # Activity stream
+```
+
+### Snapshots of Environments Elsewhere
+
+```bash
+omg migrate export -o my-setup.json        # Portable manifest of this machine
+omg migrate import my-setup.json --dry-run # Preview import (with package mapping)
+omg migrate import my-setup.json           # Import and install
 ```
 
 ---
@@ -167,31 +256,151 @@ omg audit export            # Export for compliance
 ## 🐳 Containers
 
 ```bash
-omg container shell         # Dev shell with runtimes
-omg container build         # Build container image
-omg container init          # Generate Dockerfile
-omg container run <cmd>     # Run command in container
+omg container status            # Docker/Podman runtime status
+omg container shell             # Dev shell with project mounted
+omg container run alpine -- echo "hello"
+omg container run -i ubuntu -- bash   # Interactive (-i)
+omg container build -t myapp    # Build image (default tag omg-dev:latest)
+omg container init              # Generate a Dockerfile from detected runtimes
+omg container init -b node:20   # With a specific base image
+omg container list              # Running containers
+omg container images            # Container images
+omg container pull node:20      # Pull an image
+omg container stop mycontainer  # Stop a container by name/ID
+omg container exec mycontainer -- ls -la   # Execute in a running container
 ```
 
 ---
 
-## 👥 Team Features
+## ⚙️ Configuration
 
-### Team Dashboard
 ```bash
-omg team init               # Initialize team
-omg team join <token>       # Join team
-omg team status             # Team health overview
-omg team push               # Push environment update
-omg team pull               # Pull team environment
+omg config                      # Interactive/config command root
+omg config list                 # List all configuration values
+omg config get telemetry.enabled
+omg config set telemetry.enabled false
+omg config validate             # Validate config file syntax and values
+omg config path                 # Show configuration file path
+omg config reset -y             # Reset to defaults
 ```
 
-### Fleet Management (Enterprise)
+### Config Files
+
 ```bash
-omg fleet status            # Fleet overview
-omg fleet push              # Push to entire fleet
-omg fleet remediate         # Auto-fix drift
-omg fleet report            # Compliance report
+~/.config/omg/config.toml   # General settings
+~/.config/omg/policy.toml   # Security policy
+```
+
+### Common Config Options (`~/.config/omg/config.toml`)
+
+```toml
+shims_enabled = false           # Use PATH modification (default) instead of shims
+auto_update = true              # Auto-update runtimes on install
+default_shell = "zsh"           # Default shell for hooks
+runtime_backend = "native-then-mise"  # native, mise, or native-then-mise
+telemetry_enabled = true        # Anonymous telemetry toggle
+
+[aur]
+build_concurrency = 8           # Parallel AUR builds
+review_pkgbuild = true          # Require PKGBUILD review before building
+```
+
+See [Configuration](./configuration.md) for the complete reference — every key above is read by OMG; anything not listed there is ignored.
+
+### Security Policy (`~/.config/omg/policy.toml`)
+
+```toml
+minimum_grade = "Community"     # Risk | Community | Verified | Locked
+allow_aur = true                # Set false to forbid AUR packages
+require_pgp = false             # Require signatures for everything
+allowed_licenses = ["MIT", "Apache-2.0"]
+banned_packages = []
+```
+
+---
+
+## 🛠️ Daemon
+
+```bash
+omgd                            # Start daemon (daemonizes by default)
+omgd --foreground               # Run in foreground
+omgd --socket /path/to/sock     # Custom socket path
+omg daemon-status               # Show detailed daemon status
+omg daemon                      # Start the daemon from the CLI
+omg-fast status                 # Instant status from the daemon's snapshot
+```
+
+There is no `omg daemon start/stop/restart` subcommand — the daemon is started with
+`omg daemon`/`omgd` and stopped by killing the process (or your service manager).
+To run it under systemd, see [Configuration](./configuration.md).
+
+### omg-fast (shell-prompt queries)
+
+```bash
+omg-fast ec        # Explicit count
+omg-fast tc        # Total count
+omg-fast uc        # Updates count
+omg-fast oc        # Orphan count
+omg-fast status    # Full status
+omg-fast s vim     # Search
+omg-fast i vim     # Package info
+```
+
+---
+
+## 🔍 Diagnostics
+
+```bash
+omg doctor                      # System health check
+omg doctor --network            # Also test mirror connectivity
+omg doctor --eol                # Also check end-of-life runtimes
+omg doctor --turbo              # Check zero-sudo capabilities setup
+omg status                      # Quick status overview
+omg status --fast               # Counts only, skip full dependency scan
+omg --help                      # Show help
+omg <cmd> --help                # Command help
+```
+
+---
+
+## 📜 History & Rollback
+
+```bash
+omg history                     # Recent transactions (default: 20)
+omg history -l 5                # Last 5 entries
+omg history -s firefox          # Search history for a package
+omg history -t install          # Filter by type (install/remove/update/sync)
+omg history --from 2026-01-01 --to 2026-02-01
+omg rollback                    # Roll back most recent transaction
+omg rollback <transaction-id>   # Roll back to a specific transaction
+omg rollback <id> -y            # Auto-confirm
+```
+
+---
+
+## 👥 Other Commands
+
+```bash
+omg new rust my-cli             # Scaffold projects: rust|react|node|python|go
+omg tool install ripgrep        # Cross-ecosystem dev tools
+omg tool list                   # Installed tools
+omg tool search docker          # Search the tool registry
+omg tool registry               # Browse all registry tools
+omg tool update all             # Update every installed tool
+omg tool remove ripgrep         # Remove a tool
+omg ci init github              # Generate CI config (github|gitlab|circleci)
+omg ci validate                 # Validate environment vs CI expectations
+omg ci cache                    # Recommended cache paths
+omg workspace init my-monorepo  # Workspace management (see omg workspace --help)
+omg hooks install               # Git hooks for env sync (see omg hooks --help)
+omg privacy status              # Privacy settings & data (GDPR/CCPA)
+omg license status              # License management (license-enabled builds)
+omg fleet push -m "Update"      # Enterprise fleet push (status/push only today)
+omg stats                       # Usage statistics
+omg metrics                     # Prometheus-style metrics (Unix)
+omg dash                        # Interactive TUI dashboard (alias: omg d)
+omg self-update                 # Update OMG (alias: omg up)
+omg generate-man                # Generate man pages
 ```
 
 ---
@@ -200,69 +409,23 @@ omg fleet report            # Compliance report
 
 ```bash
 omg dash                    # Launch interactive dashboard
-# OR
-omg                         # (same)
-
-# Keyboard shortcuts in TUI:
-# /          Search packages
-# Enter      Select/Install
-# Tab        Switch panels
-# q          Quit
 ```
 
----
+Keyboard shortcuts in the TUI:
 
-## ⚙️ Configuration
-
-### Config Files
-```bash
-~/.config/omg/config.toml   # General settings
-~/.config/omg/policy.toml   # Security policy
-```
-
-### Common Config Options
-```toml
-# ~/.config/omg/config.toml
-shims_enabled = false       # Use PATH (faster)
-auto_update = true          # Auto-update runtimes
-default_shell = "zsh"       # Default shell
-
-[aur]
-build_concurrency = 8       # Parallel AUR builds
-
-[security]
-scan_on_install = true      # Scan on install
-```
-
----
-
-## 🛠️ Daemon
-
-```bash
-omgd                        # Start daemon (background)
-omg daemon start            # Start daemon
-omg daemon stop             # Stop daemon
-omg daemon restart          # Restart daemon
-omg daemon status           # Daemon status
-```
-
----
-
-## 🔍 Diagnostics
-
-```bash
-omg doctor                  # System health check
-omg status                  # Quick status overview
-omg version                 # Show version
-omg --help                  # Show help
-omg <cmd> --help            # Command help
-```
+| Key | Action |
+| ----- | -------- |
+| `/` | Search packages |
+| `r` | Refresh |
+| `Tab` | Switch views/panels |
+| `q` | Quit |
 
 ---
 
 ## 🚀 Quick Workflows
 
 ### New Project Setup
+
 ```bash
 # 1. Install OMG
 curl -fsSL https://pyro1121.com/install.sh | bash
@@ -284,24 +447,30 @@ git add omg.lock && git commit -m "Lock environment"
 ---
 
 ### Team Onboarding
+
 ```bash
 # New developer:
 git clone <repo>
 cd <repo>
-omg env sync                # Install everything from omg.lock
-omg run dev                 # Start coding!
+omg env check          # Compare against the committed omg.lock
+omg use node 20        # Install the pinned runtimes
+omg install ripgrep fd # Install pinned packages
+omg run dev            # Start coding!
+# Or restore directly from a teammate's shared Gist:
+# omg env sync https://gist.github.com/user/abc123
 ```
 
 ---
 
 ### CI/CD Setup
+
 ```yaml
 # .github/workflows/ci.yml
 - name: Install OMG
   run: curl -fsSL https://pyro1121.com/install.sh | bash
 
-- name: Sync environment
-  run: omg env sync
+- name: Check environment matches omg.lock
+  run: omg env check
 
 - name: Build
   run: omg run build
@@ -309,118 +478,61 @@ omg run dev                 # Start coding!
 
 ---
 
-### Multi-Runtime Project
-```bash
-# Full-stack app (Node + Python + Rust)
-omg use node 20
-omg use python 3.12
-omg use rust stable
-
-# Create version files
-echo "20.10.0" > .nvmrc
-echo "3.12.0" > .python-version
-echo "stable" > rust-toolchain
-
-# Lock everything
-omg env capture
-```
-
----
-
 ## 🎯 Performance Tips
 
 ### Speed Up Searches
+
 ```bash
 # Ensure daemon is running (5-11ms searches!)
-omgd &
+omg daemon
 
-# Without daemon: ~100-150ms
+# Without daemon: ~100-150ms direct queries
 # With daemon: ~5-11ms (12-24x faster!)
 ```
 
 ### Parallel Operations
+
 ```bash
 # Install multiple packages at once
 omg install ripgrep fd bat -y
 
-# Update all packages in parallel
+# Update all packages
 omg update
-```
-
-### Cache Management
-```bash
-# Clear cache (if needed)
-rm -rf ~/.cache/omg
-
-# Rebuild cache
-omg status  # Automatically rebuilds
 ```
 
 ---
 
 ## 🐛 Troubleshooting
 
-### Common Issues
-
 **Shell hook not working:**
+
 ```bash
-# Add to shell config
 echo 'eval "$(omg hook zsh)"' >> ~/.zshrc
 exec $SHELL
 ```
 
-**Daemon not starting:**
+**Daemon not running:**
+
 ```bash
-# Check if running
-omg daemon status
-
-# Restart
-omg daemon restart
-
-# Check logs
-journalctl -u omgd --no-pager -n 50
+omg daemon-status          # Is it up?
+omgd --foreground          # Run it in the foreground to see errors
 ```
 
 **PATH issues:**
+
 ```bash
-# Add OMG to PATH
 echo 'export PATH="$HOME/.local/bin:$PATH"' >> ~/.zshrc
 exec $SHELL
 ```
 
 **Auto-detect not working:**
-```bash
-# Verify version file format
-cat .nvmrc  # Should be: 20.10.0 (not: node 20.10.0)
-
-# Force reload
-cd .
-```
-
-**Runtime not switching:**
-```bash
-# Check hook is loaded
-type omg  # Should show: "omg is a function"
-
-# Re-source config
-exec $SHELL
-```
-
----
-
-## 📊 Common Aliases
-
-Add to your shell config (`~/.zshrc` or `~/.bashrc`):
 
 ```bash
-alias oi='omg install'
-alias os='omg search'
-alias ou='omg use'
-alias or='omg run'
-alias oe='omg env'
-alias oa='omg audit'
-alias od='omg dash'
+cat .nvmrc                 # Should contain just the version: 20.10.0
+cd .                       # Force re-detect
 ```
+
+More help: [Troubleshooting Guide](./troubleshooting.md).
 
 ---
 
@@ -435,59 +547,15 @@ alias od='omg dash'
 
 ---
 
-## 🎓 Learning Path
-
-**Beginner (First 5 minutes):**
-1. Install OMG → `curl -fsSL https://pyro1121.com/install.sh | bash`
-2. Search packages → `omg search neovim`
-3. Install package → `omg install ripgrep`
-4. Install runtime → `omg use node 20`
-
-**Intermediate (Day 1):**
-1. Set up shell hook → `eval "$(omg hook zsh)"`
-2. Create version files → `.nvmrc`, `.python-version`
-3. Lock environment → `omg env capture`
-4. Run tasks → `omg run dev`
-
-**Advanced (Week 1):**
-1. Team sync → `omg env share`
-2. Security scanning → `omg audit`
-3. Container integration → `omg container shell`
-4. Custom configuration → Edit `~/.config/omg/config.toml`
-
-**Expert (Ongoing):**
-1. Fleet management → `omg fleet status`
-2. Policy enforcement → Edit `~/.config/omg/policy.toml`
-3. Compliance reports → `omg fleet report --standard SOC2`
-4. Custom integrations → See [integrations.md](./integrations.md)
-
----
-
-## 📏 Comparison with Traditional Tools
-
-| Task | Traditional | OMG |
-|------|-------------|-----|
-| **Search** | `pacman -Ss firefox` (133ms) | `omg search firefox` (5-11ms) |
-| **Install** | `pacman -S firefox` | `omg install firefox` |
-| **Use Node 20** | `nvm install 20 && nvm use 20` | `omg use node 20` |
-| **Use Python 3.12** | `pyenv install 3.12 && pyenv global 3.12` | `omg use python 3.12` |
-| **Lock env** | Manual docs, multiple files | `omg env capture` |
-| **Sync env** | Manual setup (hours) | `omg env sync` (minutes) |
-
-**Speed improvement:** 12-24x faster package searches, 10x faster runtime switching
-
----
-
 ## 💡 Pro Tips
 
-1. **Use daemon for speed** - Start `omgd` in background for 5-11ms searches
-2. **Version files = auto-switch** - Create `.nvmrc`, `.python-version` for automatic version switching
-3. **Lock early, lock often** - Capture environment after every major change
-4. **Parallel installs** - Install multiple packages at once: `omg install pkg1 pkg2 pkg3`
-5. **Interactive mode** - Use `omg search <query> -i` for fuzzy selection
-6. **Shell aliases** - Create aliases for common commands (see above)
-7. **Team sync** - Use `omg env share` to share environment via GitHub Gist
-8. **Security first** - Enable `scan_on_install = true` in config
+1. **Use the daemon for speed** — start it with `omg daemon` for 5-11ms searches.
+2. **Version files = auto-switch** — create `.nvmrc`, `.python-version` etc. and let the shell hook switch for you.
+3. **Lock early, lock often** — run `omg env capture` after every major change.
+4. **Preview before acting** — `--dry-run` exists on `install`, `remove`, `update`, `clean`, `snapshot restore`, `migrate import`, and `audit fix`.
+5. **JSON output for scripts** — global `--json` works on any command.
+6. **Security first** — review `omg audit policy` and tune `~/.config/omg/policy.toml`.
+7. **Share environments via Gist** — `omg env share`, then teammates run `omg env sync <gist-url>`.
 
 ---
 

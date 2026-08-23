@@ -61,8 +61,14 @@ impl SudoLoop {
             sleep(Duration::from_secs(REFRESH_INTERVAL_SECS)).await;
 
             while running_clone.load(Ordering::SeqCst) {
-                // Refresh sudo timestamp with -v (validate, extend timeout)
-                let result = Command::new("sudo").arg("-v").output().await;
+                // Refresh sudo timestamp with -v (validate, extend timeout).
+                // kill_on_drop ensures an aborted loop cannot leave a detached
+                // sudo child behind.
+                let result = Command::new("sudo")
+                    .arg("-v")
+                    .kill_on_drop(true)
+                    .output()
+                    .await;
 
                 match result {
                     Ok(output) if output.status.success() => {

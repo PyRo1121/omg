@@ -28,6 +28,7 @@ OMG provides deep shell integration that:
 ### What the Hook Does
 
 The shell hook:
+
 - Runs on every directory change (`cd`)
 - Runs on every prompt (to catch `pushd`, `popd`, etc.)
 - Detects version files (`.nvmrc`, `.python-version`, etc.)
@@ -45,6 +46,7 @@ eval "$(omg hook zsh)"
 ```
 
 Reload:
+
 ```bash
 source ~/.zshrc
 # or
@@ -60,6 +62,7 @@ eval "$(omg hook bash)"
 ```
 
 Reload:
+
 ```bash
 source ~/.bashrc
 # or
@@ -75,6 +78,7 @@ omg hook fish | source
 ```
 
 Reload:
+
 ```fish
 source ~/.config/fish/config.fish
 # or
@@ -110,7 +114,7 @@ When you enter a directory, OMG checks for version files in this order:
 ### Supported Version Files
 
 | File | Runtime | Priority |
-|------|---------|----------|
+| ------ | --------- | ---------- |
 | `.node-version` | Node.js | 1 (highest) |
 | `.nvmrc` | Node.js | 2 |
 | `.bun-version` | Bun | 1 |
@@ -138,11 +142,13 @@ When you enter a directory, OMG checks for version files in this order:
 ```
 
 Or with `v` prefix:
+
 ```
 v20.10.0
 ```
 
 Or aliases (Node.js):
+
 ```
 lts/*
 lts/hydrogen
@@ -159,6 +165,7 @@ profile = "minimal"
 ```
 
 Or simple `rust-toolchain` file:
+
 ```
 stable
 ```
@@ -227,7 +234,7 @@ These read from a cached status file updated by the daemon:
 These read the status file directly:
 
 | Function | Returns |
-|----------|---------|
+| ---------- | --------- |
 | `omg-explicit-count` | Explicit package count |
 | `omg-total-count` | Total package count |
 | `omg-orphan-count` | Orphan count |
@@ -274,7 +281,7 @@ end
 ### Performance Comparison
 
 | Method | Latency | Use Case |
-|--------|---------|----------|
+| -------- | --------- | ---------- |
 | `omg-ec` (cached) | &lt;1μs | Prompts |
 | `omg-explicit-count` (fresh) | ~1ms | Scripts |
 | `omg explicit --count` | ~<2ms | Commands |
@@ -464,20 +471,17 @@ OMG offers two PATH management methods:
 
 #### Shims
 
-- Better IDE compatibility
-- Wrapper scripts for each binary
+- Wrapper scripts for each binary (intended for better IDE compatibility)
 - Slightly slower execution
 
-Enable shims in `~/.config/omg/config.toml`:
+The `shims_enabled` setting exists in `~/.config/omg/config.toml`:
 
 ```toml
 shims_enabled = true
 ```
 
-Generate shims:
-```bash
-omg shim generate
-```
+> Note: shim generation is not wired up in the CLI yet — today only PATH-based
+> hook switching is fully functional. Treat `shims_enabled` as reserved.
 
 ### Runtime Backend
 
@@ -489,6 +493,7 @@ runtime_backend = "native-then-mise"
 ```
 
 Options:
+
 - `native` — Only OMG's built-in managers
 - `mise` — Only mise
 - `native-then-mise` — Native first, mise fallback (default)

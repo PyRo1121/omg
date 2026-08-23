@@ -22,7 +22,7 @@ pub fn run(tree: Option<&str>, limit: usize) -> Result<()> {
         } else {
             show_top_packages_debian(limit)?
         };
-        crate::cli::packages::execute_cmd(cmd);
+        crate::cli::tea::run_report(cmd)?;
         return Ok(());
     }
 
@@ -33,7 +33,7 @@ pub fn run(tree: Option<&str>, limit: usize) -> Result<()> {
         } else {
             show_top_packages(limit)?
         };
-        crate::cli::packages::execute_cmd(cmd);
+        crate::cli::tea::run_report(cmd)?;
         return Ok(());
     }
 

@@ -8,6 +8,7 @@ use crate::core::Package;
 use crate::core::format::truncate;
 use crate::package_managers::SyncPackage;
 use std::fmt::Write;
+use unicode_width::UnicodeWidthStr;
 
 #[cfg(feature = "arch")]
 use crate::package_managers::AurPackageDetail;
@@ -154,7 +155,8 @@ impl SearchModel {
         )
     }
 
-    /// Render header with beautiful box drawing
+    /// Render header with beautiful box drawing. The rule length follows the
+    /// subtitle's display width so multibyte content keeps the box aligned.
     fn render_header(title: &str, subtitle: &str) -> String {
         format!(
             "\n{} {}\n{} {}\n{}{}\n",
@@ -163,7 +165,7 @@ impl SearchModel {
             "│".cyan().bold(),
             subtitle.white(),
             "└".cyan().bold(),
-            "─".repeat(subtitle.len()).cyan().bold()
+            "─".repeat(subtitle.width()).cyan().bold()
         )
     }
 }

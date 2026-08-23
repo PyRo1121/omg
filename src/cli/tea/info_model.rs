@@ -10,6 +10,7 @@ use crate::package_managers::get_package_manager;
 use owo_colors::OwoColorize;
 use std::fmt::Write;
 use std::time::Duration;
+use unicode_width::UnicodeWidthStr;
 
 #[cfg(feature = "arch")]
 use crate::package_managers::{AurClient, search_detailed};
@@ -165,16 +166,18 @@ impl Model for InfoModel {
                 if let Some(info) = &self.info {
                     let mut output = String::new();
 
-                    // Header
+                    // Header. The rule length follows the subtitle's display
+                    // width so multibyte package names keep the box aligned.
+                    let subtitle = format!("Package Information: {}", info.name);
                     let _ = writeln!(
                         output,
                         "\n{} {}\n{} {}\n{}{}\n",
                         "┌─".cyan().bold(),
                         "OMG".cyan().bold(),
                         "│".cyan().bold(),
-                        format!("Package Information: {}", info.name).white(),
+                        subtitle.white(),
                         "└".cyan().bold(),
-                        "─".repeat(21 + info.name.len()).cyan().bold()
+                        "─".repeat(subtitle.width()).cyan().bold()
                     );
 
                     // Details

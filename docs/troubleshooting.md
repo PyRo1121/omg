@@ -34,6 +34,7 @@ omg-fast status
 ### Daemon Not Running
 
 **Symptoms:**
+
 - Slow searches (>50ms instead of ~5-11ms)
 - `omg status` shows "Daemon: Not running"
 - Commands work but feel sluggish
@@ -62,6 +63,7 @@ lsof -U | grep omg
 ### Daemon Crashes on Startup
 
 **Symptoms:**
+
 - Daemon starts then immediately exits
 - No error message visible
 
@@ -86,6 +88,7 @@ journalctl --user -u omgd -n 50
 ### Daemon Socket Permission Denied
 
 **Symptoms:**
+
 - "Permission denied" errors when running commands
 - Works with sudo but not as regular user
 
@@ -114,6 +117,7 @@ ls -la $XDG_RUNTIME_DIR
 ### PATH Not Updated After Directory Change
 
 **Symptoms:**
+
 - Runtime versions don't change automatically
 - Have to run `omg use` manually each time
 - Version files (`.nvmrc`, etc.) not detected
@@ -143,6 +147,7 @@ omg which node
 ### Completions Not Working
 
 **Symptoms:**
+
 - Tab completion doesn't show OMG commands
 - Partial completion or errors
 
@@ -174,6 +179,7 @@ source /etc/bash_completion.d/omg
 ### Shell Hook Slowing Down Prompt
 
 **Symptoms:**
+
 - Noticeable delay when pressing Enter
 - Slow directory changes
 
@@ -202,6 +208,7 @@ time omg hook-env -s zsh
 ### Search Returns No Results
 
 **Symptoms:**
+
 - `omg search <query>` returns nothing
 - Known packages not found
 
@@ -229,6 +236,7 @@ pacman -Ss <query>
 ### AUR Build Failures
 
 **Symptoms:**
+
 - AUR packages fail to build
 - Dependency errors during build
 
@@ -261,6 +269,7 @@ makepkg -si
 ### Package Installation Blocked by Policy
 
 **Symptoms:**
+
 - "Package grade X below minimum Y" error
 - "AUR packages not allowed" error
 
@@ -291,6 +300,7 @@ omg install <package>
 ### Runtime Version Not Switching
 
 **Symptoms:**
+
 - `omg use` completes but wrong version active
 - `node --version` shows different version than expected
 
@@ -322,6 +332,7 @@ exec zsh
 ### Runtime Download Fails
 
 **Symptoms:**
+
 - "Download failed" or network errors
 - Timeout during installation
 
@@ -352,6 +363,7 @@ df -h ~/.local/share/omg/
 ### mise Not Found for Extended Runtimes
 
 **Symptoms:**
+
 - Error when installing deno, elixir, etc.
 - "mise not available" message
 
@@ -380,6 +392,7 @@ curl -L https://github.com/jdx/mise/releases/
 ### Cache Corruption
 
 **Symptoms:**
+
 - Bizarre search results
 - Inconsistent package info
 - Daemon errors mentioning "cache" or "redb"
@@ -406,6 +419,7 @@ omg status
 ### History File Corrupted
 
 **Symptoms:**
+
 - `omg history` returns empty or errors
 - Rollback doesn't work
 
@@ -428,6 +442,7 @@ echo "[]" > ~/.local/share/omg/history.json
 ### Audit Log Issues
 
 **Symptoms:**
+
 - `omg audit log` shows nothing
 - `omg audit verify` fails
 
@@ -451,6 +466,7 @@ mv ~/.local/share/omg/audit/audit.jsonl ~/.local/share/omg/audit/audit.jsonl.bak
 ### Dashboard Won't Start
 
 **Symptoms:**
+
 - `omg dash` hangs or crashes immediately
 - Terminal garbled after exit
 
@@ -481,6 +497,7 @@ stty sane
 ### Display Garbled or Wrong Colors
 
 **Symptoms:**
+
 - Characters display incorrectly
 - Colors wrong or missing
 
@@ -508,6 +525,7 @@ echo $LANG
 ### Rollback Fails
 
 **Symptoms:**
+
 - "Package not found in cache" error
 - Downgrade fails
 
@@ -534,6 +552,7 @@ sudo pacman -U /var/cache/pacman/pkg/<package>-<version>.pkg.tar.zst
 ### AUR Rollback Not Supported
 
 **Symptoms:**
+
 - "AUR rollback not supported" message
 
 **Solutions:**
@@ -557,6 +576,7 @@ makepkg -si
 ### Security Audit Fails
 
 **Symptoms:**
+
 - `omg audit` returns errors
 - Vulnerability data not loading
 
@@ -583,6 +603,7 @@ omg daemon
 ### SBOM Generation Fails
 
 **Symptoms:**
+
 - `omg audit sbom` errors out
 - Empty or incomplete SBOM
 
@@ -606,6 +627,7 @@ omg explicit
 ### Debian/Ubuntu Linker Error (.eh_frame corruption)
 
 **Symptoms:**
+
 - Build fails with: `rust-lld: error: corrupted .eh_frame: CIE/FDE ends past end of section`
 - Build fails with: `rust-lld: error: .eh_frame: relocation is not in any piece`
 - Occurs when building with `--features debian` or `--features debian-pure`
@@ -649,6 +671,7 @@ docker build --no-cache -f Dockerfile.debian -t omg-debian .
 ```
 
 **Reference:**
+
 - Configuration is automatically set in `.cargo/config.toml`
 - Uses system GCC linker instead of rust-lld
 - Maintains full LTO performance on Arch Linux native builds
@@ -717,4 +740,3 @@ omg <failing-command> 2>&1 | tee command-output.log
 - [Security](./security.md) — Security-related issues
 - [Runtimes](./runtimes.md) — Runtime version switching issues
 - [Integrations](./integrations.md) — Integration troubleshooting
-- [Fleet Management](./fleet.md) — Fleet-related issues

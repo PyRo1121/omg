@@ -2,7 +2,9 @@ use crate::core::env::team::TeamStatus;
 use crate::core::history::Transaction;
 #[cfg(unix)]
 use crate::daemon::protocol::StatusResult;
-use anyhow::{Context, Result};
+#[cfg(any(feature = "arch", feature = "debian", feature = "debian-pure"))]
+use anyhow::Context;
+use anyhow::Result;
 use crossterm::event::KeyCode;
 use std::time::Instant;
 
@@ -48,6 +50,14 @@ pub struct App {
 
     // Usage stats
     pub usage_stats: crate::core::usage::UsageStats,
+
+    /// True while a long-running action (update/install/clean/audit) is
+    /// executing on a background task. Serializes actions so their results
+    /// cannot interleave.
+    pub action_in_flight: bool,
+
+    /// Last time the search query was modified; used to debounce searches.
+    pub last_query_change: Instant,
 }
 
 #[derive(Debug, Clone, Default)]
@@ -79,8 +89,9 @@ impl App {
             system_metrics: SystemMetrics::default(),
             last_update: Instant::now(),
             prev_cpu_sample: None,
-            usage_stats: crate::core::usage::UsageStats::load()
-                .context("Failed to load usage statistics")?,
+            usage_stats: crate::core::usage::UsageStats::load().unwrap_or_default(),
+            action_in_flight: false,
+            last_query_change: Instant::now(),
         };
         app.refresh().await?;
         Ok(app)
@@ -401,16 +412,18 @@ impl App {
         }
     }
 
-    pub async fn install_package(&self, package_name: &str) -> Result<()> {
+    // Long-running actions are associated functions (they never read model
+    // state) so the event loop can spawn them without borrowing the model.
+    pub async fn install_package(package_name: &str) -> Result<()> {
         let packages = vec![package_name.to_string()];
         crate::cli::packages::install(&packages, false, false).await
     }
 
-    pub async fn update_system(&self) -> Result<()> {
+    pub async fn update_system() -> Result<()> {
         crate::cli::packages::update(false, false, false).await
     }
 
-    pub async fn clean_cache(&self) -> Result<()> {
+    pub async fn clean_cache() -> Result<()> {
         crate::cli::packages::clean(true, true, true, false, false).await
     }
 
@@ -418,7 +431,7 @@ impl App {
         clippy::unused_async,
         reason = "feature-gated implementations await while fallback builds do not"
     )]
-    pub async fn remove_orphans(&self) -> Result<()> {
+    pub async fn remove_orphans() -> Result<()> {
         #[cfg(any(feature = "debian", feature = "debian-pure"))]
         if crate::core::env::distro::is_debian_like() {
             #[cfg(feature = "debian-pure")]
@@ -465,9 +478,33 @@ impl App {
         }
     }
 
-    pub async fn run_security_audit(&self) -> Result<usize> {
+    pub async fn run_security_audit() -> Result<usize> {
         let scanner = crate::core::security::vulnerability::VulnerabilityScanner::new();
         Ok(scanner.scan_system().await?)
+    }
+
+    /// Whether pressing Enter should open the install-confirmation popup.
+    /// Pure decision helper; the event loop performs the actual install only
+    /// after the popup is confirmed with a second Enter.
+    pub fn enter_requests_confirmation(&self) -> bool {
+        !self.search_mode
+            && self.current_tab == Tab::Packages
+            && !self.search_results.is_empty()
+            && !self.show_popup
+    }
+
+    /// Switch tabs, resetting transient list/search state so a stale
+    /// selection or armed search mode cannot leak across tabs.
+    pub fn switch_tab(&mut self, tab: Tab) {
+        self.current_tab = tab;
+        self.selected_index = 0;
+        self.search_mode = false;
+        self.show_popup = false;
+    }
+
+    /// Record a search-query mutation for debounce purposes.
+    pub fn note_query_change(&mut self) {
+        self.last_query_change = Instant::now();
     }
 
     pub async fn tick(&mut self) -> Result<()> {
@@ -497,12 +534,12 @@ impl App {
             }
 
             // Tab switching
-            KeyCode::Char('1') => self.current_tab = Tab::Dashboard,
-            KeyCode::Char('2') => self.current_tab = Tab::Packages,
-            KeyCode::Char('3') => self.current_tab = Tab::Runtimes,
-            KeyCode::Char('4') => self.current_tab = Tab::Security,
-            KeyCode::Char('5') => self.current_tab = Tab::Activity,
-            KeyCode::Char('6') => self.current_tab = Tab::Team,
+            KeyCode::Char('1') => self.switch_tab(Tab::Dashboard),
+            KeyCode::Char('2') => self.switch_tab(Tab::Packages),
+            KeyCode::Char('3') => self.switch_tab(Tab::Runtimes),
+            KeyCode::Char('4') => self.switch_tab(Tab::Security),
+            KeyCode::Char('5') => self.switch_tab(Tab::Activity),
+            KeyCode::Char('6') => self.switch_tab(Tab::Team),
 
             // List navigation
             KeyCode::Up | KeyCode::Char('k') => {
@@ -528,6 +565,8 @@ impl App {
                     self.search_query.clear();
                     self.search_results.clear();
                     self.search_error = None;
+                    self.selected_index = 0;
+                    self.note_query_change();
                 }
             }
             KeyCode::Esc => {
@@ -537,21 +576,23 @@ impl App {
             KeyCode::Backspace => {
                 if self.search_mode && !self.search_query.is_empty() {
                     self.search_query.pop();
+                    self.note_query_change();
                 }
             }
             KeyCode::Enter => {
                 if self.search_mode {
                     self.search_mode = false;
                     // Search will be triggered in the main loop
-                } else if self.current_tab == Tab::Packages && !self.search_results.is_empty() {
-                    // Install selected package
+                } else if self.enter_requests_confirmation() {
+                    // Ask for confirmation first; the install runs only after
+                    // a second Enter confirms the popup (handled by the loop).
                     self.show_popup = true;
                 }
             }
 
             // Tab switching with arrow keys
             KeyCode::Tab => {
-                self.current_tab = match self.current_tab {
+                let next = match self.current_tab {
                     Tab::Dashboard => Tab::Packages,
                     Tab::Packages => Tab::Runtimes,
                     Tab::Runtimes => Tab::Security,
@@ -559,9 +600,10 @@ impl App {
                     Tab::Activity => Tab::Team,
                     Tab::Team => Tab::Dashboard,
                 };
+                self.switch_tab(next);
             }
             KeyCode::BackTab => {
-                self.current_tab = match self.current_tab {
+                let prev = match self.current_tab {
                     Tab::Dashboard => Tab::Team,
                     Tab::Team => Tab::Activity,
                     Tab::Activity => Tab::Security,
@@ -569,12 +611,14 @@ impl App {
                     Tab::Runtimes => Tab::Packages,
                     Tab::Packages => Tab::Dashboard,
                 };
+                self.switch_tab(prev);
             }
 
             // Character input for search
             KeyCode::Char(c) => {
                 if self.search_mode {
                     self.search_query.push(c);
+                    self.note_query_change();
                 }
             }
 
@@ -622,5 +666,88 @@ impl App {
             .unwrap_or_default();
         #[cfg(not(unix))]
         std::collections::HashMap::new()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn test_app() -> App {
+        App {
+            status: None,
+            team_status: None,
+            history: Vec::new(),
+            last_tick: Instant::now(),
+            current_tab: Tab::Packages,
+            selected_index: 0,
+            show_popup: false,
+            search_query: String::new(),
+            search_mode: false,
+            daemon_connected: false,
+            search_results: vec![crate::package_managers::SyncPackage {
+                name: "firefox".to_string(),
+                version: crate::package_managers::parse_version_or_zero("1.0"),
+                description: "Browser".to_string(),
+                repo: "official".to_string(),
+                download_size: 0,
+                installed: false,
+            }],
+            search_error: None,
+            action_error: None,
+            system_metrics: SystemMetrics::default(),
+            last_update: Instant::now(),
+            prev_cpu_sample: None,
+            usage_stats: crate::core::usage::UsageStats::default(),
+            action_in_flight: false,
+            last_query_change: Instant::now(),
+        }
+    }
+
+    #[test]
+    fn enter_with_results_opens_confirmation_popup() {
+        let mut app = test_app();
+        app.handle_key(KeyCode::Enter);
+        assert!(app.show_popup, "first Enter must open the confirm popup");
+        assert!(
+            !app.enter_requests_confirmation(),
+            "popup must suppress a second confirmation request"
+        );
+    }
+
+    #[test]
+    fn esc_cancels_popup_without_installing() {
+        let mut app = test_app();
+        app.show_popup = true;
+        app.handle_key(KeyCode::Esc);
+        assert!(!app.show_popup);
+    }
+
+    #[test]
+    fn enter_during_search_ends_search_and_does_not_open_popup() {
+        let mut app = test_app();
+        app.search_mode = true;
+        app.search_query.push_str("fire");
+        app.handle_key(KeyCode::Enter);
+        assert!(!app.search_mode);
+        assert!(
+            !app.show_popup,
+            "committing a query must never install the stale selection"
+        );
+    }
+
+    #[test]
+    fn tab_switch_resets_selection_and_search_state() {
+        let mut app = test_app();
+        app.search_mode = true;
+        app.selected_index = 10;
+        app.handle_key(KeyCode::Char('5')); // Activity
+        assert_eq!(app.current_tab, Tab::Activity);
+        assert_eq!(app.selected_index, 0);
+        assert!(!app.search_mode, "search mode must not leak across tabs");
+
+        // Returning to Packages starts clean.
+        app.handle_key(KeyCode::Tab);
+        assert_eq!(app.current_tab, Tab::Team);
     }
 }

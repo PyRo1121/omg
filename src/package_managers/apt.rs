@@ -202,7 +202,13 @@ impl crate::package_managers::PackageManager for AptPackageManager {
                     tracing::warn!("Debian status task failed: {error}");
                     Err(anyhow::anyhow!("Debian status task panicked"))
                 });
-            super::debian_db::resolve_status_counts(fast, &fast_counts, get_system_status)
+            // The accurate fallback walks the full APT cache via FFI; keep it
+            // off the executor thread like every other cache walk.
+            tokio::task::spawn_blocking(move || {
+                super::debian_db::resolve_status_counts(fast, &fast_counts, get_system_status)
+            })
+            .await
+            .context("APT status task failed")?
         })
     }
 
@@ -228,7 +234,11 @@ impl crate::package_managers::PackageManager for AptPackageManager {
         >,
     > {
         Box::pin(async move {
-            let updates = list_updates()?;
+            // The FFI cache walk is blocking work; keep it off the executor
+            // thread like the other trait methods.
+            let updates = tokio::task::spawn_blocking(list_updates)
+                .await
+                .context("APT list_updates task failed")??;
             Ok(updates
                 .into_iter()
                 .map(

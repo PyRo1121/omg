@@ -30,8 +30,16 @@ pub async fn clean(orphans: bool, cache: bool, aur: bool, all: bool, dry_run: bo
     }
     println!();
 
-    // AUR cleanup requires the Arch backend no matter where we run: fail
-    // before any distro-specific routing can produce a less precise error.
+    // AUR cleanup needs an Arch-style package database. On Debian-like hosts
+    // the Debian backends own routing below and cannot serve AUR, so fail
+    // explicitly instead of silently ignoring the flag — including when the
+    // Arch backend is compiled in for use on other hosts.
+    #[cfg(any(feature = "debian", feature = "debian-pure"))]
+    if aur && is_debian_like() {
+        anyhow::bail!("AUR cleanup is not available on Debian-like systems");
+    }
+
+    // Without any Arch backend at all there is no AUR to clean anywhere.
     #[cfg(all(
         any(feature = "debian", feature = "debian-pure"),
         not(feature = "arch")
@@ -53,9 +61,43 @@ pub async fn clean(orphans: bool, cache: bool, aur: bool, all: bool, dry_run: bo
                 anyhow::bail!("Cache and AUR cleanup are not supported on the APT backend");
             }
             let do_orphans = orphans || all;
-            if do_orphans {
-                apt_remove_orphans()?;
+            if !do_orphans {
+                println!(
+                    "  {} To remove orphan packages: {}",
+                    "·".dimmed(),
+                    "omg clean --orphans".cyan()
+                );
+                println!();
+                return Ok(());
             }
+            if dry_run {
+                // Dry run must never mutate: report candidates from the FFI
+                // status snapshot instead of invoking apt_remove_orphans.
+                let orphan_count =
+                    tokio::task::spawn_blocking(crate::package_managers::apt_get_system_status)
+                        .await
+                        .context("APT status task failed")?
+                        .map(|(_, _, orphan_count, _)| orphan_count)
+                        .context("Failed to inspect orphan packages")?;
+                if orphan_count == 0 {
+                    println!("  {} No orphan packages found", "✓".green().bold());
+                } else {
+                    println!(
+                        "  {} Would remove {orphan_count} orphan packages",
+                        "→".cyan()
+                    );
+                    println!(
+                        "    Run: {} without --dry-run to apply",
+                        "omg clean --orphans".cyan()
+                    );
+                }
+                println!();
+                println!("  {} No changes made (dry run)", "ℹ".blue().dimmed());
+                return Ok(());
+            }
+            tokio::task::spawn_blocking(crate::package_managers::apt_remove_orphans)
+                .await
+                .context("APT orphan removal task failed")??;
             return Ok(());
         }
     }

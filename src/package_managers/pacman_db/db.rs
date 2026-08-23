@@ -1356,15 +1356,58 @@ mod tests {
     }
 
     #[test]
-    fn test_get_package_counts() {
+    fn test_get_package_counts_consistent_on_real_systems() {
         if crate::core::paths::pacman_local_dir().exists() {
             let (total, explicit, deps) = match get_counts_fast() {
                 Ok(counts) => counts,
                 Err(e) => unreachable!("Failed to get counts: {e}"),
             };
             assert!(total > 0);
-            assert_eq!(total, explicit + deps);
+            // `deps` counts TRUE ORPHANS only, which are a subset of the
+            // non-explicit packages — not a disjoint class that closes the
+            // accounting equation (most dependencies have dependants).
+            assert!(explicit <= total);
+            assert!(explicit + deps <= total);
         }
+    }
+
+    /// Isolated fixture pinning the orphan-accounting rule end to end:
+    /// exactly one of {explicit pkg, required dependency, unrequired
+    /// dependency} is a true orphan under `is_orphan_package`.
+    #[test]
+    fn orphan_accounting_matches_is_orphan_package_on_synthetic_local_db() {
+        let temp = tempfile::TempDir::new().unwrap();
+        let write_desc = |name: &str, reason: &str, extra: &str| {
+            let dir = temp.path().join(name);
+            std::fs::create_dir_all(&dir).unwrap();
+            std::fs::write(
+                dir.join("desc"),
+                format!("%NAME%\n{name}\n\n%VERSION%\n1.0-1\n\n%REASON%\n{reason}\n{extra}"),
+            )
+            .unwrap();
+        };
+        write_desc("explicit-pkg", "0", "");
+        write_desc("required-dep", "1", "\n%REQUIREDBY%\nexplicit-pkg\n");
+        write_desc("lonely-dep", "1", "");
+
+        let packages = parse_local_db(temp.path()).unwrap();
+        assert_eq!(packages.len(), 3);
+        let orphans: Vec<&LocalDbPackage> = packages
+            .values()
+            .filter(|pkg| {
+                crate::package_managers::types::is_orphan_package(
+                    pkg.explicit,
+                    pkg.required_by.is_empty(),
+                    pkg.optional_for.is_empty(),
+                )
+            })
+            .collect();
+        assert_eq!(
+            orphans.len(),
+            1,
+            "only lonely-dep is an orphan: {packages:?}"
+        );
+        assert_eq!(orphans[0].name, "lonely-dep");
     }
 
     #[test]

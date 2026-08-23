@@ -57,6 +57,12 @@ const MAX_CONCURRENT_UNPACKS: usize = 16;
 /// Maximum retries per download
 const MAX_DOWNLOAD_RETRIES: u32 = 3;
 
+/// Upper bound for one ar member inside a `.deb` (control.tar/data.tar as
+/// stored, before decompression). The decompressed payload has its own
+/// streaming budget ([`crate::runtimes::common::MAX_DECOMPRESSED_BYTES`]);
+/// this bounds raw buffering of untrusted archive members.
+const MAX_DEB_MEMBER_BYTES: u64 = 2 * 1024 * 1024 * 1024;
+
 /// Initial backoff for retries (doubles each retry)
 const INITIAL_BACKOFF_MS: u64 = 200;
 
@@ -255,7 +261,7 @@ impl Transaction {
             .map_or_else(|| PathBuf::from("/tmp"), |t| t.path().to_path_buf());
 
         // Collect all packages that need downloading
-        let packages_to_download: Vec<(usize, String, String, String, Option<String>)> = self
+        let packages_to_download: Vec<(usize, String, String, String, Option<String>, u64)> = self
             .to_install
             .iter()
             .chain(self.to_upgrade.iter())
@@ -268,6 +274,7 @@ impl Transaction {
                         action.version.clone(),
                         url.clone(),
                         action.sha256.clone(),
+                        action.size,
                     )
                 })
             })
@@ -279,7 +286,7 @@ impl Transaction {
 
         // OPTIMIZATION: Pre-warm connections to the mirror (fire and forget)
         // Extract unique hosts and make HEAD requests to establish connections
-        if let Some((_, _, _, first_url, _)) = packages_to_download.first()
+        if let Some((_, _, _, first_url, _, _)) = packages_to_download.first()
             && let Ok(url) = reqwest::Url::parse(first_url)
         {
             let warm_url = format!("{}://{}/", url.scheme(), url.host_str().unwrap_or(""));
@@ -323,7 +330,7 @@ impl Transaction {
         // Pre-create the download task futures with their own sender clones
         let download_futures: Vec<_> = packages_to_download
             .into_iter()
-            .map(|(idx, name, version, url, sha256)| {
+            .map(|(idx, name, version, url, sha256, expected_size)| {
                 let client = client.clone();
                 let temp_dir = temp_dir.clone();
                 let content_store = content_store.clone();
@@ -350,6 +357,7 @@ impl Transaction {
                         &pb,
                         &content_store,
                         sha256.as_deref(),
+                        expected_size,
                     )
                     .await;
 
@@ -604,9 +612,13 @@ impl Transaction {
     /// Rollback the transaction
     ///
     /// Removes files/directories installed by this transaction and restores
-    /// the pre-transaction dpkg status database. Files that a package
-    /// *overwrote* are removed but their previous contents are not restored;
-    /// see the module docs for the full contract.
+    /// the pre-transaction dpkg status database. Removal problems are
+    /// collected: rollback always attempts the integrity-critical status
+    /// restore before reporting a combined failure, instead of aborting on
+    /// the first stuck path and leaving the package database permanently
+    /// inconsistent. Files that a package *overwrote* are removed but their
+    /// previous contents are not restored; see the module docs for the full
+    /// contract.
     pub fn rollback(&mut self) -> Result<()> {
         tracing::warn!(
             "Rolling back transaction ({} files installed)",
@@ -616,17 +628,48 @@ impl Transaction {
         // Reverse order: children were recorded before their parent
         // directories, so unwinding backwards removes files first and then
         // the (now empty) directories created for them.
+        let mut removal_failures: Vec<(PathBuf, anyhow::Error)> = Vec::new();
         for file in self.installed_files.iter().rev() {
-            remove_file_if_present(file)?;
+            if let Err(error) = remove_file_if_present(file) {
+                tracing::error!("Rollback could not remove {}: {error:#}", file.display());
+                removal_failures.push((file.clone(), error));
+            }
         }
 
+        // The dpkg status snapshot is integrity-bound persisted data: its
+        // restore must be attempted even when path cleanup got stuck.
+        let mut restore_failures: Vec<(PathBuf, anyhow::Error)> = Vec::new();
         for (original, backup) in &self.backups {
-            restore_backup(backup, original)?;
+            if let Err(error) = restore_backup(backup, original) {
+                tracing::error!(
+                    "Rollback could not restore {} from {}: {error:#}",
+                    original.display(),
+                    backup.display()
+                );
+                restore_failures.push((original.clone(), error));
+            }
         }
 
         self.state = TransactionState::RolledBack;
-        tracing::info!("Transaction rolled back successfully");
-        Ok(())
+
+        if removal_failures.is_empty() && restore_failures.is_empty() {
+            tracing::info!("Transaction rolled back successfully");
+            return Ok(());
+        }
+
+        anyhow::bail!(
+            "Rollback incomplete: {} installed path(s) could not be removed, \
+             {} backup(s) could not be restored; system may need manual repair. \
+             First removal failure: {}; first restore failure: {}",
+            removal_failures.len(),
+            restore_failures.len(),
+            removal_failures
+                .first()
+                .map_or_else(String::new, |(_, error)| error.to_string()),
+            restore_failures
+                .first()
+                .map_or_else(String::new, |(_, error)| error.to_string()),
+        )
     }
 
     /// Get the total download size
@@ -659,90 +702,115 @@ impl Transaction {
     }
 
     /// Execute package removal
-    #[expect(clippy::unused_async)]
+    ///
+    /// The whole removal loop (maintainer scripts via `Command`, dpkg status
+    /// rewrites with fsync, filesystem walks) is synchronous and unbounded in
+    /// wall time, so it runs on the blocking pool instead of the executor.
+    /// `indicatif` progress bars are thread-safe and keep drawing from the
+    /// blocking thread.
     pub async fn execute_removal(&mut self) -> Result<()> {
         if self.to_remove.is_empty() {
             return Ok(());
         }
 
-        tracing::info!("Starting removal of {} packages", self.to_remove.len());
+        let package_names: Vec<String> = self.to_remove.iter().map(|a| a.name.clone()).collect();
+        tokio::task::spawn_blocking(move || execute_removal_blocking(&package_names))
+            .await
+            .context("Package removal task failed")?
+    }
+}
+/// Synchronous body of [`Transaction::execute_removal`], executed on the
+/// blocking pool so maintainer scripts and fsync-heavy status rewrites never
+/// stall the async executor.
+fn execute_removal_blocking(packages_to_remove: &[String]) -> Result<()> {
+    tracing::info!("Starting removal of {} packages", packages_to_remove.len());
 
-        // Setup progress display
-        let multi = MultiProgress::new();
-        let overall = multi.add(ProgressBar::new(self.to_remove.len() as u64));
-        overall.set_style(
+    // Setup progress display
+    let multi = MultiProgress::new();
+    let overall = multi.add(ProgressBar::new(packages_to_remove.len() as u64));
+    overall.set_style(
+        ProgressStyle::default_bar()
+            .template("{prefix:.bold} [{bar:40.red/blue}] {pos}/{len} {msg}")
+            .expect("valid template")
+            .progress_chars("=>-"),
+    );
+    overall.set_prefix("Removing");
+
+    remove_packages_sequentially(packages_to_remove, &multi, &overall)?;
+
+    overall.finish_and_clear();
+    tracing::info!("Successfully removed {} packages", packages_to_remove.len());
+    Ok(())
+}
+
+/// Remove `packages_to_remove` one at a time, driving the per-package and
+/// overall progress bars. Split from [`execute_removal_blocking`] so tests can
+/// exercise the removal step sequence without progress-bar setup.
+fn remove_packages_sequentially(
+    packages_to_remove: &[String],
+    multi: &MultiProgress,
+    overall: &ProgressBar,
+) -> Result<()> {
+    // Process packages in dependency order (leaves first).
+    for package_name in packages_to_remove {
+        let pb = multi.add(ProgressBar::new(5));
+        pb.set_style(
             ProgressStyle::default_bar()
-                .template("{prefix:.bold} [{bar:40.red/blue}] {pos}/{len} {msg}")
+                .template("  {prefix:.cyan} [{bar:25.red/blue}] {msg}")
                 .expect("valid template")
                 .progress_chars("=>-"),
         );
-        overall.set_prefix("Removing");
+        pb.set_prefix(package_name.clone());
 
-        // Process packages in dependency order (leaves first)
-        // For now, process in reverse order as a simple heuristic
-        let packages_to_remove: Vec<_> = self.to_remove.iter().map(|a| a.name.clone()).collect();
+        pb.set_message("validating");
+        pb.inc(1);
+        Transaction::require_package_installed(
+            package_name,
+            super::is_installed_fast(package_name)?,
+        )?;
 
-        for package_name in &packages_to_remove {
-            let pb = multi.add(ProgressBar::new(5));
-            pb.set_style(
-                ProgressStyle::default_bar()
-                    .template("  {prefix:.cyan} [{bar:25.red/blue}] {msg}")
-                    .expect("valid template")
-                    .progress_chars("=>-"),
-            );
-            pb.set_prefix(package_name.clone());
+        let version = Transaction::require_installed_version(
+            package_name,
+            super::get_package_version(package_name)?,
+        )?;
 
-            pb.set_message("validating");
-            pb.inc(1);
-            Self::require_package_installed(package_name, super::is_installed_fast(package_name)?)?;
+        pb.set_message("prerm");
+        pb.inc(1);
+        run_prerm_script(package_name).map_err(|error| {
+            removal_step_failed(&pb, overall, package_name, "prerm script", &error)
+        })?;
 
-            let version = Self::require_installed_version(
-                package_name,
-                super::get_package_version(package_name)?,
-            )?;
+        pb.set_message("removing files");
+        pb.inc(1);
+        remove_package_files(package_name).map_err(|error| {
+            removal_step_failed(&pb, overall, package_name, "file removal", &error)
+        })?;
 
-            pb.set_message("prerm");
-            pb.inc(1);
-            run_prerm_script(package_name).map_err(|error| {
-                removal_step_failed(&pb, &overall, package_name, "prerm script", &error)
-            })?;
+        pb.set_message("postrm");
+        pb.inc(1);
+        run_postrm_script(package_name).map_err(|error| {
+            removal_step_failed(&pb, overall, package_name, "postrm script", &error)
+        })?;
 
-            pb.set_message("removing files");
-            pb.inc(1);
-            remove_package_files(package_name).map_err(|error| {
-                removal_step_failed(&pb, &overall, package_name, "file removal", &error)
-            })?;
+        pb.set_message("updating status");
+        pb.inc(1);
+        update_dpkg_status_for_removal(package_name).map_err(|error| {
+            removal_step_failed(&pb, overall, package_name, "status update", &error)
+        })?;
 
-            pb.set_message("postrm");
-            pb.inc(1);
-            run_postrm_script(package_name).map_err(|error| {
-                removal_step_failed(&pb, &overall, package_name, "postrm script", &error)
-            })?;
+        pb.set_message("cleanup");
+        pb.inc(1);
+        cleanup_dpkg_info_files(package_name)
+            .map_err(|error| removal_step_failed(&pb, overall, package_name, "cleanup", &error))?;
 
-            pb.set_message("updating status");
-            pb.inc(1);
-            update_dpkg_status_for_removal(package_name).map_err(|error| {
-                removal_step_failed(&pb, &overall, package_name, "status update", &error)
-            })?;
-
-            pb.set_message("cleanup");
-            pb.inc(1);
-            cleanup_dpkg_info_files(package_name).map_err(|error| {
-                removal_step_failed(&pb, &overall, package_name, "cleanup", &error)
-            })?;
-
-            pb.set_message("✓".green().to_string());
-            pb.finish();
-            overall.inc(1);
-            tracing::info!("Removed {} v{}", package_name, version);
-        }
-
-        overall.finish_and_clear();
-        tracing::info!("Successfully removed {} packages", packages_to_remove.len());
-        Ok(())
+        pb.set_message("\u{2713}".green().to_string());
+        pb.finish();
+        overall.inc(1);
+        tracing::info!("Removed {} v{}", package_name, version);
     }
-}
 
+    Ok(())
+}
 /// Merge new dpkg status paragraphs into `current`.
 ///
 /// Existing paragraphs whose `Package:` name appears in `entries` are
@@ -873,10 +941,16 @@ fn unpack_deb_standalone(
         let mut entry = entry?;
         let name = String::from_utf8_lossy(entry.header().identifier()).to_string();
 
+        // Bound the raw buffering of each untrusted archive member; the
+        // decompression budget applies later, to the payload itself.
         let mut contents = Vec::new();
-        entry
+        (&mut entry)
+            .take(MAX_DEB_MEMBER_BYTES.saturating_add(1))
             .read_to_end(&mut contents)
             .with_context(|| format!("Failed to read {name} from .deb archive"))?;
+        if u64::try_from(contents.len()).unwrap_or(u64::MAX) > MAX_DEB_MEMBER_BYTES {
+            anyhow::bail!("Archive member {name} exceeds the {MAX_DEB_MEMBER_BYTES} byte limit");
+        }
 
         if name.starts_with("control.tar") {
             control_tar = Some(contents);
@@ -1081,6 +1155,45 @@ fn tar_payload_reader_with_budget(data: &[u8], budget: u64) -> Result<Box<dyn Re
     Ok(Box::new(std::io::Cursor::new(data.to_vec())))
 }
 
+/// Create any missing ancestor directories between `root` and `path`,
+/// recording each newly created directory in `installed_files` so rollback can
+/// remove the full chain instead of leaving empty residue behind. Ancestors
+/// already handled for this archive are skipped.
+fn ensure_parent_dirs_recorded(
+    path: &Path,
+    root: &Path,
+    seen: &mut std::collections::HashSet<PathBuf>,
+    installed_files: &mut Vec<PathBuf>,
+) -> Result<()> {
+    let mut missing = Vec::new();
+    for ancestor in path.ancestors().skip(1) {
+        if ancestor == root || seen.contains(ancestor) {
+            break;
+        }
+        seen.insert(ancestor.to_path_buf());
+        match fs::symlink_metadata(ancestor) {
+            Ok(_) => {}
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+                missing.push(ancestor.to_path_buf());
+            }
+            Err(error) => {
+                return Err(error).with_context(|| {
+                    format!("Failed to inspect {} for extraction", ancestor.display())
+                });
+            }
+        }
+    }
+
+    // Ancestors arrive nearest-first; create outermost first so each single
+    // level `create_dir` sees an existing parent.
+    for dir in missing.into_iter().rev() {
+        fs::create_dir(&dir)
+            .with_context(|| format!("Failed to create directory {}", dir.display()))?;
+        installed_files.push(dir);
+    }
+    Ok(())
+}
+
 /// Extract a tar archive with auto-detection of compression
 fn extract_tar_auto(data: &[u8], dest: &Path) -> Result<()> {
     let mut reader = tar_payload_reader(data)?;
@@ -1119,6 +1232,9 @@ fn extract_tar_to_root_at(root: &Path, data: &[u8]) -> Result<Vec<PathBuf>> {
 
     let mut installed_files = Vec::new();
     let mut pending_links = Vec::new();
+    // Ancestor directories already processed for this archive; prevents both
+    // redundant syscalls and duplicate rollback entries.
+    let mut seen_dirs: std::collections::HashSet<PathBuf> = std::collections::HashSet::new();
 
     for entry in archive.entries()? {
         let mut entry = entry?;
@@ -1126,8 +1242,16 @@ fn extract_tar_to_root_at(root: &Path, data: &[u8]) -> Result<Vec<PathBuf>> {
         let entry_type = entry.header().entry_type();
 
         if entry_type.is_dir() {
-            fs::create_dir_all(&entry_path)
-                .with_context(|| format!("Failed to create directory {}", entry_path.display()))?;
+            ensure_parent_dirs_recorded(&entry_path, root, &mut seen_dirs, &mut installed_files)?;
+            // Archives routinely re-declare pre-existing directories ("/usr",
+            // "/etc", ...); only a genuine failure to provide it is fatal.
+            if let Err(error) = fs::create_dir(&entry_path)
+                && error.kind() != std::io::ErrorKind::AlreadyExists
+            {
+                return Err(error).with_context(|| {
+                    format!("Failed to create directory {}", entry_path.display())
+                });
+            }
             installed_files.push(entry_path);
             continue;
         }
@@ -1170,11 +1294,7 @@ fn extract_tar_to_root_at(root: &Path, data: &[u8]) -> Result<Vec<PathBuf>> {
         }
 
         // Regular file: stream contents without buffering the whole payload.
-        if let Some(parent) = entry_path.parent() {
-            fs::create_dir_all(parent).with_context(|| {
-                format!("Failed to create parent dir for {}", entry_path.display())
-            })?;
-        }
+        ensure_parent_dirs_recorded(&entry_path, root, &mut seen_dirs, &mut installed_files)?;
 
         let mode = entry.header().mode()?;
         let size = entry.header().size()?;
@@ -1282,7 +1402,16 @@ async fn download_package_streaming(
     progress: &ProgressBar,
     content_store: &ContentStore,
     sha256: Option<&str>,
+    expected_size: u64,
 ) -> Result<PathBuf> {
+    // A compromised mirror must not be able to fill the disk: abort once the
+    // response doubles the metadata-declared size plus a 1 MiB slack.
+    let max_bytes = if expected_size > 0 {
+        Some(expected_size.saturating_mul(2).saturating_add(1024 * 1024))
+    } else {
+        None
+    };
+
     let filename = format!("{name}_{version}.deb");
     let dest = temp_dir.join(&filename);
 
@@ -1310,7 +1439,7 @@ async fn download_package_streaming(
 
     // OPTIMIZATION: Fast path - download without overhead
     // Skip content store on first download to minimize latency
-    match download_streaming_once(client, url, &dest, progress).await {
+    match download_streaming_once(client, url, &dest, progress, max_bytes).await {
         Ok(()) => {
             tracing::debug!("Successfully downloaded {} to {}", name, dest.display());
             require_verified_deb(&dest, name, sha256)?;
@@ -1329,7 +1458,7 @@ async fn download_package_streaming(
         progress.set_message(format!("retry {}/{}", attempt + 1, MAX_DOWNLOAD_RETRIES));
         tokio::time::sleep(backoff).await;
 
-        match download_streaming_once(client, url, &dest, progress).await {
+        match download_streaming_once(client, url, &dest, progress, max_bytes).await {
             Ok(()) => {
                 tracing::debug!("Retry succeeded for {}", name);
                 require_verified_deb(&dest, name, sha256)?;
@@ -1352,12 +1481,26 @@ async fn download_package_streaming(
     }))
 }
 
+/// Abort a download once it grows past the metadata-derived ceiling.
+fn enforce_download_cap(downloaded: u64, max_bytes: Option<u64>, url: &str) -> Result<()> {
+    if let Some(max) = max_bytes
+        && downloaded > max
+    {
+        anyhow::bail!(
+            "Download from {url} reached {downloaded} bytes, exceeding the \
+             expected maximum of {max} bytes; refusing to fill the disk"
+        );
+    }
+    Ok(())
+}
+
 /// Stream download directly to disk
 async fn download_streaming_once(
     client: &reqwest::Client,
     url: &str,
     dest: &Path,
     progress: &ProgressBar,
+    max_bytes: Option<u64>,
 ) -> Result<()> {
     use futures::StreamExt;
     use tokio::io::AsyncWriteExt;
@@ -1402,6 +1545,7 @@ async fn download_streaming_once(
                 .await
                 .with_context(|| format!("Failed to write to {}", dest.display()))?;
             downloaded += write_buffer.len() as u64;
+            enforce_download_cap(downloaded, max_bytes, url)?;
             progress.set_position(downloaded);
             write_buffer.clear();
         }
@@ -1413,6 +1557,7 @@ async fn download_streaming_once(
             .await
             .with_context(|| format!("Failed to write final chunk to {}", dest.display()))?;
         downloaded += write_buffer.len() as u64;
+        enforce_download_cap(downloaded, max_bytes, url)?;
         progress.set_position(downloaded);
     }
 
@@ -2173,5 +2318,101 @@ mod tests {
             merged,
             "Package: curl\nStatus: install ok installed\nVersion: 8.0\n\n"
         );
+    }
+
+    // ─── wave-3 fixes ───
+
+    #[tokio::test]
+    async fn execute_removal_completes_for_empty_transaction() {
+        let mut tx = Transaction::new().expect("content store init");
+        tx.execute_removal()
+            .await
+            .expect("removing nothing must succeed");
+    }
+
+    #[tokio::test]
+    async fn execute_removal_reports_unknown_package_as_failure() {
+        // The blocking-pool route must still propagate per-package validation
+        // failures instead of silently completing.
+        let mut tx = Transaction::new().expect("content store init");
+        tx.add_remove("omg-wave3-definitely-not-installed".to_string());
+        let error = tx
+            .execute_removal()
+            .await
+            .expect_err("unknown package must fail loudly");
+        assert!(
+            error.to_string().contains("not installed")
+                || error.to_string().contains("no version")
+                || error.to_string().contains("Failed"),
+            "unexpected error: {error:#}"
+        );
+    }
+
+    #[test]
+    fn rollback_restores_dpkg_status_even_when_a_path_cannot_be_removed() {
+        let dir = tempfile::TempDir::new().expect("temp dir");
+        let original = dir.path().join("status");
+        std::fs::write(&original, b"after-transaction").expect("post-tx status");
+        let backup = dir.path().join("status.pre-transaction");
+        std::fs::write(&backup, b"pre-transaction").expect("backup status");
+
+        // A directory that still holds foreign content cannot be removed by
+        // rollback; that must not prevent the integrity-critical restore.
+        let stuck = dir.path().join("shared");
+        std::fs::create_dir_all(stuck.join("foreign")).expect("stubborn dir");
+
+        let content_store = ContentStore::with_path(dir.path().join("content-store"));
+        content_store.init().expect("content store init");
+
+        let mut tx = Transaction {
+            state: TransactionState::Configuring,
+            to_install: Vec::new(),
+            to_remove: Vec::new(),
+            to_upgrade: Vec::new(),
+            temp_dir: None,
+            backups: HashMap::from([(original.clone(), backup)]),
+            installed_files: vec![stuck],
+            content_store,
+        };
+
+        let error = tx
+            .rollback()
+            .expect_err("stuck path must be reported as incomplete rollback");
+        assert!(error.to_string().contains("Rollback incomplete"), "{error}");
+        assert_eq!(
+            std::fs::read(&original).expect("restored status"),
+            b"pre-transaction",
+            "dpkg status must be restored despite the removal failure"
+        );
+    }
+
+    #[test]
+    fn implicit_parent_directories_are_recorded_for_rollback() {
+        let temp = tempfile::tempdir().expect("tempdir");
+
+        let data = build_tar(|builder| {
+            append_regular_file(builder, "./n1/n2/file", b"payload");
+            Ok(())
+        });
+
+        let installed =
+            extract_tar_to_root_at(temp.path(), &data).expect("extraction must succeed");
+
+        let n1 = temp.path().join("n1");
+        let n2 = n1.join("n2");
+        let file = n2.join("file");
+        for path in [&n1, &n2, &file] {
+            assert!(
+                installed.contains(path),
+                "{} must be recorded",
+                path.display()
+            );
+        }
+
+        // Reverse-order removal (as rollback does) unwinds the whole chain.
+        for path in installed.iter().rev() {
+            remove_file_if_present(path).expect("reverse removal");
+        }
+        assert!(!n1.exists(), "implicit parent chain fully removed");
     }
 }

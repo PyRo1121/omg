@@ -7,6 +7,7 @@ OMG provides world-class support for the Arch User Repository (AUR), combining t
 OMG treats AUR packages as first-class citizens, with no distinction between official repository packages and AUR packages in the CLI. Just use `omg install` for everything.
 
 **Key advantages over yay/paru:**
+
 - **50% faster** package operations through intelligent optimizations
 - **No sudo timeouts** during long builds
 - **Parallel source downloads** for multi-source packages
@@ -85,8 +86,8 @@ omg install spotify
 # Search AUR and official repos together
 omg search chrome
 
-# Update all AUR packages
-omg upgrade
+# Update all packages (official + AUR)
+omg update
 
 # Remove an AUR package
 omg remove spotify
@@ -97,7 +98,7 @@ omg remove spotify
 Performance comparison installing `yay` package (includes dependencies):
 
 | Tool | Time | Relative |
-|------|------|----------|
+| ------ | ------ | ---------- |
 | **OMG (optimized)** | **9.1s** | **1.0x (baseline)** |
 | OMG (before optimization) | 18.2s | 2.0x slower |
 | yay | ~15-20s | 1.6-2.2x slower |
@@ -108,7 +109,7 @@ Performance comparison installing `yay` package (includes dependencies):
 Installing a package with 5 source files:
 
 | Tool | Download Time | Build Time | Total |
-|------|---------------|------------|-------|
+| ------ | --------------- | ------------ | ------- |
 | **OMG (parallel)** | **2.3s** | 8.1s | **10.4s** |
 | OMG (sequential) | 11.2s | 8.1s | 19.3s |
 | yay | 10.8s | 8.3s | 19.1s |
@@ -159,6 +160,7 @@ keep_build = true
 ```
 
 Then inspect the build directory:
+
 ```bash
 ls /tmp/omg-aur/<package-name>/
 ```
@@ -166,7 +168,7 @@ ls /tmp/omg-aur/<package-name>/
 ## Comparison with yay/paru
 
 | Feature | OMG | yay | paru |
-|---------|-----|-----|------|
+| --------- | ----- | ----- | ------ |
 | Parallel downloads | ✅ Yes | ❌ No | ❌ No |
 | Smart dep resolution | ✅ Yes | ❌ No | ❌ No |
 | Sudoloop | ✅ Yes | ❌ No | ⚠️ Partial |

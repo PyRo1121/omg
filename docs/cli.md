@@ -18,17 +18,17 @@ This guide documents every OMG command with detailed explanations, examples, and
 | ---------- | ---------- |
 | **Package Management** | `search`, `install`, `remove`, `update`, `info`, `clean`, `explicit`, `sync`, `why`, `outdated`, `size`, `blame` |
 | **Runtime Management** | `use`, `list`, `which` |
-| **Shell Integration** | `hook`, `completions` |
+| **Shell Integration** | `hook`, `completions`, `hooks`, `workspace` |
 | **Security & Audit** | `audit`, `status`, `doctor` |
 | **Task Runner** | `run` |
 | **Project Management** | `new`, `tool`, `init`, `self-update` |
 | **Environment & Snapshots** | `env`, `snapshot`, `diff` |
-| **Team Collaboration** | `team` |
+| **Team Collaboration** | `team`, `privacy` |
 | **Container Management** | `container` |
 | **CI/CD & Migration** | `ci`, `migrate` |
 | **History & Rollback** | `history`, `rollback` |
-| **Dashboard** | `dash`, `stats` |
-| **Configuration** | `config`, `daemon`, `license` |
+| **Dashboard** | `dash`, `stats`, `metrics`, `daemon-status` |
+| **Configuration** | `config`, `daemon`, `license`, `generate-man` |
 | **Enterprise** | `fleet`, `enterprise` |
 
 ---
@@ -46,7 +46,7 @@ omg search <query> [OPTIONS]
 **Options:**
 
 | Option | Short | Description |
-|--------|-------|-------------|
+| -------- | ------- | ------------- |
 | `--detailed` | `-d` | Show detailed source metadata (votes, popularity where available) |
 | `--no-aur` | | Search official repositories only (skip community sources) |
 | `--limit <LIMIT>` | `-l` | Maximum number of results to display (default: 50) |
@@ -121,7 +121,7 @@ omg remove <packages...> [OPTIONS]
 **Options:**
 
 | Option | Short | Description |
-|--------|-------|-------------|
+| -------- | ------- | ------------- |
 | `--recursive` | `-r` | Also remove unused dependencies |
 | `--yes` | `-y` | Skip confirmation prompt |
 | `--dry-run` | | Show what would be removed without making changes |
@@ -152,7 +152,7 @@ omg update [OPTIONS]
 **Options:**
 
 | Option | Short | Description |
-|--------|-------|-------------|
+| -------- | ------- | ------------- |
 | `--check` | `-c` | Only check for updates, don't install |
 | `--yes` | `-y` | Skip confirmation prompt |
 | `--dry-run` | | Show what would be updated without making changes |
@@ -229,8 +229,9 @@ omg clean [OPTIONS]
 | -------- | ------- | ------------- |
 | `--orphans` | `-o` | Remove orphaned packages |
 | `--cache` | `-c` | Clear package cache |
-| `--aur` | `-a` | Clear AUR build cache |
-| `--all` | | Clear everything |
+| `--aur` | | Clear build directories for source-based installs |
+| `--all` | `-a` | Remove all (orphans + cache + aur) |
+| `--dry-run` | | Show what would be cleaned without making changes |
 
 **Examples:**
 
@@ -241,11 +242,14 @@ omg clean --orphans
 # Clear package cache
 omg clean --cache
 
-# Clear AUR build cache
+# Clear AUR build directories
 omg clean --aur
 
 # Full cleanup
 omg clean --all
+
+# Preview without changing anything
+omg clean --dry-run --all
 ```
 
 ---
@@ -600,6 +604,68 @@ omg completions fish > ~/.config/fish/completions/omg.fish
 
 ---
 
+### omg hooks
+
+Manage Git hooks for environment synchronization.
+
+```bash
+omg hooks <SUBCOMMAND>
+```
+
+**Subcommands:**
+
+| Subcommand | Description |
+| ------------ | ------------- |
+| `install [--force]` | Install Git hooks for environment synchronization |
+| `uninstall` | Uninstall Git hooks |
+| `status` | Show installed hooks status |
+| `run <hook>` | Run a specific hook manually (pre-commit, post-checkout, post-merge) |
+
+---
+
+### omg workspace
+
+Workspace management for monorepos.
+
+```bash
+omg workspace <SUBCOMMAND>
+```
+
+**Subcommands:**
+
+| Subcommand | Description |
+| ------------ | ------------- |
+| `init <name>` | Initialize a new workspace |
+| `add <path> [--name]` | Add a project to the workspace |
+| `remove <project>` | Remove a project from the workspace |
+| `list` | List all projects in the workspace |
+| `run <command> [-p] [--filter]` | Run a command across all projects |
+| `diff [branch]` | Show environment diff across workspace vs a branch (default: main) |
+| `sync [-y]` | Sync all project environments |
+| `status` | Show workspace status |
+
+---
+
+### omg privacy
+
+Manage your privacy settings and data (GDPR/CCPA).
+
+```bash
+omg privacy [SUBCOMMAND]
+```
+
+**Subcommands:**
+
+| Subcommand | Description |
+| ------------ | ------------- |
+| `status` | Show privacy policy summary and your current settings |
+| `export [-o <file>]` | Export all your data (Right to Portability) |
+| `delete --confirm` | Request deletion of all your data (requires confirmation) |
+| `opt-out` | Disable telemetry collection (keeps license functional) |
+| `opt-in` | Re-enable telemetry collection |
+
+---
+
 ## 🛡️ Security & Audit
 
 ### omg audit
@@ -621,6 +687,10 @@ omg audit [SUBCOMMAND]
 | `verify` | Verify audit log integrity |
 | `policy` | Show security policy status |
 | `slsa <pkg>` | Check SLSA provenance |
+| `licenses` | Scan for software license compliance issues |
+| `fix` | Auto-fix vulnerabilities by upgrading packages |
+| `export` | Export compliance evidence for audit frameworks |
+| `eol` | Check end-of-life status for installed runtimes |
 
 **Options for `log`:**
 
@@ -637,8 +707,7 @@ omg audit [SUBCOMMAND]
 omg audit
 omg audit scan
 
-# Generate SBOM with vulnerabilities
-omg audit sbom --vulns
+# Generate SBOM
 omg audit sbom -o sbom.json
 
 # Scan for secrets
@@ -671,8 +740,12 @@ omg audit slsa /path/to/package.pkg.tar.zst
 Display system status overview.
 
 ```bash
-omg status
+omg status [--fast]
 ```
+
+| Option | Short | Description |
+|--------|-------|-------------|
+| `--fast` | `-f` | Use fast path (counts only, skips full dependency scan) |
 
 **Output includes:**
 
@@ -689,8 +762,14 @@ omg status
 Run system health checks.
 
 ```bash
-omg doctor
+omg doctor [OPTIONS]
 ```
+
+| Option | Description |
+| -------- | ------------- |
+| `--network` | Test network connectivity to package mirrors |
+| `--eol` | Check for end-of-life runtime versions |
+| `--turbo` | Enable turbo mode check (zero-sudo package operations via Linux capabilities) |
 
 **Checks performed:**
 
@@ -720,6 +799,8 @@ omg run <task> [-- <args...>] [OPTIONS]
 | `--watch` | `-w` | Watch mode: re-run task on file changes |
 | `--parallel` | `-p` | Run multiple comma-separated tasks in parallel |
 | `--runtime-backend <backend>` | | Force runtime backend (native, mise, native-then-mise) |
+| `--using <ecosystem>` | `-u` | Ecosystem to use (e.g., node, rust, python, make) |
+| `--all` | `-a` | Run task across all detected ecosystems |
 
 **Supported Project Files:**
 
@@ -934,28 +1015,45 @@ omg up
 Get or set configuration values.
 
 ```bash
-omg config [key] [value]
+omg config [SUBCOMMAND]
 ```
+
+**Subcommands:**
+
+| Subcommand | Description |
+| ------------ | ------------- |
+| `get <key>` | Get a configuration value |
+| `set <key> <value>` | Set a configuration value |
+| `list` | List all configuration values |
+| `validate` | Validate configuration file syntax and values |
+| `reset [-y]` | Reset configuration to defaults |
+| `path` | Show configuration file path |
 
 **Examples:**
 
 ```bash
 # List all configuration
-omg config
+omg config list
 
 # Get a specific value
-omg config data_dir
+omg config get data_dir
 
 # Set a value
-omg config default_shell zsh
+omg config set default_shell zsh
+
+# Disable telemetry
+omg config set telemetry.enabled false
 ```
 
-**Configuration options:**
+**Configuration keys:**
 
-- `data_dir` — Data directory path
-- `socket` — Daemon socket path
+- `data_dir` — Data directory path (read-only via CLI)
+- `socket` — Daemon socket path (read-only via CLI)
 - `default_shell` — Default shell for hooks
-- `telemetry` — Enable/disable telemetry
+- `telemetry.enabled` — Enable/disable telemetry
+- `aur.build_concurrency`, `aur.enable_ccache`, `aur.enable_sccache`, `aur.secure_makepkg`, `aur.makeflags` — AUR build tuning
+- `shims.enabled` — Shim system toggle
+- `runtime_backend` — Runtime resolution strategy (read-only via CLI)
 
 ---
 
@@ -1126,8 +1224,8 @@ omg team review 42 --approve
 # Create golden path template
 omg team golden-path create frontend-setup --node 20 --packages "eslint prettier"
 
-# Check compliance
-omg team compliance --export json
+# Check compliance and export a report file
+omg team compliance --export compliance-report.json
 
 # View activity
 omg team activity --days 30
@@ -1319,36 +1417,37 @@ omg enterprise <SUBCOMMAND>
 
 | Subcommand | Description |
 | ------------ | ------------- |
-| `reports` | Generate executive reports |
-| `policy` | Manage hierarchical policies |
+| `reports` | Generate executive reports (JSON) |
+| `policy show` | Show current policies |
 | `audit-export` | Export compliance evidence |
 | `license-scan` | Scan for license compliance |
-| `server` | Self-hosted server management |
+| `server mirror` | Sync/mirror packages from upstream |
 
 **Examples:**
 
 ```bash
-# Generate monthly report
-omg enterprise reports --type monthly --format pdf
+# Generate monthly report (JSON is the only implemented format)
+omg enterprise reports --type monthly --format json
 
 # Export SOC2 compliance evidence
 omg enterprise audit-export --format soc2 --period 2025-Q4
 
-# Scan for license issues
-omg enterprise license-scan --export spdx
-
-# Set organization policy
-omg enterprise policy set --scope org "require_pgp=true"
+# Scan for license issues, exporting results to a file
+omg enterprise license-scan --export license-report.csv
 
 # Show current policies
 omg enterprise policy show
 
-# Initialize self-hosted server
-omg enterprise server init --license KEY --domain pkg.company.com --storage /data
+# Mirror packages from an upstream registry (self-hosted server)
+omg enterprise server mirror [--upstream https://registry.example.com]
 ```
 
 **Report types:** monthly, quarterly, custom
 **Compliance frameworks:** soc2, iso27001, fedramp, hipaa, pci-dss
+
+> Note: policy *management* beyond viewing (`policy show`) and self-hosted server
+> initialization are not available in the CLI yet — only `policy show` and
+> `server mirror` exist today.
 
 ---
 
@@ -1365,8 +1464,12 @@ omg history [OPTIONS]
 **Options:**
 
 | Option | Short | Description |
-|--------|-------|-------------|
+| -------- | ------- | ------------- |
 | `--limit <N>` | `-l` | Number of entries (default: 20) |
+| `--search <pkg>` | `-s` | Search for a specific package in history |
+| `--type <type>` | `-t` | Filter by transaction type (install, remove, update, sync) |
+| `--from <date>` | | Filter transactions from this date (YYYY-MM-DD) |
+| `--to <date>` | | Filter transactions until this date (YYYY-MM-DD) |
 
 **Examples:**
 
@@ -1376,6 +1479,9 @@ omg history
 
 # View last 5 transactions
 omg history --limit 5
+
+# Search history for a package
+omg history --search firefox
 ```
 
 ---
@@ -1385,13 +1491,19 @@ omg history --limit 5
 Rollback to a previous state.
 
 ```bash
-omg rollback [transaction-id]
+omg rollback [transaction-id] [-y]
 ```
+
+**Options:**
+
+| Option | Short | Description |
+|--------|-------|-------------|
+| `--yes` | `-y` | Auto-confirm without prompting (required in non-interactive mode) |
 
 **Examples:**
 
 ```bash
-# Interactive rollback
+# Interactive rollback (most recent transaction)
 omg rollback
 
 # Rollback specific transaction
@@ -1413,9 +1525,10 @@ omg dash
 **Keyboard Controls:**
 
 | Key | Action |
-|-----|--------|
+| ----- | -------- |
 | `q` | Quit |
 | `r` | Refresh |
+| `/` | Search packages |
 | `Tab` | Switch view |
 
 ---
@@ -1427,6 +1540,40 @@ Display usage statistics.
 ```bash
 omg stats
 ```
+
+---
+
+### omg metrics
+
+Show system metrics (Prometheus-style). Unix only.
+
+```bash
+omg metrics
+```
+
+---
+
+### omg daemon-status
+
+Show detailed daemon status.
+
+```bash
+omg daemon-status
+```
+
+---
+
+### omg generate-man
+
+Generate man pages for OMG commands.
+
+```bash
+omg generate-man [--output <dir>]
+```
+
+| Option | Short | Description |
+|--------|-------|-------------|
+| `--output <dir>` | `-o` | Output directory for man pages (default: ~/.local/share/man/man1) |
 
 ---
 
@@ -1487,6 +1634,8 @@ omg-fast <subcommand>
 | `tc` | Total count | &lt;1ms |
 | `uc` | Updates count | &lt;1ms |
 | `oc` | Orphan count | &lt;1ms |
+| `s <query>` | Search packages | daemon speed |
+| `i <package>` | Package info | daemon speed |
 
 **Examples:**
 
@@ -1506,9 +1655,13 @@ omg-fast status
 These options work with all commands:
 
 | Option | Short | Description |
-|--------|-------|-------------|
+| -------- | ------- | ------------- |
 | `--help` | `-h` | Show help |
 | `--version` | `-V` | Show version |
+| `--verbose` | `-v` | Increase verbosity (-v, -vv, -vvv) |
+| `--quiet` | `-q` | Suppress all output except errors |
+| `--json` | | Output in JSON format (for scripting) |
+| `--all-commands` | | Show all commands including advanced ones |
 
 ---
 

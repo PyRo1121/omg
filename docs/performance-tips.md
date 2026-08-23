@@ -39,7 +39,8 @@ enable_ccache = true
 enable_sccache = true
 ```
 
-**Impact:** 
+**Impact:**
+
 - ccache: 2-5x faster C/C++ recompilation
 - sccache: 2-4x faster Rust recompilation
 - cache_builds: Skip unchanged PKGBUILDs
@@ -69,6 +70,7 @@ Don't restart frequently. The daemon is designed to run continuously and uses <5
 OMG uses Unix Domain Sockets for near-zero IPC latency.
 
 **Verify socket location:**
+
 ```bash
 omg config get socket_path
 # Should be in $XDG_RUNTIME_DIR or /tmp
@@ -90,11 +92,13 @@ socket_path = "/tmp/omgd.sock"
 OMG parallelizes source downloads by default.
 
 **Check concurrency:**
+
 ```bash
 omg config get aur.build_concurrency
 ```
 
 **Optimize for your system:**
+
 - **4-8 cores:** `build_concurrency = 4`
 - **16+ cores:** `build_concurrency = 8-16`
 - **32+ cores:** `build_concurrency = 16-32`
@@ -104,11 +108,13 @@ omg config get aur.build_concurrency
 ### ccache Configuration
 
 **Install ccache:**
+
 ```bash
 omg install ccache
 ```
 
 **Enable in config:**
+
 ```toml
 [aur]
 enable_ccache = true
@@ -116,6 +122,7 @@ ccache_dir = "/var/cache/ccache"  # Shared cache (optional)
 ```
 
 **Set cache size:**
+
 ```bash
 ccache -M 10G  # 10GB cache
 ```
@@ -125,11 +132,13 @@ ccache -M 10G  # 10GB cache
 ### sccache for Rust Packages
 
 **Install sccache:**
+
 ```bash
 omg install sccache
 ```
 
 **Enable in config:**
+
 ```toml
 [aur]
 enable_sccache = true
@@ -148,6 +157,7 @@ srcdest = "/var/cache/omg/sources"
 ```
 
 **Benefits:**
+
 - Reuse built packages across reinstalls
 - Share sources across builds
 - Save bandwidth
@@ -205,6 +215,7 @@ metadata_cache_ttl_secs = 300  # 5 minutes (default)
 ```
 
 **Recommendations:**
+
 - **Development:** 300 (5 min) - fresh data
 - **CI/CD:** 600 (10 min) - reduce network calls
 - **Production:** 900 (15 min) - stability over freshness
@@ -214,6 +225,7 @@ metadata_cache_ttl_secs = 300  # 5 minutes (default)
 The daemon caches package status (installed, explicit, etc.):
 
 **Cache location:**
+
 ```bash
 ~/.local/share/omg/daemon/cache.redb
 ```
@@ -221,6 +233,7 @@ The daemon caches package status (installed, explicit, etc.):
 **Automatic refresh:** Every 5 minutes in background
 
 **Manual refresh:**
+
 ```bash
 omg sync  # Forces immediate index rebuild
 ```
@@ -238,10 +251,12 @@ shims_enabled = false  # Default
 ```
 
 **Performance comparison:**
+
 - **PATH modification:** <1ms overhead
 - **Shims:** 10-50ms overhead (binary wrapper)
 
 **When to use shims:**
+
 - You need persistent version switching across all shells
 - Your setup doesn't allow PATH modification
 
@@ -252,11 +267,13 @@ runtime_backend = "native-then-mise"  # Default
 ```
 
 **Options:**
+
 - `"native"`: OMG's built-in runtime managers (fastest)
 - `"mise"`: Delegate to mise (100+ runtimes)
 - `"native-then-mise"`: Try native first, fall back to mise
 
 **Performance:**
+
 - **Native:** 1-2ms switch time
 - **Mise:** 50-200ms switch time
 
@@ -269,6 +286,7 @@ runtime_backend = "native-then-mise"  # Default
 ### Persistent Daemon
 
 **GitHub Actions:**
+
 ```yaml
 - name: Start OMG daemon
   run: |
@@ -280,6 +298,7 @@ runtime_backend = "native-then-mise"  # Default
 ```
 
 **Docker:**
+
 ```dockerfile
 RUN omg daemon &
 RUN sleep 2 && omg install build-essentials
@@ -322,11 +341,13 @@ wait
 OMG benefits from fast disk I/O:
 
 **Benchmark your disk:**
+
 ```bash
 dd if=/dev/zero of=/tmp/testfile bs=1M count=1024 conv=fdatasync
 ```
 
 **Recommendations:**
+
 - **NVMe SSD:** Ideal (5000+ MB/s)
 - **SATA SSD:** Good (500+ MB/s)
 - **HDD:** Acceptable but slower (100+ MB/s)
@@ -368,6 +389,7 @@ omg daemon-status
 ```
 
 **Look for:**
+
 - Cache hit rate (aim for >80%)
 - Response times (<10ms for search/info)
 - Memory usage (<100MB)
@@ -379,6 +401,7 @@ omg doctor --network --eol
 ```
 
 **Checks:**
+
 - Mirror connectivity
 - Network latency
 - Package database freshness
@@ -392,6 +415,7 @@ omg doctor --network --eol
 **Symptom:** Commands take 100ms+ instead of <10ms
 
 **Fix:**
+
 ```bash
 omg daemon
 ```
@@ -401,6 +425,7 @@ omg daemon
 **Symptom:** Errors or slow index rebuilds
 
 **Fix:**
+
 ```bash
 rm -rf ~/.local/share/omg/daemon/cache.redb
 omg sync  # Rebuild
@@ -411,6 +436,7 @@ omg sync  # Rebuild
 **Symptom:** Package downloads are slow
 
 **Fix:**
+
 ```bash
 omg doctor --network
 # Follow recommendations to switch mirrors
@@ -421,10 +447,12 @@ omg doctor --network
 **Symptom:** Daemon using >200MB RAM
 
 **Possible causes:**
+
 - Large AUR index (80K+ packages)
 - Many cached search results
 
 **Fix:**
+
 ```bash
 # Restart daemon to clear memory
 pkill omgd
@@ -436,6 +464,7 @@ omg daemon
 **Symptom:** Builds taking longer than expected
 
 **Checklist:**
+
 1. Enable ccache/sccache
 2. Increase build_concurrency
 3. Use tmpfs for build directory
@@ -464,6 +493,7 @@ build_method = "native"  # Fastest
 ```
 
 **Performance:**
+
 - `native`: Fastest (no sandbox overhead)
 - `bubblewrap`: -10% performance
 - `chroot`: -30% performance
@@ -475,7 +505,7 @@ build_method = "native"  # Fastest
 ### Expected Response Times
 
 | Operation | Target | Acceptable | Slow |
-|-----------|--------|------------|------|
+| ----------- | -------- | ------------ | ------ |
 | Search | <10ms | <50ms | >100ms |
 | Info | <10ms | <50ms | >100ms |
 | Status | <10ms | <50ms | >100ms |
@@ -499,12 +529,14 @@ hyperfine --warmup 3 "pacman -Ss firefox"
 ### Development Workstation
 
 **Setup:**
+
 - 16-core CPU
 - 32GB RAM
 - NVMe SSD
 - ccache enabled
 
 **Results:**
+
 - Search: 5-7ms
 - Install (cached): 2-4s
 - AUR rebuild (with ccache): 10-30s
@@ -513,11 +545,13 @@ hyperfine --warmup 3 "pacman -Ss firefox"
 ### CI/CD Pipeline
 
 **Setup:**
+
 - GitHub Actions (2-core)
 - Standard runner
 - Cached OMG data
 
 **Results:**
+
 - Search: 10-15ms
 - Install (cached): 5-10s
 - Full environment setup: <30s
@@ -525,11 +559,13 @@ hyperfine --warmup 3 "pacman -Ss firefox"
 ### Production Server
 
 **Setup:**
+
 - 64-core CPU
 - 128GB RAM
 - High-performance storage
 
 **Results:**
+
 - Search: 3-5ms
 - Bulk install (16 parallel): <60s
 - Update check (100+ packages): <3s
@@ -547,6 +583,7 @@ hyperfine --warmup 3 "pacman -Ss firefox"
 5. **Cache in CI/CD** - Reuse data directory between runs
 
 **Impact:** With all optimizations, OMG delivers:
+
 - **Package search:** 5-11ms (12-24x faster than pacman)
 - **Info queries:** 3-6ms (21-38x faster than pacman)
 - **AUR builds:** 50% faster than yay
@@ -558,5 +595,5 @@ hyperfine --warmup 3 "pacman -Ss firefox"
 
 - [Benchmark Results](../BENCHMARK-RESULTS.md) - Detailed performance analysis
 - [Daemon Architecture](daemon.md) - How the daemon achieves low latency
-- [Search Performance Deep Dive](search-performance-deep-dive.md) - Index optimization
+- [Performance Tips](./performance-tips.md) - General optimization guidance
 - [Configuration Guide](configuration.md) - All config options explained

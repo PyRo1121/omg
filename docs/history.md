@@ -371,6 +371,6 @@ rm ~/.local/share/omg/history.json
 
 | File | Purpose |
 | ------ | --------- |
-| [core/history.rs](file:///home/pyro1121/Documents/code/filemanager/omg/src/core/history.rs) | HistoryManager, Transaction, PackageChange structs |
-| [cli/commands.rs](file:///home/pyro1121/Documents/code/filemanager/omg/src/cli/commands.rs) | `history` and `rollback` command implementations |
-| [cli/tui/app.rs](file:///home/pyro1121/Documents/code/filemanager/omg/src/cli/tui/app.rs) | History loading for TUI display |
+| [src/core/history.rs](../src/core/history.rs) | HistoryManager, Transaction, PackageChange structs |
+| [src/cli/commands.rs](../src/cli/commands.rs) | `history` and `rollback` command implementations |
+| [src/cli/tui/app.rs](../src/cli/tui/app.rs) | History loading for TUI display |

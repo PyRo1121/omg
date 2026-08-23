@@ -39,6 +39,7 @@ omg container status
 ```
 
 Output:
+
 ```
 Container Runtime Status:
   Runtime: podman 4.8.0
@@ -59,6 +60,7 @@ omg container shell
 ```
 
 This:
+
 1. Detects project runtimes (from `.nvmrc`, etc.)
 2. Selects appropriate base image
 3. Mounts current directory to `/app`
@@ -98,7 +100,7 @@ omg container run alpine -- echo "hello"
 omg container run node:20 -- npm test
 
 # Interactive
-omg container run -it ubuntu -- bash
+omg container run -i ubuntu -- bash
 ```
 
 ### Common Patterns
@@ -156,6 +158,7 @@ omg container init
 ```
 
 This creates a Dockerfile based on:
+
 - Detected version files (`.nvmrc`, `.python-version`, etc.)
 - Project type (package.json, Cargo.toml, etc.)
 - Best practices for that ecosystem
@@ -200,9 +203,6 @@ omg container init --base ubuntu:22.04
 ```bash
 # Running containers
 omg container list
-
-# All containers (including stopped)
-omg container list --all
 ```
 
 ### List Images
@@ -223,19 +223,15 @@ omg container pull alpine:latest
 ```bash
 # Stop by name or ID
 omg container stop mycontainer
-
-# Stop all
-omg container stop --all
 ```
+
+Note: there is no `--all` option — stop containers individually.
 
 ### Execute in Running Container
 
 ```bash
 # Run command in existing container
 omg container exec mycontainer -- ls -la
-
-# Interactive shell
-omg container exec -it mycontainer -- bash
 ```
 
 ---
@@ -332,12 +328,14 @@ OMG prefers Podman for rootless container execution:
 ### Best Practices
 
 1. **Use non-root user in Dockerfile**
+
    ```dockerfile
    RUN adduser -D appuser
    USER appuser
    ```
 
 2. **Read-only mounts when possible**
+
    ```bash
    omg container shell --volume ~/.ssh:/root/.ssh:ro
    ```

@@ -123,8 +123,8 @@ source ~/.zshrc
 git clone git@github.com:company/project.git
 cd project
 
-# 4. Sync environment from lockfile
-omg env sync
+# 4. Verify environment matches the lockfile
+omg env check
 
 # 5. Verify everything matches
 omg env check
@@ -139,8 +139,8 @@ omg run dev
 # Check for drift daily
 omg env check
 
-# If drift detected:
-omg env sync  # Get latest from team
+# If drift detected, pull the latest team lock:
+omg team pull  # Pull team lock and check drift
 
 # Or update and share your changes:
 omg env capture
@@ -253,10 +253,10 @@ jobs:
           curl -fsSL https://raw.githubusercontent.com/PyRo1121/omg/main/install.sh | bash
           echo "$HOME/.local/bin" >> $GITHUB_PATH
 
-      # Sync environment from lockfile
-      - name: Sync Environment
+      # Verify environment against omg.lock
+      - name: Check Environment
         run: |
-          omg env sync
+          omg env check
 
       # Verify environment
       - name: Verify Environment
@@ -291,7 +291,7 @@ variables:
 before_script:
   - curl -fsSL https://raw.githubusercontent.com/PyRo1121/omg/main/install.sh | bash
   - export PATH="$HOME/.local/bin:$PATH"
-  - omg env sync
+  - omg env check
 
 test:
   stage: test
@@ -320,8 +320,8 @@ RUN curl -fsSL https://raw.githubusercontent.com/PyRo1121/omg/main/install.sh | 
 WORKDIR /app
 COPY . .
 
-# Sync environment
-RUN omg env sync
+# Verify environment matches the committed omg.lock
+RUN omg env check
 
 # Build
 RUN omg run build
@@ -468,9 +468,14 @@ omg clean --all
 omg list node
 omg list python
 
-# Remove unused versions
-omg uninstall node 18.17.0
-omg uninstall python 3.10.0
+# 2. Remove unused runtime versions
+# NOTE: there is currently no CLI command that removes installed runtime
+# versions. To free space, remove the version directory manually, e.g.:
+rm -rf ~/.local/share/omg/versions/node/18.17.0
+rm -rf ~/.local/share/omg/versions/python/3.10.0
+# Then verify what remains:
+omg list node
+omg list python
 
 # 3. Verify system health
 omg doctor
@@ -568,7 +573,7 @@ rustup self uninstall
 
 ```bash
 # 1. OMG handles AUR natively
-omg search -a package-name
+omg search package-name        # Search includes AUR automatically
 omg install aur-package
 
 # 2. No migration needed - OMG reads same databases

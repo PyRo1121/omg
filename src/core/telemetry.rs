@@ -131,7 +131,7 @@ fn get_platform() -> String {
 }
 
 /// Get the compiled package manager backend identifier (`arch`, `debian`,
-/// or `none`).
+/// `fedora`, `homebrew`, or `none`).
 ///
 /// The available backends are fixed at compile time by feature flags, so
 /// runtime distro detection is deliberately not consulted.
@@ -141,6 +141,11 @@ pub fn get_backend() -> String {
         "arch".to_string()
     } else if cfg!(any(feature = "debian", feature = "debian-pure")) {
         "debian".to_string()
+    } else if cfg!(feature = "fedora") {
+        "fedora".to_string()
+    } else if cfg!(any(feature = "macos", target_os = "macos")) {
+        // Matches the homebrew module gate in `package_managers::mod`.
+        "homebrew".to_string()
     } else {
         "none".to_string()
     }
@@ -972,6 +977,10 @@ mod tests {
             "arch"
         } else if cfg!(any(feature = "debian", feature = "debian-pure")) {
             "debian"
+        } else if cfg!(feature = "fedora") {
+            "fedora"
+        } else if cfg!(any(feature = "macos", target_os = "macos")) {
+            "homebrew"
         } else {
             "none"
         };

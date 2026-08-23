@@ -104,9 +104,10 @@ This document provides a high-level overview of OMG's architecture, component in
 │         ▼                     ▼                     ▼                   │
 │  ┌─────────────────────────────────────────────────────────────────┐   │
 │  │                    Operating System                              │   │
-│  │    /var/lib/pacman    /var/lib/dpkg    https://aur.archlinux.org│   │
+│  │    /var/lib/pacman    /var/lib/dpkg    <https://aur.archlinux.org│>   │
 │  └─────────────────────────────────────────────────────────────────┘   │
 └─────────────────────────────────────────────────────────────────────────┘
+
 ```
 
 ---
@@ -133,6 +134,7 @@ A specialized, ultra-lightweight binary specifically for shell prompts. It achie
 ### Search Request
 
 ```
+
 User: omg search firefox
          │
          ▼
@@ -170,11 +172,13 @@ User: omg search firefox
                    │
                    ▼
               Format & Display
+
 ```
 
 ### Runtime Switch
 
 ```
+
 User: omg use node 20.10.0
          │
          ▼
@@ -202,6 +206,7 @@ User: omg use node 20.10.0
          │
          ▼
     Shell hook updates PATH
+
 ```
 
 ---
@@ -275,6 +280,7 @@ By default, OMG uses a "native-then-mise" strategy. It prefers its own highly op
 ### Verification Pipeline
 
 ```
+
 Package Download
       │
       ▼
@@ -305,6 +311,7 @@ Package Download
          │
          ▼
     Install / Reject
+
 ```
 
 ### Audit Log
@@ -341,6 +348,7 @@ When enabled, periodically:
 ## 🔄 Graceful Shutdown
 
 ```
+
 SIGINT/SIGTERM
       │
       ▼
@@ -366,6 +374,7 @@ Tasks     Workers       Server
          │
          ▼
       Exit
+
 ```
 
 ---
@@ -379,5 +388,5 @@ For detailed documentation on specific subsystems:
 - [Caching System](./cache.md)
 - [Package Search](./package-search.md)
 - [Runtime Management](./runtimes.md)
-- [CLI Internals](./cli-internals.md)
+- [CLI Reference](./cli.md)
 - [Security & Audit](./security.md)

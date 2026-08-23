@@ -78,9 +78,56 @@ cleanup() {
   tput_safe cnorm # Show cursor
 }
 
+# Ask a yes/no question. Honors the documented default when stdin is not a
+# terminal (e.g. `curl ... | bash`), so automation never hangs or gets prompted.
+ask_yes_no() {
+  local prompt="$1"
+  local default="${2:-y}"
+  local reply=""
+
+  if [[ ! -t 0 ]]; then
+    [[ "$default" == "y" ]]
+    return
+  fi
+
+  local hint
+  if [[ "$default" == "y" ]]; then
+    hint="[Y/n]"
+  else
+    hint="[y/N]"
+  fi
+
+  read -r -p "${prompt} ${hint} " reply || return 1
+  reply="${reply:-$default}"
+  [[ "$reply" =~ ^[Yy]$ ]]
+}
+
+# Install a binary atomically: copy to a temp name, chmod, then rename over
+# the destination so an interrupted install never leaves a truncated binary.
+install_binary() {
+  local src="$1"
+  local dst="$2"
+  local tmp_dst="${dst}.tmp.$$"
+
+  if [[ ! -f "$src" ]]; then
+    warn "Skipping $(basename "$dst"): binary missing from install source"
+    return 1
+  fi
+
+  if ! cp "$src" "$tmp_dst"; then
+    rm -f "$tmp_dst"
+    error "Failed to copy $(basename "$src") to $INSTALL_DIR"
+  fi
+  chmod +x "$tmp_dst"
+  if ! mv -f "$tmp_dst" "$dst"; then
+    rm -f "$tmp_dst"
+    error "Failed to install $dst"
+  fi
+}
+
 check_runtime_dependencies() {
   local missing=()
-  local deps=("curl" "tar")
+  local deps=("curl" "tar" "sha256sum")
 
   for dep in "${deps[@]}"; do
     if ! command -v "$dep" >/dev/null 2>&1; then
@@ -241,19 +288,34 @@ install_from_release() {
   tmp_dir=$(mktemp -d)
   trap 'cleanup_tmp_dir' RETURN
 
+  # Save under the real artifact name so the published .sha256 sidecar
+  # (which references the archive by name) verifies in place.
   start_spinner "Downloading prebuilt binary"
-  local download_file="$tmp_dir/omg-release"
-  if [[ "$artifact_name" == *.zip ]]; then
-    download_file="$tmp_dir/omg-release.zip"
-  else
-    download_file="$tmp_dir/omg-release.tar.gz"
-  fi
+  local download_file="$tmp_dir/$artifact_name"
 
   if curl -fsSL "$asset_url" -o "$download_file" >/dev/null 2>&1; then
     stop_spinner "Download complete"
   else
     fail_spinner "Download failed"
     return 1
+  fi
+
+  # Verify against the release's .sha256 sidecar when it exists.
+  start_spinner "Verifying checksum"
+  if curl -fsSL "${asset_url}.sha256" -o "${download_file}.sha256" >/dev/null 2>&1; then
+    if (
+      cd "$tmp_dir" &&
+        sha256sum --check --strict "${artifact_name}.sha256" >/dev/null 2>&1
+    ); then
+      stop_spinner "Checksum verified"
+    else
+      fail_spinner "Checksum verification failed"
+      warn "Downloaded ${artifact_name} does not match its published sha256"
+      return 1
+    fi
+  else
+    stop_spinner "Checksum unavailable"
+    warn "No .sha256 sidecar published for ${artifact_name}; skipping verification"
   fi
 
   start_spinner "Extracting binaries"
@@ -275,11 +337,12 @@ install_from_release() {
   fi
 
   mkdir -p "$INSTALL_DIR"
-  cp "$omg_path" "$INSTALL_DIR/omg"
+  install_binary "$omg_path" "$INSTALL_DIR/omg" || return 1
   if [[ -n "$omgd_path" ]]; then
-    cp "$omgd_path" "$INSTALL_DIR/omgd"
+    install_binary "$omgd_path" "$INSTALL_DIR/omgd" || return 1
+  else
+    info "Prebuilt archive does not include omgd; skipping daemon install"
   fi
-  chmod +x "$INSTALL_DIR/omg" "$INSTALL_DIR/omgd" 2>/dev/null || true
 
   success "Installed prebuilt binaries to $INSTALL_DIR"
   return 0
@@ -560,11 +623,10 @@ build_omg() {
 
   # Install
   mkdir -p "$INSTALL_DIR"
-  cp "target/release/omg" "$INSTALL_DIR/"
+  install_binary "target/release/omg" "$INSTALL_DIR/omg" || return 1
   if [[ -f "target/release/omgd" ]]; then
-    cp "target/release/omgd" "$INSTALL_DIR/"
+    install_binary "target/release/omgd" "$INSTALL_DIR/omgd" || true
   fi
-  chmod +x "$INSTALL_DIR/omg"
 
   success "Installed to $INSTALL_DIR/omg"
 }

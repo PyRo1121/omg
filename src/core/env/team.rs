@@ -258,15 +258,19 @@ impl TeamWorkspace {
 
     /// Join an existing team workspace
     pub fn join(&mut self, remote_url: &str) -> Result<()> {
+        // Fail before creating anything: joining is only valid in an
+        // initialized workspace, and a failed call must not leave an empty
+        // `.omg/` directory behind as a side effect.
+        anyhow::ensure!(
+            self.config.is_some(),
+            "Not a team workspace. Run 'omg team init' first."
+        );
         self.ensure_config_dir()?;
-        let config_path = self.config_path();
         // For now, just set the remote URL and sync
         if let Some(ref mut config) = self.config {
             config.remote_url = Some(remote_url.to_string());
             let content = toml::to_string_pretty(config)?;
-            crate::core::safe_ops::atomic_write_file_sync(config_path, content)?;
-        } else {
-            anyhow::bail!("Not a team workspace. Run 'omg team init' first.");
+            crate::core::safe_ops::atomic_write_file_sync(self.config_path(), content)?;
         }
 
         Ok(())
@@ -365,11 +369,17 @@ impl TeamWorkspace {
     pub async fn pull(&self) -> Result<bool> {
         let config = self.config.as_ref().context("Not a team workspace")?;
 
-        // If we have a remote, fetch from it
-        if let Some(ref remote_url) = config.remote_url {
-            // For GitHub Gist URLs, use the existing sync logic
+        // If we have a remote, fetch from it. Anything other than a Gist must
+        // fail loudly: silently skipping the fetch and then reporting purely
+        // local state as team sync would mislead operators into trusting a
+        // comparison that never saw the team's lock.
+        if let Some(remote_url) = &config.remote_url {
             if remote_url.contains("gist.github.com") {
                 super::super::super::cli::env::sync(remote_url.clone()).await?;
+            } else {
+                anyhow::bail!(
+                    "Unsupported team remote URL '{remote_url}': pull currently supports only gist.github.com remotes"
+                );
             }
         }
 
@@ -482,7 +492,17 @@ pub fn detect_lock_changes() -> Result<bool> {
 
     let output = Command::new("git")
         .args(["diff", "--name-only", "HEAD~1", "HEAD"])
-        .output()?;
+        .output()
+        .context("Failed to run git diff for omg.lock change detection")?;
+
+    // A non-zero git status (not a repo, shallow clone, single-commit repo)
+    // must surface as an error: silently answering "no changes" would swallow
+    // a missed drift notification.
+    anyhow::ensure!(
+        output.status.success(),
+        "git diff failed while detecting lock changes: {}",
+        String::from_utf8_lossy(&output.stderr).trim()
+    );
 
     let stdout = String::from_utf8_lossy(&output.stdout);
     Ok(stdout.lines().any(|line| line.trim() == "omg.lock"))
@@ -557,5 +577,41 @@ mod tests {
             std::fs::read_to_string(config_path).expect("read original config"),
             "team_id = ["
         );
+    }
+
+    #[test]
+    fn join_uninitialized_workspace_creates_nothing() {
+        let directory = tempfile::tempdir().expect("temp dir");
+        let mut workspace = TeamWorkspace::new(directory.path()).expect("create workspace");
+
+        let error = workspace
+            .join("https://gist.github.com/example")
+            .expect_err("join on uninitialized workspace must fail");
+
+        assert!(error.to_string().contains("Not a team workspace"));
+        assert!(
+            !directory.path().join(".omg").exists(),
+            "a failed join must not create the .omg directory"
+        );
+    }
+
+    #[tokio::test]
+    async fn pull_rejects_non_gist_remote_instead_of_reporting_local_state() {
+        let directory = tempfile::tempdir().expect("temp dir");
+        let config_dir = directory.path().join(".omg");
+        std::fs::create_dir(&config_dir).expect("create config dir");
+        std::fs::write(
+            config_dir.join("team.toml"),
+            "team_id = 't'\nname = 'Team'\nmember_id = 'm'\nremote_url = 'https://github.com/example/repo.git'\nauto_sync = true\nauto_push = false\n\n[notifications]\non_lock_update = true\non_drift = true\non_member_join = false\n",
+        )
+        .expect("write team config");
+        let workspace = TeamWorkspace::new(directory.path()).expect("create workspace");
+
+        let error = workspace
+            .pull()
+            .await
+            .expect_err("non-gist remote must fail loudly, not fake a local-only sync");
+
+        assert!(error.to_string().contains("Unsupported team remote URL"));
     }
 }

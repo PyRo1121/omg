@@ -35,30 +35,17 @@ omg search vim
 # Limit results
 omg search vim --limit 10
 
-# Search AUR only
-omg search -a visual-studio-code
+# Detailed results with votes/popularity where available
+omg search visual-studio-code -d
 
-# Search official only
-omg search -o firefox
+# Skip community sources, official repos only
+omg search --no-aur firefox
 ```
-
-### Interactive Search
-
-```bash
-# Interactive mode — select packages to install
-omg search browser -i
-```
-
-Interactive mode provides:
-- Fuzzy matching with arrow key navigation
-- Multi-select with space bar
-- Package descriptions inline
-- Security grades displayed
 
 ### Search Performance
 
 | Mode | Latency | Notes |
-|------|---------|-------|
+| ------ | --------- | ------- |
 | With daemon (cached) | ~5-11ms | Instant feel |
 | With daemon (fresh) | ~200ms | Still fast |
 | Without daemon | ~500ms | Direct libalpm |
@@ -97,12 +84,12 @@ omg install --asdeps libfoo
 
 ### Installation Lifecycle
 
-1.  **Security Analysis**: Every package is evaluated against the system's security criteria and assigned a grade.
-2.  **Policy Validation**: The system checks the package against defined rules, ensuring it meets organizational or user-set standards.
-3.  **Conflict Resolution**: Dependencies are mapped and resolved, ensuring that all required components are available.
-4.  **Download & Integrity**: Artifacts are retrieved over secure channels and verified using cryptographic signatures and hashes.
-5.  **Integration**: Official packages are integrated through the system backend, while custom sources are prepared and deployed efficiently.
-6.  **Audit Recording**: The entire transaction is logged to the history database for future reference or rollback.
+1. **Security Analysis**: Every package is evaluated against the system's security criteria and assigned a grade.
+2. **Policy Validation**: The system checks the package against defined rules, ensuring it meets organizational or user-set standards.
+3. **Conflict Resolution**: Dependencies are mapped and resolved, ensuring that all required components are available.
+4. **Download & Integrity**: Artifacts are retrieved over secure channels and verified using cryptographic signatures and hashes.
+5. **Integration**: Official packages are integrated through the system backend, while custom sources are prepared and deployed efficiently.
+6. **Audit Recording**: The entire transaction is logged to the history database for future reference or rollback.
 
 ### AUR Build Options
 
@@ -191,6 +178,7 @@ omg info firefox
 ```
 
 **Output includes:**
+
 - Name and version
 - Description
 - Repository (official/AUR)
@@ -227,6 +215,7 @@ omg status
 ```
 
 Shows:
+
 - Total packages
 - Explicit packages
 - Orphaned packages
@@ -268,7 +257,7 @@ omg sync
 Every package is assigned a security grade:
 
 | Grade | Meaning | Examples |
-|-------|---------|----------|
+| ------- | --------- | ---------- |
 | **LOCKED** | SLSA Level 3 + PGP | glibc, linux, pacman |
 | **VERIFIED** | PGP signature verified | Official repo packages |
 | **COMMUNITY** | AUR/unsigned | AUR packages |
@@ -298,10 +287,12 @@ banned_packages = ["some-bad-pkg"]
 ### Vulnerability Checking
 
 OMG checks installed packages against:
+
 - **Arch Linux Security Advisory (ALSA)**
 - **OSV.dev global database**
 
 Run audit:
+
 ```bash
 omg audit
 ```
@@ -331,6 +322,7 @@ omg rollback <transaction-id>
 ```
 
 **Rollback Limitations:**
+
 - Official packages only (AUR rollback planned)
 - Requires old packages in cache
 - May have dependency conflicts
@@ -394,16 +386,19 @@ omg install pkg3
 ### Debian/Ubuntu (Experimental)
 
 Build with Debian feature:
+
 ```bash
 cargo build --release --features debian
 ```
 
 Requires `libapt-pkg-dev`:
+
 ```bash
 sudo apt install libapt-pkg-dev
 ```
 
 Supported commands:
+
 - `omg search`
 - `omg info`
 - `omg install`

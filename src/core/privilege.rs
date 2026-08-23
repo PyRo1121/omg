@@ -236,6 +236,62 @@ pub fn elevate_for_operation(operation: &str, args: &[String]) -> std::io::Resul
 }
 
 /// Run the current executable with sudo and specific arguments asynchronously
+/// Build a scrubbed sudo command that re-executes the current binary.
+///
+/// Note: We set `OMG_ELEVATED=1` as an environment variable for the child
+/// process. This prevents infinite recursion when the elevated process checks
+/// this flag.
+///
+/// CRITICAL: Remove CARGO_* environment variables to prevent the elevated
+/// process from writing to the user's target directory as root (causing
+/// permission errors).
+///
+/// SECURITY: Also remove dangerous environment variables that could be used
+/// to hijack library loading or script execution in an elevated context.
+/// Askpass variables are removed to force the terminal-based prompt.
+fn payload_command(
+    exe: &std::path::Path,
+    args: &[&str],
+    non_interactive: bool,
+) -> tokio::process::Command {
+    let mut command = tokio::process::Command::new("sudo");
+    if non_interactive {
+        // -n fails immediately if a password would be required
+        command.arg("-n");
+    }
+    command
+        .env("OMG_ELEVATED", "1")
+        // Force terminal-based password prompt, never GUI askpass
+        .env_remove("SUDO_ASKPASS")
+        .env_remove("SSH_ASKPASS")
+        .env_remove("SSH_ASKPASS_REQUIRE")
+        // Cargo build environment
+        .env_remove("CARGO_PRIMARY_PACKAGE")
+        .env_remove("CARGO_MANIFEST_DIR")
+        .env_remove("CARGO_TARGET_DIR")
+        .env_remove("CARGO_PKG_NAME")
+        .env_remove("CARGO_PKG_VERSION")
+        .env_remove("OUT_DIR")
+        // Security: library injection vectors
+        .env_remove("LD_PRELOAD")
+        .env_remove("LD_LIBRARY_PATH")
+        .env_remove("LD_AUDIT")
+        .env_remove("LD_DEBUG")
+        // Security: script execution vectors
+        .env_remove("PYTHONPATH")
+        .env_remove("RUBYLIB")
+        .env_remove("PERL5LIB")
+        .env_remove("NODE_PATH")
+        // Inherit terminal so output and any password prompt stay attached
+        .stdin(std::process::Stdio::inherit())
+        .stdout(std::process::Stdio::inherit())
+        .stderr(std::process::Stdio::inherit())
+        .arg("--")
+        .arg(exe)
+        .args(args);
+    command
+}
+
 pub async fn run_self_sudo(args: &[&str]) -> anyhow::Result<()> {
     let exe = std::env::current_exe()?;
 
@@ -258,164 +314,105 @@ pub async fn run_self_sudo(args: &[&str]) -> anyhow::Result<()> {
     // Check if --yes flag is set for non-interactive mode
     let yes_flag = get_yes_flag();
 
-    // If --yes is specified, use only non-interactive sudo (-n flag)
-    // Otherwise, try -n first and fall back to interactive mode
-
-    // Try non-interactive sudo first (both modes start with this)
-    // Note: We set OMG_ELEVATED=1 as an environment variable for the child process.
-    // This prevents infinite recursion when the elevated process checks this flag.
-    //
-    // CRITICAL: Remove CARGO_* environment variables to prevent elevated process
-    // from writing to user's target directory as root (causing permission errors).
-    //
-    // SECURITY: Also remove dangerous environment variables that could be used
-    // to hijack library loading or script execution in elevated context.
-    // Try non-interactive sudo first (-n flag fails immediately if password needed)
-    // Remove askpass variables to ensure no GUI prompt even on -n failure
-    let status = tokio::process::Command::new("sudo")
+    // Correctness: validate sudo authentication BEFORE running the payload.
+    // Without this pre-flight, a payload command failing under cached
+    // credentials (sudo -n executes it directly) was misattributed to "password
+    // required" and the entire privileged operation was silently re-executed,
+    // repeating its side effects. The validation only refreshes the sudo
+    // timestamp; it never runs the payload.
+    let validated = tokio::process::Command::new("sudo")
         .arg("-n")
-        .env("OMG_ELEVATED", "1")
-        // Force terminal-based password prompt, never GUI
-        .env_remove("SUDO_ASKPASS")
-        .env_remove("SSH_ASKPASS")
-        .env_remove("SSH_ASKPASS_REQUIRE")
-        // Cargo build environment
-        .env_remove("CARGO_PRIMARY_PACKAGE")
-        .env_remove("CARGO_MANIFEST_DIR")
-        .env_remove("CARGO_TARGET_DIR")
-        .env_remove("CARGO_PKG_NAME")
-        .env_remove("CARGO_PKG_VERSION")
-        .env_remove("OUT_DIR")
-        // Security: library injection vectors
-        .env_remove("LD_PRELOAD")
-        .env_remove("LD_LIBRARY_PATH")
-        .env_remove("LD_AUDIT")
-        .env_remove("LD_DEBUG")
-        // Security: script execution vectors
-        .env_remove("PYTHONPATH")
-        .env_remove("RUBYLIB")
-        .env_remove("PERL5LIB")
-        .env_remove("NODE_PATH")
-        // Inherit terminal for proper output
-        .stdin(std::process::Stdio::inherit())
-        .stdout(std::process::Stdio::inherit())
-        .stderr(std::process::Stdio::inherit())
-        .arg("--")
-        .arg(&exe)
-        .args(args)
+        .arg("-v")
+        .stdin(std::process::Stdio::null())
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
         .status()
         .await;
 
-    if yes_flag {
-        // Non-interactive mode: fail if password required
-        match status {
+    let authenticated = match validated {
+        Ok(status) if status.success() => true,
+        Ok(_) => false,
+        Err(e) => {
+            return Err(anyhow::anyhow!(
+                "Failed to run sudo for privilege elevation: {e}\n\
+                 \n\
+                 RECOMMENDED: Enable turbo mode for zero-sudo operations:\n\
+                   omg doctor --turbo\n\
+                 \n\
+                 This is a one-time setup that allows omg to manage packages\n\
+                 without sudo prompts, even in scripts and automation."
+            ));
+        }
+    };
+
+    if !authenticated {
+        // sudo cannot authenticate non-interactively: a password is needed.
+        if yes_flag {
+            return Err(anyhow::anyhow!(
+                "Privilege elevation failed (--yes flag prevents password prompt).\n\
+                 \n\
+                 RECOMMENDED: Enable turbo mode for zero-sudo operations:\n\
+                   omg doctor --turbo\n\
+                 \n\
+                 This grants omg Linux capabilities to manage packages without sudo.\n\
+                 \n\
+                 Alternatives:\n\
+                 • Remove --yes flag to allow password prompt\n\
+                 • Configure NOPASSWD in sudoers: sudo visudo\n\
+                   {user} ALL=(ALL) NOPASSWD: {exe}",
+                user = whoami::username().unwrap_or_else(|_| "username".to_string()),
+                exe = exe.display()
+            ));
+        }
+
+        // Interactive sudo WITHOUT timeout. IMPORTANT: stdin/stdout/stderr are
+        // inherited by `payload_command` so the password prompt stays in the
+        // terminal instead of spawning a GUI askpass dialog. The user can
+        // Ctrl+C if needed. Runs exactly once.
+        tracing::debug!("Password required, running interactive sudo");
+        return match payload_command(&exe, args, false).status().await {
             Ok(s) if s.success() => {
-                // Child handled everything - exit immediately to avoid duplicate output
+                // The elevated process handled everything, we're done
                 std::process::exit(0);
             }
             Ok(s) => {
-                // If sudo -n fails with exit code 1, it often means password is required
-                if s.code() == Some(1) {
-                    anyhow::bail!(
-                        "Privilege elevation failed (--yes flag prevents password prompt).\n\
-                         \n\
-                         RECOMMENDED: Enable turbo mode for zero-sudo operations:\n\
-                           omg doctor --turbo\n\
-                         \n\
-                         This grants omg Linux capabilities to manage packages without sudo.\n\
-                         \n\
-                         Alternatives:\n\
-                         • Remove --yes flag to allow password prompt\n\
-                         • Configure NOPASSWD in sudoers: sudo visudo\n\
-                           {user} ALL=(ALL) NOPASSWD: {exe}",
-                        user = whoami::username().unwrap_or_else(|_| "username".to_string()),
-                        exe = exe.display()
-                    );
-                }
-                anyhow::bail!("Elevated command failed with exit code: {s}")
+                std::process::exit(s.code().unwrap_or(1));
             }
-            Err(e) => {
-                anyhow::bail!(
-                    "Failed to elevate privileges: {e}\n\
-                     \n\
-                     RECOMMENDED: Enable turbo mode for zero-sudo operations:\n\
-                       omg doctor --turbo\n\
-                     \n\
-                     This is a one-time setup that allows omg to manage packages instantly."
-                )
-            }
+            Err(e) => Err(anyhow::anyhow!(
+                "Failed to run with sudo privileges: {e}\n\
+                 \n\
+                 RECOMMENDED: Enable turbo mode for zero-sudo operations:\n\
+                   omg doctor --turbo\n\
+                 \n\
+                 This is a one-time setup that allows omg to manage packages\n\
+                 without sudo prompts, even in scripts and automation."
+            )),
+        };
+    }
+
+    // Authenticated non-interactively: run the payload exactly once and
+    // propagate its result. Never retried — a failing elevated command must
+    // surface its own error, not trigger a second execution.
+    match payload_command(&exe, args, true).status().await {
+        Ok(s) if s.success() => {
+            // Child handled everything - exit immediately to avoid duplicate output
+            std::process::exit(0);
         }
-    } else {
-        // Interactive mode: fall back to interactive sudo if password needed
-        match status {
-            Ok(s) if s.success() => {
-                // Child handled everything - exit immediately to avoid duplicate output
-                std::process::exit(0);
+        Ok(s) => {
+            if yes_flag {
+                anyhow::bail!("Elevated command failed with exit code: {s}");
             }
-            // sudo -n failed - need password. Run interactive sudo WITHOUT timeout.
-            // The user is at the terminal and can Ctrl+C if needed.
-            // Previous timeout logic was broken: couldn't distinguish "waiting for password"
-            // from "operation in progress".
-            Ok(_) | Err(_) => {
-                tracing::debug!("Password required, running interactive sudo");
-
-                // IMPORTANT: Explicitly inherit stdin/stdout/stderr to keep password
-                // prompt in the terminal. Without this, some desktop environments
-                // detect "no tty" and spawn a GUI askpass dialog instead.
-                let interactive_status = tokio::process::Command::new("sudo")
-                    .env("OMG_ELEVATED", "1")
-                    // Force terminal-based password prompt, never GUI
-                    .env_remove("SUDO_ASKPASS")
-                    .env_remove("SSH_ASKPASS")
-                    .env_remove("SSH_ASKPASS_REQUIRE")
-                    // Cargo build environment
-                    .env_remove("CARGO_PRIMARY_PACKAGE")
-                    .env_remove("CARGO_MANIFEST_DIR")
-                    .env_remove("CARGO_TARGET_DIR")
-                    .env_remove("CARGO_PKG_NAME")
-                    .env_remove("CARGO_PKG_VERSION")
-                    .env_remove("OUT_DIR")
-                    // Security: library injection vectors
-                    .env_remove("LD_PRELOAD")
-                    .env_remove("LD_LIBRARY_PATH")
-                    .env_remove("LD_AUDIT")
-                    .env_remove("LD_DEBUG")
-                    // Security: script execution vectors
-                    .env_remove("PYTHONPATH")
-                    .env_remove("RUBYLIB")
-                    .env_remove("PERL5LIB")
-                    .env_remove("NODE_PATH")
-                    // Inherit terminal for CLI password prompt
-                    .stdin(std::process::Stdio::inherit())
-                    .stdout(std::process::Stdio::inherit())
-                    .stderr(std::process::Stdio::inherit())
-                    .arg("--")
-                    .arg(&exe)
-                    .args(args)
-                    .status()
-                    .await;
-
-                match interactive_status {
-                    Ok(s) if s.success() => {
-                        // The elevated process handled everything, we're done
-                        std::process::exit(0);
-                    }
-                    Ok(s) => {
-                        std::process::exit(s.code().unwrap_or(1));
-                    }
-                    Err(e) => {
-                        anyhow::bail!(
-                            "Failed to run with sudo privileges: {e}\n\
-                             \n\
-                             RECOMMENDED: Enable turbo mode for zero-sudo operations:\n\
-                               omg doctor --turbo\n\
-                             \n\
-                             This is a one-time setup that allows omg to manage packages\n\
-                             without sudo prompts, even in scripts and automation."
-                        )
-                    }
-                }
-            }
+            std::process::exit(s.code().unwrap_or(1));
+        }
+        Err(e) => {
+            anyhow::bail!(
+                "Failed to elevate privileges: {e}\n\
+                 \n\
+                 RECOMMENDED: Enable turbo mode for zero-sudo operations:\n\
+                   omg doctor --turbo\n\
+                 \n\
+                 This is a one-time setup that allows omg to manage packages instantly."
+            )
         }
     }
 }

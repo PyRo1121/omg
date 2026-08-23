@@ -21,13 +21,19 @@ impl Default for Renderer {
     }
 }
 
+fn colors_disabled() -> bool {
+    // Single source of truth: NO_COLOR handling, OMG_COLORS overrides, and
+    // TTY detection live in the project style helper.
+    !crate::cli::style::colors_enabled()
+}
+
 impl Renderer<BufWriter<io::Stdout>> {
     /// Create a new renderer writing to stdout
     #[must_use]
     pub fn new() -> Self {
         Self {
             writer: BufWriter::new(io::stdout()),
-            no_color: std::env::var("NO_COLOR").is_ok() || std::env::var("OMG_NO_COLOR").is_ok(),
+            no_color: colors_disabled(),
         }
     }
 }
@@ -38,7 +44,7 @@ impl<W: Write> Renderer<W> {
     pub fn with_writer(writer: W) -> Self {
         Self {
             writer,
-            no_color: std::env::var("NO_COLOR").is_ok() || std::env::var("OMG_NO_COLOR").is_ok(),
+            no_color: colors_disabled(),
         }
     }
 
@@ -124,10 +130,24 @@ impl<W: Write> Renderer<W> {
         }
     }
 
-    /// Print a styled card with content
+    /// Print a styled card with content.
+    ///
+    /// Rendered into the buffered writer (never straight to stdout) so output
+    /// stays ordered relative to other commands sharing this renderer.
     pub fn card(&mut self, title: &str, content: &[String]) -> io::Result<()> {
-        ui::print_card(title, content.to_vec());
-        Ok(())
+        use comfy_table::Table;
+        use comfy_table::modifiers::UTF8_ROUND_CORNERS;
+        use comfy_table::presets::UTF8_FULL;
+
+        let mut table = Table::new();
+        table
+            .load_preset(UTF8_FULL)
+            .apply_modifier(UTF8_ROUND_CORNERS)
+            .set_header(vec![crate::cli::ui::Style::new().bold(true).render(title)]);
+        for line in content {
+            table.add_row(vec![line.clone()]);
+        }
+        writeln!(self.writer, "\n{table}")
     }
 
     /// Print a spacer (blank line)
@@ -137,26 +157,71 @@ impl<W: Write> Renderer<W> {
 
     /// Print a step in a process
     pub fn step(&mut self, step: usize, total: usize, msg: &str) -> io::Result<()> {
-        ui::print_step(step, total, msg);
-        Ok(())
+        let step_str = format!(" {step:02}/{total:02} ");
+        if self.no_color {
+            return writeln!(self.writer, "{step_str} {msg}");
+        }
+        let step_style = crate::cli::ui::Style::new()
+            .background(crate::cli::ui::Color::Gray)
+            .foreground(crate::cli::ui::Color::White);
+        let msg_style = crate::cli::ui::Style::new().foreground(crate::cli::ui::Color::Gray);
+        writeln!(
+            self.writer,
+            "{} {}",
+            step_style.render(&step_str),
+            msg_style.render(msg)
+        )
     }
 
     /// Print a key-value pair
     pub fn kv(&mut self, key: &str, value: &str) -> io::Result<()> {
-        ui::print_kv(key, value);
-        Ok(())
+        if self.no_color {
+            return writeln!(self.writer, "  {key:>12}: {value}");
+        }
+        let key_style = crate::cli::ui::Style::new().foreground(crate::cli::ui::Color::Gray);
+        writeln!(self.writer, "  {:>12}: {}", key_style.render(key), value)
     }
 
     /// Print a list item
     pub fn list_item(&mut self, item: &str, metadata: Option<&str>) -> io::Result<()> {
-        ui::print_list_item(item, metadata);
-        Ok(())
+        if self.no_color {
+            return match metadata {
+                Some(meta) => writeln!(self.writer, "  \u{2022} {item} {meta}"),
+                None => writeln!(self.writer, "  \u{2022} {item}"),
+            };
+        }
+        let bullet = crate::cli::ui::Style::new()
+            .foreground(crate::cli::ui::Color::Cyan)
+            .bold(true)
+            .render("\u{2022}");
+        match metadata {
+            Some(meta) => {
+                let meta_style =
+                    crate::cli::ui::Style::new().foreground(crate::cli::ui::Color::Gray);
+                writeln!(self.writer, "  {bullet} {item} {}", meta_style.render(meta))
+            }
+            None => writeln!(self.writer, "  {bullet} {item}"),
+        }
     }
 
     /// Print a tip
     pub fn tip(&mut self, msg: &str) -> io::Result<()> {
-        ui::print_tip(msg);
-        Ok(())
+        if self.no_color {
+            return writeln!(self.writer, "\n  Tip: {msg}");
+        }
+        let style = crate::cli::ui::Style::new()
+            .foreground(crate::cli::ui::Color::Gray)
+            .italic(true);
+        let label_style = crate::cli::ui::Style::new()
+            .foreground(crate::cli::ui::Color::Gray)
+            .italic(true)
+            .bold(true);
+        writeln!(
+            self.writer,
+            "\n  {} {}",
+            label_style.render("Tip:"),
+            style.render(msg)
+        )
     }
 }
 
@@ -232,5 +297,25 @@ mod tests {
 
         let output = String::from_utf8(cursor.into_inner()).unwrap();
         assert!(output.contains("Done"));
+    }
+
+    /// Regression: card/step/kv/list/tip used to write straight to stdout,
+    /// letting a buffered `println` from an earlier command appear *after*
+    /// the card. Everything must flow through the writer in call order.
+    #[test]
+    fn card_and_println_stay_in_call_order_through_the_writer() {
+        let mut cursor = Cursor::new(Vec::new());
+        {
+            let mut renderer = Renderer::with_writer(&mut cursor);
+            renderer.println("before").unwrap();
+            renderer.card("My Card", &["row".to_string()]).unwrap();
+            renderer.println("after").unwrap();
+            renderer.flush().unwrap();
+        }
+        let output = String::from_utf8(cursor.into_inner()).unwrap();
+        let before = output.find("before").expect("println output present");
+        let card = output.find("My Card").expect("card present");
+        let after = output.find("after").expect("trailing println present");
+        assert!(before < card && card < after, "out of order: {output:?}");
     }
 }

@@ -183,6 +183,7 @@ supports-color = "3.0.0"
 dialoguer = "0.12.0"
 csv = "1.3"
 comfy-table = "7.2"
+unicode-width = "0.2"
 
 # File watching
 notify = "8.2"
@@ -351,7 +352,11 @@ split-debuginfo = "unpacked" # Faster linking on Linux
 #
 # Platform features (arch / debian / debian-pure / fedora / macos) are additive
 # and designed to compose. `pgp` gates signature verification
-# (sequoia-openpgp); `license` gates subscription-tier features.
+# (sequoia-openpgp); `license` gates ONLY the `omg license` CLI subcommand
+# (activation/status/deactivate). The Team/Enterprise/Fleet commands and the
+# core license/JWT machinery (core/license.rs) are NOT gated and compile in
+# every combination — see Wave-3 review F5. Gating them is a pending product
+# decision, not an oversight this comment can paper over.
 #
 # PRODUCT DECISION (Wave-2 review F03): release.yml currently ships the Debian
 # binary with `--no-default-features --features debian`, i.e. WITHOUT `pgp`
@@ -391,7 +396,7 @@ fedora = ["rusqlite"]
 macos = []
 
 license = [
-] # Enable license/subscription features (Pro, Team, Enterprise tiers)
+] # Gates the `omg license` CLI subcommand only; Team/Enterprise/Fleet are ungated (see feature policy above)
 proptest = [] # Enable property-based tests
 docker_tests = [] # Enable tests that require running as root (e.g. in Docker)
 

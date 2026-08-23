@@ -11,7 +11,8 @@ pub fn run(package: &str) -> Result<()> {
     crate::core::security::validate_package_name(package)?;
 
     let cmd = build_blame_output(package)?;
-    crate::cli::packages::execute_cmd(cmd);
+    // Fails (non-zero exit) when the command tree contains Cmd::Error.
+    crate::cli::tea::run_report(cmd)?;
 
     Ok(())
 }

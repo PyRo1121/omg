@@ -227,15 +227,39 @@ impl TaskDetector {
         let Some(content) = read_optional_file(&path)? else {
             return Ok(());
         };
+        let mut seen = std::collections::HashSet::new();
         for line in content.lines() {
-            if let Some(target) = line.split(':').next() {
-                let target = target.trim();
-                if !target.is_empty()
+            // Recipe lines and comments are never rules.
+            if line.starts_with('\t') || line.trim_start().starts_with('#') {
+                continue;
+            }
+            let Some((_targets, after_colon)) = line.split_once(':') else {
+                continue;
+            };
+            // Colon-style variable assignments (`A := b`, `A ::= b`) have `=`
+            // immediately after the colon (modulo the assignment operator's
+            // own colons); rule lines never do.
+            let normalized = after_colon.trim_start().trim_start_matches(':');
+            if normalized.starts_with('=') || normalized.contains('%') {
+                // `%` on the right side marks a pattern/static-pattern rule,
+                // whose left side is not a plain runnable target.
+                continue;
+            }
+            for target in line
+                .split(':')
+                .next()
+                .unwrap_or_default()
+                .split_whitespace()
+            {
+                let is_target_like = !target.is_empty()
                     && !target.contains('=')
                     && !target.contains('.')
-                    && !target.starts_with('#')
                     && !target.contains('%')
-                {
+                    && !target.contains('$')
+                    && !target.starts_with('#');
+                // Deduplicate repeated targets so `resolve` does not present
+                // identical duplicates as an ambiguous multi-match.
+                if is_target_like && seen.insert(target.to_string()) {
                     tasks.push(Task {
                         name: target.to_string(),
                         command: "make".to_string(),
@@ -443,7 +467,24 @@ pub fn detect_tasks() -> Result<Vec<Task>> {
     detector.detect()
 }
 
-/// Execute a task with advanced options
+/// Package managers that consume flags meant for the underlying script unless
+/// the flags follow a `--` separator.
+fn needs_arg_separator(command: &str) -> bool {
+    matches!(
+        command.to_lowercase().as_str(),
+        "npm" | "pnpm" | "yarn" | "composer"
+    )
+}
+
+/// Execute a task with advanced options.
+///
+/// Task resolution order:
+/// 1. Detected tasks from project manifests (`package.json`, `Cargo.toml`, …).
+/// 2. Ordered manifest-driven fallbacks (`make`, `npm run`, `task`, …).
+/// 3. As a final resort, `task_name` itself is executed as a command resolved
+///    from `PATH`. This passthrough is intentional and bounded: the name was
+///    validated against `[A-Za-z0-9._-]` up front, so `omg run <tool>` behaves
+///    like invoking `<tool>` directly.
 pub fn run_task_advanced(
     task_name: &str,
     extra_args: &[String],
@@ -508,7 +549,12 @@ pub fn run_task_advanced(
             task.source.blue()
         );
 
-        execute_process(&task.command, &task.args, extra_args, backend_override)?;
+        execute_process(
+            &task.command,
+            &with_arg_separator(&task.command, task.args, extra_args),
+            extra_args,
+            backend_override,
+        )?;
     }
 
     Ok(())
@@ -520,6 +566,20 @@ pub fn run_task(
     backend_override: Option<RuntimeBackend>,
 ) -> Result<()> {
     run_task_advanced(task_name, extra_args, backend_override, None, false)
+}
+
+/// Prepend a `--` separator before user extra args for package managers that
+/// would otherwise swallow script-intended flags (e.g. `npm run build --minify`
+/// is consumed by npm itself).
+fn with_arg_separator(
+    command: &str,
+    mut task_args: Vec<String>,
+    extra_args: &[String],
+) -> Vec<String> {
+    if needs_arg_separator(command) && !extra_args.is_empty() {
+        task_args.push("--".to_string());
+    }
+    task_args
 }
 
 fn run_async<F, T>(future: F) -> Result<T>
@@ -1056,27 +1116,29 @@ pub fn run_task_watch(
     // Debounce: wait for changes, then re-run
     let debounce = Duration::from_millis(300);
     let mut last_run = std::time::Instant::now();
+    // Set when a change arrives inside the debounce window: the change must
+    // still trigger one re-run once the window closes instead of being lost.
+    let mut rerun_pending = false;
 
     loop {
         match rx.recv_timeout(Duration::from_secs(1)) {
             Ok(_event) => {
                 // Debounce multiple rapid events
                 if last_run.elapsed() < debounce {
+                    rerun_pending = true;
                     continue;
                 }
+                rerun_pending = false;
                 last_run = std::time::Instant::now();
-
-                println!(
-                    "\n{} File changed, re-running {}...\n",
-                    "→".yellow(),
-                    task_name.cyan()
-                );
-                if let Err(error) = run_task(task_name, extra_args, backend_override) {
-                    eprintln!("{} Task failed: {error}", "!".yellow());
-                }
+                rerun_task_in_watch(task_name, extra_args, backend_override);
             }
             Err(std::sync::mpsc::RecvTimeoutError::Timeout) => {
-                // No events, continue watching
+                if rerun_pending && last_run.elapsed() >= debounce {
+                    rerun_pending = false;
+                    last_run = std::time::Instant::now();
+                    rerun_task_in_watch(task_name, extra_args, backend_override);
+                }
+                // No events otherwise; continue watching
             }
             Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => {
                 break;
@@ -1085,6 +1147,21 @@ pub fn run_task_watch(
     }
 
     Ok(())
+}
+
+fn rerun_task_in_watch(
+    task_name: &str,
+    extra_args: &[String],
+    backend_override: Option<RuntimeBackend>,
+) {
+    println!(
+        "\n{} File changed, re-running {}...\n",
+        "→".yellow(),
+        task_name.cyan()
+    );
+    if let Err(error) = run_task(task_name, extra_args, backend_override) {
+        eprintln!("{} Task failed: {error}", "!".yellow());
+    }
 }
 
 const MAX_PARALLEL_TASKS: usize = 16;
@@ -1370,6 +1447,83 @@ build = "node"
         assert!(
             result.is_err(),
             "unreadable nvm alias must fail closed, got {result:?}"
+        );
+    }
+}
+
+#[cfg(test)]
+#[expect(clippy::unwrap_used)] // Idiomatic in tests: panics on failure with clear error context
+mod wave3_tests {
+    use super::*;
+    use std::fs;
+    use tempfile::TempDir;
+
+    #[test]
+    fn makefile_parser_extracts_only_rule_targets() {
+        let temp = TempDir::new().unwrap();
+        let makefile = "\
+CC := gcc
+CFLAGS = -Wall
+include other.mk
+-include generated.d
+
+build: main.o
+\t@echo building
+
+test run:
+\tcargo test
+
+.PHONY: build
+pattern: %.o
+var_colon ::= value
+";
+        fs::write(temp.path().join("Makefile"), makefile).unwrap();
+
+        let detector = TaskDetector::new(temp.path().to_path_buf()).unwrap();
+        let mut tasks = Vec::new();
+        detector.detect_makefile_tasks(&mut tasks).unwrap();
+
+        let names: Vec<&str> = tasks.iter().map(|t| t.name.as_str()).collect();
+        assert_eq!(names, vec!["build", "test", "run"]);
+    }
+
+    #[test]
+    fn makefile_parser_dedupes_repeated_targets() {
+        let temp = TempDir::new().unwrap();
+        fs::write(
+            temp.path().join("Makefile"),
+            "build:\n\t@echo one\n\nbuild:\n\t@echo two\n",
+        )
+        .unwrap();
+
+        let detector = TaskDetector::new(temp.path().to_path_buf()).unwrap();
+        let mut tasks = Vec::new();
+        detector.detect_makefile_tasks(&mut tasks).unwrap();
+
+        assert_eq!(tasks.len(), 1);
+    }
+
+    #[test]
+    fn arg_separator_only_applies_to_flag_swallowing_managers() {
+        assert!(needs_arg_separator("npm"));
+        assert!(needs_arg_separator("pnpm"));
+        assert!(needs_arg_separator("yarn"));
+        assert!(needs_arg_separator("composer"));
+        assert!(!needs_arg_separator("cargo"));
+        assert!(!needs_arg_separator("bun"));
+
+        // Separator is inserted only when there are extra args to protect.
+        assert_eq!(
+            with_arg_separator(
+                "npm",
+                vec!["run".into(), "build".into()],
+                &["--minify".to_string()]
+            ),
+            vec!["run".to_string(), "build".to_string(), "--".to_string()]
+        );
+        assert_eq!(
+            with_arg_separator("npm", vec!["run".into()], &[]),
+            vec!["run".to_string()]
         );
     }
 }

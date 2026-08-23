@@ -12,7 +12,7 @@ This guide helps yay users transition to OMG with familiar command patterns and 
 ## Why Migrate?
 
 | Feature | yay | OMG |
-|---------|-----|-----|
+| --------- | ----- | ----- |
 | Search Speed | 200-800ms | **6ms (12-24x faster)** |
 | Runtime Management | ❌ | ✅ Node, Python, Go, Rust, Ruby, Java, Bun |
 | Security Scanning | ❌ | ✅ CVE scanning, SBOM generation |
@@ -24,7 +24,7 @@ This guide helps yay users transition to OMG with familiar command patterns and 
 ### Package Operations
 
 | yay | OMG | Notes |
-|-----|-----|-------|
+| ----- | ----- | ------- |
 | `yay -Ss <query>` | `omg search <query>` | 12-24x faster, unified results |
 | `yay -S <pkg>` | `omg install <pkg>` | Security grading included |
 | `yay -R <pkg>` | `omg remove <pkg>` | Same behavior |
@@ -40,8 +40,8 @@ This guide helps yay users transition to OMG with familiar command patterns and 
 # yay interactive search
 yay <query>
 
-# OMG equivalent
-omg search <query> -i
+# OMG equivalent (search includes AUR by default; add -d for details)
+omg search <query>
 ```
 
 ### AUR Operations
@@ -62,11 +62,13 @@ omg update
 ## Configuration Migration
 
 ### yay config location
+
 ```
 ~/.config/yay/config.json
 ```
 
 ### OMG config location
+
 ```
 ~/.config/omg/config.toml
 ```
@@ -76,6 +78,7 @@ omg update
 After migrating, you gain access to:
 
 ### Runtime Management
+
 ```bash
 omg use node 20
 omg use python 3.12
@@ -83,12 +86,14 @@ omg list node --available
 ```
 
 ### Security Scanning
+
 ```bash
 omg audit
 omg audit sbom --format cyclonedx
 ```
 
 ### Team Sync
+
 ```bash
 omg env capture
 omg env share
@@ -96,6 +101,6 @@ omg env share
 
 ## Next Steps
 
-- [CLI Reference](/cli) — Full command documentation
-- [Configuration](/configuration) — All config options
-- [Security](/security) — Vulnerability scanning setup
+- [CLI Reference](../cli.md) — Full command documentation
+- [Configuration](../configuration.md) — All config options
+- [Security](../security.md) — Vulnerability scanning setup

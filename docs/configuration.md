@@ -26,7 +26,7 @@ OMG follows the XDG Base Directory Specification with sensible fallbacks.
 ### Data Directory
 
 | Directory | Purpose | Default Path |
-|-----------|---------|--------------|
+| ----------- | --------- | -------------- |
 | **Data root** | All OMG data | `~/.local/share/omg/` |
 | **Versions** | Runtime installations | `~/.local/share/omg/versions/` |
 | **Tools** | Installed CLI tools | `~/.local/share/omg/tools/` |
@@ -123,7 +123,7 @@ enable_sccache = false
 #### General Settings
 
 | Setting | Type | Default | Description |
-|---------|------|---------|-------------|
+| --------- | ------ | --------- | ------------- |
 | `shims_enabled` | bool | `false` | Use shims instead of PATH modification |
 | `data_dir` | string | `~/.local/share/omg` | Override data directory |
 | `socket_path` | string | XDG runtime | Override socket path |
@@ -134,12 +134,12 @@ enable_sccache = false
 #### AUR Settings
 
 | Setting | Type | Default | Description |
-|---------|------|---------|-------------|
+| --------- | ------ | --------- | ------------- |
 | `build_method` | string | `"native"` | Build isolation method (`bubblewrap`, `chroot`, `native`) |
 | `build_concurrency` | int | CPU count | Parallel AUR builds |
 | `review_pkgbuild` | bool | `false` | Require manual PKGBUILD review |
 | `secure_makepkg` | bool | `true` | Use cleanbuild/verifysource |
-| `use_metadata_archive`| bool | `true` | Use bulk metadata for fast updates |
+| `use_metadata_archive` | bool | `true` | Use bulk metadata for fast updates |
 | `cache_builds` | bool | `true` | Cache built packages |
 | `enable_ccache` | bool | `false` | Use ccache for C/C++ |
 | `enable_sccache` | bool | `false` | Use sccache for Rust |
@@ -223,7 +223,7 @@ banned_packages = [
 ### Security Grades Explained
 
 | Grade | Level | Description | Examples |
-|-------|-------|-------------|----------|
+| ------- | ------- | ------------- | ---------- |
 | **Locked** | 3 | SLSA Level 3 + PGP verified | `glibc`, `linux`, `pacman` |
 | **Verified** | 2 | PGP/checksum verified | Official repo packages |
 | **Community** | 1 | AUR/unsigned sources | AUR packages |
@@ -315,7 +315,7 @@ runtime_backend = "native-then-mise"
 OMG automatically detects version files in your project:
 
 | File | Runtime | Format |
-|------|---------|--------|
+| ------ | --------- | -------- |
 | `.nvmrc` | Node.js | `20.10.0` or `lts/*` |
 | `.node-version` | Node.js | `20.10.0` |
 | `.bun-version` | Bun | `1.0.25` |
@@ -367,11 +367,11 @@ deno = "1.40.0"
 OMG respects these environment variables:
 
 | Variable | Purpose | Default |
-|----------|---------|---------|
+| ---------- | --------- | --------- |
 | `OMG_SOCKET_PATH` | Override socket path | XDG runtime |
 | `OMG_DATA_DIR` | Override data directory | `~/.local/share/omg` |
 | `OMG_CONFIG_DIR` | Override config directory | `~/.config/omg` |
-| `OMG_LOG_LEVEL` | Logging level | `info` |
+| `RUST_LOG` | Logging level filter for CLI/daemon output | `info` |
 | `GITHUB_TOKEN` | For `omg env share` | - |
 | `XDG_RUNTIME_DIR` | XDG runtime directory | `/run/user/$UID` |
 | `XDG_DATA_HOME` | XDG data directory | `~/.local/share` |
@@ -415,7 +415,7 @@ systemctl --user start omgd
 The shell hook adds these functions to Zsh:
 
 | Function | Description |
-|----------|-------------|
+| ---------- | ------------- |
 | `omg-ec` | Explicit package count (cached) |
 | `omg-tc` | Total package count (cached) |
 | `omg-oc` | Orphan count (cached) |
@@ -516,7 +516,7 @@ omg status
 ### Common Issues
 
 | Issue | Solution |
-|-------|----------|
+| ------- | ---------- |
 | Config not loading | Check file path and TOML syntax |
 | Permission denied | Ensure socket/data dirs are writable |
 | Policy blocking packages | Lower `minimum_grade` or set `allow_aur = true` |
@@ -555,6 +555,7 @@ default_shell = "zsh"
 ```
 
 **Policy (optional):**
+
 ```toml
 # ~/.config/omg/policy.toml
 # No strict policies needed for personal use
@@ -575,12 +576,8 @@ default_shell = "zsh"
 # Disable auto-update to prevent version drift
 auto_update = false
 
-# Strict runtime version matching
+# Runtime resolution strategy
 runtime_backend = "native-then-mise"
-
-# Enable audit logging for team debugging
-[audit]
-enabled = true
 
 # Team-friendly AUR settings
 [aur]
@@ -590,26 +587,26 @@ build_concurrency = 4   # Conservative for shared builders
 ```
 
 **Policy for team sync:**
+
 ```toml
 # ~/.config/omg/policy.toml
-# Enforce security scanning
-[security.scanner]
-enabled = true
-fail_on = "high"  # Block high-severity vulnerabilities
-
-# Require version lock files
-[team]
-require_lock_file = true
+minimum_grade = "Verified"   # Require verified sources (default is "Community")
+allow_aur = false            # Forbid AUR on team machines if desired
+banned_packages = []         # Explicitly block problem packages
 ```
 
 **Usage:**
+
 ```bash
 # Lock environment for team
 omg env capture
 git add omg.lock
 
-# Team members sync
-omg env sync
+# Team members verify their machine matches the lock
+omg env check
+
+# Or restore directly from a shared Gist:
+# omg env sync <gist-url>
 ```
 
 **Best for:** Small to medium development teams (2-20 people)
@@ -624,15 +621,8 @@ omg env sync
 # ~/.config/omg/config.toml
 # Use in CI Docker images or runner VMs
 
-# Disable interactive prompts
-auto_confirm = true
-
 # Strict runtime matching
 runtime_backend = "native"
-
-# Fast package operations
-[pacman]
-parallel_downloads = 16
 
 # Minimal AUR builds (avoid in CI when possible)
 [aur]
@@ -641,29 +631,21 @@ allow_unsafe_builds = false  # Force secure builds
 review_pkgbuild = false      # Can't review in CI
 
 # Disable telemetry in CI
-[telemetry]
-enabled = false
-
-# Enable audit logging
-[audit]
-enabled = true
-log_level = "info"
+telemetry_enabled = false
 ```
 
 **Policy for CI:**
+
 ```toml
 # ~/.config/omg/policy.toml
 # Strict security in CI
-
-[security.scanner]
-enabled = true
-fail_on = "medium"  # Stricter than dev
-
-[security.sbom]
-require_sbom = true
+minimum_grade = "Verified"
+require_pgp = true
+allow_aur = false
 ```
 
 **GitHub Actions Example:**
+
 ```yaml
 # .github/workflows/ci.yml
 - name: Install OMG
@@ -688,28 +670,17 @@ require_sbom = true
 # ~/.config/omg/config.toml
 # For VPS, Raspberry Pi, or resource-constrained systems
 
-# Disable daemon (use direct mode)
-daemon_enabled = false
-
 # Minimal shims
 shims_enabled = false
 
 # Conservative parallelism
-[pacman]
-parallel_downloads = 2
-
 [aur]
 build_concurrency = 1  # Single-threaded builds
 use_metadata_archive = false  # Save memory
-
-# Disable caching
-[cache]
-enabled = false
-
-# Minimal logging
-[audit]
-enabled = false
 ```
+
+Note: there is no config switch to disable the daemon — simply do not start
+`omgd`; the CLI falls back to direct package-manager queries without it.
 
 **Best for:** VPS, Raspberry Pi, low-RAM systems (<2GB), embedded devices
 
@@ -723,33 +694,16 @@ enabled = false
 # ~/.config/omg/config.toml
 # For workstations with 16+ cores, 32GB+ RAM
 
-# Enable daemon with aggressive caching
-daemon_enabled = true
-
-# Maximum parallelism
-[pacman]
-parallel_downloads = 32
-
 [aur]
 build_concurrency = 16  # Match CPU cores
 use_metadata_archive = true
 metadata_cache_ttl_secs = 3600  # Cache longer
-
-# Aggressive caching
-[cache]
-enabled = true
-max_size_gb = 10
-
-# Node.js optimizations
-[node]
-# Use faster mirrors
-mirror = "https://npmmirror.com/mirrors/node"
-
-# Python optimizations
-[python]
-# Precompiled builds when available
-prefer_precompiled = true
+enable_ccache = true    # Faster C/C++ rebuilds
+enable_sccache = true   # Faster Rust rebuilds
 ```
+
+Note: the daemon runs automatically when started and keeps its cache sized
+internally; there are no `[node]`/`[python]` mirror overrides in config today.
 
 **Best for:** High-end workstations, build servers, performance-critical workflows
 
@@ -763,64 +717,26 @@ prefer_precompiled = true
 # ~/.config/omg/config.toml
 # Corporate/enterprise environments
 
-# Require all security features
-[security]
-verify_checksums = true
-verify_signatures = true
-scan_on_install = true
-
 # Strict AUR builds
 [aur]
 build_method = "bubblewrap"  # Sandboxed builds only
 review_pkgbuild = true        # Manual review required
 allow_unsafe_builds = false   # No native builds
 secure_makepkg = true
-
-# Full audit logging
-[audit]
-enabled = true
-log_level = "debug"
-retention_days = 90
-
-# Custom mirrors (internal/proxied)
-[node]
-mirror = "https://internal-mirror.corp.com/node"
-
-[python]
-mirror = "https://internal-mirror.corp.com/python"
 ```
 
 **Policy for compliance:**
+
 ```toml
 # ~/.config/omg/policy.toml
 # Strict enterprise security policy
-
-[security.scanner]
-enabled = true
-fail_on = "medium"  # Block medium+ vulnerabilities
-
-[security.sbom]
-require_sbom = true
-format = "cyclonedx"
-
-[security.allow_list]
-# Only allow approved packages
-enabled = true
-packages = [
-  "firefox",
-  "visual-studio-code-bin",
-  # ... approved list
-]
-
-[security.block_list]
-# Block known problematic packages
-packages = [
+minimum_grade = "Verified"
+require_pgp = true
+allow_aur = false
+allowed_licenses = ["Apache-2.0", "MIT", "BSD-3-Clause"]
+banned_packages = [
   "untrusted-package",
 ]
-
-[team]
-require_lock_file = true
-enforce_versions = true  # Exact version matching
 ```
 
 **Best for:** Enterprise, regulated industries (healthcare, finance), security-critical environments
@@ -832,7 +748,7 @@ enforce_versions = true  # Exact version matching
 Quick reference for choosing the right configuration:
 
 | Feature | Personal | Team | CI/CD | Low-Resource | Performance | Enterprise |
-|---------|----------|------|-------|--------------|-------------|------------|
+| --------- | ---------- | ------ | ------- | -------------- | ------------- | ------------ |
 | **Daemon** | ✅ Yes | ✅ Yes | ❌ No | ❌ No | ✅ Yes | ✅ Yes |
 | **Auto-update** | ✅ Yes | ❌ No | ❌ No | ❌ No | ✅ Yes | ❌ No |
 | **Parallel builds** | 8 | 4 | 8 | 1 | 16 | 4 |

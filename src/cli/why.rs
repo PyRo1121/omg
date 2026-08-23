@@ -23,7 +23,7 @@ pub fn run(package: &str, reverse: bool) -> Result<()> {
         } else {
             show_deps_debian(package)
         };
-        crate::cli::packages::execute_cmd(cmd);
+        crate::cli::tea::run_report(cmd)?;
         return Ok(());
     }
 
@@ -34,7 +34,7 @@ pub fn run(package: &str, reverse: bool) -> Result<()> {
         } else {
             show_dependency_chain(package)?
         };
-        crate::cli::packages::execute_cmd(cmd);
+        crate::cli::tea::run_report(cmd)?;
         Ok(())
     }
 
@@ -48,7 +48,7 @@ pub fn run(package: &str, reverse: bool) -> Result<()> {
         } else {
             show_deps_debian(package)
         };
-        crate::cli::packages::execute_cmd(cmd);
+        crate::cli::tea::run_report(cmd)?;
         return Ok(());
     }
 
@@ -115,10 +115,11 @@ fn show_dependency_chain_for_pkg(
         Cmd::spacer(),
     ];
 
-    if matches!(reason, alpm::PackageReason::Depend) {
-        // Find what requires this package (single shared scan).
-        let required_by = crate::cli::local_reverse_deps(handle, package);
+    // Single shared scan of the local DB for both the "Required by" card and
+    // the safety assessment below.
+    let required_by = crate::cli::local_reverse_deps(handle, package);
 
+    if matches!(reason, alpm::PackageReason::Depend) {
         if required_by.is_empty() {
             commands.push(Cmd::info("Required by: (orphan - can be removed)"));
             commands.push(Cmd::success("This package is safe to remove"));
@@ -168,11 +169,10 @@ fn show_dependency_chain_for_pkg(
         }
     }
 
-    // Safety assessment
+    // Safety assessment (reuses the shared scan above)
     commands.push(Cmd::spacer());
-    let required_by_count = crate::cli::local_reverse_deps(handle, package).len();
-    let safety = if required_by_count > 0 {
-        Safety::Unsafe(format!("NO - {required_by_count} packages depend on it"))
+    let safety = if !required_by.is_empty() {
+        Safety::Unsafe(format!("NO - {} packages depend on it", required_by.len()))
     } else if matches!(reason, alpm::PackageReason::Depend) {
         Safety::Safe("YES - orphan dependency".to_string())
     } else {

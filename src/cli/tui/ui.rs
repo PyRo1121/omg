@@ -13,6 +13,37 @@ use ratatui::{
         Block, BorderType, Borders, Cell, Clear, Gauge, List, ListItem, Paragraph, Row, Table, Tabs,
     },
 };
+use unicode_width::{UnicodeWidthChar, UnicodeWidthStr};
+
+/// Truncate `text` to at most `max_width` display columns (wide glyphs count
+/// as 2), appending an ellipsis when truncation occurs.
+fn truncate_width(text: &str, max_width: usize) -> String {
+    if text.width() <= max_width {
+        return text.to_string();
+    }
+    let mut out = String::new();
+    let mut used = 0usize;
+    for ch in text.chars() {
+        let w = ch.width().unwrap_or(0);
+        if used + w > max_width.saturating_sub(1) {
+            break;
+        }
+        out.push(ch);
+        used += w;
+    }
+    out.push('\u{2026}');
+    out
+}
+
+/// Left-pad/truncate `text` to exactly `min_width` display columns.
+fn pad_display_width(text: &str, min_width: usize) -> String {
+    let w = text.width();
+    if w >= min_width {
+        truncate_width(text, min_width)
+    } else {
+        format!("{}{}", text, " ".repeat(min_width - w))
+    }
+}
 
 // Modern color palette (inspired by Catppuccin/Tokyo Night)
 mod colors {
@@ -766,7 +797,7 @@ fn draw_packages(f: &mut Frame, area: Rect, app: &App) {
                 )),
                 Cell::from(Span::styled(pkg.repo.clone(), base_style.fg(source_color))),
                 Cell::from(Span::styled(
-                    pkg.description.chars().take(50).collect::<String>(),
+                    truncate_width(&pkg.description, 50),
                     base_style.fg(colors::FG_MUTED),
                 )),
             ])
@@ -847,7 +878,7 @@ fn draw_runtimes(f: &mut Frame, area: Rect, app: &App) {
                     Style::default().fg(colors::ACCENT_CYAN),
                 ),
                 Span::styled(
-                    format!("{name:<12}"),
+                    pad_display_width(name, 12),
                     Style::default()
                         .fg(colors::FG_PRIMARY)
                         .add_modifier(Modifier::BOLD),
@@ -1113,10 +1144,11 @@ fn draw_team(f: &mut Frame, area: Rect, app: &App) {
             Line::from(vec![
                 Span::styled("  Lock Hash: ", Style::default().fg(colors::FG_MUTED)),
                 Span::styled(
+                    // Boundary-safe: never panic on short or multibyte hashes.
                     if status.lock_hash.is_empty() {
-                        "none"
+                        "none".to_string()
                     } else {
-                        &status.lock_hash[..8]
+                        status.lock_hash.chars().take(8).collect::<String>()
                     },
                     Style::default().fg(colors::FG_PRIMARY),
                 ),

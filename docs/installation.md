@@ -29,16 +29,19 @@ Native Windows is not supported.
 OMG is available in the AUR (Arch User Repository):
 
 **Prebuilt Binary (Recommended):**
+
 ```bash
 yay -S omg-bin
 ```
 
 **Build from Source:**
+
 ```bash
 yay -S omg
 ```
 
 **Features:**
+
 - Native `libalpm` integration
 - 12-24x faster than pacman
 - Full AUR support
@@ -49,14 +52,16 @@ yay -S omg
 ### 🐧 Debian & Ubuntu
 
 **Universal Installer (Recommended):**
+
 ```bash
 curl -fsSL https://pyro1121.com/install.sh | bash
 ```
 
 **Manual Installation:**
+
 ```bash
 # Download latest release
-VERSION="0.1.204"
+VERSION="0.1.215"
 wget "https://github.com/PyRo1121/omg/releases/download/v${VERSION}/omg-v${VERSION}-x86_64-linux-debian.tar.gz"
 
 # Extract
@@ -72,6 +77,7 @@ omg --version
 ```
 
 **Features:**
+
 - Native `rust-apt` integration
 - 59-483x faster than apt-cache/Nala
 - Direct APT database access
@@ -82,11 +88,13 @@ omg --version
 ### 🎩 Fedora & RHEL
 
 **Universal Installer (Recommended):**
+
 ```bash
 curl -fsSL https://pyro1121.com/install.sh | bash
 ```
 
 **Features:**
+
 - Pure Rust DNF/RPM implementation
 - Direct SQLite database access
 - 50-100x faster package queries
@@ -97,21 +105,25 @@ curl -fsSL https://pyro1121.com/install.sh | bash
 ### 🍎 macOS
 
 **Homebrew (Coming Soon):**
+
 ```bash
 brew tap pyro1121/omg
 brew install omg
 ```
 
 **Universal Installer:**
+
 ```bash
 curl -fsSL https://pyro1121.com/install.sh | bash
 ```
 
 **Supported Architectures:**
+
 - ARM64 (Apple Silicon) - Native
 - x86_64 (Intel) - Rosetta 2
 
 **Features:**
+
 - Homebrew integration
 - Native macOS binaries
 - Optimized for Apple Silicon
@@ -133,6 +145,7 @@ OMG detects and uses the package backend for the installed Linux distribution. N
 ### 🦀 Build from Source
 
 **Prerequisites:**
+
 - Rust 1.93+ (`rustup`)
 - Platform build tools:
   - Linux: `gcc`, `pkg-config`, `libssl-dev`
@@ -140,11 +153,13 @@ OMG detects and uses the package backend for the installed Linux distribution. N
   - macOS: Xcode Command Line Tools
 
 **Install via Cargo:**
+
 ```bash
-cargo install omg-cli
+cargo install omg --locked
 ```
 
 **Build manually:**
+
 ```bash
 # Clone repository
 git clone https://github.com/PyRo1121/omg.git
@@ -158,6 +173,7 @@ sudo cp target/release/omg /usr/local/bin/
 ```
 
 **Platform-specific features:**
+
 ```bash
 # Arch Linux (with libalpm)
 cargo build --release --features arch
@@ -181,18 +197,21 @@ cargo build --release --features macos
 Enable instant version switching for Node.js, Python, etc.
 
 **Bash:**
+
 ```bash
 echo 'eval "$(omg hook bash)"' >> ~/.bashrc
 source ~/.bashrc
 ```
 
 **Zsh:**
+
 ```bash
 echo 'eval "$(omg hook zsh)"' >> ~/.zshrc
 source ~/.zshrc
 ```
 
 **Fish:**
+
 ```fish
 echo 'omg hook fish | source' >> ~/.config/fish/config.fish
 source ~/.config/fish/config.fish
@@ -214,21 +233,25 @@ omg search vim
 ### 3. Optional: Enable Shell Completions
 
 **Bash:**
+
 ```bash
 omg completions bash > ~/.local/share/bash-completion/completions/omg
 ```
 
 **Zsh:**
+
 ```bash
 omg completions zsh > ~/.zfunc/_omg
 ```
 
 **Fish:**
+
 ```bash
 omg completions fish > ~/.config/fish/completions/omg.fish
 ```
 
 **PowerShell:**
+
 ```powershell
 omg completions powershell > $PROFILE\..\omg-completion.ps1
 ```
@@ -240,21 +263,21 @@ omg completions powershell > $PROFILE\..\omg-completion.ps1
 The universal installer (`install.sh`) supports several environment variables:
 
 ```bash
-# Disable telemetry
-OMG_NO_TELEMETRY=1 curl -fsSL https://pyro1121.com/install.sh | bash
+# Disable telemetry (variable must reach the installer's bash, not curl)
+curl -fsSL https://pyro1121.com/install.sh | OMG_NO_TELEMETRY=1 bash
 
 # Skip shell integration
 OMG_SKIP_SHELL=1 curl -fsSL https://pyro1121.com/install.sh | bash
 
 # Install specific version
-OMG_VERSION=v0.1.204 curl -fsSL https://pyro1121.com/install.sh | bash
+OMG_VERSION=v0.1.215 curl -fsSL https://pyro1121.com/install.sh | bash
 
 # Custom install directory
 INSTALL_DIR=~/.omg/bin curl -fsSL https://pyro1121.com/install.sh | bash
 
 # Combine options
-OMG_NO_TELEMETRY=1 OMG_SKIP_SHELL=1 OMG_VERSION=v0.1.204 \
-  curl -fsSL https://pyro1121.com/install.sh | bash
+OMG_VERSION=v0.1.215 \
+  curl -fsSL https://pyro1121.com/install.sh | OMG_NO_TELEMETRY=1 OMG_SKIP_SHELL=1 bash
 ```
 
 ---
@@ -270,18 +293,21 @@ omg self-update
 ### Platform-specific updates
 
 **Arch (AUR):**
+
 ```bash
 yay -Syu omg-bin
 ```
 
 **Homebrew (macOS):**
+
 ```bash
 brew upgrade omg
 ```
 
 **Cargo:**
+
 ```bash
-cargo install omg-cli --force
+cargo install omg --locked --force
 ```
 
 ---
@@ -291,6 +317,7 @@ cargo install omg-cli --force
 ### Linux/macOS
 
 **Universal installer:**
+
 ```bash
 rm -f ~/.local/bin/omg
 rm -rf ~/.local/share/omg
@@ -298,11 +325,13 @@ rm -rf ~/.config/omg
 ```
 
 **AUR:**
+
 ```bash
 yay -R omg-bin
 ```
 
 **Homebrew:**
+
 ```bash
 brew uninstall omg
 ```
@@ -326,6 +355,7 @@ echo 'export PATH="$HOME/.local/bin:$PATH"' >> ~/.bashrc
 ### Permission denied
 
 **Linux/macOS:**
+
 ```bash
 chmod +x ~/.local/bin/omg
 ```
@@ -334,12 +364,16 @@ chmod +x ~/.local/bin/omg
 
 ```bash
 # Check daemon status
-omg daemon status
+omg daemon-status
 
-# Restart daemon
-omg daemon restart
+# Run the daemon in the foreground to see errors
+omgd --foreground
+```
 
-# View logs
+If you created the optional systemd user service from
+[Configuration](./configuration.md), you can also inspect it with:
+
+```bash
 journalctl --user -u omgd
 ```
 
@@ -350,6 +384,7 @@ journalctl --user -u omgd
 Use OMG in CI/CD pipelines:
 
 **GitHub Actions:**
+
 ```yaml
 - name: Install OMG
   run: curl -fsSL https://pyro1121.com/install.sh | bash
@@ -361,6 +396,7 @@ Use OMG in CI/CD pipelines:
 ```
 
 **GitLab CI:**
+
 ```yaml
 before_script:
   - curl -fsSL https://pyro1121.com/install.sh | bash
@@ -368,6 +404,7 @@ before_script:
 ```
 
 **Jenkins:**
+
 ```groovy
 sh 'curl -fsSL https://pyro1121.com/install.sh | bash'
 sh 'omg use python 3.12'
@@ -389,7 +426,7 @@ After installation:
 
 ## Support
 
-- 📚 **Documentation**: https://pyro1121.com/docs
-- 💬 **Discussions**: https://github.com/PyRo1121/omg/discussions
-- 🐛 **Issues**: https://github.com/PyRo1121/omg/issues
-- 📧 **Email**: olen@latham.cloud
+- 📚 **Documentation**: <https://pyro1121.com/docs>
+- 💬 **Discussions**: <https://github.com/PyRo1121/omg/discussions>
+- 🐛 **Issues**: <https://github.com/PyRo1121/omg/issues>
+- 📧 **Email**: <olen@latham.cloud>

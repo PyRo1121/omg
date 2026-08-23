@@ -72,21 +72,25 @@ cp target/release/{omg,omgd,omg-fast} ~/.local/bin/
 Add the OMG hook to your shell config. This enables automatic runtime version switching when you enter project directories.
 
 **Zsh** — Add to `~/.zshrc`:
+
 ```bash
 eval "$(omg hook zsh)"
 ```
 
 **Bash** — Add to `~/.bashrc`:
+
 ```bash
 eval "$(omg hook bash)"
 ```
 
 **Fish** — Add to `~/.config/fish/config.fish`:
+
 ```fish
 omg hook fish | source
 ```
 
 Then restart your shell:
+
 ```bash
 exec $SHELL
 ```
@@ -110,25 +114,30 @@ This walkthrough shows exactly what to expect when you run your first OMG comman
 ### Step 1: Check Installation (30 seconds)
 
 **Command:**
+
 ```bash
 omg --version
 ```
 
 **Expected Output:**
+
 ```
-omg 0.1.204
+omg 0.1.215
 ```
 
 **If you see:**
+
 - `omg: command not found` → Add `~/.local/bin` to PATH: `export PATH="$HOME/.local/bin:$PATH"`
 - Different version → That's fine! Use the version you have.
 
 **Next, check system status:**
+
 ```bash
 omg status
 ```
 
 **Expected Output:**
+
 ```
 OMG Status
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
@@ -145,6 +154,7 @@ Runtimes: node@20.10.0, python@3.12.0
 ```
 
 **Common Issues:**
+
 - `Daemon not running` → It's fine! OMG works without daemon (just slower). Start it: `omgd &`
 - `Cache not loaded` → Normal on first run. Will populate automatically.
 
@@ -153,11 +163,13 @@ Runtimes: node@20.10.0, python@3.12.0
 ### Step 2: Search for Packages (1 minute)
 
 **Command:**
+
 ```bash
 omg search neovim
 ```
 
 **Expected Output (appears in ~5-11ms):**
+
 ```
 Searching packages... (5-11ms)
 
@@ -172,16 +184,19 @@ aur/neovim-nightly-bin 0.10.0-1 (124 votes)
 ```
 
 **Try fuzzy search:**
+
 ```bash
 omg search nvim
 ```
 
 **Expected Output:**
+
 ```
 Did you mean: neovim? (y/n) 
 ```
 
 **Common Mistakes:**
+
 - ❌ `omg search "neovim text editor"` → Too many words. Use: `omg search neovim`
 - ❌ Exact matches only → OMG uses fuzzy matching! `nvim`, `neovim`, `neo vim` all work.
 
@@ -190,11 +205,13 @@ Did you mean: neovim? (y/n)
 ### Step 3: Install Your First Package (1 minute)
 
 **Command:**
+
 ```bash
 omg install ripgrep
 ```
 
 **Expected Output:**
+
 ```
 Resolving dependencies...
 Found in: extra/ripgrep 14.1.0-1
@@ -212,16 +229,19 @@ Security Grade: A+ ━━━━━━━━━━━━━━━ 100%
 ```
 
 **Verify installation:**
+
 ```bash
 which rg
 ```
 
 **Expected Output:**
+
 ```
 /usr/bin/rg
 ```
 
 **Common Mistakes:**
+
 - ❌ `omg install ripgrep bat fd` without confirmation → OMG will prompt. Use `-y` to skip: `omg install -y ripgrep bat fd`
 - ❌ Package not found → Check spelling or search first: `omg search ripgrep`
 
@@ -230,11 +250,13 @@ which rg
 ### Step 4: Install a Runtime (2 minutes)
 
 **Command:**
+
 ```bash
 omg use node 20
 ```
 
 **Expected Output:**
+
 ```
 Installing Node.js 20.10.0...
 
@@ -252,23 +274,27 @@ Active: node v20.10.0, npm v10.2.3
 ```
 
 **Verify it works:**
+
 ```bash
 node --version
 npm --version
 ```
 
 **Expected Output:**
+
 ```
 v20.10.0
 10.2.3
 ```
 
 **Try switching versions:**
+
 ```bash
 omg use node 18
 ```
 
 **Expected Output (much faster - ~10ms):**
+
 ```
 Installing Node.js 18.19.0...
 [Same installation process]
@@ -277,6 +303,7 @@ Installing Node.js 18.19.0...
 ```
 
 **Common Mistakes:**
+
 - ❌ `node: command not found` after install → Shell hook not loaded. Run: `eval "$(omg hook zsh)"` or restart shell.
 - ❌ Old version still active → Check hook: `type omg` should show it's a function, not a binary.
 
@@ -285,6 +312,7 @@ Installing Node.js 18.19.0...
 ### Step 5: Auto-Detect Project Versions (1 minute)
 
 **Create a test project:**
+
 ```bash
 mkdir test-project
 cd test-project
@@ -292,37 +320,44 @@ echo "20.10.0" > .nvmrc
 ```
 
 **Now just enter the directory:**
+
 ```bash
 cd .
 ```
 
 **Expected Output:**
+
 ```
 ✓ Detected .nvmrc → Switched to Node.js 20.10.0
 ```
 
 **Verify:**
+
 ```bash
 node --version
 ```
 
 **Expected Output:**
+
 ```
 v20.10.0
 ```
 
 **Create Python project:**
+
 ```bash
 echo "3.12.0" > .python-version
 cd .
 ```
 
 **Expected Output:**
+
 ```
 ✓ Detected .python-version → Switched to Python 3.12.0
 ```
 
 **Common Mistakes:**
+
 - ❌ Auto-detect not working → Shell hook not installed. Add `eval "$(omg hook zsh)"` to `~/.zshrc`
 - ❌ Still using old version → File format wrong. `.nvmrc` should contain just the version: `20.10.0`, not `node 20.10.0`
 
@@ -331,11 +366,13 @@ cd .
 ### Step 6: Lock Your Environment (30 seconds)
 
 **Command:**
+
 ```bash
 omg env capture
 ```
 
 **Expected Output:**
+
 ```
 Capturing environment...
 
@@ -348,11 +385,13 @@ Saved to: omg.lock
 ```
 
 **Check the file:**
+
 ```bash
 cat omg.lock
 ```
 
 **Expected Output:**
+
 ```json
 {
   "version": "1.0",
@@ -372,30 +411,30 @@ cat omg.lock
 ```
 
 **Share with team:**
+
 ```bash
 git add omg.lock
 git commit -m "Lock OMG environment"
 ```
 
-**Teammate syncs:**
+**Teammate verifies:**
+
 ```bash
 git pull
-omg env sync
+omg env check
 ```
 
 **Expected Output:**
+
 ```
-Syncing from omg.lock...
+Checking environment against omg.lock...
 
-Installing:
-- Node.js 20.10.0
-- Python 3.12.0  
-- ripgrep 14.1.0-1
-
-[Progress bars for each]
-
-✓ Environment synced successfully
+✓ No drift detected — your environment matches omg.lock
 ```
+
+To install the pinned runtimes and packages, teammates run `omg use <runtime> <version>`
+and `omg install <package>`. To restore a full shared environment from a Gist instead,
+use `omg env sync https://gist.github.com/user/abc123`.
 
 ---
 
@@ -412,6 +451,7 @@ After your first 5 minutes, you should have:
 - [x] Locked your environment to `omg.lock`
 
 **Next steps:**
+
 - Explore `omg dash` for interactive TUI
 - Try `omg run dev` in your projects
 - Read [CLI Reference](./cli.md) for all commands
@@ -426,6 +466,7 @@ After your first 5 minutes, you should have:
 **Symptom:** Runtime versions don't auto-switch when entering directories.
 
 **Fix:**
+
 ```bash
 # Check if hook is loaded
 type omg  # Should show "omg is a function"
@@ -440,6 +481,7 @@ exec $SHELL
 **Symptom:** `omg: command not found`
 
 **Fix:**
+
 ```bash
 # Add to PATH
 echo 'export PATH="$HOME/.local/bin:$PATH"' >> ~/.zshrc
@@ -451,6 +493,7 @@ exec $SHELL
 **Symptom:** Searches are slow (> 100ms)
 
 **Fix:**
+
 ```bash
 # Start daemon manually
 omgd &
@@ -464,11 +507,13 @@ echo 'omgd 2>/dev/null &' >> ~/.zshrc
 **Symptom:** `.nvmrc` not detected
 
 **Wrong:**
+
 ```
 node 20.10.0
 ```
 
 **Correct:**
+
 ```
 20.10.0
 ```
@@ -478,6 +523,7 @@ node 20.10.0
 **Symptom:** `nvm` or `pyenv` overriding OMG versions
 
 **Fix:**
+
 ```bash
 # Remove old hooks from shell config
 # Comment out or remove these lines:
@@ -541,7 +587,7 @@ OMG detects your project type (package.json, Cargo.toml, Makefile, etc.) and run
 
 ```bash
 omg search <query>        # Find packages
-omg search <query> -i     # Interactive mode — select packages to install
+omg search <query> -d     # Detailed results (votes, popularity)
 omg install <packages>    # Install packages
 omg remove <package>      # Remove a package
 omg remove <package> -r   # Remove with unused dependencies
@@ -625,7 +671,7 @@ Without the daemon, OMG still works — it just falls back to direct package man
 When you enter a project directory, OMG automatically detects version files and switches runtimes:
 
 | File | Runtime |
-|------|---------|
+| ------ | --------- |
 | `.nvmrc` or `.node-version` | Node.js |
 | `.python-version` | Python |
 | `.ruby-version` | Ruby |
@@ -653,6 +699,7 @@ omg dash
 ```
 
 Navigate with:
+
 - `Tab` — Switch between views
 - `r` — Refresh
 - `q` — Quit
@@ -685,7 +732,7 @@ Now that you're set up:
 ## Quick Reference
 
 | Task | Command |
-|------|---------|
+| ------ | --------- |
 | Search packages | `omg search <query>` |
 | Install package | `omg install <package>` |
 | Remove package | `omg remove <package>` |

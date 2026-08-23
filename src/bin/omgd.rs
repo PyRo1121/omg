@@ -16,7 +16,7 @@ use futures::FutureExt;
 #[cfg(unix)]
 use sentry_tracing::EventFilter;
 #[cfg(unix)]
-use std::path::PathBuf;
+use std::{fs, io::Write as _, path::PathBuf};
 #[cfg(unix)]
 use tokio::net::UnixListener;
 #[cfg(unix)]
@@ -92,13 +92,29 @@ async fn main() -> Result<()> {
             tracing::error!("Troubleshooting:");
             tracing::error!("  1. Ensure package databases are synced: sudo omg sync");
             tracing::error!("  2. Check if another daemon is running: pgrep omgd");
-            tracing::error!("  3. Remove stale lock files: rm -f ~/.local/share/omg/daemon/*.lock");
-            tracing::error!("  4. Check disk space and permissions");
+            tracing::error!(
+                "  3. Check permissions and free disk space for ~/.local/share/omg/daemon"
+            );
             return Err(e);
         }
     };
 
-    // 2. Check if daemon is already responding on the socket
+    // Claim the daemon singleton via an exclusive flock before touching the
+    // socket file. A live daemon holds this lock for its whole lifetime, so
+    // acquiring it proves any previous owner exited and makes the stale-socket
+    // unlink below safe (no TOCTOU where a second start deletes a live
+    // daemon's socket).
+    let _daemon_claim = match claim_daemon_lock(&socket_path) {
+        Ok(claim) => claim,
+        Err(e) => {
+            tracing::error!("{:#}", e);
+            return Err(e);
+        }
+    };
+
+    // 2. Check if daemon is already responding on the socket. The ping is kept
+    // for compatibility with daemons from versions that did not take the lock;
+    // once every daemon holds the claim, the lock alone decides.
     if socket_path.exists() {
         if let Ok(mut client) =
             omg_lib::core::client::DaemonClient::connect_to(socket_path.clone()).await
@@ -115,6 +131,12 @@ async fn main() -> Result<()> {
 
     // 3. Create Unix socket listener
     let listener = UnixListener::bind(&socket_path)?;
+    // RAII cleanup: removes the socket file on every exit path from here on
+    // (graceful shutdown, fatal accept error, or panic caught below), so a
+    // dead daemon never leaves a stale socket behind.
+    let _socket_guard = SocketCleanup {
+        socket_path: socket_path.clone(),
+    };
     tracing::info!("Listening on {:?}", socket_path);
 
     // Set socket permissions (user only)
@@ -152,12 +174,75 @@ async fn main() -> Result<()> {
         }
     }
 
-    // Cleanup socket on exit
-    if socket_path.exists() {
-        let _ = std::fs::remove_file(&socket_path);
-    }
+    Ok(()) // `_socket_guard` removes the socket file on drop
+}
 
-    Ok(())
+/// RAII guard that removes the daemon socket file when dropped.
+struct SocketCleanup {
+    socket_path: PathBuf,
+}
+
+impl Drop for SocketCleanup {
+    fn drop(&mut self) {
+        if let Err(error) = std::fs::remove_file(&self.socket_path)
+            && error.kind() != std::io::ErrorKind::NotFound
+        {
+            tracing::warn!(
+                "Failed to remove daemon socket {}: {error}",
+                self.socket_path.display()
+            );
+        }
+    }
+}
+
+/// Exclusive-lifetime handle on the daemon singleton claim.
+///
+/// Dropping it releases the flock, allowing the next daemon start to proceed.
+struct DaemonClaim {
+    /// Held open (and locked) for the lifetime of the daemon.
+    _lock_file: fs::File,
+}
+
+fn daemon_lock_path(socket_path: &std::path::Path) -> PathBuf {
+    let mut lock_name = socket_path.as_os_str().to_os_string();
+    lock_name.push(".lock");
+    PathBuf::from(lock_name)
+}
+
+fn claim_daemon_lock(socket_path: &std::path::Path) -> Result<DaemonClaim> {
+    use std::os::unix::fs::OpenOptionsExt;
+
+    let lock_path = daemon_lock_path(socket_path);
+    let mut lock_file = fs::OpenOptions::new()
+        .read(true)
+        .write(true)
+        .create(true)
+        .truncate(false)
+        .mode(0o600)
+        .open(&lock_path)
+        .with_context(|| format!("Failed to open daemon lock file {}", lock_path.display()))?;
+
+    use std::os::unix::io::AsFd as _;
+
+    rustix::fs::flock(
+        lock_file.as_fd(),
+        rustix::fs::FlockOperation::NonBlockingLockExclusive,
+    )
+    .map_err(|error| {
+        anyhow::anyhow!(
+            "Another omgd daemon owns {} (lock: {}): {error}",
+            socket_path.display(),
+            lock_path.display()
+        )
+    })?;
+
+    // Record the owning pid for operators inspecting the runtime directory.
+    let _ = lock_file.set_len(0);
+    let _ = writeln!(lock_file, "{}", std::process::id());
+
+    Ok(DaemonClaim {
+        _lock_file: lock_file,
+    })
 }
 
 // Windows stub - daemon not supported

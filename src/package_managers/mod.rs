@@ -427,9 +427,6 @@ pub use debian_db::{
 ))]
 pub use debian_db::list_installed_fast as apt_list_installed_fast;
 
-#[cfg(all(feature = "debian", feature = "debian-pure"))]
-pub use debian_db::list_installed_fast as apt_list_installed_db_fast;
-
 // Homebrew exports are available on macOS
 #[cfg(any(feature = "macos", target_os = "macos"))]
 pub use homebrew::HomebrewPackageManager;

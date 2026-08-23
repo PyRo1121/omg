@@ -17,17 +17,18 @@ OMG enhances your existing development workflow by integrating seamlessly with p
 **Interactive package selection:**
 
 ```bash
-# Search and install interactively
+# Search official repos + AUR, pipe through fzf
 omg search | fzf | cut -d' ' -f1 | xargs omg install
 
-# Search AUR interactively
-omg search --aur | fzf --preview 'omg info {}' | xargs omg install
+# Search AUR-style packages (search includes AUR by default; use --no-aur to skip it)
+omg search | fzf --preview 'omg info {}' | xargs omg install
 
 # Select runtime version
 omg list node --available | fzf | xargs omg use node
 ```
 
 **Add to shell:**
+
 ```bash
 # ~/.zshrc or ~/.bashrc
 alias omgi='omg search | fzf --preview "omg info {1}" | cut -d" " -f1 | xargs omg install'
@@ -88,6 +89,7 @@ zstyle ':completion:*:descriptions' format '%F{green}-- %d --%f'
 ```
 
 **Useful aliases:**
+
 ```bash
 alias oi='omg install'
 alias os='omg search'
@@ -140,6 +142,7 @@ alias or='omg run'
 OMG's shell integration works automatically with VS Code's integrated terminal.
 
 **Workspace settings:**
+
 ```json
 // .vscode/settings.json
 {
@@ -154,6 +157,7 @@ OMG's shell integration works automatically with VS Code's integrated terminal.
 ```
 
 **Recommended extensions:**
+
 - **TOML Language Support** - Syntax highlighting for `omg.toml`, `rust-toolchain.toml`
 - **Better TOML** - Enhanced TOML editing
 
@@ -173,6 +177,7 @@ OMG's shell integration works automatically with VS Code's integrated terminal.
    - Toolchain location: `~/.local/share/omg/versions/rust/current`
 
 **Auto-detect on project open:**
+
 ```bash
 # Add to project's .idea/runConfigurations/
 # Use OMG-managed runtimes
@@ -196,6 +201,7 @@ vim.env.PATH = vim.fn.expand("~/.local/share/omg/versions/node/current/bin")
 ```
 
 **Automatic runtime switching:**
+
 ```lua
 -- Auto-detect .nvmrc and switch
 vim.api.nvim_create_autocmd("DirChanged", {
@@ -252,8 +258,8 @@ jobs:
     key: omg-${{ hashFiles('omg.lock') }}
     restore-keys: omg-
 
-- name: Install OMG runtimes
-  run: omg env sync
+- name: Verify OMG environment matches omg.lock
+  run: omg env check
 ```
 
 ---
@@ -330,10 +336,10 @@ jobs:
           name: Install OMG
           command: curl -fsSL https://pyro1121.com/install.sh | bash
       - run:
-          name: Sync environment
+          name: Check environment against omg.lock
           command: |
             export PATH="$HOME/.local/bin:$PATH"
-            omg env sync
+            omg env check
       - run:
           name: Build
           command: omg run build
@@ -411,9 +417,9 @@ RUN curl -fsSL https://pyro1121.com/install.sh | bash
 # Copy environment lock
 COPY omg.lock /app/
 
-# Sync environment
+# Verify the environment matches the committed lock
 WORKDIR /app
-RUN omg env sync
+RUN omg env check
 
 # Build application
 RUN omg run build
@@ -432,7 +438,7 @@ RUN curl -fsSL https://pyro1121.com/install.sh | bash
 COPY . /app
 WORKDIR /app
 
-RUN omg env sync && omg run build
+RUN omg env check && omg run build
 
 # Production stage
 FROM archlinux:latest
@@ -531,6 +537,7 @@ yay -S firefox
 ```
 
 **Why combine?**
+
 - OMG: Lightning-fast search (6ms vs 133ms)
 - yay: Feature-complete installer (VCS packages, etc.)
 
@@ -590,14 +597,14 @@ cd project
 # Install OMG
 curl -fsSL https://pyro1121.com/install.sh | bash
 
-# Sync entire environment (runtimes + packages)
-omg env sync
+# Verify environment matches omg.lock (install pinned runtimes with: omg use node <version>)
+omg env check
 
 # Start coding
 omg run dev
 ```
 
-**One command, entire environment synced.**
+**One command to verify your environment.** To restore a full shared environment from a Gist, use `omg env sync <gist-url>`.
 
 ---
 
@@ -620,8 +627,8 @@ jobs:
       - name: Install OMG
         run: curl -fsSL https://pyro1121.com/install.sh | bash
       
-      - name: Sync environment
-        run: omg env sync
+      - name: Check environment against omg.lock
+        run: omg env check
       
       - name: Build
         run: omg run build
@@ -651,6 +658,7 @@ jobs:
 ### Troubleshooting
 
 **IDE not using OMG runtime:**
+
 ```bash
 # Restart IDE after installing runtime
 # Or explicitly set interpreter path:
@@ -658,6 +666,7 @@ jobs:
 ```
 
 **CI cache issues:**
+
 ```yaml
 # Clear cache and rebuild
 - name: Clear OMG cache

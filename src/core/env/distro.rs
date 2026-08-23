@@ -87,34 +87,7 @@ pub fn detect_distro() -> Distro {
             let id = map.get("ID").map(String::as_str).unwrap_or_default();
             let id_like = map.get("ID_LIKE").map(String::as_str).unwrap_or_default();
 
-            // Arch Linux and derivatives
-            if is_like(id, id_like, "arch") {
-                return Distro::Arch;
-            }
-
-            // Fedora and RHEL-family
-            if id == "fedora"
-                || is_like(id, id_like, "fedora")
-                || is_like(id, id_like, "rhel")
-                || id == "rhel"
-                || id == "centos"
-                || id == "rocky"
-                || id == "almalinux"
-            {
-                return Distro::Fedora;
-            }
-
-            // Ubuntu (check before debian since ubuntu is debian-like)
-            if id == "ubuntu" {
-                return Distro::Ubuntu;
-            }
-
-            // Debian and other derivatives
-            if id == "debian" || is_like(id, id_like, "debian") {
-                return Distro::Debian;
-            }
-
-            Distro::Unknown
+            classify(id, id_like)
         }
 
         #[cfg(not(any(target_os = "linux", target_os = "macos")))]
@@ -162,32 +135,48 @@ pub fn use_debian_backend() -> bool {
     }
 }
 
-/// Check if we should use Fedora/DNF backend
-#[must_use]
-pub fn use_fedora_backend() -> bool {
-    #[cfg(feature = "fedora")]
-    {
-        is_fedora_like()
+/// Classify a distribution from its os-release `ID`/`ID_LIKE` values.
+///
+/// Order matters:
+/// 1. Arch family (pacman/ALPM backend).
+/// 2. Fedora/RHEL family (DNF backend).
+/// 3. Ubuntu family — including derivatives such as Pop!_OS, KDE neon, and
+///    elementary that declare `ubuntu` in `ID_LIKE`. They must classify as
+///    [`Distro::Ubuntu`] so consumers like self-update pick Ubuntu-built
+///    artifacts; package-manager selection treats Ubuntu and Debian alike.
+/// 4. Debian family (apt backend). Pure-Debian-claimed derivatives such as
+///    Linux Mint (`ID_LIKE="debian"`) land here; they still get the apt
+///    backend.
+fn classify(id: &str, id_like: &str) -> Distro {
+    // Arch Linux and derivatives
+    if is_like(id, id_like, "arch") {
+        return Distro::Arch;
     }
 
-    #[cfg(not(feature = "fedora"))]
+    // Fedora and RHEL-family
+    if id == "fedora"
+        || is_like(id, id_like, "fedora")
+        || is_like(id, id_like, "rhel")
+        || id == "rhel"
+        || id == "centos"
+        || id == "rocky"
+        || id == "almalinux"
     {
-        false
-    }
-}
-
-/// Check if we should use Homebrew backend
-#[must_use]
-pub fn use_homebrew_backend() -> bool {
-    #[cfg(feature = "macos")]
-    {
-        is_macos()
+        return Distro::Fedora;
     }
 
-    #[cfg(not(feature = "macos"))]
-    {
-        false
+    // Ubuntu and Ubuntu-family derivatives (checked before debian since every
+    // Ubuntu derivative is also debian-like)
+    if id == "ubuntu" || is_like(id, id_like, "ubuntu") {
+        return Distro::Ubuntu;
     }
+
+    // Debian and other derivatives
+    if id == "debian" || is_like(id, id_like, "debian") {
+        return Distro::Debian;
+    }
+
+    Distro::Unknown
 }
 
 fn is_like(id: &str, id_like: &str, needle: &str) -> bool {
@@ -210,4 +199,57 @@ fn parse_os_release(contents: &str) -> HashMap<String, String> {
         }
     }
     map
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn arch_family_including_derivatives() {
+        assert_eq!(classify("arch", ""), Distro::Arch);
+        assert_eq!(classify("manjaro", "arch"), Distro::Arch);
+        assert_eq!(classify("endeavouros", "arch"), Distro::Arch);
+        assert_eq!(classify("archarm", "arch"), Distro::Arch);
+        assert_eq!(classify("cachyos", "arch"), Distro::Arch);
+    }
+
+    #[test]
+    fn fedora_family() {
+        assert_eq!(classify("fedora", ""), Distro::Fedora);
+        assert_eq!(classify("rhel", "fedora"), Distro::Fedora);
+        assert_eq!(classify("centos", "rhel fedora"), Distro::Fedora);
+        assert_eq!(classify("rocky", "rhel fedora"), Distro::Fedora);
+        assert_eq!(classify("ol", "fedora rhel centos"), Distro::Fedora);
+        assert_eq!(classify("amzn", "centos rhel fedora"), Distro::Fedora);
+    }
+
+    #[test]
+    fn ubuntu_and_ubuntu_family_derivatives_classify_as_ubuntu() {
+        assert_eq!(classify("ubuntu", "debian"), Distro::Ubuntu);
+        // Pop!_OS declares ID_LIKE="ubuntu debian"
+        assert_eq!(classify("pop", "ubuntu debian"), Distro::Ubuntu);
+        // KDE neon
+        assert_eq!(classify("neon", "ubuntu debian"), Distro::Ubuntu);
+        // elementary OS
+        assert_eq!(classify("elementary", "ubuntu debian"), Distro::Ubuntu);
+        // Trisquel
+        assert_eq!(classify("trisquel", "ubuntu"), Distro::Ubuntu);
+    }
+
+    #[test]
+    fn debian_family() {
+        assert_eq!(classify("debian", ""), Distro::Debian);
+        // Linux Mint claims only "debian" in ID_LIKE; it still gets the apt
+        // backend, so Debian classification is acceptable there.
+        assert_eq!(classify("linuxmint", "debian"), Distro::Debian);
+        assert_eq!(classify("kali", "debian"), Distro::Debian);
+    }
+
+    #[test]
+    fn unknown_distributions_do_not_match_any_family() {
+        assert_eq!(classify("alpine", ""), Distro::Unknown);
+        assert_eq!(classify("opensuse-leap", "suse opensuse"), Distro::Unknown);
+        assert_eq!(classify("", ""), Distro::Unknown);
+    }
 }

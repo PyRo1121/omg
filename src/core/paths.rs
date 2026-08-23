@@ -5,6 +5,7 @@
 //! production path resolution cannot be redirected at runtime.
 
 use std::path::PathBuf;
+#[cfg(any(test, debug_assertions))]
 use std::sync::OnceLock;
 #[cfg(any(test, debug_assertions))]
 use std::sync::RwLock;
@@ -29,6 +30,7 @@ fn get_overrides() -> &'static RwLock<PathOverrides> {
 ///
 /// Only available in test and debug builds (`cfg(any(test, debug_assertions))`);
 /// release binaries ship without this API.
+#[cfg(any(test, debug_assertions))]
 pub fn set_test_overrides(root: Option<PathBuf>, db_dir: Option<PathBuf>) {
     let mut guard = get_overrides()
         .write()
@@ -38,6 +40,7 @@ pub fn set_test_overrides(root: Option<PathBuf>, db_dir: Option<PathBuf>) {
 }
 
 /// Reset all path overrides. Test/debug builds only; see [`set_test_overrides`].
+#[cfg(any(test, debug_assertions))]
 pub fn reset_test_overrides() {
     let mut guard = get_overrides()
         .write()
