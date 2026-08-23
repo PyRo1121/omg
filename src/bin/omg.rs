@@ -92,10 +92,20 @@ fn execute_fast_system_update(suffix: &str) -> Result<()> {
 fn split_elevated_invocation(args: &[String]) -> Option<(&str, &[String])> {
     let command = args.get(1)?;
     let separator_pos = args.iter().position(|a| a == "--")?;
-    let packages = &args[separator_pos + 1..];
-    if packages.iter().any(|arg| arg.starts_with('-')) {
+    // The minimal transaction path honors exactly `omg <cmd> -- pkgs...`.
+    // ANY flag-looking token anywhere in the elevated invocation (before or
+    // after the separator) selects behavior this path cannot honor, so the
+    // full CLI re-dispatch must handle it instead. Silently dropping e.g.
+    // `--check` or `--dry-run` would turn a read-only request into a
+    // destructive mutation.
+    if args[2..separator_pos]
+        .iter()
+        .chain(&args[separator_pos + 1..])
+        .any(|arg| arg.starts_with('-'))
+    {
         return None;
     }
+    let packages = &args[separator_pos + 1..];
     Some((command.as_str(), packages))
 }
 

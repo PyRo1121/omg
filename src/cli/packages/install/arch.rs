@@ -529,11 +529,13 @@ async fn handle_aur_package(aur_pkg: crate::core::Package, yes: bool) -> Result<
     } else {
         None
     };
-    let history_result = record_aur_history(&aur_pkg.name, installed_version, outcome);
+    // Success output and usage tracking must reflect the actual outcome:
+    // record_aur_history persists the attempt and returns the install result.
+    record_aur_history(&aur_pkg.name, installed_version, outcome)?;
 
     modern_ui::print_success(&format!("Built and installed {} from AUR", aur_pkg.name));
     crate::core::usage::track_install(std::slice::from_ref(&aur_pkg.name));
-    history_result
+    Ok(())
 }
 
 /// Record one AUR install attempt in package history.
