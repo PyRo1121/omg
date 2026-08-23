@@ -1738,6 +1738,7 @@ across history/faq/cli
 - Run Docker E2E tests explicitly
 ### 📚 Documentation
 
+- Fedora engine plan — research verdicts (raw-rust RPM via zerocopy, rpmrepo_metadata, dnf5 bar)
 - Wave-12 blocker remediation roadmap (citation-backed audit)
 - Re-link AUR support page from package docs
 
