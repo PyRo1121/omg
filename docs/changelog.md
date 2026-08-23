@@ -259,6 +259,38 @@ was not linked from any doc; its command usage remains in docs/runtimes.md
 - Move performance checks to benchmarks
 ### ✨ New Features
 
+- **Dnf**: S2a strict repomd.xml parser — typed entries, fail-closed validation
+
+Implements FEDORA-ENGINE.md S2a (citations: /tmp/omg-fleet13
+
+rnd-pm-formats for repomd layout; WAVE12-BLOCKERS signature-chain
+
+blockers driving fail-closed semantics).
+
+  - parse repomd.xml into Repomd{revision, entries} with typed
+
+RepomdEntry records (type/location/sha256/size)
+
+  - quick-xml added as fedora-feature optional dependency
+
+  - fail-closed rules: missing <revision> or <data> records rejected;
+
+only sha256 checksums accepted (64 hex chars enforced); unsafe
+
+location hrefs (traversal/absolute) rejected; malformed known
+
+elements are hard errors
+
+  - self-closing <location/> handled via Event::Empty; size parsed from
+
+element text; revision propagated to every entry
+
+  - lives inside dnf.rs (no scattered per-format files)
+
+  - 7 new tests: valid manifest, missing revision, missing location,
+
+non-sha256 checksum, traversal location, short digest, empty manifest
+
 - **Dnf**: S1 strict RPM header reader — zerocopy views, librpm invariants
 
 Implements FEDORA-ENGINE.md S1 (citations: /tmp/omg-fleet13
