@@ -205,12 +205,16 @@ pub async fn run(
             let state_search = Arc::clone(state);
             if let Err(error) = tokio::task::spawn_blocking(move || {
                 let common_queries = ["", "linux", "python", "node", "firefox", "git"];
+                let index = state_search.index_snapshot();
                 for query in common_queries {
-                    let results = state_search.index.search(query, 50);
-                    let results_arc = Arc::new(results);
-                    state_search
-                        .cache
-                        .insert_arc(query.to_string(), results_arc);
+                    let results = Arc::new(index.search(query, 50));
+                    if !state_search.with_current_index(&index, || {
+                        state_search
+                            .cache
+                            .insert_arc(query.to_string(), Arc::clone(&results));
+                    }) {
+                        break;
+                    }
                 }
                 tracing::debug!(
                     "Pre-warmed search cache with {} common queries",

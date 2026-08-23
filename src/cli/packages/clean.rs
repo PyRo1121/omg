@@ -214,9 +214,10 @@ pub async fn clean(orphans: bool, cache: bool, aur: bool, all: bool, dry_run: bo
                     // Warn (do not block): cleaning can delete exactly the
                     // cached versions that update/removal rollback plans from
                     // the last 30 days depend on.
-                    match crate::core::history::HistoryManager::new()
-                        .and_then(|history| history.rollback_referenced_versions(30))
-                    {
+                    let rollback_versions: Result<Vec<(String, String)>> =
+                        crate::core::history::HistoryManager::new()
+                            .and_then(|history| history.rollback_referenced_versions(30));
+                    match rollback_versions {
                         Ok(referenced) if !referenced.is_empty() => {
                             use owo_colors::OwoColorize;
                             println!(

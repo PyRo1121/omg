@@ -244,7 +244,7 @@ impl PackageIndex {
     /// Used by tests that need ranking, suggestion, and lookup behavior without
     /// reading the host package database.
     #[cfg(test)]
-    fn from_records(records: &[(&str, &str, &str)]) -> Self {
+    pub(crate) fn from_records(records: &[(&str, &str, &str)]) -> Self {
         let pkg_count = records.len();
         let mut pool = StringPool::default();
         let mut items = Vec::with_capacity(pkg_count);

@@ -63,6 +63,7 @@ pub fn explicit_sync_with_json(count: bool, json: bool) -> Result<()> {
                 | ResponseResult::SecurityAudit(_)
                 | ResponseResult::Ping(_)
                 | ResponseResult::CacheStats { .. }
+                | ResponseResult::IndexRefreshed { .. }
                 | ResponseResult::Metrics(_)
                 | ResponseResult::Suggest(_)
                 | ResponseResult::Message(_)

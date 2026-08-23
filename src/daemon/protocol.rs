@@ -88,6 +88,10 @@ pub enum Request {
     CacheClear {
         id: RequestId,
     },
+    /// Rebuild the package index from the synchronized system databases.
+    RefreshIndex {
+        id: RequestId,
+    },
     /// Get system metrics (Prometheus-style)
     Metrics {
         id: RequestId,
@@ -132,6 +136,7 @@ impl Request {
             | Self::Ping { id }
             | Self::CacheStats { id }
             | Self::CacheClear { id }
+            | Self::RefreshIndex { id }
             | Self::Metrics { id }
             | Self::Suggest { id, .. }
             | Self::Batch { id, .. }
@@ -154,6 +159,7 @@ impl Request {
             Self::Ping { .. } => "ping",
             Self::CacheStats { .. } => "cache_stats",
             Self::CacheClear { .. } => "cache_clear",
+            Self::RefreshIndex { .. } => "refresh_index",
             Self::Metrics { .. } => "metrics",
             Self::Suggest { .. } => "suggest",
             Self::Batch { .. } => "batch",
@@ -193,6 +199,7 @@ impl Request {
             | Self::Ping { .. }
             | Self::CacheStats { .. }
             | Self::CacheClear { .. }
+            | Self::RefreshIndex { .. }
             | Self::Metrics { .. }
             | Self::Health { .. }
             | Self::ListUpdates { .. } => {}
@@ -227,6 +234,9 @@ pub enum ResponseResult {
     CacheStats {
         size: usize,
         max_size: usize,
+    },
+    IndexRefreshed {
+        packages: usize,
     },
     Metrics(MetricsSnapshot),
     Suggest(Vec<String>),

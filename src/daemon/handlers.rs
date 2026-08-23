@@ -62,7 +62,7 @@ pub struct DaemonState {
     pub(super) cache: PackageCache,
     pub(super) persistent: super::db::PersistentCache,
     pub(super) package_manager: Arc<dyn PackageManager>,
-    pub(super) index: Arc<PackageIndex>,
+    index: RwLock<Arc<PackageIndex>>,
     system_backends: SystemBackendAccess,
     pub(super) runtime_versions: Arc<RwLock<Vec<(String, String)>>>,
     pub(super) rate_limiter: Arc<RateLimiter<NotKeyed, InMemoryState, DefaultClock>>,
@@ -74,7 +74,49 @@ impl DaemonState {
     /// Whether the package index has no entries. Intended for tests and
     /// health reporting that must not reach into private state.
     pub fn index_is_empty(&self) -> bool {
-        self.index.is_empty()
+        self.index_snapshot().is_empty()
+    }
+
+    /// Clone the current immutable index snapshot without holding the read
+    /// lock during searches.
+    pub(super) fn index_snapshot(&self) -> Arc<PackageIndex> {
+        Arc::clone(
+            &self
+                .index
+                .read()
+                .unwrap_or_else(std::sync::PoisonError::into_inner),
+        )
+    }
+
+    /// Run `action` only while `snapshot` is still the published index.
+    /// Holding the read lock through the action prevents an old in-flight
+    /// search from repopulating cache after a refresh clears it.
+    pub(super) fn with_current_index(
+        &self,
+        snapshot: &Arc<PackageIndex>,
+        action: impl FnOnce(),
+    ) -> bool {
+        let current = self
+            .index
+            .read()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        if !Arc::ptr_eq(&current, snapshot) {
+            return false;
+        }
+        action();
+        true
+    }
+
+    /// Atomically publish a rebuilt index and invalidate derived caches.
+    fn replace_index(&self, index: PackageIndex) -> usize {
+        let package_count = index.len();
+        let mut current = self
+            .index
+            .write()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        *current = Arc::new(index);
+        self.cache.clear();
+        package_count
     }
 
     pub fn new() -> anyhow::Result<Self> {
@@ -169,7 +211,7 @@ impl DaemonState {
             cache,
             persistent,
             package_manager,
-            index: Arc::new(index),
+            index: RwLock::new(Arc::new(index)),
             system_backends,
             runtime_versions: Arc::new(RwLock::new(Vec::new())),
             rate_limiter,
@@ -245,6 +287,7 @@ pub async fn handle_request(state: Arc<DaemonState>, request: Request) -> Respon
                 result: ResponseResult::Message(CACHE_CLEARED_MSG.to_string()),
             }
         }
+        Request::RefreshIndex { id } => handle_refresh_index(state, id).await,
         Request::Metrics { id } => handle_metrics(id),
         Request::Suggest { id, query, limit } => handle_suggest(state, id, query, limit).await,
         Request::Batch { id, requests } => handle_batch(state, id, requests).await,
@@ -253,6 +296,31 @@ pub async fn handle_request(state: Arc<DaemonState>, request: Request) -> Respon
         }
         Request::Health { id } => handle_health(&state, id),
         Request::ListUpdates { id } => handle_list_updates(state, id).await,
+    }
+}
+
+/// Rebuild the package index from synchronized system databases and publish
+/// it atomically. Existing requests continue using their previous immutable
+/// snapshot until the swap completes.
+async fn handle_refresh_index(state: Arc<DaemonState>, id: RequestId) -> Response {
+    if !state.system_backends.is_production() {
+        return validation_error(id, "Index refresh is unavailable in an isolated daemon");
+    }
+
+    let rebuilt = tokio::task::spawn_blocking(PackageIndex::new).await;
+    let index = match rebuilt {
+        Ok(Ok(index)) => index,
+        Ok(Err(error)) => {
+            return internal_error(id, format!("Failed to rebuild package index: {error:#}"));
+        }
+        Err(error) => return internal_error(id, format!("Index rebuild task failed: {error}")),
+    };
+
+    let packages = state.replace_index(index);
+    tracing::info!(packages, "Daemon package index refreshed");
+    Response::Success {
+        id,
+        result: ResponseResult::IndexRefreshed { packages },
     }
 }
 
@@ -295,10 +363,11 @@ async fn handle_debian_search(
     // behavior depend on process-global environment state.
     // Like `handle_search`, run the (potentially large) index scan on the
     // blocking pool instead of the executor thread.
-    let state_clone = Arc::clone(&state);
+    let index = state.index_snapshot();
+    let task_index = Arc::clone(&index);
     let query_for_task = query.clone();
     let searched =
-        tokio::task::spawn_blocking(move || state_clone.index.search(&query_for_task, limit)).await;
+        tokio::task::spawn_blocking(move || task_index.search(&query_for_task, limit)).await;
 
     let mut results = match searched {
         Ok(results) => results,
@@ -308,7 +377,9 @@ async fn handle_debian_search(
         package.source = SOURCE_APT.to_string();
     }
     let results = Arc::new(results);
-    state.cache.insert_debian_arc(query, Arc::clone(&results));
+    state.with_current_index(&index, || {
+        state.cache.insert_debian_arc(query, Arc::clone(&results));
+    });
     Response::Success {
         id,
         result: ResponseResult::DebianSearch(Arc::unwrap_or_clone(results)),
@@ -385,11 +456,10 @@ async fn handle_suggest(
     let limit = limit
         .unwrap_or(DEFAULT_SUGGEST_LIMIT)
         .min(MAX_SUGGEST_LIMIT);
-    let state_clone = Arc::clone(&state);
+    let index = state.index_snapshot();
 
     // Run fuzzy search in blocking thread
-    let suggestions =
-        tokio::task::spawn_blocking(move || state_clone.index.suggest(&query, limit)).await;
+    let suggestions = tokio::task::spawn_blocking(move || index.suggest(&query, limit)).await;
 
     match suggestions {
         Ok(results) => Response::Success {
@@ -428,13 +498,19 @@ async fn handle_batch(state: Arc<DaemonState>, id: RequestId, requests: Vec<Requ
         };
     }
 
-    // SECURITY: Reject nested batch requests to prevent recursion DoS
-    if requests.iter().any(|r| matches!(r, Request::Batch { .. })) {
-        return Response::Error {
-            id,
-            code: error_codes::INVALID_PARAMS,
-            message: "Nested batch requests are not allowed".to_string(),
-        };
+    // SECURITY: Reject nested batches and index rebuilds. A rebuild is a
+    // global mutation and must never run concurrently as part of a batch.
+    if requests
+        .iter()
+        .any(|request| matches!(request, Request::Batch { .. }))
+    {
+        return validation_error(id, "Nested batch requests are not allowed");
+    }
+    if requests
+        .iter()
+        .any(|request| matches!(request, Request::RefreshIndex { .. }))
+    {
+        return validation_error(id, "RefreshIndex requests are not allowed in a batch");
     }
 
     // SECURITY: Limit expensive operations per batch to prevent resource exhaustion
@@ -520,13 +596,13 @@ async fn handle_search(
     // Run in blocking task to avoid stalling the async runtime during heavy search
     // Cache the full result set (up to MAX_SEARCH_LIMIT) so subsequent requests
     // with different limits are served correctly from cache.
-    let state_clone = Arc::clone(&state);
+    let index = state.index_snapshot();
+    let task_index = Arc::clone(&index);
     let query_arc: Arc<str> = Arc::from(query.as_str());
     let query_for_cache = query;
 
     let official =
-        tokio::task::spawn_blocking(move || state_clone.index.search(&query_arc, MAX_SEARCH_LIMIT))
-            .await;
+        tokio::task::spawn_blocking(move || task_index.search(&query_arc, MAX_SEARCH_LIMIT)).await;
 
     let official = match official {
         Ok(res) => res,
@@ -536,9 +612,11 @@ async fn handle_search(
     // Cache the full result set; serve truncated views per request limit
     let official = Arc::new(official);
     let total = official.len();
-    state
-        .cache
-        .insert_arc(query_for_cache, Arc::clone(&official));
+    state.with_current_index(&index, || {
+        state
+            .cache
+            .insert_arc(query_for_cache, Arc::clone(&official));
+    });
 
     let packages: Vec<_> = official.iter().take(limit).cloned().collect();
 
@@ -576,11 +654,15 @@ async fn handle_info(state: Arc<DaemonState>, id: RequestId, package: String) ->
     // METRICS: Cache miss - will fetch package info
     GLOBAL_METRICS.inc_cache_misses();
 
-    // 2. Try official index (Instant hash lookup)
-    if let Some(pkg) = state.index.get(&package) {
-        // Clone once, then use Arc for cheap sharing
+    // 2. Try official index (instant hash lookup).
+    let index = state.index_snapshot();
+    if let Some(pkg) = index.get(&package) {
+        // Clone once, then use Arc for cheap sharing. Cache only while this
+        // snapshot is still current; a refresh clears all older entries.
         let info = Arc::new(pkg);
-        state.cache.insert_info_arc(Arc::clone(&info));
+        state.with_current_index(&index, || {
+            state.cache.insert_info_arc(Arc::clone(&info));
+        });
         return Response::Success {
             id,
             result: ResponseResult::Info(Arc::unwrap_or_clone(info)),
@@ -1190,6 +1272,79 @@ fn not_found_error(id: RequestId, message: impl Into<String>) -> Response {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::daemon::protocol::PackageInfo;
+
+    fn isolated_state() -> (tempfile::TempDir, Arc<DaemonState>) {
+        let directory = tempfile::tempdir().expect("create temporary daemon directory");
+        let package_manager: Arc<dyn PackageManager> = Arc::new(
+            crate::package_managers::mock::MockPackageManager::new_in("arch", directory.path()),
+        );
+        let state =
+            DaemonState::new_isolated(directory.path(), PackageIndex::empty(), package_manager)
+                .expect("create isolated daemon state");
+        (directory, Arc::new(state))
+    }
+
+    #[test]
+    fn replacing_index_publishes_snapshot_and_clears_derived_cache() {
+        let (_directory, state) = isolated_state();
+        state.cache.insert_arc(
+            "cached".to_string(),
+            Arc::new(vec![PackageInfo {
+                name: "stale".to_string(),
+                version: "1".to_string(),
+                description: String::new(),
+                source: SOURCE_OFFICIAL.to_string(),
+            }]),
+        );
+        assert!(state.cache.get("cached").is_some());
+        let stale_snapshot = state.index_snapshot();
+
+        let replacement = PackageIndex::from_records(&[("fresh", "2", "fresh package")]);
+        assert_eq!(state.replace_index(replacement), 1);
+        let current_snapshot = state.index_snapshot();
+        assert!(current_snapshot.get("fresh").is_some());
+        assert!(state.cache.get("cached").is_none());
+        assert!(!state.with_current_index(&stale_snapshot, || {
+            panic!("stale snapshot action must not run");
+        }));
+        assert!(state.with_current_index(&current_snapshot, || {}));
+    }
+
+    #[tokio::test]
+    async fn refresh_index_rejects_isolated_daemons() {
+        let (_directory, state) = isolated_state();
+        let response = handle_request(state, Request::RefreshIndex { id: 41 }).await;
+        assert!(matches!(
+            response,
+            Response::Error {
+                id: 41,
+                code: error_codes::INVALID_PARAMS,
+                ..
+            }
+        ));
+    }
+
+    #[tokio::test]
+    async fn batch_rejects_index_refresh_requests() {
+        let (_directory, state) = isolated_state();
+        let response = handle_request(
+            state,
+            Request::Batch {
+                id: 42,
+                requests: vec![Request::RefreshIndex { id: 43 }],
+            },
+        )
+        .await;
+        assert!(matches!(
+            response,
+            Response::Error {
+                id: 42,
+                code: error_codes::INVALID_PARAMS,
+                ..
+            }
+        ));
+    }
 
     #[test]
     fn status_rejects_unknown_package_manager() {

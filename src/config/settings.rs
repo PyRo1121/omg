@@ -168,7 +168,7 @@ impl Settings {
     ///
     /// Serde would otherwise silently ignore typos, fabricating a working-looking
     /// config from misspelled settings.
-    fn reject_unknown_keys(content: &str) -> Result<()> {
+    fn validate_known_keys(content: &str) -> Result<()> {
         let table: toml::Table = toml::from_str(content).context("Config is not valid TOML")?;
 
         const ROOT_KEYS: [&str; 8] = [
@@ -254,7 +254,7 @@ impl Settings {
 
             let content = std::fs::read_to_string(&config_path)
                 .with_context(|| format!("Failed to read config: {}", config_path.display()))?;
-            Self::reject_unknown_keys(&content).with_context(|| {
+            Self::validate_known_keys(&content).with_context(|| {
                 format!(
                     "Invalid config: {} (unknown keys are rejected to catch typos)",
                     config_path.display()

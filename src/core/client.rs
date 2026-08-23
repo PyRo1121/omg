@@ -285,6 +285,15 @@ impl DaemonClient {
         extract_response(&response, id, as_updates)
     }
 
+    /// Rebuild the daemon's immutable package index after a database sync.
+    pub async fn refresh_index(&mut self) -> Result<usize> {
+        let id = self.request_id.fetch_add(1, Ordering::SeqCst);
+        match self.call(Request::RefreshIndex { id }).await? {
+            ResponseResult::IndexRefreshed { packages } => Ok(packages),
+            other => anyhow::bail!("Unexpected response to RefreshIndex request {id}: {other:?}"),
+        }
+    }
+
     /// Trigger a security audit
     pub async fn security_audit(&mut self) -> Result<SecurityAuditResult> {
         let id = self.request_id.fetch_add(1, Ordering::SeqCst);
