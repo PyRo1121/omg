@@ -292,6 +292,7 @@ analyzer inference
 - **Ci**: Cross-platform install script and R2 release sync
 ### 🐛 Bug Fixes
 
+- Dedupe legacy-config deprecation warning to once per process
 - AUR sandbox hardening — remove gnupg mount, disable planted git hooks
 - Wave-12 citation-backed fixes — review gate ordering, launcher socket safety
 - Wave-11 blocker pair — AUR outcome ordering and elevated flag drop
