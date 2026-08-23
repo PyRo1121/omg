@@ -125,11 +125,47 @@ async fn main() -> Result<()> {
                 socket_path.display()
             );
         }
+        // Only remove the stale node if it actually looks like ours: a
+        // socket owned by this user (or root). Anything else means someone
+        // placed a foreign object at our path - refuse rather than delete.
+        #[cfg(unix)]
+        match std::fs::metadata(&socket_path) {
+            Ok(meta)
+                if {
+                    use std::os::unix::fs::FileTypeExt;
+                    meta.file_type().is_socket()
+                } =>
+            {
+                use std::os::unix::fs::MetadataExt;
+                let uid = meta.uid();
+                if uid != nix::unistd::getuid().as_raw() && uid != 0 {
+                    anyhow::bail!(
+                        "Refusing to remove {}: not a socket we own (uid {uid})",
+                        socket_path.display()
+                    );
+                }
+            }
+            Ok(_) => {
+                tracing::debug!("Stale path {:?} is not a socket; removing", socket_path);
+            }
+            Err(e) => return Err(e).context("Failed to stat stale socket"),
+        }
         tracing::debug!("Removing stale socket at {:?}", socket_path);
         std::fs::remove_file(&socket_path)?;
     }
 
-    // 3. Create Unix socket listener
+    // 3. Create Unix socket listener. The node is created owner-only
+    // (umask tightened around bind) so there is no window where the socket
+    // accepts connections from other users before the explicit 0600 below.
+    #[cfg(unix)]
+    let listener = {
+        use nix::sys::stat::{Mode, umask};
+        let previous = umask(Mode::S_IRWXG | Mode::S_IRWXO);
+        let listener = UnixListener::bind(&socket_path);
+        umask(previous);
+        listener?
+    };
+    #[cfg(not(unix))]
     let listener = UnixListener::bind(&socket_path)?;
     // RAII cleanup: removes the socket file on every exit path from here on
     // (graceful shutdown, fatal accept error, or panic caught below), so a

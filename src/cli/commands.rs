@@ -1233,7 +1233,23 @@ pub async fn rollback(id: Option<String>, yes: bool) -> Result<()> {
                 packages.len()
             );
             let package_manager = crate::package_managers::get_package_manager()?;
-            package_manager.remove(&packages).await?;
+            let result = package_manager.remove(&packages).await;
+            // Record the rollback itself so history reflects reality: the
+            // packages were removed by this rollback, not by a user remove.
+            let changes = packages
+                .iter()
+                .map(|name| crate::core::history::PackageChange {
+                    name: name.clone(),
+                    old_version: None,
+                    new_version: None,
+                    source: "rollback".to_string(),
+                })
+                .collect();
+            crate::core::history::HistoryManager::new()?.finish_operation(
+                crate::core::history::TransactionType::Remove,
+                changes,
+                result,
+            )?;
             println!("{}", style::success("✓ Rollback completed successfully"));
         }
         RollbackAction::Restore(packages) if packages.is_empty() => {
@@ -1284,7 +1300,21 @@ pub async fn rollback(id: Option<String>, yes: bool) -> Result<()> {
                     cached_packages.len()
                 );
                 let pacman = crate::package_managers::ArchPackageManager::new();
-                pacman.install(&cached_packages).await?;
+                let result = pacman.install(&cached_packages).await;
+                let changes = packages
+                    .iter()
+                    .map(|(name, version)| crate::core::history::PackageChange {
+                        name: name.clone(),
+                        old_version: None,
+                        new_version: Some(version.clone()),
+                        source: "rollback".to_string(),
+                    })
+                    .collect();
+                crate::core::history::HistoryManager::new()?.finish_operation(
+                    crate::core::history::TransactionType::Install,
+                    changes,
+                    result,
+                )?;
                 println!("{}", style::success("✓ Rollback completed successfully"));
             }
 

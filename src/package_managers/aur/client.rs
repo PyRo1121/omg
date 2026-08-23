@@ -499,7 +499,7 @@ impl AurClient {
         let mut url = format!("{AUR_RPC_URL}?v=5&type=info");
         for name in chunk {
             url.push_str("&arg[]=");
-            url.push_str(name);
+            url.push_str(&urlencoding::encode(name));
         }
 
         let mut last_error = None;

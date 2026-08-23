@@ -122,6 +122,11 @@ fn try_fast_elevated(args: &[String]) -> Option<Result<()>> {
                 false,
                 None,
             );
+            let result = record_fast_transaction(
+                omg_lib::core::history::TransactionType::Install,
+                &packages,
+                result,
+            );
             if result.is_ok() {
                 print_fast_success(&packages, "installed");
             }
@@ -132,6 +137,11 @@ fn try_fast_elevated(args: &[String]) -> Option<Result<()>> {
             omg_lib::core::security::validate_package_names(&packages).ok()?;
             let result =
                 omg_lib::package_managers::execute_transaction(packages.clone(), true, false, None);
+            let result = record_fast_transaction(
+                omg_lib::core::history::TransactionType::Remove,
+                &packages,
+                result,
+            );
             if result.is_ok() {
                 print_fast_success(&packages, "removed");
             }
@@ -202,6 +212,31 @@ fn try_fast_elevated(args: &[String]) -> Option<Result<()>> {
 #[cfg(not(feature = "arch"))]
 const fn try_fast_elevated(_args: &[String]) -> Option<Result<()>> {
     None
+}
+
+#[cfg(feature = "arch")]
+/// Record an elevated fast-path transaction in package history.
+///
+/// Elevated (`sudo omg ... --`) invocations previously mutated the system
+/// without any history entry, leaving those packages invisible to
+/// `omg history` / `omg rollback`.
+fn record_fast_transaction(
+    kind: omg_lib::core::history::TransactionType,
+    packages: &[String],
+    result: anyhow::Result<()>,
+) -> anyhow::Result<()> {
+    use omg_lib::core::history::{HistoryManager, PackageChange};
+
+    let changes: Vec<PackageChange> = packages
+        .iter()
+        .map(|name| PackageChange {
+            name: name.clone(),
+            old_version: None,
+            new_version: None,
+            source: "pacman".to_string(),
+        })
+        .collect();
+    HistoryManager::new()?.finish_operation(kind, changes, result)
 }
 
 fn has_help_flag(args: &[String]) -> bool {

@@ -267,6 +267,14 @@ async fn handle_debian_search(
     // METRICS: Track search requests
     GLOBAL_METRICS.inc_search_requests();
 
+    if query.len() > MAX_QUERY_LENGTH {
+        return Response::Error {
+            id,
+            code: error_codes::INVALID_PARAMS,
+            message: format!("Query too long (max {MAX_QUERY_LENGTH} characters)"),
+        };
+    }
+
     let limit = limit.unwrap_or(DEFAULT_SEARCH_LIMIT).min(MAX_SEARCH_LIMIT);
 
     // Check cache first (Arc clone is cheap - just pointer copy)
