@@ -124,6 +124,10 @@ was not linked from any doc; its command usage remains in docs/runtimes.md
 - **Ci**: Cross-platform install script and R2 release sync
 ### 🐛 Bug Fixes
 
+- Wave-7 — boundary gaps, elevated-path history, rollback recording
+
+Wave-6 verification follow-ups:
+
 - Wave-6 verification round — protocol handshake completed, breaker semantics, history gaps closed
 
 Wave-6 verifiers caught fixes claimed in wave-5 that never landed, plus
