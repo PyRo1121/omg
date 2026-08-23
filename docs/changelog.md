@@ -124,6 +124,32 @@ was not linked from any doc; its command usage remains in docs/runtimes.md
 - **Ci**: Cross-platform install script and R2 release sync
 ### 🐛 Bug Fixes
 
+- Wave-7b — AUR history accuracy, boundary polish
+
+  - AUR installs record the actual installed identity: name and version are
+
+read back from the local pacman database after a successful build, so
+
+split-package renames (foo -> foo-bin) and real versions land in
+
+history instead of null placeholders under the requested alias
+
+  - cancelled or failed AUR builds are recorded as failed attempts,
+
+consistent with failed-mutation recording elsewhere; the generic
+
+recorder no longer double-reports AUR candidates
+
+  - daemon DebianSearch enforces MAX_QUERY_LENGTH like sibling handlers
+
+  - AUR rpc_info_chunk percent-encodes package names in request URLs
+
+  - daemon socket node is created owner-only via tightened umask around
+
+bind, closing the pre-chmod exposure window
+
+  - stale-socket removal verifies node type and ownership before unlinking
+
 - Wave-7 — boundary gaps, elevated-path history, rollback recording
 
 Wave-6 verification follow-ups:
