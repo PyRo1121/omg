@@ -13,6 +13,24 @@ OMG is the fastest unified package manager for Linux, replacing pacman, yay, nvm
 ## [Unreleased]
 ### ♻️  Refactoring
 
+- **Dnf**: Delete unreachable repository-metadata scaffolding
+
+fetch_repo_packages unconditionally errored, so the entire repo-metadata
+
+stack was dead weight: RepoPackage/RepoIndex/RepoConfig types, in-memory and
+
+binary caches, .repo discovery/parsing, and their five tests. Callers either
+
+silently skipped results (search/info) or failed (updates/status).
+
+  - search/info: installed-only with explicit debug logging of the boundary
+
+  - list_updates: single honest failure instead of a doomed parallel fetch
+
+  - sync: cache invalidation reduced to what exists
+
+  - net −399 lines; fedora+pgp+license clippy -D warnings clean, dnf tests pass
+
 - Delete unreachable telemetry retry pipeline
 
 The persisted batch queue in core::telemetry is the canonical retry path.
@@ -1558,6 +1576,24 @@ The configure_mirrors function was placed after #[cfg(test)] mod tests,
 which newer clippy versions flag as an error with -D warnings.
 
 ### 👷 CI/CD
+
+- Align release feature capabilities across platforms
+
+  - build every release artifact with its backend plus pgp,license
+
+  - make Arch's release feature set explicit instead of inheriting defaults
+
+  - align the primary Arch/Debian/Fedora/macOS CI matrix with exact release
+
+feature sets
+
+  - remove the unresolved Debian feature-product-decision comment and replace
+
+it with an explicit parity policy
+
+  - delete two Fedora-only dead RPM constants and a stale lint expectation
+
+exposed by checking the exact release intersection
 
 - Fix workflows and installer; refresh docs for current CLI
 
