@@ -1,19 +1,8 @@
 //! Telemetry API client for OMG
 //!
-//! Handles sending telemetry events to the API endpoints:
-//! - POST /api/cli/event - Individual events
-//! - POST /api/cli/batch - Batched events
-//!
-//! Features:
-//! - Async with tokio
-//! - Graceful error handling with retry queue
-//! - Only sends when the user has a signed, unexpired license token
-//!
-//! Retry pacing is enforced by the circuit breaker plus a bounded flush
-//! budget ([`RETRY_FLUSH_BUDGET`]); there is no per-attempt sleep.
-
-use std::collections::VecDeque;
-use std::sync::Mutex;
+//! Sends persisted telemetry batches to the API with a cancellation-safe
+//! circuit breaker. Queueing and retry persistence live in `core::telemetry`;
+//! this module owns only the network boundary and wire payloads.
 use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, Ordering};
 use std::time::Duration;
 
@@ -22,21 +11,12 @@ use serde::{Deserialize, Serialize};
 
 use crate::core::license::get_machine_id;
 
-const EVENT_API_URL: &str = "https://api.pyro1121.com/api/cli/event";
 const BATCH_API_URL: &str = "https://api.pyro1121.com/api/cli/batch";
-const MAX_RETRY_QUEUE_SIZE: usize = 500;
 const REQUEST_TIMEOUT: Duration = Duration::from_secs(5);
-const MAX_RETRIES: u32 = 3;
 
 // Circuit breaker constants
 const CIRCUIT_FAILURE_THRESHOLD: u32 = 5; // Open circuit after 5 consecutive failures
 const CIRCUIT_OPEN_DURATION_SECS: u64 = 300; // Stay open for 5 minutes (300s)
-
-/// Upper bound on time spent draining the retry queue per flush. Flushing
-/// runs on CLI-exit paths (`end_session_and_flush`), so the drain must stay
-/// far shorter than a user's patience; events that do not fit stay queued
-/// for the next flush.
-const RETRY_FLUSH_BUDGET: Duration = Duration::from_secs(2);
 
 /// Circuit breaker states: 0 = Closed, 1 = Open, 2 = Half-Open
 static CIRCUIT_STATE: AtomicU32 = AtomicU32::new(0);
@@ -51,9 +31,6 @@ static HALF_OPEN_PROBE_IN_FLIGHT: AtomicBool = AtomicBool::new(false);
 
 /// Timestamp of last failure (Unix epoch seconds as u64)
 static LAST_FAILURE: AtomicU64 = AtomicU64::new(0);
-
-/// Retry queue for failed events
-static RETRY_QUEUE: Mutex<VecDeque<TelemetryPayload>> = Mutex::new(VecDeque::new());
 
 /// Command-level telemetry event
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -152,9 +129,6 @@ pub struct TelemetryPayload {
     /// License key (if activated)
     #[serde(skip_serializing_if = "Option::is_none")]
     pub license_key: Option<String>,
-    /// Retry count
-    #[serde(default)]
-    pub retries: u32,
 }
 
 /// Batch telemetry payload
@@ -183,7 +157,6 @@ impl TelemetryPayload {
             version: env!("CARGO_PKG_VERSION").to_string(),
             platform: format!("{}-{}", std::env::consts::OS, std::env::consts::ARCH),
             license_key: license.map(|l| l.key),
-            retries: 0,
         }
     }
 }
@@ -253,8 +226,8 @@ fn check_circuit_breaker() -> (CircuitState, Option<HalfOpenProbeGuard>) {
 /// RAII claim on the half-open single-flight probe slot.
 ///
 /// Releasing via `Drop` guarantees the slot frees even when the probe future
-/// is cancelled mid-request (e.g. by the retry-flush budget timeout), which
-/// previously left the breaker latched Open until process exit.
+/// is cancelled or times out, which previously left the breaker latched Open
+/// until process exit.
 struct HalfOpenProbeGuard;
 
 impl Drop for HalfOpenProbeGuard {
@@ -270,23 +243,12 @@ impl Drop for HalfOpenProbeGuard {
     }
 }
 
-/// Read-only view of the breaker state without attempting the half-open
-/// transition; used for early-exit checks where no probe request would be
-/// driven by this call site.
-fn peek_circuit_breaker() -> CircuitState {
-    match CircuitState::from(CIRCUIT_STATE.load(Ordering::Relaxed)) {
-        CircuitState::Open => {
-            let last_failure = LAST_FAILURE.load(Ordering::Relaxed);
-            let now = jiff::Timestamp::now().as_second() as u64;
-            if now.saturating_sub(last_failure) >= CIRCUIT_OPEN_DURATION_SECS {
-                // Cooldown elapsed: the send path may attempt a probe.
-                CircuitState::HalfOpen
-            } else {
-                CircuitState::Open
-            }
-        }
-        other => other,
-    }
+/// Whether a caller may cross the network boundary in the observed state.
+/// A half-open request is allowed only for the caller that owns the single
+/// probe slot.
+const fn circuit_allows_request(state: CircuitState, owns_probe_slot: bool) -> bool {
+    matches!(state, CircuitState::Closed)
+        || (matches!(state, CircuitState::HalfOpen) && owns_probe_slot)
 }
 
 /// Record a successful request (reset circuit breaker)
@@ -331,134 +293,6 @@ fn should_send_telemetry() -> bool {
     crate::core::license::load_license().is_some_and(|license| license.is_token_valid())
 }
 
-/// Attempt to send one telemetry event.
-///
-/// This is deliberately infallible: telemetry failures are never propagated
-/// as errors. Every failure path updates the circuit breaker and queues the
-/// payload for a later retry instead.
-async fn send_event_internal(payload: TelemetryPayload) {
-    // Check circuit breaker state; hold any won probe-slot guard across the
-    // request so cancellation below cannot leak the latch (see M1).
-    let (circuit_state, _probe_guard) = check_circuit_breaker();
-
-    if matches!(circuit_state, CircuitState::Open | CircuitState::HalfOpen) {
-        // Open: cooldown. HalfOpen without the probe guard: another caller is
-        // the single designated prober; this request must not multiply
-        // failures against a struggling endpoint.
-        tracing::debug!("Circuit breaker is {circuit_state:?}, queuing event locally");
-        queue_for_retry(payload);
-        return;
-    }
-
-    let client = crate::core::http::shared_client();
-
-    let response = client
-        .post(EVENT_API_URL)
-        .json(&payload)
-        .timeout(REQUEST_TIMEOUT)
-        .send()
-        .await;
-
-    match response {
-        Ok(resp) if resp.status().is_success() => {
-            tracing::debug!("Telemetry event sent successfully");
-            record_success();
-        }
-        Ok(resp) => {
-            tracing::debug!("Telemetry event failed with status: {}", resp.status());
-            record_failure();
-            queue_for_retry(payload);
-        }
-        Err(e) => {
-            tracing::debug!("Telemetry event send error: {e}");
-            record_failure();
-            queue_for_retry(payload);
-        }
-    }
-}
-
-/// Queue an event for retry
-fn queue_for_retry(mut payload: TelemetryPayload) {
-    payload.retries += 1;
-
-    if payload.retries > MAX_RETRIES {
-        tracing::debug!("Dropping telemetry event after {MAX_RETRIES} retries");
-        return;
-    }
-
-    if let Ok(mut queue) = RETRY_QUEUE.lock() {
-        if queue.len() >= MAX_RETRY_QUEUE_SIZE {
-            // Drop oldest events to make room
-            queue.drain(0..MAX_RETRY_QUEUE_SIZE / 2);
-        }
-        queue.push_back(payload);
-    }
-}
-
-/// Remove the oldest queued payload.
-fn pop_retry_queue() -> Option<TelemetryPayload> {
-    RETRY_QUEUE
-        .lock()
-        .ok()
-        .and_then(|mut queue| queue.pop_front())
-}
-
-/// Return a payload to the front of the retry queue with its retry count
-/// preserved. Used when the flush budget runs out so un-sent events are
-/// retried first on the next flush.
-fn push_retry_queue_front(payload: TelemetryPayload) {
-    if let Ok(mut queue) = RETRY_QUEUE.lock() {
-        if queue.len() >= MAX_RETRY_QUEUE_SIZE {
-            return; // Queue is full; drop rather than evict newer events.
-        }
-        queue.push_front(payload);
-    }
-}
-
-/// Drain queued retry events within [`RETRY_FLUSH_BUDGET`].
-///
-/// Events are sent one at a time, each capped at the remaining budget. When
-/// the budget is exhausted (or a single request would exceed it), the
-/// un-sent event is returned to the *front* of the queue with its retry
-/// count preserved and the rest of the queue is left untouched. At most one
-/// event can be duplicated in the rare case where a request succeeds
-/// server-side but exceeds the time budget.
-async fn drain_retry_queue_within_budget() {
-    let deadline = tokio::time::Instant::now() + RETRY_FLUSH_BUDGET;
-    loop {
-        if peek_circuit_breaker() == CircuitState::Open {
-            tracing::debug!("Circuit breaker is open; leaving retry queue untouched");
-            return;
-        }
-        let Some(payload) = pop_retry_queue() else {
-            return;
-        };
-        let remaining = deadline.saturating_duration_since(tokio::time::Instant::now());
-        if remaining.is_zero() {
-            push_retry_queue_front(payload);
-            return;
-        }
-        match tokio::time::timeout(remaining, send_event_internal(payload.clone())).await {
-            Ok(()) => {}
-            Err(_elapsed) => {
-                tracing::debug!("Retry flush budget exhausted; returning event to queue");
-                push_retry_queue_front(payload);
-                return;
-            }
-        }
-    }
-}
-
-/// Flush retry queue (called periodically or on exit)
-pub async fn flush_retry_queue() -> Result<()> {
-    if !should_send_telemetry() {
-        return Ok(());
-    }
-
-    drain_retry_queue_within_budget().await;
-    Ok(())
-}
-
 /// Send batched telemetry events with circuit breaker support
 pub async fn send_batch(events: Vec<TelemetryEvent>) -> Result<()> {
     if !should_send_telemetry() || events.is_empty() {
@@ -467,11 +301,14 @@ pub async fn send_batch(events: Vec<TelemetryEvent>) -> Result<()> {
 
     // Check circuit breaker state; hold any won probe-slot guard across the
     // batch request so cancellation cannot leak the latch.
-    let (circuit_state, _probe_guard) = check_circuit_breaker();
+    let (circuit_state, probe_guard) = check_circuit_breaker();
 
-    if matches!(circuit_state, CircuitState::Open | CircuitState::HalfOpen) {
+    if !circuit_allows_request(circuit_state, probe_guard.is_some()) {
         anyhow::bail!("Telemetry circuit breaker is {circuit_state:?}");
     }
+    // Keep the half-open claim alive across the request. Its Drop releases
+    // the single-flight slot if this future is cancelled at the await point.
+    let _probe_guard = probe_guard;
 
     let payloads: Vec<TelemetryPayload> = events.into_iter().map(TelemetryPayload::new).collect();
 
@@ -540,31 +377,6 @@ mod tests {
     }
 
     #[test]
-    #[serial_test::serial]
-    fn retry_queue_preserves_attempt_count() {
-        reset_retry_queue();
-        let payload = TelemetryPayload {
-            event: TelemetryEvent::Feature(FeatureEvent {
-                feature: "test".to_string(),
-                enabled: true,
-                metadata: None,
-            }),
-            timestamp: String::new(),
-            machine_id: String::new(),
-            version: String::new(),
-            platform: String::new(),
-            license_key: None,
-            retries: 1,
-        };
-
-        queue_for_retry(payload);
-
-        let mut queue = RETRY_QUEUE.lock().expect("retry queue");
-        assert_eq!(queue.front().map(|payload| payload.retries), Some(2));
-        queue.clear();
-    }
-
-    #[test]
     fn command_event_serializes_payload_fields() {
         let event = CommandEvent {
             command: "search".to_string(),
@@ -600,6 +412,16 @@ mod tests {
     }
 
     #[test]
+    fn circuit_permit_requires_ownership_in_half_open_state() {
+        assert!(circuit_allows_request(CircuitState::Closed, false));
+        assert!(circuit_allows_request(CircuitState::Closed, true));
+        assert!(!circuit_allows_request(CircuitState::Open, false));
+        assert!(!circuit_allows_request(CircuitState::Open, true));
+        assert!(!circuit_allows_request(CircuitState::HalfOpen, false));
+        assert!(circuit_allows_request(CircuitState::HalfOpen, true));
+    }
+
+    #[test]
     fn circuit_breaker_state_transitions_match_threshold() {
         // Reset state
         CIRCUIT_STATE.store(CircuitState::Closed as u32, Ordering::Relaxed);
@@ -625,88 +447,6 @@ mod tests {
         record_success();
         assert_eq!(check_circuit_breaker().0, CircuitState::Closed);
         assert_eq!(FAILURE_COUNT.load(Ordering::Relaxed), 0);
-    }
-
-    #[test]
-    #[serial_test::serial]
-    fn retry_queue_front_push_preserves_order_and_retries() {
-        reset_retry_queue();
-        let first = sample_payload(0);
-        let second = sample_payload(2);
-        queue_for_retry(first);
-        queue_for_retry(second);
-
-        let head = sample_payload(9);
-        push_retry_queue_front(head);
-
-        // Copy observations out under the guard so a failing assert cannot
-        // poison the shared mutex for the other serial tests.
-        let (front, back, len) = {
-            let queue = RETRY_QUEUE
-                .lock()
-                .unwrap_or_else(std::sync::PoisonError::into_inner);
-            (
-                queue.front().map(|p| p.retries),
-                queue.back().map(|p| p.retries),
-                queue.len(),
-            )
-        };
-        assert_eq!(front, Some(9));
-        assert_eq!(back, Some(3));
-        assert_eq!(len, 3);
-        reset_retry_queue();
-    }
-
-    /// Clear the shared retry queue, recovering from poisoning so one
-    /// panicking test cannot break its serial successors.
-    fn reset_retry_queue() {
-        RETRY_QUEUE
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner)
-            .clear();
-    }
-
-    #[test]
-    #[serial_test::serial]
-    fn drain_leaves_queue_untouched_when_circuit_is_open() {
-        // Regression for the bounded retry flush: an open circuit must end
-        // the drain immediately without consuming or altering queued events.
-        reset_retry_queue();
-        CIRCUIT_STATE.store(CircuitState::Open as u32, Ordering::Relaxed);
-        FAILURE_COUNT.store(CIRCUIT_FAILURE_THRESHOLD, Ordering::Relaxed);
-        LAST_FAILURE.store(
-            u64::try_from(jiff::Timestamp::now().as_second()).unwrap_or(0),
-            Ordering::Relaxed,
-        );
-        HALF_OPEN_PROBE_IN_FLIGHT.store(false, Ordering::Relaxed);
-        queue_for_retry(sample_payload(1));
-        queue_for_retry(sample_payload(1));
-
-        let started = std::time::Instant::now();
-        // A current-thread runtime guarantees the drain observes this
-        // thread's circuit-breaker setup (Relaxed atomics are only
-        // same-thread coherent); a multi-thread runtime could poll the
-        // future on a worker with a stale view and hit the real network.
-        let runtime = tokio::runtime::Builder::new_current_thread()
-            .enable_all()
-            .build()
-            .expect("test runtime");
-        runtime.block_on(drain_retry_queue_within_budget());
-        let elapsed = started.elapsed();
-
-        let remaining = RETRY_QUEUE
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner)
-            .len();
-        assert_eq!(remaining, 2);
-        assert!(
-            elapsed < RETRY_FLUSH_BUDGET,
-            "drain must return promptly when the circuit is open, took {elapsed:?}"
-        );
-
-        // Restore closed state and clear the queue for other tests.
-        record_success();
-        reset_retry_queue();
     }
 
     #[test]
@@ -757,22 +497,5 @@ mod tests {
         CIRCUIT_STATE.store(CircuitState::Closed as u32, Ordering::Relaxed);
         FAILURE_COUNT.store(0, Ordering::Relaxed);
         HALF_OPEN_PROBE_IN_FLIGHT.store(false, Ordering::Relaxed);
-    }
-
-    /// A minimal valid payload for retry-queue tests.
-    fn sample_payload(retries: u32) -> TelemetryPayload {
-        TelemetryPayload {
-            event: TelemetryEvent::Feature(FeatureEvent {
-                feature: "test".to_string(),
-                enabled: true,
-                metadata: None,
-            }),
-            timestamp: String::new(),
-            machine_id: String::new(),
-            version: String::new(),
-            platform: String::new(),
-            license_key: None,
-            retries,
-        }
     }
 }

@@ -831,11 +831,6 @@ pub async fn end_session_and_flush() {
 
     // Flush all events
     flush_events().await;
-
-    // Also flush retry queue
-    if let Err(e) = crate::core::telemetry_client::flush_retry_queue().await {
-        tracing::debug!("Failed to flush retry queue: {e}");
-    }
 }
 
 /// Convenience timer for measuring operation duration

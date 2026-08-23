@@ -237,7 +237,6 @@ async fn test_telemetry_payload_structure() -> Result<()> {
     assert!(!payload.machine_id.is_empty(), "Machine ID should be set");
     assert!(!payload.version.is_empty(), "Version should be set");
     assert!(!payload.platform.is_empty(), "Platform should be set");
-    assert_eq!(payload.retries, 0, "Initial retry count should be 0");
 
     // Verify serialization produces valid JSON
     let json = serde_json::to_string(&payload)?;

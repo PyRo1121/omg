@@ -367,7 +367,6 @@ async fn test_telemetry_payload_creation() -> Result<()> {
     assert!(!payload.machine_id.is_empty());
     assert!(!payload.version.is_empty());
     assert!(!payload.platform.is_empty());
-    assert_eq!(payload.retries, 0);
 
     Ok(())
 }
