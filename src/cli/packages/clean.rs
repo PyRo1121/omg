@@ -211,6 +211,30 @@ pub async fn clean(orphans: bool, cache: bool, aur: bool, all: bool, dry_run: bo
                     );
                 } else {
                     crate::cli::modern_ui::print_info("Clearing package cache...");
+                    // Warn (do not block): cleaning can delete exactly the
+                    // cached versions that update/removal rollback plans from
+                    // the last 30 days depend on.
+                    match crate::core::history::HistoryManager::new()
+                        .and_then(|history| history.rollback_referenced_versions(30))
+                    {
+                        Ok(referenced) if !referenced.is_empty() => {
+                            use owo_colors::OwoColorize;
+                            println!(
+                                "  {} Cleaning will remove cached versions referenced by recent rollback plans:",
+                                "⚠".yellow().bold()
+                            );
+                            for (name, version) in &referenced {
+                                println!("    - {name} {version}");
+                            }
+                            println!("  After this, 'omg rollback' cannot restore those versions.");
+                        }
+                        Ok(_) => {}
+                        Err(history_error) => {
+                            tracing::debug!(
+                                "Could not check history for rollback-referenced versions: {history_error}"
+                            );
+                        }
+                    }
                     match clean_cache(1) {
                         // Keep 1 version by default
                         Ok((removed, freed)) => {

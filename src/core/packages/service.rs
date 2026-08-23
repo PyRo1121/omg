@@ -205,20 +205,24 @@ impl PackageService {
 
     /// Remove packages
     pub async fn remove(&self, packages: &[String], _recursive: bool) -> Result<()> {
-        let mut changes = Vec::new();
+        // Every requested package must appear in history even when its info
+        // lookup misses (e.g. installed but absent from the repo index);
+        // otherwise we mutate packages that history will never mention.
+        let mut changes = Vec::with_capacity(packages.len());
         for pkg in packages {
-            if let Some(info) = self.backend.info(pkg).await? {
-                changes.push(PackageChange {
-                    name: info.name,
-                    #[allow(
-                        clippy::implicit_clone,
-                        reason = "the package version type varies by backend feature"
-                    )]
-                    old_version: Some(info.version.to_string()),
-                    new_version: None,
-                    source: self.backend.name().to_string(),
-                });
-            }
+            let known = self.backend.info(pkg).await?;
+            changes.push(PackageChange {
+                name: known
+                    .as_ref()
+                    .map_or_else(|| pkg.clone(), |info| info.name.clone()),
+                #[allow(
+                    clippy::implicit_clone,
+                    reason = "the package version type varies by backend feature"
+                )]
+                old_version: known.map(|info| info.version.to_string()),
+                new_version: None,
+                source: self.backend.name().to_string(),
+            });
         }
 
         let result = self.backend.remove(packages).await;

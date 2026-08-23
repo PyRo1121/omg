@@ -97,6 +97,40 @@ impl HistoryManager {
 
     /// Loads every recorded transaction. A missing file is an empty
     /// history; malformed contents are rejected rather than truncated.
+    /// Collect deduplicated `(package, version)` pairs whose `old_version`
+    /// appears in successful Remove/Update transactions within the last
+    /// `days` days. Used to warn before cache cleaning destroys the archives
+    /// those rollback plans depend on.
+    pub fn rollback_referenced_versions(&self, days: i64) -> Result<Vec<(String, String)>> {
+        let entries = self.load()?;
+        let cutoff = Timestamp::now()
+            .as_second()
+            .saturating_sub(days.saturating_mul(24 * 60 * 60));
+
+        let mut referenced = std::collections::BTreeSet::new();
+        for entry in entries {
+            if !entry.success {
+                continue;
+            }
+            if !matches!(
+                entry.transaction_type,
+                TransactionType::Remove | TransactionType::Update
+            ) {
+                continue;
+            }
+            if entry.timestamp.as_second() < cutoff {
+                continue;
+            }
+            for change in &entry.changes {
+                if let Some(version) = &change.old_version {
+                    referenced.insert((change.name.clone(), version.clone()));
+                }
+            }
+        }
+
+        Ok(referenced.into_iter().collect())
+    }
+
     pub fn load(&self) -> Result<Vec<Transaction>> {
         if !self.log_path.exists() {
             return Ok(Vec::new());
