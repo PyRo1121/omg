@@ -1735,6 +1735,7 @@ across history/faq/cli
 - Run Docker E2E tests explicitly
 ### 📚 Documentation
 
+- Wave-12 blocker remediation roadmap (citation-backed audit)
 - Re-link AUR support page from package docs
 
 Removing the AUR refactor/plan docs orphaned docs/aur.md; restore its
