@@ -27,6 +27,12 @@ writes OMG cache — pick one authoritative source after signatures exist.
 per-build PKGDEST/SRCDEST with artifact digests verified pre-install; fresh
 VCS-free checkout per build (git hooks escape via planted .git/hooks).
 
+- [x] FIXED: ~/.gnupg ro-bind removed from the bwrap sandbox entirely
+      (aud-aur-client: private-key exposure to untrusted PKGBUILDs).
+- [x] PARTIAL: both `git pull --ff-only` sites now run with
+      core.hooksPath=/dev/null, GIT_CONFIG_NOSYSTEM=1 (planted-hook escape);
+      full fix remains fresh VCS-free checkout per build.
+
 ## Review ordering (1 blocker): move review_pkgbuild before parse/download_sources
 
 typed source-rename validation; byte caps.

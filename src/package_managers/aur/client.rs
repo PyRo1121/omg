@@ -1192,8 +1192,24 @@ impl AurClient {
                 cmd.env("HOME", home_path);
             }
 
-            cmd.args(["git", "-C", pkg_dir_str.as_ref(), "pull", "--ff-only"]);
+            // The checkout was writable to untrusted build code (wave-12
+            // aud-aur-client): a planted .git/hooks/post-merge or
+            // core.hooksPath would execute as the real user on this pull.
+            // Hooks are disabled outright and global/system config is
+            // isolated so repository-local config cannot inject behavior.
+            cmd.args([
+                "git",
+                "-C",
+                pkg_dir_str.as_ref(),
+                "-c",
+                "core.hooksPath=/dev/null",
+                "-c",
+                "protocol.file.allow=user",
+                "pull",
+                "--ff-only",
+            ]);
             cmd.env("GIT_TERMINAL_PROMPT", "0");
+            cmd.env("GIT_CONFIG_NOSYSTEM", "1");
 
             let status = cmd
                 .stdin(std::process::Stdio::null())
@@ -1221,8 +1237,16 @@ impl AurClient {
             let status = Command::new("git")
                 .arg("-C")
                 .arg(pkg_dir)
-                .args(["pull", "--ff-only"])
+                .args([
+                    "-c",
+                    "core.hooksPath=/dev/null",
+                    "-c",
+                    "protocol.file.allow=user",
+                    "pull",
+                    "--ff-only",
+                ])
                 .env("GIT_TERMINAL_PROMPT", "0")
+                .env("GIT_CONFIG_NOSYSTEM", "1")
                 .stdin(std::process::Stdio::null())
                 .status()
                 .await
@@ -1435,7 +1459,6 @@ impl AurClient {
 
             let pkg_dir_str = pkg_dir_canonical.to_string_lossy();
             let home = home::home_dir().unwrap_or_else(|| PathBuf::from("/root"));
-            let gnupg_dir = home.join(".gnupg");
 
             let pkgdest_str = pkgdest_canonical.to_string_lossy();
             let srcdest_str = srcdest_canonical.to_string_lossy();
@@ -1445,7 +1468,6 @@ impl AurClient {
             let pacman_cache_root = paths::pacman_cache_root_dir();
             let pacman_cache_root_str = pacman_cache_root.to_string_lossy();
             let home_str = home.to_string_lossy();
-            let gnupg_str = gnupg_dir.to_string_lossy();
 
             let mut cmd = Command::new("bwrap");
             cmd.args([
@@ -1471,12 +1493,6 @@ impl AurClient {
                 "--tmpfs",
             ]);
             cmd.arg(&*home_str);
-
-            if gnupg_dir.exists() {
-                cmd.args(["--ro-bind"]);
-                cmd.arg(&*gnupg_str);
-                cmd.arg(&*gnupg_str);
-            }
 
             cmd.args(["--bind"]);
             cmd.arg(&*pkg_dir_str);
