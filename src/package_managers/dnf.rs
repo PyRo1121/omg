@@ -1031,6 +1031,37 @@ pub mod repomd {
         Ok(Repomd { revision, entries })
     }
 
+    /// Load and verify a repository manifest.
+    ///
+    /// S2b of FEDORA-ENGINE.md (citations: WAVE12-BLOCKERS signature-chain
+    /// blockers; rnd-pm-3 trust patterns): the detached OpenPGP signature over
+    /// the repomd document MUST verify against the repo's `Signed-By` keyring
+    /// (or the distro default keyring when unset) BEFORE the manifest is
+    /// parsed. Package checksums are trusted only because they were bound to
+    /// this verified document.
+    ///
+    /// Fail-closed: missing/unusable keyring, bad signature, tampered bytes,
+    /// and unparseable manifests are hard errors.
+    pub fn load_verified_repomd(
+        repomd_xml: &[u8],
+        detached_signature: &[u8],
+        signed_by: Option<&std::path::Path>,
+    ) -> Result<Repomd> {
+        let verifier = match signed_by {
+            Some(keyring) => crate::core::security::pgp::PgpVerifier::from_keyring(keyring)
+                .context("repomd: Signed-By keyring unusable")?,
+            None => crate::core::security::pgp::PgpVerifier::new()
+                .context("repomd: distro keyring unusable")?,
+        };
+        verifier
+            .verify_memory(repomd_xml, detached_signature)
+            .context("repomd: signature verification failed")?;
+
+        let xml =
+            std::str::from_utf8(repomd_xml).context("repomd: verified manifest is not UTF-8")?;
+        parse_repomd(xml)
+    }
+
     #[cfg(test)]
     mod tests {
         use super::*;
@@ -1091,6 +1122,116 @@ pub mod repomd {
                 "abcd",
             );
             assert!(parse_repomd(&xml).is_err());
+        }
+
+        // ---- S2b verification tests (real sequoia keys + signatures) ----
+
+        /// Generate an unprotected signing cert and produce a real detached
+        /// binary signature over `data`, plus the serialized cert for a
+        /// keyring file. Exercises the same packet shapes production
+        /// verification expects.
+        fn make_fixture(data: &[u8]) -> (Vec<u8>, Vec<u8>) {
+            use sequoia_openpgp::cert::CertBuilder;
+            use sequoia_openpgp::serialize::stream::{Message, Signer};
+            use std::io::Write;
+
+            // Default builder flags are certification-only; verification requires a
+            // *signing*-capable key.
+            let primary_flags = sequoia_openpgp::types::KeyFlags::empty()
+                .set_certification()
+                .set_signing();
+            let (cert, _) = CertBuilder::new()
+                .set_primary_key_flags(primary_flags)
+                .generate()
+                .expect("test key generation");
+
+            let mut cert_bytes = Vec::new();
+            {
+                use sequoia_openpgp::serialize::Marshal;
+                cert.serialize(&mut cert_bytes).expect("cert serialize");
+            }
+
+            let mut sig_sink = Vec::new();
+            {
+                // into_keypair lives on ValidKeyAmalgamation: validate via
+                // the standard policy first. The policy outlives `vc`.
+                let policy = sequoia_openpgp::policy::StandardPolicy::new();
+                let vc = cert
+                    .with_policy(&policy, None)
+                    .expect("freshly generated cert passes default policy");
+                // Signer::new takes the KeyPair by value.
+                let keypair = vc
+                    .primary_key()
+                    .key()
+                    .clone()
+                    .parts_into_secret()
+                    .expect("secret material present")
+                    .into_keypair()
+                    .expect("unprotected keypair");
+                let mut signer = Signer::new(Message::new(&mut sig_sink), keypair)
+                    .expect("signer")
+                    .detached()
+                    .build()
+                    .expect("build detached signer");
+                signer.write_all(data).expect("sign write");
+                signer.finalize().expect("sign finalize");
+            }
+
+            (sig_sink, cert_bytes)
+        }
+
+        #[test]
+        fn s2b_verified_manifest_loads() {
+            let xml = SAMPLE.as_bytes();
+            let (sig, cert_bytes) = make_fixture(xml);
+
+            let dir = tempfile::TempDir::new().unwrap();
+            let keyring = dir.path().join("trusted.gpg");
+            std::fs::write(&keyring, &cert_bytes).unwrap();
+
+            let repomd =
+                load_verified_repomd(xml, &sig, Some(&keyring)).expect("correct signature loads");
+            assert_eq!(repomd.entries.len(), 2);
+        }
+
+        #[test]
+        fn s2b_tampered_manifest_fails() {
+            let xml = SAMPLE.as_bytes();
+            let (sig, cert_bytes) = make_fixture(xml);
+
+            let dir = tempfile::TempDir::new().unwrap();
+            let keyring = dir.path().join("trusted.gpg");
+            std::fs::write(&keyring, &cert_bytes).unwrap();
+
+            let mut tampered = xml.to_vec();
+            let last = tampered.len() - 1;
+            tampered[last] ^= 0x20;
+            assert!(load_verified_repomd(&tampered, &sig, Some(&keyring)).is_err());
+        }
+
+        #[test]
+        fn s2b_wrong_keyring_fails() {
+            let xml = SAMPLE.as_bytes();
+            let (sig, _cert) = make_fixture(xml);
+            let (_other_sig, other_cert) = make_fixture(b"other");
+
+            let dir = tempfile::TempDir::new().unwrap();
+            let keyring = dir.path().join("trusted.gpg");
+            std::fs::write(&keyring, other_cert).unwrap();
+
+            assert!(load_verified_repomd(xml, &sig, Some(&keyring)).is_err());
+        }
+
+        #[test]
+        fn s2b_missing_signature_fails() {
+            let xml = SAMPLE.as_bytes();
+            let (_, cert_bytes) = make_fixture(xml);
+
+            let dir = tempfile::TempDir::new().unwrap();
+            let keyring = dir.path().join("trusted.gpg");
+            std::fs::write(&keyring, cert_bytes).unwrap();
+
+            assert!(load_verified_repomd(xml, &[], Some(&keyring)).is_err());
         }
 
         #[test]
