@@ -259,6 +259,32 @@ was not linked from any doc; its command usage remains in docs/runtimes.md
 - Move performance checks to benchmarks
 ### ✨ New Features
 
+- **Dnf**: S2b verified-repomd loader — OpenPGP gate before manifest parse
+
+Implements FEDORA-ENGINE.md S2b (citations: WAVE12-BLOCKERS signature-chain
+
+blockers; rnd-pm-3 trust patterns).
+
+  - load_verified_repomd(): detached OpenPGP signature MUST verify against
+
+the repo's Signed-By keyring (or distro default) BEFORE parsing;
+
+reuses the shared PgpVerifier rather than new crypto code
+
+  - fail-closed: unusable/missing keyring, bad signature, tampered bytes,
+
+non-UTF-8 manifests are hard errors
+
+  - 4 tests with REAL sequoia keys and signatures (CertBuilder +
+
+streaming detached Signer): verified loads; single-bit tamper fails;
+
+wrong keyring fails; empty signature fails
+
+  - fixture root cause found during development: CertBuilder::new() emits
+
+certification-only keys, so the signing-capable flag is set explicitly
+
 - **Dnf**: S2a strict repomd.xml parser — typed entries, fail-closed validation
 
 Implements FEDORA-ENGINE.md S2a (citations: /tmp/omg-fleet13
