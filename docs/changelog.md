@@ -1855,6 +1855,30 @@ dependency-type: indirect
 
 ### 🔒 Security
 
+- Wave-9 coordinated deep cleanup (15 agents)
+
+Repo-wide deletion and deduplication pass across all subsystems. Every
+
+agent audited read-only first, then fixed only its owned files with
+
+per-scope clippy gates.
+
+Highlights by area:
+
+  - tests/shared fixtures: -1295 net (dead helpers, duplicated mocks)
+
+  - cli/tea+tui: dead renderer/cmd paths removed
+
+  - runtimes/mise: -104 net of unreachable fallbacks
+
+  - daemon/index: -101 net; server prewarm/cache publication simplified
+
+  - security/secrets: scanner scaffolding deduplicated (-141 net)
+
+  - aur/pkgbuild+index+metadata, alpm/pacman_db, core state/env/net:
+
+single-call wrappers, write-only fields, and clone-heavy scans removed
+
 - Parse bounded CLI choices into typed enums
 
   - replace stringly runtime backend, project stack, audit severity, license
