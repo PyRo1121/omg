@@ -30,6 +30,7 @@ use crate::package_managers::PackageManager;
 use crate::package_managers::types::{UpdateInfo, parse_version_or_zero};
 
 use rusqlite::{Connection, OpenFlags};
+use zerocopy::{FromBytes, Immutable, KnownLayout, big_endian::U32};
 
 /// RPM header magic bytes
 const RPM_HEADER_MAGIC: [u8; 8] = [0x8e, 0xad, 0xe8, 0x01, 0x00, 0x00, 0x00, 0x00];
@@ -44,11 +45,9 @@ mod rpm_tags {
     pub const REASON: u32 = 1160; // User/Dependency
 }
 
-/// RPM header data types
-mod rpm_types {
-    pub const STRING: u32 = 6;
-    pub const STRING_ARRAY: u32 = 8;
-}
+// RPM header data types (librpm numbering): 1=CHAR 2=INT8 3=INT16 4=INT32
+// 5=INT64 6=STRING 7=BIN 8=STRING_ARRAY 9=I18NSTRING. The parser matches on
+// these numerals directly; see parse_rpm_header for the invariant table.
 
 /// DNF Package Manager implementation
 pub struct DnfPackageManager {
@@ -190,107 +189,123 @@ impl DnfPackageManager {
         })
     }
 
-    /// Parse RPM header blob to extract metadata
+    /// Parse an RPM header region into a tag -> raw-bytes map.
     ///
-    /// RPM headers use a binary format:
-    /// - Magic: 0x8eade801 00000000
-    /// - Index entries: tag(u32), type(u32), offset(i32), count(u32)
+    /// S1 rewrite (FEDORA-ENGINE.md; citations: /tmp/omg-fleet13
+    /// rnd-pm-formats + rnd-pm-10): the header intro and every index entry
+    /// are read through zero-copy `zerocopy` big-endian views, and all
+    /// librpm validation invariants are enforced fail-closed:
+    /// - magic AND reserved words must match (`8e ad e8 01 00 00 00 00`);
+    /// - entry counts are capped before any allocation;
+    /// - tag types must be in librpm's range 1..=9 (stored NULL/type 0 and
+    ///   out-of-range types are rejected, not skipped);
+    /// - STRING and I18NSTRING carry exactly one element (count-one rule);
+    /// - entry data regions must lie fully inside the declared data area —
+    ///   hostile or negative offsets are hard errors, never silent skips.
     fn parse_rpm_header(blob: &[u8]) -> Result<HashMap<u32, Vec<u8>>> {
-        if blob.len() < 16 {
-            anyhow::bail!("RPM header too short");
+        const MAX_HEADER_ENTRIES: u32 = 100_000;
+
+        #[derive(FromBytes, KnownLayout, Immutable)]
+        #[repr(C)]
+        struct HeaderIntro {
+            magic: [u8; 4],
+            reserved: [u8; 4],
+            num_entries: U32,
+            data_size: U32,
         }
 
-        // Verify magic bytes
-        if blob[0..8] != RPM_HEADER_MAGIC {
+        #[derive(FromBytes, KnownLayout, Immutable)]
+        #[repr(C)]
+        struct IndexEntry {
+            tag: U32,
+            tag_type: U32,
+            offset: [u8; 4],
+            count: U32,
+        }
+
+        if blob.len() < size_of::<HeaderIntro>() {
+            anyhow::bail!("RPM header too short");
+        }
+        let (intro_bytes, rest) = blob.split_at(size_of::<HeaderIntro>());
+        let intro = HeaderIntro::ref_from_bytes(intro_bytes).expect("intro length checked above");
+        if intro.magic != RPM_HEADER_MAGIC[..4] || intro.reserved != RPM_HEADER_MAGIC[4..8] {
             anyhow::bail!("Invalid RPM header magic");
         }
 
-        let num_entries = u32::from_be_bytes([blob[8], blob[9], blob[10], blob[11]]) as usize;
-        let data_size = u32::from_be_bytes([blob[12], blob[13], blob[14], blob[15]]) as usize;
+        let num_entries = intro.num_entries.get();
+        anyhow::ensure!(
+            num_entries <= MAX_HEADER_ENTRIES,
+            "RPM header declares {num_entries} entries (limit {MAX_HEADER_ENTRIES})"
+        );
+        let data_size = intro.data_size.get() as usize;
 
-        let index_start: usize = 16;
-        // Checked arithmetic: num_entries/data_size come from the archive and
-        // must not overflow the offsets on any target.
-        let index_size = num_entries
-            .checked_mul(16)
-            .ok_or_else(|| anyhow::anyhow!("RPM header index size overflow"))?;
-        let data_start = index_start
-            .checked_add(index_size)
-            .ok_or_else(|| anyhow::anyhow!("RPM header index size overflow"))?;
-        let expected_len = data_start
-            .checked_add(data_size)
-            .ok_or_else(|| anyhow::anyhow!("RPM header data size overflow"))?;
+        let entries_len = num_entries as usize * size_of::<IndexEntry>();
+        // The data area starts immediately after the index (librpm layout);
+        // deriving it from the tail would let appended bytes shift the
+        // payload window and satisfy string terminators outside the
+        // declared region.
+        let data_start = entries_len;
+        anyhow::ensure!(
+            data_start
+                .checked_add(data_size)
+                .is_some_and(|end| end <= rest.len()),
+            "RPM header truncated"
+        );
 
-        if blob.len() < expected_len {
-            anyhow::bail!("RPM header truncated");
-        }
+        let payload = &rest[data_start..data_start + data_size];
+        let mut tags = HashMap::with_capacity(num_entries as usize);
+        for chunk in rest[..data_start].chunks_exact(size_of::<IndexEntry>()) {
+            let entry =
+                IndexEntry::ref_from_bytes(chunk).expect("chunk length checked by chunks_exact");
+            let tag = entry.tag.get();
+            let tag_type = entry.tag_type.get();
+            let count = entry.count.get() as usize;
 
-        let mut tags = HashMap::new();
+            anyhow::ensure!(
+                (1..=9).contains(&tag_type),
+                "RPM tag {tag} has unsupported type {tag_type}"
+            );
+            anyhow::ensure!(
+                !matches!(tag_type, 6 | 9) || count == 1, // 6=STRING 9=I18NSTRING
+                "RPM string tag {tag} must have count 1, got {count}"
+            );
 
-        // Parse index entries
-        for i in 0..num_entries {
-            let entry_offset = index_start + (i * 16);
-            let tag = u32::from_be_bytes([
-                blob[entry_offset],
-                blob[entry_offset + 1],
-                blob[entry_offset + 2],
-                blob[entry_offset + 3],
-            ]);
-            let tag_type = u32::from_be_bytes([
-                blob[entry_offset + 4],
-                blob[entry_offset + 5],
-                blob[entry_offset + 6],
-                blob[entry_offset + 7],
-            ]);
-            let offset = i32::from_be_bytes([
-                blob[entry_offset + 8],
-                blob[entry_offset + 9],
-                blob[entry_offset + 10],
-                blob[entry_offset + 11],
-            ]) as usize;
-            let count = u32::from_be_bytes([
-                blob[entry_offset + 12],
-                blob[entry_offset + 13],
-                blob[entry_offset + 14],
-                blob[entry_offset + 15],
-            ]) as usize;
+            let rel = i32::from_be_bytes(entry.offset);
+            anyhow::ensure!(rel >= 0, "RPM tag {tag} has negative data offset {rel}");
+            let base = rel as usize;
+            anyhow::ensure!(
+                base < payload.len(),
+                "RPM tag {tag} data offset outside payload"
+            );
 
-            // Extract data based on type
-            let data_offset = data_start + offset;
-            if data_offset < blob.len() {
-                let data = match tag_type {
-                    rpm_types::STRING => {
-                        // Null-terminated string
-                        let end = blob[data_offset..]
-                            .iter()
-                            .position(|&b| b == 0)
-                            .unwrap_or(0);
-                        blob[data_offset..data_offset + end].to_vec()
-                    }
-                    rpm_types::STRING_ARRAY => {
-                        // Array of null-terminated strings; `count` comes from
-                        // the archive, so every read is bounds-checked — a
-                        // hostile count must error, never panic.
-                        let mut strings = Vec::new();
-                        let mut pos = data_offset;
-                        for _ in 0..count {
-                            if pos >= blob.len() {
-                                anyhow::bail!("RPM STRING_ARRAY exceeds payload bounds");
-                            }
-                            let end = blob[pos..]
-                                .iter()
-                                .position(|&b| b == 0)
-                                .unwrap_or(blob.len() - pos);
-                            strings.extend_from_slice(&blob[pos..pos + end]);
-                            strings.push(b'\n');
-                            pos += end + 1;
-                        }
-                        strings
-                    }
-                    _ => blob[data_offset..data_offset + count].to_vec(),
-                };
-                tags.insert(tag, data);
-            }
+            // Region length this tag occupies inside the payload.
+            let region: usize = match tag_type {
+                1 | 2 => count.saturating_mul(1),
+                3 => count.saturating_mul(2),
+                4 => count.saturating_mul(4),
+                5 => count.saturating_mul(8),
+                7 => count,
+                6 | 8 | 9 => {
+                    // Strings terminate inside the declared payload only;
+                    // bytes beyond it can never satisfy a NUL.
+                    payload[base..]
+                        .iter()
+                        .position(|&b| b == 0)
+                        .map(|npos| npos + 1)
+                        .ok_or_else(|| anyhow::anyhow!("RPM tag {tag} string missing terminator"))?
+                }
+                _ => unreachable!("type range validated above"),
+            };
+
+            let abs_end = base
+                .checked_add(region)
+                .ok_or_else(|| anyhow::anyhow!("RPM tag {tag} data region overflows"))?;
+            anyhow::ensure!(
+                abs_end <= payload.len(),
+                "RPM tag {tag} data region exceeds payload"
+            );
+
+            tags.insert(tag, payload[base..abs_end].to_vec());
         }
 
         Ok(tags)
@@ -659,20 +674,82 @@ mod tests {
         let mut header = Vec::new();
         header.extend_from_slice(&RPM_HEADER_MAGIC);
         header.extend_from_slice(&[0, 0, 0, 1]); // 1 entry
-        header.extend_from_slice(&[0, 0, 0, 8]); // 8 bytes data
-        // Entry: tag=1000 (NAME), type=6 (STRING), offset=0, count=4
+        header.extend_from_slice(&[0, 0, 0, 5]); // 5 bytes data ("test\0")
+        // Entry: tag=1000 (NAME), type=6 (STRING), offset=0.
+        // librpm count-one invariant (rnd-pm-10): STRING carries exactly one
+        // element; the old fixture's count=4 encoded pre-S1 lax parsing.
         header.extend_from_slice(&1000u32.to_be_bytes());
         header.extend_from_slice(&6u32.to_be_bytes());
         header.extend_from_slice(&0i32.to_be_bytes());
-        header.extend_from_slice(&4u32.to_be_bytes());
-        // Data: "test\0\0\0\0"
-        header.extend_from_slice(b"test\0\0\0\0");
+        header.extend_from_slice(&1u32.to_be_bytes());
+        // Data: "test\0"
+        header.extend_from_slice(b"test\0");
 
         let result = DnfPackageManager::parse_rpm_header(&header);
         assert!(result.is_ok());
 
         let tags = result.unwrap();
         assert!(tags.contains_key(&1000));
+    }
+
+    fn strict_header(entries: &[(u32, u32, i32, u32)], data: &[u8]) -> Vec<u8> {
+        let mut header = Vec::new();
+        header.extend_from_slice(&RPM_HEADER_MAGIC);
+        header.extend_from_slice(&(entries.len() as u32).to_be_bytes());
+        header.extend_from_slice(&(data.len() as u32).to_be_bytes());
+        for (tag, typ, off, count) in entries {
+            header.extend_from_slice(&tag.to_be_bytes());
+            header.extend_from_slice(&typ.to_be_bytes());
+            header.extend_from_slice(&off.to_be_bytes());
+            header.extend_from_slice(&count.to_be_bytes());
+        }
+        header.extend_from_slice(data);
+        header
+    }
+
+    #[test]
+    fn s1_rejects_negative_entry_offset() {
+        let blob = strict_header(&[(1000, 6, -1, 1)], b"test\0");
+        assert!(DnfPackageManager::parse_rpm_header(&blob).is_err());
+    }
+
+    #[test]
+    fn s1_rejects_unknown_tag_type() {
+        for bad_type in [0u32, 10, 12] {
+            let blob = strict_header(&[(1000, bad_type, 0, 1)], b"abcd");
+            assert!(
+                DnfPackageManager::parse_rpm_header(&blob).is_err(),
+                "type {bad_type} must be rejected"
+            );
+        }
+    }
+
+    #[test]
+    fn s1_enforces_string_count_one() {
+        let blob = strict_header(&[(1000, 6, 0, 4)], b"test\0");
+        assert!(DnfPackageManager::parse_rpm_header(&blob).is_err());
+    }
+
+    #[test]
+    fn s1_rejects_string_missing_terminator() {
+        let blob = strict_header(&[(1004, 6, 0, 1)], b"no-nul");
+        assert!(DnfPackageManager::parse_rpm_header(&blob).is_err());
+    }
+
+    #[test]
+    fn s1_rejects_data_region_outside_declared_payload() {
+        // Offset points past the declared data size.
+        let blob = strict_header(&[(1000, 6, 99, 1)], b"test\0");
+        assert!(DnfPackageManager::parse_rpm_header(&blob).is_err());
+    }
+
+    #[test]
+    fn s1_rejects_undeclared_trailing_payload_use() {
+        // Data region ends at data_start+data_size; a string terminator may
+        // not be satisfied by bytes beyond it.
+        let mut blob = strict_header(&[(1000, 6, 0, 1)], b"xxxxx");
+        blob.extend_from_slice(b"\0"); // NUL outside the declared payload
+        assert!(DnfPackageManager::parse_rpm_header(&blob).is_err());
     }
 
     #[test]
