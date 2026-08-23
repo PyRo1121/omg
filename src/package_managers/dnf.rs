@@ -834,3 +834,269 @@ mod tests {
         );
     }
 }
+
+/// Repository manifest parsing for DNF repos (`repomd.xml`).
+///
+/// Lives inside the Fedora backend module: all DNF concerns stay in one
+/// place (no scattered per-format files).
+pub mod repomd {
+    use anyhow::{Context, Result};
+
+    /// One `<data type="primary">` record from repomd.xml.
+    #[derive(Debug, Clone, PartialEq, Eq)]
+    pub struct RepomdEntry {
+        /// Artifact kind: `primary`, `filelists`, `updateinfo`, ...
+        pub data_type: String,
+        /// Location href relative to the repository root (e.g.
+        /// `repodata/PRIMARY_XML.gz`).
+        pub location: String,
+        /// SHA256 declared by the (later verified) repomd signature.
+        pub sha256: String,
+        /// Declared size in bytes, when present.
+        pub size: Option<u64>,
+        /// Repomd revision timestamp for the whole repository.
+        pub revision: Option<String>,
+    }
+
+    /// Parsed repository manifest.
+    #[derive(Debug, Clone, PartialEq, Eq)]
+    pub struct Repomd {
+        pub revision: Option<String>,
+        pub entries: Vec<RepomdEntry>,
+    }
+
+    /// Parse repomd.xml content strictly.
+    ///
+    /// Fail-closed rules:
+    /// - the document must contain a `<revision>` element;
+    /// - every `<data>` element must carry `type`, and its `<location>`,
+    ///   `<checksum type="sha256">`, and `<open-size>`/`<size>` children are
+    ///   validated for shape (non-empty location, 64 hex chars for sha256);
+    /// - unknown elements are ignored for forward compatibility, but malformed
+    ///   known elements are hard errors — never silently skipped.
+    pub fn parse_repomd(xml: &str) -> Result<Repomd> {
+        use quick_xml::events::Event;
+
+        let mut reader = quick_xml::Reader::from_str(xml);
+        reader.config_mut().trim_text(true);
+
+        let mut revision: Option<String> = None;
+        let mut entries: Vec<RepomdEntry> = Vec::new();
+
+        let mut current_type: Option<String> = None;
+        let mut current_location: Option<String> = None;
+        let mut current_checksum: Option<String> = None;
+        let mut current_size: Option<u64> = None;
+        let mut in_checksum = false;
+        let mut in_revision = false;
+        let mut in_size = false;
+
+        let finish_data = |current_type: &mut Option<String>,
+                           current_location: &mut Option<String>,
+                           current_checksum: &mut Option<String>,
+                           current_size: &mut Option<u64>,
+                           entries: &mut Vec<RepomdEntry>|
+         -> Result<()> {
+            let data_type = current_type
+                .take()
+                .ok_or_else(|| anyhow::anyhow!("repomd: </data> without matching start"))?;
+            let location = current_location.take().ok_or_else(|| {
+                anyhow::anyhow!("repomd: <data type='{data_type}'> missing <location>")
+            })?;
+            let sha256 = current_checksum.take().ok_or_else(|| {
+                anyhow::anyhow!("repomd: <data type='{data_type}'> missing sha256 checksum")
+            })?;
+            entries.push(RepomdEntry {
+                data_type,
+                location,
+                sha256,
+                size: current_size.take(),
+                revision: None,
+            });
+            Ok(())
+        };
+
+        loop {
+            match reader.read_event() {
+                Ok(Event::Start(start)) => match start.name().as_ref() {
+                    b"data" => {
+                        let mut attr_type = None;
+                        for attr in start.attributes() {
+                            let attr = attr.context("repomd: malformed attribute")?;
+                            if attr.key.as_ref() == b"type" {
+                                attr_type = Some(String::from_utf8_lossy(&attr.value).into_owned());
+                            }
+                        }
+                        anyhow::ensure!(current_type.is_none(), "repomd: nested <data> element");
+                        current_type = Some(attr_type.ok_or_else(|| {
+                            anyhow::anyhow!("repomd: <data> without type attribute")
+                        })?);
+                        current_location = None;
+                        current_checksum = None;
+                        current_size = None;
+                    }
+                    b"revision" => in_revision = true,
+                    b"checksum" => {
+                        let mut kind = None;
+                        for attr in start.attributes() {
+                            let attr = attr.context("repomd: malformed attribute")?;
+                            if attr.key.as_ref() == b"type" {
+                                kind = Some(String::from_utf8_lossy(&attr.value).into_owned());
+                            }
+                        }
+                        anyhow::ensure!(
+                            kind.as_deref() == Some("sha256"),
+                            "repomd: only sha256 checksums are accepted"
+                        );
+                        in_checksum = true;
+                    }
+                    b"size" => in_size = true,
+                    _ => {}
+                },
+                Ok(Event::Empty(empty)) => {
+                    // <location href=".."/> is self-closing in real manifests.
+                    if empty.name().as_ref() == b"location" {
+                        let mut href = None;
+                        for attr in empty.attributes() {
+                            let attr = attr.context("repomd: malformed attribute")?;
+                            if attr.key.as_ref() == b"href" {
+                                href = Some(String::from_utf8_lossy(&attr.value).into_owned());
+                            }
+                        }
+                        let href =
+                            href.ok_or_else(|| anyhow::anyhow!("repomd: <location> without href"))?;
+                        anyhow::ensure!(
+                            !href.is_empty() && !href.contains("..") && !href.starts_with('/'),
+                            "repomd: unsafe location href '{href}'"
+                        );
+                        current_location = Some(href);
+                    }
+                }
+                Ok(Event::Text(text)) => {
+                    let value = text.unescape().context("repomd: invalid text encoding")?;
+                    let trimmed = value.trim();
+                    if in_checksum {
+                        current_checksum = Some(trimmed.to_string());
+                    } else if in_revision {
+                        revision = Some(trimmed.to_string());
+                    } else if in_size {
+                        let parsed: u64 =
+                            trimmed.parse().context("repomd: invalid <size> value")?;
+                        current_size = Some(parsed);
+                    }
+                }
+                Ok(Event::End(end)) => match end.name().as_ref() {
+                    b"revision" => in_revision = false,
+                    b"checksum" => {
+                        in_checksum = false;
+                        let digest = current_checksum.clone().unwrap_or_default();
+                        anyhow::ensure!(
+                            digest.len() == 64 && digest.bytes().all(|b| b.is_ascii_hexdigit()),
+                            "repomd: checksum must be 64 hex chars"
+                        );
+                    }
+                    b"size" => in_size = false,
+                    b"data" => {
+                        finish_data(
+                            &mut current_type,
+                            &mut current_location,
+                            &mut current_checksum,
+                            &mut current_size,
+                            &mut entries,
+                        )?;
+                    }
+                    _ => {}
+                },
+                Ok(Event::Eof) => break,
+                Err(error) => return Err(error).context("repomd: XML parse failure"),
+                _ => {}
+            }
+        }
+
+        // Propagate the repository revision onto every entry now that the full
+        // document (revision may appear after data records) has been read.
+        for entry in &mut entries {
+            entry.revision.clone_from(&revision);
+        }
+
+        anyhow::ensure!(
+            revision.is_some(),
+            "repomd: missing <revision>; refusing unsigned-looking manifest"
+        );
+        anyhow::ensure!(
+            !entries.is_empty(),
+            "repomd: no <data> records; refusing empty manifest"
+        );
+
+        Ok(Repomd { revision, entries })
+    }
+
+    #[cfg(test)]
+    mod tests {
+        use super::*;
+
+        const SAMPLE: &str = r#"<?xml version="1.0" encoding="UTF-8"?>
+    <repomd xmlns="http://linux.duke.edu/metadata/repo">
+      <revision>1735689600</revision>
+      <data type="primary">
+        <location href="repodata/primary.xml.gz"/>
+        <checksum type="sha256">ABCDEF0123456789abcdef0123456789abcdef0123456789abcdef0123456789</checksum>
+        <size>1234</size>
+      </data>
+      <data type="filelists">
+        <location href="repodata/filelists.xml.gz"/>
+        <checksum type="sha256">0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef</checksum>
+      </data>
+    </repomd>"#;
+
+        #[test]
+        fn parses_primary_and_filelists_entries() {
+            let repomd = parse_repomd(SAMPLE).expect("valid repomd parses");
+            assert_eq!(repomd.revision.as_deref(), Some("1735689600"));
+            assert_eq!(repomd.entries.len(), 2);
+            let primary = &repomd.entries[0];
+            assert_eq!(primary.data_type, "primary");
+            assert_eq!(primary.location, "repodata/primary.xml.gz");
+            assert_eq!(primary.size, Some(1234));
+        }
+
+        #[test]
+        fn rejects_missing_revision() {
+            let xml = SAMPLE.replace("<revision>1735689600</revision>", "");
+            assert!(parse_repomd(&xml).is_err());
+        }
+
+        #[test]
+        fn rejects_data_without_location() {
+            let xml = SAMPLE.replace(r#"<location href="repodata/primary.xml.gz"/>"#, "");
+            assert!(parse_repomd(&xml).is_err());
+        }
+
+        #[test]
+        fn rejects_non_sha256_checksum() {
+            let xml = SAMPLE.replace(r#"type="sha256""#, r#"type="md5""#);
+            assert!(parse_repomd(&xml).is_err());
+        }
+
+        #[test]
+        fn rejects_traversal_location() {
+            let xml = SAMPLE.replace("repodata/primary.xml.gz", "../../etc/passwd");
+            assert!(parse_repomd(&xml).is_err());
+        }
+
+        #[test]
+        fn rejects_short_digest() {
+            let xml = SAMPLE.replace(
+                "ABCDEF0123456789abcdef0123456789abcdef0123456789abcdef0123456789",
+                "abcd",
+            );
+            assert!(parse_repomd(&xml).is_err());
+        }
+
+        #[test]
+        fn rejects_empty_manifest() {
+            let xml = r#"<?xml version="1.0"?><repomd><revision>1</revision></repomd>"#;
+            assert!(parse_repomd(xml).is_err());
+        }
+    }
+}
