@@ -292,6 +292,26 @@ analyzer inference
 - **Ci**: Cross-platform install script and R2 release sync
 ### 🐛 Bug Fixes
 
+- Wave-11 blocker pair — AUR outcome ordering and elevated flag drop
+
+From the 20-agent citation-backed audit (/tmp/omg-fleet11):
+
+  - AUR install: success output and usage tracking ran before the recorded
+
+outcome was checked, so a failed build printed 'Built and installed'
+
+and counted a successful install. Success effects now follow the
+
+recorded result.
+
+  - Elevated fast-path parser: flags BEFORE the '--' separator (e.g.
+
+'sudo omg update --check --') were silently ignored, converting a
+
+read-only request into a full system update. Any flag-looking token
+
+anywhere in the invocation now falls back to the full CLI dispatch.
+
 - Schema-version persisted formats — omg.lock and team-status.json
 
 Completes the wave-6 format-verifier findings (S4/S5):
