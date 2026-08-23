@@ -1789,6 +1789,38 @@ dependency-type: indirect
 
 ### 🔒 Security
 
+- Collapse analytics into one strict telemetry pipeline
+
+Forward-only cleanup for the new product:
+
+  - delete core::analytics, its API endpoint, queue, session, heartbeat,
+
+system-info collection, geo collection, retry loop, and public module
+
+  - route one command summary per CLI invocation through the persisted batch
+
+telemetry queue
+
+  - separate local usage counters from outbound telemetry
+
+  - remove dead OperationTimer and operation-specific telemetry emitters
+
+  - minimize the wire schema to data with real producers only
+
+  - never collect positional arguments, package names, search queries, paths,
+
+raw errors, command output, arbitrary metadata, or context strings
+
+  - add strict versioned envelopes for telemetry queue/session persistence;
+
+missing, malformed, obsolete, and forward versions fail closed
+
+  - remove obsolete analytics files from privacy export
+
+  - update security documentation to exact collection, batching, retry, and
+
+timeout behavior
+
 - Align suites with current contracts and fix harness hazards
 
 Fixes from audit-quality report (/tmp/omg-fleet/audit-quality.md):
