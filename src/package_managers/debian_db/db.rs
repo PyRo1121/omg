@@ -15,8 +15,8 @@ use std::collections::HashMap;
 use std::fs::{self, File};
 use std::io::{BufReader, Read};
 use std::path::{Path, PathBuf};
-use std::sync::LazyLock;
 use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::{Arc, LazyLock};
 
 use ahash::AHashSet;
 use anyhow::{Context, Result};
@@ -82,21 +82,25 @@ struct DebianIndexCache {
 /// Cache for /var/lib/dpkg/status to avoid expensive reparsing
 struct DpkgStatusCache {
     packages: Vec<DpkgPackageEntry>,
-    installed_set: AHashSet<String>,
+    /// Shared installed-name set. `Arc` lets hot readers (`search_fast`,
+    /// `is_installed_fast`) take a reference per query without cloning N
+    /// strings or holding the writer lock.
+    installed_set: Arc<AHashSet<String>>,
     status_mtime: std::time::SystemTime,
     extended_states_mtime: Option<std::time::SystemTime>,
-    /// Last access time for TTL-based eviction (unix seconds; `0` = never)
-    last_accessed: u64,
+    /// Last access time for TTL-based eviction (unix seconds; `0` = never).
+    /// Atomic so cache HITS only need the read lock.
+    last_accessed: AtomicU64,
 }
 
 impl Default for DpkgStatusCache {
     fn default() -> Self {
         Self {
             packages: Vec::new(),
-            installed_set: AHashSet::new(),
+            installed_set: Arc::new(AHashSet::new()),
             status_mtime: std::time::UNIX_EPOCH,
             extended_states_mtime: None,
-            last_accessed: 0,
+            last_accessed: AtomicU64::new(0),
         }
     }
 }
@@ -112,6 +116,37 @@ fn cached_installed_state(cache: &DpkgStatusCache, name: &str) -> Option<bool> {
         return None;
     }
     Some(cache.installed_set.contains(name))
+}
+
+/// Names of all installed packages from the dpkg-status cache.
+///
+/// Hot path for `search_fast`: returns a shared `Arc` of the cached set after
+/// validating the source mtimes, so a search pays two `stat` calls instead of
+/// deep-cloning every installed entry and re-hashing N names.
+fn installed_names() -> Result<Arc<AHashSet<String>>> {
+    let status_path = Path::new("/var/lib/dpkg/status");
+    let status_mtime = required_mtime(status_path)?;
+    let extended_states_mtime = optional_mtime(Path::new("/var/lib/apt/extended_states"))?;
+
+    {
+        let cache = DPKG_STATUS_CACHE.read().expect("lock poisoned");
+        if !cache.packages.is_empty()
+            && cache.status_mtime == status_mtime
+            && cache.extended_states_mtime == extended_states_mtime
+            && !is_access_expired(cache.last_accessed.load(Ordering::Relaxed))
+        {
+            cache
+                .last_accessed
+                .store(unix_now_secs(), Ordering::Relaxed);
+            return Ok(Arc::clone(&cache.installed_set));
+        }
+    }
+
+    // Cold or stale: refresh through the standard path, which rebuilds and
+    // swaps in the complete set under one writer acquisition.
+    list_installed_fast()?;
+    let cache = DPKG_STATUS_CACHE.read().expect("lock poisoned");
+    Ok(Arc::clone(&cache.installed_set))
 }
 
 /// Global mmap-based index for zero-copy access (optional, used when available)
@@ -1326,11 +1361,6 @@ pub fn search_fast(query: &str) -> Result<Vec<Package>> {
     ))
 }
 
-/// Names of all installed packages from the dpkg-status cache.
-fn installed_names() -> Result<AHashSet<String>> {
-    Ok(list_installed_fast()?.into_iter().map(|p| p.name).collect())
-}
-
 /// FST-based search: `O(query_len)` prefix matching
 /// Much faster than full buffer scan for common queries
 #[inline]
@@ -1421,7 +1451,7 @@ fn fst_mmap_search(
             version: parse_version_or_zero(pkg.version.as_str()),
             description: pkg.description.to_string(),
             source: PackageSource::Official,
-            installed: false,
+            installed: installed_set.contains(pkg.name.as_str()),
         }];
     }
 
@@ -1641,19 +1671,19 @@ pub fn list_installed_fast() -> Result<Vec<DpkgPackageEntry>> {
     let status_mtime = required_mtime(status_path)?;
     let extended_states_mtime = optional_mtime(extended_states_path)?;
 
-    // Check cache first
+    // Check cache first. Hits take the READ lock only: `last_accessed` is
+    // atomic, and the returned Vec is cloned under the read guard.
     {
-        let mut cache = DPKG_STATUS_CACHE.write().expect("lock poisoned");
-
-        // Clear cache if TTL expired (safety net for unbounded growth)
-        if is_access_expired(cache.last_accessed) {
-            *cache = DpkgStatusCache::default();
-        } else if cache.status_mtime == status_mtime
+        let cache = DPKG_STATUS_CACHE.read().expect("lock poisoned");
+        if !is_access_expired(cache.last_accessed.load(Ordering::Relaxed))
+            && cache.status_mtime == status_mtime
             && cache.extended_states_mtime == extended_states_mtime
             && !cache.packages.is_empty()
         {
-            // Cache hit! Update last accessed
-            cache.last_accessed = unix_now_secs();
+            // Cache hit! Update last accessed without writer contention.
+            cache
+                .last_accessed
+                .store(unix_now_secs(), Ordering::Relaxed);
             return Ok(cache.packages.clone());
         }
     }
@@ -1690,11 +1720,18 @@ pub fn list_installed_fast() -> Result<Vec<DpkgPackageEntry>> {
     // Update cache
     {
         let mut cache = DPKG_STATUS_CACHE.write().expect("lock poisoned");
+        // Clear stale entries when the TTL safety net has lapsed so the
+        // unbounded-growth protection still applies on refresh paths.
+        if is_access_expired(cache.last_accessed.load(Ordering::Relaxed)) {
+            *cache = DpkgStatusCache::default();
+        }
         cache.packages.clone_from(&packages);
-        cache.installed_set = installed_set;
+        cache.installed_set = Arc::new(installed_set);
         cache.status_mtime = status_mtime;
         cache.extended_states_mtime = extended_states_mtime;
-        cache.last_accessed = unix_now_secs();
+        cache
+            .last_accessed
+            .store(unix_now_secs(), Ordering::Relaxed);
     }
 
     Ok(packages)
@@ -2762,8 +2799,14 @@ mod tests {
     fn partial_installed_set_must_not_answer_queries() {
         // Regression: a single-name scan insert used to poison the cache and
         // make every other installed package report as not installed.
-        let mut cache = DpkgStatusCache::default();
-        cache.installed_set.insert("curl".to_string());
+        let mut cache = DpkgStatusCache {
+            installed_set: std::sync::Arc::new({
+                let mut set = ahash::AHashSet::new();
+                set.insert("curl".to_string());
+                set
+            }),
+            ..DpkgStatusCache::default()
+        };
         assert_eq!(
             cached_installed_state(&cache, "vim"),
             None,

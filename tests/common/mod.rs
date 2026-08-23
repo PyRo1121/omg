@@ -267,7 +267,7 @@ pub fn run_omg_with_options(
         .ok()
         .and_then(|value| value.parse::<u64>().ok())
         .filter(|seconds| *seconds > 0)
-        .map_or(Duration::from_secs(30), Duration::from_secs);
+        .map_or(Duration::from_secs(60), Duration::from_secs);
 
     let mut cmd = Command::new(env!("CARGO_BIN_EXE_omg"));
     cmd.args(args)

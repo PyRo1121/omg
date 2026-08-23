@@ -3624,7 +3624,6 @@ dependencies = [
  "dashmap",
  "dialoguer",
  "dirs",
- "fastrand",
  "flate2",
  "fst",
  "futures",

@@ -271,14 +271,33 @@ async fn test_concurrent_operations() {
         async move { service.info("firefox").await }
     });
 
-    // All operations should complete successfully
+    // All operations should complete successfully and return meaningful data
     let search_result = search_task.await.unwrap();
     let status_result = status_task.await.unwrap();
     let info_result = info_task.await.unwrap();
 
-    assert!(search_result.is_ok());
-    assert!(status_result.is_ok());
-    assert!(info_result.is_ok());
+    // search("git"): the defaults fixture contains "git"; results must reflect it
+    let results = search_result.expect("concurrent search should succeed");
+    assert!(
+        results.iter().any(|p| p.name == "git"),
+        "search for 'git' should find the 'git' package, got: {:?}",
+        results.iter().map(|p| &p.name).collect::<Vec<_>>()
+    );
+
+    // get_status: with_defaults has 4 packages, 2 installed (git, pacman),
+    // 0 orphans, 0 pending updates
+    let status = status_result.expect("concurrent status should succeed");
+    assert_eq!(status, (4, 2, 0, 0), "unexpected status counts");
+
+    // info("firefox"): the defaults fixture registers firefox 122.0-1
+    let info = info_result.expect("concurrent info should succeed");
+    let package = info.expect("info('firefox') should find the registered package");
+    assert_eq!(package.name, "firefox");
+    // The version field type varies by backend feature.
+    #[cfg(feature = "arch")]
+    assert_eq!(package.version.to_string(), "122.0-1");
+    #[cfg(not(feature = "arch"))]
+    assert_eq!(package.version, "122.0-1");
 }
 
 #[tokio::test]

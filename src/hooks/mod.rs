@@ -202,14 +202,22 @@ pub fn hook_env(shell: &str) -> Result<()> {
     }
 
     // Output shell-specific PATH modification
+    //
+    // SECURITY: each addition is emitted as a POSIX single-quoted word so no
+    // component can break out of the assignment via `"`, `$(`, or backticks;
+    // `$PATH` stays outside the quoting so it still expands in the shell.
     match shell.to_lowercase().as_str() {
         "zsh" | "bash" => {
-            let additions = path_additions.join(":");
-            println!("export PATH=\"{additions}:$PATH\"");
+            let additions = path_additions
+                .iter()
+                .map(|path| posix_single_quoted(path))
+                .collect::<Vec<_>>()
+                .join(":");
+            println!("export PATH={additions}:\"$PATH\"");
         }
         "fish" => {
             for path in &path_additions {
-                println!("fish_add_path -g {path}");
+                println!("fish_add_path -g {}", fish_single_quoted(path));
             }
         }
         _ => {}
@@ -364,10 +372,17 @@ pub fn build_path_additions<S: std::hash::BuildHasher>(
                 };
                 path
             }
-            "python" => data_dir.join("versions/python").join(version).join("bin"),
-            "go" => data_dir.join("versions/go").join(version).join("bin"),
-            "ruby" => data_dir.join("versions/ruby").join(version).join("bin"),
-            "java" => data_dir.join("versions/java").join(version).join("bin"),
+            // SECURITY: repo-supplied version files (.python-version, .go-version,
+            // .ruby-version, .java-version, .tool-versions) are untrusted input.
+            // Validate before using as a path component so a hostile pin like
+            // `../../evil/bin` can never traverse out of the versions tree and
+            // place an attacker-created directory on the shell's PATH.
+            "python" | "go" | "ruby" | "java" => {
+                let Some(path) = validated_runtime_bin_dir(&data_dir, runtime, version) else {
+                    continue;
+                };
+                path
+            }
             "bun" => {
                 let Some(path) = resolve_bun_bin_path(&data_dir, version)? else {
                     continue;
@@ -451,6 +466,31 @@ fn node_version_bin_path(versions_dir: &Path, version: &str) -> Option<PathBuf> 
     crate::core::security::validate_runtime_version(version).ok()?;
     let path = versions_dir.join(version).join("bin");
     crate::runtimes::common::is_valid_version_dir(&path).then_some(path)
+}
+
+/// Resolve `<data_dir>/versions/<runtime>/<version>/bin` for the runtimes whose
+/// version pins come straight from repo-supplied files. The version string is
+/// untrusted input and must pass [`validate_runtime_version`] before it may
+/// become a path component; only an existing real directory is returned.
+fn validated_runtime_bin_dir(data_dir: &Path, runtime: &str, version: &str) -> Option<PathBuf> {
+    crate::core::security::validate_runtime_version(version).ok()?;
+    let path = data_dir
+        .join("versions")
+        .join(runtime)
+        .join(version)
+        .join("bin");
+    crate::runtimes::common::is_valid_version_dir(&path).then_some(path)
+}
+
+/// Render `value` as a POSIX single-quoted shell word (`'` becomes `'\''`),
+/// so no `$`, backtick, or double-quote inside can alter the emitted command.
+fn posix_single_quoted(value: &str) -> String {
+    format!("'{}'", value.replace('\'', r"'\''"))
+}
+
+/// Render `value` as a fish single-quoted word (`'` becomes `\'`).
+fn fish_single_quoted(value: &str) -> String {
+    format!("'{}'", value.replace('\'', r"\'"))
 }
 
 fn bun_version_bin_path(versions_dir: &Path, version: &str) -> Option<PathBuf> {
@@ -784,8 +824,73 @@ end
 #[expect(clippy::unwrap_used)] // Idiomatic in tests: panics on failure with clear error context
 mod tests {
     use super::*;
+    use std::collections::HashMap;
     use std::fs;
     use tempfile::tempdir;
+
+    #[test]
+    fn hostile_python_pin_never_reaches_path() {
+        let data = tempdir().unwrap();
+        // The directory a hostile `../..` pin would resolve to really exists,
+        // so only the validator (not the existence check) can reject it.
+        fs::create_dir_all(data.path().join("bin")).unwrap();
+        temp_env::with_var("OMG_DATA_DIR", Some(data.path()), || {
+            let versions = HashMap::from([("python".to_string(), "../..".to_string())]);
+            let additions = build_path_additions(&versions).unwrap();
+            assert!(
+                additions.is_empty(),
+                "traversal pin must be rejected, got {additions:?}"
+            );
+        });
+    }
+
+    #[test]
+    fn all_pinned_runtimes_reject_traversal_versions() {
+        let data = tempdir().unwrap();
+        fs::create_dir_all(data.path().join("bin")).unwrap();
+        temp_env::with_var("OMG_DATA_DIR", Some(data.path()), || {
+            for runtime in ["python", "go", "ruby", "java"] {
+                let versions = HashMap::from([(runtime.to_string(), "../..".to_string())]);
+                let additions = build_path_additions(&versions).unwrap();
+                assert!(
+                    additions.is_empty(),
+                    "{runtime}: traversal pin must be rejected, got {additions:?}"
+                );
+            }
+        });
+    }
+
+    #[test]
+    fn valid_python_pin_resolves_to_existing_bin_dir() {
+        let data = tempdir().unwrap();
+        fs::create_dir_all(data.path().join("versions/python/3.12.0/bin")).unwrap();
+        temp_env::with_var("OMG_DATA_DIR", Some(data.path()), || {
+            let versions = HashMap::from([("python".to_string(), "3.12.0".to_string())]);
+            let additions = build_path_additions(&versions).unwrap();
+            assert_eq!(
+                additions.len(),
+                1,
+                "valid pin should resolve: {additions:?}"
+            );
+            assert!(additions[0].ends_with("bin"));
+        });
+    }
+
+    #[test]
+    fn posix_quoting_neutralizes_metacharacters() {
+        assert_eq!(posix_single_quoted("/opt/bin"), "'/opt/bin'");
+        assert_eq!(posix_single_quoted("a'b"), "'a'\\''b'");
+        let hostile = "$(rm -rf ~)";
+        // Inside single quotes nothing expands, so metacharacters are inert
+        // verbatim; only embedded single quotes need escaping.
+        assert_eq!(posix_single_quoted(hostile), "'$(rm -rf ~)'");
+    }
+
+    #[test]
+    fn fish_quoting_escapes_embedded_quotes() {
+        assert_eq!(fish_single_quoted("/opt/bin"), "'/opt/bin'");
+        assert_eq!(fish_single_quoted("a'b"), "'a\\'b'");
+    }
 
     #[test]
     fn test_detect_nvmrc() {

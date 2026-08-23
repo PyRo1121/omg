@@ -288,8 +288,6 @@ pub use pacman_db::{
 #[cfg(feature = "arch")]
 pub use parallel_sync::sync_databases_parallel;
 pub use traits::PackageManager;
-#[cfg(feature = "arch")]
-pub use types::PackageInfo as SyncPkgInfo;
 pub use types::{LocalPackage, SyncPackage};
 
 /// Get the appropriate package manager for the current distribution

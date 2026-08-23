@@ -1,9 +1,27 @@
 #![expect(clippy::unwrap_used, clippy::expect_used)]
 use omg_lib::daemon::handlers::{DaemonState, handle_request};
 use omg_lib::daemon::protocol::{Request, Response, error_codes};
+pub mod common;
+
 use serial_test::serial;
 use std::sync::Arc;
 use tempfile::TempDir;
+
+/// Initialize a daemon state for tests that require a working backend.
+///
+/// Under backend-less feature combos the index cannot build; such runs skip
+/// observably (printed reason + counted) instead of failing the suite.
+fn init_state_or_skip(context: &str) -> Option<Arc<DaemonState>> {
+    match DaemonState::new() {
+        Ok(state) => Some(Arc::new(state)),
+        Err(e) => {
+            common::report_skip(&format!(
+                "{context}: no usable package database on this combo: {e:#}"
+            ));
+            None
+        }
+    }
+}
 
 #[tokio::test]
 #[serial]
@@ -31,9 +49,8 @@ async fn test_global_rate_limiting() {
     // Initialize daemon state
     // We need to handle potential failure if the index fails to build,
     // but for tests we expect it to work or fail gracefully
-    let state = match DaemonState::new() {
-        Ok(s) => Arc::new(s),
-        Err(_) => return, // Skip if we can't init (e.g. no package manager)
+    let Some(state) = init_state_or_skip("daemon security test") else {
+        return;
     };
 
     // The global rate limit is 100/s with burst 200.
@@ -79,9 +96,8 @@ async fn test_input_validation_audit() {
     // Initialize audit logger
     omg_lib::core::security::init_audit_logger().expect("Failed to init audit logger");
 
-    let state = match DaemonState::new() {
-        Ok(s) => Arc::new(s),
-        Err(_) => return,
+    let Some(state) = init_state_or_skip("daemon security test") else {
+        return;
     };
 
     // Send request with invalid package name to trigger audit log
@@ -149,9 +165,8 @@ async fn test_batch_size_limit_audit() {
     // Initialize audit logger
     omg_lib::core::security::init_audit_logger().expect("Failed to init audit logger");
 
-    let state = match DaemonState::new() {
-        Ok(s) => Arc::new(s),
-        Err(_) => return,
+    let Some(state) = init_state_or_skip("daemon security test") else {
+        return;
     };
 
     // Create oversized batch
@@ -202,9 +217,8 @@ async fn test_health_endpoint_returns_status() {
 
     omg_lib::core::security::init_audit_logger().expect("Failed to init audit logger");
 
-    let state = match DaemonState::new() {
-        Ok(s) => Arc::new(s),
-        Err(_) => return,
+    let Some(state) = init_state_or_skip("daemon security test") else {
+        return;
     };
 
     let req = Request::Health { id: 42 };
@@ -255,9 +269,8 @@ async fn test_ping_returns_pong() {
 
     omg_lib::core::security::init_audit_logger().expect("Failed to init audit logger");
 
-    let state = match DaemonState::new() {
-        Ok(s) => Arc::new(s),
-        Err(_) => return,
+    let Some(state) = init_state_or_skip("daemon security test") else {
+        return;
     };
 
     let req = Request::Ping { id: 123 };
@@ -294,9 +307,8 @@ async fn test_cache_stats_handler() {
 
     omg_lib::core::security::init_audit_logger().expect("Failed to init audit logger");
 
-    let state = match DaemonState::new() {
-        Ok(s) => Arc::new(s),
-        Err(_) => return,
+    let Some(state) = init_state_or_skip("daemon security test") else {
+        return;
     };
 
     let req = Request::CacheStats { id: 999 };
@@ -335,9 +347,8 @@ async fn test_cache_clear_handler() {
 
     omg_lib::core::security::init_audit_logger().expect("Failed to init audit logger");
 
-    let state = match DaemonState::new() {
-        Ok(s) => Arc::new(s),
-        Err(_) => return,
+    let Some(state) = init_state_or_skip("daemon security test") else {
+        return;
     };
 
     let req = Request::CacheClear { id: 555 };
@@ -374,9 +385,8 @@ async fn test_explicit_count_handler() {
 
     omg_lib::core::security::init_audit_logger().expect("Failed to init audit logger");
 
-    let state = match DaemonState::new() {
-        Ok(s) => Arc::new(s),
-        Err(_) => return,
+    let Some(state) = init_state_or_skip("daemon security test") else {
+        return;
     };
 
     let req = Request::ExplicitCount { id: 777 };

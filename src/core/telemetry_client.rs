@@ -207,11 +207,18 @@ impl From<u32> for CircuitState {
 }
 
 /// Check circuit breaker state and update if needed
-fn check_circuit_breaker() -> CircuitState {
+///
+/// Returns the observed state plus, when THIS call performed the
+/// open→half-open transition, a [`HalfOpenProbeGuard`] claiming the
+/// single-flight probe slot. The caller must keep the guard alive for the
+/// duration of the probe request: dropping it (including via task
+/// cancellation at an await point) releases the slot so the breaker can try
+/// again instead of latching Open forever.
+fn check_circuit_breaker() -> (CircuitState, Option<HalfOpenProbeGuard>) {
     let current_state = CircuitState::from(CIRCUIT_STATE.load(Ordering::Relaxed));
 
     match current_state {
-        CircuitState::Closed => CircuitState::Closed,
+        CircuitState::Closed => (CircuitState::Closed, None),
         CircuitState::Open => {
             // Check if enough time has passed to try again (half-open)
             let last_failure = LAST_FAILURE.load(Ordering::Relaxed);
@@ -220,22 +227,63 @@ fn check_circuit_breaker() -> CircuitState {
             if now.saturating_sub(last_failure) >= CIRCUIT_OPEN_DURATION_SECS {
                 // Transition to half-open with single-flight semantics: the
                 // first caller wins the probe slot; concurrent callers stay
-                // queued until the probe resolves (record_success/failure).
+                // queued until the probe resolves (record_success/failure)
+                // or is cancelled (guard drop).
                 if HALF_OPEN_PROBE_IN_FLIGHT
                     .compare_exchange(false, true, Ordering::Relaxed, Ordering::Relaxed)
                     .is_ok()
                 {
+                    // Relaxed is sufficient here: the latch itself is the
+                    // single-flight primitive (the CAS provides the mutual
+                    // exclusion); no other data is published through it.
                     CIRCUIT_STATE.store(CircuitState::HalfOpen as u32, Ordering::Relaxed);
                     tracing::debug!("Circuit breaker transitioning to half-open state");
-                    CircuitState::HalfOpen
+                    (CircuitState::HalfOpen, Some(HalfOpenProbeGuard))
                 } else {
-                    CircuitState::Open
+                    (CircuitState::Open, None)
                 }
+            } else {
+                (CircuitState::Open, None)
+            }
+        }
+        CircuitState::HalfOpen => (CircuitState::HalfOpen, None),
+    }
+}
+
+/// RAII claim on the half-open single-flight probe slot.
+///
+/// Releasing via `Drop` guarantees the slot frees even when the probe future
+/// is cancelled mid-request (e.g. by the retry-flush budget timeout), which
+/// previously left the breaker latched Open until process exit.
+struct HalfOpenProbeGuard;
+
+impl Drop for HalfOpenProbeGuard {
+    fn drop(&mut self) {
+        // Release the single-flight latch and return the breaker to Open so
+        // the cooldown restarts: a cancelled probe learned nothing about the
+        // endpoint, so the next attempt must come from a fresh half-open
+        // transition instead of lingering in an unprobed HalfOpen state.
+        HALF_OPEN_PROBE_IN_FLIGHT.store(false, Ordering::Relaxed);
+        CIRCUIT_STATE.store(CircuitState::Open as u32, Ordering::Relaxed);
+    }
+}
+
+/// Read-only view of the breaker state without attempting the half-open
+/// transition; used for early-exit checks where no probe request would be
+/// driven by this call site.
+fn peek_circuit_breaker() -> CircuitState {
+    match CircuitState::from(CIRCUIT_STATE.load(Ordering::Relaxed)) {
+        CircuitState::Open => {
+            let last_failure = LAST_FAILURE.load(Ordering::Relaxed);
+            let now = jiff::Timestamp::now().as_second() as u64;
+            if now.saturating_sub(last_failure) >= CIRCUIT_OPEN_DURATION_SECS {
+                // Cooldown elapsed: the send path may attempt a probe.
+                CircuitState::HalfOpen
             } else {
                 CircuitState::Open
             }
         }
-        CircuitState::HalfOpen => CircuitState::HalfOpen,
+        other => other,
     }
 }
 
@@ -287,8 +335,9 @@ fn should_send_telemetry() -> bool {
 /// as errors. Every failure path updates the circuit breaker and queues the
 /// payload for a later retry instead.
 async fn send_event_internal(payload: TelemetryPayload) {
-    // Check circuit breaker state
-    let circuit_state = check_circuit_breaker();
+    // Check circuit breaker state; hold any won probe-slot guard across the
+    // request so cancellation below cannot leak the latch (see M1).
+    let (circuit_state, _probe_guard) = check_circuit_breaker();
 
     if circuit_state == CircuitState::Open {
         tracing::debug!("Circuit breaker is open, queuing event locally");
@@ -372,7 +421,7 @@ fn push_retry_queue_front(payload: TelemetryPayload) {
 async fn drain_retry_queue_within_budget() {
     let deadline = tokio::time::Instant::now() + RETRY_FLUSH_BUDGET;
     loop {
-        if check_circuit_breaker() == CircuitState::Open {
+        if peek_circuit_breaker() == CircuitState::Open {
             tracing::debug!("Circuit breaker is open; leaving retry queue untouched");
             return;
         }
@@ -411,8 +460,9 @@ pub async fn send_batch(events: Vec<TelemetryEvent>) -> Result<()> {
         return Ok(());
     }
 
-    // Check circuit breaker state
-    let circuit_state = check_circuit_breaker();
+    // Check circuit breaker state; hold any won probe-slot guard across the
+    // batch request so cancellation cannot leak the latch.
+    let (circuit_state, _probe_guard) = check_circuit_breaker();
 
     if circuit_state == CircuitState::Open {
         anyhow::bail!("Telemetry circuit breaker is open");
@@ -551,24 +601,24 @@ mod tests {
         FAILURE_COUNT.store(0, Ordering::Relaxed);
 
         // Initially closed
-        assert_eq!(check_circuit_breaker(), CircuitState::Closed);
+        assert_eq!(check_circuit_breaker().0, CircuitState::Closed);
 
         // Record failures to open circuit
         for i in 1..=CIRCUIT_FAILURE_THRESHOLD {
             record_failure();
             if i < CIRCUIT_FAILURE_THRESHOLD {
-                assert_eq!(check_circuit_breaker(), CircuitState::Closed);
+                assert_eq!(check_circuit_breaker().0, CircuitState::Closed);
             } else {
-                assert_eq!(check_circuit_breaker(), CircuitState::Open);
+                assert_eq!(check_circuit_breaker().0, CircuitState::Open);
             }
         }
 
         // Circuit should stay open
-        assert_eq!(check_circuit_breaker(), CircuitState::Open);
+        assert_eq!(check_circuit_breaker().0, CircuitState::Open);
 
         // Success should reset circuit
         record_success();
-        assert_eq!(check_circuit_breaker(), CircuitState::Closed);
+        assert_eq!(check_circuit_breaker().0, CircuitState::Closed);
         assert_eq!(FAILURE_COUNT.load(Ordering::Relaxed), 0);
     }
 
@@ -652,6 +702,56 @@ mod tests {
         // Restore closed state and clear the queue for other tests.
         record_success();
         reset_retry_queue();
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn half_open_probe_slot_is_released_when_the_probe_future_is_cancelled() {
+        // Regression for the wave-4 M1 leak: a probe future dropped at the
+        // flush-budget timeout used to leave HALF_OPEN_PROBE_IN_FLIGHT set
+        // forever, latching the breaker Open until process exit.
+        reset_circuit_breaker_for_test();
+
+        // Force the breaker open with a just-expired cooldown.
+        CIRCUIT_STATE.store(CircuitState::Open as u32, Ordering::Relaxed);
+        FAILURE_COUNT.store(CIRCUIT_FAILURE_THRESHOLD, Ordering::Relaxed);
+        LAST_FAILURE.store(
+            u64::try_from(jiff::Timestamp::now().as_second())
+                .unwrap_or(0)
+                .saturating_sub(CIRCUIT_OPEN_DURATION_SECS),
+            Ordering::Relaxed,
+        );
+        HALF_OPEN_PROBE_IN_FLIGHT.store(false, Ordering::Relaxed);
+
+        // The send path wins the single-flight slot and holds the guard.
+        let (state, guard) = check_circuit_breaker();
+        assert_eq!(state, CircuitState::HalfOpen);
+        assert!(guard.is_some(), "transitioning caller must claim the slot");
+        assert!(HALF_OPEN_PROBE_IN_FLIGHT.load(Ordering::Relaxed));
+
+        // Simulate cancellation: the probe future is dropped before
+        // record_success/record_failure can run. The guard's Drop must clear
+        // the latch so the breaker can try again.
+        drop(guard);
+        assert!(
+            !HALF_OPEN_PROBE_IN_FLIGHT.load(Ordering::Relaxed),
+            "cancelled probe must release the half-open latch"
+        );
+
+        // A subsequent caller can win the slot again instead of seeing Open.
+        let (state_after, guard_after) = check_circuit_breaker();
+        assert_eq!(state_after, CircuitState::HalfOpen);
+        assert!(guard_after.is_some());
+
+        // Clean up for other serial tests.
+        reset_circuit_breaker_for_test();
+    }
+
+    /// Restore the shared breaker to Closed with an empty failure history.
+    fn reset_circuit_breaker_for_test() {
+        CIRCUIT_STATE.store(CircuitState::Closed as u32, Ordering::Relaxed);
+        FAILURE_COUNT.store(0, Ordering::Relaxed);
+        HALF_OPEN_PROBE_IN_FLIGHT.store(false, Ordering::Relaxed);
     }
 
     /// A minimal valid payload for retry-queue tests.

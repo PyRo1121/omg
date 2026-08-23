@@ -99,7 +99,7 @@ mod homebrew_cellar_operations {
     use super::*;
 
     #[tokio::test]
-    #[ignore]
+    #[ignore = "installs and removes a real Homebrew formula; requires macOS with live Homebrew and network access"]
     async fn test_install_and_remove_formula() -> Result<()> {
         let pm = HomebrewPackageManager::new();
 
@@ -126,7 +126,7 @@ mod homebrew_cellar_operations {
     }
 
     #[tokio::test]
-    #[ignore]
+    #[ignore = "performs a real `brew upgrade` across all formulae; requires macOS with live Homebrew and network access"]
     async fn test_update_all_formulae() -> Result<()> {
         let pm = HomebrewPackageManager::new();
 
@@ -136,7 +136,7 @@ mod homebrew_cellar_operations {
     }
 
     #[tokio::test]
-    #[ignore]
+    #[ignore = "runs a real `brew update` metadata sync; requires macOS with live Homebrew and network access"]
     async fn test_sync_formula_metadata() -> Result<()> {
         let pm = HomebrewPackageManager::new();
 

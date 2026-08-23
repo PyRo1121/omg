@@ -114,21 +114,14 @@ impl OmgError {
     pub fn suggestion(&self) -> Option<&'static str> {
         match self {
             Self::PackageNotFound(_) => Some("Try: omg search <query> to find available packages"),
-            Self::VersionNotFound { runtime, .. } => {
-                const GENERIC_SUGGESTION: &str =
-                    "Try: omg list <runtime> --available to see available versions";
-                match runtime.as_str() {
-                    "node" | "python" | "go" | "rust" | "bun" | "ruby" | "java" => {
-                        Some(GENERIC_SUGGESTION)
-                    }
-                    _ => Some(GENERIC_SUGGESTION),
-                }
+            Self::VersionNotFound { .. } => {
+                Some("Try: omg list <runtime> --available to see available versions")
             }
             Self::UnsupportedRuntime(_) => {
                 Some("Supported runtimes: node, python, go, rust, ruby, java, bun")
             }
             Self::DaemonNotRunning => Some(
-                "Start the daemon with: omgd start\nOr run without daemon: omg --no-daemon <command>",
+                "Start the daemon with: omg daemon\nOr disable daemon IPC for one run: OMG_DISABLE_DAEMON=1 <command>",
             ),
             Self::PermissionDenied(_) => {
                 Some("Try running with sudo, or check file/directory permissions")
@@ -139,9 +132,9 @@ impl OmgError {
             Self::ConfigError(_) => Some(
                 "Check ~/.config/omg/config.toml for syntax errors.\nReset with: rm ~/.config/omg/config.toml",
             ),
-            Self::DatabaseError(_) => {
-                Some("Database may be corrupted. Try: rm -rf ~/.local/share/omg/db && omg sync")
-            }
+            Self::DatabaseError(_) => Some(
+                "The database may be corrupted. Try: rm ~/.local/share/omg/omg.redb && omg sync",
+            ),
             Self::RateLimitExceeded { .. } => {
                 Some("Wait for the cooldown period, then retry your request")
             }
@@ -168,18 +161,6 @@ impl OmgError {
     }
 }
 
-/// Format an error with its suggestion for display
-#[cold]
-#[must_use]
-pub fn format_error_with_suggestion(err: &OmgError) -> String {
-    let mut msg = format!("Error: {err}");
-    if let Some(suggestion) = err.suggestion() {
-        msg.push_str("\n\nSuggestion: ");
-        msg.push_str(suggestion);
-    }
-    msg
-}
-
 /// Common error suggestions for anyhow errors
 #[cold]
 #[must_use]
@@ -202,7 +183,7 @@ pub fn suggest_for_anyhow(err: &anyhow::Error) -> Option<&'static str> {
         return Some("The required tool is not installed. Try: omg tool install <name>");
     }
     if msg.contains("daemon") {
-        return Some("Start the daemon with: omgd start");
+        return Some("Start the daemon with: omg daemon");
     }
     if msg.contains("rate limit") || msg.contains("too many requests") {
         return Some("Wait for the cooldown period, then retry your request");
@@ -253,15 +234,7 @@ mod tests {
     fn test_daemon_not_running_suggestion() {
         let err = OmgError::DaemonNotRunning;
         assert!(err.suggestion().is_some());
-        assert!(err.suggestion().unwrap().contains("omgd"));
-    }
-
-    #[test]
-    fn test_format_error_with_suggestion() {
-        let err = OmgError::PackageNotFound("test".to_string());
-        let formatted = format_error_with_suggestion(&err);
-        assert!(formatted.contains("Error:"));
-        assert!(formatted.contains("Suggestion:"));
+        assert!(err.suggestion().unwrap().contains("omg daemon"));
     }
 
     #[test]

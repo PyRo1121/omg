@@ -534,7 +534,7 @@ fn lock_file_at(lock_path: &std::path::Path) -> Option<std::fs::File> {
         Ok(lock) => lock,
         Err(error) => {
             tracing::warn!(
-                "Failed to open usage lock {}: skipping locked update ({error})",
+                "Failed to open usage lock {}: skipping this update ({error})",
                 lock_path.display()
             );
             return None;
@@ -542,7 +542,7 @@ fn lock_file_at(lock_path: &std::path::Path) -> Option<std::fs::File> {
     };
     if let Err(error) = lock.lock() {
         tracing::warn!(
-            "Failed to lock usage stats {}: {error}",
+            "Failed to lock usage stats {}: skipping this update ({error})",
             lock_path.display()
         );
         return None;
@@ -551,9 +551,16 @@ fn lock_file_at(lock_path: &std::path::Path) -> Option<std::fs::File> {
 }
 
 /// Run a load-modify-save cycle while holding the usage file lock.
-fn with_usage_lock<T>(mutate: impl FnOnce() -> T) -> T {
-    let _lock = lock_usage_file();
-    mutate()
+///
+/// Fire-and-forget tracking: when the lockfile cannot be opened or locked the
+/// mutation is **skipped** (never performed unlocked) so a lost lock can never
+/// degrade into the interleaved last-writer-wins update the lock exists to
+/// prevent. `lock_file_at` already logs the reason.
+fn with_usage_lock(mutate: impl FnOnce()) {
+    if let Some(lock) = lock_usage_file() {
+        let _lock_guard = lock;
+        mutate();
+    }
 }
 
 /// Run a mandatory load-modify-save cycle against `path` under the

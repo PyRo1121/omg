@@ -39,6 +39,10 @@ pub mod usage;
 
 pub use caps::{can_write_pacman_db, has_package_caps, is_elevated, maybe_show_turbo_hint};
 pub use database::Database;
-pub use error::{OmgError, Result};
-pub use privilege::{elevate_if_needed, get_yes_flag, is_root, set_yes_flag};
-pub use types::*;
+pub use privilege::{is_root, set_yes_flag};
+// Explicit names only (no globs): one discoverable path per concept.
+// Canonical paths: `core::types` items live at `core::{Package, PackageSource,
+// RuntimeBackend}`; caps predicates stay at `core::caps::*`; the typed error
+// contract lives at `core::error::OmgError` (unused — pending deletion, see
+// wave-4 HANDOFF).
+pub use types::{Package, PackageSource, RuntimeBackend};

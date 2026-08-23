@@ -424,7 +424,9 @@ fn test_resolver_simple_package() {
 fn test_resolver_missing_package() {
     let mut resolver = match DependencyResolver::new() {
         Ok(r) => r,
-        Err(_) => return,
+        Err(e) => common::report_skip(&format!(
+            "DependencyResolver unavailable in this environment: {e:#}"
+        )),
     };
 
     let result = resolver.add_package("this-package-definitely-does-not-exist-12345");
@@ -436,7 +438,9 @@ fn test_resolver_missing_package() {
 fn test_resolver_with_dependencies() {
     let mut resolver = match DependencyResolver::new() {
         Ok(r) => r,
-        Err(_) => return,
+        Err(e) => common::report_skip(&format!(
+            "DependencyResolver unavailable in this environment: {e:#}"
+        )),
     };
 
     // vim has dependencies like libacl, libc6, etc.
@@ -457,7 +461,9 @@ fn test_resolver_topological_sort() {
     // Test that dependencies are ordered correctly (dependencies before dependents)
     let mut resolver = match DependencyResolver::new() {
         Ok(r) => r,
-        Err(_) => return,
+        Err(e) => common::report_skip(&format!(
+            "DependencyResolver unavailable in this environment: {e:#}"
+        )),
     };
 
     if resolver.add_package("git").is_ok() {

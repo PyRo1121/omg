@@ -498,31 +498,50 @@ fn try_fast_paths(args: &[String]) -> Result<bool> {
     try_fast_completions(args)
 }
 
-fn main() -> Result<()> {
+fn main() {
     let args: Vec<String> = std::env::args().collect();
 
     // FASTEST PATH: Elevated re-exec - skip ALL initialization
     // This runs when sudo omg re-execs us with OMG_ELEVATED=1
     if let Some(result) = try_fast_elevated(&args) {
-        return result;
+        finish(result);
     }
 
-    if try_fast_paths(&args)? {
-        return Ok(());
+    match try_fast_paths(&args) {
+        Ok(true) => finish(Ok(())),
+        Ok(false) => {}
+        Err(error) => finish(Err(error)),
     }
 
-    let result = tokio::runtime::Builder::new_current_thread()
+    let runtime = tokio::runtime::Builder::new_current_thread()
         .enable_all()
-        .build()?
-        .block_on(async_main(args));
+        .build();
+    let result = match runtime {
+        Ok(runtime) => runtime.block_on(async_main(args)),
+        Err(error) => Err(anyhow::Error::new(error).context("Failed to initialize async runtime")),
+    };
 
-    if let Err(ref err) = result
-        && let Some(suggestion) = omg_lib::core::error::suggest_for_anyhow(err)
-    {
-        tracing::info!("Suggestion: {}", suggestion);
+    finish(result);
+}
+
+/// Single owner of process-level error reporting.
+///
+/// Prints the error chain exactly once, followed by actionable guidance on
+/// stderr (user-facing content, not a trace diagnostic), and selects the
+/// process exit code. Returning `!` replaces the old `Result`-returning main,
+/// whose anyhow `Termination` impl printed errors but could never show
+/// suggestions or differentiate exit codes.
+fn finish(result: Result<()>) -> ! {
+    match result {
+        Ok(()) => std::process::exit(0),
+        Err(error) => {
+            eprintln!("Error: {error:?}");
+            if let Some(suggestion) = omg_lib::core::error::suggest_for_anyhow(&error) {
+                eprintln!("\nSuggestion: {suggestion}");
+            }
+            std::process::exit(1);
+        }
     }
-
-    result
 }
 
 async fn async_main(args: Vec<String>) -> Result<()> {
