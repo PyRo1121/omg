@@ -1819,6 +1819,30 @@ dependency-type: indirect
 
 ### 🔒 Security
 
+- Parse bounded CLI choices into typed enums
+
+  - replace stringly runtime backend, project stack, audit severity, license
+
+format, vulnerability severity, compliance framework, CI provider,
+
+enterprise report type, and license export format with Clap ValueEnums
+
+  - convert runtime backend into the domain type at the CLI boundary
+
+  - remove the fake enterprise report --format option; reports are honestly
+
+JSON-only instead of accepting a one-value format switch
+
+  - rename enterprise audit-export --format to the accurate --framework
+
+  - keep truly open-ended ecosystems, periods, scopes, paths, and URLs as
+
+strings
+
+  - add parser matrices proving documented values succeed and invalid values
+
+fail before command dispatch
+
 - Collapse analytics into one strict telemetry pipeline
 
 Forward-only cleanup for the new product:
