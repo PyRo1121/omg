@@ -32,94 +32,78 @@ use tokio::time::sleep;
 async fn test_command_event_serialization() -> Result<()> {
     let event = CommandEvent {
         command: "install".to_string(),
-        subcommand: Some("multi".to_string()),
-        packages: Some(vec!["firefox".to_string(), "vim".to_string()]),
         duration_ms: 5000,
         success: true,
-        error: None,
-        result_count: None,
-        updated_count: None,
+        backend: Some("arch".to_string()),
     };
 
     // Serialize
     let json = serde_json::to_string(&event)?;
     assert!(json.contains("install"));
-    assert!(json.contains("multi"));
-    assert!(json.contains("firefox"));
+    assert!(json.contains("arch"));
     assert!(json.contains("5000"));
     assert!(json.contains("true"));
+    assert!(!json.contains("packages"));
+    assert!(!json.contains("error"));
 
     // Deserialize
     let deserialized: CommandEvent = serde_json::from_str(&json)?;
     assert_eq!(deserialized.command, "install");
-    assert_eq!(deserialized.subcommand, Some("multi".to_string()));
+    assert_eq!(deserialized.backend.as_deref(), Some("arch"));
     assert_eq!(deserialized.duration_ms, 5000);
-    assert_eq!(deserialized.packages.as_ref().unwrap().len(), 2);
 
     Ok(())
 }
 
 #[tokio::test]
-async fn test_search_event_with_result_count() -> Result<()> {
+async fn test_search_event_omits_query_and_result_details() -> Result<()> {
     let event = CommandEvent {
         command: "search".to_string(),
-        subcommand: None,
-        packages: Some(vec!["firefox".to_string()]),
         duration_ms: 75,
         success: true,
-        error: None,
-        result_count: Some(25),
-        updated_count: None,
+        backend: None,
     };
 
     let json = serde_json::to_string(&event)?;
-    assert!(json.contains("\"result_count\":25"));
-
-    let deserialized: CommandEvent = serde_json::from_str(&json)?;
-    assert_eq!(deserialized.result_count, Some(25));
+    assert!(json.contains("search"));
+    assert!(!json.contains("query"));
+    assert!(!json.contains("result_count"));
 
     Ok(())
 }
 
 #[tokio::test]
-async fn test_update_event_with_counts() -> Result<()> {
+async fn test_update_event_uses_minimal_summary() -> Result<()> {
     let event = CommandEvent {
         command: "update".to_string(),
-        subcommand: None,
-        packages: None,
         duration_ms: 10000,
         success: true,
-        error: None,
-        result_count: None,
-        updated_count: Some(5),
+        backend: None,
     };
 
     let json = serde_json::to_string(&event)?;
-    assert!(json.contains("\"updated_count\":5"));
+    assert!(json.contains("update"));
+    assert!(!json.contains("updated_count"));
 
     Ok(())
 }
 
 #[tokio::test]
-async fn test_error_event_serialization() -> Result<()> {
+async fn test_failed_event_omits_raw_error_details() -> Result<()> {
     let event = CommandEvent {
         command: "install".to_string(),
-        subcommand: None,
-        packages: Some(vec!["nonexistent-package".to_string()]),
         duration_ms: 500,
         success: false,
-        error: Some("Package not found in repositories".to_string()),
-        result_count: None,
-        updated_count: None,
+        backend: None,
     };
 
     let json = serde_json::to_string(&event)?;
     assert!(json.contains("false"));
-    assert!(json.contains("Package not found"));
+    assert!(!json.contains("error"));
+    assert!(!json.contains("Package not found"));
 
     let deserialized: CommandEvent = serde_json::from_str(&json)?;
     assert!(!deserialized.success);
-    assert!(deserialized.error.is_some());
 
     Ok(())
 }
@@ -133,13 +117,12 @@ async fn test_performance_event_serialization() -> Result<()> {
     let event = PerformanceEvent {
         metric_type: "daemon_startup".to_string(),
         duration_ms: 150,
-        context: Some("cold_start".to_string()),
     };
 
     let json = serde_json::to_string(&event)?;
     assert!(json.contains("daemon_startup"));
     assert!(json.contains("150"));
-    assert!(json.contains("cold_start"));
+    assert!(!json.contains("context"));
 
     let deserialized: PerformanceEvent = serde_json::from_str(&json)?;
     assert_eq!(deserialized.metric_type, "daemon_startup");
@@ -154,21 +137,18 @@ async fn test_performance_event_serialization() -> Result<()> {
 
 #[tokio::test]
 async fn test_feature_event_serialization() -> Result<()> {
-    let metadata = serde_json::json!({"parallel_jobs": 4, "cache_enabled": true});
     let event = FeatureEvent {
         feature: "parallel_install".to_string(),
         enabled: true,
-        metadata: Some(metadata.clone()),
     };
 
     let json = serde_json::to_string(&event)?;
     assert!(json.contains("parallel_install"));
-    assert!(json.contains("parallel_jobs"));
+    assert!(!json.contains("metadata"));
 
     let deserialized: FeatureEvent = serde_json::from_str(&json)?;
     assert_eq!(deserialized.feature, "parallel_install");
     assert!(deserialized.enabled);
-    assert!(deserialized.metadata.is_some());
 
     Ok(())
 }
@@ -221,13 +201,9 @@ async fn test_session_end_event() -> Result<()> {
 async fn test_telemetry_payload_structure() -> Result<()> {
     let event = TelemetryEvent::Command(CommandEvent {
         command: "search".to_string(),
-        subcommand: None,
-        packages: Some(vec!["test".to_string()]),
         duration_ms: 50,
         success: true,
-        error: None,
-        result_count: Some(10),
-        updated_count: None,
+        backend: None,
     });
 
     let payload = TelemetryPayload::new(event);
@@ -252,22 +228,18 @@ async fn test_telemetry_payload_structure() -> Result<()> {
 async fn test_payload_contains_event_data() -> Result<()> {
     let event = TelemetryEvent::Command(CommandEvent {
         command: "install".to_string(),
-        subcommand: None,
-        packages: Some(vec!["firefox".to_string()]),
         duration_ms: 5000,
         success: true,
-        error: None,
-        result_count: None,
-        updated_count: None,
+        backend: None,
     });
 
     let payload = TelemetryPayload::new(event);
     let json = serde_json::to_string(&payload)?;
 
-    // Verify event data is nested correctly
+    // Verify event data is nested correctly without positional arguments.
     assert!(json.contains("install"));
-    assert!(json.contains("firefox"));
     assert!(json.contains("5000"));
+    assert!(!json.contains("packages"));
 
     Ok(())
 }
@@ -281,23 +253,17 @@ async fn test_batch_payload_structure() -> Result<()> {
     let events = vec![
         TelemetryEvent::Command(CommandEvent {
             command: "search".to_string(),
-            subcommand: None,
-            packages: None,
             duration_ms: 50,
             success: true,
-            error: None,
-            result_count: Some(5),
-            updated_count: None,
+            backend: None,
         }),
         TelemetryEvent::Performance(PerformanceEvent {
             metric_type: "startup".to_string(),
             duration_ms: 100,
-            context: None,
         }),
         TelemetryEvent::Feature(FeatureEvent {
             feature: "daemon".to_string(),
             enabled: true,
-            metadata: None,
         }),
     ];
 
@@ -452,25 +418,19 @@ async fn test_event_type_discrimination() -> Result<()> {
     // Create different event types
     let cmd_event = TelemetryEvent::Command(CommandEvent {
         command: "test".to_string(),
-        subcommand: None,
-        packages: None,
         duration_ms: 100,
         success: true,
-        error: None,
-        result_count: None,
-        updated_count: None,
+        backend: None,
     });
 
     let perf_event = TelemetryEvent::Performance(PerformanceEvent {
         metric_type: "test".to_string(),
         duration_ms: 100,
-        context: None,
     });
 
     let feat_event = TelemetryEvent::Feature(FeatureEvent {
         feature: "test".to_string(),
         enabled: true,
-        metadata: None,
     });
 
     // Serialize each
@@ -495,13 +455,9 @@ async fn test_event_type_discrimination() -> Result<()> {
 async fn test_optional_fields_omitted_when_none() -> Result<()> {
     let event = CommandEvent {
         command: "search".to_string(),
-        subcommand: None,
-        packages: None,
         duration_ms: 50,
         success: true,
-        error: None,
-        result_count: None,
-        updated_count: None,
+        backend: None,
     };
 
     let json = serde_json::to_string(&event)?;
@@ -526,13 +482,9 @@ async fn test_optional_fields_omitted_when_none() -> Result<()> {
 async fn test_round_trip_serialization() -> Result<()> {
     let original = CommandEvent {
         command: "install".to_string(),
-        subcommand: Some("multi".to_string()),
-        packages: Some(vec!["pkg1".to_string(), "pkg2".to_string()]),
         duration_ms: 5000,
         success: true,
-        error: None,
-        result_count: None,
-        updated_count: None,
+        backend: None,
     };
 
     // Serialize
@@ -543,11 +495,9 @@ async fn test_round_trip_serialization() -> Result<()> {
 
     // Verify all fields match
     assert_eq!(deserialized.command, original.command);
-    assert_eq!(deserialized.subcommand, original.subcommand);
-    assert_eq!(deserialized.packages, original.packages);
     assert_eq!(deserialized.duration_ms, original.duration_ms);
     assert_eq!(deserialized.success, original.success);
-    assert_eq!(deserialized.error, original.error);
+    assert_eq!(deserialized.backend, original.backend);
 
     Ok(())
 }
@@ -556,13 +506,9 @@ async fn test_round_trip_serialization() -> Result<()> {
 async fn test_timestamp_format() -> Result<()> {
     let payload = TelemetryPayload::new(TelemetryEvent::Command(CommandEvent {
         command: "test".to_string(),
-        subcommand: None,
-        packages: None,
         duration_ms: 100,
         success: true,
-        error: None,
-        result_count: None,
-        updated_count: None,
+        backend: None,
     }));
 
     // Verify timestamp is ISO 8601 format
@@ -584,13 +530,9 @@ async fn test_timestamp_format() -> Result<()> {
 async fn test_platform_string_format() -> Result<()> {
     let payload = TelemetryPayload::new(TelemetryEvent::Command(CommandEvent {
         command: "test".to_string(),
-        subcommand: None,
-        packages: None,
         duration_ms: 100,
         success: true,
-        error: None,
-        result_count: None,
-        updated_count: None,
+        backend: None,
     }));
 
     // Platform should be in format "os-arch"
@@ -625,13 +567,9 @@ async fn test_platform_string_format() -> Result<()> {
 async fn test_version_populated() -> Result<()> {
     let payload = TelemetryPayload::new(TelemetryEvent::Command(CommandEvent {
         command: "test".to_string(),
-        subcommand: None,
-        packages: None,
         duration_ms: 100,
         success: true,
-        error: None,
-        result_count: None,
-        updated_count: None,
+        backend: None,
     }));
 
     assert!(!payload.version.is_empty(), "Version should not be empty");

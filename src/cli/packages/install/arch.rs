@@ -10,7 +10,6 @@ use crate::core::client::DaemonClient;
 #[cfg(unix)]
 use crate::core::client::PooledSyncClient;
 use crate::core::security::is_local_package_file;
-use crate::core::usage::OperationTimer;
 use crate::package_managers::AurClient;
 use crate::package_managers::get_package_manager;
 
@@ -23,7 +22,6 @@ const MISSING_FROM_REPOS_MARKER: &str = "not found in any configured repository"
 use super::MAX_REPLACEMENT_HOPS;
 
 pub async fn install(packages: &[String], yes: bool, replacement_hops: u32) -> Result<()> {
-    let timer = OperationTimer::start_with_packages("install", packages);
     let resolution_start = Instant::now();
 
     let pm = get_package_manager()?;
@@ -135,7 +133,7 @@ pub async fn install(packages: &[String], yes: bool, replacement_hops: u32) -> R
         packages,
     );
 
-    crate::core::usage::track_install_timed(packages, timer.elapsed_ms(), true, None);
+    crate::core::usage::track_install_result(packages, true);
     Ok(())
 }
 

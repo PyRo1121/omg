@@ -337,44 +337,40 @@ Enhanced telemetry is **only activated when a user has a valid license key**. Th
 
 When enabled, enhanced telemetry collects:
 
-- **Command Execution**: Command name, subcommand, duration, success/failure
-- **Search Operations**: Query terms, result count, execution time
-- **Updates**: Number of packages updated, duration
-- **Performance Metrics**: CLI startup time, operation latencies
-- **Feature Usage**: Daemon usage, parallel operations, SBOM generation, AUR operations
-- **Session Data**: Session ID, command count, session duration
-- **Session Timing**: Start/end timestamps (ISO 8601)
+- **Command Summary**: Canonical command name, duration, success/failure, and compiled backend
+- **Performance Metrics**: Metric name and duration (for example, CLI startup)
+- **Feature Usage**: Feature name and enabled state
+- **Session Data**: Random session ID, command count, duration, and start/end timestamps
 
-**No PII Collection**: OMG never collects:
+**Not collected**:
 
-- User names or home directory paths
-- Package contents or source code
-- System configuration details beyond platform/arch
+- Positional arguments, package names, search queries, or file paths
+- Raw error messages, command output, package contents, or source code
+- User names, home-directory paths, credentials, or environment variables
+- System configuration beyond platform/architecture and compiled backend
 - Network information
-- Password or credential data
-- Command output or results
 
 ### Data Handling
 
 #### Storage
 
 - **In-Flight**: Events are queued locally in `~/.local/share/omg/telemetry_queue.json`
-- **Batching**: Events are sent in batches every 60 seconds or when 100 events accumulate
-- **Retry Logic**: Failed batches are queued and retried up to 3 times with exponential backoff
-- **Privacy Isolation**: Each user has isolated storage with standard Unix permissions
+- **Batching**: Events flush on CLI exit, after 60 seconds, or when 500 events accumulate
+- **Retry Logic**: Failed batches remain in the bounded local queue for a later invocation; a circuit breaker suppresses repeated requests to an unhealthy endpoint
+- **Privacy Isolation**: Queue and session files are written atomically in the user's data directory
 
 #### Transmission
 
-- **HTTPS Only**: All data sent over TLS 1.3+
-- **Timeout**: Requests timeout after 10 seconds
-- **Silent Failures**: Network errors don't block CLI execution
-- **No Blocking**: Telemetry never interrupts your work
+- **HTTPS Only**: Telemetry is sent only to HTTPS endpoints
+- **Timeout**: Each telemetry request has a five-second upper bound
+- **Failure Isolation**: Network and server failures never fail the requested OMG command
+- **Bounded Exit Cost**: The final best-effort flush is awaited on CLI exit and remains bounded by the request timeout
 
 #### Retention
 
-- **OMG Servers**: Telemetry data is retained for 30 days then purged
+- **Server-side retention**: Governed by the published OMG privacy policy
 - **Local Queue**: Queued events are deleted after successful transmission
-- **Session Data**: Session info persists in user's local data directory only
+- **Session Data**: Session info remains in the user's local data directory until removed
 
 ### Opting Out
 
@@ -443,10 +439,10 @@ A: Yes. Set `OMG_TELEMETRY=0` or disable via config. All features work identical
 A: No. Telemetry data is used internally only and never shared with third parties.
 
 **Q: Does telemetry slow down OMG?**
-A: No. Events are queued locally and sent asynchronously in the background.
+A: Event recording is local and small. A final best-effort network flush can add up to the five-second request timeout when the endpoint is slow.
 
 **Q: What if my network is slow?**
-A: Telemetry has a 10-second timeout and will silently fail without blocking your work.
+A: Telemetry failure never changes the command result. Unsent events remain in the bounded local queue for a later invocation.
 
 ---
 

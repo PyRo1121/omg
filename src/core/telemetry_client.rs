@@ -37,25 +37,13 @@ static LAST_FAILURE: AtomicU64 = AtomicU64::new(0);
 pub struct CommandEvent {
     /// Command name (e.g., "install", "search", "update")
     pub command: String,
-    /// Optional subcommand (e.g., "packages" for "install packages")
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub subcommand: Option<String>,
-    /// Package name(s) if applicable
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub packages: Option<Vec<String>>,
     /// Duration in milliseconds
     pub duration_ms: u64,
     /// Whether the command succeeded
     pub success: bool,
-    /// Error message if failed
+    /// Compiled package-manager backend.
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub error: Option<String>,
-    /// Result count (for search)
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub result_count: Option<usize>,
-    /// Packages updated count (for update)
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub updated_count: Option<usize>,
+    pub backend: Option<String>,
 }
 
 /// Session tracking event
@@ -86,9 +74,6 @@ pub struct PerformanceEvent {
     pub metric_type: String,
     /// Duration in milliseconds
     pub duration_ms: u64,
-    /// Additional context
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub context: Option<String>,
 }
 
 /// Feature usage event
@@ -98,9 +83,6 @@ pub struct FeatureEvent {
     pub feature: String,
     /// Whether the feature is enabled/used
     pub enabled: bool,
-    /// Additional metadata
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub metadata: Option<serde_json::Value>,
 }
 
 /// Unified telemetry event wrapper
@@ -360,13 +342,9 @@ mod tests {
     fn payload_creation_fills_metadata() {
         let event = TelemetryEvent::Command(CommandEvent {
             command: "install".to_string(),
-            subcommand: None,
-            packages: Some(vec!["firefox".to_string()]),
             duration_ms: 1500,
             success: true,
-            error: None,
-            result_count: None,
-            updated_count: None,
+            backend: Some("arch".to_string()),
         });
 
         let payload = TelemetryPayload::new(event);
@@ -380,19 +358,17 @@ mod tests {
     fn command_event_serializes_payload_fields() {
         let event = CommandEvent {
             command: "search".to_string(),
-            subcommand: None,
-            packages: Some(vec!["vim".to_string()]),
             duration_ms: 50,
             success: true,
-            error: None,
-            result_count: Some(25),
-            updated_count: None,
+            backend: Some("arch".to_string()),
         };
 
         let json = serde_json::to_string(&event).expect("serialization should succeed");
         assert!(json.contains("search"));
-        assert!(json.contains("vim"));
-        assert!(json.contains("25"));
+        assert!(json.contains("arch"));
+        assert!(!json.contains("result_count"));
+        assert!(!json.contains("packages"));
+        assert!(!json.contains("error"));
     }
 
     #[test]

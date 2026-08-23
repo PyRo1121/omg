@@ -256,8 +256,6 @@ fn collect_local_privacy_data() -> Result<serde_json::Value> {
         "usage.json",
         "telemetry_queue.json",
         "telemetry_session.json",
-        "session.json",
-        "event_queue.json",
         "history.json",
     ] {
         let path = data_dir.join(name);

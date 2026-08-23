@@ -1,11 +1,9 @@
 use anyhow::Result;
 
 use crate::cli::modern_ui;
-use crate::core::usage::OperationTimer;
 use crate::package_managers::get_package_manager;
 
 pub async fn install(packages: &[String]) -> Result<()> {
-    let timer = OperationTimer::start_with_packages("install", packages);
     let pm = get_package_manager()?;
 
     modern_ui::print_phase_header(
@@ -39,7 +37,7 @@ pub async fn install(packages: &[String]) -> Result<()> {
         ),
         packages,
     );
-    crate::core::usage::track_install_timed(packages, timer.elapsed_ms(), true, None);
+    crate::core::usage::track_install_result(packages, true);
     Ok(())
 }
 

@@ -1,6 +1,5 @@
 //! Core module - shared types, database, and utilities
 
-pub mod analytics;
 pub(crate) mod archive;
 pub mod caps;
 #[cfg(unix)]

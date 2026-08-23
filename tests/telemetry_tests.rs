@@ -1,10 +1,5 @@
 #![cfg(feature = "arch")]
-#![expect(
-    clippy::unwrap_used,
-    clippy::expect_used,
-    clippy::pedantic,
-    clippy::nursery
-)]
+#![expect(clippy::expect_used, clippy::pedantic, clippy::nursery)]
 
 //! S-tier Integration Tests: Telemetry System
 //!
@@ -291,19 +286,16 @@ async fn test_command_event_serialization() -> Result<()> {
 
     let event = CommandEvent {
         command: "install".to_string(),
-        subcommand: Some("packages".to_string()),
-        packages: Some(vec!["firefox".to_string()]),
         duration_ms: 2500,
         success: true,
-        error: None,
-        result_count: None,
-        updated_count: None,
+        backend: None,
     };
 
     let json = serde_json::to_string(&event)?;
     assert!(json.contains("install"));
-    assert!(json.contains("firefox"));
     assert!(json.contains("2500"));
+    assert!(!json.contains("\"packages\":"));
+    assert!(!json.contains("\"error\":"));
 
     Ok(())
 }
@@ -335,13 +327,12 @@ async fn test_feature_event_serialization() -> Result<()> {
     let event = FeatureEvent {
         feature: "daemon".to_string(),
         enabled: true,
-        metadata: Some(json!({"cache_hit_rate": 0.85})),
     };
 
     let json = serde_json::to_string(&event)?;
     assert!(json.contains("daemon"));
     assert!(json.contains("true"));
-    assert!(json.contains("0.85"));
+    assert!(!json.contains("metadata"));
 
     Ok(())
 }
@@ -352,13 +343,9 @@ async fn test_telemetry_payload_creation() -> Result<()> {
 
     let event = TelemetryEvent::Command(CommandEvent {
         command: "search".to_string(),
-        subcommand: None,
-        packages: Some(vec!["vim".to_string()]),
         duration_ms: 50,
         success: true,
-        error: None,
-        result_count: Some(25),
-        updated_count: None,
+        backend: None,
     });
 
     let payload = TelemetryPayload::new(event);
@@ -381,12 +368,10 @@ async fn test_batch_payload_structure() -> Result<()> {
         TelemetryPayload::new(TelemetryEvent::Performance(PerformanceEvent {
             metric_type: "test1".to_string(),
             duration_ms: 100,
-            context: None,
         })),
         TelemetryPayload::new(TelemetryEvent::Performance(PerformanceEvent {
             metric_type: "test2".to_string(),
             duration_ms: 200,
-            context: None,
         })),
     ];
 
@@ -444,94 +429,75 @@ async fn test_timer_multiple_operations() -> Result<()> {
 // =============================================================================
 
 #[tokio::test]
-async fn test_special_characters_in_events() -> Result<()> {
+async fn test_positional_values_are_absent_from_events() -> Result<()> {
     use omg_lib::core::telemetry_client::{CommandEvent, TelemetryEvent};
 
-    let packages = vec!["lib++".to_string(), "g++".to_string()];
     let event = TelemetryEvent::Command(CommandEvent {
         command: "search".to_string(),
-        subcommand: None,
-        packages: Some(packages.clone()),
         duration_ms: 100,
         success: true,
-        error: None,
-        result_count: None,
-        updated_count: None,
+        backend: None,
     });
 
-    // Verify JSON serialization handles special chars
     let json = serde_json::to_string(&event)?;
-    assert!(json.contains("lib++"));
-    assert!(json.contains("g++"));
+    assert!(!json.contains("lib++"));
+    assert!(!json.contains("g++"));
+    assert!(!json.contains("packages"));
 
     Ok(())
 }
 
 #[tokio::test]
-async fn test_error_message_in_event() -> Result<()> {
+async fn test_failed_event_does_not_contain_error_text() -> Result<()> {
     use omg_lib::core::telemetry_client::{CommandEvent, TelemetryEvent};
 
     let event = TelemetryEvent::Command(CommandEvent {
         command: "install".to_string(),
-        subcommand: None,
-        packages: Some(vec!["nonexistent-package".to_string()]),
         duration_ms: 150,
         success: false,
-        error: Some("package not found in repositories".to_string()),
-        result_count: None,
-        updated_count: None,
+        backend: None,
     });
 
     let json = serde_json::to_value(&event)?;
-    // With serde tag="type", fields are flattened
     assert_eq!(json["success"].as_bool(), Some(false));
-    assert!(json["error"].as_str().unwrap().contains("not found"));
+    assert!(json.get("error").is_none());
 
     Ok(())
 }
 
 #[tokio::test]
-async fn test_search_with_result_count() -> Result<()> {
+async fn test_search_event_contains_no_query_details() -> Result<()> {
     use omg_lib::core::telemetry_client::{CommandEvent, TelemetryEvent};
 
     let event = TelemetryEvent::Command(CommandEvent {
         command: "search".to_string(),
-        subcommand: None,
-        packages: Some(vec!["vim".to_string()]),
         duration_ms: 35,
         success: true,
-        error: None,
-        result_count: Some(42),
-        updated_count: None,
+        backend: None,
     });
 
     let json = serde_json::to_value(&event)?;
-    // With serde tag="type", fields are flattened
-    assert_eq!(json["result_count"].as_u64(), Some(42));
     assert_eq!(json["duration_ms"].as_u64(), Some(35));
+    assert!(json.get("query").is_none());
+    assert!(json.get("result_count").is_none());
 
     Ok(())
 }
 
 #[tokio::test]
-async fn test_update_with_count() -> Result<()> {
+async fn test_update_event_contains_no_package_details() -> Result<()> {
     use omg_lib::core::telemetry_client::{CommandEvent, TelemetryEvent};
 
     let event = TelemetryEvent::Command(CommandEvent {
         command: "update".to_string(),
-        subcommand: None,
-        packages: None,
         duration_ms: 45000,
         success: true,
-        error: None,
-        result_count: None,
-        updated_count: Some(15),
+        backend: None,
     });
 
     let json = serde_json::to_value(&event)?;
-    // With serde tag="type", fields are flattened
-    assert_eq!(json["updated_count"].as_u64(), Some(15));
     assert_eq!(json["duration_ms"].as_u64(), Some(45000));
+    assert!(json.get("updated_count").is_none());
 
     Ok(())
 }
@@ -576,7 +542,6 @@ async fn test_timestamp_format() -> Result<()> {
     let event = TelemetryEvent::Performance(PerformanceEvent {
         metric_type: "test".to_string(),
         duration_ms: 100,
-        context: None,
     });
 
     let payload = TelemetryPayload::new(event);
@@ -596,7 +561,6 @@ async fn test_platform_string_format() -> Result<()> {
     let event = TelemetryEvent::Performance(PerformanceEvent {
         metric_type: "test".to_string(),
         duration_ms: 100,
-        context: None,
     });
 
     let payload = TelemetryPayload::new(event);

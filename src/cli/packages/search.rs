@@ -1,5 +1,4 @@
 use std::io::Write;
-use std::time::Instant;
 
 use anyhow::{Context, Result};
 use serde::Serialize;
@@ -87,8 +86,6 @@ async fn search_internal(
     no_aur: bool,
     limit: usize,
 ) -> Result<()> {
-    let start_time = Instant::now();
-
     validate_search_query(query)?;
 
     let official_search = async { search_official_packages(query).await };
@@ -128,9 +125,7 @@ async fn search_internal(
         .collect();
     display_packages.extend(deduped_aur);
 
-    // Track search with timing
-    let duration_ms = start_time.elapsed().as_millis() as u64;
-    crate::core::usage::track_search_timed(query, display_packages.len(), duration_ms, true);
+    crate::core::usage::track_search_result(true);
 
     if json {
         let json_str = serde_json::to_string_pretty(&display_packages)

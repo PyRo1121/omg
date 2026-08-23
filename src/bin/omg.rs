@@ -583,7 +583,7 @@ async fn async_main(args: Vec<String>) -> Result<()> {
     // Record startup time for telemetry
     omg_lib::core::telemetry::record_startup_time();
 
-    let cmd_start = omg_lib::core::analytics::start_timer();
+    let cmd_start = std::time::Instant::now();
     let cli = Cli::parse_from(&args);
 
     // Initialize session tracking (will create new session if expired)
@@ -638,7 +638,7 @@ async fn async_main(args: Vec<String>) -> Result<()> {
     };
 
     let result = dispatch_command(&cli.command, &ctx, cli.json).await;
-    track_command_analytics(cmd_start, command_name(&cli.command), result.is_ok()).await;
+    finish_command_telemetry(cmd_start, command_name(&cli.command), result.is_ok()).await;
     if let Some(task) = telemetry_ping {
         match task.await {
             Ok(Ok(())) => {}
@@ -777,18 +777,19 @@ const fn command_name(command: &Commands) -> &'static str {
     }
 }
 
-async fn track_command_analytics(cmd_start: std::time::Instant, cmd_name: &str, success: bool) {
-    let cmd_duration = omg_lib::core::analytics::end_timer(cmd_start);
-    omg_lib::core::analytics::track_command(
-        cmd_name,
-        None,
-        cmd_duration,
+async fn finish_command_telemetry(
+    command_started: std::time::Instant,
+    command_name: &str,
+    success: bool,
+) {
+    let duration_ms = command_started.elapsed().as_millis() as u64;
+    let backend = omg_lib::core::telemetry::get_backend();
+    omg_lib::core::telemetry::track_command_event(
+        command_name,
+        duration_ms,
         success,
-        Some(&omg_lib::core::telemetry::get_backend()),
+        Some(&backend),
     );
-    omg_lib::core::analytics::maybe_heartbeat();
-    omg_lib::core::analytics::maybe_flush().await;
-    omg_lib::core::analytics::flush_events().await.ok();
     omg_lib::core::telemetry::end_session_and_flush().await;
     omg_lib::core::usage::sync_usage_now().await;
 }

@@ -3,16 +3,12 @@
 //! Tracks command usage, time saved, and syncs with the API for dashboard display.
 //! Works for all tiers (free included) when a license is activated.
 //!
-//! ## Timing Integration
-//!
-//! This module now integrates with the telemetry system to track:
-//! - Operation durations (install, search, update, remove)
-//! - Performance metrics
-//! - Feature usage
+//! Local usage statistics and remote telemetry are separate concerns. This
+//! module records local operation counts/time-saved estimates and only emits
+//! explicit feature toggles through the canonical telemetry boundary.
 
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
-use std::time::Instant;
 
 use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
@@ -643,149 +639,47 @@ pub fn track_runtime_switch(runtime: &str) {
 }
 
 // =============================================================================
-// Timing and Telemetry Integration
+// Local usage result tracking
 // =============================================================================
 
-/// Operation timer for tracking command durations
-pub struct OperationTimer {
-    start: Instant,
-    command: String,
-    packages: Option<Vec<String>>,
-}
-
-impl OperationTimer {
-    /// Start timing an operation
-    #[must_use]
-    pub fn start(command: &str) -> Self {
-        Self {
-            start: Instant::now(),
-            command: command.to_string(),
-            packages: None,
-        }
-    }
-
-    /// Start timing with package names
-    #[must_use]
-    pub fn start_with_packages(command: &str, packages: &[String]) -> Self {
-        Self {
-            start: Instant::now(),
-            command: command.to_string(),
-            packages: Some(packages.to_vec()),
-        }
-    }
-
-    /// Get elapsed time in milliseconds
-    #[must_use]
-    pub fn elapsed_ms(&self) -> u64 {
-        self.start.elapsed().as_millis() as u64
-    }
-
-    /// Finish timing and record success
-    pub fn finish_success(self) {
-        let duration_ms = self.elapsed_ms();
-
-        // Record to telemetry
-        crate::core::telemetry::track_command_event(
-            &self.command,
-            None,
-            self.packages.as_deref(),
-            duration_ms,
-            true,
-            None,
-        );
-
-        // Also flush telemetry if needed
-        crate::core::telemetry::maybe_flush_background();
-    }
-}
-
-/// Track install command with timing
-pub fn track_install_timed(
-    packages: &[String],
-    duration_ms: u64,
-    success: bool,
-    error: Option<&str>,
-) {
-    // Record to usage stats
+/// Record a completed install in local usage statistics.
+pub fn track_install_result(packages: &[String], success: bool) {
     if success {
         track_install(packages);
     }
-
-    // Record to telemetry
-    crate::core::telemetry::track_command_event(
-        "install",
-        None,
-        Some(packages),
-        duration_ms,
-        success,
-        error,
-    );
-
     maybe_sync_background();
 }
 
-/// Track search command with timing and result count
-pub fn track_search_timed(query: &str, result_count: usize, duration_ms: u64, success: bool) {
-    // Record to usage stats
+/// Record a completed search in local usage statistics.
+pub fn track_search_result(success: bool) {
     if success {
         track_search();
     }
-
-    // Record to telemetry
-    crate::core::telemetry::track_search_event(query, result_count, duration_ms, success);
-
     maybe_sync_background();
 }
 
-/// Track update command with timing
-pub fn track_update_timed(
-    updated_count: usize,
-    duration_ms: u64,
-    success: bool,
-    error: Option<&str>,
-) {
-    // Record to usage stats
+/// Record a completed update in local usage statistics.
+pub fn track_update_result(updated_count: usize, success: bool) {
     if success {
         track(
             "update",
             time_saved::UPDATE_MS.saturating_mul(u64::try_from(updated_count).unwrap_or(0)),
         );
     }
-
-    // Record to telemetry
-    crate::core::telemetry::track_update_event(updated_count, duration_ms, success, error);
-
     maybe_sync_background();
 }
 
-/// Track remove command with timing
-pub fn track_remove_timed(
-    packages: &[String],
-    duration_ms: u64,
-    success: bool,
-    error: Option<&str>,
-) {
-    // Record to usage stats
+/// Record a completed removal in local usage statistics.
+pub fn track_remove_result(success: bool) {
     if success {
         track("remove", time_saved::REMOVE_MS);
     }
-
-    // Record to telemetry
-    crate::core::telemetry::track_command_event(
-        "remove",
-        None,
-        Some(packages),
-        duration_ms,
-        success,
-        error,
-    );
-
     maybe_sync_background();
 }
 
 /// Track feature usage (daemon, parallel, sbom, fleet, aur)
 pub fn track_feature_usage(feature: &str, enabled: bool) {
-    crate::core::telemetry::track_feature_event(feature, enabled, None);
+    crate::core::telemetry::track_feature_event(feature, enabled);
 }
 
 /// Load the stored license only when its token is valid, mirroring the

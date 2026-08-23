@@ -96,7 +96,6 @@ pub(crate) async fn try_daemon_list_updates() -> Option<Vec<UpdateInfo>> {
 pub(crate) async fn update_official_only(check_only: bool, yes: bool, dry_run: bool) -> Result<()> {
     use owo_colors::OwoColorize;
 
-    let start_time = std::time::Instant::now();
     let pm = crate::package_managers::get_package_manager()?;
     let skip_sync = check_only || dry_run;
 
@@ -188,8 +187,7 @@ pub(crate) async fn update_official_only(check_only: bool, yes: bool, dry_run: b
     pm.update().await?;
     crate::cli::modern_ui::finish_success(&pb, "Upgraded", &format!("{count} packages"));
 
-    let duration_ms = start_time.elapsed().as_millis() as u64;
-    crate::core::usage::track_update_timed(count, duration_ms, true, None);
+    crate::core::usage::track_update_result(count, true);
     crate::cli::modern_ui::print_success(&format!("Upgraded {count} packages"));
     Ok(())
 }
@@ -263,7 +261,6 @@ pub(crate) fn update_official_only_dry_run(updates: &[UpdateInfo]) -> Result<()>
 pub(crate) async fn remove_via_service(packages: &[String]) -> Result<()> {
     use crate::core::packages::PackageService;
 
-    let start_time = std::time::Instant::now();
     let pm = crate::package_managers::get_package_manager()?;
     let service = PackageService::new(pm)?;
 
@@ -279,16 +276,7 @@ pub(crate) async fn remove_via_service(packages: &[String]) -> Result<()> {
     // pass `false` and let the backend defaults decide.
     let result = service.remove(packages, false).await;
 
-    let duration_ms = start_time.elapsed().as_millis() as u64;
-    match &result {
-        Ok(()) => crate::core::usage::track_remove_timed(packages, duration_ms, true, None),
-        Err(e) => crate::core::usage::track_remove_timed(
-            packages,
-            duration_ms,
-            false,
-            Some(&e.to_string()),
-        ),
-    }
+    crate::core::usage::track_remove_result(result.is_ok());
 
     result?;
 

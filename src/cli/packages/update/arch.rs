@@ -1,5 +1,3 @@
-use std::time::Instant;
-
 use anyhow::{Context, Result};
 
 use crate::cli::packages::common::try_daemon_list_updates;
@@ -129,7 +127,6 @@ fn history_changes(updates: &[UpdateInfo]) -> Vec<crate::core::history::PackageC
 pub async fn update(check_only: bool, yes: bool, dry_run: bool) -> Result<()> {
     use owo_colors::OwoColorize;
 
-    let start_time = Instant::now();
     let pm = get_package_manager()?;
 
     let skip_sync = check_only || dry_run || !crate::core::caps::can_write_pacman_db();
@@ -364,14 +361,7 @@ pub async fn update(check_only: bool, yes: bool, dry_run: bool) -> Result<()> {
     }
     .await;
 
-    let duration_ms = start_time.elapsed().as_millis() as u64;
-    let error_message = operation_result.as_ref().err().map(ToString::to_string);
-    crate::core::usage::track_update_timed(
-        installed_count,
-        duration_ms,
-        operation_result.is_ok(),
-        error_message.as_deref(),
-    );
+    crate::core::usage::track_update_result(installed_count, operation_result.is_ok());
     history.finish_operation(
         crate::core::history::TransactionType::Update,
         changes,

@@ -9,10 +9,13 @@
 //! ## Enhanced Telemetry (requires license)
 //!
 //! When a user has activated a license, additional telemetry is collected:
-//! - Command-level event tracking (command, package, duration, success/error)
-//! - Session tracking (`session_id`, start/end times)
-//! - Performance metrics (`startup_ms`, `search_ms`, `install_ms`)
-//! - Feature usage tracking (daemon, parallel, sbom, fleet, aur)
+//! - Command summaries (canonical command name, duration, success, backend)
+//! - Session tracking (`session_id`, start/end times, command count)
+//! - Performance metrics (metric name and duration)
+//! - Feature usage (feature name and enabled state)
+//!
+//! Positional arguments, package names, search queries, paths, command output,
+//! and raw error messages are never included.
 //!
 //! Events are batched and sent every 60 seconds or on CLI exit.
 
@@ -49,6 +52,10 @@ pub(crate) fn persist_best_effort(result: Result<()>) {
 }
 /// Persist queue to disk every N seconds
 const PERSIST_INTERVAL_SECS: i64 = 30;
+/// Current on-disk telemetry queue format.
+const QUEUE_FORMAT_VERSION: u32 = 1;
+/// Current on-disk telemetry session format.
+const SESSION_FORMAT_VERSION: u32 = 1;
 
 /// Install telemetry payload
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -230,6 +237,14 @@ static SESSION_STATE: OnceLock<Mutex<TelemetrySession>> = OnceLock::new();
 /// Global CLI start time for startup metrics
 static CLI_START_TIME: OnceLock<Instant> = OnceLock::new();
 
+/// Strict persisted queue envelope.
+#[derive(Debug, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct PersistedEventQueue {
+    format_version: u32,
+    events: Vec<TelemetryEvent>,
+}
+
 /// Event queue for batching telemetry events
 #[derive(Debug)]
 struct EventQueue {
@@ -325,11 +340,17 @@ impl EventQueue {
                 });
             }
         };
-        let events = serde_json::from_str::<Vec<TelemetryEvent>>(&content)
+        let persisted = serde_json::from_str::<PersistedEventQueue>(&content)
             .with_context(|| format!("Malformed telemetry queue: {}", path.display()))?;
+        anyhow::ensure!(
+            persisted.format_version == QUEUE_FORMAT_VERSION,
+            "Unsupported telemetry queue format version {} (expected {})",
+            persisted.format_version,
+            QUEUE_FORMAT_VERSION
+        );
         let now = jiff::Timestamp::now().as_second();
         Ok(Self {
-            events: events.into(),
+            events: persisted.events.into(),
             last_flush: now,
             events_since_persist: AtomicU32::new(0),
             last_persist: AtomicI64::new(now),
@@ -343,8 +364,12 @@ impl EventQueue {
             "telemetry queue persistence is disabled after a load failure"
         );
         let path = Self::path()?;
-        let events: Vec<&TelemetryEvent> = self.events.iter().collect();
-        let content = serde_json::to_vec(&events).context("Failed to serialize telemetry queue")?;
+        let persisted = PersistedEventQueue {
+            format_version: QUEUE_FORMAT_VERSION,
+            events: self.events.iter().cloned().collect(),
+        };
+        let content =
+            serde_json::to_vec(&persisted).context("Failed to serialize telemetry queue")?;
         crate::core::safe_ops::atomic_write_file_sync(&path, content)
             .with_context(|| format!("Failed to save telemetry queue: {}", path.display()))?;
 
@@ -376,7 +401,9 @@ pub struct TelemetrySession {
 
 /// Serializable session state for persistence
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 struct SerializableSession {
+    format_version: u32,
     session_id: String,
     started_at: String,
     commands_run: u32,
@@ -441,6 +468,12 @@ impl TelemetrySession {
         };
         let session = serde_json::from_str::<SerializableSession>(&content)
             .with_context(|| format!("Malformed telemetry session: {}", path.display()))?;
+        anyhow::ensure!(
+            session.format_version == SESSION_FORMAT_VERSION,
+            "Unsupported telemetry session format version {} (expected {})",
+            session.format_version,
+            SESSION_FORMAT_VERSION
+        );
         let now = jiff::Timestamp::now().as_second();
         Ok(Self {
             session_id: session.session_id,
@@ -460,6 +493,7 @@ impl TelemetrySession {
         );
         let path = Self::path()?;
         let sess = SerializableSession {
+            format_version: SESSION_FORMAT_VERSION,
             session_id: self.session_id.clone(),
             started_at: self.started_at.clone(),
             commands_run: self.commands_run.load(Ordering::Relaxed),
@@ -586,86 +620,28 @@ fn record_session_activity() {
     }
 }
 
-/// Track command execution
-pub fn track_command_event(
-    command: &str,
-    subcommand: Option<&str>,
-    packages: Option<&[String]>,
-    duration_ms: u64,
-    success: bool,
-    error: Option<&str>,
-) {
+/// Track one CLI command summary.
+///
+/// Only the canonical command name, duration, outcome, and compiled backend
+/// are collected. Positional arguments, package names, search queries, file
+/// paths, and raw error text never cross this boundary.
+pub fn track_command_event(command: &str, duration_ms: u64, success: bool, backend: Option<&str>) {
     if !is_enhanced_telemetry_enabled() {
         return;
     }
 
     record_session_activity();
 
-    let event = TelemetryEvent::Command(CommandEvent {
+    enqueue(TelemetryEvent::Command(CommandEvent {
         command: command.to_string(),
-        subcommand: subcommand.map(String::from),
-        packages: packages.map(<[String]>::to_vec),
         duration_ms,
         success,
-        error: error.map(String::from),
-        result_count: None,
-        updated_count: None,
-    });
-
-    enqueue(event);
-}
-
-/// Track search command with result count
-pub fn track_search_event(query: &str, result_count: usize, duration_ms: u64, success: bool) {
-    if !is_enhanced_telemetry_enabled() {
-        return;
-    }
-
-    record_session_activity();
-
-    let event = TelemetryEvent::Command(CommandEvent {
-        command: "search".to_string(),
-        subcommand: None,
-        packages: Some(vec![query.to_string()]),
-        duration_ms,
-        success,
-        error: None,
-        result_count: Some(result_count),
-        updated_count: None,
-    });
-
-    enqueue(event);
-}
-
-/// Track update command with updated count
-pub fn track_update_event(
-    updated_count: usize,
-    duration_ms: u64,
-    success: bool,
-    error: Option<&str>,
-) {
-    if !is_enhanced_telemetry_enabled() {
-        return;
-    }
-
-    record_session_activity();
-
-    let event = TelemetryEvent::Command(CommandEvent {
-        command: "update".to_string(),
-        subcommand: None,
-        packages: None,
-        duration_ms,
-        success,
-        error: error.map(String::from),
-        result_count: None,
-        updated_count: Some(updated_count),
-    });
-
-    enqueue(event);
+        backend: backend.map(String::from),
+    }));
 }
 
 /// Track performance metric
-pub fn track_performance_event(metric_type: &str, duration_ms: u64, context: Option<&str>) {
+pub fn track_performance_event(metric_type: &str, duration_ms: u64) {
     if !is_enhanced_telemetry_enabled() {
         return;
     }
@@ -673,14 +649,13 @@ pub fn track_performance_event(metric_type: &str, duration_ms: u64, context: Opt
     let event = TelemetryEvent::Performance(PerformanceEvent {
         metric_type: metric_type.to_string(),
         duration_ms,
-        context: context.map(String::from),
     });
 
     enqueue(event);
 }
 
 /// Track feature usage
-pub fn track_feature_event(feature: &str, enabled: bool, metadata: Option<serde_json::Value>) {
+pub fn track_feature_event(feature: &str, enabled: bool) {
     if !is_enhanced_telemetry_enabled() {
         return;
     }
@@ -688,7 +663,6 @@ pub fn track_feature_event(feature: &str, enabled: bool, metadata: Option<serde_
     let event = TelemetryEvent::Feature(FeatureEvent {
         feature: feature.to_string(),
         enabled,
-        metadata,
     });
 
     enqueue(event);
@@ -826,7 +800,7 @@ pub async fn end_session_and_flush() {
 
     // Track startup performance if available
     if let Some(startup_ms) = get_startup_duration_ms() {
-        track_performance_event("cli_startup", startup_ms, None);
+        track_performance_event("cli_startup", startup_ms);
     }
 
     // Flush all events
@@ -857,7 +831,7 @@ impl Timer {
 
     /// Finish and record as performance event
     pub fn finish(self) {
-        track_performance_event(&self.operation, self.elapsed_ms(), None);
+        track_performance_event(&self.operation, self.elapsed_ms());
     }
 }
 
@@ -905,7 +879,6 @@ mod tests {
             queue.push(TelemetryEvent::Performance(PerformanceEvent {
                 metric_type: "test".to_string(),
                 duration_ms: 100,
-                context: None,
             }));
         }
 
@@ -950,6 +923,82 @@ mod tests {
         assert_eq!(
             std::fs::read(&session_path).expect("read malformed session"),
             b"{bad-session"
+        );
+    }
+
+    #[test]
+    fn persisted_telemetry_requires_the_current_format_version() {
+        let directory = tempfile::tempdir().expect("create temporary directory");
+        let queue_path = directory.path().join("queue.json");
+        let session_path = directory.path().join("session.json");
+
+        std::fs::write(
+            &queue_path,
+            serde_json::to_vec(&serde_json::json!({
+                "format_version": QUEUE_FORMAT_VERSION,
+                "events": []
+            }))
+            .expect("serialize current queue"),
+        )
+        .expect("write current queue");
+        std::fs::write(
+            &session_path,
+            serde_json::to_vec(&serde_json::json!({
+                "format_version": SESSION_FORMAT_VERSION,
+                "session_id": "session-id",
+                "started_at": "2025-01-01T00:00:00.000Z",
+                "commands_run": 1,
+                "last_activity": 1
+            }))
+            .expect("serialize current session"),
+        )
+        .expect("write current session");
+
+        assert!(EventQueue::load_from(&queue_path).is_ok());
+        assert!(TelemetrySession::load_from(&session_path).is_ok());
+
+        std::fs::write(&queue_path, b"[]").expect("write obsolete raw queue");
+        std::fs::write(
+            &session_path,
+            br#"{"session_id":"old","started_at":"old","commands_run":0,"last_activity":0}"#,
+        )
+        .expect("write unversioned session");
+        assert!(
+            EventQueue::load_from(&queue_path).is_err(),
+            "unversioned queue must be rejected"
+        );
+        assert!(
+            TelemetrySession::load_from(&session_path).is_err(),
+            "unversioned session must be rejected"
+        );
+
+        std::fs::write(
+            &queue_path,
+            format!(
+                r#"{{"format_version":{},"events":[]}}"#,
+                QUEUE_FORMAT_VERSION + 1
+            ),
+        )
+        .expect("write forward queue");
+        std::fs::write(
+            &session_path,
+            format!(
+                r#"{{"format_version":{},"session_id":"future","started_at":"future","commands_run":0,"last_activity":0}}"#,
+                SESSION_FORMAT_VERSION + 1
+            ),
+        )
+        .expect("write forward session");
+        assert!(
+            EventQueue::load_from(&queue_path)
+                .expect_err("forward queue must be rejected")
+                .to_string()
+                .contains("Unsupported telemetry queue format version")
+        );
+        assert!(
+            TelemetrySession::load_from(&session_path)
+                .expect_err("forward session must be rejected")
+                .to_string()
+                .contains("Unsupported telemetry session format version")
         );
     }
 
