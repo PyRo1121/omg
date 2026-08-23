@@ -124,6 +124,56 @@ was not linked from any doc; its command usage remains in docs/runtimes.md
 - **Ci**: Cross-platform install script and R2 release sync
 ### 🐛 Bug Fixes
 
+- Wave-6 verification round — protocol handshake completed, breaker semantics, history gaps closed
+
+Wave-6 verifiers caught fixes claimed in wave-5 that never landed, plus
+
+one regression introduced by the wave-4 circuit-breaker guard:
+
+  - CRITICAL regression: HalfOpenProbeGuard::drop unconditionally forced
+
+the breaker to Open, clobbering a Closed state set by a successful
+
+probe. Drop now reverts to Open only when the probe is still
+
+unresolved.
+
+  - half-open without the single-flight slot now queues/bails like Open:
+
+concurrent non-probe requests no longer multiply failures against a
+
+struggling endpoint (documented invariant now matches behavior)
+
+  - IPC protocol version handshake IMPLEMENTED (was absent): every frame
+
+is [u32 LE version][payload]; client (async + pooled sync + omg-fast)
+
+and server encode/decode through encode_frame/split_frame; mismatched
+
+peers are rejected loudly instead of risking silent bitcode mis-decodes
+
+  - debian index cache carries magic+format-version header on write and
+
+validates on read; unrecognized formats rebuild with guidance instead
+
+of undefined rkyv behavior
+
+  - config TOML rejects unknown keys with allowed-key listing (typo
+
+protection); legacy cache/general/security sections warn-and-ignore so
+
+existing installs keep working
+
+  - removal history records every requested package even when info()
+
+misses (phantom-free mutations)
+
+Verified end-to-end: daemon lifecycle suite (7/7), IPC suite (15/15),
+
+omg-fast against live versioned daemon, real Arch container cycles
+
+(multi-cache rollback, unsigned-package rejection)
+
 - Apply wave-5 HANDOFF items — removal history completeness, cache-clean rollback warning
 
   - PackageService::remove records every requested package in history even
