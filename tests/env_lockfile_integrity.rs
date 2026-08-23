@@ -20,6 +20,7 @@ use std::collections::HashMap;
 
 fn sample_state() -> EnvironmentState {
     let mut state = EnvironmentState {
+        schema_version: omg_lib::core::env::fingerprint::EnvironmentState::SCHEMA_VERSION,
         runtimes: HashMap::new(),
         packages: vec!["curl".to_string(), "git".to_string()],
         timestamp: 1_700_000_000,
@@ -114,6 +115,7 @@ fn env_check_fails_on_tampered_lockfile_integrity() {
 
     // Write a valid-schema lockfile whose contents contradict its stored hash.
     let mut state = EnvironmentState {
+        schema_version: omg_lib::core::env::fingerprint::EnvironmentState::SCHEMA_VERSION,
         runtimes: HashMap::new(),
         packages: vec![],
         timestamp: 0,

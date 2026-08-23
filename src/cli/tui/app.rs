@@ -160,6 +160,7 @@ impl App {
                 // If we don't have a local team workspace, create a synthetic one from API data
                 if self.team_status.is_none() {
                     self.team_status = Some(crate::core::env::team::TeamStatus {
+                        format_version: crate::core::env::team::TeamStatus::STATUS_FORMAT_VERSION,
                         config: crate::core::env::team::TeamConfig {
                             team_id: "fleet".to_string(),
                             name: format!(

@@ -76,6 +76,10 @@ pub struct TeamMember {
 /// Team status snapshot
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct TeamStatus {
+    /// Status-file format version. Files written by a NEWER omg are rejected
+    /// on load instead of best-effort parsed.
+    #[serde(default = "default_status_format_version")]
+    pub format_version: u32,
     /// Team configuration
     pub config: TeamConfig,
     /// Current team lock hash
@@ -86,7 +90,14 @@ pub struct TeamStatus {
     pub updated_at: i64,
 }
 
+fn default_status_format_version() -> u32 {
+    TeamStatus::STATUS_FORMAT_VERSION
+}
+
 impl TeamStatus {
+    /// Current team-status file format version.
+    pub const STATUS_FORMAT_VERSION: u32 = 1;
+
     /// Count members in sync
     #[must_use]
     pub fn in_sync_count(&self) -> usize {
@@ -228,6 +239,7 @@ impl TeamWorkspace {
 
         // Create initial status
         let status = TeamStatus {
+            format_version: TeamStatus::STATUS_FORMAT_VERSION,
             config: config.clone(),
             lock_hash: String::new(),
             members: vec![TeamMember {
@@ -343,7 +355,16 @@ impl TeamWorkspace {
         );
         let content = std::fs::read_to_string(&path)
             .with_context(|| format!("Failed to read team status: {}", path.display()))?;
-        serde_json::from_str(&content).context("Failed to parse team status")
+        let status: TeamStatus =
+            serde_json::from_str(&content).context("Failed to parse team status")?;
+        if status.format_version > TeamStatus::STATUS_FORMAT_VERSION {
+            anyhow::bail!(
+                "Team status {} was written by a newer omg (format version {}). Upgrade omg to read it.",
+                path.display(),
+                status.format_version
+            );
+        }
+        Ok(status)
     }
 
     /// Push local environment to team lock

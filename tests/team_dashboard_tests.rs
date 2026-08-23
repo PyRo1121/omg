@@ -63,6 +63,7 @@ fn create_test_team_status() -> TeamStatus {
     ];
 
     TeamStatus {
+        format_version: TeamStatus::STATUS_FORMAT_VERSION,
         config,
         lock_hash: "abc123".to_string(),
         members,
@@ -89,6 +90,7 @@ mod team_status_tests {
     fn test_empty_team_counts() {
         let config = TeamConfig::default();
         let status = TeamStatus {
+            format_version: TeamStatus::STATUS_FORMAT_VERSION,
             config,
             lock_hash: String::new(),
             members: vec![],
@@ -429,6 +431,7 @@ mod member_data_handling_tests {
     fn test_empty_members_list() {
         let config = TeamConfig::default();
         let status = TeamStatus {
+            format_version: TeamStatus::STATUS_FORMAT_VERSION,
             config,
             lock_hash: String::new(),
             members: vec![],
@@ -818,6 +821,7 @@ mod edge_cases_tests {
         };
 
         let status = TeamStatus {
+            format_version: TeamStatus::STATUS_FORMAT_VERSION,
             config,
             lock_hash: "hash".to_string(),
             members: vec![member],
@@ -866,6 +870,7 @@ mod property_based_tests {
                 .collect();
 
             let status = TeamStatus {
+            format_version: TeamStatus::STATUS_FORMAT_VERSION,
                 config,
                 lock_hash: "hash".to_string(),
                 members: members.clone(),

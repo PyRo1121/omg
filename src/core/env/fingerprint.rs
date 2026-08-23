@@ -20,6 +20,10 @@ use crate::runtimes::{
 #[derive(Debug, Serialize, Deserialize, PartialEq, Eq, Clone)]
 #[expect(clippy::unsafe_derive_deserialize)] // Struct fields are all owned safe types (HashMap, Vec, String, i64); no unsafe in fields
 pub struct EnvironmentState {
+    /// Lockfile schema version. Written on save; `load` rejects files written
+    /// by a NEWER schema instead of guessing at unknown fields.
+    #[serde(default = "default_schema_version")]
+    pub schema_version: u32,
     /// Runtime versions (`runtime_name` -> version)
     pub runtimes: HashMap<String, String>,
     /// Explicitly installed system packages
@@ -30,7 +34,14 @@ pub struct EnvironmentState {
     pub hash: String,
 }
 
+fn default_schema_version() -> u32 {
+    EnvironmentState::SCHEMA_VERSION
+}
+
 impl EnvironmentState {
+    /// Current lockfile schema version.
+    pub const SCHEMA_VERSION: u32 = 1;
+
     /// Capture the current environment state
     pub async fn capture() -> Result<Self> {
         let mut runtimes = HashMap::new();
@@ -76,6 +87,7 @@ impl EnvironmentState {
         let timestamp = jiff::Timestamp::now().as_second();
 
         let mut state = Self {
+            schema_version: Self::SCHEMA_VERSION,
             runtimes,
             packages,
             timestamp,
@@ -115,6 +127,7 @@ impl EnvironmentState {
     /// Save state to omg.lock file
     pub fn save<P: AsRef<Path>>(&self, path: P) -> Result<()> {
         let mut normalized = self.clone();
+        normalized.schema_version = Self::SCHEMA_VERSION;
         normalized.normalize();
         normalized.hash = normalized.calculate_hash();
         let content = toml::to_string_pretty(&normalized)?;
@@ -126,6 +139,22 @@ impl EnvironmentState {
         let path = path.as_ref();
         let content = fs::read_to_string(path)
             .with_context(|| format!("Failed to read lockfile {}", path.display()))?;
+        // Reject files written by a newer schema BEFORE parsing, so unknown
+        // future fields produce an actionable message instead of accidental
+        // best-effort deserialization.
+        if let Ok(raw) = toml::from_str::<toml::Value>(&content) {
+            let file_version = raw
+                .get("schema_version")
+                .and_then(toml::Value::as_integer)
+                .unwrap_or(i64::from(Self::SCHEMA_VERSION));
+            if file_version > i64::from(Self::SCHEMA_VERSION) {
+                anyhow::bail!(
+                    "Lockfile {} was written by a newer omg (schema version {file_version}). \
+                     Upgrade omg to read it.",
+                    path.display()
+                );
+            }
+        }
         let mut state: Self = toml::from_str(&content)
             .with_context(|| format!("Failed to parse lockfile {}", path.display()))?;
         let stored_hash = state.hash.clone();
@@ -377,6 +406,7 @@ mod tests {
         let directory = tempfile::TempDir::new().expect("temp dir");
         let path = directory.path().join("omg.lock");
         let state = EnvironmentState {
+            schema_version: EnvironmentState::SCHEMA_VERSION,
             runtimes: HashMap::new(),
             packages: vec!["foo".to_string()],
             timestamp: 0,
@@ -397,10 +427,31 @@ mod tests {
     }
 
     #[test]
+    fn load_rejects_lockfiles_from_newer_schema_versions() {
+        let directory = tempfile::TempDir::new().expect("temp dir");
+        let path = directory.path().join("omg.lock");
+
+        // A file written by a hypothetical future omg with schema_version 99
+        // must be rejected with an actionable message, not deserialized by
+        // best-effort field matching.
+        let newer_schema = format!(
+            "schema_version = 99\nruntimes = {{}}\npackages = []\ntimestamp = 0\nhash = 'x'\n"
+        );
+        std::fs::write(&path, newer_schema).expect("write future lockfile");
+
+        let error = EnvironmentState::load(&path).expect_err("future schema must be rejected");
+        assert!(
+            error.to_string().contains("newer omg"),
+            "error must explain the version mismatch: {error}"
+        );
+    }
+
+    #[test]
     fn save_recomputes_hash_from_normalized_contents() {
         let directory = tempfile::TempDir::new().expect("temp dir");
         let path = directory.path().join("omg.lock");
         let state = EnvironmentState {
+            schema_version: EnvironmentState::SCHEMA_VERSION,
             runtimes: HashMap::from([("node".to_string(), " 22 ".to_string())]),
             packages: vec!["zlib".to_string(), "curl".to_string()],
             timestamp: 0,
@@ -420,6 +471,7 @@ mod tests {
         let directory = tempfile::TempDir::new().expect("temp dir");
         let path = directory.path().join("omg.lock");
         let mut state = EnvironmentState {
+            schema_version: EnvironmentState::SCHEMA_VERSION,
             runtimes: HashMap::new(),
             packages: vec!["curl".to_string()],
             timestamp: 0,
