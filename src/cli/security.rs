@@ -53,7 +53,12 @@ impl LocalCommandRunner for AuditCommands {
                 limit,
                 severity,
                 export,
-            } => view_audit_log(*limit, severity.as_deref(), export.clone(), ctx),
+            } => view_audit_log(
+                *limit,
+                severity.as_ref().map(|value| value.as_str()),
+                export.clone(),
+                ctx,
+            ),
             AuditCommands::Verify => verify_audit_log(ctx),
             AuditCommands::Policy => show_policy(ctx),
             AuditCommands::Slsa { package } => check_slsa(package, ctx).await,
@@ -62,17 +67,23 @@ impl LocalCommandRunner for AuditCommands {
                 export,
                 filter,
                 check_policy,
-            } => scan_licenses(format, export.clone(), filter.clone(), *check_policy, ctx),
+            } => scan_licenses(
+                format.as_str(),
+                export.clone(),
+                filter.clone(),
+                *check_policy,
+                ctx,
+            ),
             AuditCommands::Fix {
                 dry_run,
                 yes,
                 min_severity,
-            } => fix_vulnerabilities(*dry_run, *yes, min_severity, ctx).await,
+            } => fix_vulnerabilities(*dry_run, *yes, min_severity.as_str(), ctx).await,
             AuditCommands::Export {
                 framework,
                 period,
                 output,
-            } => export_compliance(framework, period.clone(), output, ctx).await,
+            } => export_compliance(framework.as_str(), period.clone(), output, ctx).await,
             AuditCommands::Eol => check_eol(ctx),
         }?;
         ui::print_spacer();

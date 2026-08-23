@@ -361,8 +361,8 @@ pub enum Commands {
         args: Vec<String>,
 
         /// Runtime backend (native, mise, native-then-mise)
-        #[arg(long)]
-        runtime_backend: Option<String>,
+        #[arg(long, value_enum)]
+        runtime_backend: Option<RuntimeBackendChoice>,
 
         /// Watch mode: re-run task on file changes
         #[arg(short, long)]
@@ -385,8 +385,8 @@ pub enum Commands {
     #[command(visible_alias = "create")]
     New {
         /// Stack template (rust, react, node, python, go)
-        #[arg(required = true)]
-        stack: String,
+        #[arg(required = true, value_enum)]
+        stack: ProjectStack,
 
         /// Project name
         #[arg(required = true)]
@@ -540,6 +540,151 @@ impl ShellKind {
         }
     }
 }
+
+#[derive(Copy, Clone, Debug, PartialEq, Eq, clap::ValueEnum)]
+pub enum RuntimeBackendChoice {
+    Native,
+    Mise,
+    NativeThenMise,
+}
+
+impl From<RuntimeBackendChoice> for crate::core::RuntimeBackend {
+    fn from(value: RuntimeBackendChoice) -> Self {
+        match value {
+            RuntimeBackendChoice::Native => Self::Native,
+            RuntimeBackendChoice::Mise => Self::Mise,
+            RuntimeBackendChoice::NativeThenMise => Self::NativeThenMise,
+        }
+    }
+}
+
+#[derive(Copy, Clone, Debug, PartialEq, Eq, clap::ValueEnum)]
+pub enum ProjectStack {
+    Rust,
+    React,
+    Node,
+    Python,
+    Go,
+}
+
+#[derive(Copy, Clone, Debug, PartialEq, Eq, clap::ValueEnum)]
+pub enum AuditLogSeverity {
+    Debug,
+    Info,
+    Warning,
+    Error,
+    Critical,
+}
+
+#[derive(Copy, Clone, Debug, PartialEq, Eq, clap::ValueEnum)]
+pub enum LicenseOutputFormat {
+    Table,
+    Json,
+    Csv,
+}
+
+#[derive(Copy, Clone, Debug, PartialEq, Eq, clap::ValueEnum)]
+pub enum VulnerabilitySeverity {
+    Low,
+    Medium,
+    High,
+    Critical,
+}
+
+#[derive(Copy, Clone, Debug, PartialEq, Eq, clap::ValueEnum)]
+pub enum ComplianceFramework {
+    Soc2,
+    Iso27001,
+    Fedramp,
+    Hipaa,
+    PciDss,
+}
+
+#[derive(Copy, Clone, Debug, PartialEq, Eq, clap::ValueEnum)]
+pub enum CiProvider {
+    Github,
+    Gitlab,
+    Circleci,
+}
+
+#[derive(Copy, Clone, Debug, PartialEq, Eq, clap::ValueEnum)]
+pub enum EnterpriseReportType {
+    Monthly,
+    Quarterly,
+    Custom,
+}
+
+#[derive(Copy, Clone, Debug, PartialEq, Eq, clap::ValueEnum)]
+pub enum LicenseExportFormat {
+    Json,
+    Csv,
+}
+
+macro_rules! impl_cli_value_name {
+    ($type:ty, {$($variant:path => $name:literal),+ $(,)?}) => {
+        impl $type {
+            #[must_use]
+            pub const fn as_str(self) -> &'static str {
+                match self {
+                    $($variant => $name),+
+                }
+            }
+        }
+
+        impl std::fmt::Display for $type {
+            fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+                formatter.write_str(self.as_str())
+            }
+        }
+    };
+}
+
+impl_cli_value_name!(ProjectStack, {
+    ProjectStack::Rust => "rust",
+    ProjectStack::React => "react",
+    ProjectStack::Node => "node",
+    ProjectStack::Python => "python",
+    ProjectStack::Go => "go",
+});
+impl_cli_value_name!(AuditLogSeverity, {
+    AuditLogSeverity::Debug => "debug",
+    AuditLogSeverity::Info => "info",
+    AuditLogSeverity::Warning => "warning",
+    AuditLogSeverity::Error => "error",
+    AuditLogSeverity::Critical => "critical",
+});
+impl_cli_value_name!(LicenseOutputFormat, {
+    LicenseOutputFormat::Table => "table",
+    LicenseOutputFormat::Json => "json",
+    LicenseOutputFormat::Csv => "csv",
+});
+impl_cli_value_name!(VulnerabilitySeverity, {
+    VulnerabilitySeverity::Low => "low",
+    VulnerabilitySeverity::Medium => "medium",
+    VulnerabilitySeverity::High => "high",
+    VulnerabilitySeverity::Critical => "critical",
+});
+impl_cli_value_name!(ComplianceFramework, {
+    ComplianceFramework::Soc2 => "soc2",
+    ComplianceFramework::Iso27001 => "iso27001",
+    ComplianceFramework::Fedramp => "fedramp",
+    ComplianceFramework::Hipaa => "hipaa",
+    ComplianceFramework::PciDss => "pci-dss",
+});
+impl_cli_value_name!(CiProvider, {
+    CiProvider::Github => "github",
+    CiProvider::Gitlab => "gitlab",
+    CiProvider::Circleci => "circleci",
+});
+impl_cli_value_name!(EnterpriseReportType, {
+    EnterpriseReportType::Monthly => "monthly",
+    EnterpriseReportType::Quarterly => "quarterly",
+    EnterpriseReportType::Custom => "custom",
+});
+impl_cli_value_name!(LicenseExportFormat, {
+    LicenseExportFormat::Json => "json",
+    LicenseExportFormat::Csv => "csv",
+});
 
 #[derive(Subcommand, Debug)]
 pub enum HooksCommands {
@@ -948,8 +1093,8 @@ pub enum AuditCommands {
         #[arg(short, long, default_value = "20")]
         limit: usize,
         /// Filter by severity (debug, info, warning, error, critical)
-        #[arg(short, long)]
-        severity: Option<String>,
+        #[arg(short, long, value_enum)]
+        severity: Option<AuditLogSeverity>,
         /// Export log to file
         #[arg(short, long)]
         export: Option<String>,
@@ -966,8 +1111,8 @@ pub enum AuditCommands {
     /// Scan for software license compliance issues
     Licenses {
         /// Output format (table, json, csv)
-        #[arg(short, long, default_value = "table")]
-        format: String,
+        #[arg(short, long, value_enum, default_value_t = LicenseOutputFormat::Table)]
+        format: LicenseOutputFormat,
         /// Export results to file
         #[arg(short, long)]
         export: Option<String>,
@@ -987,14 +1132,14 @@ pub enum AuditCommands {
         #[arg(short = 'y', long)]
         yes: bool,
         /// Only fix vulnerabilities with this minimum severity (low, medium, high, critical)
-        #[arg(long, default_value = "medium")]
-        min_severity: String,
+        #[arg(long, value_enum, default_value_t = VulnerabilitySeverity::Medium)]
+        min_severity: VulnerabilitySeverity,
     },
     /// Export compliance evidence for audit frameworks
     Export {
         /// Compliance framework (soc2, iso27001, fedramp, hipaa, pci-dss)
-        #[arg(short, long, default_value = "soc2")]
-        framework: String,
+        #[arg(short, long, value_enum, default_value_t = ComplianceFramework::Soc2)]
+        framework: ComplianceFramework,
         /// Time period (e.g., "2024-Q4", "2024-01" to "2024-03")
         #[arg(short, long)]
         period: Option<String>,
@@ -1039,7 +1184,8 @@ pub enum CiCommands {
     /// Initialize CI configuration for a provider
     Init {
         /// CI provider (github, gitlab, circleci)
-        provider: String,
+        #[arg(value_enum)]
+        provider: CiProvider,
         /// Generate advanced "world-class" configuration with matrices and security audits
         #[arg(long)]
         advanced: bool,
@@ -1088,11 +1234,8 @@ pub enum EnterpriseCommands {
     /// Generate executive reports
     Reports {
         /// Report type (monthly, quarterly, custom)
-        #[arg(short, long, default_value = "monthly")]
-        report_type: String,
-        /// Output format (json)
-        #[arg(short, long, default_value = "json")]
-        format: String,
+        #[arg(short, long, value_enum, default_value_t = EnterpriseReportType::Monthly)]
+        report_type: EnterpriseReportType,
     },
     /// Manage hierarchical policies
     Policy {
@@ -1102,8 +1245,8 @@ pub enum EnterpriseCommands {
     /// Export audit evidence for compliance
     AuditExport {
         /// Compliance framework (soc2, iso27001, fedramp, hipaa, pci-dss)
-        #[arg(short, long, default_value = "soc2")]
-        format: String,
+        #[arg(short, long, value_enum, default_value_t = ComplianceFramework::Soc2)]
+        framework: ComplianceFramework,
         /// Time period (e.g., "2025-Q4")
         #[arg(short, long)]
         period: Option<String>,
@@ -1114,8 +1257,8 @@ pub enum EnterpriseCommands {
     /// Scan for license compliance issues
     LicenseScan {
         /// Export file format (json, csv)
-        #[arg(long)]
-        export: Option<String>,
+        #[arg(long, value_enum)]
+        export: Option<LicenseExportFormat>,
     },
     /// Initialize self-hosted/air-gapped server
     Server {
@@ -1152,5 +1295,70 @@ mod tests {
     #[test]
     fn verify_cli() {
         Cli::command().debug_assert();
+    }
+
+    #[test]
+    fn bounded_choices_fail_during_argument_parsing() {
+        let invalid: &[&[&str]] = &[
+            &["omg", "run", "test", "--runtime-backend", "unknown"],
+            &["omg", "new", "unknown", "project"],
+            &["omg", "audit", "log", "--severity", "unknown"],
+            &["omg", "audit", "licenses", "--format", "unknown"],
+            &["omg", "audit", "fix", "--min-severity", "unknown"],
+            &["omg", "audit", "export", "--framework", "unknown"],
+            &["omg", "ci", "init", "unknown"],
+            &["omg", "enterprise", "reports", "--report-type", "unknown"],
+            &[
+                "omg",
+                "enterprise",
+                "audit-export",
+                "--framework",
+                "unknown",
+            ],
+            &["omg", "enterprise", "license-scan", "--export", "unknown"],
+            &["omg", "enterprise", "reports", "--format", "json"],
+        ];
+
+        for args in invalid {
+            assert!(
+                Cli::try_parse_from(args.iter().copied()).is_err(),
+                "bounded invalid choice unexpectedly parsed: {args:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn bounded_choices_accept_documented_values() {
+        let valid: &[&[&str]] = &[
+            &[
+                "omg",
+                "run",
+                "test",
+                "--runtime-backend",
+                "native-then-mise",
+            ],
+            &["omg", "new", "rust", "project"],
+            &["omg", "audit", "log", "--severity", "critical"],
+            &["omg", "audit", "licenses", "--format", "csv"],
+            &["omg", "audit", "fix", "--min-severity", "high"],
+            &["omg", "audit", "export", "--framework", "pci-dss"],
+            &["omg", "ci", "init", "github"],
+            &["omg", "enterprise", "reports", "--report-type", "quarterly"],
+            &[
+                "omg",
+                "enterprise",
+                "audit-export",
+                "--framework",
+                "iso27001",
+            ],
+            &["omg", "enterprise", "license-scan", "--export", "json"],
+        ];
+
+        for args in valid {
+            assert!(
+                Cli::try_parse_from(args.iter().copied()).is_ok(),
+                "documented bounded choice failed to parse: {args:?}"
+            );
+        }
     }
 }

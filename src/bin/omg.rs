@@ -1001,7 +1001,7 @@ async fn handle_snapshot_command(command: &SnapshotCommands) -> Result<()> {
 
 async fn handle_ci_command(command: &CiCommands) -> Result<()> {
     match command {
-        CiCommands::Init { provider, advanced } => ci::init(provider, *advanced),
+        CiCommands::Init { provider, advanced } => ci::init(provider.as_str(), *advanced),
         CiCommands::Validate => ci::validate().await,
         CiCommands::Cache => ci::cache(),
     }
@@ -1117,7 +1117,7 @@ async fn dispatch_command(
             let run_cmd = omg_lib::cli::run::RunCommand {
                 task: task.clone(),
                 args: args.clone(),
-                runtime_backend: runtime_backend.clone(),
+                runtime_backend: runtime_backend.map(Into::into),
                 watch: *watch,
                 parallel: *parallel,
                 using: using.clone(),
@@ -1232,7 +1232,7 @@ async fn dispatch_command(
         }
         Commands::Audit { command } => handle_audit_command(command.as_ref(), ctx).await?,
         Commands::New { stack, name } => {
-            new::run(stack, name)?;
+            new::run(stack.as_str(), name)?;
         }
         Commands::Container { command } => handle_container_command(command)?,
         #[cfg(feature = "license")]

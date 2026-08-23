@@ -5,7 +5,7 @@ use anyhow::Result;
 pub struct RunCommand {
     pub task: String,
     pub args: Vec<String>,
-    pub runtime_backend: Option<String>,
+    pub runtime_backend: Option<RuntimeBackend>,
     pub watch: bool,
     pub parallel: bool,
     pub using: Option<String>,
@@ -14,12 +14,7 @@ pub struct RunCommand {
 
 impl LocalCommandRunner for RunCommand {
     async fn execute(&self, _ctx: &CliContext) -> Result<()> {
-        let backend = self
-            .runtime_backend
-            .as_deref()
-            .map(str::parse::<RuntimeBackend>)
-            .transpose()
-            .map_err(|err| anyhow::anyhow!(err))?;
+        let backend = self.runtime_backend;
 
         if self.watch {
             task_runner::run_task_watch(&self.task, &self.args, backend)?;

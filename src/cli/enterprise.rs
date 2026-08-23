@@ -16,21 +16,20 @@ use crate::core::license;
 impl LocalCommandRunner for EnterpriseCommands {
     async fn execute(&self, ctx: &CliContext) -> Result<()> {
         match self {
-            EnterpriseCommands::Reports {
-                report_type,
-                format,
-            } => reports(report_type, format, ctx).await,
+            EnterpriseCommands::Reports { report_type } => reports(report_type.as_str(), ctx).await,
             EnterpriseCommands::Policy { command } => match command {
                 EnterprisePolicyCommands::Show { scope } => {
                     policy::show(scope.as_deref(), ctx).await
                 }
             },
             EnterpriseCommands::AuditExport {
-                format,
+                framework,
                 period,
                 output,
-            } => audit_export(format, period.as_deref(), output, ctx),
-            EnterpriseCommands::LicenseScan { export } => license_scan(export.as_deref(), ctx),
+            } => audit_export(framework.as_str(), period.as_deref(), output, ctx),
+            EnterpriseCommands::LicenseScan { export } => {
+                license_scan(export.as_ref().map(|value| value.as_str()), ctx)
+            }
             EnterpriseCommands::Server { command } => match command {
                 ServerCommands::Mirror { upstream } => server::mirror(upstream, ctx).await,
             },
@@ -39,27 +38,8 @@ impl LocalCommandRunner for EnterpriseCommands {
 }
 
 /// Generate executive reports
-pub async fn reports(report_type: &str, format: &str, _ctx: &CliContext) -> Result<()> {
+pub async fn reports(report_type: &str, _ctx: &CliContext) -> Result<()> {
     use crate::cli::packages::execute_cmd;
-
-    // Only JSON is implemented; the other formats previously wrote JSON bytes
-    // into .pdf/.html/.csv files, which misrepresented the artifact.
-    if !format.eq_ignore_ascii_case("json") {
-        anyhow::bail!(
-            "Unsupported report format '{format}'. Only 'json' is implemented; \
-             PDF/HTML/CSV rendering is not available"
-        );
-    }
-
-    // SECURITY: Validate report type
-    let valid_types = ["monthly", "quarterly", "custom"];
-    if !valid_types.contains(&report_type.to_lowercase().as_str()) {
-        execute_cmd(Components::error_with_suggestion(
-            format!("Invalid report type: {report_type}"),
-            "Valid types: monthly, quarterly, custom",
-        ));
-        anyhow::bail!("Invalid report type: {report_type}");
-    }
 
     license::require_feature("enterprise-reports")?;
 
