@@ -124,6 +124,18 @@ was not linked from any doc; its command usage remains in docs/runtimes.md
 - **Ci**: Cross-platform install script and R2 release sync
 ### 🐛 Bug Fixes
 
+- Apply wave-5 HANDOFF items — removal history completeness, cache-clean rollback warning
+
+  - PackageService::remove records every requested package in history even
+
+when its info() lookup misses (previously mutated unrecorded packages)
+
+  - omg clean --cache warns (non-blocking) listing cached versions that
+
+recent rollback plans reference, via new
+
+HistoryManager::rollback_referenced_versions(30)
+
 - Wave-5 scrutiny round — state invalidation, history, protocol versioning, coherence
 
 Fifth audit wave (7 specialized reviewers):
