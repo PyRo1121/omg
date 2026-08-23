@@ -146,17 +146,20 @@ fn record_install_history(
 ) -> Result<()> {
     use crate::core::history::{HistoryManager, PackageChange, TransactionType};
 
+    // Packages handled by the dedicated AUR path record their own entries
+    // with the actual installed identity; skip them here to avoid doubles.
     let changes = packages
         .iter()
+        .filter(|package| !aur_packages.contains(*package))
         .map(|package| {
             Ok(PackageChange {
                 name: history_package_name(package),
                 old_version: None,
                 new_version: None,
+                // AUR candidates never reach this recorder: they are
+                // handled (and recorded) by record_aur_history.
                 source: if is_local_package_file(package) {
                     "local"
-                } else if aur_packages.contains(package) {
-                    "aur"
                 } else {
                     "pacman"
                 }
@@ -515,6 +518,13 @@ async fn handle_aur_package(
     };
 
     if !should_install {
+        // Record the aborted attempt like any other failed mutation so
+        // history shows why nothing changed.
+        record_aur_history(
+            &aur_pkg.name,
+            None,
+            Err(anyhow::anyhow!("cancelled by user")),
+        )?;
         modern_ui::print_error("Installation cancelled");
         anyhow::bail!("Installation cancelled by user");
     }
@@ -522,11 +532,54 @@ async fn handle_aur_package(
     modern_ui::print_aur_build_phase("Building", &aur_pkg.name);
 
     let aur_client = AurClient::new()?;
-    aur_client.install(&aur_pkg.name).await?;
+    let outcome = aur_client.install(&aur_pkg.name).await;
+    // Record with the identity actually present in the local database: AUR
+    // builds can produce package names/versions that differ from the AUR
+    // metadata the user requested.
+    let installed_version = if outcome.is_ok() {
+        installed_package_version(&aur_pkg.name)
+    } else {
+        None
+    };
+    let history_result = record_aur_history(&aur_pkg.name, installed_version, outcome);
 
     modern_ui::print_success(&format!("Built and installed {} from AUR", aur_pkg.name));
     crate::core::usage::track_install(std::slice::from_ref(&aur_pkg.name));
-    Ok(())
+    history_result
+}
+
+/// Record one AUR install attempt in package history.
+///
+/// `installed_version` comes from the local pacman database after a
+/// successful build so split-package renames are captured accurately.
+fn record_aur_history(
+    name: &str,
+    installed_version: Option<String>,
+    outcome: Result<()>,
+) -> Result<()> {
+    use crate::core::history::{HistoryManager, PackageChange, TransactionType};
+    let change = PackageChange {
+        name: name.to_string(),
+        old_version: None,
+        new_version: installed_version,
+        source: "aur".to_string(),
+    };
+    HistoryManager::new()?.finish_operation(TransactionType::Install, vec![change], outcome)
+}
+
+/// Version of `name` in the local pacman database, if installed.
+fn installed_package_version(name: &str) -> Option<String> {
+    let alpm = alpm::Alpm::new(
+        crate::core::paths::pacman_root()
+            .to_string_lossy()
+            .into_owned(),
+        crate::core::paths::pacman_db_dir()
+            .to_string_lossy()
+            .into_owned(),
+    )
+    .ok()?;
+    let pkg = alpm.localdb().pkg(name).ok()?;
+    Some(pkg.version().to_string())
 }
 
 #[cfg(test)]
