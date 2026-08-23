@@ -292,6 +292,7 @@ analyzer inference
 - **Ci**: Cross-platform install script and R2 release sync
 ### 🐛 Bug Fixes
 
+- Wave-12 citation-backed fixes — review gate ordering, launcher socket safety
 - Wave-11 blocker pair — AUR outcome ordering and elevated flag drop
 
 From the 20-agent citation-backed audit (/tmp/omg-fleet11):
