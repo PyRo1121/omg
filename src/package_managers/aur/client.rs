@@ -737,6 +737,13 @@ impl AurClient {
             crate::cli::modern_ui::print_success(&format!("Installed dependency: {dep}"));
         }
 
+        // The user's PKGBUILD review MUST precede every network/filesystem
+        // side effect (wave-12 aud-aur-client blocker): parse_sources feeds
+        // download_sources, which writes attacker-named files into SRCDEST.
+        if self.settings.aur.review_pkgbuild {
+            Self::review_pkgbuild(&pkgbuild_path).await?;
+        }
+
         // Best-effort pre-download: makepkg still fetches anything we miss.
         match parse_sources(&pkg_dir) {
             Ok(sources) if sources.is_empty() => {}
@@ -758,10 +765,6 @@ impl AurClient {
         }
 
         let cache_key = self.cache_key(&pkg_dir, &env.makeflags)?;
-
-        if self.settings.aur.review_pkgbuild {
-            Self::review_pkgbuild(&pkgbuild_path).await?;
-        }
 
         let pkg_file = if let Some(cached) = self
             .cached_package(package, &env.pkgdest, &cache_key)

@@ -625,12 +625,12 @@ pub fn daemon(foreground: bool) -> Result<()> {
             return Ok(());
         }
 
-        // SECURITY: Atomic remove avoids TOCTOU race condition
-        if let Err(e) = std::fs::remove_file(&socket_path)
-            && e.kind() != std::io::ErrorKind::NotFound
-        {
-            return Err(e.into());
-        }
+        // SECURITY: never unlink the socket from the launcher. A live but
+        // momentarily unresponsive daemon would lose its listening pathname,
+        // and the replacement omgd would then fail its singleton lock —
+        // leaving the original daemon unreachable. omgd itself verifies
+        // staleness (type + ownership) under the singleton lock before any
+        // removal.
 
         // Start daemon in background
         // 1. Try to find omgd in the same directory as the current executable (ensures version match)
