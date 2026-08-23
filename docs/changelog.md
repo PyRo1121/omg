@@ -2100,6 +2100,22 @@ the Debian backend), so it was removed from the metadata.
 - Normalize project formatting
 ### 🧪 Testing
 
+- Local 3-distro harness — docker compose for arch/debian/fedora
+
+One command now exercises omg's real package backends on every major
+
+distro family from a laptop: pacman/ALPM (arch-e2e image), apt/rust-apt
+
+(Dockerfile.apt + debian-smoke-test.sh), and dnf/rpm-sqlite (new
+
+Dockerfile.fedora). Feature sets mirror release.yml exactly so local
+
+results match shipped artifacts.
+
+Supports the one-package-manager-everywhere goal: backend parity drift
+
+is caught locally before CI.
+
 - Replace remaining no-panic security checks with fail-closed assertions
 - Assert invalid names and real secret matches instead of no-panic
 
