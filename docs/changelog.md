@@ -120,6 +120,68 @@ was not linked from any doc; its command usage remains in docs/runtimes.md
 - **Ci**: Cross-platform install script and R2 release sync
 ### 🐛 Bug Fixes
 
+- Wave-3 scrutiny round — cfg matrix, TUI, daemon lifecycle, scripts, docs
+
+Third audit wave (6 read-only reviewers):
+
+  - CRITICAL: test-only path override setters were left ungated while their
+
+machinery was cfg-gated, breaking every release-profile build; both
+
+setters now gated and release check added to verification
+
+  - feature matrix: CI legs added for arch+pgp+license and debian+pgp
+
+intersections; dead re-export removed; telemetry backend identifier
+
+maps fedora/macos correctly; duplicated cfg attributes collapsed
+
+  - TUI/tea: Enter-key routing no longer hijacks the install confirmation
+
+popup; boundary-safe short-id rendering; Cmd::Error propagates exit
+
+codes instead of exiting 0; searches debounced and actions moved off
+
+the UI task; terminal restore on early setup failure; recursion depth
+
+capped; display-width truncation via unicode-width
+
+  - daemon/runtime env: interactive sudo fallback no longer re-executes an
+
+already-applied operation (duplicate side effects); ubuntu derivatives
+
+select correct self-update artifacts; stale-socket claim made race-
+
+safe; socket cleaned up on error exits; health interval matches docs
+
+  - debian backends: remaining blocking cache walks moved to
+
+spawn_blocking; execute_removal runs off the executor; rollback always
+
+restores dpkg status even when a removal step fails; clean --dry-run
+
+--orphans no longer mutates on the APT backend; aur-cleanup contract
+
+error preserved in every feature combo
+
+  - scripts/installer: undefined ask_yes_no helper fixed (install.sh was
+
+broken); bench timing parsing fixed; deploy.sh CWD corruption guarded;
+
+DRY_RUN=1 no longer mutates Cargo.toml/lock; artifact naming single-
+
+sourced between installer and release pipeline; downloaded assets
+
+checksum-verified; pgo profiling isolated from real user data
+
+  - docs: unimplemented fleet product page deleted; cheatsheet rewritten
+
+from actual CLI surface; nonexistent flags/subcommands (search -i/-a,
+
+migrate from-nvm/pyenv/rustup, run --list, uninstall runtime version,
+
+container flag drift) corrected across all docs
+
 - Wave-2 hardening across core, backends, daemon, runtimes, and CLI
 
 Second scrutiny wave (12 read-only reviewers, reports in /tmp/omg-fleet2):
@@ -1520,6 +1582,7 @@ the documented 'omg explicit' contract
 chore(deps): update rust crate git2 to 0.20 [security]
 ### 🔧 Maintenance
 
+- Capture lockfile and remaining wave-3 stragglers
 - Align repo with enterprise governance standard
 
   - Add .github/CODEOWNERS for review ownership
