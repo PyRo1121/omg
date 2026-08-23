@@ -164,6 +164,79 @@ impl Default for AurBuildSettings {
 
 impl Settings {
     /// Load settings from config file
+    /// Reject unknown top-level and `aur`-table keys before deserialization.
+    ///
+    /// Serde would otherwise silently ignore typos, fabricating a working-looking
+    /// config from misspelled settings.
+    fn reject_unknown_keys(content: &str) -> Result<()> {
+        let table: toml::Table = toml::from_str(content).context("Config is not valid TOML")?;
+
+        const ROOT_KEYS: [&str; 8] = [
+            "shims_enabled",
+            "data_dir",
+            "socket_path",
+            "default_shell",
+            "auto_update",
+            "telemetry_enabled",
+            "runtime_backend",
+            "aur",
+        ];
+        const AUR_KEYS: [&str; 15] = [
+            "build_method",
+            "build_concurrency",
+            "review_pkgbuild",
+            "secure_makepkg",
+            "allow_unsafe_builds",
+            "use_metadata_archive",
+            "metadata_cache_ttl_secs",
+            "makeflags",
+            "pkgdest",
+            "srcdest",
+            "cache_builds",
+            "enable_ccache",
+            "ccache_dir",
+            "enable_sccache",
+            "sccache_dir",
+        ];
+
+        // Legacy sections written by older omg releases. They carry no
+        // settings the current schema consumes; recognize them so existing
+        // installs keep working, but tell the user they are ignored.
+        const LEGACY_KEYS: [&str; 3] = ["cache", "general", "security"];
+
+        let mut unknown = Vec::new();
+        for key in table.keys() {
+            if ROOT_KEYS.contains(&key.as_str()) {
+                continue;
+            }
+            if LEGACY_KEYS.contains(&key.as_str()) {
+                tracing::warn!(
+                    key = key.as_str(),
+                    "config section '{key}' is deprecated and ignored by this omg version"
+                );
+                continue;
+            }
+            unknown.push(key.clone());
+        }
+        if let Some(aur) = table.get("aur").and_then(|value| value.as_table()) {
+            for key in aur.keys() {
+                if !AUR_KEYS.contains(&key.as_str()) {
+                    unknown.push(format!("aur.{key}"));
+                }
+            }
+        }
+
+        if unknown.is_empty() {
+            return Ok(());
+        }
+        anyhow::bail!(
+            "unknown configuration keys: {}. Allowed top-level keys: {}; allowed 'aur' keys: {}",
+            unknown.join(", "),
+            ROOT_KEYS.join(", "),
+            AUR_KEYS.join(", ")
+        )
+    }
+
     pub fn load() -> Result<Self> {
         let config_path = Self::config_path()?;
 
@@ -181,6 +254,12 @@ impl Settings {
 
             let content = std::fs::read_to_string(&config_path)
                 .with_context(|| format!("Failed to read config: {}", config_path.display()))?;
+            Self::reject_unknown_keys(&content).with_context(|| {
+                format!(
+                    "Invalid config: {} (unknown keys are rejected to catch typos)",
+                    config_path.display()
+                )
+            })?;
             let settings: Self = toml::from_str(&content)
                 .with_context(|| format!("Failed to parse config: {}", config_path.display()))?;
 

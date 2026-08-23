@@ -564,6 +564,12 @@ pub fn ensure_index_loaded() -> Result<()> {
     // Load or create index (with LZ4 compression support).
     // v7 adds per-package `suite` provenance used for download-URL construction;
     // v6 caches cannot answer it and are ignored (treated as a cold cache).
+    // Cache files carry a magic + format-version header so a mismatched or
+    // corrupt artifact is rejected with a resync instead of undefined
+    // deserialization behavior.
+    const CACHE_MAGIC: [u8; 4] = *b"ODXI";
+    const CACHE_FORMAT_VERSION: u32 = 1;
+
     let cache_path = paths::cache_dir().join("debian_index_v7.lz4");
     let mmap_path = paths::cache_dir().join("debian_index_v7.mmap");
 
@@ -582,11 +588,22 @@ pub fn ensure_index_loaded() -> Result<()> {
                 .all(|pkg_mtime| cache_mtime >= *pkg_mtime);
         }
 
-        if let Ok(compressed) = fs::read(&cache_path)
-            && let Ok(bytes) = lz4_flex::decompress_size_prepended(&compressed)
-            && let Ok(idx) = rkyv::from_bytes::<DebianPackageIndex, rkyv::rancor::Error>(&bytes)
+        if let Ok(mut compressed) = fs::read(&cache_path)
+            && compressed.len() >= 8
+            && compressed[0..4] == CACHE_MAGIC
+            && u32::from_le_bytes([compressed[4], compressed[5], compressed[6], compressed[7]])
+                == CACHE_FORMAT_VERSION
         {
-            index = Some(idx);
+            compressed.drain(0..8);
+            if let Ok(bytes) = lz4_flex::decompress_size_prepended(&compressed)
+                && let Ok(idx) = rkyv::from_bytes::<DebianPackageIndex, rkyv::rancor::Error>(&bytes)
+            {
+                index = Some(idx);
+            }
+        } else if cache_path.exists() {
+            tracing::debug!(
+                "debian index cache has an unrecognized format; rebuilding (run 'omg sync' if this persists)"
+            );
         }
     }
 
@@ -663,8 +680,13 @@ pub fn ensure_index_loaded() -> Result<()> {
         use std::io::Write;
         use tempfile::NamedTempFile;
 
-        // Save compressed version for space efficiency
-        let compressed = lz4_flex::compress_prepend_size(&bytes);
+        // Save compressed version for space efficiency, prefixed with the
+        // magic + format-version header the read path validates.
+        let mut framed = Vec::with_capacity(8 + bytes.len());
+        framed.extend_from_slice(&CACHE_MAGIC);
+        framed.extend_from_slice(&CACHE_FORMAT_VERSION.to_le_bytes());
+        framed.extend_from_slice(&bytes);
+        let compressed = lz4_flex::compress_prepend_size(&framed);
 
         // Atomic write for compressed cache
         let parent = cache_path.parent().unwrap_or_else(|| Path::new("."));

@@ -83,9 +83,10 @@ impl IpcTestFixture {
 
         while let Some(request_bytes) = framed.next().await {
             let bytes = request_bytes?;
-            let request: Request = bitcode::deserialize(&bytes)?;
+            let request: Request =
+                bitcode::deserialize(omg_lib::daemon::protocol::split_frame(&bytes)?.1)?;
             let response = handle_request(Arc::clone(&state), request).await;
-            let response_bytes = bitcode::serialize(&response)?;
+            let response_bytes = omg_lib::daemon::protocol::encode_frame(&response)?;
             framed.send(response_bytes.into()).await?;
         }
 
@@ -98,7 +99,7 @@ impl IpcTestFixture {
 
     async fn send_request(&self, stream: &mut UnixStream, request: &Request) -> Result<Response> {
         // Serialize request
-        let request_bytes = bitcode::serialize(request)?;
+        let request_bytes = omg_lib::daemon::protocol::encode_frame(request)?;
         let len = u32::try_from(request_bytes.len())?;
 
         // Send length + data
@@ -115,7 +116,9 @@ impl IpcTestFixture {
         stream.read_exact(&mut resp_bytes).await?;
 
         // Deserialize response
-        Ok(bitcode::deserialize(&resp_bytes)?)
+        Ok(bitcode::deserialize(
+            omg_lib::daemon::protocol::split_frame(&resp_bytes)?.1,
+        )?)
     }
 }
 
@@ -263,7 +266,7 @@ async fn test_multiple_concurrent_connections() -> Result<()> {
             let request = Request::Ping { id: client_id };
 
             // Send request
-            let request_bytes = bitcode::serialize(&request)?;
+            let request_bytes = omg_lib::daemon::protocol::encode_frame(&request)?;
             let len = u32::try_from(request_bytes.len())?;
             stream.write_all(&len.to_be_bytes()).await?;
             stream.write_all(&request_bytes).await?;
@@ -275,7 +278,8 @@ async fn test_multiple_concurrent_connections() -> Result<()> {
             let mut resp_bytes = vec![0u8; resp_len];
             stream.read_exact(&mut resp_bytes).await?;
 
-            let response: Response = bitcode::deserialize(&resp_bytes)?;
+            let response: Response =
+                bitcode::deserialize(omg_lib::daemon::protocol::split_frame(&resp_bytes)?.1)?;
             Ok::<_, anyhow::Error>(response)
         });
         handles.push(handle);
@@ -334,7 +338,7 @@ async fn test_client_disconnect_during_request() -> Result<()> {
         let request = Request::Status { id: 200 };
 
         // Send request
-        let request_bytes = bitcode::serialize(&request)?;
+        let request_bytes = omg_lib::daemon::protocol::encode_frame(&request)?;
         let len = u32::try_from(request_bytes.len())?;
         stream.write_all(&len.to_be_bytes()).await?;
         stream.write_all(&request_bytes).await?;

@@ -211,15 +211,20 @@ impl PackageService {
         let mut changes = Vec::with_capacity(packages.len());
         for pkg in packages {
             let known = self.backend.info(pkg).await?;
+            let (name, old_version) = match known {
+                Some(info) => {
+                    #[allow(
+                        clippy::implicit_clone,
+                        reason = "the package version type varies by backend feature"
+                    )]
+                    let version = info.version.to_string();
+                    (info.name, Some(version))
+                }
+                None => (pkg.clone(), None),
+            };
             changes.push(PackageChange {
-                name: known
-                    .as_ref()
-                    .map_or_else(|| pkg.clone(), |info| info.name.clone()),
-                #[allow(
-                    clippy::implicit_clone,
-                    reason = "the package version type varies by backend feature"
-                )]
-                old_version: known.map(|info| info.version.to_string()),
+                name,
+                old_version,
                 new_version: None,
                 source: self.backend.name().to_string(),
             });

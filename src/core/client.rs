@@ -178,17 +178,20 @@ impl DaemonClient {
         let id = request.id();
         let framed = self.framed.as_mut().context("Client is in sync mode")?;
 
-        // Encode and send
-        let request_bytes = bitcode::serialize(&request)?;
+        // Encode and send (versioned frame)
+        let request_bytes =
+            crate::daemon::protocol::encode_frame(&request).context("Failed to encode request")?;
         framed.send(request_bytes.into()).await?;
 
-        // Read and decode response
+        // Read and decode response (version-checked)
         let response_bytes = tokio::time::timeout(Duration::from_secs(30), framed.next())
             .await
             .context("Timed out waiting for daemon response")?
             .ok_or_else(|| anyhow::anyhow!("Daemon disconnected"))??;
+        let (_, payload) = crate::daemon::protocol::split_frame(&response_bytes)
+            .map_err(|e| anyhow::anyhow!("Daemon protocol error: {e}"))?;
 
-        let response: Response = bitcode::deserialize(&response_bytes)?;
+        let response: Response = bitcode::deserialize(payload)?;
 
         match response {
             Response::Success {
@@ -425,14 +428,16 @@ fn as_explicit_count(response: &ResponseResult) -> Option<usize> {
 /// [`PooledSyncClient`].
 fn sync_roundtrip(stream: &mut SyncUnixStream, request: &Request) -> Result<ResponseResult> {
     let id = request.id();
-    let request_bytes =
-        bitcode::serialize(request).context("Failed to serialize daemon request")?;
+    let request_bytes = crate::daemon::protocol::encode_frame(request)
+        .context("Failed to encode daemon request")?;
     crate::daemon::protocol::write_frame(stream, &request_bytes)
         .context("Failed to write request to daemon socket")?;
     let resp_bytes = crate::daemon::protocol::read_frame(stream)
         .context("Failed to read response from daemon")?;
+    let (_, payload) = crate::daemon::protocol::split_frame(&resp_bytes)
+        .map_err(|e| anyhow::anyhow!("Daemon protocol error: {e}"))?;
     let response: Response =
-        bitcode::deserialize(&resp_bytes).context("Failed to deserialize daemon response")?;
+        bitcode::deserialize(payload).context("Failed to deserialize daemon response")?;
 
     match response {
         Response::Success {

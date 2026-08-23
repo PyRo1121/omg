@@ -469,7 +469,24 @@ async fn handle_client(stream: tokio::net::UnixStream, state: Arc<DaemonState>) 
         // from this client. Answer once with the protocol's parse-error code,
         // then close cleanly instead of tearing down silently. Request id 0 is
         // the reserved error-envelope id for requests that never decoded.
-        let request: Request = match bitcode::deserialize(&bytes) {
+        // Reject peers speaking a different protocol version before any
+        // decode attempt could silently mis-map same-shaped variants.
+        let payload = match crate::daemon::protocol::split_frame(&bytes) {
+            Ok((_, payload)) => payload,
+            Err(crate::daemon::protocol::FrameError::VersionMismatch { peer, ours }) => {
+                tracing::warn!(
+                    peer,
+                    ours,
+                    "rejecting client with mismatched protocol version"
+                );
+                continue;
+            }
+            Err(e) => {
+                tracing::warn!("malformed frame header: {e}");
+                continue;
+            }
+        };
+        let request: Request = match bitcode::deserialize(payload) {
             Ok(request) => request,
             Err(error) => {
                 let msg = format!("Failed to deserialize request: {error}");
@@ -487,7 +504,7 @@ async fn handle_client(stream: tokio::net::UnixStream, state: Arc<DaemonState>) 
                     code: error_codes::PARSE_ERROR,
                     message: msg,
                 };
-                match bitcode::serialize(&response) {
+                match crate::daemon::protocol::encode_frame(&response) {
                     Ok(response_bytes) => {
                         GLOBAL_METRICS.add_bytes_sent(response_bytes.len() as u64);
                         if let Err(send_error) = framed.send(response_bytes.into()).await {
@@ -558,7 +575,7 @@ async fn handle_client(stream: tokio::net::UnixStream, state: Arc<DaemonState>) 
                 message: "Rate limit exceeded. Please slow down.".to_string(),
             };
 
-            let response_bytes = bitcode::serialize(&response)?;
+            let response_bytes = crate::daemon::protocol::encode_frame(&response)?;
             GLOBAL_METRICS.add_bytes_sent(response_bytes.len() as u64);
             framed.send(response_bytes.into()).await?;
             continue;
@@ -586,7 +603,7 @@ async fn handle_client(stream: tokio::net::UnixStream, state: Arc<DaemonState>) 
                 });
 
         // Encode and send response
-        let response_bytes = bitcode::serialize(&response)?;
+        let response_bytes = crate::daemon::protocol::encode_frame(&response)?;
         GLOBAL_METRICS.add_bytes_sent(response_bytes.len() as u64);
         framed.send(response_bytes.into()).await?;
     }

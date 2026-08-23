@@ -259,12 +259,14 @@ struct HalfOpenProbeGuard;
 
 impl Drop for HalfOpenProbeGuard {
     fn drop(&mut self) {
-        // Release the single-flight latch and return the breaker to Open so
-        // the cooldown restarts: a cancelled probe learned nothing about the
-        // endpoint, so the next attempt must come from a fresh half-open
-        // transition instead of lingering in an unprobed HalfOpen state.
         HALF_OPEN_PROBE_IN_FLIGHT.store(false, Ordering::Relaxed);
-        CIRCUIT_STATE.store(CircuitState::Open as u32, Ordering::Relaxed);
+        // If the probe is still unresolved (cancelled at an await point),
+        // return the breaker to Open so the cooldown restarts. When the
+        // probe completed first, record_success/record_failure already set
+        // the final state; dropping the guard afterwards must not clobber it.
+        if CircuitState::from(CIRCUIT_STATE.load(Ordering::Relaxed)) == CircuitState::HalfOpen {
+            CIRCUIT_STATE.store(CircuitState::Open as u32, Ordering::Relaxed);
+        }
     }
 }
 
@@ -339,8 +341,11 @@ async fn send_event_internal(payload: TelemetryPayload) {
     // request so cancellation below cannot leak the latch (see M1).
     let (circuit_state, _probe_guard) = check_circuit_breaker();
 
-    if circuit_state == CircuitState::Open {
-        tracing::debug!("Circuit breaker is open, queuing event locally");
+    if matches!(circuit_state, CircuitState::Open | CircuitState::HalfOpen) {
+        // Open: cooldown. HalfOpen without the probe guard: another caller is
+        // the single designated prober; this request must not multiply
+        // failures against a struggling endpoint.
+        tracing::debug!("Circuit breaker is {circuit_state:?}, queuing event locally");
         queue_for_retry(payload);
         return;
     }
@@ -464,8 +469,8 @@ pub async fn send_batch(events: Vec<TelemetryEvent>) -> Result<()> {
     // batch request so cancellation cannot leak the latch.
     let (circuit_state, _probe_guard) = check_circuit_breaker();
 
-    if circuit_state == CircuitState::Open {
-        anyhow::bail!("Telemetry circuit breaker is open");
+    if matches!(circuit_state, CircuitState::Open | CircuitState::HalfOpen) {
+        anyhow::bail!("Telemetry circuit breaker is {circuit_state:?}");
     }
 
     let payloads: Vec<TelemetryPayload> = events.into_iter().map(TelemetryPayload::new).collect();

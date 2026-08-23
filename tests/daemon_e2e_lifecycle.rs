@@ -98,9 +98,11 @@ impl DaemonTestFixture {
             return false;
         };
 
-        // Send ping request (bitcode-serialized)
+        // Send ping request (versioned protocol frame)
         let ping_request = omg_lib::daemon::protocol::Request::Ping { id: 1 };
-        let request_bytes = bitcode::serialize(&ping_request).unwrap();
+        let Ok(request_bytes) = omg_lib::daemon::protocol::encode_frame(&ping_request) else {
+            return false;
+        };
         let len = u32::try_from(request_bytes.len()).unwrap();
 
         if stream.write_all(&len.to_be_bytes()).await.is_err() {
@@ -124,8 +126,11 @@ impl DaemonTestFixture {
         }
 
         // Decode response
+        let Some((_, payload)) = omg_lib::daemon::protocol::split_frame(&resp_bytes).ok() else {
+            return false;
+        };
         let Ok(response): Result<omg_lib::daemon::protocol::Response, _> =
-            bitcode::deserialize(&resp_bytes)
+            bitcode::deserialize(payload)
         else {
             return false;
         };

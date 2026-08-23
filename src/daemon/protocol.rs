@@ -6,6 +6,52 @@
 use rkyv::{Archive, Deserialize as RkyvDeserialize, Serialize as RkyvSerialize};
 use serde::{Deserialize, Serialize};
 
+/// Wire-protocol version. Bump on any change to `Request`/`Response` shape.
+///
+/// Every frame is `[u32 LE version][bitcode payload]`. Peers reject frames
+/// whose version differs instead of attempting a decode that could
+/// silently mis-map same-shaped variants.
+pub const PROTOCOL_VERSION: u32 = 1;
+
+/// Frame layout error for [`encode_frame`] / [`split_frame`].
+#[derive(Debug, thiserror::Error)]
+pub enum FrameError {
+    #[error("frame too short to contain the protocol version header")]
+    TooShort,
+    #[error(
+        "unsupported peer protocol version {peer} (this build speaks {ours}); update omg so client and daemon match"
+    )]
+    VersionMismatch { peer: u32, ours: u32 },
+    #[error("failed to encode payload: {0}")]
+    Encode(String),
+}
+
+/// Serialize `value` into a versioned frame:
+/// `[u32 LE PROTOCOL_VERSION][bitcode payload]`.
+pub fn encode_frame<T: serde::Serialize>(value: &T) -> Result<Vec<u8>, FrameError> {
+    let payload = bitcode::serialize(value).map_err(|e| FrameError::Encode(e.to_string()))?;
+    let mut frame = Vec::with_capacity(4 + payload.len());
+    frame.extend_from_slice(&PROTOCOL_VERSION.to_le_bytes());
+    frame.extend_from_slice(&payload);
+    Ok(frame)
+}
+
+/// Split a received frame into its protocol version and payload bytes,
+/// rejecting versions this build cannot speak.
+pub fn split_frame(frame: &[u8]) -> Result<(u32, &[u8]), FrameError> {
+    if frame.len() < 4 {
+        return Err(FrameError::TooShort);
+    }
+    let peer = u32::from_le_bytes([frame[0], frame[1], frame[2], frame[3]]);
+    if peer != PROTOCOL_VERSION {
+        return Err(FrameError::VersionMismatch {
+            peer,
+            ours: PROTOCOL_VERSION,
+        });
+    }
+    Ok((peer, &frame[4..]))
+}
+
 /// Request ID type
 pub type RequestId = u64;
 

@@ -61,8 +61,29 @@ fn configured_repo_count() -> usize {
 
 pub async fn update_fast() -> Result<()> {
     modern_ui::print_phase_header("⚡", "Fast System Update", "sync + upgrade");
-    crate::package_managers::arch::run_privileged_operation("fullupdate", &[], || async { Ok(()) })
-        .await
+    crate::package_managers::arch::run_privileged_operation("fullupdate", &[], run_sysupgrade).await
+}
+
+/// Execute a full system upgrade and record it in history.
+///
+/// Used by the privileged arms of `update --fast` / `--turbo`: previously
+/// these closures were no-ops, so an already-privileged invocation claimed
+/// success without upgrading anything.
+async fn run_sysupgrade() -> anyhow::Result<()> {
+    let updates = crate::package_managers::get_update_list()?;
+    let changes = history_changes(&updates);
+    let result = tokio::task::spawn_blocking(|| {
+        crate::package_managers::execute_transaction(Vec::new(), false, true, None)
+    })
+    .await
+    .context("System upgrade task failed")?;
+
+    let history = crate::core::history::HistoryManager::new()?;
+    history.finish_operation(
+        crate::core::history::TransactionType::Update,
+        changes,
+        result,
+    )
 }
 
 pub async fn update_turbo() -> Result<()> {
@@ -89,7 +110,7 @@ pub async fn update_turbo() -> Result<()> {
     );
     println!();
 
-    crate::package_managers::arch::run_privileged_operation("turboupdate", &[], || async { Ok(()) })
+    crate::package_managers::arch::run_privileged_operation("turboupdate", &[], run_sysupgrade)
         .await
 }
 

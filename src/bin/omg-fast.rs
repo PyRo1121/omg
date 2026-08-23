@@ -177,7 +177,7 @@ fn send_search_request(stream: &mut UnixStream, query: &str) -> Result<()> {
         limit: Some(20),
     };
 
-    let request_bytes = bitcode::serialize(&request)?;
+    let request_bytes = omg_lib::daemon::protocol::encode_frame(&request)?;
     let len = u32::try_from(request_bytes.len())
         .context("Search request too large for protocol framing")?;
 
@@ -194,7 +194,8 @@ fn send_search_request(stream: &mut UnixStream, query: &str) -> Result<()> {
     let mut resp_bytes = vec![0u8; resp_len];
     stream.read_exact(&mut resp_bytes)?;
 
-    let response: Response = bitcode::deserialize(&resp_bytes)?;
+    let (_, payload) = omg_lib::daemon::protocol::split_frame(&resp_bytes)?;
+    let response: Response = bitcode::deserialize(payload)?;
 
     match response {
         Response::Success {
@@ -233,7 +234,7 @@ fn send_info_request(stream: &mut UnixStream, package: &str) -> Result<()> {
         package: package.to_string(),
     };
 
-    let request_bytes = bitcode::serialize(&request)?;
+    let request_bytes = omg_lib::daemon::protocol::encode_frame(&request)?;
     let len = u32::try_from(request_bytes.len())
         .context("Info request too large for protocol framing")?;
 
@@ -250,7 +251,8 @@ fn send_info_request(stream: &mut UnixStream, package: &str) -> Result<()> {
     let mut resp_bytes = vec![0u8; resp_len];
     stream.read_exact(&mut resp_bytes)?;
 
-    let response: Response = bitcode::deserialize(&resp_bytes)?;
+    let (_, payload) = omg_lib::daemon::protocol::split_frame(&resp_bytes)?;
+    let response: Response = bitcode::deserialize(payload)?;
 
     match response {
         Response::Success {
