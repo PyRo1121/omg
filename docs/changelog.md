@@ -62,6 +62,10 @@ std::io imports); format touched files with rustfmt
 - Reuse atomic download helper for mise installs
 ### ⚡ Performance
 
+- Wave-4 scrutiny round — concurrency, boundaries, perf, API surface, errors
+
+Fourth audit wave (7 specialized reviewers):
+
 - Cut local-only fluff from the repo
 
 Remove tooling, planning docs, and stale content that nothing references
