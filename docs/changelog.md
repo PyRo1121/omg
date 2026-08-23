@@ -13,6 +13,18 @@ OMG is the fastest unified package manager for Linux, replacing pacman, yay, nvm
 ## [Unreleased]
 ### ♻️  Refactoring
 
+- Delete dead OmgError contract and unused fast-status readers
+
+Completes the wave-4 deletion HANDOFF: production code uniformly uses
+
+anyhow::Error, so the typed OmgError enum, Result alias, error-code table,
+
+suggestion table, and their four tests had no callers. Only
+
+suggest_for_anyhow (used at the CLI exit boundary) survives.
+
+Also removes FastStatus orphan/updates count readers that nothing called.
+
 - **Dnf**: Delete unreachable repository-metadata scaffolding
 
 fetch_repo_packages unconditionally errored, so the entire repo-metadata
