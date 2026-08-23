@@ -87,7 +87,7 @@ OMG_NO_TELEMETRY=1 curl -fsSL https://pyro1121.com/install.sh | bash
 OMG_SKIP_SHELL=1 curl -fsSL https://pyro1121.com/install.sh | bash
 
 # Install specific version
-OMG_VERSION=v0.1.214 curl -fsSL https://pyro1121.com/install.sh | bash
+OMG_VERSION=v0.1.215 curl -fsSL https://pyro1121.com/install.sh | bash
 ```
 
 </details>
@@ -168,7 +168,7 @@ curl -fsSL https://pyro1121.com/install.sh | bash
 **🦀 From Source (Any Platform)**
 
 ```bash
-cargo install omg-cli
+cargo install omg --locked
 ```
 
 Requires: Rust 1.93+, platform build tools
@@ -218,10 +218,10 @@ echo 'omg hook fish | source' >> ~/.config/fish/config.fish
 
 OMG prioritizes your privacy with optional, transparent telemetry:
 
-- **Basic Install Tracking**: Anonymous install counts (no PII collected). Opt-out via `OMG_TELEMETRY=0` at install.
+- **Basic Install Tracking**: Anonymous install counts (no PII collected). Opt-out at install time with `OMG_NO_TELEMETRY=1` (set it for the installer's bash: `curl -fsSL https://pyro1121.com/install.sh | OMG_NO_TELEMETRY=1 bash`). At runtime, `OMG_TELEMETRY=0` also disables collection.
 - **Enhanced Telemetry**: Only when you have a license key. Tracks commands, performance, and features to improve the product.
 - **No Collection**: Never collects passwords, credentials, home paths, or sensitive data.
-- **Always Reversible**: Disable anytime via `omg config set core.telemetry_enabled false`.
+- **Always Reversible**: Disable anytime via `omg config set telemetry.enabled false`.
 
 **Full details**: [Privacy & Telemetry Guide](docs/security.md#privacy--telemetry)
 
@@ -386,7 +386,7 @@ OMG is split into two components:
 1. **`omg`**: A thin, high-performance CLI client.
 2. **`omgd`**: A persistent daemon that maintains an in-memory package index and handles redb persistence.
 
-Communication happens over a high-speed Unix Domain Socket using a custom binary protocol (Length-Delimited framing + Bincode) for zero-latency communication.
+Communication happens over a high-speed Unix Domain Socket using a custom binary protocol (Length-Delimited framing + Bitcode) for zero-latency communication.
 
 ---
 
