@@ -124,6 +124,90 @@ was not linked from any doc; its command usage remains in docs/runtimes.md
 - **Ci**: Cross-platform install script and R2 release sync
 ### 🐛 Bug Fixes
 
+- Wave-5 scrutiny round — state invalidation, history, protocol versioning, coherence
+
+Fifth audit wave (7 specialized reviewers):
+
+state invalidation:
+
+  - every successful pacman-db mutation (arch install/remove/update/clean/
+
+orphans, AUR install) now fires best-effort CacheClear to the daemon
+
+and bumps local CACHE_EPOCH   - daemon ALPM views were frozen for the
+
+process lifetime and Request::CacheClear had no sender
+
+  - fast_status payload carries generated_at; readers treat stale entries
+
+(>15m) as absent instead of serving days-old data
+
+history & rollback:
+
+  - rollback mutations are recorded as history entries (previously invisible)
+
+  - AUR installs record the actual built package name (foo-bin), not the
+
+requested alias
+
+  - removals of packages without info() metadata still record history
+
+  - mixed official+AUR update entries shaped so rollback can restore
+
+official and refuse AUR explicitly
+
+  - clean --cache warns when it would destroy versions referenced by
+
+recent history (update-rollback dependency)
+
+  - arch restore tolerates unreadable cache dirs with a warning, failing
+
+only when no configured cache is readable
+
+protocol & persisted formats:
+
+  - IPC protocol version handshake: mismatched peers rejected with clear
+
+error instead of undefined behavior
+
+  - config TOML rejects unknown keys with allowed-key listing (typo
+
+protection, no silent fabrication)
+
+  - debian index/bitcode/content-store caches carry magic+version headers;
+
+mismatched formats are rejected with resync guidance instead of UB
+
+  - omg.lock and team-status.json carry explicit schema versions
+
+cli coherence:
+
+  - static completions match the real command set (phantom removed, 8
+
+missing added)
+
+  - contradictory flag combinations (--dry-run with update --fast/--turbo,
+
+doctor --turbo with --network/--eol) rejected explicitly
+
+  - unsupported --json targets rejected explicitly instead of silently
+
+emitting text
+
+  - shell parsing unified on ShellKind ValueEnum
+
+async discipline:
+
+  - TUI quit no longer abandons in-flight action tasks silently
+
+  - daemon shutdown drains connection tasks and final worker refresh
+
+  - workspace JoinError collects all sibling results
+
+  - tokio Command children kill_on_drop where the task owns them
+
+  - unpack worker drains quietly at runtime shutdown instead of panicking
+
 - Wave-3 scrutiny round — cfg matrix, TUI, daemon lifecycle, scripts, docs
 
 Third audit wave (6 read-only reviewers):
