@@ -210,10 +210,17 @@ impl Settings {
                 continue;
             }
             if LEGACY_KEYS.contains(&key.as_str()) {
-                tracing::warn!(
-                    key = key.as_str(),
-                    "config section '{key}' is deprecated and ignored by this omg version"
-                );
+                // Settings::load runs many times per invocation (telemetry
+                // gates, completions, ...); warn once per process so a daily
+                // command is not spammed with the same notice.
+                use std::sync::atomic::{AtomicBool, Ordering};
+                static WARNED: AtomicBool = AtomicBool::new(false);
+                if !WARNED.swap(true, Ordering::Relaxed) {
+                    tracing::warn!(
+                        key = key.as_str(),
+                        "config section '{key}' is deprecated and ignored by this omg version"
+                    );
+                }
                 continue;
             }
             unknown.push(key.clone());
