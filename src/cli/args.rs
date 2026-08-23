@@ -19,7 +19,8 @@ pub struct Cli {
     #[arg(short, long, global = true, action = clap::ArgAction::Count)]
     pub verbose: u8,
 
-    /// Suppress all output except errors
+    /// Suppress non-essential output: log messages above errors and
+    /// fast-path success banners. Command results still print.
     #[arg(short, long, global = true)]
     pub quiet: bool,
 
@@ -228,8 +229,9 @@ pub enum Commands {
     /// Usage: eval "$(omg hook zsh)"
     #[command(next_help_heading = "Shell Integration")]
     Hook {
-        /// Shell type (bash, zsh, fish)
-        shell: String,
+        /// Shell type
+        #[arg(value_enum)]
+        shell: ShellKind,
     },
 
     /// Manage Git hooks for environment synchronization
@@ -248,8 +250,8 @@ pub enum Commands {
     #[command(hide = true)]
     HookEnv {
         /// Shell type
-        #[arg(short, long, default_value = "zsh")]
-        shell: String,
+        #[arg(short, long, value_enum, default_value_t = ShellKind::Zsh)]
+        shell: ShellKind,
     },
 
     // ═══════════════════════════════════════════════════════════════════════
@@ -306,9 +308,10 @@ pub enum Commands {
     /// Internal: Dynamic shell completions
     #[command(hide = true)]
     Complete {
-        /// Shell type (bash, zsh, fish)
-        #[arg(short, long)]
-        shell: String,
+        /// Shell requesting completions. Suggestions are shell-agnostic word
+        /// lists valid for every supported shell; this validates the caller.
+        #[arg(short, long, value_enum)]
+        shell: ShellKind,
         /// Current word being completed
         #[arg(short, long)]
         current: String,
@@ -336,7 +339,7 @@ pub enum Commands {
         #[arg(long)]
         eol: bool,
         /// Enable turbo mode (zero-sudo package operations via Linux capabilities)
-        #[arg(long)]
+        #[arg(long, conflicts_with_all = ["network", "eol"])]
         turbo: bool,
     },
 

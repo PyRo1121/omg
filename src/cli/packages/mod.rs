@@ -114,7 +114,9 @@ pub(crate) fn execute_cmd(cmd: crate::cli::tea::Cmd<()>) {
                 println!("  ⚠ {msg}");
             }
             Cmd::Error(msg) => {
-                tracing::error!("{}", msg);
+                // User-facing failure: stderr so it stays visible even when
+                // stdout is redirected or consumed by progress rendering.
+                eprintln!("✗ {msg}");
             }
             Cmd::Header(title, body) => {
                 println!("\n[{title}] {body}");

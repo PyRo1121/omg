@@ -391,17 +391,6 @@ impl StoredLicense {
     pub fn is_token_valid(&self) -> bool {
         self.verified_payload().is_some()
     }
-
-    /// Check if token needs refresh (< 1 day remaining).
-    #[must_use]
-    pub fn needs_refresh(&self) -> bool {
-        if let Some(payload) = self.verified_payload() {
-            let now = jiff::Timestamp::now().as_second();
-            let one_day = 24 * 60 * 60;
-            return payload.exp - now < one_day;
-        }
-        true
-    }
 }
 
 static MACHINE_ID: OnceLock<String> = OnceLock::new();
@@ -569,11 +558,6 @@ pub fn remove_license() -> Result<()> {
         std::fs::remove_file(path)?;
     }
     Ok(())
-}
-
-/// Validate a license key against the API
-pub async fn validate_license(key: &str) -> Result<LicenseResponse> {
-    validate_license_with_user(key, None, None).await
 }
 
 /// Redact a license key for logging. Only a short prefix of plain-ASCII
@@ -825,40 +809,6 @@ pub async fn activate_with_user(
     Ok(stored)
 }
 
-/// Refresh license token if needed (called periodically)
-pub async fn refresh_if_needed() -> Result<()> {
-    let Some(license) = load_license() else {
-        return Ok(()); // No license to refresh
-    };
-
-    if !license.needs_refresh() {
-        return Ok(()); // Token still valid
-    }
-
-    // Try to refresh
-    match validate_license(&license.key).await {
-        Ok(response) if response.valid => {
-            let updated = StoredLicense {
-                key: license.key,
-                tier: response.tier.unwrap_or(license.tier),
-                features: response.features.unwrap_or(license.features),
-                customer: response.customer.or(license.customer),
-                expires_at: response.expires_at.or(license.expires_at),
-                validated_at: jiff::Timestamp::now().as_second(),
-                token: response.token.or(license.token),
-                machine_id: license.machine_id,
-            };
-            save_license(&updated)?;
-        }
-        _ => {
-            // Refresh failed, but token might still be valid for offline use
-            tracing::warn!("License refresh failed, using cached token");
-        }
-    }
-
-    Ok(())
-}
-
 /// Get current user tier
 pub fn current_tier() -> Tier {
     load_license().map_or(Tier::Free, |l| l.tier_enum())
@@ -872,11 +822,6 @@ pub fn has_feature(feature_name: &str) -> bool {
     };
 
     current_tier() >= feature.required_tier()
-}
-
-/// Check if user has at least the specified tier
-pub fn has_tier(required: Tier) -> bool {
-    current_tier() >= required
 }
 
 /// Require a feature, returning an error if not available
@@ -895,19 +840,6 @@ pub fn require_feature(feature_name: &str) -> Result<()> {
         feature_name,
         required_tier.display_name(),
         required_tier.price()
-    )
-}
-
-/// Require at least a specific tier
-pub fn require_tier(required: Tier) -> Result<()> {
-    if has_tier(required) {
-        return Ok(());
-    }
-
-    anyhow::bail!(
-        "This feature requires {} tier ({}). Upgrade at https://pyro1121.com/pricing",
-        required.display_name(),
-        required.price()
     )
 }
 

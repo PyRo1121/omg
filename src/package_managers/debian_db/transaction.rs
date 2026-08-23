@@ -777,31 +777,31 @@ fn remove_packages_sequentially(
         pb.set_message("prerm");
         pb.inc(1);
         run_prerm_script(package_name).map_err(|error| {
-            removal_step_failed(&pb, overall, package_name, "prerm script", &error)
+            removal_step_failed(&pb, overall, package_name, "prerm script", error)
         })?;
 
         pb.set_message("removing files");
         pb.inc(1);
         remove_package_files(package_name).map_err(|error| {
-            removal_step_failed(&pb, overall, package_name, "file removal", &error)
+            removal_step_failed(&pb, overall, package_name, "file removal", error)
         })?;
 
         pb.set_message("postrm");
         pb.inc(1);
         run_postrm_script(package_name).map_err(|error| {
-            removal_step_failed(&pb, overall, package_name, "postrm script", &error)
+            removal_step_failed(&pb, overall, package_name, "postrm script", error)
         })?;
 
         pb.set_message("updating status");
         pb.inc(1);
         update_dpkg_status_for_removal(package_name).map_err(|error| {
-            removal_step_failed(&pb, overall, package_name, "status update", &error)
+            removal_step_failed(&pb, overall, package_name, "status update", error)
         })?;
 
         pb.set_message("cleanup");
         pb.inc(1);
         cleanup_dpkg_info_files(package_name)
-            .map_err(|error| removal_step_failed(&pb, overall, package_name, "cleanup", &error))?;
+            .map_err(|error| removal_step_failed(&pb, overall, package_name, "cleanup", error))?;
 
         pb.set_message("\u{2713}".green().to_string());
         pb.finish();
@@ -1575,13 +1575,22 @@ fn removal_step_failed(
     overall: &ProgressBar,
     package_name: &str,
     step: &str,
-    error: &anyhow::Error,
+    error: anyhow::Error,
 ) -> anyhow::Error {
     pb.set_message(format!("{step} failed: {error}").red().to_string());
     pb.finish();
     overall.inc(1);
-    tracing::error!("Failed to {step} for {package_name}: {error}");
-    anyhow::anyhow!("Package removal failed during {step} for {package_name}")
+    // Debug-level here: the propagated chain below carries the full detail to
+    // the single boundary that owns user-facing error reporting.
+    tracing::debug!(
+        target: "pkg_removal",
+        package_name = %package_name,
+        step = %step,
+        "removal step failed: {error:#}"
+    );
+    error.context(format!(
+        "package removal failed during {step} for {package_name}"
+    ))
 }
 
 const DPKG_INFO_DIR: &str = "/var/lib/dpkg/info";

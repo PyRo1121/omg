@@ -571,7 +571,7 @@ async fn async_main(args: Vec<String>) -> Result<()> {
     validate_package_security(&cli.command)?;
 
     // Initialize logging
-    init_logging(cli.verbose);
+    init_logging(cli.verbose, cli.quiet);
 
     let telemetry_ping = spawn_telemetry_ping();
 
@@ -649,10 +649,13 @@ fn validate_package_security(command: &Commands) -> Result<()> {
 }
 
 /// Initialize tracing/logging subsystem
-fn init_logging(verbose: u8) {
+fn init_logging(verbose: u8, quiet: bool) {
     let env_filter = if std::env::var("RUST_LOG").is_ok() {
         // RUST_LOG owns filtering verbatim; do not override the user's choice.
         tracing_subscriber::EnvFilter::from_default_env()
+    } else if quiet {
+        // Quiet mode: errors only.
+        tracing_subscriber::EnvFilter::new("error")
     } else {
         // Map -v counts to levels (0=WARN, 1=INFO, 2=DEBUG, 3+=TRACE).
         let level = match verbose {
@@ -878,6 +881,16 @@ async fn handle_update_command(
     fast: bool,
     turbo: bool,
 ) -> Result<()> {
+    // Fast/turbo re-exec into non-interactive privileged flows that cannot
+    // preview or skip; honoring --check/--dry-run there would be a lie, so
+    // reject the combination instead of silently ignoring it (wave-5 F4).
+    // (--yes is accepted: fast/turbo never prompt, so it is already implied.)
+    if (fast || turbo) && (check || dry_run) {
+        anyhow::bail!(
+            "--{} cannot be combined with --fast/--turbo: fast and turbo updates run non-interactively without preview",
+            if check { "check" } else { "dry-run" }
+        );
+    }
     if turbo {
         packages::update_turbo().await
     } else if fast {
@@ -1030,6 +1043,29 @@ async fn dispatch_command(
     ctx: &omg_lib::cli::CliContext,
     json_flag: bool,
 ) -> Result<()> {
+    // Global --json contract: reject unsupported combinations explicitly instead
+    // of silently emitting human-readable output (wave-5 F3). `privacy` is
+    // accepted because `privacy status` is the scripted JSON entrypoint.
+    if json_flag
+        && !matches!(
+            command,
+            Commands::Search { .. }
+                | Commands::Info { .. }
+                | Commands::Explicit { .. }
+                | Commands::List { .. }
+                | Commands::Status { .. }
+                | Commands::History { .. }
+                | Commands::Stats
+                | Commands::Outdated
+                | Commands::Privacy { .. }
+        )
+    {
+        anyhow::bail!(
+            "--json is not supported for `{}`; supported: search, info, explicit, list, status, history, stats, outdated, privacy status",
+            command_name(command)
+        );
+    }
+
     match command {
         // Single dispatcher: each group runner is invoked directly here; there is
         // deliberately no blanket `impl LocalCommandRunner for Commands` fallback.
@@ -1113,12 +1149,12 @@ async fn dispatch_command(
             runtimes::list_versions(runtime.as_deref(), *available, json_flag).await?;
         }
         Commands::Hook { shell } => {
-            hooks::print_hook(shell)?;
+            hooks::print_hook(shell.as_str())?;
         }
         Commands::Hooks { command } => handle_hooks_command(command)?,
         Commands::Workspace { command } => handle_workspace_command(command).await?,
         Commands::HookEnv { shell } => {
-            hooks::hook_env(shell)?;
+            hooks::hook_env(shell.as_str())?;
         }
         #[cfg(unix)]
         Commands::Daemon { foreground } => {
@@ -1139,7 +1175,7 @@ async fn dispatch_command(
             last,
             full,
         } => {
-            handle_complete_command(shell, current, last, full.as_deref()).await?;
+            handle_complete_command(shell.as_str(), current, last, full.as_deref()).await?;
         }
         Commands::Status { fast } => {
             packages::status_with_json(*fast, json_flag).await?;

@@ -365,21 +365,56 @@ impl AuditLogger {
         })?;
         self.last_hash = entry.hash.clone().unwrap_or_default();
 
+        // Structured fields keep the tracing output queryable (event_type,
+        // severity, hash-chain linkage) without touching the on-disk JSONL
+        // format. Per-level macro calls are required because `event!` needs a
+        // constant level path.
         match severity {
             AuditSeverity::Debug => {
-                tracing::debug!(target: "audit", "{}: {}", entry.event_type, description);
+                tracing::debug!(
+                    target: "audit",
+                    event_type = %entry.event_type,
+                    severity = ?severity,
+                    chain_hash = %entry.hash.as_deref().unwrap_or_default(),
+                    "{description}"
+                );
             }
             AuditSeverity::Info => {
-                tracing::info!(target: "audit", "{}: {}", entry.event_type, description);
+                tracing::info!(
+                    target: "audit",
+                    event_type = %entry.event_type,
+                    severity = ?severity,
+                    chain_hash = %entry.hash.as_deref().unwrap_or_default(),
+                    "{description}"
+                );
             }
             AuditSeverity::Warning => {
-                tracing::warn!(target: "audit", "{}: {}", entry.event_type, description);
+                tracing::warn!(
+                    target: "audit",
+                    event_type = %entry.event_type,
+                    severity = ?severity,
+                    chain_hash = %entry.hash.as_deref().unwrap_or_default(),
+                    "{description}"
+                );
             }
             AuditSeverity::Error => {
-                tracing::error!(target: "audit", "{}: {}", entry.event_type, description);
+                tracing::error!(
+                    target: "audit",
+                    event_type = %entry.event_type,
+                    severity = ?severity,
+                    chain_hash = %entry.hash.as_deref().unwrap_or_default(),
+                    "{description}"
+                );
             }
             AuditSeverity::Critical => {
-                tracing::error!(target: "audit", "CRITICAL - {}: {}", entry.event_type, description);
+                tracing::error!(
+                    target: "audit",
+                    event_type = %entry.event_type,
+                    severity = ?severity,
+                    chain_hash = %entry.hash.as_deref().unwrap_or_default(),
+                    critical = true,
+                    "{description}"
+                );
             }
         }
 

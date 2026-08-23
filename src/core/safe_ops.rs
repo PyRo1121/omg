@@ -59,24 +59,6 @@ pub fn nonzero_u32_or_default(value: u32, default: u32) -> NonZeroU32 {
         .unwrap_or(NonZeroU32::MIN)
 }
 
-/// Create a `NonZeroU64` with a default fallback value.
-///
-/// If both `value` and `default` are zero, falls back to `NonZeroU64::MIN` (1).
-pub fn nonzero_u64_or_default(value: u64, default: u64) -> NonZeroU64 {
-    NonZeroU64::new(value)
-        .or_else(|| NonZeroU64::new(default))
-        .unwrap_or(NonZeroU64::MIN)
-}
-
-/// Create a `NonZeroUsize` with a default fallback value.
-///
-/// If both `value` and `default` are zero, falls back to `NonZeroUsize::MIN` (1).
-pub fn nonzero_usize_or_default(value: usize, default: usize) -> NonZeroUsize {
-    NonZeroUsize::new(value)
-        .or_else(|| NonZeroUsize::new(default))
-        .unwrap_or(NonZeroUsize::MIN)
-}
-
 /// Safe alternative to `expect()` with better error context
 pub fn expect_or<T>(option: Option<T>, context: &str) -> Result<T> {
     option.ok_or_else(|| anyhow::anyhow!("Expected value for {context} but found None"))
@@ -85,14 +67,6 @@ pub fn expect_or<T>(option: Option<T>, context: &str) -> Result<T> {
 /// Safe alternative to `unwrap()` that returns a default value
 pub fn unwrap_or_default<T: Default>(option: Option<T>) -> T {
     option.unwrap_or_default()
-}
-
-/// Safe alternative to `unwrap()` that exits with a helpful error message
-pub fn unwrap_or_exit<T>(option: Option<T>, context: &str) -> T {
-    option.unwrap_or_else(|| {
-        tracing::error!("Fatal error: {}", context);
-        std::process::exit(1);
-    })
 }
 
 /// Validate that a path is safe for file operations

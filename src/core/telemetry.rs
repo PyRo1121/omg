@@ -864,11 +864,6 @@ impl Timer {
     pub fn finish(self) {
         track_performance_event(&self.operation, self.elapsed_ms(), None);
     }
-
-    /// Finish with context
-    pub fn finish_with_context(self, context: &str) {
-        track_performance_event(&self.operation, self.elapsed_ms(), Some(context));
-    }
 }
 
 #[cfg(test)]

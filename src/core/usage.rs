@@ -26,10 +26,6 @@ pub mod time_saved {
     pub const SEARCH_MS: u64 = 127;
     /// Info: OMG 6.5ms vs pacman 138ms = 131.5ms saved
     pub const INFO_MS: u64 = 132;
-    /// Explicit: OMG 1.2ms vs pacman 14ms = 12.8ms saved
-    pub const EXPLICIT_MS: u64 = 13;
-    /// Status: OMG 1ms vs pacman 50ms = 49ms saved
-    pub const STATUS_MS: u64 = 49;
     /// Runtime switch: OMG 1.8ms vs nvm 150ms = 148.2ms saved
     pub const RUNTIME_SWITCH_MS: u64 = 148;
     /// Install: OMG parallel vs sequential = ~30% time saved (estimated 5s per package)
@@ -605,16 +601,6 @@ pub fn track_info() {
     track("info", time_saved::INFO_MS);
 }
 
-/// Track explicit command
-pub fn track_explicit() {
-    track("explicit", time_saved::EXPLICIT_MS);
-}
-
-/// Track status command
-pub fn track_status() {
-    track("status", time_saved::STATUS_MS);
-}
-
 /// Track install command
 pub fn track_install(packages: &[String]) {
     with_usage_lock(|| {
@@ -711,24 +697,6 @@ impl OperationTimer {
         // Also flush telemetry if needed
         crate::core::telemetry::maybe_flush_background();
     }
-
-    /// Finish timing and record failure
-    pub fn finish_error(self, error: &str) {
-        let duration_ms = self.elapsed_ms();
-
-        // Record to telemetry
-        crate::core::telemetry::track_command_event(
-            &self.command,
-            None,
-            self.packages.as_deref(),
-            duration_ms,
-            false,
-            Some(error),
-        );
-
-        // Also flush telemetry if needed
-        crate::core::telemetry::maybe_flush_background();
-    }
 }
 
 /// Track install command with timing
@@ -820,15 +788,6 @@ pub fn track_feature_usage(feature: &str, enabled: bool) {
     crate::core::telemetry::track_feature_event(feature, enabled, None);
 }
 
-/// Track feature usage with metadata
-pub fn track_feature_usage_with_metadata(
-    feature: &str,
-    enabled: bool,
-    metadata: serde_json::Value,
-) {
-    crate::core::telemetry::track_feature_event(feature, enabled, Some(metadata));
-}
-
 /// Load the stored license only when its token is valid, mirroring the
 /// enhanced-telemetry gate so expired or unverifiable licenses stop syncing.
 fn licensed_for_sync() -> Option<crate::core::license::StoredLicense> {
@@ -854,35 +813,6 @@ pub fn maybe_sync_background() {
             }
         });
     }
-}
-
-/// Force immediate sync (for important events like achievements)
-pub fn force_sync_background() {
-    if crate::core::paths::test_mode() {
-        return;
-    }
-    let Some(license) = licensed_for_sync() else {
-        return;
-    };
-    let Some(mut stats) = load_for_tracking() else {
-        return;
-    };
-    tokio::spawn(async move {
-        if let Err(e) = stats.sync(&license.key).await {
-            tracing::debug!("Force sync failed: {e}");
-        }
-    });
-}
-
-/// Track and sync immediately (for real-time dashboard updates)
-pub fn track_and_sync(command: &str, time_saved_ms: u64) {
-    with_usage_lock(|| {
-        let Some(mut stats) = load_for_tracking() else {
-            return;
-        };
-        stats.record_command(command, time_saved_ms);
-    });
-    maybe_sync_background();
 }
 
 /// Sync usage now (awaitable, for end of CLI commands)
