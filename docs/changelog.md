@@ -47,6 +47,40 @@ the telemetry transport (default drain can block ~2s).
 
 (fastest encode/decode, actively maintained), zerocopy, mimalloc.
 
+- Crate rationalization based on ecosystem research
+
+Online research verdicts applied:
+
+  - ratatui: disable default features; crossterm is the only backend in use.
+
+Removes the termwiz -> wezterm-input-types -> yanked-spin chain that
+
+cargo-audit has flagged since wave 1.
+
+  - redb: DELETED. It stored one daemon status row and two completion keys —
+
+an embedded transactional database was over-provisioned by an order of
+
+magnitude. Both are now single atomically-replaced JSON files with
+
+format-version rejection, matching our persisted-format policy.
+
+Lockfile: 737 -> 692 crates (-45).
+
+  - daemon status cache: rkyv archive inside redb -> serde JSON file; all
+
+vestigial Archive derives removed from protocol.rs (wire format remains
+
+bitcode).
+
+  - omgd sentry: cap shutdown_timeout at 200ms so daemon exit never waits on
+
+the telemetry transport (default drain can block ~2s).
+
+  - kept after research: moka (tested TTL/eviction at scale), bitcode
+
+(fastest encode/decode, actively maintained), zerocopy, mimalloc.
+
 - Delete dead OmgError contract and unused fast-status readers
 
 Completes the wave-4 deletion HANDOFF: production code uniformly uses
