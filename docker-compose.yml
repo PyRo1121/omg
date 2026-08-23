@@ -1,0 +1,38 @@
+# Local multi-distro test harness: one command to exercise omg against all
+# three major Linux package-manager families, mirroring the ci.yml matrix.
+#
+# Usage:
+#   docker compose build                 # build all three
+#   docker compose run --build arch      # Arch (pacman/ALPM) smoke
+#   docker compose run --build debian    # Debian (apt/rust-apt) smoke
+#   docker compose run --build fedora    # Fedora (dnf/rpm sqlite) smoke
+#
+# The Debian service also runs scripts/debian-smoke-test.sh for the deeper
+# mutation-path checks used since the wave-6 protocol work.
+
+services:
+  arch:
+    build:
+      context: .
+      dockerfile: Dockerfile.arch-e2e
+    command: >
+      bash -c "cargo build --release --locked -j 2 &&
+               ./target/release/omg --version &&
+               ./target/release/omg status --fast &&
+               ./target/release/omg search shell | head -5"
+
+  debian:
+    build:
+      context: .
+      dockerfile: Dockerfile.apt
+    command: >
+      bash -c "cargo build --release --locked -j 2 --no-default-features
+               --features debian,pgp,license &&
+               ./target/release/omg --version &&
+               ./target/release/omg status --fast &&
+               bash scripts/debian-smoke-test.sh"
+
+  fedora:
+    build:
+      context: .
+      dockerfile: Dockerfile.fedora

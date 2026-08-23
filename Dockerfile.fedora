@@ -1,0 +1,22 @@
+# Fedora/RHEL E2E testing image (mirrors the ci.yml fedora matrix leg).
+FROM fedora:latest
+
+ENV CARGO_HOME=/usr/local/cargo \
+    RUSTUP_HOME=/usr/local/rustup
+ENV PATH="$CARGO_HOME/bin:$PATH"
+
+RUN dnf install -y --setopt=install_weak_deps=False \
+        git clang cmake openssl-devel pkgconfig findutils curl \
+        rpm dnf sqlite yum-utils fedora-release && \
+    curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | \
+        sh -s -- -y --profile minimal --default-toolchain 1.93.1 && \
+    $CARGO_HOME/bin/rustup component add clippy rustfmt
+
+WORKDIR /workspace
+COPY . .
+
+# Build the exact release feature set used by release.yml for Fedora.
+RUN cargo build --release --locked -j 2 --no-default-features --features fedora,pgp,license
+
+# Smoke: read-only daily-driver paths against this distro's real package data.
+CMD ["bash", "-c", "./target/release/omg --version && ./target/release/omg status --fast && ./target/release/omg search shell | head -5"]
