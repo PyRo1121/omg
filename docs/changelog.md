@@ -259,6 +259,36 @@ was not linked from any doc; its command usage remains in docs/runtimes.md
 - Move performance checks to benchmarks
 ### ✨ New Features
 
+- **Dnf**: S1 strict RPM header reader — zerocopy views, librpm invariants
+
+Implements FEDORA-ENGINE.md S1 (citations: /tmp/omg-fleet13
+
+rnd-pm-formats + rnd-pm-10 + rnd-pm-4):
+
+  - header intro and index entries parsed through zero-copy zerocopy
+
+big-endian views; no new dependencies
+
+  - fail-closed librpm invariants: magic+reserved words, entry-count cap,
+
+tag types restricted to 1..=9, STRING/I18NSTRING count-one rule, data
+
+regions bounded by the declared payload
+
+  - data area starts immediately after the index per librpm layout; the
+
+previous tail-derived offset let appended bytes shift the payload and
+
+satisfy string terminators outside the declared region (caught by the
+
+new s1_rejects_undeclared_trailing_payload_use regression)
+
+  - negative offsets, unknown types, missing terminators, out-of-bounds
+
+regions are hard errors instead of silent skips
+
+  - 7 new hostile-input tests; fixture updated to the count-one spec
+
 - Refresh daemon package index after database sync
 
   - add explicit RefreshIndex IPC request and typed IndexRefreshed response
