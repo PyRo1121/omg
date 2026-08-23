@@ -118,3 +118,6 @@ workers/
 tasks/
 .opencode/
 .tmp/
+
+# ---- Local planning notes (intentionally untracked) ----
+TODO-mise-removal.md
