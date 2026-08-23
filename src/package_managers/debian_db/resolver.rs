@@ -160,20 +160,16 @@ impl DependencyResolver {
     /// Resolve all selected packages and their dependencies
     /// Uses parallel resolution for multiple independent packages
     pub fn resolve(&mut self) -> Result<ResolutionResult> {
-        use ahash::AHashSet;
         use rayon::prelude::*;
+        use rustc_hash::FxHashSet;
 
         let mut to_install = Vec::new();
         let mut to_upgrade = Vec::new();
-        let mut visited = AHashSet::new();
         let mut download_size = 0u64;
         let mut installed_size = 0u64;
 
         // Process each selected package
         let selected: Vec<_> = self.selected.iter().cloned().collect();
-
-        // OPTIMIZATION: Use FxHashSet for faster lookups (no crypto needed)
-        use rustc_hash::FxHashSet;
 
         // For multiple independent packages, resolve initial dependencies in parallel
         if selected.len() > 1 {
@@ -186,49 +182,31 @@ impl DependencyResolver {
                     let mut local_visited = FxHashSet::default();
                     let mut local_to_install = Vec::new();
 
-                    // Create a thread-safe clone of resolver state for read-only access
-                    match self.resolve_package_readonly(
-                        pkg_name,
-                        &mut local_visited,
-                        &mut local_to_install,
-                    ) {
-                        Ok(()) => Ok((local_to_install, local_visited)),
-                        Err(e) => Err(e),
-                    }
+                    self.resolve_package(pkg_name, &mut local_visited, &mut local_to_install)?;
+                    Ok::<_, anyhow::Error>(local_to_install)
                 })
                 .collect();
 
-            // Merge results (deduplicate packages)
+            // Merge results (deduplicate packages).
             let mut seen = FxHashSet::default();
             for result in parallel_results {
-                let (local_install, local_visited) = result?;
-                for pkg in local_install {
+                for pkg in result? {
                     if seen.insert(pkg.clone()) {
                         to_install.push(pkg);
                     }
                 }
-                visited.extend(local_visited);
-            }
-
-            // The read-only parallel pass cannot mutate `dep_graph`; record
-            // the edges for the merged closure here so `topological_sort`
-            // can order dependencies before dependents across packages.
-            for name in &to_install {
-                if self.dep_graph.contains_key(name) {
-                    continue;
-                }
-                if let Some(pkg) = self.available.get(name) {
-                    let deps: HashSet<String> =
-                        pkg.depends.iter().map(|d| parse_dep_name(d)).collect();
-                    self.dep_graph.insert(name.clone(), deps);
-                }
             }
         } else {
-            // Single package: use sequential resolution (no overhead)
+            // Single package: use sequential resolution (no overhead).
+            let mut local_visited = FxHashSet::default();
             for pkg_name in selected {
-                self.resolve_package(&pkg_name, &mut visited, &mut to_install)?;
+                self.resolve_package(&pkg_name, &mut local_visited, &mut to_install)?;
             }
         }
+
+        // The shared read-only resolver cannot mutate `dep_graph`; record
+        // edges once after either collection strategy completes.
+        self.record_dependency_edges(&to_install);
 
         // Topologically sort the install order
         let sorted = self.topological_sort(&to_install)?;
@@ -263,8 +241,8 @@ impl DependencyResolver {
         })
     }
 
-    /// Recursively resolve a package and its dependencies (read-only for parallel use)
-    fn resolve_package_readonly(
+    /// Recursively resolve a package and its dependencies
+    fn resolve_package(
         &self,
         name: &str,
         visited: &mut rustc_hash::FxHashSet<String>,
@@ -290,53 +268,6 @@ impl DependencyResolver {
         // Parse and resolve dependencies
         for dep_str in &pkg.depends {
             let dep = parse_dependency(dep_str);
-            match self.resolve_dependency_readonly(&dep, visited, to_install) {
-                Ok(()) => {}
-                Err(e) => {
-                    tracing::error!(
-                        "Failed to resolve dependency '{}' for package '{}': {}",
-                        dep_str,
-                        name,
-                        e
-                    );
-                    return Err(e).with_context(|| {
-                        format!("Cannot satisfy dependency '{dep_str}' for package '{name}'")
-                    });
-                }
-            }
-        }
-
-        // Add this package after its dependencies
-        if !to_install.contains(&name.to_string()) {
-            to_install.push(name.to_string());
-        }
-
-        Ok(())
-    }
-
-    /// Recursively resolve a package and its dependencies
-    fn resolve_package(
-        &mut self,
-        name: &str,
-        visited: &mut ahash::AHashSet<String>,
-        to_install: &mut Vec<String>,
-    ) -> Result<()> {
-        if visited.contains(name) {
-            return Ok(());
-        }
-        visited.insert(name.to_string());
-
-        let pkg = self
-            .available
-            .get(name)
-            .cloned()
-            .with_context(|| format!("Package '{name}' not found in repository"))?;
-
-        tracing::debug!("Resolving package: {} (version: {})", name, pkg.version);
-
-        // Parse and resolve dependencies
-        for dep_str in &pkg.depends {
-            let dep = parse_dependency(dep_str);
             match self.resolve_dependency(&dep, visited, to_install) {
                 Ok(()) => {}
                 Err(e) => {
@@ -353,20 +284,28 @@ impl DependencyResolver {
             }
         }
 
-        // Add this package after its dependencies
-        if !to_install.contains(&name.to_string()) {
-            to_install.push(name.to_string());
-        }
-
-        // Build dependency graph for topological sort
-        let deps: HashSet<String> = pkg.depends.iter().map(|d| parse_dep_name(d)).collect();
-        self.dep_graph.insert(name.to_string(), deps);
+        // `visited` guarantees this package is added exactly once per
+        // resolution walk, so no second linear membership scan is needed.
+        to_install.push(name.to_string());
 
         Ok(())
     }
 
-    /// Resolve a single dependency (read-only for parallel use)
-    fn resolve_dependency_readonly(
+    /// Populate dependency edges for a fully resolved package closure.
+    fn record_dependency_edges(&mut self, packages: &[String]) {
+        for name in packages {
+            if self.dep_graph.contains_key(name) {
+                continue;
+            }
+            if let Some(pkg) = self.available.get(name) {
+                let dependencies = pkg.depends.iter().map(|dep| parse_dep_name(dep)).collect();
+                self.dep_graph.insert(name.clone(), dependencies);
+            }
+        }
+    }
+
+    /// Resolve a single dependency
+    fn resolve_dependency(
         &self,
         dep: &Dependency,
         visited: &mut rustc_hash::FxHashSet<String>,
@@ -374,98 +313,20 @@ impl DependencyResolver {
     ) -> Result<()> {
         // Check if already installed
         if let Some(installed_ver) = self.installed.get(&dep.name)
-            && (dep.version_constraint.is_none()
-                || Self::version_satisfies(
-                    installed_ver,
-                    dep.version_constraint
-                        .as_ref()
-                        .expect("guarded by is_none() check"),
-                ))
+            && dep
+                .version_constraint
+                .as_ref()
+                .is_none_or(|constraint| Self::version_satisfies(installed_ver, constraint))
         {
             return Ok(());
         }
 
         // Check if available
         if let Some(pkg) = self.available.get(&dep.name)
-            && (dep.version_constraint.is_none()
-                || Self::version_satisfies(
-                    &pkg.version,
-                    dep.version_constraint
-                        .as_ref()
-                        .expect("guarded by is_none() check"),
-                ))
-        {
-            return self.resolve_package_readonly(&dep.name, visited, to_install);
-        }
-
-        // Try alternatives
-        for alt in &dep.alternatives {
-            if self
-                .resolve_dependency_readonly(alt, visited, to_install)
-                .is_ok()
-            {
-                return Ok(());
-            }
-        }
-
-        // Build helpful error message
-        use std::fmt::Write;
-        let mut error_msg = format!("Cannot satisfy dependency: {}", dep.name);
-        if !dep.alternatives.is_empty() {
-            let alt_names: Vec<_> = dep.alternatives.iter().map(|a| a.name.as_str()).collect();
-            expect_infallible(write!(
-                &mut error_msg,
-                "\n  Tried alternatives: {}",
-                alt_names.join(", ")
-            ));
-        }
-        if let Some(constraint) = &dep.version_constraint {
-            expect_infallible(write!(
-                &mut error_msg,
-                " (version: {:?} {})",
-                constraint.op, constraint.version
-            ));
-        }
-        error_msg.push_str(
-            "\n💡 This dependency is not available in any enabled repository.\n\
-            Try:\n\
-            - omg sync (refresh package database)\n\
-            - Check that required repositories are enabled\n\
-            - Install the dependency manually first",
-        );
-
-        anyhow::bail!(error_msg)
-    }
-
-    /// Resolve a single dependency (may be satisfied by multiple packages)
-    fn resolve_dependency(
-        &mut self,
-        dep: &Dependency,
-        visited: &mut ahash::AHashSet<String>,
-        to_install: &mut Vec<String>,
-    ) -> Result<()> {
-        // Check if already installed
-        if let Some(installed_ver) = self.installed.get(&dep.name)
-            && (dep.version_constraint.is_none()
-                || Self::version_satisfies(
-                    installed_ver,
-                    dep.version_constraint
-                        .as_ref()
-                        .expect("guarded by is_none() check"),
-                ))
-        {
-            return Ok(());
-        }
-
-        // Check if available
-        if let Some(pkg) = self.available.get(&dep.name)
-            && (dep.version_constraint.is_none()
-                || Self::version_satisfies(
-                    &pkg.version,
-                    dep.version_constraint
-                        .as_ref()
-                        .expect("guarded by is_none() check"),
-                ))
+            && dep
+                .version_constraint
+                .as_ref()
+                .is_none_or(|constraint| Self::version_satisfies(&pkg.version, constraint))
         {
             return self.resolve_package(&dep.name, visited, to_install);
         }
@@ -1002,6 +863,24 @@ mod tests {
         assert!(error.to_string().contains("not found"), "{error}");
         assert_eq!(similarity_prefix("éé"), "éé");
         assert_eq!(similarity_prefix("ééabc"), "ééa");
+    }
+
+    #[test]
+    fn sequential_resolution_orders_dependencies_before_dependents() {
+        let mut resolver = DependencyResolver {
+            available: HashMap::from([
+                ("base".to_string(), test_package("base", "1.0", &[])),
+                ("pkg-a".to_string(), test_package("pkg-a", "1.0", &["base"])),
+            ]),
+            installed: HashMap::new(),
+            selected: HashSet::new(),
+            dep_graph: HashMap::new(),
+        };
+        resolver.add_package("pkg-a").expect("known package");
+
+        let resolution = resolver.resolve().expect("resolvable");
+
+        assert_eq!(resolution.to_install, ["base", "pkg-a"]);
     }
 
     #[test]

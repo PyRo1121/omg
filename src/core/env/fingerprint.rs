@@ -146,7 +146,7 @@ impl EnvironmentState {
             let file_version = raw
                 .get("schema_version")
                 .and_then(toml::Value::as_integer)
-                .unwrap_or(i64::from(Self::SCHEMA_VERSION));
+                .unwrap_or_else(|| i64::from(Self::SCHEMA_VERSION));
             if file_version > i64::from(Self::SCHEMA_VERSION) {
                 anyhow::bail!(
                     "Lockfile {} was written by a newer omg (schema version {file_version}). \
@@ -434,9 +434,8 @@ mod tests {
         // A file written by a hypothetical future omg with schema_version 99
         // must be rejected with an actionable message, not deserialized by
         // best-effort field matching.
-        let newer_schema = format!(
-            "schema_version = 99\nruntimes = {{}}\npackages = []\ntimestamp = 0\nhash = 'x'\n"
-        );
+        let newer_schema =
+            "schema_version = 99\nruntimes = {}\npackages = []\ntimestamp = 0\nhash = 'x'\n";
         std::fs::write(&path, newer_schema).expect("write future lockfile");
 
         let error = EnvironmentState::load(&path).expect_err("future schema must be rejected");
