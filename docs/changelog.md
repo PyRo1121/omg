@@ -13,6 +13,32 @@ OMG is the fastest unified package manager for Linux, replacing pacman, yay, nvm
 ## [Unreleased]
 ### ♻️  Refactoring
 
+- **Container**: Delete verified-dead surface (~90 LOC)
+
+  - LocalCommandRunner impl for ContainerCommands: dispatch goes
+
+exclusively through handle_container_command; no .execute() caller
+
+exists anywhere (src, tests, benches)
+
+  - ContainerManager::runtime(): zero callers
+
+  - ContainerManager::build(): thin wrapper with zero callers (CLI uses
+
+build_with_options directly)
+
+  - ContainerManager::remove(): zero callers; container removal is not an
+
+advertised command
+
+  - ContainerConfig::ports + -p emission loop: never populated by any CLI
+
+flag or constructor
+
+Per repo standards: remove obsolete runtime paths instead of keeping
+
+dead advertised-shaped surface.
+
 - Crate rationalization based on ecosystem research
 
 Online research verdicts applied:
