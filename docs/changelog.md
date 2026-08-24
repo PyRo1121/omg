@@ -259,6 +259,36 @@ was not linked from any doc; its command usage remains in docs/runtimes.md
 - Move performance checks to benchmarks
 ### ✨ New Features
 
+- **Debian**: Verify InRelease signature before any index download
+
+Closes the WAVE12 signature-chain wiring blocker (citations:
+
+aud-debian-tx/aud-debian-db blockers; rnd-pm-3 trust patterns;
+
+WAVE12-BLOCKERS.md).
+
+  - new verify_inrelease_signature(): gpgv --keyring over the downloaded
+
+document, using repo Signed-By when configured, else the distro archive
+
+keyring — the same delegation apt itself makes
+
+  - enforced on BOTH sync paths: fresh downloads AND 304-cached documents
+
+(which may predate enforcement or be locally tampered); failure removes
+
+the untrusted document and aborts the repository sync with an explicit
+
+error — component indexes are fetched only after the anchor document is
+
+authenticated
+
+  - fail-closed unit test: absent keyring aborts before any cache use
+
+Known remaining (tracked): Valid-Until freshness check and hostile-mirror
+
+container fixtures.
+
 - **Dnf**: S2b verified-repomd loader — OpenPGP gate before manifest parse
 
 Implements FEDORA-ENGINE.md S2b (citations: WAVE12-BLOCKERS signature-chain
