@@ -410,6 +410,94 @@ analyzer inference
 - **Ci**: Cross-platform install script and R2 release sync
 ### 🐛 Bug Fixes
 
+- Remediate deep-audit blockers across elevation, history, daemon, TUI
+
+Elevation (Wave 1)
+
+  - Transmit elevation via argv marker ELEVATED_MARKER: sudo env_reset
+
+stripped OMG_ELEVATED=1, killing every fast-elevated path; root-gated
+
+marker strip in main(); regression test pins payload argv layout
+
+  - dnf: elevate "update" (real clap command), not nonexistent "upgrade"
+
+History single-ownership (Wave 2)
+
+  - Fast-elevated system upgrades now record real old->new history via
+
+execute_fast_system_update; previously --fast/--turbo were invisible
+
+to omg history and unrollbackable
+
+  - FLOW_PARENT_RECORDS token: mid-flow install/remove/sync delegations
+
+let the parent record once; child stays silent. No more double entries
+
+  - Deferred-update parent records only its AUR portion (child owns the
+
+official upgrade record); extracted as testable parent_recorded_changes
+
+Rollback (Wave 3)
+
+  - Mixed official+AUR updates no longer refused outright: officials
+
+restore from pacman cache, AUR packages surfaced for manual downgrade
+
+with explicit nonzero exit; regression tests added
+
+Daemon correctness (Wave 4)
+
+  - Version-mismatch and malformed-frame clients get one error frame then
+
+clean close instead of a silent 30s hang during upgrade skew
+
+  - RefreshIndex swaps in a fresh AlpmWorker and invalidates the persisted
+
+status snapshot: pre-sync update lists can no longer resurrect after
+
+omg sync
+
+  - PackageIndex::search limit==0 underflow fixed
+
+  - OMG_DISABLE_DAEMON semantics unified between init and client
+
+  - omg-fast routes through FastStatus::read_default (magic/version/
+
+freshness/ownership) and sets 30s socket timeouts
+
+  - FastStatus TTL aligned to daemon writer cadence with drift-pinning test
+
+Broken commands (Wave 5)
+
+  - homebrew get_status reports real update counts (was hardcoded 0)
+
+  - task_runner validates argv-direct commands with control-char checks,
+
+unblocking ./gradlew and ./mvnw (previously self-rejected)
+
+  - workspace sync honestly reports checked/needs-attention and exits
+
+nonzero when projects need attention
+
+  - privacy opt-out is unconditional: local telemetry disable happens even
+
+without a license (was a bail-before-write no-op); falsifiable test
+
+  - slsa audit fails with honest "not implemented" message
+
+  - TUI hint bars list only wired keys; fake policy values labeled defaults
+
+Tests
+
+  - Self-update network tests gated behind OMG_RUN_NETWORK_TESTS=1 so CI
+
+stops hitting the production release server on every run
+
+  - Vacuous success||contains assertions rewritten as observable checks in
+
+e2e_system_commands, cli_comprehensive, privacy_cli_tests
+
 - Audit25 highs — fail-open installer checksums, self-update downgrade
 - Dedupe legacy-config deprecation warning to once per process
 - AUR sandbox hardening — remove gnupg mount, disable planted git hooks
