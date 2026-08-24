@@ -407,7 +407,7 @@ impl DnfPackageManager {
     }
 
     /// Execute the `dnf` CLI as root (callers escalate via
-    /// `run_self_sudo` first) and invalidate caches on success.
+    /// `run_privileged_child` first) and invalidate caches on success.
     fn run_dnf(&self, args: &[&str]) -> Result<()> {
         let mut cmd = Command::new("dnf");
 
@@ -476,7 +476,10 @@ impl PackageManager for DnfPackageManager {
             crate::core::security::validate_package_names(&packages)?;
 
             if !is_root() {
-                crate::core::privilege::run_self_sudo(&["install", "--"]).await?;
+                let mut args = vec!["install", "--"];
+                let pkg_refs: Vec<&str> = packages.iter().map(String::as_str).collect();
+                args.extend_from_slice(&pkg_refs);
+                crate::core::privilege::run_privileged_child(&args).await?;
                 return Ok(());
             }
 
@@ -500,7 +503,10 @@ impl PackageManager for DnfPackageManager {
             crate::core::security::validate_package_names(&packages)?;
 
             if !is_root() {
-                crate::core::privilege::run_self_sudo(&["remove", "--"]).await?;
+                let mut args = vec!["remove", "--"];
+                let pkg_refs: Vec<&str> = packages.iter().map(String::as_str).collect();
+                args.extend_from_slice(&pkg_refs);
+                crate::core::privilege::run_privileged_child(&args).await?;
                 return Ok(());
             }
 
@@ -520,7 +526,7 @@ impl PackageManager for DnfPackageManager {
     fn update(&self) -> Pin<Box<dyn Future<Output = Result<()>> + Send + '_>> {
         Box::pin(async move {
             if !is_root() {
-                crate::core::privilege::run_self_sudo(&["upgrade"]).await?;
+                crate::core::privilege::run_privileged_child(&["update"]).await?;
                 return Ok(());
             }
 
@@ -538,7 +544,7 @@ impl PackageManager for DnfPackageManager {
             self.installed_cache.clear();
 
             if !is_root() {
-                crate::core::privilege::run_self_sudo(&["sync"]).await?;
+                crate::core::privilege::run_privileged_child(&["sync"]).await?;
                 return Ok(());
             }
 
@@ -610,8 +616,38 @@ impl PackageManager for DnfPackageManager {
             // guessing. Documented as unsupported in the backend docs.
             let orphans = 0;
 
-            // Count available updates
-            let updates = self.list_updates().await?.len();
+            // Count available updates via the dnf CLI, mirroring how this
+            // backend already executes transactions. `check-update` exits 0
+            // with no updates and 100 when updates are available; any other
+            // outcome means the count is unavailable, which must not fail the
+            // whole status command.
+            let updates = tokio::task::spawn_blocking(|| {
+                Command::new("dnf")
+                    .args(["-q", "--cacheonly", "check-update"])
+                    .output()
+            })
+            .await
+            .context("dnf check-update task failed")?
+            .map_or_else(
+                |error| {
+                    tracing::debug!("dnf CLI unavailable for update count: {error}");
+                    0
+                },
+                |output| match output.status.code() {
+                    Some(0) => 0,
+                    Some(100) => String::from_utf8_lossy(&output.stdout)
+                        .lines()
+                        .filter(|line| !line.trim().is_empty())
+                        .count(),
+                    _ => {
+                        tracing::debug!(
+                            "dnf check-update returned {:?}; update count unavailable",
+                            output.status.code()
+                        );
+                        0
+                    }
+                },
+            );
 
             Ok((total, explicit, orphans, updates))
         })

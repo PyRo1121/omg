@@ -365,26 +365,34 @@ pub async fn delete_data(confirm: bool) -> Result<()> {
 
 /// Opt-out of telemetry via API (syncs with server)
 pub async fn opt_out_api() -> Result<()> {
-    let license = license::load_license().context("No license found. Using local opt-out only.")?;
-
-    // Set local config
+    // Local opt-out is UNCONDITIONAL: telemetry must be disabled on this
+    // machine whether or not a license exists. Previously this bailed before
+    // touching the config when unlicensed, so opt-out silently did nothing.
     let mut settings = Settings::load().context("Failed to load OMG settings")?;
     settings.telemetry_enabled = false;
     settings.save()?;
 
-    // Sync with server
-    let response = crate::core::http::shared_client()
-        .post(format!("{PRIVACY_API_URL}/opt-out"))
-        .json(&serde_json::json!({
-            "license_key": license.key,
-            "opt_out": true
-        }))
-        .timeout(std::time::Duration::from_secs(10))
-        .send()
-        .await;
+    let license = license::load_license();
+
+    // Sync with server only when a license exists
+    let response = if let Some(license) = license {
+        Some(
+            crate::core::http::shared_client()
+                .post(format!("{PRIVACY_API_URL}/opt-out"))
+                .json(&serde_json::json!({
+                    "license_key": license.key,
+                    "opt_out": true
+                }))
+                .timeout(std::time::Duration::from_secs(10))
+                .send()
+                .await,
+        )
+    } else {
+        None
+    };
 
     match response {
-        Ok(r) if r.status().is_success() => {
+        Some(Ok(r)) if r.status().is_success() => {
             println!(
                 "  {} Telemetry disabled (synced with server)",
                 style::maybe_color("✓", |t| t.green().to_string())
@@ -398,7 +406,9 @@ pub async fn opt_out_api() -> Result<()> {
         }
     }
 
-    println!("  Your license remains fully functional.");
+    if license::load_license().is_some() {
+        println!("  Your license remains fully functional.");
+    }
 
     Ok(())
 }

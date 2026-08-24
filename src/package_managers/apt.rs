@@ -30,7 +30,7 @@ impl AptPackageManager {
 
     pub async fn sync_databases(&self) -> Result<()> {
         if !is_root() {
-            crate::core::privilege::run_self_sudo(&["sync"]).await?;
+            crate::core::privilege::run_privileged_child(&["sync"]).await?;
             return Ok(());
         }
 
@@ -85,7 +85,7 @@ impl crate::package_managers::PackageManager for AptPackageManager {
                 let mut args = vec!["install", "--"];
                 let pkg_refs: Vec<&str> = packages.iter().map(String::as_str).collect();
                 args.extend_from_slice(&pkg_refs);
-                crate::core::privilege::run_self_sudo(&args).await?;
+                crate::core::privilege::run_privileged_child(&args).await?;
                 return Ok(());
             }
 
@@ -106,7 +106,7 @@ impl crate::package_managers::PackageManager for AptPackageManager {
                 let mut args = vec!["remove", "--"];
                 let pkg_refs: Vec<&str> = packages.iter().map(String::as_str).collect();
                 args.extend_from_slice(&pkg_refs);
-                crate::core::privilege::run_self_sudo(&args).await?;
+                crate::core::privilege::run_privileged_child(&args).await?;
                 return Ok(());
             }
 
@@ -120,7 +120,7 @@ impl crate::package_managers::PackageManager for AptPackageManager {
     fn update(&self) -> Pin<Box<dyn Future<Output = Result<()>> + Send + '_>> {
         Box::pin(async move {
             if !is_root() {
-                crate::core::privilege::run_self_sudo(&["update"]).await?;
+                crate::core::privilege::run_privileged_child(&["update"]).await?;
                 return Ok(());
             }
 

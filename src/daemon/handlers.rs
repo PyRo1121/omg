@@ -37,7 +37,7 @@ enum SystemBackendAccess {
     Isolated,
     Production {
         #[cfg(feature = "arch")]
-        alpm_worker: AlpmWorker,
+        alpm_worker: std::sync::Arc<AlpmWorker>,
     },
 }
 
@@ -45,7 +45,7 @@ impl SystemBackendAccess {
     fn production() -> Self {
         Self::Production {
             #[cfg(feature = "arch")]
-            alpm_worker: AlpmWorker::new(),
+            alpm_worker: std::sync::Arc::new(AlpmWorker::new()),
         }
     }
 
@@ -63,7 +63,10 @@ pub struct DaemonState {
     pub(super) persistent: super::db::PersistentCache,
     pub(super) package_manager: Arc<dyn PackageManager>,
     index: RwLock<Arc<PackageIndex>>,
-    system_backends: SystemBackendAccess,
+    /// Locked because RefreshIndex must swap in a fresh AlpmWorker: libalpm
+    /// caches loaded syncdbs in memory and never revalidates them on disk, so
+    /// a worker that predates `omg sync` serves a frozen update list forever.
+    system_backends: RwLock<SystemBackendAccess>,
     pub(super) runtime_versions: Arc<RwLock<Vec<(String, String)>>>,
     pub(super) rate_limiter: Arc<RateLimiter<NotKeyed, InMemoryState, DefaultClock>>,
     pub(super) start_time: std::time::Instant,
@@ -117,6 +120,20 @@ impl DaemonState {
         *current = Arc::new(index);
         self.cache.clear();
         package_count
+    }
+
+    /// Swap in freshly constructed system backends so libalpm reloads the
+    /// sync databases from disk. Called by RefreshIndex (after `omg sync`):
+    /// without this, a worker created before the sync serves its frozen
+    /// in-memory update list until daemon restart.
+    fn refresh_system_backends(&self) {
+        let mut backends = self
+            .system_backends
+            .write()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        if backends.is_production() {
+            *backends = SystemBackendAccess::production();
+        }
     }
 
     pub fn new() -> anyhow::Result<Self> {
@@ -212,7 +229,7 @@ impl DaemonState {
             persistent,
             package_manager,
             index: RwLock::new(Arc::new(index)),
-            system_backends,
+            system_backends: RwLock::new(system_backends),
             runtime_versions: Arc::new(RwLock::new(Vec::new())),
             rate_limiter,
             start_time: std::time::Instant::now(),
@@ -303,7 +320,12 @@ pub async fn handle_request(state: Arc<DaemonState>, request: Request) -> Respon
 /// it atomically. Existing requests continue using their previous immutable
 /// snapshot until the swap completes.
 async fn handle_refresh_index(state: Arc<DaemonState>, id: RequestId) -> Response {
-    if !state.system_backends.is_production() {
+    if !state
+        .system_backends
+        .read()
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
+        .is_production()
+    {
         return validation_error(id, "Index refresh is unavailable in an isolated daemon");
     }
 
@@ -317,6 +339,10 @@ async fn handle_refresh_index(state: Arc<DaemonState>, id: RequestId) -> Respons
     };
 
     let packages = state.replace_index(index);
+    state.refresh_system_backends();
+    // Drop the persisted snapshot too: it predates the index swap and would
+    // otherwise be resurrected into the memory cache by the next status call.
+    state.persistent.invalidate_status();
     tracing::info!(packages, "Daemon package index refreshed");
     Response::Success {
         id,
@@ -724,7 +750,13 @@ async fn handle_info(state: Arc<DaemonState>, id: RequestId, package: String) ->
     // Only a genuine miss (empty results or no exact name match) falls
     // through to the negative cache.
     #[cfg(feature = "arch")]
-    if state.system_backends.is_production() && state.package_manager.name() == "pacman" {
+    if state
+        .system_backends
+        .read()
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
+        .is_production()
+        && state.package_manager.name() == "pacman"
+    {
         match tokio::time::timeout(DAEMON_INFO_AUR_TIMEOUT, search_detailed(&package)).await {
             Ok(Ok(details)) => {
                 if let Some(pkg) = details.into_iter().find(|p| p.name == package) {
@@ -890,7 +922,12 @@ async fn handle_status(state: Arc<DaemonState>, id: RequestId) -> Response {
     // 3. Query the selected backend. Production uses the optimized native
     // status paths; dependency-injected states stay behind the package-manager
     // interface and never access host package databases.
-    let status_result = if state.system_backends.is_production() {
+    let status_result = if state
+        .system_backends
+        .read()
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
+        .is_production()
+    {
         let state_clone = Arc::clone(&state);
         match tokio::task::spawn_blocking(move || {
             system_status_for_backend(state_clone.package_manager.name())
@@ -1179,9 +1216,25 @@ fn filter_ignored_updates<T>(
 /// Handle list updates request using the hot ALPM worker (zero ALPM init overhead)
 async fn handle_list_updates(state: Arc<DaemonState>, id: RequestId) -> Response {
     #[cfg(feature = "arch")]
-    let updates_result = match &state.system_backends {
-        SystemBackendAccess::Production { alpm_worker } => alpm_worker.list_updates().await,
-        SystemBackendAccess::Isolated => state.package_manager.list_updates().await,
+    let updates_result = {
+        // Clone the worker handle under the lock, then release the guard
+        // before awaiting (std RwLock guards are not Send).
+        let alpm_worker = {
+            let backends = state
+                .system_backends
+                .read()
+                .unwrap_or_else(std::sync::PoisonError::into_inner);
+            match &*backends {
+                SystemBackendAccess::Production { alpm_worker } => {
+                    Some(std::sync::Arc::clone(alpm_worker))
+                }
+                SystemBackendAccess::Isolated => None,
+            }
+        };
+        match alpm_worker {
+            Some(worker) => worker.list_updates().await,
+            None => state.package_manager.list_updates().await,
+        }
     };
 
     #[cfg(not(feature = "arch"))]
@@ -1195,7 +1248,13 @@ async fn handle_list_updates(state: Arc<DaemonState>, id: RequestId) -> Response
             // pacman.conf parse failure is an error, mirroring
             // `alpm_ops::get_update_list`.
             #[cfg(feature = "arch")]
-            if state.system_backends.is_production() && state.package_manager.name() == "pacman" {
+            if state
+                .system_backends
+                .read()
+                .unwrap_or_else(std::sync::PoisonError::into_inner)
+                .is_production()
+                && state.package_manager.name() == "pacman"
+            {
                 match crate::core::pacman_conf::PacmanConfig::parse(
                     crate::core::paths::pacman_conf_path(),
                 ) {

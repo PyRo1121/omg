@@ -124,6 +124,26 @@ fn history_changes(updates: &[UpdateInfo]) -> Vec<crate::core::history::PackageC
         .collect()
 }
 
+/// Changes THIS process must record for an update operation.
+///
+/// Single-ownership rule: when the official upgrade was delegated to the
+/// elevated child (deferred sync), the child records the official changes and
+/// this process records only the AUR portion it builds itself. Otherwise this
+/// process performed everything and records all changes.
+fn parent_recorded_changes(
+    all_updates: &[UpdateInfo],
+    aur_packages: &[String],
+    delegated_official: bool,
+) -> Vec<crate::core::history::PackageChange> {
+    if !delegated_official {
+        return history_changes(all_updates);
+    }
+    history_changes(all_updates)
+        .into_iter()
+        .filter(|change| aur_packages.contains(&change.name))
+        .collect()
+}
+
 pub async fn update(check_only: bool, yes: bool, dry_run: bool) -> Result<()> {
     use owo_colors::OwoColorize;
 
@@ -283,7 +303,11 @@ pub async fn update(check_only: bool, yes: bool, dry_run: bool) -> Result<()> {
     modern_ui::print_section("Installing updates");
 
     let history = crate::core::history::HistoryManager::new()?;
-    let changes = history_changes(&all_updates);
+    let changes = parent_recorded_changes(
+        &all_updates,
+        &aur_packages,
+        needs_deferred_sync && official_count > 0,
+    );
     let mut installed_count = 0;
     let mut failed_count = 0;
 
@@ -330,16 +354,17 @@ pub async fn update(check_only: bool, yes: bool, dry_run: bool) -> Result<()> {
             use std::sync::Arc;
 
             let client = Arc::new(crate::package_managers::AurClient::new()?);
-            let jobs: Vec<BuildJob> = aur_packages
-                .iter()
-                .map(|pkg| BuildJob::new(pkg.clone(), Vec::new()))
-                .collect();
+            // AUR updates are reported per installed output, but split packages
+            // share one PackageBase checkout and must be built together. Resolve
+            // the package-base graph only after confirmation so check-only and
+            // cancelled updates do not pay an extra network request.
+            let jobs: Vec<BuildJob> = client.build_jobs_for_updates(&aur_packages).await?;
             let max_concurrent =
                 aur_build_concurrency(std::env::var("OMG_AUR_PARALLEL").ok().as_deref());
             let builder = ParallelBuilder::new(client, max_concurrent);
 
             if let Err(e) = builder.build_packages(jobs).await {
-                println!("  {} Failed to build AUR packages: {}", "✗".red(), e);
+                println!("  {} Failed to build AUR packages: {e:#}", "✗".red());
                 failed_count += aur_packages.len();
             } else {
                 installed_count += aur_packages.len();
@@ -427,6 +452,43 @@ fn update_dry_run(updates: &[UpdateInfo]) -> Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn update_info(name: &str, repo: &str) -> UpdateInfo {
+        UpdateInfo {
+            name: name.to_string(),
+            old_version: "1.0".to_string(),
+            new_version: "2.0".to_string(),
+            repo: repo.to_string(),
+        }
+    }
+
+    #[test]
+    fn delegated_official_updates_are_recorded_by_the_child_not_twice() {
+        // Regression: with deferred elevation the child (fullupdate arm)
+        // records official changes; the parent must record only its own AUR
+        // portion or every official package appears twice in history.
+        let all = vec![
+            update_info("linux", "core"),
+            update_info("firefox", "extra"),
+            update_info("paru", "aur"),
+        ];
+        let aur = vec!["paru".to_string()];
+
+        let recorded = parent_recorded_changes(&all, &aur, true);
+
+        assert_eq!(recorded.len(), 1, "only the AUR change is parent-recorded");
+        assert_eq!(recorded[0].name, "paru");
+    }
+
+    #[test]
+    fn non_delegated_updates_record_every_change_once() {
+        let all = vec![update_info("linux", "core"), update_info("paru", "aur")];
+        let aur = vec!["paru".to_string()];
+
+        let recorded = parent_recorded_changes(&all, &aur, false);
+
+        assert_eq!(recorded.len(), 2);
+    }
 
     #[test]
     fn aur_parallel_unset_uses_default() {

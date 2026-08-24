@@ -125,8 +125,10 @@ impl ContainerManager {
 
     /// Run a command in a container
     pub fn run(&self, config: &ContainerConfig, command: &[&str]) -> Result<i32> {
-        // SECURITY: Validate image and name to prevent injection
-        crate::core::security::validate_package_name(&config.image)?;
+        // SECURITY: Validate image and name to prevent injection. Image
+        // references legitimately contain ':' (tags/digests), so they need
+        // the image-reference grammar, not the package-name charset.
+        crate::core::security::validate_image_ref(&config.image)?;
         if let Some(ref name) = config.name {
             crate::core::security::validate_package_name(name)?;
         }
@@ -304,8 +306,8 @@ impl ContainerManager {
 
     /// Pull an image
     pub fn pull(&self, image: &str) -> Result<()> {
-        // SECURITY: Validate image name
-        crate::core::security::validate_package_name(image)?;
+        // SECURITY: Validate image reference
+        crate::core::security::validate_image_ref(image)?;
 
         let status = Command::new(self.runtime.command())
             .args(["pull", "--", image])
@@ -532,16 +534,7 @@ impl ContainerManager {
 /// characters. Anything else (shell metacharacters, whitespace, option-like
 /// prefixes, traversal) must never reach a generated Dockerfile.
 fn is_safe_image_reference(image: &str) -> bool {
-    !image.is_empty()
-        && image.len() <= 256
-        && image
-            .bytes()
-            .all(|b| matches!(b, b'a'..=b'z' | b'A'..=b'Z' | b'0'..=b'9' | b'.' | b'/' | b':' | b'_' | b'-'))
-        && !image.contains("..")
-        && image
-            .chars()
-            .next()
-            .is_some_and(|c: char| c.is_ascii_alphanumeric())
+    crate::core::security::validate_image_ref(image).is_ok()
 }
 
 fn require_successful_output(

@@ -612,9 +612,15 @@ fn require_slsa_verified(verified: bool, error: Option<&str>) -> Result<()> {
     if verified {
         return Ok(());
     }
+    // Cryptographic in-toto/SLSA attestation verification is not implemented;
+    // the evidence pipeline classifies but never reports verified=true. Say so
+    // plainly instead of implying a verification failure the user could fix.
     match error {
-        Some(reason) => anyhow::bail!("SLSA verification failed: {reason}"),
-        None => anyhow::bail!("SLSA verification failed"),
+        Some(reason) => anyhow::bail!(
+            "SLSA attestation verification is not implemented (evidence: {reason}). \
+             No available evidence constitutes a verified SLSA attestation."
+        ),
+        None => anyhow::bail!("SLSA attestation verification is not implemented"),
     }
 }
 
@@ -1374,7 +1380,8 @@ mod tests {
         let err = require_slsa_verified(false, Some("no attestation"))
             .expect_err("unverified provenance must fail the command");
         assert!(
-            err.to_string().contains("SLSA verification failed"),
+            err.to_string()
+                .contains("SLSA attestation verification is not implemented"),
             "got: {err}"
         );
         assert!(
@@ -1387,7 +1394,7 @@ mod tests {
         assert!(
             missing_reason
                 .to_string()
-                .contains("SLSA verification failed")
+                .contains("SLSA attestation verification is not implemented")
         );
     }
 

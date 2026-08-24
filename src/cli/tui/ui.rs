@@ -22,6 +22,11 @@ fn truncate_width(text: &str, max_width: usize) -> Cow<'_, str> {
     if text.width() <= max_width {
         return Cow::Borrowed(text);
     }
+    if max_width == 0 {
+        // Nothing fits, and the ellipsis alone would already exceed the
+        // budget; an empty cell is the only honest rendering.
+        return Cow::Borrowed("");
+    }
     let mut out = String::new();
     let mut used = 0usize;
     for ch in text.chars() {
@@ -635,13 +640,6 @@ fn draw_quick_actions(f: &mut Frame, area: Rect, app: &App) {
             ),
             Span::styled(" Refresh", Style::default().fg(colors::FG_PRIMARY)),
         ])),
-        ListItem::new(Line::from(vec![
-            Span::styled(
-                " a ",
-                Style::default().bg(colors::BG_LIGHT).fg(colors::ACCENT_RED),
-            ),
-            Span::styled(" Security Audit", Style::default().fg(colors::FG_PRIMARY)),
-        ])),
     ];
 
     let actions_list = List::new(actions)
@@ -958,9 +956,14 @@ fn draw_security(f: &mut Frame, area: Rect, app: &App) {
                 .fg(colors::FG_PRIMARY)
                 .add_modifier(Modifier::BOLD),
         )),
+        // These are the built-in DEFAULTS, not live configuration; label them
+        // as such so they cannot be mistaken for actual policy state.
         Line::from(vec![
             Span::styled("   ├─ Min Grade: ", Style::default().fg(colors::FG_MUTED)),
-            Span::styled("VERIFIED", Style::default().fg(colors::ACCENT_GREEN)),
+            Span::styled(
+                "VERIFIED (default)",
+                Style::default().fg(colors::ACCENT_GREEN),
+            ),
         ]),
         Line::from(vec![
             Span::styled("   ├─ AUR: ", Style::default().fg(colors::FG_MUTED)),
@@ -1287,30 +1290,21 @@ fn draw_status_bar(f: &mut Frame, area: Rect, app: &App) {
             ("q", "Quit"),
             ("u", "Update"),
             ("c", "Clean"),
+            ("o", "Orphans"),
             ("r", "Refresh"),
-            ("1-5", "Tabs"),
+            ("1-6", "Tabs"),
         ],
         Tab::Packages => &[
             ("q", "Quit"),
             ("/", "Search"),
             ("↑↓", "Navigate"),
             ("Enter", "Install"),
-            ("Esc", "Cancel"),
+            ("Esc", "Cancel search"),
         ],
-        Tab::Runtimes => &[
-            ("q", "Quit"),
-            ("u", "Use"),
-            ("i", "Install"),
-            ("r", "Remove"),
-        ],
-        Tab::Security => &[("q", "Quit"), ("a", "Audit"), ("f", "Fix"), ("p", "Policy")],
-        Tab::Activity => &[("q", "Quit"), ("r", "Refresh"), ("c", "Clear")],
-        Tab::Team => &[
-            ("q", "Quit"),
-            ("r", "Refresh"),
-            ("p", "Pull"),
-            ("P", "Push"),
-        ],
+        // Hints list only keys with real handlers; dead advertised shortcuts
+        // erode trust (see audit shard 19). Wire a handler before re-adding.
+        Tab::Runtimes | Tab::Activity | Tab::Team => &[("q", "Quit"), ("r", "Refresh")],
+        Tab::Security => &[("q", "Quit"), ("a", "Audit")],
     };
 
     let mut spans = vec![Span::styled(" ", Style::default())];

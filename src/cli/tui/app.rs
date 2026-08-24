@@ -525,6 +525,37 @@ impl App {
     }
 
     pub fn handle_key(&mut self, key: KeyCode) {
+        // While typing a query, every key belongs to the search input.
+        // Navigation, refresh, and tab shortcuts must not fire mid-typing.
+        if self.search_mode {
+            match key {
+                KeyCode::Esc => {
+                    // Cancel: discard the query so the main loop cannot
+                    // mistake a cancelled search for a committed one.
+                    self.search_mode = false;
+                    self.search_query.clear();
+                    self.search_results.clear();
+                    self.note_query_change();
+                }
+                KeyCode::Enter => {
+                    self.search_mode = false;
+                    // Search will be triggered in the main loop
+                }
+                KeyCode::Backspace => {
+                    if !self.search_query.is_empty() {
+                        self.search_query.pop();
+                        self.note_query_change();
+                    }
+                }
+                KeyCode::Char(c) => {
+                    self.search_query.push(c);
+                    self.note_query_change();
+                }
+                _ => {}
+            }
+            return;
+        }
+
         match key {
             // Navigation. Quit is handled by the main loop (which restores the
             // terminal); an abrupt `process::exit` here would skip cleanup.
@@ -572,20 +603,10 @@ impl App {
                 }
             }
             KeyCode::Esc => {
-                self.search_mode = false;
                 self.show_popup = false;
             }
-            KeyCode::Backspace => {
-                if self.search_mode && !self.search_query.is_empty() {
-                    self.search_query.pop();
-                    self.note_query_change();
-                }
-            }
             KeyCode::Enter => {
-                if self.search_mode {
-                    self.search_mode = false;
-                    // Search will be triggered in the main loop
-                } else if self.enter_requests_confirmation() {
+                if self.enter_requests_confirmation() {
                     // Ask for confirmation first; the install runs only after
                     // a second Enter confirms the popup (handled by the loop).
                     self.show_popup = true;
@@ -614,14 +635,6 @@ impl App {
                     Tab::Packages => Tab::Dashboard,
                 };
                 self.switch_tab(prev);
-            }
-
-            // Character input for search
-            KeyCode::Char(c) => {
-                if self.search_mode {
-                    self.search_query.push(c);
-                    self.note_query_change();
-                }
             }
 
             _ => {}
@@ -738,10 +751,44 @@ mod tests {
     }
 
     #[test]
+    fn search_mode_treats_reserved_characters_as_query_text() {
+        let mut app = test_app();
+        app.search_mode = true;
+
+        // Every one of these keys is a global shortcut outside search mode;
+        // while typing they must be inserted into the query instead.
+        for c in ['r', 'k', 'j', '5', '/'] {
+            app.handle_key(KeyCode::Char(c));
+        }
+
+        assert_eq!(app.search_query, "rkj5/");
+        assert!(app.search_mode);
+        assert_eq!(app.current_tab, Tab::Packages);
+    }
+
+    #[test]
+    fn esc_cancels_search_by_discarding_the_query() {
+        let mut app = test_app();
+        app.search_mode = true;
+        app.search_query.push_str("fir");
+
+        app.handle_key(KeyCode::Esc);
+
+        assert!(!app.search_mode);
+        assert!(
+            app.search_query.is_empty(),
+            "a cancelled query must not commit"
+        );
+        assert!(app.search_results.is_empty());
+    }
+
+    #[test]
     fn tab_switch_resets_selection_and_search_state() {
         let mut app = test_app();
         app.search_mode = true;
         app.selected_index = 10;
+        // Exit search first: while the query is open even digits belong to it.
+        app.handle_key(KeyCode::Enter);
         app.handle_key(KeyCode::Char('5')); // Activity
         assert_eq!(app.current_tab, Tab::Activity);
         assert_eq!(app.selected_index, 0);

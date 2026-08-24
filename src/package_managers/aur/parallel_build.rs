@@ -8,7 +8,11 @@ use super::AurClient;
 
 #[derive(Debug, Clone)]
 pub struct BuildJob {
+    /// AUR package base to clone and build.
     pub package: String,
+    /// Split-package outputs from this base that should be installed.
+    pub outputs: Vec<String>,
+    /// Other package bases in this update set that must finish first.
     pub dependencies: Vec<String>,
 }
 
@@ -16,7 +20,25 @@ impl BuildJob {
     #[must_use]
     pub fn new(package: String, dependencies: Vec<String>) -> Self {
         Self {
+            outputs: vec![package.clone()],
             package,
+            dependencies,
+        }
+    }
+
+    #[must_use]
+    pub fn for_package_base(
+        package_base: String,
+        mut outputs: Vec<String>,
+        mut dependencies: Vec<String>,
+    ) -> Self {
+        outputs.sort();
+        outputs.dedup();
+        dependencies.sort();
+        dependencies.dedup();
+        Self {
+            package: package_base,
+            outputs,
             dependencies,
         }
     }
@@ -58,15 +80,19 @@ impl ParallelBuilder {
 
         let dep_graph = Self::build_dependency_graph(&jobs);
         let build_levels = Self::topological_levels(&dep_graph)?;
+        let jobs_by_package: HashMap<String, BuildJob> = jobs
+            .into_iter()
+            .map(|job| (job.package.clone(), job))
+            .collect();
 
         tracing::info!(
-            "Building {} packages in {} parallel wave(s)",
-            jobs.len(),
+            "Building {} package base(s) in {} parallel wave(s)",
+            jobs_by_package.len(),
             build_levels.len()
         );
 
         for (level_idx, level) in build_levels.iter().enumerate() {
-            self.build_level(level_idx + 1, build_levels.len(), level)
+            self.build_level(level_idx + 1, build_levels.len(), level, &jobs_by_package)
                 .await?;
         }
 
@@ -142,6 +168,7 @@ impl ParallelBuilder {
         level_num: usize,
         total_levels: usize,
         packages: &[String],
+        jobs: &HashMap<String, BuildJob>,
     ) -> Result<()> {
         use owo_colors::OwoColorize;
 
@@ -168,14 +195,17 @@ impl ParallelBuilder {
         for _ in 0..concurrency {
             if let Some(pkg) = package_iter.next() {
                 let client = Arc::clone(&self.client);
-                let package = pkg.clone();
+                let job = jobs
+                    .get(pkg)
+                    .cloned()
+                    .with_context(|| format!("Missing build job for package base '{pkg}'"))?;
 
                 tasks.spawn(async move {
-                    tracing::info!("Building {}", package);
+                    tracing::info!("Building {} for outputs {:?}", job.package, job.outputs);
                     client
-                        .install(&package)
+                        .install_package_outputs(&job.package, &job.outputs)
                         .await
-                        .with_context(|| format!("Failed to build {package}"))
+                        .with_context(|| format!("Failed to build {}", job.package))
                 });
             }
         }
@@ -185,14 +215,20 @@ impl ParallelBuilder {
                 Ok(Ok(())) => {
                     if let Some(pkg) = package_iter.next() {
                         let client = Arc::clone(&self.client);
-                        let package = pkg.clone();
+                        let job = jobs.get(pkg).cloned().with_context(|| {
+                            format!("Missing build job for package base '{pkg}'")
+                        })?;
 
                         tasks.spawn(async move {
-                            tracing::info!("Building {}", package);
+                            tracing::info!(
+                                "Building {} for outputs {:?}",
+                                job.package,
+                                job.outputs
+                            );
                             client
-                                .install(&package)
+                                .install_package_outputs(&job.package, &job.outputs)
                                 .await
-                                .with_context(|| format!("Failed to build {package}"))
+                                .with_context(|| format!("Failed to build {}", job.package))
                         });
                     }
                 }

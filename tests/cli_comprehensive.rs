@@ -443,14 +443,11 @@ mod meta_tests {
 
     #[test]
     fn test_self_update_check() {
+        // Hermeticity: hits the production release server; network-gated only.
+        require_network_tests!();
         let result = run_omg(&["self-update", "--check"]);
-        let output = result.combined_output();
-        assert!(
-            result.success
-                || output.to_lowercase().contains("update")
-                || output.to_lowercase().contains("error"),
-            "Self-update check should succeed or explain its result: {output}"
-        );
+        result.assert_success();
+        result.assert_stdout_contains("update");
     }
 
     #[test]

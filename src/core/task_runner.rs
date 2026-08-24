@@ -571,14 +571,38 @@ fn with_arg_separator(
     task_args
 }
 
+/// Validate an executable command spawned argv-directly (no shell).
+fn validate_executable_command(cmd: &str) -> anyhow::Result<()> {
+    if cmd.is_empty() {
+        anyhow::bail!("Command must not be empty");
+    }
+    if let Some(c) = cmd.chars().find(|c| c.is_control()) {
+        anyhow::bail!("Invalid control character {c:?} in command");
+    }
+    Ok(())
+}
+
 fn run_async<F, T>(future: F) -> Result<T>
 where
-    F: Future<Output = Result<T>>,
+    F: Future<Output = Result<T>> + Send,
+    T: Send,
 {
-    // Try to use existing runtime first (if we're already in an async context)
-    if let Ok(handle) = tokio::runtime::Handle::try_current() {
-        // We're in an async context, use block_in_place to avoid deadlock
-        tokio::task::block_in_place(|| handle.block_on(future))
+    if let Ok(_handle) = tokio::runtime::Handle::try_current() {
+        // We're inside an async context. `block_in_place` PANICS on a
+        // current-thread runtime (the production flavor), so instead isolate
+        // this work on a dedicated thread with its own runtime — the same
+        // pattern privilege.rs uses for elevation from async contexts.
+        std::thread::scope(|scope| {
+            scope
+                .spawn(|| {
+                    tokio::runtime::Builder::new_current_thread()
+                        .enable_all()
+                        .build()?
+                        .block_on(future)
+                })
+                .join()
+                .map_err(|_| anyhow::anyhow!("async task worker panicked"))?
+        })
     } else {
         // No runtime exists, create a minimal one
         // Use current_thread for sync operations - faster startup than multi_thread
@@ -798,9 +822,11 @@ fn execute_process(
         .find(|path| path.exists());
 
     let mut command = Command::new(cmd);
-    // SECURITY: Use -- to prevent argument injection if the command supports it
-    // Note: We can't blindly add -- to all commands, but we should ensure 'cmd' itself is safe.
-    crate::core::security::validate_package_name(cmd)?;
+    // SECURITY: cmd is spawned argv-directly (no shell), so metacharacters are
+    // inert. Reject only what makes an executable path unusable: emptiness and
+    // control characters (including NUL). Package-name rules would wrongly
+    // reject legitimate relative-path tools like `./gradlew` or `./mvnw`.
+    validate_executable_command(cmd)?;
 
     // SECURITY: Validate extra_args to prevent command injection
     for arg in extra_args {
@@ -1232,6 +1258,18 @@ mod tests {
     use super::*;
     use std::fs;
     use tempfile::TempDir;
+
+    #[test]
+    fn executable_commands_allow_relative_path_tools() {
+        // Regression: package-name validation rejected `./gradlew`, which this
+        // runner itself detects and generates for Gradle projects.
+        assert!(validate_executable_command("./gradlew").is_ok());
+        assert!(validate_executable_command("./mvnw").is_ok());
+        assert!(validate_executable_command("node").is_ok());
+        assert!(validate_executable_command("").is_err());
+        assert!(validate_executable_command("bad\u{0}cmd").is_err());
+        assert!(validate_executable_command("cmd\n").is_err());
+    }
 
     #[test]
     fn parallel_task_names_reject_empty_entries() {

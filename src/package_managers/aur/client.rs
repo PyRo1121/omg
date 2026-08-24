@@ -1,6 +1,7 @@
 //! AUR (Arch User Repository) client with build support
 
 use ahash::AHashSet;
+use std::collections::{BTreeMap, BTreeSet};
 use std::fs::File;
 use std::io::{BufReader, Cursor, Read};
 use std::path::{Path, PathBuf};
@@ -9,8 +10,8 @@ use std::str::FromStr;
 use std::time::Duration;
 
 use alpm_pkginfo::{PackageInfoV1, PackageInfoV2};
-use alpm_srcinfo::SourceInfoV1;
-use alpm_types::{Architecture, SystemArchitecture, Version};
+
+use alpm_types::Version;
 use anyhow::{Context, Result};
 use dialoguer::Confirm;
 use futures::StreamExt;
@@ -23,6 +24,7 @@ use tracing::{instrument, warn};
 use which::which;
 
 use super::error::AurError;
+use super::parallel_build::BuildJob;
 use super::utils::{
     build_user, create_dir_as_user, create_dir_as_user_sync, has_word_boundary_match,
     is_root_owned, is_symlink, original_user, original_user_home, remove_dir_as_user,
@@ -608,8 +610,116 @@ impl AurClient {
         chunks
     }
 
+    pub(crate) async fn build_jobs_for_updates(
+        &self,
+        packages: &[String],
+    ) -> Result<Vec<BuildJob>> {
+        if packages.is_empty() {
+            return Ok(Vec::new());
+        }
+        for package in packages {
+            crate::core::security::validate_package_name(package)?;
+        }
+
+        let mut package_info = Vec::with_capacity(packages.len());
+        for chunk in Self::chunk_aur_names(packages) {
+            package_info.extend(Self::rpc_info_chunk(&chunk).await?.results);
+        }
+        Self::build_jobs_from_package_info(packages, &package_info)
+    }
+
+    fn build_jobs_from_package_info(
+        packages: &[String],
+        package_info: &[AurJsonPackage],
+    ) -> Result<Vec<BuildJob>> {
+        let requested: BTreeSet<&str> = packages.iter().map(String::as_str).collect();
+        let mut info_by_name = BTreeMap::new();
+        let mut base_by_output = BTreeMap::new();
+
+        for info in package_info {
+            crate::core::security::validate_package_name(&info.name)
+                .context("AUR returned an invalid split-package name")?;
+            let package_base = info.package_base.as_deref().unwrap_or(&info.name);
+            crate::core::security::validate_package_name(package_base)
+                .context("AUR returned an invalid package base")?;
+            info_by_name.insert(info.name.as_str(), info);
+            base_by_output.insert(info.name.as_str(), package_base);
+        }
+
+        let mut outputs_by_base: BTreeMap<&str, BTreeSet<String>> = BTreeMap::new();
+        let mut dependencies_by_base: BTreeMap<&str, BTreeSet<String>> = BTreeMap::new();
+
+        for package in packages {
+            let info = info_by_name
+                .get(package.as_str())
+                .with_context(|| format!("AUR returned no package information for '{package}'"))?;
+            let package_base = base_by_output[info.name.as_str()];
+            outputs_by_base
+                .entry(package_base)
+                .or_default()
+                .insert(info.name.clone());
+
+            for dependency in info.depends.as_deref().unwrap_or_default() {
+                let dependency = dependency_name(dependency);
+                if !requested.contains(dependency) {
+                    continue;
+                }
+                let dependency_base = base_by_output.get(dependency).with_context(|| {
+                    format!("AUR returned no package information for dependency '{dependency}'")
+                })?;
+                if *dependency_base != package_base {
+                    dependencies_by_base
+                        .entry(package_base)
+                        .or_default()
+                        .insert((*dependency_base).to_string());
+                }
+            }
+        }
+
+        Ok(outputs_by_base
+            .into_iter()
+            .map(|(package_base, outputs)| {
+                let dependencies = dependencies_by_base
+                    .remove(package_base)
+                    .unwrap_or_default()
+                    .into_iter()
+                    .collect();
+                BuildJob::for_package_base(
+                    package_base.to_string(),
+                    outputs.into_iter().collect(),
+                    dependencies,
+                )
+            })
+            .collect())
+    }
+
     pub async fn install(&self, package: &str) -> Result<()> {
         crate::core::security::validate_package_name(package)?;
+        // Build the package *base* (split packages share one PKGBUILD and one
+        // checkout), but install only the output the user asked for. Installing
+        // every sibling output of the base would mutate the system beyond the
+        // request.
+        let requested = vec![package.to_string()];
+        let mut jobs = self.build_jobs_for_updates(&requested).await?;
+        let job = jobs
+            .pop()
+            .context("AUR returned no build plan for the requested package")?;
+        self.install_package_outputs(&job.package, &[package.to_string()])
+            .await
+    }
+
+    pub(crate) async fn install_package_outputs(
+        &self,
+        package: &str,
+        requested_outputs: &[String],
+    ) -> Result<()> {
+        crate::core::security::validate_package_name(package)?;
+        if requested_outputs.is_empty() {
+            anyhow::bail!("AUR build plan for '{package}' has no package outputs");
+        }
+        for output in requested_outputs {
+            crate::core::security::validate_package_name(output)?;
+        }
 
         require_unprivileged_builder(package, crate::core::is_root())?;
 
@@ -766,10 +876,18 @@ impl AurClient {
 
         let cache_key = self.cache_key(&pkg_dir, &env.makeflags)?;
 
-        let pkg_file = if let Some(cached) = self
-            .cached_package(package, &env.pkgdest, &cache_key)
-            .await?
-        {
+        // Cache namespace is the PACKAGE BASE (one hash per checkout), while
+        // the artifact search targets the requested outputs. Reading under an
+        // output name never matched the base-named write, so split packages
+        // could never hit the build cache.
+        let cached = if requested_outputs.len() == 1 {
+            self.cached_artifacts(package, requested_outputs, &env.pkgdest, &cache_key)
+                .await?
+        } else {
+            None
+        };
+
+        let pkg_files = if let Some(cached) = cached {
             crate::cli::modern_ui::print_info(&format!("Using cached build for {package}"));
             cached
         } else {
@@ -802,17 +920,18 @@ impl AurClient {
                 build_elapsed.as_secs_f64()
             );
 
-            let pkg_file = Self::find_built_package(&pkg_dir, &env.pkgdest)
+            let pkg_files = Self::find_built_packages(&pkg_dir, &env.pkgdest, requested_outputs)
                 .await
                 .map_err(|_| AurError::PackageArchiveNotFound(package.to_string()))?;
             self.write_cache_key(package, &cache_key).await?;
-            pkg_file
+            pkg_files
         };
 
         println!();
-        let install_pb = crate::cli::modern_ui::modern_spinner("Installing", package);
-        Self::install_built_package(&pkg_file, sudoloop.as_ref()).await?;
-        crate::cli::modern_ui::finish_success(&install_pb, "Installed", package);
+        let output_names = requested_outputs.join(", ");
+        let install_pb = crate::cli::modern_ui::modern_spinner("Installing", &output_names);
+        Self::install_built_packages(&pkg_files, sudoloop.as_ref()).await?;
+        crate::cli::modern_ui::finish_success(&install_pb, "Installed", &output_names);
 
         Ok(())
     }
@@ -821,30 +940,36 @@ impl AurClient {
     async fn build_only(&self, package: &str) -> Result<PathBuf> {
         crate::core::security::validate_package_name(package)?;
 
+        // A dependency may be a split-package OUTPUT whose AUR repository is
+        // named after its package base (e.g. `postgresql18-libs` lives in
+        // `postgresql18.git`). Clone/build the base; cache and artifact
+        // lookups stay scoped to the requested output.
+        let package_base = self.resolve_package_base(package).await;
+
         create_dir_as_user(&self.build_dir).await?;
 
         // SECURITY: Validate package directory is safe (prevents symlink attacks)
-        let pkg_dir = validate_build_dir(&self.build_dir, package)?;
+        let pkg_dir = validate_build_dir(&self.build_dir, &package_base)?;
         let pkgbuild_path = pkg_dir.join("PKGBUILD");
 
         if pkg_dir.exists() && pkgbuild_path.exists() {
             if let Err(e) = self.git_pull(&pkg_dir).await {
                 tracing::warn!(
                     "Git pull failed for {}: {}. Recovering by recloning package repository.",
-                    package,
+                    package_base,
                     e
                 );
                 remove_dir_as_user(&pkg_dir).await.map_err(|cleanup_err| {
                     tracing::warn!(
                         "Failed to remove stale AUR cache for {}: {}",
-                        package,
+                        package_base,
                         cleanup_err
                     );
-                    AurError::GitPullFailed(package.to_string())
+                    AurError::GitPullFailed(package_base.clone())
                 })?;
-                self.git_clone(package).await.map_err(|clone_err| {
-                    tracing::warn!("Recovery clone failed for {}: {}", package, clone_err);
-                    AurError::GitPullFailed(package.to_string())
+                self.git_clone(&package_base).await.map_err(|clone_err| {
+                    tracing::warn!("Recovery clone failed for {}: {}", package_base, clone_err);
+                    AurError::GitPullFailed(package_base.clone())
                 })?;
             }
         } else {
@@ -859,9 +984,9 @@ impl AurClient {
                     );
                 }
             }
-            self.git_clone(package).await.map_err(|e| {
-                tracing::warn!("Git clone failed for {}: {}", package, e);
-                AurError::GitCloneFailed(package.to_string())
+            self.git_clone(&package_base).await.map_err(|e| {
+                tracing::warn!("Git clone failed for {}: {}", package_base, e);
+                AurError::GitCloneFailed(package_base.clone())
             })?;
         }
 
@@ -877,8 +1002,14 @@ impl AurClient {
             Self::review_pkgbuild(&pkgbuild_path).await?;
         }
         if let Some(cached) = self
-            .cached_package(package, &env.pkgdest, &cache_key)
+            .cached_artifacts(
+                package,
+                std::slice::from_ref(&package.to_string()),
+                &env.pkgdest,
+                &cache_key,
+            )
             .await?
+            .and_then(|mut archives| archives.pop())
         {
             return Ok(cached);
         }
@@ -897,62 +1028,74 @@ impl AurClient {
             .into());
         }
 
-        let pkg_file = Self::find_built_package(&pkg_dir, &env.pkgdest)
-            .await
-            .map_err(|_| AurError::PackageArchiveNotFound(package.to_string()))?;
+        let mut pkg_files =
+            Self::find_built_packages(&pkg_dir, &env.pkgdest, &[package.to_string()])
+                .await
+                .map_err(|_| AurError::PackageArchiveNotFound(package.to_string()))?;
+        let Some(pkg_file) = pkg_files.pop() else {
+            return Err(AurError::PackageArchiveNotFound(package.to_string()).into());
+        };
         self.write_cache_key(package, &cache_key).await?;
         Ok(pkg_file)
     }
 
-    async fn find_built_package(pkg_dir: &Path, pkgdest: &Path) -> Result<PathBuf> {
+    /// Resolve an AUR name (output or base) to its package base via one RPC
+    /// lookup. Falls back to the input on any failure so offline callers keep
+    /// their previous behavior instead of hard-failing.
+    async fn resolve_package_base(&self, name: &str) -> String {
+        match Self::rpc_info_chunk(std::slice::from_ref(&name.to_string())).await {
+            Ok(response) => response
+                .results
+                .iter()
+                .find(|info| info.name == name)
+                .and_then(|info| info.package_base.clone())
+                .unwrap_or_else(|| name.to_string()),
+            Err(error) => {
+                tracing::debug!(
+                    "Could not resolve package base for {name}: {error}; using name as base"
+                );
+                name.to_string()
+            }
+        }
+    }
+
+    async fn find_built_packages(
+        pkg_dir: &Path,
+        pkgdest: &Path,
+        expected_names: &[String],
+    ) -> Result<Vec<PathBuf>> {
         let pkg_dir = pkg_dir.to_path_buf();
         let pkgdest = pkgdest.to_path_buf();
+        let expected_names = expected_names.to_vec();
 
         tokio::task::spawn_blocking(move || {
-            let mut expected_names = Self::expected_pkg_names(&pkg_dir);
-            if expected_names.is_empty() {
-                let fallback = pkg_dir.file_name().and_then(|n| n.to_str()).unwrap_or("");
-                if !fallback.is_empty() {
-                    expected_names.push(fallback.to_string());
-                }
+            let mut packages = Vec::with_capacity(expected_names.len());
+            for expected_name in &expected_names {
+                let names = [expected_name.clone()];
+                let package = Self::find_package_in_dir(&pkgdest, &names)
+                    .or_else(|| Self::find_package_in_dir(&pkg_dir, &names))
+                    .with_context(|| {
+                        format!(
+                            "No package archive found for split-package output '{expected_name}'"
+                        )
+                    })?;
+                packages.push(package);
             }
-
-            // First try pkgdest (shared cache), filtering by expected package names
-            let pkg_path = Self::find_package_in_dir(&pkgdest, &expected_names)
-                .or_else(|| Self::find_package_in_dir(&pkg_dir, &expected_names));
-
-            pkg_path.ok_or_else(|| {
-                anyhow::anyhow!(
-                    "No package archive found for '{expected_names:?}' after makepkg. Check ~/.cache/omg/aur/_logs/{}.log",
-                    pkg_dir.file_name().and_then(|n| n.to_str()).unwrap_or("unknown")
-                )
-            })
+            Ok(packages)
         })
         .await?
     }
 
-    fn expected_pkg_names(pkg_dir: &Path) -> Vec<String> {
-        let srcinfo_path = pkg_dir.join(".SRCINFO");
-        let Ok(content) = std::fs::read_to_string(&srcinfo_path) else {
-            return Vec::new();
-        };
-        let Ok(source_info) = SourceInfoV1::from_string(&content) else {
-            return Vec::new();
-        };
-
-        let mut packages: Vec<_> = source_info
-            .packages_for_architecture(SystemArchitecture::X86_64)
-            .collect();
-        if packages.is_empty() {
-            packages = source_info
-                .packages_for_architecture(Architecture::Any)
-                .collect();
+    /// Find every requested artifact in `path`, or `None` if any is missing.
+    fn find_packages_in_dir_all(path: &Path, artifacts: &[String]) -> Option<Vec<PathBuf>> {
+        let mut packages = Vec::with_capacity(artifacts.len());
+        for artifact in artifacts {
+            packages.push(Self::find_package_in_dir(
+                path,
+                std::slice::from_ref(artifact),
+            )?);
         }
-
-        packages
-            .into_iter()
-            .map(|pkg| pkg.name.to_string())
-            .collect()
+        Some(packages)
     }
 
     fn find_package_in_dir(path: &Path, expected_names: &[String]) -> Option<PathBuf> {
@@ -1974,20 +2117,25 @@ impl AurClient {
             .join(format!("{package}.hash"))
     }
 
-    async fn cached_package(
+    /// Look up a cached build: the hash file lives under `cache_name` (the
+    /// package base) while the archive search targets the requested output
+    /// artifacts, which may be split-package outputs of that base.
+    async fn cached_artifacts(
         &self,
-        package: &str,
+        cache_name: &str,
+        artifacts: &[String],
         pkgdest: &Path,
         cache_key: &str,
-    ) -> Result<Option<PathBuf>> {
+    ) -> Result<Option<Vec<PathBuf>>> {
         if !self.settings.aur.cache_builds {
             return Ok(None);
         }
 
-        let package = package.to_string();
+        let cache_name = cache_name.to_string();
+        let artifacts = artifacts.to_vec();
         let pkgdest = pkgdest.to_path_buf();
         let cache_key = cache_key.to_string();
-        let cache_path = self.cache_path(&package);
+        let cache_path = self.cache_path(&cache_name);
 
         tokio::task::spawn_blocking(move || {
             let Some(cached) = Self::read_text_if_exists(&cache_path)? else {
@@ -1997,7 +2145,7 @@ impl AurClient {
                 return Ok(None);
             }
 
-            Ok(Self::find_package_in_dir(&pkgdest, &[package]))
+            Ok(Self::find_packages_in_dir_all(&pkgdest, &artifacts))
         })
         .await?
     }
@@ -2057,6 +2205,17 @@ impl AurClient {
         pkg_path: &Path,
         sudoloop: Option<&crate::core::sudoloop::SudoLoop>,
     ) -> Result<()> {
+        Self::install_built_packages(&[pkg_path.to_path_buf()], sudoloop).await
+    }
+
+    async fn install_built_packages(
+        pkg_paths: &[PathBuf],
+        sudoloop: Option<&crate::core::sudoloop::SudoLoop>,
+    ) -> Result<()> {
+        if pkg_paths.is_empty() {
+            anyhow::bail!("AUR build produced no package archives to install");
+        }
+
         // Serialize database mutations across all concurrent builds.
         let _install_guard = INSTALL_LOCK.lock().await;
 
@@ -2064,13 +2223,11 @@ impl AurClient {
 
         // Use direct ALPM if we have capabilities (turbo mode) or running as root
         if crate::core::caps::can_write_pacman_db() {
-            let pkg_path_str = pkg_path.to_string_lossy();
-            crate::package_managers::execute_transaction(
-                vec![pkg_path_str.into_owned()],
-                false,
-                false,
-                None,
-            )?;
+            let packages = pkg_paths
+                .iter()
+                .map(|path| path.to_string_lossy().into_owned())
+                .collect();
+            crate::package_managers::execute_transaction(packages, false, false, None)?;
         } else {
             // Refresh sudo credentials right before install to prevent timeout
             if let Some(sl) = sudoloop {
@@ -2097,7 +2254,7 @@ impl AurClient {
 
                 let result = tokio::process::Command::new("sudo")
                     .args(["pacman", "-U", "--noconfirm", "--"])
-                    .arg(pkg_path)
+                    .args(pkg_paths)
                     .stdin(std::process::Stdio::inherit())
                     .stdout(std::process::Stdio::inherit())
                     .stderr(std::process::Stdio::inherit())
@@ -2406,6 +2563,76 @@ mod tests {
         if unreadable {
             result.expect_err("unreadable .SRCINFO must fail closed");
         }
+    }
+
+    #[test]
+    fn install_plan_for_one_split_output_installs_only_that_output() {
+        // `omg install postgresql18-libs` must build the shared base once but
+        // install only the requested output, never its unrequested siblings.
+        let response: AurResponse = serde_json::from_str(
+            r#"{
+                "results": [
+                    {
+                        "Name": "postgresql18-libs",
+                        "Version": "18.4-1",
+                        "PackageBase": "postgresql18"
+                    },
+                    {
+                        "Name": "postgresql18",
+                        "Version": "18.4-1",
+                        "PackageBase": "postgresql18",
+                        "Depends": ["postgresql18-libs>=18.4"]
+                    }
+                ]
+            }"#,
+        )
+        .expect("valid AUR RPC fixture");
+        let requested = vec!["postgresql18-libs".to_string()];
+
+        let jobs = AurClient::build_jobs_from_package_info(&requested, &response.results)
+            .expect("single-output build plan");
+
+        assert_eq!(jobs.len(), 1);
+        assert_eq!(jobs[0].package, "postgresql18");
+        assert_eq!(jobs[0].outputs, vec!["postgresql18-libs".to_string()]);
+    }
+
+    #[test]
+    fn update_build_jobs_group_split_packages_by_aur_package_base() {
+        // AUR RPC v5 reports both PostgreSQL split outputs under one PackageBase.
+        // Building the output name directly creates an empty/nonexistent checkout;
+        // the shared package base must be built once and both installed outputs selected.
+        let response: AurResponse = serde_json::from_str(
+            r#"{
+                "results": [
+                    {
+                        "Name": "postgresql18-libs",
+                        "Version": "18.4-1",
+                        "PackageBase": "postgresql18",
+                        "Depends": ["krb5"]
+                    },
+                    {
+                        "Name": "postgresql18",
+                        "Version": "18.4-1",
+                        "PackageBase": "postgresql18",
+                        "Depends": ["postgresql18-libs>=18.4"]
+                    }
+                ]
+            }"#,
+        )
+        .expect("valid AUR RPC fixture");
+        let requested = vec!["postgresql18-libs".to_string(), "postgresql18".to_string()];
+
+        let jobs = AurClient::build_jobs_from_package_info(&requested, &response.results)
+            .expect("split-package build plan");
+
+        assert_eq!(jobs.len(), 1);
+        assert_eq!(jobs[0].package, "postgresql18");
+        assert_eq!(
+            jobs[0].outputs,
+            vec!["postgresql18".to_string(), "postgresql18-libs".to_string()]
+        );
+        assert!(jobs[0].dependencies.is_empty());
     }
 
     #[test]

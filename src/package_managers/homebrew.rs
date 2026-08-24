@@ -874,9 +874,22 @@ impl PackageManager for HomebrewPackageManager {
             let total = packages.len();
             let explicit = packages.iter().filter(|p| p.installed_on_request).count();
 
-            // Homebrew doesn't have orphans concept like pacman
-            // Updates require syncing database first
-            Ok((total, explicit, 0, 0))
+            // Homebrew doesn't have an orphans concept like pacman; report
+            // zero rather than guessing.
+            let orphans = 0;
+
+            // Real update count from the formula cache — previously hardcoded
+            // to 0, which made `omg status` on macOS never report outdated
+            // packages.
+            let updates = match self.list_updates().await {
+                Ok(updates) => updates.len(),
+                Err(error) => {
+                    tracing::debug!("homebrew update count unavailable: {error:#}");
+                    0
+                }
+            };
+
+            Ok((total, explicit, orphans, updates))
         })
     }
 

@@ -108,6 +108,35 @@ pub fn validate_package_names(names: &[String]) -> Result<(), ValidationError> {
     Ok(())
 }
 
+/// Validate a container image reference (`[registry/]name[:tag][@digest]`).
+///
+/// Unlike package names, image references legitimately contain `:` (tags,
+/// digests) and `_`. The character allowlist matches Docker's reference
+/// grammar subset: alphanumeric plus `. _ - / : @`, must start with an
+/// alphanumeric character, and rejects traversal and option injection.
+pub fn validate_image_ref(image: &str) -> Result<(), ValidationError> {
+    if image.is_empty() {
+        return Err(ValidationError::PackageNameEmpty);
+    }
+    if image.len() > 256 {
+        return Err(ValidationError::PackageNameTooLong { max: 256 });
+    }
+    let invalid = image
+        .chars()
+        .find(|&c| !(c.is_ascii_alphanumeric() || matches!(c, '.' | '_' | '-' | '/' | ':' | '@')));
+    if let Some(character) = invalid {
+        return Err(ValidationError::PackageNameInvalidChar { character });
+    }
+    if !image
+        .chars()
+        .next()
+        .is_some_and(|c| c.is_ascii_alphanumeric())
+    {
+        return Err(ValidationError::PackageNameStartsWithDash);
+    }
+    Ok(())
+}
+
 /// Check if a string is a valid local package file path
 ///
 /// Local package files are allowed to bypass normal package name validation
@@ -516,5 +545,25 @@ mod tests {
 
         // Invalid - path traversal
         assert!(validate_package_name_or_file("/home/../etc/package.pkg.tar.zst").is_err());
+    }
+
+    #[test]
+    fn valid_tagged_image_references_are_accepted() {
+        // The documented default and common real-world references must pass.
+        assert!(validate_image_ref("ubuntu:24.04").is_ok());
+        assert!(validate_image_ref("ubuntu").is_ok());
+        assert!(validate_image_ref("ghcr.io/owner/img:1.2").is_ok());
+        assert!(validate_image_ref("my_registry/img:latest").is_ok());
+        assert!(validate_image_ref("node:20-alpine").is_ok());
+    }
+
+    #[test]
+    fn hostile_image_references_are_rejected() {
+        assert!(validate_image_ref("").is_err());
+        assert!(validate_image_ref("evil;rm -rf /").is_err());
+        assert!(validate_image_ref("-flag").is_err());
+        assert!(validate_image_ref("img$(whoami)").is_err());
+        assert!(validate_image_ref("a b").is_err());
+        assert!(validate_image_ref("../etc/passwd").is_err());
     }
 }

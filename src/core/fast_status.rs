@@ -45,6 +45,14 @@ pub struct FastStatus {
 const MAGIC: u32 = 0x4F4D_4753; // "OMGS"
 const VERSION: u8 = 1;
 
+/// Maximum age of the status file before readers reject it as stale.
+///
+/// Must stay in sync with the daemon writer cadence (`STATUS_REFRESH_INTERVAL`
+/// in `daemon/server.rs`): if the reader TTL is shorter than the writer
+/// interval, the zero-IPC fast path is dead between refreshes; a pinned test
+/// in `daemon/server.rs` enforces the relationship.
+pub const FAST_STATUS_FRESHNESS_SECS: u64 = 300;
+
 impl FastStatus {
     /// Create a new fast status
     #[must_use]
@@ -94,18 +102,21 @@ impl FastStatus {
             return None;
         }
 
-        // Check freshness (max 60 seconds old)
+        // Check freshness against the shared TTL (aligned with the daemon's
+        // STATUS_REFRESH_INTERVAL so the zero-IPC path stays live).
         let now = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
             .map_or(0, |d| d.as_secs());
-        if now.saturating_sub(status.timestamp) > 60 {
+        if now.saturating_sub(status.timestamp) > FAST_STATUS_FRESHNESS_SECS {
             return None;
         }
 
         Some(status)
     }
 
-    fn read_default() -> Option<Self> {
+    /// Read the default status file with full validation (public for the
+    /// omg-fast binary, which previously duplicated this logic unsafely).
+    pub fn read_default() -> Option<Self> {
         let path = paths::fast_status_path();
         #[cfg(unix)]
         paths::validate_socket_parent(&path).ok()?;

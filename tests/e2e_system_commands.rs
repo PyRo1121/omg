@@ -399,6 +399,10 @@ fn test_help_for_subcommand() {
 
 #[test]
 fn test_self_update_check() {
+    // Hermeticity: this command performs a real HTTPS GET against the
+    // production release server. Gate it behind OMG_RUN_NETWORK_TESTS=1 so a
+    // plain `cargo test` never touches the network (tests/README contract).
+    require_network_tests!();
     init_test_env();
 
     let result = run_omg(&["self-update", "--check"]);
@@ -459,13 +463,20 @@ fn test_generate_man_produces_pages() {
     let project = TestProject::new();
     let output_dir = project.create_dir("man");
 
-    let result = project.run(&["generate-man", output_dir.to_str().unwrap()]);
+    let result = project.run(&["generate-man", "--output", output_dir.to_str().unwrap()]);
 
-    // Should generate man pages
-    let output = result.combined_output();
+    // FALSIFIABLE: man pages must actually be written to the target dir.
+    // The old `success || contains("man")` passed whenever the word "man"
+    // appeared anywhere in any output.
+    result.assert_success();
+    let generated: Vec<_> = std::fs::read_dir(&output_dir)
+        .expect("man output dir must exist")
+        .filter_map(std::result::Result::ok)
+        .map(|entry| entry.file_name().to_string_lossy().into_owned())
+        .collect();
     assert!(
-        result.success || output.contains("man"),
-        "Should generate man pages"
+        !generated.is_empty(),
+        "generate-man must write at least one file"
     );
 }
 

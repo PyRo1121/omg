@@ -332,7 +332,9 @@ impl PackageIndex {
     }
 
     pub fn search(&self, query: &str, limit: usize) -> Vec<PackageInfo> {
-        if query.is_empty() {
+        if query.is_empty() || limit == 0 {
+            // limit == 0 previously underflowed at `limit - 1` below,
+            // panicking inside the daemon's blocking pool.
             return Vec::new();
         }
         let query_lower = query.to_ascii_lowercase();

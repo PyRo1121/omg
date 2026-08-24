@@ -5,6 +5,24 @@
 
 use std::sync::atomic::{AtomicBool, Ordering};
 
+/// Reserved argv token that marks a process as sudo-re-executed.
+///
+/// Elevation must travel through argv because sudo's default `env_reset`
+/// strips `OMG_ELEVATED` from the child environment. The child (see
+/// `src/bin/omg.rs` main) strips this marker and sets `OMG_ELEVATED`
+/// itself before any dispatch. A non-root user invoking the marker gains
+/// nothing: elevation checks still require effective root.
+pub const ELEVATED_MARKER: &str = "__omg_elevated";
+
+/// Reserved argv token: mid-flow delegation whose PARENT owns the history record.
+///
+/// The parent appends this token because it has richer change metadata and AUR
+/// handling; the elevated child strips it and skips its own
+/// `record_fast_transaction` so each mutation is recorded exactly once.
+/// Whole-command re-execs never carry it, so the child remains their sole
+/// recorder.
+pub const FLOW_PARENT_RECORDS: &str = "__omg_parent_records";
+
 #[cfg(not(test))]
 use std::sync::LazyLock;
 
@@ -260,6 +278,10 @@ fn payload_command(
         command.arg("-n");
     }
     command
+        // Elevation is transmitted via an ARGV MARKER, not the environment:
+        // sudo's default env_reset strips OMG_ELEVATED from the child, which
+        // made every fast-elevated path dead code. The child strips this
+        // marker and sets OMG_ELEVATED itself before any dispatch.
         .env("OMG_ELEVATED", "1")
         // Force terminal-based password prompt, never GUI askpass
         .env_remove("SUDO_ASKPASS")
@@ -288,18 +310,35 @@ fn payload_command(
         .stderr(std::process::Stdio::inherit())
         .arg("--")
         .arg(exe)
+        .arg(crate::core::privilege::ELEVATED_MARKER)
         .args(args);
     command
 }
 
-pub async fn run_self_sudo(args: &[&str]) -> anyhow::Result<()> {
+/// Run the omg payload under sudo exactly once and return its exit status
+/// without terminating this process.
+///
+/// In-flow callers (composite operations such as "sync then list then
+/// upgrade") must use [`run_privileged_child`] so work after the elevated
+/// step still runs. Only whole-process re-exec points should use
+/// [`run_self_sudo`], which exits to mimic exec() semantics.
+async fn sudo_payload_status(args: &[&str]) -> anyhow::Result<std::process::ExitStatus> {
     let exe = std::env::current_exe()?;
 
     // Detect if we're running in development/test mode
     let is_test_mode =
         std::env::var("OMG_TEST_MODE").is_ok() || std::env::var("CARGO_PRIMARY_PACKAGE").is_ok();
+    sudo_payload_status_in(exe, is_test_mode, args).await
+}
 
-    if is_test_mode {
+/// Dev-mode-injectable core of [`sudo_payload_status`]: `dev_mode` short-
+/// circuits before any sudo invocation so tests never touch real sudo.
+async fn sudo_payload_status_in(
+    exe: std::path::PathBuf,
+    dev_mode: bool,
+    args: &[&str],
+) -> anyhow::Result<std::process::ExitStatus> {
+    if dev_mode {
         anyhow::bail!(
             "Privilege elevation not supported in development mode.\n\
              \n\
@@ -370,51 +409,64 @@ pub async fn run_self_sudo(args: &[&str]) -> anyhow::Result<()> {
         // terminal instead of spawning a GUI askpass dialog. The user can
         // Ctrl+C if needed. Runs exactly once.
         tracing::debug!("Password required, running interactive sudo");
-        return match payload_command(&exe, args, false).status().await {
-            Ok(s) if s.success() => {
-                // The elevated process handled everything, we're done
-                std::process::exit(0);
-            }
-            Ok(s) => {
-                std::process::exit(s.code().unwrap_or(1));
-            }
-            Err(e) => Err(anyhow::anyhow!(
-                "Failed to run with sudo privileges: {e}\n\
+        return payload_command(&exe, args, false)
+            .status()
+            .await
+            .map_err(|e| {
+                anyhow::anyhow!(
+                    "Failed to run with sudo privileges: {e}\n\
                  \n\
                  RECOMMENDED: Enable turbo mode for zero-sudo operations:\n\
                    omg doctor --turbo\n\
                  \n\
                  This is a one-time setup that allows omg to manage packages\n\
                  without sudo prompts, even in scripts and automation."
-            )),
-        };
+                )
+            });
     }
 
     // Authenticated non-interactively: run the payload exactly once and
     // propagate its result. Never retried — a failing elevated command must
     // surface its own error, not trigger a second execution.
-    match payload_command(&exe, args, true).status().await {
-        Ok(s) if s.success() => {
-            // Child handled everything - exit immediately to avoid duplicate output
-            std::process::exit(0);
-        }
-        Ok(s) => {
-            if yes_flag {
-                anyhow::bail!("Elevated command failed with exit code: {s}");
-            }
-            std::process::exit(s.code().unwrap_or(1));
-        }
-        Err(e) => {
-            anyhow::bail!(
+    payload_command(&exe, args, true)
+        .status()
+        .await
+        .map_err(|e| {
+            anyhow::anyhow!(
                 "Failed to elevate privileges: {e}\n\
-                 \n\
-                 RECOMMENDED: Enable turbo mode for zero-sudo operations:\n\
-                   omg doctor --turbo\n\
-                 \n\
-                 This is a one-time setup that allows omg to manage packages instantly."
+             \n\
+             RECOMMENDED: Enable turbo mode for zero-sudo operations:\n\
+               omg doctor --turbo\n\
+             \n\
+             This is a one-time setup that allows omg to manage packages instantly."
             )
-        }
+        })
+}
+
+/// Re-execute the current command under sudo, replacing this process.
+///
+/// Does not return on success: the elevated child handles the entire
+/// command. Use only where the privileged operation IS the whole command
+/// (top-of-main elevation, `elevate_if_needed`). For an elevated step inside
+/// a larger flow, use [`run_privileged_child`].
+pub async fn run_self_sudo(args: &[&str]) -> anyhow::Result<()> {
+    let status = sudo_payload_status(args).await?;
+    std::process::exit(status.code().unwrap_or(1));
+}
+
+/// Run the current command under sudo as one step inside a larger operation,
+/// returning once the elevated child finishes.
+///
+/// Unlike [`run_self_sudo`] this never terminates the calling process:
+/// success returns `Ok(())`, a nonzero child status is returned as an error,
+/// and the caller continues with the rest of the flow (listing updates,
+/// building AUR packages, recording history, printing summaries).
+pub async fn run_privileged_child(args: &[&str]) -> anyhow::Result<()> {
+    let status = sudo_payload_status(args).await?;
+    if status.success() {
+        return Ok(());
     }
+    anyhow::bail!("Elevated command failed with exit code: {status}")
 }
 
 /// Execute a closure that requires root, elevating if needed.
@@ -442,6 +494,35 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn payload_command_transmits_elevation_via_argv_marker() {
+        // Regression: OMG_ELEVATED=1 in the child environment is stripped by
+        // sudo's env_reset, which killed every fast-elevated path. The marker
+        // must be part of argv instead.
+        let exe = std::path::PathBuf::from("/usr/bin/omg");
+        let command = payload_command(&exe, &["fullupdate", "--"], true);
+        let argv = command.as_std().get_args().collect::<Vec<_>>();
+        let marker_pos = argv
+            .iter()
+            .position(|a| *a == ELEVATED_MARKER)
+            .expect("elevation marker missing from sudo payload argv");
+        // Layout: sudo … --  <exe>  <MARKER>  <payload args…>
+        assert_eq!(argv[marker_pos - 1], "/usr/bin/omg");
+        assert_eq!(argv[marker_pos + 1], "fullupdate");
+        assert_eq!(argv[marker_pos + 2], "--");
+    }
+
+    #[tokio::test]
+    async fn elevation_bails_in_dev_mode_instead_of_exiting() {
+        // Contract: dev-mode elevation surfaces an error and RETURNS rather
+        // than terminating the process, so composite flows keep executing.
+        // The injectable core guarantees no real sudo invocation occurs.
+        let exe = std::env::current_exe().expect("current exe");
+        let result = sudo_payload_status_in(exe, true, &["sync"]).await;
+        let err = result.expect_err("dev-mode elevation must fail closed, not exit");
+        assert!(err.to_string().contains("development mode"));
+    }
 
     #[test]
     fn test_elevate_for_operation_whitelist() {

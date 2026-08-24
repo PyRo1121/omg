@@ -499,6 +499,13 @@ pub fn sync(yes: bool) -> Result<()> {
         }
     }
 
+    // NOTE: This delegates to the read-only `omg env check`, so it verifies
+    // environment health rather than mutating anything. Projects needing
+    // attention make the command exit nonzero so scripts can detect it.
+    let mut ok_count = 0usize;
+    let mut attention_count = 0usize;
+    let mut error_count = 0usize;
+
     for (name, project) in &workspace.projects {
         println!("{} {}", style::arrow("→"), style::package(name));
 
@@ -509,18 +516,35 @@ pub fn sync(yes: bool) -> Result<()> {
 
         match result {
             Ok(status) if status.success() => {
-                println!("  {}", style::success("✓ synced"));
+                println!("  {}", style::success("✓ checked"));
+                ok_count += 1;
             }
             Ok(_) => {
                 println!("  {}", style::warning("⚠ needs attention"));
+                attention_count += 1;
             }
             Err(e) => {
                 println!("  {} {}", style::error("✗"), e);
+                error_count += 1;
             }
         }
     }
 
-    Ok(())
+    println!();
+    if attention_count == 0 && error_count == 0 {
+        println!(
+            "  {} All {} project environment(s) healthy",
+            style::success("✓"),
+            ok_count
+        );
+        Ok(())
+    } else {
+        anyhow::bail!(
+            "{attention_count} project(s) need attention, {error_count} failed to check \
+             (of {} total)",
+            workspace.projects.len()
+        )
+    }
 }
 
 /// Show workspace status

@@ -469,11 +469,37 @@ async fn handle_client(stream: tokio::net::UnixStream, state: Arc<DaemonState>) 
                     ours,
                     "rejecting client with mismatched protocol version"
                 );
-                continue;
+                // Answer once so the client learns WHY instead of hanging for
+                // its full timeout, then close — the stream is unusable.
+                let response = Response::Error {
+                    id: 0,
+                    code: error_codes::PARSE_ERROR,
+                    message: format!(
+                        "unsupported peer protocol version {peer} (this daemon speaks {ours}); update omg"
+                    ),
+                };
+                if let Ok(response_bytes) = crate::daemon::protocol::encode_frame(&response) {
+                    GLOBAL_METRICS.add_bytes_sent(response_bytes.len() as u64);
+                    let _ = framed.send(response_bytes.into()).await;
+                }
+                GLOBAL_METRICS.inc_requests_failed();
+                break;
             }
             Err(e) => {
                 tracing::warn!("malformed frame header: {e}");
-                continue;
+                // Same answer-once-then-close contract as version mismatch:
+                // silence here costs every client a full timeout stall.
+                let response = Response::Error {
+                    id: 0,
+                    code: error_codes::PARSE_ERROR,
+                    message: format!("malformed frame header: {e}"),
+                };
+                if let Ok(response_bytes) = crate::daemon::protocol::encode_frame(&response) {
+                    GLOBAL_METRICS.add_bytes_sent(response_bytes.len() as u64);
+                    let _ = framed.send(response_bytes.into()).await;
+                }
+                GLOBAL_METRICS.inc_requests_failed();
+                break;
             }
         };
         let request: Request = match bitcode::deserialize(payload) {
@@ -604,8 +630,19 @@ async fn handle_client(stream: tokio::net::UnixStream, state: Arc<DaemonState>) 
 
 #[cfg(test)]
 mod tests {
-    use super::{MAX_BATCH_DEPTH, validate_batch_depth};
+    use super::{MAX_BATCH_DEPTH, STATUS_REFRESH_INTERVAL, validate_batch_depth};
     use crate::daemon::protocol::Request;
+
+    #[test]
+    fn fast_status_reader_ttl_matches_daemon_writer_cadence() {
+        // If the reader TTL is shorter than the writer interval, the
+        // zero-IPC fast path rejects every file between daemon refreshes.
+        assert_eq!(
+            STATUS_REFRESH_INTERVAL.as_secs(),
+            crate::core::fast_status::FAST_STATUS_FRESHNESS_SECS,
+            "FastStatus TTL must equal the daemon writer interval"
+        );
+    }
 
     fn flat_batch(id: u64) -> Request {
         Request::Batch {

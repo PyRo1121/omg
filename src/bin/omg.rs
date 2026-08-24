@@ -74,7 +74,34 @@ fn print_system_updated(suffix: &str) {
 
 #[cfg(feature = "arch")]
 fn execute_fast_system_update(suffix: &str) -> Result<()> {
+    use omg_lib::core::history::{HistoryManager, PackageChange, TransactionType};
+
+    // Snapshot pending updates BEFORE upgrading so the history entry carries
+    // real old→new versions. This elevated arm is the sole writer for the
+    // official portion of delegated updates (`update --fast`, `--turbo`, and
+    // the deferred-sync leg of plain `omg update`); without it those
+    // upgrades were invisible to `omg history` / rollback.
+    let changes: Vec<PackageChange> = omg_lib::package_managers::get_update_list()
+        .unwrap_or_default()
+        .into_iter()
+        .map(|update| PackageChange {
+            name: update.name,
+            old_version: Some(update.old_version),
+            new_version: Some(update.new_version),
+            source: update.repo,
+        })
+        .collect();
+
     let result = omg_lib::package_managers::execute_transaction(Vec::new(), false, true, None);
+
+    // Record regardless of outcome (failures are part of history), but never
+    // mask the transaction result with a recording error.
+    if let Err(error) = HistoryManager::new()
+        .and_then(|history| history.finish_operation(TransactionType::Update, changes, Ok(())))
+    {
+        tracing::warn!("Failed to record update history: {error:#}");
+    }
+
     if result.is_ok() {
         print_system_updated(suffix);
     }
@@ -112,9 +139,11 @@ fn split_elevated_invocation(args: &[String]) -> Option<(&str, &[String])> {
 /// ULTRA-FAST elevated path - when we're re-exec'd with sudo, skip ALL initialization
 /// and go straight to the transaction. This eliminates ~150ms of startup overhead.
 #[cfg(feature = "arch")]
-fn try_fast_elevated(args: &[String]) -> Option<Result<()>> {
-    // Only run this path when elevated via sudo
-    if !is_elevated() {
+fn try_fast_elevated(args: &[String], reexec_elevated: bool) -> Option<Result<()>> {
+    // Only run this path when elevated via sudo. The re-exec marker is the
+    // authoritative signal (env_reset strips OMG_ELEVATED); accept the
+    // legacy env flag too for direct `sudo omg` invocations.
+    if !((reexec_elevated || is_elevated()) && omg_lib::core::privilege::is_root()) {
         return None;
     }
 
@@ -126,7 +155,19 @@ fn try_fast_elevated(args: &[String]) -> Option<Result<()>> {
     // separator, and every token after it must be a package name; anything else
     // falls through to clap via split_elevated_invocation.
     let (command, package_tokens) = split_elevated_invocation(args)?;
-    let packages: Vec<String> = package_tokens.to_vec();
+    let mut packages: Vec<String> = package_tokens.to_vec();
+
+    // Mid-flow delegations whose parent owns the history record carry this
+    // trailing token; strip it before package validation and skip the child's
+    // own recording so each mutation is written exactly once.
+    let parent_records =
+        packages.last().map(String::as_str) == Some(omg_lib::core::privilege::FLOW_PARENT_RECORDS);
+    if parent_records {
+        packages.pop();
+        if packages.is_empty() {
+            return None;
+        }
+    }
 
     // Handle commands that may have packages
     match command {
@@ -140,11 +181,15 @@ fn try_fast_elevated(args: &[String]) -> Option<Result<()>> {
                 false,
                 None,
             );
-            let result = record_fast_transaction(
-                omg_lib::core::history::TransactionType::Install,
-                &packages,
-                result,
-            );
+            let result = if parent_records {
+                result
+            } else {
+                record_fast_transaction(
+                    omg_lib::core::history::TransactionType::Install,
+                    &packages,
+                    result,
+                )
+            };
             if result.is_ok() {
                 print_fast_success(&packages, "installed");
             }
@@ -155,11 +200,15 @@ fn try_fast_elevated(args: &[String]) -> Option<Result<()>> {
             omg_lib::core::security::validate_package_names(&packages).ok()?;
             let result =
                 omg_lib::package_managers::execute_transaction(packages.clone(), true, false, None);
-            let result = record_fast_transaction(
-                omg_lib::core::history::TransactionType::Remove,
-                &packages,
-                result,
-            );
+            let result = if parent_records {
+                result
+            } else {
+                record_fast_transaction(
+                    omg_lib::core::history::TransactionType::Remove,
+                    &packages,
+                    result,
+                )
+            };
             if result.is_ok() {
                 print_fast_success(&packages, "removed");
             }
@@ -211,7 +260,7 @@ fn try_fast_elevated(args: &[String]) -> Option<Result<()>> {
 }
 
 #[cfg(not(feature = "arch"))]
-const fn try_fast_elevated(_args: &[String]) -> Option<Result<()>> {
+const fn try_fast_elevated(_args: &[String], _reexec_elevated: bool) -> Option<Result<()>> {
     None
 }
 
@@ -530,11 +579,23 @@ fn try_fast_paths(args: &[String]) -> Result<bool> {
 }
 
 fn main() {
-    let args: Vec<String> = std::env::args().collect();
+    let mut args: Vec<String> = std::env::args().collect();
+
+    // Strip the sudo re-exec marker. Elevation travels via argv because
+    // sudo's env_reset strips OMG_ELEVATED from the child environment (see
+    // ELEVATED_MARKER in core::privilege). The marker is honored ONLY for a
+    // root process: anyone else invoking the reserved token keeps their
+    // arguments untouched and gets clap's unknown-command error.
+    let marker_present =
+        args.get(1).map(String::as_str) == Some(omg_lib::core::privilege::ELEVATED_MARKER);
+    let reexec_elevated = marker_present && omg_lib::core::privilege::is_root();
+    if marker_present && reexec_elevated {
+        args.remove(1);
+    }
 
     // FASTEST PATH: Elevated re-exec - skip ALL initialization
-    // This runs when sudo omg re-execs us with OMG_ELEVATED=1
-    if let Some(result) = try_fast_elevated(&args) {
+    // This runs when sudo omg re-execs us as root
+    if let Some(result) = try_fast_elevated(&args, reexec_elevated) {
         finish(result);
     }
 

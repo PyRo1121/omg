@@ -50,7 +50,14 @@ where
     tracing::debug!("Elevating privileges for {command}");
     let mut args = vec![command, "--"];
     args.extend(packages.iter().map(String::as_str));
-    privilege::run_self_sudo(&args).await?;
+    // For package-mutating delegations the PARENT owns the history record (it
+    // has richer change metadata and AUR handling); the child must stay silent
+    // to avoid double entries. System-upgrade delegations (fullupdate /
+    // turboupdate) carry no packages and the child is their only recorder.
+    if matches!(command, "install" | "remove" | "sync") {
+        args.push(privilege::FLOW_PARENT_RECORDS);
+    }
+    privilege::run_privileged_child(&args).await?;
     invalidate_caches()?;
     Ok(())
 }

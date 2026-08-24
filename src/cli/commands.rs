@@ -907,7 +907,14 @@ pub fn history(
 #[derive(Debug, PartialEq, Eq)]
 enum RollbackAction {
     Remove(Vec<String>),
-    Restore(Vec<(String, String)>),
+    Restore {
+        /// Official packages restorable from the pacman cache: (name, old version).
+        official: Vec<(String, String)>,
+        /// AUR packages whose old versions cannot be restored from any local
+        /// cache; surfaced to the user with guidance instead of aborting the
+        /// whole rollback.
+        rebuild_from_aur: Vec<String>,
+    },
     /// Nothing to reverse (e.g. a database sync transaction).
     NothingToDo,
 }
@@ -943,23 +950,29 @@ fn rollback_action(transaction: &crate::core::history::Transaction) -> Result<Ro
         )),
         crate::core::history::TransactionType::Remove
         | crate::core::history::TransactionType::Update => {
-            let mut packages = Vec::with_capacity(transaction.changes.len());
+            // Mixed official+AUR transactions are the common real-world case:
+            // refuse NOTHING outright. Official packages restore from the
+            // pacman cache; AUR packages cannot be downgraded automatically
+            // and are reported for manual action instead of failing all of it.
+            let mut official = Vec::new();
+            let mut rebuild_from_aur = Vec::new();
             for change in &transaction.changes {
-                anyhow::ensure!(
-                    change.is_official_source(),
-                    "Automatic rollback is unavailable for package '{}' from source '{}'",
-                    change.name,
-                    change.source
-                );
-                let version = change.old_version.clone().with_context(|| {
-                    format!(
-                        "Transaction does not record the old version of '{}'",
-                        change.name
-                    )
-                })?;
-                packages.push((change.name.clone(), version));
+                if change.is_official_source() {
+                    let version = change.old_version.clone().with_context(|| {
+                        format!(
+                            "Transaction does not record the old version of '{}'",
+                            change.name
+                        )
+                    })?;
+                    official.push((change.name.clone(), version));
+                } else {
+                    rebuild_from_aur.push(change.name.clone());
+                }
             }
-            Ok(RollbackAction::Restore(packages))
+            Ok(RollbackAction::Restore {
+                official,
+                rebuild_from_aur,
+            })
         }
         crate::core::history::TransactionType::Sync => Ok(RollbackAction::NothingToDo),
     }
@@ -1133,10 +1146,18 @@ pub async fn rollback(id: Option<String>, yes: bool) -> Result<()> {
             )?;
             println!("{}", style::success("✓ Rollback completed successfully"));
         }
-        RollbackAction::Restore(packages) if packages.is_empty() => {
+        RollbackAction::Restore {
+            official: packages,
+            #[cfg_attr(not(feature = "arch"), allow(unused_variables))]
+            rebuild_from_aur,
+        } if packages.is_empty() && rebuild_from_aur.is_empty() => {
             println!("{}", style::success("Nothing to roll back"));
         }
-        RollbackAction::Restore(packages) => {
+        RollbackAction::Restore {
+            official: packages,
+            #[cfg_attr(not(feature = "arch"), allow(unused_variables))]
+            rebuild_from_aur,
+        } => {
             #[cfg(any(feature = "debian", feature = "debian-pure"))]
             if crate::core::env::distro::is_debian_like() {
                 #[cfg(feature = "debian")]
@@ -1206,6 +1227,30 @@ pub async fn rollback(id: Option<String>, yes: bool) -> Result<()> {
                     .map(|(name, _)| name.clone())
                     .collect::<Vec<_>>();
                 return rollback_requires_backend(&names);
+            }
+
+            #[cfg(feature = "arch")]
+            if !rebuild_from_aur.is_empty() {
+                // AUR downgrades cannot be automated: old versions are not in
+                // any local cache and the AUR serves only latest builds.
+                // Surface them instead of silently ignoring or failing all of
+                // it. Officials were already restored above.
+                println!(
+                    "{} {} AUR package(s) could not be downgraded automatically:",
+                    style::warning("⚠"),
+                    rebuild_from_aur.len()
+                );
+                for name in &rebuild_from_aur {
+                    println!(
+                        "  {} {name} — rebuild from AUR to downgrade manually",
+                        style::dim("·")
+                    );
+                }
+                anyhow::bail!(
+                    "{} official package(s) restored; {} AUR package(s) still need manual downgrade",
+                    packages.len(),
+                    rebuild_from_aur.len()
+                );
             }
         }
     }
@@ -1439,7 +1484,37 @@ mod tests {
                 Some("1.0-1"),
                 true,
             ))?,
-            RollbackAction::Restore(vec![("example".to_string(), "1.0-1".to_string())])
+            RollbackAction::Restore {
+                official: vec![("example".to_string(), "1.0-1".to_string())],
+                rebuild_from_aur: vec![],
+            }
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn mixed_official_and_aur_updates_roll_back_officials_and_report_aur() -> Result<()> {
+        // Regression: mixed transactions used to be refused outright, making
+        // the most common real-world update permanently unrollbackable.
+        let mut mixed = transaction(
+            crate::core::history::TransactionType::Update,
+            "core",
+            Some("6.6.0"),
+            true,
+        );
+        mixed.changes.push(crate::core::history::PackageChange {
+            name: "paru".to_string(),
+            old_version: Some("1.9.0".to_string()),
+            new_version: Some("2.0.0".to_string()),
+            source: "aur".to_string(),
+        });
+
+        assert_eq!(
+            rollback_action(&mixed)?,
+            RollbackAction::Restore {
+                official: vec![("example".to_string(), "6.6.0".to_string())],
+                rebuild_from_aur: vec!["paru".to_string()],
+            }
         );
         Ok(())
     }
@@ -1458,7 +1533,7 @@ mod tests {
     }
 
     #[test]
-    fn rollback_plan_rejects_failed_and_non_restorable_transactions() {
+    fn rollback_plan_rejects_failed_and_non_restorable_transactions() -> Result<()> {
         assert!(
             rollback_action(&transaction(
                 crate::core::history::TransactionType::Update,
@@ -1468,15 +1543,21 @@ mod tests {
             ))
             .is_err()
         );
-        assert!(
+        // A pure-AUR update no longer hard-fails the plan: officials restore
+        // from cache, and AUR packages are reported for manual downgrade.
+        assert_eq!(
             rollback_action(&transaction(
                 crate::core::history::TransactionType::Update,
                 "aur",
                 Some("1.0-1"),
                 true,
-            ))
-            .is_err()
+            ))?,
+            RollbackAction::Restore {
+                official: vec![],
+                rebuild_from_aur: vec!["example".to_string()],
+            }
         );
+        Ok(())
     }
 
     #[test]

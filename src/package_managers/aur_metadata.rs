@@ -34,6 +34,10 @@ pub struct AurJsonPackage {
     pub name: String,
     #[serde(rename = "Version")]
     pub version: String,
+    #[serde(default, rename = "PackageBase")]
+    pub package_base: Option<String>,
+    #[serde(default, rename = "Depends")]
+    pub depends: Option<Vec<String>>,
     #[serde(rename = "Description")]
     pub description: Option<String>,
     #[serde(rename = "Maintainer")]

@@ -110,28 +110,35 @@ async fn run_app(
                     return Ok(());
                 }
 
-                handle_special_key_actions(app, key.code, &action_tx);
+                // While typing a query, no global shortcut may fire.
+                if !app.search_mode {
+                    handle_special_key_actions(app, key.code, &action_tx);
+                }
 
-                // A query committed with Enter (or cancelled with Esc)
-                // before the debounce elapsed must be fetched immediately
-                // so the shown results match the final query.
+                // A query committed with Enter before the debounce elapsed
+                // must be fetched immediately so the shown results match the
+                // final query. (Esc clears the query, so a cancelled search
+                // can never satisfy this condition.)
                 let committed = was_search_mode
                     && !app.search_mode
                     && !app.search_query.is_empty()
                     && app.search_query != last_search;
-                if app.search_mode && app.search_query != last_search {
-                    // Debounce: only search once typing has paused, so a
-                    // burst of keystrokes costs a single lookup.
-                    if app.last_query_change.elapsed() >= Duration::from_millis(SEARCH_DEBOUNCE_MS)
-                    {
-                        last_search.clone_from(&app.search_query);
-                        run_search(app, &last_search).await;
-                    }
-                } else if committed {
+                if committed {
                     last_search.clone_from(&app.search_query);
                     run_search(app, &last_search).await;
                 }
             }
+        }
+
+        // Debounce: once typing has paused, fetch even without another key
+        // event. This must run on every loop iteration — inside the key-event
+        // branch it would never fire after the final keystroke.
+        if app.search_mode
+            && app.search_query != last_search
+            && app.last_query_change.elapsed() >= Duration::from_millis(SEARCH_DEBOUNCE_MS)
+        {
+            last_search.clone_from(&app.search_query);
+            run_search(app, &last_search).await;
         }
 
         // Update app state

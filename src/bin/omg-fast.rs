@@ -16,11 +16,6 @@
 #[cfg(unix)]
 #[global_allocator]
 static GLOBAL: mimalloc::MiMalloc = mimalloc::MiMalloc;
-
-#[cfg(unix)]
-use std::fs::File;
-#[cfg(unix)]
-use std::io::Read;
 #[cfg(unix)]
 use std::os::unix::net::UnixStream;
 
@@ -30,8 +25,6 @@ use anyhow::{Context, Result};
 use omg_lib::core::{fast_status::FastStatus, format::truncate};
 #[cfg(unix)]
 use omg_lib::daemon::protocol::{read_frame, write_frame};
-#[cfg(unix)]
-use zerocopy::FromBytes as _;
 
 #[cfg(unix)]
 fn main() {
@@ -71,45 +64,15 @@ fn main() {
     }
 
     // Status file path: shared with the daemon via `omg_lib::core::paths`
-    // (socket dir, honors OMG_SOCKET_PATH/XDG_RUNTIME_DIR). Do not hardcode
-    // /tmp paths here; they would drift from paths.rs and miss permission
-    // hardening.
-    let path = omg_lib::core::paths::fast_status_path();
-
-    // Read the fixed-size status file.
-    let Ok(mut file) = File::open(&path) else {
+    // (socket dir, honors OMG_SOCKET_PATH/XDG_RUNTIME_DIR). Route through
+    // FastStatus::read_default so magic, layout version, freshness, and
+    // directory-ownership checks cannot drift from the daemon's writer.
+    let Some(status) = FastStatus::read_default() else {
         eprintln!(
-            "omg-fast: no status file at {} (is the omg daemon running? try 'omg daemon' or 'omg status')",
-            path.display()
+            "omg-fast: no fresh status file (is the omg daemon running? try 'omg daemon' or 'omg status')"
         );
         std::process::exit(1);
     };
-
-    let mut buf = [0u8; std::mem::size_of::<FastStatus>()];
-    if let Err(error) = file.read_exact(&mut buf) {
-        eprintln!(
-            "omg-fast: failed to read status file {}: {error}",
-            path.display()
-        );
-        std::process::exit(1);
-    }
-
-    let Ok(status) = FastStatus::read_from_bytes(&buf) else {
-        eprintln!(
-            "omg-fast: status file {} has invalid layout (stale or corrupt); rerun 'omg status'",
-            path.display()
-        );
-        std::process::exit(1);
-    };
-
-    // Validate magic (0x4F4D4753 = "OMGS")
-    if status.magic != 0x4F4D_4753 {
-        eprintln!(
-            "omg-fast: status file {} has invalid magic bytes (stale or corrupt); rerun 'omg status'",
-            path.display()
-        );
-        std::process::exit(1);
-    }
 
     let total = status.total_packages;
     let explicit = status.explicit_packages;
@@ -140,21 +103,30 @@ fn main() {
     }
 }
 
+/// Connect to the daemon socket with bounded I/O timeouts so a wedged daemon
+/// cannot hang the "instant" binary indefinitely (mirrors core/client.rs).
+#[cfg(unix)]
+fn connect_daemon_stream() -> Result<UnixStream> {
+    const DAEMON_IO_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(30);
+    let path = omg_lib::core::paths::socket_path();
+    let stream = UnixStream::connect(&path)
+        .with_context(|| format!("daemon not running (no listener at {})", path.display()))?;
+    stream.set_read_timeout(Some(DAEMON_IO_TIMEOUT))?;
+    stream.set_write_timeout(Some(DAEMON_IO_TIMEOUT))?;
+    Ok(stream)
+}
+
 /// Fast search via raw IPC (no serde, minimal parsing)
 #[cfg(unix)]
 fn fast_search(query: &str) -> Result<()> {
-    let path = omg_lib::core::paths::socket_path();
-    let mut stream = UnixStream::connect(&path)
-        .with_context(|| format!("daemon not running (no listener at {})", path.display()))?;
+    let mut stream = connect_daemon_stream()?;
     send_search_request(&mut stream, query)
 }
 
 /// Fast info via raw IPC
 #[cfg(unix)]
 fn fast_info(package: &str) -> Result<()> {
-    let path = omg_lib::core::paths::socket_path();
-    let mut stream = UnixStream::connect(&path)
-        .with_context(|| format!("daemon not running (no listener at {})", path.display()))?;
+    let mut stream = connect_daemon_stream()?;
     send_info_request(&mut stream, package)
 }
 

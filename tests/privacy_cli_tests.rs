@@ -312,26 +312,20 @@ fn test_privacy_opt_out_updates_config() {
     let result = project.run(&["privacy", "opt-out"]);
 
     // ===== ASSERT =====
-    // Should complete opt-out (may show license warning but still work locally)
-    let output = result.combined_output();
-    assert!(
-        result.success
-            || output.contains("disabled")
-            || output.contains("telemetry")
-            || output.contains("local")
-            || output.contains("opt-out"),
-        "Opt-out should process (local or server-synced): {output}"
-    );
+    result.assert_success();
 
-    // Check that config file was created/updated
-    let config_path = project.config_dir.path().join("omg").join("config.toml");
-    if config_path.exists() {
-        let config_content = fs::read_to_string(&config_path).unwrap();
-        assert!(
-            config_content.contains("telemetry") || config_content.contains("false"),
-            "Config should reflect telemetry disabled"
-        );
-    }
+    // FALSIFIABLE: the config file MUST exist and MUST record telemetry as
+    // disabled. The old version wrapped this check in `if config_path.exists()`
+    // and passed a disjunction of unrelated strings, so opt-out doing nothing
+    // at all still "passed".
+    let config_path = project.config_dir.path().join("config.toml");
+    let config_content = fs::read_to_string(&config_path)
+        .unwrap_or_else(|error| panic!("config must exist after opt-out: {error}"));
+    assert!(
+        config_content.contains("telemetry_enabled = false")
+            || config_content.contains("telemetry_enabled=false"),
+        "config must persist telemetry disabled, got: {config_content}"
+    );
 }
 
 #[test]

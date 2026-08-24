@@ -64,4 +64,20 @@ impl PersistentCache {
         crate::core::safe_ops::atomic_write_file_sync(&self.path, content)
             .with_context(|| format!("Failed to write {}", self.path.display()))
     }
+
+    /// Invalidate the persisted snapshot (best-effort).
+    ///
+    /// Called when the package index is replaced (e.g. after `omg sync`):
+    /// without this, the next status request promotes the pre-sync snapshot
+    /// from disk back into the memory cache and serves stale counts.
+    pub(crate) fn invalidate_status(&self) {
+        if let Err(error) = std::fs::remove_file(&self.path)
+            && error.kind() != std::io::ErrorKind::NotFound
+        {
+            tracing::debug!(
+                "Could not remove stale daemon status cache {}: {error}",
+                self.path.display()
+            );
+        }
+    }
 }
