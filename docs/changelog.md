@@ -410,6 +410,28 @@ analyzer inference
 - **Ci**: Cross-platform install script and R2 release sync
 ### 🐛 Bug Fixes
 
+- **Debian-pure**: Refuse live-system dispatch; fix mixed-feature builds
+
+debian-pure is the test/indexing engine: it has no privilege boundary,
+
+overwrites conffiles without dpkg semantics, and its rollback deletes
+
+replaced files instead of restoring them. get_package_manager() no longer
+
+hands it a live Debian/Ubuntu system — such builds fail with an explicit
+
+error directing users to apt-backed binaries. The pure engine stays
+
+available to tests via its explicit constructor.
+
+Also fixes the two pre-existing E0308 breaks in the arch+debian-pure
+
+combo (tea/info_model, packages/info consumed debian_db version as a
+
+String while parse_version_or_zero is feature-typed); that combination
+
+now compiles cleanly for the first time, along with arch+fedora.
+
 - Remediate deep-audit blockers across elevation, history, daemon, TUI
 
 Elevation (Wave 1)
