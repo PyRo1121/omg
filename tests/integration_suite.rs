@@ -550,17 +550,13 @@ mod runtime_management {
 
         // Test Node detection from .tool-versions
         let result = run_omg_in_dir(&["use", "node"], temp_dir.path());
-        assert!(
-            result.success || result.stdout.contains("20.10.0"),
-            "Should detect node version from .tool-versions"
-        );
+        result.assert_success();
+        result.assert_stdout_contains("20.10.0");
 
         // Test Python detection from .tool-versions
         let result = run_omg_in_dir(&["use", "python"], temp_dir.path());
-        assert!(
-            result.success || result.stdout.contains("3.11.0"),
-            "Should detect python version from .tool-versions"
-        );
+        result.assert_success();
+        result.assert_stdout_contains("3.11.0");
     }
 
     #[test]
