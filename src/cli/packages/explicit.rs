@@ -67,7 +67,6 @@ pub fn explicit_sync_with_json(count: bool, json: bool) -> Result<()> {
                 | ResponseResult::Metrics(_)
                 | ResponseResult::Suggest(_)
                 | ResponseResult::Message(_)
-                | ResponseResult::Batch(_)
                 | ResponseResult::DebianSearch(_)
                 | ResponseResult::Health(_)
                 | ResponseResult::ListUpdates(_) => {}

@@ -246,48 +246,6 @@ async fn test_concurrent_cache_updates() -> Result<()> {
     Ok(())
 }
 
-// ============================================================================
-// Test 3: Deadlock Prevention
-// ============================================================================
-
-#[tokio::test]
-#[serial]
-async fn test_no_deadlock_with_batch_requests() -> Result<()> {
-    let fixture = ConcurrencyTestFixture::new()?;
-
-    // Submit multiple batch requests concurrently
-    let mut handles = vec![];
-    for i in 0..10 {
-        let state = Arc::clone(&fixture.state);
-        let handle = tokio::spawn(async move {
-            let subrequests = vec![
-                Request::Ping { id: i * 3 },
-                Request::Ping { id: i * 3 + 1 },
-                Request::Ping { id: i * 3 + 2 },
-            ];
-
-            let batch = Request::Batch {
-                id: i,
-                requests: subrequests,
-            };
-
-            handle_request(state, batch).await
-        });
-        handles.push(handle);
-    }
-
-    // All should complete without deadlock
-    for handle in handles {
-        let response = handle.await?;
-        assert!(
-            matches!(response, Response::Success { .. }),
-            "Batch request should complete"
-        );
-    }
-
-    Ok(())
-}
-
 #[tokio::test]
 #[serial]
 async fn test_no_deadlock_with_recursive_locks() -> Result<()> {

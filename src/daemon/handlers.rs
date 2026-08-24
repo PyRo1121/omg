@@ -307,7 +307,6 @@ pub async fn handle_request(state: Arc<DaemonState>, request: Request) -> Respon
         Request::RefreshIndex { id } => handle_refresh_index(state, id).await,
         Request::Metrics { id } => handle_metrics(id),
         Request::Suggest { id, query, limit } => handle_suggest(state, id, query, limit).await,
-        Request::Batch { id, requests } => handle_batch(state, id, requests).await,
         Request::DebianSearch { id, query, limit } => {
             handle_debian_search(state, id, query, limit).await
         }
@@ -412,10 +411,6 @@ async fn handle_debian_search(
     }
 }
 
-/// Maximum number of requests in a batch to prevent `DoS`
-const MAX_BATCH_SIZE: usize = 100;
-/// Maximum concurrency for batch processing
-const BATCH_CONCURRENCY: usize = 16;
 /// Maximum length of search query
 const MAX_QUERY_LENGTH: usize = 500;
 /// Default search limit
@@ -501,86 +496,6 @@ async fn handle_suggest(
 }
 
 /// Handle batch requests - process multiple requests in parallel
-async fn handle_batch(state: Arc<DaemonState>, id: RequestId, requests: Vec<Request>) -> Response {
-    use futures::stream::{self, StreamExt};
-
-    // SECURITY: Limit batch size to prevent resource exhaustion
-    if requests.len() > MAX_BATCH_SIZE {
-        let msg = format!(
-            "Batch size {} exceeds maximum of {}",
-            requests.len(),
-            MAX_BATCH_SIZE
-        );
-        audit_log(
-            AuditEventType::PolicyViolation,
-            AuditSeverity::Warning,
-            "daemon_handler",
-            &msg,
-        );
-        return Response::Error {
-            id,
-            code: error_codes::INVALID_PARAMS,
-            message: msg,
-        };
-    }
-
-    // SECURITY: Reject nested batches and index rebuilds. A rebuild is a
-    // global mutation and must never run concurrently as part of a batch.
-    if requests
-        .iter()
-        .any(|request| matches!(request, Request::Batch { .. }))
-    {
-        return validation_error(id, "Nested batch requests are not allowed");
-    }
-    if requests
-        .iter()
-        .any(|request| matches!(request, Request::RefreshIndex { .. }))
-    {
-        return validation_error(id, "RefreshIndex requests are not allowed in a batch");
-    }
-
-    // SECURITY: Limit expensive operations per batch to prevent resource exhaustion
-    // SecurityAudit spawns 32 concurrent scans per request, so limit to 5 per batch
-    let security_audit_count = requests
-        .iter()
-        .filter(|r| matches!(r, Request::SecurityAudit { .. }))
-        .count();
-    if security_audit_count > 5 {
-        let msg =
-            format!("Too many SecurityAudit requests in batch: {security_audit_count} (max 5)");
-        audit_log(
-            AuditEventType::PolicyViolation,
-            AuditSeverity::Warning,
-            "daemon_handler",
-            &msg,
-        );
-        return Response::Error {
-            id,
-            code: error_codes::INVALID_PARAMS,
-            message: msg,
-        };
-    }
-
-    // Process requests concurrently with a limit to prevent DoS.
-    // NOTE: each sub-request flows through `handle_request`, so it consumes
-    // one global rate-limiter token and increments request metrics; a
-    // max-size batch therefore burns half of the global burst budget by
-    // design.
-    let responses: Vec<_> = stream::iter(requests)
-        .map(|req| {
-            let state = Arc::clone(&state);
-            async move { handle_request(state, req).await }
-        })
-        .buffer_unordered(BATCH_CONCURRENCY) // Limit concurrency
-        .collect()
-        .await;
-
-    Response::Success {
-        id,
-        result: ResponseResult::Batch(responses),
-    }
-}
-
 /// Handle search request
 #[tracing::instrument(skip(state), fields(query_len = query.len()))]
 async fn handle_search(
@@ -1365,27 +1280,6 @@ mod tests {
             response,
             Response::Error {
                 id: 41,
-                code: error_codes::INVALID_PARAMS,
-                ..
-            }
-        ));
-    }
-
-    #[tokio::test]
-    async fn batch_rejects_index_refresh_requests() {
-        let (_directory, state) = isolated_state();
-        let response = handle_request(
-            state,
-            Request::Batch {
-                id: 42,
-                requests: vec![Request::RefreshIndex { id: 43 }],
-            },
-        )
-        .await;
-        assert!(matches!(
-            response,
-            Response::Error {
-                id: 42,
                 code: error_codes::INVALID_PARAMS,
                 ..
             }

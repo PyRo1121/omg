@@ -380,29 +380,6 @@ const MAX_REQUEST_SIZE: usize = 1024 * 1024;
 /// Maximum deserialized request size to prevent compression bomb attacks (10MB)
 const MAX_DESERIALIZED_SIZE: usize = 10 * 1024 * 1024;
 
-/// Upper bound on Batch nesting walked by [`validate_batch_depth`] (and thus
-/// by `Request::heap_size`). `handle_batch` rejects any nested Batch outright,
-/// so 1 (top-level batch, flat children only) is the honest bound; this guard
-/// exists to bound recursion before attacker-controlled payloads are walked.
-const MAX_BATCH_DEPTH: usize = 1;
-
-/// Validate batch request depth to prevent recursion `DoS` attacks
-fn validate_batch_depth(request: &Request, depth: usize) -> Result<()> {
-    if depth > MAX_BATCH_DEPTH {
-        return Err(anyhow::anyhow!(
-            "Batch nesting depth {depth} exceeds maximum of {MAX_BATCH_DEPTH}"
-        ));
-    }
-
-    if let Request::Batch { requests, .. } = request {
-        for req in requests {
-            validate_batch_depth(req, depth + 1)?;
-        }
-    }
-
-    Ok(())
-}
-
 /// RAII guard for tracking active connections
 struct ConnectionGuard;
 
@@ -537,21 +514,6 @@ async fn handle_client(stream: tokio::net::UnixStream, state: Arc<DaemonState>) 
             }
         };
 
-        // SECURITY: Validate batch nesting depth before walking heap contents;
-        // this bounds the recursion in both this check and `heap_size`.
-        if let Err(e) = validate_batch_depth(&request, 0) {
-            let msg = format!("Invalid batch structure: {e}");
-            tracing::warn!("{}", msg);
-            audit_log(
-                AuditEventType::PolicyViolation,
-                AuditSeverity::Warning,
-                "daemon_server",
-                &msg,
-            );
-            GLOBAL_METRICS.inc_requests_failed();
-            continue;
-        }
-
         // SECURITY: Validate deserialized size to prevent compression bomb attacks.
         // `heap_size` walks `String`/`Vec` payloads; `std::mem::size_of_val`
         // would only measure the enum's stack size and could never fire.
@@ -630,8 +592,7 @@ async fn handle_client(stream: tokio::net::UnixStream, state: Arc<DaemonState>) 
 
 #[cfg(test)]
 mod tests {
-    use super::{MAX_BATCH_DEPTH, STATUS_REFRESH_INTERVAL, validate_batch_depth};
-    use crate::daemon::protocol::Request;
+    use super::STATUS_REFRESH_INTERVAL;
 
     #[test]
     fn fast_status_reader_ttl_matches_daemon_writer_cadence() {
@@ -642,29 +603,5 @@ mod tests {
             crate::core::fast_status::FAST_STATUS_FRESHNESS_SECS,
             "FastStatus TTL must equal the daemon writer interval"
         );
-    }
-
-    fn flat_batch(id: u64) -> Request {
-        Request::Batch {
-            id,
-            requests: vec![Request::Ping { id }, Request::Status { id }],
-        }
-    }
-
-    #[test]
-    fn batch_depth_guard_accepts_top_level_and_flat_children() {
-        assert!(validate_batch_depth(&flat_batch(1), 0).is_ok());
-        assert!(validate_batch_depth(&Request::Ping { id: 2 }, 0).is_ok());
-    }
-
-    #[test]
-    fn batch_depth_guard_rejects_nesting_beyond_the_honest_bound() {
-        let nested = Request::Batch {
-            id: 1,
-            requests: vec![flat_batch(2)],
-        };
-        assert!(validate_batch_depth(&nested, 0).is_err());
-        // Directly past the bound at any depth.
-        assert!(validate_batch_depth(&Request::Ping { id: 3 }, MAX_BATCH_DEPTH + 1).is_err());
     }
 }

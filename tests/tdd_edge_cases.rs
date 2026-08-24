@@ -1,4 +1,4 @@
-#![expect(clippy::unwrap_used)]
+#![allow(clippy::unwrap_used)]
 //! Edge case testing for the TDD suite
 //!
 //! This file focuses on obscure error paths and "absolute everything" testing.
@@ -48,18 +48,8 @@ async fn test_daemon_protocol_boundaries() {
     let req = Request::Ping { id: u64::MAX };
     assert_eq!(req.id(), u64::MAX);
 
-    // Test batch with maximum items
-    let mut batch = Vec::new();
-    for i in 0..100 {
-        batch.push(Request::Ping {
-            id: u64::try_from(i).unwrap(),
-        });
-    }
-    let req_batch = Request::Batch {
-        id: 0,
-        requests: batch,
-    };
-    assert_eq!(req_batch.id(), 0);
+    // Request::Batch was removed: zero production senders and its nested
+    // decode was a stack-overflow class. Ping still pins id() extraction.
 }
 
 #[test]

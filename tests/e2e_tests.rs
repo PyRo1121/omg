@@ -745,41 +745,6 @@ mod daemon_tests {
         }
     }
 
-    /// Verify batch request serialization
-    #[test]
-    fn test_batch_request_serialization() -> Result<()> {
-        // Given: A batch request with multiple sub-requests
-        let batch = Request::Batch {
-            id: 1,
-            requests: vec![
-                Request::Search {
-                    id: 2,
-                    query: "vim".to_string(),
-                    limit: Some(5),
-                },
-                Request::Info {
-                    id: 3,
-                    package: "git".to_string(),
-                },
-            ],
-        };
-
-        // When: We serialize with bitcode
-        let bytes = bitcode::serialize(&batch)?;
-
-        // Then: Should deserialize correctly
-        let deserialized: Request = bitcode::deserialize(&bytes)?;
-        match deserialized {
-            Request::Batch { id, requests } => {
-                assert_eq!(id, 1);
-                assert_eq!(requests.len(), 2);
-            }
-            _ => unreachable!("Expected batch request"),
-        }
-
-        Ok(())
-    }
-
     /// Verify socket path is correctly generated
     #[test]
     fn test_socket_path_generation() {

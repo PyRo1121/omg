@@ -144,63 +144,6 @@ async fn test_input_validation_audit() {
 
 #[tokio::test]
 #[serial]
-#[expect(unsafe_code)] // Test setup requires env var modification
-async fn test_batch_size_limit_audit() {
-    // Clear all caches before changing environment
-    #[cfg(feature = "arch")]
-    {
-        omg_lib::package_managers::clear_alpm_cache();
-        omg_lib::package_managers::invalidate_caches().expect("Failed to invalidate caches");
-    }
-
-    // Setup temporary environment
-    let temp_dir = TempDir::new().unwrap();
-    // SAFETY: Test setup - modifying environment variables for isolated test execution.
-    // This test is marked with #[serial] to prevent concurrent access.
-    unsafe {
-        std::env::set_var("OMG_DAEMON_DATA_DIR", temp_dir.path());
-        std::env::set_var("OMG_DATA_DIR", temp_dir.path());
-    }
-
-    // Initialize audit logger
-    omg_lib::core::security::init_audit_logger().expect("Failed to init audit logger");
-
-    let Some(state) = init_state_or_skip("daemon security test") else {
-        return;
-    };
-
-    // Create oversized batch
-    let mut requests = Vec::new();
-    for _ in 0..150 {
-        // Limit is 100
-        requests.push(Request::Ping { id: 1 });
-    }
-
-    let req = Request::Batch { id: 1, requests };
-
-    let response = handle_request(Arc::clone(&state), req).await;
-
-    // Verify rejection
-    if let Response::Error { message, .. } = response {
-        assert!(
-            message.contains("Batch size"),
-            "Should reject oversized batch"
-        );
-    } else {
-        unreachable!("Should have returned error response");
-    }
-
-    // Verify audit log
-    let audit_file = temp_dir.path().join("audit").join("audit.jsonl");
-    let content = std::fs::read_to_string(audit_file).expect("Audit log file should exist");
-    assert!(
-        content.contains("Batch size"),
-        "Log should record batch size violation"
-    );
-}
-
-#[tokio::test]
-#[serial]
 #[expect(unsafe_code)]
 async fn test_health_endpoint_returns_status() {
     #[cfg(feature = "arch")]

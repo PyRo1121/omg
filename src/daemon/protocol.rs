@@ -101,11 +101,6 @@ pub enum Request {
         query: String,
         limit: Option<usize>,
     },
-    /// Batch multiple requests in a single IPC round-trip
-    Batch {
-        id: RequestId,
-        requests: Vec<Request>,
-    },
     /// Search Debian/Ubuntu packages (apt)
     DebianSearch {
         id: RequestId,
@@ -138,7 +133,6 @@ impl Request {
             | Self::RefreshIndex { id }
             | Self::Metrics { id }
             | Self::Suggest { id, .. }
-            | Self::Batch { id, .. }
             | Self::DebianSearch { id, .. }
             | Self::Health { id }
             | Self::ListUpdates { id } => *id,
@@ -161,7 +155,6 @@ impl Request {
             Self::RefreshIndex { .. } => "refresh_index",
             Self::Metrics { .. } => "metrics",
             Self::Suggest { .. } => "suggest",
-            Self::Batch { .. } => "batch",
             Self::DebianSearch { .. } => "debian_search",
             Self::Health { .. } => "health",
             Self::ListUpdates { .. } => "list_updates",
@@ -174,8 +167,6 @@ impl Request {
     /// only measures the enum's stack size and can never see `String`/`Vec`
     /// payloads, so a guard built on it can never fire.
     ///
-    /// Recursion over `Batch` children is safe because the daemon validates
-    /// batch nesting depth before calling this.
     #[must_use]
     pub fn heap_size(&self) -> usize {
         let mut size = std::mem::size_of::<Self>();
@@ -184,13 +175,6 @@ impl Request {
             | Self::Suggest { query, .. }
             | Self::DebianSearch { query, .. } => size += query.capacity(),
             Self::Info { package, .. } => size += package.capacity(),
-            Self::Batch { requests, .. } => {
-                for request in requests {
-                    size += request.heap_size();
-                }
-                // Account for over-allocated but unused slots in the Vec buffer.
-                size += (requests.capacity() - requests.len()) * std::mem::size_of::<Self>();
-            }
             Self::Status { .. }
             | Self::Explicit { .. }
             | Self::ExplicitCount { .. }
@@ -240,8 +224,6 @@ pub enum ResponseResult {
     Metrics(MetricsSnapshot),
     Suggest(Vec<String>),
     Message(String),
-    /// Batch response containing multiple results
-    Batch(Vec<Response>),
     /// Debian search results (list of package info)
     DebianSearch(Vec<PackageInfo>),
     Health(HealthStatus),
@@ -442,26 +424,6 @@ mod tests {
         assert!(
             size >= 2048,
             "heap_size must include String payloads, got {size}"
-        );
-    }
-
-    #[test]
-    fn heap_size_counts_nested_batch_payloads() {
-        let inner = super::Request::Batch {
-            id: 2,
-            requests: vec![super::Request::Info {
-                id: 3,
-                package: "y".repeat(1024),
-            }],
-        };
-        let outer = super::Request::Batch {
-            id: 1,
-            requests: vec![inner],
-        };
-        let size = outer.heap_size();
-        assert!(
-            size >= 1024 + 2 * std::mem::size_of::<super::Request>(),
-            "heap_size must walk nested batch payloads, got {size}"
         );
     }
 
