@@ -297,24 +297,6 @@ opt-level = 3       # Maximum optimization
 incremental = false # LTO incompatible with incremental
 
 # Fast release builds (4-5x faster than release, ~5% slower runtime)
-[profile.release-fast]
-inherits = "release"
-lto = "thin"         # Thin LTO: 80% of fat LTO benefits, 4x faster builds
-codegen-units = 16   # Parallel codegen
-incremental = true   # Enable incremental for faster rebuilds
-opt-level = 2        # Good optimization, faster compilation
-
-# Size-optimized builds (smallest possible binary)
-# Minimal build: cargo build --profile release-size --no-default-features --features arch
-# Saves ~1.2MB by removing PGP verification (sequoia-openpgp)
-[profile.release-size]
-inherits = "release"
-lto = "fat"
-opt-level = "z"      # Optimize for size
-strip = "symbols"    # Aggressive stripping
-codegen-units = 1
-
-# Benchmarking profile
 [profile.bench]
 inherits = "release"
 debug = true         # Keep debug info for profiling

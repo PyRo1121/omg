@@ -25,11 +25,19 @@ mod check_mode_tests {
     #[test]
     fn test_check_flag_is_recognized() {
         let result = run_omg(&["update", "--check"]);
-        assert!(
-            result.success || result.contains("sudo") || result.contains("permission"),
-            "--check should succeed or report a privilege issue: {}",
-            result.combined_output()
-        );
+        // --check is read-only: it must succeed in a working environment or
+        // fail naming the privilege problem — never prompt, never dangle.
+        assert_no_password_prompt(&result);
+        if !result.success {
+            let combined = result.combined_output();
+            assert!(
+                combined.contains("sudo")
+                    || combined.contains("permission")
+                    || combined.contains("root")
+                    || combined.contains("turbo"),
+                "--check failure must name its cause. Got:\n{combined}"
+            );
+        }
     }
 
     #[test]
@@ -100,27 +108,31 @@ mod non_interactive_tests {
     #[test]
     fn test_yes_flag_without_tty() {
         let result = run_omg_with_env(&["update", "--yes"], &[("CI", "1")]);
-
-        // Should not complain about interactive mode
+        assert_runs_without_panic(&result);
+        // --yes opts into non-interactive operation; complaining about
+        // interactive terminals defeats its purpose.
         let combined = result.combined_output();
         assert!(
-            !combined.contains("requires an interactive terminal") || result.success,
-            "--yes should work in non-interactive mode. Got:\n{}",
-            combined
+            !combined.contains("requires an interactive terminal"),
+            "--yes must not demand a TTY. Got:\n{combined}"
         );
     }
 
     #[test]
     fn test_short_y_flag() {
         let result = run_omg(&["update", "-y"]);
-        assert!(
-            result.success
-                || result.contains("sudo")
-                || result.contains("permission")
-                || result.contains("root"),
-            "-y should succeed or report a privilege issue: {}",
-            result.combined_output()
-        );
+        if result.success {
+            assert!(!result.stdout.is_empty(), "-y success shows its work");
+        } else {
+            let combined = result.combined_output().to_lowercase();
+            assert!(
+                combined.contains("sudo")
+                    || combined.contains("permission")
+                    || combined.contains("root")
+                    || combined.contains("development"),
+                "-y failure must name the blocker. Got:\n{combined}"
+            );
+        }
     }
 
     #[test]
@@ -130,14 +142,17 @@ mod non_interactive_tests {
             &[("CI", "1"), ("OMG_NON_INTERACTIVE", "1")],
         );
 
-        assert!(
-            result.success
-                || result.contains("sudo")
-                || result.contains("permission")
-                || result.contains("root"),
-            "CI mode with --yes should succeed or report a privilege issue: {}",
-            result.combined_output()
-        );
+        assert_runs_without_panic(&result);
+        if !result.success {
+            let combined = result.combined_output().to_lowercase();
+            assert!(
+                combined.contains("sudo")
+                    || combined.contains("permission")
+                    || combined.contains("root")
+                    || combined.contains("development"),
+                "CI --yes failure must name the blocker. Got:\n{combined}"
+            );
+        }
     }
 
     #[test]
@@ -237,12 +252,7 @@ mod elm_workflow_tests {
     fn test_elm_model_initialization() {
         // Test that Elm model initializes correctly
         let result = run_omg(&["update", "--check"]);
-
-        assert!(
-            result.success || !result.contains("panicked"),
-            "Elm model should initialize without panicking. Output:\n{}",
-            result.combined_output()
-        );
+        assert_runs_without_panic(&result);
     }
 
     #[test]
@@ -308,24 +318,14 @@ mod error_handling_tests {
     #[test]
     fn test_extra_arguments_ignored_or_error() {
         let result = run_omg(&["update", "--check", "extra", "args"]);
-
-        assert!(
-            result.success || !result.contains("panicked"),
-            "Should handle extra arguments without panicking: {}",
-            result.combined_output()
-        );
+        assert_runs_without_panic(&result);
     }
 
     #[test]
     fn test_missing_daemon_fallback() {
         // We set OMG_DISABLE_DAEMON=1 in run_omg
         let result = run_omg(&["update", "--check"]);
-
-        assert!(
-            result.success || !result.contains("panicked"),
-            "Should work without daemon or report a non-panic error. Output:\n{}",
-            result.combined_output()
-        );
+        assert_runs_without_panic(&result);
     }
 }
 
@@ -421,12 +421,7 @@ mod regression_tests {
     fn regression_elm_fallback_on_error() {
         // Test that Elm UI falls back gracefully on error
         let result = run_omg(&["update", "--check"]);
-
-        assert!(
-            result.success || !result.contains("panicked"),
-            "Should handle Elm error gracefully. Output:\n{}",
-            result.combined_output()
-        );
+        assert_runs_without_panic(&result);
     }
 }
 
@@ -447,11 +442,7 @@ mod concurrency_tests {
 
         for handle in handles {
             let result = handle.join().unwrap();
-            assert!(
-                result.success || !result.contains("panicked"),
-                "Concurrent check should succeed or fail without panicking: {}",
-                result.combined_output()
-            );
+            assert_runs_without_panic(&result);
         }
     }
 }
@@ -466,12 +457,7 @@ mod security_tests {
     #[test]
     fn test_no_command_injection() {
         let result = run_omg(&["update", "--check", ";", "rm", "-rf", "/"]);
-
-        assert!(
-            result.success || !result.contains("panicked"),
-            "Should reject injection arguments without panicking: {}",
-            result.combined_output()
-        );
+        assert_runs_without_panic(&result);
     }
 
     #[test]
@@ -490,6 +476,23 @@ mod security_tests {
 // ═══════════════════════════════════════════════════════════════════════════════
 // HELPER FUNCTIONS
 // ═══════════════════════════════════════════════════════════════════════════════
+
+/// The real contract behind every former `success || !contains("panicked")`:
+/// the process must not panic (no `panicked at`, exit 101) and must render
+/// SOME outcome. The old form passed for any output whatsoever — including
+/// the panic message itself.
+fn assert_runs_without_panic(result: &CommandResult) {
+    let combined = result.combined_output();
+    assert!(
+        !combined.contains("panicked at"),
+        "command must not panic. Got:\n{combined}"
+    );
+    assert_ne!(result.exit_code, 101, "panic exit code observed");
+    assert!(
+        !result.stdout.is_empty() || !result.stderr.is_empty(),
+        "command produced no output at all"
+    );
+}
 
 fn assert_no_password_prompt(result: &CommandResult) {
     let combined = result.combined_output();

@@ -257,10 +257,13 @@ mod package_management {
     #[cfg(feature = "arch")]
     fn test_info_nonexistent_package() {
         let result = run_omg(&["info", "this-package-does-not-exist-12345"]);
-        // Should fail gracefully or show "not found"
+        // FALSIFIABLE: a missing package deterministically fails with a
+        // not-found message naming the query.
+        result.assert_failure();
+        let combined = result.combined_output();
         assert!(
-            !result.success || result.stdout.contains("not found"),
-            "Should indicate package not found"
+            combined.contains("not found") || combined.contains("does-not-exist"),
+            "info of a missing package must say so. Got:\n{combined}"
         );
     }
 
@@ -504,12 +507,13 @@ mod runtime_management {
     fn test_use_without_version_no_config() {
         let temp_dir = TempDir::new().unwrap();
         let result = run_omg_in_dir(&["use", "node"], temp_dir.path());
-        // Should fail because no version file exists
+        // Deterministic precondition: no version file exists anywhere in an
+        // empty temp dir, so `use node` MUST fail and say why.
+        result.assert_failure();
+        let combined = result.combined_output().to_lowercase();
         assert!(
-            !result.success
-                || result.stderr.contains("No version")
-                || result.stderr.contains("detected"),
-            "Should fail without version file"
+            combined.contains("version") || combined.contains("detect"),
+            "use without version file must explain that. Got:\n{combined}"
         );
     }
 
@@ -637,14 +641,11 @@ mod environment_management {
         let capture_result = run_omg_in_dir(&["env", "capture"], temp_dir.path());
         assert!(capture_result.success, "env capture should succeed");
 
-        // Check immediately - should work (may or may not report drift depending on timing)
+        // Check immediately after capture: the lockfile was just written, so
+        // check must SUCCEED — the old `success || contains("drift")` passed
+        // even when check crashed with any message mentioning "drift".
         let result = run_omg_in_dir(&["env", "check"], temp_dir.path());
-        let combined = result.combined_output();
-        // Should either succeed or give meaningful output about drift
-        assert!(
-            result.success || combined.contains("drift") || combined.contains("check"),
-            "env check should work: {combined}"
-        );
+        result.assert_success();
     }
 
     #[test]
@@ -728,16 +729,23 @@ mod security {
     #[test]
     fn test_audit_command() {
         let result = run_omg(&["audit"]);
-        // May succeed or fail depending on daemon status or license tier
-        // Should not crash
+        // May succeed or fail depending on daemon status or license tier,
+        // but it must run to completion: never panic, always render output.
+        assert_ne!(result.exit_code, 101, "audit panicked");
         assert!(
-            result.success
-                || result.stderr.contains("daemon")
-                || result.stderr.contains("Daemon")
-                || result.stderr.contains("requires")
-                || result.stderr.contains("tier"),
-            "Audit should work or report daemon/license issue"
+            !result.stdout.is_empty() || !result.stderr.is_empty(),
+            "audit produced no output at all"
         );
+        if !result.success {
+            let stderr = &result.stderr;
+            assert!(
+                stderr.contains("daemon")
+                    || stderr.contains("Daemon")
+                    || stderr.contains("requires")
+                    || stderr.contains("tier"),
+                "audit failure must name the blocker (daemon/tier). Got: {stderr}"
+            );
+        }
     }
 
     #[test]
@@ -1078,15 +1086,17 @@ mod integration_scenarios {
 
         // 4. Check for drift - may report drift if runtimes not installed, that's OK
         let result = run_omg_in_dir(&["env", "check"], temp_dir.path());
-        // Either succeeds or reports drift (both are valid outcomes)
-        let combined = result.combined_output();
-        assert!(
-            result.success
-                || combined.contains("drift")
-                || combined.contains("Drift")
-                || combined.contains("check"),
-            "Env check should work: {combined}"
-        );
+        // Both outcomes are valid, but each must be the REAL outcome: clean
+        // success, or a failure that explicitly names drift.
+        if result.success {
+            assert!(!result.stdout.is_empty(), "clean check prints its verdict");
+        } else {
+            let combined = result.combined_output();
+            assert!(
+                combined.contains("drift") || combined.contains("Drift"),
+                "check failure after capture must name drift. Got:\n{combined}"
+            );
+        }
     }
 
     #[test]
@@ -1624,11 +1634,13 @@ mod error_messages {
     #[cfg(feature = "arch")]
     fn test_nonexistent_package_info() {
         let result = run_omg(&["info", "this-package-definitely-does-not-exist-12345"]);
+        // FALSIFIABLE: missing package fails and says so (matches the contract
+        // pinned in error_tests).
+        result.assert_failure();
+        let combined = result.combined_output();
         assert!(
-            !result.success
-                || result.stdout.contains("not found")
-                || result.stdout.contains("No package"),
-            "Should indicate package not found"
+            combined.contains("not found") || combined.contains("does-not-exist"),
+            "info of a missing package must say so. Got:\n{combined}"
         );
     }
 
@@ -1636,10 +1648,10 @@ mod error_messages {
     fn test_use_without_version_no_config() {
         let temp_dir = TempDir::new().unwrap();
         let result = run_omg_in_dir(&["use", "node"], temp_dir.path());
+        result.assert_failure();
+        let stderr_lc = result.stderr.to_lowercase();
         assert!(
-            !result.success
-                || result.stderr.contains("No version")
-                || result.stderr.contains("detected"),
+            stderr_lc.contains("version") || stderr_lc.contains("detect"),
             "Should fail without version file"
         );
     }
