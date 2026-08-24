@@ -312,11 +312,17 @@ pub fn get_package_manager() -> anyhow::Result<Arc<dyn PackageManager>> {
         // debian provides AptPackageManager
         #[cfg(feature = "debian")]
         Distro::Debian | Distro::Ubuntu => Ok(Arc::new(AptPackageManager::new())),
-        // debian-pure provides PureDebianPackageManager
+        // debian-pure is a TEST/INDEXING ENGINE, not a live-system backend:
+        // it cannot elevate, overwrites conffiles without dpkg semantics,
+        // and its rollback cannot restore overwritten files. Builds without
+        // the apt backend must fail explicitly rather than let it mutate a
+        // real machine.
         #[cfg(all(not(feature = "debian"), feature = "debian-pure"))]
-        Distro::Debian | Distro::Ubuntu => {
-            Ok(Arc::new(debian_pure::PureDebianPackageManager::new()))
-        }
+        Distro::Debian | Distro::Ubuntu => Err(anyhow::anyhow!(
+            "This build uses the pure-Rust Debian indexing engine, which must not \
+             modify a live system (no privilege boundary or dpkg conffile semantics). \
+             Install an apt-backed build of omg for Debian/Ubuntu."
+        )),
         // Fedora/RHEL provides DnfPackageManager (pure Rust)
         #[cfg(feature = "fedora")]
         Distro::Fedora => Ok(Arc::new(dnf::DnfPackageManager::new())),
@@ -330,13 +336,6 @@ pub fn get_package_manager() -> anyhow::Result<Arc<dyn PackageManager>> {
 
             #[cfg(all(not(feature = "arch"), feature = "debian"))]
             return Ok(Arc::new(AptPackageManager::new()));
-
-            #[cfg(all(
-                not(feature = "arch"),
-                not(feature = "debian"),
-                feature = "debian-pure"
-            ))]
-            return Ok(Arc::new(debian_pure::PureDebianPackageManager::new()));
 
             #[cfg(all(
                 not(feature = "arch"),

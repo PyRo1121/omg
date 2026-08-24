@@ -29,7 +29,14 @@ pub fn info_sync(package: &str) -> Result<bool> {
     if is_debian_like() {
         if let Some(pkg) = crate::package_managers::debian_db::get_info_fast(package)? {
             ui::print_kv("Name", &style::package(&pkg.name));
-            ui::print_kv("Version", &style::version(&pkg.version));
+            // debian_db stores parse_version_or_zero output, whose concrete
+            // type follows the feature flags (AlpmVersion under arch,
+            // DebVersion/String otherwise). Normalize to a display string.
+            #[cfg(feature = "arch")]
+            let version = pkg.version.to_string();
+            #[cfg(not(feature = "arch"))]
+            let version = pkg.version.clone();
+            ui::print_kv("Version", &style::version(&version));
             ui::print_kv("Description", &pkg.description);
             ui::print_kv(
                 "Status",
