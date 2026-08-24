@@ -315,7 +315,8 @@ install_from_release() {
     fi
   else
     stop_spinner "Checksum unavailable"
-    warn "No .sha256 sidecar published for ${artifact_name}; skipping verification"
+    err "No .sha256 sidecar published for ${artifact_name}; refusing to install unverified binaries"
+    return 1
   fi
 
   start_spinner "Extracting binaries"

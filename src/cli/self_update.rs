@@ -41,12 +41,24 @@ pub async fn run(force: bool, version: Option<String>) -> Result<()> {
         None => fetch_latest_version().await?,
     };
 
-    if !force && target_version == current_version {
-        println!(
-            "  {} You are already on the latest version.",
-            style::maybe_color("✓", |t| t.green().to_string())
-        );
-        return Ok(());
+    // Downgrade protection (audit25 aud-dep-installer): without --force,
+    // only strictly newer releases may be installed. Equality and older
+    // versions both stop here so a compromised/misconfigured release feed
+    // cannot roll a user back to a vulnerable version.
+    if !force {
+        if target_version == current_version {
+            println!(
+                "  {} You are already on the latest version.",
+                style::maybe_color("✓", |t| t.green().to_string())
+            );
+            return Ok(());
+        }
+        if target_version < current_version {
+            anyhow::bail!(
+                "Refusing to downgrade from {current_version} to {target_version} \
+                 (use --force to override)"
+            );
+        }
     }
 
     let artifact = release_artifact(&target_version)?;
