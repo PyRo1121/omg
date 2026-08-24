@@ -2380,6 +2380,46 @@ the Debian backend), so it was removed from the metadata.
 - Normalize project formatting
 ### 🧪 Testing
 
+- Eliminate vacuous assertions; dedupe CI coverage; drop dead profiles
+
+Test-stack overhaul (the audit's "fluff" finding):
+
+  - error_tests.rs: rewritten with observable contracts on every path.
+
+Success must show real work; failure must name its domain and remedy.
+
+Hostile-input tests now assert the actual no-panic contract (no
+
+"panicked at", exit != 101) instead of `success || output non-empty`,
+
+which passed on the panic message itself.
+
+  - privilege_tests.rs: --help whitelist check asserts success outright;
+
+sequential-status and with_root tests assert no-panic + rendered
+
+output (exit_code >= 0 was always true); string-matching regression
+
+test replaced with the real exit-code-based detector contract.
+
+Premise fix: upgrade/fullupdate/turboupdate are internal elevated
+
+entrypoints, not clap commands, so they are excluded from --help checks.
+
+  - update_integration.rs: every `success || !contains("panicked")`
+
+replaced by a shared assert_runs_without_panic contract (no panic
+
+text, exit != 101, non-empty output); privilege failures must name
+
+their cause; --yes must never demand a TTY.
+
+  - integration_suite.rs: info-missing-package, env-check-after-capture,
+
+audit, use-without-version all converted to falsifiable contracts;
+
+duplicate copies of two tests unified.
+
 - Convert vacuous runtime-use assertions to observable checks
 
 test_runtime_use_detects_tool_versions asserted success || contains(version),
