@@ -507,8 +507,10 @@ mod search_and_selection_tests {
 
         app.handle_key(KeyCode::Esc);
         assert!(!app.search_mode);
-        // Query should persist after exiting search mode
-        assert_eq!(app.search_query, "test");
+        // Esc CANCELS the search: the query is discarded so the main loop
+        // cannot mistake a cancelled search for a committed one (the old
+        // persist-after-Esc behavior executed cancelled queries).
+        assert_eq!(app.search_query, "");
     }
 
     #[tokio::test]
