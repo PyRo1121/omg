@@ -2380,6 +2380,14 @@ the Debian backend), so it was removed from the metadata.
 - Normalize project formatting
 ### 🧪 Testing
 
+- Pin Esc-cancels-search contract in team_dashboard suite
+
+The stale test asserted the pre-rewrite behavior (query persists after
+
+Esc) that made cancelled searches execute. Aligns with app.rs and the
+
+dedicated tui tests: Esc discards the query.
+
 - Eliminate vacuous assertions; dedupe CI coverage; drop dead profiles
 
 Test-stack overhaul (the audit's "fluff" finding):
