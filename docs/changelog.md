@@ -2380,6 +2380,14 @@ the Debian backend), so it was removed from the metadata.
 - Normalize project formatting
 ### 🧪 Testing
 
+- Convert vacuous runtime-use assertions to observable checks
+
+test_runtime_use_detects_tool_versions asserted success || contains(version),
+
+which passed whenever either side held. Both legs now require command
+
+success AND the detected version string — the only falsifiable contract.
+
 - Local 3-distro harness — docker compose for arch/debian/fedora
 
 One command now exercises omg's real package backends on every major
