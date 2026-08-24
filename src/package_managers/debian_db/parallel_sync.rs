@@ -230,6 +230,52 @@ async fn sync_quiet(client: &Client, repos: &[Repository]) -> Result<()> {
     Ok(())
 }
 
+/// Verify a downloaded InRelease document's clearsigned OpenPGP signature.
+///
+/// WAVE12-BLOCKERS signature-chain fix (citations: aud-debian-tx/
+/// aud-debian-db blockers; rnd-pm-3): apt itself delegates clearsigned
+/// verification to `gpgv`, which is guaranteed present on every system
+/// with APT. Fail-closed: missing gpgv, missing keyring, bad/absent
+/// signature are all hard errors — an unverified index can never reach
+/// checksum-trust or maintainer-script execution.
+fn verify_inrelease_signature(
+    inrelease_path: &std::path::Path,
+    signed_by: Option<&std::path::Path>,
+) -> Result<()> {
+    // Resolve the trust anchor: repo-specific Signed-By wins; otherwise the
+    // distro archive keyring (same default apt uses).
+    let keyring: std::path::PathBuf = match signed_by {
+        Some(key) => key.to_path_buf(),
+        // Debian-family default; this module only serves APT repos.
+        None => std::path::PathBuf::from("/usr/share/keyrings/debian-archive-keyring.gpg"),
+    };
+    anyhow::ensure!(
+        keyring.exists(),
+        "InRelease verification failed: keyring {} does not exist",
+        keyring.display()
+    );
+
+    let status = std::process::Command::new("gpgv")
+        .arg("--keyring")
+        .arg(&keyring)
+        .arg(inrelease_path)
+        .status()
+        .map_err(|error| {
+            anyhow::anyhow!(
+                "InRelease verification failed: cannot run gpgv ({error}). \
+             Install gpgv or configure Signed-By for this repository."
+            )
+        })?;
+
+    anyhow::ensure!(
+        status.success(),
+        "InRelease signature verification FAILED for {} (gpgv exit {status}). \
+     Refusing to sync from an unauthenticated repository.",
+        inrelease_path.display()
+    );
+    Ok(())
+}
+
 /// Sync a single repository
 async fn sync_repository(
     client: &Client,
@@ -278,6 +324,16 @@ async fn sync_repository(
     match release_result {
         Ok(DownloadResult::NotModified) => {
             // 304 Not Modified - repository hasn't changed, skip component downloads
+            // The cached document must still satisfy the signature gate: it
+            // may predate enforcement or have been tampered with locally.
+            if let Err(error) = verify_inrelease_signature(&release_path, repo.signed_by.as_deref())
+            {
+                let _ = std::fs::remove_file(&release_path);
+                return Err(error).context(format!(
+                    "Cached InRelease for {}/{} failed verification; removed",
+                    repo.uri, repo.suite
+                ));
+            }
             if let Some(pb) = progress {
                 pb.set_message("up to date ✓");
             }
@@ -291,6 +347,17 @@ async fn sync_repository(
         }
         Ok(DownloadResult::Downloaded { last_modified }) => {
             tracing::debug!("Downloaded fresh Release file from {release_url}");
+            // SECURITY (WAVE12 signature chain): verify BEFORE any further
+            // use. Component indexes and their package hashes are only
+            // trusted when anchored to this verified document.
+            if let Err(error) = verify_inrelease_signature(&release_path, repo.signed_by.as_deref())
+            {
+                let _ = std::fs::remove_file(&release_path);
+                return Err(error).context(format!(
+                    "Repository {}/{} is not trustworthy; aborting sync",
+                    repo.uri, repo.suite
+                ));
+            }
             // Store Last-Modified for future conditional requests
             if let Some(lm) = last_modified
                 && let Err(error) = store_last_modified(&cache_dir, "InRelease", &lm)
@@ -700,6 +767,23 @@ pub fn needs_sync() -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn inrelease_verification_requires_existing_keyring() {
+        // Fail-closed trust anchor resolution: an absent Signed-By keyring must
+        // abort before any gpgv invocation or cache use.
+        let dir = tempfile::tempdir().expect("tempdir");
+        let doc = dir.path().join("InRelease");
+        std::fs::write(&doc, "not-a-real-signature").unwrap();
+
+        let keyring = dir.path().join("missing-keyring.gpg");
+        let result = verify_inrelease_signature(&doc, Some(&keyring));
+        let err = result.expect_err("missing keyring must fail verification");
+        assert!(
+            err.to_string().contains("does not exist"),
+            "unexpected error: {err}"
+        );
+    }
 
     #[test]
     fn invalidate_sync_timestamps_removes_fresh_markers() {
