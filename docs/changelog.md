@@ -2168,6 +2168,28 @@ dependency-type: indirect
 
 ### 🔒 Security
 
+- **Daemon**: Remove Request::Batch IPC variant entirely
+
+Batch had zero production senders: the CLI never constructs one, and its
+
+recursive bitcode deserialization ran before any depth validation, so a
+
+same-user process could stack-overflow (abort) the singleton daemon with
+
+a ~1 MiB frame of deeply nested single-element batches.
+
+Removal deletes the attack class instead of hardening it (~200 LOC):
+
+  - Request::Batch / ResponseResult::Batch variants and heap_size recursion
+
+  - handle_batch, MAX_BATCH_SIZE, BATCH_CONCURRENCY, validate_batch_depth,
+
+MAX_BATCH_DEPTH and their tests in handlers.rs/server.rs/protocol.rs
+
+  - batch e2e/concurrency/security tests that exercised only the daemon's
+
+own echo behavior
+
 - Wave-9 coordinated deep cleanup (15 agents)
 
 Repo-wide deletion and deduplication pass across all subsystems. Every
