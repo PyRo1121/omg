@@ -73,8 +73,6 @@ pub struct ContainerConfig {
     pub env: Vec<(String, String)>,
     /// Volume mounts (host:container)
     pub volumes: Vec<(String, String)>,
-    /// Ports to expose (host:container)
-    pub ports: Vec<(u16, u16)>,
     /// Working directory inside container
     pub workdir: Option<String>,
     /// Whether to remove container after exit
@@ -90,7 +88,6 @@ impl Default for ContainerConfig {
             name: None,
             env: Vec::new(),
             volumes: Vec::new(),
-            ports: Vec::new(),
             workdir: None,
             rm: true,
             interactive: true,
@@ -115,12 +112,6 @@ impl ContainerManager {
     #[must_use]
     pub fn with_runtime(runtime: ContainerRuntime) -> Self {
         Self { runtime }
-    }
-
-    /// Get the active runtime
-    #[must_use]
-    pub fn runtime(&self) -> ContainerRuntime {
-        self.runtime
     }
 
     /// Run a command in a container
@@ -160,10 +151,6 @@ impl ContainerManager {
             cmd.args(["-v", &format!("{host}:{container}")]);
         }
 
-        for (host, container) in &config.ports {
-            cmd.args(["-p", &format!("{host}:{container}")]);
-        }
-
         cmd.arg("--");
         cmd.arg(&config.image);
         cmd.args(command);
@@ -196,11 +183,6 @@ impl ContainerManager {
 
         let status = cmd.status().context("Failed to exec in container")?;
         Ok(status.code().unwrap_or(1))
-    }
-
-    /// Build a container image from a Dockerfile
-    pub fn build(&self, dockerfile: &Path, tag: &str, context: &Path) -> Result<()> {
-        self.build_with_options(dockerfile, tag, context, false, &[], None)
     }
 
     /// Build a container image with advanced options
@@ -281,25 +263,6 @@ impl ContainerManager {
 
         if !status.success() {
             anyhow::bail!("Failed to stop container: {container}");
-        }
-        Ok(())
-    }
-
-    /// Remove a container
-    pub fn remove(&self, container: &str, force: bool) -> Result<()> {
-        // SECURITY: Validate container name
-        crate::core::security::validate_package_name(container)?;
-
-        let mut cmd = Command::new(self.runtime.command());
-        cmd.arg("rm");
-        if force {
-            cmd.arg("-f");
-        }
-        cmd.args(["--", container]);
-
-        let status = cmd.status().context("Failed to remove container")?;
-        if !status.success() {
-            anyhow::bail!("Failed to remove container: {container}");
         }
         Ok(())
     }
@@ -592,7 +555,6 @@ pub fn dev_container_config(project_dir: &Path) -> ContainerConfig {
         name: Some(format!("{project_name}-dev")),
         env: vec![("TERM".to_string(), "xterm-256color".to_string())],
         volumes: vec![(project_dir.display().to_string(), "/app".to_string())],
-        ports: Vec::new(),
         workdir: Some("/app".to_string()),
         rm: true,
         interactive: true,

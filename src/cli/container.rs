@@ -4,56 +4,10 @@ use anyhow::Result;
 
 use crate::cli::components::Components;
 use crate::cli::tea::Cmd;
-use crate::cli::{CliContext, ContainerCommands, LocalCommandRunner};
+
 use crate::core::container::{
     ContainerConfig, ContainerManager, ContainerRuntime, detect_runtime, dev_container_config,
 };
-
-impl LocalCommandRunner for ContainerCommands {
-    async fn execute(&self, _ctx: &CliContext) -> Result<()> {
-        match self {
-            ContainerCommands::Status => status(),
-            ContainerCommands::Run {
-                image,
-                command,
-                name,
-                detach,
-                interactive,
-                env,
-                volume,
-                workdir,
-            } => run(
-                image,
-                command,
-                name.clone(),
-                *detach,
-                *interactive,
-                env,
-                volume,
-                workdir.clone(),
-            ),
-            ContainerCommands::Shell {
-                image,
-                workdir,
-                env,
-                volume,
-            } => shell(image.clone(), workdir.clone(), env, volume),
-            ContainerCommands::Build {
-                dockerfile,
-                tag,
-                no_cache,
-                build_arg,
-                target,
-            } => build(dockerfile.clone(), tag, *no_cache, build_arg, target),
-            ContainerCommands::List => list(),
-            ContainerCommands::Images => images(),
-            ContainerCommands::Pull { image } => pull(image),
-            ContainerCommands::Stop { container } => stop(container),
-            ContainerCommands::Exec { container, command } => exec(container, command),
-            ContainerCommands::Init { base } => init(base.clone()),
-        }
-    }
-}
 
 /// Parse environment variables from strict `KEY=VALUE` entries.
 ///
@@ -209,7 +163,6 @@ pub fn run(
         env: env_pairs,
         volumes: volume_pairs,
         workdir,
-        ..Default::default()
     };
 
     let cmd_refs: Vec<&str> = command.iter().map(String::as_str).collect();
