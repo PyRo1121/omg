@@ -506,6 +506,50 @@ analyzer inference
 - **Ci**: Cross-platform install script and R2 release sync
 ### 🐛 Bug Fixes
 
+- **Security**: Mitigate top findings from 15-agent security audit
+
+F-01 (CRITICAL, mitigated): turbo mode setcaps the binary — on multi-user
+
+machines every local account gains root-equivalent file power through it.
+
+`omg doctor --turbo` now states this trade-off explicitly and requires an
+
+interactive confirmation (default NO) before enabling. Full fix (daemon-
+
+mediated privilege) is architectural and tracked.
+
+SEC02-01 (HIGH, fixed): makepkg executed PKGBUILD build()/package() code in
+
+the same controlling TTY where omg holds a warm sudo ticket (tty-scoped
+
+timestamps), so a malicious package could escalate to root silently with
+
+`sudo -n`. makepkg now runs under setsid: no controlling terminal means
+
+tty-scoped credentials are unreachable from untrusted build code. Output
+
+streaming unchanged. Cited: https://www.sudo.ws/docs/man/sudoers.man/
+
+F6 (HIGH, fixed): Debian rollback restore passed `name=version` pins
+
+through pacman-style name validation, which rejects '=' — the Debian
+
+restore path was dead code. New validate_debian_package_specs checks the
+
+name portion strictly and leaves version parsing to apt/dpkg.
+
+F-02/F1 (HIGH, fixed): AUR historical rebuilds now honor the configured
+
+PKGBUILD review gate — a force-pushed history commit is exactly as
+
+untrusted as a fresh build.
+
+SLSA signer-binding finding (F1 sec07/sec08) acknowledged: hashedrekord
+
+verifies integrity + key-from-log-entry, not WHO signed. Level stays 1;
+
+identity binding requires Fulcio cert-chain verification and is tracked.
+
 - Grind LOW-tier audit residue
 
   - completion.rs: AUR name fetch uses the shared HTTP client with a 15s
