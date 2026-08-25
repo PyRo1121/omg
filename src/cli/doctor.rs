@@ -380,6 +380,31 @@ pub fn enable_turbo_mode() -> Result<()> {
     // Modern header without box drawing
     crate::cli::modern_ui::print_phase_header("⚡", "TURBO MODE", "Zero-Sudo Operations");
 
+    // SECURITY (audit F-01, CRITICAL): file capabilities on a binary are not
+    // user-scoped. On a multi-user machine EVERY local account can execute
+    // this binary and exercise CAP_DAC_OVERRIDE/CAP_FOWNER/CAP_CHOWN —
+    // effectively root-equivalent file power. Require explicit confirmation
+    // so the trade-off cannot be accepted silently.
+    if console::user_attended() {
+        println!(
+            "  {} Turbo mode grants file capabilities to the BINARY, not to you.",
+            "⚠".yellow().bold()
+        );
+        println!(
+            "     On multi-user systems every local user can then read/write ANY\n\
+             file on disk through this executable. Single-user machines only."
+        );
+        let proceed = dialoguer::Confirm::with_theme(&crate::cli::ui::prompt_theme())
+            .with_prompt("Enable turbo mode anyway?")
+            .default(false)
+            .interact()
+            .map_err(|error| anyhow::anyhow!("Confirmation prompt failed: {error}"))?;
+        if !proceed {
+            println!("  {} Turbo mode NOT enabled", "✗".red());
+            return Ok(());
+        }
+    }
+
     // Check if already enabled
     if crate::core::caps::has_package_caps() {
         println!("  {} Turbo mode is already enabled!", "✓".green().bold());

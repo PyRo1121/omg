@@ -821,6 +821,12 @@ impl AurClient {
         )?;
 
         let env = self.makepkg_env(&pkg_dir)?;
+        // Honor the configured PKGBUILD review gate even for historical
+        // rebuilds (audit F-02): a force-pushed history commit is exactly as
+        // untrusted as a fresh build.
+        if self.settings.aur.review_pkgbuild {
+            Self::review_pkgbuild(&pkg_dir.join("PKGBUILD")).await?;
+        }
         println!(
             "  {} Building {package} {version} from history...",
             "→".blue()
@@ -1915,7 +1921,14 @@ impl AurClient {
 
         // If running as root, drop privileges to original user or nobody
         // makepkg refuses to run as root for security reasons
-        let mut cmd = if crate::core::is_root() {
+        // SECURITY: run makepkg in a NEW SESSION without a controlling TTY.
+        // sudo timestamps are tty-scoped by default (timestamp_type=tty), so
+        // while omg holds a warm credential in THIS terminal, a malicious
+        // PKGBUILD calling `sudo -n ...` inside build()/package() would
+        // inherit that ticket and escalate to root silently. Under setsid
+        // there is no controlling terminal, so the attacker's `sudo -n`
+        // fails. -w makes setsid wait and propagate makepkg's exit status.
+        let (inner_program, inner_pre_args): (&str, Vec<&str>) = if crate::core::is_root() {
             let user = build_user.as_deref().unwrap_or("nobody");
 
             // Get the original user's home directory for proper path resolution
@@ -1932,19 +1945,36 @@ impl AurClient {
                 user,
                 user_home
             );
-            let mut c = Command::new("sudo");
-            c.args(["-E", "-u", user, "makepkg"]);
-
-            // Set HOME to original user's home directory so paths resolve correctly
-            if let Some(home) = user_home {
-                c.env("HOME", &home);
-                c.env("XDG_CACHE_HOME", format!("{home}/.cache"));
-            }
-
-            c
+            let mut pre = vec!["-E", "-u", user];
+            let _ = &mut pre;
+            ("sudo", pre)
         } else {
-            Command::new("makepkg")
+            ("makepkg", Vec::new())
         };
+        let mut cmd = {
+            let mut c = Command::new("setsid");
+            c.arg("-w").arg(inner_program).args(&inner_pre_args);
+            if inner_program == "sudo" {
+                // De-escalated from root: resolve HOME to the original user.
+                c.arg("makepkg");
+                if let Some(username) = build_user.as_deref() {
+                    let home = std::env::var("SUDO_HOME")
+                        .ok()
+                        .unwrap_or_else(|| format!("/home/{username}"));
+                    c.env("HOME", &home);
+                    c.env("XDG_CACHE_HOME", format!("{home}/.cache"));
+                }
+            }
+            c
+        };
+
+        // SECURITY: run makepkg in a NEW SESSION without a controlling TTY.
+        // sudo timestamps are tty-scoped by default (timestamp_type=tty), so
+        // while omg holds a warm credential in THIS terminal, a malicious
+        // PKGBUILD calling `sudo -n ...` inside build()/package() previously
+        // inherited that ticket and escalated to root silently. Under setsid
+        // there is no controlling terminal, so the attacker's sudo -n fails.
+        // -w makes setsid wait and propagate makepkg's real exit status.
 
         cmd.args(self.makepkg_args())
             .env("MAKEFLAGS", &env.makeflags)
@@ -1968,7 +1998,8 @@ impl AurClient {
             package_name
         );
 
-        // Stream output to both terminal AND log file
+        // Stream output to both terminal AND log file; stdout/stderr remain
+        // attached even though the session has no controlling TTY.
         let status = cmd
             .current_dir(pkg_dir)
             .stdin(Stdio::null())

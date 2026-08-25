@@ -101,6 +101,28 @@ pub fn validate_package_name(name: &str) -> Result<(), ValidationError> {
 }
 
 /// Validates multiple package names
+/// Validate Debian package specs that may pin a version (`name=1.2-3`).
+///
+/// The NAME portion gets the full package-name security checks; the version
+/// portion is checked for control characters only — apt itself parses and
+/// rejects malformed versions, and dpkg's version charset is broader than
+/// pacman's.
+pub fn validate_debian_package_specs(specs: &[String]) -> Result<(), ValidationError> {
+    for spec in specs {
+        let name = match spec.split_once('=') {
+            Some((name, version)) => {
+                if version.is_empty() || version.chars().any(char::is_control) {
+                    return Err(ValidationError::VersionInvalidChar { character: '\0' });
+                }
+                name
+            }
+            None => spec.as_str(),
+        };
+        validate_package_name(name)?;
+    }
+    Ok(())
+}
+
 pub fn validate_package_names(names: &[String]) -> Result<(), ValidationError> {
     for name in names {
         validate_package_name(name)?;
