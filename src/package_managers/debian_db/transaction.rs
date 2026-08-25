@@ -402,6 +402,14 @@ impl Transaction {
                         tracing::debug!("Unpacked {} successfully", name);
                     }
                     Err(e) => {
+                        // Recover the partial manifest so already-written
+                        // files stay tracked for rollback (audit A2).
+                        if let Ok(partial) = e
+                            .downcast_ref::<PartialExtractionError>()
+                            .map(|pe| pe.installed_files.clone())
+                        {
+                            installed_files.extend(partial);
+                        }
                         tracing::error!("Failed to unpack {}: {}", name, e);
                         unpack_errors.push((name.clone(), e));
                     }
@@ -949,9 +957,30 @@ fn unpack_deb_standalone(
         }
     }
 
-    // Extract data.tar to filesystem
+    // Extract data.tar to filesystem. On mid-extraction failure the partial
+    // manifest of already-written files is recovered and returned alongside
+    // the error so rollback tracking never loses residue (audit A2).
     let installed_files = if let Some(data) = data_tar {
-        extract_tar_to_root(&data)?
+        match extract_tar_to_root(&data) {
+            Ok(files) => files,
+            Err(error) => {
+                let partial = error
+                    .downcast_ref::<PartialExtractionError>()
+                    .map(|e| e.installed_files.clone())
+                    .unwrap_or_default();
+                if !partial.is_empty() {
+                    tracing::warn!(
+                        "Partial extraction wrote {} file(s); recovered for rollback tracking",
+                        partial.len()
+                    );
+                }
+                return Err(PartialExtraction {
+                    source: error,
+                    installed_files: partial,
+                }
+                .into());
+            }
+        }
     } else {
         Vec::new()
     };
@@ -1197,115 +1226,133 @@ fn extract_tar_to_root(data: &[u8]) -> Result<Vec<PathBuf>> {
 
 /// [`extract_tar_to_root`] against an explicit root; tests use a temporary
 /// directory, production uses `/`.
-fn extract_tar_to_root_at(root: &Path, data: &[u8]) -> Result<Vec<PathBuf>> {
-    let mut reader = tar_payload_reader(data)?;
-    let mut archive = tar::Archive::new(reader.as_mut());
+/// Error wrapper carrying the files already written before a mid-extraction
+/// failure, so the caller can merge them into rollback tracking instead of
+/// leaving untracked residue under `/` (audit A2).
+#[derive(Debug)]
+struct PartialExtractionError {
+    source: anyhow::Error,
+    installed_files: Vec<PathBuf>,
+}
 
-    tracing::debug!(
-        "Extracting data.tar ({} compressed bytes) into {}",
-        data.len(),
-        root.display()
-    );
+impl std::fmt::Display for PartialExtractionError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}", self.source)
+    }
+}
+
+impl std::error::Error for PartialExtractionError {}
+
+fn extract_tar_to_root_at(root: &Path, data: &[u8]) -> Result<Vec<PathBuf>> {
+    // Inner scope owns the manifest so ANY failure can carry the files
+    // already written back to the caller (audit A2): without this, a
+    // mid-extraction error left untracked residue under `/` that rollback
+    // could never see.
+    let inner = |installed_files: &mut Vec<PathBuf>| -> anyhow::Result<()> {
+        let mut reader = tar_payload_reader(data)?;
+        let mut archive = tar::Archive::new(reader.as_mut());
+
+        tracing::debug!(
+            "Extracting data.tar ({} compressed bytes) into {}",
+            data.len(),
+            root.display()
+        );
+
+        let mut pending_links = Vec::new();
+        let mut seen_dirs: std::collections::HashSet<PathBuf> = std::collections::HashSet::new();
+
+        for entry in archive.entries()? {
+            let mut entry = entry?;
+            let entry_path = data_tar_entry_path(root, &entry.path()?)?;
+            let entry_type = entry.header().entry_type();
+
+            if entry_type.is_dir() {
+                ensure_parent_dirs_recorded(&entry_path, root, &mut seen_dirs, installed_files)?;
+                if let Err(error) = fs::create_dir(&entry_path)
+                    && error.kind() != std::io::ErrorKind::AlreadyExists
+                {
+                    return Err(error).with_context(|| {
+                        format!("Failed to create directory {}", entry_path.display())
+                    });
+                }
+                installed_files.push(entry_path);
+                continue;
+            }
+
+            if entry_type.is_symlink() {
+                let target = entry
+                    .link_name()?
+                    .context("Archive symlink is missing its target")?;
+                validate_root_relative_link_target(root, &entry_path, &target)?;
+                installed_files.push(entry_path.clone());
+                pending_links.push(PendingRootLink::Symbolic {
+                    path: entry_path,
+                    target,
+                });
+                continue;
+            }
+
+            if entry_type.is_hard_link() {
+                let target = entry
+                    .link_name()?
+                    .context("Archive hard link is missing its target")?
+                    .into_owned();
+                let target = data_tar_entry_path(root, &target)?;
+                installed_files.push(entry_path.clone());
+                pending_links.push(PendingRootLink::Hard {
+                    path: entry_path,
+                    target,
+                });
+                continue;
+            }
+
+            if !entry_type.is_file() {
+                anyhow::bail!(
+                    "Unsupported special entry in package data.tar: {} ({entry_type:?})",
+                    entry_path.display()
+                );
+            }
+
+            ensure_parent_dirs_recorded(&entry_path, root, &mut seen_dirs, installed_files)?;
+
+            let mode = entry.header().mode()?;
+            let size = entry.header().size()?;
+
+            if size < 1024 {
+                let mut contents = Vec::with_capacity(size as usize);
+                entry.read_to_end(&mut contents)?;
+                fs::write(&entry_path, contents)
+                    .with_context(|| format!("Failed to write file: {}", entry_path.display()))?;
+            } else {
+                use std::io::BufWriter;
+                let file = File::create(&entry_path)
+                    .with_context(|| format!("Failed to create file: {}", entry_path.display()))?;
+                let mut writer = BufWriter::with_capacity(16384, file);
+                std::io::copy(&mut entry, &mut writer)
+                    .with_context(|| format!("Failed to copy to: {}", entry_path.display()))?;
+                writer.flush()?;
+            }
+
+            let mut perms = fs::metadata(&entry_path)?.permissions();
+            perms.set_mode(mode);
+            fs::set_permissions(&entry_path, perms)?;
+
+            installed_files.push(entry_path);
+        }
+
+        create_root_links(pending_links)?;
+        Ok(())
+    };
 
     let mut installed_files = Vec::new();
-    let mut pending_links = Vec::new();
-    // Ancestor directories already processed for this archive; prevents both
-    // redundant syscalls and duplicate rollback entries.
-    let mut seen_dirs: std::collections::HashSet<PathBuf> = std::collections::HashSet::new();
-
-    for entry in archive.entries()? {
-        let mut entry = entry?;
-        let entry_path = data_tar_entry_path(root, &entry.path()?)?;
-        let entry_type = entry.header().entry_type();
-
-        if entry_type.is_dir() {
-            ensure_parent_dirs_recorded(&entry_path, root, &mut seen_dirs, &mut installed_files)?;
-            // Archives routinely re-declare pre-existing directories ("/usr",
-            // "/etc", ...); only a genuine failure to provide it is fatal.
-            if let Err(error) = fs::create_dir(&entry_path)
-                && error.kind() != std::io::ErrorKind::AlreadyExists
-            {
-                return Err(error).with_context(|| {
-                    format!("Failed to create directory {}", entry_path.display())
-                });
-            }
-            installed_files.push(entry_path);
-            continue;
+    match inner(&mut installed_files) {
+        Ok(()) => Ok(installed_files),
+        Err(source) => Err(PartialExtractionError {
+            source,
+            installed_files,
         }
-
-        if entry_type.is_symlink() {
-            let target = entry
-                .link_name()?
-                .context("Archive symlink is missing its target")?
-                .into_owned();
-            validate_root_relative_link_target(root, &entry_path, &target)?;
-            // Recorded so rollback removes the link itself.
-            installed_files.push(entry_path.clone());
-            pending_links.push(PendingRootLink::Symbolic {
-                path: entry_path,
-                target,
-            });
-            continue;
-        }
-
-        if entry_type.is_hard_link() {
-            let target = entry
-                .link_name()?
-                .context("Archive hard link is missing its target")?
-                .into_owned();
-            let target = data_tar_entry_path(root, &target)?;
-            // Recorded so rollback removes the link itself.
-            installed_files.push(entry_path.clone());
-            pending_links.push(PendingRootLink::Hard {
-                path: entry_path,
-                target,
-            });
-            continue;
-        }
-
-        if !entry_type.is_file() {
-            anyhow::bail!(
-                "Unsupported special entry in package data.tar: {} ({entry_type:?})",
-                entry_path.display()
-            );
-        }
-
-        // Regular file: stream contents without buffering the whole payload.
-        ensure_parent_dirs_recorded(&entry_path, root, &mut seen_dirs, &mut installed_files)?;
-
-        let mode = entry.header().mode()?;
-        let size = entry.header().size()?;
-
-        if size < 1024 {
-            // Tiny files: read and write in one go
-            let mut contents = Vec::with_capacity(size as usize);
-            entry.read_to_end(&mut contents)?;
-            fs::write(&entry_path, contents)
-                .with_context(|| format!("Failed to write file: {}", entry_path.display()))?;
-        } else {
-            // Larger files: buffered copy
-            use std::io::BufWriter;
-            let file = File::create(&entry_path)
-                .with_context(|| format!("Failed to create file: {}", entry_path.display()))?;
-            let mut writer = BufWriter::with_capacity(16384, file);
-            std::io::copy(&mut entry, &mut writer)
-                .with_context(|| format!("Failed to copy to: {}", entry_path.display()))?;
-            writer.flush()?;
-        }
-
-        // Set permissions
-        let mut perms = fs::metadata(&entry_path)?.permissions();
-        perms.set_mode(mode);
-        fs::set_permissions(&entry_path, perms)?;
-
-        installed_files.push(entry_path);
+        .into()),
     }
-
-    // Only now that every regular file exists may archive-controlled links be
-    // created; creation itself fails explicitly if a path collision remains.
-    create_root_links(pending_links)?;
-
-    Ok(installed_files)
 }
 
 /// Run a maintainer script (preinst, postinst, prerm, postrm)
@@ -1561,10 +1608,20 @@ fn removal_step_failed(
 
 const DPKG_INFO_DIR: &str = "/var/lib/dpkg/info";
 
-fn dpkg_info_candidates(package_name: &str, extension: &str) -> [PathBuf; 2] {
-    let arch = std::env::consts::ARCH;
+fn dpkg_info_candidates(package_name: &str, extension: &str) -> [PathBuf; 3] {
+    // dpkg architecture names differ from Rust's target ARCH on the most
+    // common platform: x86_64 -> amd64 (audit A1). Probe the translated
+    // name first, then the raw Rust ARCH, then the unqualified fallback.
+    let arch = match std::env::consts::ARCH {
+        "x86_64" => "amd64",
+        other => other,
+    };
     [
         Path::new(DPKG_INFO_DIR).join(format!("{package_name}:{arch}.{extension}")),
+        Path::new(DPKG_INFO_DIR).join(format!(
+            "{package_name}:{}.{extension}",
+            std::env::consts::ARCH
+        )),
         Path::new(DPKG_INFO_DIR).join(format!("{package_name}.{extension}")),
     ]
 }

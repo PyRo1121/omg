@@ -154,12 +154,27 @@ pub async fn download_sources(sources: Vec<SourceFile>, srcdest: &Path) -> Sourc
     .progress_chars("#>-");
 
     let download_futures = sources.into_iter().map(|source| {
+        // Filename captured for the security check inside the async block.
+        let filename = source.filename.clone();
         let dest_path = srcdest.join(&source.filename);
         let pb = multi.add(ProgressBar::new(0));
         pb.set_style(style.clone());
         pb.set_message(source.filename.clone());
 
         async move {
+            // SECURITY (audit ADV-23-01): the filename may come from a
+            // hostile PKGBUILD's `name::url` rename syntax. Reject anything
+            // that is not a plain filename — separators, parent components,
+            // absolute paths — so downloads can never escape SRCDEST.
+            if filename.is_empty()
+                || filename.contains('/')
+                || filename.contains('\\')
+                || Path::new(&filename).is_absolute()
+                || filename.split('/').any(|part| part == "..")
+            {
+                warn!("Rejecting unsafe source filename from PKGBUILD: {filename:?}");
+                return Err(anyhow::anyhow!("unsafe source filename: {filename:?}"));
+            }
             match tokio::fs::symlink_metadata(&dest_path).await {
                 Ok(metadata) if metadata.is_file() => {
                     pb.finish_with_message(format!("{} (cached)", source.filename));

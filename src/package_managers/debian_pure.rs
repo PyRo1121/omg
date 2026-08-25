@@ -457,11 +457,17 @@ fn populate_package_urls(tx: &mut debian_db::Transaction) -> Result<()> {
     }
 
     // OPTIMIZATION: Look up all packages (can be optimized with get_packages_by_names later)
+    //
+    // SECURITY (audit ADV-18-01): duplicate index entries must resolve to the
+    // FIRST occurrence (repository priority order), not an arbitrary
+    // last-wins pick from HashMap::from_iter — a later duplicate from a
+    // lower-priority component could otherwise substitute a wrong-version
+    // download silently.
     let all_packages = debian_db::get_detailed_packages()?;
-    let package_map: std::collections::HashMap<_, _> = all_packages
-        .into_iter()
-        .map(|pkg| (pkg.name.clone(), pkg))
-        .collect();
+    let mut package_map: std::collections::HashMap<_, _> = std::collections::HashMap::new();
+    for pkg in all_packages {
+        package_map.entry(pkg.name.clone()).or_insert(pkg);
+    }
 
     for action in &mut tx.to_install {
         populate_action_url(action, &package_map, &repos)
