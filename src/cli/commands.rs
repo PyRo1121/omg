@@ -1003,12 +1003,26 @@ fn find_cached_arch_package_in(
         }
     }
     matches.sort_unstable();
-    matches.into_iter().next().with_context(|| {
-        format!(
+    let Some(candidate) = matches.into_iter().next() else {
+        anyhow::bail!(
             "Package {package} {version} is not available in the pacman cache at {}",
             cache_dir.display()
-        )
-    })
+        );
+    };
+    // SECURITY (audit sec04 F2): this archive feeds a privileged restore.
+    // Verify its embedded .PKGINFO actually names the requested package and
+    // version before trusting a user-writable cache file.
+    if let Some((archive_name, archive_version)) =
+        crate::package_managers::AurClient::pkg_name_and_version_from_archive(&candidate)
+        && (archive_name != package || !archive_version.eq_ignore_ascii_case(version))
+    {
+        anyhow::bail!(
+            "Cached archive {} claims '{archive_name} {archive_version}' but rollback \
+             expects '{package} {version}'; refusing to install",
+            candidate.display()
+        );
+    }
+    Ok(candidate)
 }
 
 #[cfg(feature = "arch")]

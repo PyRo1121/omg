@@ -630,8 +630,30 @@ fn persist_cache_best_effort<T: Serialize>(cache: &T, name: &str) {
     }
 }
 
-/// Load cache from disk
+/// Load cache from disk.
+///
+/// SECURITY (audit sec04 F1): when omg runs elevated (root via sudo), the
+/// cache directory still belongs to the ORIGINAL user, who is fully
+/// adversarial relative to the root process. Parsing attacker-writable
+/// bytes as trusted derived state lets them poison what root reads/writes.
+/// Elevated runs therefore bypass user-owned derived caches entirely and go
+/// to ground truth (ALPM/dpkg); the cache remains a fast path for the
+/// unprivileged user's own sessions.
 fn load_cache_from_disk<T: for<'de> Deserialize<'de>>(name: &str) -> Result<T> {
+    #[cfg(unix)]
+    if crate::core::is_root() && !paths::test_mode() {
+        use std::os::unix::fs::MetadataExt as _;
+        let dir = paths::cache_dir();
+        if let Ok(meta) = std::fs::metadata(&dir)
+            && meta.uid() != 0
+        {
+            tracing::debug!(
+                "Elevated run: ignoring user-owned derived cache {}",
+                dir.display()
+            );
+            anyhow::bail!("derived cache skipped under elevation");
+        }
+    }
     load_cache_from_disk_in(&paths::cache_dir(), name)
 }
 

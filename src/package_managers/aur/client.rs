@@ -1411,7 +1411,7 @@ impl AurClient {
         true
     }
 
-    fn pkg_name_and_version_from_archive(path: &Path) -> Option<(String, String)> {
+    pub(crate) fn pkg_name_and_version_from_archive(path: &Path) -> Option<(String, String)> {
         let file = File::open(path).ok()?;
         let reader: Box<dyn Read> = if path.extension().is_some_and(|ext| ext == "zst") {
             let decoder = ruzstd::decoding::StreamingDecoder::new(file).ok()?;
