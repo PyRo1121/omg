@@ -21,7 +21,7 @@ pub struct TeamConfig {
     pub name: String,
     /// Current user's identifier
     pub member_id: String,
-    /// Remote sync URL (GitHub repo or Gist)
+    /// Remote sync URL (GitHub Gist; full repos are not supported)
     pub remote_url: Option<String>,
     /// Whether to auto-sync on git pull
     pub auto_sync: bool,
@@ -320,7 +320,19 @@ impl TeamWorkspace {
         };
 
         // Existing team state is durable data. Reject missing or malformed
-        // status instead of replacing it with an empty member set.
+        // status instead of replacing it with an empty member set. Hold a
+        // cross-process flock across load-modify-save so two concurrent omg
+        // invocations cannot drop each other's member updates.
+        let lock_path = self.status_path().with_extension("lock");
+        let lock = std::fs::OpenOptions::new()
+            .create(true)
+            .read(true)
+            .write(true)
+            .truncate(false)
+            .open(&lock_path)
+            .with_context(|| format!("Failed to open team status lock {}", lock_path.display()))?;
+        lock.lock().context("Failed to acquire team status lock")?;
+
         let mut status = self.load_status()?;
 
         // Update or add member

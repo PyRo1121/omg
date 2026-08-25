@@ -10,7 +10,7 @@ use crate::core::format::truncate;
 use crate::package_managers::get_package_manager;
 
 #[cfg(unix)]
-use crate::core::client::{DaemonClient, PooledSyncClient};
+use crate::core::client::{DaemonClient, SyncDaemonClient};
 
 #[cfg(feature = "arch")]
 use crate::package_managers::AurClient;
@@ -274,7 +274,7 @@ pub fn search_sync_cli_with_limit(
     Ok(true)
 }
 
-/// Sync-only search: daemon IPC via `PooledSyncClient`, no tokio runtime.
+/// Sync-only search: daemon IPC via `SyncDaemonClient`, no tokio runtime.
 fn search_sync_official_only(query: &str, limit: usize) -> Result<bool> {
     #[cfg(not(unix))]
     {
@@ -283,7 +283,7 @@ fn search_sync_official_only(query: &str, limit: usize) -> Result<bool> {
 
     #[cfg(unix)]
     {
-        let Ok(mut client) = PooledSyncClient::acquire() else {
+        let Ok(mut client) = SyncDaemonClient::acquire() else {
             return Ok(false); // Daemon not running; caller falls back to async
         };
 

@@ -8,7 +8,7 @@ use crate::cli::{modern_ui, ui};
 #[cfg(unix)]
 use crate::core::client::DaemonClient;
 #[cfg(unix)]
-use crate::core::client::PooledSyncClient;
+use crate::core::client::SyncDaemonClient;
 use crate::core::security::is_local_package_file;
 use crate::package_managers::AurClient;
 use crate::package_managers::get_package_manager;
@@ -215,7 +215,7 @@ pub async fn install_dry_run(packages: &[String]) -> Result<()> {
 
     let mut total_size: u64 = 0;
     #[cfg(unix)]
-    let mut daemon_client = PooledSyncClient::acquire().ok();
+    let mut daemon_client = SyncDaemonClient::acquire().ok();
 
     for pkg_name in packages {
         #[cfg(unix)]

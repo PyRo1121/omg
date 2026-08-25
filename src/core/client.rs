@@ -340,7 +340,7 @@ impl DaemonClient {
 }
 
 /// The single conversion point from a daemon response to a typed client
-/// result. Every accessor on [`DaemonClient`] and [`PooledSyncClient`]
+/// result. Every accessor on [`DaemonClient`] and [`SyncDaemonClient`]
 /// funnels through here, so a protocol mismatch surfaces as one canonical
 /// error instead of a dozen ad-hoc bail sites.
 fn extract_response<T>(
@@ -434,7 +434,7 @@ fn as_explicit_count(response: &ResponseResult) -> Option<usize> {
 
 /// Serialize `request`, exchange one length-delimited frame with the daemon,
 /// and validate the response ID. Shared by the sync client paths above and
-/// [`PooledSyncClient`].
+/// [`SyncDaemonClient`].
 fn sync_roundtrip(stream: &mut SyncUnixStream, request: &Request) -> Result<ResponseResult> {
     let id = request.id();
     let request_bytes = crate::daemon::protocol::encode_frame(request)
@@ -469,12 +469,12 @@ fn sync_roundtrip(stream: &mut SyncUnixStream, request: &Request) -> Result<Resp
 }
 
 /// Synchronous client for non-async contexts
-pub struct PooledSyncClient {
+pub struct SyncDaemonClient {
     stream: Option<SyncUnixStream>,
     request_id: AtomicU64,
 }
 
-impl PooledSyncClient {
+impl SyncDaemonClient {
     /// Create a new sync connection to the daemon
     pub fn acquire() -> Result<Self> {
         if DaemonClient::daemon_disabled() {
@@ -525,11 +525,5 @@ impl PooledSyncClient {
         let id = self.request_id.fetch_add(1, Ordering::SeqCst);
         let response = self.call(&Request::Status { id })?;
         extract_response(&response, id, as_status)
-    }
-}
-
-impl Drop for PooledSyncClient {
-    fn drop(&mut self) {
-        // Stream will be closed automatically when dropped
     }
 }

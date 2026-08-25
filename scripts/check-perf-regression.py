@@ -80,14 +80,24 @@ def check_regression():
         print("Invalid baseline search time.")
         return 0
 
-    threshold = 2.0 # 100% tolerance for CI environment variability
+    # Default tolerance 35%: tight enough to catch real regressions, loose
+    # enough for shared-runner noise. Override via OMG_PERF_THRESHOLD.
+    import os
+    try:
+        threshold = float(os.environ.get("OMG_PERF_THRESHOLD", "1.35"))
+    except ValueError:
+        print("Invalid OMG_PERF_THRESHOLD; using default 1.35")
+        threshold = 1.35
+    if threshold <= 1.0:
+        print("OMG_PERF_THRESHOLD must be > 1.0; using default 1.35")
+        threshold = 1.35
     print(f"Baseline Search: {baseline_search_ms}ms")
     print(f"Current Search: {current_search_ms}ms")
 
     if current_search_ms > baseline_search_ms * threshold:
         diff = ((current_search_ms / baseline_search_ms) - 1) * 100
         print(f"❌ PERFORMANCE REGRESSION DETECTED!")
-        print(f"Search time increased by {diff:.2f}% (exceeds 100% threshold)")
+        print(f"Search time increased by {diff:.2f}% (exceeds configured threshold)")
         return 1
     
     print("✅ Performance check passed.")

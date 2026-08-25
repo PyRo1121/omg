@@ -107,8 +107,17 @@ pub fn cache_dir() -> PathBuf {
             // SUDO_HOME is environment-controlled and evaluated as root:
             // apply the same charset/length rules as SUDO_USER before it
             // becomes a path prefix.
+            // SUDO_HOME is an absolute HOME path (e.g. /var/home/alice on
+            // Silverblue), not a username — the old username validation
+            // rejected every legitimate value containing '/'.
             let home = match std::env::var("SUDO_HOME") {
-                Ok(dir) if is_valid_username(&dir) => PathBuf::from(dir),
+                Ok(dir)
+                    if std::path::Path::new(&dir).is_absolute()
+                        && !dir.contains('\0')
+                        && !dir.contains("..") =>
+                {
+                    PathBuf::from(dir)
+                }
                 Ok(dir) => {
                     tracing::warn!(
                         "Ignoring unsafe SUDO_HOME {dir:?}; falling back to /home/{sudo_user}"

@@ -189,7 +189,13 @@ impl CompletionEngine {
     async fn fetch_aur_names(&self) -> Result<Vec<String>> {
         // Use the AUR RPC to get all package names
         let url = "https://aur.archlinux.org/packages.gz";
-        let response = reqwest::get(url).await?;
+        // Shared client: bounded timeouts (a bare reqwest::get has none and
+        // hung shell completions when aur.archlinux.org black-holed).
+        let response = crate::core::http::shared_client()
+            .get(url)
+            .timeout(std::time::Duration::from_secs(15))
+            .send()
+            .await?;
         let bytes = response.bytes().await?;
 
         use std::io::Read;

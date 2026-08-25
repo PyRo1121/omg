@@ -39,8 +39,10 @@ jobs:
         uses: github/codeql-action/init@ff2f1c621b7f889edc0d3c761ac2e6a3f8cdb0dd # v4
         with:
           languages: rust
-          # Custom queries for additional security checks
-          queries: security-and-quality
+          # Single source of truth for queries/paths-ignore is
+          # .github/codeql.yml; inline `queries:` here would silently
+          # override it.
+          config-file: .github/codeql.yml
 
       - name: Build for CodeQL
         run: |

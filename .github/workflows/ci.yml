@@ -8,7 +8,7 @@
 # - cargo-nextest: 10-35% faster test execution
 # - Artifact caching: Shared caches across jobs
 # - Timeout protection: Prevents runaway jobs
-# - Test reporting: JUnit XML for GitHub integration
+# - Test reporting: nextest terminal output (JUnit profile removed as unused)
 
 name: CI
 
