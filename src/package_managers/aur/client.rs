@@ -1073,9 +1073,25 @@ impl AurClient {
         };
 
         let pkg_files = if let Some(cached) = cached {
-            crate::cli::modern_ui::print_info(&format!("Using cached build for {package}"));
-            cached
+            // Cache-poisoning defense (audit SEC02-02): a hit from the
+            // user-writable cache must still BE this package. Reject and
+            // rebuild on any identity mismatch.
+            let verified: Vec<PathBuf> = cached
+                .into_iter()
+                .filter(|archive| Self::cached_archive_matches(archive, package))
+                .collect();
+            if verified.len() == requested_outputs.len() {
+                crate::cli::modern_ui::print_info(&format!("Using cached build for {package}"));
+                verified
+            } else {
+                tracing::info!("Cache identity check failed for {package}; rebuilding");
+                Vec::new()
+            }
         } else {
+            Vec::new()
+        };
+
+        if pkg_files.is_empty() {
             let log_path = self.build_dir.join("_logs").join(format!("{package}.log"));
 
             // Note: run_build() shows its own real-time output, no spinner needed
@@ -1110,6 +1126,8 @@ impl AurClient {
                 .map_err(|_| AurError::PackageArchiveNotFound(package.to_string()))?;
             self.write_cache_key(package, &cache_key).await?;
             pkg_files
+        } else {
+            Vec::new()
         };
 
         println!();
@@ -1358,10 +1376,68 @@ impl AurClient {
     }
 
     fn parse_pkginfo_name(content: &str) -> Option<String> {
-        PackageInfoV2::from_str(content)
-            .map(|info| info.pkgname.to_string())
-            .or_else(|_| PackageInfoV1::from_str(content).map(|info| info.pkgname.to_string()))
-            .ok()
+        Self::parse_pkginfo_name_version(content).map(|(name, _)| name)
+    }
+
+    /// Extract `(pkgname, full-version)` from `.PKGINFO` content.
+    fn parse_pkginfo_name_version(content: &str) -> Option<(String, String)> {
+        if let Ok(info) = PackageInfoV2::from_str(content) {
+            return Some((info.pkgname.to_string(), info.pkgver.to_string()));
+        }
+        let info = PackageInfoV1::from_str(content).ok()?;
+        Some((info.pkgname.to_string(), info.pkgver.to_string()))
+    }
+
+    /// Verify a cached archive's embedded .PKGINFO names the requested
+    /// package. Defense against cross-package cache substitution (audit
+    /// SEC02-02): the key file lives in the same user-writable tree as
+    /// attacker-executing builds, so the artifact itself must carry the
+    /// identity before it is trusted for install.
+    fn cached_archive_matches(archive: &Path, package: &str) -> bool {
+        let Some((name, _version)) = Self::pkg_name_and_version_from_archive(archive) else {
+            tracing::warn!(
+                "Cached archive {} has no readable .PKGINFO; rejecting",
+                archive.display()
+            );
+            return false;
+        };
+        if name != package {
+            tracing::warn!(
+                "Cached archive {} claims pkgname '{name}', expected '{package}'; rejecting",
+                archive.display()
+            );
+            return false;
+        }
+        true
+    }
+
+    fn pkg_name_and_version_from_archive(path: &Path) -> Option<(String, String)> {
+        let file = File::open(path).ok()?;
+        let reader: Box<dyn Read> = if path.extension().is_some_and(|ext| ext == "zst") {
+            let decoder = ruzstd::decoding::StreamingDecoder::new(file).ok()?;
+            Box::new(decoder)
+        } else if path.extension().is_some_and(|ext| ext == "xz") {
+            let mut decompressed = Vec::new();
+            lzma_rs::xz_decompress(&mut BufReader::new(file), &mut decompressed).ok()?;
+            Box::new(Cursor::new(decompressed))
+        } else {
+            Box::new(flate2::read::GzDecoder::new(file))
+        };
+
+        let mut archive = tar::Archive::new(reader);
+        for entry in archive.entries().ok()? {
+            let mut entry = entry.ok()?;
+            let entry_path = entry.path().ok()?;
+            if entry_path.components().count() <= 2
+                && let Some(file_name) = entry_path.file_name().and_then(|n| n.to_str())
+                && matches!(file_name, ".PKGINFO" | "PKGINFO")
+            {
+                let mut content = String::new();
+                entry.read_to_string(&mut content).ok()?;
+                return Self::parse_pkginfo_name_version(&content);
+            }
+        }
+        None
     }
 
     async fn missing_aur_dependencies(&self, pkg_dir: &Path, package: &str) -> Result<Vec<String>> {

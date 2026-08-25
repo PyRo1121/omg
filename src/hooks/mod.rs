@@ -583,10 +583,32 @@ fn nvm_node_bin(version: &str) -> Result<Option<PathBuf>> {
         None => version.to_string(),
     };
     let normalized = resolved.trim_start_matches('v');
+
+    // SECURITY (audit sec14 F1): `version` originates from repo-supplied pin
+    // files. Without validation a hostile pin like `../../evil/bin` escapes
+    // the nvm versions tree and puts an attacker-controlled directory on the
+    // spawned command's PATH. Same contract as validated_runtime_bin_dir.
+    if crate::core::security::validate_runtime_version(normalized).is_err() {
+        return Ok(None); // hostile pin: never place it on PATH
+    }
+
     let bin_path = nvm_dir
         .join("versions/node")
         .join(format!("v{normalized}"))
         .join("bin");
+
+    // Canonicalize and require the result to stay inside the nvm versions
+    // tree even if symlinks redirect it.
+    let canonical_base = nvm_dir
+        .join("versions/node")
+        .canonicalize()
+        .unwrap_or_else(|_| nvm_dir.join("versions/node"));
+    let Ok(canonical) = bin_path.canonicalize() else {
+        return Ok(None);
+    };
+    if !canonical.starts_with(&canonical_base) {
+        return Ok(None);
+    }
 
     Ok(crate::runtimes::common::is_valid_version_dir(&bin_path).then_some(bin_path))
 }
@@ -1125,5 +1147,24 @@ erlang = "26.2"
             result.is_err(),
             "unreadable nvm alias must fail closed, got {result:?}"
         );
+    }
+    #[cfg(test)]
+    mod nvm_path_traversal_tests {
+        use super::*;
+
+        #[test]
+        fn hostile_nvm_pin_cannot_escape_versions_tree() {
+            // Audit sec14 F1: a repo-supplied pin traversing out of the nvm
+            // versions tree must never reach PATH.
+            for hostile in [
+                "../../evil/bin",
+                "../../../usr/local/bin",
+                "v8.0.0/../../../evil",
+                "..",
+            ] {
+                let result = nvm_node_bin(hostile).expect("nvm probe must not error");
+                assert!(result.is_none(), "hostile pin {hostile:?} must be refused");
+            }
+        }
     }
 }
