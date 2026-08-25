@@ -540,6 +540,32 @@ analyzer inference
 - **Ci**: Cross-platform install script and R2 release sync
 ### 🐛 Bug Fixes
 
+- **Security**: Third-wave audit mitigations — TUI input fix, fail-closed rollback
+
+F-09 (functional regression, MEDIUM): the search-mode rewrite froze ALL
+
+keyboard input in the live TUI — the event loop's only path to
+
+App::handle_key was handle_special_key_actions' catch-all, which was
+
+skipped while a query was open. Unit tests called handle_key directly and
+
+never caught it. The loop now routes search-mode keys to handle_key
+
+directly.
+
+F-04 (MEDIUM): rollback archive identity check failed OPEN when .PKGINFO
+
+was unreadable. Now fails closed with an explicit error.
+
+F-02 (MEDIUM): removed the ready-made NOPASSWD sudoers guidance from
+
+turbo setup — passwordless package management is root-equivalent for any
+
+code running as the user, and printed sudoers lines invite copy-paste.
+
+Users configure it themselves with full knowledge.
+
 - **Slsa**: Enforce Fulcio CA constraints + identity trust policy
 
 From the second-wave security audit (aud-08 F-05):
