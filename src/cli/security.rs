@@ -1384,7 +1384,11 @@ mod tests {
         assert!(require_slsa_verified(true, None).is_ok());
         let missing_reason =
             require_slsa_verified(false, None).expect_err("unverified without details still fails");
-        assert!(missing_reason.to_string().contains("SLSA verification failed"));
+        assert!(
+            missing_reason
+                .to_string()
+                .contains("SLSA verification failed")
+        );
     }
 
     #[test]
