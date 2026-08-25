@@ -436,6 +436,36 @@ analyzer inference
 - **Ci**: Cross-platform install script and R2 release sync
 ### 🐛 Bug Fixes
 
+- **Apt,dnf**: Native sudo elevation — one prompt, exact package lists
+
+apt/dnf mutating operations previously re-executed `sudo omg <cmd>`, so a
+
+non-root `omg update` re-listed updates and re-prompted for confirmation
+
+inside the elevated child (the "double prompt" finding), and the child
+
+re-resolved work the parent had already confirmed.
+
+New privilege::run_privileged_program runs the NATIVE package manager
+
+directly under sudo with explicit arguments (the same pattern the AUR
+
+client uses for pacman -U):
+
+  - pre-flight `sudo -n -v` validates credentials before any partial work;
+
+interactive sessions get exactly one authentication prompt
+
+  - dev/test mode bails without touching sudo, matching run_self_sudo
+
+  - apt-get: update / install -y -  - / remove -y -  - / upgrade -y
+
+  - dnf: makecache / install -y -  - / remove -y -  - / upgrade -y
+
+  - caches invalidated on success in the parent
+
+run_privileged_child remains for Arch's fast-elevated entrypoints.
+
 - **Debian-pure**: Refuse live-system dispatch; fix mixed-feature builds
 
 debian-pure is the test/indexing engine: it has no privilege boundary,
