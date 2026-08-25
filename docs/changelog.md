@@ -540,6 +540,38 @@ analyzer inference
 - **Ci**: Cross-platform install script and R2 release sync
 ### 🐛 Bug Fixes
 
+- **Slsa**: Enforce Fulcio CA constraints + identity trust policy
+
+From the second-wave security audit (aud-08 F-05):
+
+  - verify_fulcio_chain now enforces the Fulcio certificate profile on the
+
+leaf: BasicConstraints must be non-CA and ExtendedKeyUsage must include
+
+codeSigning (OID 1.3.6.1.5.5.7.3.3). A cert without these is rejected
+
+regardless of chain validity.
+
+  - Trust-policy predicate: verify_provenance gains required_identity.
+
+When supplied, a signature whose SAN identity does not match exactly is
+
+demoted to unverified — matching cosign's keyless model where
+
+verification without an identity policy proves nothing about trust
+
+(cited: https://docs.sigstore.dev/cosign/verify/).
+
+  - CLI: `omg audit slsa` gains --certificate-identity; when omitted, the
+
+command still succeeds cryptographically but prints a loud warning that
+
+the signer was unbounded, with the actual identity shown.
+
+Roundtrip test updated: leaf generated with codeSigning EKU; asserts
+
+identity binding reports the SAN URI.
+
 - **Security**: Redesign turbo mode — remove file-capability escalation ⚠️ **BREAKING CHANGE**
 
 CRITICAL (audit F-01): `omg doctor --turbo` setcap'd
