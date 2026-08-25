@@ -821,12 +821,12 @@ impl AurClient {
         )?;
 
         let env = self.makepkg_env(&pkg_dir)?;
-        // Honor the configured PKGBUILD review gate even for historical
-        // rebuilds (audit F-02): a force-pushed history commit is exactly as
-        // untrusted as a fresh build.
-        if self.settings.aur.review_pkgbuild {
-            Self::review_pkgbuild(&pkg_dir.join("PKGBUILD")).await?;
-        }
+        // SECURITY (audit F-03, second wave): a force-pushed history commit
+        // is exactly as untrusted as a fresh build, and the version match
+        // alone does not prove the PKGBUILD is the one originally installed.
+        // ALWAYS show the review prompt during rollback rebuilds,
+        // independent of the user's day-to-day review preference.
+        Self::review_pkgbuild(&pkg_dir.join("PKGBUILD")).await?;
         println!(
             "  {} Building {package} {version} from history...",
             "→".blue()
@@ -1873,7 +1873,14 @@ impl AurClient {
             let pacman_cache_root_str = pacman_cache_root.to_string_lossy();
             let home_str = home.to_string_lossy();
 
-            let mut cmd = Command::new("bwrap");
+            // SECURITY (audit sec2 F-01): the sandbox inherits the caller's
+            // controlling TTY, where omg's sudoloop keeps a live tty-scoped
+            // sudo ticket. Run bwrap under setsid so processes inside the
+            // sandbox have NO controlling terminal and cannot silently reuse
+            // that ticket (`sudo -n` fails without a tty). Output still
+            // streams because stdio fds remain attached.
+            let mut cmd = Command::new("setsid");
+            cmd.arg("-w").arg("bwrap");
             cmd.args([
                 "--share-net",
                 "--ro-bind",

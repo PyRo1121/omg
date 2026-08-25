@@ -439,6 +439,7 @@ fn verify_fulcio_chain(
         X509Certificate::from_der(der).ok().map(|(_, cert)| cert)
     }
 
+    eprintln!("CHAIN: roots_owned={}", roots_owned.len());
     let issued_directly_by_root = roots_owned
         .iter()
         .any(|root_der| parse_root(root_der).is_some_and(|root| leaf.issuer() == root.subject()));
@@ -496,10 +497,31 @@ fn verify_fulcio_chain(
     if at < leaf_validity.not_before.timestamp() || at > leaf_validity.not_after.timestamp() {
         return None;
     }
+    // Fulcio profile constraints on the LEAF (audit sec2 F-05):
+    // - must NOT be a CA (BasicConstraints)
+    // - must carry the CodeSigning extended key usage
+    let mut is_ca = false;
+    let mut has_code_signing_eku = false;
+    for ext in leaf.extensions() {
+        match ext.parsed_extension() {
+            ParsedExtension::BasicConstraints(bc) => is_ca = bc.ca,
+            ParsedExtension::ExtendedKeyUsage(eku) => {
+                // codeSigning OID 1.3.6.1.5.5.7.3.3
+                if eku.code_signing {
+                    has_code_signing_eku = true;
+                }
+            }
+            _ => {}
+        }
+    }
+    if is_ca || !has_code_signing_eku {
+        return None;
+    }
 
     // Signer identity from the Fulcio SAN (OIDC identity).
     for ext in leaf.extensions() {
         if let ParsedExtension::SubjectAlternativeName(san) = ext.parsed_extension() {
+            eprintln!("CHAIN: SAN found with {} names", san.general_names.len());
             for name in &san.general_names {
                 match name {
                     GeneralName::RFC822Name(email) => return Some(email.to_string()),
@@ -751,6 +773,7 @@ impl SlsaVerifier {
         &self,
         blob_path: impl AsRef<Path>,
         provenance_path: Option<impl AsRef<Path>>,
+        required_identity: Option<&str>,
     ) -> Result<VerificationResult, SlsaError> {
         // Calculate artifact hash
         let artifact_hash = Self::calculate_hash(&blob_path)?;
@@ -768,6 +791,13 @@ impl SlsaVerifier {
             ) else {
                 continue;
             };
+            // Trust POLICY (audit sec2 F-05): a signature from any Sigstore
+            // identity is cryptographically valid but only meaningful when it
+            // matches the caller's expected signer. When a required identity
+            // is supplied, a mismatch demotes the result to unverified.
+            if verified && required_identity.is_some() && signer.as_deref() != required_identity {
+                continue;
+            }
             if verified {
                 // Signature over this exact artifact digest verified with
                 // the key embedded in the transparency-log entry. When the
@@ -1151,7 +1181,7 @@ mod tests {
     #[test]
     fn fulcio_certificate_chain_binds_signer_identity() {
         use base64::Engine as _;
-        use rcgen::{CertificateParams, DnType, KeyPair};
+        use rcgen::{CertificateParams, DnType, ExtendedKeyUsagePurpose, KeyPair};
 
         // Test CA standing in for the Sigstore root.
         let ca_key = KeyPair::generate().unwrap();
@@ -1167,6 +1197,8 @@ mod tests {
         leaf_params
             .distinguished_name
             .push(DnType::CommonName, "alice");
+        // Fulcio profile: non-CA leaf with codeSigning EKU.
+        leaf_params.extended_key_usages = vec![ExtendedKeyUsagePurpose::CodeSigning];
         leaf_params.key_usages = vec![rcgen::KeyUsagePurpose::DigitalSignature];
         let leaf = leaf_params.signed_by(&leaf_key, &ca, &ca_key).unwrap();
         let leaf_der: Vec<u8> = leaf.der().to_vec();
@@ -1241,6 +1273,10 @@ mod tests {
         let entry = make_entry(&cert_pem, good_sig.to_der().as_bytes(), now);
         let (verified, signer) =
             SlsaVerifier::verify_rekor_entry(&entry, &artifact_hash, &ca_roots, "").unwrap();
+        eprintln!(
+            "DBG5 verified={verified} signer={signer:?} direct_chain_ok={}",
+            verify_fulcio_chain(&leaf_der, now, &ca_roots, "").is_some()
+        );
         assert!(verified, "valid chain + signature must verify");
         assert_eq!(
             signer.as_deref(),

@@ -1107,6 +1107,10 @@ pub enum AuditCommands {
     Slsa {
         /// Package file to verify
         package: String,
+        /// Require the Fulcio certificate SAN to match this identity
+        /// (email or OIDC URI). Without it, any Sigstore identity verifies.
+        #[arg(long)]
+        certificate_identity: Option<String>,
     },
     /// Scan for software license compliance issues
     Licenses {

@@ -61,7 +61,10 @@ impl LocalCommandRunner for AuditCommands {
             ),
             AuditCommands::Verify => verify_audit_log(ctx),
             AuditCommands::Policy => show_policy(ctx),
-            AuditCommands::Slsa { package } => check_slsa(package, ctx).await,
+            AuditCommands::Slsa {
+                package,
+                certificate_identity,
+            } => check_slsa(package, certificate_identity.as_deref(), ctx).await,
             AuditCommands::Licenses {
                 format,
                 export,
@@ -558,7 +561,11 @@ pub fn scan_secrets(path: Option<String>, _ctx: &CliContext) -> Result<()> {
 }
 
 /// Check SLSA provenance for a package
-pub async fn check_slsa(package: &str, _ctx: &CliContext) -> Result<()> {
+pub async fn check_slsa(
+    package: &str,
+    certificate_identity: Option<&str>,
+    _ctx: &CliContext,
+) -> Result<()> {
     // Require Enterprise tier for SLSA verification
     license::require_feature("slsa")?;
 
@@ -580,8 +587,20 @@ pub async fn check_slsa(package: &str, _ctx: &CliContext) -> Result<()> {
 
     let verifier = SlsaVerifier::new();
     let result = verifier
-        .verify_provenance(path, None::<&std::path::Path>)
+        .verify_provenance(path, None::<&std::path::Path>, certificate_identity)
         .await?;
+
+    // Trust-policy honesty (audit sec2 F-05): without an identity predicate,
+    // ANY Sigstore signer's valid signature "verifies" — cryptographically
+    // true but meaningless as a trust statement. Say so loudly instead of
+    // implying the artifact came from a trusted builder.
+    if result.verified && certificate_identity.is_none() {
+        println!(
+            "  {} No --certificate-identity was specified: the signature is \\\nvalid but the SIGNER is unbounded (identity: {}). \\\nSupply --certificate-identity to enforce a trust policy.",
+            style::warning("⚠"),
+            result.builder_id.as_deref().unwrap_or("unknown")
+        );
+    }
 
     require_slsa_verified(result.verified, result.error.as_deref())?;
 
