@@ -494,6 +494,12 @@ impl SecretScanner {
     }
 }
 
+impl Default for SecretScanner {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 /// Scan result summary
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SecretScanResult {

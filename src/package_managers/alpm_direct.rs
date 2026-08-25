@@ -22,17 +22,8 @@ thread_local! {
 }
 
 fn create_alpm_handle() -> Result<Alpm> {
-    let root = paths::pacman_root().to_string_lossy().into_owned();
-    let db_path = paths::pacman_db_dir().to_string_lossy().into_owned();
-
-    let alpm = Alpm::new(root.as_str(), db_path.as_str()).with_context(|| {
-        format!(
-            "Failed to initialize ALPM handle.\n\
-             Root: {root}\n\
-             DB Path: {db_path}\n\
-             Ensure pacman is installed and the database exists."
-        )
-    })?;
+    use crate::package_managers::alpm_ops::open_default_alpm;
+    let alpm = open_default_alpm().context("Failed to initialize ALPM handle")?;
 
     let repos = crate::core::pacman_conf::get_configured_repos()
         .context("Failed to load repositories from pacman.conf")?;

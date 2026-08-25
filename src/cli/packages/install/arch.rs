@@ -186,15 +186,8 @@ fn try_local_package_name(package: &str) -> Result<String> {
     let package_path = package_path
         .to_str()
         .context("Installed package path contains invalid UTF-8")?;
-    let alpm = alpm::Alpm::new(
-        crate::core::paths::pacman_root()
-            .to_string_lossy()
-            .into_owned(),
-        crate::core::paths::pacman_db_dir()
-            .to_string_lossy()
-            .into_owned(),
-    )
-    .context("Failed to initialize ALPM while recording package history")?;
+    let alpm = crate::package_managers::alpm_ops::open_default_alpm()
+        .context("Failed to initialize ALPM while recording package history")?;
     let loaded = alpm
         .pkg_load(package_path, false, alpm::SigLevel::NONE)
         .with_context(|| format!("Failed to read installed package metadata from {package}"))?;
@@ -559,15 +552,11 @@ fn record_aur_history(
 
 /// Version of `name` in the local pacman database, if installed.
 fn installed_package_version(name: &str) -> Option<String> {
-    let alpm = alpm::Alpm::new(
-        crate::core::paths::pacman_root()
-            .to_string_lossy()
-            .into_owned(),
-        crate::core::paths::pacman_db_dir()
-            .to_string_lossy()
-            .into_owned(),
-    )
-    .ok()?;
+    // installed_package_version returns Option: an unusable ALPM handle
+    // simply means "cannot determine" -> no version.
+    let Ok(alpm) = crate::package_managers::alpm_ops::open_default_alpm() else {
+        return None;
+    };
     let pkg = alpm.localdb().pkg(name).ok()?;
     Some(pkg.version().to_string())
 }

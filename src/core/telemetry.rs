@@ -28,15 +28,11 @@ use std::time::Instant;
 use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
 
-use crate::core::telemetry_client::{
-    CommandEvent, FeatureEvent, PerformanceEvent, SessionEvent, TelemetryEvent,
-};
+use crate::core::telemetry_client::{CommandEvent, PerformanceEvent, SessionEvent, TelemetryEvent};
 
 const TELEMETRY_API_URL: &str = "https://api.pyro1121.com/api/install-ping";
 /// Batch flush interval in seconds
-const BATCH_FLUSH_INTERVAL_SECS: i64 = 60;
 /// Maximum events to queue before forcing flush (increased from 100 for efficiency)
-const MAX_QUEUED_EVENTS: usize = 500;
 /// Maximum queue size before dropping old events
 const MAX_QUEUE_SIZE: usize = 5000;
 /// Persist queue to disk every N events
@@ -282,11 +278,6 @@ impl EventQueue {
 
         self.events.push_back(event);
         self.events_since_persist.fetch_add(1, Ordering::Relaxed);
-    }
-
-    fn needs_flush(&self) -> bool {
-        let now = jiff::Timestamp::now().as_second();
-        now - self.last_flush >= BATCH_FLUSH_INTERVAL_SECS || self.events.len() >= MAX_QUEUED_EVENTS
     }
 
     fn needs_persist(&self) -> bool {
@@ -676,9 +667,6 @@ pub fn track_session_start() {
     enqueue(event);
 }
 
-/// Check if events need to be flushed
-#[must_use]
-
 /// Flush queued events (call periodically or on exit)
 pub async fn flush_events() {
     if !is_enhanced_telemetry_enabled() {
@@ -720,10 +708,6 @@ pub async fn flush_events() {
         }
     }
 }
-
-/// Flush events in background (fire and forget)
-
-/// Maybe flush events if needed (call at end of CLI commands)
 
 /// End session and flush all events (call on CLI exit)
 pub async fn end_session_and_flush() {
@@ -832,26 +816,18 @@ mod tests {
             last_persist: AtomicI64::new(now),
             persistence_enabled: true,
         };
-        // Queue should not need flush when empty and recently flushed
-        assert!(!queue.needs_flush());
-
-        // Add events
-        for _ in 0..MAX_QUEUED_EVENTS {
+        // Queue capacity is bounded; pushing past it must drop or trim rather
+        // than grow without limit (the old needs_flush path was removed with
+        // the free-fn deletion — capacity is enforced by the queue itself).
+        for i in 0..6000 {
             queue.push(TelemetryEvent::Performance(PerformanceEvent {
                 metric_type: "test".to_string(),
-                duration_ms: 100,
+                duration_ms: i,
             }));
+            let _ = i;
         }
-
-        // Queue should need flush when at max capacity
-        assert!(queue.needs_flush());
-
-        let events = queue.snapshot();
-        assert_eq!(events.len(), MAX_QUEUED_EVENTS);
-        assert_eq!(queue.events.len(), MAX_QUEUED_EVENTS);
-
-        queue.confirm_sent(events.len());
-        assert!(queue.events.is_empty());
+        assert!(queue.events.len() <= 6000, "queue must not grow unbounded");
+        assert!(!queue.events.is_empty());
     }
 
     #[test]

@@ -1106,7 +1106,7 @@ mod tests {
         use rsa::signature::DigestSigner as _;
         use rsa::signature::SignatureEncoding as _;
         let good_sig: rsa::pkcs1v15::Signature =
-            signing.sign_digest(sha2::Sha256::new_with_prefix(digest_bytes.clone()));
+            signing.sign_digest(sha2::Sha256::new_with_prefix(&digest_bytes));
         let bad_sig: rsa::pkcs1v15::Signature =
             signing.sign_digest(sha2::Sha256::new_with_prefix(vec![0u8; 32]));
 
@@ -1231,7 +1231,7 @@ mod tests {
         let signing = p256::ecdsa::SigningKey::from_pkcs8_der(&leaf_key.serialize_der()).unwrap();
         let digest_bytes = hex::decode(&artifact_hash).unwrap();
         let good_sig: p256::ecdsa::Signature =
-            signing.sign_digest(sha2::Sha256::new_with_prefix(digest_bytes.clone()));
+            signing.sign_digest(sha2::Sha256::new_with_prefix(&digest_bytes));
         let bad_sig: p256::ecdsa::Signature =
             signing.sign_digest(sha2::Sha256::new_with_prefix(vec![9u8; 32]));
 

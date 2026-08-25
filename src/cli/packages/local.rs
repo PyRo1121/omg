@@ -38,14 +38,7 @@ pub fn extract_local_metadata(path: &Path) -> Result<LocalPackageInfo> {
 
 #[cfg(feature = "arch")]
 fn extract_with_libalpm(path: &Path) -> Result<LocalPackageInfo> {
-    use crate::core::paths;
-
-    // We need an alpm handle
-    let root = paths::pacman_root().to_string_lossy().into_owned();
-    let db_path = paths::pacman_db_dir().to_string_lossy().into_owned();
-
-    // Safety: alpm requires valid paths
-    let alpm = alpm::Alpm::new(root, db_path)?;
+    let alpm = crate::package_managers::alpm_ops::open_default_alpm()?;
     let pkg = alpm.pkg_load(
         path.to_str().context("Invalid path")?,
         true,

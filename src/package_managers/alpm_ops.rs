@@ -24,7 +24,22 @@ pub fn get_system_status() -> Result<(usize, usize, usize, usize)> {
     Ok((total, explicit, orphans, updates))
 }
 
-/// Get detailed list of updates (name, `old_version`, `new_version`) - FAST
+/// Get detailed list of updates - FAST
+/// Open a libalpm handle against the configured pacman root/db with a
+/// canonical error context (audit typ01 C1: seven divergent inline copies).
+#[cfg(feature = "arch")]
+pub fn open_default_alpm() -> anyhow::Result<alpm::Alpm> {
+    use anyhow::Context as _;
+
+    let root = crate::core::paths::pacman_root()
+        .to_string_lossy()
+        .into_owned();
+    let db_path = crate::core::paths::pacman_db_dir()
+        .to_string_lossy()
+        .into_owned();
+    alpm::Alpm::new(root, db_path).context("Failed to initialize ALPM")
+}
+
 pub fn get_update_list() -> Result<Vec<UpdateInfo>> {
     if crate::core::paths::test_mode() {
         let updates = crate::package_managers::pacman_db::check_updates_cached()?;
@@ -313,10 +328,7 @@ pub fn execute_transaction(
         return Ok(());
     }
 
-    let root = paths::pacman_root().to_string_lossy().into_owned();
-    let db_path = paths::pacman_db_dir().to_string_lossy().into_owned();
-    let mut alpm =
-        alpm::Alpm::new(root, db_path).context("Failed to initialize ALPM (are you root?)")?;
+    let mut alpm = open_default_alpm()?;
     configure_transaction_options(&mut alpm, &pacman_config)?;
 
     if pacman_config.repos.is_empty() {
