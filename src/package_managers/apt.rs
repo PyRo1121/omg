@@ -30,7 +30,9 @@ impl AptPackageManager {
 
     pub async fn sync_databases(&self) -> Result<()> {
         if !is_root() {
-            crate::core::privilege::run_privileged_child(&["sync"]).await?;
+            // Native elevation: run apt-get directly instead of re-executing
+            // omg (one prompt, no re-dispatch, no double work).
+            crate::core::privilege::run_privileged_program("apt-get", &["update"]).await?;
             return Ok(());
         }
 
@@ -82,10 +84,11 @@ impl crate::package_managers::PackageManager for AptPackageManager {
             crate::core::security::validate_package_names(&packages)?;
 
             if !is_root() {
-                let mut args = vec!["install", "--"];
-                let pkg_refs: Vec<&str> = packages.iter().map(String::as_str).collect();
-                args.extend_from_slice(&pkg_refs);
-                crate::core::privilege::run_privileged_child(&args).await?;
+                // Exact resolved package list goes straight to apt-get — no
+                // re-exec, no second listing or prompt.
+                let mut args = vec!["install", "-y", "--"];
+                args.extend(packages.iter().map(String::as_str));
+                crate::core::privilege::run_privileged_program("apt-get", &args).await?;
                 return Ok(());
             }
 
@@ -103,10 +106,9 @@ impl crate::package_managers::PackageManager for AptPackageManager {
             crate::core::security::validate_package_names(&packages)?;
 
             if !is_root() {
-                let mut args = vec!["remove", "--"];
-                let pkg_refs: Vec<&str> = packages.iter().map(String::as_str).collect();
-                args.extend_from_slice(&pkg_refs);
-                crate::core::privilege::run_privileged_child(&args).await?;
+                let mut args = vec!["remove", "-y", "--"];
+                args.extend(packages.iter().map(String::as_str));
+                crate::core::privilege::run_privileged_program("apt-get", &args).await?;
                 return Ok(());
             }
 
@@ -120,7 +122,8 @@ impl crate::package_managers::PackageManager for AptPackageManager {
     fn update(&self) -> Pin<Box<dyn Future<Output = Result<()>> + Send + '_>> {
         Box::pin(async move {
             if !is_root() {
-                crate::core::privilege::run_privileged_child(&["update"]).await?;
+                crate::core::privilege::run_privileged_program("apt-get", &["upgrade", "-y"])
+                    .await?;
                 return Ok(());
             }
 

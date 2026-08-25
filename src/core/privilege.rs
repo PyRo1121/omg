@@ -45,6 +45,93 @@ pub fn set_yes_flag(value: bool) {
 }
 
 /// Check if the yes flag is set
+/// Run an EXTERNAL program under sudo as one step inside a larger flow.
+///
+/// Unlike [`run_privileged_child`] this never re-executes omg: the native
+/// package manager (apt-get, dnf) runs directly with explicit arguments, so
+/// there is exactly one prompt and no re-listing/re-confirming of work the
+/// caller already resolved. Credentials are validated with a pre-flight
+/// `sudo -n -v`; when that fails and stdin is interactive, one authentication
+/// prompt is offered before giving up.
+///
+/// # Errors
+/// Dev/test mode bails without touching sudo. A password requirement in a
+/// non-interactive session, or a nonzero child status, is returned as an
+/// error.
+pub async fn run_privileged_program(program: &str, args: &[&str]) -> anyhow::Result<()> {
+    // Detect dev/test mode — identical contract to run_self_sudo.
+    let is_test_mode =
+        std::env::var("OMG_TEST_MODE").is_ok() || std::env::var("CARGO_PRIMARY_PACKAGE").is_ok();
+    if is_test_mode {
+        anyhow::bail!(
+            "Privilege elevation not supported in development mode.\n\
+             \n\
+             Options:\n\
+             • Use installed binary with turbo mode: omg doctor --turbo\n\
+             • Run directly with sudo: sudo {program} {args:?}"
+        );
+    }
+
+    // Pre-flight: validate/refresh credentials WITHOUT running the payload,
+    // so a password requirement is detected before any partial work.
+    let authenticated = tokio::process::Command::new("sudo")
+        .arg("-n")
+        .arg("-v")
+        .stdin(std::process::Stdio::null())
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .status()
+        .await
+        .map(|s| s.success())
+        .unwrap_or(false);
+
+    if !authenticated {
+        if get_yes_flag() || !console::user_attended() {
+            anyhow::bail!(
+                "Privilege elevation requires a password but no interactive \\\n                 terminal is available.\n\
+                 \n\
+                 RECOMMENDED: Enable turbo mode for zero-sudo operations:\n\
+                   omg doctor --turbo"
+            );
+        }
+        // One interactive authentication prompt with inherited stdio.
+        let status = tokio::process::Command::new("sudo")
+            .arg("-v")
+            .stdin(std::process::Stdio::inherit())
+            .stdout(std::process::Stdio::inherit())
+            .stderr(std::process::Stdio::inherit())
+            .status()
+            .await
+            .map_err(|e| anyhow::anyhow!("Failed to run sudo for credential validation: {e}"))?;
+        if !status.success() {
+            anyhow::bail!("sudo authentication failed");
+        }
+    }
+
+    let status = tokio::process::Command::new("sudo")
+        .env_remove("SUDO_ASKPASS")
+        .env_remove("SSH_ASKPASS")
+        .env_remove("SSH_ASKPASS_REQUIRE")
+        .arg("--")
+        .arg(program)
+        .args(args)
+        .stdin(std::process::Stdio::inherit())
+        .stdout(std::process::Stdio::inherit())
+        .stderr(std::process::Stdio::inherit())
+        .status()
+        .await
+        .map_err(|e| anyhow::anyhow!("Failed to run {program} under sudo: {e}"))?;
+
+    if status.success() {
+        Ok(())
+    } else {
+        anyhow::bail!(
+            "{program} failed with exit code {}",
+            status.code().unwrap_or(1)
+        )
+    }
+}
+
 pub fn get_yes_flag() -> bool {
     YES_FLAG.load(Ordering::SeqCst)
 }

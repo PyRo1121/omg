@@ -476,10 +476,12 @@ impl PackageManager for DnfPackageManager {
             crate::core::security::validate_package_names(&packages)?;
 
             if !is_root() {
-                let mut args = vec!["install", "--"];
-                let pkg_refs: Vec<&str> = packages.iter().map(String::as_str).collect();
-                args.extend_from_slice(&pkg_refs);
-                crate::core::privilege::run_privileged_child(&args).await?;
+                // Native elevation with the exact resolved package list —
+                // no omg re-exec, no second listing or confirmation prompt.
+                let mut args = vec!["install", "-y", "--"];
+                args.extend(packages.iter().map(String::as_str));
+                crate::core::privilege::run_privileged_program("dnf", &args).await?;
+                self.installed_cache.clear();
                 return Ok(());
             }
 
@@ -503,10 +505,10 @@ impl PackageManager for DnfPackageManager {
             crate::core::security::validate_package_names(&packages)?;
 
             if !is_root() {
-                let mut args = vec!["remove", "--"];
-                let pkg_refs: Vec<&str> = packages.iter().map(String::as_str).collect();
-                args.extend_from_slice(&pkg_refs);
-                crate::core::privilege::run_privileged_child(&args).await?;
+                let mut args = vec!["remove", "-y", "--"];
+                args.extend(packages.iter().map(String::as_str));
+                crate::core::privilege::run_privileged_program("dnf", &args).await?;
+                self.installed_cache.clear();
                 return Ok(());
             }
 
@@ -526,7 +528,8 @@ impl PackageManager for DnfPackageManager {
     fn update(&self) -> Pin<Box<dyn Future<Output = Result<()>> + Send + '_>> {
         Box::pin(async move {
             if !is_root() {
-                crate::core::privilege::run_privileged_child(&["update"]).await?;
+                crate::core::privilege::run_privileged_program("dnf", &["upgrade", "-y"]).await?;
+                self.installed_cache.clear();
                 return Ok(());
             }
 
@@ -544,7 +547,7 @@ impl PackageManager for DnfPackageManager {
             self.installed_cache.clear();
 
             if !is_root() {
-                crate::core::privilege::run_privileged_child(&["sync"]).await?;
+                crate::core::privilege::run_privileged_program("dnf", &["makecache", "-y"]).await?;
                 return Ok(());
             }
 
