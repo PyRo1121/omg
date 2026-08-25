@@ -1069,23 +1069,25 @@ impl AurClient {
             None
         };
 
-        let pkg_files = if let Some(cached) = cached {
-            // Cache-poisoning defense (audit SEC02-02): a hit from the
-            // user-writable cache must still BE this package. Reject and
-            // rebuild on any identity mismatch.
-            let verified: Vec<PathBuf> = cached
-                .into_iter()
-                .filter(|archive| Self::cached_archive_matches(archive, package))
-                .collect();
-            if verified.len() == requested_outputs.len() {
-                crate::cli::modern_ui::print_info(&format!("Using cached build for {package}"));
-                verified
-            } else {
-                tracing::info!("Cache identity check failed for {package}; rebuilding");
-                Vec::new()
+        // Cache-poisoning defense (audit SEC02-02): a hit from the
+        // user-writable cache must still BE this package. Verified hits are
+        // used directly; any identity mismatch rejects ALL cached artifacts
+        // for this base and falls through to a fresh build.
+        let mut pkg_files: Vec<PathBuf> = match cached {
+            Some(archives) => {
+                let verified: Vec<PathBuf> = archives
+                    .into_iter()
+                    .filter(|archive| Self::cached_archive_matches(archive, package))
+                    .collect();
+                if verified.len() == requested_outputs.len() {
+                    crate::cli::modern_ui::print_info(&format!("Using cached build for {package}"));
+                    verified
+                } else {
+                    tracing::info!("Cache identity check failed for {package}; rebuilding");
+                    Vec::new()
+                }
             }
-        } else {
-            Vec::new()
+            None => Vec::new(),
         };
 
         if pkg_files.is_empty() {
@@ -1118,15 +1120,13 @@ impl AurClient {
                 build_elapsed.as_secs_f64()
             );
 
-            let pkg_files = Self::find_built_packages(&pkg_dir, &env.pkgdest, requested_outputs)
+            pkg_files = Self::find_built_packages(&pkg_dir, &env.pkgdest, requested_outputs)
                 .await
                 .map_err(|_| AurError::PackageArchiveNotFound(package.to_string()))?;
             self.write_cache_key(package, &cache_key).await?;
-            pkg_files
-        } else {
-            Vec::new()
-        };
+        }
 
+        println!();
         println!();
         let output_names = requested_outputs.join(", ");
         let install_pb = crate::cli::modern_ui::modern_spinner("Installing", &output_names);
