@@ -215,12 +215,6 @@ pub enum SecretError {
 /// Secret scanner for detecting leaked credentials
 pub struct SecretScanner;
 
-impl Default for SecretScanner {
-    fn default() -> Self {
-        Self::new()
-    }
-}
-
 impl SecretScanner {
     #[must_use]
     pub fn new() -> Self {

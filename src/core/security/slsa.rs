@@ -1241,34 +1241,6 @@ mod tests {
         let ca_roots: Vec<&str> = vec![ca_pem.as_str()];
         let now = u64::try_from(jiff::Timestamp::now().as_second()).unwrap();
 
-        {
-            use p256::pkcs8::DecodePublicKey as _;
-            use x509_parser::prelude::*;
-            let (_, cert) = X509Certificate::from_der(&leaf_der).unwrap();
-            eprintln!("PROBE spki_len={}", cert.public_key().raw.len());
-            eprintln!(
-                "PROBE spki_hex_head={:02x?}",
-                &cert.public_key().raw[..8.min(cert.public_key().raw.len())]
-            );
-            eprintln!(
-                "PROBE p256_parse={:?}",
-                p256::PublicKey::from_public_key_der(cert.public_key().raw).is_ok()
-            );
-            eprintln!("PROBE sig_der_len={}", good_sig.to_der().len());
-            use p256::ecdsa::signature::DigestVerifier as _;
-            let key = p256::PublicKey::from_public_key_der(cert.public_key().raw).unwrap();
-            let verifying = p256::ecdsa::VerifyingKey::from(key);
-            let mut h = sha2::Sha256::new();
-            sha2::Digest::update(&mut h, &digest_bytes);
-            let manual = verifying.verify_digest(h, &good_sig.to_der()).is_ok();
-            eprintln!("PROBE manual digest verify={manual}");
-            let via_fn = SlsaVerifier::verify_digest_with_spki(
-                cert.public_key().raw,
-                &artifact_hash,
-                good_sig.to_der().as_bytes(),
-            );
-            eprintln!("PROBE via_fn={via_fn}");
-        }
         // Valid chain + correct signature -> verified AND identity bound.
         let entry = make_entry(&cert_pem, good_sig.to_der().as_bytes(), now);
         let (verified, signer) =

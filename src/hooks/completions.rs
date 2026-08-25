@@ -168,33 +168,3 @@ fn install_completions(shell: &str) -> Result<()> {
 
     Ok(())
 }
-
-/// Print completion installation instructions (legacy)
-pub fn print_completion_instructions(shell: &str) {
-    match shell.to_lowercase().as_str() {
-        "bash" => {
-            println!("# Add to ~/.bashrc:");
-            println!("eval \"$(omg completions bash --stdout)\"");
-            println!();
-            println!("# Or install system-wide:");
-            println!("sudo omg completions bash --stdout > /etc/bash_completion.d/omg");
-        }
-        "zsh" => {
-            println!("# Add to ~/.zshrc (before compinit):");
-            println!("eval \"$(omg completions zsh --stdout)\"");
-            println!();
-            println!("# Or save to fpath:");
-            println!("omg completions zsh --stdout > ~/.zfunc/_omg");
-        }
-        "fish" => {
-            println!("# Add to ~/.config/fish/config.fish:");
-            println!("omg completions fish --stdout | source");
-            println!();
-            println!("# Or save to completions dir:");
-            println!("omg completions fish --stdout > ~/.config/fish/completions/omg.fish");
-        }
-        _ => {
-            println!("See 'omg completions --help' for supported shells");
-        }
-    }
-}

@@ -2036,8 +2036,7 @@ impl AurClient {
                 user,
                 user_home
             );
-            let mut pre = vec!["-E", "-u", user];
-            let _ = &mut pre;
+            let pre = vec!["-E", "-u", user];
             ("sudo", pre)
         } else {
             ("makepkg", Vec::new())

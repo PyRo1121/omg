@@ -13,23 +13,6 @@ pub enum RuntimeBackend {
     NativeThenMise,
 }
 
-impl std::str::FromStr for RuntimeBackend {
-    type Err = String;
-
-    fn from_str(s: &str) -> Result<Self, Self::Err> {
-        match s.to_lowercase().as_str() {
-            "native" => Ok(Self::Native),
-            "mise" => Ok(Self::Mise),
-            "native-then-mise" | "native_then_mise" | "native_then-mise" => {
-                Ok(Self::NativeThenMise)
-            }
-            _ => Err(format!(
-                "Unknown runtime backend: {s} (expected native, mise, native-then-mise)"
-            )),
-        }
-    }
-}
-
 /// Package source
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum PackageSource {

@@ -718,12 +718,6 @@ fn decompress_xz(data: &[u8]) -> Result<Vec<u8>> {
     Ok(output.into_inner())
 }
 
-/// Force a full sync, ignoring cache
-pub async fn force_sync_all() -> Result<()> {
-    invalidate_sync_timestamps(&paths::cache_dir().join("apt"))?;
-    sync_all_repositories(true).await
-}
-
 /// Remove `.synced` markers so the next sync cannot treat stale cache as fresh.
 fn invalidate_sync_timestamps(cache_base: &Path) -> Result<()> {
     if !cache_base.exists() {
@@ -749,19 +743,6 @@ fn invalidate_sync_timestamps(cache_base: &Path) -> Result<()> {
         }
     }
     Ok(())
-}
-
-/// Check if any repositories need syncing
-#[must_use]
-pub fn needs_sync() -> bool {
-    let Ok(repos) = get_enabled_binary_repos() else {
-        return true;
-    };
-
-    repos.iter().any(|repo| {
-        let cache_dir = repo_cache_dir(repo);
-        !is_cache_fresh(&cache_dir)
-    })
 }
 
 #[cfg(test)]

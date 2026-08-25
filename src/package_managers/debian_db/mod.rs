@@ -38,7 +38,7 @@ pub use db::{
     list_explicit_fast, list_installed_fast, list_orphans_fast, search_fast,
 };
 
-pub use parallel_sync::{force_sync_all, needs_sync, sync_all_repositories};
+pub use parallel_sync::sync_all_repositories;
 pub use resolver::{DependencyResolver, ResolutionResult, compare_versions};
 pub use sources::{
     RepoType, Repository, get_enabled_binary_repos, parse_all_sources, parse_deb822_content,

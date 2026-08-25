@@ -654,20 +654,6 @@ pub fn track_performance_event(metric_type: &str, duration_ms: u64) {
     enqueue(event);
 }
 
-/// Track feature usage
-pub fn track_feature_event(feature: &str, enabled: bool) {
-    if !is_enhanced_telemetry_enabled() {
-        return;
-    }
-
-    let event = TelemetryEvent::Feature(FeatureEvent {
-        feature: feature.to_string(),
-        enabled,
-    });
-
-    enqueue(event);
-}
-
 /// Track session start
 pub fn track_session_start() {
     if !is_enhanced_telemetry_enabled() {
@@ -692,17 +678,6 @@ pub fn track_session_start() {
 
 /// Check if events need to be flushed
 #[must_use]
-pub fn needs_flush() -> bool {
-    if !is_enhanced_telemetry_enabled() {
-        return false;
-    }
-
-    if let Ok(queue) = get_event_queue().lock() {
-        queue.needs_flush()
-    } else {
-        false
-    }
-}
 
 /// Flush queued events (call periodically or on exit)
 pub async fn flush_events() {
@@ -747,22 +722,8 @@ pub async fn flush_events() {
 }
 
 /// Flush events in background (fire and forget)
-pub fn flush_events_background() {
-    if !is_enhanced_telemetry_enabled() {
-        return;
-    }
-
-    tokio::spawn(async {
-        flush_events().await;
-    });
-}
 
 /// Maybe flush events if needed (call at end of CLI commands)
-pub fn maybe_flush_background() {
-    if needs_flush() {
-        flush_events_background();
-    }
-}
 
 /// End session and flush all events (call on CLI exit)
 pub async fn end_session_and_flush() {

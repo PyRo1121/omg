@@ -438,11 +438,6 @@ fn detect_shell_from_parent_process() -> Option<Shell> {
     None
 }
 
-/// Get the detected shell for use in non-interactive mode
-pub fn auto_detect_shell() -> Option<Shell> {
-    detect_current_shell()
-}
-
 fn select_shell(stdout: &mut io::Stdout) -> Result<Shell> {
     let detected = detect_current_shell();
     let shells = [Shell::Zsh, Shell::Bash, Shell::Fish];
