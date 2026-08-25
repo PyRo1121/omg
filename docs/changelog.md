@@ -540,6 +540,22 @@ analyzer inference
 - **Ci**: Cross-platform install script and R2 release sync
 ### 🐛 Bug Fixes
 
+- **Aur**: Cache-hit path discarded verified archives before install
+
+Caught by the 50-agent wave (adv01 F-01, HIGH functional): the SEC02-02
+
+identity-check refactor left a stale `else { Vec::new() }` on the build
+
+branch, so every successful cache hit was wiped right before install —
+
+cached builds silently did nothing and reported "Installed" with no
+
+archives. Flow is now linear: verified cache hits are used directly;
+
+otherwise the fresh-build branch assigns its archives to the same
+
+binding.
+
 - **Security**: Third-wave audit mitigations — TUI input fix, fail-closed rollback
 
 F-09 (functional regression, MEDIUM): the search-mode rewrite froze ALL
