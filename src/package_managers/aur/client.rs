@@ -693,6 +693,185 @@ impl AurClient {
             .collect())
     }
 
+    /// Rebuild `package` at historical `version` from the AUR repository's
+    /// git history and install the resulting archive.
+    ///
+    /// Used by rollback: officials restore from the pacman cache, but AUR
+    /// serves only latest builds, so downgrading requires checking out the
+    /// commit whose `.SRCINFO` recorded the old version. The clone is fully
+    /// isolated under `_rollback/` so the user's cached checkout is never
+    /// touched, and no build-cache key is written (this is not the latest
+    /// build).
+    pub async fn downgrade_from_history(&self, package: &str, version: &str) -> Result<()> {
+        use std::process::Stdio;
+
+        crate::core::security::validate_package_name(package)?;
+        crate::core::security::validate_package_name(version)?;
+
+        let base = self.resolve_package_base(package).await;
+
+        // Isolated work tree; stamp prevents collisions between rollbacks.
+        let work = self.build_dir.join("_rollback");
+        create_dir_as_user(&work).await?;
+        let stamp = std::time::SystemTime::now()
+            .duration_since(std::time::SystemTime::UNIX_EPOCH)
+            .map_or(0_u64, |d| d.as_secs());
+        let repo_dir = work.join(format!("{base}-{stamp}"));
+        if repo_dir.exists() {
+            remove_dir_as_user(&repo_dir).await.ok();
+        }
+        create_dir_as_user(&repo_dir).await?;
+
+        // Full-history partial clone (blobs fetched on demand at checkout).
+        let url = format!("{AUR_GIT_URL}/{base}.git");
+        let clone = Command::new("git")
+            .args([
+                "clone",
+                "--filter=blob:none",
+                "--",
+                &url,
+                repo_dir.to_string_lossy().as_ref(),
+            ])
+            .env("GIT_TERMINAL_PROMPT", "0")
+            .stdin(Stdio::null())
+            .output()
+            .await;
+        match clone {
+            Ok(output) if output.status.success() => {}
+            Ok(output) => {
+                let stderr = String::from_utf8_lossy(&output.stderr);
+                anyhow::bail!(
+                    "Failed to clone AUR history for '{base}': {}",
+                    stderr.trim()
+                );
+            }
+            Err(error) => {
+                anyhow::bail!("git is required for AUR version rollback: {error}");
+            }
+        }
+
+        // Walk commits newest -> oldest looking for the recorded version.
+        let shas = Command::new("git")
+            .args(["-C"])
+            .arg(&repo_dir)
+            .args(["log", "--format=%H"])
+            .env("GIT_TERMINAL_PROMPT", "0")
+            .stdin(Stdio::null())
+            .output()
+            .await
+            .context("Failed to list AUR repository history")?;
+        if !shas.status.success() {
+            anyhow::bail!(
+                "Failed to list AUR history for '{base}': {}",
+                String::from_utf8_lossy(&shas.stderr).trim()
+            );
+        }
+        let sha_list = String::from_utf8_lossy(&shas.stdout);
+        let mut matched_sha: Option<String> = None;
+        for sha in sha_list.lines().map(str::trim).filter(|s| !s.is_empty()) {
+            let show = Command::new("git")
+                .args(["-C"])
+                .arg(&repo_dir)
+                .args(["show", &format!("{sha}:.SRCINFO")])
+                .env("GIT_TERMINAL_PROMPT", "0")
+                .stdin(Stdio::null())
+                .output()
+                .await
+                .context("Failed to read .SRCINFO from history")?;
+            if !show.status.success() {
+                continue; // commit predates .SRCINFO generation or blob gone
+            }
+            let content = String::from_utf8_lossy(&show.stdout);
+            if Self::srcinfo_version(&content).as_deref() == Some(version) {
+                matched_sha = Some(sha.to_string());
+                break;
+            }
+        }
+
+        let Some(sha) = matched_sha else {
+            anyhow::bail!(
+                "version {version} of '{base}' was not found in the AUR git history \\\n                 (the repository may have been force-pushed since it was installed)"
+            );
+        };
+
+        let checkout = Command::new("git")
+            .args(["-C"])
+            .arg(&repo_dir)
+            .args(["checkout", "--detach", &sha])
+            .env("GIT_TERMINAL_PROMPT", "0")
+            .stdin(Stdio::null())
+            .status()
+            .await
+            .context("Failed to checkout historical commit")?;
+        if !checkout.success() {
+            anyhow::bail!("Failed to checkout commit {sha} of '{base}'");
+        }
+
+        // Same hardened build pipeline as regular installs (validation,
+        // makepkg env, sandboxing method). Review prompts are skipped: a
+        // rollback rebuilds code the user already had installed.
+        let pkg_dir = validate_build_dir(
+            repo_dir
+                .parent()
+                .context("rollback work dir must have a parent")?,
+            repo_dir
+                .file_name()
+                .and_then(std::ffi::OsStr::to_str)
+                .context("rollback work dir name must be valid UTF-8")?,
+        )?;
+
+        let env = self.makepkg_env(&pkg_dir)?;
+        println!(
+            "  {} Building {package} {version} from history...",
+            "→".blue()
+        );
+        let status = self
+            .run_build(&pkg_dir, &env)
+            .await
+            .with_context(|| format!("Failed to run makepkg for '{package}'"))?;
+        if !status.success() {
+            anyhow::bail!(
+                "Historical build of {package} {version} failed; check {}\\n  → The AUR may \\\n                 no longer support building this version (changed sources/dependencies)",
+                self.build_dir.join("_logs").display()
+            );
+        }
+
+        let mut archives =
+            Self::find_built_packages(&pkg_dir, &env.pkgdest, &[package.to_string()])
+                .await
+                .map_err(|_| AurError::PackageArchiveNotFound(package.to_string()))?;
+        let Some(archive) = archives.pop() else {
+            return Err(AurError::PackageArchiveNotFound(package.to_string()).into());
+        };
+
+        Self::install_built_packages(&[archive], None).await?;
+        Ok(())
+    }
+
+    /// Extract `pkgver-pkgrel` from `.SRCINFO` text (first occurrences).
+    fn srcinfo_version(content: &str) -> Option<String> {
+        let mut pkgver: Option<&str> = None;
+        let mut pkgrel: Option<&str> = None;
+        for line in content.lines() {
+            let Some((key, value)) = line.split_once('=') else {
+                continue;
+            };
+            match key.trim() {
+                "pkgver" if pkgver.is_none() => pkgver = Some(value.trim()),
+                "pkgrel" if pkgrel.is_none() => pkgrel = Some(value.trim()),
+                _ => {}
+            }
+            if pkgver.is_some() && pkgrel.is_some() {
+                break;
+            }
+        }
+        match (pkgver, pkgrel) {
+            (Some(v), Some(r)) => Some(format!("{v}-{r}")),
+            (Some(v), None) => Some(v.to_string()),
+            _ => None,
+        }
+    }
+
     pub async fn install(&self, package: &str) -> Result<()> {
         crate::core::security::validate_package_name(package)?;
         // Build the package *base* (split packages share one PKGBUILD and one
@@ -2563,6 +2742,24 @@ mod tests {
         if unreadable {
             result.expect_err("unreadable .SRCINFO must fail closed");
         }
+    }
+
+    #[test]
+    fn srcinfo_version_extracts_pkgver_pkgrel() {
+        let srcinfo = "pkgbase = postgresql18\n\
+             pkgver = 18.4\n\
+             pkgrel = 1\n\
+             pkgdesc = PostgreSQL\n\
+             \n\
+             pkgname = postgresql18\n";
+        assert_eq!(
+            AurClient::srcinfo_version(srcinfo).as_deref(),
+            Some("18.4-1")
+        );
+        // First occurrences win over later split-package duplicates.
+        let dup = "pkgver = 1.0\npkgrel = 2\npkgname = a\npkgver = 9.9\n";
+        assert_eq!(AurClient::srcinfo_version(dup).as_deref(), Some("1.0-2"));
+        assert_eq!(AurClient::srcinfo_version("pkgname = x"), None);
     }
 
     #[test]

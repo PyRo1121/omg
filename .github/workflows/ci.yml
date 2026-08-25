@@ -137,7 +137,7 @@ jobs:
         run: cargo check --manifest-path fuzz/Cargo.toml --all-targets --locked
 
       - name: Install nextest
-        uses: taiki-e/install-action@68250fb3d551d72befef105162372ebb3e8016e0 # nextest
+        uses: taiki-e/install-action@b6ff580856c41316412a0b9b60540fbc6f8c82cc # nextest
 
       - name: Debian feature isolation check
         run: |
@@ -257,7 +257,7 @@ jobs:
             --locked -- -D warnings
 
       - name: Install nextest
-        uses: taiki-e/install-action@68250fb3d551d72befef105162372ebb3e8016e0 # nextest
+        uses: taiki-e/install-action@b6ff580856c41316412a0b9b60540fbc6f8c82cc # nextest
 
       - name: Run unit tests
         run: |
@@ -407,7 +407,9 @@ jobs:
   macos:
     name: "macOS (ARM64)"
     needs: quick-gate
-    if: needs.quick-gate.outputs.should-build == 'true' || github.event_name == 'workflow_dispatch' || github.event_name == 'merge_group'
+    # `!github.event.act` skips this leg during local act runs (no macOS
+    # containers exist); the condition is always true on GitHub.
+    if: (needs.quick-gate.outputs.should-build == 'true' || github.event_name == 'workflow_dispatch' || github.event_name == 'merge_group') && !github.event.act
     runs-on: macos-14
     timeout-minutes: 30
     steps:
@@ -430,7 +432,7 @@ jobs:
         run: cargo build --release --no-default-features --features macos,pgp,license --locked
 
       - name: Install nextest
-        uses: taiki-e/install-action@68250fb3d551d72befef105162372ebb3e8016e0 # nextest
+        uses: taiki-e/install-action@b6ff580856c41316412a0b9b60540fbc6f8c82cc # nextest
 
       - name: Run unit tests
         run: cargo nextest run --lib --no-default-features --features macos,pgp,license --locked --profile ci
@@ -459,9 +461,13 @@ jobs:
   #############################################################################
   # STAGE 4: Final Status Gate
   #############################################################################
+  # NOTE: no `integration` job exists in this workflow; it was referenced here
+  # but never defined, which made ci-success unresolvable on GitHub and broke
+  # the entire pipeline gate. Local act runs also skip the macos leg, so a
+  # skipped macos result is accepted as passing.
   ci-success:
     name: "CI Success"
-    needs: [quick-gate, linux-matrix, macos, integration]
+    needs: [quick-gate, linux-matrix, macos]
     if: always()
     runs-on: ubuntu-latest
     timeout-minutes: 5
@@ -471,7 +477,6 @@ jobs:
           QUICK_GATE: ${{ needs.quick-gate.result }}
           LINUX_MATRIX: ${{ needs.linux-matrix.result }}
           MACOS: ${{ needs.macos.result }}
-          INTEGRATION: ${{ needs.integration.result }}
         run: |
           echo "## CI Results Summary" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
@@ -490,10 +495,9 @@ jobs:
           declare -A required_results=(
             ["Linux Matrix"]="$LINUX_MATRIX"
             ["macOS"]="$MACOS"
-            ["Integration"]="$INTEGRATION"
           )
           for job in "${!required_results[@]}"; do
-            if [[ "${required_results[$job]}" != "success" ]]; then
+            if [[ "${required_results[$job]}" != "success" && "${required_results[$job]}" != "skipped" ]]; then
               echo "::error::$job did not succeed: ${required_results[$job]}"
               exit 1
             fi

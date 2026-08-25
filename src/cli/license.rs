@@ -19,6 +19,11 @@ fn prompt(message: &str) -> String {
 }
 
 /// Activate a license key
+///
+/// # Errors
+///
+/// Returns an error when the license key format is invalid or the activation
+/// request fails (network, server rejection, or persistence failure).
 pub async fn activate(key: &str) -> Result<()> {
     // SECURITY: Validate license key format
     if key.len() > 128 || key.chars().any(|c| !c.is_ascii_alphanumeric() && c != '-') {

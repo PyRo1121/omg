@@ -1,0 +1,6 @@
+-P ubuntu-latest=catthehacker/ubuntu:act-latest
+--pull=false
+--artifact-server-path=/home/pyro1121/.cache/build-targets/omg/act-artifacts
+--concurrent-jobs=2
+--action-cache-path=/home/pyro1121/.cache/build-targets/omg/act-actions
+-W=.github/workflows/ci.yml

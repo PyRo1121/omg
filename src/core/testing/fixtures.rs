@@ -100,7 +100,7 @@ mod tests {
     }
 
     #[cfg(not(feature = "arch"))]
-    const fn version_text(version: &crate::package_managers::types::Version) -> &str {
+    fn version_text(version: &crate::package_managers::types::Version) -> &str {
         version.as_str()
     }
 

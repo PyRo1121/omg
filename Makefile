@@ -290,3 +290,29 @@ bench-report:
 	@echo "Generating benchmark report template..."
 	./scripts/generate_benchmark_report.sh benchmark_report.md
 	@echo "Report template created: benchmark_report.md"
+
+# --- Local CI (act) ---------------------------------------------------------
+# Run the real .github/workflows/ci.yml locally via act, staged so the
+# 6-core machine is never over-subscribed. macOS leg is cloud-only.
+
+ACT ?= act
+
+# Stage 1: host-side fast checks (no containers, ~minutes)
+ci-local-quick:
+	cargo fmt --all -- --check
+	cargo clippy --all-targets --no-default-features --features pgp,license \
+		--locked -- -D warnings -D clippy::pedantic -A clippy::module_name_repetitions
+	cargo check --all-targets --no-default-features --features pgp,license --locked
+
+# Stage 2: quick-gate job inside the same ubuntu image CI uses (incl. nextest lib tests)
+ci-local-gate:
+	$(ACT) -j quick-gate -e .github/workflows/.local-push-event.json push
+
+# Stage 3: full Linux container matrix + feature intersections + gate
+# (heavy: 4 release builds in distro containers; run when you have time)
+ci-local-full:
+	$(ACT) -j linux-matrix -e .github/workflows/.local-push-event.json push
+	$(ACT) -j feature-intersections -e .github/workflows/.local-push-event.json push
+	$(ACT) -j ci-success -e .github/workflows/.local-push-event.json push
+
+.PHONY: ci-local-quick ci-local-gate ci-local-full

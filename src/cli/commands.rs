@@ -910,10 +910,9 @@ enum RollbackAction {
     Restore {
         /// Official packages restorable from the pacman cache: (name, old version).
         official: Vec<(String, String)>,
-        /// AUR packages whose old versions cannot be restored from any local
-        /// cache; surfaced to the user with guidance instead of aborting the
-        /// whole rollback.
-        rebuild_from_aur: Vec<String>,
+        /// AUR packages to downgrade by rebuilding the historical commit from
+        /// the AUR git history: (name, old version).
+        rebuild_from_aur: Vec<(String, String)>,
     },
     /// Nothing to reverse (e.g. a database sync transaction).
     NothingToDo,
@@ -957,16 +956,17 @@ fn rollback_action(transaction: &crate::core::history::Transaction) -> Result<Ro
             let mut official = Vec::new();
             let mut rebuild_from_aur = Vec::new();
             for change in &transaction.changes {
+                // Both restore paths need the recorded old version.
+                let version = change.old_version.clone().with_context(|| {
+                    format!(
+                        "Transaction does not record the old version of '{}'",
+                        change.name
+                    )
+                })?;
                 if change.is_official_source() {
-                    let version = change.old_version.clone().with_context(|| {
-                        format!(
-                            "Transaction does not record the old version of '{}'",
-                            change.name
-                        )
-                    })?;
                     official.push((change.name.clone(), version));
                 } else {
-                    rebuild_from_aur.push(change.name.clone());
+                    rebuild_from_aur.push((change.name.clone(), version));
                 }
             }
             Ok(RollbackAction::Restore {
@@ -1231,26 +1231,30 @@ pub async fn rollback(id: Option<String>, yes: bool) -> Result<()> {
 
             #[cfg(feature = "arch")]
             if !rebuild_from_aur.is_empty() {
-                // AUR downgrades cannot be automated: old versions are not in
-                // any local cache and the AUR serves only latest builds.
-                // Surface them instead of silently ignoring or failing all of
-                // it. Officials were already restored above.
+                // AUR downgrades rebuild the historical commit from the AUR
+                // repository's git history — machinery yay/paru don't have.
                 println!(
-                    "{} {} AUR package(s) could not be downgraded automatically:",
-                    style::warning("⚠"),
+                    "{} Downgrading {} AUR package(s) from git history...",
+                    style::info("→"),
                     rebuild_from_aur.len()
                 );
-                for name in &rebuild_from_aur {
-                    println!(
-                        "  {} {name} — rebuild from AUR to downgrade manually",
-                        style::dim("·")
+                let client = crate::package_managers::AurClient::new()?;
+                let mut failed: Vec<(String, String)> = Vec::new();
+                for (name, version) in &rebuild_from_aur {
+                    if let Err(error) = client.downgrade_from_history(name, version).await {
+                        println!("  {} {name} {version}: {error:#}", style::warning("⚠"));
+                        failed.push((name.clone(), version.clone()));
+                    } else {
+                        println!("  {} {name} downgraded to {version}", style::success("✓"));
+                    }
+                }
+                if !failed.is_empty() {
+                    anyhow::bail!(
+                        "{} official package(s) restored; {} AUR package(s) could not be \\\n                         downgraded automatically (see messages above)",
+                        packages.len(),
+                        failed.len()
                     );
                 }
-                anyhow::bail!(
-                    "{} official package(s) restored; {} AUR package(s) still need manual downgrade",
-                    packages.len(),
-                    rebuild_from_aur.len()
-                );
             }
         }
     }
@@ -1513,7 +1517,7 @@ mod tests {
             rollback_action(&mixed)?,
             RollbackAction::Restore {
                 official: vec![("example".to_string(), "6.6.0".to_string())],
-                rebuild_from_aur: vec!["paru".to_string()],
+                rebuild_from_aur: vec![("paru".to_string(), "1.9.0".to_string())],
             }
         );
         Ok(())
@@ -1554,7 +1558,7 @@ mod tests {
             ))?,
             RollbackAction::Restore {
                 official: vec![],
-                rebuild_from_aur: vec!["example".to_string()],
+                rebuild_from_aur: vec![("example".to_string(), "1.0-1".to_string())],
             }
         );
         Ok(())

@@ -1,0 +1,8 @@
+{
+  "act": true,
+  "ref": "refs/heads/main",
+  "repository": {
+    "default_branch": "main",
+    "private": true
+  }
+}
