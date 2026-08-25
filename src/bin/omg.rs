@@ -94,11 +94,17 @@ fn execute_fast_system_update(suffix: &str) -> Result<()> {
 
     let result = omg_lib::package_managers::execute_transaction(Vec::new(), false, true, None);
 
-    // Record regardless of outcome (failures are part of history), but never
-    // mask the transaction result with a recording error.
-    if let Err(error) = HistoryManager::new()
-        .and_then(|history| history.finish_operation(TransactionType::Update, changes, Ok(())))
-    {
+    // Record regardless of outcome (failures are part of history) with the
+    // TRUE transaction result — a failed upgrade must not be recorded as a
+    // success. Never mask the transaction result with a recording error.
+    let record_result = if result.is_ok() {
+        Ok(())
+    } else {
+        Err(anyhow::anyhow!("upgrade failed"))
+    };
+    if let Err(error) = HistoryManager::new().and_then(|history| {
+        history.finish_operation(TransactionType::Update, changes, record_result)
+    }) {
         tracing::warn!("Failed to record update history: {error:#}");
     }
 

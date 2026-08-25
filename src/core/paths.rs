@@ -210,6 +210,28 @@ pub fn pacman_cache_dirs() -> Vec<PathBuf> {
     if let Some(cache_dir) =
         env_path("OMG_PACMAN_CACHE_DIR").filter(|path| !path.as_os_str().is_empty())
     {
+        // SECURITY (audit F3): this path is handed to a privileged install by
+        // argv. A user-writable location would let an attacker substitute the
+        // archive root installs. Accept only when root-owned and not
+        // world/group-writable; otherwise fall through to system defaults.
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::MetadataExt as _;
+            match std::fs::metadata(&cache_dir) {
+                Ok(meta) if meta.uid() == 0 && meta.mode() & 0o022 == 0 => {
+                    return vec![cache_dir];
+                }
+                _ => {
+                    tracing::warn!(
+                        "Ignoring OMG_PACMAN_CACHE_DIR {}: must be root-owned and not \
+                         group/world-writable when omg elevates",
+                        cache_dir.display()
+                    );
+                    // fall through to defaults
+                }
+            }
+        }
+        #[cfg(not(unix))]
         return vec![cache_dir];
     }
 

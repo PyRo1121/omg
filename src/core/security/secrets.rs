@@ -413,8 +413,23 @@ impl SecretScanner {
             "config",
         ];
 
+        // Classic key-material files: often extensionless (.pem/.key DO get
+        // extensions but id_rsa does not) and previously invisible to the
+        // scanner (audit F3).
+        let key_material = [
+            ".pem",
+            ".key",
+            ".p12",
+            ".pfx",
+            ".keystore",
+            "id_rsa",
+            "id_ed25519",
+            "id_ecdsa",
+        ];
+
         scannable_extensions.contains(&extension)
             || sensitive_files.iter().any(|f| file_name.contains(f))
+            || key_material.iter().any(|f| file_name.ends_with(f))
     }
 
     /// Check if the captured secret value looks like a placeholder.
