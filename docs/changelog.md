@@ -506,6 +506,18 @@ analyzer inference
 - **Ci**: Cross-platform install script and R2 release sync
 ### 🐛 Bug Fixes
 
+- **Security**: Redesign turbo mode — remove file-capability escalation ⚠️ **BREAKING CHANGE**
+
+CRITICAL (audit F-01): `omg doctor --turbo` setcap'd
+
+cap_dac_override,cap_fowner,cap_chown onto the omg binary. File
+
+capabilities are not user-scoped: on any multi-user machine EVERY local
+
+account could then exercise root-equivalent file power simply by running
+
+the binary. No warning could make that safe.
+
 - **Security**: Elevation cache-trust boundaries (audit sec04)
 
 F1 (HIGH): when omg runs elevated, the derived pacman caches still belong
