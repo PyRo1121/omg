@@ -2515,6 +2515,22 @@ the Debian backend), so it was removed from the metadata.
 - Normalize project formatting
 ### 🧪 Testing
 
+- 30-agent audit — classify every test, rewrite vacuous contracts
+
+15 test-suite auditors classified all 66 files / ~26k LOC:
+
+PROVES kept, VACUOUS rewritten to observable contracts, WRONG-CONTRACT
+
+aligned to current product intent, REDUNDANT merged/deleted with
+
+explanations at former sites. Net: ~61 redundant/hollow tests removed,
+
+54 stronger tests added; every suite green under clippy -D warnings.
+
+Each auditor ran its assigned suites before finishing; suspected product
+
+bugs were escalated in reports rather than deleted to go green.
+
 - Pin Esc-cancels-search contract in team_dashboard suite
 
 The stale test asserted the pre-rewrite behavior (query persists after
