@@ -506,6 +506,40 @@ analyzer inference
 - **Ci**: Cross-platform install script and R2 release sync
 ### 🐛 Bug Fixes
 
+- Grind LOW-tier audit residue
+
+  - completion.rs: AUR name fetch uses the shared HTTP client with a 15s
+
+timeout (bare reqwest::get had none; hung shell completions)
+
+  - paths.rs: SUDO_HOME validated as an absolute path (no NUL, no "..")
+
+instead of username rules, which rejected every real home path
+
+containing '/' (Silverblue /var/home/...); warning now fires only for
+
+genuinely unsafe values
+
+  - ci.yml: header no longer claims JUnit reporting that does not exist
+
+  - codeql.yml: config-file passed explicitly so .github/codeql.yml is
+
+the single source of truth (inline queries silently overrode it)
+
+  - check-perf-regression.py: default threshold tightened from 100% to
+
+35%, env-overridable via OMG_PERF_THRESHOLD, fail-closed on bad input
+
+  - client.rs: PooledSyncClient renamed to SyncDaemonClient (it wraps one
+
+stream, there is no pool) and its comment-only Drop impl deleted
+
+  - team.rs: update_status RMW now holds a cross-process lock file so
+
+concurrent omg invocations cannot drop member updates; remote_url doc
+
+corrected to "GitHub Gist"
+
 - **Apt,dnf**: Native sudo elevation — one prompt, exact package lists
 
 apt/dnf mutating operations previously re-executed `sudo omg <cmd>`, so a
