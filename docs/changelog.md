@@ -285,6 +285,40 @@ was not linked from any doc; its command usage remains in docs/runtimes.md
 - Move performance checks to benchmarks
 ### ✨ New Features
 
+- **Slsa**: Fulcio identity binding — chain verification to Sigstore roots
+
+Completes the SLSA story: hashedrekord entries whose publicKey is a
+
+Fulcio CERTIFICATE are now verified as identity-bound attestations, not
+
+just integrity checks.
+
+  - Embedded Sigstore Fulcio trust roots (fulcio_v1 + intermediate v1)
+
+fetched from sigstore/root-signing targets; metadata cross-checked:
+
+root subject/issuer "O=sigstore.dev, CN=sigstore", valid
+
+2021-10-07..2031-10-05, ECDSA P-384 (sources cited in code comments)
+
+  - verify_fulcio_chain: leaf -> [embedded intermediate] -> embedded root;
+
+every link's signature verified (RSA SHA-256 / ECDSA P-256+P-384 via
+
+new x509-parser and p384 deps), validity windows must cover the Rekor
+
+integrated_time, signer identity extracted from the SAN (email/URI/DNS)
+
+  - verified=true now reports builder_id = the bound OIDC identity;
+
+plain-key entries still verify integrity-only with no identity claim
+
+Roundtrip test generates a real CA + leaf via rcgen: valid chain +
+
+correct signature verifies with the SAN reported as signer; wrong
+
+signatures fail; entries recorded before certificate existence fail.
+
 - **Slsa**: Real cryptographic verification of Rekor hashedrekord entries
 
 Replaces the always-false evidence stub with genuine verification:
