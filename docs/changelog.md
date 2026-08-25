@@ -506,6 +506,28 @@ analyzer inference
 - **Ci**: Cross-platform install script and R2 release sync
 ### 🐛 Bug Fixes
 
+- **Security**: Second batch of 15-agent audit mitigations
+
+F5 (MED, fixed): execute_fast_system_update recorded the TRUE upgrade
+
+result in history — a failed system upgrade was previously persisted as
+
+success:true, breaking rollback completeness.
+
+F3 (MED, fixed): OMG_PACMAN_CACHE_DIR is handed to a privileged install
+
+by argv. Now accepted only when the directory is root-owned and not
+
+group/world-writable; otherwise falls back to system defaults with a
+
+warning.
+
+F3 secrets (MED, fixed): scanner now includes key-material files
+
+(.pem/.key/.p12/.pfx/.keystore/id_rsa/id_ed25519/id_ecdsa) that were
+
+previously invisible to the directory scan.
+
 - **Security**: Mitigate top findings from 15-agent security audit
 
 F-01 (CRITICAL, mitigated): turbo mode setcaps the binary — on multi-user
