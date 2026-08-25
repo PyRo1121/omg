@@ -121,3 +121,5 @@ tasks/
 
 # ---- Local planning notes (intentionally untracked) ----
 TODO-mise-removal.md
+.actrc
+.github/workflows/.local-*
