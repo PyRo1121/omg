@@ -369,7 +369,20 @@ const fn check_shell_hook() -> bool {
     true
 }
 
-/// Enable turbo mode - sets Linux capabilities on the omg binary for zero-sudo operations
+/// Enable turbo mode — SECURE REDESIGN (audit F-01, CRITICAL).
+///
+/// The old implementation ran `sudo setcap` on the omg binary, granting
+/// CAP_DAC_OVERRIDE/CAP_FOWNER/CAP_CHOWN to EVERY local account on the
+/// machine: any user could execute omg and exercise root-equivalent file
+/// power. File capabilities cannot be scoped per-user, so this mode was a
+/// privilege-escalation primitive on multi-user systems.
+///
+/// The replacement keeps the zero-friction goal without permanent privilege:
+/// 1. removes any file capabilities previously granted by older versions,
+/// 2. relies on sudo's credential cache + omg's sudoloop for near-zero-prompt
+///    operation (the same model as yay/paru),
+/// 3. prints opt-in NOPASSWD guidance for users who want truly unattended
+///    operation and accept the trade-off themselves in /etc/sudoers.
 #[cfg(target_os = "linux")]
 pub fn enable_turbo_mode() -> Result<()> {
     use owo_colors::OwoColorize;
@@ -377,102 +390,70 @@ pub fn enable_turbo_mode() -> Result<()> {
     let exe = std::env::current_exe()?;
     let exe_path = exe.display();
 
-    // Modern header without box drawing
-    crate::cli::modern_ui::print_phase_header("⚡", "TURBO MODE", "Zero-Sudo Operations");
+    crate::cli::modern_ui::print_phase_header("⚡", "TURBO MODE", "Fast package operations");
 
-    // SECURITY (audit F-01, CRITICAL): file capabilities on a binary are not
-    // user-scoped. On a multi-user machine EVERY local account can execute
-    // this binary and exercise CAP_DAC_OVERRIDE/CAP_FOWNER/CAP_CHOWN —
-    // effectively root-equivalent file power. Require explicit confirmation
-    // so the trade-off cannot be accepted silently.
-    if console::user_attended() {
-        println!(
-            "  {} Turbo mode grants file capabilities to the BINARY, not to you.",
-            "⚠".yellow().bold()
-        );
-        println!(
-            "     On multi-user systems every local user can then read/write ANY\n\
-             file on disk through this executable. Single-user machines only."
-        );
-        let proceed = dialoguer::Confirm::with_theme(&crate::cli::ui::prompt_theme())
-            .with_prompt("Enable turbo mode anyway?")
-            .default(false)
-            .interact()
-            .map_err(|error| anyhow::anyhow!("Confirmation prompt failed: {error}"))?;
-        if !proceed {
-            println!("  {} Turbo mode NOT enabled", "✗".red());
-            return Ok(());
+    // Step 1: strip any capabilities an older omg version may have granted.
+    println!(
+        "  {} Removing legacy file capabilities from {}...",
+        "→".cyan(),
+        exe_path
+    );
+    let remove = std::process::Command::new("sudo")
+        .arg("setcap")
+        .arg("-r")
+        .arg(&exe)
+        .status();
+    match remove {
+        Ok(status) if status.success() => {
+            println!(
+                "  {} No file capabilities remain (or none were set)",
+                "✓".green()
+            );
+        }
+        _ => {
+            println!(
+                "  {} Could not run `setcap -r` (no caps were set, or sudo unavailable)",
+                "ℹ".blue()
+            );
         }
     }
+    println!();
 
-    // Check if already enabled
-    if crate::core::caps::has_package_caps() {
-        println!("  {} Turbo mode is already enabled!", "✓".green().bold());
-        println!();
-        println!("  Package operations run without sudo prompts.");
-        println!();
-        return Ok(());
-    }
-
-    println!("  {} Turbo mode enables:", "→".cyan());
+    // Step 2: warm the sudo credential cache so subsequent operations are
+    // prompt-free for the timestamp window; sudoloop keeps it alive during
+    // long AUR builds.
+    println!("  {} Turbo now means:", "→".cyan());
     println!(
-        "    {} Zero sudo prompts for package operations",
+        "    {} Sudo credential caching (sudoloop) — one prompt per session",
         "•".dimmed()
     );
     println!(
-        "    {} Instant privilege elevation (~5ms vs ~200ms)",
+        "    {} Native package-manager execution with exact arguments",
         "•".dimmed()
     );
     println!(
-        "    {} Direct ALPM access without process spawning",
-        "•".dimmed()
-    );
-    println!();
-    println!("  {} To enable, run:", "→".cyan().bold());
-    println!();
-    println!(
-        "    {}",
-        format!("sudo setcap 'cap_dac_override,cap_fowner,cap_chown+ep' {exe_path}").bold()
-    );
-    println!();
-    println!("  {} This grants omg permission to:", "ℹ".blue());
-    println!(
-        "    {} Write to /var/lib/pacman (package database)",
-        "•".dimmed()
-    );
-    println!("    {} Install files owned by root", "•".dimmed());
-    println!(
-        "    {} Change file ownership during installation",
+        "    {} No permanent privileges granted to any binary",
         "•".dimmed()
     );
     println!();
 
-    // Ask if user wants to enable now
+    // Step 3: optional NOPASSWD guidance for unattended operation.
     if console::user_attended() {
-        use dialoguer::Confirm;
-        let enable = Confirm::new()
-            .with_prompt("Enable turbo mode now? (requires sudo)")
-            .default(true)
-            .interact()?;
-
-        if enable {
-            println!();
-            let status = std::process::Command::new("sudo")
-                .arg("setcap")
-                .arg("cap_dac_override,cap_fowner,cap_chown+ep")
-                .arg(&exe)
-                .status()?;
-
-            if status.success() {
-                println!("  {} Turbo mode enabled successfully!", "✓".green().bold());
-                println!();
-                println!("  Package operations now run without sudo prompts.");
-                println!();
-            } else {
-                println!("  {} Failed to enable turbo mode", "✗".red().bold());
-                anyhow::bail!("setcap command failed");
-            }
-        }
+        let user = whoami::username().unwrap_or_else(|_| "username".to_string());
+        println!(
+            "  {} For fully unattended operation (YOUR choice, affects only you):",
+            "ℹ".blue()
+        );
+        println!("     sudo visudo -f /etc/sudoers.d/omg-turbo",);
+        println!(
+            "       {user} ALL=(ALL) NOPASSWD: /usr/bin/pacman, /usr/bin/dnf, /usr/bin/apt-get"
+        );
+        println!();
+        println!(
+            "  {} File capabilities are NEVER recommended: they grant privileges to\n\
+                 every user on the system.",
+            "⚠".yellow()
+        );
     }
 
     Ok(())
