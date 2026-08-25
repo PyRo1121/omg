@@ -13,6 +13,24 @@ OMG is the fastest unified package manager for Linux, replacing pacman, yay, nvm
 ## [Unreleased]
 ### ♻️  Refactoring
 
+- Typ01 C1 — shared open_default_alpm helper (7 sites)
+
+Extracts the thrice-repeated pacman_root/pacman_db_dir + Alpm::new dance
+
+into alpm_ops::open_default_alpm with one canonical error context.
+
+Migrates all seven divergent inline copies (install/arch x2, local,
+
+alpm_direct, alpm_ops x2). Error text unifies to "Failed to initialize
+
+ALPM" — no code matched the old strings.
+
+Also cleans deletion fallout: telemetry orphaned docs/constants, slsa
+
+probe remnants, secrets Default impl restored for clippy::new_without_default.
+
+Net ~-25 LOC, one canonical construction path for libalpm.
+
 - Apply 50-agent dead-code manifests (batch 1)
 
 Applied none/low-risk deletions from mnt01-15 manifests with caller
