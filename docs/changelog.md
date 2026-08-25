@@ -506,6 +506,26 @@ analyzer inference
 - **Ci**: Cross-platform install script and R2 release sync
 ### 🐛 Bug Fixes
 
+- **Security**: Elevation cache-trust boundaries (audit sec04)
+
+F1 (HIGH): when omg runs elevated, the derived pacman caches still belong
+
+to the original user, who is adversarial relative to the root process.
+
+load_cache_from_disk now refuses user-owned derived state under elevation;
+
+elevated runs go to ground truth (ALPM/dpkg) while unprivileged sessions
+
+keep the fast path.
+
+F2 (MED): rollback restore feeds user-writable pacman-cache archives to a
+
+privileged install by argv. find_cached_arch_package now opens the
+
+candidate archive and verifies its embedded .PKGINFO pkgname/version match
+
+the requested restore target; mismatch aborts with an explicit error.
+
 - **Security**: Nvm pin traversal, cache-poisoning identity check, wrangler SRI
 
 sec14 F1 (HIGH): repo-supplied node version pins reached the nvm fallback
