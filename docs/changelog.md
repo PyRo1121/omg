@@ -13,6 +13,7 @@ OMG is the fastest unified package manager for Linux, replacing pacman, yay, nvm
 ## [Unreleased]
 ### ♻️  Refactoring
 
+- **Daemon**: Typ01 C2 — send_error_response helper consolidates 4 error-send blocks (-40 LOC)
 - Typ01 C1 — shared open_default_alpm helper (7 sites)
 
 Extracts the thrice-repeated pacman_root/pacman_db_dir + Alpm::new dance
