@@ -399,24 +399,12 @@ mod member_data_handling_tests {
     }
 
     #[test]
-    fn test_member_with_drift() {
-        let member = TeamMember {
-            id: "bob".to_string(),
-            name: "Bob".to_string(),
-            env_hash: "different".to_string(),
-            last_sync: 1000,
-            in_sync: false,
-            drift_summary: Some("3 packages differ".to_string()),
-        };
-
-        assert!(!member.in_sync);
-        assert!(member.drift_summary.is_some());
-        assert_eq!(member.drift_summary.unwrap(), "3 packages differ");
-    }
-
-    #[test]
-    fn test_status_serialization() {
-        let status = create_test_team_status();
+    fn test_status_serialization_roundtrip_preserves_drift_state() {
+        // Members carrying drift state must survive a serialize/deserialize
+        // round trip so teammates see each other's real sync status.
+        let mut status = create_test_team_status();
+        status.members[1].in_sync = false;
+        status.members[1].drift_summary = Some("3 packages differ".to_string());
 
         let json = serde_json::to_string_pretty(&status).unwrap();
         let deserialized: TeamStatus = serde_json::from_str(&json).unwrap();
@@ -425,22 +413,12 @@ mod member_data_handling_tests {
         assert_eq!(status.lock_hash, deserialized.lock_hash);
         assert_eq!(status.members.len(), deserialized.members.len());
         assert_eq!(status.updated_at, deserialized.updated_at);
-    }
 
-    #[test]
-    fn test_empty_members_list() {
-        let config = TeamConfig::default();
-        let status = TeamStatus {
-            format_version: TeamStatus::STATUS_FORMAT_VERSION,
-            config,
-            lock_hash: String::new(),
-            members: vec![],
-            updated_at: 0,
-        };
-
-        assert!(status.members.is_empty());
-        assert_eq!(status.in_sync_count(), 0);
-        assert_eq!(status.out_of_sync_count(), 0);
+        assert!(!deserialized.members[1].in_sync);
+        assert_eq!(
+            deserialized.members[1].drift_summary.as_deref(),
+            Some("3 packages differ")
+        );
     }
 }
 
@@ -645,16 +623,20 @@ mod refresh_and_tick_tests {
 
     #[tokio::test]
     #[serial]
-    async fn test_refresh_command() {
+    async fn test_refresh_interval_elapsed_triggers_full_refresh() {
         let mut app = App::new().await.unwrap();
 
-        // Trigger refresh by setting last_tick to past
+        // Age the refresh timer so tick() must take the full-refresh branch
+        // (App::tick: `last_tick.elapsed() >= 5s` => refresh + reset).
         app.last_tick = std::time::Instant::now()
             .checked_sub(std::time::Duration::from_secs(10))
-            .unwrap_or_else(std::time::Instant::now);
+            .expect("10s before now is representable on Linux");
 
-        let result = app.tick().await;
-        assert!(result.is_ok());
+        app.tick().await.expect("tick should not fail");
+
+        // If the branch had not been taken, last_tick would still be the aged
+        // instant (~10s old). A fresh reset proves the refresh ran.
+        assert!(app.last_tick.elapsed() < std::time::Duration::from_secs(5));
     }
 }
 
@@ -714,62 +696,81 @@ mod system_metrics_tests {
 
     #[tokio::test]
     #[serial]
-    async fn test_system_metrics_initialized() {
+    async fn test_system_metrics_are_valid_percentages() {
         let app = App::new().await.unwrap();
 
-        // Metrics should be initialized (values may be 0 or actual)
-        assert!(app.system_metrics.cpu_usage >= 0.0);
-        assert!(app.system_metrics.memory_usage >= 0.0);
-        // Disk and network can be 0
-    }
-
-    #[tokio::test]
-    #[serial]
-    async fn test_metrics_within_bounds() {
-        let app = App::new().await.unwrap();
-
-        // CPU and memory should be percentages (0-100)
-        assert!(app.system_metrics.cpu_usage <= 100.0);
-        assert!(app.system_metrics.memory_usage <= 100.0);
+        // CPU and memory are rendered as percentages: they must be finite
+        // and bounded to [0, 100] whether they are still the defaults or
+        // values sampled by refresh(). NaN or out-of-range values would
+        // corrupt the dashboard gauge rendering.
+        for (label, value) in [
+            ("cpu", app.system_metrics.cpu_usage),
+            ("memory", app.system_metrics.memory_usage),
+        ] {
+            assert!(
+                value.is_finite() && (0.0..=100.0).contains(&value),
+                "{label} usage must be a finite percentage in [0, 100], got {value}",
+            );
+        }
     }
 }
 
 mod app_getter_tests {
     use super::*;
+    use omg_lib::daemon::protocol::StatusResult;
 
-    #[tokio::test]
-    #[serial]
-    async fn test_get_total_packages() {
-        let app = App::new().await.unwrap();
-        let _total = app.get_total_packages();
+    fn sample_status() -> StatusResult {
+        StatusResult {
+            total_packages: 120,
+            explicit_packages: 40,
+            orphan_packages: 3,
+            updates_available: 7,
+            security_vulnerabilities: 2,
+            vulnerabilities_scanned: true,
+            runtime_versions: vec![("node".to_string(), "22.4.0".to_string())],
+        }
     }
 
     #[tokio::test]
     #[serial]
-    async fn test_get_orphan_packages() {
-        let app = App::new().await.unwrap();
-        let _orphans = app.get_orphan_packages();
+    async fn getters_map_daemon_status_fields() {
+        let mut app = App::new().await.unwrap();
+        app.status = Some(sample_status());
+
+        assert_eq!(app.get_total_packages(), 120);
+        assert_eq!(app.get_orphan_packages(), 3);
+        assert_eq!(app.get_updates_available(), 7);
+        assert_eq!(app.get_security_vulnerabilities(), Some(2));
+        assert_eq!(
+            app.get_runtime_versions(),
+            [("node".to_string(), "22.4.0".to_string())]
+        );
     }
 
     #[tokio::test]
     #[serial]
-    async fn test_get_updates_available() {
-        let app = App::new().await.unwrap();
-        let _updates = app.get_updates_available();
+    async fn getters_fall_back_without_daemon_status() {
+        let mut app = App::new().await.unwrap();
+        app.status = None;
+
+        assert_eq!(app.get_total_packages(), 0);
+        assert_eq!(app.get_orphan_packages(), 0);
+        assert_eq!(app.get_updates_available(), 0);
+        assert_eq!(app.get_security_vulnerabilities(), None);
+        assert!(app.get_runtime_versions().is_empty());
     }
 
     #[tokio::test]
     #[serial]
-    async fn test_get_security_vulnerabilities() {
-        let app = App::new().await.unwrap();
-        let _vulns = app.get_security_vulnerabilities();
-    }
+    async fn vulnerability_count_is_none_when_scan_did_not_run() {
+        let mut app = App::new().await.unwrap();
+        let mut status = sample_status();
+        status.vulnerabilities_scanned = false;
+        app.status = Some(status);
 
-    #[tokio::test]
-    #[serial]
-    async fn test_get_runtime_versions() {
-        let app = App::new().await.unwrap();
-        let _runtimes = app.get_runtime_versions();
+        // An unscanned raw count must not surface as a real vulnerability
+        // count (StatusResult::scanned_vulnerability_count contract).
+        assert_eq!(app.get_security_vulnerabilities(), None);
     }
 }
 
@@ -872,7 +873,7 @@ mod property_based_tests {
                 .collect();
 
             let status = TeamStatus {
-            format_version: TeamStatus::STATUS_FORMAT_VERSION,
+                format_version: TeamStatus::STATUS_FORMAT_VERSION,
                 config,
                 lock_hash: "hash".to_string(),
                 members: members.clone(),
@@ -887,30 +888,12 @@ mod property_based_tests {
             prop_assert!(in_sync <= total);
             prop_assert!(out_of_sync <= total);
         }
-
-        #[test]
-        fn test_team_id_validation(team_id in "[a-zA-Z0-9/_-]{1,100}") {
-            // Valid team IDs should only contain alphanumeric, /, -, and _
-            prop_assert!(team_id.chars().all(|c|
-                c.is_ascii_alphanumeric() || c == '/' || c == '-' || c == '_'
-            ));
-        }
-
-        #[test]
-        fn test_member_name_reasonable_length(name in "[A-Za-z0-9 ]{1,128}") {
-            // Member names should be non-empty and reasonable ASCII length
-            prop_assert!(!name.is_empty());
-            prop_assert!(name.len() <= 128);
-            // Should be ASCII
-            prop_assert!(name.is_ascii());
-        }
     }
 }
 
 #[cfg(test)]
 mod integration_tests {
     use super::*;
-
     #[tokio::test]
     #[serial]
     async fn test_full_team_workflow() {
@@ -940,26 +923,6 @@ mod integration_tests {
             config.remote_url,
             Some("https://github.com/test/repo".to_string())
         );
-
-        drop(temp_dir);
-    }
-
-    #[tokio::test]
-    #[serial]
-    async fn test_app_with_team_workspace() {
-        let (temp_dir, mut workspace) = create_test_workspace();
-
-        workspace
-            .init("app-test", "App Test Team")
-            .expect("Failed to init");
-
-        // Create app and verify it loads team status
-        // Note: The app will try to load from current_dir, not our temp_dir
-        // This test demonstrates the integration pattern
-        let app = App::new().await.expect("Failed to create app");
-
-        // App should be created successfully regardless of team status
-        assert_eq!(app.current_tab, Tab::Dashboard);
 
         drop(temp_dir);
     }

@@ -216,110 +216,100 @@ fn test_hash_verification_test_vectors() {
     println!("✓ SHA-256 hash verification matches standard test vectors");
 }
 
-/// Test PGP verification with real Arch packages
+/// Test PGP verification failure contracts hermetically
 ///
-/// Attempts to verify signatures on real packages from /var/cache/pacman
-/// if available. Skips gracefully if cache is empty or not on Arch Linux.
+/// The former real-cache test was vacuous: it skipped when /var/cache/pacman
+/// was absent and accepted both Ok and Err from the verifier, so it passed
+/// regardless of product behavior. These tests pin the fail-closed error
+/// paths of [`PgpVerifier`] and [`require_detached_signature_files`] with no
+/// external state.
 #[test]
-#[cfg(all(feature = "arch", feature = "pgp"))]
-fn test_pgp_verification_real_packages() {
-    use omg_lib::core::security::pgp::PgpVerifier;
+fn test_pgp_verification_fail_closed_contracts() {
+    use omg_lib::core::security::pgp::{
+        PgpError, PgpVerifier, SignatureFileError, require_detached_signature_files,
+    };
     use std::fs;
-    use std::path::Path;
+    use tempfile::tempdir;
 
-    let cache_dir = Path::new("/var/cache/pacman/pkg");
+    let temp = tempdir().unwrap();
 
-    // Skip if not on Arch or cache is empty
-    if !cache_dir.exists() {
-        println!("⊘ Skipping PGP test - not on Arch Linux or cache empty");
-        return;
-    }
-
-    let verifier = PgpVerifier::new().expect("system keyring must load on Arch");
-
-    // Find a package with signature
-    let entries = fs::read_dir(cache_dir).unwrap();
-    let mut tested = false;
-
-    for entry in entries.take(50) {
-        let entry = entry.unwrap();
-        let path = entry.path();
-
-        if path.extension().is_some_and(|ext| ext == "sig") {
-            continue;
-        }
-
-        if !path
-            .extension()
-            .is_some_and(|ext| ext == "zst" || ext == "xz")
-        {
-            continue;
-        }
-
-        // Look for corresponding .sig file
-        let mut sig_path = path.clone();
-        sig_path.as_mut_os_string().push(".sig");
-
-        if sig_path.exists() {
-            println!("Testing PGP verification on: {}", path.display());
-
-            // Attempt verification
-            let result = verifier.verify_package(&path, &sig_path);
-
-            // We don't assert success (may fail due to keyring issues)
-            // but we verify the function doesn't panic and returns sensible errors
-            match result {
-                Ok(()) => {
-                    println!("✓ Successfully verified signature");
-                    tested = true;
-                    break;
-                }
-                Err(e) => {
-                    println!("  Verification failed (expected on some systems): {e}");
-                    // This is OK - the function works, just may not have correct keyring
-                }
-            }
-        }
-    }
-
-    if !tested {
-        println!("⊘ No suitable packages found in cache for PGP testing");
-    }
-}
-
-/// Test cache effectiveness for vulnerability lookups
-///
-/// Verifies that repeated vulnerability queries use cache effectively
-/// and don't hammer external APIs.
-#[tokio::test]
-#[ignore = "requires a successful external OSV request; deterministic cache behavior is covered by the unit test"]
-async fn test_vulnerability_cache_effectiveness() {
-    use std::time::Instant;
-
-    let scanner = VulnerabilityScanner::new();
-    let package = "test-package";
-    let version = parse_version_or_zero("1.0.0");
-
-    // First query (cache miss)
-    let start = Instant::now();
-    let _first = scanner.scan_package(package, &version).await;
-    let first_duration = start.elapsed();
-
-    // Second query (cache hit)
-    let start = Instant::now();
-    let _second = scanner.scan_package(package, &version).await;
-    let second_duration = start.elapsed();
-
-    // Cache hit should be significantly faster (at least 10x)
+    // 1. A missing keyring is an error, never an empty trusted set.
+    let missing_keyring = temp.path().join("no-such-keyring.gpg");
+    let Err(err) = PgpVerifier::from_keyring(&missing_keyring) else {
+        panic!("missing keyring must be rejected")
+    };
     assert!(
-        second_duration < first_duration / 10,
-        "Cache not effective: first={first_duration:?}, second={second_duration:?}"
+        matches!(err, PgpError::KeyringMissing { .. }),
+        "expected KeyringMissing, got: {err:?}"
     );
 
-    println!(
-        "✓ Vulnerability cache effective: first={:?}, cached={:?} ({}x faster)",
-        first_duration,
-        second_duration,
-        first_duration.as_micros() / second_duration.as_micros().max(1)
+    // 2. An unparseable keyring file is an error.
+    let garbage_keyring = temp.path().join("garbage.gpg");
+    fs::write(&garbage_keyring, b"not a keyring").unwrap();
+    let Err(err) = PgpVerifier::from_keyring(&garbage_keyring) else {
+        panic!("garbage keyring must be rejected")
+    };
+    assert!(
+        matches!(err, PgpError::KeyringParse { .. }),
+        "expected KeyringParse, got: {err:?}"
+    );
+
+    // 3. Verifying a package whose blob is missing fails with PackageOpen,
+    //    not silently with Ok.
+    let verifier = PgpVerifier::empty();
+    let missing_pkg = temp.path().join("missing-1.0-1-x86_64.pkg.tar.zst");
+    let sig = temp.path().join("sig.asc");
+    fs::write(&sig, b"fake signature bytes").unwrap();
+    let err = verifier
+        .verify_detached(&missing_pkg, &sig)
+        .expect_err("missing package blob must fail closed");
+    assert!(
+        matches!(err, PgpError::PackageOpen { .. }),
+        "expected PackageOpen, got: {err:?}"
+    );
+
+    // 4. An existing package with a malformed detached signature fails with
+    //    a parse error, never Ok.
+    let pkg = temp.path().join("pkg-1.0-1-x86_64.pkg.tar.zst");
+    fs::write(&pkg, b"package payload").unwrap();
+    let bad_sig = temp.path().join("bad.asc");
+    fs::write(&bad_sig, b"definitely not OpenPGP").unwrap();
+    let err = verifier
+        .verify_detached(&pkg, &bad_sig)
+        .expect_err("malformed signature must fail closed");
+    assert!(
+        matches!(err, PgpError::SignatureParse { .. }),
+        "expected SignatureParse, got: {err:?}"
+    );
+
+    // 5. require_detached_signature_files names the missing artifact in its
+    //    typed errors (fail-closed on unsigned packages).
+    let err = require_detached_signature_files(
+        "ripgrep",
+        &temp.path().join("ripgrep.pkg.tar.zst"),
+        &temp.path().join("ripgrep.pkg.tar.zst.sig"),
+    )
+    .expect_err("missing package must be reported");
+    assert!(
+        matches!(err, SignatureFileError::PackageMissing { ref package_name, .. } if package_name == "ripgrep"),
+        "expected PackageMissing naming 'ripgrep', got: {err:?}"
+    );
+
+    let pkg_path = temp.path().join("present.pkg.tar.zst");
+    fs::write(&pkg_path, b"payload").unwrap();
+    let err = require_detached_signature_files(
+        "tree",
+        &pkg_path,
+        &temp.path().join("present.pkg.tar.zst.sig"),
+    )
+    .expect_err("missing signature must be reported");
+    assert!(
+        matches!(err, SignatureFileError::SignatureMissing { ref package_name, .. } if package_name == "tree"),
+        "expected SignatureMissing naming 'tree', got: {err:?}"
     );
 }
+
+// NOTE: `test_vulnerability_cache_effectiveness` was deleted as redundant:
+// deterministic cache behavior is already pinned by the unit test
+// `successful_osv_responses_are_cached` (src/core/security/vulnerability.rs:396),
+// and this test's 10x-timing assertion was both network-dependent and flaky.

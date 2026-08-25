@@ -276,26 +276,7 @@ fn test_harness_version_sorting() -> Result<()> {
     Ok(())
 }
 
-#[cfg(test)]
-mod integration_with_omg {
-    use super::*;
-
-    #[test]
-    fn test_omg_alpm_ops_with_harness() -> Result<()> {
-        let harness = AlpmHarness::new()?;
-
-        // Add test packages
-        harness.add_sync_pkg("core", &HarnessPkg::new("test-pkg", "1.0-1"))?;
-
-        let alpm = harness.alpm()?;
-        let db = alpm.register_syncdb("core", alpm::SigLevel::NONE)?;
-
-        // Test that OMG's ALPM operations work with harness
-        // This would normally call functions from src/package_managers/alpm_ops.rs
-        // For now, just verify the harness provides valid ALPM handles
-
-        assert!(db.pkg("test-pkg").is_ok());
-
-        Ok(())
-    }
-}
+// NOTE: there is deliberately no `integration_with_omg` module here. Its only
+// test admitted in comments that it never called OMG code — it re-verified
+// `db.pkg()` lookups already covered by `test_harness_package_info` and
+// `test_harness_package_not_found`, so it proved nothing new.

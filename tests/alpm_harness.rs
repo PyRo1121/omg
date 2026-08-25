@@ -124,6 +124,87 @@ impl AlpmHarness {
     pub fn db_path(&self) -> &Path {
         &self.db_path
     }
+
+    /// Add a sync package carrying the metadata libalpm requires to plan a
+    /// real install (`%FILENAME%`, `%CSIZE%`, `%ISIZE%`), backed by a
+    /// placeholder payload in the harness cache. Unlike [`Self::add_sync_pkg`],
+    /// a transaction over this package passes `trans_prepare`. Commit still
+    /// needs a configured sync server, which the harness intentionally does
+    /// not provide.
+    pub fn add_installable_sync_pkg(&self, db_name: &str, pkg: &HarnessPkg) -> Result<()> {
+        let filename = format!("{}-{}-x86_64.pkg.tar.gz", pkg.name, pkg.version);
+        let pkg_path = self.root_path.join("var/cache/pacman/pkg").join(&filename);
+        let csize = write_placeholder_package(&pkg_path, &pkg.name, &pkg.version)?;
+        let isize_ = csize + 4096;
+
+        let desc = format!(
+            "%FILENAME%\n{filename}\n\n%NAME%\n{}\n\n%VERSION%\n{}\n\n%DESC%\n{}\n\n%ARCH%\nx86_64\n\n%CSIZE%\n{csize}\n\n%ISIZE%\n{isize_}\n\n",
+            pkg.name, pkg.version, pkg.desc
+        );
+
+        let db_file = self.db_path.join("sync").join(format!("{db_name}.db"));
+        let file = File::create(db_file)?;
+        let mut encoder = GzEncoder::new(file, Compression::default());
+        {
+            let mut builder = Builder::new(&mut encoder);
+            let dir = format!("{}-{}/", pkg.name, pkg.version);
+            let mut header = Header::new_gnu();
+            header.set_path(&dir)?;
+            header.set_size(0);
+            header.set_entry_type(EntryType::Directory);
+            header.set_mode(0o755);
+            header.set_mtime(0);
+            header.set_uid(0);
+            header.set_gid(0);
+            header.set_cksum();
+            builder.append(&header, &mut std::io::empty())?;
+
+            let mut header = Header::new_gnu();
+            header.set_path(format!("{dir}desc"))?;
+            header.set_size(desc.len() as u64);
+            header.set_entry_type(EntryType::Regular);
+            header.set_mode(0o644);
+            header.set_mtime(0);
+            header.set_uid(0);
+            header.set_gid(0);
+            header.set_cksum();
+            builder.append(&header, desc.as_bytes())?;
+            builder.finish()?;
+        }
+        encoder.finish()?;
+        Ok(())
+    }
+}
+
+/// Write a minimal gzip-compressed tar with one placeholder binary and return
+/// its compressed size on disk.
+fn write_placeholder_package(path: &Path, name: &str, version: &str) -> std::io::Result<u64> {
+    let file = File::create(path)?;
+    let mut encoder = GzEncoder::new(file, Compression::default());
+    {
+        let mut builder = Builder::new(&mut encoder);
+        for dir in ["usr/", "usr/bin/"] {
+            let mut header = Header::new_gnu();
+            header.set_path(dir)?;
+            header.set_size(0);
+            header.set_entry_type(EntryType::Directory);
+            header.set_mode(0o755);
+            header.set_mtime(0);
+            header.set_cksum();
+            builder.append(&header, &mut std::io::empty())?;
+        }
+        let content = format!("#!/bin/sh\necho {name}-{version}\n");
+        let mut header = Header::new_gnu();
+        header.set_path(format!("usr/bin/{name}"))?;
+        header.set_size(content.len() as u64);
+        header.set_mode(0o755);
+        header.set_mtime(0);
+        header.set_cksum();
+        builder.append(&header, content.as_bytes())?;
+        builder.finish()?;
+    }
+    let file = encoder.finish()?;
+    Ok(file.metadata()?.len())
 }
 
 pub fn generate_desc(name: &str, version: &str) -> String {

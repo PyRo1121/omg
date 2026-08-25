@@ -232,6 +232,10 @@ mod update_scenarios {
         let updates = pm.list_updates().await?;
 
         assert!(!updates.is_empty(), "Should have updates: {updates:?}");
+        assert!(
+            updates.iter().any(|u| u.name == "node"),
+            "node should appear in the update list: {updates:?}"
+        );
 
         Ok(())
     }
@@ -339,7 +343,14 @@ mod status_reporting {
 
             let (total, explicit, _orphans, _updates) = pm.get_status(false).await?;
 
-            assert!(total > 0, "{} should have packages", pm.name());
+            // We just installed git, so both counters must reflect it — not
+            // merely be nonzero for incidental reasons.
+            assert!(total >= 1, "{} should count the installed git", pm.name());
+            assert!(
+                explicit >= 1,
+                "{} should count installed git as explicit",
+                pm.name()
+            );
             assert!(total >= explicit, "Total should be >= explicit");
         }
 
@@ -454,8 +465,23 @@ mod edge_cases {
     async fn test_empty_package_list() -> Result<()> {
         let pm = MockPackageManager::debian();
 
+        // Start from a known point: git is absent.
+        pm.remove(&["git".to_string()]).await?;
+
+        // Empty batches are accepted as no-ops...
         pm.install(&[]).await?;
         pm.remove(&[]).await?;
+
+        // ...and must not have touched any package state.
+        assert!(
+            !pm.is_installed("git").await.unwrap(),
+            "empty install batch must not install anything"
+        );
+        assert_eq!(
+            pm.list_installed().await?.len(),
+            0,
+            "empty batches must leave the installed set unchanged"
+        );
 
         Ok(())
     }

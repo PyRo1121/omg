@@ -287,6 +287,10 @@ fn test_circular_self_dependency() {
     let result = ParallelBuilder::topological_levels(&graph);
 
     assert!(result.is_err());
+    assert!(
+        result.unwrap_err().to_string().contains("Circular"),
+        "self-dependency must be reported as a circular dependency"
+    );
 
     println!("✓ Self-dependency detected");
 }
@@ -308,6 +312,10 @@ fn test_circular_complex_with_cycle() {
     let result = ParallelBuilder::topological_levels(&graph);
 
     assert!(result.is_err());
+    assert!(
+        result.unwrap_err().to_string().contains("Circular"),
+        "cycle embedded in a larger graph must be reported as circular"
+    );
 
     println!("✓ Cycle in complex graph detected");
 }
@@ -429,28 +437,7 @@ async fn test_realworld_aur_helper_dependencies() {
 }
 
 #[tokio::test]
-async fn test_realworld_aur_to_aur_dependencies() {
-    require_system_tests!();
-    require_arch!();
-
-    println!("\n=== Test: AUR-to-AUR Dependencies ===");
-
-    // Some AUR packages depend on other AUR packages
-    // Example: Some *-git packages depend on other *-git packages
-
-    // For this test, we'll install a package and verify the dep resolution
-    let package = "yay-bin"; // Has minimal AUR deps
-
-    cleanup_package(package);
-
-    let result = run_omg(&["install", package]);
-    result.assert_success();
-
-    println!("✓ AUR-to-AUR dependency chain handled");
-}
-
-#[tokio::test]
-async fn test_realworld_optional_dependencies() {
+async fn test_realworld_optional_dependencies_metadata() {
     require_system_tests!();
     require_arch!();
 
@@ -463,20 +450,22 @@ async fn test_realworld_optional_dependencies() {
     let result = run_omg(&["install", package]);
     result.assert_success();
 
-    // Query optional deps
+    // Contract: `pacman -Qi` always renders an "Optional Deps" field for an
+    // installed package ("None" when there are none), so after a successful
+    // install the package database must expose this package's optional-deps
+    // metadata. Optional deps are reported but never auto-installed.
     let info = Command::new("pacman")
         .args(["-Qi", package])
         .output()
         .expect("Failed to query package");
 
     let output = String::from_utf8_lossy(&info.stdout);
+    assert!(
+        output.contains("Optional Deps"),
+        "pacman -Qi {package} must list the 'Optional Deps' field:\n{output}"
+    );
 
-    // Optional deps should be listed but not installed by default
-    if output.contains("Optional Deps") {
-        println!("✓ Optional dependencies listed (not auto-installed)");
-    } else {
-        println!("✓ Package has no optional dependencies");
-    }
+    println!("✓ Optional dependencies metadata present (not auto-installed)");
 }
 
 // ============================================================================

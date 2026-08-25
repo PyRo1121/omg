@@ -342,15 +342,18 @@ mod proptest_tests {
                 .unwrap()
                 .block_on(service.search(&query));
 
+            // The mock backend cannot fail; an error must fail the test
+            // rather than being silently swallowed by an `if let Ok` guard.
+            let pkgs = results.expect("search against TestPackageManager must succeed");
+
             // All results should have the query in name or description
-            if let Ok(pkgs) = results {
-                for pkg in pkgs {
-                    let query_lower = query.to_lowercase();
-                    assert!(
-                        pkg.name.to_lowercase().contains(&query_lower) ||
-                        pkg.description.to_lowercase().contains(&query_lower)
-                    );
-                }
+            for pkg in pkgs {
+                let query_lower = query.to_lowercase();
+                prop_assert!(
+                    pkg.name.to_lowercase().contains(&query_lower) ||
+                    pkg.description.to_lowercase().contains(&query_lower),
+                    "result {:?} does not match query {query}", pkg.name
+                );
             }
         }
 
@@ -359,7 +362,12 @@ mod proptest_tests {
             let pm = Arc::new(TestPackageManager::new());
             pm.add_package(&package_name, "1.0.0", "Test package");
 
+            // Inject the no-op vulnerability source: install() grades every
+            // package through the scanner (service.rs assign_grade), and the
+            // default VulnerabilityScanner requires network access that a
+            // unit test must not depend on. Mirrors test_install_package.
             let service = PackageService::builder(pm.clone())
+                .vulnerability_source(Arc::new(NoKnownVulnerabilities))
                 .without_history()
                 .build()
                 .expect("history-disabled service should build");

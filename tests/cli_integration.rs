@@ -62,19 +62,18 @@ fn test_search_pacman() {
     result.assert_stdout_contains(query);
 }
 
+// Falsifiable contract: `info <installed-package>` must succeed and render
+// the package name plus a version token (src: `omg info` handler renders
+// `<name> <version>` as its first line).
 #[test]
 fn test_info_pacman() {
     let package_name = "pacman";
     let result = run_omg(&["info", package_name]);
-    let combined = format!("{}{}", result.stdout, result.stderr);
-    assert!(
-        result.success || combined.contains("not found"),
-        "Expected success or 'not found'. Got exit {}: {}",
-        result.exit_code,
-        combined
-    );
+    common::assertions::assert_package_info(&result, package_name);
 }
 
+// Falsifiable contract: a missing package must FAIL and say so — the old
+// `... || !result.success` disjunction passed even on unrelated failures.
 #[test]
 fn test_info_nonexistent_package() {
     use common::fixtures::packages::NONEXISTENT;
@@ -86,10 +85,11 @@ fn test_info_nonexistent_package() {
     let result = run_omg(&["info", nonexistent_package]);
 
     // ===== ASSERT =====
+    result.assert_failure();
     let combined = result.combined_output();
     assert!(
-        combined.contains("not found") || combined.contains("No package") || !result.success,
-        "Should indicate package not found"
+        combined.contains("not found") || combined.contains(nonexistent_package),
+        "info of a missing package must name the failure. Got:\n{combined}"
     );
 }
 
@@ -124,6 +124,8 @@ fn test_status_command() {
     );
 }
 
+// Falsifiable contract: install --dry-run exits 0 without installing and
+// previews BOTH the exact package and that no changes will be made.
 #[test]
 fn test_install_dry_run() {
     // ===== ARRANGE =====
@@ -133,13 +135,17 @@ fn test_install_dry_run() {
     let result = run_omg(&["install", "--dry-run", package]);
 
     // ===== ASSERT =====
-    let combined = result.combined_output();
+    result.assert_success();
+    result.assert_stdout_contains(package);
     assert!(
-        combined.contains(package) || combined.contains("dry") || combined.contains("Dry"),
-        "Dry run should mention the package or dry run mode"
+        result.stdout_contains("dry run"),
+        "Install preview should state dry-run mode. Got:\n{}",
+        result.stdout
     );
 }
 
+// Falsifiable contract: remove --dry-run exits 0 without removing anything
+// and previews BOTH the exact package and that no changes will be made.
 #[test]
 fn test_remove_dry_run() {
     // ===== ARRANGE =====
@@ -149,13 +155,19 @@ fn test_remove_dry_run() {
     let result = run_omg(&["remove", "--dry-run", package]);
 
     // ===== ASSERT =====
-    let combined = result.combined_output();
+    result.assert_success();
+    result.assert_stdout_contains(package);
     assert!(
-        combined.contains(package) || combined.contains("dry") || combined.contains("Dry"),
-        "Dry run should mention the package or dry run mode"
+        result.stdout_contains("dry run"),
+        "Remove preview should state dry-run mode. Got:\n{}",
+        result.stdout
     );
 }
 
+// Falsifiable contract: doctor must run to completion (exit 0; individual
+// check failures do not fail the command, src/cli/doctor.rs:38 `run` always
+// returns Ok) and render its report header "OMG Doctor Checking system
+// health...".
 #[test]
 fn test_doctor_command() {
     // ===== ARRANGE =====
@@ -165,12 +177,14 @@ fn test_doctor_command() {
     let result = run_omg(&["doctor"]);
 
     // ===== ASSERT =====
+    result.assert_success();
+    result.assert_stdout_contains("Doctor");
     assert!(
-        result.stdout_contains("✓")
-            || result.stdout_contains("✗")
-            || result.stdout_contains("check")
-            || result.stdout_contains("Check"),
-        "Doctor should show check results"
+        result.stdout_contains("health")
+            || result.stdout_contains("✓")
+            || result.stdout_contains("✗"),
+        "Doctor should show check results. Got:\n{}",
+        result.stdout
     );
 }
 
@@ -184,9 +198,17 @@ fn test_invalid_command() {
 
     // ===== ASSERT =====
     result.assert_failure();
+    assert!(
+        result.stderr_contains("error") || result.stderr_contains("unrecognized"),
+        "Invalid command should report an error. Got:\n{}",
+        result.stderr
+    );
 }
 
 /// Empty search returns all packages (valid behavior)
+/// Falsifiable contract: empty query must succeed AND render the results
+/// block; the old `success || !stdout.is_empty()` disjunction passed even
+/// when search crashed with non-empty stderr.
 #[test]
 fn test_search_empty_query() {
     // ===== ARRANGE =====
@@ -196,12 +218,8 @@ fn test_search_empty_query() {
     let result = run_omg(&["search", ""]);
 
     // ===== ASSERT =====
-    // Empty search is valid - returns all packages
-    // Just verify it doesn't crash and produces output
-    assert!(
-        result.success || !result.stdout.is_empty(),
-        "Empty search should succeed or produce output"
-    );
+    result.assert_success();
+    result.assert_stdout_contains("Search Results");
 }
 
 #[test]

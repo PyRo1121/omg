@@ -14,8 +14,6 @@
 #![expect(clippy::unwrap_used)]
 #![expect(clippy::pedantic)]
 
-use std::process::{Command, Stdio};
-
 pub mod common;
 
 // ═══════════════════════════════════════════════════════════════════════════════
@@ -67,39 +65,6 @@ impl TestRunner {
             exit_code: result.exit_code,
         }
     }
-
-    /// Run a mock sudo command using bash -c to avoid temp file race conditions
-    fn run_mock_sudo(&self, args: &[&str], scenario: SudoScenario) -> TestResult {
-        let script_body = match scenario {
-            SudoScenario::Success => format!("echo 'Mock sudo: {}'; exit 0", args.join(" ")),
-            SudoScenario::PasswordRequired => {
-                "echo 'sudo: a password is required' >&2; exit 1".to_string()
-            }
-            SudoScenario::PermissionDenied => {
-                "echo 'sudo: permission denied' >&2; exit 1".to_string()
-            }
-            SudoScenario::CommandNotFound => {
-                let cmd = args.get(1).unwrap_or(&"command");
-                format!("echo 'sudo: {cmd}: command not found' >&2; exit 1")
-            }
-            SudoScenario::NoTty => "echo 'sudo: no tty present' >&2; exit 1".to_string(),
-        };
-
-        let output = Command::new("bash")
-            .arg("-c")
-            .arg(&script_body)
-            .stdout(Stdio::piped())
-            .stderr(Stdio::piped())
-            .output()
-            .expect("Failed to execute bash");
-
-        TestResult {
-            success: output.status.success(),
-            stdout: String::from_utf8_lossy(&output.stdout).to_string(),
-            stderr: String::from_utf8_lossy(&output.stderr).to_string(),
-            exit_code: output.status.code().unwrap_or(-1),
-        }
-    }
 }
 
 impl Default for TestRunner {
@@ -143,26 +108,6 @@ impl TestResult {
         );
         self
     }
-
-    fn assert_contains(&self, pattern: &str) -> &Self {
-        assert!(
-            self.contains(pattern),
-            "Expected output to contain '{}'. Got:\n{}",
-            pattern,
-            self.combined_output()
-        );
-        self
-    }
-}
-
-/// Scenarios for mocking sudo behavior
-#[derive(Debug, Clone, Copy)]
-enum SudoScenario {
-    Success,
-    PasswordRequired,
-    PermissionDenied,
-    CommandNotFound,
-    NoTty,
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
@@ -187,22 +132,25 @@ fn test_whitelist_allowed_operations() {
 
 #[test]
 fn test_whitelist_blocks_unsafe_operations() {
-    // The privilege module's elevate_for_operation should block non-whitelisted ops
-    // We test this indirectly by checking error messages
+    // Contract (src/core/privilege.rs, elevate_for_operation): only
+    // install/remove/upgrade/update/sync/clean may request elevation. Every
+    // read-only operation must be rejected with PermissionDenied and an error
+    // message that names the operation and says it is not whitelisted.
+    use omg_lib::core::privilege;
+    use std::io::ErrorKind;
 
-    let disallowed = ["search", "info", "status", "why", "blame"];
-
-    for op in disallowed {
-        let runner = TestRunner::new();
-        let result = runner.run(&[op, "test-package"]);
-
-        // These should either work or fail for reasons OTHER than "not whitelisted"
-        let combined = result.combined_output();
+    for op in ["search", "info", "status", "why", "blame"] {
+        let err = privilege::elevate_for_operation(op, &[])
+            .expect_err("read-only operations must never be elevatable");
+        assert_eq!(
+            err.kind(),
+            ErrorKind::PermissionDenied,
+            "operation '{op}' must be denied with PermissionDenied"
+        );
+        let message = err.to_string();
         assert!(
-            !combined.contains("not whitelisted"),
-            "Operation '{}' should not trigger whitelist error. Output: {}",
-            op,
-            combined
+            message.contains("not whitelisted") && message.contains(op),
+            "denial for '{op}' must name the operation and the whitelist: {message}"
         );
     }
 }
@@ -213,128 +161,119 @@ fn test_whitelist_blocks_unsafe_operations() {
 
 #[test]
 fn test_sudo_n_flag_fallback_on_password_required() {
-    // Test the critical -n flag fallback behavior
-    let runner = TestRunner::new();
+    // Regression contract (src/core/privilege.rs, sudo_payload_status_in):
+    // credentials are validated by a pre-flight `sudo -n -v` before any payload,
+    // so a non-interactive `--yes` run can never block on a password prompt.
+    // It must terminate with an outcome on BOTH paths:
+    //   success  -> reports what happened (up to date / updates listed)
+    //   failure  -> names its cause (sudo/NOPASSWD/turbo/development mode)
+    let runner = TestRunner::new().with_env("CI", "1");
 
-    // Scenario 1: Password required (exit code 1)
-    let result = runner.run_mock_sudo(&["-n", "omg", "update"], SudoScenario::PasswordRequired);
+    let result = runner.run(&["update", "--yes"]);
+    let combined = result.combined_output();
 
-    // Should detect password requirement
+    assert_ne!(result.exit_code, 101, "update --yes panicked:\n{combined}");
+    for prompt in ["[sudo]", "password for", "Password:"] {
+        assert!(
+            !combined.contains(prompt),
+            "--yes must never prompt for a password ({prompt}). Got:\n{combined}"
+        );
+    }
+
+    if result.success {
+        assert!(
+            combined.to_lowercase().contains("up to date")
+                || combined.to_lowercase().contains("update"),
+            "successful update --yes must report its outcome. Got:\n{combined}"
+        );
+    } else {
+        let lowered = combined.to_lowercase();
+        assert!(
+            [
+                "sudo",
+                "nopasswd",
+                "password",
+                "turbo",
+                "development",
+                "permission",
+                "root"
+            ]
+            .iter()
+            .any(|cause| lowered.contains(cause)),
+            "failed update --yes must name its cause instead of prompting. Got:\n{combined}"
+        );
+    }
+}
+
+#[test]
+fn test_privileged_program_fail_closed_in_dev_mode() {
+    // Contract (src/core/privilege.rs, run_privileged_program): in dev/test
+    // builds external-program elevation must bail BEFORE touching sudo, and
+    // the error must be actionable: it names the mode, the program, and the
+    // sudo fallback.
+    use omg_lib::core::privilege;
+
+    let result = temp_env::with_vars([("OMG_TEST_MODE", Some("1"))], || {
+        tokio::runtime::Runtime::new()
+            .expect("tokio runtime")
+            .block_on(privilege::run_privileged_program("apt-get", &["update"]))
+    });
+
+    let err = result.expect_err("dev/test builds must refuse privilege elevation");
+    let message = err.to_string();
     assert!(
-        result.stderr.contains("password is required")
-            || result.stderr.contains("permission denied")
-            || result.stderr.contains("no tty"),
-        "Should detect password required scenario. Got: {}",
-        result.stderr
+        message.contains("development mode"),
+        "error must explain the dev-mode limitation: {message}"
     );
-
-    assert!(!result.success, "Should fail when password required");
-}
-
-#[test]
-fn test_sudo_n_flag_no_tty_detection() {
-    // Test detection of "no tty present" error
-    let runner = TestRunner::new();
-
-    let result = runner.run_mock_sudo(&["-n", "omg", "update"], SudoScenario::NoTty);
-
     assert!(
-        result.stderr.contains("no tty"),
-        "Should detect no tty error. Got: {}",
-        result.stderr
+        message.contains("apt-get"),
+        "error must name the program it refused to elevate: {message}"
+    );
+    assert!(
+        message.contains("sudo"),
+        "error must suggest the manual sudo alternative: {message}"
     );
 }
 
 #[test]
-fn test_sudo_permission_denied_detection() {
-    // Test various PermissionDenied error messages
-    let runner = TestRunner::new();
+fn test_elevate_rejects_injection_style_operations() {
+    // Contract (src/core/privilege.rs, ALLOWED_ROOT_OPS): the whitelist is an
+    // exact string match, so shell metacharacters or concatenated commands can
+    // never smuggle an elevation through. Every crafted op must be rejected
+    // with PermissionDenied naming the payload.
+    use omg_lib::core::privilege;
+    use std::io::ErrorKind;
 
-    let result = runner.run_mock_sudo(
-        &["-n", "omg", "install", "test"],
-        SudoScenario::PermissionDenied,
-    );
+    let hostile_ops = [
+        "install; rm -rf /",
+        "install && cat /etc/shadow",
+        "$(echo pwned)",
+        "`id`",
+        "install\nremove",
+    ];
 
-    result.assert_failure().assert_contains("permission");
-}
-
-#[test]
-fn test_sudo_n_flag_success_path() {
-    // Test that sudo -n works when NOPASSWD is configured
-    let runner = TestRunner::new();
-
-    let result = runner.run_mock_sudo(&["-n", "echo", "success"], SudoScenario::Success);
-
-    result.assert_success().assert_contains("success");
+    for op in hostile_ops {
+        let err = privilege::elevate_for_operation(op, &[])
+            .expect_err("crafted operations must never reach elevation");
+        assert_eq!(err.kind(), ErrorKind::PermissionDenied, "op: {op}");
+        assert!(
+            err.to_string().contains(op),
+            "denial must echo the rejected op '{op}': {err}"
+        );
+    }
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
 // ERROR MESSAGE DETECTION TESTS
 // ═══════════════════════════════════════════════════════════════════════════════
 
-#[test]
-fn test_error_message_parsing_password_required() {
-    // Test that the code correctly identifies password-required scenarios
-    let test_cases = vec![
-        "sudo: a password is required",
-        "sudo: permission denied",
-        "sudo: no tty present",
-        "Sorry, user [^ ]* may not run sudo",
-    ];
-
-    for pattern in test_cases {
-        // The privilege module should detect these patterns
-        assert!(!pattern.is_empty(), "Pattern should not be empty");
-    }
-}
-
-#[test]
-fn test_interactive_fallback_triggered() {
-    // Test that when sudo -n fails, interactive sudo is attempted
-    let runner = TestRunner::new();
-
-    // First attempt with -n (fails)
-    let result1 = runner.run_mock_sudo(&["-n", "omg", "update"], SudoScenario::PasswordRequired);
-
-    assert!(
-        !result1.success,
-        "sudo -n should fail when password required"
-    );
-
-    // Second attempt without -n (interactive)
-    let result2 = runner.run_mock_sudo(&["omg", "update"], SudoScenario::Success);
-
-    // Interactive version would succeed in real scenario
-    assert!(result2.success || result2.exit_code == 0);
-}
-
 // ═══════════════════════════════════════════════════════════════════════════════
 // UPDATE COMMAND SUDO INTEGRATION TESTS
 // ═══════════════════════════════════════════════════════════════════════════════
 
-#[test]
-fn test_update_suggests_sudo_without_root() {
-    // Test that update command suggests sudo when not root
-    let runner = TestRunner::new();
-
-    let result = runner.run(&["update", "--yes"]);
-
-    // If we're not root, should suggest sudo or show helpful message
-    let combined = result.combined_output();
-
-    if !result.success {
-        // Only check if it failed (might already be root in some test environments)
-        assert!(
-            combined.contains("sudo")
-                || combined.contains("root")
-                || combined.contains("privilege")
-                || combined.contains("permission")
-                || combined.contains("Elevating"),
-            "Should mention sudo/root when update fails. Got: {}",
-            combined
-        );
-    }
-}
+// ═══════════════════════════════════════════════════════════════════════════════
+// DEVELOPMENT BUILD DETECTION TESTS
+// ═══════════════════════════════════════════════════════════════════════════════
 
 #[test]
 fn test_update_check_mode_no_password_prompt() {
@@ -357,45 +296,39 @@ fn test_update_check_mode_no_password_prompt() {
     );
 }
 
-#[test]
-fn test_update_with_yes_flag_non_interactive() {
-    // Test that --yes flag avoids interactive prompts
-    let runner = TestRunner::new().with_env("CI", "1");
-
-    let result = runner.run(&["update", "--yes"]);
-
-    // May fail due to permissions, but should not complain about interactive mode
-    let combined = result.combined_output();
-
-    assert!(
-        !combined.contains("requires an interactive terminal") || result.success,
-        "--yes should work non-interactively. Got: {}",
-        combined
-    );
-}
-
 // ═══════════════════════════════════════════════════════════════════════════════
 // DEVELOPMENT BUILD DETECTION TESTS
 // ═══════════════════════════════════════════════════════════════════════════════
 
 #[test]
-fn test_dev_build_detection_blocks_elevation() {
-    // Test that dev builds properly block privilege elevation
+fn test_dev_build_marker_blocks_elevation() {
+    // Contract (src/core/privilege.rs, sudo_payload_status_in): the dev-build
+    // marker CARGO_PRIMARY_PACKAGE — on its own, without OMG_TEST_MODE — must
+    // also fail closed. If elevation is needed, the failure has to name the
+    // dev-mode limitation; if no elevation was needed, an outcome is reported.
     let runner = TestRunner::new().with_env("CARGO_PRIMARY_PACKAGE", "1");
 
-    // In dev mode, elevation should fail gracefully
     let result = runner.run(&["update", "--yes"]);
-
     let combined = result.combined_output();
 
-    // Should show dev build message if elevation was attempted
-    if combined.contains("Privilege elevation") || combined.contains("development builds") {
+    assert_ne!(result.exit_code, 101, "update --yes panicked:\n{combined}");
+    assert!(
+        !combined.contains("[sudo]"),
+        "dev builds must never reach a sudo prompt. Got:\n{combined}"
+    );
+    if result.success {
         assert!(
-            combined.contains("development")
-                || combined.contains("cargo install")
-                || combined.contains("sudo"),
-            "Should explain dev build limitation. Got: {}",
-            combined
+            combined.to_lowercase().contains("up to date")
+                || combined.to_lowercase().contains("update"),
+            "successful update --yes must report its outcome. Got:\n{combined}"
+        );
+    } else {
+        let lowered = combined.to_lowercase();
+        assert!(
+            lowered.contains("development")
+                || lowered.contains("turbo")
+                || lowered.contains("sudo"),
+            "dev-mode elevation failure must explain the limitation. Got:\n{combined}"
         );
     }
 }
@@ -406,19 +339,27 @@ fn test_dev_build_detection_blocks_elevation() {
 
 #[test]
 fn test_empty_args_handling() {
-    // Test that empty args are handled gracefully
+    // Contract (src/cli/args.rs: `arg_required_else_help = true`): with no
+    // subcommand clap prints the help text (including the Usage line) and
+    // exits 2. It must never panic or run an implicit default command.
     let runner = TestRunner::new();
 
     let result = runner.run(&[]);
 
-    // Should show help, not crash
-    assert!(
-        result.contains("omg")
-            || result.contains("Usage")
-            || result.contains("usage")
-            || result.contains("help"),
-        "Should show help for empty args. Got: {}",
+    assert_eq!(
+        result.exit_code,
+        2,
+        "empty args must exit with clap's usage error code 2. Output:\n{}",
         result.combined_output()
+    );
+    assert!(
+        result.contains("Usage:"),
+        "empty args must print help with a Usage line. Got:\n{}",
+        result.combined_output()
+    );
+    assert!(
+        !result.stderr.contains("panicked at"),
+        "empty args must not panic"
     );
 }
 
@@ -441,7 +382,10 @@ fn test_sequential_status_commands() {
 
 #[test]
 fn test_special_chars_in_package_names() {
-    // Test that special characters are handled safely
+    // Contract: `info <name>` treats every name as data. For names that do not
+    // exist it must fail gracefully with an error that echoes the queried name
+    // (src/cli/packages/info.rs: "Package '<name>' not found"), and it must
+    // never leak system files such as /etc/passwd into the output.
     let runner = TestRunner::new();
 
     let special_names = [
@@ -454,20 +398,29 @@ fn test_special_chars_in_package_names() {
 
     for name in special_names {
         let result = runner.run(&["info", name]);
+        let combined = result.combined_output();
 
-        // Should not crash
+        assert_ne!(
+            result.exit_code, 101,
+            "info '{name}' must not panic. Output:\n{combined}"
+        );
         assert!(
-            result.exit_code >= 0,
-            "Should handle package name '{}' gracefully",
-            name
+            !combined.contains("root:x:") && !result.stdout.contains("root:$"),
+            "info '{name}' must never expose /etc/passwd content"
         );
 
-        // Should not execute shell commands
-        assert!(
-            !result.stdout.contains("root:") && !result.stderr.contains("root:"),
-            "Should not expose system data for name '{}'",
-            name
-        );
+        if result.success {
+            assert!(
+                result.stdout.contains(name),
+                "successful info must show the package '{name}'. Got:\n{}",
+                result.stdout
+            );
+        } else {
+            assert!(
+                combined.contains("not found") && combined.contains(name),
+                "failed info for unknown package '{name}' must say so and echo the name.\nGot:\n{combined}"
+            );
+        }
     }
 }
 
@@ -476,37 +429,39 @@ fn test_special_chars_in_package_names() {
 // ═══════════════════════════════════════════════════════════════════════════════
 
 #[test]
-fn test_sudo_command_not_found() {
-    // Test behavior when sudo itself is not found
+fn test_sudo_command_not_found_reports_error() {
+    // Contract: running a command that cannot resolve must surface a named
+    // error rather than silently succeeding. `omg info` on a package that no
+    // repo knows exits nonzero and says so.
     let runner = TestRunner::new();
 
-    let result = runner.run_mock_sudo(&["nonexistent-command"], SudoScenario::CommandNotFound);
+    let result = runner.run(&["info", "definitely-not-a-real-command-xyz"]);
 
     result.assert_failure();
-
     assert!(
-        result.stderr.contains("not found")
-            || result.stderr.contains("command not found")
-            || result.stderr.contains("No such file"),
-        "Should report command not found. Got: {}",
-        result.stderr
+        result.stderr.contains("not found") || result.stdout.contains("not found"),
+        "unknown package must be reported as not found. Got:\n{}",
+        result.combined_output()
     );
 }
 
 #[test]
-fn test_is_root_function() {
-    // Test the is_root() function behavior
-    // We can't directly test it in this integration test,
-    // but we can verify its effects
-
+fn test_is_root_function_status_completes() {
+    // The is_root check feeds `status`; it must complete without crashing and
+    // render its report.
     let runner = TestRunner::new();
 
     let result = runner.run(&["status"]);
 
-    // Should complete without crashing
+    assert_ne!(
+        result.exit_code,
+        101,
+        "status panicked; is_root path is broken. Output:\n{}",
+        result.combined_output()
+    );
     assert!(
-        result.exit_code >= 0,
-        "is_root check should not cause crashes"
+        !result.stdout.is_empty() || !result.stderr.is_empty(),
+        "status produced no output at all"
     );
 }
 
@@ -536,86 +491,10 @@ fn test_with_root_closure_execution() {
 // REGRESSION TESTS FOR BUG FIXES
 // ═══════════════════════════════════════════════════════════════════════════════
 
-#[test]
-fn regression_sudo_n_flag_fallback_bug() {
-    // Regression test for the -n flag fallback bug
-    // The bug was: sudo -n exit code 1 wasn't properly detected,
-    // leading to password prompts in CI/non-interactive mode
-
-    let runner = TestRunner::new();
-
-    // Simulate CI environment
-    let result = runner.with_env("CI", "1").run(&["update", "--yes"]);
-
-    let combined = result.combined_output();
-
-    // Should NOT hang waiting for password
-    // Should show helpful error or alternative paths
-    if !result.success {
-        assert!(
-            combined.contains("sudo")
-                || combined.contains("NOPASSWD")
-                || combined.contains("automation")
-                || combined.contains("CI")
-                || combined.contains("--yes"),
-            "Should show helpful error for CI without sudo. Got: {}",
-            combined
-        );
-    }
-}
-
-#[test]
-fn regression_string_matching_error_detection() {
-    // Regression test for fragile string matching in error detection
-    // The bug was: error detection relied on exact string matches
-
-    // Detection is EXIT-CODE based (the pre-flight `sudo -n -v` validates
-    // credentials before any payload), so message wording/case can no longer
-    // dodge it. Pin that contract across every known sudo failure message:
-    let error_messages = [
-        "sudo: a password is required",
-        "sudo: permission denied",
-        "Permission denied",
-        "sudo: no tty present",
-    ];
-
-    let runner = TestRunner::new();
-    for msg in error_messages {
-        let result = runner.run_mock_sudo(&["-n", "omg", "update"], SudoScenario::PasswordRequired);
-        let _ = msg; // scenario output varies; the code path is what matters
-        assert_eq!(
-            result.exit_code, 1,
-            "password-required scenario must exit 1 regardless of message text ('{msg}')"
-        );
-        assert!(!result.success);
-    }
-}
-
-#[test]
-fn regression_exit_code_vs_string_detection() {
-    // Test that we detect password requirement via BOTH exit code AND error message
-    let runner = TestRunner::new();
-
-    let result = runner.run_mock_sudo(&["-n", "test-command"], SudoScenario::PasswordRequired);
-
-    // Should fail (exit code 1)
-    assert_eq!(
-        result.exit_code, 1,
-        "Exit code should be 1 for password required"
-    );
-
-    // Should have error message
-    assert!(!result.stderr.is_empty(), "Should have error message");
-
-    // Should contain password-related text
-    assert!(
-        result.stderr.contains("password")
-            || result.stderr.contains("permission")
-            || result.stderr.contains("tty"),
-        "Error should mention password/permission/tty. Got: {}",
-        result.stderr
-    );
-}
+// Regression coverage for the historical "sudo -n exit code 1 was not
+// detected, so CI runs hung on a password prompt" bug now lives in
+// `test_sudo_n_flag_fallback_on_password_required` above, which pins the
+// no-prompt + named-failure contract end to end.
 
 // ═══════════════════════════════════════════════════════════════════════════════
 // YES FLAG NON-INTERACTIVE SUDO TESTS
@@ -668,65 +547,4 @@ fn test_remove_command_parses_yes_flag() {
 
     let result = runner.run(&["remove", "--help"]);
     assert!(result.stdout.contains("--yes") || result.stdout.contains("-y"));
-}
-
-#[test]
-fn test_yes_flag_with_nopasswd_sudo() {
-    // Test scenario: --yes flag with NOPASSWD sudo configured
-    // This should work without password prompt
-    let runner = TestRunner::new();
-
-    // When NOPASSWD is configured, sudo -n succeeds
-    let result = runner.run_mock_sudo(
-        &["-n", "omg", "install", "test-package"],
-        SudoScenario::Success,
-    );
-
-    assert!(result.success, "Should succeed with NOPASSWD configured");
-}
-
-#[test]
-fn test_yes_flag_without_nopasswd_fails_clearly() {
-    // Test scenario: --yes flag without NOPASSWD sudo
-    // This should fail with clear error message, not prompt for password
-    let runner = TestRunner::new();
-
-    // When NOPASSWD is NOT configured, sudo -n fails
-    let result = runner.run_mock_sudo(
-        &["-n", "omg", "install", "test-package"],
-        SudoScenario::PasswordRequired,
-    );
-
-    assert!(!result.success, "Should fail when password required");
-
-    // Should mention non-interactive mode in error
-    let combined = result.combined_output();
-    assert!(
-        combined.contains("non-interactive")
-            || combined.contains("password")
-            || combined.contains("NOPASSWD"),
-        "Error should mention non-interactive mode or NOPASSWD. Got: {}",
-        combined
-    );
-}
-
-#[test]
-fn test_yes_flag_prevents_fallback_to_interactive() {
-    // Test that --yes flag does NOT fall back to interactive sudo
-    // This is critical for CI/CD scenarios
-    use omg_lib::core::privilege;
-
-    // Set yes flag to simulate --yes being passed
-    privilege::set_yes_flag(true);
-
-    // Verify it's set
-    assert!(privilege::get_yes_flag());
-
-    // Clear after test
-    privilege::set_yes_flag(false);
-
-    // In actual run_self_sudo with yes_flag=true:
-    // - Should use sudo -n
-    // - Should NOT fall back to interactive sudo on failure
-    // - Should fail with clear error message about NOPASSWD
 }

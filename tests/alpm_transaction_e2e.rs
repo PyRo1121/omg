@@ -74,7 +74,7 @@ fn test_alpm_transaction_prepare() {
 
     let harness = AlpmHarness::new().expect("Failed to create harness");
     harness
-        .add_sync_pkg("core", &HarnessPkg::new("ed", "1.20-1"))
+        .add_installable_sync_pkg("core", &HarnessPkg::new("ed", "1.20-1"))
         .expect("Failed to add package");
 
     let mut alpm = harness.alpm().expect("Failed to get handle");
@@ -91,9 +91,17 @@ fn test_alpm_transaction_prepare() {
         }
     }
 
-    // Prepare resolves dependencies - may fail in harness but should not panic
-    // Drop the result before release since PrepareError borrows alpm
-    drop(alpm.trans_prepare());
+    // "ed" is installable (desc carries %FILENAME%/sizes and a cached
+    // payload), so prepare must fully resolve the transaction instead of
+    // silently failing.
+    let prepared = alpm.trans_prepare();
+    assert!(
+        prepared.is_ok(),
+        "prepare must succeed for an installable target: {:?}",
+        prepared.err()
+    );
+    // Drop before release since PrepareError borrows alpm
+    drop(prepared);
     alpm.trans_release().expect("Should release transaction");
 }
 
@@ -201,6 +209,15 @@ fn test_alpm_package_version_comparison() {
                 std::cmp::Ordering::Equal,
                 "Version should equal itself"
             );
+            // Real installed versions are strictly greater than the lowest
+            // possible version, pinning that vercmp orders (not just compares
+            // reflexively) through omg's alpm handle.
+            let vs_zero = alpm::vercmp(version, "0");
+            assert_eq!(
+                vs_zero,
+                std::cmp::Ordering::Greater,
+                "installed version {version} must order greater than 0"
+            );
         }
         Ok(())
     })
@@ -213,7 +230,12 @@ fn test_alpm_dependency_chain_query() {
 
     omg_lib::package_managers::alpm_direct::with_handle(|alpm| {
         let localdb = alpm.localdb();
-        if let Ok(bash) = localdb.pkg("bash") {
+        // bash is an essential package on every Arch system; do not silently
+        // skip the assertions below when it is absent.
+        let bash = localdb
+            .pkg("bash")
+            .expect("bash must be installed on a real Arch system");
+        {
             let deps = bash.depends();
             assert!(!deps.is_empty(), "bash should have dependencies");
 
@@ -237,13 +259,18 @@ fn test_alpm_dependency_chain_query() {
 // =============================================================================
 
 #[test]
-fn test_alpm_log_callback() {
+fn test_alpm_log_callback_receives_transaction_events() {
     require_arch!();
 
     let log_count = Arc::new(AtomicU64::new(0));
 
     let harness = AlpmHarness::new().expect("Failed to create harness");
+    harness
+        .add_sync_pkg("core", &HarnessPkg::new("ed", "1.20-1"))
+        .expect("Failed to add package");
     let mut alpm = harness.alpm().expect("Failed to get handle");
+    alpm.register_syncdb("core", alpm::SigLevel::NONE)
+        .expect("Failed to register db");
 
     alpm.set_log_cb(Arc::clone(&log_count), |_level, _msg, counter| {
         counter.fetch_add(1, Ordering::Relaxed);
@@ -251,29 +278,29 @@ fn test_alpm_log_callback() {
 
     alpm.trans_init(alpm::TransFlag::empty())
         .expect("Should init");
+    for db in alpm.syncdbs() {
+        if let Ok(pkg) = db.pkg("ed") {
+            alpm.trans_add_pkg(pkg)
+                .expect("Should add pkg to transaction");
+            break;
+        }
+    }
+    // libalpm routes its dependency-resolution messages through the log
+    // callback during prepare, so the callback must have fired by now.
+    drop(alpm.trans_prepare());
     alpm.trans_release().expect("Should release");
-}
 
-#[test]
-fn test_alpm_progress_callback() {
-    require_arch!();
-
-    let counter = Arc::new(AtomicU64::new(0));
-
-    let harness = AlpmHarness::new().expect("Failed to create harness");
-    let mut alpm = harness.alpm().expect("Failed to get handle");
-
-    alpm.set_progress_cb(
-        Arc::clone(&counter),
-        |_op, _name, _percent, _n, _total, counter| {
-            counter.fetch_add(1, Ordering::Relaxed);
-        },
+    assert!(
+        log_count.load(Ordering::Relaxed) > 0,
+        "log callback must receive at least one message during prepare"
     );
-
-    alpm.trans_init(alpm::TransFlag::empty())
-        .expect("Should init");
-    alpm.trans_release().expect("Should release");
 }
+
+// NOTE: there is deliberately no progress-callback test here. Progress events
+// only fire during payload extraction inside `trans_commit`, which requires a
+// sync server and populated package cache that this desc-only harness cannot
+// provide; an unasserted counter would pass even if callbacks were never
+// delivered.
 
 // =============================================================================
 // EDGE CASE TESTS

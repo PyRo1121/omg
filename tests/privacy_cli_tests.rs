@@ -20,20 +20,23 @@ fn test_privacy_status_default() {
     init_test_env();
 
     // ===== ACT =====
+    // Bare `privacy` dispatches to Status (src/bin/omg.rs:901:
+    // `Some(PrivacyCommands::Status) | None => telemetry::privacy_status()`).
     let result = run_omg(&["privacy"]);
 
     // ===== ASSERT =====
-    // Should succeed and show privacy information
-    assert!(
-        result.success || result.contains("Privacy"),
-        "Privacy status command should succeed or show privacy info"
-    );
-
-    // Should mention key privacy concepts
+    // privacy_status always exits Ok and prints the settings header plus the
+    // rights list in BOTH the API-success and offline-fallback branches
+    // (src/cli/telemetry.rs:92 and :129/:146).
+    result.assert_success();
     let output = result.combined_output();
     assert!(
-        output.contains("privacy") || output.contains("Privacy"),
-        "Output should mention privacy: {output}"
+        output.contains("Privacy Settings"),
+        "Output should render the privacy settings header: {output}"
+    );
+    assert!(
+        output.contains("Your Rights:"),
+        "Output should render the user-rights section: {output}"
     );
 }
 
@@ -46,21 +49,12 @@ fn test_privacy_status_explicit() {
     let result = run_omg(&["privacy", "status"]);
 
     // ===== ASSERT =====
-    // Should succeed and show privacy information
-    assert!(
-        result.success || result.contains("Privacy"),
-        "Privacy status command should succeed"
-    );
-
+    // Same handler as bare `privacy`, dispatched through Some(Status).
+    result.assert_success();
     let output = result.combined_output();
-    // Should show privacy-related information
     assert!(
-        output.contains("privacy")
-            || output.contains("Privacy")
-            || output.contains("data")
-            || output.contains("telemetry")
-            || output.contains("rights"),
-        "Status should show privacy information: {output}"
+        output.contains("Privacy Settings"),
+        "Status should render the privacy settings header: {output}"
     );
 }
 
@@ -75,16 +69,14 @@ fn test_privacy_status_shows_commands() {
     // ===== ASSERT =====
     let output = result.combined_output();
 
-    // Should list available privacy commands
-    let has_commands = output.contains("export")
-        || output.contains("delete")
-        || output.contains("opt-out")
-        || output.contains("opt-in");
-
-    assert!(
-        has_commands,
-        "Status should show available privacy commands: {output}"
-    );
+    // The Commands footer lists ALL four subcommands unconditionally
+    // (src/cli/telemetry.rs:186-191); requiring each one pins the full list.
+    for command in ["export", "delete", "opt-out", "opt-in"] {
+        assert!(
+            output.contains(command),
+            "Status should list the '{command}' privacy command: {output}"
+        );
+    }
 }
 
 #[test]
@@ -138,31 +130,9 @@ fn test_privacy_export_without_license() {
     assert!(exported["remote"].is_null());
 }
 
-#[test]
-fn test_privacy_export_with_output_flag() {
-    // ===== ARRANGE =====
-    init_test_env();
-    clear_license();
-    let project = TestProject::new();
-    let output_path = project.path().join("my-export.json");
-
-    // ===== ACT =====
-    let result = project.run(&[
-        "privacy",
-        "export",
-        "--output",
-        output_path.to_str().unwrap(),
-    ]);
-
-    // ===== ASSERT =====
-    result.assert_success();
-    assert!(output_path.is_file(), "Export should honor the output path");
-    let output = result.combined_output();
-    assert!(
-        output.contains("export"),
-        "Should report export success: {output}"
-    );
-}
+// test_privacy_export_with_output_flag deleted (tst03): redundant duplicate of
+// test_privacy_export_without_license, which already pins --output handling more
+// strongly (parses the written file and checks the local/remote shape).
 
 #[test]
 fn test_privacy_export_help() {
@@ -196,46 +166,61 @@ fn test_privacy_delete_without_confirm() {
     init_test_env();
 
     // ===== ACT =====
+    // run_omg gives every invocation a fresh OMG_DATA_DIR, so there is no
+    // license. delete_data checks the license BEFORE the confirm gate
+    // (src/cli/telemetry.rs:284-286) and bails with a named error.
     let result = run_omg(&["privacy", "delete"]);
 
     // ===== ASSERT =====
-    // Should show warning and NOT proceed without --confirm
+    result.assert_failure();
     let output = result.combined_output();
-
-    // Should mention deletion/confirm/license (implementation requires license)
     assert!(
-        output.contains("confirm")
-            || output.contains("--confirm")
-            || output.contains("IRREVERSIBLE")
-            || output.contains("permanently")
-            || output.contains("delete")
-            || output.contains("license"),
-        "Should warn about deletion or license requirement: {output}"
+        output.contains("No license found"),
+        "Delete without a license must fail naming the missing license: {output}"
     );
 }
 
 #[test]
 fn test_privacy_delete_shows_warning_details() {
     // ===== ARRANGE =====
-    init_test_env();
+    // The deletion warning is only reachable WITH a license: delete_data bails
+    // on a missing license before the confirmation gate
+    // (src/cli/telemetry.rs delete_data). Seed a stored license — load_license
+    // accepts any well-formed license.json (src/core/license.rs:490) — so the
+    // pre-confirmation warning path is actually exercised.
+    let project = TestProject::new();
+    let license_path = project.data_dir.path().join("license.json");
+    fs::write(
+        &license_path,
+        serde_json::json!({
+            "key": "omg-test-license-key",
+            "tier": "pro",
+            "features": [],
+            "customer": null,
+            "expires_at": null,
+            "validated_at": 0,
+            "token": null,
+            "machine_id": null
+        })
+        .to_string(),
+    )
+    .expect("failed to seed license.json");
 
     // ===== ACT =====
-    let result = run_omg(&["privacy", "delete"]);
+    let result = project.run(&["privacy", "delete"]);
 
     // ===== ASSERT =====
+    // Without --confirm the command shows the irreversible-deletion warning and
+    // exits successfully without deleting anything (telemetry.rs:288-312).
+    result.assert_success();
     let output = result.combined_output();
-
-    // Should show delete-related messaging or license requirement
-    let has_details = output.contains("history")
-        || output.contains("metrics")
-        || output.contains("data")
-        || output.contains("permanently")
-        || output.contains("delete")
-        || output.contains("license");
-
     assert!(
-        has_details,
-        "Should show delete-related output or license requirement: {output}"
+        output.contains("IRREVERSIBLE"),
+        "Warning must state the action is IRREVERSIBLE: {output}"
+    );
+    assert!(
+        output.contains("--confirm"),
+        "Warning must name the --confirm flag: {output}"
     );
 }
 
@@ -249,11 +234,13 @@ fn test_privacy_delete_with_confirm_no_license() {
     let result = run_omg(&["privacy", "delete", "--confirm"]);
 
     // ===== ASSERT =====
-    // Should fail without a license
+    // Without a license, `delete --confirm` must FAIL with the named cause —
+    // not succeed silently and not merely print an unrelated warning.
+    result.assert_failure();
     let output = result.combined_output();
     assert!(
-        !result.success || output.contains("license") || output.contains("activate"),
-        "Delete should require license: {output}"
+        output.contains("No license found"),
+        "Delete --confirm without a license must fail naming the missing license: {output}"
     );
 }
 
@@ -292,14 +279,13 @@ fn test_privacy_opt_out() {
     let result = project.run(&["privacy", "opt-out"]);
 
     // ===== ASSERT =====
-    // Should succeed (works without license for local-only opt-out)
+    // Local opt-out is unconditional (src/cli/telemetry.rs opt_out_api) and
+    // always confirms with the "Telemetry disabled" banner.
+    result.assert_success();
     let output = result.combined_output();
     assert!(
-        output.contains("disabled")
-            || output.contains("opt")
-            || output.contains("telemetry")
-            || result.success,
-        "Opt-out should work and confirm telemetry disabled: {output}"
+        output.contains("Telemetry disabled"),
+        "Opt-out must confirm telemetry is disabled: {output}"
     );
 }
 
@@ -332,20 +318,19 @@ fn test_privacy_opt_out_updates_config() {
 fn test_privacy_opt_out_without_license_local_only() {
     // ===== ARRANGE =====
     let project = TestProject::new();
-    clear_license();
 
     // ===== ACT =====
     let result = project.run(&["privacy", "opt-out"]);
 
     // ===== ASSERT =====
-    // Should work locally even without license
+    // Without a license there is no server to sync with, so opt-out must
+    // succeed via the local-only path and say so
+    // (src/cli/telemetry.rs opt_out_api: response is None when unlicensed).
+    result.assert_success();
     let output = result.combined_output();
     assert!(
-        output.contains("disabled")
-            || output.contains("local")
-            || output.contains("telemetry")
-            || result.success,
-        "Opt-out should work locally without license: {output}"
+        output.contains("Telemetry disabled locally (server sync pending)"),
+        "Unlicensed opt-out must disable locally and report pending server sync: {output}"
     );
 }
 
@@ -380,11 +365,13 @@ fn test_privacy_opt_in() {
     let result = project.run(&["privacy", "opt-in"]);
 
     // ===== ASSERT =====
-    // Should succeed
+    // Opt-in succeeds and confirms with the "Telemetry enabled" banner
+    // (src/cli/telemetry.rs opt_in_api).
+    result.assert_success();
     let output = result.combined_output();
     assert!(
-        output.contains("enabled") || output.contains("telemetry") || result.success,
-        "Opt-in should work and confirm telemetry enabled: {output}"
+        output.contains("Telemetry enabled"),
+        "Opt-in must confirm telemetry is enabled: {output}"
     );
 }
 
@@ -397,22 +384,20 @@ fn test_privacy_opt_in_updates_config() {
     let result = project.run(&["privacy", "opt-in"]);
 
     // ===== ASSERT =====
-    // Should succeed and update config
-    let output = result.combined_output();
-    assert!(
-        result.success || output.contains("enabled") || output.contains("telemetry"),
-        "Opt-in should succeed: {output}"
-    );
+    result.assert_success();
 
-    // Check that config file was created/updated
-    let config_path = project.config_dir.path().join("omg").join("config.toml");
-    if config_path.exists() {
-        let config_content = fs::read_to_string(&config_path).unwrap();
-        assert!(
-            config_content.contains("telemetry") || config_content.contains("true"),
-            "Config should reflect telemetry enabled"
-        );
-    }
+    // FALSIFIABLE: Settings::save writes to <config_dir>/config.toml
+    // (src/config/settings.rs config_path; OMG_CONFIG_DIR is used verbatim,
+    // src/core/paths.rs config_dir). The old version looked for a nonexistent
+    // omg/config.toml nested path wrapped in `if exists()`, so it never
+    // asserted anything.
+    let config_path = project.config_dir.path().join("config.toml");
+    let config_content = fs::read_to_string(&config_path)
+        .unwrap_or_else(|error| panic!("config must exist after opt-in: {error}"));
+    assert!(
+        config_content.contains("telemetry_enabled = true"),
+        "config must persist telemetry enabled, got: {config_content}"
+    );
 }
 
 #[test]
@@ -441,29 +426,27 @@ fn test_privacy_opt_in_help() {
 fn test_privacy_toggle_opt_out_then_opt_in() {
     // ===== ARRANGE =====
     let project = TestProject::new();
+    let config_path = project.config_dir.path().join("config.toml");
 
     // ===== ACT & ASSERT =====
-    // First opt-out
+    // First opt-out: succeeds and persists telemetry_enabled = false.
     let result1 = project.run(&["privacy", "opt-out"]);
-    let output1 = result1.combined_output();
+    result1.assert_success();
+    let config1 = fs::read_to_string(&config_path)
+        .unwrap_or_else(|error| panic!("config must exist after opt-out: {error}"));
     assert!(
-        output1.contains("disabled")
-            || output1.contains("telemetry")
-            || output1.contains("local")
-            || output1.contains("opt-out")
-            || result1.success,
-        "First opt-out should process: {output1}"
+        config1.contains("telemetry_enabled = false"),
+        "after opt-out the config must disable telemetry, got: {config1}"
     );
 
-    // Then opt-in
+    // Then opt-in: flips the persisted state back to true.
     let result2 = project.run(&["privacy", "opt-in"]);
-    let output2 = result2.combined_output();
+    result2.assert_success();
+    let config2 = fs::read_to_string(&config_path)
+        .unwrap_or_else(|error| panic!("config must survive opt-in: {error}"));
     assert!(
-        output2.contains("enabled")
-            || output2.contains("telemetry")
-            || output2.contains("opt-in")
-            || result2.success,
-        "Opt-in after opt-out should process: {output2}"
+        config2.contains("telemetry_enabled = true"),
+        "after opt-in the config must enable telemetry, got: {config2}"
     );
 }
 
@@ -471,29 +454,27 @@ fn test_privacy_toggle_opt_out_then_opt_in() {
 fn test_privacy_toggle_opt_in_then_opt_out() {
     // ===== ARRANGE =====
     let project = TestProject::new();
+    let config_path = project.config_dir.path().join("config.toml");
 
     // ===== ACT & ASSERT =====
-    // First opt-in
+    // First opt-in: succeeds and persists telemetry_enabled = true.
     let result1 = project.run(&["privacy", "opt-in"]);
-    let output1 = result1.combined_output();
+    result1.assert_success();
+    let config1 = fs::read_to_string(&config_path)
+        .unwrap_or_else(|error| panic!("config must exist after opt-in: {error}"));
     assert!(
-        output1.contains("enabled")
-            || output1.contains("telemetry")
-            || output1.contains("opt-in")
-            || result1.success,
-        "Opt-in should process: {output1}"
+        config1.contains("telemetry_enabled = true"),
+        "after opt-in the config must enable telemetry, got: {config1}"
     );
 
-    // Then opt-out
+    // Then opt-out: flips the persisted state back to false.
     let result2 = project.run(&["privacy", "opt-out"]);
-    let output2 = result2.combined_output();
+    result2.assert_success();
+    let config2 = fs::read_to_string(&config_path)
+        .unwrap_or_else(|error| panic!("config must survive opt-out: {error}"));
     assert!(
-        output2.contains("disabled")
-            || output2.contains("telemetry")
-            || output2.contains("local")
-            || output2.contains("opt-out")
-            || result2.success,
-        "Opt-out after opt-in should process: {output2}"
+        config2.contains("telemetry_enabled = false"),
+        "after opt-out the config must disable telemetry, got: {config2}"
     );
 }
 
@@ -507,22 +488,24 @@ fn test_privacy_opt_out_with_env_override() {
     let project = TestProject::new();
 
     // ===== ACT =====
-    // Set environment variable that forces telemetry on
+    // OMG_TELEMETRY=1 must not block a local opt-out: opt_out_api disables
+    // telemetry unconditionally in the saved settings
+    // (src/cli/telemetry.rs opt_out_api; env vars only affect
+    // is_telemetry_opt_out reads, src/core/telemetry.rs:85).
     let result = project.run_with_env(&["privacy", "opt-out"], &[("OMG_TELEMETRY", "1")]);
 
     // ===== ASSERT =====
-    // Should still process opt-out command (may show license warning)
+    result.assert_success();
     let output = result.combined_output();
     assert!(
-        output.contains("disabled")
-            || output.contains("telemetry")
-            || output.contains("environment")
-            || output.contains("env")
-            || output.contains("license")
-            || output.contains("local")
-            || output.contains("opt-out")
-            || result.success,
-        "Should process opt-out command: {output}"
+        output.contains("Telemetry disabled"),
+        "Opt-out must confirm telemetry disabled even with OMG_TELEMETRY=1: {output}"
+    );
+    let config_content = fs::read_to_string(project.config_dir.path().join("config.toml"))
+        .expect("config must exist after opt-out");
+    assert!(
+        config_content.contains("telemetry_enabled = false"),
+        "env override must not prevent persisting the opt-out, got: {config_content}"
     );
 }
 
@@ -535,14 +518,15 @@ fn test_privacy_status_shows_env_override() {
     let result = project.run_with_env(&["privacy", "status"], &[("OMG_TELEMETRY", "0")]);
 
     // ===== ASSERT =====
+    // WRONG-CONTRACT fix: `privacy status` never renders an "Environment"
+    // line — that text lives in cli::telemetry::status, which no command
+    // reaches. The honest observable contract is that status still succeeds
+    // and renders its header with the override set.
+    result.assert_success();
     let output = result.combined_output();
-    // Should indicate environment variable is set
     assert!(
-        output.contains("environment")
-            || output.contains("env")
-            || output.contains("OMG_TELEMETRY")
-            || result.success,
-        "Status should show environment variable override: {output}"
+        output.contains("Privacy Settings"),
+        "Status must render normally with OMG_TELEMETRY set: {output}"
     );
 }
 
@@ -559,17 +543,16 @@ fn test_privacy_status_json_output() {
     let result = run_omg(&["--json", "privacy", "status"]);
 
     // ===== ASSERT =====
-    if result.success {
-        let output = result.combined_output();
-        // If JSON mode is implemented, output should be valid JSON
-        if output.trim().starts_with('{') || output.trim().starts_with('[') {
-            let parse_result = serde_json::from_str::<serde_json::Value>(&output);
-            assert!(
-                parse_result.is_ok(),
-                "JSON output should be valid JSON: {output}"
-            );
-        }
-    }
+    // The global --json gate explicitly allowlists `privacy` and documents it
+    // as the scripted JSON entrypoint (src/bin/omg.rs dispatch_command), so a
+    // scripted caller must get exit-code success. NOTE: the handler currently
+    // renders human-readable text even under --json; that gap is recorded as a
+    // SUSPECTED PRODUCT BUG in the tst03 report rather than asserted here.
+    result.assert_success();
+    assert!(
+        !result.combined_output().trim().is_empty(),
+        "--json privacy status must produce output"
+    );
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
@@ -613,11 +596,14 @@ fn test_privacy_export_invalid_output_path() {
     ]);
 
     // ===== ASSERT =====
-    // Should fail (either due to no license or invalid path)
+    // Export without a license skips the remote API and fails locally when the
+    // output path is unwritable (src/cli/telemetry.rs export_data ->
+    // atomic_write_file_sync).
+    result.assert_failure();
     let output = result.combined_output();
     assert!(
-        !result.success,
-        "Should fail with invalid output path or no license: {output}"
+        output.contains("Error") || output.contains("Failed"),
+        "Failure must name its cause, not vanish silently: {output}"
     );
 }
 
@@ -638,12 +624,23 @@ fn test_privacy_delete_confirm_flag_variations() {
         let result = run_omg(&args);
 
         // ===== ASSERT =====
-        // All should attempt to process the deletion (will fail without license)
+        // `--confirm` reaches the license gate and fails naming its cause
+        // (fresh data dir per run => no license exists). clap's SetTrue action
+        // rejects an explicit value, so `--confirm=true` must fail with a
+        // usage error instead of being silently accepted.
+        result.assert_failure();
         let output = result.combined_output();
-        assert!(
-            output.contains("delete") || output.contains("license") || output.contains("activate"),
-            "Should process delete with confirm flag: {args:?} -> {output}"
-        );
+        if *args.last().unwrap() == "--confirm" {
+            assert!(
+                output.contains("No license found"),
+                "{args:?} must fail naming the missing license: {output}"
+            );
+        } else {
+            assert!(
+                output.contains("unexpected value") && output.contains("--confirm"),
+                "{args:?} must be rejected as invalid flag syntax: {output}"
+            );
+        }
     }
 }
 
@@ -661,35 +658,33 @@ fn test_privacy_commands_work_offline() {
 
     // ===== ACT & ASSERT =====
 
-    // Status should work offline (shows local status)
+    // Status works offline: both the API-success and fallback branches print
+    // the rights section and commands footer (src/cli/telemetry.rs:129/:146
+    // and :186-191), so these strings are network-independent.
     let result = project.run(&["privacy", "status"]);
+    result.assert_success();
     let output = result.combined_output();
     assert!(
-        result.success || output.contains("privacy") || output.contains("telemetry"),
-        "Status should work offline: {output}"
+        output.contains("Your Rights:") && output.contains("privacy export"),
+        "Status must render rights and commands regardless of API reachability: {output}"
     );
 
-    // Opt-out should work offline (local config change, may show license warning)
+    // Opt-out works offline: local config change succeeds unconditionally.
     let result = project.run(&["privacy", "opt-out"]);
+    result.assert_success();
     let output = result.combined_output();
     assert!(
-        result.success
-            || output.contains("disabled")
-            || output.contains("telemetry")
-            || output.contains("local")
-            || output.contains("opt-out"),
-        "Opt-out should work offline (locally): {output}"
+        output.contains("Telemetry disabled"),
+        "Opt-out must succeed offline: {output}"
     );
 
-    // Opt-in should work offline (local config change)
+    // Opt-in works offline: local config change succeeds unconditionally.
     let result = project.run(&["privacy", "opt-in"]);
+    result.assert_success();
     let output = result.combined_output();
     assert!(
-        result.success
-            || output.contains("enabled")
-            || output.contains("telemetry")
-            || output.contains("opt-in"),
-        "Opt-in should work offline: {output}"
+        output.contains("Telemetry enabled"),
+        "Opt-in must succeed offline: {output}"
     );
 }
 
@@ -706,11 +701,12 @@ fn test_privacy_status_verbose() {
     let result = run_omg(&["-v", "privacy", "status"]);
 
     // ===== ASSERT =====
-    // Verbose mode should still show privacy info
+    // Verbose mode must not change the command's outcome or suppress output.
+    result.assert_success();
     let output = result.combined_output();
     assert!(
-        result.success || output.contains("privacy") || output.contains("Privacy"),
-        "Verbose mode should work: {output}"
+        output.contains("Privacy Settings"),
+        "Verbose mode must still render privacy status: {output}"
     );
 }
 
@@ -723,12 +719,13 @@ fn test_privacy_status_quiet() {
     let result = run_omg(&["--quiet", "privacy", "status"]);
 
     // ===== ASSERT =====
-    // Quiet mode should still execute the command
-    // (actual quiet behavior implementation may vary)
+    // --quiet suppresses non-essential output but "command results still
+    // print" (src/cli/args.rs:31-33), so the status body must survive.
+    result.assert_success();
     let output = result.combined_output();
     assert!(
-        result.success || !output.is_empty(),
-        "Quiet mode should execute without crashing: {output}"
+        output.contains("Privacy Settings"),
+        "Quiet mode must keep command results: {output}"
     );
 }
 

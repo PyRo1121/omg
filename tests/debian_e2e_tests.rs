@@ -19,6 +19,10 @@ use platform_semantics::assert_no_arch_terms;
 use tempfile::TempDir;
 
 // Import modules under test
+#[cfg(feature = "docker_tests")]
+use omg_lib::package_managers::debian_db::resolver::DependencyResolver;
+#[cfg(feature = "docker_tests")]
+use omg_lib::package_managers::debian_db::sources::get_enabled_binary_repos;
 use omg_lib::package_managers::debian_db::transaction::dry_run;
 use omg_lib::package_managers::debian_db::{
     RepoType, Repository, ResolutionResult, Transaction, TransactionState, compare_versions,
@@ -400,23 +404,26 @@ fn test_resolver_simple_package() {
     // This test requires a real Debian/Ubuntu system with package database
     let mut resolver = match DependencyResolver::new() {
         Ok(r) => r,
-        Err(_) => {
-            eprintln!("Skipping test: no package database available");
+        Err(e) => {
+            common::report_skip(&format!(
+                "DependencyResolver unavailable in this environment: {e:#}"
+            ));
             return;
         }
     };
 
-    // Try to resolve a common package
-    if resolver.add_package("curl").is_ok() {
-        let result = resolver.resolve();
-        assert!(result.is_ok(), "Should resolve curl and its dependencies");
-
-        let resolution = result.unwrap();
-        assert!(
-            !resolution.to_install.is_empty() || !resolution.to_upgrade.is_empty(),
-            "Should have packages to install or upgrade"
-        );
-    }
+    // curl must be resolvable on a real Debian database; resolution must
+    // produce concrete work (installs and/or upgrades).
+    resolver
+        .add_package("curl")
+        .expect("curl must exist in a populated Debian package database");
+    let resolution = resolver
+        .resolve()
+        .expect("Should resolve curl and its dependencies");
+    assert!(
+        !resolution.to_install.is_empty() || !resolution.to_upgrade.is_empty(),
+        "Should have packages to install or upgrade"
+    );
 }
 
 #[test]
@@ -424,9 +431,12 @@ fn test_resolver_simple_package() {
 fn test_resolver_missing_package() {
     let mut resolver = match DependencyResolver::new() {
         Ok(r) => r,
-        Err(e) => common::report_skip(&format!(
-            "DependencyResolver unavailable in this environment: {e:#}"
-        )),
+        Err(e) => {
+            common::report_skip(&format!(
+                "DependencyResolver unavailable in this environment: {e:#}"
+            ));
+            return;
+        }
     };
 
     let result = resolver.add_package("this-package-definitely-does-not-exist-12345");
@@ -438,21 +448,26 @@ fn test_resolver_missing_package() {
 fn test_resolver_with_dependencies() {
     let mut resolver = match DependencyResolver::new() {
         Ok(r) => r,
-        Err(e) => common::report_skip(&format!(
-            "DependencyResolver unavailable in this environment: {e:#}"
-        )),
+        Err(e) => {
+            common::report_skip(&format!(
+                "DependencyResolver unavailable in this environment: {e:#}"
+            ));
+            return;
+        }
     };
 
-    // vim has dependencies like libacl, libc6, etc.
-    if resolver.add_package("vim").is_ok() {
-        if let Ok(result) = resolver.resolve() {
-            // Should include vim and its dependencies
-            assert!(
-                result.to_install.len() >= 1,
-                "Should resolve at least vim itself"
-            );
-        }
-    }
+    // vim has dependencies like libacl, libc6, etc.; both steps must succeed
+    // on a real Debian database — silent skips would hide resolver breakage.
+    resolver
+        .add_package("vim")
+        .expect("vim must exist in a populated Debian package database");
+    let result = resolver
+        .resolve()
+        .expect("dependency resolution should succeed");
+    assert!(
+        result.to_install.len() >= 1,
+        "Should resolve at least vim itself"
+    );
 }
 
 #[test]
@@ -461,28 +476,31 @@ fn test_resolver_topological_sort() {
     // Test that dependencies are ordered correctly (dependencies before dependents)
     let mut resolver = match DependencyResolver::new() {
         Ok(r) => r,
-        Err(e) => common::report_skip(&format!(
-            "DependencyResolver unavailable in this environment: {e:#}"
-        )),
+        Err(e) => {
+            common::report_skip(&format!(
+                "DependencyResolver unavailable in this environment: {e:#}"
+            ));
+            return;
+        }
     };
 
-    if resolver.add_package("git").is_ok() {
-        if let Ok(result) = resolver.resolve() {
-            // Verify topological order: if package A depends on B,
-            // B should appear before A in to_install list
-            // This is a property of the topological sort
-            let install_list = result.to_install;
-
-            // Basic sanity: should have multiple packages
-            if install_list.len() > 1 {
-                println!("Install order: {:?}", install_list);
-                // Dependencies should be installed first
-                // (Hard to test precisely without parsing actual deps,
-                // but we can check the list is non-empty and ordered)
-                assert!(!install_list.is_empty());
-            }
-        }
-    }
+    // git pulls in library dependencies; the resolved install list must be a
+    // non-empty plan that actually contains the requested package.
+    resolver
+        .add_package("git")
+        .expect("git must exist in a populated Debian package database");
+    let result = resolver
+        .resolve()
+        .expect("dependency resolution should succeed");
+    let install_list = result.to_install;
+    assert!(
+        !install_list.is_empty(),
+        "Resolving 'git' should produce at least one package to install"
+    );
+    assert!(
+        install_list.iter().any(|package| package == "git"),
+        "The resolved plan must contain 'git' itself, got: {install_list:?}"
+    );
 }
 
 // ============================================================================
@@ -598,7 +616,7 @@ fn test_full_workflow_search_resolve_transaction() {
     let repos = match get_enabled_binary_repos() {
         Ok(r) if !r.is_empty() => r,
         _ => {
-            eprintln!("Skipping: no repositories configured");
+            common::report_skip("no repositories configured");
             return;
         }
     };
@@ -608,23 +626,34 @@ fn test_full_workflow_search_resolve_transaction() {
     let mut resolver = match DependencyResolver::new() {
         Ok(r) => r,
         Err(e) => {
-            eprintln!("Skipping: cannot create resolver: {}", e);
+            common::report_skip(&format!("cannot create resolver: {e}"));
             return;
         }
     };
 
-    // Try to resolve a small package
-    if resolver.add_package("hello").is_ok() {
-        if let Ok(result) = resolver.resolve() {
-            let tx = Transaction::from_resolution(result.clone()).expect("content store init");
-
-            assert!(tx.package_count() > 0);
-            assert_eq!(tx.state, TransactionState::Pending);
-
-            let dry_run_output = dry_run(&result);
-            assert!(dry_run_output.contains("hello") || !result.to_install.is_empty());
-        }
+    if resolver.add_package("hello").is_err() {
+        common::report_skip("'hello' not available in the configured repositories");
+        return;
     }
+
+    let result = resolver
+        .resolve()
+        .expect("dependency resolution should succeed");
+
+    // The dry-run plan must be a non-empty rendering of that resolution.
+    let dry_run_output = dry_run(&result);
+    assert!(
+        !dry_run_output.trim().is_empty(),
+        "Dry run should print a transaction plan"
+    );
+
+    // ResolutionResult is not Clone: consume it last.
+    let tx = Transaction::from_resolution(result).expect("content store init");
+    assert!(
+        tx.package_count() > 0,
+        "Resolution should produce work for 'hello'"
+    );
+    assert_eq!(tx.state, TransactionState::Pending);
 }
 
 // ============================================================================
@@ -687,33 +716,78 @@ fn run_omg_debian(args: &[&str], extra_env: &[(&str, &str)]) -> CommandResult {
     common::run_omg_with_env(args, &env)
 }
 
-#[test]
-fn test_cli_search_on_debian() {
-    let result = run_omg_cli(&["search", "curl"]);
-    // May or may not succeed depending on setup - just check it doesn't panic
-    let _ = result.success;
-
-    let combined = format!("{}{}", result.stdout, result.stderr);
+/// Known-good no-panic contract: a command may legitimately fail, but it must
+/// never panic ("panicked at" in its output) or die via the Rust abort path
+/// (exit code 101).
+fn assert_runs_without_panic(result: &CommandResult, context: &str) {
+    let combined = result.combined_output();
     assert!(
         !combined.contains("panicked"),
-        "Search should not panic on Debian"
+        "{context} panicked:\n{combined}"
     );
+    assert_ne!(
+        result.exit_code, 101,
+        "{context} exited with panic code 101:\n{combined}"
+    );
+}
+
+/// Dual-path contract: depending on the host environment (mock index vs. a
+/// populated Debian database) a command may legitimately succeed or fail, but
+/// BOTH paths must show concrete work — the documented success marker or a
+/// named failure cause. A silent exit on either side is a bug.
+fn assert_dual_path_contract(
+    result: &CommandResult,
+    success_marker: &str,
+    failure_marker: &str,
+    context: &str,
+) {
+    assert_runs_without_panic(result, context);
+    let output = result.combined_output();
+    if result.success {
+        assert!(
+            output.contains(success_marker),
+            "{context}: success must render '{success_marker}', got: {output}"
+        );
+    } else {
+        assert!(
+            output.contains(failure_marker),
+            "{context}: failure must name its cause ('{failure_marker}'), got: {output}"
+        );
+    }
+}
+
+#[test]
+fn test_cli_search_on_debian() {
+    // Known mock package: MockPackageDb::debian_defaults always contains
+    // `git` (src/package_managers/mock.rs), and search exits 0 either way.
+    let hit = run_omg_cli(&["search", "git"]);
+    hit.assert_success();
+    hit.assert_stdout_contains("Search Results");
+    hit.assert_stdout_contains("git");
+
+    // Unknown/virtual package: graceful empty result with an explicit notice,
+    // not an error and not silence.
+    let miss = run_omg_cli(&["search", "this-package-does-not-exist-xyz"]);
+    miss.assert_success();
+    miss.assert_stdout_contains("No results found");
 }
 
 #[test]
 fn test_cli_info_debian_package() {
     let result = run_omg_cli(&["info", "apt"]);
-
-    let combined = format!("{}{}", result.stdout, result.stderr);
-    assert!(
-        !combined.contains("panicked"),
-        "Info should work on Debian packages"
-    );
-
+    // Dual-path: with a resolvable package the info pane shows details; without
+    // one the failure names the missing package.
+    assert_runs_without_panic(&result, "info apt");
+    let combined = result.combined_output();
     if result.success {
         assert!(
             combined.contains("apt") || combined.contains("Version"),
-            "Should show package information"
+            "Successful info must show package details: {combined}"
+        );
+    } else {
+        assert!(
+            combined.contains("not found"),
+            "Failed info must name the missing-package cause: {combined}"
         );
     }
 }
@@ -721,237 +795,161 @@ fn test_cli_info_debian_package() {
 #[test]
 fn test_cli_install_debian_package_dry_run() {
     let result = run_omg_cli(&["install", "--dry-run", "curl"]);
-
-    let combined = format!("{}{}", result.stdout, result.stderr);
-    assert!(
-        !combined.contains("panicked"),
-        "Install dry-run should work on Debian"
+    // Dual-path: an available index renders the Install Preview table; a
+    // missing/unresolvable package fails naming the cause.
+    assert_dual_path_contract(
+        &result,
+        "Install Preview",
+        "Error",
+        "Debian install dry-run",
     );
-    assert_no_arch_terms(&combined, "Debian dry-run");
+    assert_no_arch_terms(&result.combined_output(), "Debian dry-run");
 }
 
 #[test]
 fn test_cli_update_check_debian() {
     let result = run_omg_cli(&["update", "--check"]);
+    assert_runs_without_panic(&result, "update --check");
+    assert_no_arch_terms(&result.combined_output(), "Debian update check");
 
-    let combined = format!("{}{}", result.stdout, result.stderr);
-    assert!(
-        !combined.contains("panicked"),
-        "Update check should work on Debian"
-    );
-    assert_no_arch_terms(&combined, "Debian update check");
-
-    // Should not require password for check
+    // Update check is a read-only operation: it must never escalate.
+    let combined = result.combined_output();
     assert!(
         !combined.contains("[sudo]") && !combined.contains("Password:"),
-        "Update check should not require sudo"
+        "Update check should not require sudo: {combined}"
+    );
+
+    // Success must state one of the documented outcomes.
+    result.assert_success();
+    assert!(
+        combined.contains("up to date")
+            || combined.contains("upgraded")
+            || combined.contains("update"),
+        "Update check must report its outcome: {combined}"
     );
 }
 
 #[test]
 fn test_cli_status_shows_debian_info() {
     let result = run_omg_cli(&["status"]);
-
-    let combined = format!("{}{}", result.stdout, result.stderr);
-    assert!(
-        !combined.contains("panicked"),
-        "Status should work on Debian"
-    );
+    // Dual-path: success renders the System Status overview; failure names its
+    // cause instead of exiting silently.
+    assert_dual_path_contract(&result, "System Status", "Error", "Debian status");
 }
 
 #[test]
 fn test_cli_list_installed_debian() {
-    let result = run_omg_cli(&["list", "--installed"]);
+    // Stateful contract: a mock-installed package shows up as explicitly
+    // installed. The installed-package listing command is `explicit`
+    // (src/cli/args.rs Explicit); the old `list --installed` invocation was
+    // rejected by clap as an unknown argument.
+    let data = TempDir::new().expect("temp data dir");
+    let data_env = [("OMG_DATA_DIR", data.path().to_str().expect("utf8 path"))];
 
-    let combined = format!("{}{}", result.stdout, result.stderr);
-    assert!(!combined.contains("panicked"), "List should work on Debian");
+    let install = run_omg_debian(&["install", "-y", "git"], &data_env);
+    install.assert_success();
 
-    if result.success {
-        // Should show at least some packages
-        assert!(combined.len() > 20, "Should list some installed packages");
-    }
+    let listing = run_omg_debian(&["explicit"], &data_env);
+    listing.assert_success();
+    let output = listing.combined_output();
+    assert!(
+        output.contains("Explicit Packages"),
+        "Explicit listing must render its header: {output}"
+    );
+    assert!(
+        output.contains("git"),
+        "Mock-installed 'git' must appear in the explicit listing: {output}"
+    );
 }
 
 #[test]
 fn test_cli_install_multiple_debian_packages() {
     let result = run_omg_cli(&["install", "--dry-run", "curl", "wget", "git"]);
-
-    let combined = format!("{}{}", result.stdout, result.stderr);
-    assert!(
-        !combined.contains("panicked"),
-        "Multi-package install should work"
+    assert_dual_path_contract(
+        &result,
+        "Install Preview",
+        "Error",
+        "Debian multi-package install dry-run",
     );
-    assert_no_arch_terms(&combined, "Debian multi-package install dry-run");
-}
-
-#[test]
-fn test_cli_handles_debian_version_strings() {
-    // Debian version strings can be complex (epoch, revision, etc.)
-    let result = run_omg_cli(&["info", "libc6"]);
-
-    let combined = format!("{}{}", result.stdout, result.stderr);
-    assert!(
-        !combined.contains("panicked"),
-        "Should handle complex version strings"
+    assert_no_arch_terms(
+        &result.combined_output(),
+        "Debian multi-package install dry-run",
     );
 }
 
-#[test]
-fn test_cli_debian_dependency_resolution() {
-    // Install package with many dependencies
-    let result = run_omg_cli(&["install", "--dry-run", "build-essential"]);
+// test_cli_handles_debian_version_strings deleted (tst03): redundant duplicate
+// of test_cli_info_debian_package (same `info` command, same no-panic contract).
 
-    let combined = format!("{}{}", result.stdout, result.stderr);
-    assert!(
-        !combined.contains("panicked"),
-        "Should handle dependency resolution"
-    );
+// test_cli_debian_dependency_resolution deleted (tst03): redundant duplicate of
+// test_cli_install_debian_package_dry_run (same command family, weaker
+// assertion that passed on any successful output).
 
-    if result.success {
-        // Should show dependencies
-        assert!(
-            combined.contains("depend")
-                || combined.contains("install")
-                || combined.contains("build-essential"),
-            "Should show dependency information"
-        );
-    }
-}
+// test_cli_debian_sources_list_parsing and test_cli_debian_ppa_style_repos
+// deleted (tst03): both were bare no-panic probes over `search`, now covered
+// with concrete contracts by test_cli_search_on_debian.
 
-#[test]
-fn test_cli_debian_sources_list_parsing() {
-    // This indirectly tests sources.list parsing via search
-    let result = run_omg_cli(&["search", "nginx"]);
-
-    let combined = format!("{}{}", result.stdout, result.stderr);
-    assert!(
-        !combined.contains("panicked"),
-        "Should parse sources.list correctly"
-    );
-}
-
-#[test]
-fn test_cli_debian_ppa_style_repos() {
-    // Test that we handle PPA-style sources gracefully
-    let result = run_omg_cli(&["search", "software"]);
-
-    let combined = format!("{}{}", result.stdout, result.stderr);
-    assert!(
-        !combined.contains("panicked"),
-        "Should handle PPA-style repos"
-    );
-}
-
-#[test]
-fn test_cli_debian_security_updates() {
-    let result = run_omg_cli(&["update", "--check"]);
-
-    let combined = format!("{}{}", result.stdout, result.stderr);
-    assert!(
-        !combined.contains("panicked"),
-        "Should handle security updates"
-    );
-    assert_no_arch_terms(&combined, "Debian security update path");
-}
+// test_cli_debian_security_updates, test_cli_debian_handles_held_packages and
+// test_cli_debian_handles_slow_mirrors deleted (tst03): all three ran the same
+// `update --check` invocation as test_cli_update_check_debian with only a
+// no-panic assertion; the concrete contracts live there.
 
 #[test]
 fn test_cli_debian_remove_dry_run() {
     let result = run_omg_cli(&["remove", "--dry-run", "curl"]);
-
-    let combined = format!("{}{}", result.stdout, result.stderr);
-    assert!(
-        !combined.contains("panicked"),
-        "Remove should work in dry-run"
-    );
-    assert_no_arch_terms(&combined, "Debian remove dry-run");
+    // Dual-path: a resolvable index renders the Remove Preview; otherwise the
+    // failure names its cause.
+    assert_dual_path_contract(&result, "Remove Preview", "Error", "Debian remove dry-run");
+    assert_no_arch_terms(&result.combined_output(), "Debian remove dry-run");
 }
 
-#[test]
-fn test_cli_debian_handles_held_packages() {
-    // Test that held packages are handled correctly
-    let result = run_omg_cli(&["update", "--check"]);
-
-    let combined = format!("{}{}", result.stdout, result.stderr);
-    assert!(
-        !combined.contains("panicked"),
-        "Should handle held packages"
-    );
-    assert_no_arch_terms(&combined, "Debian held-package update path");
-}
-
-#[test]
-fn test_cli_debian_virtual_packages() {
-    // Test virtual packages (provided by other packages)
-    let result = run_omg_cli(&["search", "mail-transport-agent"]);
-
-    let combined = format!("{}{}", result.stdout, result.stderr);
-    assert!(
-        !combined.contains("panicked"),
-        "Should handle virtual packages"
-    );
-}
+// test_cli_debian_virtual_packages deleted (tst03): its unknown/virtual-package
+// search probe is folded into test_cli_search_on_debian with a concrete
+// "No results found" contract.
 
 #[test]
 fn test_cli_debian_package_not_found() {
     let result = run_omg_cli(&["install", "-y", "this-package-does-not-exist-xyz"]);
 
-    let combined = format!("{}{}", result.stdout, result.stderr);
-    assert!(!result.success, "Should fail for nonexistent package");
+    let combined = result.combined_output();
+    result.assert_failure();
     assert_no_arch_terms(&combined, "Debian install failure path");
     assert!(
         combined.contains("not found") || combined.contains("Unable"),
-        "Should show helpful error message"
+        "Should show helpful error message: {combined}"
     );
 }
 
 #[test]
 fn test_cli_debian_install_with_recommends() {
-    // Debian has recommended packages
+    // Debian has recommended packages; the dry-run must either render the
+    // preview table or name why it could not resolve.
     let result = run_omg_cli(&["install", "--dry-run", "vim"]);
-
-    let combined = format!("{}{}", result.stdout, result.stderr);
-    assert!(
-        !combined.contains("panicked"),
-        "Should handle recommended packages"
+    assert_dual_path_contract(
+        &result,
+        "Install Preview",
+        "Error",
+        "Debian vim install dry-run",
     );
 }
 
-#[test]
-fn test_cli_debian_architecture_handling() {
-    // Test that we correctly handle architecture-specific packages
-    let result = run_omg_cli(&["search", "libc6"]);
-
-    let combined = format!("{}{}", result.stdout, result.stderr);
-    assert!(
-        !combined.contains("panicked"),
-        "Should handle architecture correctly"
-    );
-}
-
-#[test]
-fn test_cli_debian_multi_arch_support() {
-    // Debian supports multiple architectures
-    let result = run_omg_cli(&["info", "libc6"]);
-
-    let combined = format!("{}{}", result.stdout, result.stderr);
-    assert!(
-        !combined.contains("panicked"),
-        "Should handle multi-arch packages"
-    );
-}
+// test_cli_debian_architecture_handling and test_cli_debian_multi_arch_support
+// deleted (tst03): bare no-panic duplicates of the search/info contracts now
+// pinned concretely in test_cli_search_on_debian / test_cli_info_debian_package.
 
 #[test]
 fn test_cli_debian_error_recovery() {
-    // Test error recovery by running multiple failing commands
+    // Each nonexistent package must be rejected with a named error — and the
+    // CLI must keep working across repeated failures.
     for i in 0..5 {
         let result = run_omg_cli(&["install", "-y", &format!("fake-pkg-{i}")]);
-        let combined = format!("{}{}", result.stdout, result.stderr);
-
+        let context = format!("error recovery iteration {i}");
+        assert_runs_without_panic(&result, &context);
+        assert_no_arch_terms(&result.combined_output(), "Debian error recovery path");
+        result.assert_failure();
         assert!(
-            !combined.contains("panicked"),
-            "Should recover from errors gracefully on iteration {i}"
+            result.combined_output().contains("not found"),
+            "{context}: rejection must name the missing package"
         );
-        assert_no_arch_terms(&combined, "Debian error recovery path");
     }
 }
 
@@ -968,13 +966,8 @@ fn test_cli_debian_full_workflow() {
 
     for cmd in commands {
         let result = run_omg_cli(&cmd);
-        let combined = format!("{}{}", result.stdout, result.stderr);
-
-        assert!(
-            !combined.contains("panicked"),
-            "Command {cmd:?} should not panic"
-        );
-        assert_no_arch_terms(&combined, "Debian full workflow command");
+        assert_runs_without_panic(&result, &format!("command {cmd:?}"));
+        assert_no_arch_terms(&result.combined_output(), "Debian full workflow command");
     }
 }
 
@@ -989,36 +982,33 @@ fn test_cli_debian_concurrent_operations() {
 
     for handle in handles {
         let result = handle.join().expect("Thread panicked");
-        let combined = format!("{}{}", result.stdout, result.stderr);
-
-        assert!(
-            !combined.contains("panicked"),
-            "Concurrent operations should not panic"
-        );
-        assert_no_arch_terms(&combined, "Debian concurrent operation");
+        assert_runs_without_panic(&result, "concurrent operation");
+        assert_no_arch_terms(&result.combined_output(), "Debian concurrent operation");
     }
 }
 
-#[test]
-fn test_cli_debian_handles_slow_mirrors() {
-    // The command should return a result without panicking.
-    let result = run_omg_cli(&["update", "--check"]);
-    let combined = format!("{}{}", result.stdout, result.stderr);
-    assert!(
-        !combined.contains("panicked"),
-        "Should handle slow mirrors gracefully"
-    );
-    assert_no_arch_terms(&combined, "Debian slow mirror update path");
-}
+// test_cli_debian_handles_slow_mirrors deleted (tst03): identical `update
+// --check` no-panic probe as test_cli_update_check_debian, which pins concrete
+// contracts for the same invocation.
 
 #[test]
 fn test_cli_debian_respects_ci_mode() {
-    let result = run_omg_debian(&["install", "curl"], &[("CI", "1")]);
-    let combined = format!("{}{}", result.stdout, result.stderr);
+    // CI=1 must run a mock install of a known default package to completion
+    // without any interactive prompt.
+    let result = run_omg_debian(&["install", "git"], &[("CI", "1")]);
+    assert_runs_without_panic(&result, "CI-mode install");
+    result.assert_success();
 
+    let combined = result.combined_output();
     assert!(
-        !combined.contains("Continue?") && !combined.contains("Press"),
-        "Should not prompt in CI mode"
+        !combined.contains("Continue?")
+            && !combined.contains("Press")
+            && !combined.contains("Password:"),
+        "Should not prompt in CI mode: {combined}"
+    );
+    assert!(
+        combined.contains("Installed"),
+        "CI-mode install must confirm the install: {combined}"
     );
 }
 
@@ -1029,11 +1019,9 @@ fn test_cli_debian_package_name_validation() {
 
     for name in valid_names {
         let result = run_omg_cli(&["search", name]);
-        let combined = format!("{}{}", result.stdout, result.stderr);
-
-        assert!(
-            !combined.contains("panicked"),
-            "Should handle package name: {name}"
-        );
+        // Search never fails on unusual-but-valid names: unknown names degrade
+        // to the explicit "No results found" notice with exit 0.
+        result.assert_success();
+        assert_runs_without_panic(&result, &format!("search {name}"));
     }
 }

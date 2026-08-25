@@ -20,6 +20,10 @@ use common::*;
 // DOCTOR COMMAND E2E TESTS
 // ═══════════════════════════════════════════════════════════════════════════════
 
+// Contract pinned at src/cli/doctor.rs:37-124: `doctor` always exits 0 and
+// unconditionally prints the "OMG Doctor" header, the "Checking system health..."
+// banner, and one verdict line per dependency (git/curl/tar/sudo) — either
+// "Found dependency: <dep>" or "Missing dependency: <dep>".
 #[test]
 fn test_doctor_runs_diagnostics() {
     init_test_env();
@@ -29,13 +33,18 @@ fn test_doctor_runs_diagnostics() {
     result.assert_success();
 
     let output = result.stdout;
-    // Should show diagnostic information
     assert!(
-        output.contains("System") || output.contains("Check") || output.contains("OMG"),
-        "Doctor should show diagnostic info"
+        output.contains("OMG Doctor"),
+        "Missing doctor header: {output}"
+    );
+    assert!(
+        output.contains("Checking system health"),
+        "Missing health-check banner: {output}"
     );
 }
 
+// Every mandatory dependency must get an explicit Found/Missing verdict line,
+// so a doctor that silently skips a check cannot pass.
 #[test]
 fn test_doctor_checks_environment() {
     init_test_env();
@@ -44,34 +53,23 @@ fn test_doctor_checks_environment() {
 
     result.assert_success();
 
-    // Should check environment setup
-    let output = result.combined_output();
-    assert!(
-        output.len() > 50,
-        "Should show substantial diagnostic output"
-    );
-}
-
-#[test]
-fn test_doctor_shows_checks() {
-    init_test_env();
-
-    let result = run_omg(&["doctor"]);
-
-    result.assert_success();
-
-    let output = result.combined_output();
-    // Should show diagnostic checks
-    assert!(
-        output.contains("✓") || output.contains("System") || output.contains("Check"),
-        "Should show diagnostic checks"
-    );
+    let output = result.stdout;
+    for dep in ["git", "curl", "tar", "sudo"] {
+        assert!(
+            output.contains(&format!("Found dependency: {dep}"))
+                || output.contains(&format!("Missing dependency: {dep}")),
+            "Doctor must report a verdict for dependency '{dep}': {output}"
+        );
+    }
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
 // CONFIG COMMAND E2E TESTS
 // ═══════════════════════════════════════════════════════════════════════════════
 
+// Contract pinned at src/cli/config.rs:138-160: `config list` always prints the
+// "OMG Configuration" header followed by key/value lines including
+// "telemetry.enabled = <bool>".
 #[test]
 fn test_config_list_shows_settings() {
     init_test_env();
@@ -80,11 +78,14 @@ fn test_config_list_shows_settings() {
 
     result.assert_success();
 
-    // Should show configuration (even if empty)
     let output = result.stdout;
     assert!(
-        !output.is_empty() || result.stderr.contains("No config"),
-        "Should show configuration or empty message"
+        output.contains("OMG Configuration"),
+        "Missing config header: {output}"
+    );
+    assert!(
+        output.contains("telemetry.enabled ="),
+        "Config list must show telemetry.enabled: {output}"
     );
 }
 
@@ -102,56 +103,50 @@ fn test_config_get_specific_value() {
     );
 }
 
+// Contract pinned at src/cli/config.rs:43-136 and 13-39: `config set` accepts
+// the whitelisted key `telemetry.enabled`, persists it via Settings::save, and
+// `config get telemetry.enabled` prints exactly the stored boolean. The old
+// version used 'test.key' (not writable → set failed) and nested `if success`
+// guards so it passed without proving anything.
 #[test]
 fn test_config_set_and_get() {
     init_test_env();
 
     let project = TestProject::new();
 
-    // Set a config value
-    let set_result = project.run(&["config", "set", "test.key", "test_value"]);
+    let set_result = project.run(&["config", "set", "telemetry.enabled", "false"]);
+    set_result.assert_success();
 
-    if set_result.success {
-        // Get the value back
-        let get_result = project.run(&["config", "get", "test.key"]);
-
-        if get_result.success {
-            assert!(
-                get_result.stdout.contains("test_value"),
-                "Should retrieve set value"
-            );
-        }
-    }
-}
-
-#[test]
-fn test_config_shows_format() {
-    init_test_env();
-
-    let result = run_omg(&["config", "list"]);
-
-    result.assert_success();
-
-    // Should show configuration format
-    let output = result.combined_output();
-    assert!(!output.is_empty(), "Should show configuration");
+    let get_result = project.run(&["config", "get", "telemetry.enabled"]);
+    get_result.assert_success();
+    assert_eq!(
+        get_result.stdout.trim(),
+        "false",
+        "config get must return the persisted value"
+    );
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
 // DAEMON COMMAND E2E TESTS
 // ═══════════════════════════════════════════════════════════════════════════════
 
+// Contract pinned at src/cli/daemon_status.rs:17-90: on Unix, `daemon-status`
+// always exits 0, prints the "OMG Daemon Status" header, and reports one of the
+// concrete socket states (socket not found / failed to connect / running).
 #[test]
 fn test_daemon_status_shows_state() {
     init_test_env();
 
     let result = run_omg(&["daemon-status"]);
 
-    // Should show daemon status (running or not)
-    let output = result.combined_output();
+    result.assert_success();
+    result.assert_stdout_contains("Daemon");
+    let output = result.stdout;
     assert!(
-        result.success || output.contains("not running") || output.contains("daemon"),
-        "Should show daemon status"
+        output.contains("socket not found")
+            || output.contains("Failed to connect")
+            || output.contains("Daemon is running"),
+        "Must report a concrete daemon state: {output}"
     );
 }
 
@@ -169,40 +164,52 @@ fn test_daemon_help() {
 // HISTORY COMMAND E2E TESTS
 // ═══════════════════════════════════════════════════════════════════════════════
 
+// Contract pinned at src/cli/commands.rs:845-857: `history` always exits 0 and
+// prints the header "Transaction History (last <limit>)"; each run uses a fresh
+// isolated data dir, so the empty-state line must follow.
 #[test]
 fn test_history_shows_transactions() {
     init_test_env();
 
     let result = run_omg(&["history"]);
 
-    // Should show history (even if empty)
-    let output = result.combined_output();
+    result.assert_success();
+    let output = result.stdout;
     assert!(
-        result.success || output.contains("No history") || output.contains("transaction"),
-        "Should show transaction history"
+        output.contains("Transaction History (last 20)"),
+        "Missing default header: {output}"
+    );
+    assert!(
+        output.contains("No matching transactions found"),
+        "Fresh data dir must show empty state: {output}"
     );
 }
 
+// The --limit flag must be reflected verbatim in the rendered header.
 #[test]
 fn test_history_with_limit() {
     init_test_env();
 
     let result = run_omg(&["history", "--limit", "10"]);
 
-    // Should respect limit
-    let output = result.combined_output();
-    assert!(!output.is_empty(), "Should show limited history");
+    result.assert_success();
+    result.assert_stdout_contains("Transaction History (last 10)");
 }
 
+// --json must emit machine-readable output: a syntactically valid JSON array.
 #[test]
-fn test_history_formats_output() {
+fn test_history_json_output() {
     init_test_env();
 
-    let result = run_omg(&["history"]);
+    let result = run_omg(&["history", "--json"]);
 
-    // Should show history format (empty or with transactions)
-    let output = result.combined_output();
-    assert!(!output.is_empty(), "Should show history information");
+    result.assert_success();
+    let parsed: serde_json::Value =
+        serde_json::from_str(result.stdout.trim()).expect("history --json must emit valid JSON");
+    assert!(
+        parsed.is_array(),
+        "history --json must emit a JSON array, got: {parsed}"
+    );
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
@@ -219,50 +226,58 @@ fn test_rollback_help() {
     result.assert_stdout_contains("rollback");
 }
 
+// Contract pinned at src/cli/commands.rs:1055-1060: interactive rollback with
+// an empty transaction log bails with "No history entries available for rollback"
+// instead of prompting. Fresh isolated data dir guarantees the empty case.
 #[test]
 fn test_rollback_without_history() {
     init_test_env();
 
-    // Try to rollback when no history exists
     let result = run_omg(&["rollback"]);
 
-    // Should fail gracefully
-    let output = result.combined_output();
-    assert!(
-        !result.success || output.contains("No transactions") || output.contains("history"),
-        "Should handle empty history gracefully"
-    );
+    result.assert_failure();
+    result.assert_stderr_contains("No history entries available for rollback");
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
 // STATS AND METRICS E2E TESTS
 // ═══════════════════════════════════════════════════════════════════════════════
 
+// Contract pinned at src/cli/commands.rs:1277-1315: `stats` always exits 0 and
+// prints the "OMG Usage Statistics" header plus the "Total Commands:" counter.
 #[test]
 fn test_stats_shows_usage() {
     init_test_env();
 
     let result = run_omg(&["stats"]);
 
-    // Should show usage statistics
-    let output = result.combined_output();
+    result.assert_success();
+    let output = result.stdout;
     assert!(
-        result.success || output.contains("stats") || output.contains("usage"),
-        "Should show statistics"
+        output.contains("OMG Usage Statistics"),
+        "Missing stats header: {output}"
+    );
+    assert!(
+        output.contains("Total Commands:"),
+        "Missing command counter: {output}"
     );
 }
 
+// --json must emit machine-readable usage statistics with the documented fields.
 #[test]
-fn test_stats_shows_counters() {
+fn test_stats_json_output() {
     init_test_env();
 
-    let result = run_omg(&["stats"]);
+    let result = run_omg(&["stats", "--json"]);
 
-    // Should show statistics counters
-    let output = result.combined_output();
+    result.assert_success();
+    let parsed: serde_json::Value =
+        serde_json::from_str(result.stdout.trim()).expect("stats --json must emit valid JSON");
     assert!(
-        result.success || output.contains("stats") || output.contains("usage"),
-        "Should show statistics"
+        parsed
+            .get("total_commands")
+            .is_some_and(serde_json::Value::is_u64),
+        "stats --json must expose total_commands as a number, got: {parsed}"
     );
 }
 
@@ -285,53 +300,49 @@ fn test_metrics_command_exists() {
 fn test_completions_bash() {
     init_test_env();
 
-    let result = run_omg(&["completions", "bash"]);
+    // --stdout prints the script instead of installing into the real home
+    // directory; contract is the embedded script's entry point
+    // (src/hooks/completions/bash.sh:1).
+    let result = run_omg(&["completions", "bash", "--stdout"]);
 
     result.assert_success();
-
-    let output = result.stdout;
-    // Should generate bash completion script
-    assert!(
-        output.contains("_omg") || output.contains("complete") || output.contains("bash"),
-        "Should generate bash completions"
-    );
-    assert!(!output.is_empty(), "Completion script should not be empty");
+    result.assert_stdout_contains("_omg_completions()");
 }
 
 #[test]
 fn test_completions_zsh() {
     init_test_env();
 
-    let result = run_omg(&["completions", "zsh"]);
+    // --stdout prints the script (src/hooks/completions/zsh.zsh:1 starts
+    // with the #compdef directive).
+    let result = run_omg(&["completions", "zsh", "--stdout"]);
 
     result.assert_success();
-    assert!(!result.stdout.is_empty(), "Should generate zsh completions");
+    result.assert_stdout_contains("#compdef omg");
 }
 
 #[test]
 fn test_completions_fish() {
     init_test_env();
 
-    let result = run_omg(&["completions", "fish"]);
+    // --stdout prints the script (src/hooks/completions/fish.fish:1 defines
+    // __omg_dynamic_complete).
+    let result = run_omg(&["completions", "fish", "--stdout"]);
 
     result.assert_success();
-    assert!(
-        !result.stdout.is_empty(),
-        "Should generate fish completions"
-    );
+    result.assert_stdout_contains("__omg_dynamic_complete");
 }
 
 #[test]
 fn test_completions_powershell() {
     init_test_env();
 
-    let result = run_omg(&["completions", "powershell"]);
+    // --stdout prints the clap_complete-generated PowerShell registration.
+    let result = run_omg(&["completions", "powershell", "--stdout"]);
 
     result.assert_success();
-    assert!(
-        !result.stdout.is_empty(),
-        "Should generate powershell completions"
-    );
+    result.assert_stdout_contains("Register-ArgumentCompleter");
+    result.assert_stdout_contains("'omg'");
 }
 
 #[test]
@@ -397,22 +408,19 @@ fn test_help_for_subcommand() {
 // SELF-UPDATE E2E TESTS
 // ═══════════════════════════════════════════════════════════════════════════════
 
+// WRONG-CONTRACT FIX: `self-update` has no `--check` flag (src/cli/args.rs:484-491:
+// only --force/--version), so the old invocation was rejected by clap before any
+// network call. Replacement pins a real, network-free guarantee from
+// src/cli/self_update.rs:53-62: requesting an older version must be refused by
+// downgrade protection without downloading anything.
 #[test]
-fn test_self_update_check() {
-    // Hermeticity: this command performs a real HTTPS GET against the
-    // production release server. Gate it behind OMG_RUN_NETWORK_TESTS=1 so a
-    // plain `cargo test` never touches the network (tests/README contract).
-    require_network_tests!();
+fn test_self_update_downgrade_protection() {
     init_test_env();
 
-    let result = run_omg(&["self-update", "--check"]);
+    let result = run_omg(&["self-update", "--version", "0.0.1"]);
 
-    // Should check for updates (may require network)
-    let output = result.combined_output();
-    assert!(
-        !output.is_empty(),
-        "Self-update check should produce output"
-    );
+    result.assert_failure();
+    result.assert_stderr_contains("Refusing to downgrade");
 }
 
 #[test]
@@ -447,9 +455,10 @@ fn test_init_in_project() {
 
     let result = project.run(&["init"]);
 
-    // Should initialize project configuration
-    let output = result.combined_output();
-    assert!(!output.is_empty(), "Init should produce output");
+    // Non-interactive terminals fall through to run_defaults(), which finishes
+    // with the completion banner (src/cli/init.rs:327-332).
+    result.assert_success();
+    result.assert_stdout_contains("Setup complete!");
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
@@ -492,9 +501,14 @@ fn test_status_shows_system_state() {
 
     result.assert_success();
 
-    let output = result.stdout;
-    // Should show system package status
-    assert!(!output.is_empty(), "Status should show package information");
+    // Both renderers print a status overview heading: the Elm UI emits
+    // "System Status overview" and the fallback "Status Overview (...)"
+    // (src/cli/packages/status.rs:103-165).
+    let output = result.stdout.to_lowercase();
+    assert!(
+        output.contains("status overview"),
+        "Status must render its overview heading: {output}"
+    );
 }
 
 #[test]
@@ -503,9 +517,22 @@ fn test_status_json_output() {
 
     let result = run_omg(&["status", "--json"]);
 
-    if result.success && !result.stdout.is_empty() {
-        let json_result = serde_json::from_str::<serde_json::Value>(&result.stdout);
-        assert!(json_result.is_ok(), "JSON output should be valid");
+    // Contract pinned at src/cli/packages/status.rs:48-100: --json must succeed
+    // and emit the StatusJson schema on every run.
+    result.assert_success();
+    let parsed: serde_json::Value =
+        serde_json::from_str(result.stdout.trim()).expect("status --json must emit valid JSON");
+    for field in [
+        "total_packages",
+        "explicit_packages",
+        "orphan_packages",
+        "updates_available",
+        "query_time_ms",
+    ] {
+        assert!(
+            parsed.get(field).is_some(),
+            "status --json must expose '{field}', got: {parsed}"
+        );
     }
 }
 
@@ -523,17 +550,19 @@ fn test_migrate_help() {
     result.assert_stdout_contains("migrate");
 }
 
+// WRONG-CONTRACT FIX: there is no `brew` subcommand — MigrateCommands only has
+// Export/Import (src/cli/args.rs:1200-1215). Pin the clap rejection explicitly.
 #[test]
-fn test_migrate_from_brew() {
+fn test_migrate_rejects_unknown_subcommand() {
     init_test_env();
 
     let result = run_omg(&["migrate", "brew", "--dry-run"]);
 
-    // Should handle migration (may not be on macOS)
+    result.assert_failure();
     let output = result.combined_output();
     assert!(
-        result.success || output.contains("not found") || output.contains("brew"),
-        "Should handle brew migration or show error"
+        output.contains("unrecognized subcommand 'brew'"),
+        "Unknown migrate subcommand must be named in the error: {output}"
     );
 }
 
@@ -547,11 +576,13 @@ fn test_no_command_shows_help() {
 
     let result = run_omg(&[]);
 
-    // Should show help when no command given
+    // clap requires a subcommand: bare `omg` prints help text and exits 2
+    // (observed contract of the derive config in src/cli/args.rs).
+    result.assert_failure();
     let output = result.combined_output();
     assert!(
-        output.contains("Usage") || output.contains("COMMANDS") || output.contains("help"),
-        "Should show help when no command provided"
+        output.contains("Usage:"),
+        "No-command run must print usage help: {output}"
     );
 }
 
@@ -609,19 +640,17 @@ fn test_workflow_config_set_and_list() {
     let project = TestProject::new();
 
     // Set a config value
-    let set_result = project.run(&["config", "set", "test.key", "value123"]);
+    let set_result = project.run(&["config", "set", "telemetry.enabled", "false"]);
+    set_result.assert_success();
 
-    if set_result.success {
-        // List all config
-        let list_result = project.run(&["config", "list"]);
-        list_result.assert_success();
+    let list_result = project.run(&["config", "list"]);
+    list_result.assert_success();
 
-        // Should contain the set value
-        assert!(
-            list_result.stdout.contains("value123"),
-            "Config list should show set value"
-        );
-    }
+    assert!(
+        list_result.stdout.contains("telemetry.enabled = false"),
+        "Config list must reflect the persisted value: {}",
+        list_result.stdout
+    );
 }
 
 #[test]
@@ -629,20 +658,10 @@ fn test_workflow_history_and_stats() {
     init_test_env();
 
     let history_result = run_omg(&["history"]);
-    let history_output = history_result.combined_output();
-    assert!(
-        history_result.success
-            || history_output.contains("No history")
-            || history_output.to_lowercase().contains("transaction"),
-        "History should succeed or explain its empty/error state: {history_output}"
-    );
+    history_result.assert_success();
+    history_result.assert_stdout_contains("Transaction History");
 
     let stats_result = run_omg(&["stats"]);
-    let stats_output = stats_result.combined_output();
-    assert!(
-        stats_result.success
-            || stats_output.to_lowercase().contains("stats")
-            || stats_output.to_lowercase().contains("usage"),
-        "Stats should succeed or explain its result: {stats_output}"
-    );
+    stats_result.assert_success();
+    stats_result.assert_stdout_contains("OMG Usage Statistics");
 }

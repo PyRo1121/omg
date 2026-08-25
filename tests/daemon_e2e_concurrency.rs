@@ -75,22 +75,24 @@ async fn test_concurrent_search_requests() -> Result<()> {
         handles.push(handle);
     }
 
-    // Wait for all requests to complete
+    // Wait for all requests to complete. Valid short queries are always
+    // answerable (handle_search returns Success for them, and the per-state
+    // quota is 100/s with burst 200 — src/daemon/handlers.rs:207), so every
+    // one of the 50 requests must succeed.
     let mut success_count = 0;
-    let mut error_count = 0;
-
     for handle in handles {
         let (id, response) = handle.await?;
         match response {
             Response::Success { .. } => success_count += 1,
-            Response::Error { .. } => error_count += 1,
+            Response::Error { code, message, .. } => {
+                panic!("concurrent search {id} failed: code={code} message={message}")
+            }
         }
         // Verify response ID matches request ID
         assert_eq!(response_id(&response), id);
     }
 
-    println!("Concurrent searches: {success_count} success, {error_count} errors");
-    assert!(success_count > 0, "At least some requests should succeed");
+    assert_eq!(success_count, 50, "every concurrent search should succeed");
 
     Ok(())
 }
@@ -302,22 +304,29 @@ async fn test_no_race_in_cache_updates() -> Result<()> {
         handles.push(handle);
     }
 
-    // All should get consistent results
+    // All 50 hits on the same key must succeed AND agree: the cached result
+    // set for a given query is immutable once inserted.
     let mut results = vec![];
+    let mut total_responses = 0;
     for handle in handles {
-        if let Response::Success {
-            result: ResponseResult::Search(search_result),
-            ..
-        } = handle.await?
-        {
-            results.push(search_result);
+        total_responses += 1;
+        match handle.await? {
+            Response::Success {
+                result: ResponseResult::Search(search_result),
+                ..
+            } => results.push(search_result),
+            Response::Error { code, message, .. } => {
+                panic!("concurrent same-key search failed: code={code} message={message}")
+            }
+            other @ Response::Success { .. } => panic!("unexpected response to Search: {other:?}"),
         }
     }
 
-    assert!(
-        !results.is_empty(),
-        "At least one concurrent search should succeed"
+    assert_eq!(
+        total_responses, 50,
+        "every same-key search must receive a response"
     );
+    assert_eq!(results.len(), 50, "every same-key search must succeed");
 
     // All cached results should be identical
     if results.len() > 1 {
@@ -431,14 +440,22 @@ async fn test_shared_state_thread_safety() -> Result<()> {
         handles.push(handle);
     }
 
-    // All should complete safely
+    // All five request types are infallible for these inputs and the fresh
+    // state's rate-limit budget (burst 200) covers all 50 requests, so every
+    // response must be a Success carrying its request's id. The previous
+    // `matches!(Success | Error)` accepted literally every possible response
+    // and proved nothing.
+    let mut successes = 0;
     for handle in handles {
         let response = handle.await?;
-        assert!(
-            matches!(response, Response::Success { .. } | Response::Error { .. }),
-            "All requests should complete safely"
-        );
+        match &response {
+            Response::Success { .. } => successes += 1,
+            Response::Error { id, code, message } => {
+                panic!("request {id} failed under mixed concurrency: code={code} message={message}")
+            }
+        }
     }
+    assert_eq!(successes, 50, "all mixed-workload requests must succeed");
 
     Ok(())
 }

@@ -12,18 +12,21 @@
 //! - Official package operations
 //! - AUR package operations
 //! - Parallel build and error recovery
-//! - Retry logic for network failures
-//! - Parallel build functionality
-//! - Security (PGP verification, sandbox)
 //! - Non-interactive mode (CI/CD)
-//! - Mixed package sources
 //! - Dry-run mode
 //! - Error messages and user experience
+//!
+//! Harness contract: `run_omg` sets `OMG_TEST_MODE=1`, which routes the
+//! package-manager trait to the mock backend seeded with pacman/firefox/git
+//! (src/package_managers/mock.rs `MockPackageDb::arch_defaults`). Surfaces
+//! that bypass the trait (`info`, `install --dry-run`) read real ALPM data
+//! and the AUR RPC instead.
 //!
 //! Run: cargo test --test install_update_comprehensive --features arch
 //!
 //! Environment variables:
 //!   OMG_RUN_SYSTEM_TESTS=1      - Enable tests requiring real system access
+//!   OMG_RUN_NETWORK_TESTS=1     - Enable tests requiring AUR RPC access
 //!   OMG_RUN_DESTRUCTIVE_TESTS=1 - Enable tests that modify the system
 
 use std::env;
@@ -97,6 +100,19 @@ impl TestResult {
         );
         self
     }
+
+    /// Pinned from src/cli/packages/update/arch.rs: an update check must name
+    /// either pending updates ("Found N update(s)") or a clean system
+    /// ("System is up to date").
+    fn assert_reports_update_status(&self) -> &Self {
+        let combined = self.combined();
+        assert!(
+            combined.contains("up to date") || combined.contains("Found"),
+            "update check must report pending updates or 'up to date'. Got:\n{}",
+            combined
+        );
+        self
+    }
 }
 
 fn run_omg(args: &[&str]) -> TestResult {
@@ -118,6 +134,10 @@ fn run_omg_with_env(args: &[&str], env_vars: &[(&str, &str)]) -> TestResult {
 
 fn system_tests_enabled() -> bool {
     matches!(env::var("OMG_RUN_SYSTEM_TESTS"), Ok(v) if v == "1")
+}
+
+fn network_tests_enabled() -> bool {
+    matches!(env::var("OMG_RUN_NETWORK_TESTS"), Ok(v) if v == "1")
 }
 
 fn destructive_tests_enabled() -> bool {
@@ -143,49 +163,57 @@ mod install_cli_tests {
     fn test_install_no_packages_shows_error() {
         let result = run_omg(&["install"]);
         result.assert_failure();
-        let combined = result.combined();
-        assert!(
-            combined.contains("required arguments") || combined.contains("PACKAGES"),
-            "Should show clap error about missing packages. Got: {}",
-            combined
-        );
+        // Pinned clap contract: PACKAGES is `required = true`
+        // (src/cli/args.rs Install).
+        result.assert_contains("required arguments");
     }
 
     #[test]
     fn test_install_help_flag() {
         let result = run_omg(&["install", "--help"]);
         result.assert_success();
-        result.assert_contains("install");
+        result.assert_contains("Usage");
+        // Documented flags must appear in help (src/cli/args.rs Install).
+        result.assert_contains("--dry-run");
+        result.assert_contains("--yes");
     }
 
     #[test]
-    fn test_install_yes_flag_recognized() {
-        let result = run_omg(&["install", "-y", "nonexistent-pkg-12345"]);
-        result.assert_no_panic();
+    fn test_install_yes_flag_auto_confirms() {
+        // OMG_TEST_MODE routes installs to the mock backend whose arch
+        // defaults include firefox, so `-y` must complete end-to-end without
+        // any confirmation prompt.
+        let result = run_omg(&["install", "-y", "firefox"]);
+        result.assert_no_password_prompt();
+        result.assert_success();
+        result.assert_contains("Installed 1 package");
+        result.assert_contains("firefox");
     }
 
     #[test]
     fn test_install_dry_run_flag() {
         let result = run_omg(&["install", "--dry-run", "firefox"]);
         result.assert_success();
-        let combined = result.combined();
-        assert!(
-            combined.to_lowercase().contains("dry run") || combined.contains("DRY RUN"),
-            "Should indicate dry run mode. Got: {}",
-            combined
-        );
+        // Pinned footer: src/cli/packages/install/arch.rs install_dry_run.
+        result.assert_contains("(dry run)");
+        result.assert_contains("No changes will be made");
     }
 
     #[test]
     fn test_install_multiple_packages() {
         let result = run_omg(&["install", "--dry-run", "firefox", "vim", "git"]);
         result.assert_success();
+        // The preview table must list every requested package.
+        result.assert_contains("firefox");
+        result.assert_contains("vim");
+        result.assert_contains("git");
     }
 
     #[test]
     fn test_install_invalid_flag() {
         let result = run_omg(&["install", "--invalid-flag-xyz"]);
         result.assert_failure();
+        result.assert_contains("unexpected argument");
     }
 }
 
@@ -220,17 +248,16 @@ mod install_resolution_tests {
 
     #[test]
     fn test_install_detects_aur_package() {
-        if !system_tests_enabled() {
+        if !network_tests_enabled() {
             return;
         }
-        let result = run_omg(&["install", "--dry-run", "visual-studio-code-bin"]);
+        // yay-bin lives in the AUR only; dry-run resolves it through the AUR
+        // RPC (src/cli/packages/install/arch.rs install_dry_run) and tags the
+        // table row with an AUR source.
+        let result = run_omg(&["install", "--dry-run", "yay-bin"]);
         result.assert_success();
-        let combined = result.combined();
-        assert!(
-            combined.contains("AUR") || combined.contains("aur"),
-            "Should detect AUR package. Got: {}",
-            combined
-        );
+        result.assert_contains("yay-bin");
+        result.assert_contains("AUR");
     }
 }
 
@@ -244,39 +271,29 @@ mod install_error_tests {
     #[test]
     fn test_install_helpful_error_messages() {
         let result = run_omg(&["install", "nonexistent-pkg-xyz"]);
-        let combined = result.combined();
-        assert!(
-            combined.contains("not found")
-                || combined.contains("error")
-                || combined.contains("AUR"),
-            "Should show helpful error. Got: {}",
-            combined
-        );
+        result.assert_failure();
+        // Missing packages must be reported with an explicit not-found error
+        // plus recovery advice, never silently ignored.
+        result.assert_contains("not found");
+        result.assert_contains("Suggestion");
     }
 
     #[test]
     fn test_install_no_panic_on_error() {
         let result = run_omg(&["install", "-y", "definitely-fake-package"]);
+        result.assert_failure();
         result.assert_no_panic();
     }
 
     #[test]
-    fn test_install_without_root_shows_sudo_message() {
-        if !system_tests_enabled() {
-            return;
-        }
+    fn test_install_package_missing_from_mock_index_fails_cleanly() {
+        // vim is not in the mock arch defaults; the install flow must fail
+        // with the repository-level not-found diagnostic instead of
+        // attempting elevation or panicking.
         let result = run_omg(&["install", "-y", "vim"]);
-        if !result.success {
-            let combined = result.combined();
-            assert!(
-                combined.contains("sudo")
-                    || combined.contains("root")
-                    || combined.contains("privilege")
-                    || combined.contains("Elevating"),
-                "Should mention sudo when not root. Got: {}",
-                combined
-            );
-        }
+        result.assert_failure();
+        result.assert_no_password_prompt();
+        result.assert_contains("not found");
     }
 }
 
@@ -291,43 +308,76 @@ mod update_cli_tests {
     fn test_update_help_flag() {
         let result = run_omg(&["update", "--help"]);
         result.assert_success();
-        result.assert_contains("update");
+        result.assert_contains("Usage");
+        // Documented flags must appear in help (src/cli/args.rs Update).
+        result.assert_contains("--check");
+        result.assert_contains("--dry-run");
+        result.assert_contains("--fast");
+        result.assert_contains("--turbo");
     }
 
     #[test]
     fn test_update_check_flag() {
         let result = run_omg(&["update", "--check"]);
-        result.assert_no_panic();
+        result.assert_success();
+        result.assert_reports_update_status();
     }
 
     #[test]
     fn test_update_yes_flag() {
         let result = run_omg(&["update", "-y", "--check"]);
-        result.assert_no_panic();
+        result.assert_success();
+        result.assert_reports_update_status();
     }
 
     #[test]
     fn test_update_dry_run_flag() {
         let result = run_omg(&["update", "--dry-run"]);
-        result.assert_no_panic();
+        result.assert_success();
+        // Pinned header: src/cli/packages/update/arch.rs update().
+        result.assert_contains("Dry run");
+        result.assert_reports_update_status();
     }
 
     #[test]
     fn test_update_invalid_flag() {
         let result = run_omg(&["update", "--invalid-xyz"]);
         result.assert_failure();
+        result.assert_contains("unexpected argument");
     }
 
     #[test]
-    fn test_update_fast_flag() {
-        let result = run_omg(&["update", "--fast", "--check"]);
+    fn test_update_fast_flag_never_prompts_and_fails_with_cause() {
+        // --fast delegates to a privileged full upgrade. As an unprivileged
+        // user in a development build it must refuse cleanly, naming the
+        // elevation block (src/core/privilege.rs / arch.rs
+        // run_privileged_operation); as a privileged caller it runs the fast
+        // update header. Either way: no password prompt, no panic.
+        let result = run_omg(&["update", "--fast"]);
+        result.assert_no_password_prompt();
         result.assert_no_panic();
+        result.assert_contains("Fast System Update");
+        if !result.success {
+            let combined = result.combined();
+            assert!(
+                combined.contains("Privilege elevation not supported")
+                    || combined.contains("sudo")
+                    || combined.contains("Elevating"),
+                "failed fast update must cite the privilege boundary. Got:\n{}",
+                combined
+            );
+        }
     }
 
     #[test]
-    fn test_update_turbo_flag() {
-        let result = run_omg(&["update", "--turbo", "--check"]);
+    fn test_update_turbo_flag_reports_status() {
+        // Turbo's unprivileged arm performs the cached check-only pass and
+        // reports update status without elevating.
+        let result = run_omg(&["update", "--turbo"]);
+        result.assert_no_password_prompt();
         result.assert_no_panic();
+        result.assert_contains("TURBO");
+        result.assert_reports_update_status();
     }
 }
 
@@ -342,6 +392,8 @@ mod update_check_tests {
     fn test_check_mode_no_password_prompt() {
         let result = run_omg(&["update", "--check"]);
         result.assert_no_password_prompt();
+        result.assert_success();
+        result.assert_reports_update_status();
     }
 
     #[test]
@@ -350,15 +402,8 @@ mod update_check_tests {
             return;
         }
         let result = run_omg(&["update", "--check"]);
-        let combined = result.combined();
-        assert!(
-            combined.contains("update")
-                || combined.contains("up to date")
-                || combined.contains("Found")
-                || combined.contains("✓"),
-            "Should report status. Got: {}",
-            combined
-        );
+        result.assert_success();
+        result.assert_reports_update_status();
     }
 }
 
@@ -372,19 +417,15 @@ mod update_ci_tests {
     #[test]
     fn test_ci_mode_with_yes() {
         let result = run_omg_with_env(&["update", "--check", "-y"], &[("CI", "1")]);
-        result.assert_no_panic();
+        result.assert_success();
+        result.assert_reports_update_status();
     }
 
     #[test]
     fn test_non_interactive_env_var() {
         let result = run_omg_with_env(&["update", "--check"], &[("OMG_NON_INTERACTIVE", "1")]);
-        result.assert_no_panic();
-    }
-
-    #[test]
-    fn test_ci_check_completes() {
-        let result = run_omg_with_env(&["update", "--check"], &[("CI", "1")]);
-        result.assert_no_panic();
+        result.assert_success();
+        result.assert_reports_update_status();
     }
 }
 
@@ -396,31 +437,36 @@ mod aur_tests {
     use super::*;
 
     #[test]
-    fn test_aur_search_works() {
-        if !system_tests_enabled() {
-            return;
-        }
-        let result = run_omg(&["search", "visual-studio-code"]);
+    fn test_search_degrades_gracefully_for_unindexed_names() {
+        // Search runs against the mock official index under OMG_TEST_MODE;
+        // AUR-only names are absent there and must produce an explicit,
+        // successful "no results" report rather than an error.
+        let result = run_omg(&["search", "yay-bin"]);
         result.assert_success();
-        result.assert_contains("visual-studio-code");
+        result.assert_contains("No results found");
     }
 
     #[test]
     fn test_aur_info_works() {
-        if !system_tests_enabled() {
+        if !network_tests_enabled() {
             return;
         }
-        let result = run_omg(&["info", "visual-studio-code-bin"]);
-        result.assert_no_panic();
+        // info falls back to the AUR RPC for names missing from official
+        // repos (src/cli/packages/info.rs).
+        let result = run_omg(&["info", "yay-bin"]);
+        result.assert_success();
+        result.assert_contains("yay-bin");
+        result.assert_contains("Description");
     }
 
     #[test]
     fn test_aur_dry_run() {
-        if !system_tests_enabled() {
+        if !network_tests_enabled() {
             return;
         }
-        let result = run_omg(&["install", "--dry-run", "visual-studio-code-bin"]);
+        let result = run_omg(&["install", "--dry-run", "yay-bin"]);
         result.assert_success();
+        result.assert_contains("AUR");
     }
 }
 
@@ -574,13 +620,22 @@ mod security_tests {
 
     #[test]
     fn test_command_injection_prevented() {
+        // Shell metacharacters are rejected by package-name validation
+        // (src/core/security/validation.rs), so the command must fail with
+        // the allowlist diagnostic instead of ever reaching a subprocess.
         let result = run_omg(&["install", "pkg; rm -rf /"]);
+        result.assert_failure();
+        result.assert_contains("Invalid character");
         result.assert_no_panic();
     }
 
     #[test]
     fn test_path_traversal_prevented() {
+        // Dot-leading names are rejected before resolution
+        // (PackageNameStartsWithDot in src/core/security/validation.rs).
         let result = run_omg(&["install", "../../../etc/passwd"]);
+        result.assert_failure();
+        result.assert_contains("cannot start with '.'");
         result.assert_no_panic();
     }
 }
@@ -593,9 +648,12 @@ mod ux_tests {
     use super::*;
 
     #[test]
-    fn test_color_output_available() {
+    fn test_top_level_help_lists_core_commands() {
         let result = run_omg(&["--help"]);
         result.assert_success();
+        result.assert_contains("Usage");
+        result.assert_contains("install");
+        result.assert_contains("update");
     }
 
     #[test]
@@ -604,18 +662,8 @@ mod ux_tests {
             return;
         }
         let result = run_omg(&["status"]);
-        result.assert_no_panic();
-    }
-
-    #[test]
-    fn test_error_messages_are_helpful() {
-        let result = run_omg(&["install", "nonexistent-xyz-123"]);
-        let combined = result.combined();
-        assert!(
-            combined.len() > 10,
-            "Error message should be helpful, got: {}",
-            combined
-        );
+        result.assert_success();
+        result.assert_contains("Packages");
     }
 }
 
@@ -632,13 +680,16 @@ mod e2e_workflow_tests {
             return;
         }
 
-        // Complete workflow: search -> info -> install --dry-run
-        let search = run_omg(&["search", "vim"]);
+        // Complete workflow: search -> info -> install --dry-run. Search hits
+        // the mock official index (seeded: pacman/firefox/git); info and
+        // dry-run read real ALPM data.
+        let search = run_omg(&["search", "git"]);
         search.assert_success();
-        search.assert_contains("vim");
+        search.assert_contains("git");
 
-        let info = run_omg(&["info", "vim"]);
-        info.assert_no_panic();
+        let info = run_omg(&["info", "pacman"]);
+        info.assert_success();
+        info.assert_contains("Description");
 
         let install = run_omg(&["install", "--dry-run", "vim"]);
         install.assert_success();
@@ -653,13 +704,17 @@ mod e2e_workflow_tests {
 
         // Complete update workflow: check -> status -> update --dry-run
         let check = run_omg(&["update", "--check"]);
-        check.assert_no_panic();
+        check.assert_success();
+        check.assert_reports_update_status();
 
         let status = run_omg(&["status"]);
-        status.assert_no_panic();
+        status.assert_success();
+        status.assert_contains("Packages");
 
         let update = run_omg(&["update", "--dry-run"]);
-        update.assert_no_panic();
+        update.assert_success();
+        update.assert_contains("Dry run");
+        update.assert_reports_update_status();
     }
 
     #[test]
@@ -668,88 +723,49 @@ mod e2e_workflow_tests {
             return;
         }
 
-        // Test installing both official and AUR packages in one command
-        let result = run_omg(&["install", "--dry-run", "vim", "git", "curl"]);
+        // Every requested package must appear in the dry-run preview table.
+        let result = run_omg(&["install", "--dry-run", "firefox", "vim", "git"]);
         result.assert_success();
-
-        let combined = result.combined();
-        assert!(
-            combined.contains("vim") || combined.contains("git"),
-            "Should list packages to install"
-        );
+        result.assert_contains("firefox");
+        result.assert_contains("vim");
+        result.assert_contains("git");
     }
 
     #[test]
-    fn test_install_with_dependencies_resolution() {
+    fn test_install_dry_run_shows_dependency_information() {
         if !system_tests_enabled() {
             return;
         }
 
-        // Large packages have many dependencies
         let result = run_omg(&["install", "--dry-run", "firefox"]);
         result.assert_success();
-
-        let combined = result.combined();
-        // Should show dependency resolution
-        assert!(
-            combined.contains("firefox") || combined.contains("dependencies"),
-            "Should show dependency information"
-        );
+        result.assert_contains("firefox");
+        // The preview reports the aggregate download size for the resolved
+        // dependency set (src/cli/packages/install/arch.rs).
+        result.assert_contains("Total download size");
     }
 
     #[test]
-    fn test_update_specific_package() {
-        if !system_tests_enabled() {
-            return;
-        }
-
-        // Update a specific package instead of all
+    fn test_update_rejects_positional_packages() {
+        // Update takes no positional package list (src/cli/args.rs Update);
+        // passing one must be a clap argument error, never a silent ignore.
         let result = run_omg(&["update", "vim", "--dry-run"]);
-        result.assert_no_panic();
+        result.assert_failure();
+        result.assert_contains("unexpected argument");
     }
 
     #[test]
-    fn test_install_already_installed_package() {
+    fn test_install_dry_run_lists_available_official_package() {
         if !system_tests_enabled() {
             return;
         }
 
-        // Try to install pacman (which is always installed on Arch)
-        let result = run_omg(&["install", "pacman", "--dry-run"]);
-        result.assert_no_panic();
-
-        let combined = result.combined();
-        // Should indicate it's already installed or up to date
-        assert!(
-            combined.contains("already")
-                || combined.contains("up to date")
-                || combined.contains("installed")
-                || combined.contains("reinstall"),
-            "Should indicate package status, got: {}",
-            combined
-        );
-    }
-
-    #[test]
-    fn test_install_with_version_constraint() {
-        if !system_tests_enabled() {
-            return;
-        }
-
-        // Some package managers support version constraints
-        let result = run_omg(&["install", "--dry-run", "vim"]);
+        // pacman exists in every Arch repository set; dry-run must list it
+        // as an available Official package.
+        let result = run_omg(&["install", "--dry-run", "pacman"]);
         result.assert_success();
-    }
-
-    #[test]
-    fn test_update_with_exclude_packages() {
-        if !system_tests_enabled() {
-            return;
-        }
-
-        // Test excluding packages from update
-        let result = run_omg(&["update", "--dry-run"]);
-        result.assert_no_panic();
+        result.assert_contains("pacman");
+        result.assert_contains("Official");
     }
 
     #[test]
@@ -758,25 +774,22 @@ mod e2e_workflow_tests {
             return;
         }
 
-        // Realistic user workflow
-        let search = run_omg(&["search", "htop"]);
+        // Realistic user workflow against the seeded mock index; the final
+        // dry-run reads real repository metadata.
+        let search = run_omg(&["search", "firefox"]);
         search.assert_success();
+        search.assert_contains("firefox");
 
-        if search.combined().contains("htop") {
-            let install = run_omg(&["install", "--dry-run", "htop"]);
-            install.assert_success();
-        }
+        let install = run_omg(&["install", "--dry-run", "firefox"]);
+        install.assert_success();
+        install.assert_contains("firefox");
     }
 
     #[test]
-    fn test_install_package_with_provides() {
-        if !system_tests_enabled() {
-            return;
-        }
-
-        // Some packages provide virtual packages
-        let result = run_omg(&["info", "vim"]);
-        result.assert_no_panic();
+    fn test_info_shows_provided_details() {
+        let result = run_omg(&["info", "pacman"]);
+        result.assert_success();
+        result.assert_contains("Description");
     }
 }
 
@@ -791,81 +804,104 @@ mod edge_case_tests {
     fn test_install_empty_package_name() {
         let result = run_omg(&["install", ""]);
         result.assert_failure();
+        // Pinned: ValidationError::PackageNameEmpty.
+        result.assert_contains("cannot be empty");
     }
 
     #[test]
     fn test_install_package_name_with_spaces() {
         let result = run_omg(&["install", "package with spaces"]);
+        result.assert_failure();
+        result.assert_contains("Invalid character");
         result.assert_no_panic();
-        // Should either handle it or error gracefully
     }
 
     #[test]
     fn test_install_very_long_package_name() {
         let long_name = "a".repeat(1000);
         let result = run_omg(&["install", "--dry-run", &long_name]);
+        result.assert_failure();
+        // Pinned: MAX_PACKAGE_NAME_LENGTH = 255.
+        result.assert_contains("too long");
         result.assert_no_panic();
     }
 
     #[test]
     fn test_install_unicode_package_name() {
         let result = run_omg(&["install", "--dry-run", "🦀-package"]);
+        result.assert_failure();
+        result.assert_contains("Invalid character");
         result.assert_no_panic();
     }
 
     #[test]
     fn test_install_with_special_chars() {
-        let special_chars = vec!["pkg@123", "pkg#hash", "pkg!", "pkg?"];
-
-        for pkg in special_chars {
-            let result = run_omg(&["install", "--dry-run", pkg]);
+        // '@' is on the package-name allowlist, so pkg@123 passes validation
+        // and must fail later with an explicit not-found; true metacharacters
+        // are rejected upfront by validation.
+        let cases: [(&str, &str); 4] = [
+            ("pkg@123", "was not found"),
+            ("pkg#hash", "Invalid character"),
+            ("pkg!", "Invalid character"),
+            ("pkg?", "Invalid character"),
+        ];
+        for (payload, expected) in cases {
+            let result = run_omg(&["install", "--dry-run", payload]);
+            result.assert_failure();
+            result.assert_contains(expected);
             result.assert_no_panic();
         }
     }
 
     #[test]
-    fn test_update_with_no_packages_installed() {
-        // This is impossible in reality but tests error handling
-        let result = run_omg(&["update", "--check"]);
-        result.assert_no_panic();
+    fn test_install_case_insensitive_search() {
+        // The backend lowercases queries before matching
+        // (src/package_managers/mock.rs MockPackageManager::search), so both
+        // spellings must surface the same seeded package.
+        let lower = run_omg(&["search", "firefox"]);
+        lower.assert_success();
+        lower.assert_contains("firefox");
+
+        let upper = run_omg(&["search", "FIREFOX"]);
+        upper.assert_success();
+        upper.assert_contains("firefox");
     }
 
     #[test]
-    fn test_install_case_sensitivity() {
-        if !system_tests_enabled() {
-            return;
-        }
-
-        let lower = run_omg(&["search", "vim"]);
-        let upper = run_omg(&["search", "VIM"]);
-
-        // Both should work (case-insensitive) or handle gracefully
-        lower.assert_no_panic();
-        upper.assert_no_panic();
-    }
-
-    #[test]
-    fn test_install_package_with_hyphen_underscore() {
-        if !system_tests_enabled() {
-            return;
-        }
-
-        // Test packages with different naming conventions
+    fn test_search_partial_prefix_query() {
+        // Trailing-hyphen queries match nothing in the index but must still
+        // exit 0 with an explicit result summary.
         let result = run_omg(&["search", "python-"]);
-        result.assert_no_panic();
+        result.assert_success();
+        let combined = result.combined();
+        assert!(
+            combined.contains("Search Results") || combined.contains("No results found"),
+            "search must print a result summary. Got:\n{}",
+            combined
+        );
     }
 
     #[test]
     fn test_multiple_flags_combination() {
-        let result = run_omg(&["install", "-y", "--dry-run", "--fast", "vim"]);
-        result.assert_no_panic();
+        if !system_tests_enabled() {
+            return;
+        }
+
+        // -y and --dry-run compose: the dry-run preview wins and nothing is
+        // installed or prompted.
+        let result = run_omg(&["install", "-y", "--dry-run", "firefox"]);
+        result.assert_success();
+        result.assert_contains("(dry run)");
+        result.assert_no_password_prompt();
     }
 
     #[test]
     fn test_conflicting_flags() {
-        // Some flags might conflict
-        let result = run_omg(&["install", "--fast", "--turbo", "vim"]);
-        result.assert_no_panic();
+        // Install has no --fast/--turbo modes (those belong to update);
+        // passing them must be rejected by clap.
+        let result = run_omg(&["install", "--fast", "firefox"]);
+        result.assert_failure();
+        result.assert_contains("unexpected argument '--fast'");
     }
 }
 
@@ -877,33 +913,20 @@ mod system_state_tests {
     use super::*;
 
     #[test]
-    fn test_list_installed_packages() {
-        if !system_tests_enabled() {
-            return;
-        }
-
-        let result = run_omg(&["list", "--installed"]);
+    fn test_list_runtime_versions() {
+        // `list` reports installed runtime versions
+        // (src/cli/args.rs List); it takes no --installed flag.
+        let result = run_omg(&["list"]);
         result.assert_success();
-
-        // Should show some installed packages
-        let combined = result.combined();
-        assert!(combined.len() > 10, "Should list installed packages");
+        result.assert_contains("Installed runtime versions");
     }
 
     #[test]
-    fn test_search_returns_real_results() {
-        if !system_tests_enabled() {
-            return;
-        }
-
-        let result = run_omg(&["search", "linux"]);
+    fn test_search_returns_seeded_results() {
+        let result = run_omg(&["search", "firefox"]);
         result.assert_success();
-
-        let combined = result.combined();
-        assert!(
-            combined.contains("linux") || combined.contains("kernel"),
-            "Search should return relevant results"
-        );
+        result.assert_contains("firefox");
+        result.assert_contains("Official");
     }
 
     #[test]
@@ -914,14 +937,11 @@ mod system_state_tests {
 
         let result = run_omg(&["info", "pacman"]);
         result.assert_success();
-
-        let combined = result.combined();
-        assert!(
-            combined.contains("Version")
-                || combined.contains("Description")
-                || combined.contains("pacman"),
-            "Info should show package details"
-        );
+        // Official-package info renders the version inline next to the name
+        // and labels Description/Repository sections
+        // (src/cli/packages/info.rs).
+        result.assert_contains("Description");
+        result.assert_contains("Repository");
     }
 
     #[test]
@@ -932,16 +952,7 @@ mod system_state_tests {
 
         let result = run_omg(&["update", "--check"]);
         result.assert_success();
-
-        let combined = result.combined();
-        // Should either show updates or say system is up to date
-        assert!(
-            combined.contains("update")
-                || combined.contains("up to date")
-                || combined.contains("available")
-                || combined.len() > 5,
-            "Should show update status"
-        );
+        result.assert_reports_update_status();
     }
 
     #[test]
@@ -952,9 +963,7 @@ mod system_state_tests {
 
         let result = run_omg(&["status"]);
         result.assert_success();
-
-        let combined = result.combined();
-        assert!(combined.len() > 10, "Status should show system information");
+        result.assert_contains("Packages");
     }
 }
 
@@ -971,13 +980,14 @@ mod command_integration_tests {
             return;
         }
 
-        // Full workflow test (destructive)
-        let install = run_omg(&["install", "--dry-run", "cowsay"]);
+        // Preview workflow: both sides must show their dry-run contract.
+        let install = run_omg(&["install", "--dry-run", "firefox"]);
         install.assert_success();
+        install.assert_contains("(dry run)");
 
-        // Verify remove command also works
-        let remove = run_omg(&["remove", "--dry-run", "cowsay"]);
-        remove.assert_no_panic();
+        let remove = run_omg(&["remove", "--dry-run", "firefox"]);
+        remove.assert_success();
+        remove.assert_contains("No changes made (dry run)");
     }
 
     #[test]
@@ -987,10 +997,12 @@ mod command_integration_tests {
         }
 
         let update = run_omg(&["update", "--check"]);
-        update.assert_no_panic();
+        update.assert_success();
+        update.assert_reports_update_status();
 
-        let install = run_omg(&["install", "--dry-run", "vim"]);
+        let install = run_omg(&["install", "--dry-run", "firefox"]);
         install.assert_success();
+        install.assert_contains("firefox");
     }
 
     #[test]
@@ -999,25 +1011,30 @@ mod command_integration_tests {
             return;
         }
 
-        // Complete user journey
-        let search = run_omg(&["search", "htop"]);
+        // Complete user journey across the three read/preview surfaces.
+        let search = run_omg(&["search", "firefox"]);
         search.assert_success();
+        search.assert_contains("firefox");
 
-        let info = run_omg(&["info", "htop"]);
-        info.assert_no_panic();
+        let info = run_omg(&["info", "firefox"]);
+        info.assert_success();
+        info.assert_contains("Description");
 
-        let install = run_omg(&["install", "--dry-run", "htop"]);
+        let install = run_omg(&["install", "--dry-run", "firefox"]);
         install.assert_success();
+        install.assert_contains("firefox");
     }
 
     #[test]
     fn test_status_after_failed_install() {
         let bad_install = run_omg(&["install", "-y", "nonexistent-pkg"]);
         bad_install.assert_failure();
+        bad_install.assert_contains("not found");
 
-        // Status should still work after failure
+        // Status must still work after the failure.
         let status = run_omg(&["status"]);
-        status.assert_no_panic();
+        status.assert_success();
+        status.assert_contains("Packages");
     }
 
     #[test]
@@ -1026,18 +1043,26 @@ mod command_integration_tests {
             return;
         }
 
-        // Simulate realistic CLI usage session
-        let commands = vec![
-            vec!["status"],
-            vec!["search", "vim"],
-            vec!["info", "vim"],
-            vec!["install", "--dry-run", "vim"],
-            vec!["update", "--check"],
-        ];
+        // Realistic CLI usage session; each command must deliver its own
+        // observable result, not merely avoid panicking.
+        let status = run_omg(&["status"]);
+        status.assert_success();
+        status.assert_contains("Packages");
 
-        for cmd in commands {
-            let result = run_omg(&cmd);
-            result.assert_no_panic();
-        }
+        let search = run_omg(&["search", "firefox"]);
+        search.assert_success();
+        search.assert_contains("firefox");
+
+        let info = run_omg(&["info", "pacman"]);
+        info.assert_success();
+        info.assert_contains("Description");
+
+        let install = run_omg(&["install", "--dry-run", "vim"]);
+        install.assert_success();
+        install.assert_contains("(dry run)");
+
+        let update = run_omg(&["update", "--check"]);
+        update.assert_success();
+        update.assert_reports_update_status();
     }
 }

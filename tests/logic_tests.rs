@@ -85,11 +85,18 @@ async fn test_mock_package_manager_search() {
 
     // ===== ACT =====
     let results = pm.search("test").await.unwrap();
+    let miss = pm.search("definitely-not-indexed").await.unwrap();
 
     // ===== ASSERT =====
     assert_eq!(results.len(), 1);
     assert_eq!(results[0].name, "test-pkg");
     assert!(!results[0].installed);
+    // A query matching nothing must return empty results, not an error or
+    // fabricated packages.
+    assert!(
+        miss.is_empty(),
+        "search for a non-indexed term must return no results"
+    );
 }
 
 #[tokio::test]

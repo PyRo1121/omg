@@ -144,12 +144,16 @@ fn test_docker_omg_info() {
     assert!(success, "Info should succeed");
     let plain = strip_ansi(&stdout);
     assert!(plain.contains("bash"), "Should show bash package info");
-    // Output may be compact ("bash 5.3.9-1") or labeled ("Version: 5.3.9-1")
+    // Contract: display_pkg_info (src/package_managers/alpm_ops.rs:246-272)
+    // prints "<name> <version>" plus labeled fields; the description and
+    // repository lines must be present.
     assert!(
-        plain.contains("Version")
-            || plain.contains("version")
-            || plain.chars().any(|c| c.is_ascii_digit()),
-        "Should show version info, got: {plain}"
+        plain.contains("Description:"),
+        "info output must include a Description line, got: {plain}"
+    );
+    assert!(
+        plain.contains("Repository:"),
+        "official-repo info output must include a Repository line, got: {plain}"
     );
 }
 
@@ -175,26 +179,9 @@ fn test_docker_real_install() {
     );
 }
 
-#[test]
-#[ignore = "requires Docker; run the dedicated Docker E2E job with --ignored"]
-fn test_docker_real_remove() {
-    require_docker_tests();
-    assert!(ensure_docker_image(), "Docker image not ready");
-
-    // Install, remove, and verify in a single container
-    let (success, stdout, stderr) =
-        run_script_in_docker("sudo omg install -y tree && sudo omg remove -y tree && ! which tree");
-
-    if !success {
-        eprintln!("STDOUT: {stdout}");
-        eprintln!("STDERR: {stderr}");
-    }
-
-    assert!(
-        success,
-        "Install, remove, and verify should succeed in single container"
-    );
-}
+// NOTE: `test_docker_real_remove` was merged into
+// `test_docker_install_removes_work_together`, which runs the strictly
+// stronger script (it additionally verifies the install before removing).
 
 #[test]
 #[ignore = "requires Docker; run the dedicated Docker E2E job with --ignored"]
@@ -202,10 +189,17 @@ fn test_docker_update_check() {
     require_docker_tests();
     assert!(ensure_docker_image(), "Docker image not ready");
 
-    // Update check should work without sudo
-    let (success, _stdout, _stderr) = run_in_docker(&["omg", "update", "--check"]);
+    let (success, stdout, _stderr) = run_in_docker(&["omg", "update", "--check"]);
 
     assert!(success, "Update check should succeed");
+    // Contract: arch::update check_only path prints a phase header announcing
+    // it is checking without syncing
+    // (src/cli/packages/update/arch.rs:155-165).
+    let plain = strip_ansi(&stdout);
+    assert!(
+        plain.contains("Checking"),
+        "update --check must announce its check phase, got: {plain}"
+    );
 }
 
 #[test]
@@ -230,9 +224,20 @@ fn test_docker_status() {
     require_docker_tests();
     assert!(ensure_docker_image(), "Docker image not ready");
 
-    let (success, _stdout, _stderr) = run_in_docker(&["omg", "status"]);
+    let (success, stdout, _stderr) = run_in_docker(&["omg", "status"]);
 
     assert!(success, "Status command should succeed");
+    // Contract: display_status_report always renders these two lines
+    // (src/cli/packages/status.rs:139-166).
+    let plain = strip_ansi(&stdout);
+    assert!(
+        plain.contains("Status Overview"),
+        "status must render its report header, got: {plain}"
+    );
+    assert!(
+        plain.contains("Total Packages:"),
+        "status must include the total package count line, got: {plain}"
+    );
 }
 
 #[test]
@@ -270,12 +275,13 @@ fn test_docker_nonexistent_package() {
 
     let (_success, stdout, stderr) = run_in_docker(&["omg", "info", "package-does-not-exist-xyz"]);
 
-    // omg info may exit 0 even for not-found packages; check output instead
+    // Contract: every info lookup path bails with this message for missing
+    // packages (e.g. src/cli/packages/info.rs:115).
     let combined = format!("{stdout}{stderr}");
     let plain = strip_ansi(&combined);
     assert!(
-        plain.contains("not found") || plain.contains("Not Found") || plain.contains("error"),
-        "Should show 'not found' message, got: {plain}"
+        plain.contains("not found"),
+        "Should report 'Package ... not found', got: {plain}"
     );
 }
 

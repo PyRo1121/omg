@@ -16,10 +16,11 @@
 
 pub mod common;
 
+use common::{serial, with_test_env};
+
 use anyhow::Result;
 use std::fs;
 use std::path::{Path, PathBuf};
-use std::time::Duration;
 use tempfile::TempDir;
 
 // ═══════════════════════════════════════════════════════════════════════════════
@@ -53,16 +54,6 @@ impl E2ETestEnv {
         }
         fs::write(&path, content)?;
         Ok(path)
-    }
-
-    /// Read a file from the data directory
-    fn read_data_file(&self, name: &str) -> Result<String> {
-        Ok(fs::read_to_string(self.data_dir.path().join(name))?)
-    }
-
-    /// Check if a file exists in the data directory
-    fn data_file_exists(&self, name: &str) -> bool {
-        self.data_dir.path().join(name).exists()
     }
 }
 
@@ -234,13 +225,16 @@ mod license_tests {
         Ok(())
     }
 
-    /// Verify offline license validation with cached token
+    /// Verify a cached license written to the data dir loads via the product
+    /// loader (`load_license`), which reads `<OMG_DATA_DIR>/license.json`.
+    /// Contract pinned at src/core/license.rs:494.
     #[test]
+    #[serial]
     fn test_offline_license_validation_with_cached_token() -> Result<()> {
-        // Given: A test environment with a cached license
-        let env = E2ETestEnv::new()?;
+        use omg_lib::core::license::load_license;
 
-        // Create a mock cached license (simulating offline scenario)
+        // Given: An isolated data dir containing a cached license
+        let env = E2ETestEnv::new()?;
         let license_json = r#"{
             "key": "OMG-PRO-TEST",
             "tier": "pro",
@@ -251,12 +245,16 @@ mod license_tests {
             "machine_id": "abc123"
         }"#;
         env.create_data_file("license.json", license_json)?;
+        let data_dir = env.data_path().to_string_lossy().into_owned();
 
-        // Then: License file should exist for offline validation
-        assert!(
-            env.data_file_exists("license.json"),
-            "Cached license should exist for offline validation"
-        );
+        // When: The product loader reads the cache offline
+        let loaded = with_test_env(&[("OMG_DATA_DIR", &data_dir)], load_license);
+
+        // Then: The stored license must round-trip its identity fields
+        let license = loaded.expect("cached pro license must load offline");
+        assert_eq!(license.key, "OMG-PRO-TEST");
+        assert_eq!(license.tier, "pro");
+        assert_eq!(license.features, vec!["sbom", "audit"]);
 
         Ok(())
     }
@@ -288,16 +286,25 @@ mod usage_tests {
         );
     }
 
-    /// Verify command recording increments counters correctly
+    /// Verify command recording increments counters correctly.
+    ///
+    /// `record_command` also persists best-effort to `<OMG_DATA_DIR>/usage.json`,
+    /// so it runs against an isolated data dir instead of the developer's real
+    /// one (src/core/usage.rs:230).
     #[test]
+    #[serial]
     fn test_record_command_increments_counters() {
-        // Given: Empty usage stats
+        // Given: Empty usage stats in an isolated data dir
+        let env = E2ETestEnv::new().unwrap();
+        let data_dir = env.data_path().to_string_lossy().into_owned();
         let mut stats = UsageStats::default();
 
-        // When: We record commands
-        stats.record_command("search", 127);
-        stats.record_command("search", 127);
-        stats.record_command("info", 132);
+        // When: We record commands through the public API
+        with_test_env(&[("OMG_DATA_DIR", &data_dir)], || {
+            stats.record_command("search", 127);
+            stats.record_command("search", 127);
+            stats.record_command("info", 132);
+        });
 
         // Then: Counters should be updated
         assert_eq!(stats.total_commands, 3, "Total should be 3");
@@ -318,21 +325,26 @@ mod usage_tests {
         );
     }
 
-    /// Verify `installed_packages` hashmap tracks package installations
+    /// Verify `installed_packages` counting through the product tracking path:
+    /// `track_install` increments per-package counters under the cross-process
+    /// lock and persists to `<OMG_DATA_DIR>/usage.json` (src/core/usage.rs:554).
     #[test]
-    fn test_installed_packages_tracking() {
-        // Given: Usage stats
-        let mut stats = UsageStats::default();
+    #[serial]
+    fn test_installed_packages_tracking() -> Result<()> {
+        use omg_lib::core::usage::track_install;
 
-        // When: We track package installations
-        stats.installed_packages.insert("firefox".to_string(), 1);
-        stats.installed_packages.insert("vim".to_string(), 3);
-        *stats
-            .installed_packages
-            .entry("firefox".to_string())
-            .or_insert(0) += 1;
+        // Given: An isolated data dir
+        let env = E2ETestEnv::new()?;
+        let data_dir = env.data_path().to_string_lossy().into_owned();
 
-        // Then: Package counts should be tracked
+        // When: Installs are tracked through the product API
+        with_test_env(&[("OMG_DATA_DIR", &data_dir)], || {
+            track_install(&["firefox".to_string(), "vim".to_string()]);
+            track_install(&["firefox".to_string()]);
+        });
+
+        // Then: Reloaded stats must show the accumulated per-package counts
+        let stats = with_test_env(&[("OMG_DATA_DIR", &data_dir)], UsageStats::load)?;
         assert_eq!(
             stats.installed_packages.get("firefox"),
             Some(&2),
@@ -340,33 +352,46 @@ mod usage_tests {
         );
         assert_eq!(
             stats.installed_packages.get("vim"),
-            Some(&3),
-            "Vim should be installed 3 times"
+            Some(&1),
+            "Vim should be installed 1 time"
         );
+
+        Ok(())
     }
 
-    /// Verify `runtime_usage_counts` hashmap tracks runtime switches
+    /// Verify `runtime_usage_counts` tracking through the product path:
+    /// `track_runtime_switch` increments counters and persists them
+    /// (src/core/usage.rs:573).
     #[test]
-    fn test_runtime_usage_tracking() {
-        // Given: Usage stats
-        let mut stats = UsageStats::default();
+    #[serial]
+    fn test_runtime_usage_tracking() -> Result<()> {
+        use omg_lib::core::usage::track_runtime_switch;
 
-        // When: We track runtime switches
-        stats.runtime_usage_counts.insert("node".to_string(), 5);
-        stats.runtime_usage_counts.insert("python".to_string(), 3);
-        stats.runtime_usage_counts.insert("rust".to_string(), 1);
+        // Given: An isolated data dir
+        let env = E2ETestEnv::new()?;
+        let data_dir = env.data_path().to_string_lossy().into_owned();
 
-        // Then: Runtime counts should be tracked
+        // When: Runtime switches are tracked through the product API
+        with_test_env(&[("OMG_DATA_DIR", &data_dir)], || {
+            track_runtime_switch("node");
+            track_runtime_switch("node");
+            track_runtime_switch("python");
+        });
+
+        // Then: Reloaded stats must show the accumulated switch counts
+        let stats = with_test_env(&[("OMG_DATA_DIR", &data_dir)], UsageStats::load)?;
         assert_eq!(
             stats.runtime_usage_counts.get("node"),
-            Some(&5),
-            "Node usage should be 5"
+            Some(&2),
+            "Node usage should be 2"
         );
         assert_eq!(
             stats.runtime_usage_counts.get("python"),
-            Some(&3),
-            "Python usage should be 3"
+            Some(&1),
+            "Python usage should be 1"
         );
+
+        Ok(())
     }
 
     /// Verify time saved calculation is accurate
@@ -419,22 +444,28 @@ mod usage_tests {
         }
     }
 
-    /// Verify achievement unlocking based on thresholds
+    /// Verify achievement unlocking is driven by real command recording.
+    ///
+    /// `check_achievements` runs inside every `record_command`
+    /// (src/core/usage.rs:273), so thresholds must unlock through the public
+    /// API: 100 commands at 600ms each = Centurion + MinuteSaver, but NOT
+    /// Legend (10k commands) or HourSaver (3.6M ms).
     #[test]
+    #[serial]
     fn test_achievement_unlocking() {
-        // Given: Stats that should trigger achievements
-        let mut stats = UsageStats {
-            total_commands: 100,
-            time_saved_ms: 60_000, // 1 minute
-            ..Default::default()
-        };
+        // Given: An isolated data dir and empty stats
+        let env = E2ETestEnv::new().unwrap();
+        let data_dir = env.data_path().to_string_lossy().into_owned();
+        let mut stats = UsageStats::default();
 
-        // Manually check achievements (normally called in record_command)
-        stats.achievements.push(Achievement::FirstStep);
-        stats.achievements.push(Achievement::Centurion);
-        stats.achievements.push(Achievement::MinuteSaver);
+        // When: Exactly 100 commands are recorded totalling 60_000ms saved
+        with_test_env(&[("OMG_DATA_DIR", &data_dir)], || {
+            for _ in 0..100 {
+                stats.record_command("bench", 600);
+            }
+        });
 
-        // Then: Appropriate achievements should be present
+        // Then: The earned achievements are unlocked...
         assert!(
             stats.achievements.contains(&Achievement::FirstStep),
             "Should have FirstStep achievement"
@@ -446,6 +477,16 @@ mod usage_tests {
         assert!(
             stats.achievements.contains(&Achievement::MinuteSaver),
             "Should have MinuteSaver (1 minute saved) achievement"
+        );
+
+        // ...and the unmet thresholds stay locked
+        assert!(
+            !stats.achievements.contains(&Achievement::Legend),
+            "Legend requires 10_000 commands, must not unlock at 100"
+        );
+        assert!(
+            !stats.achievements.contains(&Achievement::HourSaver),
+            "HourSaver requires 3_600_000ms saved, must not unlock at 60_000ms"
         );
     }
 
@@ -485,63 +526,28 @@ mod usage_tests {
         Ok(())
     }
 
-    /// Verify sync payload format matches API expectations
+    /// Verify usage file persistence through the product save/load cycle
+    /// (`UsageStats::save` / `UsageStats::load`, src/core/usage.rs:198/218).
     #[test]
-    fn test_sync_payload_format() {
-        // Given: Usage stats
-        let mut stats = UsageStats {
-            total_commands: 100,
-            queries_today: 10,
-            ..Default::default()
-        };
-        stats.installed_packages.insert("vim".to_string(), 1);
-        stats.runtime_usage_counts.insert("python".to_string(), 3);
-
-        // When: We construct a sync payload (simulating what sync() does)
-        let payload = serde_json::json!({
-            "license_key": "test-key",
-            "machine_id": "abc123",
-            "commands_run": stats.queries_today,
-            "installed_packages": stats.installed_packages,
-            "runtime_usage_counts": stats.runtime_usage_counts,
-            "time_saved_ms": stats.time_saved_ms,
-        });
-
-        // Then: Payload should have correct structure
-        assert!(
-            payload["license_key"].is_string(),
-            "Payload should have license_key"
-        );
-        assert!(
-            payload["installed_packages"].is_object(),
-            "installed_packages should be object"
-        );
-        assert!(
-            payload["runtime_usage_counts"].is_object(),
-            "runtime_usage_counts should be object"
-        );
-    }
-
-    /// Verify usage file persistence
-    #[test]
+    #[serial]
     fn test_usage_stats_persistence() -> Result<()> {
-        // Given: A test environment
+        // Given: An isolated data dir with stats saved via the product API
         let env = E2ETestEnv::new()?;
+        let data_dir = env.data_path().to_string_lossy().into_owned();
 
-        // Create usage stats file
         let stats = UsageStats {
             total_commands: 42,
             time_saved_ms: 5000,
             ..Default::default()
         };
-        let json = serde_json::to_string_pretty(&stats)?;
-        env.create_data_file("usage.json", &json)?;
+        with_test_env(&[("OMG_DATA_DIR", &data_dir)], || {
+            stats.save().expect("usage stats save must succeed");
+        });
 
-        // When: We read back the file
-        let content = env.read_data_file("usage.json")?;
-        let loaded: UsageStats = serde_json::from_str(&content)?;
+        // When: A fresh load reads the persisted file back
+        let loaded = with_test_env(&[("OMG_DATA_DIR", &data_dir)], UsageStats::load)?;
 
-        // Then: Stats should match
+        // Then: Stats should round-trip exactly
         assert_eq!(loaded.total_commands, 42);
         assert_eq!(loaded.time_saved_ms, 5000);
 
@@ -659,33 +665,37 @@ mod daemon_tests {
         Ok(())
     }
 
-    /// Verify length-delimited framing format
+    /// Verify the product length-delimited framing round-trips payloads.
+    ///
+    /// `write_frame` prefixes a big-endian `u32` length; `read_frame` reads it
+    /// back and rejects frames over [`MAX_FRAME_SIZE`]
+    /// (src/daemon/protocol.rs:380/399).
     #[test]
     fn test_length_delimited_framing() -> Result<()> {
-        // Given: A message to frame
+        use omg_lib::daemon::protocol::{MAX_FRAME_SIZE, read_frame, write_frame};
+        use std::io::Cursor;
+
+        // Given: A message framed through the product writer
         let message = b"test message content";
+        let mut wire = Cursor::new(Vec::new());
+        write_frame(&mut wire, message)?;
 
-        // When: We apply length-delimited framing (Big Endian u32 prefix)
-        let len = u32::try_from(message.len()).unwrap();
-        let mut framed = Vec::with_capacity(4 + message.len());
-        framed.extend_from_slice(&len.to_be_bytes());
-        framed.extend_from_slice(message);
+        // Then: The frame is 4-byte prefix + payload, and reading it back
+        // yields the exact payload
+        let buf = wire.into_inner();
+        assert_eq!(buf.len(), 4 + message.len());
+        let decoded = read_frame(&mut Cursor::new(&buf))?;
+        assert_eq!(decoded, message.to_vec(), "frame payload must round-trip");
 
-        // Then: Frame should have correct structure
-        assert_eq!(
-            framed.len(),
-            4 + message.len(),
-            "Frame should have 4-byte prefix + message"
-        );
-
-        // And: Length prefix should be correct
-        let prefix_bytes: [u8; 4] = framed[..4].try_into()?;
-        let decoded_len = u32::from_be_bytes(prefix_bytes);
-        assert_eq!(
-            decoded_len as usize,
-            message.len(),
-            "Length prefix should match message length"
-        );
+        // And: An oversized announced length must be rejected as invalid data
+        let hostile_prefix = (MAX_FRAME_SIZE as u32 + 1).to_be_bytes();
+        let hostile: Vec<u8> = hostile_prefix
+            .iter()
+            .copied()
+            .chain(b"x".repeat(8))
+            .collect();
+        let err = read_frame(&mut Cursor::new(&hostile)).unwrap_err();
+        assert_eq!(err.kind(), std::io::ErrorKind::InvalidData);
 
         Ok(())
     }
@@ -745,34 +755,48 @@ mod daemon_tests {
         }
     }
 
-    /// Verify socket path is correctly generated
+    /// Verify socket path resolution honours its documented override order:
+    /// `OMG_SOCKET_PATH` first, then a name ending in `omg.sock`
+    /// (src/core/paths.rs:278).
     #[test]
+    #[serial]
     fn test_socket_path_generation() {
         use omg_lib::core::paths::socket_path;
 
-        // When: We get the socket path
-        let path = socket_path();
-
-        // Then: Path should end with omg.sock
+        // Default resolution must still name the omg socket file
+        let default_path = socket_path();
         assert!(
-            path.to_string_lossy().contains("omg.sock"),
-            "Socket path should contain omg.sock"
+            default_path.ends_with("omg.sock"),
+            "Socket path should end with omg.sock, got {default_path:?}"
+        );
+
+        // An explicit OMG_SOCKET_PATH override must win verbatim
+        let overridden = with_test_env(
+            &[("OMG_SOCKET_PATH", "/tmp-test-dir/custom.sock")],
+            socket_path,
+        );
+        assert_eq!(
+            overridden,
+            PathBuf::from("/tmp-test-dir/custom.sock"),
+            "OMG_SOCKET_PATH must override the socket path"
         );
     }
 
-    /// Verify daemon disabled check respects environment
+    /// Verify test-mode detection matches the documented accepted values:
+    /// only "1", "true", or "TRUE" enable test mode (src/core/paths.rs:401).
     #[test]
+    #[serial]
     fn test_daemon_disabled_check() {
         use omg_lib::core::paths::test_mode;
 
-        // Note: This test runs in test mode, so daemon should be disabled
-        // The actual env var is set by the test harness
-
-        // When: We check test mode
-        // (In actual test execution, OMG_TEST_MODE=1 is set)
-
-        // Then: We just verify the function exists and returns a bool
-        let _ = test_mode(); // Just verify it compiles and runs
+        assert!(
+            with_test_env(&[("OMG_TEST_MODE", "1")], test_mode),
+            "OMG_TEST_MODE=1 must enable test mode"
+        );
+        assert!(
+            !with_test_env(&[("OMG_TEST_MODE", "0")], test_mode),
+            "OMG_TEST_MODE=0 must not enable test mode"
+        );
     }
 }
 
@@ -784,10 +808,18 @@ mod daemon_tests {
 mod integration_tests {
     use super::*;
 
-    /// Verify complete license activation flow (mocked)
+    /// Verify the license activation flow end-to-end without network.
+    ///
+    /// Product intent is FAIL-CLOSED: `tier_enum()` trusts only a JWT that
+    /// verifies against the (currently stub) Ed25519 key, so an offline cached
+    /// pro license keeps its stored identity but degrades to Free gating
+    /// (src/core/license.rs:39-44, 383-387).
     #[test]
+    #[serial]
     fn test_license_activation_flow_mocked() -> Result<()> {
-        // Given: A test environment
+        use omg_lib::core::license::{Tier, current_tier, load_license, require_feature};
+
+        // Given: An isolated data dir with an activated pro license
         let env = E2ETestEnv::new()?;
 
         // Simulate successful activation by creating license file
@@ -801,22 +833,40 @@ mod integration_tests {
             "machine_id": "test123"
         }"#;
         env.create_data_file("license.json", license)?;
+        let data_dir = env.data_path().to_string_lossy().into_owned();
 
-        // Then: License should be persisted
-        assert!(env.data_file_exists("license.json"));
+        // Then: The stored identity round-trips...
+        let stored = with_test_env(&[("OMG_DATA_DIR", &data_dir)], load_license)
+            .expect("cached pro license must be readable");
+        assert_eq!(stored.key, "OMG-PRO-TEST-1234");
+        assert_eq!(stored.tier, "pro");
 
-        // And: Should be readable
-        let content = env.read_data_file("license.json")?;
-        assert!(content.contains("OMG-PRO-TEST-1234"));
-        assert!(content.contains("pro"));
+        // ...but gating fails closed until the JWT verifies against a real key
+        let tier = with_test_env(&[("OMG_DATA_DIR", &data_dir)], current_tier);
+        assert_eq!(
+            tier,
+            Tier::Free,
+            "an unverifiable paid license must degrade to Free gating"
+        );
+        let sbom_err = with_test_env(&[("OMG_DATA_DIR", &data_dir)], || require_feature("sbom"))
+            .expect_err("'sbom' must stay gated while the verification key is a stub");
+        let message = format!("{sbom_err:#}");
+        assert!(
+            message.contains("sbom") && message.contains("Pro tier"),
+            "denial must name feature and required tier, got: {message}"
+        );
 
         Ok(())
     }
 
-    /// Verify usage tracking accumulates across sessions
+    /// Verify usage tracking accumulates across sessions through the product
+    /// load → record → persist cycle (src/core/usage.rs:198/230).
     #[test]
+    #[serial]
     fn test_usage_tracking_persistence() -> Result<()> {
-        // Given: A test environment with existing usage
+        use omg_lib::core::usage::UsageStats;
+
+        // Given: A data dir with an existing session's stats on disk
         let env = E2ETestEnv::new()?;
 
         // Initial usage
@@ -833,50 +883,28 @@ mod integration_tests {
             "last_sync": 1700000000
         }"#;
         env.create_data_file("usage.json", initial_usage)?;
+        let data_dir = env.data_path().to_string_lossy().into_owned();
 
-        // When: We simulate adding more usage
-        let content = env.read_data_file("usage.json")?;
-        let mut stats: omg_lib::core::usage::UsageStats = serde_json::from_str(&content)?;
-        stats.total_commands += 5;
-        stats.time_saved_ms += 635; // 5 * 127ms for search
+        // When: A new session records five searches via the product API
+        // (record_command persists best-effort after each record)
+        with_test_env(&[("OMG_DATA_DIR", &data_dir)], || {
+            let mut stats = UsageStats::load().expect("existing stats must load");
+            for _ in 0..5 {
+                stats.record_command("search", 127);
+            }
+        });
 
-        // Save updated stats
-        let updated = serde_json::to_string_pretty(&stats)?;
-        env.create_data_file("usage.json", &updated)?;
-
-        // Then: Updated values should persist
-        let final_content = env.read_data_file("usage.json")?;
-        let final_stats: omg_lib::core::usage::UsageStats = serde_json::from_str(&final_content)?;
-
+        // Then: The next session sees the accumulated totals persisted
+        let final_stats = with_test_env(&[("OMG_DATA_DIR", &data_dir)], UsageStats::load)?;
         assert_eq!(
             final_stats.total_commands, 105,
             "Commands should accumulate"
         );
         assert_eq!(
-            final_stats.time_saved_ms, 13335,
+            final_stats.time_saved_ms, 13_335,
             "Time saved should accumulate"
         );
-
-        Ok(())
-    }
-
-    /// Verify environment isolation between tests
-    #[test]
-    fn test_environment_isolation() -> Result<()> {
-        // Given: Two separate test environments
-        let env1 = E2ETestEnv::new()?;
-        let env2 = E2ETestEnv::new()?;
-
-        // When: We create files in one environment
-        env1.create_data_file("test.txt", "env1 content")?;
-        env2.create_data_file("test.txt", "env2 content")?;
-
-        // Then: Each environment should have its own file
-        assert_eq!(env1.read_data_file("test.txt")?, "env1 content");
-        assert_eq!(env2.read_data_file("test.txt")?, "env2 content");
-
-        // And: Paths should be different
-        assert_ne!(env1.data_path(), env2.data_path());
+        assert_eq!(final_stats.commands.get("search"), Some(&55));
 
         Ok(())
     }
@@ -890,70 +918,67 @@ mod integration_tests {
 mod error_handling_tests {
     use super::*;
 
-    /// Verify graceful handling of corrupted license file
+    /// Verify graceful handling of a corrupted license file: the product
+    /// loader must treat it as no license (`None`) instead of panicking or
+    /// inventing a default (src/core/license.rs:489-507).
     #[test]
+    #[serial]
     fn test_corrupted_license_file_handling() -> Result<()> {
-        // Given: A test environment with corrupted license
+        use omg_lib::core::license::load_license;
+
+        // Given: A data dir whose license.json is malformed
         let env = E2ETestEnv::new()?;
         env.create_data_file("license.json", "{ invalid json }")?;
+        let data_dir = env.data_path().to_string_lossy().into_owned();
 
-        // When: We try to parse the file
-        let content = env.read_data_file("license.json")?;
-        let result: Result<omg_lib::core::license::StoredLicense, _> =
-            serde_json::from_str(&content);
-
-        // Then: Parsing should fail gracefully
-        assert!(
-            result.is_err(),
-            "Corrupted license file should fail to parse"
-        );
+        // When: The product loader reads the corrupt cache
+        // Then: It degrades to "no license", never a panic or fabricated tier
+        let loaded = with_test_env(&[("OMG_DATA_DIR", &data_dir)], load_license);
+        assert!(loaded.is_none(), "corrupt license must load as None");
 
         Ok(())
     }
 
-    /// Verify graceful handling of missing license file
+    /// Verify graceful handling of a missing license file: the documented
+    /// no-license state is `None`, silently (src/core/license.rs:495).
     #[test]
+    #[serial]
     fn test_missing_license_file_handling() -> Result<()> {
-        // Given: A test environment without license file
-        let env = E2ETestEnv::new()?;
+        use omg_lib::core::license::load_license;
 
-        // Then: File should not exist
-        assert!(
-            !env.data_file_exists("license.json"),
-            "License file should not exist by default"
-        );
+        // Given: An isolated data dir without license.json
+        let env = E2ETestEnv::new()?;
+        let data_dir = env.data_path().to_string_lossy().into_owned();
+
+        // When/Then: The loader reports the no-license state
+        let loaded = with_test_env(&[("OMG_DATA_DIR", &data_dir)], load_license);
+        assert!(loaded.is_none(), "missing license must load as None");
 
         Ok(())
     }
 
-    /// Verify graceful handling of corrupted usage file
+    /// Verify graceful handling of a corrupted usage file: `UsageStats::load`
+    /// must fail with its integrity context instead of silently resetting the
+    /// user's counters (src/core/usage.rs:214).
     #[test]
+    #[serial]
     fn test_corrupted_usage_file_handling() -> Result<()> {
-        // Given: A test environment with corrupted usage file
+        use omg_lib::core::usage::UsageStats;
+
+        // Given: A data dir whose usage.json is not JSON at all
         let env = E2ETestEnv::new()?;
         env.create_data_file("usage.json", "not valid json at all")?;
+        let data_dir = env.data_path().to_string_lossy().into_owned();
 
-        // When: We try to parse the file
-        let content = env.read_data_file("usage.json")?;
-        let result: Result<omg_lib::core::usage::UsageStats, _> = serde_json::from_str(&content);
-
-        // Then: Should fail to parse
-        assert!(result.is_err(), "Corrupted usage file should fail to parse");
+        // When/Then: Loading fails loudly, naming the malformed state
+        let error = with_test_env(&[("OMG_DATA_DIR", &data_dir)], UsageStats::load)
+            .expect_err("corrupt usage stats must fail to load");
+        assert!(
+            format!("{error:#}").contains("Malformed usage stats"),
+            "error must name the malformed usage stats, got: {error:#}"
+        );
 
         Ok(())
-    }
-
-    /// Verify network timeout handling (simulated)
-    #[test]
-    fn test_network_timeout_simulation() {
-        // Given: A very short timeout
-        let timeout = Duration::from_millis(1);
-
-        // Then: Timeout should be less than typical network latency
-        assert!(
-            timeout < Duration::from_secs(1),
-            "Timeout should be configurable for testing"
-        );
     }
 
     /// Verify empty response handling

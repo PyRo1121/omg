@@ -66,25 +66,29 @@ fn test_conflicting_packages_fails_gracefully() -> Result<()> {
 
 #[test]
 #[serial]
-fn test_permission_denied_on_cache_fails_gracefully() -> Result<()> {
+fn test_unwritable_database_dir_fails_gracefully() -> Result<()> {
     let harness = AlpmHarness::new()?;
 
     let pkg = HarnessPkg::new("pkg-a", "1.0.0");
     harness.add_sync_pkg("core", &pkg)?;
 
-    // Make the root directory read-only to simulate permission issues
-    let sync_dir = harness.db_path().join("sync");
-    let mut perms = std::fs::metadata(&sync_dir)?.permissions();
+    // Inject the fault where it actually bites the production path: an
+    // UNWRITABLE database directory makes libalpm's lockfile creation
+    // (db.lck) fail inside trans_init. (A read-only sync/ dir does NOT stop a
+    // local install — verified: without this chmod the call fails with a
+    // different, unrelated message.)
+    let db_dir = harness.db_path();
+    let mut perms = std::fs::metadata(db_dir)?.permissions();
     perms.set_readonly(true);
-    std::fs::set_permissions(&sync_dir, perms)?;
+    std::fs::set_permissions(db_dir, perms)?;
 
-    // Ensure we reset permissions so harness can be cleaned up
+    // Restore permissions so the harness temp dir can be cleaned up.
     scopeguard::defer! {
-        if let Ok(meta) = std::fs::metadata(&sync_dir) {
+        if let Ok(meta) = std::fs::metadata(db_dir) {
             use std::os::unix::fs::PermissionsExt;
             let mut p = meta.permissions();
             p.set_mode(0o755); // Restore standard directory permissions
-            let _ = std::fs::set_permissions(&sync_dir, p);
+            let _ = std::fs::set_permissions(db_dir, p);
         }
     }
 
@@ -97,12 +101,20 @@ fn test_permission_denied_on_cache_fails_gracefully() -> Result<()> {
         paths::reset_test_overrides();
     }
 
-    // This should fail during handle creation or DB registration
+    // Production path (no injected handle): must fail gracefully with the
+    // friendly locked-database mapping from prepare_alpm_transaction
+    // (src/package_managers/alpm_ops.rs:472-481), never panic and never
+    // report a missing package instead of the database problem.
     let result = alpm_ops::execute_transaction(vec!["pkg-a".to_string()], false, false, None);
 
     assert!(
         result.is_err(),
-        "Transaction should fail due to permissions"
+        "Transaction should fail due to unwritable database directory"
+    );
+    let err = result.unwrap_err().to_string();
+    assert!(
+        err.contains("Database is locked"),
+        "unwritable db dir must surface the friendly locked-database message, got: {err}"
     );
 
     Ok(())

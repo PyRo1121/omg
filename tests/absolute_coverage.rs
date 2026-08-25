@@ -121,18 +121,28 @@ async fn test_env_check_fails_without_lock() -> Result<()> {
 
 #[tokio::test]
 #[serial]
-async fn test_env_check_fails_on_drift() -> Result<()> {
+async fn test_env_check_rejects_future_schema_lockfile() -> Result<()> {
     let temp = tempdir()?;
     let _cwd = CurrentDirGuard::change_to(temp.path());
 
     let ctx = get_ctx();
 
-    fs::write(temp.path().join("omg.lock"), "{}")?;
+    // A lockfile stamped with a schema version newer than this build must be
+    // rejected with an actionable message, not parsed best-effort
+    // (contract: EnvironmentState::load, src/core/env/fingerprint.rs:139).
+    fs::write(
+        temp.path().join("omg.lock"),
+        "schema_version = 99\nruntimes = {}\npackages = []\ntimestamp = 0\nhash = 'x'\n",
+    )?;
 
     let check_cmd = EnvCommands::Check;
     let result = check_cmd.execute(&ctx).await;
 
     assert!(result.is_err());
+    assert!(
+        result.unwrap_err().to_string().contains("newer omg"),
+        "future-schema lockfile must be rejected with a version-mismatch error"
+    );
     Ok(())
 }
 
@@ -179,10 +189,12 @@ async fn test_tool_install_invalid_name_fails() -> Result<()> {
     let result = install_cmd.execute(&ctx).await;
     assert!(result.is_err());
     let err = result.unwrap_err().to_string();
+    // validate_package_name checks the leading dot before anything else for
+    // "../dangerous", so the hidden-file rule is the deterministic rejection
+    // (src/core/security/validation.rs:84-86).
     assert!(
-        err.contains("cannot start with")
-            || err.contains("path traversal")
-            || err.contains("Invalid character")
+        err.contains("cannot start with '.'"),
+        "dot-prefixed name must be rejected by the hidden-file rule, got: {err}"
     );
     Ok(())
 }
@@ -201,8 +213,13 @@ async fn test_fleet_status_requires_license() -> Result<()> {
     let result = status_cmd.execute(&ctx).await;
     assert!(result.is_err());
     let err = result.unwrap_err().to_string();
-    eprintln!("Actual error: {err}");
-    assert!(err.contains("license") || err.contains("feature") || err.contains("tier"));
+    // license::require_feature is the first call in fleet status; without a
+    // stored license it bails with exactly this shape
+    // (src/core/license.rs:838-843).
+    assert!(
+        err.contains("Feature 'fleet' requires"),
+        "fleet status without a license must name the gated feature, got: {err}"
+    );
     Ok(())
 }
 
@@ -257,10 +274,7 @@ async fn test_run_detect_and_execute_mock_task() -> Result<()> {
     let temp = tempdir()?;
     let _cwd = CurrentDirGuard::change_to(temp.path());
 
-    fs::write(
-        temp.path().join("Makefile"),
-        "test:\n\t@echo 'Hello Test'\n",
-    )?;
+    fs::write(temp.path().join("Makefile"), "test:\n\t@touch ran.marker\n")?;
 
     let ctx = get_ctx();
     let run_cmd = RunCommand {
@@ -274,6 +288,13 @@ async fn test_run_detect_and_execute_mock_task() -> Result<()> {
     };
 
     run_cmd.execute(&ctx).await?;
+
+    // Success alone could mean the command was merely accepted; the marker
+    // proves the make recipe actually executed.
+    assert!(
+        temp.path().join("ran.marker").exists(),
+        "make task must have executed its recipe"
+    );
 
     Ok(())
 }

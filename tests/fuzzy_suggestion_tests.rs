@@ -54,15 +54,23 @@ async fn test_fuzzy_suggestions() {
         },
     )
     .await;
+    // A single-character name would leave an empty prefix after `pop`, and
+    // `PackageIndex::suggest` returns nothing for an empty query by contract
+    // (src/daemon/index.rs), so only multi-character names are usable here.
     let target_pkg = match probe {
         Response::Success {
             result: ResponseResult::Search(results),
             ..
-        } if !results.packages.is_empty() => results.packages[0].name.clone(),
-        _ => {
-            report_skip("package index has no entries to derive a typo from");
-            return;
-        }
+        } => results
+            .packages
+            .iter()
+            .map(|pkg| pkg.name.clone())
+            .find(|name| name.chars().count() > 1),
+        _ => None,
+    };
+    let Some(target_pkg) = target_pkg else {
+        report_skip("package index has no multi-character entries to derive a typo from");
+        return;
     };
 
     // Create a typo: remove last char
@@ -80,12 +88,19 @@ async fn test_fuzzy_suggestions() {
 
     match response {
         Response::Success {
+            id,
             result: ResponseResult::Suggest(suggestions),
             ..
         } => {
+            assert_eq!(id, 1, "Suggest response must echo the request id");
             assert!(
                 !suggestions.is_empty(),
                 "Should return suggestions for '{typo}'"
+            );
+            assert!(
+                suggestions.len() <= 5,
+                "limit=Some(5) must cap the suggestion count, got {}",
+                suggestions.len()
             );
             // `suggest` is prefix-based: every suggestion must extend the
             // queried prefix (pinned as a contract, not against a specific

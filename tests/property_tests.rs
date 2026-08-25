@@ -58,6 +58,15 @@ proptest! {
     fn prop_version_strings_handled(version in "[0-9]{1,3}(\\.[0-9]{1,3}){0,3}") {
         let result = run_omg(&["use", "node", &version]);
         prop_assert!(!result.stderr.contains("panicked at"));
+        // Generated versions always pass `validate_runtime_version`
+        // (digits and dots only, never "current", no ':'/'~'), so the switch
+        // header from src/cli/runtimes.rs must be announced before any
+        // install attempt, regardless of whether the install then succeeds.
+        prop_assert!(
+            result.stdout.contains(&format!("Switching node to version {version}")),
+            "`use node` must announce the target version, got stdout: {}",
+            result.stdout.chars().take(200).collect::<String>()
+        );
     }
 
     /// Path inputs should not allow traversal
@@ -68,6 +77,7 @@ proptest! {
     ) {
         let input = format!("{prefix}{path}");
         let result = run_omg(&["info", &input]);
+        prop_assert!(!result.stderr.contains("panicked at"));
         // Should not expose system files
         prop_assert!(!result.stdout.contains("/etc/passwd"));
         prop_assert!(!result.stdout.contains("/etc/shadow"));
@@ -112,18 +122,38 @@ proptest! {
         let result1 = run_omg(&["which", runtime]);
         // Should not crash on any variant
         prop_assert!(!result1.stderr.contains("panicked at"));
+        // Every accepted alias must resolve through canonical_runtime_name
+        // (src/cli/runtimes.rs) and print an answer naming the requested
+        // runtime: either its active version or the explicit "no version set"
+        // notice. A silent success would mean the lookup was skipped.
+        if result1.success {
+            prop_assert!(
+                result1.stdout.contains(runtime) || result1.stderr.contains(runtime),
+                "`which {runtime}` success must name the runtime, got: {}",
+                result1.combined_output().chars().take(200).collect::<String>()
+            );
+        } else {
+            prop_assert!(
+                !result1.stderr.is_empty(),
+                "`which {runtime}` failure must explain why on stderr"
+            );
+        }
     }
 
     /// Environment variables in input should not be expanded
     #[test]
     fn prop_no_env_expansion(var_name in "[A-Z]{3,10}") {
+        // Inject a canary value for the variable so the non-expansion claim
+        // is exercised deterministically instead of only when the variable
+        // happens to be set in the test process.
+        let canary = format!("canary-{var_name}-must-not-expand");
         let input = format!("${{{var_name}}}");
-        let result = run_omg(&["search", &input]);
+        let result = run_omg_with_env(&["search", &input], &[(&var_name, canary.as_str())]);
         prop_assert!(!result.stderr.contains("panicked at"));
-        // Verify env var wasn't expanded
-        if let Ok(val) = std::env::var(&var_name) {
-            prop_assert!(!result.stdout.contains(&val));
-        }
+        prop_assert!(
+            !result.stdout.contains(&canary),
+            "Search query env var must not be expanded into output"
+        );
     }
 
     /// Unicode inputs should be handled safely
@@ -132,18 +162,18 @@ proptest! {
         let result = run_omg(&["search", &s]);
         prop_assert!(!result.stderr.contains("panicked at"));
 
+        // UTF-8 validity is guaranteed by the harness (`from_utf8_lossy`),
+        // so the real contract here is structured output on every success.
         if result.success {
-            let is_valid_utf8 = std::str::from_utf8(result.stdout.as_bytes()).is_ok();
-            prop_assert!(is_valid_utf8, "Output should be valid UTF-8");
-
             let has_structured_output = result.stdout.is_empty() ||
                                        result.stdout.contains("Search Results") ||
-                                       result.stdout.contains("Package") ||
                                        result.stdout.contains("No results");
             prop_assert!(has_structured_output, "Valid output should be structured");
-        } else if !result.stderr.is_empty() {
-            let error_valid_utf8 = std::str::from_utf8(result.stderr.as_bytes()).is_ok();
-            prop_assert!(error_valid_utf8, "Error messages should be valid UTF-8");
+        } else {
+            prop_assert!(
+                !result.stderr.is_empty(),
+                "Failed search must explain why on stderr"
+            );
         }
     }
 
@@ -154,21 +184,17 @@ proptest! {
         let result = run_omg(&["search", &long_input]);
         prop_assert!(!result.stderr.contains("panicked at"));
 
-        let output_reasonable_size = result.stdout.len() < len * 100;
         prop_assert!(
-            output_reasonable_size,
+            result.stdout.len() < len * 100,
             "Output should not be exponentially larger than input (input: {}, output: {})",
             len,
             result.stdout.len()
         );
 
-        if result.success || !result.stderr.is_empty() {
-            let total_output = result.stdout.len() + result.stderr.len();
-            prop_assert!(
-                total_output > 0,
-                "Should produce some output (success or error message)"
-            );
-        }
+        prop_assert!(
+            result.stdout.len() + result.stderr.len() > 0,
+            "Should produce some output (results header or error message)"
+        );
     }
 
     // Note: Null byte tests removed - std::process::Command rejects null bytes in args
@@ -192,36 +218,14 @@ proptest! {
         let version = format!("{major}.{minor}.{patch}");
         let result = run_omg(&["use", "node", &version]);
         prop_assert!(!result.stderr.contains("panicked at"));
-
-        if !result.success {
-            let has_helpful_error = result.stderr.contains("not available") ||
-                                   result.stderr.contains("not found") ||
-                                   result.stderr.contains("version") ||
-                                   result.stderr.contains("error");
-            prop_assert!(
-                has_helpful_error,
-                "Error should be helpful, got: {}",
-                result.stderr.chars().take(200).collect::<String>()
-            );
-        } else {
-            prop_assert!(
-                result.stdout.contains(&version) || result.stderr.is_empty(),
-                "Success should mention version or have no errors"
-            );
-        }
-    }
-
-    /// Partial versions should be handled
-    #[test]
-    fn prop_partial_versions(major in 0u32..30, minor in 0u32..30) {
-        let v1 = format!("{major}");
-        let v2 = format!("{major}.{minor}");
-
-        let result1 = run_omg(&["use", "node", &v1]);
-        let result2 = run_omg(&["use", "node", &v2]);
-
-        prop_assert!(!result1.stderr.contains("panicked at"));
-        prop_assert!(!result2.stderr.contains("panicked at"));
+        // These generated versions always pass validation (digits and dots),
+        // so the switch header from src/cli/runtimes.rs must be printed no
+        // matter how the subsequent install attempt ends.
+        prop_assert!(
+            result.stdout.contains(&format!("Switching node to version {version}")),
+            "`use node <semver>` must announce the target version, got stdout: {}",
+            result.stdout.chars().take(200).collect::<String>()
+        );
     }
 
     /// Version aliases should work
@@ -230,70 +234,30 @@ proptest! {
         alias in prop::sample::select(vec!["lts", "latest", "stable", "current", "lts/*", "lts/iron"])
     ) {
         let result = run_omg(&["use", "node", alias]);
-        if result.stderr.contains("panicked at") {
-            eprintln!("Panic detected in prop_version_aliases: {}", result.stderr);
-        }
         prop_assert!(!result.stderr.contains("panicked at"));
+        // Aliases containing '/' are rejected by validate_version; every other
+        // failure must still carry a diagnostic.
+        if !result.success {
+            prop_assert!(
+                !result.stderr.is_empty(),
+                "Rejected alias `{alias}` must produce an error message"
+            );
+        }
     }
 
+    /// 'v'-prefixed versions should be normalized and handled
     #[test]
     fn prop_v_prefix_versions(major in 0u32..30, minor in 0u32..30, patch in 0u32..30) {
         let version = format!("v{major}.{minor}.{patch}");
         let result = run_omg(&["use", "node", &version]);
         prop_assert!(!result.stderr.contains("panicked at"));
-    }
-
-    #[test]
-    fn prop_version_comparison(
-        old_major in 0u32..50,
-        old_minor in 0u32..50,
-        old_patch in 0u32..50,
-        new_major in 0u32..50,
-        new_minor in 0u32..50,
-        new_patch in 0u32..50
-    ) {
-        let old = format!("{old_major}.{old_minor}.{old_patch}");
-        let new = format!("{new_major}.{new_minor}.{new_patch}");
-
-        let _comparison = old.cmp(&new);
-
-        prop_assert!(!old.contains("panicked at") && !new.contains("panicked at"));
-    }
-
-    #[test]
-    fn prop_update_detection(
-        _name in "[a-z]{3,10}",
-        old_major in 0u32..20,
-        old_minor in 0u32..20,
-        old_patch in 0u32..20,
-        new_major in 0u32..20,
-        new_minor in 0u32..20,
-        new_patch in 0u32..20
-    ) {
-        let old_version = format!("{old_major}.{old_minor}.{old_patch}");
-        let new_version = format!("{new_major}.{new_minor}.{new_patch}");
-
-        let old = parse_version(&old_version);
-        let new = parse_version(&new_version);
-
-        let _is_newer = new > old;
-
-        prop_assert!(!old_version.contains("panicked at") && !new_version.contains("panicked at"));
-    }
-}
-
-fn parse_version(v: &str) -> (u32, u32, u32) {
-    let parts: Vec<u32> = v
-        .split('.')
-        .take(3)
-        .map(|s| s.parse().unwrap_or(0))
-        .collect();
-
-    match parts.as_slice() {
-        [major, minor, patch] => (*major, *minor, *patch),
-        [major, minor] => (*major, *minor, 0),
-        [major] => (*major, 0, 0),
-        _ => (0, 0, 0),
+        // The switch header (src/cli/runtimes.rs) echoes the version as given
+        // — the 'v' prefix is stripped later, inside install_or_use.
+        prop_assert!(
+            result.stdout.contains(&format!("Switching node to version {version}")),
+            "`use node {version}` must announce the target version, got stdout: {}",
+            result.stdout.chars().take(200).collect::<String>()
+        );
     }
 }
 
@@ -463,11 +427,13 @@ mod fuzz {
         }
 
         // Use simple deterministic fuzzing instead of rand
+        // Note: no null-byte case here - std::process::Command rejects null
+        // bytes at spawn time (OS-level behavior), which would panic the test
+        // harness itself rather than exercising omg.
         let test_args = vec![
             vec![""],
             vec!["a"],
             vec!["aaaa"],
-            vec!["\0"],
             vec!["\n\r\t"],
             vec!["😀🔥"],
             vec!["--", "test"],
@@ -628,15 +594,15 @@ mod regression {
     #[test]
     fn regression_special_chars_in_path() {
         let project = TestProject::new();
-        // Try to create directories with special characters
+        // create_dir uses create_dir_all().unwrap(), so it either succeeds or
+        // fails the test outright; no exists() guard is needed.
         for special in &["test dir", "test'dir", "test\"dir", "test\\dir"] {
-            if project.create_dir(special).exists() {
-                let result = run_omg_in_dir(&["status"], &project.path().join(special));
-                assert!(
-                    !result.stderr.contains("panicked at"),
-                    "Panic with path: {special}"
-                );
-            }
+            project.create_dir(special);
+            let result = run_omg_in_dir(&["status"], &project.path().join(special));
+            assert!(
+                !result.stderr.contains("panicked at"),
+                "Panic with path: {special}"
+            );
         }
     }
 

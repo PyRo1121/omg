@@ -36,8 +36,17 @@ mod dnf_integration {
         );
     }
 
+    /// Searches shell out to the host's dnf/rpm, so they require a real
+    /// Fedora-class system just like the other dnf_integration tests.
     #[tokio::test]
     async fn test_search_nonexistent_package() -> Result<()> {
+        // Gate inline (instead of require_system_tests!, whose `return;` is
+        // incompatible with this test's Result signature).
+        if common::TestConfig::default().skip_if_no_system("dnf_search_nonexistent") {
+            common::report_skip("system tests disabled (set OMG_RUN_SYSTEM_TESTS=1)");
+            return Ok(());
+        }
+
         let pm = DnfPackageManager::new();
 
         let results = pm.search("nonexistent-package-xyz-12345").await?;
@@ -63,9 +72,31 @@ mod dnf_integration {
 
     #[tokio::test]
     async fn test_list_updates() -> Result<()> {
+        // Gate inline (instead of require_system_tests!, whose `return;` is
+        // incompatible with this test's Result signature).
+        if common::TestConfig::default().skip_if_no_system("dnf_list_updates") {
+            common::report_skip("system tests disabled (set OMG_RUN_SYSTEM_TESTS=1)");
+            return Ok(());
+        }
+
         let pm = DnfPackageManager::new();
 
-        let _updates = pm.list_updates().await?;
+        // The call must succeed on a real system, and every reported update
+        // must be well-formed: named package with distinct old/new versions.
+        let updates = pm.list_updates().await?;
+        for update in &updates {
+            assert!(
+                !update.name.is_empty(),
+                "every update entry needs a package name"
+            );
+            assert!(
+                update.old_version != update.new_version,
+                "update for {} must change version ({} -> {})",
+                update.name,
+                update.old_version,
+                update.new_version
+            );
+        }
 
         Ok(())
     }
@@ -177,6 +208,7 @@ mod dnf_error_handling {
     #[tokio::test]
     async fn test_install_invalid_package() {
         if !omg_lib::core::is_root() {
+            common::report_skip("requires root privileges");
             return;
         }
 

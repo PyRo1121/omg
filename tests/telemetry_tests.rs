@@ -1,15 +1,11 @@
 #![cfg(feature = "arch")]
-#![expect(clippy::expect_used, clippy::pedantic, clippy::nursery)]
 
 //! S-tier Integration Tests: Telemetry System
 //!
 //! Comprehensive tests for privacy-first telemetry including:
-//! - Opt-out behavior (OMG_TELEMETRY=0 prevents all telemetry)
-//! - Event batching and queue management
-//! - Queue persistence across process restarts
+//! - Event batching and queue management structures
 //! - Session tracking with 30-minute timeout
-//! - Offline queue with retry logic
-//! - License-gated enhanced telemetry
+//! - Privacy guarantees of serialized events
 //!
 //! Run: cargo test --features arch telemetry
 //!
@@ -17,76 +13,20 @@
 //! requiring actual network calls or environment manipulation.
 
 use anyhow::Result;
-use serde_json::json;
-use std::path::PathBuf;
-use tempfile::TempDir;
 use tokio::time::Duration;
 
 use omg_lib::core::telemetry::{TelemetrySession, Timer};
 
 // =============================================================================
-// Test Fixtures and Helpers
+// AUDIT NOTE (tst-08)
 // =============================================================================
-
-/// Test fixture with isolated data directories
-struct TelemetryTestFixture {
-    _temp_dir: TempDir,
-    data_dir: PathBuf,
-    queue_path: PathBuf,
-    session_path: PathBuf,
-}
-
-impl TelemetryTestFixture {
-    fn new() -> Result<Self> {
-        let temp_dir = TempDir::new()?;
-        let data_dir = temp_dir.path().join("omg_data");
-        std::fs::create_dir_all(&data_dir)?;
-
-        let queue_path = data_dir.join("telemetry_queue.json");
-        let session_path = data_dir.join("telemetry_session.json");
-
-        Ok(Self {
-            _temp_dir: temp_dir,
-            data_dir,
-            queue_path,
-            session_path,
-        })
-    }
-
-    /// Read queue file
-    fn read_queue(&self) -> Result<Vec<serde_json::Value>> {
-        if !self.queue_path.exists() {
-            return Ok(Vec::new());
-        }
-        let content = std::fs::read_to_string(&self.queue_path)?;
-        let events: Vec<serde_json::Value> = serde_json::from_str(&content)?;
-        Ok(events)
-    }
-
-    /// Read session file
-    fn read_session(&self) -> Result<Option<serde_json::Value>> {
-        if !self.session_path.exists() {
-            return Ok(None);
-        }
-        let content = std::fs::read_to_string(&self.session_path)?;
-        let session: serde_json::Value = serde_json::from_str(&content)?;
-        Ok(Some(session))
-    }
-
-    /// Write a mock queue file
-    fn write_queue(&self, events: &[serde_json::Value]) -> Result<()> {
-        let content = serde_json::to_string_pretty(events)?;
-        std::fs::write(&self.queue_path, content)?;
-        Ok(())
-    }
-
-    /// Write a mock session file
-    fn write_session(&self, session: &serde_json::Value) -> Result<()> {
-        let content = serde_json::to_string_pretty(session)?;
-        std::fs::write(&self.session_path, content)?;
-        Ok(())
-    }
-}
+// The former `TelemetryTestFixture`-based tests (queue/session persistence,
+// corrupted-queue recovery, empty queue, queue path location, file permissions)
+// were DELETED as VACUOUS: they only wrote JSON with `serde_json` and read it
+// back through the fixture's own helpers, exercising zero product code. The
+// real queue/session persistence paths (`EventQueue::load`,
+// `TelemetrySession::load_from/save`) are private to the `omg_lib` telemetry
+// module and are covered by unit tests inside that module.
 
 // =============================================================================
 // SESSION TRACKING TESTS
@@ -169,109 +109,6 @@ async fn test_session_serialization() -> Result<()> {
     // Create a second session and verify they have different IDs
     let session2 = TelemetrySession::new();
     assert_ne!(session.session_id, session2.session_id);
-
-    Ok(())
-}
-
-#[tokio::test]
-async fn test_session_persistence() -> Result<()> {
-    use std::sync::atomic::Ordering;
-
-    let fixture = TelemetryTestFixture::new()?;
-
-    let session = TelemetrySession::new();
-    let original_id = session.session_id.clone();
-
-    // Persist session using the serializable format (matching real implementation)
-    let session_json = json!({
-        "session_id": session.session_id,
-        "started_at": session.started_at,
-        "commands_run": session.commands_run.load(Ordering::Relaxed),
-        "last_activity": session.last_activity.load(Ordering::Relaxed)
-    });
-    fixture.write_session(&session_json)?;
-
-    // Read it back
-    let loaded_session_json = fixture.read_session()?.expect("Session should exist");
-    assert_eq!(
-        loaded_session_json["session_id"].as_str(),
-        Some(original_id.as_str())
-    );
-
-    Ok(())
-}
-
-// =============================================================================
-// QUEUE PERSISTENCE TESTS
-// =============================================================================
-
-#[tokio::test]
-async fn test_queue_persistence_across_restart() -> Result<()> {
-    let fixture = TelemetryTestFixture::new()?;
-
-    // Create mock events
-    let events = vec![
-        json!({
-            "type": "command",
-            "command": {
-                "command": "search",
-                "duration_ms": 100,
-                "success": true
-            }
-        }),
-        json!({
-            "type": "command",
-            "command": {
-                "command": "install",
-                "duration_ms": 1500,
-                "success": true
-            }
-        }),
-    ];
-
-    // Write queue
-    fixture.write_queue(&events)?;
-
-    // Read it back
-    let loaded = fixture.read_queue()?;
-    assert_eq!(loaded.len(), 2);
-    assert_eq!(loaded[0]["type"].as_str(), Some("command"));
-
-    Ok(())
-}
-
-#[tokio::test]
-async fn test_queue_path_location() -> Result<()> {
-    let fixture = TelemetryTestFixture::new()?;
-
-    // Verify queue path is in data directory
-    assert!(fixture.queue_path.starts_with(&fixture.data_dir));
-    assert!(fixture.queue_path.ends_with("telemetry_queue.json"));
-
-    Ok(())
-}
-
-#[tokio::test]
-async fn test_corrupted_queue_recovery() -> Result<()> {
-    let fixture = TelemetryTestFixture::new()?;
-
-    // Write corrupted JSON to queue file
-    std::fs::write(&fixture.queue_path, "{ invalid json [")?;
-
-    // Reading should fail gracefully
-    let result = fixture.read_queue();
-    assert!(result.is_err(), "Corrupted queue should error");
-
-    Ok(())
-}
-
-#[tokio::test]
-async fn test_empty_queue() -> Result<()> {
-    let fixture = TelemetryTestFixture::new()?;
-
-    // No queue file exists yet
-    let queue = fixture.read_queue()?;
-    assert_eq!(queue.len(), 0);
 
     Ok(())
 }
@@ -425,7 +262,7 @@ async fn test_timer_multiple_operations() -> Result<()> {
 }
 
 // =============================================================================
-// INTEGRATION TESTS (EVENT TYPES)
+// PRIVACY CONTRACT TESTS (EVENT TYPES)
 // =============================================================================
 
 #[tokio::test]
@@ -567,47 +404,7 @@ async fn test_platform_string_format() -> Result<()> {
 
     // Platform should be "os-arch"
     assert!(payload.platform.contains('-'));
-    let parts: Vec<&str> = payload.platform.split('-').collect();
-    assert_eq!(parts.len(), 2);
-
-    Ok(())
-}
-
-// =============================================================================
-// FILE SYSTEM TESTS
-// =============================================================================
-
-#[tokio::test]
-async fn test_queue_file_permissions() -> Result<()> {
-    let fixture = TelemetryTestFixture::new()?;
-
-    let events = vec![json!({"type": "test"})];
-    fixture.write_queue(&events)?;
-
-    // Verify file exists and is readable
-    assert!(fixture.queue_path.exists());
-    let content = std::fs::read_to_string(&fixture.queue_path)?;
-    assert!(content.contains("test"));
-
-    Ok(())
-}
-
-#[tokio::test]
-async fn test_session_file_permissions() -> Result<()> {
-    let fixture = TelemetryTestFixture::new()?;
-
-    let session = json!({
-        "session_id": "test-123",
-        "started_at": "2024-01-01T00:00:00.000Z",
-        "commands_run": 5,
-        "last_activity": 1234567890
-    });
-    fixture.write_session(&session)?;
-
-    // Verify file exists and is readable
-    assert!(fixture.session_path.exists());
-    let content = std::fs::read_to_string(&fixture.session_path)?;
-    assert!(content.contains("test-123"));
+    assert_eq!(payload.platform.split('-').count(), 2);
 
     Ok(())
 }

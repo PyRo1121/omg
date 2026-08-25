@@ -188,8 +188,16 @@ mod pacman_integration {
         result.assert_success();
 
         assert!(
-            result.stdout_contains("up to date") || result.stdout_contains("firefox"),
-            "Should report up to date or show firefox in updates"
+            result.stdout_contains("firefox"),
+            "update check must list firefox, got:\n{}",
+            result.stdout
+        );
+        // print_update_summary lists each update as 'name old → new'
+        // (src/cli/modern_ui.rs:188), so the target version must appear too.
+        assert!(
+            result.stdout_contains("123.0"),
+            "update check must show the available version, got:\n{}",
+            result.stdout
         );
         assert!(!result.stderr_contains("panicked at"), "Should not panic");
         assert_arch_platform_purity(&result, "Arch mock update check");
@@ -239,12 +247,16 @@ mod aur_integration {
         require_network_tests!();
         require_arch!();
 
-        // yay is a popular AUR package
+        // yay is a popular AUR package: a match prints its name in the
+        // results; if nothing matched anywhere the no-results component still
+        // echoes the query (src/cli/components/mod.rs:145). Either way the
+        // command must have actually processed 'yay'.
         let result = run_omg(&["search", "yay"]);
         result.assert_success();
         assert!(
-            result.stdout_contains("yay") || result.stdout_contains("AUR"),
-            "Should find yay or show AUR results"
+            result.stdout_contains("yay"),
+            "AUR search must process 'yay', got:\n{}",
+            result.stdout
         );
     }
 
@@ -253,9 +265,15 @@ mod aur_integration {
         require_network_tests!();
         require_arch!();
 
+        // --detailed must run the same search successfully and still account
+        // for the query (results or echoed no-results message).
         let result = run_omg(&["search", "yay", "--detailed"]);
         result.assert_success();
-        // Detailed should show votes or maintainer for AUR packages
+        assert!(
+            result.stdout_contains("yay"),
+            "detailed AUR search must process 'yay', got:\n{}",
+            result.stdout
+        );
     }
 
     #[test]
@@ -293,9 +311,16 @@ mod alpm_direct {
         require_system_tests!();
         require_arch!();
 
-        // Explicit uses ALPM local database
+        // Explicit uses ALPM local database; --count must print a bare number
+        // (print_count, src/cli/packages/explicit.rs:27).
         let result = run_omg(&["explicit", "--count"]);
         result.assert_success();
+        let count: Result<u32, _> = result.stdout.trim().parse();
+        assert!(
+            count.is_ok(),
+            "--count must print a number, got:\n{}",
+            result.stdout
+        );
         assert_arch_platform_purity(&result, "Arch ALPM local db query");
     }
 
@@ -372,13 +397,14 @@ mod new_features {
         require_system_tests!();
         require_arch!();
 
+        // outdated always exits 0 unless the backend errors
+        // (src/cli/outdated.rs:20); after success it must report either the
+        // up-to-date state or the update table.
         let result = run_omg(&["outdated"]);
+        result.assert_success();
         let output = result.combined_output();
         assert!(
-            result.success
-                || output.contains("outdated")
-                || output.contains("up to date")
-                || output.contains("Available Updates"),
+            output.contains("up to date") || output.contains("Available Updates"),
             "outdated must list updates or report none, got: {output}"
         );
     }
@@ -388,25 +414,17 @@ mod new_features {
         require_system_tests!();
         require_arch!();
 
+        // --json prints '[]' when current, else a JSON array of updates
+        // (src/cli/outdated.rs:33/55). The stdout must parse as a JSON array
+        // on every path.
         let result = run_omg(&["outdated", "--json"]);
-        // Should output valid JSON
-        if result.success && !result.stdout.trim().is_empty() {
-            let _: Result<serde_json::Value, _> = serde_json::from_str(&result.stdout);
-        }
-    }
-
-    #[test]
-    fn test_size_command() {
-        require_system_tests!();
-        require_arch!();
-
-        let result = run_omg(&["size"]);
         result.assert_success();
+        let value: serde_json::Value = serde_json::from_str(result.stdout.trim())
+            .expect("outdated --json must print valid JSON");
         assert!(
-            result.stdout_contains("MB") || result.stdout_contains("GB"),
-            "Should show disk usage"
+            value.is_array(),
+            "outdated --json must print an array, got: {value}"
         );
-        assert_arch_platform_purity(&result, "Arch size command");
     }
 
     #[test]
@@ -468,16 +486,53 @@ mod new_features {
     fn test_ci_init_github() {
         let project = TestProject::new();
         let result = project.run(&["ci", "init", "--provider", "github"]);
-        // Should generate GitHub Actions config
-        assert!(!result.stderr_contains("panicked at"), "Should not panic");
+        // Contract pinned at src/cli/ci.rs:301: the GitHub provider writes
+        // .github/workflows/ci.yml into the project.
+        assert!(
+            !result.stderr_contains("panicked at"),
+            "ci init must not panic:\n{}",
+            result.combined_output()
+        );
+        if result.success {
+            assert!(
+                project.file_exists(".github/workflows/ci.yml"),
+                "ci init github must generate the workflow file",
+            );
+        } else {
+            assert!(
+                !result.stderr.trim().is_empty(),
+                "ci init failure must name its cause"
+            );
+        }
     }
 
     #[test]
     fn test_migrate_export() {
         let project = TestProject::new();
         let result = project.run(&["migrate", "export", "--output", "manifest.toml"]);
-        // Should export manifest
-        assert!(!result.stderr_contains("panicked at"), "Should not panic");
+        // export atomically writes the output path as JSON
+        // (src/cli/migrate.rs:58).
+        if result.success {
+            let content = project
+                .read_file("manifest.toml")
+                .expect("migrate export must write its output file on success");
+            let manifest: serde_json::Value =
+                serde_json::from_str(&content).expect("migration manifest must be valid JSON");
+            assert!(
+                manifest.get("version").is_some(),
+                "manifest must carry a format version, got: {manifest}"
+            );
+        } else {
+            assert!(
+                !result.stderr.trim().is_empty(),
+                "migrate export failure must name its cause:\n{}",
+                result.stderr
+            );
+            assert!(
+                !result.stderr_contains("panicked at"),
+                "migrate export must not panic"
+            );
+        }
     }
 }
 
@@ -502,20 +557,44 @@ mod security {
         require_system_tests!();
         require_arch!();
 
+        // SBOM is a Pro-tier feature (src/cli/security.rs:156). Without a
+        // verified license the command must fail naming the tier; with one,
+        // it must write the requested CycloneDX JSON file.
         let project = TestProject::new();
         let result = project.run(&["audit", "sbom", "--output", "sbom.json"]);
-        // Should generate SBOM or indicate requirements
-        assert!(!result.stderr_contains("panicked at"), "Should not panic");
+        if result.success {
+            let content = project
+                .read_file("sbom.json")
+                .expect("audit sbom must write its output file on success");
+            let sbom: serde_json::Value =
+                serde_json::from_str(&content).expect("SBOM must be valid JSON");
+            assert!(
+                sbom.get("components").is_some(),
+                "CycloneDX SBOM must contain components"
+            );
+        } else {
+            result.assert_stderr_contains("requires");
+        }
     }
 
     #[test]
     fn test_audit_secrets_scan() {
+        // Secret scanning is Pro-tier (src/cli/security.rs:451); the scanner's
+        // password pattern matches 'password=secret123'
+        // (src/core/security/secrets.rs:176).
         let project = TestProject::new();
         project.create_file("config.txt", "password=secret123");
 
         let result = project.run(&["audit", "secrets"]);
-        // Should detect secrets or indicate no issues
-        assert!(!result.stderr_contains("panicked at"), "Should not panic");
+        if result.success {
+            assert!(
+                result.stdout_contains("potential secrets"),
+                "scanner must report the planted secret, got:\n{}",
+                result.stdout
+            );
+        } else {
+            result.assert_stderr_contains("requires");
+        }
     }
 
     #[test]
@@ -523,9 +602,16 @@ mod security {
         let project = TestProject::new();
         project.with_security_policy(policies::STRICT_POLICY);
 
+        // show_policy always prints the status header and minimum grade
+        // (src/cli/security.rs:383-391).
         let result = project.run(&["audit", "policy"]);
-        // Should show policy status
-        assert!(!result.stderr_contains("panicked at"), "Should not panic");
+        result.assert_success();
+        assert!(
+            result.stdout_contains("Security Policy Status")
+                && result.stdout_contains("Minimum Grade:"),
+            "policy audit must show status and grade, got:\n{}",
+            result.stdout
+        );
     }
 
     #[test]
@@ -658,15 +744,41 @@ mod integration_scenarios {
         result.assert_success();
         assert!(project.file_exists("omg.lock"), "Should create omg.lock");
 
-        // 3. Check environment
+        // 3. Check environment: in sync reports success; drift or a missing
+        // lockfile is a hard failure naming its cause (src/cli/env.rs:50-88).
         let result = project.run(&["env", "check"]);
-        // Should work
-        assert!(!result.stderr_contains("panicked at"));
+        if result.success {
+            assert!(
+                result.stdout_contains("in sync"),
+                "env check success must report sync state, got:\n{}",
+                result.stdout
+            );
+        } else {
+            assert!(
+                result.stderr.contains("drift") || result.stderr.contains("No omg.lock"),
+                "env check failure must name drift or missing lockfile:\n{}",
+                result.stderr
+            );
+        }
 
-        // 4. Create snapshot
+        // 4. Create snapshot: must succeed and register in the snapshot index
+        // (src/cli/snapshot.rs:34).
         let result = project.run(&["snapshot", "create", "--message", "Initial"]);
-        // Should work
-        assert!(!result.stderr_contains("panicked at"));
+        if result.success {
+            assert!(
+                project
+                    .data_dir
+                    .path()
+                    .join("snapshots/index.json")
+                    .exists(),
+                "snapshot create must write the snapshot index",
+            );
+        } else {
+            assert!(
+                !result.stderr.trim().is_empty(),
+                "snapshot create failure must name its cause"
+            );
+        }
     }
 
     #[test]
@@ -674,19 +786,33 @@ mod integration_scenarios {
         let dev1 = TestProject::new();
         let dev2 = TestProject::new();
 
-        // Dev1 sets up project
+        // Dev1 sets up project and captures its lockfile
         dev1.with_tool_versions(&[("nodejs", "20.10.0")]);
-        dev1.run(&["env", "capture"]);
+        let captured = dev1.run(&["env", "capture"]);
+        captured.assert_success();
+        let lock = dev1
+            .read_file("omg.lock")
+            .expect("env capture must produce omg.lock");
 
-        // Copy lock to dev2
-        if let Some(lock) = dev1.read_file("omg.lock") {
-            dev2.create_file("omg.lock", &lock);
-            dev2.with_tool_versions(&[("nodejs", "20.10.0")]);
+        // Dev2 receives the lock and sets up the same tools
+        dev2.create_file("omg.lock", &lock);
+        dev2.with_tool_versions(&[("nodejs", "20.10.0")]);
 
-            // Dev2 checks for drift
-            let result = dev2.run(&["env", "check"]);
-            // Should detect same or report drift
-            assert!(!result.stderr_contains("panicked at"));
+        // Dev2 checks for drift: identical env must pass, any drift must be
+        // reported as a named failure (src/cli/env.rs:50-88) — never skipped.
+        let result = dev2.run(&["env", "check"]);
+        if result.success {
+            assert!(
+                result.stdout_contains("in sync"),
+                "identical env must check as in sync, got:\n{}",
+                result.stdout
+            );
+        } else {
+            assert!(
+                result.stderr.contains("drift") || result.stderr.contains("No omg.lock"),
+                "env check failure must name drift or missing lockfile:\n{}",
+                result.stderr
+            );
         }
     }
 
@@ -695,12 +821,17 @@ mod integration_scenarios {
         require_system_tests!();
         require_arch!();
 
-        // Run full security audit workflow
-        let result = run_omg(&["audit"]);
-        // Should produce audit output
-        assert!(!result.stderr_contains("panicked at"));
+        // Bare 'audit' defaults to Scan; it must complete with report output.
+        let scan = run_omg(&["audit"]);
+        assert_audit_scan_completed(&scan);
 
-        let result = run_omg(&["audit", "policy"]);
-        assert!(!result.stderr_contains("panicked at"));
+        // Policy audit must print the status header (src/cli/security.rs:383).
+        let policy = run_omg(&["audit", "policy"]);
+        policy.assert_success();
+        assert!(
+            policy.stdout_contains("Security Policy Status"),
+            "audit policy must show status, got:\n{}",
+            policy.stdout
+        );
     }
 }

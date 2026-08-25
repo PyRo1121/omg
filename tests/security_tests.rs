@@ -236,8 +236,10 @@ mod filesystem_security {
             fs::set_permissions(&file_path, perms).unwrap();
         }
 
-        // Run commands
-        project.run(&["env", "capture"]);
+        // Run commands; the capture must actually succeed, otherwise the
+        // permission check below would pass vacuously.
+        let result = project.run(&["env", "capture"]);
+        result.assert_success();
 
         // Verify permissions unchanged
         #[cfg(unix)]
@@ -254,9 +256,11 @@ mod filesystem_security {
 
         #[cfg(unix)]
         {
-            // Create symlink to sensitive file
+            // Create symlink to sensitive file (fail loudly if setup breaks,
+            // otherwise the leak assertion below proves nothing)
             let link_path = project.path().join("passwd_link");
-            std::os::unix::fs::symlink("/etc/passwd", &link_path).ok();
+            std::os::unix::fs::symlink("/etc/passwd", &link_path)
+                .expect("create /etc/passwd symlink fixture");
 
             // OMG should not follow symlinks to sensitive locations
             let result = project.run(&["status"]);
@@ -500,15 +504,32 @@ mod policy_enforcement {
             .expect("verified official MIT package passes enterprise policy");
     }
 
-    /// CLI smoke: the audit-policy command loads and reports a written
-    /// policy file (display only; enforcement is pinned above at the seam).
+    /// CLI smoke: `audit policy` must load the policy written to the product
+    /// config path — `$OMG_CONFIG_DIR/policy.toml`, see
+    /// `SecurityPolicy::load_default` in src/core/security/policy.rs — and
+    /// report its actual values instead of silently falling back to the
+    /// built-in defaults (COMMUNITY grade, AUR allowed, empty ban list).
     #[test]
-    fn cli_audit_policy_runs_with_written_strict_policy() {
+    fn cli_audit_policy_reports_written_strict_policy() {
         let project = TestProject::new();
-        project.with_security_policy(policies::STRICT_POLICY);
+        let policy_path = project.config_dir.path().join("policy.toml");
+        std::fs::write(&policy_path, policies::STRICT_POLICY).expect("write strict policy fixture");
 
         let result = project.run(&["audit", "policy"]);
         result.assert_success();
+        let output = result.combined_output();
+        assert!(
+            output.contains("VERIFIED"),
+            "audit policy must report the strict minimum grade, got: {output}"
+        );
+        assert!(
+            output.contains("Banned Packages") && output.contains("telnet"),
+            "audit policy must list the configured banned packages, got: {output}"
+        );
+        assert!(
+            !output.contains("COMMUNITY"),
+            "audit policy must not fall back to built-in defaults, got: {output}"
+        );
     }
 }
 
@@ -741,22 +762,34 @@ mod privilege_tests {
     use super::*;
 
     #[test]
-    fn test_no_unnecessary_root() {
-        // Commands that don't need root should not require it
-        let safe_commands = vec![
+    fn test_safe_commands_run_without_root() {
+        // Every command here must fully succeed as an unprivileged user and
+        // report its actual result — not merely avoid demanding root.
+        // Pinned surfaces: status overview, runtime listing, which lookup,
+        // top-level help, generated bash completions.
+        let commands: [Vec<&str>; 5] = [
             vec!["status"],
             vec!["list"],
             vec!["which", "node"],
             vec!["--help"],
             vec!["completions", "bash", "--stdout"],
         ];
+        let expected_needles = [
+            "Packages",
+            "runtime versions",
+            "node",
+            "Usage",
+            "_omg_completions",
+        ];
 
-        for args in safe_commands {
-            let result = run_omg(&args.clone());
-            // Should work without sudo
+        for (args, needle) in commands.iter().zip(expected_needles) {
+            let result = run_omg(args);
+            result.assert_success();
             assert!(
-                result.success || !result.stderr.contains("root"),
-                "Command {args:?} unnecessarily requires root"
+                result.contains(needle),
+                "command {args:?} must report its result without root; expected \
+                 '{needle}' in: {}",
+                result.combined_output()
             );
         }
     }
@@ -764,68 +797,37 @@ mod privilege_tests {
     #[test]
     fn test_no_suid_creation() {
         let project = TestProject::new();
-        project.run(&["env", "capture"]);
+        let result = project.run(&["env", "capture"]);
+        // The capture must succeed, otherwise the SUID sweep below proves
+        // nothing about what the tool writes.
+        result.assert_success();
 
-        // Verify no SUID files were created
+        // Verify no SUID files were created anywhere in the project tree
         #[cfg(unix)]
         {
             use std::fs;
             use std::os::unix::fs::PermissionsExt;
 
-            for entry in walkdir::WalkDir::new(project.path()).into_iter().flatten() {
-                if entry.file_type().is_file()
-                    && let Ok(meta) = fs::metadata(entry.path())
-                {
+            fn collect_files(dir: &std::path::Path) -> std::io::Result<Vec<std::path::PathBuf>> {
+                let mut files = Vec::new();
+                for entry in fs::read_dir(dir)?.flatten() {
+                    let path = entry.path();
+                    if path.is_dir() {
+                        files.extend(collect_files(&path)?);
+                    } else {
+                        files.push(path);
+                    }
+                }
+                Ok(files)
+            }
+
+            for path in collect_files(project.path()).expect("walk project directory") {
+                if let Ok(meta) = fs::metadata(&path) {
                     let mode = meta.permissions().mode();
-                    assert!(mode & 0o4000 == 0, "SUID file created: {:?}", entry.path());
-                    assert!(mode & 0o2000 == 0, "SGID file created: {:?}", entry.path());
+                    assert!(mode & 0o4000 == 0, "SUID file created: {path:?}");
+                    assert!(mode & 0o2000 == 0, "SGID file created: {path:?}");
                 }
             }
-        }
-    }
-}
-
-// Add walkdir for the SUID test
-#[cfg(test)]
-mod walkdir {
-    pub struct WalkDir {
-        path: std::path::PathBuf,
-    }
-
-    impl WalkDir {
-        pub fn new<P: AsRef<std::path::Path>>(path: P) -> Self {
-            Self {
-                path: path.as_ref().to_path_buf(),
-            }
-        }
-    }
-
-    impl IntoIterator for WalkDir {
-        type Item = Result<DirEntry, std::io::Error>;
-        type IntoIter = std::vec::IntoIter<Self::Item>;
-
-        fn into_iter(self) -> Self::IntoIter {
-            let mut entries = Vec::new();
-            if let Ok(read_dir) = std::fs::read_dir(&self.path) {
-                for entry in read_dir.flatten() {
-                    entries.push(Ok(DirEntry { entry }));
-                }
-            }
-            entries.into_iter()
-        }
-    }
-
-    pub struct DirEntry {
-        entry: std::fs::DirEntry,
-    }
-
-    impl DirEntry {
-        pub fn path(&self) -> std::path::PathBuf {
-            self.entry.path()
-        }
-
-        pub fn file_type(&self) -> std::fs::FileType {
-            self.entry.file_type().unwrap()
         }
     }
 }

@@ -50,21 +50,35 @@ mod arch_matrix {
     #[test]
     #[serial]
     fn test_info() {
+        // In test mode `info` resolves through the pacman sync-database cache
+        // (src/package_managers/alpm_ops.rs:102 get_sync_pkg_info ->
+        // src/package_managers/pacman_db/db.rs:991 get_sync_package), which only
+        // exists on hosts with a real /var/lib/pacman/sync directory. Skip
+        // observably elsewhere instead of asserting a vacuous disjunction.
+        if !std::path::Path::new("/var/lib/pacman/sync").exists() {
+            common::report_skip("test_info requires a pacman sync database");
+            return;
+        }
+
+        // Success must show the resolved package metadata
+        // (src/package_managers/alpm_ops.rs:246 display_pkg_info and the
+        // "Official repository" Source line in src/cli/packages/info.rs).
         let res = run_arch(&["info", "pacman"]);
-        let combined = format!("{}{}", res.stdout, res.stderr);
-        assert!(
-            res.success || combined.contains("not found"),
-            "Expected success or 'not found' message. Got exit {}: {}",
-            res.exit_code,
-            combined
-        );
+        res.assert_success();
+        res.assert_stdout_contains("pacman");
+        res.assert_stdout_contains("Description:");
+        res.assert_stdout_contains("Repository:");
+        res.assert_stdout_contains("Official repository");
     }
 
     #[test]
     #[serial]
     fn test_list() {
+        // `list` is the runtime listing command; its header is part of the
+        // rendered output on every path.
         let res = run_arch(&["list"]);
         res.assert_success();
+        res.assert_stdout_contains("runtime versions");
     }
 
     #[test]
@@ -141,14 +155,16 @@ mod debian_matrix {
     #[test]
     #[serial]
     fn test_info() {
+        // Dual-path contract: success must display the resolved package,
+        // failure must name the package as not found
+        // (src/cli/packages/info.rs info_fallback bails with
+        // "Package '{package}' not found").
         let res = run_debian(&["info", "apt"]);
-        let combined = format!("{}{}", res.stdout, res.stderr);
-        assert!(
-            res.success || combined.contains("not found"),
-            "Expected success or 'not found' message. Got exit {}: {}",
-            res.exit_code,
-            combined
-        );
+        if res.success {
+            res.assert_stdout_contains("apt");
+        } else {
+            res.assert_stderr_contains("not found");
+        }
     }
 
     #[test]
@@ -188,10 +204,7 @@ mod runtime_matrix {
     #[test]
     #[serial]
     fn test_use_node_detection() {
-        let config = TestConfig::default();
-        if config.skip_if_no_network("test_use_node_detection") {
-            return;
-        }
+        require_network_tests!();
 
         let project = TestProject::new();
         project.create_file(".nvmrc", "20.0.0");
@@ -203,10 +216,7 @@ mod runtime_matrix {
     #[test]
     #[serial]
     fn test_use_python_detection() {
-        let config = TestConfig::default();
-        if config.skip_if_no_network("test_use_python_detection") {
-            return;
-        }
+        require_network_tests!();
 
         let project = TestProject::new();
         project.create_file(".python-version", "3.12.0");
@@ -222,6 +232,9 @@ mod runtime_matrix {
         for rt in runtimes {
             let res = run_omg(&["which", rt]);
             res.assert_success();
+            // Both outcomes mention the runtime: either the pinned version or
+            // the "<rt>: no version set (...)" hint (src/bin/omg.rs:1022).
+            res.assert_stdout_contains(rt);
         }
     }
 
@@ -271,33 +284,48 @@ mod runtime_matrix {
     #[test]
     #[serial]
     fn test_config_workflow() {
-        // List config
-        run_omg(&["config"]).assert_success();
+        // List config: renders the configuration overview
+        let listing = run_omg(&["config"]);
+        listing.assert_success();
+        listing.assert_stdout_contains("Configuration");
 
-        // Get a valid config value
-        run_omg(&["config", "get", "telemetry.enabled"]).assert_success();
+        // Get a valid config value: default telemetry.enabled is true
+        let get = run_omg(&["config", "get", "telemetry.enabled"]);
+        get.assert_success();
+        get.assert_stdout_contains("true");
     }
 
     #[test]
     #[serial]
     fn test_audit_command() {
+        // The harness isolates OMG_DATA_DIR (no license file), so `audit`
+        // must be rejected by the Pro-tier feature gate before any scan runs
+        // (src/cli/security.rs:96 require_feature ->
+        // src/core/license.rs:828-843 tier error message).
         let res = run_omg(&["audit"]);
-        // May fail if daemon not running, but should give clean error message
-        assert!(!res.combined_output().contains("panic"));
+        res.assert_failure();
+        res.assert_stderr_contains("requires Pro tier");
     }
 
     #[test]
     #[serial]
     fn test_new_and_run_scaffolding() {
         let project = TestProject::new();
-        // Create a new project (using dry-run or mock backend)
-        let res = project.run(&["new", "rust", "my-app"]);
-        assert!(!res.combined_output().contains("panic"));
 
-        // Mock a task runner (Makefile)
+        // Scaffolding must succeed AND create the target project directory.
+        let res = project.run(&["new", "rust", "my-app"]);
+        res.assert_success();
+        assert!(
+            project.path().join("my-app").exists(),
+            "`omg new rust my-app` must create my-app/"
+        );
+        res.assert_stdout_contains("my-app");
+
+        // A Makefile task must execute through make and produce its output.
         project.create_file("Makefile", "test:\n\techo 'running tests'");
         let res = project.run(&["run", "test"]);
-        assert!(res.success || res.stderr.contains("not found"));
+        res.assert_success();
+        res.assert_stdout_contains("running tests");
     }
 }
 
@@ -325,11 +353,13 @@ mod boundary_matrix {
 
     #[test]
     #[serial]
-
     fn test_empty_search() {
-        let res = run_omg(&["search", ""]);
-        // Should not crash, output might vary but success/failure is fine as long as no panic
-        assert!(!res.combined_output().contains("panic"));
+        // An empty query must not crash and must render the results view with
+        // the mock catalog (src/package_managers/mock.rs arch_defaults).
+        let res = run_arch(&["search", ""]);
+        res.assert_success();
+        res.assert_stdout_contains("Search Results");
+        res.assert_stdout_contains("pacman");
     }
 }
 
@@ -343,10 +373,16 @@ mod team_matrix {
     #[test]
     #[serial]
     fn test_team_status() {
-        // Team status behavior depends on environment (whether team workspace exists)
-        // Just verify the command runs without panicking
-        let res = run_omg(&["team", "status"]);
-        assert!(!res.combined_output().contains("panic"));
+        // Outside a team workspace (isolated temp cwd), `team status` must
+        // fail with the workspace error (src/cli/team.rs:162-167).
+        let project = TestProject::new();
+        let res = project.run(&["team", "status"]);
+        res.assert_failure();
+        assert!(
+            res.contains("Not a team workspace"),
+            "expected 'Not a team workspace' error, got:\n{}",
+            res.combined_output()
+        );
     }
 
     #[test]
@@ -376,24 +412,13 @@ mod fleet_matrix {
     #[test]
     #[serial]
     fn test_fleet_status() {
-        clear_license(); // Ensure no license for consistent test behavior
+        // `fleet status` gates on the Team tier before any network call
+        // (src/cli/fleet.rs:21-24); the harness's isolated data dir has no
+        // license, so it must fail naming the required tier
+        // (src/core/license.rs:828-843).
         let res = run_omg(&["fleet", "status"]);
-        // Might fail if not logged in or no license, but we check it runs
-        if res.success {
-            // Good
-        } else {
-            // If it fails, it should be a graceful error about auth or backend connection
-            let stderr = &res.stderr;
-            assert!(
-                stderr.contains("login")
-                    || stderr.contains("license")
-                    || stderr.contains("tier")
-                    || stderr.contains("Failed to fetch")
-                    || stderr.contains("404"),
-                "Expected auth/network error, got: {}",
-                stderr
-            );
-        }
+        res.assert_failure();
+        res.assert_stderr_contains("requires Team tier");
     }
 }
 
@@ -407,16 +432,25 @@ mod container_matrix {
     #[test]
     #[serial]
     fn test_container_status() {
+        // Every branch of `container status` renders the "Container Status"
+        // header (src/cli/container.rs:87-114): runtime found, no containers,
+        // docker list error, or no runtime at all.
         let res = run_omg(&["container", "status"]);
-        // Should check for docker/podman presence
-        // We accept failure if docker isn't running in the test env
-        assert!(!res.combined_output().contains("panic"));
+        res.assert_success();
+        res.assert_stdout_contains("Container Status");
     }
 
     #[test]
     #[serial]
     fn test_container_list() {
+        // Dual-path contract: success lists under the "Running Containers"
+        // header (src/cli/container.rs:315-344); failure must name the missing
+        // container runtime (src/core/container.rs:105-108).
         let res = run_omg(&["container", "list"]);
-        assert!(!res.combined_output().contains("panic"));
+        if res.success {
+            res.assert_stdout_contains("Running Containers");
+        } else {
+            res.assert_stderr_contains("No container runtime found");
+        }
     }
 }

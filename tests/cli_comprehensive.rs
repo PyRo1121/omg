@@ -22,27 +22,32 @@ mod install_tests {
         result.assert_stdout_contains("install");
     }
 
+    // Contract: installing a package that exists nowhere must FAIL and name the
+    // cause (observed: "Error: Package not found in official repos"). The old
+    // `!success || ...` disjunction also passed when install wrongly succeeded.
     #[test]
     fn test_install_nonexistent() {
         let result = run_omg(&["install", "package-that-definitely-does-not-exist-12345"]);
+        result.assert_failure();
         let combined = result.combined_output();
         assert!(
-            !result.success
-                || combined.to_lowercase().contains("not found")
-                || combined.to_lowercase().contains("unable")
-                || combined.to_lowercase().contains("error"),
-            "Nonexistent install should fail or explain the error: {combined}"
+            combined.to_lowercase().contains("not found"),
+            "Failure must name the missing package cause: {combined}"
         );
     }
 
+    // Contract: dry-run exits 0 and explicitly promises no changes
+    // (observed: "No changes will be made (dry run)").
     #[test]
     fn test_install_dry_run() {
         let result = run_omg(&["install", "--dry-run", "pacman"]);
-        // Dry run should succeed (or show what would be done)
+        result.assert_success();
         let combined = result.combined_output();
         assert!(
-            result.success || combined.contains("already installed") || combined.contains("Would"),
-            "Dry run should work"
+            combined
+                .to_lowercase()
+                .contains("no changes will be made (dry run)"),
+            "Dry run must state that no changes are made: {combined}"
         );
     }
 }
@@ -82,11 +87,13 @@ mod update_tests {
         result.assert_stdout_contains("update");
     }
 
+    // Contract: --check mode exits 0 and announces check-only operation
+    // (observed: "Checking for updates (no sync)").
     #[test]
     fn test_update_dry_run() {
         let result = run_omg(&["update", "--check"]);
-        // Check should always work (shows what would be updated)
-        assert!(result.success || result.combined_output().contains("up to date"));
+        result.assert_success();
+        result.assert_stdout_contains("Checking for updates");
     }
 }
 
@@ -115,9 +122,9 @@ mod runtime_tests {
     fn test_hook_fish() {
         let result = run_omg(&["hook", "fish"]);
         result.assert_success();
-        // Fish uses 'source' instead of 'eval'
-        let output = result.combined_output();
-        assert!(output.contains("source") || output.contains("omg"));
+        // Fish uses 'source' instead of 'eval' (src/cli/commands.rs hook text:
+        // `omg hook fish | source`); pin it exactly.
+        result.assert_stdout_contains("source");
     }
 
     #[test]
@@ -301,8 +308,9 @@ mod system_tests {
     #[test]
     fn test_config_list() {
         let result = run_omg(&["config", "list"]);
-        // Should show config even if empty
-        assert!(result.success);
+        // Should render the configuration header with real settings
+        result.assert_success();
+        result.assert_stdout_contains("OMG Configuration");
     }
 
     #[test]
@@ -315,8 +323,10 @@ mod system_tests {
     #[test]
     fn test_daemon_status_basic() {
         let result = run_omg(&["daemon-status"]);
-        // Should work whether daemon is running or not
-        assert!(result.success || result.combined_output().contains("not running"));
+        // On Unix, daemon-status always exits 0 and prints its header,
+        // whether the daemon is reachable or not (daemon_status.rs:17-90).
+        result.assert_success();
+        result.assert_stdout_contains("Daemon Status");
     }
 
     #[test]
@@ -441,14 +451,10 @@ mod meta_tests {
         result.assert_stdout_contains("update");
     }
 
-    #[test]
-    fn test_self_update_check() {
-        // Hermeticity: hits the production release server; network-gated only.
-        require_network_tests!();
-        let result = run_omg(&["self-update", "--check"]);
-        result.assert_success();
-        result.assert_stdout_contains("update");
-    }
+    // REMOVED (WRONG-CONTRACT): `self-update --check` — there is no --check flag
+    // (src/cli/args.rs:484-491), so this gated test failed whenever network tests
+    // were enabled. The downgrade-protection replacement lives in
+    // e2e_system_commands.rs::test_self_update_downgrade_protection.
 
     #[test]
     fn test_init_help() {
@@ -465,31 +471,36 @@ mod meta_tests {
 mod package_ops_tests {
     use super::*;
 
+    // WRONG-CONTRACT FIX: `clean` takes flags (--cache/--orphans), not positional
+    // subcommands (src/cli/args.rs:172-189). The old invocations were clap errors
+    // whose message happened to contain "cache"/"orphans", so they passed vacuously.
     #[test]
-    fn test_clean_cache() {
-        let result = run_omg(&["clean", "cache", "--dry-run"]);
-        let output = result.combined_output();
+    fn test_clean_cache_dry_run() {
+        let result = run_omg(&["clean", "--cache", "--dry-run"]);
+        result.assert_success();
+        let output = result.stdout;
         assert!(
-            !output.contains("panicked at"),
-            "Clean cache should not panic"
+            output.contains("Would clear package cache"),
+            "Dry run must preview the cache cleanup: {output}"
         );
         assert!(
-            result.success || output.contains("cache") || output.contains("Cache"),
-            "Clean cache should succeed or explain the cache outcome: {output}"
+            output.contains("No changes made (dry run)"),
+            "Dry run must promise no mutations: {output}"
         );
     }
 
     #[test]
-    fn test_clean_orphans() {
-        let result = run_omg(&["clean", "orphans", "--dry-run"]);
-        let output = result.combined_output();
+    fn test_clean_orphans_dry_run() {
+        let result = run_omg(&["clean", "--orphans", "--dry-run"]);
+        result.assert_success();
+        let output = result.stdout;
         assert!(
-            !output.contains("panicked at"),
-            "Clean orphans should not panic"
+            output.contains("Would remove") && output.to_lowercase().contains("orphan"),
+            "Dry run must preview orphan removal: {output}"
         );
         assert!(
-            result.success || output.to_lowercase().contains("orphan"),
-            "Clean orphans should succeed or explain the orphan outcome: {output}"
+            output.contains("No changes made (dry run)"),
+            "Dry run must promise no mutations: {output}"
         );
     }
 }
@@ -526,21 +537,19 @@ mod error_tests {
         assert!(!result.success, "Should fail when package name missing");
     }
 
+    // RE-CONTRACTED: --json/--quiet are GLOBAL args (src/cli/args.rs:24-29), not
+    // conflicting search flags — the invocation is valid and must exit 0 with
+    // machine-readable JSON on stdout.
     #[test]
-    fn test_conflicting_flags() {
+    fn test_global_json_flag_emits_json() {
         let result = run_omg(&["search", "--json", "--quiet", "test"]);
-        assert_ne!(result.exit_code, 101, "Conflicting flags must not panic");
-        if !result.success {
-            let combined = result.combined_output();
-            assert!(
-                combined.to_lowercase().contains("conflict")
-                    || combined.to_lowercase().contains("cannot be used")
-                    || combined.to_lowercase().contains("error")
-                    || combined.to_lowercase().contains("no results")
-                    || combined.to_lowercase().contains("not found"),
-                "Failed conflicting-flag command should explain the result: {combined}"
-            );
-        }
+        result.assert_success();
+        let parsed: serde_json::Value =
+            serde_json::from_str(result.stdout.trim()).expect("search --json must emit valid JSON");
+        assert!(
+            parsed.is_array(),
+            "search --json must emit a JSON array, got: {parsed}"
+        );
     }
 }
 

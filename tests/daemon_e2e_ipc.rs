@@ -375,27 +375,31 @@ async fn test_malformed_request_handling() -> Result<()> {
 
     let mut stream = fixture.connect().await?;
 
-    // Send garbage data
+    // Send garbage data that cannot deserialize into a `Request`.
     let garbage = vec![0xFF; 100];
     let len = u32::try_from(garbage.len())?;
     stream.write_all(&len.to_be_bytes()).await?;
     stream.write_all(&garbage).await?;
 
-    // Server should either reject or close connection
-    // Try to send valid request after
+    // Contract: handle_connection propagates the decode error and drops the
+    // stream, so a follow-up valid request on the SAME connection must never
+    // be answered with a success response — the connection is closed (read
+    // failure / timeout) or explicitly rejected with an error response.
     sleep(Duration::from_millis(100)).await;
 
-    let request = Request::Ping { id: 300 };
-    let result = timeout(
-        Duration::from_secs(1),
-        fixture.send_request(&mut stream, &request),
+    let follow_up = Request::Ping { id: 300 };
+    let outcome = timeout(
+        Duration::from_secs(2),
+        fixture.send_request(&mut stream, &follow_up),
     )
     .await;
 
-    // Connection might be closed, which is acceptable
-    if result.is_err() {
-        // Connection closed due to malformed data - expected
-        return Ok(());
+    match outcome {
+        Err(_) | Ok(Err(_)) => {}
+        Ok(Ok(Response::Error { .. })) => {}
+        Ok(Ok(Response::Success { id, .. })) => panic!(
+            "server answered request id {id} on a connection that previously \n            received a malformed frame",
+        ),
     }
 
     Ok(())

@@ -16,20 +16,16 @@ pub mod common;
 
 use common::TestProject;
 
-// Staged for the success-path pins described in the HANDOFF note below;
-// unused until that upstream install-path defect settles.
-#[allow(dead_code)]
-fn seed_installed(project: &TestProject, package: &str, version: &str) {
-    project
-        .mock_install(package, version)
-        .expect("seed mock installed package");
-}
-
-// HANDOFF (src wave-2, in flight): `install` against a SEEDED mock package
-// currently exits 1 with EMPTY diagnostics for both `-y` and `--dry-run`
-// (verified: "Install Preview dry run" then silent failure). That looks like
-// a defect in the install path being refactored upstream, so the success-path
-// pins are withheld rather than weakened. Re-add, once src settles:
+// HANDOFF (src wave-2, still unresolved as of 2025-08-25): `install` against
+// a SEEDED mock package currently exits 1 with EMPTY diagnostics for both
+// `-y` and `--dry-run`. Root cause: install resolution goes through
+// `lookup_official_package` -> `get_sync_pkg_info`, which reads the pacman
+// sync db under `OMG_PACMAN_ROOT` and never consults the `MockPackageManager`
+// state file that seeding writes — so every seeded package looks missing and
+// the request is routed to the AUR-fallback/"not found" path before the mock
+// backend is ever reached (src/cli/packages/install/arch.rs:335,
+// src/package_managers/alpm_ops.rs:102). The success-path pins are withheld
+// rather than weakened. Re-add, once src settles:
 //   1. dry-run of a seeded package succeeds and names the package;
 //   2. dry-run of multiple seeded packages names both;
 //   3. dry run never prompts for a password and mutates no mock state;

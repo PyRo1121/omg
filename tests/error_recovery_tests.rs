@@ -103,12 +103,30 @@ fn test_parallel_builder_empty_jobs() {
 }
 
 #[test]
-fn test_parallel_builder_self_dependency_filtered() {
+fn test_parallel_builder_self_dependency_is_rejected_as_circular() {
+    // Contract (src/package_managers/aur/parallel_build.rs:104-121):
+    // build_dependency_graph keeps only dependencies that are themselves in
+    // the job set — a package's own name IS in that set, so a self-edge
+    // survives the filter. topological_levels must then refuse to schedule
+    // the unsatisfiable node by reporting a circular dependency, never hang
+    // or silently skip the package.
     let jobs = vec![BuildJob::new("pkg".to_string(), vec!["pkg".to_string()])];
 
     let graph = omg_lib::package_managers::aur::ParallelBuilder::build_dependency_graph(&jobs);
+    let deps = graph
+        .get("pkg")
+        .expect("the job's own node must exist in the graph");
+    assert!(
+        deps.contains("pkg"),
+        "the self-edge is within the job set, so it must be kept, got: {deps:?}"
+    );
 
-    assert!(graph.contains_key("pkg"));
+    let err = omg_lib::package_managers::aur::ParallelBuilder::topological_levels(&graph)
+        .expect_err("a self-dependency is unschedulable and must be reported");
+    assert!(
+        err.to_string().contains("Circular dependency"),
+        "self-dependency must surface as a circular dependency, got: {err}"
+    );
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
@@ -209,6 +227,11 @@ fn test_cli_error_message_names_the_package() {
         "definitely-nonexistent-package-xyz123",
     ]);
     let combined = result.combined_output();
+    assert!(
+        !result.success,
+        "a nonexistent package must fail the command, got exit {}: {combined}",
+        result.exit_code
+    );
     assert!(
         combined.contains("definitely-nonexistent-package-xyz123"),
         "error output must echo the offending package name, got: {combined}"

@@ -110,12 +110,12 @@ mod invalid_input_errors {
 
         // ===== ASSERT =====
         // `info` on a package that is in neither repos nor AUR must fail with
-        // a not-found message that names the query.
+        // an explicit not-found classification naming the query.
         result.assert_failure();
         let combined = result.combined_output();
         assert!(
-            combined.contains("not found") || combined.contains(nonexistent_pkg),
-            "info of a missing package must say so and name it. Got:\n{combined}"
+            combined.contains("not found") && combined.contains(nonexistent_pkg),
+            "info of a missing package must classify the failure AND name it. Got:\n{combined}"
         );
     }
 
@@ -203,7 +203,7 @@ mod network_errors {
     }
 
     #[test]
-    fn test_network_error_suggests_checking_connection() {
+    fn test_privilege_error_suggests_remedies() {
         // ===== ARRANGE =====
         // (No special setup needed)
 
@@ -211,21 +211,21 @@ mod network_errors {
         let result = run_omg(&["sync"]);
 
         // ===== ASSERT =====
-        // sync may succeed (network fine) or fail; on failure the message
-        // must identify its domain rather than being generic. Compare
-        // case-insensitively: the top-level handler emits "Error:".
-        if !result.success {
-            let combined = result.combined_output().to_lowercase();
-            assert!(
-                combined.contains("network")
-                    || combined.contains("connection")
-                    || combined.contains("mirror")
-                    || combined.contains("failed")
-                    || combined.contains("error")
-                    || combined.contains("development mode"),
-                "sync failure must name its domain. Got:\n{combined}"
-            );
-        }
+        // In hermetic test mode, privileged operations bail deterministically
+        // without touching sudo and must name both the cause and the remedies
+        // (src/core/privilege.rs:66-73). The previous matcher list accepted
+        // any output containing "error", which the top-level handler always
+        // prints — vacuous on this path.
+        result.assert_failure();
+        let combined = result.combined_output().to_lowercase();
+        assert!(
+            combined.contains("development mode"),
+            "test-mode sync failure must identify dev/test-mode privilege policy. Got:\n{combined}"
+        );
+        assert!(
+            combined.contains("turbo") && combined.contains("sudo"),
+            "failure message must offer both documented remedies. Got:\n{combined}"
+        );
     }
 }
 
@@ -381,13 +381,14 @@ mod helpful_messages {
         let nonexistent_pkg = "nonexistent-package";
         let result = run_omg(&["info", nonexistent_pkg]);
 
-        // info on a missing package deterministically fails and must echo the
-        // queried name so users can see typos.
+        // info on a missing package deterministically fails with
+        // "Package 'X' not found" — the query echo alone is not enough, the
+        // error must classify itself as a not-found condition.
         result.assert_failure();
         let combined = result.combined_output();
         assert!(
-            combined.contains("not found") || combined.contains(nonexistent_pkg),
-            "error must provide context naming the query. Got:\n{combined}"
+            combined.contains("not found") && combined.contains(nonexistent_pkg),
+            "error must say 'not found' AND name the query. Got:\n{combined}"
         );
     }
 }

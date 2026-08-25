@@ -14,22 +14,21 @@ async fn test_metrics_collection() {
 
     // Initialize with scoped env: the daemon and audit logger capture their
     // data-dir paths during construction, so isolation holds after the guard
-    // restores the process environment.
+    // restores the process environment. State creation is a hard requirement:
+    // a construction failure must fail this test, not silently skip it.
     let data_dir = temp_dir.path().to_path_buf();
-    let state = temp_env::with_vars(
+    let state: Arc<DaemonState> = temp_env::with_vars(
         [
             ("OMG_DAEMON_DATA_DIR", Some(data_dir.as_os_str())),
             ("OMG_DATA_DIR", Some(data_dir.as_os_str())),
         ],
         || {
             let _ = omg_lib::core::security::init_audit_logger();
-            match DaemonState::new() {
-                Ok(s) => Some(Arc::new(s)),
-                Err(_) => None,
-            }
+            DaemonState::new()
+                .map(Arc::new)
+                .expect("DaemonState::new must succeed for metrics collection tests")
         },
     );
-    let Some(state) = state else { return };
 
     // Get initial metrics
     let initial = GLOBAL_METRICS.snapshot();
@@ -78,17 +77,23 @@ async fn test_metrics_collection() {
     let req_metrics = Request::Metrics { id: 3 };
     let response = handle_request(Arc::clone(&state), req_metrics).await;
 
-    if let Response::Success {
+    let Response::Success {
         result: ResponseResult::Metrics(snapshot),
         ..
     } = response
-    {
-        // The snapshot inside the response should reflect at least the previous state
-        // Note: It might count the metrics request itself depending on ordering
-        assert!(snapshot.requests_total >= after_invalid.requests_total);
-    } else {
-        unreachable!("Expected Metrics response");
-    }
+    else {
+        panic!("Expected Metrics response, got: {response:?}");
+    };
+
+    // handle_request increments requests_total before dispatching
+    // (src/daemon/handlers.rs:259), so the snapshot inside the response MUST
+    // already include the Metrics request itself — exactly one more than the
+    // post-invalid-requests baseline.
+    assert_eq!(
+        snapshot.requests_total,
+        after_invalid.requests_total + 1,
+        "Metrics snapshot must include its own request (inc happens at dispatch entry)"
+    );
 }
 
 #[tokio::test]
@@ -96,14 +101,14 @@ async fn test_metrics_collection() {
 async fn test_security_audit_metrics() {
     let temp_dir = TempDir::new().unwrap();
     let daemon_data_dir = temp_dir.path().to_path_buf();
-    let state = temp_env::with_vars(
+    let state: Arc<DaemonState> = temp_env::with_vars(
         [("OMG_DAEMON_DATA_DIR", Some(daemon_data_dir.as_os_str()))],
-        || match DaemonState::new() {
-            Ok(s) => Some(Arc::new(s)),
-            Err(_) => None,
+        || {
+            DaemonState::new()
+                .map(Arc::new)
+                .expect("DaemonState::new must succeed for security audit metrics tests")
         },
     );
-    let Some(state) = state else { return };
 
     let initial = GLOBAL_METRICS.snapshot();
 

@@ -34,10 +34,25 @@ fn test_debian_backend_decision() {
 #[test]
 fn test_pure_debian_search_mock() {
     init_test_env();
-    // We can't easily test the real debian_db without /var/lib/dpkg/status
-    // but we can ensure it doesn't panic when calling methods.
+    // In test mode (OMG_TEST_MODE=1, set by init_test_env) the pure backend's
+    // search returns a deterministic stub result set instead of requiring
+    // /var/lib/dpkg-status (see debian_db::search_fast). The contract under
+    // test: search parses into domain Packages, never panics, and surfaces a
+    // match with fully populated metadata.
     let pm = omg_lib::package_managers::debian_pure::PureDebianPackageManager::new();
 
-    // This will likely return empty list on non-Debian systems but should not panic
-    let _result = pm.search("bash");
+    let rt = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .expect("failed to build tokio runtime");
+
+    let results = rt.block_on(pm.search("bash")).expect("search must succeed");
+    assert!(
+        !results.is_empty(),
+        "test-mode search must return the stub match"
+    );
+    assert!(
+        results.iter().any(|package| package.name == "apt"),
+        "expected the 'apt' stub package in test-mode results, got: {results:?}"
+    );
 }

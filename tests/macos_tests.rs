@@ -52,7 +52,12 @@ mod homebrew_integration {
     async fn test_list_installed_formulae() -> Result<()> {
         let pm = HomebrewPackageManager::new();
 
-        let _installed = pm.list_installed().await?;
+        // The operation must succeed, and every returned entry must carry a
+        // usable identity — not just "run without error".
+        let installed = pm.list_installed().await?;
+        for pkg in &installed {
+            assert!(!pkg.name.is_empty(), "installed entries must have a name");
+        }
 
         Ok(())
     }
@@ -62,15 +67,17 @@ mod homebrew_integration {
     async fn test_formula_info() -> Result<()> {
         let pm = HomebrewPackageManager::new();
 
-        let info = pm.info("wget").await?;
-
-        if let Some(pkg) = info {
-            assert_eq!(pkg.name, "wget");
-            assert!(
-                !pkg.description.is_empty(),
-                "Description should not be empty"
-            );
-        }
+        // Network-gated: the API is reachable, so wget MUST resolve. A None
+        // here is a regression, not an acceptable pass.
+        let pkg = pm
+            .info("wget")
+            .await?
+            .expect("wget formula must resolve against the live Homebrew API");
+        assert_eq!(pkg.name, "wget");
+        assert!(
+            !pkg.description.is_empty(),
+            "Description should not be empty"
+        );
 
         Ok(())
     }
@@ -89,7 +96,16 @@ mod homebrew_integration {
     async fn test_is_installed_check() -> Result<()> {
         let pm = HomebrewPackageManager::new();
 
-        let _is_brew_installed = pm.is_installed("homebrew").await.unwrap();
+        // Deterministic, offline contract: a formula that cannot exist
+        // reports Ok(false) rather than an error (mirrors the src-side unit
+        // test at src/package_managers/homebrew.rs:994).
+        let installed = pm
+            .is_installed("this-formula-definitely-does-not-exist-12345")
+            .await?;
+        assert!(
+            !installed,
+            "a nonexistent formula must report installed=false"
+        );
 
         Ok(())
     }

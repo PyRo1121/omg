@@ -76,14 +76,6 @@ mod check_mode_tests {
     }
 
     #[test]
-    fn test_check_mode_does_not_prompt() {
-        require_system_tests!();
-
-        let result = run_omg(&["update", "--check"]);
-        assert_no_password_prompt(&result);
-    }
-
-    #[test]
     fn test_check_mode_with_yes_flag() {
         require_system_tests!();
 
@@ -158,18 +150,25 @@ mod non_interactive_tests {
     #[test]
     fn test_ci_mode_without_yes_fails_gracefully() {
         let result = run_omg_with_env(&["update"], &[("CI", "1")]);
+        assert_no_password_prompt(&result);
 
         let combined = result.combined_output();
 
         if !result.success {
-            // Should show helpful error about needing --yes
+            // Pending updates + non-attended stdin must bail with the --yes
+            // blocker (src/cli/packages/common.rs update_official_only:
+            // `anyhow::bail!("Use --yes for non-interactive updates")`).
             assert!(
-                combined.contains("--yes")
-                    || combined.contains("interactive")
-                    || combined.contains("terminal")
-                    || combined.contains("sudo"),
-                "Should mention --yes or sudo in CI mode. Got:\n{}",
-                combined
+                combined.contains("--yes"),
+                "non-interactive failure must name the --yes blocker. Got:\n{combined}"
+            );
+        } else {
+            // Nothing to upgrade: the command must report the checked status
+            // (print_up_to_date / "Found N update(s)") rather than exiting
+            // silently.
+            assert!(
+                combined.contains("up to date") || combined.contains("Found"),
+                "successful no-op update must report its status. Got:\n{combined}"
             );
         }
     }
@@ -185,19 +184,28 @@ mod sudo_integration_tests {
     #[test]
     fn test_update_without_privileges_shows_helpful_error() {
         let result = run_omg(&["update", "--yes"]);
+        assert_no_password_prompt(&result);
 
         let combined = result.combined_output();
 
         if !result.success {
-            // Should show helpful message about sudo
+            // Privilege/sync failure must name the blocker.
             assert!(
                 combined.contains("sudo")
                     || combined.contains("root")
                     || combined.contains("privilege")
                     || combined.contains("permission")
                     || combined.contains("Elevating"),
-                "Should mention sudo/root when not privileged. Got:\n{}",
-                combined
+                "failure must name the privilege blocker. Got:\n{combined}"
+            );
+        } else {
+            // A successful run must still show the outcome of the check:
+            // up-to-date notice, found-updates summary, or upgrade result.
+            assert!(
+                combined.contains("up to date")
+                    || combined.contains("Found")
+                    || combined.contains("Upgraded"),
+                "successful update must report what happened. Got:\n{combined}"
             );
         }
     }
@@ -221,12 +229,13 @@ mod sudo_integration_tests {
 
     #[test]
     fn test_n_flag_fallback_in_ci() {
-        // Test that sudo -n fallback works in CI
+        // CI-style environment: sudo -n fallback either succeeds and shows
+        // its work, or fails naming the automation blocker — never dangles.
         let result = run_omg_with_env(&["update", "--yes"], &[("CI", "1")]);
+        assert_no_password_prompt(&result);
 
         let combined = result.combined_output();
 
-        // If it fails, should show CI-friendly error
         if !result.success {
             assert!(
                 combined.contains("NOPASSWD")
@@ -234,8 +243,14 @@ mod sudo_integration_tests {
                     || combined.contains("CI")
                     || combined.contains("sudo")
                     || combined.contains("root"),
-                "Should show CI-friendly error. Got:\n{}",
-                combined
+                "CI failure must name the automation blocker. Got:\n{combined}"
+            );
+        } else {
+            assert!(
+                combined.contains("up to date")
+                    || combined.contains("Found")
+                    || combined.contains("Upgraded"),
+                "CI success must report the update outcome. Got:\n{combined}"
             );
         }
     }
@@ -257,37 +272,17 @@ mod elm_workflow_tests {
 
     #[test]
     fn test_elm_update_cycle() {
-        // Test the Model-Update-View cycle
+        // The Model-Update-View cycle completes and the View renders its
+        // outcome on stdout (phase header, up-to-date notice, or findings).
         require_system_tests!();
 
         let result = run_omg(&["update", "--check"]);
-
-        // The Elm cycle should complete
-        let combined = result.combined_output();
-
-        // View should render successfully
-        assert!(
-            !combined.contains("panicked")
-                && !combined.contains("unwrap")
-                && !combined.contains("expect"),
-            "Elm cycle should complete without panics. Got:\n{}",
-            combined
-        );
-    }
-
-    #[test]
-    fn test_elm_view_rendering() {
-        // Test that Elm view renders correctly
-        let result = run_omg(&["update", "--check"]);
+        assert_runs_without_panic(&result);
 
         let combined = result.combined_output();
-
-        // Should not crash and should produce some output
-        // The Elm UI should render without errors
-        assert!(!result.stderr.contains("panicked"), "Should not panic");
         assert!(
-            !combined.contains("panicked"),
-            "Output should not contain panic"
+            !combined.contains("unwrap") && !combined.contains("expect"),
+            "Elm cycle should not leak debug helpers into output. Got:\n{combined}"
         );
     }
 }
@@ -316,9 +311,18 @@ mod error_handling_tests {
     }
 
     #[test]
-    fn test_extra_arguments_ignored_or_error() {
+    fn test_extra_positional_arguments_rejected() {
+        // clap pins Update as option-only (src/cli/args.rs:91-108 has no
+        // positionals), so stray words after flags are a usage error with a
+        // named offender — never silently ignored.
         let result = run_omg(&["update", "--check", "extra", "args"]);
-        assert_runs_without_panic(&result);
+
+        assert!(!result.success, "stray positional args must be rejected");
+        assert!(
+            result.stderr.contains("unexpected argument"),
+            "clap should name the unexpected argument. stderr:\n{}",
+            result.stderr
+        );
     }
 
     #[test]
@@ -338,13 +342,16 @@ mod output_format_tests {
     use std::env;
 
     #[test]
-    fn test_output_is_utf8() {
+    fn test_check_mode_writes_status_to_stdout() {
+        // Check mode renders its human-readable status on stdout, not only
+        // diagnostics on stderr.
         let result = run_omg(&["update", "--check"]);
+        assert_runs_without_panic(&result);
 
-        // String is always valid UTF-8 in Rust, just verify it's not corrupted
         assert!(
-            !result.stdout.is_empty() || !result.stderr.is_empty(),
-            "Should produce some output"
+            !result.stdout.is_empty(),
+            "--check must write its status to stdout\nstderr: {}",
+            result.stderr
         );
     }
 
@@ -362,24 +369,8 @@ mod output_format_tests {
         );
     }
 
-    #[test]
-    fn test_error_messages_are_user_friendly() {
-        let result = run_omg(&["update", "--invalid-xyz-flag"]);
-
-        let combined = result.combined_output();
-
-        if !result.success {
-            // Error messages should be helpful
-            assert!(
-                combined.contains("error")
-                    || combined.contains("unrecognized")
-                    || combined.contains("unknown")
-                    || combined.contains("usage"),
-                "Error should be user-friendly. Got:\n{}",
-                combined
-            );
-        }
-    }
+    // test_error_messages_are_user_friendly was merged into
+    // error_handling_tests::test_invalid_flag_rejected (identical contract).
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
@@ -398,24 +389,9 @@ mod regression_tests {
         assert_no_password_prompt(&result);
     }
 
-    #[test]
-    fn regression_n_flag_fallback_detection() {
-        // Regression test for -n flag fallback detection
-        // The bug was: sudo -n exit code wasn't properly detected
-        let result = run_omg_with_env(&["update", "--yes"], &[("CI", "1")]);
-
-        // If it fails, should have helpful error
-        if !result.success {
-            let combined = result.combined_output();
-            assert!(
-                combined.contains("sudo")
-                    || combined.contains("NOPASSWD")
-                    || combined.contains("privilege"),
-                "Should show helpful error about sudo. Got:\n{}",
-                combined
-            );
-        }
-    }
+    // regression_n_flag_fallback_detection was merged into
+    // sudo_integration_tests::test_n_flag_fallback_in_ci (same command and
+    // contract, now asserted on both paths).
 
     #[test]
     fn regression_elm_fallback_on_error() {

@@ -89,6 +89,11 @@ mod apt_integration {
         for pkg in &["build-essential", "git", "curl", "wget"] {
             let result = run_omg(&["search", pkg]);
             result.assert_success();
+            assert!(
+                result.stdout_contains(pkg),
+                "search '{pkg}' must list the package itself. Got:\n{}",
+                result.stdout
+            );
             assert_debian_platform_purity(&result, "Debian search development packages");
         }
     }
@@ -100,6 +105,11 @@ mod apt_integration {
         // Debian packages can have architecture suffixes
         let result = run_omg(&["search", "libc6"]);
         result.assert_success();
+        assert!(
+            result.stdout_contains("libc6"),
+            "search libc6 must list libc6 itself. Got:\n{}",
+            result.stdout
+        );
         assert_debian_platform_purity(&result, "Debian search architecture handling");
     }
 
@@ -118,24 +128,37 @@ mod apt_integration {
         require_system_tests!();
 
         let result = run_omg(&["info", "dpkg"]);
-        result.assert_success();
-        // Should show version, description, etc.
-        assert!(
-            result.stdout_contains("Version") || result.stdout.contains('.'),
-            "Should show version info"
-        );
+        // Must show the package name plus a real dotted version token
+        // (e.g. 1.21.0); the old `contains('.')` matched almost any prose.
+        assert_package_info(&result, "dpkg");
         assert_debian_platform_purity(&result, "Debian info package details");
     }
 
     #[test]
     fn test_info_nonexistent_package() {
+        // Contract (src/cli/packages/info.rs): an unknown package must fail
+        // gracefully with an error that echoes the queried name — never a
+        // panic and never a silent success.
         let result = run_omg(&["info", "nonexistent-package-xyz-99999"]);
-        // Command may fail with error or succeed with "not found" message
-        // Either behavior is acceptable - the key is no panic
+        let combined = result.combined_output();
+
         assert!(
-            !result.stderr_contains("panicked at"),
+            !combined.contains("panicked at"),
             "Should not panic on nonexistent package"
         );
+        if result.success {
+            assert!(
+                result.stdout_contains("nonexistent-package-xyz-99999"),
+                "successful info must show the package. Got:\n{}",
+                result.stdout
+            );
+        } else {
+            assert!(
+                combined.contains("not found")
+                    && combined.contains("nonexistent-package-xyz-99999"),
+                "failure for unknown package must say so and echo the name.\nGot:\n{combined}"
+            );
+        }
     }
 
     #[test]
@@ -155,11 +178,16 @@ mod apt_integration {
         let result = run_omg(&["explicit", "--count"]);
         result.assert_success();
         assert_debian_platform_purity(&result, "Debian explicit count");
-        // Should output a number
+        // Contract (src/cli/packages/explicit.rs print_count): plain-text mode
+        // prints exactly one integer line.
         let stdout = result.stdout.trim();
-        if !stdout.is_empty() {
-            let _: Result<u32, _> = stdout.parse();
-        }
+        let count: usize = stdout.parse().unwrap_or_else(|error| {
+            panic!("explicit --count must print an integer, got '{stdout}': {error}")
+        });
+        assert!(
+            count > 0,
+            "a real Debian system always has explicit packages"
+        );
     }
 
     #[test]
@@ -186,9 +214,12 @@ mod apt_integration {
         let result = project.run(&["update", "--check"]);
         result.assert_success();
 
+        // The mock fixture pins firefox-esr 115.6.0 installed vs 116.0.0
+        // available, so the check must surface that exact package as an update.
         assert!(
-            result.stdout_contains("up to date") || result.stdout_contains("firefox-esr"),
-            "Should report up to date or show firefox-esr in updates"
+            result.stdout_contains("firefox-esr"),
+            "update --check must list the outdated mock package. Got:\n{}",
+            result.stdout
         );
         assert!(!result.stderr_contains("panicked at"), "Should not panic");
         assert_debian_platform_purity(&result, "Debian mock update check");
@@ -223,11 +254,21 @@ mod apt_integration {
         require_debian_like!();
 
         let result = run_omg(&["clean", "--orphans"]);
-        // Should succeed or report no orphans
-        assert!(
-            result.success || result.stdout_contains("no orphan"),
-            "Should handle clean orphans"
-        );
+        if result.success {
+            assert!(
+                !result.stdout.trim().is_empty() || !result.stderr.trim().is_empty(),
+                "clean --orphans must report its outcome"
+            );
+        } else {
+            let combined = result.combined_output().to_lowercase();
+            assert!(
+                ["orphan", "permission", "root", "privilege"]
+                    .iter()
+                    .any(|cause| combined.contains(cause)),
+                "failed clean --orphans must name its cause. Got: {}",
+                result.combined_output()
+            );
+        }
     }
 
     #[test]
@@ -288,10 +329,11 @@ mod apt_integration {
 
         let result = run_omg(&["why", "apt"]);
         result.assert_success();
-        // Should explain why apt is installed (usually 'explicit')
+        // The explanation is about apt specifically, so it must name it.
         assert!(
-            result.stdout_contains("apt") || result.stdout_contains("explicit"),
-            "Should explain why apt is installed"
+            result.stdout_contains("apt"),
+            "why apt must mention the queried package. Got:\n{}",
+            result.stdout
         );
     }
 
@@ -335,7 +377,11 @@ mod ubuntu_specific {
 
         let result = run_omg(&["search", "ubuntu-desktop"]);
         result.assert_success();
-        // Ubuntu should have ubuntu-specific packages
+        assert!(
+            result.stdout_contains("ubuntu-desktop"),
+            "Ubuntu main repo search must list ubuntu-desktop. Got:\n{}",
+            result.stdout
+        );
     }
 
     #[test]
@@ -346,6 +392,11 @@ mod ubuntu_specific {
         // Universe repo packages
         let result = run_omg(&["search", "htop"]);
         result.assert_success();
+        assert!(
+            result.stdout_contains("htop"),
+            "universe search must list htop. Got:\n{}",
+            result.stdout
+        );
     }
 
     #[test]
@@ -518,23 +569,51 @@ mod new_features {
 
         let result = run_omg(&["outdated"]);
         let output = result.combined_output();
-        assert!(
-            result.success
-                || output.contains("outdated")
-                || output.contains("up to date")
-                || output.contains("Available Updates"),
-            "outdated must list updates or report none, got: {output}"
-        );
+        assert_ne!(result.exit_code, 101, "outdated panicked:\n{output}");
+        if result.success {
+            // A successful run always renders a report (either the up-to-date
+            // banner or the sorted updates table).
+            assert!(
+                !result.stdout.trim().is_empty(),
+                "outdated must render its report on success"
+            );
+        } else {
+            let lowered = output.to_lowercase();
+            assert!(
+                [
+                    "error",
+                    "failed",
+                    "unable",
+                    "permission",
+                    "not found",
+                    "no such"
+                ]
+                .iter()
+                .any(|cause| lowered.contains(cause)),
+                "failed outdated must name its cause, got: {output}"
+            );
+        }
     }
 
     #[test]
     fn test_outdated_json_output() {
         require_system_tests!();
 
+        // Contract (src/cli/outdated.rs): --json prints either `[]` when
+        // current or a JSON array of outdated packages — never prose.
         let result = run_omg(&["outdated", "--json"]);
-        if result.success && !result.stdout.trim().is_empty() {
-            let _: Result<serde_json::Value, _> = serde_json::from_str(&result.stdout);
-        }
+        result.assert_success();
+        let parsed: serde_json::Value =
+            serde_json::from_str(result.stdout.trim()).unwrap_or_else(|error| {
+                panic!(
+                    "outdated --json must print a JSON document, got '{}': {error}",
+                    result.stdout.trim()
+                )
+            });
+        assert!(
+            parsed.is_array(),
+            "outdated --json prints an array, got: {parsed}"
+        );
     }
 
     #[test]
@@ -782,10 +861,22 @@ mod migration {
         let result = project.run(&["migrate", "export", "--output", "manifest.toml"]);
 
         if result.success {
-            // Check manifest was created
             assert!(
                 project.file_exists("manifest.toml"),
-                "Should create manifest"
+                "successful export must create the manifest file"
+            );
+            let manifest = project
+                .read_file("manifest.toml")
+                .expect("manifest readable");
+            assert!(
+                !manifest.trim().is_empty(),
+                "exported manifest must have content"
+            );
+        } else {
+            assert!(
+                !result.stderr.trim().is_empty(),
+                "failed export must explain why on stderr. stdout:\n{}",
+                result.stdout
             );
         }
     }
@@ -858,18 +949,26 @@ mod integration_scenarios {
 
         // Simulate Debian environment
         debian_project.with_tool_versions(&[("nodejs", "20.10.0")]);
-        debian_project.run(&["env", "capture"]);
+        let capture = debian_project.run(&["env", "capture"]);
+        capture.assert_success();
 
-        // Export manifest
-        debian_project.run(&["migrate", "export", "--output", "manifest.toml"]);
+        // Export manifest; the hand-off artifact MUST exist to migrate at all.
+        let exported = debian_project.run(&["migrate", "export", "--output", "manifest.toml"]);
+        exported.assert_success();
+        let manifest = debian_project
+            .read_file("manifest.toml")
+            .expect("migrate export must produce manifest.toml");
+        assert!(!manifest.trim().is_empty(), "manifest must have content");
 
-        if let Some(manifest) = debian_project.read_file("manifest.toml") {
-            ubuntu_project.create_file("manifest.toml", &manifest);
+        ubuntu_project.create_file("manifest.toml", &manifest);
 
-            // Dry run import on "Ubuntu"
-            let result = ubuntu_project.run(&["migrate", "import", "--dry-run", "manifest.toml"]);
-            assert!(!result.stderr_contains("panicked at"));
-        }
+        // Dry run import on "Ubuntu"
+        let result = ubuntu_project.run(&["migrate", "import", "--dry-run", "manifest.toml"]);
+        assert!(
+            !result.combined_output().contains("panicked at"),
+            "dry-run import must not panic. Output:\n{}",
+            result.combined_output()
+        );
     }
 
     #[test]
@@ -879,17 +978,23 @@ mod integration_scenarios {
 
         // Dev1 sets up project
         dev1.with_tool_versions(&[("nodejs", "20.10.0")]);
-        dev1.run(&["env", "capture"]);
+        let capture = dev1.run(&["env", "capture"]);
+        capture.assert_success();
 
-        // Copy lock to dev2
-        if let Some(lock) = dev1.read_file("omg.lock") {
-            dev2.create_file("omg.lock", &lock);
-            dev2.with_tool_versions(&[("nodejs", "20.10.0")]);
+        // Copy lock to dev2; the shared-lock workflow depends on it existing.
+        let lock = dev1
+            .read_file("omg.lock")
+            .expect("env capture must produce omg.lock for sharing");
+        dev2.create_file("omg.lock", &lock);
+        dev2.with_tool_versions(&[("nodejs", "20.10.0")]);
 
-            // Dev2 checks for drift
-            let result = dev2.run(&["env", "check"]);
-            assert!(!result.stderr_contains("panicked at"));
-        }
+        // Dev2 checks for drift
+        let result = dev2.run(&["env", "check"]);
+        assert!(
+            !result.combined_output().contains("panicked at"),
+            "env check with a shared lock must not panic. Output:\n{}",
+            result.combined_output()
+        );
     }
 
     #[test]

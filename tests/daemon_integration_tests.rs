@@ -200,9 +200,10 @@ async fn test_oversized_query_is_rejected() {
         Response::Error { id, code, message } => {
             assert_eq!(id, 800);
             assert_eq!(code, error_codes::INVALID_PARAMS);
+            // Exact contract: src/daemon/handlers.rs:515
             assert!(
-                message.contains("too long") || message.contains("Query"),
-                "Error should mention query length"
+                message.contains("query too long"),
+                "error should name the oversized query, got: {message}"
             );
         }
         Response::Success { .. } => unreachable!("Should reject oversized query"),

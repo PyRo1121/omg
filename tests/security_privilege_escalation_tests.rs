@@ -112,29 +112,16 @@ mod privilege_escalation {
     fn test_yes_flag_global_state() {
         use omg_lib::core::privilege::{get_yes_flag, set_yes_flag};
 
-        // Initially false
+        // The -y/--yes flag is process-global interactive-prompt state: set
+        // for non-interactive runs, cleared afterwards. Round-trip both ways.
         set_yes_flag(false);
-        assert!(!get_yes_flag());
+        assert!(!get_yes_flag(), "flag must start cleared");
 
-        // Set to true
         set_yes_flag(true);
-        assert!(get_yes_flag());
-
-        // Set back to false
-        set_yes_flag(false);
-        assert!(!get_yes_flag());
-    }
-
-    #[test]
-    fn test_yes_flag_non_interactive_mode() {
-        use omg_lib::core::privilege::{get_yes_flag, set_yes_flag};
-
-        // Test that yes flag prevents interactive prompts
-        set_yes_flag(true);
-        assert!(get_yes_flag(), "Yes flag should be set");
+        assert!(get_yes_flag(), "set(true) must be observable");
 
         set_yes_flag(false);
-        assert!(!get_yes_flag(), "Yes flag should be cleared");
+        assert!(!get_yes_flag(), "clearing must be observable");
     }
 }
 
@@ -354,48 +341,18 @@ mod pgp_verification {
     }
 
     #[test]
-    fn test_memory_signature_verification() {
+    fn test_memory_signature_verification_rejects_garbage_and_empty() {
+        // With an empty keyring nothing can verify: garbage bytes and empty
+        // signature blobs must both be rejected (this also covers the
+        // expired/revoked-key paths, which can only ever end in rejection on
+        // an empty keyring).
         let verifier = PgpVerifier::empty();
 
-        let data = b"test data";
-        let invalid_sig = b"not a signature";
+        let result = verifier.verify_memory(b"test data", b"not a signature");
+        assert!(result.is_err(), "garbage in-memory signature must fail");
 
-        let result = verifier.verify_memory(data, invalid_sig);
-        assert!(result.is_err(), "Should fail with invalid signature");
-    }
-
-    #[test]
-    fn test_expired_signature_handling() {
-        // Test that expired signatures are rejected
-        // This would require generating an expired test signature
-        // For now, we verify the verifier handles edge cases
-        let verifier = PgpVerifier::empty();
-
-        let data = b"test";
-        let empty_sig = b"";
-
-        let result = verifier.verify_memory(data, empty_sig);
-        assert!(result.is_err());
-    }
-
-    #[test]
-    fn test_revoked_key_handling() {
-        // Verifier should reject signatures from revoked keys
-        // The PgpVerifier.verify_detached() filters for .revoked(false)
-        let verifier = PgpVerifier::empty();
-
-        // Empty keyring should fail verification
-        let mut data = NamedTempFile::new().unwrap();
-        writeln!(data, "data").unwrap();
-        data.flush().unwrap();
-
-        let mut sig = NamedTempFile::new().unwrap();
-        writeln!(sig, "sig").unwrap();
-        sig.flush().unwrap();
-
-        let result = verifier.verify_detached(data.path(), sig.path());
-
-        assert!(result.is_err());
+        let result = verifier.verify_memory(b"test data", b"");
+        assert!(result.is_err(), "empty in-memory signature must fail");
     }
 }
 
@@ -408,10 +365,16 @@ mod sbom_audit {
     use std::io::Write;
 
     #[test]
-    fn test_audit_logger_creation() {
+    fn test_audit_logger_creation_creates_parent_dirs() {
         let temp_dir = TempDir::new().unwrap();
-        let result = AuditLogger::new_in(temp_dir.path().join("audit/audit.jsonl"));
-        assert!(result.is_ok(), "Should create audit logger");
+        let log_path = temp_dir.path().join("audit/audit.jsonl");
+
+        AuditLogger::new_in(&log_path)
+            .expect("logger creation should succeed on a fresh directory");
+
+        // new_in must create missing parent directories so first-use audit
+        // logging never fails on a fresh machine (audit.rs: create_dir_all).
+        assert!(log_path.parent().unwrap().is_dir());
     }
 
     #[test]
@@ -690,20 +653,15 @@ mod attack_scenarios {
     fn test_secret_scanner_detects_leaks() {
         let scanner = SecretScanner::new();
 
-        // AWS keys (using realistic format, not EXAMPLE)
-        let content = "AWS_ACCESS_KEY_ID=AKIAI44QH8DHBEXAMPLE"; // Real format but still fake
-        let _findings = scanner.scan_content(content, "test.env");
-        // Note: May be filtered as placeholder if contains "EXAMPLE"
-        // So we'll test with actual private key pattern which is more reliable
-
-        // Private keys - more reliably detected
+        // Private keys are reliably detected as critical leaks.
         let content = "-----BEGIN RSA PRIVATE KEY-----\nMIIE...";
         let findings = scanner.scan_content(content, "key.pem");
         assert!(!findings.is_empty(), "Should detect private key");
         assert!(
             findings
                 .iter()
-                .any(|f| f.severity == SecretSeverity::Critical)
+                .any(|f| f.severity == SecretSeverity::Critical),
+            "private key leak must be flagged Critical"
         );
     }
 
