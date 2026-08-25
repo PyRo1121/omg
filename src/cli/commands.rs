@@ -1588,12 +1588,46 @@ mod tests {
 
     #[test]
     fn arch_rollback_requires_the_exact_cached_version() -> Result<()> {
+        use flate2::write::GzEncoder;
+
+        let write_pkginfo_archive = |dir: &std::path::Path, name: &str, file: &str| {
+            let path = dir.join(file);
+            let enc = GzEncoder::new(std::fs::File::create(&path)?, flate2::Compression::fast());
+            let mut tar = tar::Builder::new(enc);
+            let pkginfo = format!("pkgname = {name}\npkgver = 9.9\n");
+            let header = tar::Header::new_gnu();
+            // We only need a parseable .PKGINFO at depth <= 2; version comes
+            // from PKGINFO's pkgver field, so craft per-case content below.
+            let _ = pkginfo;
+            let _ = header;
+            tar.finish()?;
+            drop(tar);
+            Ok::<(), std::io::Error>(())
+        };
+        let _ = write_pkginfo_archive;
+
         let directory = tempfile::tempdir()?;
-        let expected = directory.path().join("example-1.0-1-x86_64.pkg.tar.zst");
-        std::fs::write(&expected, b"fixture")?;
-        std::fs::write(
-            directory.path().join("example-2.0-1-x86_64.pkg.tar.zst"),
-            b"wrong version",
+
+        // Build real archives with embedded .PKGINFO (the rollback identity
+        // check now fails closed when it cannot read one).
+        let make_archive = |path: &std::path::Path, pkgver: &str| -> Result<()> {
+            let enc = GzEncoder::new(std::fs::File::create(path)?, flate2::Compression::fast());
+            let mut tar = tar::Builder::new(enc);
+            let pkginfo = format!("pkgname = example\npkgver = {pkgver}\npkgrel = 1\n");
+            let mut header = tar::Header::new_gnu();
+            header.set_size(pkginfo.len() as u64);
+            header.set_mode(0o644);
+            header.set_cksum();
+            tar.append_data(&mut header, ".PKGINFO", pkginfo.as_bytes())?;
+            tar.into_inner()?.finish()?;
+            Ok(())
+        };
+
+        let expected = directory.path().join("example-1.0-1-x86_64.pkg.tar.gz");
+        make_archive(&expected, "1.0-1")?;
+        make_archive(
+            &directory.path().join("example-2.0-1-x86_64.pkg.tar.gz"),
+            "2.0-1",
         )?;
 
         assert_eq!(

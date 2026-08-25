@@ -6,10 +6,7 @@ use std::fs::File;
 use std::io::{BufReader, Cursor, Read};
 use std::path::{Path, PathBuf};
 use std::process::Stdio;
-use std::str::FromStr;
 use std::time::Duration;
-
-use alpm_pkginfo::{PackageInfoV1, PackageInfoV2};
 
 use alpm_types::Version;
 use anyhow::{Context, Result};
@@ -1381,11 +1378,22 @@ impl AurClient {
 
     /// Extract `(pkgname, full-version)` from `.PKGINFO` content.
     fn parse_pkginfo_name_version(content: &str) -> Option<(String, String)> {
-        if let Ok(info) = PackageInfoV2::from_str(content) {
-            return Some((info.pkgname.to_string(), info.pkgver.to_string()));
+        // Tolerant line parser: alpm-pkginfo's schema requires a dozen
+        // mandatory fields; rollback/cache identity checks only need these
+        // two keys and must work even when other metadata is absent.
+        let mut name: Option<String> = None;
+        let mut version: Option<String> = None;
+        for line in content.lines() {
+            let Some((key, value)) = line.split_once('=') else {
+                continue;
+            };
+            match key.trim() {
+                "pkgname" if name.is_none() => name = Some(value.trim().to_string()),
+                "pkgver" if version.is_none() => version = Some(value.trim().to_string()),
+                _ => {}
+            }
         }
-        let info = PackageInfoV1::from_str(content).ok()?;
-        Some((info.pkgname.to_string(), info.pkgver.to_string()))
+        Some((name?, version?))
     }
 
     /// Verify a cached archive's embedded .PKGINFO names the requested
