@@ -110,8 +110,14 @@ async fn run_app(
                     return Ok(());
                 }
 
-                // While typing a query, no global shortcut may fire.
-                if !app.search_mode {
+                // While typing a query, global shortcuts must not fire AND
+                // every key must reach App::handle_key's search-input block.
+                // handle_special_key_actions is where normal keys are routed
+                // to handle_key via its catch-all, so skipping it during a
+                // query would freeze all input (audit sec2 F-09).
+                if app.search_mode {
+                    app.handle_key(key.code);
+                } else {
                     handle_special_key_actions(app, key.code, &action_tx);
                 }
 
