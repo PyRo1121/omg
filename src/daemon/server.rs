@@ -397,6 +397,22 @@ impl Drop for ConnectionGuard {
 }
 
 /// Handle a single client connection
+/// Encode and send one error frame, accounting bytes sent. The shared tail
+/// of every early-reject path in `handle_client` (audit typ01 C2): without
+/// it, drift between copies is how a future edit forgets the metric.
+async fn send_error_response(
+    framed: &mut tokio_util::codec::Framed<tokio::net::UnixStream, LengthDelimitedCodec>,
+    id: u64,
+    code: i32,
+    message: String,
+) {
+    let response = Response::Error { id, code, message };
+    if let Ok(response_bytes) = crate::daemon::protocol::encode_frame(&response) {
+        GLOBAL_METRICS.add_bytes_sent(response_bytes.len() as u64);
+        let _ = framed.send(response_bytes.into()).await;
+    }
+}
+
 async fn handle_client(stream: tokio::net::UnixStream, state: Arc<DaemonState>) -> Result<()> {
     // METRICS: Track active connections using RAII guard
     let _guard = ConnectionGuard::new();
@@ -448,33 +464,27 @@ async fn handle_client(stream: tokio::net::UnixStream, state: Arc<DaemonState>) 
                 );
                 // Answer once so the client learns WHY instead of hanging for
                 // its full timeout, then close — the stream is unusable.
-                let response = Response::Error {
-                    id: 0,
-                    code: error_codes::PARSE_ERROR,
-                    message: format!(
+                send_error_response(
+                    &mut framed,
+                    0,
+                    error_codes::PARSE_ERROR,
+                    format!(
                         "unsupported peer protocol version {peer} (this daemon speaks {ours}); update omg"
                     ),
-                };
-                if let Ok(response_bytes) = crate::daemon::protocol::encode_frame(&response) {
-                    GLOBAL_METRICS.add_bytes_sent(response_bytes.len() as u64);
-                    let _ = framed.send(response_bytes.into()).await;
-                }
+                )
+                .await;
                 GLOBAL_METRICS.inc_requests_failed();
                 break;
             }
             Err(e) => {
                 tracing::warn!("malformed frame header: {e}");
-                // Same answer-once-then-close contract as version mismatch:
-                // silence here costs every client a full timeout stall.
-                let response = Response::Error {
-                    id: 0,
-                    code: error_codes::PARSE_ERROR,
-                    message: format!("malformed frame header: {e}"),
-                };
-                if let Ok(response_bytes) = crate::daemon::protocol::encode_frame(&response) {
-                    GLOBAL_METRICS.add_bytes_sent(response_bytes.len() as u64);
-                    let _ = framed.send(response_bytes.into()).await;
-                }
+                send_error_response(
+                    &mut framed,
+                    0,
+                    error_codes::PARSE_ERROR,
+                    format!("malformed frame header: {e}"),
+                )
+                .await;
                 GLOBAL_METRICS.inc_requests_failed();
                 break;
             }
@@ -492,24 +502,7 @@ async fn handle_client(stream: tokio::net::UnixStream, state: Arc<DaemonState>) 
                 );
                 GLOBAL_METRICS.inc_validation_failures();
                 GLOBAL_METRICS.inc_requests_failed();
-                let response = Response::Error {
-                    id: 0,
-                    code: error_codes::PARSE_ERROR,
-                    message: msg,
-                };
-                match crate::daemon::protocol::encode_frame(&response) {
-                    Ok(response_bytes) => {
-                        GLOBAL_METRICS.add_bytes_sent(response_bytes.len() as u64);
-                        if let Err(send_error) = framed.send(response_bytes.into()).await {
-                            tracing::warn!("Failed to deliver parse-error response: {send_error}");
-                        }
-                    }
-                    Err(serialize_error) => {
-                        tracing::error!(
-                            "Failed to serialize parse-error response: {serialize_error}"
-                        );
-                    }
-                }
+                send_error_response(&mut framed, 0, error_codes::PARSE_ERROR, msg).await;
                 break;
             }
         };
@@ -547,15 +540,13 @@ async fn handle_client(stream: tokio::net::UnixStream, state: Arc<DaemonState>) 
             GLOBAL_METRICS.inc_rate_limit_hits();
             GLOBAL_METRICS.inc_requests_failed();
 
-            let response = Response::Error {
-                id: request_id,
-                code: error_codes::RATE_LIMITED,
-                message: "Rate limit exceeded. Please slow down.".to_string(),
-            };
-
-            let response_bytes = crate::daemon::protocol::encode_frame(&response)?;
-            GLOBAL_METRICS.add_bytes_sent(response_bytes.len() as u64);
-            framed.send(response_bytes.into()).await?;
+            send_error_response(
+                &mut framed,
+                request_id,
+                error_codes::RATE_LIMITED,
+                "Rate limit exceeded. Please slow down.".to_string(),
+            )
+            .await;
             continue;
         }
 
