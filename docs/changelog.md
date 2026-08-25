@@ -506,6 +506,38 @@ analyzer inference
 - **Ci**: Cross-platform install script and R2 release sync
 ### 🐛 Bug Fixes
 
+- **Security**: Nvm pin traversal, cache-poisoning identity check, wrangler SRI
+
+sec14 F1 (HIGH): repo-supplied node version pins reached the nvm fallback
+
+unvalidated — a pin like `../../evil/bin` escaped the versions tree and
+
+placed an attacker-controlled directory on the spawned command's PATH.
+
+nvm_node_bin now applies validate_runtime_version plus a canonicalize +
+
+prefix check against the versions tree. Regression test covers four
+
+hostile pins.
+
+SEC02-02 (HIGH, defense layer): AUR build-cache hits now verify the
+
+archive's embedded .PKGINFO pkgname matches the requested output before
+
+reuse; any mismatch rejects the cache and forces a rebuild. The key file
+
+alone is not trustworthy while it lives in the same user-writable tree as
+
+the build that produced it.
+
+SEC04-3 (MED): release workflow verifies wrangler@4.123.0's registry
+
+integrity hash (sha512-VXo2I1oa0x9aGAKIFPRSQPqTh0RBY5Ktl44YOhNmsJQFUdJKD...)
+
+before any npx invocation carrying CLOUDFLARE_API_TOKEN; mismatch fails
+
+the release.
+
 - **Security**: Second batch of 15-agent audit mitigations
 
 F5 (MED, fixed): execute_fast_system_update recorded the TRUE upgrade
