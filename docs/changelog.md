@@ -2233,6 +2233,7 @@ which newer clippy versions flag as an error with -D warnings.
 
 ### 👷 CI/CD
 
+- Deploylint deploy-gate test
 - Align release feature capabilities across platforms
 
   - build every release artifact with its backend plus pgp,license
