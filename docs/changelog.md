@@ -540,6 +540,42 @@ analyzer inference
 - **Ci**: Cross-platform install script and R2 release sync
 ### 🐛 Bug Fixes
 
+- **Security**: Third-wave HIGH findings from 50-agent audit
+
+A1 (HIGH): dpkg-info lookups used Rust's ARCH constant (x86_64) where
+
+dpkg writes amd64 — arch-qualified maintainer-script/conffile paths were
+
+dead code, silently degrading conffile protection and breaking multiarch
+
+removal. Candidates now probe the translated dpkg name first.
+
+A2 (HIGH): a mid-extraction failure discarded the rollback manifest —
+
+files already written under / became untracked residue. Extraction now
+
+runs in an inner closure owning the manifest and any failure returns a
+
+PartialExtractionError carrying it; both unpack_deb_standalone's caller
+
+and the standalone path merge partial manifests into rollback tracking.
+
+ADV-23-01 (HIGH): .SRCINFO rename filenames (`name::url` syntax) reached
+
+the pre-downloader unsanitized — a hostile PKGBUILD could write outside
+
+SRCDEST via path components. Filenames are now rejected unless they are
+
+plain names (no separators, absolute paths, or parent components).
+
+ADV-18-01 (HIGH): duplicate index entries resolved via HashMap last-wins,
+
+letting a lower-priority component substitute a wrong-version download.
+
+Resolution now keeps the FIRST entry per name (repository priority order).
+
+All four carry targeted fixes with the audit reference in-code.
+
 - **Aur**: Cache-hit path discarded verified archives before install
 
 Caught by the 50-agent wave (adv01 F-01, HIGH functional): the SEC02-02
