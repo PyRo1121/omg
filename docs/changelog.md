@@ -285,6 +285,76 @@ was not linked from any doc; its command usage remains in docs/runtimes.md
 - Move performance checks to benchmarks
 ### ✨ New Features
 
+- **Slsa**: Real cryptographic verification of Rekor hashedrekord entries
+
+Replaces the always-false evidence stub with genuine verification:
+
+  - decodes the base64 Rekor entry body and requires kind `hashedrekord`
+
+  - requires the recorded SHA-256 to match the artifact digest exactly
+
+  - verifies the embedded signature over that digest with the embedded
+
+public key: RSA PKCS[#1](https://github.com/PyRo1121/omg/issues/1) v1.5/SHA-256 (SPKI + PKCS[#1](https://github.com/PyRo1121/omg/issues/1) PEM) and P-256
+
+ECDSA/SHA-256 (SPKI or raw SEC1), via new rsa/p256/base64 deps
+
+  - verified=true maps to SLSA Level 1 (signed provenance in a
+
+transparency log); unsupported kinds and malformed entries report
+
+honestly as unverified instead of pretending
+
+Roundtrip regression tests sign with generated RSA-2048 and P-256 keys:
+
+valid signatures verify, wrong signatures fail, hash mismatches fail,
+
+non-hashedrekord kinds never claim verification.
+
+sha2 pinned to 0.10 to share one digest implementation across rsa/p256.
+
+- **Rollback**: Auto-rebuild old AUR versions from AUR git history
+
+Rollback previously restored official packages from the pacman cache but
+
+told users to manually rebuild old AUR versions — the most common
+
+real-world rollback shape stayed half-done.
+
+New AurClient::downgrade_from_history(package, version):
+
+  - resolves the package base (split packages) then full-history partial
+
+clones the AUR repo into an isolated _rollback/ work dir, never
+
+touching the user's cached checkout
+
+  - walks commits newest->oldest reading .SRCINFO at each commit until
+
+pkgver-pkgrel matches the version recorded in history; clear error if
+
+force-push erased it
+
+  - checks out that commit and builds via the same hardened pipeline
+
+(validate_build_dir, makepkg env, sandboxing method); PKGBUILD review
+
+prompts are skipped because rollback reinstalls already-audited code
+
+  - installs through install_built_packages (INSTALL_LOCK, direct pacman -U)
+
+  - no build-cache key written: historical builds must not poison the
+
+latest-build cache
+
+rollback_action now carries (name, old_version) for AUR entries;
+
+the Restore arm downgrades each automatically, reports per-package
+
+failures without aborting the rest, and exits nonzero only when some
+
+package could not be restored.
+
 - **Debian**: Verify InRelease signature before any index download
 
 Closes the WAVE12 signature-chain wiring blocker (citations:
