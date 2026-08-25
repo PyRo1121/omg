@@ -13,6 +13,48 @@ OMG is the fastest unified package manager for Linux, replacing pacman, yay, nvm
 ## [Unreleased]
 ### ♻️  Refactoring
 
+- Apply 50-agent dead-code manifests (batch 1)
+
+Applied none/low-risk deletions from mnt01-15 manifests with caller
+
+verification before every removal:
+
+  - telemetry: track_feature_event, maybe_flush_background,
+
+flush_events_background, free needs_flush (internally-chained cluster,
+
+zero external callers)
+
+  - init: auto_detect_shell (zero callers)
+
+  - hooks/completions: print_completion_instructions (zero callers)
+
+  - debian_db: needs_sync + force_sync_all + their mod re-export (only
+
+referenced by the re-export itself)
+
+  - types: FromStr for RuntimeBackend (unused)
+
+  - debian_db/db: packages() accessor
+
+  - transaction: TransactionState::Unpacking variant
+
+  - dnf: repos_dir field, Default impl
+
+  - pacman_db/mod: dead type re-exports
+
+  - runtimes/common: duplicated doc line
+
+  - client: dead `let _ = &mut pre`
+
+  - repomd module deleted entirely (~402 LOC): unwired Fedora trust chain
+
+with zero production callers — flagged needs-review by two independent
+
+shards; deletion-first standard applies to incomplete advertised paths
+
+Every batch gated with cargo fmt/check.
+
 - **Container**: Delete verified-dead surface (~90 LOC)
 
   - LocalCommandRunner impl for ContainerCommands: dispatch goes
