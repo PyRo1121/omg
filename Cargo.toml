@@ -193,8 +193,12 @@ notify = "8.2"
 home = "0.5.12"
 
 # Cryptography
-sha2 = "0.11.0"
+sha2 = "0.10"
 hex = "0.4.3"
+base64 = "0.22"
+# SLSA/Sigstore verification: RSA (PKCS#1 v1.5, SPKI keys) and P-256 ECDSA
+rsa = { version = "0.9" }
+p256 = { version = "0.13", features = ["ecdsa", "pkcs8"] }
 
 # System calls (for disk space checks, etc.)
 nix = { version = "0.31", features = ["fs", "user"] }

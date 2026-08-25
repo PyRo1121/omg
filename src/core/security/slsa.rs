@@ -54,6 +54,25 @@ pub enum SlsaError {
         #[source]
         source: reqwest::Error,
     },
+    #[error("Malformed Rekor entry body")]
+    RekorBodyDecode {
+        #[source]
+        source: base64::DecodeError,
+    },
+    #[error("Rekor entry body is not valid JSON")]
+    RekorBodyJson {
+        #[source]
+        source: serde_json::Error,
+    },
+    #[error("Rekor entry body missing field '{field}'")]
+    RekorBodyMissingField { field: &'static str },
+    #[error("Artifact hash is not valid hex")]
+    RekorBodyHashHex {
+        #[source]
+        source: hex::FromHexError,
+    },
+    #[error("Signature bytes are malformed for the given key type")]
+    SignatureMalformed,
     #[error("Failed to read '{path}'")]
     Read {
         path: String,
@@ -156,8 +175,9 @@ pub struct SlsaMaterial {
 /// Verification result with detailed information.
 #[derive(Debug, Clone)]
 pub struct VerificationResult {
-    /// True only after full cryptographic attestation verification; the
-    /// current evidence-based pipeline always reports `false`.
+    /// True only after cryptographic verification succeeded: a Rekor
+    /// hashedrekord entry whose embedded signature over the artifact digest
+    /// verifies against its embedded public key.
     pub verified: bool,
     /// Classified SLSA build level for the artifact.
     pub slsa_level: SlsaLevel,
@@ -332,13 +352,144 @@ impl SlsaVerifier {
         Ok(parse_rekor_entry(uuid, entry_map)?)
     }
 
-    /// Verify SLSA provenance for a package
-    /// Gather provenance *evidence* for an artifact and classify it.
+    /// Attempt REAL cryptographic verification of a Rekor `hashedrekord`
+    /// entry against an artifact digest.
     ///
-    /// This queries the Rekor transparency log and optionally parses a local
-    /// provenance file, but neither is cryptographic verification: the
-    /// returned [`VerificationResult`] currently always reports
-    /// `verified: false` until full in-toto/SLSA verification lands. Callers
+    /// Steps: decode the base64 entry body, require kind `hashedrekord`,
+    /// require its recorded SHA-256 to match the artifact digest, then verify
+    /// the embedded signature over that digest with the embedded public key
+    /// (RSA PKCS#1 v1.5 with SHA-256, or P-256 ECDSA with SHA-256 — the two
+    /// key types Sigstore issues). Other entry kinds report honestly as
+    /// unverified rather than pretending.
+    fn verify_rekor_entry(entry: &RekorEntry, artifact_hash: &str) -> Result<bool, SlsaError> {
+        use base64::Engine as _;
+
+        let body_json = base64::engine::general_purpose::STANDARD
+            .decode(entry.body.trim())
+            .map_err(|source| SlsaError::RekorBodyDecode { source })?;
+        let body: serde_json::Value = serde_json::from_slice(&body_json)
+            .map_err(|source| SlsaError::RekorBodyJson { source })?;
+
+        if body.get("kind").and_then(serde_json::Value::as_str) != Some("hashedrekord") {
+            // intoto/other kinds are not verified by this engine yet.
+            return Ok(false);
+        }
+
+        let spec = body
+            .get("spec")
+            .ok_or(SlsaError::RekorBodyMissingField { field: "spec" })?;
+        let recorded_hash = spec
+            .pointer("/data/hash/value")
+            .and_then(serde_json::Value::as_str)
+            .ok_or(SlsaError::RekorBodyMissingField {
+                field: "spec.data.hash.value",
+            })?;
+        // The log must be attesting THIS artifact, byte-for-byte.
+        if !recorded_hash.eq_ignore_ascii_case(artifact_hash) {
+            return Ok(false);
+        }
+
+        let signature_b64 = spec
+            .pointer("/signature/content")
+            .and_then(serde_json::Value::as_str)
+            .ok_or(SlsaError::RekorBodyMissingField {
+                field: "spec.signature.content",
+            })?;
+        let pem_b64 = spec
+            .pointer("/signature/publicKey/content")
+            .and_then(serde_json::Value::as_str)
+            .ok_or(SlsaError::RekorBodyMissingField {
+                field: "spec.signature.publicKey.content",
+            })?;
+
+        let base64_engine = base64::engine::general_purpose::STANDARD;
+        let signature = base64_engine
+            .decode(signature_b64.trim())
+            .map_err(|source| SlsaError::RekorBodyDecode { source })?;
+        let pem = base64_engine
+            .decode(pem_b64.trim())
+            .map_err(|source| SlsaError::RekorBodyDecode { source })?;
+        let pem = String::from_utf8_lossy(&pem);
+
+        Self::verify_pem_signature(pem.trim(), &signature, artifact_hash)
+    }
+
+    /// Decode a PEM PUBLIC KEY block and verify `signature` over the SHA-256
+    /// digest named by hex `artifact_hash`. Tries RSA PKCS#1 v1.5 then P-256
+    /// ECDSA; returns Ok(false) when the key type is unrecognized.
+    fn verify_pem_signature(
+        pem: &str,
+        signature: &[u8],
+        artifact_hash: &str,
+    ) -> Result<bool, SlsaError> {
+        use base64::Engine as _;
+
+        let der: Vec<u8> = base64::engine::general_purpose::STANDARD
+            .decode(
+                pem.lines()
+                    .filter(|line| !line.contains("BEGIN") && !line.contains("END"))
+                    .map(str::trim)
+                    .collect::<String>(),
+            )
+            .map_err(|source| SlsaError::RekorBodyDecode { source })?;
+
+        // Raw digest bytes (the hashedrekord signature covers exactly this).
+        let mut digest = [0u8; 32];
+        hex::decode_to_slice(artifact_hash, &mut digest)
+            .map_err(|source| SlsaError::RekorBodyHashHex { source })?;
+
+        // --- RSA PKCS#1 v1.5 with SHA-256 ---
+        {
+            use rsa::pkcs1::DecodeRsaPublicKey as _;
+            use rsa::pkcs8::DecodePublicKey as _;
+            let rsa_key = rsa::RsaPublicKey::from_public_key_der(&der)
+                .or_else(|_| rsa::RsaPublicKey::from_pkcs1_der(&der));
+            if let Ok(key) = rsa_key {
+                use rsa::pkcs1v15::Signature as RsaSignature;
+                let verifying = rsa::pkcs1v15::VerifyingKey::<sha2::Sha256>::new(key);
+                let sig =
+                    RsaSignature::try_from(signature).map_err(|_| SlsaError::SignatureMalformed)?;
+                let mut hasher = sha2::Sha256::new();
+                sha2::Digest::update(&mut hasher, digest);
+                use rsa::signature::DigestVerifier as _;
+                return Ok(verifying.verify_digest(hasher, &sig).is_ok());
+            }
+        }
+
+        // --- ECDSA P-256 with SHA-256 (DER-encoded signature) ---
+        {
+            use p256::ecdsa::signature::DigestVerifier as _;
+            use p256::pkcs8::DecodePublicKey as _;
+            let sec1: std::borrow::Cow<'_, [u8]> =
+                match p256::PublicKey::from_public_key_der(&der) {
+                    Ok(spki_key) => std::borrow::Cow::Owned(
+                        ::p256::elliptic_curve::sec1::ToEncodedPoint::<p256::NistP256>::to_encoded_point(
+                            &spki_key, false,
+                        )
+                        .as_bytes()
+                        .to_vec(),
+                    ),
+                    Err(_) => std::borrow::Cow::Borrowed(&der[..]), // raw SEC1 point
+                };
+            if let Ok(verifying) = p256::ecdsa::VerifyingKey::from_sec1_bytes(&sec1) {
+                let sig = p256::ecdsa::Signature::from_der(signature)
+                    .map_err(|_| SlsaError::SignatureMalformed)?;
+                let mut hasher = sha2::Sha256::new();
+                sha2::Digest::update(&mut hasher, digest);
+                return Ok(verifying.verify_digest(hasher, &sig).is_ok());
+            }
+        }
+
+        Ok(false)
+    }
+
+    /// Verify SLSA provenance for a package
+    /// Gather provenance evidence for an artifact, then cryptographically
+    /// verify it when possible.
+    ///
+    /// Queries the Rekor transparency log and verifies each `hashedrekord`
+    /// entry's embedded signature over the artifact digest (RSA or P-256).
+    /// A local provenance file is parsed for context but unsigned local JSON
     /// must not treat an `Ok` result as a verified attestation.
     pub async fn verify_provenance(
         &self,
@@ -348,8 +499,24 @@ impl SlsaVerifier {
         // Calculate artifact hash
         let artifact_hash = Self::calculate_hash(&blob_path)?;
 
-        // Check Rekor for transparency log entries
+        // Check Rekor for transparency log entries, then attempt REAL
+        // cryptographic verification of the best candidate.
         let rekor_entries = self.query_rekor(&artifact_hash).await?;
+
+        for entry in &rekor_entries {
+            if Self::verify_rekor_entry(entry, &artifact_hash).unwrap_or(false) {
+                // Signature over this exact artifact digest verified with
+                // the key embedded in the transparency-log entry.
+                return Ok(VerificationResult {
+                    verified: true,
+                    slsa_level: SlsaLevel::Level1,
+                    transparency_log_entry: Some(entry.uuid.clone()),
+                    builder_id: None,
+                    build_timestamp: None,
+                    error: None,
+                });
+            }
+        }
 
         if let Some(entry) = rekor_entries.first() {
             let mut result = classify_slsa_evidence(SlsaEvidence::RekorIndexHit);
@@ -606,5 +773,107 @@ mod tests {
     fn empty_rekor_entry_map_is_an_error() {
         let err = parse_rekor_entry("abc", HashMap::new()).expect_err("empty map must fail");
         assert!(matches!(err, RekorError::EmptyEntryMap), "got: {err}");
+    }
+    #[test]
+    fn rekor_entry_verification_roundtrips_rsa_and_p256() {
+        use base64::Engine as _;
+        let artifact_hash = "a".repeat(64);
+        let b64 = |bytes: &[u8]| base64::engine::general_purpose::STANDARD.encode(bytes);
+
+        let make_body = |pem: &str, sig: &[u8]| {
+            let body = serde_json::json!({
+                "kind": "hashedrekord",
+                "spec": {
+                    "data": {"hash": {"algorithm": "sha256", "value": artifact_hash}},
+                    "signature": {
+                        "content": b64(sig),
+                        "publicKey": {"content": b64(pem.as_bytes())}
+                    }
+                }
+            });
+            b64(body.to_string().as_bytes())
+        };
+
+        // --- RSA roundtrip ---
+        let mut rng = rsa::rand_core::OsRng;
+        let private = rsa::RsaPrivateKey::new(&mut rng, 2048).expect("rsa keygen");
+        let public = rsa::RsaPublicKey::from(&private);
+        let pem = {
+            use rsa::pkcs8::EncodePublicKey as _;
+            public
+                .to_public_key_pem(rsa::pkcs8::LineEnding::LF)
+                .expect("spki pem")
+        };
+        let digest_bytes = hex::decode(&artifact_hash).unwrap();
+        let signing = rsa::pkcs1v15::SigningKey::<sha2::Sha256>::new(private);
+        use rsa::signature::DigestSigner as _;
+        use rsa::signature::SignatureEncoding as _;
+        let good_sig: rsa::pkcs1v15::Signature =
+            signing.sign_digest(sha2::Sha256::new_with_prefix(digest_bytes.clone()));
+        let bad_sig: rsa::pkcs1v15::Signature =
+            signing.sign_digest(sha2::Sha256::new_with_prefix(vec![0u8; 32]));
+
+        for (sig, expect) in [(&good_sig.to_bytes(), true), (&bad_sig.to_bytes(), false)] {
+            let entry = RekorEntry {
+                uuid: "t".into(),
+                log_index: 0,
+                integrated_time: 0,
+                body: make_body(&pem, sig),
+            };
+            assert_eq!(
+                SlsaVerifier::verify_rekor_entry(&entry, &artifact_hash).unwrap(),
+                expect,
+                "RSA verification must distinguish real from wrong signatures"
+            );
+        }
+
+        // Hash mismatch must fail even with a valid signature.
+        let entry = RekorEntry {
+            uuid: "t".into(),
+            log_index: 0,
+            integrated_time: 0,
+            body: make_body(&pem, &good_sig.to_bytes()),
+        };
+        assert!(
+            !SlsaVerifier::verify_rekor_entry(&entry, &"b".repeat(64)).unwrap(),
+            "recorded-hash mismatch must not verify"
+        );
+
+        // --- P-256 roundtrip ---
+        let p256_signing = p256::ecdsa::SigningKey::from_slice(&[7u8; 32]).unwrap();
+        use p256::pkcs8::EncodePublicKey as _;
+        // SigningKey derefs to its VerifyingKey; SPKI PEM of the public key.
+        let p256_pem = p256_signing
+            .verifying_key()
+            .to_public_key_pem(p256::pkcs8::LineEnding::LF)
+            .unwrap();
+        let good_ec: p256::ecdsa::Signature =
+            p256_signing.sign_digest(sha2::Sha256::new_with_prefix(digest_bytes));
+        let ec_der = good_ec.to_der();
+        let entry = RekorEntry {
+            uuid: "t2".into(),
+            log_index: 0,
+            integrated_time: 0,
+            body: make_body(&p256_pem, ec_der.as_bytes()),
+        };
+        assert!(
+            SlsaVerifier::verify_rekor_entry(&entry, &artifact_hash).unwrap(),
+            "valid P-256 signature over the artifact digest must verify"
+        );
+
+        // Non-hashedrekord kinds are honestly unverified.
+        let intoto_body = b64(serde_json::json!({"kind": "intoto", "spec": {}})
+            .to_string()
+            .as_bytes());
+        let entry = RekorEntry {
+            uuid: "t3".into(),
+            log_index: 0,
+            integrated_time: 0,
+            body: intoto_body,
+        };
+        assert!(
+            !SlsaVerifier::verify_rekor_entry(&entry, &artifact_hash).unwrap(),
+            "unsupported kinds must not claim verification"
+        );
     }
 }
