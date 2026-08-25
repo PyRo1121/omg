@@ -199,6 +199,8 @@ base64 = "0.22"
 # SLSA/Sigstore verification: RSA (PKCS#1 v1.5, SPKI keys) and P-256 ECDSA
 rsa = { version = "0.9" }
 p256 = { version = "0.13", features = ["ecdsa", "pkcs8"] }
+p384 = { version = "0.13", features = ["ecdsa", "pkcs8"] }
+x509-parser = { version = "0.16", default-features = false, features = ["verify"] }
 
 # System calls (for disk space checks, etc.)
 nix = { version = "0.31", features = ["fs", "user"] }
@@ -283,6 +285,7 @@ rusqlite = { version = "0.40", features = [
 ], optional = true } # SQLite for RPM db
 
 [dev-dependencies]
+rcgen = "0.13"
 criterion = { version = "0.8", features = ["html_reports"] }
 assert_cmd = "2.1"
 proptest = "1.4"                                             # Property-based testing
