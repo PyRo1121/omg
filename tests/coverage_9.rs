@@ -1,0 +1,322 @@
+//! Coverage tests #9 — src/cli/runtimes.rs + src/runtimes/mod.rs
+//!
+//! Contracts under test (each assertion pins observable CLI behavior):
+//! - `which`: version-file resolution (project dir, parent walk, case), the
+//!   explicit "no version set" notice when no pin exists and mise is absent
+//! - `use`: failure when neither explicit version nor pin file is available;
+//!   rejection of reserved (`current`) and filesystem-unsafe versions
+//! - `list --json`: structured entries for native runtimes (exact payload),
+//!   explicit failure naming mise-managed runtimes, `--available` conflict
+//! - backend dispatch: unknown runtimes go to mise; with no mise binary the
+//!   command must fail naming the backend instead of succeeding silently
+//! - dynamic completion: known_runtimes() falls back to SUPPORTED_RUNTIMES
+//!
+//! All tests are offline: mise availability is forced off by clearing PATH
+//! (the omg binary itself is spawned by absolute path), and every assertion
+//! avoids code paths that download anything.
+
+#![expect(clippy::unwrap_used, clippy::expect_used, clippy::pedantic)]
+
+pub mod common;
+
+use common::*;
+
+/// Env additions guaranteeing mise is unavailable: no bundled mise in the
+/// isolated OMG_DATA_DIR, and no system mise reachable with an empty PATH.
+const NO_MISE_ENV: &[(&str, &str)] = &[("PATH", "")];
+
+fn data_dir_str(project: &TestProject) -> String {
+    project.data_dir.path().display().to_string()
+}
+
+fn config_dir_str(project: &TestProject) -> String {
+    project.config_dir.path().display().to_string()
+}
+
+fn pacman_root_str(project: &TestProject) -> String {
+    project.pacman_root.path().display().to_string()
+}
+
+/// Run omg inside an arbitrary directory (e.g. a nested project subdir)
+/// while keeping the project's isolated data/config dirs and disabling mise.
+fn run_in_dir(
+    project: &TestProject,
+    dir: &std::path::Path,
+    args: &[&str],
+    extra_env: &[(&str, &str)],
+) -> CommandResult {
+    let mut vars: Vec<(String, String)> = vec![
+        ("OMG_DATA_DIR".into(), data_dir_str(project)),
+        ("OMG_CONFIG_DIR".into(), config_dir_str(project)),
+        (
+            "OMG_CACHE_DIR".into(),
+            project.data_dir.path().join("cache").display().to_string(),
+        ),
+        ("OMG_PACMAN_ROOT".into(), pacman_root_str(project)),
+        ("OMG_TEST_DISTRO".into(), "arch".to_string()),
+    ];
+    vars.push(("PATH".into(), String::new()));
+    let refs: Vec<(&str, &str)> = vars
+        .iter()
+        .map(|(k, v)| (k.as_str(), v.as_str()))
+        .chain(extra_env.iter().copied())
+        .collect();
+    run_omg_with_options(args, Some(dir), &refs)
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// WHICH — version-file resolution (src/cli/runtimes.rs resolve_active_version)
+// ═══════════════════════════════════════════════════════════════════════════════
+
+#[test]
+fn which_reports_pin_from_nvmrc_in_project_directory() {
+    let project = TestProject::new();
+    project.create_file(".nvmrc", "20.10.0");
+
+    let result = project.run_with_env(&["which", "node"], NO_MISE_ENV);
+    result.assert_success();
+
+    // Contract: the .nvmrc pin is reported verbatim, NOT the "no version
+    // set" notice. Both halves matter — dropping either lets a broken
+    // resolver (always-None, or always-the-notice) slip through.
+    result.assert_stdout_contains("20.10.0");
+    assert!(
+        !result.stdout.contains("no version set"),
+        "`omg which node` with a .nvmrc pin must report the version, got:\n{}",
+        result.stdout
+    );
+}
+
+#[test]
+fn which_resolves_pin_from_parent_directory() {
+    let project = TestProject::new();
+    project.create_file(".ruby-version", "3.2.1");
+    let nested = project.create_dir("apps/web");
+
+    // Contract: detection walks up from cwd, so a pin in the repo root is
+    // visible from a nested working directory (hooks::detect_versions).
+    let result = run_in_dir(&project, &nested, &["which", "ruby"], &[]);
+    result.assert_success();
+    result.assert_stdout_contains("3.2.1");
+    assert!(
+        !result.stdout.contains("no version set"),
+        "parent-directory pin must be found from nested cwd:\n{}",
+        result.stdout
+    );
+}
+
+#[test]
+fn which_prints_no_version_notice_when_unset_and_mise_absent() {
+    let project = TestProject::new();
+
+    let result = project.run_with_env(&["which", "python"], NO_MISE_ENV);
+
+    // Contract (handle_which_command Ok(None) arm): exit 0 with the exact
+    // actionable notice naming the pin files it consulted.
+    result.assert_success();
+    result.assert_stdout_contains("no version set");
+    result.assert_stdout_contains("python");
+    result.assert_stdout_contains(".tool-versions");
+}
+
+#[test]
+fn which_is_case_insensitive_for_runtime_name() {
+    let project = TestProject::new();
+    project.create_file(".nvmrc", "20.10.0");
+
+    // Contract: resolve_active_version lowercases the lookup key, so
+    // "NODE" resolves the same pin stored under "node".
+    let result = project.run_with_env(&["which", "NODE"], NO_MISE_ENV);
+    result.assert_success();
+    result.assert_stdout_contains("20.10.0");
+    assert!(
+        !result.stdout.contains("no version set"),
+        "case-insensitive lookup must find the node pin:\n{}",
+        result.stdout
+    );
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// USE — argument validation before any install work (offline paths only)
+// ═══════════════════════════════════════════════════════════════════════════════
+
+#[test]
+fn use_fails_without_pin_or_explicit_version() {
+    let project = TestProject::new(); // no version files anywhere below cwd
+
+    let result = project.run_with_env(&["use", "go"], NO_MISE_ENV);
+
+    // Contract (use_version detection arm): fail closed and name both the
+    // problem and where pins may live. Must never fall through to an
+    // install with an empty/implicit version.
+    result.assert_failure();
+    result.assert_stderr_contains("No version specified and none detected");
+    result.assert_stderr_contains(".tool-versions");
+}
+
+#[test]
+fn use_rejects_reserved_current_version() {
+    let project = TestProject::new();
+
+    let result = project.run_with_env(&["use", "node", "current"], NO_MISE_ENV);
+
+    // Contract: validate_runtime_version reserves "current" for the
+    // active-version symlink and says so before any manager dispatch.
+    result.assert_failure();
+    result.assert_stderr_contains("'current' is reserved");
+}
+
+#[test]
+fn use_rejects_unsafe_runtime_version_characters() {
+    let project = TestProject::new();
+
+    // ':' is legal for package epochs but unsafe as a runtime directory name.
+    let result = project.run_with_env(&["use", "rust", "1.5.0:epoch"], NO_MISE_ENV);
+
+    result.assert_failure();
+    result.assert_stderr_contains("unsafe for filesystem paths");
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// LIST --json — structured output contract (list_installed_json /
+// runtime_versions_value in src/cli/runtimes.rs)
+// ═══════════════════════════════════════════════════════════════════════════════
+
+#[test]
+fn list_json_native_runtime_emits_exact_structured_entry() {
+    let project = TestProject::new();
+    // Seed OMG's own bun store: <data>/versions/bun/<version> plus the
+    // `current` symlink, so both fields have real values to pin.
+    let bun_dir = project.data_dir.path().join("versions/bun/9.9.9");
+    std::fs::create_dir_all(&bun_dir).unwrap();
+    #[cfg(unix)]
+    std::os::unix::fs::symlink(
+        &bun_dir,
+        project.data_dir.path().join("versions/bun/current"),
+    )
+    .unwrap();
+
+    let result = project.run_with_env(&["list", "bun", "--json"], NO_MISE_ENV);
+    result.assert_success();
+
+    // Contract: the entry carries exactly the documented fields — runtime
+    // name, active version resolved through the symlink, and the installed
+    // list. (serde_json emits keys alphabetically: current, installed, runtime.)
+    result.assert_stdout_contains("\"current\": \"9.9.9\"");
+    result.assert_stdout_contains("\"runtime\": \"bun\"");
+    let expected_installed = "\"installed\": [\n    \"9.9.9\"\n  ]";
+    assert!(
+        result.stdout.contains(expected_installed),
+        "installed must list exactly [\"9.9.9\"].\nexpected:\n{expected_installed}\nstdout:\n{}",
+        result.stdout
+    );
+    // No stray fields beyond the three contract keys.
+    let value_lines = result.stdout.lines().filter(|l| l.contains("\":")).count();
+    assert_eq!(
+        value_lines, 3,
+        "entry must have exactly three fields:\n{}",
+        result.stdout
+    );
+}
+
+#[test]
+fn list_json_all_runtimes_emits_seven_entries_with_required_fields() {
+    let project = TestProject::new();
+
+    let result = project.run_with_env(&["list", "--json"], NO_MISE_ENV);
+    result.assert_success();
+
+    // Contract: one entry per natively supported runtime, each carrying
+    // runtime/current/installed keys.
+    let names = ["node", "python", "rust", "go", "ruby", "java", "bun"];
+    let count = result.stdout.matches("\"runtime\":").count();
+    assert_eq!(
+        count, 7,
+        "exactly seven native runtime entries expected, stdout:\n{}",
+        result.stdout
+    );
+    for name in names {
+        let field = format!("\"runtime\": \"{name}\"");
+        assert!(
+            result.stdout.contains(&field),
+            "missing {field} in JSON listing:\n{}",
+            result.stdout
+        );
+    }
+    // Every entry must carry both remaining fields (7 occurrences each).
+    assert_eq!(result.stdout.matches("\"current\":").count(), 7);
+    assert_eq!(result.stdout.matches("\"installed\":").count(), 7);
+}
+
+#[test]
+fn list_json_mise_managed_runtime_fails_explicitly() {
+    let project = TestProject::new();
+
+    let result = project.run_with_env(&["list", "erlang", "--json"], NO_MISE_ENV);
+
+    // Contract: JSON output for a mise-managed runtime is refused with an
+    // explicit message rather than emitting partial or empty data.
+    result.assert_failure();
+    result.assert_stderr_contains(
+        "JSON version output is not supported for mise-managed runtime 'erlang'",
+    );
+}
+
+#[test]
+fn list_json_conflicts_with_available_flag() {
+    let project = TestProject::new();
+
+    let result = project.run_with_env(&["list", "node", "--available", "--json"], NO_MISE_ENV);
+
+    result.assert_failure();
+    result.assert_stderr_contains("--json is not supported together with --available");
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// BACKEND DISPATCH — non-native runtimes route through mise; without a mise
+// binary the CLI must fail loudly naming the backend (never succeed silently).
+// ═══════════════════════════════════════════════════════════════════════════════
+
+#[test]
+fn list_unknown_runtime_offline_fails_naming_mise_backend() {
+    let project = TestProject::new();
+
+    // erlang is not natively managed → mise_list_versions spawns `mise`;
+    // with no bundled copy and an empty PATH the spawn fails and the error
+    // chain must name the failed backend invocation.
+    let result = project.run_with_env(&["list", "erlang"], NO_MISE_ENV);
+
+    result.assert_failure();
+    result.assert_stderr_contains("mise");
+    result.assert_stderr_contains("Failed to run `mise`");
+}
+
+#[test]
+fn complete_lists_known_runtimes_when_mise_unavailable() {
+    let project = TestProject::new();
+
+    // Contract (known_runtimes fallback): with mise unavailable, dynamic
+    // completion after `omg use <TAB>` offers exactly the seven supported
+    // runtimes, deduplicated and sorted — nothing more, nothing less.
+    let result = project.run_with_env(
+        &[
+            "complete",
+            "--shell",
+            "zsh",
+            "--current",
+            "",
+            "--last",
+            "use",
+        ],
+        NO_MISE_ENV,
+    );
+    result.assert_success();
+
+    let suggestions: Vec<&str> = result.stdout.lines().map(str::trim).collect();
+    assert_eq!(
+        suggestions,
+        vec!["bun", "go", "java", "node", "python", "ruby", "rust"],
+        "completion after `use` must offer exactly the sorted supported runtimes:\n{}",
+        result.stdout
+    );
+}

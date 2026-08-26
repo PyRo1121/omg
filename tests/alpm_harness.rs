@@ -69,6 +69,7 @@ impl AlpmHarness {
         Ok(())
     }
 
+    #[allow(dead_code)] // used by failure_tests.rs
     pub fn alpm(&self) -> Result<Alpm> {
         let alpm = Alpm::new(
             self.root_path.to_str().unwrap(),
