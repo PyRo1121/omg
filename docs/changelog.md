@@ -2881,6 +2881,7 @@ the Debian backend), so it was removed from the metadata.
 - Normalize project formatting
 ### 🧪 Testing
 
+- Fix dockerfile payload assertion to not catch legitimate apt cleanup
 - Fix dockerfile_unsafe_inputs assertion to match actual sanitizer behavior
 - Mark environment-dependent why/snapshot tests as ignored
 - Fix clippy issues across coverage_1-20 test files
