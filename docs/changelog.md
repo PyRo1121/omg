@@ -2850,6 +2850,790 @@ the documented 'omg explicit' contract
 chore(deps): update rust crate git2 to 0.20 [security]
 ### 🔧 Maintenance
 
+- **Deps**: Bump the dependencies group across 1 directory with 42 updates
+
+Bumps the dependencies group with 41 updates in the / directory:
+
+| Package | From | To |
+
+| --  - | --  - | --  - |
+
+| [clap_complete](https://github.com/clap-rs/clap) | `4.5.66` | `4.6.9` |
+
+| [clap_mangen](https://github.com/clap-rs/clap) | `0.2.31` | `0.3.3` |
+
+| [anyhow](https://github.com/dtolnay/anyhow) | `1.0.103` | `1.0.104` |
+
+| [thiserror](https://github.com/dtolnay/thiserror) | `2.0.18` | `2.0.20` |
+
+| [trait-variant](https://github.com/rust-lang/impl-trait-utils) | `0.1.2` | `0.1.3` |
+
+| [tokio](https://github.com/tokio-rs/tokio) | `1.49.0` | `1.50.0` |
+
+| [futures](https://github.com/rust-lang/futures-rs) | `0.3.32` | `0.3.34` |
+
+| [quick-xml](https://github.com/tafia/quick-xml) | `0.37.5` | `0.41.0` |
+
+| [toml](https://github.com/toml-rs/toml) | `1.0.3+spec-1.1.0` | `1.1.4+spec-1.1.0` |
+
+| [reqwest](https://github.com/seanmonstar/reqwest) | `0.13.2` | `0.13.4` |
+
+| [tokio-util](https://github.com/tokio-rs/tokio) | `0.7.18` | `0.7.19` |
+
+| [zip](https://github.com/zip-rs/zip2) | `8.1.0` | `8.6.0` |
+
+| [regex](https://github.com/rust-lang/regex) | `1.12.3` | `1.13.1` |
+
+| [zerocopy](https://github.com/google/zerocopy) | `0.8.39` | `0.8.56` |
+
+| [dashmap](https://github.com/xacrimon/dashmap) | `6.1.0` | `6.2.1` |
+
+| [moka](https://github.com/moka-rs/moka) | `0.12.13` | `0.12.16` |
+
+| [memchr](https://github.com/BurntSushi/memchr) | `2.8.0` | `2.8.3` |
+
+| [rustc-hash](https://github.com/rust-lang/rustc-hash) | `2.1.1` | `2.1.3` |
+
+| [tracing-subscriber](https://github.com/tokio-rs/tracing) | `0.3.22` | `0.3.23` |
+
+| [indicatif](https://github.com/console-rs/indicatif) | `0.18.4` | `0.18.5` |
+
+| [console](https://github.com/console-rs/console) | `0.16.2` | `0.16.4` |
+
+| [comfy-table](https://github.com/nukesor/comfy-table) | `7.2.2` | `8.0.0` |
+
+| [sha2](https://github.com/RustCrypto/hashes) | `0.10.9` | `0.11.0` |
+
+| [base64](https://github.com/marshallpierce/rust-base64) | `0.22.1` | `0.23.1` |
+
+| [p256](https://github.com/RustCrypto/elliptic-curves) | `0.13.2` | `0.14.0` |
+
+| [p384](https://github.com/RustCrypto/elliptic-curves) | `0.13.1` | `0.14.0` |
+
+| [x509-parser](https://github.com/rusticata/x509-parser) | `0.16.0` | `0.18.1` |
+
+| [nix](https://github.com/nix-rust/nix) | `0.31.1` | `0.31.3` |
+
+| [jiff](https://github.com/BurntSushi/jiff) | `0.2.21` | `0.2.35` |
+
+| [which](https://github.com/harryfei/which-rs) | `8.0.0` | `8.0.5` |
+
+| [semver](https://github.com/dtolnay/semver) | `1.0.27` | `1.0.28` |
+
+| [tempfile](https://github.com/Stebalien/tempfile) | `3.25.0` | `3.27.0` |
+
+| [rayon](https://github.com/rayon-rs/rayon) | `1.11.0` | `1.12.0` |
+
+| [sequoia-openpgp](https://gitlab.com/sequoia-pgp/sequoia) | `2.2.0` | `2.4.1` |
+
+| [uuid](https://github.com/uuid-rs/uuid) | `1.21.0` | `1.25.0` |
+
+| [rkyv](https://github.com/rkyv/rkyv) | `0.8.17` | `0.8.18` |
+
+| [whoami](https://github.com/ardaku/whoami) | `2.1.0` | `2.1.3` |
+
+| [jsonwebtoken](https://github.com/Keats/jsonwebtoken) | `10.3.0` | `11.0.0` |
+
+| [rcgen](https://github.com/rustls/rcgen) | `0.13.2` | `0.14.9` |
+
+| [assert_cmd](https://github.com/assert-rs/assert_cmd) | `2.1.2` | `2.2.2` |
+
+| [proptest](https://github.com/proptest-rs/proptest) | `1.10.0` | `1.11.0` |
+
+Updates `clap_complete` from 4.5.66 to 4.6.9
+
+  - [Release notes](https://github.com/clap-rs/clap/releases)
+
+  - [Changelog](https://github.com/clap-rs/clap/blob/master/CHANGELOG.md)
+
+  - [Commits](https://github.com/clap-rs/clap/compare/clap_complete-v4.5.66...clap_complete-v4.6.9)
+
+Updates `clap_mangen` from 0.2.31 to 0.3.3
+
+  - [Release notes](https://github.com/clap-rs/clap/releases)
+
+  - [Changelog](https://github.com/clap-rs/clap/blob/master/CHANGELOG.md)
+
+  - [Commits](https://github.com/clap-rs/clap/compare/clap_mangen-v0.2.31...clap_mangen-v0.3.3)
+
+Updates `anyhow` from 1.0.103 to 1.0.104
+
+  - [Release notes](https://github.com/dtolnay/anyhow/releases)
+
+  - [Commits](https://github.com/dtolnay/anyhow/compare/1.0.103...1.0.104)
+
+Updates `thiserror` from 2.0.18 to 2.0.20
+
+  - [Release notes](https://github.com/dtolnay/thiserror/releases)
+
+  - [Commits](https://github.com/dtolnay/thiserror/compare/2.0.18...2.0.20)
+
+Updates `trait-variant` from 0.1.2 to 0.1.3
+
+  - [Release notes](https://github.com/rust-lang/impl-trait-utils/releases)
+
+  - [Commits](https://github.com/rust-lang/impl-trait-utils/compare/v0.1.2...v0.1.3)
+
+Updates `tokio` from 1.49.0 to 1.50.0
+
+  - [Release notes](https://github.com/tokio-rs/tokio/releases)
+
+  - [Commits](https://github.com/tokio-rs/tokio/compare/tokio-1.49.0...tokio-1.50.0)
+
+Updates `futures` from 0.3.32 to 0.3.34
+
+  - [Release notes](https://github.com/rust-lang/futures-rs/releases)
+
+  - [Changelog](https://github.com/rust-lang/futures-rs/blob/main/CHANGELOG.md)
+
+  - [Commits](https://github.com/rust-lang/futures-rs/compare/0.3.32...0.3.34)
+
+Updates `quick-xml` from 0.37.5 to 0.41.0
+
+  - [Release notes](https://github.com/tafia/quick-xml/releases)
+
+  - [Changelog](https://github.com/tafia/quick-xml/blob/master/Changelog.md)
+
+  - [Commits](https://github.com/tafia/quick-xml/compare/v0.37.5...v0.41.0)
+
+Updates `toml` from 1.0.3+spec-1.1.0 to 1.1.4+spec-1.1.0
+
+  - [Commits](https://github.com/toml-rs/toml/compare/toml-v1.0.3...toml-v1.1.4)
+
+Updates `reqwest` from 0.13.2 to 0.13.4
+
+  - [Release notes](https://github.com/seanmonstar/reqwest/releases)
+
+  - [Changelog](https://github.com/seanmonstar/reqwest/blob/master/CHANGELOG.md)
+
+  - [Commits](https://github.com/seanmonstar/reqwest/compare/v0.13.2...v0.13.4)
+
+Updates `tokio-util` from 0.7.18 to 0.7.19
+
+  - [Release notes](https://github.com/tokio-rs/tokio/releases)
+
+  - [Commits](https://github.com/tokio-rs/tokio/compare/tokio-util-0.7.18...tokio-util-0.7.19)
+
+Updates `zip` from 8.1.0 to 8.6.0
+
+  - [Release notes](https://github.com/zip-rs/zip2/releases)
+
+  - [Changelog](https://github.com/zip-rs/zip2/blob/master/CHANGELOG.md)
+
+  - [Commits](https://github.com/zip-rs/zip2/compare/v8.1.0...v8.6.0)
+
+Updates `regex` from 1.12.3 to 1.13.1
+
+  - [Release notes](https://github.com/rust-lang/regex/releases)
+
+  - [Changelog](https://github.com/rust-lang/regex/blob/master/CHANGELOG.md)
+
+  - [Commits](https://github.com/rust-lang/regex/compare/1.12.3...1.13.1)
+
+Updates `zerocopy` from 0.8.39 to 0.8.56
+
+  - [Release notes](https://github.com/google/zerocopy/releases)
+
+  - [Commits](https://github.com/google/zerocopy/compare/v0.8.39...v0.8.56)
+
+Updates `dashmap` from 6.1.0 to 6.2.1
+
+  - [Release notes](https://github.com/xacrimon/dashmap/releases)
+
+  - [Commits](https://github.com/xacrimon/dashmap/compare/v6.1.0...v6.2.1)
+
+Updates `moka` from 0.12.13 to 0.12.16
+
+  - [Release notes](https://github.com/moka-rs/moka/releases)
+
+  - [Changelog](https://github.com/moka-rs/moka/blob/main/CHANGELOG.md)
+
+  - [Commits](https://github.com/moka-rs/moka/compare/v0.12.13...v0.12.16)
+
+Updates `memchr` from 2.8.0 to 2.8.3
+
+  - [Commits](https://github.com/BurntSushi/memchr/compare/2.8.0...2.8.3)
+
+Updates `rustc-hash` from 2.1.1 to 2.1.3
+
+  - [Changelog](https://github.com/rust-lang/rustc-hash/blob/main/CHANGELOG.md)
+
+  - [Commits](https://github.com/rust-lang/rustc-hash/compare/v2.1.1...v2.1.3)
+
+Updates `tracing-subscriber` from 0.3.22 to 0.3.23
+
+  - [Release notes](https://github.com/tokio-rs/tracing/releases)
+
+  - [Commits](https://github.com/tokio-rs/tracing/compare/tracing-subscriber-0.3.22...tracing-subscriber-0.3.23)
+
+Updates `indicatif` from 0.18.4 to 0.18.5
+
+  - [Release notes](https://github.com/console-rs/indicatif/releases)
+
+  - [Commits](https://github.com/console-rs/indicatif/compare/0.18.4...0.18.5)
+
+Updates `console` from 0.16.2 to 0.16.4
+
+  - [Release notes](https://github.com/console-rs/console/releases)
+
+  - [Changelog](https://github.com/console-rs/console/blob/main/CHANGELOG.md)
+
+  - [Commits](https://github.com/console-rs/console/compare/0.16.2...0.16.4)
+
+Updates `comfy-table` from 7.2.2 to 8.0.0
+
+  - [Release notes](https://github.com/nukesor/comfy-table/releases)
+
+  - [Changelog](https://github.com/Nukesor/comfy-table/blob/main/CHANGELOG.md)
+
+  - [Commits](https://github.com/nukesor/comfy-table/compare/v7.2.2...v8.0.0)
+
+Updates `sha2` from 0.10.9 to 0.11.0
+
+  - [Commits](https://github.com/RustCrypto/hashes/compare/sha2-v0.10.9...sha2-v0.11.0)
+
+Updates `base64` from 0.22.1 to 0.23.1
+
+  - [Changelog](https://github.com/marshallpierce/rust-base64/blob/master/RELEASE-NOTES.md)
+
+  - [Commits](https://github.com/marshallpierce/rust-base64/compare/v0.22.1...v0.23.1)
+
+Updates `p256` from 0.13.2 to 0.14.0
+
+  - [Commits](https://github.com/RustCrypto/elliptic-curves/compare/p256/v0.13.2...p256/v0.14.0)
+
+Updates `p384` from 0.13.1 to 0.14.0
+
+  - [Commits](https://github.com/RustCrypto/elliptic-curves/compare/sm2/v0.13.1...p384/v0.14.0)
+
+Updates `x509-parser` from 0.16.0 to 0.18.1
+
+  - [Changelog](https://github.com/rusticata/x509-parser/blob/master/CHANGELOG.md)
+
+  - [Commits](https://github.com/rusticata/x509-parser/commits)
+
+Updates `nix` from 0.31.1 to 0.31.3
+
+  - [Changelog](https://github.com/nix-rust/nix/blob/master/CHANGELOG.md)
+
+  - [Commits](https://github.com/nix-rust/nix/compare/v0.31.1...v0.31.3)
+
+Updates `jiff` from 0.2.21 to 0.2.35
+
+  - [Release notes](https://github.com/BurntSushi/jiff/releases)
+
+  - [Changelog](https://github.com/BurntSushi/jiff/blob/master/CHANGELOG.md)
+
+  - [Commits](https://github.com/BurntSushi/jiff/compare/jiff-static-0.2.21...jiff-static-0.2.35)
+
+Updates `which` from 8.0.0 to 8.0.5
+
+  - [Release notes](https://github.com/harryfei/which-rs/releases)
+
+  - [Changelog](https://github.com/harryfei/which-rs/blob/master/CHANGELOG.md)
+
+  - [Commits](https://github.com/harryfei/which-rs/compare/8.0.0...8.0.5)
+
+Updates `semver` from 1.0.27 to 1.0.28
+
+  - [Release notes](https://github.com/dtolnay/semver/releases)
+
+  - [Commits](https://github.com/dtolnay/semver/compare/1.0.27...1.0.28)
+
+Updates `tempfile` from 3.25.0 to 3.27.0
+
+  - [Changelog](https://github.com/Stebalien/tempfile/blob/master/CHANGELOG.md)
+
+  - [Commits](https://github.com/Stebalien/tempfile/commits/v3.27.0)
+
+Updates `rayon` from 1.11.0 to 1.12.0
+
+  - [Changelog](https://github.com/rayon-rs/rayon/blob/main/RELEASES.md)
+
+  - [Commits](https://github.com/rayon-rs/rayon/compare/rayon-core-v1.11.0...rayon-core-v1.12.0)
+
+Updates `sequoia-openpgp` from 2.2.0 to 2.4.1
+
+  - [Commits](https://gitlab.com/sequoia-pgp/sequoia/compare/openpgp/v2.2.0...openpgp/v2.4.1)
+
+Updates `uuid` from 1.21.0 to 1.25.0
+
+  - [Release notes](https://github.com/uuid-rs/uuid/releases)
+
+  - [Commits](https://github.com/uuid-rs/uuid/compare/v1.21.0...1.25.0)
+
+Updates `rustix` from 1.1.3 to 1.1.4
+
+  - [Release notes](https://github.com/bytecodealliance/rustix/releases)
+
+  - [Changelog](https://github.com/bytecodealliance/rustix/blob/main/CHANGES.md)
+
+  - [Commits](https://github.com/bytecodealliance/rustix/compare/v1.1.3...v1.1.4)
+
+Updates `rkyv` from 0.8.17 to 0.8.18
+
+  - [Release notes](https://github.com/rkyv/rkyv/releases)
+
+  - [Commits](https://github.com/rkyv/rkyv/compare/0.8.17...0.8.18)
+
+Updates `whoami` from 2.1.0 to 2.1.3
+
+  - [Release notes](https://github.com/ardaku/whoami/releases)
+
+  - [Commits](https://github.com/ardaku/whoami/compare/v2.1.0...v2.1.3)
+
+Updates `jsonwebtoken` from 10.3.0 to 11.0.0
+
+  - [Changelog](https://github.com/Keats/jsonwebtoken/blob/master/CHANGELOG.md)
+
+  - [Commits](https://github.com/Keats/jsonwebtoken/compare/v10.3.0...v11.0.0)
+
+Updates `rcgen` from 0.13.2 to 0.14.9
+
+  - [Release notes](https://github.com/rustls/rcgen/releases)
+
+  - [Commits](https://github.com/rustls/rcgen/compare/v0.13.2...v/0.14.9)
+
+Updates `assert_cmd` from 2.1.2 to 2.2.2
+
+  - [Changelog](https://github.com/assert-rs/assert_cmd/blob/master/CHANGELOG.md)
+
+  - [Commits](https://github.com/assert-rs/assert_cmd/compare/v2.1.2...v2.2.2)
+
+Updates `proptest` from 1.10.0 to 1.11.0
+
+  - [Release notes](https://github.com/proptest-rs/proptest/releases)
+
+  - [Changelog](https://github.com/proptest-rs/proptest/blob/main/CHANGELOG.md)
+
+  - [Commits](https://github.com/proptest-rs/proptest/compare/v1.10.0...v1.11.0)
+
+---
+
+updated-dependencies:
+
+  - dependency-name: clap_complete
+
+dependency-version: 4.6.9
+
+dependency-type: direct:production
+
+update-type: version-update:semver-minor
+
+dependency-group: dependencies
+
+  - dependency-name: clap_mangen
+
+dependency-version: 0.3.3
+
+dependency-type: direct:production
+
+update-type: version-update:semver-minor
+
+dependency-group: dependencies
+
+  - dependency-name: anyhow
+
+dependency-version: 1.0.104
+
+dependency-type: direct:production
+
+update-type: version-update:semver-patch
+
+dependency-group: dependencies
+
+  - dependency-name: thiserror
+
+dependency-version: 2.0.20
+
+dependency-type: direct:production
+
+update-type: version-update:semver-patch
+
+dependency-group: dependencies
+
+  - dependency-name: trait-variant
+
+dependency-version: 0.1.3
+
+dependency-type: direct:production
+
+update-type: version-update:semver-patch
+
+dependency-group: dependencies
+
+  - dependency-name: tokio
+
+dependency-version: 1.50.0
+
+dependency-type: direct:production
+
+update-type: version-update:semver-minor
+
+dependency-group: dependencies
+
+  - dependency-name: futures
+
+dependency-version: 0.3.34
+
+dependency-type: direct:production
+
+update-type: version-update:semver-patch
+
+dependency-group: dependencies
+
+  - dependency-name: quick-xml
+
+dependency-version: 0.41.0
+
+dependency-type: direct:production
+
+update-type: version-update:semver-minor
+
+dependency-group: dependencies
+
+  - dependency-name: toml
+
+dependency-version: 1.1.4+spec-1.1.0
+
+dependency-type: direct:production
+
+update-type: version-update:semver-minor
+
+dependency-group: dependencies
+
+  - dependency-name: reqwest
+
+dependency-version: 0.13.4
+
+dependency-type: direct:production
+
+update-type: version-update:semver-patch
+
+dependency-group: dependencies
+
+  - dependency-name: tokio-util
+
+dependency-version: 0.7.19
+
+dependency-type: direct:production
+
+update-type: version-update:semver-patch
+
+dependency-group: dependencies
+
+  - dependency-name: zip
+
+dependency-version: 8.6.0
+
+dependency-type: direct:production
+
+update-type: version-update:semver-minor
+
+dependency-group: dependencies
+
+  - dependency-name: regex
+
+dependency-version: 1.13.1
+
+dependency-type: direct:production
+
+update-type: version-update:semver-minor
+
+dependency-group: dependencies
+
+  - dependency-name: zerocopy
+
+dependency-version: 0.8.56
+
+dependency-type: direct:production
+
+update-type: version-update:semver-patch
+
+dependency-group: dependencies
+
+  - dependency-name: dashmap
+
+dependency-version: 6.2.1
+
+dependency-type: direct:production
+
+update-type: version-update:semver-minor
+
+dependency-group: dependencies
+
+  - dependency-name: moka
+
+dependency-version: 0.12.16
+
+dependency-type: direct:production
+
+update-type: version-update:semver-patch
+
+dependency-group: dependencies
+
+  - dependency-name: memchr
+
+dependency-version: 2.8.3
+
+dependency-type: direct:production
+
+update-type: version-update:semver-patch
+
+dependency-group: dependencies
+
+  - dependency-name: rustc-hash
+
+dependency-version: 2.1.3
+
+dependency-type: direct:production
+
+update-type: version-update:semver-patch
+
+dependency-group: dependencies
+
+  - dependency-name: tracing-subscriber
+
+dependency-version: 0.3.23
+
+dependency-type: direct:production
+
+update-type: version-update:semver-patch
+
+dependency-group: dependencies
+
+  - dependency-name: indicatif
+
+dependency-version: 0.18.5
+
+dependency-type: direct:production
+
+update-type: version-update:semver-patch
+
+dependency-group: dependencies
+
+  - dependency-name: console
+
+dependency-version: 0.16.4
+
+dependency-type: direct:production
+
+update-type: version-update:semver-patch
+
+dependency-group: dependencies
+
+  - dependency-name: comfy-table
+
+dependency-version: 8.0.0
+
+dependency-type: direct:production
+
+update-type: version-update:semver-major
+
+dependency-group: dependencies
+
+  - dependency-name: sha2
+
+dependency-version: 0.11.0
+
+dependency-type: direct:production
+
+update-type: version-update:semver-minor
+
+dependency-group: dependencies
+
+  - dependency-name: base64
+
+dependency-version: 0.23.1
+
+dependency-type: direct:production
+
+update-type: version-update:semver-minor
+
+dependency-group: dependencies
+
+  - dependency-name: p256
+
+dependency-version: 0.14.0
+
+dependency-type: direct:production
+
+update-type: version-update:semver-minor
+
+dependency-group: dependencies
+
+  - dependency-name: p384
+
+dependency-version: 0.14.0
+
+dependency-type: direct:production
+
+update-type: version-update:semver-minor
+
+dependency-group: dependencies
+
+  - dependency-name: x509-parser
+
+dependency-version: 0.18.1
+
+dependency-type: direct:production
+
+update-type: version-update:semver-minor
+
+dependency-group: dependencies
+
+  - dependency-name: nix
+
+dependency-version: 0.31.3
+
+dependency-type: direct:production
+
+update-type: version-update:semver-patch
+
+dependency-group: dependencies
+
+  - dependency-name: jiff
+
+dependency-version: 0.2.35
+
+dependency-type: direct:production
+
+update-type: version-update:semver-patch
+
+dependency-group: dependencies
+
+  - dependency-name: which
+
+dependency-version: 8.0.5
+
+dependency-type: direct:production
+
+update-type: version-update:semver-patch
+
+dependency-group: dependencies
+
+  - dependency-name: semver
+
+dependency-version: 1.0.28
+
+dependency-type: direct:production
+
+update-type: version-update:semver-patch
+
+dependency-group: dependencies
+
+  - dependency-name: tempfile
+
+dependency-version: 3.27.0
+
+dependency-type: direct:production
+
+update-type: version-update:semver-minor
+
+dependency-group: dependencies
+
+  - dependency-name: rayon
+
+dependency-version: 1.12.0
+
+dependency-type: direct:production
+
+update-type: version-update:semver-minor
+
+dependency-group: dependencies
+
+  - dependency-name: sequoia-openpgp
+
+dependency-version: 2.4.1
+
+dependency-type: direct:production
+
+update-type: version-update:semver-minor
+
+dependency-group: dependencies
+
+  - dependency-name: uuid
+
+dependency-version: 1.25.0
+
+dependency-type: direct:production
+
+update-type: version-update:semver-minor
+
+dependency-group: dependencies
+
+  - dependency-name: rustix
+
+dependency-version: 1.1.4
+
+dependency-type: direct:production
+
+update-type: version-update:semver-patch
+
+dependency-group: dependencies
+
+  - dependency-name: rkyv
+
+dependency-version: 0.8.18
+
+dependency-type: direct:production
+
+update-type: version-update:semver-patch
+
+dependency-group: dependencies
+
+  - dependency-name: whoami
+
+dependency-version: 2.1.3
+
+dependency-type: direct:production
+
+update-type: version-update:semver-patch
+
+dependency-group: dependencies
+
+  - dependency-name: jsonwebtoken
+
+dependency-version: 11.0.0
+
+dependency-type: direct:production
+
+update-type: version-update:semver-major
+
+dependency-group: dependencies
+
+  - dependency-name: rcgen
+
+dependency-version: 0.14.9
+
+dependency-type: direct:production
+
+update-type: version-update:semver-minor
+
+dependency-group: dependencies
+
+  - dependency-name: assert_cmd
+
+dependency-version: 2.2.2
+
+dependency-type: direct:production
+
+update-type: version-update:semver-minor
+
+dependency-group: dependencies
+
+  - dependency-name: proptest
+
+dependency-version: 1.11.0
+
+dependency-type: direct:production
+
+update-type: version-update:semver-minor
+
+dependency-group: dependencies
+
+...
+
 - Move generated audit master report out of the repository
 - Ignore local TODO-mise-removal.md planning note
 - Capture lockfile and remaining wave-3 stragglers
