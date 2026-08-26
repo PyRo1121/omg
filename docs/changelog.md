@@ -2851,6 +2851,7 @@ the Debian backend), so it was removed from the metadata.
 - Normalize project formatting
 ### 🧪 Testing
 
+- Fix clippy issues across coverage_1-20 test files
 - 30-agent audit — classify every test, rewrite vacuous contracts
 
 15 test-suite auditors classified all 66 files / ~26k LOC:
