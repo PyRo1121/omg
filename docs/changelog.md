@@ -2510,6 +2510,7 @@ from pi-local-workspace instead of treating it as a session artifact.
 
 ### 📦 Dependencies
 
+- Touch CI workflow
 - **Deps**: Bump tar from 0.4.44 to 0.4.46
 
 Bumps [tar](https://github.com/composefs/tar-rs) from 0.4.44 to 0.4.46.
