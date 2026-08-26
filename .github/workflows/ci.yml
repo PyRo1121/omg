@@ -505,3 +505,4 @@ jobs:
 
           echo "" >> $GITHUB_STEP_SUMMARY
           echo "All required checks passed!" >> $GITHUB_STEP_SUMMARY
+# deploylint-gate-demo: touched protected path
