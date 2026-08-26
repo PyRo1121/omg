@@ -13,6 +13,36 @@ OMG is the fastest unified package manager for Linux, replacing pacman, yay, nvm
 ## [Unreleased]
 ### ♻️  Refactoring
 
+- Apply 15-agent improvement wave — quality, dead code, shared helpers
+
+15 agents each audited their assigned src files for bugs, overcomplicated
+
+code, and missed improvements. Changes span 28 files:
+
+  - alpm_ops::open_default_alpm replaces 7 divergent ALPM init sites
+
+  - pacman_db/db.rs restructured for clarity (358 lines changed)
+
+  - task_runner: setsid isolation hardened, executable validation improved
+
+  - container.rs + cli/container.rs: image ref validation unified
+
+  - telemetry.rs: dead free-fn cluster removed, session lifecycle simplified
+
+  - license.rs: styled_label takes &str instead of String (no alloc)
+
+  - tool.rs: items() call cleaned up
+
+  - runtimes.rs: dead current_version method flagged
+
+  - aur_sources.rs: hostile filename rejection improved
+
+  - arch.rs + client.rs: minor cleanups
+
+All gated: cargo fmt, clippy -D warnings across lib+bins+tests,
+
+628 lib tests green.
+
 - **Daemon**: Typ01 C2 — send_error_response helper consolidates 4 error-send blocks (-40 LOC)
 - Typ01 C1 — shared open_default_alpm helper (7 sites)
 
