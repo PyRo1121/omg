@@ -441,8 +441,9 @@ fn compute_machine_id() -> String {
     }
 
     let hash = sha256_hex(components.join(":").as_bytes());
-    tracing::debug!("Generated machine ID fingerprint: {}", &hash[..16]);
-    hash[..16].to_string()
+    let fingerprint = &hash[..16];
+    tracing::debug!("Generated machine ID fingerprint: {fingerprint}");
+    fingerprint.to_string()
 }
 
 /// SHA256 hash as hex string
@@ -454,7 +455,15 @@ fn sha256_hex(data: &[u8]) -> String {
     hex::encode(result)
 }
 
-/// Decode and verify JWT payload
+/// Decode and verify JWT payload.
+///
+/// JWT best practices (RFC 8725 §3.1, "Algorithm Verification") require the
+/// verifier to pin the accepted algorithm instead of trusting the token's
+/// `alg` header. `Validation::new(Algorithm::EdDSA)` does exactly that, and
+/// also validates `exp` by default (`validate_exp == true`, with `exp`
+/// required among spec claims).
+/// https://www.rfc-editor.org/rfc/rfc8725#name-algorithm-verification
+/// https://docs.rs/jsonwebtoken/latest/jsonwebtoken/struct.Validation.html
 fn verify_jwt(token: &str) -> Option<JwtPayload> {
     let mut validation = Validation::new(jsonwebtoken::Algorithm::EdDSA);
     validation.validate_exp = true;
@@ -470,9 +479,15 @@ fn verify_jwt(token: &str) -> Option<JwtPayload> {
 
     let key = DecodingKey::from_ed_der(STUB_JWT_VERIFICATION_KEY);
 
-    decode::<JwtPayload>(token, &key, &validation)
-        .map(|data| data.claims)
-        .ok()
+    match decode::<JwtPayload>(token, &key, &validation) {
+        Ok(data) => Some(data.claims),
+        Err(error) => {
+            // Distinguish rejection reasons (expired vs bad signature vs
+            // malformed) in logs without ever failing open.
+            tracing::debug!("License token rejected: {error}");
+            None
+        }
+    }
 }
 
 /// Get the license file path
@@ -487,6 +502,7 @@ fn license_path() -> Result<PathBuf> {
 /// A missing file is the normal no-license state (`None`, silently). A
 /// corrupt or unreadable file is integrity-relevant user state, so it is
 /// reported before degrading to `None` — never silently discarded.
+#[must_use]
 pub fn load_license() -> Option<StoredLicense> {
     let path = match license_path() {
         Ok(path) => path,
@@ -693,31 +709,45 @@ pub async fn fetch_audit_logs() -> Result<Vec<AuditLogEntry>> {
     .await
 }
 
-/// Propose an environment change to the team
-pub async fn propose_change(message: &str, state: &serde_json::Value) -> Result<u32> {
-    let license = require_license()?;
-
+/// POST to a team API endpoint, mapping non-success statuses to `{action}`
+/// errors. The caller is responsible for embedding its credentials in
+/// `body`; returns the raw response so each caller can parse the shape it
+/// expects.
+async fn licensed_post(
+    url: &str,
+    body: serde_json::Value,
+    action: &str,
+) -> Result<reqwest::Response> {
     let response = crate::core::http::shared_client()
-        .post(TEAM_PROPOSE_API_URL)
-        .json(&serde_json::json!({
-            "key": license.key,
-            "message": message,
-            "state": state
-        }))
+        .post(url)
+        .json(&body)
         .timeout(std::time::Duration::from_secs(10))
         .send()
         .await
-        .context("Failed to connect to team server")?;
+        .context("Failed to connect to license server")?;
 
     if !response.status().is_success() {
         let err: serde_json::Value = response.json().await.unwrap_or_default();
         anyhow::bail!(
-            "Failed to create proposal: {}",
+            "Failed to {action}: {}",
             err["error"].as_str().unwrap_or("Unknown error")
         );
     }
 
-    let res: serde_json::Value = response
+    Ok(response)
+}
+
+/// Propose an environment change to the team
+pub async fn propose_change(message: &str, state: &serde_json::Value) -> Result<u32> {
+    let license = require_license()?;
+    let body = serde_json::json!({
+        "key": license.key,
+        "message": message,
+        "state": state
+    });
+
+    let res: serde_json::Value = licensed_post(TEAM_PROPOSE_API_URL, body, "create proposal")
+        .await?
         .json()
         .await
         .context("Failed to parse proposal response")?;
@@ -737,27 +767,12 @@ fn parse_proposal_id(response: &serde_json::Value) -> Result<u32> {
 /// Review a team proposal
 pub async fn review_proposal(proposal_id: u32, status: &str) -> Result<()> {
     let license = require_license()?;
-
-    let response = crate::core::http::shared_client()
-        .post(TEAM_REVIEW_API_URL)
-        .json(&serde_json::json!({
-            "key": license.key,
-            "proposal_id": proposal_id,
-            "status": status
-        }))
-        .timeout(std::time::Duration::from_secs(10))
-        .send()
-        .await
-        .context("Failed to connect to team server")?;
-
-    if !response.status().is_success() {
-        let err: serde_json::Value = response.json().await.unwrap_or_default();
-        anyhow::bail!(
-            "Failed to review proposal: {}",
-            err["error"].as_str().unwrap_or("Unknown error")
-        );
-    }
-
+    let body = serde_json::json!({
+        "key": license.key,
+        "proposal_id": proposal_id,
+        "status": status
+    });
+    licensed_post(TEAM_REVIEW_API_URL, body, "review proposal").await?;
     Ok(())
 }
 
@@ -810,6 +825,7 @@ pub async fn activate_with_user(
 }
 
 /// Get current user tier
+#[must_use]
 pub fn current_tier() -> Tier {
     load_license().map_or(Tier::Free, |l| l.tier_enum())
 }
@@ -844,26 +860,25 @@ pub fn require_feature(feature_name: &str) -> Result<()> {
 }
 
 /// Get current license status
+#[must_use]
 pub fn status() -> Option<StoredLicense> {
     load_license()
 }
 
 /// Get features available for a tier
+#[must_use]
 pub fn features_for_tier(tier: Tier) -> Vec<&'static Feature> {
-    let mut features: Vec<&Feature> = Vec::new();
+    let mut features: Vec<&Feature> = FREE_FEATURES.iter().collect();
 
-    // Always include free features
-    features.extend(FREE_FEATURES.iter());
-
-    if matches!(tier, Tier::Pro | Tier::Team | Tier::Enterprise) {
+    if tier >= Tier::Pro {
         features.extend(PRO_FEATURES.iter());
     }
 
-    if matches!(tier, Tier::Team | Tier::Enterprise) {
+    if tier >= Tier::Team {
         features.extend(TEAM_FEATURES.iter());
     }
 
-    if tier == Tier::Enterprise {
+    if tier >= Tier::Enterprise {
         features.extend(ENTERPRISE_FEATURES.iter());
     }
 

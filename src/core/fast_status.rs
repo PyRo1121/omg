@@ -85,12 +85,25 @@ impl FastStatus {
         temporary.as_file_mut().write_all(self.as_bytes())?;
         temporary.as_file_mut().sync_all()?;
 
-        // Atomic rename
-        temporary.persist(path).map_err(|error| error.error)?;
+        // Atomic rename; keep the io::ErrorKind so callers matching on
+        // NotFound vs PermissionDenied still work, but name the target path
+        // in the message instead of silently pointing at the vanished temp
+        // file. https://docs.rs/tempfile/latest/tempfile/struct.NamedTempFile.html#method.persist
+        temporary.persist(path).map_err(|error| {
+            std::io::Error::new(
+                error.error.kind(),
+                format!(
+                    "failed to persist fast status to {}: {}",
+                    path.display(),
+                    error.error
+                ),
+            )
+        })?;
         Ok(())
     }
 
     /// Read status from file (sub-millisecond)
+    #[must_use]
     pub fn read_from_file(path: &Path) -> Option<Self> {
         let mut file = File::open(path).ok()?;
         let mut bytes = [0u8; std::mem::size_of::<Self>()];

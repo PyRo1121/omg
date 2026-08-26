@@ -7,8 +7,36 @@ use crate::cli::{
 };
 use anyhow::{Context, Result};
 
+use crate::cli::packages::execute_cmd;
 use crate::core::env::team::TeamWorkspace;
 use crate::core::license;
+
+/// Open the team workspace for the current directory, or fail with guidance.
+fn open_team_workspace() -> Result<TeamWorkspace> {
+    let cwd = std::env::current_dir().context("Failed to determine current directory")?;
+    let workspace = TeamWorkspace::new(&cwd)?;
+    if !workspace.is_team_workspace() {
+        execute_cmd(Components::error_with_suggestion(
+            "Not a team workspace",
+            "Run 'omg team init <team-id>' first",
+        ));
+        anyhow::bail!("Not a team workspace");
+    }
+    Ok(workspace)
+}
+
+/// Whether a member's last-seen timestamp falls within the active window.
+fn recently_active(last_seen_at: &str, now: i64) -> bool {
+    const ONE_HOUR: i64 = 3600;
+    crate::cli::parse_timestamp_opt(last_seen_at)
+        .is_some_and(|ts| now.saturating_sub(ts) < ONE_HOUR)
+}
+
+/// First `len` characters of a string, safe on any input (no panics on
+/// multi-byte boundaries).
+fn prefix(s: &str, len: usize) -> String {
+    s.chars().take(len).collect()
+}
 
 impl LocalCommandRunner for TeamCommands {
     async fn execute(&self, ctx: &CliContext) -> Result<()> {
@@ -52,8 +80,6 @@ impl LocalCommandRunner for TeamCommands {
 
 /// Initialize a new team workspace
 pub fn init(team_id: &str, name: Option<&str>, _ctx: &CliContext) -> Result<()> {
-    use crate::cli::packages::execute_cmd;
-
     // SECURITY: Validate team_id
     if team_id
         .chars()
@@ -103,8 +129,6 @@ pub fn init(team_id: &str, name: Option<&str>, _ctx: &CliContext) -> Result<()> 
 
 /// Join an existing team by setting remote URL
 pub async fn join(remote_url: &str, _ctx: &CliContext) -> Result<()> {
-    use crate::cli::packages::execute_cmd;
-
     // SECURITY: Basic URL validation
     if !remote_url.starts_with("https://") {
         execute_cmd(Components::error_with_suggestion(
@@ -154,18 +178,7 @@ pub async fn join(remote_url: &str, _ctx: &CliContext) -> Result<()> {
 
 /// Show team status
 pub async fn status(_ctx: &CliContext) -> Result<()> {
-    use crate::cli::packages::execute_cmd;
-
-    let cwd = std::env::current_dir()?;
-    let workspace = TeamWorkspace::new(&cwd)?;
-
-    if !workspace.is_team_workspace() {
-        execute_cmd(Components::error_with_suggestion(
-            "Not a team workspace",
-            "Run 'omg team init <team-id>' first",
-        ));
-        anyhow::bail!("Not a team workspace");
-    }
+    let workspace = open_team_workspace()?;
 
     let team_status = workspace.update_status().await?;
 
@@ -183,10 +196,7 @@ pub async fn status(_ctx: &CliContext) -> Result<()> {
         if team_status.lock_hash.is_empty() {
             "none".to_string()
         } else {
-            format!(
-                "{}...",
-                &team_status.lock_hash[..12.min(team_status.lock_hash.len())]
-            )
+            format!("{}...", prefix(&team_status.lock_hash, 12))
         }
     ));
 
@@ -225,18 +235,7 @@ pub async fn status(_ctx: &CliContext) -> Result<()> {
 
 /// Push local environment to team lock
 pub async fn push(_ctx: &CliContext) -> Result<()> {
-    use crate::cli::packages::execute_cmd;
-
-    let cwd = std::env::current_dir()?;
-    let workspace = TeamWorkspace::new(&cwd)?;
-
-    if !workspace.is_team_workspace() {
-        execute_cmd(Components::error_with_suggestion(
-            "Not a team workspace",
-            "Run 'omg team init <team-id>' first",
-        ));
-        anyhow::bail!("Not a team workspace");
-    }
+    let workspace = open_team_workspace()?;
 
     execute_cmd(Components::loading("Pushing environment to team lock..."));
 
@@ -252,18 +251,7 @@ pub async fn push(_ctx: &CliContext) -> Result<()> {
 
 /// Pull team lock and check for drift
 pub async fn pull(_ctx: &CliContext) -> Result<()> {
-    use crate::cli::packages::execute_cmd;
-
-    let cwd = std::env::current_dir()?;
-    let workspace = TeamWorkspace::new(&cwd)?;
-
-    if !workspace.is_team_workspace() {
-        execute_cmd(Components::error_with_suggestion(
-            "Not a team workspace",
-            "Run 'omg team init <team-id>' first",
-        ));
-        anyhow::bail!("Not a team workspace");
-    }
+    let workspace = open_team_workspace()?;
 
     execute_cmd(Components::loading("Pulling team lock..."));
 
@@ -283,8 +271,6 @@ pub async fn pull(_ctx: &CliContext) -> Result<()> {
 
 /// List team members
 pub async fn members(_ctx: &CliContext) -> Result<()> {
-    use crate::cli::packages::execute_cmd;
-
     // Require Team tier for team features
     license::require_feature("team-sync")?;
 
@@ -300,12 +286,11 @@ pub async fn members(_ctx: &CliContext) -> Result<()> {
     }
 
     let now = jiff::Timestamp::now().as_second();
-    let one_hour = 3600;
 
     let mut member_list = vec![];
     for member in &members {
         let last_seen_ts = crate::cli::parse_timestamp_opt(&member.last_seen_at);
-        let in_sync = last_seen_ts.is_some_and(|ts| now.saturating_sub(ts) < one_hour);
+        let in_sync = recently_active(&member.last_seen_at, now);
 
         let sync_icon = if in_sync { "✓" } else { "⚠" };
         let hostname = member.hostname.as_deref().unwrap_or(&member.machine_id);
@@ -321,7 +306,7 @@ pub async fn members(_ctx: &CliContext) -> Result<()> {
             "{} {} ({})",
             sync_icon,
             hostname,
-            &member.machine_id[..8.min(member.machine_id.len())]
+            prefix(&member.machine_id, 8)
         ));
         member_list.push(format!("  Last active: {last_sync}"));
         member_list.push(format!("  Platform: {platform}"));
@@ -329,10 +314,7 @@ pub async fn members(_ctx: &CliContext) -> Result<()> {
 
     let in_sync_count = members
         .iter()
-        .filter(|m| {
-            crate::cli::parse_timestamp_opt(&m.last_seen_at)
-                .is_some_and(|ts| now.saturating_sub(ts) < one_hour)
-        })
+        .filter(|m| recently_active(&m.last_seen_at, now))
         .count();
 
     execute_cmd(Cmd::batch([
@@ -353,16 +335,22 @@ fn extract_team_id(url: &str) -> String {
     // e.g., "https://gist.github.com/user/abc123" -> "gist-abc123"
 
     if url.contains("gist.github.com") {
-        // Split URL and safely get the last segment
-        let segments: Vec<&str> = url.split('/').collect();
-        let id = segments.last().copied().unwrap_or("team");
-        // Safely take up to 8 characters
-        let short_id = id.chars().take(8).collect::<String>();
-        format!("gist-{short_id}")
+        // Take the last non-empty path segment so trailing slashes and query
+        // strings do not yield an empty ID.
+        let id = url
+            .split(['/', '?'])
+            .rev()
+            .find(|segment| !segment.is_empty())
+            .unwrap_or("team");
+        format!("gist-{}", prefix(id, 8))
     } else if url.contains("github.com") {
-        url.trim_end_matches(".git")
+        // strip_suffix instead of trim_end_matches so a repo legitimately named
+        // e.g. "foo.git.git" is only stripped once.
+        url.strip_suffix(".git")
+            .unwrap_or(url)
             .split("github.com/")
             .nth(1) // More idiomatic than .last() when we want the element after split
+            .filter(|id| !id.is_empty())
             .unwrap_or("team")
             .to_string()
     } else {
@@ -404,8 +392,6 @@ pub mod roles {
 
 /// Propose environment changes for review
 pub async fn propose(message: &str, _ctx: &CliContext) -> Result<()> {
-    use crate::cli::packages::execute_cmd;
-
     license::require_feature("team-sync")?;
 
     execute_cmd(Components::loading("Creating proposal..."));
@@ -440,8 +426,6 @@ pub async fn propose(message: &str, _ctx: &CliContext) -> Result<()> {
 
 /// Review and approve/reject a proposal
 pub async fn review(proposal_id: u32, approve: bool, _ctx: &CliContext) -> Result<()> {
-    use crate::cli::packages::execute_cmd;
-
     license::require_feature("team-sync")?;
 
     let status = if approve { "approved" } else { "rejected" };
@@ -459,8 +443,6 @@ pub async fn review(proposal_id: u32, approve: bool, _ctx: &CliContext) -> Resul
 
 /// List pending team proposals
 pub async fn list_proposals(_ctx: &CliContext) -> Result<()> {
-    use crate::cli::packages::execute_cmd;
-
     license::require_feature("team-sync")?;
 
     let proposals = license::fetch_proposals().await?;
@@ -533,12 +515,10 @@ pub mod golden_path {
 
         pub fn save(&self) -> Result<()> {
             let path = Self::path();
-            if let Some(parent) = path.parent() {
-                let _ = std::fs::create_dir_all(parent);
-            }
+            // Atomic replacement keeps a crash from truncating the template
+            // store, matching the durability of other omg config writes.
             let content = toml::to_string_pretty(self)?;
-            std::fs::write(path, content)?;
-            Ok(())
+            crate::core::safe_ops::atomic_write_file_sync(path, content)
         }
     }
 
@@ -697,8 +677,6 @@ pub mod golden_path {
 /// Honest surface: this CLI has no local compliance-evaluation engine, so the
 /// command reports exactly that instead of displaying fabricated scores.
 pub fn compliance(export: Option<&str>, enforce: bool, _ctx: &CliContext) -> Result<()> {
-    use crate::cli::packages::execute_cmd;
-
     license::require_feature("team-sync")?;
 
     if enforce {
@@ -729,8 +707,6 @@ pub fn compliance(export: Option<&str>, enforce: bool, _ctx: &CliContext) -> Res
 
 /// Show team activity stream
 pub async fn activity(days: u32, _ctx: &CliContext) -> Result<()> {
-    use crate::cli::packages::execute_cmd;
-
     license::require_feature("team-sync")?;
 
     let logs = license::fetch_audit_logs().await?;

@@ -10,6 +10,21 @@ use crate::package_managers::{get_system_status, invalidate_caches, traits::Pack
 /// Arch Linux package manager (ALPM) implementation
 pub struct ArchPackageManager;
 
+/// Run an ALPM transaction on a blocking thread.
+/// Shared by install/remove/update and orphan removal; every caller passes
+/// `None` for the ALPM handle (see `execute_transaction`).
+async fn run_alpm_transaction(
+    packages: Vec<String>,
+    remove: bool,
+    sysupgrade: bool,
+) -> AnyhowResult<()> {
+    tokio::task::spawn_blocking(move || {
+        crate::package_managers::execute_transaction(packages, remove, sysupgrade, None)
+    })
+    .await??;
+    Ok(())
+}
+
 impl ArchPackageManager {
     #[must_use]
     pub const fn new() -> Self {
@@ -99,20 +114,14 @@ impl PackageManager for ArchPackageManager {
     ) -> Pin<Box<dyn Future<Output = AnyhowResult<()>> + Send + '_>> {
         let packages = packages.to_vec();
         Box::pin(async move {
-            crate::core::security::validate_package_names_or_files(&packages)?;
             if packages.is_empty() {
                 return Ok(());
             }
+            crate::core::security::validate_package_names_or_files(&packages)?;
 
             run_privileged_operation("install", &packages, || {
                 let pkgs = packages.clone();
-                async move {
-                    tokio::task::spawn_blocking(move || {
-                        crate::package_managers::execute_transaction(pkgs, false, false, None)
-                    })
-                    .await??;
-                    Ok(())
-                }
+                async move { run_alpm_transaction(pkgs, false, false).await }
             })
             .await
         })
@@ -124,20 +133,14 @@ impl PackageManager for ArchPackageManager {
     ) -> Pin<Box<dyn Future<Output = AnyhowResult<()>> + Send + '_>> {
         let packages = packages.to_vec();
         Box::pin(async move {
-            crate::core::security::validate_package_names(&packages)?;
             if packages.is_empty() {
                 return Ok(());
             }
+            crate::core::security::validate_package_names(&packages)?;
 
             run_privileged_operation("remove", &packages, || {
                 let pkgs = packages.clone();
-                async move {
-                    tokio::task::spawn_blocking(move || {
-                        crate::package_managers::execute_transaction(pkgs, true, false, None)
-                    })
-                    .await??;
-                    Ok(())
-                }
+                async move { run_alpm_transaction(pkgs, true, false).await }
             })
             .await
         })
@@ -147,11 +150,7 @@ impl PackageManager for ArchPackageManager {
         Box::pin(async move {
             run_privileged_operation("update", &[], || async {
                 tracing::info!("{} Starting full system upgrade...", "OMG".cyan().bold());
-                tokio::task::spawn_blocking(move || {
-                    crate::package_managers::execute_transaction(Vec::new(), false, true, None)
-                })
-                .await??;
-                Ok(())
+                run_alpm_transaction(Vec::new(), false, true).await
             })
             .await
         })
@@ -298,13 +297,7 @@ pub async fn remove_orphans() -> AnyhowResult<()> {
     // same sudo elevation as install/remove instead of a raw ALPM failure.
     run_privileged_operation("remove", &orphans, || {
         let pkgs = orphans.clone();
-        async move {
-            tokio::task::spawn_blocking(move || {
-                crate::package_managers::execute_transaction(pkgs, true, false, None)
-            })
-            .await??;
-            Ok(())
-        }
+        async move { run_alpm_transaction(pkgs, true, false).await }
     })
     .await
 }

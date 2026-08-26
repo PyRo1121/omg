@@ -10,6 +10,9 @@ use std::time::Duration;
 
 use crate::core::paths;
 
+/// Per-operation timeout budget for one daemon request (send *and* receive).
+const REQUEST_TIMEOUT: Duration = Duration::from_secs(30);
+
 #[cfg(unix)]
 use futures::sink::SinkExt;
 #[cfg(unix)]
@@ -178,39 +181,22 @@ impl DaemonClient {
         let id = request.id();
         let framed = self.framed.as_mut().context("Client is in sync mode")?;
 
-        // Encode and send (versioned frame)
+        // Encode and send (versioned frame). The send shares the same timeout
+        // budget as the read: a wedged daemon that stops draining its socket
+        // would otherwise block us indefinitely once the OS send buffer fills.
+        // See https://docs.rs/tokio/latest/tokio/time/fn.timeout.html
         let request_bytes =
             crate::daemon::protocol::encode_frame(&request).context("Failed to encode request")?;
-        framed.send(request_bytes.into()).await?;
+        tokio::time::timeout(REQUEST_TIMEOUT, framed.send(request_bytes.into()))
+            .await
+            .context("Timed out sending request to daemon")??;
 
         // Read and decode response (version-checked)
-        let response_bytes = tokio::time::timeout(Duration::from_secs(30), framed.next())
+        let response_bytes = tokio::time::timeout(REQUEST_TIMEOUT, framed.next())
             .await
             .context("Timed out waiting for daemon response")?
             .ok_or_else(|| anyhow::anyhow!("Daemon disconnected"))??;
-        let (_, payload) = crate::daemon::protocol::split_frame(&response_bytes)
-            .map_err(|e| anyhow::anyhow!("Daemon protocol error: {e}"))?;
-
-        let response: Response = bitcode::deserialize(payload)?;
-
-        match response {
-            Response::Success {
-                id: resp_id,
-                result,
-            } => {
-                if resp_id != id {
-                    anyhow::bail!("Request ID mismatch: sent {id}, got {resp_id}");
-                }
-                Ok(result)
-            }
-            Response::Error {
-                id: _,
-                code,
-                message,
-            } => {
-                anyhow::bail!("Daemon error ({code}): {message}");
-            }
-        }
+        decode_response(&response_bytes, id)
     }
 
     /// Send a request and get response synchronously (ultra fast)
@@ -343,6 +329,37 @@ impl DaemonClient {
 /// result. Every accessor on [`DaemonClient`] and [`SyncDaemonClient`]
 /// funnels through here, so a protocol mismatch surfaces as one canonical
 /// error instead of a dozen ad-hoc bail sites.
+/// Decode one received frame into the [`ResponseResult`] answering
+/// `expected_id`. Shared by the async [`DaemonClient::call`] path and the
+/// sync roundtrip so both wire paths enforce identical protocol rules:
+/// version check, bitcode deserialization, ID correlation, and error
+/// propagation all live here instead of being duplicated per transport.
+fn decode_response(frame: &[u8], expected_id: u64) -> Result<ResponseResult> {
+    let (_, payload) = crate::daemon::protocol::split_frame(frame)
+        .map_err(|e| anyhow::anyhow!("Daemon protocol error: {e}"))?;
+    let response: Response = bitcode::deserialize(payload)
+        .map_err(|e| anyhow::anyhow!("Failed to deserialize daemon response: {e}"))?;
+
+    match response {
+        Response::Success {
+            id: resp_id,
+            result,
+        } => {
+            if resp_id != expected_id {
+                anyhow::bail!("Request ID mismatch: sent {expected_id}, got {resp_id}");
+            }
+            Ok(result)
+        }
+        Response::Error {
+            id: _,
+            code,
+            message,
+        } => {
+            anyhow::bail!("Daemon error ({code}): {message}");
+        }
+    }
+}
+
 fn extract_response<T>(
     response: &ResponseResult,
     request_id: u64,
@@ -443,29 +460,7 @@ fn sync_roundtrip(stream: &mut SyncUnixStream, request: &Request) -> Result<Resp
         .context("Failed to write request to daemon socket")?;
     let resp_bytes = crate::daemon::protocol::read_frame(stream)
         .context("Failed to read response from daemon")?;
-    let (_, payload) = crate::daemon::protocol::split_frame(&resp_bytes)
-        .map_err(|e| anyhow::anyhow!("Daemon protocol error: {e}"))?;
-    let response: Response =
-        bitcode::deserialize(payload).context("Failed to deserialize daemon response")?;
-
-    match response {
-        Response::Success {
-            id: resp_id,
-            result,
-        } => {
-            if resp_id != id {
-                anyhow::bail!("Request ID mismatch: sent {id}, got {resp_id}");
-            }
-            Ok(result)
-        }
-        Response::Error {
-            id: _,
-            code,
-            message,
-        } => {
-            anyhow::bail!("Daemon error ({code}): {message}");
-        }
-    }
+    decode_response(&resp_bytes, id)
 }
 
 /// Synchronous client for non-async contexts

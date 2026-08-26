@@ -85,6 +85,8 @@ fn main() {
         "oc" | "orphan" => println!("{orphans}"),
         "uc" | "updates" => println!("{updates}"),
         "status" | "s" => {
+            // `s <query>` was already routed to search above; a bare "s"
+            // intentionally falls through to the status display.
             println!("==> OMG System Status\n");
             if updates > 0 {
                 println!("  ⚠ Updates: {updates} available");
@@ -116,6 +118,22 @@ fn connect_daemon_stream() -> Result<UnixStream> {
     Ok(stream)
 }
 
+/// Send one framed request and decode the framed response.
+#[cfg(unix)]
+fn exchange(
+    stream: &mut UnixStream,
+    request: &omg_lib::daemon::protocol::Request,
+) -> Result<omg_lib::daemon::protocol::Response> {
+    use omg_lib::daemon::protocol;
+
+    let request_bytes = protocol::encode_frame(request)?;
+    write_frame(stream, &request_bytes)?;
+    let resp_bytes = read_frame(stream)?;
+
+    let (_, payload) = protocol::split_frame(&resp_bytes)?;
+    Ok(bitcode::deserialize(payload)?)
+}
+
 /// Fast search via raw IPC (no serde, minimal parsing)
 #[cfg(unix)]
 fn fast_search(query: &str) -> Result<()> {
@@ -134,18 +152,14 @@ fn fast_info(package: &str) -> Result<()> {
 fn send_search_request(stream: &mut UnixStream, query: &str) -> Result<()> {
     use omg_lib::daemon::protocol::{Request, Response, ResponseResult};
 
-    let request = Request::Search {
-        id: 0,
-        query: query.to_string(),
-        limit: Some(20),
-    };
-
-    let request_bytes = omg_lib::daemon::protocol::encode_frame(&request)?;
-    write_frame(stream, &request_bytes)?;
-    let resp_bytes = read_frame(stream)?;
-
-    let (_, payload) = omg_lib::daemon::protocol::split_frame(&resp_bytes)?;
-    let response: Response = bitcode::deserialize(payload)?;
+    let response = exchange(
+        stream,
+        &Request::Search {
+            id: 0,
+            query: query.to_string(),
+            limit: Some(20),
+        },
+    )?;
 
     match response {
         Response::Success {
@@ -177,17 +191,13 @@ fn send_search_request(stream: &mut UnixStream, query: &str) -> Result<()> {
 fn send_info_request(stream: &mut UnixStream, package: &str) -> Result<()> {
     use omg_lib::daemon::protocol::{Request, Response, ResponseResult};
 
-    let request = Request::Info {
-        id: 0,
-        package: package.to_string(),
-    };
-
-    let request_bytes = omg_lib::daemon::protocol::encode_frame(&request)?;
-    write_frame(stream, &request_bytes)?;
-    let resp_bytes = read_frame(stream)?;
-
-    let (_, payload) = omg_lib::daemon::protocol::split_frame(&resp_bytes)?;
-    let response: Response = bitcode::deserialize(payload)?;
+    let response = exchange(
+        stream,
+        &Request::Info {
+            id: 0,
+            package: package.to_string(),
+        },
+    )?;
 
     match response {
         Response::Success {

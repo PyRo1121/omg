@@ -114,11 +114,41 @@ impl ContainerManager {
         Self { runtime }
     }
 
-    /// Run a command in a container
+    /// Run a command in a container and wait for it to exit
     pub fn run(&self, config: &ContainerConfig, command: &[&str]) -> Result<i32> {
-        // SECURITY: Validate image and name to prevent injection. Image
-        // references legitimately contain ':' (tags/digests), so they need
-        // the image-reference grammar, not the package-name charset.
+        let status = self
+            .build_run_command(config, command, false)?
+            .status()
+            .context("Failed to run container")?;
+        Ok(status.code().unwrap_or(1))
+    }
+
+    /// Start a command in a background (detached) container.
+    ///
+    /// Unlike [`ContainerManager::run`], this passes `--detach` so the caller
+    /// returns immediately; the runtime prints the container ID on stdout.
+    /// See <https://docs.docker.com/reference/cli/docker/container/run/>.
+    pub fn run_detached(&self, config: &ContainerConfig, command: &[&str]) -> Result<i32> {
+        let status = self
+            .build_run_command(config, command, true)?
+            .status()
+            .context("Failed to run detached container")?;
+        Ok(status.code().unwrap_or(1))
+    }
+
+    /// Build the `docker/podman run` command for `config`.
+    ///
+    /// # Security
+    /// Image and container names are validated against the shared allowlists
+    /// before they ever reach the runtime argv. Image references legitimately
+    /// contain ':' (tags/digests), so they need the image-reference grammar,
+    /// not the package-name charset.
+    fn build_run_command(
+        &self,
+        config: &ContainerConfig,
+        command: &[&str],
+        detach: bool,
+    ) -> Result<Command> {
         crate::core::security::validate_image_ref(&config.image)?;
         if let Some(ref name) = config.name {
             crate::core::security::validate_package_name(name)?;
@@ -126,6 +156,10 @@ impl ContainerManager {
 
         let mut cmd = Command::new(self.runtime.command());
         cmd.arg("run");
+
+        if detach {
+            cmd.arg("--detach");
+        }
 
         if config.rm {
             cmd.arg("--rm");
@@ -155,14 +189,12 @@ impl ContainerManager {
         cmd.arg(&config.image);
         cmd.args(command);
 
-        let status = cmd.status().context("Failed to run container")?;
-        Ok(status.code().unwrap_or(1))
+        Ok(cmd)
     }
 
     /// Run an interactive shell in a container
     pub fn shell(&self, config: &ContainerConfig) -> Result<i32> {
-        let shell = detect_container_shell(&config.image);
-        self.run(config, &[&shell])
+        self.run(config, &[detect_container_shell(&config.image)])
     }
 
     /// Execute a command in a running container
@@ -195,6 +227,20 @@ impl ContainerManager {
         build_args: &[String],
         target: Option<&str>,
     ) -> Result<()> {
+        // SECURITY: Same input hygiene as `run`: the tag follows the
+        // image-reference grammar (`registry:port/name:tag` legitimately
+        // contains ':'), and a multi-stage target must be a plain stage name.
+        // See <https://docs.docker.com/build/building/multi-stage/>.
+        crate::core::security::validate_image_ref(tag)?;
+        if let Some(t) = target {
+            crate::core::security::validate_package_name(t)?;
+        }
+        for arg in build_args {
+            if arg.chars().any(char::is_control) {
+                anyhow::bail!("Invalid build argument {arg:?}: control characters are not allowed");
+            }
+        }
+
         let mut cmd = Command::new(self.runtime.command());
         cmd.arg("build");
         cmd.args(["-f", &dockerfile.display().to_string()]);
@@ -238,8 +284,7 @@ impl ContainerManager {
         let containers = stdout
             .lines()
             .filter_map(|line| {
-                let parts: Vec<&str> = line.split('\t').collect();
-                (parts.len() >= 4).then(|| ContainerInfo {
+                parse_listing_line(line, 4).map(|parts| ContainerInfo {
                     id: parts[0].to_string(),
                     name: parts[1].to_string(),
                     image: parts[2].to_string(),
@@ -299,8 +344,7 @@ impl ContainerManager {
         let images = stdout
             .lines()
             .filter_map(|line| {
-                let parts: Vec<&str> = line.split('\t').collect();
-                (parts.len() >= 4).then(|| ImageInfo {
+                parse_listing_line(line, 4).map(|parts| ImageInfo {
                     repository: parts[0].to_string(),
                     tag: parts[1].to_string(),
                     id: parts[2].to_string(),
@@ -368,7 +412,14 @@ impl ContainerManager {
                 "node" => {
                     dockerfile.push_str("# Install Node.js\n");
                     dockerfile.push_str("ENV NODE_VERSION=");
-                    dockerfile.push_str(if version == "lts" { "20" } else { version });
+                    // The NodeSource setup script only accepts a numeric major
+                    // version; alias symbolic requests to the supported LTS
+                    // major. https://github.com/nodesource/distributions
+                    dockerfile.push_str(if matches!(version, "lts" | "latest") {
+                        "20"
+                    } else {
+                        version
+                    });
                     dockerfile.push('\n');
                     dockerfile.push_str("RUN curl -fsSL https://deb.nodesource.com/setup_${NODE_VERSION}.x | bash - \\\n");
                     dockerfile.push_str("    && apt-get install -y nodejs \\\n");
@@ -389,13 +440,27 @@ impl ContainerManager {
                     dockerfile.push_str("ENV RUSTUP_HOME=/usr/local/rustup \\\n");
                     dockerfile.push_str("    CARGO_HOME=/usr/local/cargo \\\n");
                     dockerfile.push_str("    PATH=/usr/local/cargo/bin:$PATH\n");
+                    // rustup requires a non-empty toolchain name; fall back to
+                    // the stable channel for unspecified/symbolic versions.
+                    // https://rust-lang.github.io/rustup/concepts/toolchains.html
+                    let toolchain = match version {
+                        "" | "latest" => "stable",
+                        other => other,
+                    };
                     dockerfile.push_str("RUN curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --default-toolchain ");
-                    dockerfile.push_str(version);
+                    dockerfile.push_str(toolchain);
                     dockerfile.push_str("\n\n");
                 }
                 "go" => {
                     dockerfile.push_str("# Install Go\n");
-                    let go_ver = if version == "latest" { "1.22" } else { version };
+                    // The tarball URL embeds the version, so it must be a real
+                    // release number, never empty or "latest".
+                    // https://go.dev/doc/install
+                    let go_ver = if version.is_empty() || version == "latest" {
+                        "1.22"
+                    } else {
+                        version
+                    };
                     dockerfile.push_str("ENV GO_VERSION=");
                     dockerfile.push_str(go_ver);
                     dockerfile.push('\n');
@@ -437,47 +502,12 @@ impl ContainerManager {
                 }
                 _ => {
                     // Attempt to install as system package based on distribution
-                    let pkg = *runtime;
-                    if base_image.contains("ubuntu") || base_image.contains("debian") {
+                    push_package_install(&mut dockerfile, base_image, runtime);
+                    if !push_package_install_supported(base_image) {
                         use std::fmt::Write as _;
-                        let _ = writeln!(dockerfile, "# Install {pkg}");
-                        let _ = writeln!(
-                            dockerfile,
-                            "RUN apt-get update && apt-get install -y {pkg} && rm -rf /var/lib/apt/lists/*\n"
-                        );
-                    } else if base_image.contains("arch") {
-                        use std::fmt::Write as _;
-                        let _ = writeln!(dockerfile, "# Install {pkg}");
-                        let _ = writeln!(dockerfile, "RUN pacman -S --noconfirm {pkg}\n");
-                    } else if base_image.contains("alpine") {
-                        use std::fmt::Write as _;
-                        let _ = writeln!(dockerfile, "# Install {pkg}");
-                        let _ = writeln!(dockerfile, "RUN apk add --no-cache {pkg}\n");
-                    } else if base_image.contains("fedora")
-                        || base_image.contains("rhel")
-                        || base_image.contains("centos")
-                    {
-                        use std::fmt::Write as _;
-                        let _ = writeln!(dockerfile, "# Install {pkg}");
-                        let _ = writeln!(dockerfile, "RUN dnf install -y {pkg} && dnf clean all\n");
-                    } else if base_image.contains("opensuse") {
-                        use std::fmt::Write as _;
-                        let _ = writeln!(dockerfile, "# Install {pkg}");
-                        let _ =
-                            writeln!(dockerfile, "RUN zypper install -y {pkg} && zypper clean\n");
-                    } else {
-                        use std::fmt::Write as _;
-                        let _ = writeln!(
-                            dockerfile,
-                            "# WARNING: Unknown base image '{base_image}' - package installation not automated"
-                        );
                         let _ = writeln!(
                             dockerfile,
                             "# Please manually install {runtime} {version} using your distribution's package manager"
-                        );
-                        let _ = writeln!(
-                            dockerfile,
-                            "# Supported base images: ubuntu, debian, arch, alpine, fedora, rhel, centos, opensuse\n"
                         );
                     }
                 }
@@ -498,6 +528,77 @@ impl ContainerManager {
 /// prefixes, traversal) must never reach a generated Dockerfile.
 fn is_safe_image_reference(image: &str) -> bool {
     crate::core::security::validate_image_ref(image).is_ok()
+}
+
+/// Whether [`push_package_install`] knows how to emit an install line for
+/// this base-image family.
+fn push_package_install_supported(base_image: &str) -> bool {
+    base_image.contains("ubuntu")
+        || base_image.contains("debian")
+        || base_image.contains("arch")
+        || base_image.contains("alpine")
+        || base_image.contains("fedora")
+        || base_image.contains("rhel")
+        || base_image.contains("centos")
+        || base_image.contains("opensuse")
+}
+
+/// Append the distribution-appropriate package-install command for `package`
+/// to a generated Dockerfile. Emits a warning comment for unknown base-image
+/// families instead of guessing a package manager.
+fn push_package_install(dockerfile: &mut String, base_image: &str, package: &str) {
+    use std::fmt::Write as _;
+
+    let _ = writeln!(dockerfile, "# Install {package}");
+    if base_image.contains("ubuntu") || base_image.contains("debian") {
+        let _ = writeln!(
+            dockerfile,
+            "RUN apt-get update && apt-get install -y {package} && rm -rf /var/lib/apt/lists/*\n"
+        );
+    } else if base_image.contains("arch") {
+        let _ = writeln!(dockerfile, "RUN pacman -S --noconfirm {package}\n");
+    } else if base_image.contains("alpine") {
+        let _ = writeln!(dockerfile, "RUN apk add --no-cache {package}\n");
+    } else if base_image.contains("fedora")
+        || base_image.contains("rhel")
+        || base_image.contains("centos")
+    {
+        let _ = writeln!(
+            dockerfile,
+            "RUN dnf install -y {package} && dnf clean all\n"
+        );
+    } else if base_image.contains("opensuse") {
+        let _ = writeln!(
+            dockerfile,
+            "RUN zypper install -y {package} && zypper clean\n"
+        );
+    } else {
+        let _ = writeln!(
+            dockerfile,
+            "# WARNING: Unknown base image '{base_image}' - package installation not automated"
+        );
+        let _ = writeln!(
+            dockerfile,
+            "# Supported base images: ubuntu, debian, arch, alpine, fedora, rhel, centos, opensuse\n"
+        );
+    }
+}
+
+/// Split one tab-separated `--format` output line from the runtime.
+///
+/// Lines without the expected column count are reported via `tracing::warn!`
+/// and skipped instead of being dropped silently.
+fn parse_listing_line(line: &str, expected_columns: usize) -> Option<Vec<&str>> {
+    let parts: Vec<&str> = line.split('\t').collect();
+    if parts.len() < expected_columns {
+        if !line.is_empty() {
+            tracing::warn!(
+                "Skipping malformed runtime listing line (expected {expected_columns} columns): {line:?}"
+            );
+        }
+        return None;
+    }
+    Some(parts)
 }
 
 fn require_successful_output(
@@ -535,11 +636,11 @@ pub struct ImageInfo {
 }
 
 /// Detect the best shell for a container image
-fn detect_container_shell(image: &str) -> String {
+fn detect_container_shell(image: &str) -> &'static str {
     if image.contains("alpine") {
-        "/bin/sh".to_string()
+        "/bin/sh"
     } else {
-        "/bin/bash".to_string()
+        "/bin/bash"
     }
 }
 

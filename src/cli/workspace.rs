@@ -103,10 +103,16 @@ impl Workspace {
             anyhow::bail!("Circular dependency detected involving project: {name}");
         }
 
-        if let Some(project) = self.projects.get(name) {
-            for dep in &project.depends_on {
-                self.visit_project(dep, visited, temp_mark, result)?;
-            }
+        // A dependency that isn't a registered project would otherwise appear as a
+        // phantom entry in the sorted output and be silently skipped by `run`.
+        let Some(project) = self.projects.get(name) else {
+            anyhow::bail!(
+                "Unknown project '{name}' referenced in depends_on; add it with \
+                 'omg workspace add' or fix the reference"
+            );
+        };
+        for dep in &project.depends_on {
+            self.visit_project(dep, visited, temp_mark, result)?;
         }
 
         temp_mark.remove(name);
@@ -118,15 +124,16 @@ impl Workspace {
 
 /// Initialize a new workspace
 pub fn init(name: &str) -> Result<()> {
+    // Fail fast before printing any banner so errors aren't buried under it
+    if Path::new(WORKSPACE_FILE).exists() {
+        anyhow::bail!("Workspace already exists. Delete {WORKSPACE_FILE} to reinitialize.");
+    }
+
     println!(
         "{} Initializing workspace '{}'\n",
         style::header("OMG"),
         name
     );
-
-    if Path::new(WORKSPACE_FILE).exists() {
-        anyhow::bail!("Workspace already exists. Delete {WORKSPACE_FILE} to reinitialize.");
-    }
 
     let workspace = Workspace {
         name: name.to_string(),
@@ -296,13 +303,40 @@ pub async fn run(
         run_parallel(&workspace, &projects, command, args).await?;
     } else {
         // Run sequentially
-        run_sequential(&workspace, &projects, command, args);
+        run_sequential(&workspace, &projects, command, args)?;
     }
 
     Ok(())
 }
 
-fn run_sequential(workspace: &Workspace, projects: &[&str], command: &str, args: &[String]) {
+/// Print the outcome summary and fail loudly when anything failed.
+///
+/// A partial workspace failure must surface as a nonzero exit code so scripts
+/// and CI wrapping `omg workspace run` observe it instead of a misleading zero.
+fn print_summary(command: &str, success: usize, failed: usize) -> Result<()> {
+    println!();
+    println!(
+        "{} {success} succeeded, {failed} failed",
+        if failed == 0 {
+            style::success("✓")
+        } else {
+            style::warning("⚠")
+        }
+    );
+
+    if failed == 0 {
+        Ok(())
+    } else {
+        anyhow::bail!("{failed} project(s) failed to run '{command}'")
+    }
+}
+
+fn run_sequential(
+    workspace: &Workspace,
+    projects: &[&str],
+    command: &str,
+    args: &[String],
+) -> Result<()> {
     let mut success = 0;
     let mut failed = 0;
 
@@ -326,14 +360,7 @@ fn run_sequential(workspace: &Workspace, projects: &[&str], command: &str, args:
         }
     }
 
-    println!(
-        "{} {success} succeeded, {failed} failed",
-        if failed == 0 {
-            style::success("✓")
-        } else {
-            style::warning("⚠")
-        }
-    );
+    print_summary(command, success, failed)
 }
 
 async fn run_parallel(
@@ -342,6 +369,8 @@ async fn run_parallel(
     command: &str,
     args: &[String],
 ) -> Result<()> {
+    // Signature keeps Result<()> so sequential and parallel paths stay symmetric;
+    // per-project failures are aggregated in print_summary below.
     use tokio::task;
 
     let mut handles = Vec::new();
@@ -382,19 +411,7 @@ async fn run_parallel(
         }
     }
 
-    println!();
-    println!(
-        "{} {} succeeded, {} failed",
-        if failed == 0 {
-            style::success("✓")
-        } else {
-            style::warning("⚠")
-        },
-        success,
-        failed
-    );
-
-    Ok(())
+    print_summary(command, success, failed)
 }
 
 fn run_project_command(
@@ -405,15 +422,24 @@ fn run_project_command(
 ) -> Result<()> {
     // Check for custom command first
     if let Some(custom_cmd) = project.commands.get(command) {
+        // POSIX sh: operands after the -c command string become positional
+        // parameters ($1, "$@", ...) inside the script, so extra args reach the
+        // command without ad-hoc shell quoting of interpolated values.
+        // https://pubs.opengroup.org/onlinepubs/9699919799/utilities/sh.html
         let status = std::process::Command::new("sh")
             .arg("-c")
             .arg(custom_cmd)
+            .arg("sh")
+            .args(args)
             .current_dir(path)
             .status()
-            .context("Failed to execute command")?;
+            .with_context(|| format!("Failed to execute '{command}' in '{path}'"))?;
 
         if !status.success() {
-            anyhow::bail!("Command exited with code {}", status.code().unwrap_or(-1));
+            anyhow::bail!(
+                "'{command}' in '{path}' exited with code {}",
+                status.code().unwrap_or(-1)
+            );
         }
         return Ok(());
     }
@@ -424,10 +450,15 @@ fn run_project_command(
     cmd.args(args);
     cmd.current_dir(path);
 
-    let status = cmd.status().context("Failed to execute omg run")?;
+    let status = cmd
+        .status()
+        .with_context(|| format!("Failed to execute 'omg run {command}' in '{path}'"))?;
 
     if !status.success() {
-        anyhow::bail!("Command exited with code {}", status.code().unwrap_or(-1));
+        anyhow::bail!(
+            "'omg run {command}' in '{path}' exited with code {}",
+            status.code().unwrap_or(-1)
+        );
     }
 
     Ok(())
@@ -443,7 +474,12 @@ pub fn diff(branch: &str) -> Result<()> {
         branch
     );
 
-    for (name, project) in &workspace.projects {
+    // Sort names so output order is deterministic despite HashMap iteration
+    let mut names: Vec<&String> = workspace.projects.keys().collect();
+    names.sort();
+
+    for name in names {
+        let project = &workspace.projects[name];
         println!("{} {}", style::arrow("→"), style::package(name));
 
         let lock_path = PathBuf::from(&project.path).join("omg.lock");
@@ -463,8 +499,15 @@ pub fn diff(branch: &str) -> Result<()> {
             println!("  {}", style::success("No changes"));
         } else {
             let diff = String::from_utf8_lossy(&output.stdout);
-            let added = diff.lines().filter(|l| l.starts_with('+')).count();
-            let removed = diff.lines().filter(|l| l.starts_with('-')).count();
+            // Skip the +++/--- file-header lines so they aren't counted as changes
+            let added = diff
+                .lines()
+                .filter(|l| l.starts_with('+') && !l.starts_with("+++"))
+                .count();
+            let removed = diff
+                .lines()
+                .filter(|l| l.starts_with('-') && !l.starts_with("---"))
+                .count();
             println!(
                 "  {} +{} lines, -{} lines",
                 style::warning("Changes:"),
@@ -506,7 +549,12 @@ pub fn sync(yes: bool) -> Result<()> {
     let mut attention_count = 0usize;
     let mut error_count = 0usize;
 
-    for (name, project) in &workspace.projects {
+    // Sort names so output order is deterministic despite HashMap iteration
+    let mut names: Vec<&String> = workspace.projects.keys().collect();
+    names.sort();
+
+    for name in names {
+        let project = &workspace.projects[name];
         println!("{} {}", style::arrow("→"), style::package(name));
 
         let result = std::process::Command::new("omg")
@@ -567,7 +615,12 @@ pub fn status() -> Result<()> {
     let mut healthy = 0;
     let mut needs_attention = 0;
 
-    for (name, project) in &workspace.projects {
+    // Sort names so output order is deterministic despite HashMap iteration
+    let mut names: Vec<&String> = workspace.projects.keys().collect();
+    names.sort();
+
+    for name in names {
+        let project = &workspace.projects[name];
         let project_path = PathBuf::from(&project.path);
         let lock_path = project_path.join("omg.lock");
 

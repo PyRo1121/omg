@@ -94,8 +94,6 @@ impl HistoryManager {
         Ok(Self { log_path })
     }
 
-    /// Loads every recorded transaction. A missing file is an empty
-    /// history; malformed contents are rejected rather than truncated.
     /// Collect deduplicated `(package, version)` pairs whose `old_version`
     /// appears in successful Remove/Update transactions within the last
     /// `days` days. Used to warn before cache cleaning destroys the archives
@@ -130,6 +128,8 @@ impl HistoryManager {
         Ok(referenced.into_iter().collect())
     }
 
+    /// Loads every recorded transaction. A missing file is an empty history;
+    /// malformed contents are rejected rather than truncated.
     pub fn load(&self) -> Result<Vec<Transaction>> {
         if !self.log_path.exists() {
             return Ok(Vec::new());

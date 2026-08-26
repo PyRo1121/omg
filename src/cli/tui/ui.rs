@@ -4,6 +4,7 @@
 
 use crate::cli::tui::app::{App, Tab};
 use crate::core::format::format_bytes;
+use crate::core::history::TransactionType;
 use ratatui::{
     Frame,
     layout::{Alignment, Constraint, Direction, Layout, Rect},
@@ -18,6 +19,7 @@ use unicode_width::{UnicodeWidthChar, UnicodeWidthStr};
 
 /// Truncate `text` to at most `max_width` display columns (wide glyphs count
 /// as 2), appending an ellipsis when truncation occurs.
+#[must_use]
 fn truncate_width(text: &str, max_width: usize) -> Cow<'_, str> {
     if text.width() <= max_width {
         return Cow::Borrowed(text);
@@ -27,11 +29,13 @@ fn truncate_width(text: &str, max_width: usize) -> Cow<'_, str> {
         // budget; an empty cell is the only honest rendering.
         return Cow::Borrowed("");
     }
+    // Reserve one column for the ellipsis.
+    let budget = max_width - 1;
     let mut out = String::new();
     let mut used = 0usize;
     for ch in text.chars() {
         let w = ch.width().unwrap_or(0);
-        if used + w > max_width.saturating_sub(1) {
+        if used + w > budget {
             break;
         }
         out.push(ch);
@@ -42,6 +46,7 @@ fn truncate_width(text: &str, max_width: usize) -> Cow<'_, str> {
 }
 
 /// Right-pad/truncate `text` to exactly `min_width` display columns.
+#[must_use]
 fn pad_display_width(text: &str, min_width: usize) -> Cow<'_, str> {
     let width = text.width();
     if width >= min_width {
@@ -73,6 +78,28 @@ mod colors {
     pub const ACCENT_MAGENTA: Color = Color::Rgb(187, 154, 247);
 
     pub const BORDER_NORMAL: Color = Color::Rgb(61, 66, 91);
+}
+
+/// Accent color for a transaction kind. Shared by the dashboard activity
+/// feed and the full Activity log so they stay visually consistent.
+fn transaction_color(t: TransactionType) -> ratatui::style::Color {
+    match t {
+        TransactionType::Install => colors::ACCENT_GREEN,
+        TransactionType::Remove => colors::ACCENT_RED,
+        TransactionType::Update => colors::ACCENT_YELLOW,
+        TransactionType::Sync => colors::ACCENT_CYAN,
+    }
+}
+
+/// Icon glyph for a transaction kind. Exhaustive over the enum, so adding a
+/// variant forces a decision here instead of silently hitting a
+/// string-compare fallback arm that could never fire (`Display` only emits
+/// these exact strings).
+fn transaction_icon(t: TransactionType) -> &'static str {
+    match t {
+        TransactionType::Install | TransactionType::Remove | TransactionType::Update => "",
+        TransactionType::Sync => "󰓦",
+    }
 }
 
 pub fn draw(f: &mut Frame, app: &App) {
@@ -308,7 +335,12 @@ fn draw_usage_stats(f: &mut Frame, area: Rect, app: &App) {
     f.render_widget(usage_widget, area);
 }
 
-fn styled_block(title: &str) -> Block<'_> {
+// The returned block owns its title (formatted into a `String`), so it does
+// not actually borrow `title`; returning `Block<'static>` lets this compose
+// with other owned widget constructors below. C-MUSTUSE:
+// https://rust-lang.github.io/api-guidelines/checklist.html#c-mustuse
+#[must_use]
+fn styled_block(title: &str) -> Block<'static> {
     Block::default()
         .title(format!(" {title} "))
         .title_style(
@@ -320,6 +352,34 @@ fn styled_block(title: &str) -> Block<'_> {
         .border_type(BorderType::Rounded)
         .border_style(Style::default().fg(colors::BORDER_NORMAL))
         .style(Style::default().bg(colors::BG_MEDIUM))
+}
+
+/// Builds one dashboard stat card: a bold icon+value line followed by a
+/// muted caption, centered inside a [`styled_block`] panel.
+#[must_use]
+fn stat_card<'a>(
+    title: &'a str,
+    icon: &'a str,
+    icon_color: ratatui::style::Color,
+    value: impl Into<Cow<'a, str>>,
+    value_color: ratatui::style::Color,
+    caption: &'a str,
+) -> Paragraph<'a> {
+    Paragraph::new(vec![
+        Line::from(""),
+        Line::from(vec![
+            Span::styled(format!("{icon} "), Style::default().fg(icon_color)),
+            Span::styled(
+                value.into(),
+                Style::default()
+                    .fg(value_color)
+                    .add_modifier(Modifier::BOLD),
+            ),
+        ]),
+        Line::from(Span::styled(caption, Style::default().fg(colors::FG_MUTED))),
+    ])
+    .alignment(Alignment::Center)
+    .block(styled_block(title))
 }
 
 fn draw_health_cards(f: &mut Frame, area: Rect, app: &App) {
@@ -340,25 +400,17 @@ fn draw_health_cards(f: &mut Frame, area: Rect, app: &App) {
 
     // Packages card
     if let Some(c) = cards.first() {
-        let card = Paragraph::new(vec![
-            Line::from(""),
-            Line::from(vec![
-                Span::styled("󰏗 ", Style::default().fg(colors::ACCENT_BLUE)),
-                Span::styled(
-                    format!("{total_packages}"),
-                    Style::default()
-                        .fg(colors::FG_PRIMARY)
-                        .add_modifier(Modifier::BOLD),
-                ),
-            ]),
-            Line::from(Span::styled(
+        f.render_widget(
+            stat_card(
+                "Inventory",
+                "󰏗",
+                colors::ACCENT_BLUE,
+                total_packages.to_string(),
+                colors::FG_PRIMARY,
                 "System Packages",
-                Style::default().fg(colors::FG_MUTED),
-            )),
-        ])
-        .alignment(Alignment::Center)
-        .block(styled_block("Inventory"));
-        f.render_widget(card, *c);
+            ),
+            *c,
+        );
     }
 
     // Updates card
@@ -368,28 +420,21 @@ fn draw_health_cards(f: &mut Frame, area: Rect, app: &App) {
         } else {
             colors::ACCENT_GREEN
         };
-        let status_icon = if updates > 0 { "󰚰 " } else { "󰄬 " };
-        let card = Paragraph::new(vec![
-            Line::from(""),
-            Line::from(vec![
-                Span::styled(status_icon, Style::default().fg(color)),
-                Span::styled(
-                    format!("{updates}"),
-                    Style::default().fg(color).add_modifier(Modifier::BOLD),
-                ),
-            ]),
-            Line::from(Span::styled(
+        f.render_widget(
+            stat_card(
+                "Maintainability",
+                if updates > 0 { "󰚰" } else { "󰄬" },
+                color,
+                updates.to_string(),
+                color,
                 if updates > 0 {
                     "Updates Available"
                 } else {
                     "System Up-to-date"
                 },
-                Style::default().fg(colors::FG_MUTED),
-            )),
-        ])
-        .alignment(Alignment::Center)
-        .block(styled_block("Maintainability"));
-        f.render_widget(card, *c);
+            ),
+            *c,
+        );
     }
 
     // Orphans card
@@ -399,51 +444,60 @@ fn draw_health_cards(f: &mut Frame, area: Rect, app: &App) {
         } else {
             colors::ACCENT_GREEN
         };
-        let status_icon = if orphans > 0 { "󰃤 " } else { "󰄬 " };
-        let card = Paragraph::new(vec![
-            Line::from(""),
-            Line::from(vec![
-                Span::styled(status_icon, Style::default().fg(color)),
-                Span::styled(
-                    format!("{orphans}"),
-                    Style::default().fg(color).add_modifier(Modifier::BOLD),
-                ),
-            ]),
-            Line::from(Span::styled(
+        f.render_widget(
+            stat_card(
+                "Hygiene",
+                if orphans > 0 { "󰃤" } else { "󰄬" },
+                color,
+                orphans.to_string(),
+                color,
                 "Orphan Packages",
-                Style::default().fg(colors::FG_MUTED),
-            )),
-        ])
-        .alignment(Alignment::Center)
-        .block(styled_block("Hygiene"));
-        f.render_widget(card, *c);
+            ),
+            *c,
+        );
     }
 
     // Security card
     if let Some(c) = cards.get(3) {
         let (color, status_icon, label) = match vulns {
-            Some(0) => (colors::ACCENT_GREEN, "󰒃 ", "Secure".to_string()),
-            Some(count) => (colors::ACCENT_RED, "󰀦 ", format!("{count} CVEs")),
-            None => (colors::FG_MUTED, "󰀦 ", "Not scanned".to_string()),
+            Some(0) => (colors::ACCENT_GREEN, "󰒃", Cow::Borrowed("Secure")),
+            Some(count) => (colors::ACCENT_RED, "󰀦", Cow::Owned(format!("{count} CVEs"))),
+            None => (colors::FG_MUTED, "󰀦", Cow::Borrowed("Not scanned")),
         };
-        let card = Paragraph::new(vec![
-            Line::from(""),
-            Line::from(vec![
-                Span::styled(status_icon, Style::default().fg(color)),
-                Span::styled(
-                    label,
-                    Style::default().fg(color).add_modifier(Modifier::BOLD),
-                ),
-            ]),
-            Line::from(Span::styled(
+        f.render_widget(
+            stat_card(
+                "Security",
+                status_icon,
+                color,
+                label,
+                color,
                 "Compliance Status",
-                Style::default().fg(colors::FG_MUTED),
-            )),
-        ])
-        .alignment(Alignment::Center)
-        .block(styled_block("Security"));
-        f.render_widget(card, *c);
+            ),
+            *c,
+        );
     }
+}
+
+/// Renders a labeled utilization gauge whose fill escalates from green
+/// through yellow to red at the given thresholds. Percentages outside
+/// `[0, 100]` are clamped so bad sensor readings cannot corrupt rendering.
+#[must_use]
+fn utilization_gauge(title: &str, percent: f32, warn_at: f32, critical_at: f32) -> Gauge<'static> {
+    let clamped = percent.clamp(0.0, 100.0);
+    let color = if clamped <= warn_at {
+        colors::ACCENT_GREEN
+    } else if clamped <= critical_at {
+        colors::ACCENT_YELLOW
+    } else {
+        colors::ACCENT_RED
+    };
+
+    Gauge::default()
+        .block(styled_block(title))
+        .gauge_style(Style::default().fg(color).bg(colors::BG_LIGHT))
+        .percent(clamped as u16)
+        // The label shows the true reading; only the fill is clamped.
+        .label(format!("{percent:.1}%"))
 }
 
 fn draw_system_gauges(f: &mut Frame, area: Rect, app: &App) {
@@ -456,35 +510,14 @@ fn draw_system_gauges(f: &mut Frame, area: Rect, app: &App) {
         return;
     };
 
-    // CPU Gauge
-    let cpu_percent = app.system_metrics.cpu_usage.min(100.0) as u16;
-    let cpu_color = match cpu_percent {
-        0..=50 => colors::ACCENT_GREEN,
-        51..=80 => colors::ACCENT_YELLOW,
-        _ => colors::ACCENT_RED,
-    };
-
-    let cpu_gauge = Gauge::default()
-        .block(styled_block(" CPU"))
-        .gauge_style(Style::default().fg(cpu_color).bg(colors::BG_LIGHT))
-        .percent(cpu_percent)
-        .label(format!("{:.1}%", app.system_metrics.cpu_usage));
-    f.render_widget(cpu_gauge, *cpu_area);
-
-    // Memory Gauge
-    let mem_percent = app.system_metrics.memory_usage.min(100.0) as u16;
-    let mem_color = match mem_percent {
-        0..=60 => colors::ACCENT_GREEN,
-        61..=85 => colors::ACCENT_YELLOW,
-        _ => colors::ACCENT_RED,
-    };
-
-    let mem_gauge = Gauge::default()
-        .block(styled_block(" Memory"))
-        .gauge_style(Style::default().fg(mem_color).bg(colors::BG_LIGHT))
-        .percent(mem_percent)
-        .label(format!("{:.1}%", app.system_metrics.memory_usage));
-    f.render_widget(mem_gauge, *mem_area);
+    f.render_widget(
+        utilization_gauge(" CPU", app.system_metrics.cpu_usage, 50.0, 80.0),
+        *cpu_area,
+    );
+    f.render_widget(
+        utilization_gauge(" Memory", app.system_metrics.memory_usage, 60.0, 85.0),
+        *mem_area,
+    );
 }
 
 fn draw_system_info(f: &mut Frame, area: Rect, app: &App) {
@@ -656,26 +689,16 @@ fn draw_recent_activity(f: &mut Frame, area: Rect, app: &App) {
         .take(5)
         .map(|t| {
             let time = t.timestamp.strftime("%H:%M").to_string();
-            let transaction_type = t.transaction_type.to_string();
-            let type_color = match transaction_type.as_str() {
-                "Install" => colors::ACCENT_GREEN,
-                "Remove" => colors::ACCENT_RED,
-                "Update" => colors::ACCENT_YELLOW,
-                "Sync" => colors::ACCENT_CYAN,
-                _ => colors::FG_MUTED,
-            };
-
-            let icon = match transaction_type.as_str() {
-                "Install" | "Remove" | "Update" => "",
-                "Sync" => "󰓦",
-                _ => "•",
-            };
+            let type_color = transaction_color(t.transaction_type);
 
             ListItem::new(Line::from(vec![
                 Span::styled(format!("{time} "), Style::default().fg(colors::FG_MUTED)),
-                Span::styled(format!("{icon} "), Style::default().fg(type_color)),
                 Span::styled(
-                    transaction_type,
+                    format!("{} ", transaction_icon(t.transaction_type)),
+                    Style::default().fg(type_color),
+                ),
+                Span::styled(
+                    t.transaction_type.to_string(),
                     Style::default().fg(type_color).add_modifier(Modifier::BOLD),
                 ),
                 if t.success {
@@ -1037,27 +1060,16 @@ fn draw_activity(f: &mut Frame, area: Rect, app: &App) {
         .take(20)
         .map(|t| {
             let time = t.timestamp.strftime("%H:%M:%S").to_string();
-            let transaction_type = t.transaction_type.to_string();
-
-            let type_color = match transaction_type.as_str() {
-                "Install" => colors::ACCENT_GREEN,
-                "Remove" => colors::ACCENT_RED,
-                "Update" => colors::ACCENT_YELLOW,
-                "Sync" => colors::ACCENT_CYAN,
-                _ => colors::FG_MUTED,
-            };
-
-            let icon = match transaction_type.as_str() {
-                "Install" | "Remove" | "Update" => "",
-                "Sync" => "󰓦",
-                _ => "•",
-            };
+            let type_color = transaction_color(t.transaction_type);
 
             let header = Line::from(vec![
                 Span::styled(format!(" {time} "), Style::default().fg(colors::FG_MUTED)),
-                Span::styled(format!("{icon} "), Style::default().fg(type_color)),
                 Span::styled(
-                    format!("{transaction_type:<8}"),
+                    format!("{} ", transaction_icon(t.transaction_type)),
+                    Style::default().fg(type_color),
+                ),
+                Span::styled(
+                    format!("{:<8}", t.transaction_type.to_string()),
                     Style::default().fg(type_color).add_modifier(Modifier::BOLD),
                 ),
                 if t.success {

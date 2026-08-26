@@ -14,14 +14,18 @@ use crate::runtimes::{
 static MISE: LazyLock<MiseManager> = LazyLock::new(MiseManager::new);
 
 pub fn resolve_active_version(runtime: &str) -> Result<Option<String>> {
+    // File-based detection (.tool-versions, .nvmrc, ...) is keyed by canonical
+    // tool names ("node", "python"), so aliases such as "nodejs" or "golang"
+    // must be normalized before lookup.
+    let runtime = canonical_runtime_name(runtime);
     let versions = crate::hooks::get_active_versions()?;
-    if let Some(version) = versions.get(&runtime.to_lowercase()) {
+    if let Some(version) = versions.get(&runtime) {
         return Ok(Some(version.clone()));
     }
     if !MISE.is_available() {
         return Ok(None);
     }
-    MISE.current_version(runtime)
+    MISE.current_version(&runtime)
         .with_context(|| format!("Failed to query mise current version for {runtime}"))
 }
 
@@ -61,8 +65,19 @@ pub fn known_runtimes() -> Result<Vec<String>> {
     Ok(runtimes)
 }
 
+/// Strip a single leading `v` prefix (Node tags like `v20.10.0`) while keeping
+/// the rest of the string intact. Unlike `trim_start_matches`, this cannot
+/// over-trim repeated prefixes (`trim_start_matches` would turn "vv1" into "1").
+#[must_use]
+fn strip_version_prefix(version: &str) -> &str {
+    // https://doc.rust-lang.org/std/primitive.str.html#method.strip_prefix
+    version.strip_prefix('v').unwrap_or(version)
+}
+
 trait RuntimeInstallUse {
     fn list_installed(&self) -> Result<Vec<String>>;
+    #[allow(dead_code)]
+    fn current_version(&self) -> Option<String>;
     fn use_version(&self, version: &str) -> Result<()>;
     async fn install(&self, version: &str) -> Result<()>;
 }
@@ -72,6 +87,8 @@ macro_rules! impl_runtime_install_use {
         $(
             impl RuntimeInstallUse for $t {
                 fn list_installed(&self) -> Result<Vec<String>> { self.list_installed() }
+                #[allow(dead_code)]
+    fn current_version(&self) -> Option<String> { self.current_version() }
                 fn use_version(&self, version: &str) -> Result<()> { self.use_version(version) }
                 async fn install(&self, version: &str) -> Result<()> { self.install(version).await }
             }
@@ -135,26 +152,26 @@ pub async fn use_version(runtime: &str, version: Option<&str>) -> Result<()> {
 
     match runtime.as_str() {
         "node" => {
-            install_or_use(&NodeManager::new(), version.trim_start_matches('v')).await?;
+            install_or_use(&NodeManager::new(), strip_version_prefix(&version)).await?;
         }
         "python" => {
-            install_or_use(&PythonManager::new(), version.trim_start_matches('v')).await?;
+            install_or_use(&PythonManager::new(), strip_version_prefix(&version)).await?;
         }
         "rust" => {
             // Rust manager handles toolchains internally; always delegates to install
             RustManager::new().install(&version).await?;
         }
         "go" => {
-            install_or_use(&GoManager::new(), version.trim_start_matches('v')).await?;
+            install_or_use(&GoManager::new(), strip_version_prefix(&version)).await?;
         }
         "ruby" => {
-            install_or_use(&RubyManager::new(), version.trim_start_matches('v')).await?;
+            install_or_use(&RubyManager::new(), strip_version_prefix(&version)).await?;
         }
         "java" => {
             install_or_use(&JavaManager::new(), &version).await?;
         }
         "bun" => {
-            install_or_use(&BunManager::new(), version.trim_start_matches('v')).await?;
+            install_or_use(&BunManager::new(), strip_version_prefix(&version)).await?;
         }
         _ => {
             if !MISE.is_available() {
@@ -183,7 +200,13 @@ fn mise_list_versions(runtime: &str, available: bool) -> Result<()> {
         .output()
         .context("Failed to run `mise`")?;
     if !output.status.success() {
-        anyhow::bail!("mise failed to list versions for {runtime}");
+        // Surface mise's stderr so failures are diagnosable instead of a bare
+        // "mise failed" with no cause.
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        anyhow::bail!(
+            "mise failed to list versions for {runtime}: {}",
+            stderr.trim()
+        );
     }
 
     let stdout = String::from_utf8_lossy(&output.stdout);
@@ -224,6 +247,29 @@ fn mise_list_all() -> Result<()> {
         }
     }
     Ok(())
+}
+
+/// Probe one natively supported runtime's installed + active versions.
+/// Returns `None` when `runtime` is mise-managed (no structured listing).
+/// Aliases (`nodejs`, `golang`, `jdk`, ...) are normalized via
+/// `canonical_runtime_name` before dispatch.
+fn native_version_info(runtime: &str) -> Option<(Result<Vec<String>>, Option<String>)> {
+    macro_rules! probe {
+        ($mgr:expr) => {{
+            let mgr = $mgr;
+            Some((mgr.list_installed(), mgr.current_version()))
+        }};
+    }
+    match canonical_runtime_name(runtime).as_str() {
+        "node" => probe!(NodeManager::new()),
+        "python" => probe!(PythonManager::new()),
+        "rust" => probe!(RustManager::new()),
+        "go" => probe!(GoManager::new()),
+        "ruby" => probe!(RubyManager::new()),
+        "java" => probe!(JavaManager::new()),
+        "bun" => probe!(BunManager::new()),
+        _ => None,
+    }
 }
 
 fn print_installed_versions(installed: Vec<String>, current: Option<&str>) {
@@ -267,44 +313,15 @@ fn runtime_versions_value(
 /// is mise-managed (whose listing is unstructured text and cannot be
 /// represented as machine output).
 fn installed_json_entry(runtime: &str) -> Result<Option<serde_json::Value>> {
-    match runtime.to_lowercase().as_str() {
-        "node" | "nodejs" => {
-            let mgr = NodeManager::new();
-            let current = mgr.current_version();
-            runtime_versions_value("node", mgr.list_installed(), current.as_deref()).map(Some)
-        }
-        "python" => {
-            let mgr = PythonManager::new();
-            let current = mgr.current_version();
-            runtime_versions_value("python", mgr.list_installed(), current.as_deref()).map(Some)
-        }
-        "rust" => {
-            let mgr = RustManager::new();
-            let current = mgr.current_version();
-            runtime_versions_value("rust", mgr.list_installed(), current.as_deref()).map(Some)
-        }
-        "go" | "golang" => {
-            let mgr = GoManager::new();
-            let current = mgr.current_version();
-            runtime_versions_value("go", mgr.list_installed(), current.as_deref()).map(Some)
-        }
-        "ruby" => {
-            let mgr = RubyManager::new();
-            let current = mgr.current_version();
-            runtime_versions_value("ruby", mgr.list_installed(), current.as_deref()).map(Some)
-        }
-        "java" | "jdk" => {
-            let mgr = JavaManager::new();
-            let current = mgr.current_version();
-            runtime_versions_value("java", mgr.list_installed(), current.as_deref()).map(Some)
-        }
-        "bun" | "bunjs" => {
-            let mgr = BunManager::new();
-            let current = mgr.current_version();
-            runtime_versions_value("bun", mgr.list_installed(), current.as_deref()).map(Some)
-        }
-        _ => Ok(None),
-    }
+    let Some((installed, current)) = native_version_info(runtime) else {
+        return Ok(None);
+    };
+    runtime_versions_value(
+        &canonical_runtime_name(runtime),
+        installed,
+        current.as_deref(),
+    )
+    .map(Some)
 }
 
 /// JSON output for installed runtime versions. Requesting JSON for a
@@ -337,64 +354,11 @@ pub fn list_versions_sync(runtime: Option<&str>, json: bool) -> Result<()> {
         ui::print_header("OMG", &format!("{rt} versions"));
         ui::print_spacer();
 
-        match rt.to_lowercase().as_str() {
-            "node" | "nodejs" => {
-                let mgr = NodeManager::new();
-                print_listed_versions(
-                    "node",
-                    mgr.list_installed(),
-                    mgr.current_version().as_deref(),
-                )?;
+        match native_version_info(rt) {
+            Some((installed, current)) => {
+                print_listed_versions(&canonical_runtime_name(rt), installed, current.as_deref())?;
             }
-            "python" => {
-                let mgr = PythonManager::new();
-                print_listed_versions(
-                    "python",
-                    mgr.list_installed(),
-                    mgr.current_version().as_deref(),
-                )?;
-            }
-            "rust" => {
-                let mgr = RustManager::new();
-                print_listed_versions(
-                    "rust",
-                    mgr.list_installed(),
-                    mgr.current_version().as_deref(),
-                )?;
-            }
-            "go" | "golang" => {
-                let mgr = GoManager::new();
-                print_listed_versions(
-                    "go",
-                    mgr.list_installed(),
-                    mgr.current_version().as_deref(),
-                )?;
-            }
-            "ruby" => {
-                let mgr = RubyManager::new();
-                print_listed_versions(
-                    "ruby",
-                    mgr.list_installed(),
-                    mgr.current_version().as_deref(),
-                )?;
-            }
-            "java" | "jdk" => {
-                let mgr = JavaManager::new();
-                print_listed_versions(
-                    "java",
-                    mgr.list_installed(),
-                    mgr.current_version().as_deref(),
-                )?;
-            }
-            "bun" | "bunjs" => {
-                let mgr = BunManager::new();
-                print_listed_versions(
-                    "bun",
-                    mgr.list_installed(),
-                    mgr.current_version().as_deref(),
-                )?;
-            }
-            _ => {
+            None => {
                 mise_list_versions(rt, false)?;
             }
         }
@@ -548,7 +512,8 @@ pub async fn list_versions(runtime: Option<&str>, available: bool, json: bool) -
                 ));
                 MISE.ensure_installed().await?;
             }
-            mise_list_versions(rt, available)?;
+            // `!available` already returned above, so this is always remote listing.
+            mise_list_versions(rt, true)?;
         }
     }
 

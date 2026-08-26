@@ -11,6 +11,7 @@ use crossterm::{
     terminal::{self, ClearType},
 };
 use std::io::{self, IsTerminal, Write};
+use std::path::PathBuf;
 use std::process::Command;
 
 /// RAII guard restoring terminal state even when a menu exits via `?` or an
@@ -58,6 +59,56 @@ fn write_menu_line(stdout: &mut io::Stdout, text: &str, highlighted: bool) -> Re
 
 use crate::config::Settings;
 use crate::core::sysinfo::{BuildRecommendation, SystemInfo};
+
+/// Core interactive single-select menu loop shared by all wizard prompts.
+///
+/// Renders each option via `render` (highlighting the active row), then
+/// handles ↑/↓ navigation, Enter to confirm, and q to cancel. Raw mode is
+/// enabled here and restored on every exit path via [`RawModeGuard`].
+///
+/// Non-press key events fall through to the `MoveUp` redraw instead of
+/// `continue`-ing past it: skipping the move desynchronises the cursor and
+/// makes the next redraw paint below the menu (observed on terminals that
+/// emit release/repeat events).
+fn run_menu<T: Copy>(
+    stdout: &mut io::Stdout,
+    options: &[T],
+    initial: usize,
+    render: impl Fn(&T) -> String,
+) -> Result<T> {
+    assert!(!options.is_empty(), "menu needs at least one option");
+    let _raw = RawModeGuard::enable()?;
+    let mut selected = initial.min(options.len() - 1);
+
+    loop {
+        for (i, opt) in options.iter().enumerate() {
+            let label = render(opt);
+            let text = if i == selected {
+                format!("  ▸ {label}")
+            } else {
+                format!("    {label}")
+            };
+            write_menu_line(stdout, &text, i == selected)?;
+        }
+
+        stdout.flush()?;
+
+        if let Event::Key(key) = event::read()?
+            && key.kind == KeyEventKind::Press
+        {
+            match key.code {
+                KeyCode::Up => selected = selected.saturating_sub(1),
+                KeyCode::Down => selected = (selected + 1).min(options.len() - 1),
+                KeyCode::Enter => return Ok(options[selected]),
+                KeyCode::Char('q') => anyhow::bail!("Setup cancelled"),
+                _ => {}
+            }
+        }
+
+        // Move cursor back up to redraw.
+        execute!(stdout, cursor::MoveUp(options.len() as u16))?;
+    }
+}
 
 /// Shell options for hook installation
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -441,7 +492,7 @@ fn detect_shell_from_parent_process() -> Option<Shell> {
 fn select_shell(stdout: &mut io::Stdout) -> Result<Shell> {
     let detected = detect_current_shell();
     let shells = [Shell::Zsh, Shell::Bash, Shell::Fish];
-    let mut selected = detected.map_or(0, |s| shells.iter().position(|x| *x == s).unwrap_or(0));
+    let initial = detected.map_or(0, |d| shells.iter().position(|&s| s == d).unwrap_or(0));
 
     execute!(
         stdout,
@@ -461,47 +512,13 @@ fn select_shell(stdout: &mut io::Stdout) -> Result<Shell> {
     }
     println!();
 
-    let _raw = RawModeGuard::enable()?;
-
-    loop {
-        // Clear and redraw options
-        for (i, shell) in shells.iter().enumerate() {
-            let prefix = if i == selected { "  ▸ " } else { "    " };
-            let suffix = if Some(*shell) == detected {
-                " (detected)"
-            } else {
-                ""
-            };
-
-            let text = format!("{}{}{}", prefix, shell.name(), suffix);
-            write_menu_line(stdout, &text, i == selected)?;
+    run_menu(stdout, &shells, initial, |shell| {
+        if Some(*shell) == detected {
+            format!("{} (detected)", shell.name())
+        } else {
+            shell.name().to_owned()
         }
-
-        stdout.flush()?;
-
-        // Wait for key
-        if let Event::Key(key) = event::read()? {
-            if key.kind != KeyEventKind::Press {
-                continue;
-            }
-            match key.code {
-                KeyCode::Up => {
-                    selected = selected.saturating_sub(1);
-                }
-                KeyCode::Down => {
-                    if selected < shells.len() - 1 {
-                        selected += 1;
-                    }
-                }
-                KeyCode::Enter => return Ok(shells[selected]),
-                KeyCode::Char('q') => anyhow::bail!("Setup cancelled"),
-                _ => {}
-            }
-        }
-
-        // Move cursor back up to redraw
-        execute!(stdout, cursor::MoveUp(shells.len() as u16))?;
-    }
+    })
 }
 
 fn select_daemon_startup(stdout: &mut io::Stdout) -> Result<DaemonStartup> {
@@ -511,7 +528,6 @@ fn select_daemon_startup(stdout: &mut io::Stdout) -> Result<DaemonStartup> {
         DaemonStartup::Systemd,
         DaemonStartup::Manual,
     ];
-    let mut selected = 0;
 
     execute!(
         stdout,
@@ -528,39 +544,7 @@ fn select_daemon_startup(stdout: &mut io::Stdout) -> Result<DaemonStartup> {
     )?;
     println!();
 
-    let _raw = RawModeGuard::enable()?;
-
-    loop {
-        for (i, opt) in options.iter().enumerate() {
-            let prefix = if i == selected { "  ▸ " } else { "    " };
-
-            let text = format!("{}{}", prefix, opt.name());
-            write_menu_line(stdout, &text, i == selected)?;
-        }
-
-        stdout.flush()?;
-
-        if let Event::Key(key) = event::read()? {
-            if key.kind != KeyEventKind::Press {
-                continue;
-            }
-            match key.code {
-                KeyCode::Up => {
-                    selected = selected.saturating_sub(1);
-                }
-                KeyCode::Down => {
-                    if selected < options.len() - 1 {
-                        selected += 1;
-                    }
-                }
-                KeyCode::Enter => return Ok(options[selected]),
-                KeyCode::Char('q') => anyhow::bail!("Setup cancelled"),
-                _ => {}
-            }
-        }
-
-        execute!(stdout, cursor::MoveUp(options.len() as u16))?;
-    }
+    run_menu(stdout, &options, 0, |opt| opt.name().to_owned())
 }
 
 fn select_build_config(stdout: &mut io::Stdout) -> Result<BuildRecommendation> {
@@ -707,44 +691,16 @@ fn confirm_env_capture(stdout: &mut io::Stdout) -> Result<bool> {
 }
 
 /// Run a two-option raw-mode menu; returns `true` when the first option is
-/// chosen. Terminal raw mode is restored by [`RawModeGuard`] on every exit
-/// path, including errors.
+/// chosen.
 fn select_binary_menu(
     stdout: &mut io::Stdout,
     first_label: &str,
     second_label: &str,
 ) -> Result<bool> {
-    let _raw = RawModeGuard::enable()?;
-    let mut selected = 0usize;
-
-    loop {
-        for (i, label) in [first_label, second_label].iter().enumerate() {
-            let text = if i == selected {
-                format!("  ▸ {label}")
-            } else {
-                format!("    {label}")
-            };
-            write_menu_line(stdout, &text, i == selected)?;
-        }
-
-        stdout.flush()?;
-
-        if let Event::Key(key) = event::read()? {
-            if key.kind != KeyEventKind::Press {
-                continue;
-            }
-            match key.code {
-                KeyCode::Up | KeyCode::Down => {
-                    selected = 1 - selected;
-                }
-                KeyCode::Enter => return Ok(selected == 0),
-                KeyCode::Char('q') => anyhow::bail!("Setup cancelled"),
-                _ => {}
-            }
-        }
-
-        execute!(stdout, cursor::MoveUp(2))?;
-    }
+    let labels = [first_label, second_label];
+    run_menu(stdout, &[true, false], 0, |chosen| {
+        labels[usize::from(!chosen)].to_owned()
+    })
 }
 
 fn read_optional_shell_rc(path: &str) -> Result<Option<String>> {
@@ -755,9 +711,34 @@ fn read_optional_shell_rc(path: &str) -> Result<Option<String>> {
     }
 }
 
+/// Expand the leading `~` of a shell config path using `$HOME`.
+fn resolve_config_path(shell: Shell) -> Result<PathBuf> {
+    let home =
+        std::env::var("HOME").context("Cannot locate your shell config: $HOME is not set")?;
+    // Replace only the leading `~`; `replace` with no count would also mangle
+    // any literal tilde later in the path.
+    Ok(PathBuf::from(shell.config_file().replacen('~', &home, 1)))
+}
+
+/// Best-effort detection of the user's login shell from `$SHELL`.
+pub(crate) fn shell_from_env() -> Option<Shell> {
+    parse_shell_path(&std::env::var("SHELL").ok()?)
+}
+
+/// Whether `shell`'s rc file already contains the OMG hook line.
+///
+/// Used by `omg init` for idempotent installs and by `omg doctor` to verify
+/// the hook actually landed on disk.
+pub(crate) fn shell_rc_has_hook(shell: Shell) -> bool {
+    resolve_config_path(shell)
+        .ok()
+        .and_then(|path| read_optional_shell_rc(&path.to_string_lossy()).ok())
+        .flatten()
+        .is_some_and(|content| content.contains("omg hook"))
+}
+
 fn install_shell_hook(stdout: &mut io::Stdout, shell: Shell, start_daemon: bool) -> Result<()> {
-    let home = std::env::var("HOME").unwrap_or_else(|_| "~".to_string());
-    let config_path = shell.config_file().replace('~', &home);
+    let config_path = resolve_config_path(shell)?;
     let hook_cmd = shell.hook_command();
 
     execute!(
@@ -769,7 +750,7 @@ fn install_shell_hook(stdout: &mut io::Stdout, shell: Shell, start_daemon: bool)
         Print(format!(" Installing {} hook...", shell.name()))
     )?;
 
-    if let Some(content) = read_optional_shell_rc(&config_path)?
+    if let Some(content) = read_optional_shell_rc(&config_path.to_string_lossy())?
         && content.contains("omg hook")
     {
         execute!(
@@ -786,7 +767,7 @@ fn install_shell_hook(stdout: &mut io::Stdout, shell: Shell, start_daemon: bool)
         .create(true)
         .append(true)
         .open(&config_path)
-        .with_context(|| format!("Failed to open {config_path}"))?;
+        .with_context(|| format!("Failed to open {}", config_path.display()))?;
 
     writeln!(file, "\n# OMG shell integration")?;
 
@@ -832,15 +813,7 @@ fn configure_daemon_startup(stdout: &mut io::Stdout, startup: DaemonStartup) -> 
             )?;
         }
         DaemonStartup::OnDemand => {
-            // Prefer the omgd binary shipped next to the running omg so a
-            // PATH shadowing an older install cannot start a version-mismatched
-            // daemon (same strategy as `commands::daemon`).
-            let omgd_path = std::env::current_exe()
-                .ok()
-                .and_then(|exe| exe.parent().map(|dir| dir.join("omgd")))
-                .filter(|path| path.is_file())
-                .unwrap_or_else(|| std::path::PathBuf::from("omgd"));
-            Command::new(omgd_path)
+            Command::new(omgd_sibling_path().unwrap_or_else(|| PathBuf::from("omgd")))
                 .arg("--")
                 // Detach stdio: the daemon outlives this process, and an
                 // inherited pipe would keep the parent's readers open forever.
@@ -879,24 +852,44 @@ fn configure_daemon_startup(stdout: &mut io::Stdout, startup: DaemonStartup) -> 
     Ok(())
 }
 
+/// Resolve the `omgd` binary shipped next to the running `omg`, so a PATH
+/// entry shadowing an older install cannot start a version-mismatched daemon
+/// (same strategy as `commands::daemon`). Returns `None` when no sibling
+/// binary exists.
+fn omgd_sibling_path() -> Option<PathBuf> {
+    std::env::current_exe()
+        .ok()
+        .and_then(|exe| exe.parent().map(|dir| dir.join("omgd")))
+        .filter(|path| path.is_file())
+}
+
 fn create_systemd_service() -> Result<()> {
     let home = std::env::var("HOME")?;
     let service_dir = format!("{home}/.config/systemd/user");
     std::fs::create_dir_all(&service_dir)?;
 
-    let service_content = r"[Unit]
+    // Pin ExecStart to the omgd shipped next to this omg; fall back to the
+    // historical %h/.local/bin location when it cannot be resolved.
+    let exec_start = omgd_sibling_path().map_or_else(
+        || "ExecStart=%h/.local/bin/omgd --foreground".to_owned(),
+        |path| format!("ExecStart={} --foreground", path.display()),
+    );
+
+    let service_content = format!(
+        r"[Unit]
 Description=OMG Package Manager Daemon
 After=default.target
 
 [Service]
 Type=simple
-ExecStart=%h/.local/bin/omgd --foreground
+{exec_start}
 Restart=on-failure
 RestartSec=5
 
 [Install]
 WantedBy=default.target
-";
+"
+    );
 
     std::fs::write(format!("{service_dir}/omgd.service"), service_content)?;
 

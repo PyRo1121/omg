@@ -84,13 +84,11 @@ pub fn parse_sources(pkg_dir: &Path) -> Result<Vec<SourceFile>> {
 /// Handles PKGBUILD rename syntax: `newname::https://url/oldname.tar.gz`
 /// Returns None for local files, git repos, or other non-downloadable sources.
 fn extract_http_source(source_url: &str) -> Option<SourceFile> {
-    // Handle PKGBUILD rename syntax: "newname::url"
-    let (custom_filename, url) = if let Some(idx) = source_url.find("::") {
-        let name = &source_url[..idx];
-        let url = &source_url[idx + 2..];
-        (Some(name.to_string()), url)
-    } else {
-        (None, source_url)
+    // Handle PKGBUILD rename syntax: "newname::url".
+    // https://man.archlinux.org/PKGBUILD.5#sources_and_checksums
+    let (custom_filename, url) = match source_url.rsplit_once("::") {
+        Some((name, url)) => (Some(name.to_string()), url),
+        None => (None, source_url),
     };
 
     // Skip non-HTTP sources
@@ -98,18 +96,15 @@ fn extract_http_source(source_url: &str) -> Option<SourceFile> {
         return None;
     }
 
-    // Use custom filename if provided, otherwise extract from URL
+    // Use custom filename if provided, otherwise derive it from the URL by
+    // stripping any query string / fragment. `split` always yields at least
+    // one element, so a trailing-slash URL simply produces an empty name
+    // (rejected later as unsafe) rather than a fabricated fallback.
     let filename = custom_filename.unwrap_or_else(|| {
-        url.rsplit('/')
-            .next()
-            .unwrap_or("unknown")
-            .split('?')
-            .next()
-            .unwrap_or("unknown")
-            .split('#')
-            .next()
-            .unwrap_or("unknown")
-            .to_string()
+        let base = url.split('?').next().unwrap_or_default();
+        let base = base.split('#').next().unwrap_or_default();
+        // rsplit on '/' always yields at least one element
+        base.rsplit('/').next().unwrap_or_default().to_string()
     });
 
     Some(SourceFile {

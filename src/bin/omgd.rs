@@ -208,6 +208,11 @@ async fn main() -> Result<()> {
 }
 
 /// RAII guard that removes the daemon socket file when dropped.
+///
+/// Rust API Guidelines C-MUST_USE: dropping a guard immediately is almost
+/// always an accident (it would delete the live listener's socket node).
+/// https://rust-lang.github.io/api-guidelines/necessities.html#c-must-use-must-use
+#[must_use = "the socket file is removed when this guard drops; discard the binding only at shutdown"]
 struct SocketCleanup {
     socket_path: PathBuf,
 }
@@ -228,6 +233,10 @@ impl Drop for SocketCleanup {
 /// Exclusive-lifetime handle on the daemon singleton claim.
 ///
 /// Dropping it releases the flock, allowing the next daemon start to proceed.
+/// Rust API Guidelines C-MUST_USE: an unbound (immediately dropped) claim
+/// would let a second daemon start concurrently.
+/// https://rust-lang.github.io/api-guidelines/necessities.html#c-must-use-must-use
+#[must_use = "dropping this claim releases the daemon singleton lock"]
 struct DaemonClaim {
     /// Held open (and locked) for the lifetime of the daemon.
     _lock_file: fs::File,

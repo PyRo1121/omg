@@ -36,7 +36,6 @@ use crate::cli::{AuditCommands, CliContext, LocalCommandRunner, style, ui};
 use crate::core::client::DaemonClient;
 use crate::core::license;
 use crate::core::security::{AuditLogger, AuditSeverity, SbomGenerator, SecurityPolicy};
-use dialoguer;
 
 impl LocalCommandRunner for AuditCommands {
     async fn execute(&self, ctx: &CliContext) -> Result<()> {
@@ -168,7 +167,13 @@ pub async fn generate_sbom(
 
     let generator = SbomGenerator::new().with_vulnerabilities(include_vulns);
 
-    let sbom = generator.generate_system_sbom().await?;
+    // The format string mirrors what `SbomGenerator` actually emits; keep the
+    // two in sync when bumping spec versions.
+    // Spec registry: https://cyclonedx.org/spec-version/
+    let sbom = generator
+        .generate_system_sbom()
+        .await
+        .context("Failed to generate system SBOM")?;
 
     let path = if let Some(output_path) = output {
         let path = std::path::PathBuf::from(&output_path);
@@ -234,21 +239,26 @@ pub fn view_audit_log(
         };
 
         if format == "csv" {
-            let mut wtr = csv::Writer::from_path(&path)?;
+            let mut wtr = csv::Writer::from_path(&path)
+                .with_context(|| format!("Failed to create CSV file {}", path.display()))?;
             wtr.write_record(["Timestamp", "Severity", "Event", "Description", "Resource"])?;
             for entry in &entries {
-                wtr.write_record(&[
-                    entry.timestamp.clone(),
-                    entry.severity.to_string(),
-                    format!("{:?}", entry.event_type),
-                    entry.description.clone(),
-                    entry.resource.clone(),
+                let severity = entry.severity.to_string();
+                let event = format!("{:?}", entry.event_type);
+                wtr.write_record([
+                    entry.timestamp.as_str(),
+                    severity.as_str(),
+                    event.as_str(),
+                    entry.description.as_str(),
+                    entry.resource.as_str(),
                 ])?;
             }
             wtr.flush()?;
         } else {
             let json = serde_json::to_string_pretty(&entries)?;
-            std::fs::write(&path, json)?;
+            std::fs::write(&path, json).with_context(|| {
+                format!("Failed to write audit log export to {}", path.display())
+            })?;
         }
         println!(
             "{} Export successful",
@@ -455,6 +465,9 @@ pub fn scan_secrets(path: Option<String>, _ctx: &CliContext) -> Result<()> {
 
     use crate::core::security::SecretScanner;
 
+    /// Number of findings printed before the "... and N more" summary.
+    const DISPLAY_LIMIT: usize = 20;
+
     let scan_path = path.unwrap_or_else(|| ".".to_string());
 
     println!(
@@ -465,9 +478,13 @@ pub fn scan_secrets(path: Option<String>, _ctx: &CliContext) -> Result<()> {
 
     let scanner = SecretScanner::new();
     let findings = if std::path::Path::new(&scan_path).is_file() {
-        scanner.scan_file(&scan_path)?
+        scanner
+            .scan_file(&scan_path)
+            .with_context(|| format!("Failed to scan file {scan_path}"))?
     } else {
-        scanner.scan_directory(&scan_path)?
+        scanner
+            .scan_directory(&scan_path)
+            .with_context(|| format!("Failed to scan directory {scan_path}"))?
     };
 
     if findings.is_empty() {
@@ -515,7 +532,7 @@ pub fn scan_secrets(path: Option<String>, _ctx: &CliContext) -> Result<()> {
 
     println!();
 
-    for finding in result.findings.iter().take(20) {
+    for finding in result.findings.iter().take(DISPLAY_LIMIT) {
         let sev_str = finding.severity.to_string();
         let severity_color = match finding.severity {
             crate::core::security::secrets::SecretSeverity::Critical => {
@@ -542,11 +559,11 @@ pub fn scan_secrets(path: Option<String>, _ctx: &CliContext) -> Result<()> {
         println!("      {}", style::dim(&finding.redacted));
     }
 
-    if result.total_findings > 20 {
+    if result.total_findings > DISPLAY_LIMIT {
         println!(
             "\n  {} ... and {} more",
             style::maybe_color("ℹ", |t| t.blue().to_string()),
-            result.total_findings - 20
+            result.total_findings - DISPLAY_LIMIT
         );
     }
 
@@ -596,7 +613,7 @@ pub async fn check_slsa(
     // implying the artifact came from a trusted builder.
     if result.verified && certificate_identity.is_none() {
         println!(
-            "  {} No --certificate-identity was specified: the signature is \\\nvalid but the SIGNER is unbounded (identity: {}). \\\nSupply --certificate-identity to enforce a trust policy.",
+            "  {} No --certificate-identity was specified: the signature is \nvalid but the SIGNER is unbounded (identity: {}). \nSupply --certificate-identity to enforce a trust policy.",
             style::warning("⚠"),
             result.builder_id.as_deref().unwrap_or("unknown")
         );
@@ -725,13 +742,15 @@ pub fn scan_licenses(
     // Get installed packages and their licenses
     let packages = installed_packages_with_licenses()?;
 
-    // Filter by license if specified
+    // Filter by license if specified, categorizing each package once.
+    // `from_license` tokenizes the expression, so it must not be recomputed
+    // separately for the summary, policy check, AND export.
     let filter_terms: Vec<String> = filter
         .map(|f| f.split(',').map(|s| s.trim().to_lowercase()).collect())
         .unwrap_or_default();
 
-    let filtered_packages: Vec<_> = packages
-        .iter()
+    let filtered_packages: Vec<(String, String, String, LicenseCategory)> = packages
+        .into_iter()
         .filter(|(_, license, _)| {
             if filter_terms.is_empty() {
                 true
@@ -746,29 +765,34 @@ pub fn scan_licenses(
                 })
             }
         })
+        .map(|(name, license, version)| {
+            let category = LicenseCategory::from_license(&license);
+            (name, license, version, category)
+        })
         .collect();
-
-    // Categorize licenses
-    let mut permissive = 0;
-    let mut copyleft = 0;
-    let mut strong_copyleft = 0;
-    let mut proprietary = 0;
-    let mut unknown = 0;
-
-    for (_, license, _) in &filtered_packages {
-        match LicenseCategory::from_license(license) {
-            LicenseCategory::Permissive => permissive += 1,
-            LicenseCategory::Copyleft => copyleft += 1,
-            LicenseCategory::StrongCopyleft => strong_copyleft += 1,
-            LicenseCategory::Proprietary => proprietary += 1,
-            LicenseCategory::Unknown => unknown += 1,
-        }
-    }
 
     // Print summary
     println!("  {}", style::header("License Summary"));
-    println!("    {} {}", style::success("Permissive:"), permissive);
-    println!("    {} {}", style::warning("Copyleft:"), copyleft);
+    println!(
+        "    {} {}",
+        style::success("Permissive:"),
+        filtered_packages
+            .iter()
+            .filter(|(_, _, _, c)| *c == LicenseCategory::Permissive)
+            .count()
+    );
+    println!(
+        "    {} {}",
+        style::warning("Copyleft:"),
+        filtered_packages
+            .iter()
+            .filter(|(_, _, _, c)| *c == LicenseCategory::Copyleft)
+            .count()
+    );
+    let strong_copyleft = filtered_packages
+        .iter()
+        .filter(|(_, _, _, c)| *c == LicenseCategory::StrongCopyleft)
+        .count();
     if strong_copyleft > 0 {
         println!(
             "    {} {}",
@@ -776,9 +800,17 @@ pub fn scan_licenses(
             strong_copyleft
         );
     }
+    let proprietary = filtered_packages
+        .iter()
+        .filter(|(_, _, _, c)| *c == LicenseCategory::Proprietary)
+        .count();
     if proprietary > 0 {
         println!("    {} {}", style::error("Proprietary:"), proprietary);
     }
+    let unknown = filtered_packages
+        .iter()
+        .filter(|(_, _, _, c)| *c == LicenseCategory::Unknown)
+        .count();
     if unknown > 0 {
         println!("    {} {}", style::dim("Unknown:"), unknown);
     }
@@ -789,7 +821,7 @@ pub fn scan_licenses(
         let policy = SecurityPolicy::load_default().context("Failed to load security policy")?;
         let mut violations = Vec::new();
 
-        for (name, license, _) in &filtered_packages {
+        for (name, license, _, _) in &filtered_packages {
             // Check against allowed licenses (if policy specifies them)
             if !policy.allowed_licenses.is_empty()
                 && !crate::core::security::policy::license_matches_allowlist(
@@ -842,12 +874,12 @@ pub fn scan_licenses(
             "json" => {
                 let data: Vec<_> = filtered_packages
                     .iter()
-                    .map(|(name, license, version)| {
+                    .map(|(name, license, version, category)| {
                         serde_json::json!({
                             "name": name,
                             "version": version,
                             "license": license,
-                            "category": format!("{:?}", LicenseCategory::from_license(license))
+                            "category": format!("{category:?}")
                         })
                     })
                     .collect();
@@ -857,9 +889,14 @@ pub fn scan_licenses(
             "csv" => {
                 let mut wtr = csv::Writer::from_path(&path)?;
                 wtr.write_record(["Package", "Version", "License", "Category"])?;
-                for (name, license, version) in &filtered_packages {
-                    let category_str = format!("{:?}", LicenseCategory::from_license(license));
-                    wtr.write_record([name.as_str(), version, license, &category_str])?;
+                for (name, license, version, category) in &filtered_packages {
+                    let category_str = format!("{category:?}");
+                    wtr.write_record([
+                        name.as_str(),
+                        version.as_str(),
+                        license.as_str(),
+                        &category_str,
+                    ])?;
                 }
                 wtr.flush()?;
             }
@@ -867,8 +904,8 @@ pub fn scan_licenses(
                 // Table format (default) - just write as text
                 use std::fmt::Write as _;
                 let mut content = String::from("Package\tVersion\tLicense\tCategory\n");
-                for (name, license, version) in &filtered_packages {
-                    let category_str = format!("{:?}", LicenseCategory::from_license(license));
+                for (name, license, version, category) in &filtered_packages {
+                    let category_str = format!("{category:?}");
                     let _ = writeln!(content, "{name}\t{version}\t{license}\t{category_str}");
                 }
                 std::fs::write(&path, &content)?;
@@ -884,8 +921,7 @@ pub fn scan_licenses(
     } else if format == "table" {
         // Show first 20 packages in table format
         println!("  {}", style::header("Packages"));
-        for (name, license, _) in filtered_packages.iter().take(20) {
-            let category = LicenseCategory::from_license(license);
+        for (name, license, _, category) in filtered_packages.iter().take(20) {
             println!(
                 "    {} {} ({})",
                 style::package(name),
@@ -935,6 +971,12 @@ fn package_has_available_update(package: &str) -> Result<bool> {
     }
 }
 
+/// Best-effort CVSS base score for a vulnerability; unparsable or missing
+/// scores count as 0.0 so they never cross a severity threshold by accident.
+fn vuln_score(score: Option<&str>) -> f64 {
+    score.and_then(|s| s.parse::<f64>().ok()).unwrap_or(0.0)
+}
+
 /// Auto-fix vulnerabilities by upgrading packages
 pub async fn fix_vulnerabilities(
     dry_run: bool,
@@ -978,7 +1020,9 @@ pub async fn fix_vulnerabilities(
             return Ok(());
         }
 
-        // Determine minimum severity threshold
+        // Determine minimum severity threshold. Bands follow the CVSS v3.1
+        // qualitative scale: medium >= 4.0, high >= 7.0, critical >= 9.0.
+        // https://www.first.org/data/specs/cvss-v3.1#CVSS-v3.1-Qualitative-Severity-Rating-Scale
         let min_sev = match min_severity.to_lowercase().as_str() {
             "critical" => 9.0,
             "high" => 7.0,
@@ -986,35 +1030,28 @@ pub async fn fix_vulnerabilities(
             _ => 4.0, // Default to medium or unknown
         };
 
-        // Find packages with fixable vulnerabilities
+        // Find packages with fixable vulnerabilities (single pass; each
+        // vulnerability's CVSS string is parsed exactly once).
         let mut to_upgrade: Vec<String> = Vec::new();
         let mut unfixable: Vec<(String, String)> = Vec::new();
 
         for (pkg, vulns) in &scan_result.vulnerabilities {
-            let has_severe = vulns.iter().any(|v| {
-                let score = v
-                    .score
-                    .as_ref()
-                    .and_then(|s| s.parse::<f64>().ok())
-                    .unwrap_or(0.0);
-                score >= min_sev
-            });
-
-            if has_severe {
-                if package_has_available_update(pkg)? {
-                    to_upgrade.push(pkg.clone());
-                } else {
-                    for vuln in vulns {
-                        let score = vuln
-                            .score
-                            .as_ref()
-                            .and_then(|s| s.parse::<f64>().ok())
-                            .unwrap_or(0.0);
-                        if score >= min_sev {
-                            unfixable.push((pkg.clone(), vuln.id.clone()));
-                        }
-                    }
-                }
+            let severe_vulns: Vec<&str> = vulns
+                .iter()
+                .filter(|v| vuln_score(v.score.as_deref()) >= min_sev)
+                .map(|v| v.id.as_str())
+                .collect();
+            if severe_vulns.is_empty() {
+                continue;
+            }
+            if package_has_available_update(pkg)? {
+                to_upgrade.push(pkg.clone());
+            } else {
+                unfixable.extend(
+                    severe_vulns
+                        .into_iter()
+                        .map(|id| (pkg.clone(), id.to_string())),
+                );
             }
         }
 
@@ -1125,7 +1162,8 @@ pub async fn export_compliance(
             let entries = read_audit_entries(&logger, 1000, None)?;
             let json = serde_json::to_string_pretty(&entries)?;
             let log_path = output_dir.join(format!("audit-log-{timestamp}.json"));
-            std::fs::write(&log_path, json)?;
+            std::fs::write(&log_path, json)
+                .with_context(|| format!("Failed to write {}", log_path.display()))?;
             println!(
                 "  {} Audit log: {}",
                 style::success("✓"),
@@ -1152,6 +1190,12 @@ pub async fn export_compliance(
                 );
             }
 
+            #[cfg(not(unix))]
+            println!(
+                "  {} Vulnerability scan skipped: daemon unavailable on this platform",
+                style::warning("⚠")
+            );
+
             // 3. Generate SBOM
             let generator = SbomGenerator::new().with_vulnerabilities(true);
             let sbom = generator
@@ -1175,7 +1219,8 @@ pub async fn export_compliance(
             std::fs::write(
                 &config_path,
                 serde_json::to_string_pretty(&config_snapshot)?,
-            )?;
+            )
+            .with_context(|| format!("Failed to write {}", config_path.display()))?;
             println!(
                 "  {} Configuration: {}",
                 style::success("✓"),
@@ -1269,6 +1314,12 @@ pub fn check_eol(_ctx: &CliContext) -> Result<()> {
     ];
 
     let now = jiff::Timestamp::now();
+    // Loop-invariant warning window: a runtime within 6 months of its EOL date
+    // counts as "Ending Soon".
+    let six_months = jiff::Span::new().months(6);
+    let warning_ts = now
+        .checked_add(six_months)
+        .context("Failed to compute EOL warning window")?;
     let runtimes = ["node", "python", "rust", "go", "ruby", "java", "bun"];
     let mut issues = 0;
 
@@ -1302,16 +1353,10 @@ pub fn check_eol(_ctx: &CliContext) -> Result<()> {
                     status = "EOL";
                     is_eol = true;
                     issues += 1;
-                } else {
-                    let six_months = jiff::Span::new().months(6);
-                    let warning_ts = now
-                        .checked_add(six_months)
-                        .context("Failed to compute EOL warning window")?;
-                    if warning_ts > eol_timestamp {
-                        status = "Ending Soon";
-                        is_warning = true;
-                        issues += 1;
-                    }
+                } else if warning_ts > eol_timestamp {
+                    status = "Ending Soon";
+                    is_warning = true;
+                    issues += 1;
                 }
                 break;
             }

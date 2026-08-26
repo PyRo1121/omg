@@ -94,6 +94,11 @@ fn default_status_format_version() -> u32 {
     TeamStatus::STATUS_FORMAT_VERSION
 }
 
+/// Best-effort display name for the local team member.
+fn local_member_name() -> String {
+    whoami::realname().unwrap_or_else(|_| "Unknown".to_string())
+}
+
 impl TeamStatus {
     /// Current team-status file format version.
     pub const STATUS_FORMAT_VERSION: u32 = 1;
@@ -219,8 +224,20 @@ impl TeamWorkspace {
         toml::from_str(&content).context("Failed to parse team config")
     }
 
-    /// Initialize a new team workspace
+    /// Initialize a new team workspace.
+    ///
+    /// Refuses to run in a directory that is already initialized: the existing
+    /// `team.toml` and member status are durable shared state, and silently
+    /// resetting them would destroy every teammate's record.
     pub fn init(&mut self, team_id: &str, name: &str) -> Result<()> {
+        if let Some(existing) = self.config.as_ref() {
+            anyhow::bail!(
+                "This directory is already initialized as team '{}' ({}). \
+                 Remove .omg/team.toml first if you really want to re-initialize.",
+                existing.name,
+                existing.team_id
+            );
+        }
         self.ensure_config_dir()?;
 
         let config = TeamConfig {
@@ -244,7 +261,7 @@ impl TeamWorkspace {
             lock_hash: String::new(),
             members: vec![TeamMember {
                 id: config.member_id.clone(),
-                name: whoami::realname().unwrap_or_else(|_| "Unknown".to_string()),
+                name: local_member_name(),
                 env_hash: String::new(),
                 last_sync: jiff::Timestamp::now().as_second(),
                 in_sync: true,
@@ -278,12 +295,12 @@ impl TeamWorkspace {
             "Not a team workspace. Run 'omg team init' first."
         );
         self.ensure_config_dir()?;
-        // For now, just set the remote URL and sync
-        if let Some(ref mut config) = self.config {
-            config.remote_url = Some(remote_url.to_string());
-            let content = toml::to_string_pretty(config)?;
-            crate::core::safe_ops::atomic_write_file_sync(self.config_path(), content)?;
-        }
+        // The ensure! above guarantees the config is loaded, so set the remote
+        // URL directly instead of re-branching on Option.
+        let config = self.config.as_mut().context("Not a team workspace")?;
+        config.remote_url = Some(remote_url.to_string());
+        let content = toml::to_string_pretty(config)?;
+        crate::core::safe_ops::atomic_write_file_sync(self.config_path(), content)?;
 
         Ok(())
     }
@@ -308,7 +325,7 @@ impl TeamWorkspace {
 
         let member = TeamMember {
             id: config.member_id.clone(),
-            name: whoami::realname().unwrap_or_else(|_| "Unknown".to_string()),
+            name: local_member_name(),
             env_hash: current_env.hash,
             last_sync: jiff::Timestamp::now().as_second(),
             in_sync,
@@ -322,7 +339,9 @@ impl TeamWorkspace {
         // Existing team state is durable data. Reject missing or malformed
         // status instead of replacing it with an empty member set. Hold a
         // cross-process flock across load-modify-save so two concurrent omg
-        // invocations cannot drop each other's member updates.
+        // invocations cannot drop each other's member updates. Uses the std
+        // advisory file-lock API (stable since Rust 1.89):
+        // https://doc.rust-lang.org/std/fs/struct.File.html#method.lock
         let lock_path = self.status_path().with_extension("lock");
         let lock = std::fs::OpenOptions::new()
             .create(true)
@@ -408,7 +427,7 @@ impl TeamWorkspace {
         // comparison that never saw the team's lock.
         if let Some(remote_url) = &config.remote_url {
             if remote_url.contains("gist.github.com") {
-                super::super::super::cli::env::sync(remote_url.clone()).await?;
+                crate::cli::env::sync(remote_url.clone()).await?;
             } else {
                 anyhow::bail!(
                     "Unsupported team remote URL '{remote_url}': pull currently supports only gist.github.com remotes"
@@ -435,11 +454,13 @@ impl TeamWorkspace {
         }
 
         let hooks_dir = self.root.join(".git/hooks");
-        std::fs::create_dir_all(&hooks_dir)?;
+        std::fs::create_dir_all(&hooks_dir)
+            .with_context(|| format!("Failed to create hooks dir {}", hooks_dir.display()))?;
 
-        // Post-merge hook (runs after git pull)
-        let post_merge = hooks_dir.join("post-merge");
-        let hook_content = r#"#!/bin/sh
+        // Never overwrite an existing hook: it may belong to another tool.
+        Self::write_hook_if_absent(
+            &hooks_dir.join("post-merge"),
+            r#"#!/bin/sh
 # OMG Team Sync Hook
 # Auto-check for environment drift after git pull
 
@@ -447,38 +468,38 @@ if [ -f "omg.lock" ]; then
     echo "🔄 OMG: Checking for environment drift..."
     omg env check 2>/dev/null || echo "⚠️  OMG: Environment drift detected! Run 'omg env check' for details."
 fi
-"#;
+"#,
+        )?;
 
-        // Only write if hook doesn't exist or is our hook
-        if !post_merge.exists() {
-            std::fs::write(&post_merge, hook_content)?;
-            #[cfg(unix)]
-            {
-                use std::os::unix::fs::PermissionsExt;
-                std::fs::set_permissions(&post_merge, std::fs::Permissions::from_mode(0o755))?;
-            }
-        }
-
-        // Post-checkout hook (runs after git checkout)
-        let post_checkout = hooks_dir.join("post-checkout");
-        let checkout_hook = r#"#!/bin/sh
+        Self::write_hook_if_absent(
+            &hooks_dir.join("post-checkout"),
+            r#"#!/bin/sh
 # OMG Team Sync Hook
 # Auto-check for environment drift after git checkout
 
 if [ -f "omg.lock" ]; then
     omg env check 2>/dev/null || true
 fi
-"#;
+"#,
+        )?;
 
-        if !post_checkout.exists() {
-            std::fs::write(&post_checkout, checkout_hook)?;
-            #[cfg(unix)]
-            {
-                use std::os::unix::fs::PermissionsExt;
-                std::fs::set_permissions(&post_checkout, std::fs::Permissions::from_mode(0o755))?;
-            }
+        Ok(())
+    }
+
+    /// Write a hook script and mark it executable, unless one already exists.
+    fn write_hook_if_absent(path: &Path, content: &str) -> Result<()> {
+        if path.exists() {
+            return Ok(());
         }
-
+        std::fs::write(path, content)
+            .with_context(|| format!("Failed to write git hook {}", path.display()))?;
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o755)).with_context(
+                || format!("Failed to mark git hook executable: {}", path.display()),
+            )?;
+        }
         Ok(())
     }
 
@@ -509,10 +530,19 @@ fi
             .output()
             .context("Failed to run git commit for omg.lock")?;
         if !commit.status.success() {
-            anyhow::bail!(
-                "git commit failed: {}",
-                String::from_utf8_lossy(&commit.stderr).trim()
+            // An unchanged lock is not an error: pushing the same environment
+            // twice must succeed. git-commit(1) exits non-zero with "nothing to
+            // commit" in that case:
+            // https://git-scm.com/docs/git-commit#_description
+            let output = format!(
+                "{}{}",
+                String::from_utf8_lossy(&commit.stdout),
+                String::from_utf8_lossy(&commit.stderr)
             );
+            if output.contains("nothing to commit") {
+                return Ok(());
+            }
+            anyhow::bail!("git commit failed: {}", output.trim());
         }
 
         Ok(())

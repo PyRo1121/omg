@@ -11,16 +11,13 @@ use std::sync::atomic::{AtomicU64, Ordering};
 
 /// Safe constructor for `NonZeroU32` with context
 pub fn nonzero_u32(value: u32, context: &str) -> Result<NonZeroU32> {
-    NonZeroU32::new(value)
-        .ok_or_else(|| anyhow::anyhow!("{context}: value must be > 0, got {value}"))
-        .with_context(|| format!("Failed to create NonZeroU32 for {context}"))
+    // `anyhow::Context` is also implemented for `Option`, mapping `None` to an error.
+    NonZeroU32::new(value).with_context(|| format!("{context}: value must be > 0, got {value}"))
 }
 
 /// Safe constructor for `NonZeroU64` with context
 pub fn nonzero_u64(value: u64, context: &str) -> Result<NonZeroU64> {
-    NonZeroU64::new(value)
-        .ok_or_else(|| anyhow::anyhow!("{context}: value must be > 0, got {value}"))
-        .with_context(|| format!("Failed to create NonZeroU64 for {context}"))
+    NonZeroU64::new(value).with_context(|| format!("{context}: value must be > 0, got {value}"))
 }
 
 /// Create a `NonZeroU32` with a default fallback value.
@@ -93,6 +90,12 @@ pub fn atomic_write_file_sync<P: AsRef<Path>, C: AsRef<[u8]>>(path: P, contents:
         .persist(&path)
         .map_err(|error| error.error)
         .with_context(|| format!("Failed to replace {}", path.display()))?;
+    // The rename above is only durable once the parent directory entry is
+    // synced; without this, a crash can resurrect the previous version of the
+    // file. https://lwn.net/Articles/457667/
+    std::fs::File::open(parent)
+        .and_then(|directory| directory.sync_all())
+        .with_context(|| format!("Failed to sync parent directory: {}", parent.display()))?;
     Ok(())
 }
 

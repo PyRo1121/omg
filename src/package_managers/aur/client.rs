@@ -909,7 +909,9 @@ impl AurClient {
         // This ensures the sudoloop has a valid timestamp to refresh,
         // and the user is prompted for their password upfront rather
         // than mid-build when it would be confusing.
-        if !crate::core::caps::can_write_pacman_db() && !crate::core::is_root() {
+        // (`require_unprivileged_builder` already rejected root, so only
+        // the pacman-db capability decides whether sudo is needed.)
+        if !crate::core::caps::can_write_pacman_db() {
             if !console::user_attended() {
                 let status = tokio::process::Command::new("sudo")
                     .args(["-n", "true"])
@@ -1015,6 +1017,16 @@ impl AurClient {
             return Err(AurError::PkgbuildNotFound(package.to_string()).into());
         }
 
+        // The user's PKGBUILD review MUST precede every network/filesystem
+        // side effect triggered by the PKGBUILD's contents (wave-12
+        // aud-aur-client blocker). That includes PGP key fetching (network
+        // access plus keyring writes), AUR dependency installation (a system
+        // mutation driven by unreviewed depends), and parse_sources ->
+        // download_sources, which writes attacker-named files into SRCDEST.
+        if self.settings.aur.review_pkgbuild {
+            Self::review_pkgbuild(&pkgbuild_path).await?;
+        }
+
         Self::fetch_missing_pgp_keys(&pkgbuild_path).await?;
 
         let env = self.makepkg_env(&pkg_dir)?;
@@ -1027,13 +1039,6 @@ impl AurClient {
             let dep_pkg = self.build_only(&dep).await?;
             Self::install_built_package(&dep_pkg, sudoloop.as_ref()).await?;
             crate::cli::modern_ui::print_success(&format!("Installed dependency: {dep}"));
-        }
-
-        // The user's PKGBUILD review MUST precede every network/filesystem
-        // side effect (wave-12 aud-aur-client blocker): parse_sources feeds
-        // download_sources, which writes attacker-named files into SRCDEST.
-        if self.settings.aur.review_pkgbuild {
-            Self::review_pkgbuild(&pkgbuild_path).await?;
         }
 
         // Best-effort pre-download: makepkg still fetches anything we miss.
@@ -1058,34 +1063,34 @@ impl AurClient {
 
         let cache_key = self.cache_key(&pkg_dir, &env.makeflags)?;
 
-        // Cache namespace is the PACKAGE BASE (one hash per checkout), while
-        // the artifact search targets the requested outputs. Reading under an
-        // output name never matched the base-named write, so split packages
-        // could never hit the build cache.
-        let cached = if requested_outputs.len() == 1 {
-            self.cached_artifacts(package, requested_outputs, &env.pkgdest, &cache_key)
-                .await?
-        } else {
-            None
-        };
+        let cached = self
+            .cached_artifacts(package, requested_outputs, &env.pkgdest, &cache_key)
+            .await?;
 
         // Cache-poisoning defense (audit SEC02-02): a hit from the
-        // user-writable cache must still BE this package. Verified hits are
-        // used directly; any identity mismatch rejects ALL cached artifacts
-        // for this base and falls through to a fresh build.
+        // user-writable cache must still BE what is about to be installed.
+        // Each archive is verified positionally against its requested OUTPUT,
+        // not against the package base: installing a split-package output
+        // alone never matched a base-name check, which kept that output's
+        // cache permanently cold and forced a rebuild on every install.
+        // Any identity mismatch rejects ALL cached artifacts for this base
+        // and falls through to a fresh build.
         let mut pkg_files: Vec<PathBuf> = match cached {
-            Some(archives) => {
-                let verified: Vec<PathBuf> = archives
-                    .into_iter()
-                    .filter(|archive| Self::cached_archive_matches(archive, package))
-                    .collect();
-                if verified.len() == requested_outputs.len() {
-                    crate::cli::modern_ui::print_info(&format!("Using cached build for {package}"));
-                    verified
-                } else {
-                    tracing::info!("Cache identity check failed for {package}; rebuilding");
-                    Vec::new()
-                }
+            Some(archives)
+                if archives.len() == requested_outputs.len()
+                    && archives
+                        .iter()
+                        .zip(requested_outputs)
+                        .all(|(archive, output)| Self::cached_archive_matches(archive, output)) =>
+            {
+                crate::cli::modern_ui::print_info(&format!("Using cached build for {package}"));
+                archives
+            }
+            Some(_) => {
+                // cached_artifacts only returns Some when every requested
+                // artifact was found, so a mismatch here means identity.
+                tracing::info!("Cache identity check failed for {package}; rebuilding");
+                Vec::new()
             }
             None => Vec::new(),
         };

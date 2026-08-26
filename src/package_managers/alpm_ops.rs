@@ -123,6 +123,8 @@ pub fn get_sync_pkg_info(name: &str) -> Result<Option<PackageInfo>> {
                 description: pkg.desc,
                 url: Some(pkg.url),
                 size: pkg.isize,
+                // Saturate instead of wrapping: u64 -> i64 `as` casts wrap on
+                // overflow (https://doc.rust-lang.org/reference/expressions/operator-expr.html#numeric-cast).
                 install_size: Some(i64::try_from(pkg.isize).unwrap_or(i64::MAX)),
                 download_size: Some(pkg.csize),
                 repo: pkg.repo,
@@ -146,7 +148,10 @@ pub fn get_pkg_info_from_db(alpm: &alpm::Alpm, name: &str) -> Result<Option<Pack
                 version: super::types::parse_version_or_zero(pkg.version()),
                 description: pkg.desc().unwrap_or("").to_string(),
                 url: pkg.url().map(std::string::ToString::to_string),
-                size: pkg.isize() as u64,
+                // libalpm's installed size is i64; a negative value (corrupt
+                // DB) must not wrap into a huge u64 via `as`.
+                // https://doc.rust-lang.org/reference/expressions/operator-expr.html#numeric-cast
+                size: u64::try_from(pkg.isize()).unwrap_or(0),
                 install_size: Some(pkg.isize()),
                 download_size: Some(pkg.size() as u64),
                 repo: db.name().to_string(),
@@ -222,36 +227,52 @@ pub fn clean_cache(keep_versions: usize) -> Result<(usize, u64)> {
             // Only credit bytes that were actually freed; failed removals are
             // reported so callers are not told space was reclaimed when it
             // was not.
-            let mut failures = 0usize;
-
-            let pkg_len = std::fs::metadata(&old).map(|metadata| metadata.len());
-            if std::fs::remove_file(&old).is_ok() {
-                removed += 1;
-                freed = freed.saturating_add(pkg_len.unwrap_or(0));
-            } else {
-                failures += 1;
-            }
-
-            let signature = std::path::PathBuf::from(format!("{}.sig", old.display()));
-            let sig_len = std::fs::metadata(&signature).map(|metadata| metadata.len());
-            if std::fs::remove_file(&signature).is_ok() {
-                removed += 1;
-                freed = freed.saturating_add(sig_len.unwrap_or(0));
-            } else if signature.exists() {
-                failures += 1;
-            }
-
-            if failures > 0 {
-                tracing::warn!(
-                    "Failed to remove {} cache file(s) under {}",
-                    failures,
-                    old.display()
-                );
-            }
+            // Only credit bytes that were actually freed; failures are
+            // logged with their cause so callers are not told space was
+            // reclaimed when it was not.
+            freed += remove_cache_file_and_signature(&old, &mut removed);
         }
     }
 
     Ok((removed, freed))
+}
+
+/// Remove one cache archive plus its `.sig` companion, returning the bytes
+/// actually freed. The detached signature is optional: its absence is normal
+/// for unsigned custom packages and is not an error.
+fn remove_cache_file_and_signature(archive: &std::path::Path, removed: &mut usize) -> u64 {
+    let mut freed = 0u64;
+
+    let archive_len = std::fs::metadata(archive)
+        .map(|metadata| metadata.len())
+        .ok();
+    match std::fs::remove_file(archive) {
+        Ok(()) => {
+            *removed += 1;
+            freed = freed.saturating_add(archive_len.unwrap_or(0));
+        }
+        Err(error) => tracing::warn!("Failed to remove cache file {}: {error}", archive.display()),
+    }
+
+    let signature = std::path::PathBuf::from(format!("{}.sig", archive.display()));
+    let sig_len = std::fs::metadata(&signature)
+        .map(|metadata| metadata.len())
+        .ok();
+    match std::fs::remove_file(&signature) {
+        Ok(()) => {
+            *removed += 1;
+            freed = freed.saturating_add(sig_len.unwrap_or(0));
+        }
+        Err(error) if signature.exists() => {
+            tracing::warn!(
+                "Failed to remove cache signature {}: {error}",
+                signature.display()
+            );
+        }
+        Err(_) => {}
+    }
+
+    freed
 }
 
 /// List orphaned packages - INSTANT
@@ -287,6 +308,7 @@ pub fn display_pkg_info(info: &PackageInfo) {
 }
 
 /// RAII Guard for ALPM transactions to ensure release
+#[must_use]
 struct AlpmTransaction<'a>(&'a mut alpm::Alpm);
 
 impl Drop for AlpmTransaction<'_> {
@@ -511,6 +533,8 @@ fn prepare_alpm_transaction<'a>(
                     tx_guard.0.trans_remove_pkg(pkg).map_err(|e| {
                         anyhow::anyhow!("Failed to add {pkg_name} to removal list: {e}")
                     })?;
+                } else {
+                    tracing::warn!("Package '{pkg_name}' is not installed; skipping removal");
                 }
             } else {
                 if pkg_name.contains(".pkg.tar.") || std::path::Path::new(&pkg_name).is_absolute() {
@@ -721,10 +745,10 @@ fn commit_alpm_transaction(alpm: &mut alpm::Alpm, main_pb: &indicatif::ProgressB
         main_pb.finish_and_clear();
         use owo_colors::OwoColorize;
         println!();
-        println!(
-            "  {} Nothing to do - system is up to date",
-            "✓".green().bold()
-        );
+        // Deliberately neutral wording: this also fires when every requested
+        // removal target was already absent, where "system is up to date"
+        // would be misleading.
+        println!("  {} Nothing to do", "✓".green().bold());
         println!();
         return Ok(());
     }
@@ -778,9 +802,14 @@ fn configure_mirrors(alpm: &mut alpm::Alpm) -> Result<()> {
 
     if let Ok(config) = crate::core::pacman_conf::PacmanConfig::parse(&conf_path) {
         for repo in &config.repos {
-            if let Ok(servers) = config.resolve_servers(repo, arch) {
-                for db in alpm.syncdbs_mut() {
-                    if db.name() == repo.name {
+            match config.resolve_servers(repo, arch) {
+                Ok(servers) => {
+                    // AlpmListMut is an IntoIterator, not an Iterator.
+                    let target_db = alpm
+                        .syncdbs_mut()
+                        .into_iter()
+                        .find(|db| db.name() == repo.name);
+                    if let Some(db) = target_db {
                         for server in servers {
                             if let Err(e) = db.add_server(server.clone()) {
                                 tracing::debug!(
@@ -789,9 +818,17 @@ fn configure_mirrors(alpm: &mut alpm::Alpm) -> Result<()> {
                                 );
                             }
                         }
-                        break;
+                    } else {
+                        tracing::debug!(
+                            "Repository '{}' from pacman.conf has no registered sync database",
+                            repo.name
+                        );
                     }
                 }
+                Err(error) => tracing::debug!(
+                    "Failed to resolve mirrors for repository '{}': {error}",
+                    repo.name
+                ),
             }
         }
         return Ok(());

@@ -54,7 +54,12 @@ fn load_sync_packages(sync_dir: &Path) -> Result<HashMap<String, SyncDbPackage>>
 
     let mut packages = HashMap::with_capacity(20000);
     for pkgs in parsed {
-        packages.extend(pkgs);
+        // First repo wins: official repos are collected before custom ones
+        // (see `collect_sync_db_paths`), so a custom repo cannot silently
+        // shadow an official package of the same name in update checks.
+        for (name, pkg) in pkgs {
+            packages.entry(name).or_insert(pkg);
+        }
     }
     Ok(packages)
 }
@@ -208,33 +213,28 @@ impl Default for LocalDbPackage {
 /// Parse a sync database file (core.db, extra.db, multilib.db)
 /// Returns a `HashMap` of package name -> `SyncDbPackage`
 pub fn parse_sync_db(path: &Path, repo_name: &str) -> Result<HashMap<String, SyncDbPackage>> {
-    let file = File::open(path).with_context(|| format!("Failed to open {}", path.display()))?;
+    let mut file =
+        File::open(path).with_context(|| format!("Failed to open {}", path.display()))?;
 
-    // Detect compression type from the first magic bytes, then hand the
+    // Detect compression type from the first magic bytes rather than the
+    // filename (mirrors pacman's own content sniffing), then hand the
     // already-opened file to the matching decoder (single open per DB).
     let reader: Box<dyn Read> = {
-        let path_str = path.to_string_lossy();
-        if path_str.ends_with(".db") || path_str.ends_with(".zst") {
-            let mut magic = [0u8; 4];
-            let mut prefix = file.take(4);
-            prefix.read_exact(&mut magic)?;
-            let mut file = prefix.into_inner();
-            // The magic probe advanced the stream; decoders must see byte 0.
-            file.rewind()?;
+        let mut magic = [0u8; 4];
+        file.read_exact(&mut magic)?;
+        // The magic probe advanced the stream; decoders must see byte 0.
+        file.rewind()?;
 
-            if magic[0..2] == [0x1f, 0x8b] {
-                Box::new(GzDecoder::new(file))
-            } else if magic[0..4] == [0x28, 0xb5, 0x2f, 0xfd] {
-                let mut decoder = ruzstd::decoding::StreamingDecoder::new(file)
-                    .map_err(|e| anyhow::anyhow!("zstd init: {e}"))?;
-                let mut decompressed = Vec::new();
-                std::io::copy(&mut decoder, &mut decompressed)?;
-                Box::new(std::io::Cursor::new(decompressed))
-            } else {
-                // Unknown magic: fall back to gzip, matching pacman defaults.
-                Box::new(GzDecoder::new(file))
-            }
+        if magic[0..2] == [0x1f, 0x8b] {
+            Box::new(GzDecoder::new(file))
+        } else if magic[0..4] == [0x28, 0xb5, 0x2f, 0xfd] {
+            let mut decoder = ruzstd::decoding::StreamingDecoder::new(file)
+                .map_err(|e| anyhow::anyhow!("zstd init: {e}"))?;
+            let mut decompressed = Vec::new();
+            std::io::copy(&mut decoder, &mut decompressed)?;
+            Box::new(std::io::Cursor::new(decompressed))
         } else {
+            // Unknown magic: fall back to gzip, matching pacman defaults.
             Box::new(GzDecoder::new(file))
         }
     };
@@ -686,174 +686,162 @@ fn is_cache_reusable(
     cache_mtime == Some(current_mtime) && has_packages && !is_cache_expired(last_accessed)
 }
 
-/// Ensure sync cache is loaded (fast if already loaded)
-fn ensure_sync_cache_loaded(sync_dir: &Path) -> Result<()> {
-    let current_mtime = get_newest_db_mtime(sync_dir)?;
+/// Shared access to the fields that both on-disk caches serialize, so a
+/// single generic loader serves sync and local databases without changing
+/// the persisted bitcode format.
+trait PackageCache: Serialize + for<'de> Deserialize<'de> {
+    type Package;
 
-    {
-        let mut cache = SYNC_DB_CACHE
-            .write()
-            .unwrap_or_else(std::sync::PoisonError::into_inner);
-        if is_cache_reusable(
-            cache.last_modified,
+    fn packages(&self) -> &HashMap<String, Self::Package>;
+    fn packages_mut(&mut self) -> &mut HashMap<String, Self::Package>;
+    fn last_modified(&self) -> Option<SystemTime>;
+    fn set_last_modified(&mut self, time: Option<SystemTime>);
+    fn last_accessed(&self) -> Option<SystemTime>;
+    fn set_last_accessed(&mut self, time: Option<SystemTime>);
+}
+
+impl PackageCache for DbCache {
+    type Package = SyncDbPackage;
+
+    fn packages(&self) -> &HashMap<String, Self::Package> {
+        &self.packages
+    }
+    fn packages_mut(&mut self) -> &mut HashMap<String, Self::Package> {
+        &mut self.packages
+    }
+    fn last_modified(&self) -> Option<SystemTime> {
+        self.last_modified
+    }
+    fn set_last_modified(&mut self, time: Option<SystemTime>) {
+        self.last_modified = time;
+    }
+    fn last_accessed(&self) -> Option<SystemTime> {
+        self.last_accessed
+    }
+    fn set_last_accessed(&mut self, time: Option<SystemTime>) {
+        self.last_accessed = time;
+    }
+}
+
+impl PackageCache for LocalDbCache {
+    type Package = LocalDbPackage;
+
+    fn packages(&self) -> &HashMap<String, Self::Package> {
+        &self.packages
+    }
+    fn packages_mut(&mut self) -> &mut HashMap<String, Self::Package> {
+        &mut self.packages
+    }
+    fn last_modified(&self) -> Option<SystemTime> {
+        self.last_modified
+    }
+    fn set_last_modified(&mut self, time: Option<SystemTime>) {
+        self.last_modified = time;
+    }
+    fn last_accessed(&self) -> Option<SystemTime> {
+        self.last_accessed
+    }
+    fn set_last_accessed(&mut self, time: Option<SystemTime>) {
+        self.last_accessed = time;
+    }
+}
+
+/// Locking helpers. A panic while holding the cache lock only leaves derived
+/// data in an unspecified state; recovering via `PoisonError::into_inner`
+/// keeps package operations working instead of poisoning every later call.
+/// https://doc.rust-lang.org/std/sync/struct.RwLock.html#poisoning
+fn read_lock<T>(lock: &RwLock<T>) -> std::sync::RwLockReadGuard<'_, T> {
+    lock.read()
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
+}
+
+fn write_lock<T>(lock: &RwLock<T>) -> std::sync::RwLockWriteGuard<'_, T> {
+    lock.write()
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
+}
+
+/// Ensure `cache_lock` holds a fresh cache for `current_mtime`, using (in
+/// order of cost): the in-memory cache, the on-disk cache named `disk_name`,
+/// or a fresh parse via `load_fresh`. Double-checked locking around every
+/// blocking step means concurrent readers never re-parse redundantly.
+///
+/// Expired in-memory entries are not cleared eagerly; they are never reusable
+/// (`is_cache_reusable`), so the first load replaces them wholesale.
+fn ensure_cache_loaded<C: PackageCache>(
+    cache_lock: &RwLock<C>,
+    disk_name: &str,
+    current_mtime: SystemTime,
+    load_fresh: impl FnOnce() -> Result<HashMap<String, C::Package>>,
+) -> Result<()> {
+    let reusable = |cache: &C| {
+        is_cache_reusable(
+            cache.last_modified(),
             current_mtime,
-            !cache.packages.is_empty(),
-            cache.last_accessed,
-        ) {
-            // Update last accessed time on cache hit
-            cache.last_accessed = Some(SystemTime::now());
-            return Ok(());
-        }
+            !cache.packages().is_empty(),
+            cache.last_accessed(),
+        )
+    };
+    let now = || Some(SystemTime::now());
 
-        // Clear cache if TTL expired (safety net for unbounded growth)
-        if is_cache_expired(cache.last_accessed) {
-            cache.packages.clear();
-            cache.last_modified = None;
-            cache.last_accessed = None;
+    // Fast path: in-memory hit (brief write lock only to refresh the TTL).
+    {
+        let mut cache = write_lock(cache_lock);
+        if reusable(&cache) {
+            cache.set_last_accessed(now());
+            return Ok(());
         }
     }
 
     // Try to load from disk cache first (FAST < 5ms)
-    if let Ok(disk_cache) = load_cache_from_disk::<DbCache>("sync_db")
-        && is_cache_reusable(
-            disk_cache.last_modified,
-            current_mtime,
-            !disk_cache.packages.is_empty(),
-            disk_cache.last_accessed,
-        )
+    if let Ok(disk_cache) = load_cache_from_disk::<C>(disk_name)
+        && reusable(&disk_cache)
     {
-        let mut cache = SYNC_DB_CACHE
-            .write()
-            .unwrap_or_else(std::sync::PoisonError::into_inner);
-
-        // Double-check: another thread may have loaded while we were waiting
-        if is_cache_reusable(
-            cache.last_modified,
-            current_mtime,
-            !cache.packages.is_empty(),
-            cache.last_accessed,
-        ) {
-            cache.last_accessed = Some(SystemTime::now());
+        let mut cache = write_lock(cache_lock);
+        // Double-check: another thread may have loaded while we were waiting.
+        if reusable(&cache) {
+            cache.set_last_accessed(now());
             return Ok(());
         }
-
         *cache = disk_cache;
-        cache.last_accessed = Some(SystemTime::now());
+        cache.set_last_accessed(now());
         return Ok(());
     }
 
     // Cache miss or stale - need to reload/parse
-    let packages = load_sync_packages(sync_dir)?;
+    let packages = load_fresh()?;
 
-    // Update memory cache with double-checked locking
-    let mut cache = SYNC_DB_CACHE
-        .write()
-        .unwrap_or_else(std::sync::PoisonError::into_inner);
-
-    // Re-check: another thread may have loaded while we were parsing
-    if is_cache_reusable(
-        cache.last_modified,
-        current_mtime,
-        !cache.packages.is_empty(),
-        cache.last_accessed,
-    ) {
-        cache.last_accessed = Some(SystemTime::now());
+    let mut cache = write_lock(cache_lock);
+    // Re-check: another thread may have loaded while we were parsing.
+    if reusable(&cache) {
+        cache.set_last_accessed(now());
         return Ok(());
     }
 
-    cache.packages = packages;
-    cache.last_modified = Some(current_mtime);
-    cache.last_accessed = Some(SystemTime::now());
+    *cache.packages_mut() = packages;
+    cache.set_last_modified(Some(current_mtime));
+    cache.set_last_accessed(now());
 
     // Persist for faster restarts; the in-memory cache is authoritative
     // for this process, so a disk write failure is logged, not fatal.
-    persist_cache_best_effort(&*cache, "sync_db");
+    persist_cache_best_effort(&*cache, disk_name);
 
     Ok(())
+}
+
+/// Ensure sync cache is loaded (fast if already loaded)
+fn ensure_sync_cache_loaded(sync_dir: &Path) -> Result<()> {
+    let current_mtime = get_newest_db_mtime(sync_dir)?;
+    ensure_cache_loaded(&SYNC_DB_CACHE, "sync_db", current_mtime, || {
+        load_sync_packages(sync_dir)
+    })
 }
 
 /// Ensure local cache is loaded (fast if already loaded)
 fn ensure_local_cache_loaded(local_dir: &Path) -> Result<()> {
     let current_mtime = get_local_db_mtime(local_dir)?;
-
-    {
-        let mut cache = LOCAL_DB_CACHE
-            .write()
-            .unwrap_or_else(std::sync::PoisonError::into_inner);
-        if is_cache_reusable(
-            cache.last_modified,
-            current_mtime,
-            !cache.packages.is_empty(),
-            cache.last_accessed,
-        ) {
-            // Update last accessed time on cache hit
-            cache.last_accessed = Some(SystemTime::now());
-            return Ok(());
-        }
-
-        // Clear cache if TTL expired (safety net for unbounded growth)
-        if is_cache_expired(cache.last_accessed) {
-            cache.packages.clear();
-            cache.last_modified = None;
-            cache.last_accessed = None;
-        }
-    }
-
-    // Try to load from disk cache first
-    if let Ok(disk_cache) = load_cache_from_disk::<LocalDbCache>("local_db")
-        && is_cache_reusable(
-            disk_cache.last_modified,
-            current_mtime,
-            !disk_cache.packages.is_empty(),
-            disk_cache.last_accessed,
-        )
-    {
-        let mut cache = LOCAL_DB_CACHE
-            .write()
-            .unwrap_or_else(std::sync::PoisonError::into_inner);
-
-        // Double-check: another thread may have loaded while we were waiting
-        if is_cache_reusable(
-            cache.last_modified,
-            current_mtime,
-            !cache.packages.is_empty(),
-            cache.last_accessed,
-        ) {
-            cache.last_accessed = Some(SystemTime::now());
-            return Ok(());
-        }
-
-        *cache = disk_cache;
-        cache.last_accessed = Some(SystemTime::now());
-        return Ok(());
-    }
-
-    // Cache miss - reload
-    let packages = parse_local_db(local_dir)?;
-
-    // Update memory cache
-    let mut cache = LOCAL_DB_CACHE
-        .write()
-        .unwrap_or_else(std::sync::PoisonError::into_inner);
-
-    // Double-check: another thread may have loaded while we were parsing
-    if is_cache_reusable(
-        cache.last_modified,
-        current_mtime,
-        !cache.packages.is_empty(),
-        cache.last_accessed,
-    ) {
-        cache.last_accessed = Some(SystemTime::now());
-        return Ok(());
-    }
-
-    cache.packages = packages;
-    cache.last_modified = Some(current_mtime);
-    cache.last_accessed = Some(SystemTime::now());
-
-    persist_cache_best_effort(&*cache, "local_db");
-
-    Ok(())
+    ensure_cache_loaded(&LOCAL_DB_CACHE, "local_db", current_mtime, || {
+        parse_local_db(local_dir)
+    })
 }
 
 /// Get newest modification time of sync DBs
@@ -902,18 +890,16 @@ fn get_local_db_mtime(local_dir: &Path) -> Result<SystemTime> {
 /// Force refresh of all caches (call after sync/install)
 pub fn invalidate_caches() -> Result<()> {
     {
-        let mut cache = SYNC_DB_CACHE
-            .write()
-            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        let mut cache = write_lock(&SYNC_DB_CACHE);
         cache.packages.clear();
         cache.last_modified = None;
+        cache.last_accessed = None;
     }
     {
-        let mut cache = LOCAL_DB_CACHE
-            .write()
-            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        let mut cache = write_lock(&LOCAL_DB_CACHE);
         cache.packages.clear();
         cache.last_modified = None;
+        cache.last_accessed = None;
     }
     super::super::alpm_direct::clear_alpm_cache();
 
@@ -937,9 +923,7 @@ pub fn get_detailed_packages() -> Result<Vec<SyncDbPackage>> {
     let sync_dir = paths::pacman_sync_dir();
     ensure_sync_cache_loaded(&sync_dir)?;
 
-    let cache = SYNC_DB_CACHE
-        .read()
-        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    let cache = read_lock(&SYNC_DB_CACHE);
     Ok(cache.packages.values().cloned().collect())
 }
 
@@ -963,12 +947,8 @@ pub fn check_updates_cached() -> Result<Vec<CachedUpdate>> {
     ensure_local_cache_loaded(&local_dir)?;
 
     // Hold both cache locks simultaneously - no cloning!
-    let sync_cache = SYNC_DB_CACHE
-        .read()
-        .unwrap_or_else(std::sync::PoisonError::into_inner);
-    let local_cache = LOCAL_DB_CACHE
-        .read()
-        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    let sync_cache = read_lock(&SYNC_DB_CACHE);
+    let local_cache = read_lock(&LOCAL_DB_CACHE);
 
     // Compare versions - Parallelized with Rayon for <1ms update check on 2000+ pkgs
     // Optimized: filter references first, then clone only needed data at the end
@@ -1002,9 +982,7 @@ pub fn get_local_package(name: &str) -> Result<Option<LocalDbPackage>> {
     let local_dir = paths::pacman_local_dir();
     ensure_local_cache_loaded(&local_dir)?;
 
-    let cache = LOCAL_DB_CACHE
-        .read()
-        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    let cache = read_lock(&LOCAL_DB_CACHE);
     Ok(cache.packages.get(name).cloned())
 }
 
@@ -1014,9 +992,7 @@ pub fn get_sync_package(name: &str) -> Result<Option<SyncDbPackage>> {
     let sync_dir = paths::pacman_sync_dir();
     ensure_sync_cache_loaded(&sync_dir)?;
 
-    let cache = SYNC_DB_CACHE
-        .read()
-        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    let cache = read_lock(&SYNC_DB_CACHE);
     Ok(cache.packages.get(name).cloned())
 }
 
@@ -1025,9 +1001,7 @@ pub fn list_local_cached() -> Result<Vec<LocalDbPackage>> {
     let local_dir = paths::pacman_local_dir();
     ensure_local_cache_loaded(&local_dir)?;
 
-    let cache = LOCAL_DB_CACHE
-        .read()
-        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    let cache = read_lock(&LOCAL_DB_CACHE);
     Ok(cache.packages.values().cloned().collect())
 }
 
@@ -1042,12 +1016,8 @@ pub fn get_potential_aur_packages() -> Result<Vec<String>> {
     ensure_sync_cache_loaded(&sync_dir)?;
     ensure_local_cache_loaded(&local_dir)?;
 
-    let sync_cache = SYNC_DB_CACHE
-        .read()
-        .unwrap_or_else(std::sync::PoisonError::into_inner);
-    let local_cache = LOCAL_DB_CACHE
-        .read()
-        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    let sync_cache = read_lock(&SYNC_DB_CACHE);
+    let local_cache = read_lock(&LOCAL_DB_CACHE);
 
     let mut potential = Vec::with_capacity(local_cache.packages.len() / 10);
     for name in local_cache.packages.keys() {
@@ -1069,9 +1039,7 @@ pub fn get_counts_fast() -> Result<(usize, usize, usize)> {
     let local_dir = paths::pacman_local_dir();
     ensure_local_cache_loaded(&local_dir)?;
 
-    let cache = LOCAL_DB_CACHE
-        .read()
-        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    let cache = read_lock(&LOCAL_DB_CACHE);
     let total = cache.packages.len();
     let mut explicit = 0;
     let mut orphans = 0;

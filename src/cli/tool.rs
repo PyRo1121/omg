@@ -10,6 +10,61 @@ use std::process::Command;
 
 use crate::cli::style;
 
+/// A resolved registry entry: `(manager, package, description)`.
+type RegistryEntry = (&'static str, &'static str, &'static str);
+
+/// Resolve a registered tool name to its `(manager, package, description)`.
+///
+/// Returns `Some(Err(_))` for a malformed source tag so callers can report the
+/// bad entry explicitly instead of failing on an opaque split error.
+fn find_registry_entry(tool: &str) -> Option<anyhow::Result<RegistryEntry>> {
+    TOOL_REGISTRY
+        .iter()
+        .find(|(name, _, _, _)| *name == tool)
+        .map(|(_, source, desc, _)| {
+            let (manager, pkg) = source.split_once(':').ok_or_else(|| {
+                anyhow::anyhow!("Invalid registry source '{source}' for tool '{tool}'")
+            })?;
+            Ok((manager, pkg, *desc))
+        })
+}
+
+/// Whether `name` is base-environment plumbing of a Python virtualenv rather
+/// than an installed tool's entry point (`python`, pip, activate variants).
+fn is_venv_base_tool(name: &std::ffi::OsStr) -> bool {
+    let Some(name) = name.to_str() else {
+        return false;
+    };
+    let name = name.strip_suffix(".exe").unwrap_or(name);
+    name == "pip"
+        || name == "pip3"
+        || name.starts_with("pip3.")
+        || name.starts_with("python")
+        || name.starts_with("pydoc")
+        || name.ends_with("activate")
+}
+
+/// Pick the best available CPython launcher.
+///
+/// PEP 394: upstream recommends `python3`, and minimal distributions may not
+/// provide an unversioned `python` at all, so probe `python3` first.
+/// https://peps.python.org/pep-0394/
+fn python_binary() -> &'static str {
+    for candidate in ["python3", "python"] {
+        let available = Command::new(candidate)
+            .arg("--version")
+            .stdin(std::process::Stdio::null())
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null())
+            .status()
+            .is_ok_and(|status| status.success());
+        if available {
+            return candidate;
+        }
+    }
+    "python3" // default; the venv step surfaces a clear error when missing
+}
+
 impl LocalCommandRunner for ToolCommands {
     async fn execute(&self, _ctx: &CliContext) -> Result<()> {
         match self {
@@ -262,10 +317,8 @@ pub async fn install(name: &str) -> Result<()> {
     fs::create_dir_all(&bin_dir)?;
 
     // 1. Check Registry
-    if let Some((_, source, desc, _)) = TOOL_REGISTRY.iter().find(|(k, _, _, _)| *k == name) {
-        let Some((manager, pkg)) = source.split_once(':') else {
-            anyhow::bail!("Invalid registry format for {name}");
-        };
+    if let Some(resolved) = find_registry_entry(name) {
+        let (manager, pkg, desc) = resolved?;
         println!(
             "{} Found in registry: {} ({})",
             style::success("✓"),
@@ -273,7 +326,7 @@ pub async fn install(name: &str) -> Result<()> {
             style::info(manager)
         );
         println!("  {} {}", style::dim("→"), desc);
-        return install_managed(manager, pkg, name, &tools_dir, &bin_dir).await;
+        return install_managed(manager, pkg, &tools_dir, &bin_dir).await;
     }
 
     // 2. Interactive Fallback
@@ -285,7 +338,7 @@ pub async fn install(name: &str) -> Result<()> {
              Example: omg install {name}  # for system installation"
         );
     }
-    let choices = vec![
+    let choices = [
         "Pacman (System)",
         "Cargo (Isolated)",
         "NPM (Isolated)",
@@ -295,26 +348,20 @@ pub async fn install(name: &str) -> Result<()> {
     let selection = Select::with_theme(&ColorfulTheme::default())
         .with_prompt(format!("Tool '{name}' not in registry. Source?"))
         .default(0)
-        .items(&choices)
+        .items(choices.as_slice())
         .interact()?;
 
     match selection {
         0 => crate::cli::packages::install(&[name.to_string()], false, false).await,
-        1 => install_managed("cargo", name, name, &tools_dir, &bin_dir).await,
-        2 => install_managed("npm", name, name, &tools_dir, &bin_dir).await,
-        3 => install_managed("pip", name, name, &tools_dir, &bin_dir).await,
-        4 => install_managed("go", name, name, &tools_dir, &bin_dir).await,
+        1 => install_managed("cargo", name, &tools_dir, &bin_dir).await,
+        2 => install_managed("npm", name, &tools_dir, &bin_dir).await,
+        3 => install_managed("pip", name, &tools_dir, &bin_dir).await,
+        4 => install_managed("go", name, &tools_dir, &bin_dir).await,
         _ => Ok(()),
     }
 }
 
-async fn install_managed(
-    manager: &str,
-    pkg: &str,
-    tool_name: &str,
-    tools_dir: &Path,
-    bin_dir: &Path,
-) -> Result<()> {
+async fn install_managed(manager: &str, pkg: &str, tools_dir: &Path, bin_dir: &Path) -> Result<()> {
     // Create isolation directory: ~/.local/share/omg/tools/<manager>/<pkg>
     let install_dir = tools_dir.join(manager).join(pkg);
     match fs::symlink_metadata(&install_dir) {
@@ -385,11 +432,11 @@ async fn install_managed(
             }
         }
         "pip" => {
-            // 1. Create venv
+            // 1. Create venv (PEP 394-aware launcher resolution, see python_binary)
             let install_path = install_dir
                 .to_str()
                 .context("Install directory path contains invalid UTF-8")?;
-            let status_venv = Command::new("python")
+            let status_venv = Command::new(python_binary())
                 .args(["-m", "venv", "--", install_path])
                 .status()?;
 
@@ -443,12 +490,18 @@ async fn install_managed(
     println!("  {} Installation successful", style::success("✓"));
 
     // LINKING PHASE
-    link_binaries(&install_dir, bin_dir, tool_name)?;
+    // PEP 405: a venv is identified by a pyvenv.cfg marker next to bin/.
+    // Base interpreter files (python, pip, activate) in a venv are environment
+    // plumbing, not the installed tool's entry points, so don't link them into
+    // the shared bin dir where they would shadow system Python/pip.
+    // https://peps.python.org/pep-0405/
+    let is_venv = install_dir.join("pyvenv.cfg").is_file();
+    link_binaries(&install_dir, bin_dir, is_venv)?;
 
     Ok(())
 }
 
-fn link_binaries(install_dir: &Path, bin_dir: &Path, _tool_name: &str) -> Result<()> {
+fn link_binaries(install_dir: &Path, bin_dir: &Path, skip_venv_base_tools: bool) -> Result<()> {
     println!("  {} Linking binaries...", style::dim("→"));
 
     // Find binaries in standard locations within the isolated install dir
@@ -483,6 +536,9 @@ fn link_binaries(install_dir: &Path, bin_dir: &Path, _tool_name: &str) -> Result
                 let Some(filename) = path.file_name() else {
                     continue;
                 };
+                if skip_venv_base_tools && is_venv_base_tool(filename) {
+                    continue;
+                }
                 let dest = bin_dir.join(filename);
 
                 // Remove existing link
@@ -560,7 +616,7 @@ pub fn remove(name: &str) -> Result<()> {
     // We need to find which manager installed it.
     // Check tools_dir/{manager}/{name}
 
-    let managers = vec!["cargo", "npm", "pip", "go"];
+    let managers = ["cargo", "npm", "pip", "go"];
     let mut found = false;
 
     for manager in managers {
@@ -639,29 +695,27 @@ pub async fn update(name: &str) -> Result<()> {
                 style::dim("→"),
                 style::package(&tool)
             );
-            if let Some((_, source, _, _)) = TOOL_REGISTRY.iter().find(|(k, _, _, _)| *k == tool) {
-                let Some((manager, pkg)) = source.split_once(':') else {
-                    println!(
-                        "  {}",
-                        style::error(&format!("Invalid registry format for {tool}"))
-                    );
+            match find_registry_entry(&tool) {
+                Some(Ok((manager, pkg, _))) => {
+                    if let Err(error) = install_managed(manager, pkg, &tools_dir, &bin_dir).await {
+                        println!(
+                            "  {}",
+                            style::error(&format!("Failed to update {tool}: {error}"))
+                        );
+                        failed.push(tool);
+                    }
+                }
+                Some(Err(error)) => {
+                    println!("  {}", style::error(&format!("{error}")));
                     failed.push(tool);
-                    continue;
-                };
-                if let Err(error) = install_managed(manager, pkg, &tool, &tools_dir, &bin_dir).await
-                {
+                }
+                None => {
                     println!(
                         "  {}",
-                        style::error(&format!("Failed to update {tool}: {error}"))
+                        style::error(&format!("{tool} is not in the tool registry"))
                     );
                     failed.push(tool);
                 }
-            } else {
-                println!(
-                    "  {}",
-                    style::error(&format!("{tool} is not in the tool registry"))
-                );
-                failed.push(tool);
             }
         }
         if failed.is_empty() {
@@ -682,14 +736,15 @@ pub async fn update(name: &str) -> Result<()> {
     );
 
     // Find the tool in registry or installed
-    if let Some((_, source, _, _)) = TOOL_REGISTRY.iter().find(|(k, _, _, _)| *k == name) {
-        let Some((manager, pkg)) = source.split_once(':') else {
-            anyhow::bail!("Invalid registry format for {name}");
-        };
-        install_managed(manager, pkg, name, &tools_dir, &bin_dir).await?;
-        println!("\n{}", style::success("Update complete!"));
-    } else {
-        anyhow::bail!("Tool '{name}' not found in registry. Cannot determine update source.");
+    match find_registry_entry(name) {
+        Some(resolved) => {
+            let (manager, pkg, _) = resolved?;
+            install_managed(manager, pkg, &tools_dir, &bin_dir).await?;
+            println!("\n{}", style::success("Update complete!"));
+        }
+        None => {
+            anyhow::bail!("Tool '{name}' not found in registry. Cannot determine update source.");
+        }
     }
 
     Ok(())

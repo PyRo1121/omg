@@ -70,7 +70,18 @@ pub async fn install(packages: &[String], yes: bool, replacement_hops: u32) -> R
         resolution_start.elapsed().as_millis()
     );
 
-    let operation_result = if missing_packages.is_empty() {
+    // Officially-resolvable packages must be installed even when other
+    // requested names need the AUR fallback. Previously a request with
+    // exactly one unresolved name skipped `pm.install` entirely, silently
+    // dropping its official siblings from the transaction while still
+    // reporting success for them.
+    let official: Vec<String> = packages
+        .iter()
+        .filter(|package| !missing_packages.contains(*package))
+        .cloned()
+        .collect();
+
+    let operation_result = if official.len() == packages.len() {
         match pm.install(packages).await {
             Ok(()) => Ok(()),
             Err(error) => {
@@ -83,25 +94,10 @@ pub async fn install(packages: &[String], yes: bool, replacement_hops: u32) -> R
                 }
             }
         }
-    } else if missing_packages.len() == 1 {
-        handle_missing_package(
-            missing_packages[0].clone(),
-            anyhow::anyhow!("Package not found in official repos"),
-            yes,
-            replacement_hops,
-        )
-        .await
     } else {
         async {
-            if missing_packages.len() < packages.len() {
-                let official: Vec<String> = packages
-                    .iter()
-                    .filter(|package| !missing_packages.contains(package))
-                    .cloned()
-                    .collect();
-                if !official.is_empty() {
-                    pm.install(&official).await?;
-                }
+            if !official.is_empty() {
+                pm.install(&official).await?;
             }
 
             for missing_pkg in &missing_packages {

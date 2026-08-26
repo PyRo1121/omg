@@ -152,7 +152,7 @@ mod why_contracts {
             .stdout(std::process::Stdio::null())
             .stderr(std::process::Stdio::null())
             .status();
-        if !probe.map_or(false, |s| s.success()) {
+        if !probe.is_ok_and(|s| s.success()) {
             eprintln!("skipping: no live pacman database");
             return;
         }

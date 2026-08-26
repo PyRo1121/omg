@@ -96,11 +96,14 @@ fn execute_fast_system_update(suffix: &str) -> Result<()> {
 
     // Record regardless of outcome (failures are part of history) with the
     // TRUE transaction result — a failed upgrade must not be recorded as a
-    // success. Never mask the transaction result with a recording error.
+    // success. anyhow::Error is not Clone, so the history entry carries only
+    // a failure marker; the real pacman error is reported verbatim by the
+    // `finish(result)` call below and by `omg update`'s non-elevated arm.
+    // https://docs.rs/anyhow/latest/anyhow/struct.Error.html (no Clone impl)
     let record_result = if result.is_ok() {
         Ok(())
     } else {
-        Err(anyhow::anyhow!("upgrade failed"))
+        Err(anyhow::anyhow!("system upgrade transaction failed"))
     };
     if let Err(error) = HistoryManager::new().and_then(|history| {
         history.finish_operation(TransactionType::Update, changes, record_result)
@@ -295,6 +298,16 @@ fn record_fast_transaction(
     HistoryManager::new()?.finish_operation(kind, changes, result)
 }
 
+/// Parse a `--limit` value accepted by the fast search path.
+/// Returns `None` for non-numeric or zero values so the invocation defers to
+/// clap, whose own validation owns the user-facing error.
+fn parse_fast_limit(value: &str) -> Option<usize> {
+    match value.parse::<usize>() {
+        Ok(limit @ 1..) => Some(limit),
+        _ => None,
+    }
+}
+
 fn has_help_flag(args: &[String]) -> bool {
     args.iter().any(|a| matches!(a.as_str(), "--help" | "-h"))
 }
@@ -365,22 +378,15 @@ fn try_fast_search(args: &[String]) -> bool {
                 if i >= args.len() {
                     return false;
                 }
-                let Ok(parsed) = args[i].parse::<usize>() else {
+                let Some(parsed) = parse_fast_limit(&args[i]) else {
                     return false;
                 };
-                if parsed == 0 {
-                    return false;
-                }
                 limit = parsed;
             }
             s if s.starts_with("--limit=") => {
-                let value = &s[8..];
-                let Ok(parsed) = value.parse::<usize>() else {
+                let Some(parsed) = parse_fast_limit(&s["--limit=".len()..]) else {
                     return false;
                 };
-                if parsed == 0 {
-                    return false;
-                }
                 limit = parsed;
             }
             // Any other flag means this search needs the full async path
@@ -553,14 +559,20 @@ fn try_fast_hooks(args: &[String]) -> bool {
                 }
             }
             "hook-env" => {
-                if args.len() >= 3 {
-                    let shell = args[1..]
-                        .iter()
-                        .find(|a| !a.starts_with('-') && *a != "hook-env")
-                        .map_or("", String::as_str);
-                    if hooks::hook_env(shell).is_ok() {
-                        return true;
-                    }
+                // args[1] is the "hook-env" token itself, so scanning from
+                // args[2] finds the same shell argument the old scan did —
+                // without ever invoking hook_env("") (which always fails and
+                // should simply defer to the full CLI path). get(2..) keeps
+                // bare `omg hook-env` invocations panic-free.
+                if let Some(shell) = args
+                    .get(2..)
+                    .into_iter()
+                    .flatten()
+                    .map(String::as_str)
+                    .find(|shell| !shell.starts_with('-'))
+                    && hooks::hook_env(shell).is_ok()
+                {
+                    return true;
                 }
             }
             _ => {}
@@ -592,10 +604,10 @@ fn main() {
     // ELEVATED_MARKER in core::privilege). The marker is honored ONLY for a
     // root process: anyone else invoking the reserved token keeps their
     // arguments untouched and gets clap's unknown-command error.
-    let marker_present =
-        args.get(1).map(String::as_str) == Some(omg_lib::core::privilege::ELEVATED_MARKER);
-    let reexec_elevated = marker_present && omg_lib::core::privilege::is_root();
-    if marker_present && reexec_elevated {
+    let reexec_elevated = args.get(1).map(String::as_str)
+        == Some(omg_lib::core::privilege::ELEVATED_MARKER)
+        && omg_lib::core::privilege::is_root();
+    if reexec_elevated {
         args.remove(1);
     }
 

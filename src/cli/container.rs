@@ -146,14 +146,16 @@ pub fn run(
         anyhow::bail!("Invalid container name");
     }
 
+    // Parse user inputs before emitting any UI so malformed env/volume
+    // entries fail fast without a dangling loading message.
+    let env_pairs = parse_env_vars(env)?;
+    let volume_pairs = parse_volumes(volumes)?;
+
     let manager = ContainerManager::new()?;
 
     execute_cmd(Components::loading(format!(
         "Running in {image} container..."
     )));
-
-    let env_pairs = parse_env_vars(env)?;
-    let volume_pairs = parse_volumes(volumes)?;
 
     let config = ContainerConfig {
         image: image.to_string(),
@@ -166,7 +168,13 @@ pub fn run(
     };
 
     let cmd_refs: Vec<&str> = command.iter().map(String::as_str).collect();
-    let exit_code = manager.run(&config, &cmd_refs)?;
+    // Detached runs must actually pass --detach; previously the flag only
+    // disabled --rm/-it and the container still blocked the terminal.
+    let exit_code = if detach {
+        manager.run_detached(&config, &cmd_refs)?
+    } else {
+        manager.run(&config, &cmd_refs)?
+    };
 
     if exit_code != 0 {
         std::process::exit(exit_code);

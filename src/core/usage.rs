@@ -337,12 +337,22 @@ impl UsageStats {
 
     /// Record runtime usage (for Polyglot achievement)
     pub fn record_runtime(&mut self, runtime: &str) {
-        let runtime_lower = runtime.to_lowercase();
-        if !self.runtimes_used.contains(&runtime_lower) {
-            self.runtimes_used.push(runtime_lower);
-            self.check_achievements();
+        if self.record_runtime_on(runtime) {
             self.save_best_effort();
         }
+    }
+
+    /// Register a newly used runtime without persisting; callers batch this
+    /// with other mutations under one lock and a single save.
+    /// Returns whether the runtime was new (and thus state mutated).
+    fn record_runtime_on(&mut self, runtime: &str) -> bool {
+        let runtime_lower = runtime.to_lowercase();
+        if self.runtimes_used.contains(&runtime_lower) {
+            return false;
+        }
+        self.runtimes_used.push(runtime_lower);
+        self.check_achievements();
+        true
     }
 
     /// Get time saved as human-readable string
@@ -581,7 +591,9 @@ pub fn track_runtime_switch(runtime: &str) {
             .entry(runtime.to_string())
             .or_insert(0) += 1;
 
-        stats.record_runtime(runtime);
+        // Batched with the specialized-command record below into a single
+        // locked save instead of writing usage.json once per mutation.
+        let _ = stats.record_runtime_on(runtime);
 
         stats.record_specialized_command(
             "runtime_switch",
@@ -636,16 +648,20 @@ fn licensed_for_sync() -> Option<crate::core::license::StoredLicense> {
     crate::core::license::load_license().filter(super::license::StoredLicense::is_token_valid)
 }
 
+/// Resolve a background-sync candidate: gated on test mode, a valid license,
+/// and loadable persisted state.
+fn sync_candidate() -> Option<(UsageStats, crate::core::license::StoredLicense)> {
+    if crate::core::paths::test_mode() {
+        return None;
+    }
+    let license = licensed_for_sync()?;
+    let stats = load_for_tracking()?;
+    Some((stats, license))
+}
+
 /// Sync usage in background if needed
 pub fn maybe_sync_background() {
-    // Only sync if we have a valid license and persisted usage state.
-    if crate::core::paths::test_mode() {
-        return;
-    }
-    let Some(license) = licensed_for_sync() else {
-        return;
-    };
-    let Some(mut stats) = load_for_tracking() else {
+    let Some((mut stats, license)) = sync_candidate() else {
         return;
     };
     if stats.needs_sync() || stats.needs_immediate_sync() {
@@ -659,13 +675,7 @@ pub fn maybe_sync_background() {
 
 /// Sync usage now (awaitable, for end of CLI commands)
 pub async fn sync_usage_now() {
-    if crate::core::paths::test_mode() {
-        return;
-    }
-    let Some(license) = licensed_for_sync() else {
-        return;
-    };
-    let Some(mut stats) = load_for_tracking() else {
+    let Some((mut stats, license)) = sync_candidate() else {
         return;
     };
     if let Err(e) = stats.sync(&license.key).await {

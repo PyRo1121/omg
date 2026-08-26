@@ -31,21 +31,10 @@ use serde::{Deserialize, Serialize};
 use crate::core::telemetry_client::{CommandEvent, PerformanceEvent, SessionEvent, TelemetryEvent};
 
 const TELEMETRY_API_URL: &str = "https://api.pyro1121.com/api/install-ping";
-/// Batch flush interval in seconds
-/// Maximum events to queue before forcing flush (increased from 100 for efficiency)
 /// Maximum queue size before dropping old events
 const MAX_QUEUE_SIZE: usize = 5000;
 /// Persist queue to disk every N events
 const PERSIST_EVERY_N_EVENTS: u32 = 10;
-
-/// Persist telemetry state on a best-effort basis. Telemetry must never fail a
-/// user command, so persistence errors are logged at debug level only and the
-/// in-memory state (authoritative for the current process) is left unchanged.
-pub(crate) fn persist_best_effort(result: Result<()>) {
-    if let Err(error) = result {
-        tracing::debug!("Failed to persist telemetry state (non-fatal): {error}");
-    }
-}
 /// Persist queue to disk every N seconds
 const PERSIST_INTERVAL_SECS: i64 = 30;
 /// Current on-disk telemetry queue format.
@@ -114,23 +103,52 @@ pub fn is_first_run() -> bool {
 }
 
 /// Generate or load install ID
-fn generate_or_load_id() -> Result<String> {
+///
+/// A corrupt or unreadable marker falls back to a fresh ID rather than
+/// failing: install telemetry must never break a user command, and the next
+/// successful `create_marker` repairs the file.
+fn generate_or_load_id() -> String {
     let marker_path = super::paths::installed_marker_path();
 
     if marker_path.exists() {
-        // Load existing ID
-        let content = std::fs::read_to_string(&marker_path)?;
-        let marker: InstallMarker = serde_json::from_str(&content)?;
-        Ok(marker.install_id)
-    } else {
-        // Generate new ID
-        Ok(uuid::Uuid::new_v4().to_string())
+        match std::fs::read_to_string(&marker_path)
+            .map_err(anyhow::Error::from)
+            .and_then(|content| Ok(serde_json::from_str::<InstallMarker>(&content)?.install_id))
+        {
+            Ok(install_id) => return install_id,
+            Err(error) => tracing::debug!(
+                "Install marker unreadable ({}), regenerating install ID: {error}",
+                marker_path.display()
+            ),
+        }
     }
+    uuid::Uuid::new_v4().to_string()
 }
 
 /// Get platform string (e.g., "linux-x86_64")
 fn get_platform() -> String {
     format!("{}-{}", std::env::consts::OS, std::env::consts::ARCH)
+}
+
+/// Current UTC timestamp formatted as millisecond-precision ISO 8601.
+///
+/// Shared by session state and event payloads so every emitted timestamp uses
+/// one canonical format.
+/// https://docs.rs/jiff/latest/jiff/fmt/strtime/index.html#supported-directives
+/// (`%.3fZ` always emits exactly three fractional digits).
+fn now_iso8601_ms() -> String {
+    jiff::Timestamp::now()
+        .strftime("%Y-%m-%dT%H:%M:%S%.3fZ")
+        .to_string()
+}
+
+/// Persist telemetry state on a best-effort basis. Telemetry must never fail a
+/// user command, so persistence errors are logged at debug level only and the
+/// in-memory state (authoritative for the current process) is left unchanged.
+pub(crate) fn persist_best_effort(result: Result<()>) {
+    if let Err(error) = result {
+        tracing::debug!("Failed to persist telemetry state (non-fatal): {error}");
+    }
 }
 
 /// Get the compiled package manager backend identifier (`arch`, `debian`,
@@ -178,7 +196,7 @@ fn create_marker(install_id: &str) -> Result<()> {
 /// Ping install telemetry endpoint
 pub async fn ping_install() -> Result<()> {
     // Generate or load install ID
-    let install_id = generate_or_load_id()?;
+    let install_id = generate_or_load_id();
 
     // Create payload
     let payload = InstallPayload {
@@ -245,7 +263,6 @@ struct PersistedEventQueue {
 #[derive(Debug)]
 struct EventQueue {
     events: VecDeque<TelemetryEvent>,
-    last_flush: i64,
     events_since_persist: AtomicU32,
     last_persist: AtomicI64,
     persistence_enabled: bool,
@@ -255,7 +272,6 @@ impl Default for EventQueue {
     fn default() -> Self {
         Self {
             events: VecDeque::new(),
-            last_flush: jiff::Timestamp::now().as_second(),
             events_since_persist: AtomicU32::new(0),
             last_persist: AtomicI64::new(jiff::Timestamp::now().as_second()),
             persistence_enabled: true,
@@ -268,7 +284,7 @@ impl EventQueue {
         // Enforce bounded queue: drop oldest 25% when exceeding max size
         if self.events.len() >= MAX_QUEUE_SIZE {
             let drop_count = MAX_QUEUE_SIZE / 4;
-            self.events.drain(0..drop_count);
+            self.events.drain(..drop_count);
             tracing::warn!(
                 "Telemetry queue exceeded {} events, dropped {} oldest events",
                 MAX_QUEUE_SIZE,
@@ -293,7 +309,6 @@ impl EventQueue {
     }
 
     fn confirm_sent(&mut self, count: usize) {
-        self.last_flush = jiff::Timestamp::now().as_second();
         self.events.drain(..count.min(self.events.len()));
     }
 
@@ -342,7 +357,6 @@ impl EventQueue {
         let now = jiff::Timestamp::now().as_second();
         Ok(Self {
             events: persisted.events.into(),
-            last_flush: now,
             events_since_persist: AtomicU32::new(0),
             last_persist: AtomicI64::new(now),
             persistence_enabled: true,
@@ -409,12 +423,11 @@ impl Default for TelemetrySession {
 
 impl TelemetrySession {
     pub fn new() -> Self {
-        let now = jiff::Timestamp::now().as_second();
+        let timestamp = jiff::Timestamp::now();
+        let now = timestamp.as_second();
         Self {
             session_id: uuid::Uuid::new_v4().to_string(),
-            started_at: jiff::Timestamp::now()
-                .strftime("%Y-%m-%dT%H:%M:%S%.3fZ")
-                .to_string(),
+            started_at: timestamp.strftime("%Y-%m-%dT%H:%M:%S%.3fZ").to_string(),
             commands_run: AtomicU32::new(0),
             last_activity: AtomicI64::new(now),
             persist_counter: AtomicU32::new(0),
@@ -528,6 +541,11 @@ impl TelemetrySession {
     }
 
     /// Get session duration in seconds
+    ///
+    /// `%.f` parses the optional fractional seconds emitted by `%.3f`, so the
+    /// persisted `started_at` round-trips even though write and parse formats
+    /// differ.
+    /// https://docs.rs/jiff/latest/jiff/fmt/strtime/index.html#supported-directives
     pub fn duration_secs(&self) -> u64 {
         if let Ok(started) = jiff::Timestamp::strptime("%Y-%m-%dT%H:%M:%S%.fZ", &self.started_at) {
             let now = jiff::Timestamp::now().as_second();
@@ -596,6 +614,8 @@ fn enqueue(event: TelemetryEvent) {
         if queue.needs_persist() {
             persist_best_effort(queue.save());
         }
+    } else {
+        tracing::debug!("Telemetry queue lock poisoned; dropped one event (non-fatal)");
     }
 }
 
@@ -608,6 +628,8 @@ fn record_session_activity() {
         if session.needs_persist() {
             persist_best_effort(session.save());
         }
+    } else {
+        tracing::debug!("Telemetry session lock poisoned; activity not recorded (non-fatal)");
     }
 }
 
@@ -654,11 +676,7 @@ pub fn track_session_start() {
     let event = TelemetryEvent::Session(SessionEvent {
         session_id: get_session_id(),
         event_type: "start".to_string(),
-        start_time: Some(
-            jiff::Timestamp::now()
-                .strftime("%Y-%m-%dT%H:%M:%S%.3fZ")
-                .to_string(),
-        ),
+        start_time: Some(now_iso8601_ms()),
         end_time: None,
         commands_run: None,
         duration_secs: None,
@@ -715,33 +733,30 @@ pub async fn end_session_and_flush() {
         return;
     }
 
-    // Record session end event
-    let (session_id, commands_run, duration_secs) = {
-        if let Ok(session) = get_session().lock() {
-            (
-                session.session_id.clone(),
-                session.commands_run.load(Ordering::Relaxed),
-                session.duration_secs(),
-            )
-        } else {
-            return;
-        }
-    };
-
-    let event = TelemetryEvent::Session(SessionEvent {
-        session_id,
-        event_type: "end".to_string(),
-        start_time: None,
-        end_time: Some(
-            jiff::Timestamp::now()
-                .strftime("%Y-%m-%dT%H:%M:%S%.3fZ")
-                .to_string(),
-        ),
-        commands_run: Some(commands_run),
-        duration_secs: Some(duration_secs),
+    // Record session end event. A poisoned session lock must not skip the
+    // final flush below — queued events are still delivered on CLI exit.
+    let session_summary = get_session().lock().ok().map(|session| {
+        (
+            session.session_id.clone(),
+            session.commands_run.load(Ordering::Relaxed),
+            session.duration_secs(),
+        )
     });
 
-    enqueue(event);
+    if let Some((session_id, commands_run, duration_secs)) = session_summary {
+        let event = TelemetryEvent::Session(SessionEvent {
+            session_id,
+            event_type: "end".to_string(),
+            start_time: None,
+            end_time: Some(now_iso8601_ms()),
+            commands_run: Some(commands_run),
+            duration_secs: Some(duration_secs),
+        });
+
+        enqueue(event);
+    } else {
+        tracing::debug!("Telemetry session lock poisoned; skipping session-end event");
+    }
 
     // Track startup performance if available
     if let Some(startup_ms) = get_startup_duration_ms() {
@@ -753,14 +768,18 @@ pub async fn end_session_and_flush() {
 }
 
 /// Convenience timer for measuring operation duration
+///
+/// Dropping a timer without calling [`Timer::finish`] silently discards the
+/// measurement, so constructing one is marked `#[must_use]`.
+#[must_use]
 pub struct Timer {
     start: Instant,
     operation: String,
 }
 
 impl Timer {
-    /// Start a new timer for an operation
-    #[must_use]
+    /// Start a new timer for an operation (constructor for the `#[must_use]`
+    /// [`Timer`]; the struct-level attribute covers dropped timers)
     pub fn new(operation: &str) -> Self {
         Self {
             start: Instant::now(),
@@ -807,11 +826,10 @@ mod tests {
 
     #[test]
     fn event_queue_flushes_when_full_and_confirms_sent() {
-        // Create a queue with current time for last_flush
+        // Create a queue with current time for last_persist
         let now = jiff::Timestamp::now().as_second();
         let mut queue = EventQueue {
             events: VecDeque::new(),
-            last_flush: now,
             events_since_persist: AtomicU32::new(0),
             last_persist: AtomicI64::new(now),
             persistence_enabled: true,

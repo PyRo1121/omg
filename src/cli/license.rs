@@ -6,7 +6,8 @@ use std::io::{self, Write};
 
 use crate::cli::style;
 use crate::core::license::{
-    self, ENTERPRISE_FEATURES, FREE_FEATURES, Feature, PRO_FEATURES, TEAM_FEATURES, Tier,
+    self, ENTERPRISE_FEATURES, FREE_FEATURES, Feature, PRO_FEATURES, StoredLicense, TEAM_FEATURES,
+    Tier,
 };
 
 /// Prompt for user input
@@ -103,102 +104,85 @@ fn report_activation(result: Result<license::StoredLicense>) -> Result<()> {
     }
 }
 
+/// Print one tier's feature list. `unlocked` drives both the header mark
+/// (✓ vs price) and the per-feature ✓/✗ icons; within a tier every feature
+/// has the same required tier, so one flag covers the whole group.
+fn print_feature_group(
+    styled_label: &str,
+    unlocked: bool,
+    locked_label: &str,
+    features: &[Feature],
+) {
+    let mark = if unlocked {
+        style::maybe_color("✓", |t| t.green().to_string())
+    } else {
+        style::dim(locked_label)
+    };
+    println!("\n  {styled_label} {mark} features:");
+
+    let icon = if unlocked {
+        style::maybe_color("✓", |t| t.green().to_string())
+    } else {
+        style::maybe_color("✗", |t| t.red().to_string())
+    };
+    for feature in features {
+        println!("    {icon} {}", feature.display_name());
+    }
+}
+
 /// Show current license status
 pub fn status() -> Result<()> {
     println!("{} License Status\n", style::runtime("OMG"));
 
-    let tier = license::current_tier();
+    // Read stored license once; derive both the display record and the
+    // effective (signature-verified) tier from it.
+    let stored = license::status();
+    let tier = stored.as_ref().map_or(Tier::Free, StoredLicense::tier_enum);
 
-    match license::status() {
-        Some(stored) => {
-            println!("  Status: {} ✓", style::version("Active"));
-            println!(
-                "  Tier: {} {}",
-                style::runtime(tier.display_name()),
-                style::dim(tier.price())
-            );
-            if let Some(customer) = &stored.customer {
-                println!("  Customer: {customer}");
-            }
-            if let Some(expires) = &stored.expires_at {
-                println!("  Expires: {expires}");
-            }
-        }
-        None => {
-            println!(
-                "  Status: {} (Free tier)",
-                style::maybe_color("No license", |t| t.yellow().to_string())
-            );
-        }
-    }
-
-    // Show features by tier
-    println!(
-        "\n  {} {} features:",
-        style::maybe_color("Free", |t| t.green().bold().to_string()),
-        style::maybe_color("✓", |t| t.green().to_string())
-    );
-    for feature in FREE_FEATURES {
+    if let Some(stored) = &stored {
+        println!("  Status: {} ✓", style::version("Active"));
         println!(
-            "    {} {}",
-            style::maybe_color("✓", |t| t.green().to_string()),
-            feature.display_name()
+            "  Tier: {} {}",
+            style::runtime(tier.display_name()),
+            style::dim(tier.price())
+        );
+        if let Some(customer) = &stored.customer {
+            println!("  Customer: {customer}");
+        }
+        if let Some(expires) = &stored.expires_at {
+            println!("  Expires: {expires}");
+        }
+    } else {
+        println!(
+            "  Status: {} (Free tier)",
+            style::maybe_color("No license", |t| t.yellow().to_string())
         );
     }
 
-    println!(
-        "\n  {} {} features:",
-        style::runtime("Pro"),
-        if tier >= Tier::Pro {
-            style::maybe_color("✓", |t| t.green().to_string())
-        } else {
-            style::dim("$9/mo")
-        }
+    print_feature_group(
+        &style::maybe_color("Free", |t| t.green().bold().to_string()),
+        true,
+        "",
+        FREE_FEATURES,
     );
-    for feature in PRO_FEATURES {
-        let icon = if license::has_feature(feature.as_str()) {
-            style::maybe_color("✓", |t| t.green().to_string())
-        } else {
-            style::maybe_color("✗", |t| t.red().to_string())
-        };
-        println!("    {} {}", icon, feature.display_name());
-    }
-
-    println!(
-        "\n  {} {} features:",
-        style::maybe_color("Team", |t| t.magenta().bold().to_string()),
-        if tier >= Tier::Team {
-            style::maybe_color("✓", |t| t.green().to_string())
-        } else {
-            style::dim("$200/mo")
-        }
+    print_feature_group(
+        &style::runtime("Pro"),
+        tier >= Tier::Pro,
+        "$9/mo",
+        PRO_FEATURES,
     );
-    for feature in TEAM_FEATURES {
-        let icon = if license::has_feature(feature.as_str()) {
-            style::maybe_color("✓", |t| t.green().to_string())
-        } else {
-            style::maybe_color("✗", |t| t.red().to_string())
-        };
-        println!("    {} {}", icon, feature.display_name());
-    }
-
-    println!(
-        "\n  {} {} features:",
-        style::highlight("Enterprise"),
-        if tier >= Tier::Enterprise {
-            style::maybe_color("✓", |t| t.green().to_string())
-        } else {
-            style::dim("$200/mo")
-        }
+    print_feature_group(
+        &style::maybe_color("Team", |t| t.magenta().bold().to_string()),
+        tier >= Tier::Team,
+        "$200/mo",
+        TEAM_FEATURES,
     );
-    for feature in ENTERPRISE_FEATURES {
-        let icon = if license::has_feature(feature.as_str()) {
-            style::maybe_color("✓", |t| t.green().to_string())
-        } else {
-            style::maybe_color("✗", |t| t.red().to_string())
-        };
-        println!("    {} {}", icon, feature.display_name());
-    }
+    print_feature_group(
+        &style::highlight("Enterprise"),
+        tier >= Tier::Enterprise,
+        "$200/mo",
+        ENTERPRISE_FEATURES,
+    );
 
     if tier == Tier::Free {
         println!(
@@ -227,15 +211,9 @@ pub fn deactivate() -> Result<()> {
 
 /// Check if a specific feature is available
 pub fn check_feature(feature_name: &str) -> Result<()> {
-    // SECURITY: Validate feature name
-    if feature_name.len() > 64
-        || feature_name
-            .chars()
-            .any(|c| !c.is_ascii_alphanumeric() && c != '-')
-    {
-        anyhow::bail!("Invalid feature name");
-    }
-
+    // No manual charset pre-validation needed: Feature::from_str is the
+    // authoritative allowlist and rejects anything that isn't a known
+    // feature name, including malformed input.
     let Some(feature) = Feature::from_str(feature_name) else {
         anyhow::bail!(
             "Unknown feature '{feature_name}'. Run `omg license status` to see available features."

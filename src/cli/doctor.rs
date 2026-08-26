@@ -17,13 +17,20 @@ const MIRROR_ENDPOINTS: &[(&str, &str)] = &[
 /// EOL information for common runtimes
 const EOL_DATES: &[(&str, &str, &str)] = &[
     // (runtime, version_prefix, eol_date)
+    // Node.js LTS schedule: https://github.com/nodejs/release
     ("node", "16", "2023-09-11"),
     ("node", "18", "2025-04-30"),
     ("node", "19", "2023-06-01"),
+    ("node", "20", "2026-04-30"),
+    ("node", "22", "2027-04-30"),
+    // Python release lifecycle: https://devguide.python.org/versions/
     ("python", "3.7", "2023-06-27"),
     ("python", "3.8", "2024-10-31"),
     ("python", "3.9", "2025-10-31"),
-    ("rust", "1.70", "2024-01-01"), // Approximate, Rust has short support cycles
+    ("python", "3.10", "2026-10-31"), // Approximate: security-only through October 2026
+    ("python", "3.11", "2027-10-31"), // Approximate
+    ("python", "3.12", "2028-10-31"), // Approximate
+    ("python", "3.13", "2029-10-31"), // Approximate
     ("go", "1.19", "2023-08-08"),
     ("go", "1.20", "2024-02-06"),
     ("ruby", "2.7", "2023-03-31"),
@@ -31,6 +38,9 @@ const EOL_DATES: &[(&str, &str, &str)] = &[
     ("java", "8", "2030-12-31"), // Extended support varies by vendor
     ("java", "11", "2026-09-30"),
     ("java", "17", "2029-09-30"),
+    // Rust is intentionally absent: stable releases have no per-version EOL —
+    // each release is supported until the next six-weekly one, so a fixed
+    // date only produced false positives. https://forge.rust-lang.org/
 ];
 
 /// Run all health checks
@@ -97,7 +107,7 @@ pub async fn run(network: bool, eol: bool) -> Result<()> {
     } else {
         println!(
             "  {}",
-            style::warning("Shell hook not detected in environment")
+            style::warning("Shell hook not found in your login shell's rc file (run 'omg init')")
         );
     }
 
@@ -295,27 +305,23 @@ async fn check_daemon() -> bool {
             let socket_path = crate::core::paths::socket_path();
             if socket_path.exists() {
                 // Check if it's a permission issue (common under sudo)
-                let metadata = std::fs::metadata(&socket_path);
-                if let Ok(meta) = metadata {
-                    #[cfg(unix)]
-                    {
-                        use std::os::unix::fs::MetadataExt;
-                        let socket_uid = meta.uid();
-                        let current_uid = rustix::process::getuid().as_raw();
+                if let Ok(meta) = std::fs::metadata(&socket_path) {
+                    use std::os::unix::fs::MetadataExt;
+                    let socket_uid = meta.uid();
+                    let current_uid = rustix::process::getuid().as_raw();
 
-                        if socket_uid != current_uid {
-                            println!(
-                                "    {} Socket exists at {}, but belongs to UID {} (you are UID {})",
-                                style::error("✗"),
-                                socket_path.display(),
-                                socket_uid,
-                                current_uid
-                            );
-                            println!(
-                                "      Hint: The daemon was likely started by a different user. Try restarting it."
-                            );
-                            return false;
-                        }
+                    if socket_uid != current_uid {
+                        println!(
+                            "    {} Socket exists at {}, but belongs to UID {} (you are UID {})",
+                            style::error("✗"),
+                            socket_path.display(),
+                            socket_uid,
+                            current_uid
+                        );
+                        println!(
+                            "      Hint: The daemon was likely started by a different user. Try restarting it."
+                        );
+                        return false;
                     }
                 }
 
@@ -327,18 +333,15 @@ async fn check_daemon() -> bool {
                 );
             } else {
                 // Check if we can find it in common locations despite environment
-                #[cfg(unix)]
-                {
-                    let uid = rustix::process::getuid().as_raw();
-                    let common_path = std::path::PathBuf::from(format!("/run/user/{uid}/omg.sock"));
-                    if common_path.exists() {
-                        println!(
-                            "    {} Daemon socket found at {} but client failed to connect!",
-                            style::warning("⚠"),
-                            common_path.display()
-                        );
-                        println!("      Hint: Check if the daemon process is actually alive.");
-                    }
+                let uid = rustix::process::getuid().as_raw();
+                let common_path = std::path::PathBuf::from(format!("/run/user/{uid}/omg.sock"));
+                if common_path.exists() {
+                    println!(
+                        "    {} Daemon socket found at {} but client failed to connect!",
+                        style::warning("⚠"),
+                        common_path.display()
+                    );
+                    println!("      Hint: Check if the daemon process is actually alive.");
                 }
             }
             false
@@ -350,23 +353,32 @@ fn check_path() -> bool {
     if crate::core::paths::test_mode() {
         return true;
     }
-    if let Ok(path) = std::env::var("PATH")
-        && let Ok(exe) = std::env::current_exe()
-        && let Some(parent) = exe.parent()
-    {
-        return path.contains(parent.to_str().unwrap_or(""));
-    }
-    false
+    let Some(exe_dir) = std::env::current_exe()
+        .ok()
+        .and_then(|exe| exe.parent().map(std::path::Path::to_path_buf))
+    else {
+        return false;
+    };
+    let Some(path_var) = std::env::var_os("PATH") else {
+        return false;
+    };
+    // Compare PATH entries as whole components via split_paths; a substring
+    // check falsely matched lookalike directories (e.g. /usr/local/bin-backup)
+    // and vacuously passed when the exe dir was non-UTF-8.
+    // https://doc.rust-lang.org/std/env/fn.split_paths.html
+    std::env::split_paths(&path_var).any(|dir| dir == exe_dir)
 }
 
-const fn check_shell_hook() -> bool {
-    // Hard to check if hook is active effectively.
-    // But hook usually modifies PATH.
-    // If we rely on check_path, that covers part of it.
-    // Maybe check if `omg` function exists? Can't check shell functions from subshell.
-    // We'll skip this for now or check checking env vars?
-    // Let's rely on PATH check mostly.
-    true
+fn check_shell_hook() -> bool {
+    if crate::core::paths::test_mode() {
+        return true;
+    }
+    // A doctor subshell cannot inspect live shell functions, so verify the
+    // hook the same way `omg init` installs it: $SHELL's rc file contains the
+    // hook line. The previous stub was hard-wired to `true`, which made doctor
+    // report "Shell hook active" unconditionally — false confidence in a
+    // diagnostics tool.
+    crate::cli::init::shell_from_env().is_some_and(crate::cli::init::shell_rc_has_hook)
 }
 
 /// Enable turbo mode — SECURE REDESIGN (audit F-01, CRITICAL).
