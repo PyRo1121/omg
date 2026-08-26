@@ -36,7 +36,7 @@ impl Default for TeamConfig {
         Self {
             team_id: String::new(),
             name: String::new(),
-            member_id: whoami::username().unwrap_or_else(|_| "unknown".to_string()),
+            member_id: current_member_id(),
             remote_url: None,
             auto_sync: true,
             auto_push: false,
@@ -97,6 +97,24 @@ fn default_status_format_version() -> u32 {
 /// Best-effort display name for the local team member.
 fn local_member_name() -> String {
     whoami::realname().unwrap_or_else(|_| "Unknown".to_string())
+}
+
+/// Stable fallback identity for local team state.
+fn current_member_id() -> String {
+    whoami::username().unwrap_or_else(|_| "unknown".to_string())
+}
+
+/// Read a durable team file after rejecting symlinks and non-regular paths.
+fn read_regular_file(path: &Path, what: &str) -> Result<String> {
+    let metadata = std::fs::symlink_metadata(path)
+        .with_context(|| format!("Failed to inspect {what}: {}", path.display()))?;
+    anyhow::ensure!(
+        !metadata.file_type().is_symlink() && metadata.is_file(),
+        "{what} must be a regular file: {}",
+        path.display()
+    );
+    std::fs::read_to_string(path)
+        .with_context(|| format!("Failed to read {what}: {}", path.display()))
 }
 
 impl TeamStatus {
@@ -212,15 +230,7 @@ impl TeamWorkspace {
     fn load_config(root: &Path) -> Result<TeamConfig> {
         Self::validate_config_dir(root)?;
         let path = root.join(".omg/team.toml");
-        let metadata = std::fs::symlink_metadata(&path)
-            .with_context(|| format!("Failed to inspect team config: {}", path.display()))?;
-        anyhow::ensure!(
-            !metadata.file_type().is_symlink() && metadata.is_file(),
-            "Team config must be a regular file: {}",
-            path.display()
-        );
-        let content = std::fs::read_to_string(&path)
-            .with_context(|| format!("Failed to read team config: {}", path.display()))?;
+        let content = read_regular_file(&path, "Team config")?;
         toml::from_str(&content).context("Failed to parse team config")
     }
 
@@ -243,7 +253,7 @@ impl TeamWorkspace {
         let config = TeamConfig {
             team_id: team_id.to_string(),
             name: name.to_string(),
-            member_id: whoami::username().unwrap_or_else(|_| "unknown".to_string()),
+            member_id: current_member_id(),
             remote_url: None,
             auto_sync: true,
             auto_push: false,
@@ -377,15 +387,7 @@ impl TeamWorkspace {
     pub fn load_status(&self) -> Result<TeamStatus> {
         Self::validate_config_dir(&self.root)?;
         let path = self.status_path();
-        let metadata = std::fs::symlink_metadata(&path)
-            .with_context(|| format!("Failed to inspect team status: {}", path.display()))?;
-        anyhow::ensure!(
-            !metadata.file_type().is_symlink() && metadata.is_file(),
-            "Team status must be a regular file: {}",
-            path.display()
-        );
-        let content = std::fs::read_to_string(&path)
-            .with_context(|| format!("Failed to read team status: {}", path.display()))?;
+        let content = read_regular_file(&path, "Team status")?;
         let status: TeamStatus =
             serde_json::from_str(&content).context("Failed to parse team status")?;
         if status.format_version > TeamStatus::STATUS_FORMAT_VERSION {
