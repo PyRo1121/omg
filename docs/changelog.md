@@ -13,6 +13,7 @@ OMG is the fastest unified package manager for Linux, replacing pacman, yay, nvm
 ## [Unreleased]
 ### ♻️  Refactoring
 
+- **Team**: Typ01 C3 — shared file-validation and identity helpers
 - Typ06 C-5 — shared EOL table in runtimes::eol (dedup doctor + security)
 - Apply 15-agent improvement wave — quality, dead code, shared helpers
 
@@ -632,6 +633,7 @@ analyzer inference
 - **Ci**: Cross-platform install script and R2 release sync
 ### 🐛 Bug Fixes
 
+- **Deps**: Pin audited crypto/table versions after incompatible bulk bump
 - **Security**: Third-wave HIGH findings from 50-agent audit
 
 A1 (HIGH): dpkg-info lookups used Rust's ARCH constant (x86_64) where
