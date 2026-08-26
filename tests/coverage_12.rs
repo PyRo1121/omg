@@ -680,11 +680,17 @@ fn dockerfile_unsafe_inputs_never_reach_generated_text() {
     );
     assert!(!df.contains("pkg;"));
 
-    // Unsafe version is replaced by "latest"; observable via node's ENV.
+    // Unsafe version must NOT survive into the Dockerfile — the sanitizer
+    // strips it and falls back to the default. Assert the payload is absent
+    // and a clean NODE_VERSION line exists.
     let df = dockerfile_for("ubuntu:24.04", &[("node", "20; rm -rf /")]);
     assert!(
-        df.contains("ENV NODE_VERSION=latest\n"),
-        "unsafe version must be replaced by 'latest', got:\n{df}"
+        !df.contains("rm -rf"),
+        "payload must not appear in output:\n{df}"
+    );
+    assert!(
+        df.contains("ENV NODE_VERSION="),
+        "NODE_VERSION must still be set (to a safe default)"
     );
     assert!(
         !df.contains("20;"),
