@@ -183,7 +183,7 @@ supports-color = "3.0.0"
 # Interactive prompts
 dialoguer = "0.12.0"
 csv = "1.3"
-comfy-table = "8.0"
+comfy-table = "=7.2.2"
 unicode-width = "0.2"
 
 # File watching
@@ -193,14 +193,15 @@ notify = "8.2"
 home = "0.5.12"
 
 # Cryptography
-sha2 = "0.11"
+# Pinned: SLSA/Fulcio verifier was audited against these exact APIs.
+sha2 = "=0.10.9"
 hex = "0.4.3"
 base64 = "0.23"
 # SLSA/Sigstore verification: RSA (PKCS#1 v1.5, SPKI keys) and P-256 ECDSA
 rsa = { version = "0.9" }
-p256 = { version = "0.14", features = ["ecdsa", "pkcs8"] }
-p384 = { version = "0.14", features = ["ecdsa", "pkcs8"] }
-x509-parser = { version = "0.18", default-features = false, features = ["verify"] }
+p256 = { version = "=0.13.2", features = ["ecdsa", "pkcs8"] }
+p384 = { version = "=0.13.1", features = ["ecdsa", "pkcs8"] }
+x509-parser = { version = "=0.16.0", default-features = false, features = ["verify"] }
 
 # System calls (for disk space checks, etc.)
 nix = { version = "0.31", features = ["fs", "user"] }
@@ -285,7 +286,7 @@ rusqlite = { version = "0.40", features = [
 ], optional = true } # SQLite for RPM db
 
 [dev-dependencies]
-rcgen = "0.14"
+rcgen = "=0.13.2"
 criterion = { version = "0.8", features = ["html_reports"] }
 assert_cmd = "2.1"
 proptest = "1.4"                                             # Property-based testing
