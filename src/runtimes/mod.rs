@@ -2,6 +2,8 @@ use std::path::PathBuf;
 
 use crate::core::paths;
 
+pub(crate) mod eol;
+
 static DATA_DIR: std::sync::LazyLock<PathBuf> = std::sync::LazyLock::new(paths::data_dir);
 
 pub(crate) mod bun;

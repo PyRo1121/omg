@@ -1286,32 +1286,7 @@ fn version_components(version: &str) -> Vec<u64> {
 pub fn check_eol(_ctx: &CliContext) -> Result<()> {
     println!("{} Checking runtime EOL status...\n", style::runtime("OMG"));
 
-    // Hardcoded EOL snapshot (sourced from endoflife.date; last reviewed
-    // 2026-02). This is NOT a live API cache — refresh manually when adding
-    // runtime versions.
-    let eol_data: &[(&str, &[u64], &str, &str)] = &[
-        // (runtime, version components, eol_date, lts_until)
-        ("node", &[16], "2023-09-11", "N/A"),
-        ("node", &[18], "2025-04-30", "2023-10-18"),
-        ("node", &[19], "2023-06-01", "N/A"),
-        ("node", &[20], "2026-04-30", "2024-10-22"),
-        ("node", &[21], "2024-06-01", "N/A"),
-        ("node", &[22], "2027-04-30", "2025-10-21"),
-        ("python", &[3, 7], "2023-06-27", "N/A"),
-        ("python", &[3, 8], "2024-10-31", "N/A"),
-        ("python", &[3, 9], "2025-10-31", "N/A"),
-        ("python", &[3, 10], "2026-10-31", "N/A"),
-        ("python", &[3, 11], "2027-10-31", "N/A"),
-        ("python", &[3, 12], "2028-10-31", "N/A"),
-        ("go", &[1, 20], "2024-02-06", "N/A"),
-        ("go", &[1, 21], "2024-08-06", "N/A"),
-        ("go", &[1, 22], "2025-02-06", "N/A"),
-        ("ruby", &[3, 0], "2024-03-31", "N/A"),
-        ("ruby", &[3, 1], "2025-03-31", "N/A"),
-        ("ruby", &[3, 2], "2026-03-31", "N/A"),
-        ("java", &[17], "2029-09-30", "LTS"),
-        ("java", &[21], "2031-09-30", "LTS"),
-    ];
+    let eol_data: &[crate::runtimes::eol::EolEntry] = crate::runtimes::eol::EOL_TABLE;
 
     let now = jiff::Timestamp::now();
     // Loop-invariant warning window: a runtime within 6 months of its EOL date
@@ -1327,21 +1302,24 @@ pub fn check_eol(_ctx: &CliContext) -> Result<()> {
         if let Some(version) = crate::runtimes::probe_version(runtime) {
             let installed_components = version_components(&version);
             let mut status = "Active";
-            let mut eol_date_str = "Unknown";
+            let eol_date_str = "Unknown";
             let mut is_eol = false;
             let mut is_warning = false;
 
             // Check EOL status: match on full numeric component prefix so that,
             // e.g., Python 3.13 can never match a future `3.1` row.
-            for (rt, ver_prefix, eol_date, _lts) in eol_data {
-                if rt != runtime || !installed_components.starts_with(ver_prefix) {
+            for entry in eol_data {
+                if entry.runtime != *runtime
+                    || !installed_components.starts_with(entry.version_prefix)
+                {
                     continue;
                 }
-                eol_date_str = eol_date;
+                let eol_date = entry.eol_date;
                 let eol_timestamp = parse_eol_timestamp(eol_date).with_context(|| {
                     format!(
                         "Invalid EOL date '{eol_date}' for {runtime} {}",
-                        ver_prefix
+                        entry
+                            .version_prefix
                             .iter()
                             .map(std::string::ToString::to_string)
                             .collect::<Vec<_>>()

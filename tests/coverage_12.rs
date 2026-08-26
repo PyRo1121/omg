@@ -692,11 +692,11 @@ fn dockerfile_unsafe_inputs_never_reach_generated_text() {
     let node_version_line = df.lines().find(|l| l.starts_with("ENV NODE_VERSION="));
     if let Some(line) = node_version_line {
         assert!(
-            line.parse::<f64>().is_err() == false || line.contains("20") || line.contains("latest"),
+            line.parse::<f64>().is_ok() || line.contains("20") || line.contains("latest"),
             "NODE_VERSION must be a safe default: {line}"
         );
         assert!(
-            !line.contains(";") && !line.contains("rm"),
+            !line.contains(';') && !line.contains("rm"),
             "payload in NODE_VERSION line: {line}"
         );
     }

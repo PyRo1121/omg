@@ -14,34 +14,7 @@ const MIRROR_ENDPOINTS: &[(&str, &str)] = &[
     ("AUR", "https://aur.archlinux.org"),
 ];
 
-/// EOL information for common runtimes
-const EOL_DATES: &[(&str, &str, &str)] = &[
-    // (runtime, version_prefix, eol_date)
-    // Node.js LTS schedule: https://github.com/nodejs/release
-    ("node", "16", "2023-09-11"),
-    ("node", "18", "2025-04-30"),
-    ("node", "19", "2023-06-01"),
-    ("node", "20", "2026-04-30"),
-    ("node", "22", "2027-04-30"),
-    // Python release lifecycle: https://devguide.python.org/versions/
-    ("python", "3.7", "2023-06-27"),
-    ("python", "3.8", "2024-10-31"),
-    ("python", "3.9", "2025-10-31"),
-    ("python", "3.10", "2026-10-31"), // Approximate: security-only through October 2026
-    ("python", "3.11", "2027-10-31"), // Approximate
-    ("python", "3.12", "2028-10-31"), // Approximate
-    ("python", "3.13", "2029-10-31"), // Approximate
-    ("go", "1.19", "2023-08-08"),
-    ("go", "1.20", "2024-02-06"),
-    ("ruby", "2.7", "2023-03-31"),
-    ("ruby", "3.0", "2024-03-31"),
-    ("java", "8", "2030-12-31"), // Extended support varies by vendor
-    ("java", "11", "2026-09-30"),
-    ("java", "17", "2029-09-30"),
-    // Rust is intentionally absent: stable releases have no per-version EOL —
-    // each release is supported until the next six-weekly one, so a fixed
-    // date only produced false positives. https://forge.rust-lang.org/
-];
+// EOL data lives in `runtimes::eol` (shared with security.rs).
 
 /// Run all health checks
 pub async fn run(network: bool, eol: bool) -> Result<()> {
@@ -206,9 +179,15 @@ fn check_eol_runtimes() -> usize {
             // Check against EOL dates
             let mut eol_warning = None;
 
-            for (rt, ver_prefix, eol_date) in EOL_DATES {
-                if *rt == *runtime
-                    && version.starts_with(ver_prefix)
+            for entry in crate::runtimes::eol::EOL_TABLE {
+                let (rt, ver_prefix, eol_date) =
+                    (entry.runtime, entry.version_prefix, entry.eol_date);
+                if rt == *runtime
+                    && version
+                        .split('.')
+                        .filter_map(|v| v.parse::<u64>().ok())
+                        .collect::<Vec<_>>()
+                        .starts_with(ver_prefix)
                     && let Ok(eol_ts) = jiff::civil::Date::strptime("%Y-%m-%d", eol_date)
                     && let Ok(zoned) = eol_ts.at(0, 0, 0, 0).to_zoned(jiff::tz::TimeZone::UTC)
                 {
