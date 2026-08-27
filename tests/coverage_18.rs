@@ -23,7 +23,7 @@ use anyhow::{Context, Result};
 use common::*;
 use omg_lib::daemon::handlers::DaemonState;
 use omg_lib::daemon::index::PackageIndex;
-use omg_lib::daemon::protocol::{Request, Response, ResponseResult, error_codes};
+use omg_lib::daemon::protocol::{MetricsSnapshot, Request, Response, ResponseResult, error_codes};
 use omg_lib::daemon::server;
 use omg_lib::package_managers::mock::MockPackageManager;
 use serial_test::serial;
@@ -177,9 +177,7 @@ async fn expect_eof(stream: &mut UnixStream, ctx: &str) {
     }
 }
 
-/// Read the daemon's own `requests_failed` metric through the Metrics IPC
-/// request, so metric-delta assertions exercise the real serving path.
-async fn requests_failed_probe(fixture: &RealServerFixture) -> Result<u64> {
+async fn metrics_probe(fixture: &RealServerFixture) -> Result<MetricsSnapshot> {
     let mut stream = fixture.connect().await?;
     let bytes = omg_lib::daemon::protocol::encode_frame(&Request::Metrics { id: 0xBEEF })?;
     send_raw_frame(&mut stream, &bytes).await?;
@@ -187,11 +185,17 @@ async fn requests_failed_probe(fixture: &RealServerFixture) -> Result<u64> {
         Response::Success {
             result: ResponseResult::Metrics(snapshot),
             ..
-        } => Ok(snapshot.requests_failed),
+        } => Ok(snapshot),
         other => Err(anyhow::anyhow!(
             "expected a Metrics snapshot response, got {other:?}"
         )),
     }
+}
+
+/// Read the daemon's own `requests_failed` metric through the Metrics IPC
+/// request, so metric-delta assertions exercise the real serving path.
+async fn requests_failed_probe(fixture: &RealServerFixture) -> Result<u64> {
+    Ok(metrics_probe(fixture).await?.requests_failed)
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
@@ -498,4 +502,34 @@ async fn rate_limited_burst_rejects_with_exact_envelope_and_keeps_connection_ope
         other => panic!("connection must stay usable after a rate-limit rejection, got {other:?}"),
     }
     Ok(())
+}
+
+#[tokio::test]
+#[serial]
+async fn active_connection_metric_returns_to_baseline_after_disconnect() -> Result<()> {
+    let fixture = RealServerFixture::new().await?;
+    tokio::time::sleep(Duration::from_millis(50)).await;
+    let baseline = metrics_probe(&fixture).await?.active_connections;
+
+    let mut stream = fixture.connect().await?;
+    let ping = omg_lib::daemon::protocol::encode_frame(&Request::Ping { id: 0xCAFE })?;
+    send_raw_frame(&mut stream, &ping).await?;
+    assert!(matches!(
+        read_response(&mut stream).await?,
+        Response::Success { id: 0xCAFE, .. }
+    ));
+    drop(stream);
+
+    let deadline = Instant::now() + Duration::from_secs(2);
+    loop {
+        tokio::time::sleep(Duration::from_millis(25)).await;
+        let active = metrics_probe(&fixture).await?.active_connections;
+        if active == baseline {
+            return Ok(());
+        }
+        anyhow::ensure!(
+            Instant::now() < deadline,
+            "active connections never returned to baseline {baseline}; last value was {active}"
+        );
+    }
 }
