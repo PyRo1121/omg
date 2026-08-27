@@ -270,7 +270,7 @@ OMG unifies language runtimes under a single "Runtime Manager" interface. This a
 All runtimes are stored in your home directory (`~/.local/share/omg/versions`), ensuring you never need `sudo` to switch a Node.js version and your system-wide packages remain untouched.
 
 ### Resolution Strategy
-By default, OMG uses a "native-then-mise" strategy. It prefers its own highly optimized native managers for common languages but can seamlessly fall back to the `mise` ecosystem for more obscure runtimes, giving you the best of both worlds.
+OMG supports only its native runtime managers. Unknown runtime names fail explicitly rather than downloading or invoking a fallback manager. Pi releases are installed with npm into OMG's version tree using lifecycle scripts disabled, then activated atomically like other runtimes.
 
 ---
 

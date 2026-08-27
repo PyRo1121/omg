@@ -485,16 +485,6 @@ impl TestProject {
         self
     }
 
-    pub fn with_mise_config(&self, tools: &[(&str, &str)]) -> &Self {
-        let tools_str: String = tools
-            .iter()
-            .map(|(k, v)| format!("{k} = \"{v}\""))
-            .collect::<Vec<_>>()
-            .join("\n");
-        self.create_file(".mise.toml", &format!("[tools]\n{tools_str}"));
-        self
-    }
-
     pub fn with_omg_lock(&self, content: &str) -> &Self {
         self.create_file("omg.lock", content);
         self

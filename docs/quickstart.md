@@ -678,7 +678,7 @@ When you enter a project directory, OMG automatically detects version files and 
 | `.go-version` | Go |
 | `.java-version` | Java |
 | `rust-toolchain.toml` | Rust |
-| `.tool-versions` | Any (mise format) |
+| `.tool-versions` | Multiple runtimes (asdf format) |
 
 Create a version file in your project:
 

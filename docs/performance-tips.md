@@ -260,24 +260,9 @@ shims_enabled = false  # Default
 - You need persistent version switching across all shells
 - Your setup doesn't allow PATH modification
 
-### Native vs Mise Backend
+### Native Runtime Resolution
 
-```toml
-runtime_backend = "native-then-mise"  # Default
-```
-
-**Options:**
-
-- `"native"`: OMG's built-in runtime managers (fastest)
-- `"mise"`: Delegate to mise (100+ runtimes)
-- `"native-then-mise"`: Try native first, fall back to mise
-
-**Performance:**
-
-- **Native:** 1-2ms switch time
-- **Mise:** 50-200ms switch time
-
-**Recommendation:** Use native for Node, Python, Rust, Go, Ruby, Java, Bun. Use mise for other runtimes.
+OMG resolves only its native Node, Python, Rust, Go, Ruby, Java, Bun, and Pi installations. Unsupported names fail immediately instead of probing or starting a fallback manager.
 
 ---
 

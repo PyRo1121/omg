@@ -126,9 +126,6 @@ When you enter a directory, OMG checks for version files in this order:
 | `rust-toolchain.toml` | Rust | 1 |
 | `rust-toolchain` | Rust | 2 |
 | `.tool-versions` | Multiple | 3 |
-| `.mise.toml` | Multiple | 3 |
-| `.mise.local.toml` | Multiple | 2 |
-| `mise.toml` | Multiple | 4 |
 | `package.json` | Node/Bun | 4 (engines/volta) |
 
 ### Version File Formats
@@ -177,22 +174,6 @@ node 20.10.0
 python 3.12.0
 rust stable
 go 1.21.0
-```
-
-#### .mise.toml
-
-```toml
-[tools]
-node = "20.10.0"
-python = "3.12.0"
-rust = "stable"
-deno = "1.40.0"
-
-[tools.node]
-version = "20"
-
-[tools.python]
-version = "3.12"
 ```
 
 #### package.json
@@ -483,20 +464,9 @@ shims_enabled = true
 > Note: shim generation is not wired up in the CLI yet — today only PATH-based
 > hook switching is fully functional. Treat `shims_enabled` as reserved.
 
-### Runtime Backend
+### Runtime Resolution
 
-Control runtime resolution:
-
-```toml
-# In ~/.config/omg/config.toml
-runtime_backend = "native-then-mise"
-```
-
-Options:
-
-- `native` — Only OMG's built-in managers
-- `mise` — Only mise
-- `native-then-mise` — Native first, mise fallback (default)
+Shell hooks resolve only OMG's native runtime installations. Unknown pins do not add anything to `PATH`.
 
 ---
 

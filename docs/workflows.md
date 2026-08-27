@@ -210,22 +210,12 @@ rust stable
 go 1.21.0
 EOF
 
-# 2. Or use .mise.toml for more options
-cat > .mise.toml << 'EOF'
-[tools]
-node = "20.10.0"
-python = "3.12.0"
-rust = "stable"
-deno = "1.40.0"
-EOF
-
-# 3. Install all runtimes
+# 2. Install all runtimes
 omg use node 20.10.0
 omg use python 3.12.0
 omg use rust stable
-omg use deno 1.40.0
 
-# 4. Capture complete environment
+# 3. Capture complete environment
 omg env capture
 ```
 
@@ -602,19 +592,9 @@ rm -rf ~/.asdf
 # Remove asdf lines from shell config
 ```
 
-### From mise
+### From other runtime managers
 
-```bash
-# 1. OMG includes mise internally
-# No migration needed!
-
-# 2. OMG reads .mise.toml natively
-
-# 3. Just add OMG hook
-echo 'eval "$(omg hook zsh)"' >> ~/.zshrc
-
-# 4. Your mise config files work automatically
-```
+Convert supported runtime pins to `.tool-versions`, then install each exact version with `omg use`. Unsupported runtimes must remain with their existing manager.
 
 ---
 

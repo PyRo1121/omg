@@ -1,7 +1,7 @@
 ---
 title: Runtime Management
 sidebar_position: 11
-description: Managing Node.js, Python, Go, Rust, Ruby, Java, and Bun
+description: Managing Node.js, Python, Go, Rust, Ruby, Java, Bun, and Pi
 ---
 
 # Runtime Management
@@ -23,23 +23,9 @@ OMG features native, pure Rust implementations for the most popular language eco
 | **Ruby** | `.ruby-version`, `Gemfile` | `omg use ruby 3.2` | `omg use ruby 3.1` | `ruby`, `gem` |
 | **Java** | `.java-version`, `pom.xml` | `omg use java 21` | `omg use java 17` | `java`, `javac` |
 | **Bun** | `.bun-version` | `omg use bun latest` | `omg use bun 1.0` | `bun`, `bunx` |
+| **Pi** | `.tool-versions` | `omg use pi 0.83.0` | `omg use pi 0.84.3` | `pi` |
 
-### Extended Universe (Built-in Mise)
-
-For everything else, OMG includes a **built-in mise manager**. If you request a runtime that isn't natively handled, OMG automatically leverages the `mise` ecosystem to provide support for over **100 additional languages and tools**, including Deno, Elixir, Zig, PHP, and more.
-
-```bash
-# Install any tool via mise
-omg tool install bat
-omg tool install ripgrep
-omg tool install terraform
-
-# Browse available tools in the registry
-omg tool registry
-
-# Update all installed tools
-omg tool update all
-```
+Unknown runtime names fail explicitly. OMG does not download or invoke a fallback runtime manager.
 
 ---
 
@@ -213,41 +199,6 @@ omg use node 18 --force
 # Show which version file is active
 omg which node --verbose
 ```
-
----
-
-## 🔌 mise Integration
-
-OMG bundles mise for 100+ additional runtimes and tools that aren't natively implemented.
-
-```bash
-# Install development tools
-omg tool install bat
-omg tool install ripgrep
-omg tool install fd
-omg tool install terraform
-omg tool install elixir
-
-# List installed tools
-omg tool list
-
-# Browse available tools in the registry
-omg tool registry
-
-# Update all installed tools
-omg tool update all
-
-# Remove a tool
-omg tool remove bat
-```
-
-**Supported via mise:**
-
-- Deno, Elixir, Zig, PHP, Lua
-- Terraform, kubectl, helm
-- And 90+ more languages/tools
-
-See [Tool Runner docs](task-runner.md) for details.
 
 ---
 

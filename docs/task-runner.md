@@ -418,26 +418,9 @@ omg run lint   # → composer run-script lint
 
 ---
 
-## ⚙️ Runtime Backend Options
+## ⚙️ Runtime Resolution
 
-Control how runtimes are resolved:
-
-```bash
-# Force native OMG managers
-omg run --runtime-backend native dev
-
-# Force mise
-omg run --runtime-backend mise dev
-
-# Default: native-then-mise
-omg run dev
-```
-
-Configuration in `~/.config/omg/config.toml`:
-
-```toml
-runtime_backend = "native-then-mise"
-```
+`omg run` resolves project pins through OMG's native runtime managers. There is no backend override or implicit fallback manager.
 
 ---
 
@@ -593,5 +576,5 @@ omg run dev        # Output shows "via npm" / "via bun" / "via pnpm" etc.
 
 - [Runtime Management](./runtimes.md) — Version file formats and runtime setup
 - [Shell Integration](./shell-integration.md) — PATH management
-- [Configuration](./configuration.md) — runtime_backend setting
+- [Configuration](./configuration.md) — runtime and task settings
 - [Workflows](./workflows.md) — Complete project setup workflows

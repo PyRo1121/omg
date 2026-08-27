@@ -72,17 +72,15 @@ fn test_use_invalid_runtime() {
     let result = run_omg(&["use", "invalid-runtime-xyz", "1.0.0"]);
     result.assert_failure();
 
-    // Unknown runtimes fall through to the mise backend (src/cli/runtimes.rs
-    // `use_version`, mise fallback arm); whatever fails must name either the
-    // offending runtime or that backend — never die silently or panic.
+    // Unknown runtimes fail explicitly and never install a fallback manager.
     let output = result.combined_output();
     assert!(
         !output.contains("panicked at"),
         "`omg use <unknown>` must not panic:\n{output}"
     );
     assert!(
-        output.contains("invalid-runtime-xyz") || output.contains("mise"),
-        "failure must name the unsupported runtime or the mise backend:\n{output}"
+        output.contains("Unsupported runtime 'invalid-runtime-xyz'"),
+        "failure must name the unsupported runtime:\n{output}"
     );
 }
 
@@ -267,13 +265,10 @@ fn test_list_invalid_runtime() {
     let result = run_omg(&["list", "invalid-runtime-xyz"]);
 
     result.assert_failure();
-    // Unknown runtimes are delegated to mise for listing; the failure must
-    // name the runtime or the backend (mise_list_versions in
-    // src/cli/runtimes.rs).
     let output = result.combined_output();
     assert!(
-        output.contains("invalid-runtime-xyz") || output.contains("mise"),
-        "failure must name the unknown runtime or the mise backend:\n{output}"
+        output.contains("Unsupported runtime 'invalid-runtime-xyz'"),
+        "failure must name the unknown runtime:\n{output}"
     );
 }
 
@@ -315,20 +310,6 @@ fn test_detect_tool_versions() {
 
     let project = TestProject::new();
     project.with_tool_versions(&[("node", "20.10.0"), ("python", "3.11.0")]);
-
-    let result = project.run_with_env(
-        &["use", "node"],
-        &[("OMG_TEST_COMMAND_TIMEOUT_SECS", DETECTION_TIMEOUT_SECS)],
-    );
-    assert_detected(&result, "20.10.0");
-}
-
-#[test]
-fn test_detect_mise_config() {
-    init_test_env();
-
-    let project = TestProject::new();
-    project.with_mise_config(&[("node", "20.10.0"), ("python", "3.11.0")]);
 
     let result = project.run_with_env(
         &["use", "node"],
@@ -488,8 +469,8 @@ fn test_error_unsupported_runtime() {
         "`omg use <unsupported>` must not panic:\n{output}"
     );
     assert!(
-        output.contains("unsupported-runtime") || output.contains("mise"),
-        "failure must name the unsupported runtime or the mise backend:\n{output}"
+        output.contains("Unsupported runtime 'unsupported-runtime'"),
+        "failure must name the unsupported runtime:\n{output}"
     );
 }
 

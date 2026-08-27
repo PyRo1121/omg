@@ -1085,13 +1085,4 @@ mod runtime_management {
         let result = project.run(&["status"]);
         result.assert_success();
     }
-
-    #[test]
-    fn test_mise_config_detection() {
-        let project = TestProject::new();
-        project.with_mise_config(&[("node", "20.10.0"), ("python", "3.11.0")]);
-
-        let result = project.run(&["status"]);
-        result.assert_success();
-    }
 }

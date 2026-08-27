@@ -435,10 +435,9 @@ omg use <runtime> [version]
 | `rust` | `rustlang` | `rust-toolchain.toml` |
 | `ruby` | | `.ruby-version` |
 | `java` | | `.java-version` |
+| `pi` | | `.tool-versions` |
 
-**100+ Additional Runtimes** (via built-in mise):
-
-- Deno, Elixir, Erlang, Zig, Nim, Swift, Kotlin, .NET, PHP, Perl, Lua, Julia, R, and more
+Unsupported runtime names fail explicitly.
 
 **Examples:**
 
@@ -458,11 +457,8 @@ omg use rust stable
 # Use Rust nightly
 omg use rust nightly
 
-# Install Deno (uses built-in mise)
-omg use deno 1.40.0
-
-# Install Elixir (uses built-in mise)
-omg use elixir 1.16.0
+# Install and activate an exact Pi release
+omg use pi 0.83.0
 ```
 
 **How It Works:**
@@ -798,7 +794,6 @@ omg run <task> [-- <args...>] [OPTIONS]
 | -------- | ------- | ------------- |
 | `--watch` | `-w` | Watch mode: re-run task on file changes |
 | `--parallel` | `-p` | Run multiple comma-separated tasks in parallel |
-| `--runtime-backend <backend>` | | Force runtime backend (native, mise, native-then-mise) |
 | `--using <ecosystem>` | `-u` | Ecosystem to use (e.g., node, rust, python, make) |
 | `--all` | `-a` | Run task across all detected ecosystems |
 
@@ -831,9 +826,6 @@ omg run test --watch
 
 # Run multiple tasks in parallel
 omg run build,test,lint --parallel
-
-# Force mise backend
-omg run --runtime-backend mise dev
 ```
 
 **JavaScript Package Manager Priority:**
@@ -1053,7 +1045,6 @@ omg config set telemetry.enabled false
 - `telemetry.enabled` — Enable/disable telemetry
 - `aur.build_concurrency`, `aur.enable_ccache`, `aur.enable_sccache`, `aur.secure_makepkg`, `aur.makeflags` — AUR build tuning
 - `shims.enabled` — Shim system toggle
-- `runtime_backend` — Runtime resolution strategy (read-only via CLI)
 
 ---
 

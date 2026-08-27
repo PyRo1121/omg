@@ -259,7 +259,7 @@ Direct `libalpm`/`rust-apt` integration—no subprocess overhead. Persistent dae
 
 ### 🛠️ Unified Runtimes
 
-Node.js, Bun, Python, Go, Rust, Ruby, Java—all native. Plus 100+ more via bundled mise. Auto-detects `.nvmrc`, `.python-version`, `rust-toolchain.toml`, `.tool-versions`.
+Node.js, Bun, Python, Go, Rust, Ruby, Java, and Pi are managed natively. Auto-detects `.nvmrc`, `.python-version`, `rust-toolchain.toml`, and `.tool-versions`.
 
 ### 🛡️ Enterprise Security
 
@@ -541,7 +541,6 @@ See **[COMMERCIAL-LICENSE](COMMERCIAL-LICENSE.md)** for commercial licensing det
 
 OMG incorporates third-party open source software:
 
-- **[mise](https://github.com/jdx/mise)** - Runtime version management (MIT License, © 2025 Jeff Dickey)
 - Various Rust crates (MIT/Apache-2.0 licenses)
 
 See [NOTICE](NOTICE) and [THIRD-PARTY-LICENSES.md](THIRD-PARTY-LICENSES.md) for complete attribution.

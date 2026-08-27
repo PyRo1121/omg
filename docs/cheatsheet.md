@@ -132,7 +132,7 @@ omg use java 21
 omg use bun latest
 ```
 
-Native runtimes: `node`, `python`, `go`, `rust`, `ruby`, `java`, `bun`. Additional runtimes are resolved through mise when configured.
+Native runtimes: `node`, `python`, `go`, `rust`, `ruby`, `java`, `bun`, and `pi`. Unsupported runtimes fail explicitly.
 
 ### Query Versions
 
@@ -297,7 +297,6 @@ omg config reset -y             # Reset to defaults
 shims_enabled = false           # Use PATH modification (default) instead of shims
 auto_update = true              # Auto-update runtimes on install
 default_shell = "zsh"           # Default shell for hooks
-runtime_backend = "native-then-mise"  # native, mise, or native-then-mise
 telemetry_enabled = true        # Anonymous telemetry toggle
 
 [aur]

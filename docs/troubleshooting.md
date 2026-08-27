@@ -360,30 +360,9 @@ df -h ~/.local/share/omg/
 
 ---
 
-### mise Not Found for Extended Runtimes
+### Unsupported Runtime
 
-**Symptoms:**
-
-- Error when installing deno, elixir, etc.
-- "mise not available" message
-
-**Solutions:**
-
-```bash
-# 1. Check mise installation
-ls ~/.local/share/omg/mise/
-
-# 2. Force mise reinstall
-rm -rf ~/.local/share/omg/mise/
-omg use deno 1.40.0
-# Will auto-download mise
-
-# 3. Check mise works
-~/.local/share/omg/mise/mise --version
-
-# 4. Verify network access
-curl -L https://github.com/jdx/mise/releases/
-```
+OMG supports Node, Python, Go, Rust, Ruby, Java, Bun, and Pi. Other runtime names fail explicitly; use that runtime's own documented manager rather than expecting OMG to install a fallback.
 
 ---
 

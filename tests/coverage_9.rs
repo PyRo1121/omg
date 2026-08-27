@@ -102,7 +102,7 @@ fn which_resolves_pin_from_parent_directory() {
 }
 
 #[test]
-fn which_prints_no_version_notice_when_unset_and_mise_absent() {
+fn which_prints_no_version_notice_when_unset() {
     let project = TestProject::new();
 
     let result = project.run_with_env(&["which", "python"], NO_MISE_ENV);

@@ -472,7 +472,7 @@ mod runtime_management {
     // list path in src/bin/omg.rs:514): JSON listing of a runtime that is not
     // natively supported must FAIL with an error naming the runtime. Plain-text
     // `list unknownruntime` cannot be pinned here because it delegates to an
-    // external `mise` binary whose availability varies by machine.
+    // external runtime-manager binaries whose availability varies by machine.
     #[test]
     fn test_list_unknown_runtime() {
         let result = run_omg(&["list", "unknownruntime", "--json"]);
@@ -1220,41 +1220,6 @@ mod integration_scenarios {
                 "check failure after lock copy must name drift. Got:\n{combined}"
             );
         }
-    }
-}
-
-// ═══════════════════════════════════════════════════════════════════════════════
-// MISE INTEGRATION TESTS (Built-in runtime manager)
-// ═══════════════════════════════════════════════════════════════════════════════
-
-mod mise_integration {
-    use super::*;
-
-    // (test_mise_manager_initialization removed: it ran bare `omg list`, an
-    // exact duplicate of runtime_management::test_list_all_runtimes.)
-
-    // Falsifiable contract: a .mise.toml project must not break status, which
-    // must render its report including the Runtimes section.
-    #[test]
-    fn test_mise_toml_detection() {
-        let temp_dir = TempDir::new().unwrap();
-
-        // Create .mise.toml with multiple runtimes
-        let mut f = File::create(temp_dir.path().join(".mise.toml")).unwrap();
-        writeln!(
-            f,
-            r#"[tools]
-deno = "1.40.0"
-elixir = "1.16.0"
-zig = "0.11.0"
-"#
-        )
-        .unwrap();
-
-        // Status should work with .mise.toml present
-        let result = run_omg_in_dir(&["status"], temp_dir.path());
-        result.assert_success();
-        result.assert_stdout_contains("Runtimes");
     }
 }
 

@@ -132,7 +132,7 @@ Search, install, update, and remove system packages from official repositories a
 
 ### Runtime Version Management
 
-Install and switch between versions of Node.js, Python, Rust, Go, Ruby, Java, and Bun. Detects `.nvmrc`, `.python-version`, and similar files automatically. Plus 100+ additional runtimes through built-in mise integration.
+Install and switch between versions of Node.js, Python, Rust, Go, Ruby, Java, Bun, and Pi. Detects `.nvmrc`, `.python-version`, and similar files automatically; unsupported runtimes fail explicitly.
 
 ### Environment Synchronization
 

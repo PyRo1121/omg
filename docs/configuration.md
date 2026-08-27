@@ -30,7 +30,6 @@ OMG follows the XDG Base Directory Specification with sensible fallbacks.
 | **Data root** | All OMG data | `~/.local/share/omg/` |
 | **Versions** | Runtime installations | `~/.local/share/omg/versions/` |
 | **Tools** | Installed CLI tools | `~/.local/share/omg/tools/` |
-| **Mise** | Bundled mise binary | `~/.local/share/omg/mise/` |
 | **Cache** | Persistent cache (redb) | `~/.local/share/omg/cache.redb` |
 | **History** | Transaction history | `~/.local/share/omg/history.json` |
 | **Audit** | Audit log | `~/.local/share/omg/audit/audit.jsonl` |
@@ -68,8 +67,6 @@ default_shell = "zsh"
 auto_update = false
 
 # Runtime backend preference
-# Options: "native", "mise", "native-then-mise" (default)
-runtime_backend = "native-then-mise"
 
 # ═══════════════════════════════════════════════════════════════════════════
 # AUR BUILD SETTINGS
@@ -129,7 +126,6 @@ enable_sccache = false
 | `socket_path` | string | XDG runtime | Override socket path |
 | `default_shell` | string | `"zsh"` | Default shell for hooks |
 | `auto_update` | bool | `false` | Auto-check for updates |
-| `runtime_backend` | string | `"native-then-mise"` | Runtime resolution strategy |
 
 #### AUR Settings
 
@@ -274,39 +270,9 @@ banned_packages = []
 
 ---
 
-## 🔄 Runtime Backend Configuration
+## 🔄 Runtime Management
 
-OMG supports three runtime backends:
-
-### native
-
-Uses OMG's built-in pure Rust runtime managers.
-
-```toml
-runtime_backend = "native"
-```
-
-**Supported runtimes**: Node, Python, Go, Rust, Ruby, Java, Bun
-
-### mise
-
-Uses the bundled mise tool for all runtimes.
-
-```toml
-runtime_backend = "mise"
-```
-
-**Supported runtimes**: 100+ runtimes
-
-### native-then-mise (Default)
-
-Prefers native managers, falls back to mise for unsupported runtimes.
-
-```toml
-runtime_backend = "native-then-mise"
-```
-
-**Best of both worlds**: Fast native managers + wide mise compatibility
+OMG manages Node, Python, Go, Rust, Ruby, Java, Bun, and Pi natively. There is no runtime-backend selector or implicit fallback manager.
 
 ---
 
@@ -325,9 +291,6 @@ OMG automatically detects version files in your project:
 | `.java-version` | Java | `21` |
 | `rust-toolchain.toml` | Rust | TOML format (see below) |
 | `.tool-versions` | Multi | asdf format |
-| `.mise.toml` | Multi | Mise format |
-| `.mise.local.toml` | Multi | Local overrides |
-| `mise.toml` | Multi | Project root |
 | `package.json` | Node/Bun | `engines` or `volta` field |
 | `go.mod` | Go | `go 1.21` directive |
 
@@ -348,16 +311,6 @@ node 20.10.0
 python 3.12.0
 rust stable
 go 1.21.0
-```
-
-### .mise.toml Format
-
-```toml
-[tools]
-node = "20.10.0"
-python = "3.12.0"
-rust = "stable"
-deno = "1.40.0"
 ```
 
 ---
@@ -457,7 +410,6 @@ aur = "https://aur.archlinux.org"
 ```toml
 # ~/.config/omg/config.toml
 default_shell = "zsh"
-runtime_backend = "native-then-mise"
 
 [aur]
 build_concurrency = 16
@@ -470,7 +422,6 @@ cache_builds = true
 ```toml
 # ~/.config/omg/config.toml
 auto_update = false
-runtime_backend = "native"
 
 [daemon]
 refresh_interval = 60
@@ -520,7 +471,7 @@ omg status
 | Config not loading | Check file path and TOML syntax |
 | Permission denied | Ensure socket/data dirs are writable |
 | Policy blocking packages | Lower `minimum_grade` or set `allow_aur = true` |
-| Runtime not found | Check `runtime_backend` setting |
+| Runtime not found | Use one of the documented native runtime names |
 
 ### Reset to Defaults
 
@@ -576,9 +527,6 @@ default_shell = "zsh"
 # Disable auto-update to prevent version drift
 auto_update = false
 
-# Runtime resolution strategy
-runtime_backend = "native-then-mise"
-
 # Team-friendly AUR settings
 [aur]
 review_pkgbuild = true  # Require PKGBUILD review
@@ -620,9 +568,6 @@ omg env check
 ```toml
 # ~/.config/omg/config.toml
 # Use in CI Docker images or runner VMs
-
-# Strict runtime matching
-runtime_backend = "native"
 
 # Minimal AUR builds (avoid in CI when possible)
 [aur]

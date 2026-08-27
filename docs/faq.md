@@ -154,16 +154,9 @@ enable_ccache = true
 - Ruby
 - Java
 - Bun
+- Pi coding agent
 
-**Via built-in mise (100+ more):**
-- Deno
-- Elixir
-- Erlang
-- Zig
-- Swift
-- .NET
-- PHP
-- And many more...
+Unsupported runtime names fail explicitly; OMG does not download a fallback runtime manager.
 
 ### Does OMG replace nvm/pyenv/rustup?
 
@@ -175,18 +168,13 @@ OMG checks for version files when you change directories:
 - `.nvmrc`, `.node-version` (Node.js)
 - `.python-version` (Python)
 - `rust-toolchain.toml` (Rust)
-- `.tool-versions`, `.mise.toml` (Multiple)
+- `.tool-versions` (Multiple)
 
 The shell hook automatically updates PATH.
 
-### What is mise and why is it built-in?
+### What happens for unsupported runtimes?
 
-[mise](https://mise.jdx.dev/) is a runtime version manager. OMG bundles it internally to provide access to 100+ runtimes without you needing to install mise separately.
-
-When you `omg use deno 1.40.0`, OMG:
-1. Checks if deno is a native runtime (it's not)
-2. Downloads mise if needed
-3. Uses mise to install deno
+OMG rejects unsupported names with a list of native runtimes. It never downloads or invokes another runtime manager as an implicit fallback.
 
 ---
 
