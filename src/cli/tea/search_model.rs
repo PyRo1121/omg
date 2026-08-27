@@ -4,8 +4,8 @@
 
 use crate::cli::style;
 use crate::cli::tea::{Cmd, Model};
-use crate::core::Package;
 use crate::core::format::truncate;
+use crate::core::{Package, PackageSource};
 use crate::package_managers::{SyncPackage, VersionDisplay};
 use std::fmt::Write;
 use unicode_width::UnicodeWidthStr;
@@ -23,24 +23,14 @@ pub enum SearchState {
     Failed,
 }
 
-/// Package source for styling
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum PackageSource {
-    Official,
-    Aur,
-}
+use owo_colors::OwoColorize;
 
-impl PackageSource {
-    /// Get styled label for this source
-    pub fn styled_label(&self) -> String {
-        match self {
-            Self::Official => "official".cyan().to_string(),
-            Self::Aur => "aur".yellow().to_string(),
-        }
+fn styled_source_label(source: PackageSource) -> String {
+    match source {
+        PackageSource::Official => "official".cyan().to_string(),
+        PackageSource::Aur => "aur".yellow().to_string(),
     }
 }
-
-use owo_colors::OwoColorize;
 
 /// Search result package
 #[derive(Debug, Clone)]
@@ -143,7 +133,7 @@ impl SearchModel {
             style::dim(&(index + 1).to_string()),
             style::package(&result.name),
             style::version(&result.version),
-            result.source.styled_label(),
+            styled_source_label(result.source),
             installed_mark,
             style::dim(&truncate(&result.description, desc_width())),
             aur_info,
@@ -427,16 +417,16 @@ impl From<SyncPackage> for SearchResult {
 
 impl From<Package> for SearchResult {
     fn from(pkg: Package) -> Self {
-        let (source, repo) = match pkg.source {
-            crate::core::PackageSource::Official => (PackageSource::Official, "official"),
-            crate::core::PackageSource::Aur => (PackageSource::Aur, "aur"),
+        let repo = match pkg.source {
+            PackageSource::Official => "official",
+            PackageSource::Aur => "aur",
         };
 
         Self {
             name: pkg.name,
             version: pkg.version.version_string(),
             description: pkg.description,
-            source,
+            source: pkg.source,
             repo: repo.to_string(),
             installed: pkg.installed,
             #[cfg(feature = "arch")]
@@ -485,8 +475,8 @@ mod tests {
 
     #[test]
     fn test_package_source_labels() {
-        assert!(PackageSource::Official.styled_label().contains("official"));
-        assert!(PackageSource::Aur.styled_label().contains("aur"));
+        assert!(styled_source_label(PackageSource::Official).contains("official"));
+        assert!(styled_source_label(PackageSource::Aur).contains("aur"));
     }
 
     #[test]

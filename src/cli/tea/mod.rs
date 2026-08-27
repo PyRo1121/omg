@@ -99,7 +99,7 @@ pub use cmd::{
 
 // Re-export models
 pub use info_model::{InfoModel, InfoMsg, InfoSource};
-pub use search_model::{PackageSource, SearchModel, SearchMsg, SearchResult, SearchState};
+pub use search_model::{SearchModel, SearchMsg, SearchResult, SearchState};
 pub use status_model::{StatusData, StatusModel, StatusMsg};
 pub use update_model::{UpdateModel, UpdateMsg, UpdatePackage, UpdateState, UpdateType};
 
