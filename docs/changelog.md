@@ -3679,6 +3679,7 @@ the Debian backend), so it was removed from the metadata.
 - Normalize project formatting
 ### 🧪 Testing
 
+- **Env**: Share from captured lockfile directory
 - **Daemon**: Make startup status refresh hermetic and falsifiable
 - **Daemon**: Mutation-proof startup cache prewarming
 - **Daemon**: Verify active connection guard releases metrics
