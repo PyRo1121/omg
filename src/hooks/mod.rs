@@ -377,7 +377,7 @@ pub fn build_path_additions<S: std::hash::BuildHasher>(
             // Validate before using as a path component so a hostile pin like
             // `../../evil/bin` can never traverse out of the versions tree and
             // place an attacker-created directory on the shell's PATH.
-            "python" | "go" | "ruby" | "java" => {
+            "python" | "go" | "ruby" | "java" | "pi" => {
                 let Some(path) = validated_runtime_bin_dir(&data_dir, runtime, version) else {
                     continue;
                 };
@@ -656,7 +656,7 @@ fn native_runtime_bin_path(runtime: &str, version: &str) -> Result<Option<PathBu
             };
             path
         }
-        "python" | "go" | "ruby" | "java" => {
+        "python" | "go" | "ruby" | "java" | "pi" => {
             if crate::core::security::validate_runtime_version(version).is_err() {
                 return Ok(None);
             }

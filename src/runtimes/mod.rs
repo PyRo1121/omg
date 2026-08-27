@@ -12,6 +12,7 @@ pub(crate) mod go;
 pub(crate) mod java;
 pub(crate) mod mise;
 pub(crate) mod node;
+pub(crate) mod pi;
 pub(crate) mod python;
 pub(crate) mod ruby;
 pub(crate) mod rust;
@@ -21,13 +22,14 @@ pub(crate) use go::GoManager;
 pub(crate) use java::JavaManager;
 pub(crate) use mise::MiseManager;
 pub(crate) use node::NodeManager;
+pub(crate) use pi::PiManager;
 pub(crate) use python::PythonManager;
 pub(crate) use ruby::RubyManager;
 pub(crate) use rust::RustManager;
 
-/// Runtimes managed natively by OMG (mise covers everything else).
+/// Runtimes managed natively by OMG.
 pub(crate) const SUPPORTED_RUNTIMES: &[&str] =
-    &["node", "python", "go", "rust", "ruby", "java", "bun"];
+    &["node", "python", "go", "rust", "ruby", "java", "bun", "pi"];
 
 /// Fast probing for active runtime versions. The current symlink must
 /// resolve to a real version directory inside the runtime versions tree;

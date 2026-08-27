@@ -6,8 +6,8 @@ use owo_colors::OwoColorize;
 
 use crate::cli::ui;
 use crate::runtimes::{
-    BunManager, GoManager, JavaManager, MiseManager, NodeManager, PythonManager, RubyManager,
-    RustManager, SUPPORTED_RUNTIMES,
+    BunManager, GoManager, JavaManager, MiseManager, NodeManager, PiManager, PythonManager,
+    RubyManager, RustManager, SUPPORTED_RUNTIMES,
 };
 
 /// Global mise manager instance
@@ -102,7 +102,8 @@ impl_runtime_install_use!(
     GoManager,
     RubyManager,
     JavaManager,
-    BunManager
+    BunManager,
+    PiManager
 );
 
 /// Use an already-installed version, or install it first if missing.
@@ -172,6 +173,9 @@ pub async fn use_version(runtime: &str, version: Option<&str>) -> Result<()> {
         }
         "bun" => {
             install_or_use(&BunManager::new(), strip_version_prefix(&version)).await?;
+        }
+        "pi" => {
+            install_or_use(&PiManager::new(), strip_version_prefix(&version)).await?;
         }
         _ => {
             if !MISE.is_available() {
@@ -268,6 +272,7 @@ fn native_version_info(runtime: &str) -> Option<(Result<Vec<String>>, Option<Str
         "ruby" => probe!(RubyManager::new()),
         "java" => probe!(JavaManager::new()),
         "bun" => probe!(BunManager::new()),
+        "pi" => probe!(PiManager::new()),
         _ => None,
     }
 }
@@ -336,7 +341,7 @@ fn list_installed_json(runtime: Option<&str>) -> Result<()> {
     }
 
     let mut entries = Vec::new();
-    for rt in ["node", "python", "rust", "go", "ruby", "java", "bun"] {
+    for rt in ["node", "python", "rust", "go", "ruby", "java", "bun", "pi"] {
         if let Some(entry) = installed_json_entry(rt)? {
             entries.push(entry);
         }
@@ -374,6 +379,7 @@ pub fn list_versions_sync(runtime: Option<&str>, json: bool) -> Result<()> {
             ("Ruby", RubyManager::new().current_version()),
             ("Java", JavaManager::new().current_version()),
             ("Bun", BunManager::new().current_version()),
+            ("Pi", PiManager::new().current_version()),
         ] {
             if let Some(v) = mgr_version {
                 ui::print_list_item(name, Some(&v));
@@ -406,7 +412,7 @@ pub async fn list_versions(runtime: Option<&str>, available: bool, json: bool) -
         ui::print_header("OMG", "Installed runtime versions");
         ui::print_spacer();
 
-        let (node_res, py_res, rust_res, go_res, ruby_res, java_res, bun_res) = tokio::join!(
+        let (node_res, py_res, rust_res, go_res, ruby_res, java_res, bun_res, pi_res) = tokio::join!(
             tokio::task::spawn_blocking(|| NodeManager::new().current_version()),
             tokio::task::spawn_blocking(|| PythonManager::new().current_version()),
             tokio::task::spawn_blocking(|| RustManager::new().current_version()),
@@ -414,6 +420,7 @@ pub async fn list_versions(runtime: Option<&str>, available: bool, json: bool) -
             tokio::task::spawn_blocking(|| RubyManager::new().current_version()),
             tokio::task::spawn_blocking(|| JavaManager::new().current_version()),
             tokio::task::spawn_blocking(|| BunManager::new().current_version()),
+            tokio::task::spawn_blocking(|| PiManager::new().current_version()),
         );
 
         for (name, res) in [
@@ -424,6 +431,7 @@ pub async fn list_versions(runtime: Option<&str>, available: bool, json: bool) -
             ("Ruby", ruby_res),
             ("Java", java_res),
             ("Bun", bun_res),
+            ("Pi", pi_res),
         ] {
             let version = res.with_context(|| format!("Failed to inspect {name} versions"))?;
             if let Some(v) = version {
@@ -504,6 +512,11 @@ pub async fn list_versions(runtime: Option<&str>, available: bool, json: bool) -
                 let pre = if v.prerelease { " (pre-release)" } else { "" };
                 ui::print_list_item(&v.version, Some(pre));
             }
+        }
+        "pi" => {
+            anyhow::bail!(
+                "Remote Pi version listing is not yet supported; specify an exact npm version"
+            );
         }
         _ => {
             if !MISE.is_available() {

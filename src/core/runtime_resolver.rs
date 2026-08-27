@@ -20,7 +20,7 @@ use super::{RuntimeBackend, paths};
 pub fn native_runtime_bin_path(runtime: &str, version: &str) -> Option<PathBuf> {
     let versions_dir = paths::data_dir().join("versions");
     let bin_path = match runtime {
-        "node" | "python" | "go" | "ruby" | "java" => {
+        "node" | "python" | "go" | "ruby" | "java" | "pi" => {
             versions_dir.join(runtime).join(version).join("bin")
         }
         "bun" => versions_dir.join("bun").join(version),
