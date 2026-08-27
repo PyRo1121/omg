@@ -456,7 +456,7 @@ pub fn enable_turbo_mode() -> Result<()> {
     println!();
     println!("  {} Turbo mode is only available on Linux", "ℹ".blue());
     println!();
-    println!("  Linux capabilities (setcap) are required for zero-sudo operations.");
+    println!("  Prompt-light sudo credential caching is only available on Linux.");
     println!();
     Ok(())
 }

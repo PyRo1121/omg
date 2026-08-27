@@ -1,51 +1,40 @@
-//! Linux capabilities support for zero-sudo package operations
+//! Privileged package-operation state.
 //!
-//! When omg is installed with the right capabilities, it can perform
-//! package operations without sudo, eliminating all privilege elevation overhead.
-//!
-//! Setup (run once during install):
-//! ```bash
-//! sudo setcap 'cap_dac_override,cap_fowner,cap_chown+ep' /usr/bin/omg
-//! ```
+//! OMG never authorizes package database writes through executable file
+//! capabilities. Mutations run either as root or through the explicit sudo
+//! delegation paths in [`crate::core::privilege`].
 
-#[cfg(target_os = "linux")]
-use rustix::thread::CapabilitySet;
-
-/// Check if the current process has the capabilities needed for package operations.
-/// Returns true if we can write to /var/lib/pacman without sudo.
-#[cfg(target_os = "linux")]
-pub fn has_package_caps() -> bool {
-    // Check effective capabilities
-    // We need CAP_DAC_OVERRIDE to write to root-owned directories
-    rustix::thread::capabilities(None)
-        .is_ok_and(|caps| caps.effective.contains(CapabilitySet::DAC_OVERRIDE))
-}
-
-#[cfg(not(target_os = "linux"))]
-pub fn has_package_caps() -> bool {
-    false
-}
-
-/// Check if we're running in elevated mode (re-exec'd with sudo).
-/// `OMG_ELEVATED` alone is not privilege; the process must also be root.
+/// Check if this process is the root child created by OMG's sudo delegation.
+///
+/// The marker alone is not authority: effective root identity is mandatory.
 #[inline]
+#[must_use]
 pub fn is_elevated() -> bool {
     std::env::var_os("OMG_ELEVATED").is_some() && crate::core::privilege::is_root()
 }
 
-/// Check if we can perform privileged operations (either via caps or being root)
-#[inline]
-pub fn can_write_pacman_db() -> bool {
-    has_package_caps() || crate::core::privilege::is_root()
+/// Check whether this process may write the package database directly.
+///
+/// Direct mutation is root-only. Non-root callers must use the explicit sudo
+/// delegation path rather than inheritable executable capabilities.
+const fn direct_package_access_allowed(is_root: bool) -> bool {
+    is_root
 }
 
-/// Show a one-time hint about turbo mode if not enabled
-/// Returns true if the hint was shown
+#[inline]
+#[must_use]
+pub fn can_write_pacman_db() -> bool {
+    direct_package_access_allowed(crate::core::privilege::is_root())
+}
+
+/// Show a one-time hint about prompt-light sudo credential caching.
+///
+/// Returns `true` when the hint was shown.
 #[cfg(target_os = "linux")]
 pub fn maybe_show_turbo_hint() -> bool {
     use std::io::Write;
 
-    if has_package_caps() || is_elevated() || crate::core::privilege::is_root() {
+    if is_elevated() || crate::core::privilege::is_root() {
         return false;
     }
 
@@ -59,12 +48,12 @@ pub fn maybe_show_turbo_hint() -> bool {
     eprintln!(
         "  {} {}",
         "TIP:".bright_cyan().bold(),
-        "Enable turbo mode for instant package operations:".dimmed()
+        "Prime sudo credentials for prompt-light package operations:".dimmed()
     );
     eprintln!("       {}", "omg doctor --turbo".cyan().bold());
     eprintln!(
         "       {}",
-        "(one-time setup, eliminates sudo prompts)".dimmed()
+        "(uses sudo credential caching; grants no permanent privileges)".dimmed()
     );
     eprintln!();
 
@@ -97,9 +86,15 @@ mod tests {
 
     #[test]
     fn test_is_elevated_without_env_explicit() {
-        // Verify unset state
         temp_env::with_var_unset("OMG_ELEVATED", || {
             assert!(!is_elevated());
         });
+    }
+
+    #[test]
+    fn direct_package_database_access_is_root_only() {
+        assert!(direct_package_access_allowed(true));
+        assert!(!direct_package_access_allowed(false));
+        assert_eq!(can_write_pacman_db(), crate::core::privilege::is_root());
     }
 }

@@ -29,6 +29,38 @@ use tempfile::{NamedTempFile, TempDir};
 mod privilege_escalation {
     use serial_test::serial;
     // Note: MockPrivilegeChecker is only available in unit tests (cfg(test))
+
+    #[test]
+    fn installer_never_grants_file_capabilities() {
+        let installer = include_str!("../install.sh");
+
+        assert!(
+            !installer.lines().any(|line| {
+                let normalized = line.to_ascii_lowercase();
+                normalized.contains("setcap") && normalized.contains("+ep")
+            }),
+            "the installer must not grant permanent file capabilities"
+        );
+        assert!(
+            !installer.contains("cap_dac_override,cap_fowner,cap_chown"),
+            "the legacy root-equivalent capability set must not return"
+        );
+    }
+
+    #[test]
+    fn turbo_help_does_not_advertise_file_capabilities() {
+        let output = std::process::Command::new(env!("CARGO_BIN_EXE_omg"))
+            .args(["doctor", "--help"])
+            .output()
+            .expect("doctor help must execute");
+        let help = String::from_utf8(output.stdout).expect("doctor help must be UTF-8");
+
+        assert!(output.status.success(), "doctor help must succeed: {help}");
+        assert!(
+            !help.to_ascii_lowercase().contains("linux capabilities"),
+            "turbo help must describe the sudo credential model, not file capabilities: {help}"
+        );
+    }
     // These integration tests use the real SystemPrivilegeChecker
 
     #[test]

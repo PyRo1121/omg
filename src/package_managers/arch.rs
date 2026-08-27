@@ -40,10 +40,8 @@ impl Default for ArchPackageManager {
 
 /// Helper to run a privileged operation, either directly or via sudo.
 ///
-/// Priority:
-/// 1. If we have Linux capabilities (`CAP_DAC_OVERRIDE`) -> run directly (FASTEST)
-/// 2. If already root -> run directly
-/// 3. Otherwise -> elevate via sudo (with ultra-fast elevated path)
+/// Root processes run directly; all non-root callers delegate through sudo.
+/// Executable file capabilities are intentionally never an authorization path.
 pub async fn run_privileged_operation<F, Fut>(
     command: &str,
     packages: &[String],
@@ -53,9 +51,8 @@ where
     F: FnOnce() -> Fut,
     Fut: Future<Output = AnyhowResult<()>>,
 {
-    // FAST PATH: Check capabilities first (zero-overhead if set)
     if can_write_pacman_db() {
-        tracing::debug!("Using direct ALPM access (capabilities or root)");
+        tracing::debug!("Using direct ALPM access as root");
         operation().await?;
         invalidate_caches()?;
         return Ok(());

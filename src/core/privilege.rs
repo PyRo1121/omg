@@ -67,7 +67,7 @@ pub async fn run_privileged_program(program: &str, args: &[&str]) -> anyhow::Res
             "Privilege elevation not supported in development mode.\n\
              \n\
              Options:\n\
-             • Use installed binary with turbo mode: omg doctor --turbo\n\
+             • Prime sudo credentials: omg doctor --turbo\n\
              • Run directly with sudo: sudo {program} {args:?}"
         );
     }
@@ -90,8 +90,8 @@ pub async fn run_privileged_program(program: &str, args: &[&str]) -> anyhow::Res
             anyhow::bail!(
                 "Privilege elevation requires a password but no interactive \\\n                 terminal is available.\n\
                  \n\
-                 RECOMMENDED: Enable turbo mode for zero-sudo operations:\n\
-                   omg doctor --turbo"
+                 Run 'omg doctor --turbo' interactively to prime sudo credentials,\n\
+                 or configure narrowly scoped NOPASSWD rules for automation."
             );
         }
         // One interactive authentication prompt with inherited stdio.
@@ -432,7 +432,7 @@ async fn sudo_payload_status_in(
             "Privilege elevation not supported in development mode.\n\
              \n\
              Options:\n\
-             • Use installed binary with turbo mode: omg doctor --turbo\n\
+             • Prime sudo credentials: omg doctor --turbo\n\
              • Run directly with sudo: sudo {} {:?}",
             exe.display(),
             args
@@ -464,11 +464,8 @@ async fn sudo_payload_status_in(
             return Err(anyhow::anyhow!(
                 "Failed to run sudo for privilege elevation: {e}\n\
                  \n\
-                 RECOMMENDED: Enable turbo mode for zero-sudo operations:\n\
-                   omg doctor --turbo\n\
-                 \n\
-                 This is a one-time setup that allows omg to manage packages\n\
-                 without sudo prompts, even in scripts and automation."
+                 Run 'omg doctor --turbo' interactively to prime sudo credentials,\n\
+                 or configure narrowly scoped NOPASSWD rules for automation."
             ));
         }
     };
@@ -479,15 +476,12 @@ async fn sudo_payload_status_in(
             return Err(anyhow::anyhow!(
                 "Privilege elevation failed (--yes flag prevents password prompt).\n\
                  \n\
-                 RECOMMENDED: Enable turbo mode for zero-sudo operations:\n\
-                   omg doctor --turbo\n\
+                 Run 'omg doctor --turbo' interactively to prime sudo credentials.\n\
+                 For automation, configure NOPASSWD only for the required native\n\
+                 package-manager executables.\n\
                  \n\
-                 This grants omg Linux capabilities to manage packages without sudo.\n\
-                 \n\
-                 Alternatives:\n\
-                 • Remove --yes flag to allow password prompt\n\
-                 • Configure NOPASSWD in sudoers: sudo visudo\n\
-                   {user} ALL=(ALL) NOPASSWD: {exe}",
+                 Alternative: remove --yes to allow a password prompt.\n\
+                 Current user: {user}; omg executable: {exe}",
                 user = whoami::username().unwrap_or_else(|_| "username".to_string()),
                 exe = exe.display()
             ));
@@ -505,11 +499,8 @@ async fn sudo_payload_status_in(
                 anyhow::anyhow!(
                     "Failed to run with sudo privileges: {e}\n\
                  \n\
-                 RECOMMENDED: Enable turbo mode for zero-sudo operations:\n\
-                   omg doctor --turbo\n\
-                 \n\
-                 This is a one-time setup that allows omg to manage packages\n\
-                 without sudo prompts, even in scripts and automation."
+                 Run 'omg doctor --turbo' interactively to prime sudo credentials\n\
+                 before retrying."
                 )
             });
     }
@@ -524,10 +515,8 @@ async fn sudo_payload_status_in(
             anyhow::anyhow!(
                 "Failed to elevate privileges: {e}\n\
              \n\
-             RECOMMENDED: Enable turbo mode for zero-sudo operations:\n\
-               omg doctor --turbo\n\
-             \n\
-             This is a one-time setup that allows omg to manage packages instantly."
+             Run 'omg doctor --turbo' interactively to prime sudo credentials\n\
+             before retrying."
             )
         })
 }

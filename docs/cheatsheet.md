@@ -354,7 +354,7 @@ omg-fast i vim     # Package info
 omg doctor                      # System health check
 omg doctor --network            # Also test mirror connectivity
 omg doctor --eol                # Also check end-of-life runtimes
-omg doctor --turbo              # Check zero-sudo capabilities setup
+omg doctor --turbo              # Prime sudo credentials; remove legacy file capabilities
 omg status                      # Quick status overview
 omg status --fast               # Counts only, skip full dependency scan
 omg --help                      # Show help

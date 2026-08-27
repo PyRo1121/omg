@@ -35,7 +35,7 @@ pub mod testing;
 mod types;
 pub mod usage;
 
-pub use caps::{can_write_pacman_db, has_package_caps, is_elevated, maybe_show_turbo_hint};
+pub use caps::{can_write_pacman_db, is_elevated, maybe_show_turbo_hint};
 pub use privilege::{is_root, set_yes_flag};
 // Explicit names only (no globs): one discoverable path per concept.
 // Canonical paths: `core::types` items live at `core::{Package, PackageSource,

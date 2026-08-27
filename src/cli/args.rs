@@ -338,7 +338,7 @@ pub enum Commands {
         /// Check for end-of-life runtime versions
         #[arg(long)]
         eol: bool,
-        /// Enable turbo mode (zero-sudo package operations via Linux capabilities)
+        /// Prime sudo credentials for prompt-light package operations
         #[arg(long, conflicts_with_all = ["network", "eol"])]
         turbo: bool,
     },
