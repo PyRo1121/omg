@@ -22,6 +22,20 @@ pub enum PackageSource {
     Aur,
 }
 
+impl PackageSource {
+    /// Parse either the wire labels (`official`/`aur`) or human display labels.
+    #[must_use]
+    pub fn from_label(label: &str) -> Option<Self> {
+        if label.eq_ignore_ascii_case("official") {
+            Some(Self::Official)
+        } else if label.eq_ignore_ascii_case("aur") {
+            Some(Self::Aur)
+        } else {
+            None
+        }
+    }
+}
+
 /// Package information
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Package {
@@ -38,5 +52,25 @@ impl std::fmt::Display for PackageSource {
             Self::Official => write!(f, "Official"),
             Self::Aur => write!(f, "AUR"),
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::PackageSource;
+
+    #[test]
+    fn package_source_accepts_wire_and_display_casing() {
+        assert_eq!(
+            PackageSource::from_label("official"),
+            Some(PackageSource::Official)
+        );
+        assert_eq!(
+            PackageSource::from_label("Official"),
+            Some(PackageSource::Official)
+        );
+        assert_eq!(PackageSource::from_label("aur"), Some(PackageSource::Aur));
+        assert_eq!(PackageSource::from_label("AUR"), Some(PackageSource::Aur));
+        assert_eq!(PackageSource::from_label("unknown"), None);
     }
 }

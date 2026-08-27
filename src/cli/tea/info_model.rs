@@ -5,6 +5,8 @@
 use crate::cli::style;
 use crate::cli::tea::{Cmd, Model};
 #[cfg(unix)]
+use crate::core::PackageSource;
+#[cfg(unix)]
 use crate::core::client::DaemonClient;
 use crate::package_managers::get_package_manager;
 use owo_colors::OwoColorize;
@@ -279,7 +281,7 @@ async fn fetch_info(package: &str) -> InfoMsg {
             name: info.name,
             version: info.version,
             description: info.description,
-            source: if info.source == "official" {
+            source: if PackageSource::from_label(&info.source) == Some(PackageSource::Official) {
                 InfoSource::Official
             } else {
                 InfoSource::Aur

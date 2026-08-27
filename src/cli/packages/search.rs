@@ -5,8 +5,8 @@ use serde::Serialize;
 
 use crate::cli::packages::common::{description_width, validate_search_query};
 use crate::cli::style;
-use crate::core::Package;
 use crate::core::format::truncate;
+use crate::core::{Package, PackageSource};
 use crate::package_managers::{VersionDisplay, get_package_manager};
 
 #[cfg(unix)]
@@ -316,16 +316,21 @@ fn search_sync_official_only(query: &str, limit: usize) -> Result<bool> {
     }
 }
 
+fn styled_source(source: &str) -> String {
+    if PackageSource::from_label(source) == Some(PackageSource::Aur) {
+        style::warning(source)
+    } else {
+        style::info(source)
+    }
+}
+
 #[inline]
 fn write_package_line<W: Write>(
     w: &mut W,
     pkg: &DisplayPackage,
     desc_width: usize,
 ) -> std::io::Result<()> {
-    let source_style = match pkg.source.as_str() {
-        "AUR" => style::warning(&pkg.source),
-        _ => style::info(&pkg.source),
-    };
+    let source_style = styled_source(&pkg.source);
 
     write!(
         w,
@@ -358,10 +363,7 @@ fn write_daemon_package<W: Write>(
     pkg: &crate::daemon::protocol::PackageInfo,
     desc_width: usize,
 ) -> std::io::Result<()> {
-    let source_style = match pkg.source.as_str() {
-        "AUR" => style::warning(&pkg.source),
-        _ => style::info(&pkg.source),
-    };
+    let source_style = styled_source(&pkg.source);
 
     writeln!(
         w,

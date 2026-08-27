@@ -6,6 +6,8 @@ use futures::future::BoxFuture;
 
 use crate::cli::{modern_ui, ui};
 #[cfg(unix)]
+use crate::core::PackageSource;
+#[cfg(unix)]
 use crate::core::client::DaemonClient;
 #[cfg(unix)]
 use crate::core::client::SyncDaemonClient;
@@ -213,14 +215,16 @@ pub async fn install_dry_run(packages: &[String]) -> Result<()> {
                 let search_result = client.search(pkg_name, Some(8));
                 match search_result {
                     Ok(search_result) => {
-                        let is_official = search_result
-                            .packages
-                            .iter()
-                            .any(|pkg| pkg.name == pkg_name.as_str() && pkg.source != "AUR");
+                        let is_official = search_result.packages.iter().any(|pkg| {
+                            pkg.name == pkg_name.as_str()
+                                && PackageSource::from_label(&pkg.source)
+                                    == Some(PackageSource::Official)
+                        });
 
                         if is_official
                             && let Ok(info) = client.info(pkg_name)
-                            && info.source == "official"
+                            && PackageSource::from_label(&info.source)
+                                == Some(PackageSource::Official)
                         {
                             let size_mb = info.download_size as f64 / 1024.0 / 1024.0;
                             total_size += info.download_size;
@@ -315,10 +319,10 @@ fn extract_missing_package(msg: &str, packages: &[String]) -> Option<String> {
 #[cfg(unix)]
 async fn daemon_has_official_package(client: &mut DaemonClient, package: &str) -> Result<bool> {
     let result = client.search(package, Some(8)).await?;
-    Ok(result
-        .packages
-        .iter()
-        .any(|pkg| pkg.name == package && pkg.source != "AUR"))
+    Ok(result.packages.iter().any(|pkg| {
+        pkg.name == package
+            && PackageSource::from_label(&pkg.source) == Some(PackageSource::Official)
+    }))
 }
 
 async fn lookup_official_package(

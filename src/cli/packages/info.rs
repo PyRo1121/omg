@@ -6,6 +6,8 @@ use std::time::Duration;
 use crate::cli::tea::run_info_elm;
 use crate::cli::{style, ui};
 #[cfg(unix)]
+use crate::core::PackageSource;
+#[cfg(unix)]
 use crate::core::client::DaemonClient;
 #[cfg(any(feature = "debian", feature = "debian-pure"))]
 use crate::core::env::distro::is_debian_like;
@@ -161,7 +163,7 @@ fn display_detailed_info(info: &crate::daemon::protocol::DetailedPackageInfo) {
     ui::print_kv("Version", &style::version(&info.version));
     ui::print_kv("Description", &info.description);
 
-    let source_label = if info.source == "official" {
+    let source_label = if PackageSource::from_label(&info.source) == Some(PackageSource::Official) {
         format!("Official repository ({})", style::info(&info.repo))
     } else {
         style::warning("AUR (Arch User Repository)")

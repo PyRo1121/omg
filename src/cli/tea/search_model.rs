@@ -332,15 +332,14 @@ async fn fetch_search_results(query: &str) -> SearchMsg {
         && let Ok(res) = client.search(query, Some(50)).await
     {
         for pkg in res.packages {
+            let Some(source) = PackageSource::from_label(&pkg.source) else {
+                return SearchMsg::Error(format!("Unknown package source: {}", pkg.source));
+            };
             results.push(SearchResult {
                 name: pkg.name,
                 version: pkg.version,
                 description: pkg.description,
-                source: if pkg.source == "AUR" {
-                    PackageSource::Aur
-                } else {
-                    PackageSource::Official
-                },
+                source,
                 repo: pkg.source,
                 installed: false,
                 #[cfg(feature = "arch")]
