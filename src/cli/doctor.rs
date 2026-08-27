@@ -179,32 +179,21 @@ fn check_eol_runtimes() -> usize {
             // Check against EOL dates
             let mut eol_warning = None;
 
-            for entry in crate::runtimes::eol::EOL_TABLE {
-                let (rt, ver_prefix, eol_date) =
-                    (entry.runtime, entry.version_prefix, entry.eol_date);
-                if rt == *runtime
-                    && version
-                        .split('.')
-                        .filter_map(|v| v.parse::<u64>().ok())
-                        .collect::<Vec<_>>()
-                        .starts_with(ver_prefix)
-                    && let Ok(eol_ts) = jiff::civil::Date::strptime("%Y-%m-%d", eol_date)
-                    && let Ok(zoned) = eol_ts.at(0, 0, 0, 0).to_zoned(jiff::tz::TimeZone::UTC)
-                {
-                    let eol_timestamp = zoned.timestamp();
-
-                    if now > eol_timestamp {
-                        eol_warning = Some(format!("EOL since {eol_date}"));
-                    } else {
-                        // Check if EOL is within 6 months
-                        let six_months = jiff::Span::new().months(6);
-                        if let Ok(warning_ts) = now.checked_add(six_months)
-                            && warning_ts > eol_timestamp
-                        {
-                            eol_warning = Some(format!("EOL on {eol_date}"));
-                        }
+            let components = crate::runtimes::eol::version_components(&version);
+            if let Some(entry) = crate::runtimes::eol::find_eol_entry(runtime, &components)
+                && let Ok(eol_date) = jiff::civil::Date::strptime("%Y-%m-%d", entry.eol_date)
+                && let Ok(zoned) = eol_date.at(0, 0, 0, 0).to_zoned(jiff::tz::TimeZone::UTC)
+            {
+                let eol_timestamp = zoned.timestamp();
+                if now > eol_timestamp {
+                    eol_warning = Some(format!("EOL since {}", entry.eol_date));
+                } else {
+                    let six_months = jiff::Span::new().months(6);
+                    if let Ok(warning_ts) = now.checked_add(six_months)
+                        && warning_ts > eol_timestamp
+                    {
+                        eol_warning = Some(format!("EOL on {}", entry.eol_date));
                     }
-                    break;
                 }
             }
 

@@ -9,9 +9,6 @@ pub(crate) struct EolEntry {
     pub runtime: &'static str,
     pub version_prefix: &'static [u64],
     pub eol_date: &'static str,
-    /// LTS date or "N/A" for non-LTS releases.
-    #[allow(dead_code)]
-    pub lts_until: &'static str,
 }
 
 /// Canonical EOL table sourced from endoflife.date (last reviewed 2026-02).
@@ -20,157 +17,149 @@ pub(crate) const EOL_TABLE: &[EolEntry] = &[
         runtime: "node",
         version_prefix: &[16],
         eol_date: "2023-09-11",
-        lts_until: "N/A",
     },
     EolEntry {
         runtime: "node",
         version_prefix: &[18],
         eol_date: "2025-04-30",
-        lts_until: "2023-10-18",
     },
     EolEntry {
         runtime: "node",
         version_prefix: &[19],
         eol_date: "2023-06-01",
-        lts_until: "N/A",
     },
     EolEntry {
         runtime: "node",
         version_prefix: &[20],
         eol_date: "2026-04-30",
-        lts_until: "2024-10-22",
     },
     EolEntry {
         runtime: "node",
         version_prefix: &[21],
         eol_date: "2024-06-01",
-        lts_until: "N/A",
     },
     EolEntry {
         runtime: "node",
         version_prefix: &[22],
         eol_date: "2027-04-30",
-        lts_until: "2025-10-21",
     },
     EolEntry {
         runtime: "python",
         version_prefix: &[3, 7],
         eol_date: "2023-06-27",
-        lts_until: "N/A",
     },
     EolEntry {
         runtime: "python",
         version_prefix: &[3, 8],
         eol_date: "2024-10-31",
-        lts_until: "N/A",
     },
     EolEntry {
         runtime: "python",
         version_prefix: &[3, 9],
         eol_date: "2025-10-31",
-        lts_until: "N/A",
     },
     EolEntry {
         runtime: "python",
         version_prefix: &[3, 10],
         eol_date: "2026-10-31",
-        lts_until: "N/A",
     },
     EolEntry {
         runtime: "python",
         version_prefix: &[3, 11],
         eol_date: "2027-10-31",
-        lts_until: "N/A",
     },
     EolEntry {
         runtime: "python",
         version_prefix: &[3, 12],
         eol_date: "2028-10-31",
-        lts_until: "N/A",
     },
     EolEntry {
         runtime: "python",
         version_prefix: &[3, 13],
         eol_date: "2029-10-31",
-        lts_until: "N/A",
     },
     EolEntry {
         runtime: "go",
         version_prefix: &[1, 19],
         eol_date: "2023-08-08",
-        lts_until: "N/A",
     },
     EolEntry {
         runtime: "go",
         version_prefix: &[1, 20],
         eol_date: "2024-02-06",
-        lts_until: "N/A",
     },
     EolEntry {
         runtime: "go",
         version_prefix: &[1, 21],
         eol_date: "2024-08-06",
-        lts_until: "N/A",
     },
     EolEntry {
         runtime: "go",
         version_prefix: &[1, 22],
         eol_date: "2025-02-06",
-        lts_until: "N/A",
     },
     EolEntry {
         runtime: "ruby",
         version_prefix: &[2, 7],
         eol_date: "2023-03-31",
-        lts_until: "N/A",
     },
     EolEntry {
         runtime: "ruby",
         version_prefix: &[3, 0],
         eol_date: "2024-03-31",
-        lts_until: "N/A",
     },
     EolEntry {
         runtime: "ruby",
         version_prefix: &[3, 1],
         eol_date: "2025-03-31",
-        lts_until: "N/A",
     },
     EolEntry {
         runtime: "ruby",
         version_prefix: &[3, 2],
         eol_date: "2026-03-31",
-        lts_until: "N/A",
     },
     EolEntry {
         runtime: "java",
         version_prefix: &[8],
         eol_date: "2030-12-31",
-        lts_until: "LTS",
     },
     EolEntry {
         runtime: "java",
         version_prefix: &[11],
         eol_date: "2026-09-30",
-        lts_until: "LTS",
     },
     EolEntry {
         runtime: "java",
         version_prefix: &[17],
         eol_date: "2029-09-30",
-        lts_until: "LTS",
     },
     EolEntry {
         runtime: "java",
         version_prefix: &[21],
         eol_date: "2031-09-30",
-        lts_until: "LTS",
     },
 ];
 
+/// Numeric components of a decorated runtime version.
+///
+/// Parsing stops at the first non-numeric suffix, so distro revisions do not
+/// affect runtime lifecycle matching.
+#[must_use]
+pub(crate) fn version_components(version: &str) -> Vec<u64> {
+    let numeric_prefix = version
+        .strip_prefix(['v', 'V'])
+        .unwrap_or(version)
+        .split(|character: char| !character.is_ascii_digit() && character != '.')
+        .next()
+        .unwrap_or("");
+    numeric_prefix
+        .split('.')
+        .map_while(|part| part.parse::<u64>().ok())
+        .collect()
+}
+
 /// Find the EOL entry matching a runtime + installed version components.
 /// Component-prefix match prevents Python `3.13` from ever matching `3.1`.
-#[allow(dead_code)] // used by tests
 pub(crate) fn find_eol_entry(
     runtime: &str,
     version_components: &[u64],

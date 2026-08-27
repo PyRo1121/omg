@@ -36,6 +36,7 @@ use crate::cli::{AuditCommands, CliContext, LocalCommandRunner, style, ui};
 use crate::core::client::DaemonClient;
 use crate::core::license;
 use crate::core::security::{AuditLogger, AuditSeverity, SbomGenerator, SecurityPolicy};
+use crate::runtimes::eol::version_components;
 
 impl LocalCommandRunner for AuditCommands {
     async fn execute(&self, ctx: &CliContext) -> Result<()> {
@@ -1265,28 +1266,9 @@ fn parse_eol_timestamp(eol_date: &str) -> Result<jiff::Timestamp> {
     Ok(zoned.timestamp())
 }
 
-/// Numeric components of a version string: `"3.13.1-1"` → `[3, 13, 1]`,
-/// `"1.20"` → `[1, 20]`. Non-numeric segments stop the parse.
-fn version_components(version: &str) -> Vec<u64> {
-    // A single leading 'v' is conventional version decoration ("v22"), not
-    // part of the numeric components.
-    let numeric_prefix = version
-        .strip_prefix(['v', 'V'])
-        .unwrap_or(version)
-        .split(|c: char| !c.is_ascii_digit() && c != '.')
-        .next()
-        .unwrap_or("");
-    numeric_prefix
-        .split('.')
-        .map_while(|part| part.parse::<u64>().ok())
-        .collect()
-}
-
 /// Check end-of-life status for installed runtimes
 pub fn check_eol(_ctx: &CliContext) -> Result<()> {
     println!("{} Checking runtime EOL status...\n", style::runtime("OMG"));
-
-    let eol_data: &[crate::runtimes::eol::EolEntry] = crate::runtimes::eol::EOL_TABLE;
 
     let now = jiff::Timestamp::now();
     // Loop-invariant warning window: a runtime within 6 months of its EOL date
@@ -1302,19 +1284,16 @@ pub fn check_eol(_ctx: &CliContext) -> Result<()> {
         if let Some(version) = crate::runtimes::probe_version(runtime) {
             let installed_components = version_components(&version);
             let mut status = "Active";
-            let eol_date_str = "Unknown";
+            let mut eol_date_str = "Unknown";
             let mut is_eol = false;
             let mut is_warning = false;
 
-            // Check EOL status: match on full numeric component prefix so that,
-            // e.g., Python 3.13 can never match a future `3.1` row.
-            for entry in eol_data {
-                if entry.runtime != *runtime
-                    || !installed_components.starts_with(entry.version_prefix)
-                {
-                    continue;
-                }
+            // Check EOL status using the shared component-prefix matcher.
+            if let Some(entry) =
+                crate::runtimes::eol::find_eol_entry(runtime, &installed_components)
+            {
                 let eol_date = entry.eol_date;
+                eol_date_str = eol_date;
                 let eol_timestamp = parse_eol_timestamp(eol_date).with_context(|| {
                     format!(
                         "Invalid EOL date '{eol_date}' for {runtime} {}",
@@ -1336,7 +1315,6 @@ pub fn check_eol(_ctx: &CliContext) -> Result<()> {
                     is_warning = true;
                     issues += 1;
                 }
-                break;
             }
 
             let status_display = if is_eol {
