@@ -382,6 +382,19 @@ mod tests {
     }
 
     #[test]
+    fn debian_package_specs_reject_empty_and_control_versions() {
+        assert!(matches!(
+            validate_debian_package_specs(&["curl=".to_string()]),
+            Err(ValidationError::VersionInvalidChar { character: '\0' })
+        ));
+        assert!(matches!(
+            validate_debian_package_specs(&["curl=1.2\n3".to_string()]),
+            Err(ValidationError::VersionInvalidChar { character: '\0' })
+        ));
+        assert!(validate_debian_package_specs(&["curl=1:8.0-1".to_string()]).is_ok());
+    }
+
+    #[test]
     fn test_valid_versions() {
         assert!(validate_version("1.0.0").is_ok());
         assert!(validate_version("2.3.4-rc1").is_ok());
