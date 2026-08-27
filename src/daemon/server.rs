@@ -374,11 +374,11 @@ pub async fn run(
     Ok(())
 }
 
-/// Maximum request size to prevent `DoS` attacks (1MB should be sufficient)
+/// Maximum request size to prevent `DoS` attacks. This also bounds the sole
+/// `String` in every `Request` variant: bitcode consumes its bytes directly
+/// from the frame before copying them into the decoded value.
+/// <https://github.com/SoftbearStudios/bitcode/blob/f41da053c08178189aaee8c62f4c6e738add6eda/src/str.rs>
 const MAX_REQUEST_SIZE: usize = 1024 * 1024;
-
-/// Maximum deserialized request size to prevent compression bomb attacks (10MB)
-const MAX_DESERIALIZED_SIZE: usize = 10 * 1024 * 1024;
 
 /// RAII guard for tracking active connections
 struct ConnectionGuard;
@@ -506,25 +506,6 @@ async fn handle_client(stream: tokio::net::UnixStream, state: Arc<DaemonState>) 
                 break;
             }
         };
-
-        // SECURITY: Validate deserialized size to prevent compression bomb attacks.
-        // `heap_size` walks `String`/`Vec` payloads; `std::mem::size_of_val`
-        // would only measure the enum's stack size and could never fire.
-        let estimated_size = request.heap_size();
-        if estimated_size > MAX_DESERIALIZED_SIZE {
-            let msg = format!(
-                "Deserialized request too large: {estimated_size} bytes (max {MAX_DESERIALIZED_SIZE})"
-            );
-            tracing::warn!("{}", msg);
-            audit_log(
-                AuditEventType::PolicyViolation,
-                AuditSeverity::Warning,
-                "daemon_server",
-                &msg,
-            );
-            GLOBAL_METRICS.inc_requests_failed();
-            continue;
-        }
 
         let request_id = request.id();
 

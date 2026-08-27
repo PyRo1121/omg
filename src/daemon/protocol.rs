@@ -160,35 +160,6 @@ impl Request {
             Self::ListUpdates { .. } => "list_updates",
         }
     }
-
-    /// Estimated heap footprint in bytes (stack size + owned heap contents).
-    ///
-    /// Used by the daemon's compression-bomb guard. `std::mem::size_of_val`
-    /// only measures the enum's stack size and can never see `String`/`Vec`
-    /// payloads, so a guard built on it can never fire.
-    ///
-    #[must_use]
-    pub fn heap_size(&self) -> usize {
-        let mut size = std::mem::size_of::<Self>();
-        match self {
-            Self::Search { query, .. }
-            | Self::Suggest { query, .. }
-            | Self::DebianSearch { query, .. } => size += query.capacity(),
-            Self::Info { package, .. } => size += package.capacity(),
-            Self::Status { .. }
-            | Self::Explicit { .. }
-            | Self::ExplicitCount { .. }
-            | Self::SecurityAudit { .. }
-            | Self::Ping { .. }
-            | Self::CacheStats { .. }
-            | Self::CacheClear { .. }
-            | Self::RefreshIndex { .. }
-            | Self::Metrics { .. }
-            | Self::Health { .. }
-            | Self::ListUpdates { .. } => {}
-        }
-        size
-    }
 }
 
 /// Unified Response Enum
@@ -409,27 +380,4 @@ pub fn read_frame<R: std::io::Read>(reader: &mut R) -> std::io::Result<Vec<u8>> 
     let mut payload = vec![0u8; len];
     reader.read_exact(&mut payload)?;
     Ok(payload)
-}
-
-#[cfg(test)]
-mod tests {
-    #[test]
-    fn heap_size_counts_string_payloads() {
-        let request = super::Request::Search {
-            id: 1,
-            query: "x".repeat(2048),
-            limit: None,
-        };
-        let size = request.heap_size();
-        assert!(
-            size >= 2048,
-            "heap_size must include String payloads, got {size}"
-        );
-    }
-
-    #[test]
-    fn heap_size_of_unit_variants_is_stack_only() {
-        let size = super::Request::Ping { id: 1 }.heap_size();
-        assert_eq!(size, std::mem::size_of::<super::Request>());
-    }
 }
