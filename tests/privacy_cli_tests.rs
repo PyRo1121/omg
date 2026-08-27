@@ -1,7 +1,9 @@
 //! Privacy CLI Command Tests
 //!
-//! Tests for GDPR/CCPA privacy commands: status, export, delete, opt-out, opt-in
-//! These tests verify CLI behavior with/without license activation and use mock API responses.
+//! Tests for local privacy commands: status, export, opt-out, and opt-in.
+//!
+//! Account export and deletion are session-authenticated web operations and
+//! are intentionally not exposed through the license-key-authenticated CLI.
 
 #![cfg(feature = "arch")]
 
@@ -25,9 +27,8 @@ fn test_privacy_status_default() {
     let result = run_omg(&["privacy"]);
 
     // ===== ASSERT =====
-    // privacy_status always exits Ok and prints the settings header plus the
-    // rights list in BOTH the API-success and offline-fallback branches
-    // (src/cli/telemetry.rs:92 and :129/:146).
+    // Privacy status is local-only and points account-level requests to the
+    // authenticated web surface.
     result.assert_success();
     let output = result.combined_output();
     assert!(
@@ -35,8 +36,9 @@ fn test_privacy_status_default() {
         "Output should render the privacy settings header: {output}"
     );
     assert!(
-        output.contains("Your Rights:"),
-        "Output should render the user-rights section: {output}"
+        output.contains("Account export and deletion require an authenticated session")
+            && output.contains("https://omg.latham.cloud/privacy/"),
+        "Output should direct account-level rights to the authenticated web surface: {output}"
     );
 }
 
@@ -69,14 +71,16 @@ fn test_privacy_status_shows_commands() {
     // ===== ASSERT =====
     let output = result.combined_output();
 
-    // The Commands footer lists ALL four subcommands unconditionally
-    // (src/cli/telemetry.rs:186-191); requiring each one pins the full list.
-    for command in ["export", "delete", "opt-out", "opt-in"] {
+    for command in ["export", "opt-out", "opt-in"] {
         assert!(
             output.contains(command),
             "Status should list the '{command}' privacy command: {output}"
         );
     }
+    assert!(
+        !output.contains("omg privacy delete"),
+        "session-authenticated account deletion must not be advertised as a CLI command: {output}"
+    );
 }
 
 #[test]
@@ -100,8 +104,8 @@ fn test_privacy_help() {
         "Help should mention export subcommand"
     );
     assert!(
-        output.contains("delete") || output.contains("Delete"),
-        "Help should mention delete subcommand"
+        !output.contains("Delete all") && !output.contains("delete <"),
+        "Help must not advertise the removed account-deletion command"
     );
 }
 
@@ -159,112 +163,6 @@ fn test_privacy_export_help() {
 // ═══════════════════════════════════════════════════════════════════════════════
 // Privacy Delete Command
 // ═══════════════════════════════════════════════════════════════════════════════
-
-#[test]
-fn test_privacy_delete_without_confirm() {
-    // ===== ARRANGE =====
-    init_test_env();
-
-    // ===== ACT =====
-    // run_omg gives every invocation a fresh OMG_DATA_DIR, so there is no
-    // license. delete_data checks the license BEFORE the confirm gate
-    // (src/cli/telemetry.rs:284-286) and bails with a named error.
-    let result = run_omg(&["privacy", "delete"]);
-
-    // ===== ASSERT =====
-    result.assert_failure();
-    let output = result.combined_output();
-    assert!(
-        output.contains("No license found"),
-        "Delete without a license must fail naming the missing license: {output}"
-    );
-}
-
-#[test]
-fn test_privacy_delete_shows_warning_details() {
-    // ===== ARRANGE =====
-    // The deletion warning is only reachable WITH a license: delete_data bails
-    // on a missing license before the confirmation gate
-    // (src/cli/telemetry.rs delete_data). Seed a stored license — load_license
-    // accepts any well-formed license.json (src/core/license.rs:490) — so the
-    // pre-confirmation warning path is actually exercised.
-    let project = TestProject::new();
-    let license_path = project.data_dir.path().join("license.json");
-    fs::write(
-        &license_path,
-        serde_json::json!({
-            "key": "omg-test-license-key",
-            "tier": "pro",
-            "features": [],
-            "customer": null,
-            "expires_at": null,
-            "validated_at": 0,
-            "token": null,
-            "machine_id": null
-        })
-        .to_string(),
-    )
-    .expect("failed to seed license.json");
-
-    // ===== ACT =====
-    let result = project.run(&["privacy", "delete"]);
-
-    // ===== ASSERT =====
-    // Without --confirm the command shows the irreversible-deletion warning and
-    // exits successfully without deleting anything (telemetry.rs:288-312).
-    result.assert_success();
-    let output = result.combined_output();
-    assert!(
-        output.contains("IRREVERSIBLE"),
-        "Warning must state the action is IRREVERSIBLE: {output}"
-    );
-    assert!(
-        output.contains("--confirm"),
-        "Warning must name the --confirm flag: {output}"
-    );
-}
-
-#[test]
-fn test_privacy_delete_with_confirm_no_license() {
-    // ===== ARRANGE =====
-    init_test_env();
-    clear_license();
-
-    // ===== ACT =====
-    let result = run_omg(&["privacy", "delete", "--confirm"]);
-
-    // ===== ASSERT =====
-    // Without a license, `delete --confirm` must FAIL with the named cause —
-    // not succeed silently and not merely print an unrelated warning.
-    result.assert_failure();
-    let output = result.combined_output();
-    assert!(
-        output.contains("No license found"),
-        "Delete --confirm without a license must fail naming the missing license: {output}"
-    );
-}
-
-#[test]
-fn test_privacy_delete_help() {
-    // ===== ARRANGE =====
-    init_test_env();
-
-    // ===== ACT =====
-    let result = run_omg(&["privacy", "delete", "--help"]);
-
-    // ===== ASSERT =====
-    result.assert_success();
-
-    let output = result.combined_output();
-    assert!(
-        output.contains("delete") || output.contains("Delete"),
-        "Help should mention delete"
-    );
-    assert!(
-        output.contains("confirm") || output.contains("--confirm"),
-        "Help should mention confirm flag"
-    );
-}
 
 // ═══════════════════════════════════════════════════════════════════════════════
 // Privacy Opt-Out Command
@@ -329,8 +227,8 @@ fn test_privacy_opt_out_without_license_local_only() {
     result.assert_success();
     let output = result.combined_output();
     assert!(
-        output.contains("Telemetry disabled locally (server sync pending)"),
-        "Unlicensed opt-out must disable locally and report pending server sync: {output}"
+        output.contains("Telemetry disabled locally"),
+        "Unlicensed opt-out must confirm the local policy change: {output}"
     );
 }
 
@@ -607,43 +505,6 @@ fn test_privacy_export_invalid_output_path() {
     );
 }
 
-#[test]
-fn test_privacy_delete_confirm_flag_variations() {
-    // ===== ARRANGE =====
-    init_test_env();
-    clear_license();
-
-    // Test various ways to specify the confirm flag
-    let test_cases = vec![
-        vec!["privacy", "delete", "--confirm"],
-        vec!["privacy", "delete", "--confirm=true"],
-    ];
-
-    for args in test_cases {
-        // ===== ACT =====
-        let result = run_omg(&args);
-
-        // ===== ASSERT =====
-        // `--confirm` reaches the license gate and fails naming its cause
-        // (fresh data dir per run => no license exists). clap's SetTrue action
-        // rejects an explicit value, so `--confirm=true` must fail with a
-        // usage error instead of being silently accepted.
-        result.assert_failure();
-        let output = result.combined_output();
-        if *args.last().unwrap() == "--confirm" {
-            assert!(
-                output.contains("No license found"),
-                "{args:?} must fail naming the missing license: {output}"
-            );
-        } else {
-            assert!(
-                output.contains("unexpected value") && output.contains("--confirm"),
-                "{args:?} must be rejected as invalid flag syntax: {output}"
-            );
-        }
-    }
-}
-
 // ═══════════════════════════════════════════════════════════════════════════════
 // Offline/Network Error Scenarios
 // ═══════════════════════════════════════════════════════════════════════════════
@@ -658,15 +519,13 @@ fn test_privacy_commands_work_offline() {
 
     // ===== ACT & ASSERT =====
 
-    // Status works offline: both the API-success and fallback branches print
-    // the rights section and commands footer (src/cli/telemetry.rs:129/:146
-    // and :186-191), so these strings are network-independent.
+    // Status is local-only and always renders the account privacy URL.
     let result = project.run(&["privacy", "status"]);
     result.assert_success();
     let output = result.combined_output();
     assert!(
-        output.contains("Your Rights:") && output.contains("privacy export"),
-        "Status must render rights and commands regardless of API reachability: {output}"
+        output.contains("privacy export") && output.contains("https://omg.latham.cloud/privacy/"),
+        "Status must render local commands and the authenticated account surface: {output}"
     );
 
     // Opt-out works offline: local config change succeeds unconditionally.
@@ -738,7 +597,7 @@ fn test_privacy_all_subcommands_have_help() {
     // ===== ARRANGE =====
     init_test_env();
 
-    let subcommands = vec!["status", "export", "delete", "opt-out", "opt-in"];
+    let subcommands = vec!["status", "export", "opt-out", "opt-in"];
 
     for subcmd in subcommands {
         // ===== ACT =====
