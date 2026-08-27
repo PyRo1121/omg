@@ -7,9 +7,7 @@ use std::future::Future;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
-use crate::config::Settings;
-use crate::core::RuntimeBackend;
-use crate::core::runtime_resolver::{add_mise_path_fallbacks, find_in_path};
+use crate::core::runtime_resolver::find_in_path;
 use crate::hooks;
 use crate::runtimes::rust::RustManager;
 use crate::runtimes::{BunManager, NodeManager};
@@ -477,7 +475,6 @@ fn needs_arg_separator(command: &str) -> bool {
 pub fn run_task_advanced(
     task_name: &str,
     extra_args: &[String],
-    backend_override: Option<RuntimeBackend>,
     using: Option<&str>,
     all: bool,
 ) -> Result<()> {
@@ -522,11 +519,11 @@ pub fn run_task_advanced(
                     .map(std::string::ToString::to_string)
                     .collect();
                 args.push(task_name.to_string());
-                return execute_process(cmd, &args, extra_args, backend_override);
+                return execute_process(cmd, &args, extra_args);
             }
         }
 
-        return execute_process(task_name, &[], extra_args, backend_override);
+        return execute_process(task_name, &[], extra_args);
     }
 
     for task in matches {
@@ -542,19 +539,14 @@ pub fn run_task_advanced(
             &task.command,
             &with_arg_separator(&task.command, task.args, extra_args),
             extra_args,
-            backend_override,
         )?;
     }
 
     Ok(())
 }
 
-pub fn run_task(
-    task_name: &str,
-    extra_args: &[String],
-    backend_override: Option<RuntimeBackend>,
-) -> Result<()> {
-    run_task_advanced(task_name, extra_args, backend_override, None, false)
+pub fn run_task(task_name: &str, extra_args: &[String]) -> Result<()> {
+    run_task_advanced(task_name, extra_args, None, false)
 }
 
 /// Prepend a `--` separator before user extra args for package managers that
@@ -745,12 +737,7 @@ struct Poetry {
     scripts: Option<HashMap<String, String>>,
 }
 
-fn execute_process(
-    cmd: &str,
-    args: &[String],
-    extra_args: &[String],
-    backend_override: Option<RuntimeBackend>,
-) -> Result<()> {
+fn execute_process(cmd: &str, args: &[String], extra_args: &[String]) -> Result<()> {
     // Detect required runtime versions and inject them into PATH
     // This ensures 'npm' uses the correct node version, 'cargo' uses correct rust channel, etc.
     let current_dir = std::env::current_dir()?;
@@ -787,32 +774,24 @@ fn execute_process(
         versions.entry(runtime).or_insert(default_version);
     }
     ensure_js_package_manager(cmd)?;
-    let settings = Settings::load()?;
-    let backend = backend_override.unwrap_or(settings.runtime_backend);
-    if backend != RuntimeBackend::Mise {
-        // Resolve all required runtimes - uses generic ensure_runtime helper
-        // Note: Sequential processing required since ensure_* may prompt for user confirmation
-        let runtime_resolvers: &[(&str, fn(&str) -> Result<String>)] = &[
-            ("node", ensure_node_runtime),
-            ("bun", ensure_bun_runtime),
-            ("python", ensure_python_runtime),
-            ("go", ensure_go_runtime),
-            ("ruby", ensure_ruby_runtime),
-            ("java", ensure_java_runtime),
-        ];
+    // Resolve all required runtimes. Sequential processing is required because
+    // individual resolvers may ask the user to confirm an installation.
+    let runtime_resolvers: &[(&str, fn(&str) -> Result<String>)] = &[
+        ("node", ensure_node_runtime),
+        ("bun", ensure_bun_runtime),
+        ("python", ensure_python_runtime),
+        ("go", ensure_go_runtime),
+        ("ruby", ensure_ruby_runtime),
+        ("java", ensure_java_runtime),
+    ];
 
-        for (runtime_name, resolver) in runtime_resolvers {
-            if let Some(version) = versions.get(*runtime_name).cloned() {
-                let resolved = resolver(&version)?;
-                versions.insert((*runtime_name).to_string(), resolved);
-            }
+    for (runtime_name, resolver) in runtime_resolvers {
+        if let Some(version) = versions.get(*runtime_name).cloned() {
+            let resolved = resolver(&version)?;
+            versions.insert((*runtime_name).to_string(), resolved);
         }
     }
-    let mut path_additions = match backend {
-        RuntimeBackend::Mise => Vec::new(),
-        _ => hooks::build_path_additions(&versions)?,
-    };
-    add_mise_path_fallbacks(&versions, &mut path_additions, backend);
+    let mut path_additions = hooks::build_path_additions(&versions)?;
 
     // Auto-activate python virtual environment if present
     // Check for .venv or venv in current directory
@@ -1049,11 +1028,7 @@ fn ensure_js_package_manager(command: &str) -> Result<()> {
 /// Run a task in watch mode - re-run on file changes
 ///
 /// Synchronous and blocking by design: the process lives in the watch loop.
-pub fn run_task_watch(
-    task_name: &str,
-    extra_args: &[String],
-    backend_override: Option<RuntimeBackend>,
-) -> Result<()> {
+pub fn run_task_watch(task_name: &str, extra_args: &[String]) -> Result<()> {
     use notify::{Config, RecommendedWatcher, RecursiveMode, Watcher};
     use std::sync::mpsc::channel;
     use std::time::Duration;
@@ -1065,7 +1040,7 @@ pub fn run_task_watch(
     );
 
     // Initial run; surface failures in watch mode instead of discarding them.
-    if let Err(error) = run_task(task_name, extra_args, backend_override) {
+    if let Err(error) = run_task(task_name, extra_args) {
         eprintln!("{} Task failed: {error}", "!".yellow());
     }
 
@@ -1142,13 +1117,13 @@ pub fn run_task_watch(
                 }
                 rerun_pending = false;
                 last_run = std::time::Instant::now();
-                rerun_task_in_watch(task_name, extra_args, backend_override);
+                rerun_task_in_watch(task_name, extra_args);
             }
             Err(std::sync::mpsc::RecvTimeoutError::Timeout) => {
                 if rerun_pending && last_run.elapsed() >= debounce {
                     rerun_pending = false;
                     last_run = std::time::Instant::now();
-                    rerun_task_in_watch(task_name, extra_args, backend_override);
+                    rerun_task_in_watch(task_name, extra_args);
                 }
                 // No events otherwise; continue watching
             }
@@ -1161,17 +1136,13 @@ pub fn run_task_watch(
     Ok(())
 }
 
-fn rerun_task_in_watch(
-    task_name: &str,
-    extra_args: &[String],
-    backend_override: Option<RuntimeBackend>,
-) {
+fn rerun_task_in_watch(task_name: &str, extra_args: &[String]) {
     println!(
         "\n{} File changed, re-running {}...\n",
         "→".yellow(),
         task_name.cyan()
     );
-    if let Err(error) = run_task(task_name, extra_args, backend_override) {
+    if let Err(error) = run_task(task_name, extra_args) {
         eprintln!("{} Task failed: {error}", "!".yellow());
     }
 }
@@ -1197,15 +1168,11 @@ fn parse_parallel_task_names(tasks: &str) -> Result<Vec<String>> {
 }
 
 /// Run multiple tasks in parallel (comma-separated task names).
-pub async fn run_tasks_parallel(
-    tasks_str: &str,
-    extra_args: &[String],
-    backend_override: Option<RuntimeBackend>,
-) -> Result<()> {
+pub async fn run_tasks_parallel(tasks_str: &str, extra_args: &[String]) -> Result<()> {
     let task_names = parse_parallel_task_names(tasks_str)?;
 
     if task_names.len() == 1 {
-        return run_task(&task_names[0], extra_args, backend_override);
+        return run_task(&task_names[0], extra_args);
     }
 
     println!(
@@ -1219,9 +1186,8 @@ pub async fn run_tasks_parallel(
         .into_iter()
         .map(|task| {
             let args = extra_args.to_vec();
-            let backend = backend_override;
             tokio::task::spawn_blocking(move || {
-                let result = run_task(&task, &args, backend);
+                let result = run_task(&task, &args);
                 (task, result)
             })
         })

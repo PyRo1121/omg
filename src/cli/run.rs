@@ -1,11 +1,10 @@
 use crate::cli::{CliContext, LocalCommandRunner};
-use crate::core::{RuntimeBackend, task_runner};
+use crate::core::task_runner;
 use anyhow::Result;
 
 pub struct RunCommand {
     pub task: String,
     pub args: Vec<String>,
-    pub runtime_backend: Option<RuntimeBackend>,
     pub watch: bool,
     pub parallel: bool,
     pub using: Option<String>,
@@ -14,17 +13,14 @@ pub struct RunCommand {
 
 impl LocalCommandRunner for RunCommand {
     async fn execute(&self, _ctx: &CliContext) -> Result<()> {
-        let backend = self.runtime_backend;
-
         if self.watch {
-            task_runner::run_task_watch(&self.task, &self.args, backend)?;
+            task_runner::run_task_watch(&self.task, &self.args)?;
         } else if self.parallel {
-            task_runner::run_tasks_parallel(&self.task, &self.args, backend).await?;
+            task_runner::run_tasks_parallel(&self.task, &self.args).await?;
         } else {
             task_runner::run_task_advanced(
                 &self.task,
                 &self.args,
-                backend,
                 self.using.as_deref(),
                 self.all,
             )?;

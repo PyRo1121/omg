@@ -1,17 +1,11 @@
-use std::process::Command;
-use std::sync::LazyLock;
-
 use anyhow::{Context, Result};
 use owo_colors::OwoColorize;
 
 use crate::cli::ui;
 use crate::runtimes::{
-    BunManager, GoManager, JavaManager, MiseManager, NodeManager, PiManager, PythonManager,
-    RubyManager, RustManager, SUPPORTED_RUNTIMES,
+    BunManager, GoManager, JavaManager, NodeManager, PiManager, PythonManager, RubyManager,
+    RustManager, SUPPORTED_RUNTIMES,
 };
-
-/// Global mise manager instance
-static MISE: LazyLock<MiseManager> = LazyLock::new(MiseManager::new);
 
 pub fn resolve_active_version(runtime: &str) -> Result<Option<String>> {
     // File-based detection (.tool-versions, .nvmrc, ...) is keyed by canonical
@@ -22,27 +16,12 @@ pub fn resolve_active_version(runtime: &str) -> Result<Option<String>> {
     if let Some(version) = versions.get(&runtime) {
         return Ok(Some(version.clone()));
     }
-    if !MISE.is_available() {
-        return Ok(None);
-    }
-    MISE.current_version(&runtime)
-        .with_context(|| format!("Failed to query mise current version for {runtime}"))
+    Ok(None)
 }
 
 pub fn ensure_active_version(runtime: &str) -> Result<Option<String>> {
     if let Some(version) = resolve_active_version(runtime)? {
         return Ok(Some(version));
-    }
-    if !MISE.is_available() {
-        return Ok(None);
-    }
-    if MISE
-        .install_runtime(runtime)
-        .with_context(|| format!("Failed to install {runtime} via mise"))?
-    {
-        return MISE
-            .current_version(runtime)
-            .with_context(|| format!("Failed to query mise current version for {runtime}"));
     }
     Ok(None)
 }
@@ -52,13 +31,6 @@ pub fn known_runtimes() -> Result<Vec<String>> {
         .iter()
         .map(std::string::ToString::to_string)
         .collect();
-
-    if MISE.is_available() {
-        runtimes.extend(
-            MISE.list_installed()
-                .context("Failed to list mise-installed runtimes")?,
-        );
-    }
 
     runtimes.sort();
     runtimes.dedup();
@@ -177,84 +149,16 @@ pub async fn use_version(runtime: &str, version: Option<&str>) -> Result<()> {
         "pi" => {
             install_or_use(&PiManager::new(), strip_version_prefix(&version)).await?;
         }
-        _ => {
-            if !MISE.is_available() {
-                println!(
-                    "{} {} is not natively supported, installing mise...\n",
-                    "→".blue(),
-                    runtime.yellow()
-                );
-                MISE.ensure_installed().await?;
-            }
-            MISE.use_version(&runtime, &version)?;
-        }
+        _ => anyhow::bail!(
+            "Unsupported runtime '{runtime}'. Supported runtimes: {}",
+            SUPPORTED_RUNTIMES.join(", ")
+        ),
     }
 
     Ok(())
 }
 
-fn mise_list_versions(runtime: &str, available: bool) -> Result<()> {
-    let args = if available {
-        vec!["ls-remote", "--", runtime]
-    } else {
-        vec!["ls", "--", runtime]
-    };
-    let output = Command::new(MISE.mise_path())
-        .args(args)
-        .output()
-        .context("Failed to run `mise`")?;
-    if !output.status.success() {
-        // Surface mise's stderr so failures are diagnosable instead of a bare
-        // "mise failed" with no cause.
-        let stderr = String::from_utf8_lossy(&output.stderr);
-        anyhow::bail!(
-            "mise failed to list versions for {runtime}: {}",
-            stderr.trim()
-        );
-    }
-
-    let stdout = String::from_utf8_lossy(&output.stdout);
-    if stdout.trim().is_empty() {
-        println!("  {} No mise versions found for {}", "-".dimmed(), runtime);
-    } else {
-        for line in stdout.lines() {
-            println!("  {line}");
-        }
-    }
-    Ok(())
-}
-
-fn mise_list_all() -> Result<()> {
-    let output = Command::new(MISE.mise_path())
-        .args(["ls"])
-        .output()
-        .context("Failed to run `mise ls`")?;
-
-    if !output.status.success() {
-        let stderr = String::from_utf8_lossy(&output.stderr);
-        anyhow::bail!(
-            "mise failed to list installed runtimes{}",
-            if stderr.trim().is_empty() {
-                String::new()
-            } else {
-                format!(": {}", stderr.trim())
-            }
-        );
-    }
-
-    let stdout = String::from_utf8_lossy(&output.stdout);
-    if stdout.trim().is_empty() {
-        println!("  {} No mise runtimes installed", "-".dimmed());
-    } else {
-        for line in stdout.lines() {
-            println!("  {line}");
-        }
-    }
-    Ok(())
-}
-
-/// Probe one natively supported runtime's installed + active versions.
-/// Returns `None` when `runtime` is mise-managed (no structured listing).
+/// Probe one natively supported runtime's installed and active versions.
 /// Aliases (`nodejs`, `golang`, `jdk`, ...) are normalized via
 /// `canonical_runtime_name` before dispatch.
 fn native_version_info(runtime: &str) -> Option<(Result<Vec<String>>, Option<String>)> {
@@ -314,9 +218,7 @@ fn runtime_versions_value(
     }))
 }
 
-/// JSON entry for a natively supported runtime, or `None` when `runtime`
-/// is mise-managed (whose listing is unstructured text and cannot be
-/// represented as machine output).
+/// JSON entry for a natively supported runtime.
 fn installed_json_entry(runtime: &str) -> Result<Option<serde_json::Value>> {
     let Some((installed, current)) = native_version_info(runtime) else {
         return Ok(None);
@@ -329,12 +231,11 @@ fn installed_json_entry(runtime: &str) -> Result<Option<serde_json::Value>> {
     .map(Some)
 }
 
-/// JSON output for installed runtime versions. Requesting JSON for a
-/// mise-managed runtime fails explicitly instead of emitting partial data.
+/// JSON output for installed runtime versions.
 fn list_installed_json(runtime: Option<&str>) -> Result<()> {
     if let Some(rt) = runtime {
         let Some(entry) = installed_json_entry(rt)? else {
-            anyhow::bail!("JSON version output is not supported for mise-managed runtime '{rt}'");
+            anyhow::bail!("Unsupported runtime '{rt}'");
         };
         println!("{}", serde_json::to_string_pretty(&entry)?);
         return Ok(());
@@ -363,9 +264,7 @@ pub fn list_versions_sync(runtime: Option<&str>, json: bool) -> Result<()> {
             Some((installed, current)) => {
                 print_listed_versions(&canonical_runtime_name(rt), installed, current.as_deref())?;
             }
-            None => {
-                mise_list_versions(rt, false)?;
-            }
+            None => anyhow::bail!("Unsupported runtime '{rt}'"),
         }
     } else {
         ui::print_header("OMG", "Installed runtime versions");
@@ -384,13 +283,6 @@ pub fn list_versions_sync(runtime: Option<&str>, json: bool) -> Result<()> {
             if let Some(v) = mgr_version {
                 ui::print_list_item(name, Some(&v));
             }
-        }
-
-        if MISE.is_available() {
-            ui::print_spacer();
-            ui::print_header("MISE", "Additional Runtimes");
-            ui::print_spacer();
-            mise_list_all()?;
         }
     }
 
@@ -437,13 +329,6 @@ pub async fn list_versions(runtime: Option<&str>, available: bool, json: bool) -
             if let Some(v) = version {
                 ui::print_list_item(name, Some(&v));
             }
-        }
-
-        if MISE.is_available() {
-            ui::print_spacer();
-            ui::print_header("MISE", "Additional Runtimes");
-            ui::print_spacer();
-            mise_list_all()?;
         }
 
         ui::print_spacer();
@@ -518,16 +403,7 @@ pub async fn list_versions(runtime: Option<&str>, available: bool, json: bool) -
                 "Remote Pi version listing is not yet supported; specify an exact npm version"
             );
         }
-        _ => {
-            if !MISE.is_available() {
-                ui::print_tip(&format!(
-                    "{rt} is not natively supported, installing mise..."
-                ));
-                MISE.ensure_installed().await?;
-            }
-            // `!available` already returned above, so this is always remote listing.
-            mise_list_versions(rt, true)?;
-        }
+        _ => anyhow::bail!("Unsupported runtime '{rt}'"),
     }
 
     ui::print_spacer();
@@ -556,9 +432,9 @@ mod tests {
     }
 
     #[test]
-    fn installed_json_entry_rejects_mise_managed_runtimes() {
+    fn installed_json_entry_rejects_unsupported_runtimes() {
         let entry = super::installed_json_entry("erlang").expect("probe must succeed");
-        assert!(entry.is_none(), "mise-managed runtimes have no JSON entry");
+        assert!(entry.is_none(), "unsupported runtimes have no JSON entry");
     }
 
     #[test]
@@ -576,7 +452,7 @@ mod tests {
     }
 
     #[test]
-    fn non_native_runtime_names_are_preserved_for_mise_dispatch() {
+    fn unsupported_runtime_names_are_preserved_for_diagnostics() {
         assert_eq!(canonical_runtime_name("Erlang"), "erlang");
         assert_eq!(canonical_runtime_name("deno"), "deno");
     }

@@ -39,6 +39,6 @@ pub use caps::{can_write_pacman_db, is_elevated, maybe_show_turbo_hint};
 pub use privilege::{is_root, set_yes_flag};
 // Explicit names only (no globs): one discoverable path per concept.
 // Canonical paths: `core::types` items live at `core::{Package, PackageSource,
-// RuntimeBackend}`; caps predicates stay at `core::caps::*`; error suggestions
+// caps predicates stay at `core::caps::*`; error suggestions
 // live at `core::error::suggest_for_anyhow`.
-pub use types::{Package, PackageSource, RuntimeBackend};
+pub use types::{Package, PackageSource};

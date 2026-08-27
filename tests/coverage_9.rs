@@ -2,18 +2,16 @@
 //!
 //! Contracts under test (each assertion pins observable CLI behavior):
 //! - `which`: version-file resolution (project dir, parent walk, case), the
-//!   explicit "no version set" notice when no pin exists and mise is absent
+//!   explicit "no version set" notice when no pin exists
 //! - `use`: failure when neither explicit version nor pin file is available;
 //!   rejection of reserved (`current`) and filesystem-unsafe versions
 //! - `list --json`: structured entries for native runtimes (exact payload),
-//!   explicit failure naming mise-managed runtimes, `--available` conflict
-//! - backend dispatch: unknown runtimes go to mise; with no mise binary the
-//!   command must fail naming the backend instead of succeeding silently
-//! - dynamic completion: known_runtimes() falls back to SUPPORTED_RUNTIMES
+//!   explicit failure naming unsupported runtimes, `--available` conflict
+//! - unknown runtimes fail explicitly without installing a fallback manager
+//! - dynamic completion is sourced from `SUPPORTED_RUNTIMES`
 //!
-//! All tests are offline: mise availability is forced off by clearing PATH
-//! (the omg binary itself is spawned by absolute path), and every assertion
-//! avoids code paths that download anything.
+//! All tests are offline: PATH is cleared (the omg binary itself is spawned
+//! by absolute path), and every assertion avoids code paths that download.
 
 #![expect(clippy::unwrap_used, clippy::expect_used, clippy::pedantic)]
 
@@ -21,8 +19,6 @@ pub mod common;
 
 use common::*;
 
-/// Env additions guaranteeing mise is unavailable: no bundled mise in the
-/// isolated OMG_DATA_DIR, and no system mise reachable with an empty PATH.
 const NO_MISE_ENV: &[(&str, &str)] = &[("PATH", "")];
 
 fn data_dir_str(project: &TestProject) -> String {
@@ -38,7 +34,7 @@ fn pacman_root_str(project: &TestProject) -> String {
 }
 
 /// Run omg inside an arbitrary directory (e.g. a nested project subdir)
-/// while keeping the project's isolated data/config dirs and disabling mise.
+/// while keeping the project's isolated data/config directories.
 fn run_in_dir(
     project: &TestProject,
     dir: &std::path::Path,
@@ -220,7 +216,7 @@ fn list_json_native_runtime_emits_exact_structured_entry() {
 }
 
 #[test]
-fn list_json_all_runtimes_emits_seven_entries_with_required_fields() {
+fn list_json_all_runtimes_emits_eight_entries_with_required_fields() {
     let project = TestProject::new();
 
     let result = project.run_with_env(&["list", "--json"], NO_MISE_ENV);
@@ -228,11 +224,11 @@ fn list_json_all_runtimes_emits_seven_entries_with_required_fields() {
 
     // Contract: one entry per natively supported runtime, each carrying
     // runtime/current/installed keys.
-    let names = ["node", "python", "rust", "go", "ruby", "java", "bun"];
+    let names = ["node", "python", "rust", "go", "ruby", "java", "bun", "pi"];
     let count = result.stdout.matches("\"runtime\":").count();
     assert_eq!(
-        count, 7,
-        "exactly seven native runtime entries expected, stdout:\n{}",
+        count, 8,
+        "exactly eight native runtime entries expected, stdout:\n{}",
         result.stdout
     );
     for name in names {
@@ -243,23 +239,20 @@ fn list_json_all_runtimes_emits_seven_entries_with_required_fields() {
             result.stdout
         );
     }
-    // Every entry must carry both remaining fields (7 occurrences each).
-    assert_eq!(result.stdout.matches("\"current\":").count(), 7);
-    assert_eq!(result.stdout.matches("\"installed\":").count(), 7);
+    // Every entry must carry both remaining fields.
+    assert_eq!(result.stdout.matches("\"current\":").count(), 8);
+    assert_eq!(result.stdout.matches("\"installed\":").count(), 8);
 }
 
 #[test]
-fn list_json_mise_managed_runtime_fails_explicitly() {
+fn list_json_unsupported_runtime_fails_explicitly() {
     let project = TestProject::new();
 
     let result = project.run_with_env(&["list", "erlang", "--json"], NO_MISE_ENV);
 
-    // Contract: JSON output for a mise-managed runtime is refused with an
-    // explicit message rather than emitting partial or empty data.
+    // Unsupported runtimes fail rather than emitting partial or empty data.
     result.assert_failure();
-    result.assert_stderr_contains(
-        "JSON version output is not supported for mise-managed runtime 'erlang'",
-    );
+    result.assert_stderr_contains("Unsupported runtime 'erlang'");
 }
 
 #[test]
@@ -273,31 +266,24 @@ fn list_json_conflicts_with_available_flag() {
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
-// BACKEND DISPATCH — non-native runtimes route through mise; without a mise
-// binary the CLI must fail loudly naming the backend (never succeed silently).
+// UNSUPPORTED RUNTIMES — fail explicitly without installing a fallback.
 // ═══════════════════════════════════════════════════════════════════════════════
 
 #[test]
-fn list_unknown_runtime_offline_fails_naming_mise_backend() {
+fn list_unknown_runtime_fails_explicitly() {
     let project = TestProject::new();
 
-    // erlang is not natively managed → mise_list_versions spawns `mise`;
-    // with no bundled copy and an empty PATH the spawn fails and the error
-    // chain must name the failed backend invocation.
     let result = project.run_with_env(&["list", "erlang"], NO_MISE_ENV);
 
     result.assert_failure();
-    result.assert_stderr_contains("mise");
-    result.assert_stderr_contains("Failed to run `mise`");
+    result.assert_stderr_contains("Unsupported runtime 'erlang'");
 }
 
 #[test]
-fn complete_lists_known_runtimes_when_mise_unavailable() {
+fn complete_lists_all_supported_native_runtimes() {
     let project = TestProject::new();
 
-    // Contract (known_runtimes fallback): with mise unavailable, dynamic
-    // completion after `omg use <TAB>` offers exactly the seven supported
-    // runtimes, deduplicated and sorted — nothing more, nothing less.
+    // Dynamic completion offers every supported runtime, sorted and deduplicated.
     let result = project.run_with_env(
         &[
             "complete",
@@ -315,7 +301,7 @@ fn complete_lists_known_runtimes_when_mise_unavailable() {
     let suggestions: Vec<&str> = result.stdout.lines().map(str::trim).collect();
     assert_eq!(
         suggestions,
-        vec!["bun", "go", "java", "node", "python", "ruby", "rust"],
+        vec!["bun", "go", "java", "node", "pi", "python", "ruby", "rust"],
         "completion after `use` must offer exactly the sorted supported runtimes:\n{}",
         result.stdout
     );

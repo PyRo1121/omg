@@ -4,7 +4,7 @@ use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
 
-use crate::core::{RuntimeBackend, paths};
+use crate::core::paths;
 
 /// Maximum config file size (1MB) to prevent `DoS` via large configs
 const MAX_CONFIG_SIZE: u64 = 1024 * 1024;
@@ -64,9 +64,6 @@ pub struct Settings {
 
     /// Whether telemetry is enabled
     pub telemetry_enabled: bool,
-
-    /// Runtime resolution backend (native, mise, native-then-mise)
-    pub runtime_backend: RuntimeBackend,
 
     /// AUR build configuration
     pub aur: AurBuildSettings,
@@ -132,7 +129,6 @@ impl Default for Settings {
             default_shell: "zsh".to_string(),
             auto_update: false,
             telemetry_enabled: true,
-            runtime_backend: RuntimeBackend::default(),
             aur: AurBuildSettings::default(),
         }
     }
@@ -171,14 +167,13 @@ impl Settings {
     fn validate_known_keys(content: &str) -> Result<()> {
         let table: toml::Table = toml::from_str(content).context("Config is not valid TOML")?;
 
-        const ROOT_KEYS: [&str; 8] = [
+        const ROOT_KEYS: [&str; 7] = [
             "shims_enabled",
             "data_dir",
             "socket_path",
             "default_shell",
             "auto_update",
             "telemetry_enabled",
-            "runtime_backend",
             "aur",
         ];
         const AUR_KEYS: [&str; 15] = [

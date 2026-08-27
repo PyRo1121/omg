@@ -1,6 +1,6 @@
 //! Shell hook system for PATH modification
 //!
-//! Implements the fast shell hook approach (like mise) for version switching.
+//! Implements fast shell-hook PATH switching for native runtimes.
 //! This is the default and fastest method - shims are optional fallback.
 
 pub mod completions;
@@ -9,15 +9,11 @@ use std::collections::HashMap;
 use std::fs;
 use std::path::{Path, PathBuf};
 
+use crate::core::paths;
+use crate::runtimes::rust::RustToolchainSpec;
 use anyhow::{Context, Result};
 use semver::{Version, VersionReq};
 use serde::Deserialize;
-use toml::Value;
-
-use crate::config::Settings;
-use crate::core::runtime_resolver::{mise_available, mise_runtime_bin_path};
-use crate::core::{RuntimeBackend, paths};
-use crate::runtimes::rust::RustToolchainSpec;
 
 /// Known version files and their corresponding runtime
 const VERSION_FILES: &[(&str, &str)] = &[
@@ -40,9 +36,6 @@ const VERSION_FILES: &[(&str, &str)] = &[
     ("rust-toolchain.toml", "rust"),
     // Universal
     (".tool-versions", "multi"),
-    (".mise.toml", "multi"),
-    (".mise.local.toml", "multi"),
-    ("mise.toml", "multi"),
     ("package.json", "multi"),
 ];
 
@@ -74,11 +67,6 @@ struct PackageEngines {
 struct VoltaToolchain {
     node: Option<String>,
     bun: Option<String>,
-}
-
-#[derive(Deserialize)]
-struct MiseConfig {
-    tools: Option<HashMap<String, Value>>,
 }
 
 fn read_pin_file(path: &Path) -> Result<Option<String>> {
@@ -122,40 +110,6 @@ fn read_package_json_versions(dir: &Path) -> Result<Option<HashMap<String, Strin
     Ok((!versions.is_empty()).then_some(versions))
 }
 
-fn read_mise_versions(path: &Path) -> Result<Option<HashMap<String, String>>> {
-    let Some(content) = read_pin_file(path)? else {
-        return Ok(None);
-    };
-    let config: MiseConfig =
-        toml::from_str(&content).with_context(|| format!("Failed to parse {}", path.display()))?;
-    let Some(tools) = config.tools else {
-        return Ok(None);
-    };
-    let mut versions = HashMap::new();
-
-    for (tool, value) in tools {
-        if let Some(version) = mise_tool_version(&value) {
-            let normalized = normalize_runtime_name(&tool);
-            versions.insert(normalized, version);
-        }
-    }
-
-    Ok((!versions.is_empty()).then_some(versions))
-}
-
-fn mise_tool_version(value: &Value) -> Option<String> {
-    match value {
-        Value::String(s) => Some(s.clone()),
-        Value::Array(items) => items
-            .iter()
-            .find_map(|entry| entry.as_str().map(std::string::ToString::to_string)),
-        Value::Table(table) => table
-            .get("version")
-            .and_then(|entry| entry.as_str().map(std::string::ToString::to_string)),
-        _ => None,
-    }
-}
-
 /// Print the shell hook script to be added to shell rc file
 ///
 /// Usage: eval "$(omg hook zsh)"
@@ -194,8 +148,7 @@ pub fn hook_env(shell: &str) -> Result<()> {
     }
 
     // Build PATH modifications
-    let settings = Settings::load()?;
-    let path_additions = build_path_additions_with_backend(&versions, settings.runtime_backend)?;
+    let path_additions = build_path_additions(&versions)?;
 
     if path_additions.is_empty() {
         return Ok(());
@@ -319,15 +272,6 @@ fn try_parse_version_file(
             }
         }
         "go.mod" => parse_go_mod_file(file_path, runtime, versions)?,
-        ".mise.toml" | ".mise.local.toml" | "mise.toml" => {
-            if let Some(extra) = read_mise_versions(file_path)? {
-                for (runtime, version) in extra {
-                    versions
-                        .entry(runtime)
-                        .or_insert_with(|| version.trim().to_string());
-                }
-            }
-        }
         _ => parse_simple_version_file(file_path, runtime, versions)?,
     }
     Ok(())
@@ -404,27 +348,6 @@ pub fn build_path_additions<S: std::hash::BuildHasher>(
         if crate::runtimes::common::is_valid_version_dir(&bin_path) {
             paths.push(bin_path.display().to_string());
         }
-    }
-
-    Ok(paths)
-}
-
-/// Build PATH additions for detected versions with backend preference
-pub fn build_path_additions_with_backend<S: std::hash::BuildHasher>(
-    versions: &HashMap<String, String, S>,
-    backend: RuntimeBackend,
-) -> Result<Vec<String>> {
-    let mut paths = match backend {
-        RuntimeBackend::Mise => Vec::new(),
-        _ => build_path_additions(versions)?,
-    };
-
-    if matches!(
-        backend,
-        RuntimeBackend::Mise | RuntimeBackend::NativeThenMise
-    ) {
-        let prefer_native = backend == RuntimeBackend::NativeThenMise;
-        add_mise_path_fallbacks(versions, &mut paths, prefer_native)?;
     }
 
     Ok(paths)
@@ -622,71 +545,7 @@ fn resolve_nvm_alias(nvm_dir: &Path, alias: &str) -> Result<Option<String>> {
     Ok((!resolved.is_empty()).then(|| resolved.to_string()))
 }
 
-fn add_mise_path_fallbacks<S: std::hash::BuildHasher>(
-    versions: &HashMap<String, String, S>,
-    path_additions: &mut Vec<String>,
-    prefer_native: bool,
-) -> Result<()> {
-    if !mise_available() {
-        return Ok(());
-    }
-
-    let mut seen: std::collections::HashSet<String> = path_additions.iter().cloned().collect();
-    for (runtime, version) in versions {
-        if prefer_native && native_runtime_bin_path(runtime, version)?.is_some() {
-            continue;
-        }
-
-        if let Some(bin_dir) = mise_runtime_bin_path(runtime, version) {
-            let bin = bin_dir.display().to_string();
-            if seen.insert(bin.clone()) {
-                path_additions.push(bin);
-            }
-        }
-    }
-    Ok(())
-}
-
-fn native_runtime_bin_path(runtime: &str, version: &str) -> Result<Option<PathBuf>> {
-    let data_dir = paths::data_dir();
-    let bin_path = match runtime {
-        "node" => {
-            let Some(path) = resolve_node_bin_path(&data_dir, version)? else {
-                return Ok(None);
-            };
-            path
-        }
-        "python" | "go" | "ruby" | "java" | "pi" => {
-            if crate::core::security::validate_runtime_version(version).is_err() {
-                return Ok(None);
-            }
-            data_dir
-                .join(format!("versions/{runtime}"))
-                .join(version)
-                .join("bin")
-        }
-        "bun" => {
-            let Some(path) = resolve_bun_bin_path(&data_dir, version)? else {
-                return Ok(None);
-            };
-            path
-        }
-        "rust" => {
-            let Some(toolchain) = RustToolchainSpec::parse(version).ok() else {
-                return Ok(None);
-            };
-            data_dir
-                .join("versions/rust")
-                .join(toolchain.name())
-                .join("bin")
-        }
-        _ => return Ok(None),
-    };
-
-    Ok(crate::runtimes::common::is_valid_version_dir(&bin_path).then_some(bin_path))
-}
-
-// Runtime resolution functions (find_in_path, mise_available, mise_runtime_bin_path)
+// Runtime resolution helpers
 // moved to core::runtime_resolver module
 
 /// Get active versions for display
@@ -962,49 +821,6 @@ mod tests {
         let versions = detect_versions(dir.path()).unwrap();
         assert_eq!(versions.get("node"), Some(&">=18 <21".to_string()));
         assert_eq!(versions.get("bun"), Some(&"1.1.0".to_string()));
-    }
-
-    #[test]
-    fn test_mise_toml_tools() {
-        let dir = tempdir().unwrap();
-        fs::write(
-            dir.path().join(".mise.toml"),
-            r#"[tools]
-node = "20.10.0"
-bun = "1.0.25"
-python = "3.12.1"
-"#,
-        )
-        .unwrap();
-
-        let versions = detect_versions(dir.path()).unwrap();
-        assert_eq!(versions.get("node"), Some(&"20.10.0".to_string()));
-        assert_eq!(versions.get("bun"), Some(&"1.0.25".to_string()));
-        assert_eq!(versions.get("python"), Some(&"3.12.1".to_string()));
-    }
-
-    #[test]
-    fn test_mise_toml_non_native_runtimes() {
-        // Test that mise.toml detects runtimes we don't have native support for
-        let dir = tempdir().unwrap();
-        fs::write(
-            dir.path().join(".mise.toml"),
-            r#"[tools]
-deno = "1.40.0"
-elixir = "1.16.0"
-zig = "0.11.0"
-swift = "5.9"
-erlang = "26.2"
-"#,
-        )
-        .unwrap();
-
-        let versions = detect_versions(dir.path()).unwrap();
-        assert_eq!(versions.get("deno"), Some(&"1.40.0".to_string()));
-        assert_eq!(versions.get("elixir"), Some(&"1.16.0".to_string()));
-        assert_eq!(versions.get("zig"), Some(&"0.11.0".to_string()));
-        assert_eq!(versions.get("swift"), Some(&"5.9".to_string()));
-        assert_eq!(versions.get("erlang"), Some(&"26.2".to_string()));
     }
 
     #[test]

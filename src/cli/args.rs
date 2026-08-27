@@ -363,10 +363,6 @@ pub enum Commands {
         #[arg(last = true)]
         args: Vec<String>,
 
-        /// Runtime backend (native, mise, native-then-mise)
-        #[arg(long, value_enum)]
-        runtime_backend: Option<RuntimeBackendChoice>,
-
         /// Watch mode: re-run task on file changes
         #[arg(short, long)]
         watch: bool,
@@ -540,23 +536,6 @@ impl ShellKind {
             ShellKind::Fish => "fish",
             ShellKind::Powershell => "powershell",
             ShellKind::Elvish => "elvish",
-        }
-    }
-}
-
-#[derive(Copy, Clone, Debug, PartialEq, Eq, clap::ValueEnum)]
-pub enum RuntimeBackendChoice {
-    Native,
-    Mise,
-    NativeThenMise,
-}
-
-impl From<RuntimeBackendChoice> for crate::core::RuntimeBackend {
-    fn from(value: RuntimeBackendChoice) -> Self {
-        match value {
-            RuntimeBackendChoice::Native => Self::Native,
-            RuntimeBackendChoice::Mise => Self::Mise,
-            RuntimeBackendChoice::NativeThenMise => Self::NativeThenMise,
         }
     }
 }
@@ -1307,7 +1286,13 @@ mod tests {
     #[test]
     fn bounded_choices_fail_during_argument_parsing() {
         let invalid: &[&[&str]] = &[
-            &["omg", "run", "test", "--runtime-backend", "unknown"],
+            &[
+                "omg",
+                "run",
+                "test",
+                "--runtime-backend",
+                "native-then-mise",
+            ],
             &["omg", "new", "unknown", "project"],
             &["omg", "audit", "log", "--severity", "unknown"],
             &["omg", "audit", "licenses", "--format", "unknown"],
@@ -1337,13 +1322,6 @@ mod tests {
     #[test]
     fn bounded_choices_accept_documented_values() {
         let valid: &[&[&str]] = &[
-            &[
-                "omg",
-                "run",
-                "test",
-                "--runtime-backend",
-                "native-then-mise",
-            ],
             &["omg", "new", "rust", "project"],
             &["omg", "audit", "log", "--severity", "critical"],
             &["omg", "audit", "licenses", "--format", "csv"],

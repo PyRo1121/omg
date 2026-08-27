@@ -1132,7 +1132,6 @@ async fn dispatch_command(command: &Commands, ctx: &omg_lib::cli::CliContext) ->
         Commands::Run {
             task,
             args,
-            runtime_backend,
             watch,
             parallel,
             using,
@@ -1141,7 +1140,6 @@ async fn dispatch_command(command: &Commands, ctx: &omg_lib::cli::CliContext) ->
             let run_cmd = omg_lib::cli::run::RunCommand {
                 task: task.clone(),
                 args: args.clone(),
-                runtime_backend: runtime_backend.map(Into::into),
                 watch: *watch,
                 parallel: *parallel,
                 using: using.clone(),

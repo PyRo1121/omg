@@ -3,16 +3,6 @@
 use crate::package_managers::types::Version;
 use serde::{Deserialize, Serialize};
 
-/// Runtime resolution backend
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
-#[serde(rename_all = "kebab-case")]
-pub enum RuntimeBackend {
-    Native,
-    Mise,
-    #[default]
-    NativeThenMise,
-}
-
 /// Package source
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum PackageSource {

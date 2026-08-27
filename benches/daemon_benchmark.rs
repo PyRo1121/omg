@@ -153,14 +153,6 @@ fn bench_runtime_resolution(c: &mut Criterion) {
         });
     });
 
-    // Benchmark mise_available (called frequently)
-    group.bench_function("mise_available", |b| {
-        b.iter(|| {
-            let result = runtime_resolver::mise_available();
-            black_box(result);
-        });
-    });
-
     // Benchmark native runtime path resolution
     group.bench_function("native_runtime_bin_path", |b| {
         b.iter(|| {

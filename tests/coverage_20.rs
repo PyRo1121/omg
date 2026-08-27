@@ -16,10 +16,7 @@
 pub mod common;
 
 use common::*;
-use omg_lib::core::RuntimeBackend;
-use omg_lib::hooks::{
-    build_path_additions, build_path_additions_with_backend, detect_versions, hook_env, print_hook,
-};
+use omg_lib::hooks::{build_path_additions, detect_versions, hook_env, print_hook};
 use std::collections::HashMap;
 use std::path::PathBuf;
 
@@ -337,48 +334,6 @@ fn nvm_symlink_escape_refused_by_containment_check() {
             assert!(
                 additions.is_empty(),
                 "symlink escaping the nvm tree must be refused, got {additions:?}"
-            );
-        },
-    );
-}
-
-// ══════════════════════════════════════════════════════════════════════════
-// Backend selection
-// ══════════════════════════════════════════════════════════════════════════
-
-/// Contract: backend `Mise` ignores native installs entirely — with mise
-/// unavailable it emits NOTHING even though a native install exists.
-/// Backend `NativeThenMise` still emits the native paths in that situation.
-#[test]
-#[serial]
-fn mise_backend_skips_native_paths_when_mise_absent() {
-    let tmp = tempfile::tempdir().unwrap();
-    let data = tmp.path();
-    fs_extra_or_std::create_dir_all(&node_bin(data, "20.11.1"));
-    with_test_env(
-        &[
-            ("OMG_DATA_DIR", data.to_str().unwrap()),
-            ("NVM_DIR", "/nonexistent-nvm-for-tests"),
-            // Empty PATH guarantees find_in_path("mise") fails regardless of
-            // what is installed on the host machine.
-            ("PATH", ""),
-        ],
-        || {
-            let versions = pin_map(&[("node", "20.11.1")]);
-            let mise_only = build_path_additions_with_backend(&versions, RuntimeBackend::Mise)
-                .expect("mise-only resolution");
-            assert!(
-                mise_only.is_empty(),
-                "mise backend must ignore native installs, got {mise_only:?}"
-            );
-
-            let native_first =
-                build_path_additions_with_backend(&versions, RuntimeBackend::NativeThenMise)
-                    .expect("native-first resolution");
-            assert_eq!(
-                native_first,
-                vec![node_bin(data, "20.11.1").display().to_string()],
-                "NativeThenMise must still emit native paths when mise is absent"
             );
         },
     );

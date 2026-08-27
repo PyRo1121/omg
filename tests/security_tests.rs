@@ -747,10 +747,7 @@ mod network_security {
             include_str!("../src/runtimes/bun.rs"),
             "src/runtimes/bun.rs",
         );
-        assert_no_plaintext_http(
-            include_str!("../src/runtimes/mise.rs"),
-            "src/runtimes/mise.rs",
-        );
+        assert_no_plaintext_http(include_str!("../src/runtimes/pi.rs"), "src/runtimes/pi.rs");
     }
 }
 

@@ -7,7 +7,7 @@ use dialoguer::Confirm;
 
 use crate::cli::style;
 use crate::config::Settings;
-use crate::core::{RuntimeBackend, paths};
+use crate::core::paths;
 
 /// Get a configuration value
 pub fn get(key: &str) -> Result<()> {
@@ -30,7 +30,6 @@ pub fn get(key: &str) -> Result<()> {
             .makeflags
             .as_deref()
             .map_or_else(|| "(not set)".to_string(), str::to_string),
-        "runtime_backend" => format!("{:?}", settings.runtime_backend).to_lowercase(),
         "default_shell" => settings.default_shell,
         _ => anyhow::bail!("Unknown config key: '{key}'"),
     };
@@ -100,16 +99,6 @@ pub fn set(key: &str, value: &str) -> Result<()> {
                 Some(value.to_string())
             };
         }
-        "runtime_backend" => {
-            settings.runtime_backend = match value.to_lowercase().as_str() {
-                "native" => RuntimeBackend::Native,
-                "mise" => RuntimeBackend::Mise,
-                "native-then-mise" | "nativetomise" => RuntimeBackend::NativeThenMise,
-                _ => anyhow::bail!(
-                    "Invalid runtime backend. Valid values: native, mise, native-then-mise"
-                ),
-            };
-        }
         "default_shell" => {
             if !matches!(value, "bash" | "zsh" | "fish") {
                 anyhow::bail!("Invalid shell. Valid values: bash, zsh, fish");
@@ -123,7 +112,7 @@ pub fn set(key: &str, value: &str) -> Result<()> {
             anyhow::bail!(
                 "Unknown config key: '{key}'. \
                  Writable keys: telemetry.enabled, aur.build_concurrency, aur.enable_ccache, \
-                 aur.enable_sccache, aur.secure_makepkg, aur.makeflags, runtime_backend, \
+                 aur.enable_sccache, aur.secure_makepkg, aur.makeflags, \
                  default_shell, shims.enabled"
             );
         }
@@ -162,11 +151,6 @@ pub fn list() -> Result<()> {
         "    {} = {}",
         style::info("telemetry.enabled"),
         settings.telemetry_enabled
-    );
-    println!(
-        "    {} = {}",
-        style::info("runtime_backend"),
-        format!("{:?}", settings.runtime_backend).to_lowercase()
     );
     println!(
         "    {} = {}",

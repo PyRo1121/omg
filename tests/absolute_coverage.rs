@@ -250,7 +250,6 @@ async fn test_run_invalid_task_fails() -> Result<()> {
     let run_cmd = RunCommand {
         task: "dangerous; command".to_string(),
         args: vec![],
-        runtime_backend: None,
         watch: false,
         parallel: false,
         using: None,
@@ -280,7 +279,6 @@ async fn test_run_detect_and_execute_mock_task() -> Result<()> {
     let run_cmd = RunCommand {
         task: "test".to_string(),
         args: vec![],
-        runtime_backend: None,
         watch: false,
         parallel: false,
         using: Some("make".to_string()),
