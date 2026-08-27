@@ -180,16 +180,8 @@ fn pick_latest_stable(versions: Vec<BunVersion>) -> Option<String> {
 }
 
 fn bun_platform() -> Result<String> {
-    let os = match std::env::consts::OS {
-        "linux" => "linux",
-        "macos" => "darwin",
-        other => anyhow::bail!("Unsupported operating system for Bun: {other}"),
-    };
-    let arch = match std::env::consts::ARCH {
-        "x86_64" => "x64",
-        "aarch64" => "aarch64",
-        arch => anyhow::bail!("Unsupported architecture for Bun: {arch}"),
-    };
+    let os = super::common::host_os_tag("Bun", "linux", "darwin")?;
+    let arch = super::common::host_arch_tag("Bun", "x64", "aarch64")?;
     Ok(format!("{os}-{arch}"))
 }
 

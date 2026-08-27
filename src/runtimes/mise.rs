@@ -368,16 +368,8 @@ impl MiseManager {
 }
 
 fn mise_platform() -> Result<String> {
-    let os = match std::env::consts::OS {
-        "linux" => "linux",
-        "macos" => "macos",
-        other => anyhow::bail!("Unsupported operating system for mise: {other}"),
-    };
-    let arch = match std::env::consts::ARCH {
-        "x86_64" => "x64",
-        "aarch64" => "arm64",
-        arch => anyhow::bail!("Unsupported architecture for mise: {arch}"),
-    };
+    let os = super::common::host_os_tag("mise", "linux", "macos")?;
+    let arch = super::common::host_arch_tag("mise", "x64", "arm64")?;
     Ok(format!("{os}-{arch}"))
 }
 

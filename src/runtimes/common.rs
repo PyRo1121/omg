@@ -35,6 +35,30 @@ pub(crate) struct GithubAsset {
     pub(crate) digest: Option<String>,
 }
 
+pub(crate) fn host_os_tag(
+    runtime: &str,
+    linux: &'static str,
+    macos: &'static str,
+) -> Result<&'static str> {
+    match std::env::consts::OS {
+        "linux" => Ok(linux),
+        "macos" => Ok(macos),
+        other => anyhow::bail!("Unsupported operating system for {runtime}: {other}"),
+    }
+}
+
+pub(crate) fn host_arch_tag(
+    runtime: &str,
+    x86_64: &'static str,
+    aarch64: &'static str,
+) -> Result<&'static str> {
+    match std::env::consts::ARCH {
+        "x86_64" => Ok(x86_64),
+        "aarch64" => Ok(aarch64),
+        other => anyhow::bail!("Unsupported architecture for {runtime}: {other}"),
+    }
+}
+
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 // Bounded decompression
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━

@@ -171,17 +171,10 @@ impl JavaManager {
 crate::runtimes::common::impl_runtime_common!(JavaManager);
 
 fn java_platform() -> Result<(&'static str, &'static str)> {
-    let os = match std::env::consts::OS {
-        "linux" => "linux",
-        "macos" => "mac",
-        other => anyhow::bail!("Unsupported operating system for Java: {other}"),
-    };
-    let arch = match std::env::consts::ARCH {
-        "x86_64" => "x64",
-        "aarch64" => "aarch64",
-        arch => anyhow::bail!("Unsupported architecture for Java: {arch}"),
-    };
-    Ok((os, arch))
+    Ok((
+        super::common::host_os_tag("Java", "linux", "mac")?,
+        super::common::host_arch_tag("Java", "x64", "aarch64")?,
+    ))
 }
 
 #[cfg(test)]

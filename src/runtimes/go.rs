@@ -148,16 +148,8 @@ impl GoManager {
 crate::runtimes::common::impl_runtime_common!(GoManager);
 
 fn go_platform() -> Result<String> {
-    let os = match std::env::consts::OS {
-        "linux" => "linux",
-        "macos" => "darwin",
-        other => anyhow::bail!("Unsupported operating system for Go: {other}"),
-    };
-    let arch = match std::env::consts::ARCH {
-        "x86_64" => "amd64",
-        "aarch64" => "arm64",
-        arch => anyhow::bail!("Unsupported architecture for Go: {arch}"),
-    };
+    let os = super::common::host_os_tag("Go", "linux", "darwin")?;
+    let arch = super::common::host_arch_tag("Go", "amd64", "arm64")?;
     Ok(format!("{os}-{arch}"))
 }
 
