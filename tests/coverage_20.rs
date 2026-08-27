@@ -513,6 +513,29 @@ fn hook_env_unresolvable_pin_prints_nothing() {
     );
 }
 
+/// Contract: tracing diagnostics use stderr, leaving stdout safe for command
+/// substitution and other machine-readable consumers.
+#[test]
+fn tracing_diagnostics_do_not_contaminate_stdout() {
+    let config = tempfile::tempdir().unwrap();
+    std::fs::write(config.path().join("config.toml"), "[general]\n").unwrap();
+
+    let result = run_omg_with_options(
+        &["config", "get", "telemetry.enabled"],
+        None,
+        &[
+            ("OMG_CONFIG_DIR", config.path().to_str().unwrap()),
+            ("RUST_LOG", "warn"),
+        ],
+    );
+    result.assert_success();
+    result.assert_stderr_contains("config section 'general' is deprecated");
+    assert_eq!(
+        result.stdout, "true\n",
+        "diagnostics must never be mixed into machine-readable stdout"
+    );
+}
+
 /// Contract: `hook_env` rejects shells outside zsh/bash/fish, naming the
 /// offending shell in the error.
 #[test]

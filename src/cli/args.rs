@@ -15,7 +15,7 @@ use clap::{Parser, Subcommand};
 #[command(subcommand_required = true)]
 #[command(arg_required_else_help = true)]
 pub struct Cli {
-    /// Increase verbosity (-v, -vv, -vvv)
+    /// Increase verbosity; -v also streams package build output live
     #[arg(short, long, global = true, action = clap::ArgAction::Count)]
     pub verbose: u8,
 

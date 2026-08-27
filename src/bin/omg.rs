@@ -680,6 +680,9 @@ async fn async_main(args: Vec<String>) -> Result<()> {
     // SECURITY: Validate package names
     validate_package_security(&cli.command)?;
 
+    // Configure terminal rendering before any long-running command starts.
+    omg_lib::cli::modern_ui::configure_output(cli.verbose, cli.quiet);
+
     // Initialize logging
     init_logging(cli.verbose, cli.quiet);
 
@@ -778,6 +781,7 @@ fn init_logging(verbose: u8, quiet: bool) {
 
     tracing_subscriber::fmt()
         .with_env_filter(env_filter)
+        .with_writer(std::io::stderr)
         .with_target(false)
         .with_ansi(console::colors_enabled())
         .without_time()
