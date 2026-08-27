@@ -135,6 +135,27 @@ mod privilege_escalation {
     }
 
     #[test]
+    fn release_archives_are_attested_before_approved_r2_promotion() {
+        let workflow = include_str!("../.github/workflows/release.yml");
+        assert!(
+            workflow.contains(
+                "actions/attest-build-provenance@977bb373ede98d70efdf65b84cb5f73e068dcc2a"
+            ) && workflow.contains("subject-path: \"release/*.tar.gz\"")
+                && workflow.contains("attestations: write")
+                && workflow.contains("id-token: write"),
+            "published archives must receive GitHub/Sigstore provenance with minimal required permissions"
+        );
+        let r2_job = workflow
+            .split("  sync-r2:")
+            .nth(1)
+            .expect("R2 release job must exist");
+        assert!(
+            r2_job.contains("environment: production"),
+            "R2 promotion must pass through the protected production environment"
+        );
+    }
+
+    #[test]
     fn ci_and_container_bootstraps_are_pinned_and_verified() {
         let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
         let bootstrap_sources = [

@@ -255,6 +255,8 @@ jobs:
     needs: [build-arch, build-debian, build-ubuntu, build-fedora, build-macos]
     permissions:
       contents: write
+      id-token: write
+      attestations: write
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
@@ -269,6 +271,12 @@ jobs:
         run: |
           VERSION="${GITHUB_REF#refs/tags/v}"
           ./scripts/collect-release-artifacts.sh "$VERSION" artifacts release
+
+      - name: Attest release archives
+        if: github.event_name == 'push' || (github.event_name == 'workflow_dispatch' && github.event.inputs.dry_run == 'false')
+        uses: actions/attest-build-provenance@977bb373ede98d70efdf65b84cb5f73e068dcc2a # v3
+        with:
+          subject-path: "release/*.tar.gz"
 
       - name: Generate Release Notes
         id: release_notes
@@ -364,6 +372,7 @@ jobs:
   sync-r2:
     name: "Sync to Cloudflare R2"
     runs-on: ubuntu-latest
+    environment: production
     timeout-minutes: 10
     needs: [release]
     if: github.event_name == 'push' || (github.event_name == 'workflow_dispatch' && github.event.inputs.dry_run == 'false')
