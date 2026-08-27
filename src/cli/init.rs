@@ -355,13 +355,7 @@ pub async fn run_defaults() -> Result<()> {
 
     // Start daemon unless explicitly disabled or running under tests; spawned
     // daemons must never inherit this process's stdio (it is short-lived).
-    // Semantics match core::client's predicate: only "1"/"true"/"TRUE"
-    // disable; `OMG_DISABLE_DAEMON=0` must not silently skip setup while the
-    // client keeps dialing.
-    let daemon_disabled = matches!(
-        std::env::var("OMG_DISABLE_DAEMON").as_deref(),
-        Ok("1" | "true" | "TRUE")
-    ) || crate::core::paths::test_mode();
+    let daemon_disabled = crate::core::client::DaemonClient::daemon_disabled();
     configure_daemon_startup(
         &mut stdout,
         if daemon_disabled {

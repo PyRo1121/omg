@@ -68,7 +68,7 @@ pub struct DaemonClient {
 }
 
 impl DaemonClient {
-    fn daemon_disabled() -> bool {
+    pub(crate) fn daemon_disabled() -> bool {
         matches!(
             std::env::var("OMG_DISABLE_DAEMON").as_deref(),
             Ok("1" | "true" | "TRUE")
