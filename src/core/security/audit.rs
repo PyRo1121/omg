@@ -3,8 +3,12 @@
 //! Provides append-only audit logs with SHA-256 chain verification to detect
 //! tampering, log rotation, and compliance-ready event tracking.
 
+#[cfg(unix)]
+use nix::libc;
 use std::fs::{File, OpenOptions};
 use std::io::{self, BufRead, BufReader, Write};
+#[cfg(unix)]
+use std::os::unix::fs::OpenOptionsExt;
 use std::path::{Path, PathBuf};
 
 use serde::{Deserialize, Serialize};
@@ -12,6 +16,10 @@ use sha2::{Digest, Sha256};
 use thiserror::Error;
 
 use crate::core::paths;
+
+const DEFAULT_MAX_AUDIT_BYTES: u64 = 16 * 1024 * 1024;
+const DEFAULT_AUDIT_ARCHIVES: usize = 5;
+const MAX_AUDIT_FIELD_BYTES: usize = 4096;
 
 /// Failures creating, reading, or appending the integrity-bound audit log.
 #[derive(Debug, Error)]
@@ -217,6 +225,8 @@ pub struct AuditLogger {
     /// after each successful append. `log_locked` always re-reads the
     /// authoritative tail under the lock.
     last_hash: String,
+    max_bytes: u64,
+    max_archives: usize,
 }
 
 impl AuditLogger {
@@ -240,10 +250,20 @@ impl AuditLogger {
             source,
         })?;
 
+        Self::new_in_with_limits(log_path, DEFAULT_MAX_AUDIT_BYTES, DEFAULT_AUDIT_ARCHIVES)
+    }
+
+    fn new_in_with_limits(
+        log_path: PathBuf,
+        max_bytes: u64,
+        max_archives: usize,
+    ) -> Result<Self, AuditError> {
         let last_hash = get_last_hash(&log_path)?;
         Ok(Self {
             log_path,
             last_hash,
+            max_bytes,
+            max_archives,
         })
     }
 
@@ -268,16 +288,7 @@ impl AuditLogger {
         description: &str,
     ) -> Result<(), AuditError> {
         let lock_path = self.log_path.with_extension("lock");
-        let lock = OpenOptions::new()
-            .create(true)
-            .read(true)
-            .write(true)
-            .truncate(false)
-            .open(&lock_path)
-            .map_err(|source| AuditError::Open {
-                path: lock_path.display().to_string(),
-                source,
-            })?;
+        let lock = open_lock_file(&lock_path)?;
         lock.lock().map_err(|source| AuditError::Open {
             path: lock_path.display().to_string(),
             source,
@@ -303,6 +314,7 @@ impl AuditLogger {
         resource: &str,
         description: &str,
     ) -> Result<(), AuditError> {
+        self.rotate_if_needed()?;
         // Re-read the on-disk tail hash while holding the lock so entries
         // written by another process since this logger was created chain
         // correctly instead of sharing our stale prev_hash.
@@ -320,8 +332,8 @@ impl AuditLogger {
             event_type: event,
             severity,
             user,
-            resource: resource.to_string(),
-            description: description.to_string(),
+            resource: bounded_audit_field(resource),
+            description: bounded_audit_field(description),
             metadata: None,
             prev_hash,
             hash: None,
@@ -330,14 +342,7 @@ impl AuditLogger {
         let hash = entry.compute_hash();
         entry.hash = Some(hash);
 
-        let mut file = OpenOptions::new()
-            .create(true)
-            .append(true)
-            .open(&self.log_path)
-            .map_err(|source| AuditError::Open {
-                path: path_str.clone(),
-                source,
-            })?;
+        let mut file = open_append_file(&self.log_path)?;
 
         let json =
             serde_json::to_string(&entry).map_err(|source| AuditError::Serialize { source })?;
@@ -411,13 +416,75 @@ impl AuditLogger {
         Ok(())
     }
 
+    fn rotate_if_needed(&mut self) -> Result<(), AuditError> {
+        let metadata = match std::fs::symlink_metadata(&self.log_path) {
+            Ok(metadata) => metadata,
+            Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(()),
+            Err(source) => {
+                return Err(AuditError::Open {
+                    path: self.log_path.display().to_string(),
+                    source,
+                });
+            }
+        };
+        if !metadata.file_type().is_file() {
+            return Err(AuditError::Open {
+                path: self.log_path.display().to_string(),
+                source: io::Error::new(
+                    io::ErrorKind::InvalidInput,
+                    "audit log must be a regular file and not a symlink",
+                ),
+            });
+        }
+        if metadata.len() < self.max_bytes {
+            return Ok(());
+        }
+
+        if self.max_archives == 0 {
+            std::fs::remove_file(&self.log_path).map_err(|source| AuditError::Write {
+                path: self.log_path.display().to_string(),
+                source,
+            })?;
+        } else {
+            let oldest = rotated_path(&self.log_path, self.max_archives);
+            match std::fs::remove_file(&oldest) {
+                Ok(()) => {}
+                Err(error) if error.kind() == io::ErrorKind::NotFound => {}
+                Err(source) => {
+                    return Err(AuditError::Write {
+                        path: oldest.display().to_string(),
+                        source,
+                    });
+                }
+            }
+            for index in (1..self.max_archives).rev() {
+                let from = rotated_path(&self.log_path, index);
+                let to = rotated_path(&self.log_path, index + 1);
+                match std::fs::rename(&from, &to) {
+                    Ok(()) => {}
+                    Err(error) if error.kind() == io::ErrorKind::NotFound => {}
+                    Err(source) => {
+                        return Err(AuditError::Write {
+                            path: from.display().to_string(),
+                            source,
+                        });
+                    }
+                }
+            }
+            let first = rotated_path(&self.log_path, 1);
+            std::fs::rename(&self.log_path, &first).map_err(|source| AuditError::Write {
+                path: self.log_path.display().to_string(),
+                source,
+            })?;
+        }
+        self.last_hash = "genesis".to_string();
+        Ok(())
+    }
+
     /// Verify the integrity of the entire audit log
     pub fn verify_integrity(&self) -> Result<AuditIntegrityReport, AuditError> {
         let path_str = self.log_path.display().to_string();
-        let file = File::open(&self.log_path).map_err(|source| AuditError::Open {
-            path: path_str.clone(),
-            source,
-        })?;
+        let file = open_read_file(&self.log_path)?;
         let reader = BufReader::new(file);
 
         let mut total_entries = 0;
@@ -488,6 +555,54 @@ impl AuditLogger {
     }
 }
 
+fn bounded_audit_field(value: &str) -> String {
+    if value.len() <= MAX_AUDIT_FIELD_BYTES {
+        return value.to_string();
+    }
+    let mut end = MAX_AUDIT_FIELD_BYTES;
+    while !value.is_char_boundary(end) {
+        end -= 1;
+    }
+    value[..end].to_string()
+}
+
+fn rotated_path(path: &Path, index: usize) -> PathBuf {
+    PathBuf::from(format!("{}.{index}", path.display()))
+}
+
+fn open_read_file(path: &Path) -> Result<File, AuditError> {
+    let mut options = OpenOptions::new();
+    options.read(true);
+    #[cfg(unix)]
+    options.custom_flags(libc::O_NOFOLLOW);
+    options.open(path).map_err(|source| AuditError::Open {
+        path: path.display().to_string(),
+        source,
+    })
+}
+
+fn open_lock_file(path: &Path) -> Result<File, AuditError> {
+    let mut options = OpenOptions::new();
+    options.create(true).read(true).write(true).truncate(false);
+    #[cfg(unix)]
+    options.mode(0o600).custom_flags(libc::O_NOFOLLOW);
+    options.open(path).map_err(|source| AuditError::Open {
+        path: path.display().to_string(),
+        source,
+    })
+}
+
+fn open_append_file(path: &Path) -> Result<File, AuditError> {
+    let mut options = OpenOptions::new();
+    options.create(true).append(true);
+    #[cfg(unix)]
+    options.mode(0o600).custom_flags(libc::O_NOFOLLOW);
+    options.open(path).map_err(|source| AuditError::Open {
+        path: path.display().to_string(),
+        source,
+    })
+}
+
 /// Read every JSONL entry. Missing files are empty; IO and parse failures are errors.
 fn read_all_entries(path: &Path) -> Result<Vec<AuditEntry>, AuditError> {
     if !path.exists() {
@@ -495,10 +610,7 @@ fn read_all_entries(path: &Path) -> Result<Vec<AuditEntry>, AuditError> {
     }
 
     let path_str = path.display().to_string();
-    let file = File::open(path).map_err(|source| AuditError::Open {
-        path: path_str.clone(),
-        source,
-    })?;
+    let file = open_read_file(path)?;
     let mut entries = Vec::new();
     for (index, line) in BufReader::new(file).lines().enumerate() {
         let line = line.map_err(|source| AuditError::Read {
@@ -717,6 +829,8 @@ mod tests {
         let logger = AuditLogger {
             log_path,
             last_hash: "genesis".to_string(),
+            max_bytes: DEFAULT_MAX_AUDIT_BYTES,
+            max_archives: DEFAULT_AUDIT_ARCHIVES,
         };
         let report = logger.verify_integrity().unwrap();
         assert!(!report.is_valid());
@@ -810,6 +924,79 @@ mod tests {
             report.is_valid(),
             "chain broke under concurrency: {report:?}"
         );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn audit_log_rotates_with_valid_chains_and_restrictive_modes() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let temp = tempfile::tempdir().expect("temporary audit directory");
+        let log_path = temp.path().join("audit.jsonl");
+        let mut logger =
+            AuditLogger::new_in_with_limits(log_path.clone(), 1, 2).expect("create bounded logger");
+
+        logger
+            .log(
+                AuditEventType::DaemonStarted,
+                AuditSeverity::Info,
+                "daemon",
+                "first",
+            )
+            .expect("write first event");
+        logger
+            .log(
+                AuditEventType::DaemonStopped,
+                AuditSeverity::Info,
+                "daemon",
+                "second",
+            )
+            .expect("rotate and write second event");
+
+        let archive_path = rotated_path(&log_path, 1);
+        assert!(archive_path.is_file());
+        assert!(
+            AuditLogger::new_in(&archive_path)
+                .expect("open archive")
+                .verify_integrity()
+                .expect("verify archive")
+                .is_valid()
+        );
+        assert!(logger.verify_integrity().expect("verify active").is_valid());
+        assert_eq!(
+            std::fs::metadata(&log_path)
+                .expect("active mode")
+                .permissions()
+                .mode()
+                & 0o777,
+            0o600
+        );
+        assert_eq!(
+            std::fs::metadata(log_path.with_extension("lock"))
+                .expect("lock mode")
+                .permissions()
+                .mode()
+                & 0o777,
+            0o600
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn audit_logger_refuses_symlink_log_paths() {
+        use std::os::unix::fs::symlink;
+
+        let temp = tempfile::tempdir().expect("temporary audit directory");
+        let target = temp.path().join("target");
+        std::fs::write(&target, b"").expect("create target");
+        let link = temp.path().join("audit.jsonl");
+        symlink(&target, &link).expect("create symlink");
+
+        let error = match AuditLogger::new_in(&link) {
+            Ok(_) => panic!("symlink must fail closed"),
+            Err(error) => error,
+        };
+        assert!(matches!(error, AuditError::Open { .. }));
     }
 
     #[test]

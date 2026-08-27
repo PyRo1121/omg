@@ -26,6 +26,69 @@ where
         .build()
 }
 
+const CACHE_BYTES_PER_CONFIGURED_ENTRY: usize = 64 * 1024;
+
+fn weight(bytes: usize) -> u32 {
+    u32::try_from(bytes.max(1)).unwrap_or(u32::MAX)
+}
+
+fn package_weight(package: &PackageInfo) -> usize {
+    package
+        .name
+        .len()
+        .saturating_add(package.version.len())
+        .saturating_add(package.description.len())
+        .saturating_add(std::mem::size_of::<PackageInfo>())
+}
+
+fn search_weight(query: &str, packages: &Arc<Vec<PackageInfo>>) -> u32 {
+    weight(
+        query.len().saturating_add(
+            packages
+                .iter()
+                .map(package_weight)
+                .fold(0usize, usize::saturating_add),
+        ),
+    )
+}
+
+fn detailed_weight(name: &str, info: &Arc<DetailedPackageInfo>) -> u32 {
+    let vectors = info
+        .depends
+        .iter()
+        .chain(&info.licenses)
+        .map(String::len)
+        .fold(0usize, usize::saturating_add);
+    weight(
+        name.len()
+            .saturating_add(info.name.len())
+            .saturating_add(info.version.len())
+            .saturating_add(info.description.len())
+            .saturating_add(info.url.len())
+            .saturating_add(info.repo.len())
+            .saturating_add(vectors)
+            .saturating_add(std::mem::size_of::<DetailedPackageInfo>()),
+    )
+}
+
+fn build_search_cache(max_bytes: u64, ttl: Duration) -> Cache<String, Arc<Vec<PackageInfo>>> {
+    Cache::builder()
+        .max_capacity(max_bytes)
+        .weigher(|query: &String, packages: &Arc<Vec<PackageInfo>>| search_weight(query, packages))
+        .eviction_policy(EvictionPolicy::lru())
+        .time_to_live(ttl)
+        .build()
+}
+
+fn build_detailed_cache(max_bytes: u64, ttl: Duration) -> Cache<String, Arc<DetailedPackageInfo>> {
+    Cache::builder()
+        .max_capacity(max_bytes)
+        .weigher(|name: &String, info: &Arc<DetailedPackageInfo>| detailed_weight(name, info))
+        .eviction_policy(EvictionPolicy::lru())
+        .time_to_live(ttl)
+        .build()
+}
+
 /// LRU cache for package search results
 pub struct PackageCache {
     /// Search results cache: query -> packages (Arc for cheap cloning)
@@ -59,11 +122,17 @@ impl PackageCache {
         let ttl = Duration::from_secs(ttl_secs);
         let status_ttl = Duration::from_secs(status_ttl_secs);
         let capacity = max_size as u64;
+        let byte_capacity = u64::try_from(
+            max_size
+                .max(1)
+                .saturating_mul(CACHE_BYTES_PER_CONFIGURED_ENTRY),
+        )
+        .unwrap_or(u64::MAX);
 
         Self {
-            cache: build_cache(capacity, ttl),
-            debian_cache: build_cache(capacity, ttl),
-            detailed_cache: build_cache(capacity, ttl),
+            cache: build_search_cache(byte_capacity, ttl),
+            debian_cache: build_search_cache(byte_capacity, ttl),
+            detailed_cache: build_detailed_cache(byte_capacity, ttl),
             info_miss_cache: build_cache(capacity, ttl),
             max_size,
             system_status: build_cache(1, status_ttl),

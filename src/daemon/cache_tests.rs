@@ -58,6 +58,22 @@ fn test_cache_miss_handling() {
 }
 
 #[test]
+fn oversized_search_value_is_not_admitted_to_the_byte_bounded_cache() {
+    let cache = PackageCache::new(1, 60);
+    let oversized = PackageInfo {
+        name: "oversized".to_string(),
+        version: "1".to_string(),
+        description: "x".repeat(CACHE_BYTES_PER_CONFIGURED_ENTRY * 2),
+        source: crate::daemon::protocol::WirePackageSource::Official,
+    };
+
+    cache.insert_arc("large".to_string(), Arc::new(vec![oversized]));
+    cache.sync();
+
+    assert!(cache.get("large").is_none());
+}
+
+#[test]
 fn test_system_status_cache() {
     let cache = PackageCache::new(10, 60);
     let status = StatusResult {
