@@ -488,19 +488,26 @@ fi
         Ok(())
     }
 
-    /// Write a hook script and mark it executable, unless one already exists.
+    /// Write a hook script and mark it executable, unless any entry already exists.
     fn write_hook_if_absent(path: &Path, content: &str) -> Result<()> {
-        if path.exists() {
-            return Ok(());
-        }
-        std::fs::write(path, content)
-            .with_context(|| format!("Failed to write git hook {}", path.display()))?;
         #[cfg(unix)]
         {
-            use std::os::unix::fs::PermissionsExt;
-            std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o755)).with_context(
-                || format!("Failed to mark git hook executable: {}", path.display()),
-            )?;
+            crate::core::safe_ops::write_executable(path, content.as_bytes(), false)?;
+        }
+        #[cfg(not(unix))]
+        {
+            match std::fs::OpenOptions::new()
+                .write(true)
+                .create_new(true)
+                .open(path)
+            {
+                Ok(mut file) => {
+                    use std::io::Write as _;
+                    file.write_all(content.as_bytes())?;
+                }
+                Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => {}
+                Err(error) => return Err(error.into()),
+            }
         }
         Ok(())
     }

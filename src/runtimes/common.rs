@@ -750,6 +750,30 @@ pub(crate) fn is_valid_version_dir(version_dir: &Path) -> bool {
     fs::symlink_metadata(version_dir).is_ok_and(|metadata| metadata.is_dir())
 }
 
+/// Return whether a runtime binary directory is safe to prepend to `PATH`.
+///
+/// It must be a real directory owned by the current user (or root) and not
+/// writable by group/other users. This prevents a repository pin from making
+/// an attacker-writable runtime tree shadow ordinary commands.
+#[must_use]
+pub(crate) fn is_trusted_runtime_bin_dir(path: &Path) -> bool {
+    let Ok(metadata) = fs::symlink_metadata(path) else {
+        return false;
+    };
+    if !metadata.file_type().is_dir() {
+        return false;
+    }
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::MetadataExt as _;
+        let current_uid = nix::unistd::geteuid().as_raw();
+        if (metadata.uid() != 0 && metadata.uid() != current_uid) || metadata.mode() & 0o022 != 0 {
+            return false;
+        }
+    }
+    true
+}
+
 /// Require a regular file at `path`. Symlinks, directories, and missing paths fail closed.
 pub(crate) fn require_regular_file(path: &Path) -> Result<()> {
     match fs::symlink_metadata(path) {
@@ -1397,6 +1421,21 @@ mod tests {
         let temp = TempDir::new().unwrap();
         let error = set_current_version(temp.path(), "1.0.0").unwrap_err();
         assert!(error.to_string().contains("is not installed"));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn runtime_path_rejects_group_writable_directories() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let temp = tempfile::tempdir().unwrap();
+        let bin = temp.path().join("bin");
+        fs::create_dir(&bin).unwrap();
+        fs::set_permissions(&bin, fs::Permissions::from_mode(0o775)).unwrap();
+
+        assert!(!is_trusted_runtime_bin_dir(&bin));
+        fs::set_permissions(&bin, fs::Permissions::from_mode(0o755)).unwrap();
+        assert!(is_trusted_runtime_bin_dir(&bin));
     }
 
     #[test]

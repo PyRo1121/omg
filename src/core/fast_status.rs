@@ -156,7 +156,10 @@ impl FastStatus {
 
     /// Write status to default path
     pub fn write_default(&self) -> std::io::Result<()> {
-        self.write_to_file(&paths::fast_status_path())
+        let path = paths::fast_status_path();
+        #[cfg(unix)]
+        paths::prepare_socket_parent(&path)?;
+        self.write_to_file(&path)
     }
 }
 

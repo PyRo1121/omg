@@ -7,8 +7,6 @@
 
 use anyhow::{Context, Result};
 use std::fs;
-#[cfg(unix)]
-use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
 
 use crate::cli::style;
@@ -143,19 +141,42 @@ pub fn install(force: bool) -> Result<()> {
             }
         }
 
-        // Write the hook
-        fs::write(&hook_path, content).with_context(|| format!("Failed to write {name} hook"))?;
-
-        // Make executable (Unix only)
         #[cfg(unix)]
-        {
-            let mut perms = fs::metadata(&hook_path)?.permissions();
-            perms.set_mode(0o755);
-            fs::set_permissions(&hook_path, perms)?;
-        }
+        let wrote = crate::core::safe_ops::write_executable(&hook_path, content.as_bytes(), force)
+            .with_context(|| format!("Failed to write {name} hook"))?;
+        #[cfg(not(unix))]
+        let wrote = {
+            if force {
+                fs::write(&hook_path, content)?;
+                true
+            } else {
+                match fs::OpenOptions::new()
+                    .write(true)
+                    .create_new(true)
+                    .open(&hook_path)
+                {
+                    Ok(mut file) => {
+                        use std::io::Write as _;
+                        file.write_all(content.as_bytes())?;
+                        true
+                    }
+                    Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => false,
+                    Err(error) => return Err(error.into()),
+                }
+            }
+        };
 
-        println!("  {} {}", style::success("✓"), name);
-        installed += 1;
+        if wrote {
+            println!("  {} {}", style::success("✓"), name);
+            installed += 1;
+        } else {
+            println!(
+                "  {} {} (appeared concurrently; skipped)",
+                style::warning("⚠"),
+                name
+            );
+            skipped += 1;
+        }
     }
 
     println!();

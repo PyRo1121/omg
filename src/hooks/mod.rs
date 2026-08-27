@@ -345,7 +345,7 @@ pub fn build_path_additions<S: std::hash::BuildHasher>(
             _ => continue,
         };
 
-        if crate::runtimes::common::is_valid_version_dir(&bin_path) {
+        if crate::runtimes::common::is_trusted_runtime_bin_dir(&bin_path) {
             paths.push(bin_path.display().to_string());
         }
     }
@@ -388,7 +388,7 @@ fn resolve_bun_bin_path(data_dir: &Path, version: &str) -> Result<Option<PathBuf
 fn node_version_bin_path(versions_dir: &Path, version: &str) -> Option<PathBuf> {
     crate::core::security::validate_runtime_version(version).ok()?;
     let path = versions_dir.join(version).join("bin");
-    crate::runtimes::common::is_valid_version_dir(&path).then_some(path)
+    crate::runtimes::common::is_trusted_runtime_bin_dir(&path).then_some(path)
 }
 
 /// Resolve `<data_dir>/versions/<runtime>/<version>/bin` for the runtimes whose
@@ -402,7 +402,7 @@ fn validated_runtime_bin_dir(data_dir: &Path, runtime: &str, version: &str) -> O
         .join(runtime)
         .join(version)
         .join("bin");
-    crate::runtimes::common::is_valid_version_dir(&path).then_some(path)
+    crate::runtimes::common::is_trusted_runtime_bin_dir(&path).then_some(path)
 }
 
 /// Render `value` as a POSIX single-quoted shell word (`'` becomes `'\''`),
@@ -419,7 +419,7 @@ fn fish_single_quoted(value: &str) -> String {
 fn bun_version_bin_path(versions_dir: &Path, version: &str) -> Option<PathBuf> {
     crate::core::security::validate_runtime_version(version).ok()?;
     let path = versions_dir.join(version);
-    crate::runtimes::common::is_valid_version_dir(&path).then_some(path)
+    crate::runtimes::common::is_trusted_runtime_bin_dir(&path).then_some(path)
 }
 
 fn resolve_installed_version_req(versions_dir: &Path, req: &str) -> Result<Option<String>> {
@@ -533,12 +533,38 @@ fn nvm_node_bin(version: &str) -> Result<Option<PathBuf>> {
         return Ok(None);
     }
 
-    Ok(crate::runtimes::common::is_valid_version_dir(&bin_path).then_some(bin_path))
+    Ok(crate::runtimes::common::is_trusted_runtime_bin_dir(&bin_path).then_some(bin_path))
 }
 
 fn resolve_nvm_alias(nvm_dir: &Path, alias: &str) -> Result<Option<String>> {
-    let alias_path = nvm_dir.join("alias").join(alias);
-    let Some(content) = read_pin_file(&alias_path)? else {
+    let relative = Path::new(alias);
+    if relative.is_absolute()
+        || relative
+            .components()
+            .any(|component| !matches!(component, std::path::Component::Normal(_)))
+    {
+        return Ok(None);
+    }
+
+    let alias_root = nvm_dir.join("alias");
+    let canonical_root = match alias_root.canonicalize() {
+        Ok(path) => path,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+        Err(error) => return Err(error).context("Failed to resolve nvm alias directory"),
+    };
+    let candidate = alias_root.join(relative);
+    let canonical = match candidate.canonicalize() {
+        Ok(path) => path,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+        Err(error) => {
+            return Err(error)
+                .with_context(|| format!("Failed to resolve nvm alias {}", candidate.display()));
+        }
+    };
+    if !canonical.starts_with(&canonical_root) {
+        return Ok(None);
+    }
+    let Some(content) = read_pin_file(&canonical)? else {
         return Ok(None);
     };
     let resolved = content.trim();
@@ -938,6 +964,26 @@ mod tests {
     fn resolve_nvm_alias_missing_is_none() {
         let dir = tempdir().unwrap();
         assert!(resolve_nvm_alias(dir.path(), "lts").unwrap().is_none());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn resolve_nvm_alias_symlink_cannot_escape_alias_directory() {
+        use std::os::unix::fs::symlink;
+
+        let dir = tempdir().unwrap();
+        let alias_dir = dir.path().join("alias");
+        fs::create_dir(&alias_dir).unwrap();
+        let outside = dir.path().join("outside");
+        fs::write(&outside, "20.11.1\n").unwrap();
+        symlink(&outside, alias_dir.join("default")).unwrap();
+
+        assert!(resolve_nvm_alias(dir.path(), "default").unwrap().is_none());
+        assert!(
+            resolve_nvm_alias(dir.path(), "../outside")
+                .unwrap()
+                .is_none()
+        );
     }
 
     #[test]

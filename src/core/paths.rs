@@ -174,6 +174,31 @@ pub fn pacman_root() -> PathBuf {
         .unwrap_or_else(|| PathBuf::from("/"))
 }
 
+fn pacman_env_dir(name: &str, require_root_owned: bool) -> Option<PathBuf> {
+    let path = env_path(name).filter(|path| !path.as_os_str().is_empty())?;
+    #[cfg(unix)]
+    if require_root_owned {
+        use std::os::unix::fs::MetadataExt as _;
+        match std::fs::symlink_metadata(&path) {
+            Ok(metadata)
+                if metadata.file_type().is_dir()
+                    && metadata.uid() == 0
+                    && metadata.mode() & 0o022 == 0 =>
+            {
+                return Some(path);
+            }
+            _ => {
+                tracing::warn!(
+                    "Ignoring {name} {}: privileged pacman directories must be real, root-owned directories that are not group/world-writable",
+                    path.display()
+                );
+                return None;
+            }
+        }
+    }
+    Some(path)
+}
+
 /// Pacman database directory (default: /var/lib/pacman). Honors
 /// [`set_test_overrides`] in test and debug builds only.
 #[must_use]
@@ -187,51 +212,28 @@ pub fn pacman_db_dir() -> PathBuf {
             return db.clone();
         }
     }
-    env_path("OMG_PACMAN_DB_DIR")
-        .filter(|path| !path.as_os_str().is_empty())
+    pacman_env_dir("OMG_PACMAN_DB_DIR", crate::core::privilege::is_root())
         .unwrap_or_else(|| pacman_root().join("var/lib/pacman"))
 }
 
 /// Pacman sync database directory (default: /var/lib/pacman/sync).
 #[must_use]
 pub fn pacman_sync_dir() -> PathBuf {
-    env_path("OMG_PACMAN_SYNC_DIR").unwrap_or_else(|| pacman_db_dir().join("sync"))
+    pacman_env_dir("OMG_PACMAN_SYNC_DIR", crate::core::privilege::is_root())
+        .unwrap_or_else(|| pacman_db_dir().join("sync"))
 }
 
 /// Pacman local database directory (default: /var/lib/pacman/local).
 #[must_use]
 pub fn pacman_local_dir() -> PathBuf {
-    env_path("OMG_PACMAN_LOCAL_DIR").unwrap_or_else(|| pacman_db_dir().join("local"))
+    pacman_env_dir("OMG_PACMAN_LOCAL_DIR", crate::core::privilege::is_root())
+        .unwrap_or_else(|| pacman_db_dir().join("local"))
 }
 
 /// Pacman package cache directories in configured priority order.
 #[must_use]
 pub fn pacman_cache_dirs() -> Vec<PathBuf> {
-    if let Some(cache_dir) =
-        env_path("OMG_PACMAN_CACHE_DIR").filter(|path| !path.as_os_str().is_empty())
-    {
-        // SECURITY (audit F3): this path is handed to a privileged install by
-        // argv. A user-writable location would let an attacker substitute the
-        // archive root installs. Accept only when root-owned and not
-        // world/group-writable; otherwise fall through to system defaults.
-        #[cfg(unix)]
-        {
-            use std::os::unix::fs::MetadataExt as _;
-            match std::fs::metadata(&cache_dir) {
-                Ok(meta) if meta.uid() == 0 && meta.mode() & 0o022 == 0 => {
-                    return vec![cache_dir];
-                }
-                _ => {
-                    tracing::warn!(
-                        "Ignoring OMG_PACMAN_CACHE_DIR {}: must be root-owned and not \
-                         group/world-writable when omg elevates",
-                        cache_dir.display()
-                    );
-                    // fall through to defaults
-                }
-            }
-        }
-        #[cfg(not(unix))]
+    if let Some(cache_dir) = pacman_env_dir("OMG_PACMAN_CACHE_DIR", true) {
         return vec![cache_dir];
     }
 
@@ -520,6 +522,31 @@ mod tests {
         temp_env::with_var_unset("OMG_PACMAN_ROOT", || {
             let root = pacman_root();
             assert_eq!(root, PathBuf::from("/"));
+        });
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn privileged_pacman_override_rejects_writable_and_symlinked_directories() {
+        use std::os::unix::fs::{PermissionsExt, symlink};
+
+        let temp = tempfile::tempdir().expect("temporary pacman path");
+        let writable = temp.path().join("writable");
+        std::fs::create_dir(&writable).expect("create writable directory");
+        std::fs::set_permissions(&writable, std::fs::Permissions::from_mode(0o777))
+            .expect("set writable mode");
+        temp_env::with_var("OMG_PACMAN_DB_DIR", Some(writable.as_os_str()), || {
+            assert!(pacman_env_dir("OMG_PACMAN_DB_DIR", true).is_none());
+        });
+
+        let trusted_target = temp.path().join("target");
+        std::fs::create_dir(&trusted_target).expect("create target directory");
+        std::fs::set_permissions(&trusted_target, std::fs::Permissions::from_mode(0o700))
+            .expect("set target mode");
+        let linked = temp.path().join("linked");
+        symlink(&trusted_target, &linked).expect("link override");
+        temp_env::with_var("OMG_PACMAN_DB_DIR", Some(linked.as_os_str()), || {
+            assert!(pacman_env_dir("OMG_PACMAN_DB_DIR", true).is_none());
         });
     }
 

@@ -30,7 +30,7 @@ pub fn native_runtime_bin_path(runtime: &str, version: &str) -> Option<PathBuf> 
         _ => return None,
     };
 
-    crate::runtimes::common::is_valid_version_dir(&bin_path).then_some(bin_path)
+    crate::runtimes::common::is_trusted_runtime_bin_dir(&bin_path).then_some(bin_path)
 }
 
 /// Find a binary in the system PATH
