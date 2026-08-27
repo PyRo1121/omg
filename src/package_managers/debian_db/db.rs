@@ -195,6 +195,59 @@ impl FstIndex {
     }
 }
 
+/// Zero-copy memory-mapped Debian package index.
+pub struct DebianMmapIndex {
+    mmap: Mmap,
+    last_accessed: AtomicU64,
+}
+
+impl DebianMmapIndex {
+    /// Open and validate an existing read-only package index.
+    pub fn open(path: &Path) -> Result<Self> {
+        let file = File::open(path)
+            .with_context(|| format!("Failed to open mmap index at {}", path.display()))?;
+
+        // SAFETY: the file descriptor is read-only, the mapping is owned by
+        // this value, and every archived access is validated by rkyv before
+        // data is exposed.
+        #[expect(unsafe_code)]
+        let mmap = unsafe { Mmap::map(&file)? };
+
+        Ok(Self {
+            mmap,
+            last_accessed: AtomicU64::new(unix_now_secs()),
+        })
+    }
+
+    fn archive(&self) -> Result<&rkyv::Archived<DebianPackageIndex>> {
+        rkyv::access::<rkyv::Archived<DebianPackageIndex>, rkyv::rancor::Error>(&self.mmap)
+            .map_err(|error| anyhow::anyhow!("Corrupted Debian package index: {error}"))
+    }
+
+    /// Look up one package without deserializing the full index.
+    pub fn get(&self, name: &str) -> Result<Option<&rkyv::Archived<DebianPackage>>> {
+        let archive = self.archive()?;
+        let Some(index) = archive.name_to_idx.get(name) else {
+            return Ok(None);
+        };
+        Ok(archive.packages.get(u32::from(*index) as usize))
+    }
+
+    /// Access all archived packages without deserializing the index.
+    pub fn packages(&self) -> Result<&rkyv::vec::ArchivedVec<rkyv::Archived<DebianPackage>>> {
+        Ok(&self.archive()?.packages)
+    }
+
+    #[must_use]
+    pub fn is_expired(&self) -> bool {
+        is_access_expired(self.last_accessed.load(Ordering::Relaxed))
+    }
+
+    pub fn touch(&self) {
+        self.last_accessed.store(unix_now_secs(), Ordering::Relaxed);
+    }
+}
+
 impl Drop for DebianMmapIndex {
     fn drop(&mut self) {
         // Mmap::drop() will automatically unmap the memory and close the file descriptor

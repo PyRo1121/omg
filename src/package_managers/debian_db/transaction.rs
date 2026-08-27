@@ -404,7 +404,7 @@ impl Transaction {
                     Err(e) => {
                         // Recover the partial manifest so already-written
                         // files stay tracked for rollback (audit A2).
-                        if let Ok(partial) = e
+                        if let Some(partial) = e
                             .downcast_ref::<PartialExtractionError>()
                             .map(|pe| pe.installed_files.clone())
                         {
@@ -974,11 +974,7 @@ fn unpack_deb_standalone(
                         partial.len()
                     );
                 }
-                return Err(PartialExtraction {
-                    source: error,
-                    installed_files: partial,
-                }
-                .into());
+                return Err(error);
             }
         }
     } else {
@@ -1282,7 +1278,8 @@ fn extract_tar_to_root_at(root: &Path, data: &[u8]) -> Result<Vec<PathBuf>> {
             if entry_type.is_symlink() {
                 let target = entry
                     .link_name()?
-                    .context("Archive symlink is missing its target")?;
+                    .context("Archive symlink is missing its target")?
+                    .into_owned();
                 validate_root_relative_link_target(root, &entry_path, &target)?;
                 installed_files.push(entry_path.clone());
                 pending_links.push(PendingRootLink::Symbolic {
@@ -1909,8 +1906,13 @@ mod tests {
 
     #[test]
     fn test_dpkg_info_candidates_prefer_arch_qualified_name() {
-        let [qualified, unqualified] = dpkg_info_candidates("curl", "list");
-        assert!(qualified.ends_with(format!("curl:{}.list", std::env::consts::ARCH)));
+        let [debian_arch, rust_arch, unqualified] = dpkg_info_candidates("curl", "list");
+        let expected_arch = match std::env::consts::ARCH {
+            "x86_64" => "amd64",
+            other => other,
+        };
+        assert!(debian_arch.ends_with(format!("curl:{expected_arch}.list")));
+        assert!(rust_arch.ends_with(format!("curl:{}.list", std::env::consts::ARCH)));
         assert!(unqualified.ends_with("curl.list"));
     }
 

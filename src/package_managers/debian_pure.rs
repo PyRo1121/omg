@@ -16,6 +16,25 @@ use crate::package_managers::types::UpdateInfo;
 #[derive(Debug, Default)]
 pub struct PureDebianPackageManager;
 
+/// Publish authenticated package lists through APT's native trust engine.
+async fn update_apt_lists(program: &std::path::Path, needs_elevation: bool) -> Result<()> {
+    let program_text = program
+        .to_str()
+        .context("apt-get executable path is not valid UTF-8")?;
+    if needs_elevation {
+        crate::core::privilege::run_privileged_program(program_text, &["update"]).await?;
+        return Ok(());
+    }
+
+    let status = tokio::process::Command::new(program)
+        .arg("update")
+        .status()
+        .await
+        .context("Failed to run apt-get update")?;
+    anyhow::ensure!(status.success(), "apt-get update failed with {status}");
+    Ok(())
+}
+
 impl PureDebianPackageManager {
     pub fn new() -> Self {
         Self
@@ -256,27 +275,12 @@ impl PackageManager for PureDebianPackageManager {
 
     fn sync(&self) -> Pin<Box<dyn Future<Output = Result<()>> + Send + '_>> {
         Box::pin(async move {
-            use std::time::Instant;
-
-            let start = Instant::now();
-            tracing::info!("Starting pure Rust repository sync");
-
-            // Use parallel sync for maximum performance
-            // Note: show_progress=false to avoid tty issues in some contexts
-            match debian_db::sync_all_repositories(false).await {
-                Ok(()) => {
-                    let elapsed = start.elapsed();
-                    tracing::info!(
-                        "Pure Rust sync completed in {:.2}s (faster than apt update)",
-                        elapsed.as_secs_f64()
-                    );
-                    Ok(())
-                }
-                Err(e) => {
-                    tracing::error!("Pure Rust sync failed: {}", e);
-                    Err(e)
-                }
-            }
+            // APT owns repository authentication and publication into
+            // /var/lib/apt/lists. The removed custom downloader wrote a
+            // separate user cache that the Debian index never consumed and,
+            // critically, did not authenticate Packages indexes against the
+            // signed InRelease checksum table.
+            update_apt_lists(std::path::Path::new("apt-get"), !crate::core::is_root()).await
         })
     }
 
@@ -554,4 +558,45 @@ fn populate_action_url(
         pkg.filename
     ));
     Ok(())
+}
+
+#[cfg(all(test, unix))]
+mod tests {
+    use super::update_apt_lists;
+    use std::os::unix::fs::PermissionsExt;
+
+    fn fake_apt_script(body: &str) -> (tempfile::TempDir, std::path::PathBuf) {
+        let directory = tempfile::tempdir().expect("temporary fake apt directory");
+        let program = directory.path().join("apt-get");
+        std::fs::write(&program, format!("#!/bin/sh\n{body}\n")).expect("write fake apt-get");
+        let mut permissions = std::fs::metadata(&program)
+            .expect("fake apt metadata")
+            .permissions();
+        permissions.set_mode(0o700);
+        std::fs::set_permissions(&program, permissions).expect("make fake apt executable");
+        (directory, program)
+    }
+
+    #[tokio::test]
+    async fn native_sync_executes_exact_apt_update_command() {
+        let (_directory, program) = fake_apt_script("[ \"$#\" -eq 1 ] && [ \"$1\" = update ]");
+
+        update_apt_lists(&program, false)
+            .await
+            .expect("apt update command must succeed");
+    }
+
+    #[tokio::test]
+    async fn native_sync_propagates_apt_failure() {
+        let (_directory, program) = fake_apt_script("exit 23");
+
+        let error = update_apt_lists(&program, false)
+            .await
+            .expect_err("apt failure must fail sync");
+        let chain = format!("{error:#}");
+        assert!(
+            chain.contains("exit status: 23"),
+            "unexpected apt failure: {chain}"
+        );
+    }
 }

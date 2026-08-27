@@ -7,7 +7,6 @@
 //!
 //! - [`db`]: Core package database parsing and caching
 //! - [`sources`]: APT sources.list and deb822 sources parser
-//! - [`parallel_sync`]: Parallel repository synchronization
 //! - [`resolver`]: Dependency resolution with version comparison
 //! - [`transaction`]: Pure Rust transaction engine for .deb installation
 //! - [`validation`]: Pre-flight checks and error validation
@@ -22,7 +21,6 @@
 
 pub mod content_store;
 pub mod db;
-pub mod parallel_sync;
 pub mod resolver;
 pub mod sources;
 pub mod transaction;
@@ -38,7 +36,6 @@ pub use db::{
     list_explicit_fast, list_installed_fast, list_orphans_fast, search_fast,
 };
 
-pub use parallel_sync::sync_all_repositories;
 pub use resolver::{DependencyResolver, ResolutionResult, compare_versions};
 pub use sources::{
     RepoType, Repository, get_enabled_binary_repos, parse_all_sources, parse_deb822_content,

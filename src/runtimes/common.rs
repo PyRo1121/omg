@@ -84,10 +84,6 @@ pub(crate) struct BudgetedReader<R> {
 
 #[cfg(any(feature = "debian", feature = "debian-pure"))]
 impl<R> BudgetedReader<R> {
-    pub(crate) fn with_default_budget(inner: R) -> Self {
-        Self::new(inner, MAX_DECOMPRESSED_BYTES)
-    }
-
     /// Explicit budget: production callers pass [`MAX_DECOMPRESSED_BYTES`],
     /// tests pass a small budget so the abort path is exercisable without
     /// gigabyte allocations.
