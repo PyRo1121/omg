@@ -23,8 +23,8 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 
 use super::common::{
-    GITHUB_USER_AGENT, GithubRelease, download_with_progress, parse_sha256_digest,
-    remove_file_best_effort,
+    GITHUB_USER_AGENT, GithubRelease, download_with_progress, normalize_version,
+    parse_sha256_digest, remove_file_best_effort,
 };
 
 const MISE_GITHUB_RELEASES: &str = "https://github.com/jdx/mise/releases";
@@ -163,11 +163,7 @@ impl MiseManager {
             .await
             .context("Failed to parse mise release info")?;
 
-        Ok(release
-            .tag_name
-            .strip_prefix('v')
-            .unwrap_or(&release.tag_name)
-            .to_owned())
+        Ok(normalize_version(&release.tag_name))
     }
 
     /// Extract mise tarball
