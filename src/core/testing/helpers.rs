@@ -60,13 +60,6 @@ impl TestContext {
         path
     }
 
-    /// Create a test file in the config directory
-    pub fn create_config_file(&self, name: &str, content: &str) -> PathBuf {
-        let path = self.config_dir.join(name);
-        fs::write(&path, content).unwrap();
-        path
-    }
-
     /// Read a test file
     pub fn read_file(&self, path: &Path) -> String {
         fs::read_to_string(path).unwrap()

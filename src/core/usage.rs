@@ -335,13 +335,6 @@ impl UsageStats {
         self.unlock(Achievement::Polyglot, self.runtimes_used.len() >= 7);
     }
 
-    /// Record runtime usage (for Polyglot achievement)
-    pub fn record_runtime(&mut self, runtime: &str) {
-        if self.record_runtime_on(runtime) {
-            self.save_best_effort();
-        }
-    }
-
     /// Register a newly used runtime without persisting; callers batch this
     /// with other mutations under one lock and a single save.
     /// Returns whether the runtime was new (and thus state mutated).

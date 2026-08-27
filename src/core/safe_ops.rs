@@ -35,8 +35,12 @@ pub fn expect_or<T>(option: Option<T>, context: &str) -> Result<T> {
     option.ok_or_else(|| anyhow::anyhow!("Expected value for {context} but found None"))
 }
 
-/// Validate that a path is safe for file operations
-pub fn validate_path<P: AsRef<Path>>(path: P) -> Result<PathBuf> {
+/// Validate only the basic string syntax of a path.
+///
+/// This rejects empty, non-UTF-8, and NUL-containing paths. It deliberately
+/// does not claim symlink, traversal, ownership, or containment safety;
+/// callers crossing those boundaries must apply a domain-specific validator.
+pub fn validate_path_syntax<P: AsRef<Path>>(path: P) -> Result<PathBuf> {
     let path = path.as_ref();
 
     // Check for empty path
@@ -136,7 +140,7 @@ pub async fn atomic_write_file<P: AsRef<Path>, C: AsRef<[u8]>>(path: P, contents
 
 /// Safe synchronous file write with atomic operations
 pub fn atomic_write_file_sync<P: AsRef<Path>, C: AsRef<[u8]>>(path: P, contents: C) -> Result<()> {
-    let path = validate_path(path)?;
+    let path = validate_path_syntax(path)?;
     let parent = path
         .parent()
         .filter(|parent| !parent.as_os_str().is_empty())
@@ -338,16 +342,16 @@ mod tests {
     }
 
     #[test]
-    fn test_validate_path_valid() {
+    fn test_validate_path_syntax_valid() {
         let path = "/tmp";
-        let result = validate_path(path);
+        let result = validate_path_syntax(path);
         assert!(result.is_ok());
     }
 
     #[test]
-    fn test_validate_path_empty() {
+    fn test_validate_path_syntax_empty() {
         let path = "";
-        let result = validate_path(path);
+        let result = validate_path_syntax(path);
         assert!(result.is_err());
     }
 

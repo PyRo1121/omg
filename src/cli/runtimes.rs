@@ -48,8 +48,6 @@ fn strip_version_prefix(version: &str) -> &str {
 
 trait RuntimeInstallUse {
     fn list_installed(&self) -> Result<Vec<String>>;
-    #[allow(dead_code)]
-    fn current_version(&self) -> Option<String>;
     fn use_version(&self, version: &str) -> Result<()>;
     async fn install(&self, version: &str) -> Result<()>;
 }
@@ -59,8 +57,6 @@ macro_rules! impl_runtime_install_use {
         $(
             impl RuntimeInstallUse for $t {
                 fn list_installed(&self) -> Result<Vec<String>> { self.list_installed() }
-                #[allow(dead_code)]
-    fn current_version(&self) -> Option<String> { self.current_version() }
                 fn use_version(&self, version: &str) -> Result<()> { self.use_version(version) }
                 async fn install(&self, version: &str) -> Result<()> { self.install(version).await }
             }

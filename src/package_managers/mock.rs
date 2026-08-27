@@ -174,17 +174,6 @@ impl MockPackageManager {
         Ok(())
     }
 
-    pub fn create_update_scenario(&self, updates: &[(&str, &str, &str)]) -> Result<()>
-    where
-        Self: Sized,
-    {
-        for (name, installed, available) in updates {
-            self.set_installed_version(name, installed)?;
-            self.set_available_version(name, available)?;
-        }
-        Ok(())
-    }
-
     /// Synchronously list explicitly installed packages from the mock state.
     /// Used by CLI paths that cannot await (test-mode `explicit`).
     pub fn list_explicit_sync(&self) -> Result<Vec<String>> {

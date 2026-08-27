@@ -141,26 +141,6 @@ impl FastStatus {
     pub fn read_explicit_count() -> Option<usize> {
         Self::read_default().map(|status| status.explicit_packages as usize)
     }
-
-    /// Read orphan count directly (fastest path)
-    #[must_use]
-    pub fn read_orphan_count() -> Option<usize> {
-        Self::read_default().map(|status| status.orphan_packages as usize)
-    }
-
-    /// Read updates count directly (fastest path)
-    #[must_use]
-    pub fn read_updates_count() -> Option<usize> {
-        Self::read_default().map(|status| status.updates_available as usize)
-    }
-
-    /// Write status to default path
-    pub fn write_default(&self) -> std::io::Result<()> {
-        let path = paths::fast_status_path();
-        #[cfg(unix)]
-        paths::prepare_socket_parent(&path)?;
-        self.write_to_file(&path)
-    }
 }
 
 #[cfg(test)]

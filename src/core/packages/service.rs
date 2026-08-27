@@ -320,8 +320,6 @@ pub struct PackageServiceBuilder {
     history: HistoryConfiguration,
     #[cfg(feature = "arch")]
     aur_client: Option<crate::package_managers::AurClient>,
-    #[cfg(feature = "arch")]
-    enable_aur: bool,
 }
 
 impl PackageServiceBuilder {
@@ -334,8 +332,6 @@ impl PackageServiceBuilder {
             history: HistoryConfiguration::Default,
             #[cfg(feature = "arch")]
             aur_client: None,
-            #[cfg(feature = "arch")]
-            enable_aur: true,
         }
     }
 
@@ -375,19 +371,10 @@ impl PackageServiceBuilder {
         self
     }
 
-    /// Disable AUR support (Arch only)
-    #[cfg(feature = "arch")]
-    #[must_use]
-    pub fn without_aur(mut self) -> Self {
-        self.enable_aur = false;
-        self.aur_client = None;
-        self
-    }
-
     /// Build the `PackageService`
     pub fn build(self) -> Result<PackageService> {
         #[cfg(feature = "arch")]
-        let aur_client = if self.enable_aur && self.backend.name() == "pacman" {
+        let aur_client = if self.backend.name() == "pacman" {
             match self.aur_client {
                 Some(client) => Some(client),
                 None => Some(crate::package_managers::AurClient::new()?),

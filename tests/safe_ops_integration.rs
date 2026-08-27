@@ -49,16 +49,16 @@ async fn test_path_validation_integration() {
     // Test valid path
     let temp_dir = TempDir::new().unwrap();
     let valid_path = temp_dir.path();
-    let result = validate_path(valid_path);
+    let result = validate_path_syntax(valid_path);
     assert!(result.is_ok());
 
     // Test empty path
-    let empty_result = validate_path("");
+    let empty_result = validate_path_syntax("");
     assert!(empty_result.is_err());
 
     // Test path with null byte
     let null_path = "/tmp/with\0null";
-    let null_result = validate_path(null_path);
+    let null_result = validate_path_syntax(null_path);
     assert!(null_result.is_err());
 }
 

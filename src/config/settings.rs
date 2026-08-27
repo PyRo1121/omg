@@ -328,10 +328,4 @@ impl Settings {
     pub fn versions_dir(&self) -> PathBuf {
         self.data_dir.join("versions")
     }
-
-    /// Get the shims directory
-    #[must_use]
-    pub fn shims_dir(&self) -> PathBuf {
-        self.data_dir.join("shims")
-    }
 }

@@ -10,9 +10,9 @@ use crate::core::env::fingerprint::EnvironmentState;
 /// Compare two environment states
 pub async fn run(from: Option<&str>, to: &str) -> Result<()> {
     if let Some(path) = from {
-        crate::core::safe_ops::validate_path(path)?;
+        crate::core::safe_ops::validate_path_syntax(path)?;
     }
-    crate::core::safe_ops::validate_path(to)?;
+    crate::core::safe_ops::validate_path_syntax(to)?;
 
     println!("{} Environment Comparison\n", style::runtime("OMG"));
 

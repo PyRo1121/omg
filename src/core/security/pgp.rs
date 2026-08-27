@@ -287,17 +287,6 @@ impl PgpVerifier {
         }
         false
     }
-
-    /// Detached-signature verification for a package file and its `.sig`
-    /// sidecar. Distro-agnostic; a thin convenience wrapper over
-    /// [`Self::verify_detached`].
-    pub fn verify_package(
-        &self,
-        pkg_path: impl AsRef<Path>,
-        sig_path: impl AsRef<Path>,
-    ) -> Result<(), PgpError> {
-        self.verify_detached(pkg_path.as_ref(), sig_path.as_ref())
-    }
 }
 
 /// Fail closed when a package blob or its detached `.sig` is missing.

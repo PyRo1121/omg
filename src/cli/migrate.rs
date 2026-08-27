@@ -87,7 +87,7 @@ pub async fn export(output: &str) -> Result<()> {
 
 /// Import environment from manifest with package mapping
 pub async fn import(manifest_path: &str, dry_run: bool) -> Result<()> {
-    let manifest_path = crate::core::safe_ops::validate_path(manifest_path)?;
+    let manifest_path = crate::core::safe_ops::validate_path_syntax(manifest_path)?;
 
     println!(
         "{} {} manifest...\n",

@@ -559,28 +559,6 @@ pub async fn run_privileged_child(args: &[&str]) -> anyhow::Result<()> {
     anyhow::bail!("Elevated command failed with exit code: {status}")
 }
 
-/// Execute a closure that requires root, elevating if needed.
-///
-/// When not running as root this re-executes the current process under sudo;
-/// in production builds the child exits after the elevated command, so this
-/// function only returns normally when already root (or in test builds, where
-/// elevation is a no-op).
-pub fn with_root<F, T>(f: F) -> anyhow::Result<T>
-where
-    F: FnOnce() -> anyhow::Result<T>,
-{
-    if !is_root() {
-        let args: Vec<String> = std::env::args().collect();
-        // Re-exec with sudo - this replaces the process
-        elevate_if_needed(&args)
-            .map_err(|e| anyhow::anyhow!("Failed to elevate privileges: {e}"))?;
-        // Production: unreachable (elevate_if_needed exits the process).
-        // Test builds: elevation is mocked as a no-op, so fall through and
-        // run the closure directly.
-    }
-    f()
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;

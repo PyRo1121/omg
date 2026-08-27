@@ -178,17 +178,6 @@ pub fn print_dry_run_footer() {
     );
 }
 
-/// Print a step in a multi-step process.
-pub fn print_step(step: usize, total: usize, msg: &str) {
-    let step_str = format!(" {step:02}/{total:02} ");
-    let step_style = Style::new()
-        .background(Color::Gray) // approximate for bright black
-        .foreground(Color::White);
-    let msg_style = Style::new().foreground(Color::Gray);
-
-    println!("{} {}", step_style.render(&step_str), msg_style.render(msg));
-}
-
 /// Print a key-value pair with consistent formatting.
 pub fn print_kv(key: &str, value: &str) {
     let key_style = Style::new().foreground(Color::Gray);
