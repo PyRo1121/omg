@@ -23,7 +23,9 @@ use anyhow::{Context, Result};
 use common::*;
 use omg_lib::daemon::handlers::DaemonState;
 use omg_lib::daemon::index::PackageIndex;
-use omg_lib::daemon::protocol::{MetricsSnapshot, Request, Response, ResponseResult, error_codes};
+use omg_lib::daemon::protocol::{
+    MetricsSnapshot, PROTOCOL_VERSION, Request, Response, ResponseResult, error_codes,
+};
 use omg_lib::daemon::server;
 use omg_lib::package_managers::mock::MockPackageManager;
 use serial_test::serial;
@@ -229,7 +231,9 @@ async fn version_mismatch_gets_exact_parse_error_then_connection_closes() -> Res
             );
             assert_eq!(
                 message,
-                "unsupported peer protocol version 999001 (this daemon speaks 1); update omg",
+                format!(
+                    "unsupported peer protocol version 999001 (this daemon speaks {PROTOCOL_VERSION}); update omg"
+                ),
                 "rejection must tell the client WHY (peer version) and WHAT to do"
             );
         }
@@ -334,7 +338,7 @@ async fn undecodable_payload_gets_parse_error_validation_failure_then_close() ->
 
     let mut stream = fixture.connect().await?;
     let mut frame = Vec::new();
-    frame.extend_from_slice(&1u32.to_le_bytes()); // current PROTOCOL_VERSION
+    frame.extend_from_slice(&PROTOCOL_VERSION.to_le_bytes());
     frame.extend_from_slice(&[0xFFu8; 100]); // garbage payload
     send_raw_frame(&mut stream, &frame).await?;
 

@@ -6,12 +6,12 @@ use futures::future::BoxFuture;
 
 use crate::cli::{modern_ui, ui};
 #[cfg(unix)]
-use crate::core::PackageSource;
-#[cfg(unix)]
 use crate::core::client::DaemonClient;
 #[cfg(unix)]
 use crate::core::client::SyncDaemonClient;
 use crate::core::security::is_local_package_file;
+#[cfg(unix)]
+use crate::daemon::protocol::WirePackageSource;
 use crate::package_managers::AurClient;
 use crate::package_managers::get_package_manager;
 
@@ -217,14 +217,12 @@ pub async fn install_dry_run(packages: &[String]) -> Result<()> {
                     Ok(search_result) => {
                         let is_official = search_result.packages.iter().any(|pkg| {
                             pkg.name == pkg_name.as_str()
-                                && PackageSource::from_label(&pkg.source)
-                                    == Some(PackageSource::Official)
+                                && pkg.source == WirePackageSource::Official
                         });
 
                         if is_official
                             && let Ok(info) = client.info(pkg_name)
-                            && PackageSource::from_label(&info.source)
-                                == Some(PackageSource::Official)
+                            && info.source == WirePackageSource::Official
                         {
                             let size_mb = info.download_size as f64 / 1024.0 / 1024.0;
                             total_size += info.download_size;
@@ -319,10 +317,10 @@ fn extract_missing_package(msg: &str, packages: &[String]) -> Option<String> {
 #[cfg(unix)]
 async fn daemon_has_official_package(client: &mut DaemonClient, package: &str) -> Result<bool> {
     let result = client.search(package, Some(8)).await?;
-    Ok(result.packages.iter().any(|pkg| {
-        pkg.name == package
-            && PackageSource::from_label(&pkg.source) == Some(PackageSource::Official)
-    }))
+    Ok(result
+        .packages
+        .iter()
+        .any(|pkg| pkg.name == package && pkg.source == WirePackageSource::Official))
 }
 
 async fn lookup_official_package(

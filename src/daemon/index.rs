@@ -9,7 +9,7 @@ use std::sync::Arc;
 use ahash::AHashMap;
 use anyhow::Result;
 
-use crate::daemon::protocol::{DetailedPackageInfo, PackageInfo};
+use crate::daemon::protocol::{DetailedPackageInfo, PackageInfo, WirePackageSource};
 
 struct PackageBloomFilter {
     bits: Vec<u64>,
@@ -161,7 +161,7 @@ struct CompactPackageInfo {
     size: u64,
     download_size: u64,
     repo_offset: u32,
-    source_offset: u32,
+    source: WirePackageSource,
 }
 
 /// Relevance score for a search match
@@ -233,7 +233,7 @@ impl PackageIndex {
             size,
             download_size,
             repo_offset: self.pool.intern(repo),
-            source_offset: self.pool.intern("official"),
+            source: WirePackageSource::Official,
         });
         self.trigrams.insert(&name_lower, idx as u32);
         self.name_to_idx.insert(name.to_owned(), idx);
@@ -418,7 +418,7 @@ impl PackageIndex {
                     name: self.pool.get(item.name_offset).to_string(),
                     version: self.pool.get(item.version_offset).to_string(),
                     description: self.pool.get(item.description_offset).to_string(),
-                    source: self.pool.get(item.source_offset).to_string(),
+                    source: item.source,
                 })
             })
             .collect()
@@ -477,7 +477,7 @@ impl PackageIndex {
             repo: self.pool.get(item.repo_offset).to_string(),
             depends: Vec::new(),
             licenses: Vec::new(),
-            source: self.pool.get(item.source_offset).to_string(),
+            source: item.source,
         })
     }
 
@@ -580,7 +580,7 @@ mod tests {
 
         let firefox = index.get("firefox").expect("exact name must resolve");
         assert_eq!(firefox.version, "146.0");
-        assert_eq!(firefox.source, "official");
+        assert_eq!(firefox.source, WirePackageSource::Official);
         assert!(index.get("missing").is_none());
     }
 

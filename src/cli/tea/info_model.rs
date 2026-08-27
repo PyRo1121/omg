@@ -281,7 +281,7 @@ async fn fetch_info(package: &str) -> InfoMsg {
             name: info.name,
             version: info.version,
             description: info.description,
-            source: if PackageSource::from_label(&info.source) == Some(PackageSource::Official) {
+            source: if PackageSource::from(info.source) == PackageSource::Official {
                 InfoSource::Official
             } else {
                 InfoSource::Aur

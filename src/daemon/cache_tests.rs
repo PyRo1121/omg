@@ -9,7 +9,7 @@ fn test_cache_basic_ops() {
         name: "test".to_string(),
         version: "1.0".to_string(),
         description: "desc".to_string(),
-        source: "test_source".to_string(),
+        source: crate::daemon::protocol::WirePackageSource::Official,
     };
 
     // Insert
@@ -51,7 +51,7 @@ fn test_cache_miss_handling() {
         repo: String::new(),
         depends: vec![],
         licenses: vec![],
-        source: String::new(),
+        source: crate::daemon::protocol::WirePackageSource::Official,
     };
     cache.insert_info(info);
     assert!(!cache.is_info_miss("missing"));

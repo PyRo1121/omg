@@ -12,7 +12,8 @@ use super::cache::PackageCache;
 use super::index::PackageIndex;
 use super::protocol::{
     DetailedPackageInfo, ExplicitResult, HealthStatus, Request, RequestId, Response,
-    ResponseResult, SearchResult, SecurityAuditResult, UpdateEntry, Vulnerability, error_codes,
+    ResponseResult, SearchResult, SecurityAuditResult, UpdateEntry, Vulnerability,
+    WirePackageSource, error_codes,
 };
 use crate::core::metrics::GLOBAL_METRICS;
 use crate::core::security::{AuditEventType, AuditSeverity, audit_log};
@@ -22,11 +23,6 @@ use crate::package_managers::{alpm_worker::AlpmWorker, search_detailed};
 use std::sync::RwLock;
 use std::sync::atomic::{AtomicU64, Ordering};
 
-// Constants for package source strings to avoid repeated allocations
-const SOURCE_APT: &str = "apt";
-const SOURCE_OFFICIAL: &str = "official";
-#[cfg(feature = "arch")]
-const SOURCE_AUR: &str = "aur";
 const PING_RESPONSE: &str = "pong";
 const CACHE_CLEARED_MSG: &str = "cleared";
 const DAEMON_INFO_BACKEND_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(5);
@@ -415,7 +411,7 @@ async fn handle_debian_search(
         Err(error) => return internal_error(id, format!("Debian search task failed: {error}")),
     };
     for package in &mut results {
-        package.source = SOURCE_APT.to_string();
+        package.source = WirePackageSource::Apt;
     }
     let results = Arc::new(results);
     state.with_current_index(&index, || {
@@ -644,7 +640,7 @@ async fn handle_info(state: Arc<DaemonState>, id: RequestId, package: String) ->
                 repo: String::new(),
                 depends: Vec::new(),
                 licenses: Vec::new(),
-                source: SOURCE_OFFICIAL.to_string(),
+                source: WirePackageSource::Official,
             });
             state.cache.insert_info_arc(Arc::clone(&detailed));
             return Response::Success {
@@ -694,10 +690,10 @@ async fn handle_info(state: Arc<DaemonState>, id: RequestId, package: String) ->
                         url: pkg.url.unwrap_or_default(),
                         size: 0,
                         download_size: 0,
-                        repo: SOURCE_AUR.to_string(),
+                        repo: "aur".to_string(),
                         depends: pkg.depends.unwrap_or_default(),
                         licenses: pkg.license.unwrap_or_default(),
-                        source: SOURCE_AUR.to_string(),
+                        source: WirePackageSource::Aur,
                     });
 
                     state.cache.insert_info_arc(Arc::clone(&detailed));
@@ -1267,7 +1263,7 @@ mod tests {
                 name: "stale".to_string(),
                 version: "1".to_string(),
                 description: String::new(),
-                source: SOURCE_OFFICIAL.to_string(),
+                source: WirePackageSource::Official,
             }]),
         );
         assert!(state.cache.get("cached").is_some());

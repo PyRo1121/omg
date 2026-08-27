@@ -174,7 +174,7 @@ async fn search_official_packages(query: &str) -> Result<Vec<DisplayPackage>> {
                         name: pkg.name,
                         version: pkg.version,
                         description: pkg.description,
-                        source: pkg.source,
+                        source: pkg.source.label().to_string(),
                         votes: None,
                         popularity: None,
                         maintainer: None,
@@ -366,7 +366,7 @@ fn write_daemon_package<W: Write>(
     pkg: &crate::daemon::protocol::PackageInfo,
     desc_width: usize,
 ) -> std::io::Result<()> {
-    let source_style = styled_source(&pkg.source);
+    let source_style = styled_source(pkg.source.label());
 
     writeln!(
         w,

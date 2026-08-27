@@ -562,7 +562,9 @@ mod usage_tests {
 /// Tests for daemon IPC protocol and communication
 mod daemon_tests {
     use super::*;
-    use omg_lib::daemon::protocol::{PackageInfo, Request, Response, ResponseResult, SearchResult};
+    use omg_lib::daemon::protocol::{
+        PackageInfo, Request, Response, ResponseResult, SearchResult, WirePackageSource,
+    };
 
     /// Verify request serialization with bitcode
     #[test]
@@ -605,7 +607,7 @@ mod daemon_tests {
                     name: "firefox".to_string(),
                     version: "122.0".to_string(),
                     description: "Web browser".to_string(),
-                    source: "extra".to_string(),
+                    source: WirePackageSource::Official,
                 }],
                 total: 1,
             }),

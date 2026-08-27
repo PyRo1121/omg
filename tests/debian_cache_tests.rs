@@ -1,12 +1,12 @@
 use omg_lib::daemon::cache::PackageCache;
-use omg_lib::daemon::protocol::PackageInfo;
+use omg_lib::daemon::protocol::{PackageInfo, WirePackageSource};
 
 fn pkg(name: &str, version: &str) -> PackageInfo {
     PackageInfo {
         name: name.to_string(),
         version: version.to_string(),
         description: "desc".to_string(),
-        source: "apt".to_string(),
+        source: WirePackageSource::Apt,
     }
 }
 

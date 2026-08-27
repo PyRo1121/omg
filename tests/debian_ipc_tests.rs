@@ -8,7 +8,7 @@
 //! socket is caught here instead of at runtime.
 
 #![expect(clippy::unwrap_used)]
-use omg_lib::daemon::protocol::{PackageInfo, Request, ResponseResult};
+use omg_lib::daemon::protocol::{PackageInfo, Request, ResponseResult, WirePackageSource};
 
 /// The request must serialize with its externally-tagged variant name
 /// `"DebianSearch"` and round-trip every field.
@@ -70,13 +70,13 @@ fn test_debian_search_result_serialization() {
             name: "vim".to_string(),
             version: "2:9.0.0821-1".to_string(),
             description: "Vi IMproved - enhanced vi editor".to_string(),
-            source: "apt".to_string(),
+            source: WirePackageSource::Apt,
         },
         PackageInfo {
             name: "nano".to_string(),
             version: "7.2-1".to_string(),
             description: "small, friendly text editor".to_string(),
-            source: "apt".to_string(),
+            source: WirePackageSource::Apt,
         },
     ]);
 
@@ -95,7 +95,7 @@ fn test_debian_search_result_serialization() {
             pkgs[0].description, "Vi IMproved - enhanced vi editor",
             "descriptions survive verbatim"
         );
-        assert_eq!(pkgs[0].source, "apt");
+        assert_eq!(pkgs[0].source, WirePackageSource::Apt);
         assert_eq!(pkgs[1].name, "nano");
         assert!(
             !pkgs[1].version.is_empty(),

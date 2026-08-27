@@ -14,7 +14,7 @@ use criterion::{Criterion, criterion_group, criterion_main};
 
 use omg_lib::core::runtime_resolver;
 use omg_lib::daemon::cache::PackageCache;
-use omg_lib::daemon::protocol::PackageInfo;
+use omg_lib::daemon::protocol::{PackageInfo, WirePackageSource};
 
 /// Benchmark cache operations with Arc optimization
 fn bench_cache_operations(c: &mut Criterion) {
@@ -29,7 +29,7 @@ fn bench_cache_operations(c: &mut Criterion) {
             name: format!("package{i}"),
             version: "1.0.0".to_string(),
             description: format!("Test package {i}"),
-            source: "test".to_string(),
+            source: WirePackageSource::Official,
         })
         .collect();
 
@@ -175,7 +175,7 @@ fn bench_arc_clone(c: &mut Criterion) {
             name: format!("pkg{i}"),
             version: "1.0.0".to_string(),
             description: "test".to_string(),
-            source: "test".to_string(),
+            source: WirePackageSource::Official,
         })
         .collect();
 

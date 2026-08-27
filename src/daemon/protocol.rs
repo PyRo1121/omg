@@ -10,7 +10,7 @@ use serde::{Deserialize, Serialize};
 /// Every frame is `[u32 LE version][bitcode payload]`. Peers reject frames
 /// whose version differs instead of attempting a decode that could
 /// silently mis-map same-shaped variants.
-pub const PROTOCOL_VERSION: u32 = 1;
+pub const PROTOCOL_VERSION: u32 = 2;
 
 /// Frame layout error for [`encode_frame`] / [`split_frame`].
 #[derive(Debug, thiserror::Error)]
@@ -252,13 +252,50 @@ impl StatusResult {
     }
 }
 
+/// Closed package-source vocabulary for the daemon wire protocol.
+///
+/// Adding a variant requires a protocol-version bump so older peers reject the
+/// frame before decoding instead of interpreting a new source as an old value.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum WirePackageSource {
+    Official,
+    Aur,
+    Apt,
+}
+
+impl WirePackageSource {
+    #[must_use]
+    pub const fn label(self) -> &'static str {
+        match self {
+            Self::Official => "official",
+            Self::Aur => "aur",
+            Self::Apt => "apt",
+        }
+    }
+}
+
+impl From<WirePackageSource> for crate::core::PackageSource {
+    fn from(source: WirePackageSource) -> Self {
+        match source {
+            WirePackageSource::Official | WirePackageSource::Apt => Self::Official,
+            WirePackageSource::Aur => Self::Aur,
+        }
+    }
+}
+
+impl std::fmt::Display for WirePackageSource {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter.write_str(self.label())
+    }
+}
+
 /// Package info for IPC (minimal)
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PackageInfo {
     pub name: String,
     pub version: String,
     pub description: String,
-    pub source: String,
+    pub source: WirePackageSource,
 }
 
 /// Detailed package info for IPC
@@ -273,7 +310,7 @@ pub struct DetailedPackageInfo {
     pub repo: String,
     pub depends: Vec<String>,
     pub licenses: Vec<String>,
-    pub source: String,
+    pub source: WirePackageSource,
 }
 
 /// Vulnerability info for IPC
@@ -380,4 +417,43 @@ pub fn read_frame<R: std::io::Read>(reader: &mut R) -> std::io::Result<Vec<u8>> 
     let mut payload = vec![0u8; len];
     reader.read_exact(&mut payload)?;
     Ok(payload)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn every_package_source_round_trips_through_the_versioned_wire_format() {
+        for source in [
+            WirePackageSource::Official,
+            WirePackageSource::Aur,
+            WirePackageSource::Apt,
+        ] {
+            let package = PackageInfo {
+                name: "package".to_string(),
+                version: "1".to_string(),
+                description: String::new(),
+                source,
+            };
+            let frame = encode_frame(&package).expect("encode package frame");
+            let (_, payload) = split_frame(&frame).expect("accept current protocol frame");
+            let decoded: PackageInfo = bitcode::deserialize(payload).expect("decode package frame");
+            assert_eq!(decoded.source, source);
+        }
+    }
+
+    #[test]
+    fn previous_string_source_protocol_version_is_rejected_before_decode() {
+        let mut old_frame = 1u32.to_le_bytes().to_vec();
+        old_frame.extend_from_slice(b"old string-source payload");
+
+        assert!(matches!(
+            split_frame(&old_frame),
+            Err(FrameError::VersionMismatch {
+                peer: 1,
+                ours: PROTOCOL_VERSION,
+            })
+        ));
+    }
 }
