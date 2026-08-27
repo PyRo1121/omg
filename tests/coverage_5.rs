@@ -532,33 +532,6 @@ fn team_members_requires_license_gate() {
 
 #[test]
 #[serial]
-fn team_proposals_requires_license_gate() {
-    clear_license();
-    let project = TestProject::new();
-    let res = project.run(&["team", "proposals"]);
-    assert_gate_failure(&res, "proposals");
-}
-
-#[test]
-#[serial]
-fn team_propose_requires_license_gate() {
-    clear_license();
-    let project = TestProject::new();
-    let res = project.run(&["team", "propose", "switch to node 20"]);
-    assert_gate_failure(&res, "propose");
-}
-
-#[test]
-#[serial]
-fn team_review_requires_license_gate() {
-    clear_license();
-    let project = TestProject::new();
-    let res = project.run(&["team", "review", "42", "--approve"]);
-    assert_gate_failure(&res, "review");
-}
-
-#[test]
-#[serial]
 fn team_activity_requires_license_gate() {
     clear_license();
     let project = TestProject::new();

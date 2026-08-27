@@ -175,6 +175,7 @@ mod tests {
 
     #[cfg(unix)]
     #[tokio::test]
+    #[serial_test::serial(pi_runtime)]
     async fn install_publishes_exact_version_and_activates_it() -> Result<()> {
         let temp = tempfile::tempdir()?;
         let versions_dir = temp.path().join("versions/pi");
@@ -208,6 +209,7 @@ mod tests {
 
     #[cfg(unix)]
     #[tokio::test]
+    #[serial_test::serial(pi_runtime)]
     async fn hostile_version_is_rejected_before_npm_execution() -> Result<()> {
         let temp = tempfile::tempdir()?;
         let manager = PiManager::with_paths(
@@ -228,6 +230,7 @@ mod tests {
 
     #[cfg(unix)]
     #[tokio::test]
+    #[serial_test::serial(pi_runtime)]
     async fn failed_install_does_not_publish_or_replace_active_version() -> Result<()> {
         let temp = tempfile::tempdir()?;
         let versions_dir = temp.path().join("versions/pi");
@@ -250,6 +253,7 @@ mod tests {
 
     #[cfg(unix)]
     #[tokio::test]
+    #[serial_test::serial(pi_runtime)]
     async fn mismatched_registry_version_fails_closed() -> Result<()> {
         let temp = tempfile::tempdir()?;
         let versions_dir = temp.path().join("versions/pi");
@@ -261,7 +265,10 @@ mod tests {
             .await
             .expect_err("unexpected package version must not be published");
 
-        assert!(error.to_string().contains("expected 0.83.0"));
+        assert!(
+            error.to_string().contains("expected 0.83.0"),
+            "mismatch error must name the requested version, got: {error:#}"
+        );
         assert!(!versions_dir.join("0.83.0").exists());
         Ok(())
     }

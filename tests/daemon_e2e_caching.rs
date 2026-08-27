@@ -8,7 +8,9 @@
 use anyhow::Result;
 use omg_lib::daemon::cache::PackageCache;
 use omg_lib::daemon::handlers::{DaemonState, handle_request};
-use omg_lib::daemon::protocol::{Request, Response, ResponseResult};
+use omg_lib::daemon::protocol::{
+    PackageInfo, Request, Response, ResponseResult, WirePackageSource,
+};
 use serial_test::serial;
 use std::sync::Arc;
 use tempfile::TempDir;
@@ -340,10 +342,19 @@ async fn test_lru_eviction_behavior() -> Result<()> {
     // Create small cache (3 entries max)
     let cache = PackageCache::new(3, 300);
 
-    // Insert 3 entries
-    cache.insert_arc("query-1".to_string(), Arc::new(vec![]));
-    cache.insert_arc("query-2".to_string(), Arc::new(vec![]));
-    cache.insert_arc("query-3".to_string(), Arc::new(vec![]));
+    let result = |name: &str| {
+        Arc::new(vec![PackageInfo {
+            name: name.to_string(),
+            version: "1.0.0".to_string(),
+            description: "x".repeat(60_000),
+            source: WirePackageSource::Official,
+        }])
+    };
+
+    // Three weighted entries fit within the configured byte budget.
+    cache.insert_arc("query-1".to_string(), result("one"));
+    cache.insert_arc("query-2".to_string(), result("two"));
+    cache.insert_arc("query-3".to_string(), result("three"));
     cache.sync();
 
     // Access query-1 to mark it as recently used
@@ -351,7 +362,7 @@ async fn test_lru_eviction_behavior() -> Result<()> {
     cache.sync();
 
     // Insert query-4 (should evict LRU, which is query-2)
-    cache.insert_arc("query-4".to_string(), Arc::new(vec![]));
+    cache.insert_arc("query-4".to_string(), result("four"));
     cache.sync();
 
     // query-1 should still be cached (recently accessed), while query-2 is the LRU entry.
