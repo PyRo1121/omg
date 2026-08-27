@@ -84,9 +84,11 @@ assets; `install.sh` consumes them via the GitHub releases API.
 - `<version>` is the release tag without the leading `v` (e.g. `0.1.204`).
 - `<arch>` is one of `x86_64`, `aarch64`, `i686`, `armv7l` (see `detect_arch`
   in `install.sh`).
-- Every archive MUST have a sidecar `<archive-name>.sha256` containing standard
-  `sha256sum` output; `install.sh` verifies it when present and warns when a
-  release omits it.
+- Every archive MUST have a sidecar `<archive-name>.sha256` containing exactly
+  one standard `sha256sum` entry. `install.sh` refuses missing, malformed, or
+  mismatched sidecars.
+- `collect-release-artifacts.sh` rejects duplicate, missing, unexpected, or
+  checksum-invalid release files before GitHub publication or R2 upload.
 - Any new release pipeline (local or CI) must emit exactly these names plus
   checksum sidecars; do not invent alternate schemes such as Rust target-triple
   names (`x86_64-unknown-linux-gnu`) — the installer will not select them.

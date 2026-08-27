@@ -48,6 +48,93 @@ mod privilege_escalation {
     }
 
     #[test]
+    fn installer_refuses_unpinned_remote_source_fallbacks() {
+        let installer = include_str!("../install.sh");
+
+        assert!(
+            !installer.contains("git clone --depth 1 \"$REPO_URL\""),
+            "the installer must not clone and execute unpinned repository HEAD"
+        );
+        assert!(
+            installer.contains("refusing to build unpinned repository HEAD"),
+            "a missing verified release must fail closed"
+        );
+    }
+
+    #[test]
+    fn installer_requires_verified_release_checksums() {
+        let installer = include_str!("../install.sh");
+
+        assert!(
+            installer.contains("Published checksum for ${artifact_name} is malformed"),
+            "the installer must validate the sidecar digest shape"
+        );
+        assert!(
+            installer.contains("does not match its published sha256"),
+            "the installer must reject checksum mismatches"
+        );
+        assert!(
+            installer.contains("refusing to install unverified binaries"),
+            "a missing checksum must fail closed"
+        );
+    }
+
+    #[test]
+    fn release_collector_rejects_unexpected_artifacts() {
+        use sha2::Digest as _;
+
+        let temp = tempfile::tempdir().expect("release collector fixture directory");
+        let artifacts = temp.path().join("artifacts");
+        let release = temp.path().join("release");
+        std::fs::create_dir(&artifacts).expect("artifact directory");
+
+        for platform in [
+            "x86_64-linux-arch",
+            "x86_64-linux-debian",
+            "x86_64-linux-ubuntu",
+            "x86_64-linux-fedora",
+            "aarch64-darwin",
+        ] {
+            let directory = artifacts.join(platform);
+            std::fs::create_dir(&directory).expect("platform artifact directory");
+            let archive = format!("omg-v1.2.3-{platform}.tar.gz");
+            let bytes = platform.as_bytes();
+            std::fs::write(directory.join(&archive), bytes).expect("archive fixture");
+            let digest = format!("{:x}", sha2::Sha256::digest(bytes));
+            std::fs::write(
+                directory.join(format!("{archive}.sha256")),
+                format!("{digest}  {archive}\n"),
+            )
+            .expect("checksum fixture");
+        }
+
+        let script = format!(
+            "{}/scripts/collect-release-artifacts.sh",
+            env!("CARGO_MANIFEST_DIR")
+        );
+        let accepted = std::process::Command::new(&script)
+            .args(["1.2.3"])
+            .arg(&artifacts)
+            .arg(&release)
+            .status()
+            .expect("release collector must execute");
+        assert!(accepted.success(), "the exact release set must be accepted");
+
+        std::fs::write(artifacts.join("unexpected.tar.gz"), b"unexpected")
+            .expect("unexpected artifact fixture");
+        let rejected = std::process::Command::new(script)
+            .args(["1.2.3"])
+            .arg(&artifacts)
+            .arg(temp.path().join("rejected-release"))
+            .status()
+            .expect("release collector must execute");
+        assert!(
+            !rejected.success(),
+            "an unexpected archive must fail the release allowlist"
+        );
+    }
+
+    #[test]
     fn turbo_help_does_not_advertise_file_capabilities() {
         let output = std::process::Command::new(env!("CARGO_BIN_EXE_omg"))
             .args(["doctor", "--help"])

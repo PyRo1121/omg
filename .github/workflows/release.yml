@@ -265,11 +265,10 @@ jobs:
         with:
           path: artifacts
 
-      - name: Collect Files
+      - name: Collect and verify exact release files
         run: |
-          mkdir release
-          find artifacts -name "*.tar.gz*" -exec cp {} release/ \;
-          ls -la release/
+          VERSION="${GITHUB_REF#refs/tags/v}"
+          ./scripts/collect-release-artifacts.sh "$VERSION" artifacts release
 
       - name: Generate Release Notes
         id: release_notes
@@ -314,6 +313,20 @@ jobs:
           | macOS | ARM64 | \`omg-v${VERSION}-aarch64-darwin.tar.gz\` |
           | WSL | x86_64 | Use the binary matching the installed Linux distribution |
 
+          ## Verification
+
+          Verify the downloaded archive before extracting or installing it:
+
+          **Linux:**
+          \`\`\`bash
+          sha256sum -c omg-v${VERSION}-*.sha256
+          \`\`\`
+
+          **macOS:**
+          \`\`\`bash
+          shasum -a 256 -c omg-v${VERSION}-*.sha256
+          \`\`\`
+
           ## Manual Installation
 
           **Linux/macOS:**
@@ -321,15 +334,6 @@ jobs:
           tar -xzf omg-v${VERSION}-*.tar.gz
           cd omg-v${VERSION}-*
           sudo cp omg /usr/local/bin/
-          \`\`\`
-
-          ## Verification
-
-          All binaries include SHA256 checksums. Verify downloads:
-
-          **Linux/macOS:**
-          \`\`\`bash
-          sha256sum -c omg-v${VERSION}-*.sha256
           \`\`\`
 
           ---
@@ -364,15 +368,18 @@ jobs:
     needs: [release]
     if: github.event_name == 'push' || (github.event_name == 'workflow_dispatch' && github.event.inputs.dry_run == 'false')
     steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+
       - uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 # v7
         with:
           path: artifacts
 
-      - name: Collect Files
+      - name: Collect and verify exact release files
         run: |
-          mkdir release
-          find artifacts -name "*.tar.gz*" -exec cp {} release/ \;
-          ls -la release/
+          VERSION="${GITHUB_REF#refs/tags/v}"
+          ./scripts/collect-release-artifacts.sh "$VERSION" artifacts release
 
       - name: Upload latest-version marker
         env:

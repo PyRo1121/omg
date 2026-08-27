@@ -2,6 +2,7 @@
 #
 # 🚀 OMG Installer
 # The fastest unified package manager for all platforms
+# Canonical source: this file. The omg-web production copy must remain byte-identical.
 #
 # Usage:
 #   curl -fsSL https://raw.githubusercontent.com/PyRo1121/omg/main/install.sh | bash
@@ -39,7 +40,6 @@ OMG_VERSION="${OMG_VERSION:-latest}"
 INSTALL_DIR="${INSTALL_DIR:-$HOME/.local/bin}"
 DATA_DIR="${XDG_DATA_HOME:-$HOME/.local/share}/omg"
 CONFIG_DIR="${XDG_CONFIG_HOME:-$HOME/.config}/omg"
-REPO_URL="https://github.com/PyRo1121/omg.git"
 REPO_OWNER="PyRo1121"
 REPO_NAME="omg"
 
@@ -127,13 +127,16 @@ install_binary() {
 
 check_runtime_dependencies() {
   local missing=()
-  local deps=("curl" "tar" "sha256sum")
+  local deps=("curl" "tar")
 
   for dep in "${deps[@]}"; do
     if ! command -v "$dep" >/dev/null 2>&1; then
       missing+=("$dep")
     fi
   done
+  if ! command -v sha256sum >/dev/null 2>&1 && ! command -v shasum >/dev/null 2>&1; then
+    missing+=("sha256sum or shasum")
+  fi
 
   if [[ ${#missing[@]} -gt 0 ]]; then
     warn "Missing runtime dependencies for prebuilt install: ${missing[*]}"
@@ -141,6 +144,16 @@ check_runtime_dependencies() {
   fi
 
   return 0
+}
+
+calculate_sha256() {
+  local file="$1"
+
+  if command -v sha256sum >/dev/null 2>&1; then
+    sha256sum "$file" | awk '{print $1}'
+  else
+    shasum -a 256 "$file" | awk '{print $1}'
+  fi
 }
 
 # 🌍 OS/Distro/Arch Detection Functions
@@ -228,8 +241,11 @@ fetch_release_json() {
 
   if [[ "$OMG_VERSION" == "latest" ]]; then
     curl -fsSL "${api_base}/latest"
-  else
+  elif [[ "$OMG_VERSION" =~ ^v[0-9]+\.[0-9]+\.[0-9]+([.-][0-9A-Za-z.-]+)?$ ]]; then
     curl -fsSL "${api_base}/tags/${OMG_VERSION}"
+  else
+    warn "OMG_VERSION must be 'latest' or a version tag such as v1.2.3"
+    return 1
   fi
 }
 
@@ -256,8 +272,8 @@ install_from_release() {
   # Extract actual version tag from release JSON
   local actual_version
   actual_version=$(printf "%s" "$release_json" | grep -Eo '"tag_name"\s*:\s*"[^"]+"' | head -n1 | cut -d'"' -f4)
-  if [[ -z "$actual_version" ]]; then
-    warn "Unable to parse version from release metadata"
+  if [[ ! "$actual_version" =~ ^v[0-9]+\.[0-9]+\.[0-9]+([.-][0-9A-Za-z.-]+)?$ ]]; then
+    warn "Release metadata returned an invalid version tag"
     return 1
   fi
 
@@ -282,6 +298,13 @@ install_from_release() {
     warn "No prebuilt binary found for ${detected_os}/${detected_distro}/${detected_arch} (artifact: ${artifact_name})"
     return 1
   fi
+  case "$asset_url" in
+  "https://github.com/${REPO_OWNER}/${REPO_NAME}/releases/download/"*) ;;
+  *)
+    warn "Release metadata returned an unexpected download origin"
+    return 1
+    ;;
+  esac
 
   header "Installing Prebuilt OMG"
   info "Platform: ${detected_os}/${detected_distro}/${detected_arch}"
@@ -300,13 +323,20 @@ install_from_release() {
     return 1
   fi
 
-  # Verify against the release's .sha256 sidecar when it exists.
+  # Verify against the release's .sha256 sidecar without trusting the
+  # sidecar's filename field as a filesystem path.
   start_spinner "Verifying checksum"
   if curl -fsSL "${asset_url}.sha256" -o "${download_file}.sha256" >/dev/null 2>&1; then
-    if (
-      cd "$tmp_dir" &&
-        sha256sum --check --strict "${artifact_name}.sha256" >/dev/null 2>&1
-    ); then
+    local expected_checksum
+    local actual_checksum
+    expected_checksum=$(awk 'NR == 1 { print $1 }' "${download_file}.sha256")
+    if [[ ! "$expected_checksum" =~ ^[0-9a-f]{64}$ ]]; then
+      fail_spinner "Checksum verification failed"
+      warn "Published checksum for ${artifact_name} is malformed"
+      return 1
+    fi
+    actual_checksum=$(calculate_sha256 "$download_file")
+    if [[ "$actual_checksum" == "$expected_checksum" ]]; then
       stop_spinner "Checksum verified"
     else
       fail_spinner "Checksum verification failed"
@@ -314,8 +344,8 @@ install_from_release() {
       return 1
     fi
   else
-    stop_spinner "Checksum unavailable"
-    err "No .sha256 sidecar published for ${artifact_name}; refusing to install unverified binaries"
+    fail_spinner "Checksum unavailable"
+    warn "No .sha256 sidecar published for ${artifact_name}; refusing to install unverified binaries"
     return 1
   fi
 
@@ -563,24 +593,12 @@ check_dependencies() {
 build_omg() {
   header "Building OMG"
 
-  local work_dir
-
-  if [[ "$IS_SOURCE_INSTALL" == "true" ]]; then
-    work_dir="$SCRIPT_DIR"
-    info "Installing from source directory"
-  else
-    work_dir=$(mktemp -d)
-    trap 'rm -rf "$work_dir"; cleanup' EXIT
-
-    start_spinner "Cloning repository"
-    if git clone --depth 1 "$REPO_URL" "$work_dir" >/dev/null 2>&1; then
-      stop_spinner "Repository cloned"
-    else
-      fail_spinner "Failed to clone repository"
-      exit 1
-    fi
+  if [[ "$IS_SOURCE_INSTALL" != "true" ]]; then
+    error "Remote source fallback is disabled; install a verified release or clone a reviewed tag before running install.sh"
   fi
 
+  local work_dir="$SCRIPT_DIR"
+  info "Installing from source directory"
   cd "$work_dir"
 
   # Select features based on platform. WSL reports Linux and uses its distro backend.
@@ -789,6 +807,9 @@ finish() {
 main() {
   print_banner
   if ! install_from_release; then
+    if [[ "$IS_SOURCE_INSTALL" != "true" ]]; then
+      error "No verified prebuilt release is available for this platform; refusing to build unpinned repository HEAD"
+    fi
     check_platform
     check_dependencies
     build_omg
