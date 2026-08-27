@@ -641,7 +641,7 @@ fn persist_cache_best_effort<T: Serialize>(cache: &T, name: &str) {
 /// unprivileged user's own sessions.
 fn load_cache_from_disk<T: for<'de> Deserialize<'de>>(name: &str) -> Result<T> {
     #[cfg(unix)]
-    if crate::core::is_root() && !paths::test_mode() {
+    if crate::core::is_root() {
         use std::os::unix::fs::MetadataExt as _;
         let dir = paths::cache_dir();
         if let Ok(meta) = std::fs::metadata(&dir)

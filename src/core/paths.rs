@@ -420,18 +420,36 @@ pub fn installed_marker_path() -> PathBuf {
     data_dir().join(".installed")
 }
 
-/// Returns true if running in hermetic test mode.
+fn test_mode_value(value: Option<&str>, debug_assertions: bool) -> bool {
+    debug_assertions
+        && value.is_some_and(|value| value == "1" || value.eq_ignore_ascii_case("true"))
+}
+
+/// Returns true if a debug/test binary is running in hermetic test mode.
+///
+/// Release binaries ignore `OMG_TEST_MODE`: an inherited environment variable
+/// must never replace real package/runtime state with synthetic fixtures.
 #[must_use]
 pub fn test_mode() -> bool {
-    matches!(
-        std::env::var("OMG_TEST_MODE").as_deref(),
-        Ok("1" | "true" | "TRUE")
+    test_mode_value(
+        std::env::var("OMG_TEST_MODE").ok().as_deref(),
+        cfg!(debug_assertions),
     )
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn test_mode_requires_debug_build_and_explicit_truthy_value() {
+        assert!(test_mode_value(Some("1"), true));
+        assert!(test_mode_value(Some("TRUE"), true));
+        assert!(!test_mode_value(Some("1"), false));
+        assert!(!test_mode_value(Some("0"), true));
+        assert!(!test_mode_value(Some(""), true));
+        assert!(!test_mode_value(None, true));
+    }
 
     #[test]
     fn data_dir_is_non_empty() {

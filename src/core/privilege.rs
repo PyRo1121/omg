@@ -61,7 +61,7 @@ pub fn set_yes_flag(value: bool) {
 pub async fn run_privileged_program(program: &str, args: &[&str]) -> anyhow::Result<()> {
     // Detect dev/test mode — identical contract to run_self_sudo.
     let is_test_mode =
-        std::env::var("OMG_TEST_MODE").is_ok() || std::env::var("CARGO_PRIMARY_PACKAGE").is_ok();
+        crate::core::paths::test_mode() || std::env::var("CARGO_PRIMARY_PACKAGE").is_ok();
     if is_test_mode {
         anyhow::bail!(
             "Privilege elevation not supported in development mode.\n\
@@ -425,9 +425,9 @@ fn payload_command(
 async fn sudo_payload_status(args: &[&str]) -> anyhow::Result<std::process::ExitStatus> {
     let exe = std::env::current_exe()?;
 
-    // Detect if we're running in development/test mode
+    // Detect if we're running in development/test mode.
     let is_test_mode =
-        std::env::var("OMG_TEST_MODE").is_ok() || std::env::var("CARGO_PRIMARY_PACKAGE").is_ok();
+        crate::core::paths::test_mode() || std::env::var("CARGO_PRIMARY_PACKAGE").is_ok();
     sudo_payload_status_in(std::path::Path::new("sudo"), exe, is_test_mode, args).await
 }
 

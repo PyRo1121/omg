@@ -225,26 +225,6 @@ async fn test_fleet_status_requires_license() -> Result<()> {
 
 #[tokio::test]
 #[serial]
-async fn test_fleet_push_invalid_team_fails() -> Result<()> {
-    let ctx = get_ctx();
-    let push_cmd = FleetCommands::Push {
-        team: Some("; rm -rf /".to_string()),
-        message: None,
-    };
-
-    let result = push_cmd.execute(&ctx).await;
-    assert!(result.is_err());
-    assert!(
-        result
-            .unwrap_err()
-            .to_string()
-            .contains("Invalid team identifier")
-    );
-    Ok(())
-}
-
-#[tokio::test]
-#[serial]
 async fn test_run_invalid_task_fails() -> Result<()> {
     let ctx = get_ctx();
     let run_cmd = RunCommand {

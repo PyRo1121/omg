@@ -744,10 +744,16 @@ fn write_install_marker(version_dir: &Path, version: &str) -> Result<()> {
     Ok(())
 }
 
-/// Return whether a runtime version path is a real directory, not a symlink or file.
+pub(crate) const TEST_RUNTIME_MARKER: &str = ".omg-test-mock";
+
+/// Return whether a runtime version path is a real production directory.
+///
+/// Debug-only synthetic runtimes are marked and never considered installed or
+/// eligible for activation after the test-mode process exits.
 #[must_use]
 pub(crate) fn is_valid_version_dir(version_dir: &Path) -> bool {
     fs::symlink_metadata(version_dir).is_ok_and(|metadata| metadata.is_dir())
+        && !version_dir.join(TEST_RUNTIME_MARKER).exists()
 }
 
 /// Return whether a runtime binary directory is safe to prepend to `PATH`.
@@ -1320,6 +1326,18 @@ mod tests {
         assert!(versions.contains(&"1.0.0".to_string()));
         assert!(versions.contains(&"2.0.0".to_string()));
         assert!(!versions.contains(&"current".to_string()));
+    }
+
+    #[test]
+    fn synthetic_test_runtime_is_not_installed_or_activatable() {
+        let temp = TempDir::new().unwrap();
+        let synthetic = temp.path().join("3.12.0");
+        fs::create_dir(&synthetic).unwrap();
+        fs::write(synthetic.join(TEST_RUNTIME_MARKER), "synthetic\n").unwrap();
+
+        assert!(list_installed_versions(temp.path()).unwrap().is_empty());
+        let error = set_current_version(temp.path(), "3.12.0").unwrap_err();
+        assert!(error.to_string().contains("valid directory"));
     }
 
     #[test]
