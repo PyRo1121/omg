@@ -640,6 +640,7 @@ analyzer inference
 - **Ci**: Cross-platform install script and R2 release sync
 ### 🐛 Bug Fixes
 
+- **Packages**: Normalize daemon package-source labels
 - **Enterprise**: Write durable exports atomically
 - **Deps**: Pin audited crypto/table versions after incompatible bulk bump
 - **Security**: Third-wave HIGH findings from 50-agent audit
