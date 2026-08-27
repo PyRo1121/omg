@@ -3679,6 +3679,7 @@ the Debian backend), so it was removed from the metadata.
 - Normalize project formatting
 ### 🧪 Testing
 
+- **Daemon**: Verify active connection guard releases metrics
 - **Daemon**: Kill reduced frame-cap mutant
 - **Privilege**: Make sudo preflight mutation-verifiable
 - **Container**: Isolate runtime-missing contract from host Docker
