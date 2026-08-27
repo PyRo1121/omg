@@ -7,7 +7,7 @@ use crate::cli::packages::common::{description_width, validate_search_query};
 use crate::cli::style;
 use crate::core::Package;
 use crate::core::format::truncate;
-use crate::package_managers::get_package_manager;
+use crate::package_managers::{VersionDisplay, get_package_manager};
 
 #[cfg(unix)]
 use crate::core::client::{DaemonClient, SyncDaemonClient};
@@ -32,14 +32,10 @@ struct DisplayPackage {
 }
 
 impl DisplayPackage {
-    #[allow(
-        clippy::implicit_clone,
-        reason = "the package version type varies by backend feature"
-    )]
     fn from_package(p: Package) -> Self {
         Self {
             name: p.name,
-            version: p.version.to_string(),
+            version: p.version.version_string(),
             description: p.description,
             source: p.source.to_string(),
             votes: None,

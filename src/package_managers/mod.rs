@@ -47,6 +47,7 @@ pub mod pkgbuild;
 mod traits;
 pub mod types;
 
+pub(crate) use types::VersionDisplay;
 pub use types::{parse_version_or_zero, zero_version};
 
 #[cfg(feature = "arch")]

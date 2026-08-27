@@ -4,8 +4,8 @@ use crate::core::security::{
     SecurityPolicy,
     vulnerability::{VulnerabilityScanner, VulnerabilitySource},
 };
-use crate::package_managers::PackageManager;
 use crate::package_managers::types::UpdateInfo;
+use crate::package_managers::{PackageManager, VersionDisplay};
 #[cfg(feature = "arch")]
 use anyhow::Context;
 use anyhow::Result;
@@ -82,11 +82,7 @@ impl PackageService {
                     changes.push(PackageChange {
                         name: info.name,
                         old_version: None,
-                        #[allow(
-                            clippy::implicit_clone,
-                            reason = "the package version type varies by backend feature"
-                        )]
-                        new_version: Some(info.version.to_string()),
+                        new_version: Some(info.version.version_string()),
                         source: "official".to_string(),
                     });
                 } else if let Some(info) = aur.info(pkg).await? {
@@ -105,11 +101,7 @@ impl PackageService {
                     changes.push(PackageChange {
                         name: info.name,
                         old_version: None,
-                        #[allow(
-                            clippy::implicit_clone,
-                            reason = "the package version type varies by backend feature"
-                        )]
-                        new_version: Some(info.version.to_string()),
+                        new_version: Some(info.version.version_string()),
                         source: "aur".to_string(),
                     });
                 } else {
@@ -151,11 +143,7 @@ impl PackageService {
                     changes.push(PackageChange {
                         name: info.name,
                         old_version: None,
-                        #[allow(
-                            clippy::implicit_clone,
-                            reason = "the package version type varies by backend feature"
-                        )]
-                        new_version: Some(info.version.to_string()),
+                        new_version: Some(info.version.version_string()),
                         source: self.backend.name().to_string(),
                     });
                 } else {
@@ -186,11 +174,7 @@ impl PackageService {
                     changes.push(PackageChange {
                         name: info.name,
                         old_version: None,
-                        #[allow(
-                            clippy::implicit_clone,
-                            reason = "the package version type varies by backend feature"
-                        )]
-                        new_version: Some(info.version.to_string()),
+                        new_version: Some(info.version.version_string()),
                         source: self.backend.name().to_string(),
                     });
                 } else {
@@ -213,11 +197,7 @@ impl PackageService {
             let known = self.backend.info(pkg).await?;
             let (name, old_version) = match known {
                 Some(info) => {
-                    #[allow(
-                        clippy::implicit_clone,
-                        reason = "the package version type varies by backend feature"
-                    )]
-                    let version = info.version.to_string();
+                    let version = info.version.version_string();
                     (info.name, Some(version))
                 }
                 None => (pkg.clone(), None),

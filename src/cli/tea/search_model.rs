@@ -6,7 +6,7 @@ use crate::cli::style;
 use crate::cli::tea::{Cmd, Model};
 use crate::core::Package;
 use crate::core::format::truncate;
-use crate::package_managers::SyncPackage;
+use crate::package_managers::{SyncPackage, VersionDisplay};
 use std::fmt::Write;
 use unicode_width::UnicodeWidthStr;
 
@@ -406,15 +406,11 @@ async fn fetch_search_results(query: &str) -> SearchMsg {
 // CONVERSIONS
 // ═══════════════════════════════════════════════════════════════════════════════
 
-#[allow(
-    clippy::implicit_clone,
-    reason = "the package version type varies by backend feature"
-)]
 impl From<SyncPackage> for SearchResult {
     fn from(pkg: SyncPackage) -> Self {
         Self {
             name: pkg.name,
-            version: pkg.version.to_string(),
+            version: pkg.version.version_string(),
             description: pkg.description,
             source: PackageSource::Official,
             repo: pkg.repo,
@@ -429,10 +425,6 @@ impl From<SyncPackage> for SearchResult {
     }
 }
 
-#[allow(
-    clippy::implicit_clone,
-    reason = "the package version type varies by backend feature"
-)]
 impl From<Package> for SearchResult {
     fn from(pkg: Package) -> Self {
         let (source, repo) = match pkg.source {
@@ -442,7 +434,7 @@ impl From<Package> for SearchResult {
 
         Self {
             name: pkg.name,
-            version: pkg.version.to_string(),
+            version: pkg.version.version_string(),
             description: pkg.description,
             source,
             repo: repo.to_string(),

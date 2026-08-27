@@ -10,6 +10,8 @@ use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
 use crate::core::paths;
+#[cfg(feature = "arch")]
+use crate::package_managers::VersionDisplay;
 
 use super::vulnerability::PackageSource;
 
@@ -324,11 +326,7 @@ impl SbomGenerator {
 
             // Build component list
             for pkg in &installed {
-                #[allow(
-                    clippy::implicit_clone,
-                    reason = "the package version type varies by backend feature"
-                )]
-                let version = pkg.version.to_string();
+                let version = pkg.version.version_string();
                 let bom_ref = package_purl(&pkg.name, &version, debian_like);
 
                 let component = SbomComponent {
@@ -370,12 +368,8 @@ impl SbomGenerator {
                 for issue in issues {
                     for pkg_name in &issue.packages {
                         if let Some(pkg) = installed.iter().find(|p| p.name == *pkg_name) {
-                            #[allow(
-                                clippy::implicit_clone,
-                                reason = "the package version type varies by backend feature"
-                            )]
                             let bom_ref =
-                                package_purl(&pkg.name, &pkg.version.to_string(), debian_like);
+                                package_purl(&pkg.name, &pkg.version.version_string(), debian_like);
 
                             let severity = match issue.severity.to_lowercase().as_str() {
                                 "critical" => Some("critical".to_string()),

@@ -185,6 +185,29 @@ fn compare_deb_versions(a: &str, b: &str) -> std::cmp::Ordering {
 #[cfg(not(feature = "arch"))]
 pub type Version = DebVersion;
 
+/// Uniform borrowed rendering for the backend-dependent [`Version`] type.
+pub(crate) trait VersionDisplay {
+    fn version_string(&self) -> String;
+}
+
+#[cfg(feature = "arch")]
+impl VersionDisplay for AlpmVersion {
+    #[allow(
+        clippy::implicit_clone,
+        reason = "alpm-types Display consumes self; centralize the required clone"
+    )]
+    fn version_string(&self) -> String {
+        self.to_string()
+    }
+}
+
+#[cfg(not(feature = "arch"))]
+impl VersionDisplay for DebVersion {
+    fn version_string(&self) -> String {
+        self.as_str().to_owned()
+    }
+}
+
 /// Parse a version string, returning a zero version on failure.
 /// This is infallible and avoids `expect()/unwrap()` in hot paths.
 ///
@@ -214,6 +237,13 @@ pub fn parse_version_or_zero(s: &str) -> Version {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn version_display_is_borrowed_and_backend_independent() {
+        let version = parse_version_or_zero("1:2.3.4-5");
+        assert_eq!(version.version_string(), "1:2.3.4-5");
+        assert_eq!(version.version_string(), "1:2.3.4-5");
+    }
 
     #[cfg(not(feature = "arch"))]
     #[test]

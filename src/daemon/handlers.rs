@@ -16,7 +16,7 @@ use super::protocol::{
 };
 use crate::core::metrics::GLOBAL_METRICS;
 use crate::core::security::{AuditEventType, AuditSeverity, audit_log};
-use crate::package_managers::{PackageManager, get_package_manager};
+use crate::package_managers::{PackageManager, VersionDisplay, get_package_manager};
 #[cfg(feature = "arch")]
 use crate::package_managers::{alpm_worker::AlpmWorker, search_detailed};
 use std::sync::RwLock;
@@ -620,11 +620,7 @@ async fn handle_info(state: Arc<DaemonState>, id: RequestId, package: String) ->
         Ok(Ok(Some(info))) => {
             let detailed = Arc::new(DetailedPackageInfo {
                 name: info.name,
-                #[allow(
-                    clippy::implicit_clone,
-                    reason = "the package version type varies by backend feature"
-                )]
-                version: info.version.to_string(),
+                version: info.version.version_string(),
                 description: info.description,
                 url: String::new(), // info.url not in Package struct currently
                 size: 0,

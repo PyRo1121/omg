@@ -5,6 +5,7 @@
 use crate::cli::tui::app::{App, Tab};
 use crate::core::format::format_bytes;
 use crate::core::history::TransactionType;
+use crate::package_managers::VersionDisplay;
 use ratatui::{
     Frame,
     layout::{Alignment, Constraint, Direction, Layout, Rect},
@@ -811,11 +812,7 @@ fn draw_packages(f: &mut Frame, area: Rect, app: &App) {
                         }),
                 )),
                 Cell::from(Span::styled(
-                    #[allow(
-                        clippy::implicit_clone,
-                        reason = "the package version type varies by backend feature"
-                    )]
-                    pkg.version.to_string(),
+                    pkg.version.version_string(),
                     base_style.fg(colors::ACCENT_GREEN),
                 )),
                 Cell::from(Span::styled(pkg.repo.as_str(), base_style.fg(source_color))),
