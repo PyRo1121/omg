@@ -18,7 +18,7 @@ use serde::Deserialize;
 use super::common::{
     activate_version, begin_staged_install, complete_staged_install, download_with_progress,
     extract_tar_gz, parse_sha256_digest, print_already_installed, print_installed,
-    remove_file_best_effort,
+    remove_file_best_effort, validate_download_filename,
 };
 use crate::core::http::download_client;
 
@@ -129,8 +129,9 @@ impl JavaManager {
 
         fs::create_dir_all(&self.versions_dir)?;
 
-        println!("{} Downloading {}...", "→".blue(), binary.package.name);
-        let download_path = self.versions_dir.join(&binary.package.name);
+        let archive_name = validate_download_filename(&binary.package.name)?;
+        println!("{} Downloading {}...", "→".blue(), archive_name);
+        let download_path = self.versions_dir.join(archive_name);
         let checksum = parse_sha256_digest(&binary.package.checksum, "Adoptium")?;
         download_with_progress(self.client, &binary.package.link, &download_path, &checksum)
             .await?;

@@ -4,9 +4,7 @@
 
 use std::cmp::Ordering;
 use std::fs::{self, File};
-#[cfg(any(feature = "debian", feature = "debian-pure"))]
-use std::io::Read;
-use std::io::{BufReader, Write};
+use std::io::{BufReader, Read, Write};
 use std::path::{Path, PathBuf};
 
 use anyhow::{Context, Result};
@@ -74,15 +72,12 @@ pub(crate) const MAX_DECOMPRESSED_BYTES: u64 = 2 * 1024 * 1024 * 1024;
 ///
 /// Every read that would push the cumulative output past `budget` fails with
 /// [`ErrorKind::InvalidData`], so downstream consumers never buffer more than
-/// the budget. Only Debian-side extraction consumes this today; runtime
-/// extraction uses [`BudgetedSink`] because xz has no streaming decoder.
-#[cfg(any(feature = "debian", feature = "debian-pure"))]
+/// the budget.
 pub(crate) struct BudgetedReader<R> {
     inner: R,
     remaining: u64,
 }
 
-#[cfg(any(feature = "debian", feature = "debian-pure"))]
 impl<R> BudgetedReader<R> {
     /// Explicit budget: production callers pass [`MAX_DECOMPRESSED_BYTES`],
     /// tests pass a small budget so the abort path is exercisable without
@@ -95,7 +90,6 @@ impl<R> BudgetedReader<R> {
     }
 }
 
-#[cfg(any(feature = "debian", feature = "debian-pure"))]
 impl<R: Read> Read for BudgetedReader<R> {
     fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
         let read = self.inner.read(buf)?;
@@ -146,9 +140,8 @@ impl BudgetedSink {
 
     /// Explicit budget: production callers pass [`MAX_DECOMPRESSED_BYTES`],
     /// tests pass a small budget so the abort path is exercisable without
-    /// gigabyte allocations. Only Debian-side extraction needs a custom
-    /// budget today.
-    #[cfg(any(feature = "debian", feature = "debian-pure"))]
+    /// gigabyte allocations.
+    #[cfg(any(test, feature = "debian", feature = "debian-pure"))]
     pub(crate) fn with_budget(budget: u64) -> Self {
         Self {
             buf: Vec::new(),
@@ -159,6 +152,50 @@ impl BudgetedSink {
     pub(crate) fn into_inner(self) -> Vec<u8> {
         self.buf
     }
+}
+
+struct BudgetedWriter<'a, W> {
+    inner: W,
+    remaining: &'a mut u64,
+}
+
+impl<W: Write> Write for BudgetedWriter<'_, W> {
+    fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
+        let length = u64::try_from(buf.len()).map_err(|_| {
+            std::io::Error::new(std::io::ErrorKind::InvalidData, "impossible write size")
+        })?;
+        if length > *self.remaining {
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::InvalidData,
+                format!(
+                    "decompressed data exceeds the maximum supported size of {MAX_DECOMPRESSED_BYTES} bytes"
+                ),
+            ));
+        }
+        let written = self.inner.write(buf)?;
+        *self.remaining -= u64::try_from(written).map_err(|_| {
+            std::io::Error::new(std::io::ErrorKind::InvalidData, "impossible write size")
+        })?;
+        Ok(written)
+    }
+
+    fn flush(&mut self) -> std::io::Result<()> {
+        self.inner.flush()
+    }
+}
+
+fn copy_with_budget<R: Read, W: Write>(
+    reader: &mut R,
+    writer: W,
+    remaining: &mut u64,
+) -> std::io::Result<u64> {
+    std::io::copy(
+        reader,
+        &mut BudgetedWriter {
+            inner: writer,
+            remaining,
+        },
+    )
 }
 
 impl Write for BudgetedSink {
@@ -199,6 +236,20 @@ fn extract_progress_style() -> ProgressStyle {
     ProgressStyle::default_spinner()
         .template("{spinner:.green} {msg}")
         .expect("valid template")
+}
+
+/// Validate that an upstream-supplied archive name is exactly one ordinary
+/// filename component before it is joined beneath a local download directory.
+pub(crate) fn validate_download_filename(filename: &str) -> Result<&str> {
+    let mut components = Path::new(filename).components();
+    anyhow::ensure!(
+        matches!(components.next(), Some(std::path::Component::Normal(_)))
+            && components.next().is_none()
+            && !filename.contains('\\')
+            && !filename.contains('\0'),
+        "Invalid vendor download filename: {filename:?}"
+    );
+    Ok(filename)
 }
 
 /// Download a file with progress bar and checksum verification.
@@ -430,7 +481,8 @@ pub(crate) async fn extract_tar_gz(
             .with_context(|| format!("Failed to open archive: {}", archive_path.display()))?;
 
         let decoder = flate2::read::GzDecoder::new(BufReader::new(file));
-        let mut archive = tar::Archive::new(decoder);
+        let bounded = BudgetedReader::new(decoder, MAX_DECOMPRESSED_BYTES);
+        let mut archive = tar::Archive::new(bounded);
 
         let pb = ProgressBar::new_spinner();
         pb.set_style(extract_progress_style());
@@ -500,6 +552,7 @@ pub(crate) async fn extract_zip(
         pb.set_message("Extracting...");
 
         fs::create_dir_all(&dest_dir)?;
+        let mut remaining_budget = MAX_DECOMPRESSED_BYTES;
 
         for i in 0..archive.len() {
             let mut file = archive.by_index(i)?;
@@ -525,14 +578,23 @@ pub(crate) async fn extract_zip(
                 if let Some(parent) = dest_path.parent() {
                     fs::create_dir_all(parent)?;
                 }
+                anyhow::ensure!(
+                    file.size() <= remaining_budget,
+                    "decompressed ZIP data exceeds the maximum supported size of {MAX_DECOMPRESSED_BYTES} bytes"
+                );
                 let mut outfile = File::create(&dest_path)?;
-                std::io::copy(&mut file, &mut outfile)?;
+                if let Err(error) = copy_with_budget(&mut file, &mut outfile, &mut remaining_budget) {
+                    drop(outfile);
+                    let _ = fs::remove_file(&dest_path);
+                    return Err(error).context("Runtime ZIP exceeded decompression budget");
+                }
 
-                // Preserve permissions on Unix
+                // Preserve ordinary permission bits on Unix; never restore
+                // setuid, setgid, or sticky bits from an untrusted archive.
                 #[cfg(unix)]
                 if let Some(mode) = file.unix_mode() {
                     use std::os::unix::fs::PermissionsExt;
-                    fs::set_permissions(&dest_path, fs::Permissions::from_mode(mode))?;
+                    fs::set_permissions(&dest_path, fs::Permissions::from_mode(mode & 0o777))?;
                 }
             }
         }
@@ -1083,6 +1145,29 @@ mod tests {
     }
 
     #[test]
+    fn vendor_download_filename_must_be_one_component() {
+        assert_eq!(
+            validate_download_filename("runtime.tar.gz").unwrap(),
+            "runtime.tar.gz"
+        );
+        for hostile in [
+            "",
+            ".",
+            "..",
+            "../runtime.tar.gz",
+            "nested/runtime.tar.gz",
+            "nested\\runtime.tar.gz",
+            "/runtime.tar.gz",
+            "runtime\0.tar.gz",
+        ] {
+            assert!(
+                validate_download_filename(hostile).is_err(),
+                "hostile vendor filename must fail: {hostile:?}"
+            );
+        }
+    }
+
+    #[test]
     fn test_normalize_version() {
         assert_eq!(normalize_version("v1.0.0"), "1.0.0");
         assert_eq!(normalize_version("1.0.0"), "1.0.0");
@@ -1307,6 +1392,30 @@ mod tests {
         Ok(())
     }
 
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn zip_extraction_strips_special_permission_bits() -> anyhow::Result<()> {
+        use std::os::unix::fs::PermissionsExt as _;
+
+        let temp = TempDir::new()?;
+        let archive_path = temp.path().join("runtime.zip");
+        let file = File::create(&archive_path)?;
+        let mut archive = zip::ZipWriter::new(file);
+        let options = zip::write::SimpleFileOptions::default().unix_permissions(0o6755);
+        archive.start_file("runtime/bin/tool", options)?;
+        archive.write_all(b"tool")?;
+        archive.finish()?;
+
+        let destination = temp.path().join("destination");
+        extract_zip(&archive_path, &destination, 1).await?;
+        let mode = fs::metadata(destination.join("bin/tool"))?
+            .permissions()
+            .mode();
+        assert_eq!(mode & 0o7000, 0, "special mode bits must be stripped");
+        assert_eq!(mode & 0o777, 0o755);
+        Ok(())
+    }
+
     #[test]
     fn test_list_installed_versions_empty() {
         let temp = TempDir::new().unwrap();
@@ -1501,7 +1610,6 @@ mod tests {
     }
 
     /// Build a gzip bomb: `expanded` bytes of zeros compress to a few KiB.
-    #[cfg(any(feature = "debian", feature = "debian-pure"))]
     fn gzip_bomb(expanded: usize) -> Vec<u8> {
         use flate2::Compression;
         use flate2::write::GzEncoder;
@@ -1517,7 +1625,6 @@ mod tests {
     }
 
     #[test]
-    #[cfg(any(feature = "debian", feature = "debian-pure"))]
     fn budgeted_reader_aborts_a_decompression_bomb_during_streaming() {
         let bomb = gzip_bomb(64 * 1024 * 1024); // 64 MiB of zeros compresses to ~60 KiB
         let decoder = flate2::read::GzDecoder::new(bomb.as_slice());
@@ -1534,7 +1641,21 @@ mod tests {
         assert!(sink.len() <= 1024 * 1024 + 64 * 1024);
     }
 
-    #[cfg(any(feature = "debian", feature = "debian-pure"))]
+    #[test]
+    fn budgeted_writer_stops_before_exceeding_cumulative_budget() {
+        let mut remaining = 16;
+        let mut output = Vec::new();
+        let error = copy_with_budget(
+            &mut std::io::Cursor::new(vec![0_u8; 17]),
+            &mut output,
+            &mut remaining,
+        )
+        .expect_err("budget must abort before writing excess bytes");
+
+        assert_eq!(error.kind(), std::io::ErrorKind::InvalidData);
+        assert!(output.len() <= 16);
+    }
+
     #[test]
     fn budgeted_sink_stops_growing_at_the_budget() {
         let mut sink = BudgetedSink::with_budget(16);

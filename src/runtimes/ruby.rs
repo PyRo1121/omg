@@ -15,7 +15,7 @@ use super::common::{
     GITHUB_USER_AGENT, GithubRelease, activate_version, begin_staged_install,
     complete_staged_install, download_with_progress, extract_tar_gz, normalize_version,
     parse_sha256_digest, print_already_installed, print_installed, print_using,
-    remove_file_best_effort, version_cmp,
+    remove_file_best_effort, validate_download_filename, version_cmp,
 };
 use crate::core::http::download_client;
 
@@ -121,7 +121,8 @@ impl RubyManager {
         fs::create_dir_all(&self.versions_dir)?;
 
         println!("{} Downloading pre-built Ruby {version}...", "→".blue());
-        let download_path = self.versions_dir.join(&asset.name);
+        let archive_name = validate_download_filename(&asset.name)?;
+        let download_path = self.versions_dir.join(archive_name);
 
         let download_url = asset
             .browser_download_url
