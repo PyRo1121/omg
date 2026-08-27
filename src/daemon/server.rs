@@ -564,7 +564,7 @@ async fn handle_client(stream: tokio::net::UnixStream, state: Arc<DaemonState>) 
 
 #[cfg(test)]
 mod tests {
-    use super::STATUS_REFRESH_INTERVAL;
+    use super::*;
 
     #[test]
     fn fast_status_reader_ttl_matches_daemon_writer_cadence() {
@@ -575,5 +575,38 @@ mod tests {
             crate::core::fast_status::FAST_STATUS_FRESHNESS_SECS,
             "FastStatus TTL must equal the daemon writer interval"
         );
+    }
+
+    #[tokio::test]
+    async fn startup_prewarms_every_common_search_query() -> Result<()> {
+        let directory = tempfile::tempdir()?;
+        let data_dir = directory.path().join("data");
+        std::fs::create_dir_all(&data_dir)?;
+        let state = Arc::new(super::super::handlers::DaemonState::new_isolated(
+            &data_dir,
+            super::super::index::PackageIndex::empty(),
+            Arc::new(crate::package_managers::mock::MockPackageManager::new_in(
+                "arch", &data_dir,
+            )),
+        )?);
+        let socket_path = directory.path().join("prewarm.sock");
+        let listener = UnixListener::bind(&socket_path)?;
+        let server = tokio::spawn(run(listener, Arc::clone(&state), socket_path));
+
+        let queries = ["", "linux", "python", "node", "firefox", "git"];
+        let deadline = tokio::time::Instant::now() + Duration::from_secs(5);
+        loop {
+            if queries.iter().all(|query| state.cache.get(query).is_some()) {
+                break;
+            }
+            if tokio::time::Instant::now() >= deadline {
+                server.abort();
+                anyhow::bail!("startup did not prewarm all common search queries");
+            }
+            tokio::time::sleep(Duration::from_millis(25)).await;
+        }
+
+        server.abort();
+        Ok(())
     }
 }
