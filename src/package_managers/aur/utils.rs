@@ -142,16 +142,40 @@ pub fn original_user_home() -> Option<PathBuf> {
     })
 }
 
+fn sudo_as_user_command(
+    user: &str,
+    program: &str,
+    flags: &[&str],
+    path: &Path,
+) -> std::process::Command {
+    let mut command = std::process::Command::new("sudo");
+    command
+        .arg("-u")
+        .arg(user)
+        .arg(program)
+        .args(flags)
+        .arg("--")
+        .arg(path.as_os_str());
+    command
+}
+
+fn ensure_sudo_success(
+    status: std::process::ExitStatus,
+    user: &str,
+    operation: &str,
+    path: &Path,
+) -> Result<()> {
+    anyhow::ensure!(
+        status.success(),
+        "Failed to {operation} as user '{user}': {}",
+        path.display()
+    );
+    Ok(())
+}
+
 pub async fn create_dir_as_user(path: &Path) -> Result<()> {
     if let Some(user) = original_user() {
-        // Use OsStr directly to handle non-UTF8 paths correctly
-        let status = Command::new("sudo")
-            .arg("-u")
-            .arg(&user)
-            .arg("mkdir")
-            .arg("-p")
-            .arg("--")
-            .arg(path.as_os_str())
+        let status = Command::from(sudo_as_user_command(&user, "mkdir", &["-p"], path))
             .status()
             .await
             .with_context(|| {
@@ -161,14 +185,7 @@ pub async fn create_dir_as_user(path: &Path) -> Result<()> {
                 )
             })?;
 
-        if !status.success() {
-            anyhow::bail!(
-                "Failed to create directory as user '{}': {}",
-                user,
-                path.display()
-            );
-        }
-        Ok(())
+        ensure_sudo_success(status, &user, "create directory", path)
     } else {
         tokio::fs::create_dir_all(path)
             .await
@@ -182,14 +199,7 @@ pub fn is_root_owned(path: &Path) -> bool {
 
 pub async fn remove_dir_as_user(path: &Path) -> Result<()> {
     if let Some(user) = original_user() {
-        // Use OsStr directly to handle non-UTF8 paths correctly
-        let status = Command::new("sudo")
-            .arg("-u")
-            .arg(&user)
-            .arg("rm")
-            .arg("-rf")
-            .arg("--")
-            .arg(path.as_os_str())
+        let status = Command::from(sudo_as_user_command(&user, "rm", &["-rf"], path))
             .status()
             .await
             .with_context(|| {
@@ -199,14 +209,7 @@ pub async fn remove_dir_as_user(path: &Path) -> Result<()> {
                 )
             })?;
 
-        if !status.success() {
-            anyhow::bail!(
-                "Failed to remove directory as user '{}': {}",
-                user,
-                path.display()
-            );
-        }
-        Ok(())
+        ensure_sudo_success(status, &user, "remove directory", path)
     } else {
         tokio::fs::remove_dir_all(path)
             .await
@@ -216,14 +219,7 @@ pub async fn remove_dir_as_user(path: &Path) -> Result<()> {
 
 pub fn create_dir_as_user_sync(path: &Path) -> Result<()> {
     if let Some(user) = original_user() {
-        // Use OsStr directly to handle non-UTF8 paths correctly
-        let status = std::process::Command::new("sudo")
-            .arg("-u")
-            .arg(&user)
-            .arg("mkdir")
-            .arg("-p")
-            .arg("--")
-            .arg(path.as_os_str())
+        let status = sudo_as_user_command(&user, "mkdir", &["-p"], path)
             .status()
             .with_context(|| {
                 format!(
@@ -232,14 +228,7 @@ pub fn create_dir_as_user_sync(path: &Path) -> Result<()> {
                 )
             })?;
 
-        if !status.success() {
-            anyhow::bail!(
-                "Failed to create directory as user '{}': {}",
-                user,
-                path.display()
-            );
-        }
-        Ok(())
+        ensure_sudo_success(status, &user, "create directory", path)
     } else {
         std::fs::create_dir_all(path)
             .with_context(|| format!("Failed to create directory: {}", path.display()))
@@ -249,6 +238,16 @@ pub fn create_dir_as_user_sync(path: &Path) -> Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn sudo_as_user_command_always_separates_path_from_options() {
+        let command = sudo_as_user_command("builder", "rm", &["-rf"], Path::new("-cache"));
+        assert_eq!(command.get_program(), "sudo");
+        assert_eq!(
+            command.get_args().collect::<Vec<_>>(),
+            ["-u", "builder", "rm", "-rf", "--", "-cache"]
+        );
+    }
 
     #[test]
     fn is_symlink_detects_symlinks_and_regular_files() {
