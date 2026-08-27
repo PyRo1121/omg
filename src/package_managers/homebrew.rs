@@ -552,7 +552,7 @@ impl HomebrewPackageManager {
             .unwrap_or_default();
 
         // Get description from cache if available
-        let description = if let Some(cache) = self.cache.read().expect("lock poisoned").as_ref() {
+        let description = if let Some(cache) = crate::core::sync::read_cache(&self.cache).as_ref() {
             cache
                 .formula_map
                 .get(name)
@@ -682,7 +682,7 @@ impl HomebrewPackageManager {
             .and_then(|m| m.modified().ok());
 
         let needs_refresh = {
-            let cache = INSTALLED_CACHE.read().expect("lock poisoned");
+            let cache = crate::core::sync::read_cache(&INSTALLED_CACHE);
             cache.cellar_mtime != cellar_mtime || cache.packages.is_empty()
         };
 
@@ -690,7 +690,7 @@ impl HomebrewPackageManager {
             let names = self.list_installed_sync()?;
             let set: AHashSet<String> = names.into_iter().collect();
 
-            let mut cache = INSTALLED_CACHE.write().expect("lock poisoned");
+            let mut cache = crate::core::sync::write_cache(&INSTALLED_CACHE);
             cache.packages = set;
             cache.cellar_mtime = cellar_mtime;
             cache.last_refreshed = Some(Instant::now());
@@ -700,7 +700,7 @@ impl HomebrewPackageManager {
 
     pub fn is_installed_fast(&self, package: &str) -> Result<bool> {
         {
-            let cache = INSTALLED_CACHE.read().expect("lock poisoned");
+            let cache = crate::core::sync::read_cache(&INSTALLED_CACHE);
             if let Some(last) = cache.last_refreshed
                 && last.elapsed().as_secs() < INSTALLED_CACHE_TTL_SECS
             {
@@ -752,7 +752,7 @@ impl PackageManager for HomebrewPackageManager {
         Box::pin(async move {
             self.ensure_cache().await?;
 
-            let cache = self.cache.read().expect("lock poisoned");
+            let cache = crate::core::sync::read_cache(&self.cache);
             let cache = cache.as_ref().context("Cache not loaded")?;
 
             Ok(self.fuzzy_search(cache, &query))
@@ -802,7 +802,7 @@ impl PackageManager for HomebrewPackageManager {
         Box::pin(async move {
             // Sync from API instead of running brew update
             let cache = self.fetch_and_cache_formulas().await?;
-            *self.cache.write().expect("lock poisoned") = Some(cache);
+            *crate::core::sync::write_cache(&self.cache) = Some(cache);
             Ok(())
         })
     }
@@ -815,7 +815,7 @@ impl PackageManager for HomebrewPackageManager {
         Box::pin(async move {
             self.ensure_cache().await?;
 
-            let cache = self.cache.read().expect("lock poisoned");
+            let cache = crate::core::sync::read_cache(&self.cache);
             let cache = cache.as_ref().context("Cache not loaded")?;
 
             // Check formulas first

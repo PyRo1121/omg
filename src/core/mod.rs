@@ -25,6 +25,7 @@ pub mod security;
 pub mod service_api;
 #[cfg(unix)]
 pub mod sudoloop;
+pub(crate) mod sync;
 pub mod sysinfo;
 pub mod task_runner;
 pub mod telemetry;
