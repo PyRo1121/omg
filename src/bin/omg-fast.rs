@@ -170,9 +170,12 @@ fn send_search_request(stream: &mut UnixStream, query: &str) -> Result<()> {
             for pkg in res.packages.iter().take(20) {
                 println!(
                     "  {} {} - {}",
-                    pkg.name,
-                    pkg.version,
-                    truncate(&pkg.description, 50)
+                    omg_lib::cli::style::sanitize_terminal_text(&pkg.name),
+                    omg_lib::cli::style::sanitize_terminal_text(&pkg.version),
+                    truncate(
+                        &omg_lib::cli::style::sanitize_terminal_text(&pkg.description),
+                        50,
+                    )
                 );
             }
         }
@@ -204,10 +207,20 @@ fn send_info_request(stream: &mut UnixStream, package: &str) -> Result<()> {
             result: ResponseResult::Info(info),
             ..
         } => {
-            println!("{} {}", info.name, info.version);
-            println!("  {}", info.description);
+            println!(
+                "{} {}",
+                omg_lib::cli::style::sanitize_terminal_text(&info.name),
+                omg_lib::cli::style::sanitize_terminal_text(&info.version)
+            );
+            println!(
+                "  {}",
+                omg_lib::cli::style::sanitize_terminal_text(&info.description)
+            );
             if !info.url.is_empty() {
-                println!("  URL: {}", info.url);
+                println!(
+                    "  URL: {}",
+                    omg_lib::cli::style::sanitize_terminal_text(&info.url)
+                );
             }
         }
         Response::Error { message, .. } => {

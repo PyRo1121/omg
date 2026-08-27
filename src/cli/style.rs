@@ -178,6 +178,25 @@ pub fn command(cmd: &str) -> String {
     maybe_color(cmd, |c| format!("`{}`", c.cyan()))
 }
 
+/// Remove terminal-control and bidi-override characters from remote text.
+///
+/// Package metadata is untrusted and must not move the cursor, set terminal
+/// state, create hidden OSC links, or reorder the visible command line.
+#[must_use]
+pub fn sanitize_terminal_text(text: &str) -> String {
+    text.chars()
+        .filter(|character| {
+            !character.is_control()
+                && !matches!(
+                    character,
+                    '\u{202a}'
+                        ..='\u{202e}' | '\u{2066}'
+                        ..='\u{2069}'
+                )
+        })
+        .collect()
+}
+
 /// URL formatting (underlined blue)
 #[must_use]
 pub fn url(link: &str) -> String {
@@ -302,6 +321,14 @@ mod tests {
         temp_env::with_var("OMG_UNICODE", Some("0"), || {
             assert_eq!(icon("✓", "OK"), "OK");
         });
+    }
+
+    #[test]
+    fn untrusted_terminal_text_cannot_emit_controls_or_bidi_overrides() {
+        assert_eq!(
+            sanitize_terminal_text("safe\x1b]52;c;secret\x07\ntext\u{202e}txt"),
+            "safe]52;c;secrettexttxt"
+        );
     }
 
     #[test]

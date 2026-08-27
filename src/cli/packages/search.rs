@@ -338,7 +338,10 @@ fn write_package_line<W: Write>(
         style::package(&pkg.name),
         style::version(&pkg.version),
         source_style,
-        style::dim(&truncate(&pkg.description, desc_width))
+        style::dim(&truncate(
+            &style::sanitize_terminal_text(&pkg.description),
+            desc_width,
+        ))
     )?;
 
     if let Some(votes) = pkg.votes {
@@ -371,7 +374,10 @@ fn write_daemon_package<W: Write>(
         style::package(&pkg.name),
         style::version(&pkg.version),
         source_style,
-        style::dim(&truncate(&pkg.description, desc_width))
+        style::dim(&truncate(
+            &style::sanitize_terminal_text(&pkg.description),
+            desc_width,
+        ))
     )
 }
 
@@ -386,6 +392,25 @@ mod tests {
         let mut buf = Vec::new();
         write_package_line(&mut buf, pkg, 50).expect("in-memory writer cannot fail");
         String::from_utf8(buf).expect("writer only emits UTF-8")
+    }
+
+    #[test]
+    fn package_writer_strips_terminal_control_sequences() {
+        let package = DisplayPackage {
+            name: "safe".to_string(),
+            version: "1".to_string(),
+            description: "normal\x1b]52;c;secret\x07\nforged".to_string(),
+            source: "official".to_string(),
+            votes: None,
+            popularity: None,
+            maintainer: None,
+            out_of_date: None,
+        };
+
+        let output = format_package(&package);
+        assert!(!output.contains('\x1b'));
+        assert!(!output.contains('\x07'));
+        assert!(!output.contains("\nforged"));
     }
 
     #[test]

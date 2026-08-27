@@ -39,7 +39,10 @@ pub fn info_sync(package: &str) -> Result<bool> {
             #[cfg(not(feature = "arch"))]
             let version = pkg.version.clone();
             ui::print_kv("Version", &style::version(&version));
-            ui::print_kv("Description", &pkg.description);
+            ui::print_kv(
+                "Description",
+                &style::sanitize_terminal_text(&pkg.description),
+            );
             ui::print_kv(
                 "Status",
                 if pkg.installed {
@@ -122,13 +125,21 @@ pub async fn info_aur(package: &str) -> Result<()> {
 
     ui::print_kv("Name", &style::package(&info.name));
     ui::print_kv("Version", &style::version(&info.version.to_string()));
-    ui::print_kv("Description", &info.description);
+    ui::print_kv(
+        "Description",
+        &style::sanitize_terminal_text(&info.description),
+    );
 
     // Query detailed info for better UX
     if let Ok(detailed) = search_detailed(package).await
         && let Some(d) = detailed.into_iter().find(|p| p.name == info.name)
     {
-        ui::print_kv("URL", &style::url(d.url.as_deref().unwrap_or_default()));
+        ui::print_kv(
+            "URL",
+            &style::url(&style::sanitize_terminal_text(
+                d.url.as_deref().unwrap_or_default(),
+            )),
+        );
         ui::print_kv("Popularity", &format!("{:.2}", d.popularity));
         if let Some(license) = d.license
             && !license.is_empty()
@@ -161,7 +172,10 @@ pub async fn info_aur(package: &str) -> Result<()> {
 fn display_detailed_info(info: &crate::daemon::protocol::DetailedPackageInfo) {
     ui::print_kv("Name", &style::package(&info.name));
     ui::print_kv("Version", &style::version(&info.version));
-    ui::print_kv("Description", &info.description);
+    ui::print_kv(
+        "Description",
+        &style::sanitize_terminal_text(&info.description),
+    );
 
     let source_label = if PackageSource::from_label(&info.source) == Some(PackageSource::Official) {
         format!("Official repository ({})", style::info(&info.repo))
@@ -169,7 +183,10 @@ fn display_detailed_info(info: &crate::daemon::protocol::DetailedPackageInfo) {
         style::warning("AUR (Arch User Repository)")
     };
     ui::print_kv("Source", &source_label);
-    ui::print_kv("URL", &style::url(&info.url));
+    ui::print_kv(
+        "URL",
+        &style::url(&style::sanitize_terminal_text(&info.url)),
+    );
     ui::print_kv("Size", &style::size(info.size));
     ui::print_kv("Download", &style::size(info.download_size));
 
@@ -321,9 +338,12 @@ async fn info_fallback(package: &str) -> Result<()> {
         ui::print_kv("Version", &style::version(&pkg.version));
         ui::print_kv(
             "Description",
-            pkg.description.as_deref().unwrap_or_default(),
+            &style::sanitize_terminal_text(pkg.description.as_deref().unwrap_or_default()),
         );
-        ui::print_kv("Maintainer", pkg.maintainer.as_deref().unwrap_or("orphan"));
+        ui::print_kv(
+            "Maintainer",
+            &style::sanitize_terminal_text(pkg.maintainer.as_deref().unwrap_or("orphan")),
+        );
         ui::print_kv("Votes", &pkg.num_votes.to_string());
         ui::print_kv("Popularity", &format!("{:.2}%", pkg.popularity));
         if pkg.out_of_date.is_some() {
@@ -353,9 +373,12 @@ fn display_package_info(info: &crate::package_managers::types::PackageInfo) {
             "not installed"
         },
     );
-    ui::print_kv("Description", &info.description);
+    ui::print_kv(
+        "Description",
+        &style::sanitize_terminal_text(&info.description),
+    );
     if let Some(url) = &info.url {
-        ui::print_kv("URL", url);
+        ui::print_kv("URL", &style::sanitize_terminal_text(url));
     }
     if let Some(size) = info.install_size {
         ui::print_kv("Install Size", &format!("{size} bytes"));
