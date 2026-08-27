@@ -1497,8 +1497,9 @@ fn enforce_download_cap(downloaded: u64, max_bytes: Option<u64>, url: &str) -> R
         && downloaded > max
     {
         anyhow::bail!(
-            "Download from {url} reached {downloaded} bytes, exceeding the \
-             expected maximum of {max} bytes; refusing to fill the disk"
+            "Download from {} reached {downloaded} bytes, exceeding the \
+             expected maximum of {max} bytes; refusing to fill the disk",
+            crate::core::http::redact_url(url)
         );
     }
     Ok(())
@@ -1515,14 +1516,15 @@ async fn download_streaming_once(
     use futures::StreamExt;
     use tokio::io::AsyncWriteExt;
 
+    let safe_url = crate::core::http::redact_url(url);
     let response = client
         .get(url)
         .send()
         .await
-        .with_context(|| format!("Failed to request {url}"))?;
+        .with_context(|| format!("Failed to request {safe_url}"))?;
 
     if !response.status().is_success() {
-        anyhow::bail!("HTTP {} for {url}", response.status());
+        anyhow::bail!("HTTP {} for {safe_url}", response.status());
     }
 
     // Set total size for progress bar
@@ -1544,7 +1546,7 @@ async fn download_streaming_once(
     let mut write_buffer = Vec::with_capacity(8192); // 8KB buffer
 
     while let Some(chunk) = stream.next().await {
-        let chunk = chunk.with_context(|| format!("Failed to read chunk from {url}"))?;
+        let chunk = chunk.with_context(|| format!("Failed to read chunk from {safe_url}"))?;
 
         // OPTIMIZATION: Batch small chunks into 8KB writes
         write_buffer.extend_from_slice(&chunk);

@@ -249,14 +249,15 @@ fn release_artifact(version: &Version) -> Result<ReleaseArtifact> {
 
 /// Fetch the pinned SHA-256 digest for the artifact from its sidecar file.
 async fn fetch_checksum(url: &str) -> Result<String> {
+    let safe_url = crate::core::http::redact_url(url);
     let response = crate::core::http::shared_client()
         .get(url)
         .send()
         .await
-        .with_context(|| format!("Failed to fetch checksum sidecar {url}"))?;
+        .with_context(|| format!("Failed to fetch checksum sidecar {safe_url}"))?;
     if !response.status().is_success() {
         anyhow::bail!(
-            "Checksum sidecar request failed: {} ({url})",
+            "Checksum sidecar request failed: {} ({safe_url})",
             response.status()
         );
     }
@@ -295,13 +296,14 @@ fn parse_checksum(body: &str) -> Result<String> {
 /// Fails closed: any mismatch aborts the update instead of installing
 /// unverified bytes.
 async fn download_verified(url: &str, expected_digest: &str) -> Result<Vec<u8>> {
+    let safe_url = crate::core::http::redact_url(url);
     let response = crate::core::http::download_client()
         .get(url)
         .send()
         .await
-        .with_context(|| format!("Failed to download update archive from {url}"))?;
+        .with_context(|| format!("Failed to download update archive from {safe_url}"))?;
     if !response.status().is_success() {
-        anyhow::bail!("Update download failed: {} ({url})", response.status());
+        anyhow::bail!("Update download failed: {} ({safe_url})", response.status());
     }
 
     // Preallocate from Content-Length only up to the prealloc cap, so a

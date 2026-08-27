@@ -185,7 +185,7 @@ pub async fn status(_ctx: &CliContext) -> Result<()> {
     )];
 
     if let Some(ref url) = team_status.config.remote_url {
-        details.push(format!("Remote: {url}"));
+        details.push(format!("Remote: {}", crate::core::http::redact_url(url)));
     }
 
     details.push(format!(

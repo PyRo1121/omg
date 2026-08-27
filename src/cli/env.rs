@@ -112,6 +112,13 @@ struct GistFileResponse {
 }
 
 /// Share environment state to GitHub Gist
+fn sanitize_remote_error_body(body: &str) -> String {
+    crate::cli::style::sanitize_terminal_text(body)
+        .chars()
+        .take(200)
+        .collect()
+}
+
 pub async fn share(description: String, public: bool) -> Result<()> {
     use crate::cli::packages::execute_cmd;
 
@@ -156,11 +163,13 @@ pub async fn share(description: String, public: bool) -> Result<()> {
 
     if !response.status().is_success() {
         let status = response.status();
-        let text = response.text().await?;
+        let body = response.text().await?;
+        let safe_body = sanitize_remote_error_body(&body);
+        tracing::debug!(status = %status, body_bytes = body.len(), "GitHub Gist request failed");
         execute_cmd(Cmd::error(format!(
-            "Failed to create gist: {status} - {text}"
+            "Failed to create gist: {status} - {safe_body}"
         )));
-        anyhow::bail!("Failed to create gist: {status} - {text}");
+        anyhow::bail!("Failed to create gist: {status} - {safe_body}");
     }
 
     let gist_resp: GistResponse = response.json().await?;
@@ -253,4 +262,18 @@ pub async fn sync(url_or_id: String) -> Result<()> {
     }
 
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::sanitize_remote_error_body;
+
+    #[test]
+    fn remote_error_body_is_terminal_safe_and_bounded() {
+        let body = format!("\u{1b}]52;c;secret\u{7}{}", "x".repeat(400));
+        let safe = sanitize_remote_error_body(&body);
+        assert!(!safe.contains('\u{1b}'));
+        assert!(!safe.contains('\u{7}'));
+        assert_eq!(safe.chars().count(), 200);
+    }
 }

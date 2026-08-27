@@ -6,7 +6,7 @@
 use std::sync::LazyLock;
 use std::time::Duration;
 
-use reqwest::Client;
+use reqwest::{Client, Url};
 
 const DEFAULT_TIMEOUT: Duration = Duration::from_secs(15);
 const DEFAULT_CONNECT_TIMEOUT: Duration = Duration::from_secs(5);
@@ -67,6 +67,22 @@ fn build_client(timeout: Duration, connect_timeout: Duration, read_timeout: Dura
         .expect("Failed to build HTTP client - check TLS configuration")
 }
 
+/// Render a remote URL without credentials, query parameters, or fragments.
+///
+/// Error messages and logs must not echo URL-embedded tokens. Invalid URLs are
+/// represented by a fixed placeholder rather than reflecting unparsed input.
+#[must_use]
+pub fn redact_url(raw: &str) -> String {
+    let Ok(mut url) = Url::parse(raw) else {
+        return "<invalid URL>".to_string();
+    };
+    let _ = url.set_username("");
+    let _ = url.set_password(None);
+    url.set_query(None);
+    url.set_fragment(None);
+    url.to_string()
+}
+
 /// Shared default HTTP client.
 #[must_use]
 #[inline]
@@ -79,4 +95,19 @@ pub fn shared_client() -> &'static Client {
 #[inline]
 pub fn download_client() -> &'static Client {
     &DOWNLOAD_CLIENT
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn redacted_urls_never_reflect_credentials_or_query_secrets() {
+        let redacted = redact_url("https://user:password@example.com/file?token=secret#fragment");
+        assert_eq!(redacted, "https://example.com/file");
+        for secret in ["user", "password", "token", "secret", "fragment"] {
+            assert!(!redacted.contains(secret));
+        }
+        assert_eq!(redact_url("not a URL with secret"), "<invalid URL>");
+    }
 }

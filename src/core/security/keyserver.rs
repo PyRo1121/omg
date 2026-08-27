@@ -133,6 +133,7 @@ pub async fn fetch_key_from(key_id: &str, keyserver_url: &str) -> Result<Cert, K
             source: SequoiaSource(source),
         })?;
     let lookup_url = keyserver_lookup_url(keyserver_url, &key_handle)?;
+    let safe_keyserver = crate::core::http::redact_url(keyserver_url);
 
     let fetch = async {
         let response = shared_client()
@@ -141,13 +142,13 @@ pub async fn fetch_key_from(key_id: &str, keyserver_url: &str) -> Result<Cert, K
             .await
             .map_err(|source| KeyserverError::Fetch {
                 key_id: key_id.to_string(),
-                keyserver: keyserver_url.to_string(),
+                keyserver: safe_keyserver.clone(),
                 source,
             })?
             .error_for_status()
             .map_err(|source| KeyserverError::HttpStatus {
                 key_id: key_id.to_string(),
-                keyserver: keyserver_url.to_string(),
+                keyserver: safe_keyserver.clone(),
                 source,
             })?;
 
@@ -205,7 +206,7 @@ pub async fn fetch_key_from(key_id: &str, keyserver_url: &str) -> Result<Cert, K
         Ok(result) => result,
         Err(_) => Err(KeyserverError::Timeout {
             key_id: key_id.to_string(),
-            keyserver: keyserver_url.to_string(),
+            keyserver: safe_keyserver,
         }),
     }
 }
@@ -219,19 +220,20 @@ fn keyserver_lookup_url(
     } else {
         keyserver_url.to_string()
     };
+    let safe_keyserver = crate::core::http::redact_url(keyserver_url);
     let mut url = Url::parse(&normalized).map_err(|source| KeyserverError::InvalidUrl {
-        url: keyserver_url.to_string(),
+        url: safe_keyserver.clone(),
         source: SequoiaSource(source.into()),
     })?;
 
     if url.scheme() != "https" {
         return Err(KeyserverError::InsecureTransport {
-            url: keyserver_url.to_string(),
+            url: safe_keyserver,
         });
     }
     if url.host_str().is_none() {
         return Err(KeyserverError::MissingHost {
-            url: keyserver_url.to_string(),
+            url: safe_keyserver,
         });
     }
     if !url.username().is_empty() || url.password().is_some() {

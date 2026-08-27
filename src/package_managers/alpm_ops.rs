@@ -854,7 +854,10 @@ fn configure_mirrors(alpm: &mut alpm::Alpm) -> Result<()> {
         for server in &servers {
             let url = server.replace("$repo", db_name).replace("$arch", arch);
             if let Err(e) = db.add_server(url.clone()) {
-                tracing::debug!("Failed to add server '{url}' to repo '{db_name}': {e}");
+                tracing::debug!(
+                    "Failed to add server '{}' to repo '{db_name}': {e}",
+                    crate::core::http::redact_url(&url)
+                );
             }
         }
     }

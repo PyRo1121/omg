@@ -429,7 +429,6 @@ fn verify_fulcio_chain(
     // An absent intermediate may be passed as an empty string; only a
     // successfully decoded, non-empty DER counts.
     let inter_der = decode_pem_der(intermediate_pem).filter(|der| !der.is_empty());
-    let has_intermediate = inter_der.is_some();
 
     // Roots are kept as owned DER; each check site re-parses within its own
     // scope so no borrowed certificate reference escapes this function.
@@ -439,7 +438,10 @@ fn verify_fulcio_chain(
         X509Certificate::from_der(der).ok().map(|(_, cert)| cert)
     }
 
-    eprintln!("CHAIN: roots_owned={}", roots_owned.len());
+    tracing::trace!(
+        root_count = roots_owned.len(),
+        "checking Fulcio certificate chain"
+    );
     let issued_directly_by_root = roots_owned
         .iter()
         .any(|root_der| parse_root(root_der).is_some_and(|root| leaf.issuer() == root.subject()));
@@ -458,8 +460,8 @@ fn verify_fulcio_chain(
                 return None;
             }
         }
-    } else if has_intermediate {
-        let (_, intermediate) = X509Certificate::from_der(inter_der.as_ref().unwrap()).ok()?;
+    } else if let Some(intermediate_der) = inter_der.as_deref() {
+        let (_, intermediate) = X509Certificate::from_der(intermediate_der).ok()?;
 
         if leaf.issuer() != intermediate.subject() {
             return None;
@@ -521,7 +523,10 @@ fn verify_fulcio_chain(
     // Signer identity from the Fulcio SAN (OIDC identity).
     for ext in leaf.extensions() {
         if let ParsedExtension::SubjectAlternativeName(san) = ext.parsed_extension() {
-            eprintln!("CHAIN: SAN found with {} names", san.general_names.len());
+            tracing::trace!(
+                san_count = san.general_names.len(),
+                "checking Fulcio signer identities"
+            );
             for name in &san.general_names {
                 match name {
                     GeneralName::RFC822Name(email) => return Some(email.to_string()),
@@ -1201,7 +1206,6 @@ mod tests {
         leaf_params.extended_key_usages = vec![ExtendedKeyUsagePurpose::CodeSigning];
         leaf_params.key_usages = vec![rcgen::KeyUsagePurpose::DigitalSignature];
         let leaf = leaf_params.signed_by(&leaf_key, &ca, &ca_key).unwrap();
-        let leaf_der: Vec<u8> = leaf.der().to_vec();
 
         let artifact_hash = "c".repeat(64);
         let b64 = |bytes: &[u8]| base64::engine::general_purpose::STANDARD.encode(bytes);
@@ -1245,10 +1249,6 @@ mod tests {
         let entry = make_entry(&cert_pem, good_sig.to_der().as_bytes(), now);
         let (verified, signer) =
             SlsaVerifier::verify_rekor_entry(&entry, &artifact_hash, &ca_roots, "").unwrap();
-        eprintln!(
-            "DBG5 verified={verified} signer={signer:?} direct_chain_ok={}",
-            verify_fulcio_chain(&leaf_der, now, &ca_roots, "").is_some()
-        );
         assert!(verified, "valid chain + signature must verify");
         assert_eq!(
             signer.as_deref(),

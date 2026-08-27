@@ -481,7 +481,7 @@ fn populate_package_urls(tx: &mut debian_db::Transaction) -> Result<()> {
             name = action.name,
             version = action.version,
             size = action.size,
-            url = action.url.as_deref().unwrap_or("")
+            url = crate::core::http::redact_url(action.url.as_deref().unwrap_or(""))
         );
     }
 
@@ -493,7 +493,7 @@ fn populate_package_urls(tx: &mut debian_db::Transaction) -> Result<()> {
             action.name,
             action.version,
             action.size,
-            action.url.as_deref().unwrap_or("")
+            crate::core::http::redact_url(action.url.as_deref().unwrap_or(""))
         );
     }
 

@@ -432,7 +432,8 @@ impl TeamWorkspace {
                 crate::cli::env::sync(remote_url.clone()).await?;
             } else {
                 anyhow::bail!(
-                    "Unsupported team remote URL '{remote_url}': pull currently supports only gist.github.com remotes"
+                    "Unsupported team remote URL '{}': pull currently supports only gist.github.com remotes",
+                    crate::core::http::redact_url(remote_url)
                 );
             }
         }

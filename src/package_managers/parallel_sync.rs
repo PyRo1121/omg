@@ -206,6 +206,7 @@ async fn download_db(
     let mut last_error = None;
 
     for (mirror_idx, url) in urls.iter().enumerate() {
+        let safe_url = crate::core::http::redact_url(url);
         if mirror_idx > 0 {
             pb.set_message(format!("{} (mirror {})", repo_name, mirror_idx + 1));
         }
@@ -225,7 +226,7 @@ async fn download_db(
             let response = match req.send().await {
                 Ok(resp) => resp,
                 Err(e) => {
-                    last_error = Some(anyhow::anyhow!("Failed to connect to {url}: {e}"));
+                    last_error = Some(anyhow::anyhow!("Failed to connect to {safe_url}: {e}"));
                     if e.is_timeout() || e.is_connect() {
                         continue;
                     }
@@ -239,12 +240,12 @@ async fn download_db(
             }
 
             if response.status().is_server_error() {
-                last_error = Some(anyhow::anyhow!("HTTP {}: {}", response.status(), url));
+                last_error = Some(anyhow::anyhow!("HTTP {}: {safe_url}", response.status()));
                 continue;
             }
 
             if !response.status().is_success() {
-                last_error = Some(anyhow::anyhow!("HTTP {}: {}", response.status(), url));
+                last_error = Some(anyhow::anyhow!("HTTP {}: {safe_url}", response.status()));
                 break;
             }
 

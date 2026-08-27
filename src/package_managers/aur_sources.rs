@@ -216,11 +216,12 @@ pub async fn download_sources(sources: Vec<SourceFile>, srcdest: &Path) -> Sourc
 /// Download a single file with progress tracking
 async fn download_file(url: &str, dest_path: &Path, pb: ProgressBar) -> Result<()> {
     let client = shared_client();
+    let safe_url = crate::core::http::redact_url(url);
     let response = client
         .get(url)
         .send()
         .await
-        .with_context(|| format!("Failed to fetch {url}"))?;
+        .with_context(|| format!("Failed to fetch {safe_url}"))?;
 
     if !response.status().is_success() {
         pb.finish_with_message(format!("Failed: HTTP {}", response.status()));

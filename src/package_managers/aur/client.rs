@@ -1597,6 +1597,7 @@ impl AurClient {
 
     async fn git_clone(&self, package: &str) -> Result<()> {
         let url = format!("{AUR_GIT_URL}/{package}.git");
+        let safe_url = crate::core::http::redact_url(&url);
         let dest = self.build_dir.join(package);
 
         let spinner = create_spinner("Cloning repository...");
@@ -1634,7 +1635,7 @@ impl AurClient {
                 .with_context(|| format!("Failed to run git clone as user '{user}'"))?;
 
             if !status.success() {
-                anyhow::bail!("git clone failed for {url}");
+                anyhow::bail!("git clone failed for {safe_url}");
             }
 
             spinner.finish_and_clear();
@@ -1650,10 +1651,10 @@ impl AurClient {
             let status = command
                 .status()
                 .await
-                .with_context(|| format!("Failed to run git clone for {url}"))?;
+                .with_context(|| format!("Failed to run git clone for {safe_url}"))?;
             spinner.finish_and_clear();
             if !status.success() {
-                anyhow::bail!("git clone failed for {url}");
+                anyhow::bail!("git clone failed for {safe_url}");
             }
         }
         Ok(())
