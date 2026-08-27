@@ -61,6 +61,21 @@ pub async fn run(
     state: Arc<DaemonState>,
     socket_path: PathBuf,
 ) -> Result<()> {
+    run_with_status_path(
+        listener,
+        state,
+        socket_path,
+        crate::core::paths::fast_status_path(),
+    )
+    .await
+}
+
+async fn run_with_status_path(
+    listener: UnixListener,
+    state: Arc<DaemonState>,
+    socket_path: PathBuf,
+    fast_status_path: PathBuf,
+) -> Result<()> {
     let shutdown_token = CancellationToken::new();
 
     // Budget for concurrent client connections; permits are released when a
@@ -76,7 +91,7 @@ pub async fn run(
     let worker_handle = tokio::spawn(async move {
         tracing::info!("Background status worker started");
 
-        async fn refresh_status(state: &Arc<DaemonState>) {
+        async fn refresh_status(state: &Arc<DaemonState>, fast_status_path: &std::path::Path) {
             let pm_name = state.package_manager.name().to_string();
             let result = tokio::task::spawn_blocking(move || {
                 use crate::cli::runtimes::{ensure_active_version, known_runtimes};
@@ -126,7 +141,7 @@ pub async fn run(
             };
             let fast_status =
                 crate::core::fast_status::FastStatus::new(total, explicit, orphans, updates);
-            if let Err(error) = fast_status.write_default() {
+            if let Err(error) = fast_status.write_to_file(fast_status_path) {
                 tracing::warn!("Failed to write fast status file: {error}");
             }
 
@@ -214,7 +229,7 @@ pub async fn run(
         }
 
         // Initial refresh
-        refresh_status(&state_worker).await;
+        refresh_status(&state_worker, &fast_status_path).await;
         prewarm_caches(&state_worker).await;
 
         // Track last cleanup time for periodic mmap cleanup
@@ -232,7 +247,7 @@ pub async fn run(
                 }
                 () = tokio::time::sleep(STATUS_REFRESH_INTERVAL) => {
                     tracing::debug!("Refreshing system status cache...");
-                    refresh_status(&state_worker).await;
+                    refresh_status(&state_worker, &fast_status_path).await;
                     // Independent of status publication: a failed scan must
                     // not degrade first-query latency for unrelated paths.
                     prewarm_caches(&state_worker).await;
@@ -590,18 +605,26 @@ mod tests {
             )),
         )?);
         let socket_path = directory.path().join("prewarm.sock");
+        let fast_status_path = directory.path().join("omg.status");
         let listener = UnixListener::bind(&socket_path)?;
-        let server = tokio::spawn(run(listener, Arc::clone(&state), socket_path));
+        let server = tokio::spawn(run_with_status_path(
+            listener,
+            Arc::clone(&state),
+            socket_path,
+            fast_status_path.clone(),
+        ));
 
         let queries = ["", "linux", "python", "node", "firefox", "git"];
         let deadline = tokio::time::Instant::now() + Duration::from_secs(5);
         loop {
-            if queries.iter().all(|query| state.cache.get(query).is_some()) {
+            if fast_status_path.is_file()
+                && queries.iter().all(|query| state.cache.get(query).is_some())
+            {
                 break;
             }
             if tokio::time::Instant::now() >= deadline {
                 server.abort();
-                anyhow::bail!("startup did not prewarm all common search queries");
+                anyhow::bail!("startup did not publish fast status and prewarm all common queries");
             }
             tokio::time::sleep(Duration::from_millis(25)).await;
         }
