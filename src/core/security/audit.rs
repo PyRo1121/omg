@@ -992,9 +992,8 @@ mod tests {
         let link = temp.path().join("audit.jsonl");
         symlink(&target, &link).expect("create symlink");
 
-        let error = match AuditLogger::new_in(&link) {
-            Ok(_) => panic!("symlink must fail closed"),
-            Err(error) => error,
+        let Err(error) = AuditLogger::new_in(&link) else {
+            panic!("symlink must fail closed");
         };
         assert!(matches!(error, AuditError::Open { .. }));
     }

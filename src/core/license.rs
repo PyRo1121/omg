@@ -946,7 +946,7 @@ mod tests {
     const TEST_PUBLIC_KEY: &[u8] = b"-----BEGIN PUBLIC KEY-----\nMCowBQYDK2VwAyEAniF8d18mTVtOAi1msyk1sPU6smSFhAiiTRpLgzcFEEs=\n-----END PUBLIC KEY-----\n";
 
     fn signed_test_token(issuer: &str, audience: &str) -> String {
-        let now = jsonwebtoken::get_current_timestamp() as i64;
+        let now = jsonwebtoken::get_current_timestamp().cast_signed();
         let payload = JwtPayload {
             iss: issuer.to_string(),
             aud: audience.to_string(),

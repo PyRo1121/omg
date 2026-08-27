@@ -2945,9 +2945,14 @@ mod tests {
             .expect("write fake compiler output");
         writer.shutdown().await.expect("close fake compiler output");
 
-        drain_build_output(reader, Arc::clone(&log), BuildOutputStream::Stdout, false)
-            .await
-            .expect("drain output");
+        Box::pin(drain_build_output(
+            reader,
+            Arc::clone(&log),
+            BuildOutputStream::Stdout,
+            false,
+        ))
+        .await
+        .expect("drain output");
         log.lock().await.flush().await.expect("flush build log");
 
         assert_eq!(
