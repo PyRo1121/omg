@@ -67,6 +67,8 @@ pub struct DaemonState {
     /// caches loaded syncdbs in memory and never revalidates them on disk, so
     /// a worker that predates `omg sync` serves a frozen update list forever.
     system_backends: RwLock<SystemBackendAccess>,
+    refresh_lock: tokio::sync::Mutex<()>,
+    index_generation: AtomicU64,
     pub(super) runtime_versions: Arc<RwLock<Vec<(String, String)>>>,
     pub(super) rate_limiter: Arc<RateLimiter<NotKeyed, InMemoryState, DefaultClock>>,
     pub(super) start_time: std::time::Instant,
@@ -118,6 +120,7 @@ impl DaemonState {
             .write()
             .unwrap_or_else(std::sync::PoisonError::into_inner);
         *current = Arc::new(index);
+        self.index_generation.fetch_add(1, Ordering::Release);
         self.cache.clear();
         package_count
     }
@@ -230,6 +233,8 @@ impl DaemonState {
             package_manager,
             index: RwLock::new(Arc::new(index)),
             system_backends: RwLock::new(system_backends),
+            refresh_lock: tokio::sync::Mutex::new(()),
+            index_generation: AtomicU64::new(0),
             runtime_versions: Arc::new(RwLock::new(Vec::new())),
             rate_limiter,
             start_time: std::time::Instant::now(),
@@ -326,6 +331,17 @@ async fn handle_refresh_index(state: Arc<DaemonState>, id: RequestId) -> Respons
         .is_production()
     {
         return validation_error(id, "Index refresh is unavailable in an isolated daemon");
+    }
+
+    let observed_generation = state.index_generation.load(Ordering::Acquire);
+    let _refresh_guard = state.refresh_lock.lock().await;
+    if state.index_generation.load(Ordering::Acquire) != observed_generation {
+        let packages = state.index_snapshot().len();
+        tracing::debug!(packages, "Coalesced concurrent package index refresh");
+        return Response::Success {
+            id,
+            result: ResponseResult::IndexRefreshed { packages },
+        };
     }
 
     let rebuilt = tokio::task::spawn_blocking(PackageIndex::new).await;
@@ -1256,9 +1272,11 @@ mod tests {
         );
         assert!(state.cache.get("cached").is_some());
         let stale_snapshot = state.index_snapshot();
+        assert_eq!(state.index_generation.load(Ordering::Acquire), 0);
 
         let replacement = PackageIndex::from_records(&[("fresh", "2", "fresh package")]);
         assert_eq!(state.replace_index(replacement), 1);
+        assert_eq!(state.index_generation.load(Ordering::Acquire), 1);
         let current_snapshot = state.index_snapshot();
         assert!(current_snapshot.get("fresh").is_some());
         assert!(state.cache.get("cached").is_none());

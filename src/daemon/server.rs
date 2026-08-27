@@ -32,6 +32,9 @@ const MEMORY_CLEANUP_INTERVAL: Duration = Duration::from_mins(30);
 /// Socket health check interval (60 seconds) - detect deleted socket files
 const SOCKET_HEALTH_CHECK_INTERVAL: Duration = Duration::from_secs(60);
 
+/// Close clients that hold a connection without sending a complete frame.
+const CLIENT_IDLE_TIMEOUT: Duration = Duration::from_secs(60);
+
 /// Per-connection rate limit (requests per second)
 const CLIENT_RATE_LIMIT_HZ: u32 = 50;
 /// Per-connection burst size
@@ -429,6 +432,14 @@ async fn send_error_response(
 }
 
 async fn handle_client(stream: tokio::net::UnixStream, state: Arc<DaemonState>) -> Result<()> {
+    handle_client_with_idle_timeout(stream, state, CLIENT_IDLE_TIMEOUT).await
+}
+
+async fn handle_client_with_idle_timeout(
+    stream: tokio::net::UnixStream,
+    state: Arc<DaemonState>,
+    idle_timeout: Duration,
+) -> Result<()> {
     // METRICS: Track active connections using RAII guard
     let _guard = ConnectionGuard::new();
 
@@ -447,7 +458,15 @@ async fn handle_client(stream: tokio::net::UnixStream, state: Arc<DaemonState>) 
 
     tracing::debug!("New binary client connected");
 
-    while let Some(request_bytes) = framed.next().await {
+    loop {
+        let request_bytes = match tokio::time::timeout(idle_timeout, framed.next()).await {
+            Ok(Some(request_bytes)) => request_bytes,
+            Ok(None) => break,
+            Err(_) => {
+                tracing::debug!(?idle_timeout, "Closing idle daemon client");
+                break;
+            }
+        };
         // Transport/frame errors (oversize frame, I/O) tear down the
         // connection: the length-prefix stream may be desynchronized, so
         // answering on it would be unsafe.
@@ -580,6 +599,7 @@ async fn handle_client(stream: tokio::net::UnixStream, state: Arc<DaemonState>) 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use anyhow::Context as _;
 
     #[test]
     fn fast_status_reader_ttl_matches_daemon_writer_cadence() {
@@ -590,6 +610,38 @@ mod tests {
             crate::core::fast_status::FAST_STATUS_FRESHNESS_SECS,
             "FastStatus TTL must equal the daemon writer interval"
         );
+    }
+
+    #[tokio::test]
+    async fn idle_client_is_closed_and_releases_its_connection_metric() -> Result<()> {
+        let directory = tempfile::tempdir()?;
+        let data_dir = directory.path().join("data");
+        std::fs::create_dir_all(&data_dir)?;
+        let state = Arc::new(super::super::handlers::DaemonState::new_isolated(
+            &data_dir,
+            super::super::index::PackageIndex::empty(),
+            Arc::new(crate::package_managers::mock::MockPackageManager::new_in(
+                "arch", &data_dir,
+            )),
+        )?);
+        let baseline = GLOBAL_METRICS.snapshot().active_connections;
+        let (server, _idle_client) = tokio::net::UnixStream::pair()?;
+
+        let task = tokio::spawn(handle_client_with_idle_timeout(
+            server,
+            state,
+            Duration::from_millis(20),
+        ));
+        tokio::time::timeout(Duration::from_secs(1), task)
+            .await
+            .context("idle client did not time out")???;
+
+        assert_eq!(
+            GLOBAL_METRICS.snapshot().active_connections,
+            baseline,
+            "idle timeout must release the active connection guard"
+        );
+        Ok(())
     }
 
     #[tokio::test]
