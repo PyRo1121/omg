@@ -1415,3 +1415,80 @@ fn draw_popup(f: &mut Frame, app: &App) {
 
     f.render_widget(popup, popup_area);
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use ratatui::{Terminal, backend::TestBackend};
+    use std::time::Instant;
+
+    fn app_on(tab: Tab) -> App {
+        App {
+            status: None,
+            team_status: None,
+            history: Vec::new(),
+            last_tick: Instant::now(),
+            current_tab: tab,
+            selected_index: 0,
+            show_popup: false,
+            search_query: String::new(),
+            search_mode: false,
+            daemon_connected: false,
+            search_results: Vec::new(),
+            search_error: None,
+            action_error: None,
+            system_metrics: crate::cli::tui::app::SystemMetrics::default(),
+            last_update: Instant::now(),
+            prev_cpu_sample: None,
+            usage_stats: crate::core::usage::UsageStats::default(),
+            action_in_flight: false,
+            last_query_change: Instant::now(),
+        }
+    }
+
+    fn render(tab: Tab, width: u16, height: u16) -> String {
+        let mut terminal = Terminal::new(TestBackend::new(width, height)).expect("test terminal");
+        let app = app_on(tab);
+        terminal.draw(|frame| draw(frame, &app)).expect("draw tab");
+        terminal
+            .backend()
+            .buffer()
+            .content()
+            .iter()
+            .map(ratatui::buffer::Cell::symbol)
+            .collect()
+    }
+
+    #[test]
+    fn every_tab_renders_its_state_contract() {
+        for (tab, expected) in [
+            (Tab::Dashboard, "Usage Stats"),
+            (Tab::Packages, "Type / to search packages"),
+            (Tab::Runtimes, "Runtimes"),
+            (Tab::Security, "NOT SCANNED"),
+            (Tab::Activity, "Activity Log"),
+            (Tab::Team, "Not in a team workspace"),
+        ] {
+            let rendered = render(tab, 120, 40);
+            assert!(
+                rendered.contains(expected),
+                "{tab:?} must render {expected:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn every_tab_handles_a_small_terminal_without_panicking() {
+        for tab in [
+            Tab::Dashboard,
+            Tab::Packages,
+            Tab::Runtimes,
+            Tab::Security,
+            Tab::Activity,
+            Tab::Team,
+        ] {
+            let rendered = render(tab, 24, 8);
+            assert!(!rendered.is_empty(), "{tab:?} must produce a frame");
+        }
+    }
+}
