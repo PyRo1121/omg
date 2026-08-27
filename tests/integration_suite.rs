@@ -655,10 +655,14 @@ mod environment_management {
     #[test]
     fn test_env_share_without_token() {
         let temp_dir = TempDir::new().unwrap();
-        run_omg_in_dir(&["env", "capture"], temp_dir.path());
+        run_omg_in_dir(&["env", "capture"], temp_dir.path()).assert_success();
 
-        // Clear GITHUB_TOKEN
-        let result = run_omg_with_env(&["env", "share"], &[("GITHUB_TOKEN", "")]);
+        // Clear GITHUB_TOKEN while sharing the lockfile captured above.
+        let result = run_omg_with_options(
+            &["env", "share"],
+            Some(temp_dir.path()),
+            &[("GITHUB_TOKEN", "")],
+        );
         result.assert_failure();
         let combined = result.combined_output().to_lowercase();
         assert!(
