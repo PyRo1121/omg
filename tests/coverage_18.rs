@@ -289,7 +289,37 @@ async fn frame_too_short_for_header_gets_parse_error_then_connection_closes() ->
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
-// Contract 3: correct version header, undecodable payload
+// Contract 3: medium frame reaches protocol parsing
+// ═══════════════════════════════════════════════════════════════════════════════
+
+#[tokio::test]
+#[serial]
+async fn four_kib_frame_reaches_protocol_parser_before_rejection() -> Result<()> {
+    let fixture = RealServerFixture::new().await?;
+    let baseline = requests_failed_probe(&fixture).await?;
+    let mut stream = fixture.connect().await?;
+
+    // Above a mutated 2 KiB cap but comfortably below the documented 1 MiB
+    // cap. The zeroed protocol header is malformed, so acceptance is observed
+    // as one PARSE_ERROR response followed by connection close.
+    send_raw_frame(&mut stream, &vec![0; 4 * 1024]).await?;
+    match read_response(&mut stream).await? {
+        Response::Error { id, code, message } => {
+            assert_eq!(id, 0);
+            assert_eq!(code, error_codes::PARSE_ERROR);
+            assert!(message.contains("protocol version") || message.contains("frame header"));
+        }
+        other => anyhow::bail!("expected parse-error response, got {other:?}"),
+    }
+    expect_eof(&mut stream, "4 KiB malformed frame").await;
+
+    let after = requests_failed_probe(&fixture).await?;
+    assert_eq!(after, baseline + 1);
+    Ok(())
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// Contract 4: correct version header, undecodable payload
 // ═══════════════════════════════════════════════════════════════════════════════
 
 #[tokio::test]
@@ -326,7 +356,7 @@ async fn undecodable_payload_gets_parse_error_validation_failure_then_close() ->
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
-// Contract 4: frame exceeding MAX_REQUEST_SIZE tears down WITHOUT a response
+// Contract 5: frame exceeding MAX_REQUEST_SIZE tears down WITHOUT a response
 // ═══════════════════════════════════════════════════════════════════════════════
 
 #[tokio::test]
@@ -378,7 +408,7 @@ async fn oversized_frame_tears_down_silently_without_any_response_frame() -> Res
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
-// Contract 5: rate limit rejects bursts with exact envelope, keeps connection
+// Contract 6: rate limit rejects bursts with exact envelope, keeps connection
 // ═══════════════════════════════════════════════════════════════════════════════
 
 #[tokio::test]
