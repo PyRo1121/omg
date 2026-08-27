@@ -442,15 +442,13 @@ mod container_matrix {
 
     #[test]
     #[serial]
-    fn test_container_list() {
-        // Dual-path contract: success lists under the "Running Containers"
-        // header (src/cli/container.rs:315-344); failure must name the missing
-        // container runtime (src/core/container.rs:105-108).
-        let res = run_omg(&["container", "list"]);
-        if res.success {
-            res.assert_stdout_contains("Running Containers");
-        } else {
-            res.assert_stderr_contains("No container runtime found");
-        }
+    fn test_container_list_without_runtime_reports_actionable_error() {
+        // Hide host Docker/Podman binaries so this contract does not depend on
+        // whether the developer machine has a daemon or socket permission.
+        let empty_path = TempDir::new().unwrap();
+        let path = empty_path.path().to_str().unwrap();
+        let res = run_omg_with_env(&["container", "list"], &[("PATH", path)]);
+        res.assert_failure();
+        res.assert_stderr_contains("No container runtime found");
     }
 }
