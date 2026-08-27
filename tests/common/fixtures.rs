@@ -13,10 +13,7 @@ impl PackageFixtureExt for PackageFixture {
     fn to_mock_package(self) -> MockPackage {
         let package = self.build();
 
-        #[cfg(feature = "arch")]
         let version = package.version.to_string();
-        #[cfg(not(feature = "arch"))]
-        let version = package.version;
 
         MockPackage {
             name: package.name,
