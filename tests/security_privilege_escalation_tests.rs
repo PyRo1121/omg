@@ -159,7 +159,9 @@ mod privilege_escalation {
     fn ci_and_container_bootstraps_are_pinned_and_verified() {
         let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
         let bootstrap_sources = [
+            ".github/workflows/benchmark.yml",
             ".github/workflows/ci.yml",
+            ".github/workflows/coverage.yml",
             ".github/workflows/docker-e2e.yml",
             ".github/workflows/release.yml",
             "Dockerfile.apt",
