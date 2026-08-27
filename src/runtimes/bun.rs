@@ -9,14 +9,14 @@
 
 use anyhow::{Context, Result};
 use owo_colors::OwoColorize;
-use serde::Deserialize;
 use std::fs;
 use std::path::{Path, PathBuf};
 
 use super::common::{
-    activate_version, begin_staged_install, complete_staged_install, download_with_progress,
-    extract_zip, normalize_version, parse_sha256_digest, print_already_installed, print_installed,
-    print_using, remove_file_best_effort, version_cmp,
+    GITHUB_USER_AGENT, GithubRelease, activate_version, begin_staged_install,
+    complete_staged_install, download_with_progress, extract_zip, normalize_version,
+    parse_sha256_digest, print_already_installed, print_installed, print_using,
+    remove_file_best_effort, version_cmp,
 };
 use crate::core::http::download_client;
 
@@ -28,20 +28,6 @@ const BUN_API_URL: &str = "https://api.github.com/repos/oven-sh/bun/releases";
 pub(crate) struct BunVersion {
     pub(crate) version: String,
     pub(crate) prerelease: bool,
-}
-
-#[derive(Debug, Deserialize)]
-struct GithubRelease {
-    tag_name: String,
-    prerelease: bool,
-    #[serde(default)]
-    assets: Vec<GithubAsset>,
-}
-
-#[derive(Debug, Deserialize)]
-struct GithubAsset {
-    name: String,
-    digest: Option<String>,
 }
 
 pub(crate) struct BunManager {
@@ -62,6 +48,7 @@ impl BunManager {
         let releases: Vec<GithubRelease> = self
             .client
             .get(format!("{BUN_API_URL}?per_page=20"))
+            .header("User-Agent", GITHUB_USER_AGENT)
             .send()
             .await
             .context("Failed to fetch Bun releases from GitHub")?
@@ -127,7 +114,7 @@ impl BunManager {
         let release: GithubRelease = self
             .client
             .get(format!("{BUN_API_URL}/tags/bun-v{version}"))
-            .header("User-Agent", "omg-package-manager")
+            .header("User-Agent", GITHUB_USER_AGENT)
             .send()
             .await
             .context("Failed to fetch Bun release metadata")?

@@ -8,14 +8,14 @@
 
 use anyhow::{Context, Result};
 use owo_colors::OwoColorize;
-use serde::Deserialize;
 use std::fs;
 use std::path::{Path, PathBuf};
 
 use super::common::{
-    activate_version, begin_staged_install, complete_staged_install, download_with_progress,
-    extract_tar_gz, normalize_version, parse_sha256_digest, print_already_installed,
-    print_installed, print_using, remove_file_best_effort, version_cmp,
+    GITHUB_USER_AGENT, GithubRelease, activate_version, begin_staged_install,
+    complete_staged_install, download_with_progress, extract_tar_gz, normalize_version,
+    parse_sha256_digest, print_already_installed, print_installed, print_using,
+    remove_file_best_effort, version_cmp,
 };
 use crate::core::http::download_client;
 
@@ -25,20 +25,6 @@ const RUBY_VERSIONS_URL: &str = "https://api.github.com/repos/ruby/ruby-builder/
 #[derive(Debug, Clone)]
 pub(crate) struct RubyVersion {
     pub version: String,
-}
-
-#[derive(Debug, Deserialize)]
-struct GithubRelease {
-    tag_name: String,
-    #[serde(default)]
-    assets: Vec<GithubAsset>,
-}
-
-#[derive(Debug, Deserialize)]
-struct GithubAsset {
-    name: String,
-    browser_download_url: String,
-    digest: Option<String>,
 }
 
 pub(crate) struct RubyManager {
@@ -59,6 +45,7 @@ impl RubyManager {
         let releases: Vec<GithubRelease> = self
             .client
             .get(format!("{RUBY_VERSIONS_URL}?per_page=20"))
+            .header("User-Agent", GITHUB_USER_AGENT)
             .send()
             .await
             .context("Failed to fetch Ruby releases from GitHub")?
@@ -110,7 +97,7 @@ impl RubyManager {
         let release: GithubRelease = self
             .client
             .get(format!("{RUBY_VERSIONS_URL}/tags/ruby-{version}"))
-            .header("User-Agent", "omg-package-manager")
+            .header("User-Agent", GITHUB_USER_AGENT)
             .send()
             .await
             .context("Failed to fetch Ruby release metadata")?
@@ -136,18 +123,17 @@ impl RubyManager {
         println!("{} Downloading pre-built Ruby {version}...", "→".blue());
         let download_path = self.versions_dir.join(&asset.name);
 
-        download_with_progress(
-            self.client,
-            &asset.browser_download_url,
-            &download_path,
-            &checksum,
-        )
-        .await
-        .with_context(|| {
-            eprintln!("{} Pre-built Ruby {version} not available", "!".yellow());
-            eprintln!("  Try: omg list ruby --available");
-            format!("Failed to download Ruby {version}")
-        })?;
+        let download_url = asset
+            .browser_download_url
+            .as_deref()
+            .context("Ruby release asset has no browser download URL")?;
+        download_with_progress(self.client, download_url, &download_path, &checksum)
+            .await
+            .with_context(|| {
+                eprintln!("{} Pre-built Ruby {version} not available", "!".yellow());
+                eprintln!("  Try: omg list ruby --available");
+                format!("Failed to download Ruby {version}")
+            })?;
 
         println!("{} Extracting (pure Rust)...", "→".blue());
         let staging = begin_staged_install(&self.versions_dir)?;

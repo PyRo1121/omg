@@ -9,31 +9,19 @@
 
 use anyhow::{Context, Result};
 use owo_colors::OwoColorize;
-use serde::Deserialize;
 use std::fs;
 use std::path::{Path, PathBuf};
 
 use super::common::{
-    activate_version, begin_staged_install, complete_staged_install, download_with_progress,
-    extract_tar_gz, normalize_version, parse_sha256_digest, print_already_installed,
-    print_installed, print_using, remove_file_best_effort, version_cmp,
+    GITHUB_USER_AGENT, GithubRelease, activate_version, begin_staged_install,
+    complete_staged_install, download_with_progress, extract_tar_gz, normalize_version,
+    parse_sha256_digest, print_already_installed, print_installed, print_using,
+    remove_file_best_effort, version_cmp,
 };
 use crate::core::http::download_client;
 
 const PBS_RELEASES_URL: &str =
     "https://api.github.com/repos/indygreg/python-build-standalone/releases";
-
-#[derive(Debug, Deserialize)]
-struct GithubRelease {
-    assets: Vec<GithubAsset>,
-}
-
-#[derive(Debug, Deserialize)]
-struct GithubAsset {
-    name: String,
-    browser_download_url: String,
-    digest: Option<String>,
-}
 
 /// Python version info for available versions
 #[derive(Debug, Clone)]
@@ -69,6 +57,7 @@ impl PythonManager {
         let releases: Vec<GithubRelease> = self
             .client
             .get(format!("{PBS_RELEASES_URL}?per_page=10"))
+            .header("User-Agent", GITHUB_USER_AGENT)
             .send()
             .await
             .context("Failed to fetch Python releases from GitHub")?
@@ -150,7 +139,7 @@ impl PythonManager {
         let releases: Vec<GithubRelease> = self
             .client
             .get(PBS_RELEASES_URL)
-            .header("User-Agent", "omg-package-manager")
+            .header("User-Agent", GITHUB_USER_AGENT)
             .send()
             .await
             .context("Failed to fetch Python releases")?
@@ -172,7 +161,10 @@ impl PythonManager {
                 anyhow::anyhow!("Python {version} not found. Try: omg list python --available")
             })?;
 
-        let url = &asset.browser_download_url;
+        let url = asset
+            .browser_download_url
+            .as_deref()
+            .ok_or_else(|| anyhow::anyhow!("Python release asset has no browser download URL"))?;
         let asset_name = &asset.name;
         let checksum = asset
             .digest

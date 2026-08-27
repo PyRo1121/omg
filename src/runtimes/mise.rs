@@ -15,7 +15,6 @@ use crate::core::archive::stripped_archive_path;
 use crate::core::http::download_client;
 use anyhow::{Context, Result};
 use owo_colors::OwoColorize;
-use serde::Deserialize;
 use std::fs::{self, File};
 use std::io::{self, Write};
 #[cfg(unix)]
@@ -23,23 +22,13 @@ use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
-use super::common::{download_with_progress, parse_sha256_digest, remove_file_best_effort};
+use super::common::{
+    GITHUB_USER_AGENT, GithubRelease, download_with_progress, parse_sha256_digest,
+    remove_file_best_effort,
+};
 
 const MISE_GITHUB_RELEASES: &str = "https://github.com/jdx/mise/releases";
 const MISE_GITHUB_API: &str = "https://api.github.com/repos/jdx/mise";
-
-#[derive(Debug, Deserialize)]
-struct GithubRelease {
-    tag_name: String,
-    #[serde(default)]
-    assets: Vec<GithubAsset>,
-}
-
-#[derive(Debug, Deserialize)]
-struct GithubAsset {
-    name: String,
-    digest: Option<String>,
-}
 
 /// Mise runtime manager - bundled with OMG.
 pub(crate) struct MiseManager {
@@ -140,7 +129,7 @@ impl MiseManager {
         let release: GithubRelease = self
             .client
             .get(format!("{MISE_GITHUB_API}/releases/tags/v{version}"))
-            .header("User-Agent", "omg-package-manager")
+            .header("User-Agent", GITHUB_USER_AGENT)
             .send()
             .await
             .context("Failed to fetch mise release metadata")?
@@ -166,7 +155,7 @@ impl MiseManager {
         let release: GithubRelease = self
             .client
             .get(format!("{MISE_GITHUB_API}/releases/latest"))
-            .header("User-Agent", "omg-package-manager")
+            .header("User-Agent", GITHUB_USER_AGENT)
             .send()
             .await
             .context("Failed to fetch mise releases")?

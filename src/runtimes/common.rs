@@ -12,9 +12,28 @@ use std::path::{Path, PathBuf};
 use anyhow::{Context, Result};
 use indicatif::{ProgressBar, ProgressStyle};
 use owo_colors::OwoColorize;
+use serde::Deserialize;
 use sha2::{Digest, Sha256};
 
 use crate::core::archive::stripped_archive_path;
+
+pub(crate) const GITHUB_USER_AGENT: &str = "omg-package-manager/0.1";
+
+#[derive(Debug, Deserialize)]
+pub(crate) struct GithubRelease {
+    pub(crate) tag_name: String,
+    #[serde(default)]
+    pub(crate) prerelease: bool,
+    #[serde(default)]
+    pub(crate) assets: Vec<GithubAsset>,
+}
+
+#[derive(Debug, Deserialize)]
+pub(crate) struct GithubAsset {
+    pub(crate) name: String,
+    pub(crate) browser_download_url: Option<String>,
+    pub(crate) digest: Option<String>,
+}
 
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 // Bounded decompression
@@ -174,7 +193,7 @@ pub async fn download_with_progress(
 
     let response = client
         .get(url)
-        .header("User-Agent", "omg-package-manager/0.1")
+        .header("User-Agent", GITHUB_USER_AGENT)
         .send()
         .await
         .with_context(|| format!("Failed to connect to {}", extract_domain(url)))?;
@@ -975,6 +994,26 @@ mod tests {
         builder.finish().unwrap();
         drop(builder);
         bytes
+    }
+
+    #[test]
+    fn github_release_decodes_runtime_specific_payload_subsets() {
+        let minimal: GithubRelease = serde_json::from_str(
+            r#"{"tag_name":"v1.2.3","assets":[{"name":"runtime.zip","digest":"sha256:abc"}]}"#,
+        )
+        .unwrap();
+        assert!(!minimal.prerelease);
+        assert!(minimal.assets[0].browser_download_url.is_none());
+
+        let downloadable: GithubRelease = serde_json::from_str(
+            r#"{"tag_name":"v1.2.3","prerelease":true,"assets":[{"name":"runtime.tgz","browser_download_url":"https://example.invalid/runtime.tgz"}]}"#,
+        )
+        .unwrap();
+        assert!(downloadable.prerelease);
+        assert_eq!(
+            downloadable.assets[0].browser_download_url.as_deref(),
+            Some("https://example.invalid/runtime.tgz")
+        );
     }
 
     #[test]
