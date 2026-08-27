@@ -16,11 +16,11 @@ on:
   workflow_dispatch:
 
 concurrency:
-  group: ${{ github.workflow }}-${{ github.ref }}
-  cancel-in-progress: true
+  group: ${{ github.workflow }}-${{ github.event_name }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name != 'schedule' }}
 
 permissions:
-  contents: write
+  contents: read
 
 env:
   CARGO_TERM_COLOR: always
@@ -32,6 +32,9 @@ jobs:
     runs-on: ubuntu-latest
     container: archlinux:latest@sha256:b0deabeb3d283da2c7f7dbf0eea051b7b2cd0554e0b737cc457fd21683bdcdd1
     timeout-minutes: 30
+    outputs:
+      search_time: ${{ steps.bench.outputs.search_time }}
+      speedup: ${{ steps.bench.outputs.speedup }}
 
     steps:
       - name: Install Dependencies
@@ -82,7 +85,7 @@ jobs:
         uses: actions/cache@caa296126883cff596d87d8935842f9db880ef25 # v5
         with:
           path: target
-          key: bench-target-${{ hashFiles('**/Cargo.lock') }}-${{ hashFiles('src/**/*.rs') }}
+          key: bench-target-${{ hashFiles('**/Cargo.lock') }}
           restore-keys: |
             bench-target-${{ hashFiles('**/Cargo.lock') }}-
             bench-target-
@@ -148,31 +151,48 @@ jobs:
             benchmark_output.txt
           retention-days: 90
 
-      - name: Update Benchmark Results
-        if: github.ref == 'refs/heads/main'
+
+  commit-results:
+    name: Commit Benchmark Results
+    needs: benchmark
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+
+      - uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 # v7
+        with:
+          name: benchmark-report
+          path: benchmark-artifact
+
+      - name: Prepare benchmark history
         env:
-          BENCH_SPEEDUP: ${{ steps.bench.outputs.speedup }}
-          BENCH_SEARCH_TIME: ${{ steps.bench.outputs.search_time }}
+          BENCH_SPEEDUP: ${{ needs.benchmark.outputs.speedup }}
+          BENCH_SEARCH_TIME: ${{ needs.benchmark.outputs.search_time }}
         run: |
+          [[ "$BENCH_SEARCH_TIME" =~ ^[0-9]+([.][0-9]+)?$ ]]
+          [[ "$BENCH_SPEEDUP" =~ ^[0-9]+([.][0-9]+)?x$ ]]
+          test -f benchmark-artifact/benchmark_results/search.md
+          test -f benchmark-artifact/benchmark-badge.json
           mkdir -p benchmarks
 
-          TIMESTAMP=$(date +%Y%m%d_%H%M%S)
-          cp benchmark_results/search.md "benchmarks/report_${TIMESTAMP}.md"
-          cp benchmark_results/search.md benchmarks/latest.md
-          cp benchmark-badge.json benchmarks/badge.json
+          TIMESTAMP=$(date -u +%Y%m%d_%H%M%S)
+          cp benchmark-artifact/benchmark_results/search.md "benchmarks/report_${TIMESTAMP}.md"
+          cp benchmark-artifact/benchmark_results/search.md benchmarks/latest.md
+          cp benchmark-artifact/benchmark-badge.json benchmarks/badge.json
 
           jq -n \
-            --arg timestamp "$(date -Iseconds)" \
+            --arg timestamp "$(date -u -Iseconds)" \
             --argjson search_ms "$BENCH_SEARCH_TIME" \
             --arg speedup "$BENCH_SPEEDUP" \
             --arg commit "$GITHUB_SHA" \
             '{timestamp: $timestamp, search_ms: $search_ms, speedup: $speedup, commit: $commit}' \
             > benchmarks/summary.json
 
-      - name: Commit Benchmark Results
-        if: github.ref == 'refs/heads/main'
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      - name: Commit benchmark history
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
@@ -181,8 +201,5 @@ jobs:
             echo "No benchmark changes to commit"
             exit 0
           fi
-
           git commit -m "Update benchmark results [skip ci]"
-          git config credential.helper '!f() { echo username=x-access-token; echo "password=$GITHUB_TOKEN"; }; f'
           git push
-          git config --unset credential.helper

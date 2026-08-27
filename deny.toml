@@ -8,9 +8,10 @@
 
 [advisories]
 # Escalate unmaintained and unsound advisories only when they affect a direct
-# workspace crate. Vulnerabilities remain denied; yanked packages are reported.
+# workspace crate. Vulnerabilities and yanked packages are denied.
 unmaintained = "workspace"
 unsound = "workspace"
+yanked = "deny"
 ignore = [
   { id = "RUSTSEC-2023-0071", reason = "No patched rsa release; OMG performs public-key signature verification only, never network-observable private-key decryption" },
 ]

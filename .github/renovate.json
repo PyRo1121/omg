@@ -13,6 +13,17 @@
   "packageRules": [
     {
       "matchManagers": [
+        "github-actions"
+      ],
+      "matchUpdateTypes": [
+        "digest"
+      ],
+      "minimumReleaseAge": "7 days",
+      "automerge": false,
+      "description": "Require review and dwell time for action digest changes"
+    },
+    {
+      "matchManagers": [
         "cargo"
       ],
       "groupName": "Rust dependencies",

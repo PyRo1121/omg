@@ -267,7 +267,7 @@ jobs:
         uses: actions/cache@caa296126883cff596d87d8935842f9db880ef25 # v5
         with:
           path: target
-          key: v1-${{ matrix.platform }}-target-${{ hashFiles('**/Cargo.lock') }}-${{ hashFiles('src/**/*.rs') }}
+          key: v1-${{ matrix.platform }}-target-${{ hashFiles('**/Cargo.lock') }}
           restore-keys: |
             v1-${{ matrix.platform }}-target-${{ hashFiles('**/Cargo.lock') }}-
             v1-${{ matrix.platform }}-target-
@@ -422,7 +422,7 @@ jobs:
         uses: actions/cache@caa296126883cff596d87d8935842f9db880ef25 # v5
         with:
           path: target
-          key: v1-xsec-${{ matrix.platform }}-target-${{ hashFiles('**/Cargo.lock') }}-${{ hashFiles('src/**/*.rs') }}
+          key: v1-xsec-${{ matrix.platform }}-target-${{ hashFiles('**/Cargo.lock') }}
           restore-keys: |
             v1-xsec-${{ matrix.platform }}-target-
 
@@ -521,7 +521,6 @@ jobs:
           echo "| Quick Gate | $QUICK_GATE |" >> $GITHUB_STEP_SUMMARY
           echo "| Linux Matrix | $LINUX_MATRIX |" >> $GITHUB_STEP_SUMMARY
           echo "| macOS | $MACOS |" >> $GITHUB_STEP_SUMMARY
-          echo "| Integration | $INTEGRATION |" >> $GITHUB_STEP_SUMMARY
 
           if [[ "$QUICK_GATE" != "success" ]]; then
             echo "::error::Quick gate failed"
@@ -541,4 +540,3 @@ jobs:
 
           echo "" >> $GITHUB_STEP_SUMMARY
           echo "All required checks passed!" >> $GITHUB_STEP_SUMMARY
-# deploylint-gate-demo: touched protected path

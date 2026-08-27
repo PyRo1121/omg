@@ -73,7 +73,7 @@ jobs:
 
       - name: Generate dependency tree
         if: always()
-        run: cargo tree --depth 3 > dependency-tree.txt
+        run: cargo tree --locked --depth 3 > dependency-tree.txt
 
       - name: Upload dependency tree
         if: always()

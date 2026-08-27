@@ -80,9 +80,9 @@ jobs:
           git commit -m "docs: update changelog [skip ci]
 
           Auto-generated from git history with git-cliff."
+          trap 'git config --unset credential.helper >/dev/null 2>&1 || true' EXIT
           git config credential.helper '!f() { echo username=x-access-token; echo "password=$GITHUB_TOKEN"; }; f'
           git push origin HEAD:main
-          git config --unset credential.helper
 
       - name: Summary
         env:

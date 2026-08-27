@@ -135,6 +135,56 @@ mod privilege_escalation {
     }
 
     #[test]
+    fn dependency_and_workflow_updates_fail_closed() {
+        let renovate: serde_json::Value =
+            serde_json::from_str(include_str!("../.github/renovate.json"))
+                .expect("Renovate configuration must be JSON");
+        let action_rule = renovate["packageRules"]
+            .as_array()
+            .expect("package rules")
+            .iter()
+            .find(|rule| {
+                rule["matchManagers"]
+                    .as_array()
+                    .is_some_and(|items| items.iter().any(|item| item == "github-actions"))
+            })
+            .expect("GitHub Actions update rule");
+        assert_eq!(action_rule["automerge"], false);
+        assert_eq!(action_rule["minimumReleaseAge"], "7 days");
+
+        let deny = include_str!("../deny.toml");
+        assert!(
+            deny.contains("yanked = \"deny\""),
+            "yanked locked dependencies must fail cargo-deny"
+        );
+        let audit = include_str!("../.github/workflows/audit.yml");
+        assert!(
+            audit.contains("cargo tree --locked --depth 3"),
+            "dependency evidence must be generated from the reviewed lockfile"
+        );
+    }
+
+    #[test]
+    fn benchmark_code_runs_without_repository_write_credentials() {
+        let workflow = include_str!("../.github/workflows/benchmark.yml");
+        let (benchmark_job, commit_job) = workflow
+            .split_once("  commit-results:")
+            .expect("benchmark commit job must be isolated");
+        assert!(
+            benchmark_job.contains("permissions:\n  contents: read"),
+            "benchmark scripts must run under a read-only token"
+        );
+        assert!(
+            commit_job.contains("permissions:\n      contents: write"),
+            "only the result-commit job may receive repository write permission"
+        );
+        assert!(
+            !workflow.contains("credential.helper"),
+            "workflow must rely on checkout-managed credentials, not persistent token helpers"
+        );
+    }
+
+    #[test]
     fn release_archives_are_attested_before_approved_r2_promotion() {
         let workflow = include_str!("../.github/workflows/release.yml");
         assert!(
