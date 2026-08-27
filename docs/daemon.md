@@ -23,7 +23,7 @@ When the daemon starts, it resolves its operating environment and establishes a 
 The daemon maintains a comprehensive, thread-safe view of the system's package and runtime environment:
 
 - **In-Memory Cache (moka)**: A high-speed cache for recent search queries, package metadata, and system status results.
-- **Persistent Store (redb)**: An embedded, ACID-compliant database that ensures system status and audit logs survive reboots.
+- **Persistent Status Snapshot**: Versioned JSON published with a same-directory temporary file, `fsync`, and atomic rename. Audit logs remain a separate hash-chained owner-only file.
 - **Package Index**: A highly optimized, searchable index built from official repository databases, enabling sub-millisecond lookups.
 - **Runtime Registry**: A dynamic list of all installed language runtimes and their active versions.
 

@@ -85,8 +85,8 @@ This document provides a high-level overview of OMG's architecture, component in
 │              │  ┌──────────────────────────────┐  │                     │
 │              │  │        Persistence           │  │                     │
 │              │  │  ┌─────────┐ ┌────────────┐  │  │                     │
-│              │  │  │  redb   │ │ Binary     │  │  │                     │
-│              │  │  │  (ACID) │ │ Status     │  │  │                     │
+│              │  │  │ Atomic  │ │ Binary     │  │  │                     │
+│              │  │  │  JSON   │ │ Status     │  │  │                     │
 │              │  │  └─────────┘ └────────────┘  │  │                     │
 │              │  └──────────────────────────────┘  │                     │
 │              └────────────────┬───────────────────┘                     │
@@ -227,8 +227,8 @@ OMG uses a multi-tier caching architecture to eliminate the latency typically as
 ### 1. In-Memory (moka)
 The hottest data (recent searches, package details, system status) is kept in a concurrent, high-performance memory cache. This allows multiple CLI instances to share results instantly without hitting the disk.
 
-### 2. Persistent (redb)
-Data that should survive a reboot is stored in `redb`, an ACID-compliant embedded database. This includes your transaction history, audit logs, and pre-computed package indices.
+### 2. Persistent snapshots
+The daemon persists its latest status snapshot as versioned JSON using a same-directory temporary file, `fsync`, and atomic rename. Transaction history and the hash-chained audit log are separate owner-only files; package search indexes are rebuilt from native package-manager databases rather than treated as durable authority.
 
 ### 3. Binary Status
 A specialized binary status file is maintained by the daemon to store your system's "vital signs" (update counts, error status). This is what enables `omg-fast` to power your shell prompt with zero-allocation, zero-IPC reads.
@@ -251,7 +251,6 @@ The protocol supports a wide range of structured requests and responses:
 *   **Info**: Retrieve detailed metadata for a specific package.
 *   **Status**: Get the current system "vital signs" (package counts, updates).
 *   **SecurityAudit**: Trigger a vulnerability scan across installed packages.
-*   **Batch**: Combine multiple requests into a single IPC round-trip for maximum efficiency.
 *   **Explicit**: List packages installed by the user.
 *   **System Controls**: Commands for cache management, pings, and health checks.
 
@@ -259,7 +258,7 @@ The protocol supports a wide range of structured requests and responses:
 
 - **Serialization Latency**: ~10μs
 - **Round-trip Time**: ~100μs for cached data, ~1ms for fresh queries.
-- **Efficiency**: Batching allows the system to process multiple operations in a single kernel context switch.
+- **Efficiency**: Persistent connections can issue multiple individually framed requests without a duplicate batch protocol.
 
 ---
 
@@ -334,7 +333,7 @@ Runs every 300 seconds:
 3. Generate system status
 4. Update moka cache
 5. Write binary status file
-6. Persist to redb
+6. Atomically persist the versioned JSON status snapshot
 
 ### ALSA Scanner (Optional)
 

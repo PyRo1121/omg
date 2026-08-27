@@ -384,7 +384,7 @@ See the [latest benchmark report](benchmarks/latest.md) for comprehensive method
 OMG is split into two components:
 
 1. **`omg`**: A thin, high-performance CLI client.
-2. **`omgd`**: A persistent daemon that maintains an in-memory package index and handles redb persistence.
+2. **`omgd`**: A persistent daemon that maintains an in-memory package index and atomically publishes a versioned JSON status snapshot.
 
 Communication happens over a high-speed Unix Domain Socket using a custom binary protocol (Length-Delimited framing + Bitcode) for zero-latency communication.
 
