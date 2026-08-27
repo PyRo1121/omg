@@ -13,8 +13,6 @@ use std::path::{Path, PathBuf};
 use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
 
-const USAGE_SYNC_API: &str = "https://api.pyro1121.com/api/report-usage";
-
 /// Time saved per operation (in milliseconds)
 /// Based on benchmark comparisons vs traditional tools
 pub mod time_saved {
@@ -432,7 +430,7 @@ impl UsageStats {
 
         let client = crate::core::http::shared_client();
         client
-            .post(USAGE_SYNC_API)
+            .post(super::service_api::REPORT_USAGE)
             .json(&payload)
             .timeout(std::time::Duration::from_secs(5))
             .send()

@@ -813,9 +813,8 @@ mod integration_tests {
     /// Verify the license activation flow end-to-end without network.
     ///
     /// Product intent is FAIL-CLOSED: `tier_enum()` trusts only a JWT that
-    /// verifies against the (currently stub) Ed25519 key, so an offline cached
-    /// pro license keeps its stored identity but degrades to Free gating
-    /// (src/core/license.rs:39-44, 383-387).
+    /// verifies against the production Ed25519 key, so an offline cached pro
+    /// license without a token keeps its stored identity but degrades to Free.
     #[test]
     #[serial]
     fn test_license_activation_flow_mocked() -> Result<()> {
@@ -843,7 +842,7 @@ mod integration_tests {
         assert_eq!(stored.key, "OMG-PRO-TEST-1234");
         assert_eq!(stored.tier, "pro");
 
-        // ...but gating fails closed until the JWT verifies against a real key
+        // ...but gating fails closed because this fixture has no signed JWT.
         let tier = with_test_env(&[("OMG_DATA_DIR", &data_dir)], current_tier);
         assert_eq!(
             tier,
@@ -851,7 +850,7 @@ mod integration_tests {
             "an unverifiable paid license must degrade to Free gating"
         );
         let sbom_err = with_test_env(&[("OMG_DATA_DIR", &data_dir)], || require_feature("sbom"))
-            .expect_err("'sbom' must stay gated while the verification key is a stub");
+            .expect_err("'sbom' must stay gated without a verified token");
         let message = format!("{sbom_err:#}");
         assert!(
             message.contains("sbom") && message.contains("Pro tier"),

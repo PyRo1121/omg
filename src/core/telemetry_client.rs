@@ -11,7 +11,6 @@ use serde::{Deserialize, Serialize};
 
 use crate::core::license::get_machine_id;
 
-const BATCH_API_URL: &str = "https://api.pyro1121.com/api/cli/batch";
 const REQUEST_TIMEOUT: Duration = Duration::from_secs(5);
 
 // Circuit breaker constants
@@ -305,7 +304,7 @@ pub async fn send_batch(events: Vec<TelemetryEvent>) -> Result<()> {
     let client = crate::core::http::shared_client();
 
     let response = client
-        .post(BATCH_API_URL)
+        .post(super::service_api::CLI_BATCH)
         .json(&batch)
         .timeout(REQUEST_TIMEOUT)
         .send()

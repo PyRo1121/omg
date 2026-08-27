@@ -6,9 +6,8 @@
 //!
 //! Untestable offline (documented, not skipped silently): the *positive*
 //! path of `StoredLicense::verified_payload` requires an Ed25519 signature
-//! made by the production licensing key embedded in the binary
-//! (`STUB_JWT_VERIFICATION_KEY`). No externally-crafted token can verify
-//! against it, so tests pin the fail-closed behavior instead — which is the
+//! made by the production licensing key. Its private signing key is not a
+//! test fixture, so tests pin the fail-closed behavior instead — which is the
 //! security-relevant contract.
 
 pub mod common;

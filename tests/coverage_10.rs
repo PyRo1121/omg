@@ -7,9 +7,9 @@
 //!
 //! Known limitation (documented, not theater): the *enabled* side of the
 //! enhanced pipeline (`enqueue` → `save` → network flush) cannot be driven
-//! end-to-end in tests because `license::verify_jwt` verifies against a stub
-//! Ed25519 public key whose matching private key exists nowhere, so
-//! `is_enhanced_telemetry_enabled()` can never be true in a test process.
+//! end-to-end in tests because `license::verify_jwt` verifies against the
+//! production Ed25519 public key and its private key is not a test fixture, so
+//! `is_enhanced_telemetry_enabled()` cannot be true in a test process.
 //! The gate itself IS tested below from the disabled side.
 
 pub mod common;

@@ -79,7 +79,7 @@ export OMG_TELEMETRY=0
 
 ### Where is data sent?
 
-Data is sent to `api.pyro1121.com`. The telemetry endpoint only accepts:
+Data is sent to `omg-api.latham.cloud`. The telemetry endpoint only accepts:
 - Install counts (for GitHub badge)
 - Anonymous command usage patterns
 - Error reports with stack traces (no user data)

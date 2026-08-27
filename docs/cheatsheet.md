@@ -234,9 +234,6 @@ omg team push                   # Push local environment to team lock
 omg team pull                   # Pull team lock and check drift
 omg team members                # List members and sync state
 omg team dashboard              # Interactive team TUI
-omg team propose "Add Node 22"  # Propose environment changes
-omg team proposals              # List pending proposals
-omg team review 42 --approve    # Approve a proposal
 omg team golden-path create frontend-setup --node 20 --packages "eslint prettier"
 omg team golden-path list
 omg team compliance             # Check compliance status
@@ -394,7 +391,7 @@ omg workspace init my-monorepo  # Workspace management (see omg workspace --help
 omg hooks install               # Git hooks for env sync (see omg hooks --help)
 omg privacy status              # Privacy settings & data (GDPR/CCPA)
 omg license status              # License management (license-enabled builds)
-omg fleet push -m "Update"      # Enterprise fleet push (status/push only today)
+omg fleet status                # Enterprise fleet status
 omg stats                       # Usage statistics
 omg metrics                     # Prometheus-style metrics (Unix)
 omg dash                        # Interactive TUI dashboard (alias: omg d)

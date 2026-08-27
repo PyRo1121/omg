@@ -654,10 +654,9 @@ omg privacy [SUBCOMMAND]
 
 | Subcommand | Description |
 | ------------ | ------------- |
-| `status` | Show privacy policy summary and your current settings |
-| `export [-o <file>]` | Export all your data (Right to Portability) |
-| `delete --confirm` | Request deletion of all your data (requires confirmation) |
-| `opt-out` | Disable telemetry collection (keeps license functional) |
+| `status` | Show local privacy settings and the authenticated account-management URL |
+| `export [-o <file>]` | Export local OMG data |
+| `opt-out` | Disable telemetry collection |
 | `opt-in` | Re-enable telemetry collection |
 
 ---
@@ -1179,8 +1178,6 @@ omg team <SUBCOMMAND>
 | `members` | List team members |
 | `dashboard` | Interactive team TUI |
 | `roles list` | List available roles and permissions |
-| `propose` | Propose environment changes |
-| `review` | Review proposed changes |
 | `golden-path` | Manage setup templates |
 | `compliance` | Check compliance status |
 | `activity` | View team activity stream |
@@ -1205,12 +1202,6 @@ omg team pull
 
 # List members
 omg team members
-
-# Propose a change
-omg team propose "Add Node.js 22 for new features"
-
-# Review proposals
-omg team review 42 --approve
 
 # Create golden path template
 omg team golden-path create frontend-setup --node 20 --packages "eslint prettier"
@@ -1373,19 +1364,12 @@ omg fleet <SUBCOMMAND>
 | Subcommand | Description |
 |------------|-------------|
 | `status` | Show fleet health across machines |
-| `push` | Push configuration to fleet |
 
 **Examples:**
 
 ```bash
 # View fleet status
 omg fleet status
-
-# Push config to all machines
-omg fleet push -m "Security update"
-
-# Push to specific team
-omg fleet push --team frontend
 ```
 
 **Status shows:**

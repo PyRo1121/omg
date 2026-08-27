@@ -30,7 +30,6 @@ use serde::{Deserialize, Serialize};
 
 use crate::core::telemetry_client::{CommandEvent, PerformanceEvent, SessionEvent, TelemetryEvent};
 
-const TELEMETRY_API_URL: &str = "https://api.pyro1121.com/api/install-ping";
 /// Maximum queue size before dropping old events
 const MAX_QUEUE_SIZE: usize = 5000;
 /// Persist queue to disk every N events
@@ -210,7 +209,7 @@ pub async fn ping_install() -> Result<()> {
     // Send ping with timeout
     let client = crate::core::http::shared_client();
     let response = client
-        .post(TELEMETRY_API_URL)
+        .post(super::service_api::INSTALL_PING)
         .json(&payload)
         .timeout(std::time::Duration::from_secs(5))
         .send()

@@ -923,16 +923,15 @@ fn handle_config_command(command: Option<&omg_lib::cli::ConfigCommands>) -> Resu
     }
 }
 
-async fn handle_privacy_command(command: Option<&omg_lib::cli::PrivacyCommands>) -> Result<()> {
+fn handle_privacy_command(command: Option<&omg_lib::cli::PrivacyCommands>) -> Result<()> {
     use omg_lib::cli::PrivacyCommands;
     use omg_lib::cli::telemetry;
 
     match command {
-        Some(PrivacyCommands::Status) | None => telemetry::privacy_status().await,
-        Some(PrivacyCommands::Export { output }) => telemetry::export_data(output.as_deref()).await,
-        Some(PrivacyCommands::Delete { confirm }) => telemetry::delete_data(*confirm).await,
-        Some(PrivacyCommands::OptOut) => telemetry::opt_out_api().await,
-        Some(PrivacyCommands::OptIn) => telemetry::opt_in_api().await,
+        Some(PrivacyCommands::Status) | None => telemetry::privacy_status(),
+        Some(PrivacyCommands::Export { output }) => telemetry::export_data(output.as_deref()),
+        Some(PrivacyCommands::OptOut) => telemetry::opt_out_api(),
+        Some(PrivacyCommands::OptIn) => telemetry::opt_in_api(),
     }
 }
 
@@ -1220,7 +1219,7 @@ async fn dispatch_command(command: &Commands, ctx: &omg_lib::cli::CliContext) ->
             commands::daemon(*foreground)?;
         }
         Commands::Config { command } => handle_config_command(command.as_ref())?,
-        Commands::Privacy { command } => handle_privacy_command(command.as_ref()).await?,
+        Commands::Privacy { command } => handle_privacy_command(command.as_ref())?,
         Commands::SelfUpdate { force, version } => {
             omg_lib::cli::self_update::run(*force, version.clone()).await?;
         }

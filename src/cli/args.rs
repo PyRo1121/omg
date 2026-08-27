@@ -771,17 +771,11 @@ pub enum ConfigCommands {
 pub enum PrivacyCommands {
     /// Show privacy policy summary and your current settings
     Status,
-    /// Export all your data (Right to Portability)
+    /// Export local OMG data
     Export {
         /// Output file path (default: omg-data-export-YYYY-MM-DD.json)
         #[arg(short, long)]
         output: Option<String>,
-    },
-    /// Request deletion of all your data (Right to Erasure)
-    Delete {
-        /// Confirm data deletion (required for destructive action)
-        #[arg(long)]
-        confirm: bool,
     },
     /// Disable telemetry collection (keeps license functional)
     #[command(name = "opt-out")]
@@ -867,26 +861,6 @@ pub enum TeamCommands {
     Roles {
         #[command(subcommand)]
         command: TeamRoleCommands,
-    },
-    /// Propose environment changes for review
-    Propose {
-        /// Message describing the changes
-        message: String,
-    },
-
-    /// List pending team proposals
-    Proposals,
-
-    /// Review and approve/reject a proposal
-    Review {
-        /// Proposal ID
-        id: u32,
-        /// Approve the proposal
-        #[arg(long)]
-        approve: bool,
-        /// Request changes
-        #[arg(long)]
-        request_changes: Option<String>,
     },
     /// Manage golden path templates
     GoldenPath {
@@ -1204,15 +1178,6 @@ pub enum MigrateCommands {
 pub enum FleetCommands {
     /// Show fleet status across all machines
     Status,
-    /// Push configuration to fleet
-    Push {
-        /// Target team (or all)
-        #[arg(short, long)]
-        team: Option<String>,
-        /// Message describing the push
-        #[arg(short, long)]
-        message: Option<String>,
-    },
 }
 
 #[derive(Subcommand, Debug)]

@@ -51,9 +51,6 @@ impl LocalCommandRunner for TeamCommands {
             TeamCommands::Roles { command } => match command {
                 TeamRoleCommands::List => roles::list(ctx),
             },
-            TeamCommands::Propose { message } => propose(message, ctx).await,
-            TeamCommands::Proposals => list_proposals(ctx).await,
-            TeamCommands::Review { id, approve, .. } => review(*id, *approve, ctx).await,
             TeamCommands::GoldenPath { command } => match command {
                 GoldenPathCommands::Create {
                     name,
@@ -388,92 +385,6 @@ pub mod roles {
 
         Ok(())
     }
-}
-
-/// Propose environment changes for review
-pub async fn propose(message: &str, _ctx: &CliContext) -> Result<()> {
-    license::require_feature("team-sync")?;
-
-    execute_cmd(Components::loading("Creating proposal..."));
-
-    // Capture current environment state for the proposal
-    let packages = crate::package_managers::list_explicit_fast()
-        .context("Failed to list explicitly installed packages for the proposal")?;
-
-    let state = serde_json::json!({
-        "environment": crate::core::env::fingerprint::EnvironmentState::capture().await?,
-        "packages": packages,
-    });
-
-    let proposal_id = license::propose_change(message, &state).await?;
-
-    execute_cmd(Cmd::batch([
-        Cmd::success(format!("Proposal #{proposal_id} created")),
-        Components::kv_list(
-            Some("Proposal Details"),
-            vec![
-                ("ID", &proposal_id.to_string()),
-                ("Message", &message.to_string()),
-            ],
-        ),
-        Cmd::spacer(),
-        Cmd::info("Notified reviewers for approval"),
-        Cmd::info(format!("Check status with: omg team review {proposal_id}")),
-    ]));
-
-    Ok(())
-}
-
-/// Review and approve/reject a proposal
-pub async fn review(proposal_id: u32, approve: bool, _ctx: &CliContext) -> Result<()> {
-    license::require_feature("team-sync")?;
-
-    let status = if approve { "approved" } else { "rejected" };
-    let status_str = if approve { "APPROVE" } else { "REJECT" };
-
-    execute_cmd(Components::loading(format!(
-        "Reviewing proposal #{proposal_id} -> {status_str}..."
-    )));
-
-    license::review_proposal(proposal_id, status).await?;
-
-    execute_cmd(Cmd::success("Proposal status updated"));
-    Ok(())
-}
-
-/// List pending team proposals
-pub async fn list_proposals(_ctx: &CliContext) -> Result<()> {
-    license::require_feature("team-sync")?;
-
-    let proposals = license::fetch_proposals().await?;
-
-    if proposals.is_empty() {
-        execute_cmd(Cmd::batch([
-            Cmd::header("Team Proposals", "No pending proposals"),
-            Cmd::spacer(),
-        ]));
-        return Ok(());
-    }
-
-    let mut proposal_list = vec![];
-    for p in &proposals {
-        let id = p["id"].as_u64().unwrap_or(0);
-        let status = p["status"].as_str().unwrap_or("pending");
-        let msg = p["message"].as_str().unwrap_or("");
-        let email = p["creator_email"].as_str().unwrap_or("unknown");
-        let date = p["created_at"].as_str().unwrap_or("");
-
-        proposal_list.push(format!("#{id} [{status}] {msg} - {email}"));
-        proposal_list.push(format!("  Created: {date}"));
-    }
-
-    execute_cmd(Cmd::batch([
-        Cmd::header("Team Proposals", format!("{} proposal(s)", proposals.len())),
-        Cmd::spacer(),
-        Cmd::card("Pending Proposals", proposal_list),
-    ]));
-
-    Ok(())
 }
 
 /// Manage golden path templates

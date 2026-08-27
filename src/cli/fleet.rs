@@ -4,15 +4,12 @@ use crate::cli::components::Components;
 use crate::cli::tea::Cmd;
 use crate::cli::{CliContext, FleetCommands, LocalCommandRunner};
 use crate::core::license;
-use anyhow::{Context, Result};
+use anyhow::Result;
 
 impl LocalCommandRunner for FleetCommands {
     async fn execute(&self, ctx: &CliContext) -> Result<()> {
         match self {
             FleetCommands::Status => status(ctx).await,
-            FleetCommands::Push { team, message } => {
-                push(team.as_deref(), message.as_deref(), ctx).await
-            }
         }
     }
 }
@@ -92,131 +89,8 @@ pub async fn status(_ctx: &CliContext) -> Result<()> {
     Ok(())
 }
 
-/// Push configuration to fleet
-pub async fn push(team: Option<&str>, message: Option<&str>, _ctx: &CliContext) -> Result<()> {
-    use crate::cli::packages::execute_cmd;
-
-    if let Some(t) = team {
-        // SECURITY: Validate team identifier
-        if t.chars()
-            .any(|c| !c.is_ascii_alphanumeric() && c != '/' && c != '-' && c != '_')
-        {
-            execute_cmd(Components::error_with_suggestion(
-                "Invalid team identifier",
-                "Team IDs must be alphanumeric with /, -, or _ allowed",
-            ));
-            anyhow::bail!("Invalid team identifier");
-        }
-    }
-    if let Some(m) = message {
-        // SECURITY: Validate message
-        if m.len() > 1000 {
-            execute_cmd(Cmd::error("Push message too long (max 1000 characters)"));
-            anyhow::bail!("Push message too long");
-        }
-    }
-
-    license::require_feature("fleet")?;
-
-    let target = team.unwrap_or("all machines");
-    let msg = message.unwrap_or("Fleet push");
-
-    execute_cmd(Components::loading(format!("Pushing to {target}...")));
-
-    // Fetch members to get a real count
-    let members = license::fetch_team_members().await?;
-    let count = members.len();
-
-    let lock_path = std::path::Path::new("omg.lock");
-    let lock_content = if lock_path.exists() {
-        std::fs::read_to_string(lock_path).context("Failed to read omg.lock")?
-    } else {
-        execute_cmd(Cmd::warning(
-            "No omg.lock found, capturing current state...",
-        ));
-        String::new()
-    };
-
-    let push_result = crate::core::http::shared_client()
-        .post("https://api.pyro1121.com/api/fleet/push")
-        .json(&serde_json::json!({
-            "team": target,
-            "message": msg,
-            "lock_content": lock_content,
-            "machine_count": count
-        }))
-        .timeout(std::time::Duration::from_secs(30))
-        .send()
-        .await;
-
-    match push_result {
-        Ok(res) => {
-            let status = res.status().as_u16();
-            if let Err(e) = fleet_push_http_outcome(status) {
-                execute_cmd(Cmd::error(e.to_string()));
-                return Err(e);
-            }
-        }
-        Err(e) => {
-            // Network error
-            execute_cmd(Cmd::error(format!(
-                "Failed to connect to fleet server: {e}"
-            )));
-            anyhow::bail!("Failed to connect to fleet server: {e}");
-        }
-    }
-
-    execute_cmd(Cmd::batch([
-        Cmd::success("Push complete!"),
-        Components::kv_list(
-            Some("Push Summary"),
-            vec![
-                ("Target", target.to_string()),
-                ("Machines in fleet", count.to_string()),
-                ("Message", msg.to_string()),
-            ],
-        ),
-    ]));
-
-    Ok(())
-}
-
-fn fleet_push_http_outcome(status: u16) -> Result<()> {
-    if (200..300).contains(&status) {
-        Ok(())
-    } else if status == 404 {
-        anyhow::bail!("Fleet API endpoint not found (404)")
-    } else {
-        anyhow::bail!("Fleet push failed: {status}")
-    }
-}
-
 fn generate_health_bar(pct: f32) -> String {
     let filled = ((pct / 10.0).round() as usize).min(10);
     let empty = 10 - filled;
     format!("{}{}", "█".repeat(filled), "░".repeat(empty))
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn fleet_push_rejects_missing_endpoint() {
-        let err =
-            fleet_push_http_outcome(404).expect_err("404 must not look like a successful push");
-        assert!(err.to_string().contains("404"), "got: {err}");
-    }
-
-    #[test]
-    fn fleet_push_rejects_server_errors() {
-        let err = fleet_push_http_outcome(503).expect_err("5xx must fail the push");
-        assert!(err.to_string().contains("503"), "got: {err}");
-    }
-
-    #[test]
-    fn fleet_push_accepts_success() {
-        assert!(fleet_push_http_outcome(200).is_ok());
-        assert!(fleet_push_http_outcome(204).is_ok());
-    }
 }

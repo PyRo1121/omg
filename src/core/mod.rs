@@ -22,6 +22,7 @@ pub mod privilege;
 pub mod runtime_resolver;
 pub mod safe_ops;
 pub mod security;
+pub mod service_api;
 #[cfg(unix)]
 pub mod sudoloop;
 pub mod sysinfo;

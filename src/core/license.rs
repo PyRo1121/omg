@@ -20,28 +20,18 @@ use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
 use std::str::FromStr;
 use std::sync::OnceLock;
-use std::sync::atomic::{AtomicBool, Ordering};
 
-const LICENSE_API_URL: &str = "https://api.pyro1121.com/api/validate-license";
-const LICENSE_TOKEN_ISSUER: &str = "https://omg-api.latham.cloud";
+const LICENSE_TOKEN_ISSUER: &str = super::service_api::ORIGIN;
 const LICENSE_TOKEN_AUDIENCE: &str = "omg-cli";
-const MEMBERS_API_URL: &str = "https://api.pyro1121.com/api/license/members";
-const POLICIES_API_URL: &str = "https://api.pyro1121.com/api/license/policies";
-const AUDIT_API_URL: &str = "https://api.pyro1121.com/api/license/audit";
-const TEAM_PROPOSE_API_URL: &str = "https://api.pyro1121.com/api/team/propose";
-const TEAM_REVIEW_API_URL: &str = "https://api.pyro1121.com/api/team/review";
-const TEAM_PROPOSALS_API_URL: &str = "https://api.pyro1121.com/api/team/proposals";
 
-/// Ed25519 public key used for JWT verification.
+/// Production Ed25519 public key used for offline license-token verification.
 ///
-/// STUB: this is NOT a real licensing key — the base64 body is filler
-/// (`f9Of6Of6…`) and no token can ever verify against it. Until it is
-/// replaced by the production key (build-time injected), every paid-tier
-/// license fails closed to [`Tier::Free`]. The name keeps that stub status
-/// visible at every use site.
-const STUB_JWT_VERIFICATION_KEY: &[u8] = b"-----BEGIN PUBLIC KEY-----
-MCowBQYDK2VwAyEAf9Of6Of6Of6Of6Of6Of6Of6Of6Of6Of6Of6Of6Of6Of6
------END PUBLIC KEY-----";
+/// The matching public artifact is published at
+/// `https://omg.latham.cloud/.well-known/omg-license-ed25519-v1.pem`.
+const LICENSE_JWT_VERIFICATION_KEY: &[u8] = b"-----BEGIN PUBLIC KEY-----
+MCowBQYDK2VwAyEA0TzkAlaX2+uVvrUh0VE4LO9HjBtDx7dt469do025EKg=
+-----END PUBLIC KEY-----
+";
 
 /// License tiers (ordered by level)
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
@@ -398,8 +388,6 @@ impl StoredLicense {
 }
 
 static MACHINE_ID: OnceLock<String> = OnceLock::new();
-/// Emit the stub-key warning once per process instead of on every check.
-static STUB_JWT_VERIFICATION_WARNED: AtomicBool = AtomicBool::new(false);
 
 /// Get machine fingerprint for license binding.
 #[must_use]
@@ -469,16 +457,7 @@ fn sha256_hex(data: &[u8]) -> String {
 /// https://www.rfc-editor.org/rfc/rfc8725#name-algorithm-verification
 /// https://docs.rs/jsonwebtoken/latest/jsonwebtoken/struct.Validation.html
 fn verify_jwt(token: &str) -> Option<JwtPayload> {
-    // Fail closed against the stub key, but say so once per process so the
-    // silent downgrade of every paid tier is observable.
-    if !STUB_JWT_VERIFICATION_WARNED.swap(true, Ordering::Relaxed) {
-        tracing::warn!(
-            "License verification is running against a STUB public key; \
-             paid-tier licenses cannot verify and will degrade to Free"
-        );
-    }
-
-    verify_jwt_with_key(token, STUB_JWT_VERIFICATION_KEY)
+    verify_jwt_with_key(token, LICENSE_JWT_VERIFICATION_KEY)
 }
 
 fn pem_der(pem: &[u8], begin: &str, end: &str) -> Result<Vec<u8>> {
@@ -665,7 +644,7 @@ pub async fn validate_license_with_user(
     );
 
     let response = crate::core::http::shared_client()
-        .post(LICENSE_API_URL)
+        .post(super::service_api::VALIDATE_LICENSE)
         .json(&payload)
         .timeout(std::time::Duration::from_secs(10))
         .send()
@@ -735,7 +714,7 @@ async fn licensed_get<T: serde::de::DeserializeOwned>(
 /// Fetch team members associated with this license
 pub async fn fetch_team_members() -> Result<Vec<TeamMember>> {
     licensed_get(
-        MEMBERS_API_URL,
+        super::service_api::TEAM_MEMBERS,
         "Team features require Team or Enterprise tier",
         "team members",
     )
@@ -745,7 +724,7 @@ pub async fn fetch_team_members() -> Result<Vec<TeamMember>> {
 /// Fetch enterprise policies associated with this license
 pub async fn fetch_policies() -> Result<Vec<PolicyRule>> {
     licensed_get(
-        POLICIES_API_URL,
+        super::service_api::TEAM_POLICIES,
         "Policy features require Enterprise tier",
         "policies",
     )
@@ -755,86 +734,9 @@ pub async fn fetch_policies() -> Result<Vec<PolicyRule>> {
 /// Fetch audit logs associated with this license
 pub async fn fetch_audit_logs() -> Result<Vec<AuditLogEntry>> {
     licensed_get(
-        AUDIT_API_URL,
+        super::service_api::TEAM_AUDIT_LOG,
         "Audit logs require Team or Enterprise tier",
         "audit logs",
-    )
-    .await
-}
-
-/// POST to a team API endpoint, mapping non-success statuses to `{action}`
-/// errors. The caller is responsible for embedding its credentials in
-/// `body`; returns the raw response so each caller can parse the shape it
-/// expects.
-async fn licensed_post(
-    url: &str,
-    body: serde_json::Value,
-    action: &str,
-) -> Result<reqwest::Response> {
-    let response = crate::core::http::shared_client()
-        .post(url)
-        .json(&body)
-        .timeout(std::time::Duration::from_secs(10))
-        .send()
-        .await
-        .context("Failed to connect to license server")?;
-
-    if !response.status().is_success() {
-        let err: serde_json::Value = response.json().await.unwrap_or_default();
-        anyhow::bail!(
-            "Failed to {action}: {}",
-            err["error"].as_str().unwrap_or("Unknown error")
-        );
-    }
-
-    Ok(response)
-}
-
-/// Propose an environment change to the team
-pub async fn propose_change(message: &str, state: &serde_json::Value) -> Result<u32> {
-    let license = require_license()?;
-    let body = serde_json::json!({
-        "key": license.key,
-        "message": message,
-        "state": state
-    });
-
-    let res: serde_json::Value = licensed_post(TEAM_PROPOSE_API_URL, body, "create proposal")
-        .await?
-        .json()
-        .await
-        .context("Failed to parse proposal response")?;
-
-    parse_proposal_id(&res)
-}
-
-fn parse_proposal_id(response: &serde_json::Value) -> Result<u32> {
-    let proposal_id = response
-        .get("proposal_id")
-        .and_then(serde_json::Value::as_u64)
-        .context("Proposal response is missing a valid proposal_id")?;
-    u32::try_from(proposal_id)
-        .with_context(|| format!("Proposal ID {proposal_id} exceeds u32 range"))
-}
-
-/// Review a team proposal
-pub async fn review_proposal(proposal_id: u32, status: &str) -> Result<()> {
-    let license = require_license()?;
-    let body = serde_json::json!({
-        "key": license.key,
-        "proposal_id": proposal_id,
-        "status": status
-    });
-    licensed_post(TEAM_REVIEW_API_URL, body, "review proposal").await?;
-    Ok(())
-}
-
-/// Fetch team proposals
-pub async fn fetch_proposals() -> Result<Vec<serde_json::Value>> {
-    licensed_get(
-        TEAM_PROPOSALS_API_URL,
-        "Failed to fetch proposals",
-        "proposals",
     )
     .await
 }
@@ -942,6 +844,7 @@ pub fn features_for_tier(tier: Tier) -> Vec<&'static Feature> {
 mod tests {
     use super::*;
 
+    // gitleaks:allow -- deterministic test-only Ed25519 fixture
     const TEST_PRIVATE_KEY: &[u8] = b"-----BEGIN PRIVATE KEY-----\nMC4CAQAwBQYDK2VwBCIEIIx/ifT0yOyJ/SykVkxxVR4zdDCep94lm3xLOyNn83kM\n-----END PRIVATE KEY-----\n";
     const TEST_PUBLIC_KEY: &[u8] = b"-----BEGIN PUBLIC KEY-----\nMCowBQYDK2VwAyEAniF8d18mTVtOAi1msyk1sPU6smSFhAiiTRpLgzcFEEs=\n-----END PUBLIC KEY-----\n";
 
@@ -971,6 +874,14 @@ mod tests {
             ),
         )
         .expect("test token must encode")
+    }
+
+    #[test]
+    fn production_verification_key_matches_published_fingerprint() {
+        assert_eq!(
+            sha256_hex(LICENSE_JWT_VERIFICATION_KEY),
+            "8bf0749afe4761500cb47a370cef66f1ab4c88415a1298c4481ead53ac4bc13c"
+        );
     }
 
     #[test]
@@ -1072,13 +983,6 @@ mod tests {
             .mode()
             & 0o777;
         assert_eq!(mode, 0o600);
-    }
-
-    #[test]
-    fn malformed_proposal_response_is_rejected() {
-        let error = parse_proposal_id(&serde_json::json!({}))
-            .expect_err("missing proposal ID must be rejected");
-        assert!(error.to_string().contains("missing a valid proposal_id"));
     }
 
     #[test]

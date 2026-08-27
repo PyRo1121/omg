@@ -2,7 +2,7 @@
 
 **Stop switching between 7 package managers.**
 
-![Installs](https://img.shields.io/endpoint?url=https://api.pyro1121.com/api/badge/installs&style=flat-square&cacheSeconds=60)
+![Installs](https://img.shields.io/endpoint?url=https://omg-api.latham.cloud/api/badge/installs&style=flat-square&cacheSeconds=60)
 [![Benchmark](https://img.shields.io/badge/search-5--11ms%20(12--24x%20faster)-brightgreen?style=flat-square)](benchmark.sh)
 [![codecov](https://codecov.io/gh/pyro1121/omg/branch/main/graph/badge.svg?style=flat-square)](https://codecov.io/gh/pyro1121/omg)
 [![License](https://img.shields.io/badge/license-AGPL--3.0--or--later-blue?style=flat-square)](LICENSE)

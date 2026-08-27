@@ -693,7 +693,7 @@ setup_telemetry() {
   printf "  • Error reports (helps us fix bugs)\\n"
   printf "\\n"
   printf "  ${DIM}No personal information, file contents, or package names collected.${RESET}\\n"
-  printf "  ${DIM}Data is sent to api.pyro1121.com. You can opt out at any time.${RESET}\\n"
+  printf "  ${DIM}Data is sent to omg-api.latham.cloud. You can opt out at any time.${RESET}\\n"
   printf "\\n"
 
   # Ask for consent; non-interactive runs default to opted-out.
