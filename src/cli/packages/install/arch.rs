@@ -413,6 +413,7 @@ fn handle_missing_package(
                     &[new_pkg],
                     yes,
                     false,
+                    false,
                     replacement_hops - 1,
                 )
                 .await;

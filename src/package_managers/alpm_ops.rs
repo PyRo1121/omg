@@ -537,9 +537,9 @@ fn prepare_alpm_transaction<'a>(
                     tracing::warn!("Package '{pkg_name}' is not installed; skipping removal");
                 }
             } else {
-                if pkg_name.contains(".pkg.tar.") || std::path::Path::new(&pkg_name).is_absolute() {
-                    let canonical_path = std::fs::canonicalize(&pkg_name)
-                        .context("Failed to canonicalize package path")?;
+                if crate::core::security::is_local_package_file(&pkg_name) {
+                    let canonical_path =
+                        crate::core::security::validate_local_package_file(&pkg_name)?;
                     let canonical_str = canonical_path
                         .to_str()
                         .context("Package path contains invalid UTF-8")?;

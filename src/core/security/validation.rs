@@ -2,6 +2,8 @@
 //!
 //! Prevents command injection, path traversal, and other input-based attacks.
 
+#[cfg(unix)]
+use anyhow::Context as _;
 use thiserror::Error;
 
 const MAX_PACKAGE_NAME_LENGTH: usize = 255;
@@ -189,6 +191,71 @@ pub fn is_local_package_file(name: &str) -> bool {
     }
 
     true
+}
+
+/// Resolve a local package archive through an ownership and mode boundary.
+///
+/// The archive and its immediate directory must be owned by root or the
+/// invoking user and must not be group/world writable. Symlinks are rejected
+/// before canonicalization so another local account cannot swap the root-bound
+/// artifact through a writable directory between validation and ALPM loading.
+#[cfg(unix)]
+pub fn validate_local_package_file(path: &str) -> anyhow::Result<std::path::PathBuf> {
+    use std::os::unix::fs::MetadataExt;
+
+    anyhow::ensure!(
+        is_local_package_file(path),
+        "not a supported local package archive path"
+    );
+    let input = std::path::Path::new(path);
+    let link_metadata = std::fs::symlink_metadata(input)
+        .map_err(|error| anyhow::anyhow!("Cannot inspect local package archive {path}: {error}"))?;
+    anyhow::ensure!(
+        !link_metadata.file_type().is_symlink(),
+        "local package archive must not be a symlink: {path}"
+    );
+
+    let canonical = std::fs::canonicalize(input)
+        .map_err(|error| anyhow::anyhow!("Cannot resolve local package archive {path}: {error}"))?;
+    let metadata = std::fs::metadata(&canonical)?;
+    anyhow::ensure!(
+        metadata.is_file(),
+        "local package archive is not a regular file: {}",
+        canonical.display()
+    );
+
+    let effective_uid = rustix::process::geteuid().as_raw();
+    let invoking_uid = if effective_uid == 0 {
+        std::env::var("SUDO_UID")
+            .ok()
+            .and_then(|value| value.parse::<u32>().ok())
+            .unwrap_or(0)
+    } else {
+        effective_uid
+    };
+    let owner_allowed = |uid| uid == 0 || uid == invoking_uid;
+    anyhow::ensure!(
+        owner_allowed(metadata.uid()),
+        "local package archive is owned by an untrusted user"
+    );
+    anyhow::ensure!(
+        metadata.mode() & 0o022 == 0,
+        "local package archive must not be group/world writable"
+    );
+
+    let parent = canonical
+        .parent()
+        .context("local package archive has no parent directory")?;
+    let parent_metadata = std::fs::metadata(parent)?;
+    anyhow::ensure!(
+        owner_allowed(parent_metadata.uid()),
+        "local package directory is owned by an untrusted user"
+    );
+    anyhow::ensure!(
+        parent_metadata.mode() & 0o022 == 0,
+        "local package directory must not be group/world writable"
+    );
+    Ok(canonical)
 }
 
 /// Validates a package name or local package file path

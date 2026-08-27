@@ -69,6 +69,9 @@ pub enum Commands {
         /// Show what would be installed without making changes
         #[arg(long)]
         dry_run: bool,
+        /// Explicitly permit installation from local package archives
+        #[arg(long)]
+        allow_local_file: bool,
     },
 
     /// Remove packages (with optional dependency cleanup)

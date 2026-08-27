@@ -418,7 +418,7 @@ impl App {
     // state) so the event loop can spawn them without borrowing the model.
     pub async fn install_package(package_name: &str) -> Result<()> {
         let packages = vec![package_name.to_string()];
-        crate::cli::packages::install(&packages, false, false).await
+        crate::cli::packages::install(&packages, false, false, false).await
     }
 
     pub async fn update_system() -> Result<()> {

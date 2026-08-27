@@ -198,7 +198,7 @@ pub async fn import(manifest_path: &str, dry_run: bool) -> Result<()> {
     if !to_install.is_empty() {
         println!();
         println!("    Installing {} packages...", to_install.len());
-        if let Err(e) = crate::cli::packages::install(&to_install, true, false).await {
+        if let Err(e) = crate::cli::packages::install(&to_install, true, false, false).await {
             println!(
                 "      {} Package installation failed: {e}",
                 style::maybe_color("✗", |t| t.red().to_string())

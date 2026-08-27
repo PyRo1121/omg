@@ -220,6 +220,49 @@ mod security_validation {
     }
 
     #[test]
+    fn local_package_install_requires_explicit_consent() {
+        let output = std::process::Command::new(env!("CARGO_BIN_EXE_omg"))
+            .args(["install", "/var/tmp/untrusted.pkg.tar.zst"])
+            .output()
+            .expect("install command must execute");
+        let combined = format!(
+            "{}{}",
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr)
+        );
+
+        assert!(!output.status.success());
+        assert!(
+            combined.contains("--allow-local-file"),
+            "local archive refusal must name the explicit consent flag: {combined}"
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn local_package_archive_rejects_symlinks_and_writable_directories() {
+        use std::os::unix::fs::{PermissionsExt, symlink};
+
+        let secure = TempDir::new().expect("secure package directory");
+        let archive = secure.path().join("safe.pkg.tar.zst");
+        std::fs::write(&archive, b"archive").expect("write archive");
+        let validated = validate_local_package_file(archive.to_str().unwrap())
+            .expect("owner-only regular archive must pass");
+        assert_eq!(validated, archive.canonicalize().unwrap());
+
+        let link = secure.path().join("link.pkg.tar.zst");
+        symlink(&archive, &link).expect("create package symlink");
+        assert!(validate_local_package_file(link.to_str().unwrap()).is_err());
+
+        let writable = TempDir::new().expect("writable package directory");
+        std::fs::set_permissions(writable.path(), std::fs::Permissions::from_mode(0o777))
+            .expect("make directory writable");
+        let archive = writable.path().join("unsafe.pkg.tar.zst");
+        std::fs::write(&archive, b"archive").expect("write unsafe archive");
+        assert!(validate_local_package_file(archive.to_str().unwrap()).is_err());
+    }
+
+    #[test]
     fn test_local_package_file_validation() {
         // Valid
         assert!(is_local_package_file("/home/user/pkg.pkg.tar.zst"));

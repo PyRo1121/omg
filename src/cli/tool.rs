@@ -352,7 +352,7 @@ pub async fn install(name: &str) -> Result<()> {
         .interact()?;
 
     match selection {
-        0 => crate::cli::packages::install(&[name.to_string()], false, false).await,
+        0 => crate::cli::packages::install(&[name.to_string()], false, false, false).await,
         1 => install_managed("cargo", name, &tools_dir, &bin_dir).await,
         2 => install_managed("npm", name, &tools_dir, &bin_dir).await,
         3 => install_managed("pip", name, &tools_dir, &bin_dir).await,
@@ -398,7 +398,7 @@ async fn install_managed(manager: &str, pkg: &str, tools_dir: &Path, bin_dir: &P
             // Pacman installs globally, breaks isolation pattern but is preferred for OS tools
             // We just delegate and return
             pb.finish_and_clear();
-            return crate::cli::packages::install(&[pkg.to_string()], false, false).await;
+            return crate::cli::packages::install(&[pkg.to_string()], false, false, false).await;
         }
         "npm" => {
             // npm install --prefix <dir> <pkg>

@@ -1166,8 +1166,9 @@ async fn dispatch_command(command: &Commands, ctx: &omg_lib::cli::CliContext) ->
             packages: pkgs,
             yes,
             dry_run,
+            allow_local_file,
         } => {
-            packages::install(pkgs, *yes, *dry_run).await?;
+            packages::install(pkgs, *yes, *dry_run, *allow_local_file).await?;
         }
         Commands::Remove {
             packages: pkgs,

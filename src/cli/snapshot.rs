@@ -318,7 +318,7 @@ pub async fn restore(id: &str, dry_run: bool, yes: bool) -> Result<()> {
 
         if !to_install.is_empty() {
             println!("    Installing {} packages...", to_install.len());
-            crate::cli::packages::install(&to_install, true, false).await?;
+            crate::cli::packages::install(&to_install, true, false, false).await?;
         }
 
         if !to_remove.is_empty() {

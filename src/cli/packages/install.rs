@@ -26,8 +26,21 @@ mod generic;
 /// * `packages` - Package names to install
 /// * `yes` - Skip confirmation prompts
 /// * `dry_run` - Show what would be installed without actually installing
-pub async fn install(packages: &[String], yes: bool, dry_run: bool) -> Result<()> {
-    install_with_replacement_budget(packages, yes, dry_run, MAX_REPLACEMENT_HOPS).await
+/// * `allow_local_file` - Explicit consent for privileged local archive installation
+pub async fn install(
+    packages: &[String],
+    yes: bool,
+    dry_run: bool,
+    allow_local_file: bool,
+) -> Result<()> {
+    install_with_replacement_budget(
+        packages,
+        yes,
+        dry_run,
+        allow_local_file,
+        MAX_REPLACEMENT_HOPS,
+    )
+    .await
 }
 
 /// Entry point with an explicit interactive-replacement budget.
@@ -38,11 +51,20 @@ pub(crate) async fn install_with_replacement_budget(
     packages: &[String],
     yes: bool,
     dry_run: bool,
+    allow_local_file: bool,
     replacement_hops: u32,
 ) -> Result<()> {
     if packages.is_empty() {
         anyhow::bail!("No packages specified");
     }
+
+    let includes_local_file = packages
+        .iter()
+        .any(|package| crate::core::security::is_local_package_file(package));
+    anyhow::ensure!(
+        !includes_local_file || allow_local_file,
+        "Local package archives require explicit consent: pass --allow-local-file after reviewing the archive source"
+    );
 
     if dry_run {
         return install_dry_run(packages).await;
