@@ -99,7 +99,7 @@ fn local_package_history_records_the_name_parsed_from_inside_the_archive() {
     // The mock repo does not know this absolute path, so pm.install rejects it
     // and the install fails — but history MUST still be recorded, under the
     // name read from inside the archive by try_local_package_name.
-    let result = project.run(&["install", path_arg, "--yes"]);
+    let result = project.run(&["install", path_arg, "--allow-local-file", "--yes"]);
     result.assert_failure();
     result.assert_stderr_contains("not found in any repository");
 
@@ -131,7 +131,7 @@ fn unreadable_local_archive_falls_back_to_recording_the_raw_path() {
     write_corrupt_package(&pkg_path);
     let path_arg = pkg_path.to_str().expect("utf8 temp path");
 
-    let result = project.run(&["install", path_arg, "--yes"]);
+    let result = project.run(&["install", path_arg, "--allow-local-file", "--yes"]);
     result.assert_failure();
 
     let history = load_history(&project);
