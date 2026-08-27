@@ -360,7 +360,11 @@ pub struct AuditLogEntry {
 
 impl StoredLicense {
     fn verified_payload(&self) -> Option<JwtPayload> {
-        let payload = verify_jwt(self.token.as_deref()?)?;
+        self.verified_payload_with_key(LICENSE_JWT_VERIFICATION_KEY)
+    }
+
+    fn verified_payload_with_key(&self, verification_key: &[u8]) -> Option<JwtPayload> {
+        let payload = verify_jwt_with_key(self.token.as_deref()?, verification_key)?;
         if payload.lic != self.key {
             return None;
         }
@@ -456,10 +460,6 @@ fn sha256_hex(data: &[u8]) -> String {
 /// required among spec claims).
 /// https://www.rfc-editor.org/rfc/rfc8725#name-algorithm-verification
 /// https://docs.rs/jsonwebtoken/latest/jsonwebtoken/struct.Validation.html
-fn verify_jwt(token: &str) -> Option<JwtPayload> {
-    verify_jwt_with_key(token, LICENSE_JWT_VERIFICATION_KEY)
-}
-
 fn pem_der(pem: &[u8], begin: &str, end: &str) -> Result<Vec<u8>> {
     use base64::Engine as _;
 
@@ -850,15 +850,24 @@ mod tests {
 
     fn signed_test_token(issuer: &str, audience: &str) -> String {
         let now = jsonwebtoken::get_current_timestamp().cast_signed();
+        signed_test_token_with_claims(issuer, audience, None, now + 3600)
+    }
+
+    fn signed_test_token_with_claims(
+        issuer: &str,
+        audience: &str,
+        machine_id: Option<String>,
+        expires_at: i64,
+    ) -> String {
         let payload = JwtPayload {
             iss: issuer.to_string(),
             aud: audience.to_string(),
             sub: "customer-1".to_string(),
             tier: "pro".to_string(),
             features: vec!["sbom".to_string()],
-            exp: now + 3600,
-            iat: now,
-            mid: None,
+            exp: expires_at,
+            iat: jsonwebtoken::get_current_timestamp().cast_signed(),
+            mid: machine_id,
             lic: "license-1".to_string(),
         };
         jsonwebtoken::encode(
@@ -894,6 +903,55 @@ mod tests {
 
         let wrong_audience = signed_test_token(LICENSE_TOKEN_ISSUER, "another-client");
         assert!(verify_jwt_with_key(&wrong_audience, TEST_PUBLIC_KEY).is_none());
+    }
+
+    #[test]
+    fn license_tokens_enforce_expiry_and_machine_binding() {
+        let now = jsonwebtoken::get_current_timestamp().cast_signed();
+        let valid = signed_test_token_with_claims(
+            LICENSE_TOKEN_ISSUER,
+            LICENSE_TOKEN_AUDIENCE,
+            Some(get_machine_id()),
+            now + 3600,
+        );
+        let wrong_machine = signed_test_token_with_claims(
+            LICENSE_TOKEN_ISSUER,
+            LICENSE_TOKEN_AUDIENCE,
+            Some("different-machine".to_string()),
+            now + 3600,
+        );
+        let expired = signed_test_token_with_claims(
+            LICENSE_TOKEN_ISSUER,
+            LICENSE_TOKEN_AUDIENCE,
+            Some(get_machine_id()),
+            now - 3600,
+        );
+
+        let stored = |token| StoredLicense {
+            key: "license-1".to_string(),
+            tier: "pro".to_string(),
+            features: vec!["sbom".to_string()],
+            customer: None,
+            expires_at: None,
+            validated_at: now,
+            token: Some(token),
+            machine_id: Some(get_machine_id()),
+        };
+        assert!(
+            stored(valid)
+                .verified_payload_with_key(TEST_PUBLIC_KEY)
+                .is_some()
+        );
+        assert!(
+            stored(wrong_machine)
+                .verified_payload_with_key(TEST_PUBLIC_KEY)
+                .is_none()
+        );
+        assert!(
+            stored(expired)
+                .verified_payload_with_key(TEST_PUBLIC_KEY)
+                .is_none()
+        );
     }
 
     #[test]
