@@ -23,6 +23,8 @@ use std::sync::OnceLock;
 use std::sync::atomic::{AtomicBool, Ordering};
 
 const LICENSE_API_URL: &str = "https://api.pyro1121.com/api/validate-license";
+const LICENSE_TOKEN_ISSUER: &str = "https://omg-api.latham.cloud";
+const LICENSE_TOKEN_AUDIENCE: &str = "omg-cli";
 const MEMBERS_API_URL: &str = "https://api.pyro1121.com/api/license/members";
 const POLICIES_API_URL: &str = "https://api.pyro1121.com/api/license/policies";
 const AUDIT_API_URL: &str = "https://api.pyro1121.com/api/license/audit";
@@ -311,6 +313,8 @@ pub struct LicenseResponse {
 /// JWT payload structure (matches backend)
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct JwtPayload {
+    pub iss: String,           // trusted licensing Worker origin
+    pub aud: String,           // intended OMG CLI audience
     pub sub: String,           // customer_id
     pub tier: String,          // license tier
     pub features: Vec<String>, // enabled features
@@ -465,9 +469,6 @@ fn sha256_hex(data: &[u8]) -> String {
 /// https://www.rfc-editor.org/rfc/rfc8725#name-algorithm-verification
 /// https://docs.rs/jsonwebtoken/latest/jsonwebtoken/struct.Validation.html
 fn verify_jwt(token: &str) -> Option<JwtPayload> {
-    let mut validation = Validation::new(jsonwebtoken::Algorithm::EdDSA);
-    validation.validate_exp = true;
-
     // Fail closed against the stub key, but say so once per process so the
     // silent downgrade of every paid tier is observable.
     if !STUB_JWT_VERIFICATION_WARNED.swap(true, Ordering::Relaxed) {
@@ -477,7 +478,59 @@ fn verify_jwt(token: &str) -> Option<JwtPayload> {
         );
     }
 
-    let key = DecodingKey::from_ed_der(STUB_JWT_VERIFICATION_KEY);
+    verify_jwt_with_key(token, STUB_JWT_VERIFICATION_KEY)
+}
+
+fn pem_der(pem: &[u8], begin: &str, end: &str) -> Result<Vec<u8>> {
+    use base64::Engine as _;
+
+    let text = std::str::from_utf8(pem).context("PEM key is not UTF-8")?;
+    let body = text
+        .trim()
+        .strip_prefix(begin)
+        .and_then(|value| value.strip_suffix(end))
+        .context("PEM key has an unexpected label")?;
+    let encoded: String = body
+        .chars()
+        .filter(|character| !character.is_whitespace())
+        .collect();
+    base64::engine::general_purpose::STANDARD
+        .decode(encoded)
+        .context("PEM key body is not valid base64")
+}
+
+fn ed25519_public_key_from_pem(pem: &[u8]) -> Result<[u8; 32]> {
+    const ED25519_SPKI_PREFIX: &[u8] = &[
+        0x30, 0x2a, 0x30, 0x05, 0x06, 0x03, 0x2b, 0x65, 0x70, 0x03, 0x21, 0x00,
+    ];
+    let der = pem_der(
+        pem,
+        "-----BEGIN PUBLIC KEY-----",
+        "-----END PUBLIC KEY-----",
+    )?;
+    anyhow::ensure!(
+        der.len() == ED25519_SPKI_PREFIX.len() + 32 && der.starts_with(ED25519_SPKI_PREFIX),
+        "license public key is not an Ed25519 SubjectPublicKeyInfo key"
+    );
+    der[ED25519_SPKI_PREFIX.len()..]
+        .try_into()
+        .context("Ed25519 public key has an invalid length")
+}
+
+fn verify_jwt_with_key(token: &str, public_key_pem: &[u8]) -> Option<JwtPayload> {
+    let mut validation = Validation::new(jsonwebtoken::Algorithm::EdDSA);
+    validation.validate_exp = true;
+    validation.set_required_spec_claims(&["exp", "iss", "aud", "sub"]);
+    validation.set_issuer(&[LICENSE_TOKEN_ISSUER]);
+    validation.set_audience(&[LICENSE_TOKEN_AUDIENCE]);
+
+    let key = match ed25519_public_key_from_pem(public_key_pem) {
+        Ok(key) => DecodingKey::from_ed_der(&key),
+        Err(error) => {
+            tracing::debug!("License public key rejected: {error}");
+            return None;
+        }
+    };
 
     match decode::<JwtPayload>(token, &key, &validation) {
         Ok(data) => Some(data.claims),
@@ -888,6 +941,49 @@ pub fn features_for_tier(tier: Tier) -> Vec<&'static Feature> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    const TEST_PRIVATE_KEY: &[u8] = b"-----BEGIN PRIVATE KEY-----\nMC4CAQAwBQYDK2VwBCIEIIx/ifT0yOyJ/SykVkxxVR4zdDCep94lm3xLOyNn83kM\n-----END PRIVATE KEY-----\n";
+    const TEST_PUBLIC_KEY: &[u8] = b"-----BEGIN PUBLIC KEY-----\nMCowBQYDK2VwAyEAniF8d18mTVtOAi1msyk1sPU6smSFhAiiTRpLgzcFEEs=\n-----END PUBLIC KEY-----\n";
+
+    fn signed_test_token(issuer: &str, audience: &str) -> String {
+        let now = jsonwebtoken::get_current_timestamp() as i64;
+        let payload = JwtPayload {
+            iss: issuer.to_string(),
+            aud: audience.to_string(),
+            sub: "customer-1".to_string(),
+            tier: "pro".to_string(),
+            features: vec!["sbom".to_string()],
+            exp: now + 3600,
+            iat: now,
+            mid: None,
+            lic: "license-1".to_string(),
+        };
+        jsonwebtoken::encode(
+            &jsonwebtoken::Header::new(jsonwebtoken::Algorithm::EdDSA),
+            &payload,
+            &jsonwebtoken::EncodingKey::from_ed_der(
+                &pem_der(
+                    TEST_PRIVATE_KEY,
+                    "-----BEGIN PRIVATE KEY-----",
+                    "-----END PRIVATE KEY-----",
+                )
+                .expect("test private key must parse"),
+            ),
+        )
+        .expect("test token must encode")
+    }
+
+    #[test]
+    fn license_tokens_require_expected_issuer_and_audience() {
+        let valid = signed_test_token(LICENSE_TOKEN_ISSUER, LICENSE_TOKEN_AUDIENCE);
+        assert!(verify_jwt_with_key(&valid, TEST_PUBLIC_KEY).is_some());
+
+        let wrong_issuer = signed_test_token("https://attacker.invalid", LICENSE_TOKEN_AUDIENCE);
+        assert!(verify_jwt_with_key(&wrong_issuer, TEST_PUBLIC_KEY).is_none());
+
+        let wrong_audience = signed_test_token(LICENSE_TOKEN_ISSUER, "another-client");
+        assert!(verify_jwt_with_key(&wrong_audience, TEST_PUBLIC_KEY).is_none());
+    }
 
     #[test]
     fn tier_parsing_covers_hierarchy() {
