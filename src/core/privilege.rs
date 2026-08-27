@@ -355,11 +355,12 @@ pub fn elevate_for_operation(operation: &str, args: &[String]) -> std::io::Resul
 /// to hijack library loading or script execution in an elevated context.
 /// Askpass variables are removed to force the terminal-based prompt.
 fn payload_command(
+    sudo_program: &std::path::Path,
     exe: &std::path::Path,
     args: &[&str],
     non_interactive: bool,
 ) -> tokio::process::Command {
-    let mut command = tokio::process::Command::new("sudo");
+    let mut command = tokio::process::Command::new(sudo_program);
     if non_interactive {
         // -n fails immediately if a password would be required
         command.arg("-n");
@@ -415,12 +416,13 @@ async fn sudo_payload_status(args: &[&str]) -> anyhow::Result<std::process::Exit
     // Detect if we're running in development/test mode
     let is_test_mode =
         std::env::var("OMG_TEST_MODE").is_ok() || std::env::var("CARGO_PRIMARY_PACKAGE").is_ok();
-    sudo_payload_status_in(exe, is_test_mode, args).await
+    sudo_payload_status_in(std::path::Path::new("sudo"), exe, is_test_mode, args).await
 }
 
 /// Dev-mode-injectable core of [`sudo_payload_status`]: `dev_mode` short-
 /// circuits before any sudo invocation so tests never touch real sudo.
 async fn sudo_payload_status_in(
+    sudo_program: &std::path::Path,
     exe: std::path::PathBuf,
     dev_mode: bool,
     args: &[&str],
@@ -446,7 +448,7 @@ async fn sudo_payload_status_in(
     // required" and the entire privileged operation was silently re-executed,
     // repeating its side effects. The validation only refreshes the sudo
     // timestamp; it never runs the payload.
-    let validated = tokio::process::Command::new("sudo")
+    let validated = tokio::process::Command::new(sudo_program)
         .arg("-n")
         .arg("-v")
         .stdin(std::process::Stdio::null())
@@ -496,7 +498,7 @@ async fn sudo_payload_status_in(
         // terminal instead of spawning a GUI askpass dialog. The user can
         // Ctrl+C if needed. Runs exactly once.
         tracing::debug!("Password required, running interactive sudo");
-        return payload_command(&exe, args, false)
+        return payload_command(sudo_program, &exe, args, false)
             .status()
             .await
             .map_err(|e| {
@@ -515,7 +517,7 @@ async fn sudo_payload_status_in(
     // Authenticated non-interactively: run the payload exactly once and
     // propagate its result. Never retried — a failing elevated command must
     // surface its own error, not trigger a second execution.
-    payload_command(&exe, args, true)
+    payload_command(sudo_program, &exe, args, true)
         .status()
         .await
         .map_err(|e| {
@@ -581,6 +583,37 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::os::unix::fs::PermissionsExt;
+
+    fn fake_sudo(
+        validation_exit: i32,
+        payload_exit: i32,
+    ) -> (tempfile::TempDir, std::path::PathBuf, std::path::PathBuf) {
+        let directory = tempfile::tempdir().expect("fake sudo tempdir");
+        let sudo = directory.path().join("sudo");
+        let log = directory.path().join("sudo.log");
+        let script = format!(
+            "#!/bin/sh\nprintf '%s\\n' \"$*\" >> '{}'\n\
+             if [ \"$1\" = '-n' ] && [ \"$2\" = '-v' ]; then exit {validation_exit}; fi\n\
+             exit {payload_exit}\n",
+            log.display()
+        );
+        std::fs::write(&sudo, script).expect("write fake sudo");
+        let mut permissions = std::fs::metadata(&sudo)
+            .expect("fake sudo metadata")
+            .permissions();
+        permissions.set_mode(0o755);
+        std::fs::set_permissions(&sudo, permissions).expect("chmod fake sudo");
+        (directory, sudo, log)
+    }
+
+    struct YesFlagReset;
+
+    impl Drop for YesFlagReset {
+        fn drop(&mut self) {
+            set_yes_flag(false);
+        }
+    }
 
     #[test]
     fn payload_command_transmits_elevation_via_argv_marker() {
@@ -588,7 +621,12 @@ mod tests {
         // sudo's env_reset, which killed every fast-elevated path. The marker
         // must be part of argv instead.
         let exe = std::path::PathBuf::from("/usr/bin/omg");
-        let command = payload_command(&exe, &["fullupdate", "--"], true);
+        let command = payload_command(
+            std::path::Path::new("sudo"),
+            &exe,
+            &["fullupdate", "--"],
+            true,
+        );
         let argv = command.as_std().get_args().collect::<Vec<_>>();
         let marker_pos = argv
             .iter()
@@ -606,9 +644,60 @@ mod tests {
         // than terminating the process, so composite flows keep executing.
         // The injectable core guarantees no real sudo invocation occurs.
         let exe = std::env::current_exe().expect("current exe");
-        let result = sudo_payload_status_in(exe, true, &["sync"]).await;
+        let result =
+            sudo_payload_status_in(std::path::Path::new("sudo"), exe, true, &["sync"]).await;
         let err = result.expect_err("dev-mode elevation must fail closed, not exit");
         assert!(err.to_string().contains("development mode"));
+    }
+
+    #[tokio::test]
+    async fn cached_credentials_run_one_noninteractive_payload() {
+        let (_directory, sudo, log) = fake_sudo(0, 7);
+        let status = sudo_payload_status_in(
+            &sudo,
+            std::path::PathBuf::from("/usr/bin/omg"),
+            false,
+            &["sync"],
+        )
+        .await
+        .expect("fake sudo should execute");
+
+        assert_eq!(status.code(), Some(7), "payload status must propagate");
+        let invocations = std::fs::read_to_string(log).expect("read fake sudo log");
+        let lines = invocations.lines().collect::<Vec<_>>();
+        assert_eq!(lines.len(), 2, "preflight plus exactly one payload");
+        assert_eq!(lines[0], "-n -v");
+        assert_eq!(
+            lines[1],
+            format!("-n -- /usr/bin/omg {ELEVATED_MARKER} sync"),
+            "cached credentials must keep the payload noninteractive"
+        );
+    }
+
+    #[tokio::test]
+    async fn failed_preflight_with_yes_never_runs_payload() {
+        set_yes_flag(true);
+        let _reset = YesFlagReset;
+        let (_directory, sudo, log) = fake_sudo(1, 0);
+        let error = sudo_payload_status_in(
+            &sudo,
+            std::path::PathBuf::from("/usr/bin/omg"),
+            false,
+            &["sync"],
+        )
+        .await
+        .expect_err("--yes must reject a password-requiring preflight");
+
+        assert!(
+            error
+                .to_string()
+                .contains("--yes flag prevents password prompt")
+        );
+        assert_eq!(
+            std::fs::read_to_string(log).expect("read fake sudo log"),
+            "-n -v\n",
+            "failed preflight must not execute the payload"
+        );
     }
 
     #[test]
