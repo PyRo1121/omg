@@ -114,6 +114,7 @@ tokio = { version = "1.49", features = [
   "process",
   "fs",
   "io-util",
+  "io-std",
   "sync",
   "signal",
   "time",

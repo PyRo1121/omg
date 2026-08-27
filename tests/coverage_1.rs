@@ -36,7 +36,26 @@ const ERR_EMPTY_NAME: &str = "Package name cannot be empty";
 const ERR_LEADING_DASH: &str = "Package name cannot start with '-' (option injection protection)";
 const ERR_PATH_TRAVERSAL: &str = "Package name cannot contain '..' (path traversal protection)";
 
+use omg_lib::config::{AurBuildMethod, Settings};
 use omg_lib::package_managers::AurClient;
+
+#[test]
+fn default_aur_policy_requires_review_and_sandboxing() {
+    let settings = Settings::default();
+
+    assert!(
+        settings.aur.review_pkgbuild,
+        "default AUR builds must require PKGBUILD review"
+    );
+    assert!(
+        matches!(settings.aur.build_method, AurBuildMethod::Bubblewrap),
+        "default AUR builds must use the supported sandbox"
+    );
+    assert!(
+        !settings.aur.allow_unsafe_builds,
+        "missing sandbox support must fail closed by default"
+    );
+}
 
 /// Run `f` with `OMG_CONFIG_DIR` pointing at a fresh temp dir whose only file
 /// is `config.toml` = `config_toml`, and `OMG_CACHE_DIR` at another fresh

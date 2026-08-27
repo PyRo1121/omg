@@ -210,40 +210,41 @@ impl ParallelBuilder {
             }
         }
 
+        // A failed package must not detach its already-running siblings. In
+        // particular, aborting a `setsid -w makepkg` task kills the waiter but
+        // can leave the compiler process group alive and still writing to the
+        // terminal. Drain the current independent wave, remember its first
+        // failure, and stop before any dependent wave starts.
+        let mut first_error = None;
         while let Some(result) = tasks.join_next().await {
             match result {
-                Ok(Ok(())) => {
-                    if let Some(pkg) = package_iter.next() {
-                        let client = Arc::clone(&self.client);
-                        let job = jobs.get(pkg).cloned().with_context(|| {
-                            format!("Missing build job for package base '{pkg}'")
-                        })?;
+                Ok(Ok(())) => {}
+                Ok(Err(error)) => {
+                    first_error.get_or_insert(error);
+                }
+                Err(error) => {
+                    first_error.get_or_insert_with(|| error.into());
+                }
+            }
 
-                        tasks.spawn(async move {
-                            tracing::info!(
-                                "Building {} for outputs {:?}",
-                                job.package,
-                                job.outputs
-                            );
-                            client
-                                .install_package_outputs(&job.package, &job.outputs)
-                                .await
-                                .with_context(|| format!("Failed to build {}", job.package))
-                        });
-                    }
-                }
-                Ok(Err(e)) => {
-                    tasks.abort_all();
-                    return Err(e);
-                }
-                Err(e) => {
-                    tasks.abort_all();
-                    return Err(e.into());
-                }
+            if let Some(pkg) = package_iter.next() {
+                let client = Arc::clone(&self.client);
+                let job = jobs
+                    .get(pkg)
+                    .cloned()
+                    .with_context(|| format!("Missing build job for package base '{pkg}'"))?;
+
+                tasks.spawn(async move {
+                    tracing::info!("Building {} for outputs {:?}", job.package, job.outputs);
+                    client
+                        .install_package_outputs(&job.package, &job.outputs)
+                        .await
+                        .with_context(|| format!("Failed to build {}", job.package))
+                });
             }
         }
 
-        Ok(())
+        first_error.map_or(Ok(()), Err)
     }
 }
 

@@ -6,6 +6,7 @@ use std::fs::File;
 use std::io::{BufReader, Cursor, Read};
 use std::path::{Path, PathBuf};
 use std::process::Stdio;
+use std::sync::Arc;
 use std::time::Duration;
 
 use alpm_types::Version;
@@ -16,6 +17,7 @@ use indicatif::{ProgressBar, ProgressStyle};
 use owo_colors::OwoColorize;
 use serde::Deserialize;
 use sha2::{Digest, Sha256};
+use tokio::io::{AsyncRead, AsyncReadExt, AsyncWriteExt};
 use tokio::process::Command;
 use tracing::{instrument, warn};
 use which::which;
@@ -51,6 +53,8 @@ const AUR_RPC_MAX_URI: usize = 4400;
 /// waves finishing together — either fail spuriously on the lock or race the
 /// ALPM database. Builds stay parallel; installs are applied one at a time.
 static INSTALL_LOCK: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
+static REVIEW_LOCK: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
+const MAX_PKGBUILD_REVIEW_BYTES: usize = 1024 * 1024;
 /// Pre-computed length of the AUR RPC info base URL (47 bytes)
 const AUR_RPC_INFO_BASE_LEN: usize = 47;
 
@@ -174,6 +178,110 @@ struct MakepkgEnv {
     srcdest: PathBuf,
     builddir: PathBuf,
     extra_env: Vec<(String, String)>,
+}
+
+#[derive(Clone, Copy)]
+enum BuildOutputStream {
+    Stdout,
+    Stderr,
+}
+
+/// Drain one child stream completely so a quiet build can never block on a
+/// full pipe. Log failures are remembered while draining continues; otherwise
+/// a compiler could deadlock before omg has a chance to report the I/O error.
+fn configure_auxiliary_output(command: &mut Command) {
+    if crate::cli::modern_ui::output_mode() == crate::cli::modern_ui::OutputMode::Verbose {
+        command.stdout(Stdio::inherit()).stderr(Stdio::inherit());
+    } else {
+        command.stdout(Stdio::null()).stderr(Stdio::null());
+    }
+}
+
+/// Give PKGBUILD-driven processes a minimal deterministic environment.
+/// Credentials, agent sockets, language injection paths, and caller-specific
+/// tokens are absent because the command starts from `env_clear`.
+fn configure_build_environment(command: &mut Command, home: &Path, user: &str) {
+    command
+        .env_clear()
+        .env("PATH", "/usr/local/sbin:/usr/local/bin:/usr/bin")
+        .env("HOME", home)
+        .env("XDG_CACHE_HOME", home.join(".cache"))
+        .env("USER", user)
+        .env("LOGNAME", user)
+        .env("LANG", "C.UTF-8")
+        .env("LC_ALL", "C.UTF-8");
+}
+
+fn build_identity() -> (String, PathBuf) {
+    let user =
+        build_user().unwrap_or_else(|| whoami::username().unwrap_or_else(|_| "nobody".into()));
+    let home = std::env::var_os("SUDO_HOME")
+        .map(PathBuf::from)
+        .or_else(home::home_dir)
+        .unwrap_or_else(|| PathBuf::from(format!("/home/{user}")));
+    (user, home)
+}
+
+fn pkgbuild_review_text(bytes: &[u8]) -> Result<String> {
+    anyhow::ensure!(
+        bytes.len() <= MAX_PKGBUILD_REVIEW_BYTES,
+        "PKGBUILD exceeds the {MAX_PKGBUILD_REVIEW_BYTES} byte review limit"
+    );
+    let text = String::from_utf8_lossy(bytes);
+    Ok(text
+        .chars()
+        .filter(|character| matches!(character, '\n' | '\t') || !character.is_control())
+        .collect())
+}
+
+async fn drain_build_output<R>(
+    mut reader: R,
+    log: Arc<tokio::sync::Mutex<tokio::fs::File>>,
+    stream: BuildOutputStream,
+    verbose: bool,
+) -> std::io::Result<()>
+where
+    R: AsyncRead + Unpin,
+{
+    let mut buffer = [0_u8; 16 * 1024];
+    let mut log_error = None;
+    let mut log_writable = true;
+    let mut terminal_writable = verbose;
+    let mut stdout = tokio::io::stdout();
+    let mut stderr = tokio::io::stderr();
+
+    loop {
+        let read = reader.read(&mut buffer).await?;
+        if read == 0 {
+            break;
+        }
+        let chunk = &buffer[..read];
+
+        if log_writable {
+            let result = log.lock().await.write_all(chunk).await;
+            if let Err(error) = result {
+                log_writable = false;
+                log_error = Some(error);
+            }
+        }
+
+        if terminal_writable {
+            let result = match stream {
+                BuildOutputStream::Stdout => stdout.write_all(chunk).await,
+                BuildOutputStream::Stderr => stderr.write_all(chunk).await,
+            };
+            if result.is_err() {
+                // A closed output consumer must not stop us draining the child.
+                terminal_writable = false;
+            }
+        }
+    }
+
+    if let Some(error) = log_error {
+        Err(error)
+    } else {
+        Ok(())
+    }
 }
 
 #[derive(Debug, Deserialize)]
@@ -704,6 +812,7 @@ impl AurClient {
 
         crate::core::security::validate_package_name(package)?;
         crate::core::security::validate_package_name(version)?;
+        require_unprivileged_builder(package, crate::core::is_root())?;
 
         let base = self.resolve_package_base(package).await;
 
@@ -829,7 +938,7 @@ impl AurClient {
             "→".blue()
         );
         let status = self
-            .run_build(&pkg_dir, &env)
+            .run_build(&pkg_dir, &env, package)
             .await
             .with_context(|| format!("Failed to run makepkg for '{package}'"))?;
         if !status.success() {
@@ -1096,15 +1205,12 @@ impl AurClient {
         };
 
         if pkg_files.is_empty() {
-            let log_path = self.build_dir.join("_logs").join(format!("{package}.log"));
+            let log_path = self.build_log_path(package);
 
-            // Note: run_build() shows its own real-time output, no spinner needed
-            let build_start = std::time::Instant::now();
             let status = self
-                .run_build(&pkg_dir, &env)
+                .run_build(&pkg_dir, &env, package)
                 .await
                 .with_context(|| format!("Failed to run makepkg for '{package}'"))?;
-            let build_elapsed = build_start.elapsed();
 
             if !status.success() {
                 println!();
@@ -1116,14 +1222,6 @@ impl AurClient {
                 }
                 .into());
             }
-
-            println!();
-            println!(
-                "  {} Built {} in {:.1}s",
-                "✓".green().bold(),
-                package.bold(),
-                build_elapsed.as_secs_f64()
-            );
 
             pkg_files = Self::find_built_packages(&pkg_dir, &env.pkgdest, requested_outputs)
                 .await
@@ -1199,13 +1297,13 @@ impl AurClient {
             return Err(AurError::PkgbuildNotFound(package.to_string()).into());
         }
 
+        if self.settings.aur.review_pkgbuild {
+            Self::review_pkgbuild(&pkgbuild_path).await?;
+        }
         Self::fetch_missing_pgp_keys(&pkgbuild_path).await?;
 
         let env = self.makepkg_env(&pkg_dir)?;
         let cache_key = self.cache_key(&pkg_dir, &env.makeflags)?;
-        if self.settings.aur.review_pkgbuild {
-            Self::review_pkgbuild(&pkgbuild_path).await?;
-        }
         if let Some(cached) = self
             .cached_artifacts(
                 package,
@@ -1219,9 +1317,9 @@ impl AurClient {
             return Ok(cached);
         }
 
-        let log_path = self.build_dir.join("_logs").join(format!("{package}.log"));
+        let log_path = self.build_log_path(package);
         let status = self
-            .run_build(&pkg_dir, &env)
+            .run_build(&pkg_dir, &env, package)
             .await
             .with_context(|| format!("Failed to run makepkg for '{package}'"))?;
 
@@ -1527,6 +1625,7 @@ impl AurClient {
 
             // Prevent git from prompting for credentials
             cmd.env("GIT_TERMINAL_PROMPT", "0");
+            configure_auxiliary_output(&mut cmd);
 
             let status = cmd
                 .stdin(std::process::Stdio::null())
@@ -1540,12 +1639,15 @@ impl AurClient {
 
             spinner.finish_and_clear();
         } else {
-            let status = Command::new("git")
+            let mut command = Command::new("git");
+            command
                 .args(["clone", "--depth=1", "--filter=blob:none", "--"])
                 .arg(&url)
                 .arg(&dest)
                 .env("GIT_TERMINAL_PROMPT", "0")
-                .stdin(std::process::Stdio::null())
+                .stdin(std::process::Stdio::null());
+            configure_auxiliary_output(&mut command);
+            let status = command
                 .status()
                 .await
                 .with_context(|| format!("Failed to run git clone for {url}"))?;
@@ -1627,6 +1729,7 @@ impl AurClient {
             ]);
             cmd.env("GIT_TERMINAL_PROMPT", "0");
             cmd.env("GIT_CONFIG_NOSYSTEM", "1");
+            configure_auxiliary_output(&mut cmd);
 
             let status = cmd
                 .stdin(std::process::Stdio::null())
@@ -1651,7 +1754,8 @@ impl AurClient {
                 );
             }
         } else {
-            let status = Command::new("git")
+            let mut command = Command::new("git");
+            command
                 .arg("-C")
                 .arg(pkg_dir)
                 .args([
@@ -1664,7 +1768,9 @@ impl AurClient {
                 ])
                 .env("GIT_TERMINAL_PROMPT", "0")
                 .env("GIT_CONFIG_NOSYSTEM", "1")
-                .stdin(std::process::Stdio::null())
+                .stdin(std::process::Stdio::null());
+            configure_auxiliary_output(&mut command);
+            let status = command
                 .status()
                 .await
                 .with_context(|| format!("Failed to run git pull in {}", pkg_dir.display()))?;
@@ -1683,19 +1789,79 @@ impl AurClient {
         &self,
         pkg_dir: &Path,
         env: &MakepkgEnv,
+        package: &str,
     ) -> Result<std::process::ExitStatus> {
         match self.settings.aur.build_method {
-            AurBuildMethod::Bubblewrap => self.run_sandboxed_makepkg(pkg_dir, env).await,
-            AurBuildMethod::Chroot => self.run_chroot_build(pkg_dir, env).await,
+            AurBuildMethod::Bubblewrap => {
+                self.install_build_dependencies(pkg_dir).await?;
+                self.run_sandboxed_makepkg(pkg_dir, env, package).await
+            }
+            AurBuildMethod::Chroot => self.run_chroot_build(pkg_dir, env, package).await,
             AurBuildMethod::Native => {
                 if !self.settings.aur.allow_unsafe_builds {
                     anyhow::bail!(
                         "Native AUR builds are disabled. Enable 'aur.allow_unsafe_builds' or use bubblewrap/chroot."
                     );
                 }
-                self.run_native_makepkg(pkg_dir, env).await
+                self.install_build_dependencies(pkg_dir).await?;
+                self.run_native_makepkg(pkg_dir, env, package).await
             }
         }
+    }
+
+    /// Install repository dependencies before entering the unprivileged build
+    /// session. Native and bubblewrap builds intentionally have no controlling
+    /// TTY, so allowing their `makepkg` process to invoke sudo would fail (and
+    /// would weaken the isolation that prevents PKGBUILDs from reusing omg's
+    /// sudo ticket).
+    async fn install_build_dependencies(&self, pkg_dir: &Path) -> Result<()> {
+        let needs_sync = match check_dependencies(pkg_dir) {
+            Ok(info) if info.total > 0 && info.missing.is_empty() => return Ok(()),
+            Ok(info) => !info.missing.is_empty() || info.total == 0,
+            Err(error) => {
+                tracing::warn!(
+                    "Could not preflight dependencies for {}: {error}; deferring to makepkg",
+                    pkg_dir.display()
+                );
+                true
+            }
+        };
+        if !needs_sync {
+            return Ok(());
+        }
+
+        // Parallel AUR workers may reach this step together. makepkg delegates
+        // to pacman, whose database admits only one writer at a time.
+        let _install_guard = INSTALL_LOCK.lock().await;
+        let package_name = pkg_dir
+            .file_name()
+            .and_then(|name| name.to_str())
+            .unwrap_or("package");
+        println!(
+            "{} Installing build dependencies for {}...",
+            "→".cyan().bold(),
+            package_name
+        );
+
+        let (build_user, build_home) = build_identity();
+        let mut command = Command::new("makepkg");
+        configure_build_environment(&mut command, &build_home, &build_user);
+        command
+            .args(Self::makepkg_dependency_args())
+            .current_dir(pkg_dir)
+            .stdin(Stdio::inherit())
+            .stdout(Stdio::inherit())
+            .stderr(Stdio::inherit())
+            .kill_on_drop(true);
+        let status = command.status().await.with_context(|| {
+            format!("Failed to install build dependencies for '{package_name}'")
+        })?;
+        if !status.success() {
+            anyhow::bail!(
+                "Failed to install build dependencies for '{package_name}' (makepkg exited with {status})"
+            );
+        }
+        Ok(())
     }
 
     /// Run makepkg with bubblewrap sandboxing if available
@@ -1704,120 +1870,16 @@ impl AurClient {
         &self,
         pkg_dir: &Path,
         env: &MakepkgEnv,
+        package: &str,
     ) -> Result<std::process::ExitStatus> {
-        let package_name = pkg_dir
-            .file_name()
-            .and_then(|name| name.to_str())
-            .unwrap_or("package");
-        let spinner = create_spinner(&format!("Building {package_name}..."));
-
         let bwrap_available = which("bwrap").is_ok();
 
         if bwrap_available {
             tracing::info!("Using bubblewrap sandbox for secure AUR build");
             println!("{} Building in sandbox (bubblewrap)...", "🔒".green());
 
-            // Install dependencies BEFORE entering sandbox (requires sudo)
-            // If running as root, drop to original user or nobody
-            let build_user = build_user();
-
-            let mut dep_cmd = if crate::core::is_root() {
-                let user = build_user.as_deref().unwrap_or("nobody");
-
-                // Get the original user's home directory
-                let user_home = if let Some(ref username) = build_user {
-                    // Try to get home directory from passwd
-                    std::env::var("SUDO_HOME").ok().or_else(|| {
-                        // Fallback: construct from /home/<username>
-                        Some(format!("/home/{username}"))
-                    })
-                } else {
-                    None
-                };
-
-                let mut c = Command::new("sudo");
-                c.args(["-E", "-u", user, "makepkg"]);
-
-                // Set HOME to original user's home directory
-                if let Some(home) = user_home {
-                    c.env("HOME", &home);
-                    // Also set XDG_CACHE_HOME to ensure cache goes to user's directory
-                    c.env("XDG_CACHE_HOME", format!("{home}/.cache"));
-                }
-
-                c
-            } else {
-                Command::new("makepkg")
-            };
-
-            // Check dependencies using .SRCINFO before running makepkg
-            let dep_info = check_dependencies(pkg_dir).unwrap_or_else(|e| {
-                tracing::debug!("Failed to check dependencies: {e}");
-                // Fallback: empty info means we'll run makepkg --syncdeps
-                super::super::aur_deps::DependencyInfo {
-                    missing: Vec::new(),
-                    satisfied: Vec::new(),
-                    total: 0,
-                }
-            });
-
-            if dep_info.total > 0 {
-                if dep_info.missing.is_empty() {
-                    println!(
-                        "{} All {} dependencies already installed",
-                        "✓".green(),
-                        dep_info.total
-                    );
-                } else {
-                    println!(
-                        "{} Installing {} missing dependencies ({} already satisfied)...",
-                        "→".cyan().bold(),
-                        dep_info.missing.len(),
-                        dep_info.satisfied.len()
-                    );
-                }
-            } else {
-                println!("{} No dependencies required", "✓".green());
-            }
-
-            // Only run makepkg --syncdeps if there are missing dependencies
-            if !dep_info.missing.is_empty() || dep_info.total == 0 {
-                println!(
-                    "{} Checking and installing dependencies...",
-                    "→".cyan().bold()
-                );
-
-                let dep_status = dep_cmd
-                    .args(["--syncdeps", "--noconfirm", "--nobuild"])
-                    .current_dir(pkg_dir)
-                    .stdin(Stdio::inherit()) // Allow sudo password prompt
-                    .stdout(Stdio::inherit()) // Show makepkg output
-                    .stderr(Stdio::inherit()) // Show errors
-                    .status()
-                    .await;
-
-                match dep_status {
-                    Err(e) => {
-                        tracing::warn!("Failed to install dependencies: {e}");
-                        println!("{} Dependency installation failed: {}", "⚠".yellow(), e);
-                        println!(
-                            "{} Continuing with build - may fail if deps are missing",
-                            "→".dimmed()
-                        );
-                    }
-                    Ok(status) => {
-                        if status.success() {
-                            println!("{} Dependencies ready", "✓".green());
-                        } else {
-                            println!(
-                                "{} Some dependencies may have failed to install",
-                                "⚠".yellow()
-                            );
-                            println!("{} Continuing with build...", "→".dimmed());
-                        }
-                    }
-                }
-            }
+            // Repository dependencies were installed before entering the
+            // sandbox; the untrusted build itself receives no sudo-capable TTY.
 
             // - Read-only bind: /usr, /etc, /lib, /lib64
             // - Writable: Build directory, /tmp
@@ -1875,7 +1937,7 @@ impl AurClient {
             }
 
             let pkg_dir_str = pkg_dir_canonical.to_string_lossy();
-            let home = home::home_dir().unwrap_or_else(|| PathBuf::from("/root"));
+            let (build_user_name, home) = build_identity();
 
             let pkgdest_str = pkgdest_canonical.to_string_lossy();
             let srcdest_str = srcdest_canonical.to_string_lossy();
@@ -1893,8 +1955,10 @@ impl AurClient {
             // that ticket (`sudo -n` fails without a tty). Output still
             // streams because stdio fds remain attached.
             let mut cmd = Command::new("setsid");
+            configure_build_environment(&mut cmd, &home, &build_user_name);
             cmd.arg("-w").arg("bwrap");
             cmd.args([
+                "--clearenv",
                 "--share-net",
                 "--ro-bind",
                 "/usr",
@@ -1946,6 +2010,17 @@ impl AurClient {
             cmd.arg(&*pacman_cache_root_str);
             cmd.args(["--die-with-parent", "--chdir"]);
             cmd.arg(&*pkg_dir_str);
+            for (key, value) in [
+                ("HOME", home_str.as_ref()),
+                ("XDG_CACHE_HOME", "/tmp/.cache"),
+                ("USER", build_user_name.as_str()),
+                ("LOGNAME", build_user_name.as_str()),
+                ("PATH", "/usr/local/sbin:/usr/local/bin:/usr/bin"),
+                ("LANG", "C.UTF-8"),
+                ("LC_ALL", "C.UTF-8"),
+            ] {
+                cmd.args(["--setenv", key, value]);
+            }
             cmd.args(["--setenv", "MAKEFLAGS"]);
             cmd.arg(&env.makeflags);
             cmd.args(["--setenv", "PKGDEST"]);
@@ -1964,39 +2039,21 @@ impl AurClient {
             cmd.args(["--", "makepkg"]);
             cmd.args(makepkg_args);
 
-            spinner.finish_and_clear();
-            println!(
-                "{} Building {} (this may take several minutes for source packages)...",
-                "→".cyan().bold(),
-                package_name
-            );
-
-            // Stream output to both terminal AND log file
-            let status = cmd
-                .stdin(Stdio::null())
-                .stdout(Stdio::inherit()) // Show output in real-time
-                .stderr(Stdio::inherit()) // Show errors in real-time
-                .status()
+            cmd.stdin(Stdio::null());
+            self.run_logged_build_command(&mut cmd, package)
                 .await
-                .context("Failed to run sandboxed makepkg")?;
-
-            if !status.success() {
-                println!("  {} Build failed", "✗".red());
-            }
-            Ok(status)
+                .context("Failed to run sandboxed makepkg")
         } else {
             if !self.settings.aur.allow_unsafe_builds {
-                spinner.finish_and_clear();
                 return Err(AurError::SandboxUnavailable.into());
             }
 
-            spinner.finish_and_clear();
             tracing::debug!("bubblewrap not found, using regular makepkg");
             println!(
                 "{} Building without sandbox (install 'bubblewrap' for isolation)...",
                 "→".dimmed()
             );
-            self.run_native_makepkg(pkg_dir, env).await
+            self.run_native_makepkg(pkg_dir, env, package).await
         }
     }
 
@@ -2004,64 +2061,26 @@ impl AurClient {
         &self,
         pkg_dir: &Path,
         env: &MakepkgEnv,
+        package: &str,
     ) -> Result<std::process::ExitStatus> {
-        let spinner = create_spinner(&format!(
-            "Building {}...",
-            pkg_dir
-                .file_name()
-                .and_then(|name| name.to_str())
-                .unwrap_or("package")
-        ));
-        // Get build user (original user from sudo/doas, or fallback to nobody)
-        let build_user = build_user();
+        let (build_user, build_home) = build_identity();
 
-        // If running as root, drop privileges to original user or nobody
-        // makepkg refuses to run as root for security reasons
-        // SECURITY: run makepkg in a NEW SESSION without a controlling TTY.
-        // sudo timestamps are tty-scoped by default (timestamp_type=tty), so
-        // while omg holds a warm credential in THIS terminal, a malicious
-        // PKGBUILD calling `sudo -n ...` inside build()/package() would
-        // inherit that ticket and escalate to root silently. Under setsid
-        // there is no controlling terminal, so the attacker's `sudo -n`
-        // fails. -w makes setsid wait and propagate makepkg's exit status.
-        let (inner_program, inner_pre_args): (&str, Vec<&str>) = if crate::core::is_root() {
-            let user = build_user.as_deref().unwrap_or("nobody");
-
-            // Get the original user's home directory for proper path resolution
-            let user_home = if let Some(ref username) = build_user {
-                std::env::var("SUDO_HOME")
-                    .ok()
-                    .or_else(|| Some(format!("/home/{username}")))
-            } else {
-                None
-            };
-
+        // If running as root, drop privileges without preserving root's
+        // environment. makepkg refuses to run as root, and `sudo -E` would
+        // expose root credentials and injection variables to the PKGBUILD.
+        let mut cmd = Command::new("setsid");
+        configure_build_environment(&mut cmd, &build_home, &build_user);
+        cmd.arg("-w");
+        if crate::core::is_root() {
             tracing::debug!(
-                "Running makepkg as user '{}' (de-escalated from root), HOME={:?}",
-                user,
-                user_home
+                "Running makepkg as user '{}' (de-escalated from root), HOME={}",
+                build_user,
+                build_home.display()
             );
-            let pre = vec!["-E", "-u", user];
-            ("sudo", pre)
+            cmd.args(["sudo", "-H", "-u", build_user.as_str(), "--", "makepkg"]);
         } else {
-            ("makepkg", Vec::new())
-        };
-        let mut cmd = {
-            let mut c = Command::new("setsid");
-            c.arg("-w").arg(inner_program).args(&inner_pre_args);
-            if inner_program == "sudo" {
-                // De-escalated from root: resolve HOME to the original user.
-                c.arg("makepkg");
-                if let Some(username) = build_user.as_deref() {
-                    let home = std::env::var("SUDO_HOME")
-                        .ok()
-                        .unwrap_or_else(|| format!("/home/{username}"));
-                    c.env("HOME", &home);
-                    c.env("XDG_CACHE_HOME", format!("{home}/.cache"));
-                }
-            }
-            c
-        };
+            cmd.arg("makepkg");
+        }
 
         // SECURITY: run makepkg in a NEW SESSION without a controlling TTY.
         // sudo timestamps are tty-scoped by default (timestamp_type=tty), so
@@ -2081,43 +2100,18 @@ impl AurClient {
             cmd.env(key, value);
         }
 
-        spinner.finish_and_clear();
-
-        let package_name = pkg_dir
-            .file_name()
-            .and_then(|name| name.to_str())
-            .unwrap_or("package");
-        println!(
-            "{} Building {} (this may take several minutes for source packages)...",
-            "→".cyan().bold(),
-            package_name
-        );
-
-        // Stream output to both terminal AND log file; stdout/stderr remain
-        // attached even though the session has no controlling TTY.
-        let status = cmd
-            .current_dir(pkg_dir)
-            .stdin(Stdio::null())
-            .stdout(Stdio::inherit()) // Show output in real-time
-            .stderr(Stdio::inherit()) // Show errors in real-time
-            .status()
+        cmd.current_dir(pkg_dir).stdin(Stdio::null());
+        self.run_logged_build_command(&mut cmd, package)
             .await
-            .context("Failed to run makepkg")?;
-
-        Ok(status)
+            .context("Failed to run makepkg")
     }
 
     async fn run_chroot_build(
         &self,
         pkg_dir: &Path,
         env: &MakepkgEnv,
+        package: &str,
     ) -> Result<std::process::ExitStatus> {
-        let package_name = pkg_dir
-            .file_name()
-            .and_then(|name| name.to_str())
-            .unwrap_or("package");
-        let spinner = create_spinner(&format!("Building {package_name} (chroot)..."));
-
         let mut cmd = if which("pkgctl").is_ok() {
             let mut cmd = Command::new("pkgctl");
             cmd.arg("build");
@@ -2130,37 +2124,129 @@ impl AurClient {
             cmd.args(["-r", "/var/lib/archbuild"]).arg("--");
             cmd
         } else {
-            spinner.finish_and_clear();
             anyhow::bail!(
                 "Chroot build requires devtools (pkgctl/makechrootpkg). Install devtools or choose bubblewrap/native."
             );
         };
 
+        let (build_user, build_home) = build_identity();
+        configure_build_environment(&mut cmd, &build_home, &build_user);
         cmd.current_dir(pkg_dir)
             .env("MAKEFLAGS", &env.makeflags)
             .env("PKGDEST", &env.pkgdest)
             .env("SRCDEST", &env.srcdest)
             .env("BUILDDIR", &env.builddir)
-            .stdin(Stdio::null())
-            .stdout(Stdio::inherit())
-            .stderr(Stdio::inherit());
+            .stdin(Stdio::null());
 
-        spinner.finish_and_clear();
-        println!(
-            "{} Building {} in chroot (this may take several minutes for source packages)...",
-            "→".cyan().bold(),
-            package_name
-        );
+        self.run_logged_build_command(&mut cmd, package)
+            .await
+            .context("Failed to run chroot build")
+    }
 
-        let status = cmd.status().await.context("Failed to run chroot build")?;
-        if !status.success() {
-            println!("  {} Build failed", "✗".red());
+    fn build_log_path(&self, package: &str) -> PathBuf {
+        self.build_dir.join("_logs").join(format!("{package}.log"))
+    }
+
+    async fn run_logged_build_command(
+        &self,
+        command: &mut Command,
+        package: &str,
+    ) -> Result<std::process::ExitStatus> {
+        let log_path = self.build_log_path(package);
+        let log_dir = log_path
+            .parent()
+            .context("AUR build log path must have a parent directory")?;
+        tokio::fs::create_dir_all(log_dir).await.with_context(|| {
+            format!(
+                "Failed to create build log directory: {}",
+                log_dir.display()
+            )
+        })?;
+        let log = tokio::fs::OpenOptions::new()
+            .create(true)
+            .truncate(true)
+            .write(true)
+            .mode(0o600)
+            .open(&log_path)
+            .await
+            .with_context(|| format!("Failed to create build log: {}", log_path.display()))?;
+        let log = Arc::new(tokio::sync::Mutex::new(log));
+
+        let progress = crate::cli::modern_ui::aur_build_progress(package, &log_path);
+        let verbose =
+            crate::cli::modern_ui::output_mode() == crate::cli::modern_ui::OutputMode::Verbose;
+
+        command
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .kill_on_drop(true);
+        let mut child = command
+            .spawn()
+            .with_context(|| format!("Failed to start AUR build for '{package}'"))?;
+        let stdout = child
+            .stdout
+            .take()
+            .context("AUR build stdout pipe was not available")?;
+        let stderr = child
+            .stderr
+            .take()
+            .context("AUR build stderr pipe was not available")?;
+
+        let stdout_capture = Box::pin(drain_build_output(
+            stdout,
+            Arc::clone(&log),
+            BuildOutputStream::Stdout,
+            verbose,
+        ));
+        let stderr_capture = Box::pin(drain_build_output(
+            stderr,
+            Arc::clone(&log),
+            BuildOutputStream::Stderr,
+            verbose,
+        ));
+        let (status, stdout_result, stderr_result) =
+            tokio::join!(child.wait(), stdout_capture, stderr_capture);
+
+        let status = match status {
+            Ok(status) => status,
+            Err(error) => {
+                progress.finish(false);
+                return Err(error).context("Failed while waiting for AUR build");
+            }
+        };
+        let capture_result: Result<()> = async {
+            stdout_result.context("Failed to capture AUR build stdout")?;
+            stderr_result.context("Failed to capture AUR build stderr")?;
+            log.lock()
+                .await
+                .flush()
+                .await
+                .context("Failed to flush AUR build log")?;
+            Ok(())
         }
+        .await;
+
+        progress.finish(status.success() && capture_result.is_ok());
+        capture_result?;
         Ok(status)
     }
 
+    const fn makepkg_dependency_args() -> [&'static str; 5] {
+        [
+            "--syncdeps",
+            "--noconfirm",
+            "--nobuild",
+            "--needed",
+            // Arch makepkg otherwise hard-codes `sudo -k`, invalidating the
+            // credential omg acquired immediately before the parallel build.
+            // Its documented trailing environment assignments accept this
+            // scalar as a one-element PACMAN_AUTH command array.
+            "PACMAN_AUTH=/usr/bin/sudo",
+        ]
+    }
+
     fn makepkg_args(&self) -> Vec<&'static str> {
-        let mut args = vec!["-s", "--noconfirm", "-f", "--needed"];
+        let mut args = vec!["--noconfirm", "-f", "--needed"];
         if self.settings.aur.secure_makepkg {
             args.push("--cleanbuild");
         }
@@ -2176,20 +2262,33 @@ impl AurClient {
         args
     }
 
-    /// Prompt the user to review the PKGBUILD before building.
-    ///
-    /// Runs the blocking `dialoguer` prompt inside `spawn_blocking` so a
-    /// user thinking at the confirmation prompt cannot stall the async
-    /// runtime while other parallel builds are in flight.
+    /// Display and confirm a PKGBUILD before any script-driven side effect.
     async fn review_pkgbuild(pkgbuild_path: &Path) -> Result<()> {
+        // Parallel build waves may discover several independent packages at
+        // once. One review owns the terminal at a time so prompts and source
+        // text cannot interleave.
+        let _review_guard = REVIEW_LOCK.lock().await;
+        if !console::user_attended() {
+            anyhow::bail!(
+                "PKGBUILD review requires an interactive terminal. Review the package manually, or explicitly configure aur.review_pkgbuild=false if you accept unreviewed AUR code."
+            );
+        }
+
+        let bytes = tokio::fs::read(pkgbuild_path)
+            .await
+            .with_context(|| format!("Failed to read PKGBUILD: {}", pkgbuild_path.display()))?;
+        let review = pkgbuild_review_text(&bytes)?;
         println!(
-            "{} Review PKGBUILD before building: {}",
+            "{} Review PKGBUILD before building: {}\n\n{}\n{}",
             "→".blue(),
-            pkgbuild_path.display()
+            pkgbuild_path.display(),
+            review,
+            "─".repeat(72)
         );
+
         let proceed = tokio::task::spawn_blocking(|| {
             Confirm::new()
-                .with_prompt("Proceed with build?")
+                .with_prompt("Proceed with this PKGBUILD?")
                 .default(false)
                 .interact()
         })
@@ -2526,7 +2625,7 @@ impl AurClient {
 
         println!("{} Installing built package...", "→".blue());
 
-        // Use direct ALPM if we have capabilities (turbo mode) or running as root
+        // Only an already-root process may mutate ALPM directly.
         if crate::core::caps::can_write_pacman_db() {
             let packages = pkg_paths
                 .iter()
@@ -2796,6 +2895,84 @@ mod tests {
         assert!(
             !status.success(),
             "Sandbox should prevent writing to arbitrary files"
+        );
+    }
+
+    #[test]
+    fn pkgbuild_review_is_bounded_and_terminal_safe() {
+        let rendered = pkgbuild_review_text(b"pkgname=safe\n\x1b]52;c;secret\x07\n")
+            .expect("small PKGBUILD must render");
+        assert_eq!(rendered, "pkgname=safe\n]52;c;secret\n");
+
+        let oversized = vec![b'x'; MAX_PKGBUILD_REVIEW_BYTES + 1];
+        let error = pkgbuild_review_text(&oversized)
+            .expect_err("oversized PKGBUILD must fail before terminal rendering");
+        assert!(error.to_string().contains("review limit"));
+    }
+
+    #[tokio::test]
+    async fn build_environment_drops_inherited_secrets() {
+        let home = tempfile::tempdir().expect("temporary build home");
+        let mut command = Command::new("/usr/bin/env");
+        command.env("OMG_TEST_SECRET", "must-not-leak");
+        configure_build_environment(&mut command, home.path(), "builder");
+
+        let output = command.output().await.expect("run env probe");
+        assert!(output.status.success());
+        let environment = String::from_utf8(output.stdout).expect("environment must be UTF-8");
+        assert!(environment.contains(&format!("HOME={}", home.path().display())));
+        assert!(environment.contains("USER=builder"));
+        assert!(environment.contains("PATH=/usr/local/sbin:/usr/local/bin:/usr/bin"));
+        assert!(
+            !environment.contains("OMG_TEST_SECRET"),
+            "untrusted builds must not inherit caller credentials: {environment}"
+        );
+    }
+
+    #[tokio::test]
+    async fn quiet_build_output_is_fully_written_to_the_log() {
+        let temp = tempfile::tempdir().expect("temporary log directory");
+        let log_path = temp.path().join("build.log");
+        let log = tokio::fs::File::create(&log_path)
+            .await
+            .expect("create build log");
+        let log = Arc::new(tokio::sync::Mutex::new(log));
+        let (mut writer, reader) = tokio::io::duplex(128);
+
+        writer
+            .write_all(b"compiler output\n")
+            .await
+            .expect("write fake compiler output");
+        writer.shutdown().await.expect("close fake compiler output");
+
+        drain_build_output(reader, Arc::clone(&log), BuildOutputStream::Stdout, false)
+            .await
+            .expect("drain output");
+        log.lock().await.flush().await.expect("flush build log");
+
+        assert_eq!(
+            tokio::fs::read_to_string(log_path)
+                .await
+                .expect("read build log"),
+            "compiler output\n"
+        );
+    }
+
+    #[test]
+    fn native_build_never_runs_makepkg_syncdeps_without_a_tty() {
+        let client = AurClient::new().expect("test settings must load");
+        assert!(
+            !client.makepkg_args().contains(&"-s"),
+            "dependency installation must happen before the isolated build session"
+        );
+    }
+
+    #[test]
+    fn dependency_install_reuses_the_preacquired_sudo_credential() {
+        assert_eq!(
+            AurClient::makepkg_dependency_args().last(),
+            Some(&"PACMAN_AUTH=/usr/bin/sudo"),
+            "makepkg's default sudo -k would invalidate omg's live credential"
         );
     }
 

@@ -143,11 +143,11 @@ impl Default for AurBuildSettings {
         let jobs = std::thread::available_parallelism().map_or(1, std::num::NonZero::get);
 
         Self {
-            build_method: AurBuildMethod::Native,
+            build_method: AurBuildMethod::Bubblewrap,
             build_concurrency: jobs.max(1),
-            review_pkgbuild: false,
+            review_pkgbuild: true,
             secure_makepkg: true,
-            allow_unsafe_builds: true,
+            allow_unsafe_builds: false,
             use_metadata_archive: true,
             metadata_cache_ttl_secs: 300,
             makeflags: None,
