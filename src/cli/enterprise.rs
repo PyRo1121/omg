@@ -55,7 +55,7 @@ pub async fn reports(report_type: &str, _ctx: &CliContext) -> Result<()> {
     );
 
     let content = serde_json::to_string_pretty(&report)?;
-    fs::write(&filename, &content)?;
+    crate::core::safe_ops::atomic_write_file_sync(&filename, &content)?;
 
     let report_sections = vec![
         "Executive Summary".to_string(),
@@ -134,7 +134,7 @@ pub fn audit_export(
     let mut file_list = vec![];
     for (filename, content) in &files {
         let path = Path::new(output).join(filename);
-        fs::write(&path, content)?;
+        crate::core::safe_ops::atomic_write_file_sync(&path, content)?;
         file_list.push(path.display().to_string());
     }
 
@@ -223,7 +223,7 @@ pub fn license_scan(export: Option<&str>, _ctx: &CliContext) -> Result<()> {
                 } else {
                     serde_json::to_string_pretty(&scan)?
                 };
-                fs::write(&filename, content)?;
+                crate::core::safe_ops::atomic_write_file_sync(&filename, content)?;
                 Cmd::success(format!("Exported to {filename}"))
             }])
         } else {
