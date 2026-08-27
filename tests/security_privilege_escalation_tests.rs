@@ -135,6 +135,60 @@ mod privilege_escalation {
     }
 
     #[test]
+    fn ci_and_container_bootstraps_are_pinned_and_verified() {
+        let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
+        let bootstrap_sources = [
+            ".github/workflows/ci.yml",
+            ".github/workflows/docker-e2e.yml",
+            ".github/workflows/release.yml",
+            "Dockerfile.apt",
+            "Dockerfile.debian",
+            "Dockerfile.fedora",
+            "Dockerfile.ubuntu",
+        ];
+        for relative in bootstrap_sources {
+            let source = std::fs::read_to_string(root.join(relative)).expect("bootstrap source");
+            assert!(
+                !source.contains("sh.rustup.rs"),
+                "{relative} must not execute the mutable rustup shell installer"
+            );
+            assert!(
+                source.contains("rustup/archive/1.28.2/x86_64-unknown-linux-gnu/rustup-init")
+                    && source.contains(
+                        "20a06e644b0d9bd2fbdbfd52d42540bdde820ea7df86e92e533c073da0cdd43c",
+                    ),
+                "{relative} must pin and hash-check rustup-init"
+            );
+        }
+
+        for relative in [
+            "Dockerfile.apt",
+            "Dockerfile.arch-e2e",
+            "Dockerfile.benchmark",
+            "Dockerfile.debian",
+            "Dockerfile.fedora",
+            "Dockerfile.ubuntu",
+            "Dockerfile.ubuntu-benchmark",
+        ] {
+            let source = std::fs::read_to_string(root.join(relative)).expect("Dockerfile");
+            for line in source.lines().filter(|line| line.starts_with("FROM ")) {
+                if !line.contains("${BASE_IMAGE}") {
+                    assert!(
+                        line.contains("@sha256:"),
+                        "{relative} has a mutable base image: {line}"
+                    );
+                }
+            }
+            for line in source.lines().filter(|line| line.contains("cargo build")) {
+                assert!(
+                    line.contains("--locked"),
+                    "{relative} has an unlocked Cargo build: {line}"
+                );
+            }
+        }
+    }
+
+    #[test]
     fn turbo_help_does_not_advertise_file_capabilities() {
         let output = std::process::Command::new(env!("CARGO_BIN_EXE_omg"))
             .args(["doctor", "--help"])

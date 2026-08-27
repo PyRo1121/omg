@@ -1,5 +1,5 @@
 # Dockerfile for E2E testing on Arch Linux
-FROM archlinux:latest
+FROM archlinux:latest@sha256:b860afd5823683f7ea389ba5f00d812f4fe55f6f286dea329d2abeefa535e309
 
 # Update system and install base dependencies
 RUN pacman -Syu --noconfirm && \

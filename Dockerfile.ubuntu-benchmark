@@ -1,4 +1,4 @@
-FROM ubuntu:24.04
+FROM ubuntu:24.04@sha256:33ceb71981b602c1a7443a53469e4dba065f7503eab3078a2d7a57a2ab987517
 
 # Prevent interactive prompts during apt install
 ENV DEBIAN_FRONTEND=noninteractive
@@ -15,8 +15,15 @@ RUN apt-get update && apt-get install -y \
 # Install hyperfine (for statistical benchmarks)
 RUN HYPERFINE_VERSION=1.19.0 && \
     ARCH=$(dpkg --print-architecture) && \
-    curl -fsSL "https://github.com/sharkdp/hyperfine/releases/download/v${HYPERFINE_VERSION}/hyperfine_${HYPERFINE_VERSION}_${ARCH}.deb" \
+    case "$ARCH" in \
+        amd64) HYPERFINE_SHA256=5ffe6996aefbbf547f383116eea53569263cc7cf6598ee53f0081e37b702055d ;; \
+        arm64) HYPERFINE_SHA256=27b40ada2bf41fa66e514281fb24a1d4f0cd09a8b3bd01c4090065ff18261c67 ;; \
+        *) echo "Unsupported benchmark architecture: $ARCH" >&2; exit 1 ;; \
+    esac && \
+    curl --proto '=https' --tlsv1.2 -fsSL \
+        "https://github.com/sharkdp/hyperfine/releases/download/v${HYPERFINE_VERSION}/hyperfine_${HYPERFINE_VERSION}_${ARCH}.deb" \
         -o /tmp/hyperfine.deb && \
+    echo "$HYPERFINE_SHA256  /tmp/hyperfine.deb" | sha256sum --check && \
     dpkg -i /tmp/hyperfine.deb && \
     rm /tmp/hyperfine.deb
 
