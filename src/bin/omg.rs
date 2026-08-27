@@ -148,7 +148,11 @@ fn split_elevated_invocation(args: &[String]) -> Option<(&str, &[String])> {
 /// ULTRA-FAST elevated path - when we're re-exec'd with sudo, skip ALL initialization
 /// and go straight to the transaction. This eliminates ~150ms of startup overhead.
 #[cfg(feature = "arch")]
-fn try_fast_elevated(args: &[String], reexec_elevated: bool) -> Option<Result<()>> {
+fn try_fast_elevated(
+    args: &[String],
+    reexec_elevated: bool,
+    parent_records: bool,
+) -> Option<Result<()>> {
     // Only run this path when elevated via sudo. The re-exec marker is the
     // authoritative signal (env_reset strips OMG_ELEVATED); accept the
     // legacy env flag too for direct `sudo omg` invocations.
@@ -164,19 +168,7 @@ fn try_fast_elevated(args: &[String], reexec_elevated: bool) -> Option<Result<()
     // separator, and every token after it must be a package name; anything else
     // falls through to clap via split_elevated_invocation.
     let (command, package_tokens) = split_elevated_invocation(args)?;
-    let mut packages: Vec<String> = package_tokens.to_vec();
-
-    // Mid-flow delegations whose parent owns the history record carry this
-    // trailing token; strip it before package validation and skip the child's
-    // own recording so each mutation is written exactly once.
-    let parent_records =
-        packages.last().map(String::as_str) == Some(omg_lib::core::privilege::FLOW_PARENT_RECORDS);
-    if parent_records {
-        packages.pop();
-        if packages.is_empty() {
-            return None;
-        }
-    }
+    let packages: Vec<String> = package_tokens.to_vec();
 
     // Handle commands that may have packages
     match command {
@@ -269,7 +261,11 @@ fn try_fast_elevated(args: &[String], reexec_elevated: bool) -> Option<Result<()
 }
 
 #[cfg(not(feature = "arch"))]
-const fn try_fast_elevated(_args: &[String], _reexec_elevated: bool) -> Option<Result<()>> {
+const fn try_fast_elevated(
+    _args: &[String],
+    _reexec_elevated: bool,
+    _parent_records: bool,
+) -> Option<Result<()>> {
     None
 }
 
@@ -596,6 +592,22 @@ fn try_fast_paths(args: &[String]) -> Result<bool> {
     try_fast_completions(args)
 }
 
+fn strip_internal_invocation_markers(args: &mut Vec<String>, is_root: bool) -> (bool, bool) {
+    let reexec_elevated = is_root
+        && args.get(1).map(String::as_str) == Some(omg_lib::core::privilege::ELEVATED_MARKER);
+    if !reexec_elevated {
+        return (false, false);
+    }
+    args.remove(1);
+
+    let parent_records =
+        args.get(1).map(String::as_str) == Some(omg_lib::core::privilege::FLOW_PARENT_RECORDS);
+    if parent_records {
+        args.remove(1);
+    }
+    (true, parent_records)
+}
+
 fn main() {
     let mut args: Vec<String> = std::env::args().collect();
 
@@ -604,16 +616,12 @@ fn main() {
     // ELEVATED_MARKER in core::privilege). The marker is honored ONLY for a
     // root process: anyone else invoking the reserved token keeps their
     // arguments untouched and gets clap's unknown-command error.
-    let reexec_elevated = args.get(1).map(String::as_str)
-        == Some(omg_lib::core::privilege::ELEVATED_MARKER)
-        && omg_lib::core::privilege::is_root();
-    if reexec_elevated {
-        args.remove(1);
-    }
+    let (reexec_elevated, parent_records) =
+        strip_internal_invocation_markers(&mut args, omg_lib::core::privilege::is_root());
 
     // FASTEST PATH: Elevated re-exec - skip ALL initialization
     // This runs when sudo omg re-execs us as root
-    if let Some(result) = try_fast_elevated(&args, reexec_elevated) {
+    if let Some(result) = try_fast_elevated(&args, reexec_elevated, parent_records) {
         finish(result);
     }
 
@@ -1318,10 +1326,59 @@ mod fast_path_tests {
 
     #[cfg(feature = "arch")]
     use super::split_elevated_invocation;
+    use super::strip_internal_invocation_markers;
 
     #[cfg(feature = "arch")]
     fn args(list: &[&str]) -> Vec<String> {
         list.iter().map(std::string::ToString::to_string).collect()
+    }
+
+    #[cfg(feature = "arch")]
+    #[test]
+    fn parent_history_marker_is_accepted_only_inside_root_reexec_protocol() {
+        let mut internal = args(&[
+            "omg",
+            omg_lib::core::privilege::ELEVATED_MARKER,
+            omg_lib::core::privilege::FLOW_PARENT_RECORDS,
+            "install",
+            "--",
+            "ripgrep",
+        ]);
+        assert_eq!(
+            strip_internal_invocation_markers(&mut internal, true),
+            (true, true)
+        );
+        assert_eq!(internal, args(&["omg", "install", "--", "ripgrep"]));
+
+        let mut direct = args(&[
+            "omg",
+            "install",
+            "--",
+            "ripgrep",
+            omg_lib::core::privilege::FLOW_PARENT_RECORDS,
+        ]);
+        let original = direct.clone();
+        assert_eq!(
+            strip_internal_invocation_markers(&mut direct, true),
+            (false, false)
+        );
+        assert_eq!(
+            direct, original,
+            "direct root argv must not gain protocol authority"
+        );
+
+        let mut non_root = args(&[
+            "omg",
+            omg_lib::core::privilege::ELEVATED_MARKER,
+            omg_lib::core::privilege::FLOW_PARENT_RECORDS,
+            "install",
+        ]);
+        let original = non_root.clone();
+        assert_eq!(
+            strip_internal_invocation_markers(&mut non_root, false),
+            (false, false)
+        );
+        assert_eq!(non_root, original);
     }
 
     #[cfg(feature = "arch")]

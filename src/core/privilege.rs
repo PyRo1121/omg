@@ -360,6 +360,12 @@ fn payload_command(
     args: &[&str],
     non_interactive: bool,
 ) -> tokio::process::Command {
+    let parent_records = args.last().copied() == Some(FLOW_PARENT_RECORDS);
+    let payload_args = if parent_records {
+        &args[..args.len() - 1]
+    } else {
+        args
+    };
     let mut command = tokio::process::Command::new(sudo_program);
     if non_interactive {
         // -n fails immediately if a password would be required
@@ -398,8 +404,14 @@ fn payload_command(
         .stderr(std::process::Stdio::inherit())
         .arg("--")
         .arg(exe)
-        .arg(crate::core::privilege::ELEVATED_MARKER)
-        .args(args);
+        .arg(crate::core::privilege::ELEVATED_MARKER);
+    if parent_records {
+        // Internal flow ownership is positional protocol metadata, never a
+        // package-list token. The root child accepts it only immediately
+        // after the authenticated elevation marker.
+        command.arg(FLOW_PARENT_RECORDS);
+    }
+    command.args(payload_args);
     command
 }
 
@@ -625,6 +637,33 @@ mod tests {
         assert_eq!(argv[marker_pos - 1], "/usr/bin/omg");
         assert_eq!(argv[marker_pos + 1], "fullupdate");
         assert_eq!(argv[marker_pos + 2], "--");
+    }
+
+    #[test]
+    fn payload_command_moves_history_ownership_out_of_package_arguments() {
+        let exe = std::path::PathBuf::from("/usr/bin/omg");
+        let command = payload_command(
+            std::path::Path::new("sudo"),
+            &exe,
+            &["install", "--", "ripgrep", FLOW_PARENT_RECORDS],
+            true,
+        );
+        let argv = command
+            .as_std()
+            .get_args()
+            .map(|argument| argument.to_string_lossy().into_owned())
+            .collect::<Vec<_>>();
+        let marker = argv
+            .iter()
+            .position(|argument| argument == ELEVATED_MARKER)
+            .expect("elevation marker");
+
+        assert_eq!(
+            argv.get(marker + 1).map(String::as_str),
+            Some(FLOW_PARENT_RECORDS)
+        );
+        assert_eq!(argv.get(marker + 2).map(String::as_str), Some("install"));
+        assert_eq!(argv.last().map(String::as_str), Some("ripgrep"));
     }
 
     #[tokio::test]
