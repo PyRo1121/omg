@@ -1,9 +1,9 @@
 //! Secret detection using regex patterns and entropy analysis
 //!
 //! Scans files and content for accidentally committed secrets like API keys,
-//! tokens, private keys, and credentials across 20 secret types.
+//! tokens, private keys, and credentials across 19 secret types.
 
-use std::io;
+use std::io::{self, Read};
 use std::path::Path;
 use std::sync::LazyLock;
 
@@ -71,8 +71,6 @@ pub struct SecretFinding {
     pub file_path: String,
     /// 1-based line number of the match.
     pub line_number: usize,
-    /// Raw matched text. Treat as sensitive; do not print.
-    pub matched_text: String,
     /// Masked form safe for display and reports.
     pub redacted: String,
     /// Severity assigned by the pattern that matched.
@@ -208,6 +206,8 @@ pub enum SecretError {
         #[source]
         source: io::Error,
     },
+    #[error("File '{path}' exceeds the maximum secret-scan size of {max} bytes ({size} bytes)")]
+    FileTooLarge { path: String, size: u64, max: u64 },
     #[error("Directory nesting exceeds the maximum scan depth of {max} at '{path}'")]
     DepthExceeded { path: String, max: usize },
 }
@@ -216,6 +216,8 @@ pub enum SecretError {
 pub struct SecretScanner;
 
 impl SecretScanner {
+    const MAX_FILE_BYTES: u64 = 10 * 1024 * 1024;
+
     #[must_use]
     pub fn new() -> Self {
         Self
@@ -223,11 +225,39 @@ impl SecretScanner {
 
     /// Scan a file for secrets
     pub fn scan_file<P: AsRef<Path>>(&self, path: P) -> Result<Vec<SecretFinding>, SecretError> {
-        let path_str = path.as_ref().display().to_string();
-        let content = std::fs::read_to_string(&path).map_err(|source| SecretError::Read {
+        let path = path.as_ref();
+        let path_str = path.display().to_string();
+        let metadata = std::fs::metadata(path).map_err(|source| SecretError::Read {
             path: path_str.clone(),
             source,
         })?;
+        if metadata.len() > Self::MAX_FILE_BYTES {
+            return Err(SecretError::FileTooLarge {
+                path: path_str,
+                size: metadata.len(),
+                max: Self::MAX_FILE_BYTES,
+            });
+        }
+
+        let file = std::fs::File::open(path).map_err(|source| SecretError::Read {
+            path: path_str.clone(),
+            source,
+        })?;
+        let mut content = String::new();
+        let bytes_read = file
+            .take(Self::MAX_FILE_BYTES + 1)
+            .read_to_string(&mut content)
+            .map_err(|source| SecretError::Read {
+                path: path_str.clone(),
+                source,
+            })?;
+        if bytes_read as u64 > Self::MAX_FILE_BYTES {
+            return Err(SecretError::FileTooLarge {
+                path: path_str,
+                size: bytes_read as u64,
+                max: Self::MAX_FILE_BYTES,
+            });
+        }
 
         Ok(self.scan_content(&content, &path_str))
     }
@@ -256,7 +286,6 @@ impl SecretScanner {
                         secret_type: pattern.secret_type.clone(),
                         file_path: source.to_string(),
                         line_number: line_num + 1,
-                        matched_text: matched.to_string(),
                         redacted: Self::redact(matched),
                         severity: pattern.severity,
                     });
@@ -472,12 +501,12 @@ impl SecretScanner {
     /// arbitrary non-whitespace UTF-8 (e.g. via the generic password
     /// pattern), and byte-index slicing would panic on multi-byte chars.
     fn redact(text: &str) -> String {
-        if text.len() <= 8 {
-            return "*".repeat(text.len());
-        }
-
         let visible_chars = 4;
         let total_chars = text.chars().count();
+        if total_chars <= visible_chars * 2 {
+            return "*".repeat(total_chars);
+        }
+
         let prefix: String = text.chars().take(visible_chars).collect();
         let suffix: String = text
             .chars()
@@ -575,27 +604,30 @@ mod tests {
     }
 
     #[test]
-    fn redaction_never_panics_on_multibyte_secrets() {
-        // Regression: byte-index slicing panicked on non-ASCII matches from
-        // the generic password pattern ([^\s"]{8,}).
-        let scanner = SecretScanner::new();
-        let content = "password = \u{43f}\u{430}\u{440}\u{43e}\u{43b}\u{44c}12345678"; // Cyrillic + digits, > 8 chars
-        let findings = scanner.scan_content(content, "dotfile");
+    fn redaction_never_exposes_short_multibyte_secrets() {
+        let secret = "паролями";
+        let redacted = SecretScanner::redact(secret);
 
-        assert!(!findings.is_empty(), "multibyte password must be detected");
-        let redacted = findings[0].redacted.clone();
-        assert!(
-            redacted.contains('*'),
-            "redacted output must mask the secret"
-        );
-        // The masked form keeps only a short prefix/suffix window and never
-        // the full secret.
-        assert!(redacted.contains('*'), "got: {redacted}");
-        assert!(redacted.contains("..."), "got: {redacted}");
-        assert!(
-            !redacted.contains("\u{5bc2}\u{9759}\u{5bc6}"),
-            "middle leaked: {redacted}"
-        );
+        assert_eq!(redacted, "********");
+        assert!(!secret.chars().any(|character| redacted.contains(character)));
+
+        let longer = SecretScanner::redact("пароль12345678");
+        assert!(longer.contains('*'), "got: {longer}");
+        assert!(longer.contains("..."), "got: {longer}");
+    }
+
+    #[test]
+    fn scan_file_rejects_files_over_the_bounded_read_limit() {
+        let temp = tempfile::NamedTempFile::new().unwrap();
+        temp.as_file()
+            .set_len(SecretScanner::MAX_FILE_BYTES + 1)
+            .unwrap();
+
+        let error = SecretScanner::new()
+            .scan_file(temp.path())
+            .expect_err("oversized files must not be buffered");
+
+        assert!(matches!(error, SecretError::FileTooLarge { .. }));
     }
 
     #[test]
@@ -694,7 +726,6 @@ mod tests {
             secret_type: SecretType::PrivateKey,
             file_path: "test.pem".to_string(),
             line_number: 1,
-            matched_text: "-----BEGIN PRIVATE KEY-----".to_string(),
             redacted: "****".to_string(),
             severity: SecretSeverity::Critical,
         }];
