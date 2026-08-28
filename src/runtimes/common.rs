@@ -16,6 +16,7 @@ use sha2::{Digest, Sha256};
 use crate::core::archive::stripped_archive_path;
 
 pub(crate) const GITHUB_USER_AGENT: &str = "omg-package-manager/0.1";
+const MAX_RUNTIME_DOWNLOAD_BYTES: u64 = 1024 * 1024 * 1024;
 
 #[derive(Debug, Deserialize)]
 pub(crate) struct GithubRelease {
@@ -283,6 +284,10 @@ pub async fn download_with_progress(
     }
 
     let total_size = response.content_length().unwrap_or(0);
+    anyhow::ensure!(
+        total_size <= MAX_RUNTIME_DOWNLOAD_BYTES,
+        "Runtime download declares {total_size} bytes, exceeding the {MAX_RUNTIME_DOWNLOAD_BYTES}-byte limit"
+    );
     let pb = ProgressBar::new(total_size);
     pb.set_style(download_progress_style());
 
@@ -312,7 +317,7 @@ pub async fn download_with_progress(
 
         hasher.update(&chunk);
 
-        downloaded += chunk.len() as u64;
+        downloaded = bounded_download_size(downloaded, chunk.len())?;
         pb.set_position(downloaded);
     }
 
@@ -340,6 +345,17 @@ pub async fn download_with_progress(
         .with_context(|| format!("Failed to finalize download: {}", dest.display()))?;
     pb.finish_and_clear();
     Ok(())
+}
+
+fn bounded_download_size(downloaded: u64, chunk_size: usize) -> Result<u64> {
+    let next = downloaded
+        .checked_add(u64::try_from(chunk_size).context("Download chunk size does not fit u64")?)
+        .context("Runtime download byte count overflowed")?;
+    anyhow::ensure!(
+        next <= MAX_RUNTIME_DOWNLOAD_BYTES,
+        "Runtime download exceeded the {MAX_RUNTIME_DOWNLOAD_BYTES}-byte limit"
+    );
+    Ok(next)
 }
 
 enum PendingArchiveLink {
@@ -1187,6 +1203,12 @@ mod tests {
         assert_eq!(version_cmp("1.0", "1.0.0"), Ordering::Equal);
         assert_eq!(version_cmp("1", "1.0.0"), Ordering::Equal);
         assert_eq!(version_cmp("2", "1.9.9"), Ordering::Greater);
+    }
+
+    #[test]
+    fn runtime_download_size_is_bounded_even_without_content_length() {
+        assert_eq!(bounded_download_size(10, 5).unwrap(), 15);
+        assert!(bounded_download_size(MAX_RUNTIME_DOWNLOAD_BYTES, 1).is_err());
     }
 
     #[test]
