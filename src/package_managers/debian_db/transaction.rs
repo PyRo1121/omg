@@ -1061,7 +1061,10 @@ enum PendingRootLink {
     Hard { path: PathBuf, target: PathBuf },
 }
 
-fn create_root_links(links: Vec<PendingRootLink>) -> Result<()> {
+fn create_root_links(
+    links: Vec<PendingRootLink>,
+    extracted_regular_files: &std::collections::HashSet<PathBuf>,
+) -> Result<()> {
     for link in links {
         match link {
             PendingRootLink::Symbolic { path, target } => {
@@ -1074,6 +1077,12 @@ fn create_root_links(links: Vec<PendingRootLink>) -> Result<()> {
                 })?;
             }
             PendingRootLink::Hard { path, target } => {
+                anyhow::ensure!(
+                    extracted_regular_files.contains(&target),
+                    "Archive hard-link target was not extracted from this archive: {} -> {}",
+                    path.display(),
+                    target.display()
+                );
                 fs::hard_link(&target, &path).with_context(|| {
                     format!(
                         "Failed to create archive hard link {} -> {}",
@@ -1232,6 +1241,28 @@ impl std::fmt::Display for PartialExtractionError {
 
 impl std::error::Error for PartialExtractionError {}
 
+fn write_archive_regular_file(entry: &mut dyn Read, entry_path: &Path, mode: u32) -> Result<()> {
+    let parent = entry_path
+        .parent()
+        .context("Archive file path has no parent directory")?;
+    let mut temporary = tempfile::NamedTempFile::new_in(parent).with_context(|| {
+        format!(
+            "Failed to create temporary archive file beside {}",
+            entry_path.display()
+        )
+    })?;
+    std::io::copy(entry, temporary.as_file_mut())
+        .with_context(|| format!("Failed to write archive file: {}", entry_path.display()))?;
+    temporary
+        .as_file_mut()
+        .set_permissions(fs::Permissions::from_mode(mode))?;
+    temporary
+        .persist(entry_path)
+        .map_err(|error| error.error)
+        .with_context(|| format!("Failed to publish archive file: {}", entry_path.display()))?;
+    Ok(())
+}
+
 fn extract_tar_to_root_at(root: &Path, data: &[u8]) -> Result<Vec<PathBuf>> {
     // Inner scope owns the manifest so ANY failure can carry the files
     // already written back to the caller (audit A2): without this, a
@@ -1249,6 +1280,7 @@ fn extract_tar_to_root_at(root: &Path, data: &[u8]) -> Result<Vec<PathBuf>> {
 
         let mut pending_links = Vec::new();
         let mut seen_dirs: std::collections::HashSet<PathBuf> = std::collections::HashSet::new();
+        let mut extracted_regular_files = std::collections::HashSet::new();
 
         for entry in archive.entries()? {
             let mut entry = entry?;
@@ -1306,31 +1338,12 @@ fn extract_tar_to_root_at(root: &Path, data: &[u8]) -> Result<Vec<PathBuf>> {
             ensure_parent_dirs_recorded(&entry_path, root, &mut seen_dirs, installed_files)?;
 
             let mode = entry.header().mode()?;
-            let size = entry.header().size()?;
-
-            if size < 1024 {
-                let mut contents = Vec::with_capacity(size as usize);
-                entry.read_to_end(&mut contents)?;
-                fs::write(&entry_path, contents)
-                    .with_context(|| format!("Failed to write file: {}", entry_path.display()))?;
-            } else {
-                use std::io::BufWriter;
-                let file = File::create(&entry_path)
-                    .with_context(|| format!("Failed to create file: {}", entry_path.display()))?;
-                let mut writer = BufWriter::with_capacity(16384, file);
-                std::io::copy(&mut entry, &mut writer)
-                    .with_context(|| format!("Failed to copy to: {}", entry_path.display()))?;
-                writer.flush()?;
-            }
-
-            let mut perms = fs::metadata(&entry_path)?.permissions();
-            perms.set_mode(mode);
-            fs::set_permissions(&entry_path, perms)?;
-
+            write_archive_regular_file(&mut entry, &entry_path, mode)?;
+            extracted_regular_files.insert(entry_path.clone());
             installed_files.push(entry_path);
         }
 
-        create_root_links(pending_links)?;
+        create_root_links(pending_links, &extracted_regular_files)?;
         Ok(())
     };
 
@@ -2085,6 +2098,59 @@ mod tests {
         let escaped = temp.path().parent().expect("tempdir parent").join("pwned");
         assert!(!escaped.exists(), "nothing may land outside the root");
         assert!(!temp.path().join("lib").exists());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn regular_file_replaces_preexisting_leaf_symlink_without_writing_through() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let root = temp.path().join("root");
+        fs::create_dir(&root).expect("root");
+        let victim = temp.path().join("victim");
+        fs::write(&victim, b"sentinel").expect("victim");
+        std::os::unix::fs::symlink(&victim, root.join("tool")).expect("leaf symlink");
+        let data = build_tar(|builder| {
+            append_regular_file(builder, "./tool", b"package payload");
+            Ok(())
+        });
+
+        extract_tar_to_root_at(&root, &data).expect("regular file extraction");
+
+        assert_eq!(fs::read(&victim).expect("victim readable"), b"sentinel");
+        assert!(
+            fs::symlink_metadata(root.join("tool"))
+                .expect("installed file")
+                .is_file()
+        );
+        assert_eq!(
+            fs::read(root.join("tool")).expect("payload"),
+            b"package payload"
+        );
+    }
+
+    #[test]
+    fn hard_link_target_must_be_a_regular_file_from_the_same_archive() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        fs::create_dir_all(temp.path().join("etc")).expect("etc");
+        fs::write(temp.path().join("etc/shadow"), b"preexisting").expect("preexisting target");
+        let data = build_tar(|builder| {
+            let mut header = tar::Header::new_gnu();
+            header.set_entry_type(tar::EntryType::Link);
+            header.set_size(0);
+            header.set_cksum();
+            builder.append_link(&mut header, "./copy", "./etc/shadow")
+        });
+
+        let error = extract_tar_to_root_at(temp.path(), &data)
+            .expect_err("hard links may not target preexisting files");
+
+        assert!(
+            error
+                .to_string()
+                .contains("not extracted from this archive"),
+            "{error}"
+        );
+        assert!(!temp.path().join("copy").exists());
     }
 
     #[test]
