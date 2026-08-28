@@ -91,48 +91,9 @@ pub async fn run(force: bool, version: Option<String>) -> Result<()> {
         let new_binary = locate_binary(temp_dir.path(), &archive_name)
             .ok_or_else(|| anyhow::anyhow!("update archive did not contain an 'omg' binary"))?;
 
-        // Replace current binary
         let current_exe = env::current_exe().context("Failed to find current executable path")?;
-
-        // On Linux we can rename over the running executable
-        // We rename the *current* exe to .old first to be safe, then move new one in
-        let backup_path = current_exe.with_extension("old");
-        fs::rename(&current_exe, &backup_path).context("Failed to backup current binary")?;
-
-        match fs::rename(&new_binary, &current_exe) {
-            Ok(()) => {
-                // Fix permissions on Unix
-                #[cfg(unix)]
-                {
-                    use std::os::unix::fs::PermissionsExt;
-                    let mut perms = fs::metadata(&current_exe)
-                        .context("Failed to read updated binary metadata")?
-                        .permissions();
-                    perms.set_mode(0o755);
-                    fs::set_permissions(&current_exe, perms)
-                        .context("Failed to set updated binary permissions")?;
-                }
-
-                // Cleanup backup; a leftover .old file is harmless.
-                if let Err(error) = fs::remove_file(&backup_path) {
-                    tracing::debug!(
-                        "Failed to remove self-update backup {}: {error}",
-                        backup_path.display()
-                    );
-                }
-            }
-            Err(e) => {
-                // Restore backup, and surface a restore failure: otherwise the
-                // binary is left missing with only the install error reported.
-                if let Err(restore_error) = fs::rename(&backup_path, &current_exe) {
-                    return Err(anyhow::anyhow!(
-                        "Failed to install update: {e}; additionally failed to restore the previous binary: {restore_error}"
-                    ));
-                }
-                return Err(anyhow::anyhow!("Failed to install update: {e}"));
-            }
-        }
-        Ok(())
+        install_binary_atomically(&new_binary, &current_exe)
+            .context("Failed to install updated binary")
     })
     .await??;
 
@@ -145,6 +106,40 @@ pub async fn run(force: bool, version: Option<String>) -> Result<()> {
         style::maybe_color(&format!("v{target_version}"), |t| t.cyan().to_string())
     );
 
+    Ok(())
+}
+
+fn install_binary_atomically(
+    new_binary: &std::path::Path,
+    destination: &std::path::Path,
+) -> Result<()> {
+    let parent = destination
+        .parent()
+        .context("Current executable has no parent directory")?;
+    let mut staged = tempfile::NamedTempFile::new_in(parent)
+        .with_context(|| format!("Failed to stage update in {}", parent.display()))?;
+    let mut source = fs::File::open(new_binary)
+        .with_context(|| format!("Failed to open update payload {}", new_binary.display()))?;
+    std::io::copy(&mut source, staged.as_file_mut())
+        .context("Failed to copy update payload into executable directory")?;
+
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        staged
+            .as_file_mut()
+            .set_permissions(fs::Permissions::from_mode(0o755))
+            .context("Failed to set updated binary permissions")?;
+    }
+    staged
+        .as_file_mut()
+        .sync_all()
+        .context("Failed to sync updated binary")?;
+    staged
+        .persist(destination)
+        .map_err(|error| error.error)
+        .with_context(|| format!("Failed to replace {}", destination.display()))?;
+    crate::core::safe_ops::sync_parent_directory_sync(destination)?;
     Ok(())
 }
 
@@ -465,6 +460,42 @@ mod tests {
         );
         assert_eq!(release_target(Distro::MacOS), Some(("aarch64", "darwin")));
         assert_eq!(release_target(Distro::Unknown), None);
+    }
+
+    #[test]
+    fn install_binary_stages_replacement_in_destination_directory() {
+        let temp = tempfile::tempdir().expect("temp dir");
+        let source_dir = temp.path().join("download");
+        let destination_dir = temp.path().join("bin");
+        std::fs::create_dir_all(&source_dir).expect("source dir");
+        std::fs::create_dir_all(&destination_dir).expect("destination dir");
+        let source = source_dir.join("omg");
+        let destination = destination_dir.join("omg");
+        std::fs::write(&source, b"new binary").expect("source");
+        std::fs::write(&destination, b"old binary").expect("destination");
+
+        install_binary_atomically(&source, &destination).expect("install binary");
+
+        assert_eq!(
+            std::fs::read(&destination).expect("installed"),
+            b"new binary"
+        );
+        assert_eq!(
+            std::fs::read(&source).expect("source remains"),
+            b"new binary"
+        );
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            assert_eq!(
+                std::fs::metadata(destination)
+                    .expect("metadata")
+                    .permissions()
+                    .mode()
+                    & 0o777,
+                0o755
+            );
+        }
     }
 
     #[test]
