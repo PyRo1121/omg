@@ -25,9 +25,6 @@ pub enum Cmd<M> {
     /// Execute a function that produces a message
     Exec(Box<dyn FnOnce() -> M>),
 
-    /// Print raw output (no formatting)
-    Print(String),
-
     /// Print output with newline
     PrintLn(String),
 
@@ -49,20 +46,8 @@ pub enum Cmd<M> {
     /// Print a styled card with content
     Card(String, Vec<String>),
 
-    /// Create or update a progress bar
-    Progress(ProgressConfig),
-
-    /// Create a temporary spinner
-    Spinner(SpinnerConfig),
-
-    /// Render a styled table
-    Table(TableConfig),
-
     /// Render styled text with lip-gloss styles
     StyledText(StyledTextConfig),
-
-    /// Render a bordered panel/box
-    Panel(PanelConfig),
 
     /// Print a blank line (spacer)
     Spacer,
@@ -75,7 +60,6 @@ impl<M> fmt::Debug for Cmd<M> {
             Self::Msg(_) => write!(f, "Cmd::Msg(...)"),
             Self::Batch(batch) => f.debug_tuple("Batch").field(&batch.len()).finish(),
             Self::Exec(_) => write!(f, "Cmd::Exec(...)"),
-            Self::Print(s) => f.debug_tuple("Print").field(&truncate(s, 20)).finish(),
             Self::PrintLn(s) => f.debug_tuple("PrintLn").field(&truncate(s, 20)).finish(),
             Self::Info(s) => f.debug_tuple("Info").field(&truncate(s, 20)).finish(),
             Self::Success(s) => f.debug_tuple("Success").field(&truncate(s, 20)).finish(),
@@ -83,102 +67,10 @@ impl<M> fmt::Debug for Cmd<M> {
             Self::Error(s) => f.debug_tuple("Error").field(&truncate(s, 20)).finish(),
             Self::Header(t, _) => f.debug_tuple("Header").field(t).finish(),
             Self::Card(t, _) => f.debug_tuple("Card").field(t).finish(),
-            Self::Progress(_) => write!(f, "Cmd::Progress(...)"),
-            Self::Spinner(_) => write!(f, "Cmd::Spinner(...)"),
-            Self::Table(_) => write!(f, "Cmd::Table(...)"),
             Self::StyledText(_) => write!(f, "Cmd::StyledText(...)"),
-            Self::Panel(_) => write!(f, "Cmd::Panel(...)"),
             Self::Spacer => write!(f, "Cmd::Spacer"),
         }
     }
-}
-
-/// Configuration for progress bars
-#[derive(Debug, Clone)]
-pub struct ProgressConfig {
-    /// Unique identifier for this progress bar
-    pub id: String,
-    /// Message to display
-    pub message: String,
-    /// Current progress (0-100)
-    pub percent: usize,
-    /// Total length if known
-    pub length: Option<usize>,
-    /// Style of the progress bar
-    pub style: ProgressStyle,
-}
-
-/// Progress bar visual styles
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum ProgressStyle {
-    /// Default progress bar
-    Default,
-    /// Download style with speed indicator
-    Download,
-    /// Install style with package count
-    Install,
-    /// Spinner only (no bar)
-    Spinner,
-}
-
-/// Configuration for spinners
-#[derive(Debug, Clone)]
-pub struct SpinnerConfig {
-    /// Unique identifier
-    pub id: String,
-    /// Message to display
-    pub message: String,
-    /// Spinner style
-    pub style: SpinnerStyle,
-}
-
-/// Spinner visual styles
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum SpinnerStyle {
-    /// Dots spinning
-    Dots,
-    /// Arrows
-    Arrows,
-    /// Simple pipe rotation
-    Pipe,
-    /// Moon phases
-    Moon,
-}
-
-/// Configuration for tables
-#[derive(Debug, Clone)]
-pub struct TableConfig {
-    /// Table headers
-    pub headers: Vec<String>,
-    /// Table rows (each row is a vector of cells)
-    pub rows: Vec<Vec<String>>,
-    /// Column alignments
-    pub alignments: Vec<TableAlignment>,
-    /// Border style
-    pub border_style: BorderStyle,
-}
-
-/// Table column alignment
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum TableAlignment {
-    Left,
-    Center,
-    Right,
-}
-
-/// Border styles for tables and panels
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum BorderStyle {
-    /// No border
-    None,
-    /// Light single-line border
-    Light,
-    /// Heavy double-line border
-    Heavy,
-    /// Rounded corners
-    Rounded,
-    /// Double lines
-    Double,
 }
 
 /// Configuration for styled text
@@ -201,19 +93,6 @@ pub enum TextStyle {
     Info,
     /// Muted color (gray)
     Muted,
-}
-
-/// Configuration for bordered panels
-#[derive(Debug, Clone)]
-pub struct PanelConfig {
-    /// Panel title (optional)
-    pub title: Option<String>,
-    /// Panel content
-    pub content: Vec<String>,
-    /// Border style
-    pub border_style: BorderStyle,
-    /// Padding inside the border
-    pub padding: usize,
 }
 
 impl<M> Cmd<M> {

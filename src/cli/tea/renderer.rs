@@ -53,11 +53,6 @@ impl<W: Write> Renderer<W> {
         self.writer.flush()
     }
 
-    /// Print raw text (no styling, no newline)
-    pub fn print(&mut self, text: &str) -> io::Result<()> {
-        write!(self.writer, "{text}")
-    }
-
     /// Print text with newline
     pub fn println(&mut self, text: &str) -> io::Result<()> {
         writeln!(self.writer, "{text}")
@@ -152,18 +147,6 @@ mod tests {
     use std::io::Cursor;
 
     #[test]
-    fn test_renderer_print() {
-        let mut cursor = Cursor::new(Vec::new());
-        let mut renderer = Renderer::with_writer(&mut cursor);
-
-        renderer.print("hello").unwrap();
-        renderer.print(" world").unwrap();
-
-        let output = String::from_utf8(cursor.into_inner()).unwrap();
-        assert_eq!(output, "hello world");
-    }
-
-    #[test]
     fn test_renderer_println() {
         let mut cursor = Cursor::new(Vec::new());
         let mut renderer = Renderer::with_writer(&mut cursor);
@@ -180,11 +163,11 @@ mod tests {
         let mut cursor = Cursor::new(Vec::new());
         let mut renderer = Renderer::with_writer(&mut cursor);
 
-        renderer.print("test").unwrap();
+        renderer.println("test").unwrap();
         renderer.flush().unwrap();
 
         let output = String::from_utf8(cursor.into_inner()).unwrap();
-        assert_eq!(output, "test");
+        assert_eq!(output, "test\n");
     }
 
     #[test]

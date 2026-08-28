@@ -119,7 +119,7 @@ impl PackageManager for PureDebianPackageManager {
 
                     // Create transaction and populate URLs; a missing URL/SHA256
                     // is fatal here rather than a silent skip downstream.
-                    let mut tx = debian_db::Transaction::from_resolution(resolution)?;
+                    let mut tx = debian_db::Transaction::from_resolution(resolution);
                     populate_package_urls(&mut tx).context(
                         "Failed to resolve package URLs. Repository configuration may be invalid.",
                     )?;
@@ -169,11 +169,7 @@ impl PackageManager for PureDebianPackageManager {
                 }
             }
 
-            // Create transaction on the blocking pool: content-store init
-            // touches the filesystem.
-            let mut tx = tokio::task::spawn_blocking(debian_db::Transaction::new)
-                .await
-                .context("Debian removal preparation task failed")??;
+            let mut tx = debian_db::Transaction::new();
             for pkg in &packages {
                 tx.add_remove(pkg.clone());
             }
@@ -250,7 +246,7 @@ impl PackageManager for PureDebianPackageManager {
                     )
                     .context("Insufficient disk space for upgrade")?;
 
-                    let mut tx = debian_db::Transaction::from_resolution(resolution)?;
+                    let mut tx = debian_db::Transaction::from_resolution(resolution);
                     populate_package_urls(&mut tx)
                         .context("Failed to resolve package URLs for upgrade")?;
                     Ok(tx)

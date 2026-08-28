@@ -26,7 +26,6 @@ use indicatif::{MultiProgress, ProgressBar, ProgressStyle};
 use owo_colors::OwoColorize;
 use tempfile::TempDir;
 
-use super::content_store::ContentStore;
 use super::resolver::ResolutionResult;
 use super::validation::require_verified_deb;
 use crate::runtimes::common::{BudgetedReader, BudgetedSink};
@@ -82,8 +81,12 @@ pub struct Transaction {
     backups: HashMap<PathBuf, PathBuf>,
     /// Files installed by this transaction
     installed_files: Vec<PathBuf>,
-    /// Content-addressable storage for package deduplication
-    content_store: ContentStore,
+}
+
+impl Default for Transaction {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 /// Action to perform on a package
@@ -104,8 +107,9 @@ pub struct PackageAction {
 }
 
 impl Transaction {
-    /// Create a new transaction from resolution result
-    pub fn from_resolution(result: ResolutionResult) -> Result<Self> {
+    /// Create a new transaction from a resolution result.
+    #[must_use]
+    pub fn from_resolution(result: ResolutionResult) -> Self {
         let to_install: Vec<PackageAction> = result
             .to_install
             .into_iter()
@@ -145,10 +149,7 @@ impl Transaction {
             })
             .collect();
 
-        let content_store = ContentStore::new();
-        content_store.init()?;
-
-        Ok(Self {
+        Self {
             state: TransactionState::Pending,
             to_install,
             to_remove,
@@ -156,16 +157,13 @@ impl Transaction {
             temp_dir: None,
             backups: HashMap::new(),
             installed_files: Vec::new(),
-            content_store,
-        })
+        }
     }
 
-    /// Create an empty transaction
-    pub fn new() -> Result<Self> {
-        let content_store = ContentStore::new();
-        content_store.init()?;
-
-        Ok(Self {
+    /// Create an empty transaction.
+    #[must_use]
+    pub fn new() -> Self {
+        Self {
             state: TransactionState::Pending,
             to_install: Vec::new(),
             to_remove: Vec::new(),
@@ -173,8 +171,7 @@ impl Transaction {
             temp_dir: None,
             backups: HashMap::new(),
             installed_files: Vec::new(),
-            content_store,
-        })
+        }
     }
 
     /// Return the private transaction workspace after `execute` initializes it.
@@ -322,7 +319,6 @@ impl Transaction {
         // Channel for passing downloaded packages to unpack workers
         // Small buffer to reduce memory pressure
         let (tx, mut rx) = mpsc::channel::<(PathBuf, String)>(MAX_CONCURRENT_UNPACKS);
-        let content_store = self.content_store.clone();
 
         // Pre-create the download task futures with their own sender clones
         let download_futures: Vec<_> = packages_to_download
@@ -330,7 +326,6 @@ impl Transaction {
             .map(|(idx, name, version, url, sha256, expected_size)| {
                 let client = client.clone();
                 let temp_dir = temp_dir.clone();
-                let content_store = content_store.clone();
                 let tx = tx.clone();
                 let pb = multi.add(ProgressBar::new(0));
                 pb.set_style(
@@ -351,7 +346,6 @@ impl Transaction {
                         &url,
                         &temp_dir,
                         &pb,
-                        &content_store,
                         sha256.as_deref(),
                         expected_size,
                     )
@@ -1409,7 +1403,6 @@ async fn download_package_streaming(
     url: &str,
     temp_dir: &Path,
     progress: &ProgressBar,
-    content_store: &ContentStore,
     sha256: Option<&str>,
     expected_size: u64,
 ) -> Result<PathBuf> {
@@ -1424,30 +1417,7 @@ async fn download_package_streaming(
     let filename = format!("{name}_{version}.deb");
     let dest = temp_dir.join(&filename);
 
-    // Check content store first (if we have the SHA256 hash)
-    if let Some(hash) = sha256
-        && content_store.contains(hash)
-    {
-        match content_store.hard_link(hash, &dest) {
-            Ok(()) => {
-                require_verified_deb(&dest, name, Some(hash))?;
-                progress.set_message("cached ✓".green().to_string());
-                tracing::info!(
-                    "Using cached .deb from content store: {name} (hash: {})",
-                    &hash[..8]
-                );
-                return Ok(dest);
-            }
-            Err(e) => {
-                tracing::warn!(
-                    "Failed to hard link from content store: {e}, falling back to download"
-                );
-            }
-        }
-    }
-
-    // OPTIMIZATION: Fast path - download without overhead
-    // Skip content store on first download to minimize latency
+    // OPTIMIZATION: Fast path - download without retry overhead.
     match download_streaming_once(client, url, &dest, progress, max_bytes).await {
         Ok(()) => {
             tracing::debug!("Successfully downloaded {} to {}", name, dest.display());
@@ -1848,7 +1818,7 @@ mod tests {
 
     #[test]
     fn test_transaction_new() {
-        let tx = Transaction::new().expect("content store init");
+        let tx = Transaction::new();
         assert_eq!(tx.state, TransactionState::Pending);
         assert!(tx.to_install.is_empty());
         assert!(tx.to_remove.is_empty());
@@ -1856,7 +1826,7 @@ mod tests {
 
     #[test]
     fn transaction_steps_reject_missing_private_workspace() {
-        let mut transaction = Transaction::new().expect("content store init");
+        let mut transaction = Transaction::new();
 
         let error = transaction
             .configure_packages()
@@ -1871,7 +1841,7 @@ mod tests {
 
     #[test]
     fn test_transaction_add_install() {
-        let mut tx = Transaction::new().expect("content store init");
+        let mut tx = Transaction::new();
         tx.add_install(
             "vim".to_string(),
             "9.0".to_string(),
@@ -1884,7 +1854,7 @@ mod tests {
 
     #[test]
     fn test_transaction_sizes() {
-        let mut tx = Transaction::new().expect("content store init");
+        let mut tx = Transaction::new();
         tx.add_install("pkg1".to_string(), "1.0".to_string(), String::new(), 1000);
         tx.add_install("pkg2".to_string(), "1.0".to_string(), String::new(), 2000);
         assert_eq!(tx.total_download_size(), 3000);
@@ -2282,7 +2252,9 @@ mod tests {
 
         assert!(error.to_string().contains("exceeds"), "{error}");
         assert!(
-            error.to_string().contains("maximum supported size"),
+            error
+                .to_string()
+                .contains("configured limit of 1048576 bytes"),
             "{error}"
         );
         // The sink stopped at the budget instead of expanding to 64 MiB.
@@ -2346,7 +2318,7 @@ mod tests {
 
     #[tokio::test]
     async fn execute_removal_completes_for_empty_transaction() {
-        let mut tx = Transaction::new().expect("content store init");
+        let mut tx = Transaction::new();
         tx.execute_removal()
             .await
             .expect("removing nothing must succeed");
@@ -2356,7 +2328,7 @@ mod tests {
     async fn execute_removal_reports_unknown_package_as_failure() {
         // The blocking-pool route must still propagate per-package validation
         // failures instead of silently completing.
-        let mut tx = Transaction::new().expect("content store init");
+        let mut tx = Transaction::new();
         tx.add_remove("omg-wave3-definitely-not-installed".to_string());
         let error = tx
             .execute_removal()
@@ -2383,9 +2355,6 @@ mod tests {
         let stuck = dir.path().join("shared");
         std::fs::create_dir_all(stuck.join("foreign")).expect("stubborn dir");
 
-        let content_store = ContentStore::with_path(dir.path().join("content-store"));
-        content_store.init().expect("content store init");
-
         let mut tx = Transaction {
             state: TransactionState::Configuring,
             to_install: Vec::new(),
@@ -2394,7 +2363,6 @@ mod tests {
             temp_dir: None,
             backups: HashMap::from([(original.clone(), backup)]),
             installed_files: vec![stuck],
-            content_store,
         };
 
         let error = tx

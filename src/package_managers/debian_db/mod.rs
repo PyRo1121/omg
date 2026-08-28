@@ -19,14 +19,12 @@
 //! success/failure. A typed error enum would add surface without a current
 //! consumer; revisit if this module is ever extracted into a crate.
 
-pub mod content_store;
 pub mod db;
 pub mod resolver;
 pub mod sources;
 pub mod transaction;
 pub mod validation;
 
-pub use content_store::ContentStore;
 pub use db::{
     DebianMmapIndex, DebianPackage, DebianPackageIndex, DpkgPackageEntry, clean_package_cache,
     cleanup_expired_mmaps, debian_arch, ensure_index_loaded, ensure_mmap_loaded,

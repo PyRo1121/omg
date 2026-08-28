@@ -84,21 +84,13 @@ pub(crate) fn execute_cmd(cmd: crate::cli::tea::Cmd<()>) {
 
     fn execute_inner(cmd: Cmd<()>) {
         match cmd {
-            Cmd::None
-            | Cmd::Msg(())
-            | Cmd::Exec(_)
-            | Cmd::Progress(_)
-            | Cmd::Spinner(_)
-            | Cmd::Table(_) => {
+            Cmd::None | Cmd::Msg(()) | Cmd::Exec(_) => {
                 // Not supported or applicable in fallback mode
             }
             Cmd::Batch(cmds) => {
                 for c in cmds {
                     execute_inner(c);
                 }
-            }
-            Cmd::Print(output) => {
-                print!("{output}");
             }
             Cmd::PrintLn(output) => {
                 println!("{output}");
@@ -126,14 +118,6 @@ pub(crate) fn execute_cmd(cmd: crate::cli::tea::Cmd<()>) {
             Cmd::StyledText(config) => {
                 // In fallback mode, just print the text without styling
                 println!("{}", config.text);
-            }
-            Cmd::Panel(config) => {
-                if let Some(title) = &config.title {
-                    println!("\n[{title}]");
-                }
-                for line in &config.content {
-                    println!("{}{}", " ".repeat(config.padding), line);
-                }
             }
             Cmd::Spacer => {
                 println!();

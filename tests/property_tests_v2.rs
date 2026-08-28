@@ -111,7 +111,6 @@ proptest! {
 // ═══════════════════════════════════════════════════════════════════════════════
 
 proptest! {
-
     #[test]
     fn prop_pacman_version_format(
         major in 0u32..50u32,
@@ -121,73 +120,13 @@ proptest! {
     ) {
         use omg_lib::cli::tea::UpdateType;
 
-        let v1 = format!("{}.{}.{}-{}", major, minor, patch, pkgrel);
-        let v2 = format!("{}.{}.{}-{}", major, minor, patch + 1, pkgrel);
+        let v1 = format!("{major}.{minor}.{patch}-{pkgrel}");
+        let v2 = format!("{major}.{minor}.{}-{pkgrel}", patch + 1);
 
         let update_type = UpdateType::from_versions(&v1, &v2);
 
         prop_assert_eq!(update_type, UpdateType::Patch);
     }
-
-}
-
-// ═══════════════════════════════════════════════════════════════════════════════
-// ELM ARCHITECTURE MODEL PROPERTIES
-// ═══════════════════════════════════════════════════════════════════════════════
-
-proptest! {
-
-    #[test]
-    fn prop_update_model_empty_packages(
-        check_only in proptest::bool::ANY,
-        yes in proptest::bool::ANY
-    ) {
-        use omg_lib::cli::tea::{Model, UpdateModel, UpdateMsg};
-
-        let mut model = UpdateModel::new()
-            .with_check_only(check_only)
-            .with_yes(yes);
-
-        let _cmd = model.update(UpdateMsg::UpdatesFound(vec![]));
-
-        prop_assert!(model.updates.is_empty());
-        let expected_state = if check_only || yes {
-            omg_lib::cli::tea::UpdateState::ShowingUpdates
-        } else {
-            omg_lib::cli::tea::UpdateState::Confirming
-        };
-        prop_assert_eq!(model.state, expected_state);
-    }
-
-    #[test]
-    fn prop_error_state_preserved(
-        error_msg in "[a-zA-Z0-9 ]{1,100}"
-    ) {
-        use omg_lib::cli::tea::{Model, UpdateModel, UpdateMsg};
-
-        let mut model = UpdateModel::new();
-
-        let _cmd = model.update(UpdateMsg::Error(error_msg.clone()));
-
-        // Should be in failed state
-        prop_assert_eq!(model.state, omg_lib::cli::tea::UpdateState::Failed);
-        prop_assert_eq!(model.error.as_ref(), Some(&error_msg));
-    }
-}
-
-#[test]
-fn update_model_state_sequence_reaches_completion() {
-    use omg_lib::cli::tea::{Model, UpdateModel, UpdateMsg, UpdateState};
-
-    let mut model = UpdateModel::new();
-    let _check_command = model.update(UpdateMsg::Check);
-    assert_eq!(model.state, UpdateState::Checking);
-
-    let _no_updates_command = model.update(UpdateMsg::NoUpdates);
-    assert_eq!(model.state, UpdateState::Complete);
-
-    let _complete_command = model.update(UpdateMsg::Complete);
-    assert_eq!(model.state, UpdateState::Complete);
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════

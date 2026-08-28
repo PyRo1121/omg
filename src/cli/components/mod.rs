@@ -38,56 +38,6 @@ impl Components {
         ])
     }
 
-    /// Create a formatted package list with numbering
-    ///
-    /// ```text
-    /// ┌─ Available Packages ─┐
-    /// │ 1. pkg-a - Description │
-    /// │ 2. pkg-b - Description │
-    /// └──────────────────────┘
-    /// ```
-    #[must_use]
-    pub fn package_list<M>(
-        title: impl Into<String>,
-        packages: Vec<(impl Into<String>, Option<impl Into<String>>)>,
-    ) -> Cmd<M> {
-        let content: Vec<String> = packages
-            .into_iter()
-            .enumerate()
-            .map(|(i, (name, desc))| {
-                if let Some(d) = desc {
-                    format!("{}. {} - {}", i + 1, name.into(), d.into())
-                } else {
-                    format!("{}. {}", i + 1, name.into())
-                }
-            })
-            .collect();
-
-        Cmd::card(title.into(), content)
-    }
-
-    /// Create an update summary showing version changes
-    ///
-    /// ```text
-    /// ┌─ Updates Available ─┐
-    /// │ pkg-a 1.0 → 2.0     │
-    /// │ pkg-b 3.1 → 3.2     │
-    /// └────────────────────┘
-    /// ```
-    #[must_use]
-    pub fn update_summary<M>(
-        packages: Vec<(impl Into<String>, impl Into<String>, impl Into<String>)>,
-    ) -> Cmd<M> {
-        let content: Vec<String> = packages
-            .into_iter()
-            .map(|(name, old_ver, new_ver)| {
-                format!("{} {} → {}", name.into(), old_ver.into(), new_ver.into())
-            })
-            .collect();
-
-        Cmd::card("Updates Available", content)
-    }
-
     /// Create a key-value list, optionally in a card
     ///
     /// With title: renders as a card.
@@ -159,34 +109,6 @@ impl Components {
         ])
     }
 
-    /// Permission denied error with sudo suggestion
-    #[must_use]
-    pub fn permission_error<M>(command: impl Into<String>) -> Cmd<M> {
-        Cmd::batch([
-            Cmd::spacer(),
-            Cmd::error("Permission denied"),
-            Cmd::styled_text(StyledTextConfig {
-                text: format!("Try running: sudo {}", command.into()),
-                style: TextStyle::Muted,
-            }),
-            Cmd::spacer(),
-        ])
-    }
-
-    /// Confirmation prompt with action hint
-    #[must_use]
-    pub fn confirm<M>(message: impl Into<String>, action: impl Into<String>) -> Cmd<M> {
-        Cmd::batch([
-            Cmd::spacer(),
-            Cmd::bold(message.into()),
-            Cmd::styled_text(StyledTextConfig {
-                text: format!("Proceed? ({} or --yes to skip)", action.into()),
-                style: TextStyle::Muted,
-            }),
-            Cmd::spacer(),
-        ])
-    }
-
     /// Command completed successfully with checkmark
     #[must_use]
     pub fn complete<M>(message: impl Into<String>) -> Cmd<M> {
@@ -213,16 +135,6 @@ impl Components {
         ])
     }
 
-    /// Welcome banner for CLI commands
-    #[must_use]
-    pub fn welcome<M>(command: &str, description: &str) -> Cmd<M> {
-        Cmd::batch([
-            Cmd::spacer(),
-            Cmd::header(command, description),
-            Cmd::spacer(),
-        ])
-    }
-
     /// Section header for grouping related output
     #[must_use]
     pub fn section<M>(title: impl Into<String>) -> Cmd<M> {
@@ -235,34 +147,6 @@ mod tests {
     use super::*;
 
     #[test]
-    fn package_list_numbers_names_and_descriptions() {
-        let cmd: Cmd<()> =
-            Components::package_list("Results", vec![("pkg1", Some("desc")), ("pkg2", None)]);
-        match cmd {
-            Cmd::Card(title, content) => {
-                assert_eq!(title, "Results");
-                assert_eq!(
-                    content,
-                    vec!["1. pkg1 - desc".to_string(), "2. pkg2".to_string()]
-                );
-            }
-            other => panic!("expected card, got {other:?}"),
-        }
-    }
-
-    #[test]
-    fn update_summary_shows_version_arrows() {
-        let cmd: Cmd<()> = Components::update_summary(vec![("pkg", "1.0", "2.0")]);
-        match cmd {
-            Cmd::Card(title, content) => {
-                assert_eq!(title, "Updates Available");
-                assert_eq!(content, vec!["pkg 1.0 → 2.0".to_string()]);
-            }
-            other => panic!("expected card, got {other:?}"),
-        }
-    }
-
-    #[test]
     fn kv_list_with_title_is_a_card() {
         let cmd: Cmd<()> = Components::kv_list(Some("Info"), vec![("k", "v")]);
         match cmd {
@@ -272,26 +156,5 @@ mod tests {
             }
             other => panic!("expected card, got {other:?}"),
         }
-    }
-
-    #[test]
-    fn permission_error_mentions_the_command() {
-        let cmd: Cmd<()> = Components::permission_error("omg update");
-        let Cmd::Batch(parts) = cmd else {
-            panic!("expected batch");
-        };
-        assert!(
-            parts
-                .iter()
-                .any(|part| matches!(part, Cmd::Error(msg) if msg == "Permission denied")),
-            "must print permission denied"
-        );
-        assert!(
-            parts.iter().any(|part| matches!(
-                part,
-                Cmd::StyledText(cfg) if cfg.text.contains("sudo omg update")
-            )),
-            "must suggest sudo for the original command"
-        );
     }
 }

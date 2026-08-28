@@ -129,25 +129,6 @@ pub fn error(msg: &str) -> String {
     maybe_color(msg, |m| format!("{} {}", icon("✗", "X").red().bold(), m))
 }
 
-/// Error with helpful context and suggestions
-///
-/// # Example
-/// ```ignore
-/// style::error_with_context(
-///     "Package not found: rust-analyzer",
-///     &["Try: omg search analyzer", "Check spelling", "Run: omg sync"]
-/// );
-/// ```
-pub fn error_with_context(msg: &str, suggestions: &[&str]) {
-    println!("{}", error(msg));
-    if !suggestions.is_empty() {
-        println!();
-        for (i, suggestion) in suggestions.iter().enumerate() {
-            println!("  {} {}", dim(&format!("{}.", i + 1)), arrow(suggestion));
-        }
-    }
-}
-
 /// Info message with i
 #[must_use]
 pub fn info(msg: &str) -> String {

@@ -92,16 +92,13 @@ pub use renderer::Renderer;
 const MAX_CMD_STEPS: usize = 100_000;
 
 // Re-export configuration types for convenience
-pub use cmd::{
-    BorderStyle, PanelConfig, ProgressConfig, ProgressStyle, SpinnerConfig, SpinnerStyle,
-    StyledTextConfig, TableAlignment, TableConfig, TextStyle,
-};
+pub use cmd::{StyledTextConfig, TextStyle};
 
 // Re-export models
 pub use info_model::{InfoModel, InfoMsg, InfoSource};
 pub use search_model::{SearchModel, SearchMsg, SearchResult, SearchState};
 pub use status_model::{StatusData, StatusModel, StatusMsg};
-pub use update_model::{UpdateModel, UpdateMsg, UpdatePackage, UpdateState, UpdateType};
+pub use update_model::UpdateType;
 
 // Re-export wrappers for easy integration
 pub use wrappers::{run_info_elm, run_status_elm};
@@ -225,9 +222,6 @@ impl<M: Model> Program<M> {
 fn execute_output_cmd<M>(renderer: &mut Renderer, cmd: Cmd<M>) -> io::Result<()> {
     match cmd {
         Cmd::None | Cmd::Msg(_) | Cmd::Batch(_) | Cmd::Exec(_) => {}
-        Cmd::Print(output) => {
-            renderer.print(&output)?;
-        }
         Cmd::PrintLn(output) => {
             renderer.println(&output)?;
         }
@@ -250,33 +244,10 @@ fn execute_output_cmd<M>(renderer: &mut Renderer, cmd: Cmd<M>) -> io::Result<()>
         Cmd::Card(title, content) => {
             renderer.card(&title, &content)?;
         }
-        Cmd::Progress(_) | Cmd::Spinner(_) => {
-            // NOT SUPPORTED by this synchronous renderer: progress bars and
-            // spinners require an event loop this runtime does not have.
-            // Models must use `Cmd::Info`/`Cmd::Card` for progress feedback.
-            tracing::debug!("Progress/Spinner command ignored by synchronous renderer");
-        }
-        Cmd::Table(config) => {
-            // No table renderer exists; emit rows as plain lines so the
-            // content is never silently swallowed.
-            renderer.header(&config.headers.join(" | "), "")?;
-            for row in &config.rows {
-                renderer.println(&row.join(" | "))?;
-            }
-        }
         Cmd::StyledText(config) => {
             // No style renderer in this path; print the text so it is not
             // silently dropped (matches the fallback renderer behavior).
             renderer.println(&config.text)?;
-        }
-        Cmd::Panel(config) => {
-            if let Some(title) = &config.title {
-                renderer.println(title)?;
-            }
-            let pad = " ".repeat(config.padding);
-            for line in &config.content {
-                renderer.println(&format!("{pad}{line}"))?;
-            }
         }
         Cmd::Spacer => {
             renderer.println("")?;

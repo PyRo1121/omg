@@ -24,7 +24,6 @@ pub enum Ecosystem {
     Ruby,
     Python,
     Java,
-    Custom(String),
 }
 
 impl std::fmt::Display for Ecosystem {
@@ -40,7 +39,6 @@ impl std::fmt::Display for Ecosystem {
             Self::Ruby => write!(f, "Ruby"),
             Self::Python => write!(f, "Python"),
             Self::Java => write!(f, "Java"),
-            Self::Custom(s) => write!(f, "{s}"),
         }
     }
 }
@@ -56,7 +54,6 @@ impl Ecosystem {
             Self::Java => 60,
             Self::Php => 50,
             Self::Make => 40,
-            Self::Custom(_) => 0,
         }
     }
 
