@@ -62,6 +62,8 @@ pub enum AuditError {
     },
     #[error("Corrupt audit log '{path}' at line {line}: missing hash")]
     MissingHash { path: String, line: usize },
+    #[error("Global audit logger state is poisoned")]
+    LoggerPoisoned,
     #[error("Failed to unlock audit log '{path}'")]
     Unlock {
         path: String,
@@ -81,6 +83,7 @@ impl AuditError {
             Self::Serialize { .. }
             | Self::CorruptLine { .. }
             | Self::MissingHash { .. }
+            | Self::LoggerPoisoned
             | Self::Unlock { .. } => false,
         }
     }
@@ -670,7 +673,9 @@ static AUDIT_LOGGER: std::sync::LazyLock<std::sync::Mutex<Option<AuditLogger>>> 
 /// use, so callers that never ran this function still persist events.
 pub fn init_audit_logger() -> Result<(), AuditError> {
     let logger = AuditLogger::new()?;
-    *AUDIT_LOGGER.lock().expect("audit logger mutex poisoned") = Some(logger);
+    *AUDIT_LOGGER
+        .lock()
+        .map_err(|_| AuditError::LoggerPoisoned)? = Some(logger);
     Ok(())
 }
 
@@ -685,7 +690,10 @@ fn record_global(
     resource: &str,
     description: &str,
 ) {
-    let mut guard = AUDIT_LOGGER.lock().expect("audit logger mutex poisoned");
+    let Ok(mut guard) = AUDIT_LOGGER.lock() else {
+        tracing::error!("Audit logger state is poisoned; dropping event {event} for {resource}");
+        return;
+    };
     if guard.is_none() {
         match AuditLogger::new() {
             Ok(logger) => *guard = Some(logger),

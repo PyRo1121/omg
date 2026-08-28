@@ -710,9 +710,7 @@ impl HomebrewPackageManager {
 
         self.refresh_installed_cache_if_needed()?;
 
-        Ok(INSTALLED_CACHE
-            .read()
-            .expect("lock poisoned")
+        Ok(crate::core::sync::read_cache(&INSTALLED_CACHE)
             .packages
             .contains(package))
     }

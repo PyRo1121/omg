@@ -653,7 +653,7 @@ fn finish(result: Result<()>) -> ! {
     match result {
         Ok(()) => std::process::exit(0),
         Err(error) => {
-            eprintln!("Error: {error:?}");
+            eprintln!("Error: {error:#}");
             if let Some(suggestion) = omg_lib::core::error::suggest_for_anyhow(&error) {
                 eprintln!("\nSuggestion: {suggestion}");
             }
