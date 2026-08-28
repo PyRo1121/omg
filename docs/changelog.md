@@ -668,6 +668,7 @@ analyzer inference
 - **Ci**: Cross-platform install script and R2 release sync
 ### 🐛 Bug Fixes
 
+- Keep isolated daemon queries off host state
 - Pass valid arguments to DNF
 - Preserve Debian package state by architecture
 - Validate historical AUR versions
