@@ -668,6 +668,7 @@ analyzer inference
 - **Ci**: Cross-platform install script and R2 release sync
 ### 🐛 Bug Fixes
 
+- Emit UTC security timestamps
 - Synchronize usage only after valid activity
 - Retain official siblings during AUR fallback
 - Align TUI actions and activity selection
@@ -2504,6 +2505,7 @@ which newer clippy versions flag as an error with -D warnings.
 
 ### 👷 CI/CD
 
+- Require feature intersection checks
 - Add bounded weekly fuzz campaigns
 - Isolate write credentials and fail closed on dependencies
 - Pin Rust toolchain across release and analysis jobs
