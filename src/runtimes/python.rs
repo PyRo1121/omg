@@ -108,6 +108,13 @@ impl PythonManager {
         }
     }
 
+    fn asset_matches_version(name: &str, version: &str, target: &str) -> bool {
+        Self::extract_cpython_version(name).as_deref() == Some(version)
+            && name.contains(target)
+            && name.contains("install_only")
+            && name.ends_with(".tar.gz")
+    }
+
     /// Install Python - PURE RUST, NO SUBPROCESS
     pub async fn install(&self, version: &str) -> Result<()> {
         let version = normalize_version(version);
@@ -162,16 +169,10 @@ impl PythonManager {
             .await
             .context("Failed to parse Python release data")?;
 
-        let python_prefix = format!("cpython-{version}");
         let asset = releases
             .iter()
             .flat_map(|release| &release.assets)
-            .find(|asset| {
-                asset.name.contains(&python_prefix)
-                    && asset.name.contains(&target)
-                    && asset.name.contains("install_only")
-                    && asset.name.ends_with(".tar.gz")
-            })
+            .find(|asset| Self::asset_matches_version(&asset.name, &version, &target))
             .ok_or_else(|| {
                 anyhow::anyhow!("Python {version} not found. Try: omg list python --available")
             })?;
@@ -264,6 +265,26 @@ mod tests {
         assert!(PythonManager::is_semver_like("3.11.5"));
         assert!(!PythonManager::is_semver_like("3.12"));
         assert!(!PythonManager::is_semver_like("3"));
+    }
+
+    #[test]
+    fn asset_version_matching_is_component_bounded() {
+        let name = "cpython-3.10.21+20260825-x86_64-unknown-linux-gnu-install_only.tar.gz";
+        assert!(PythonManager::asset_matches_version(
+            name,
+            "3.10.21",
+            "x86_64-unknown-linux-gnu"
+        ));
+        assert!(!PythonManager::asset_matches_version(
+            name,
+            "3.1",
+            "x86_64-unknown-linux-gnu"
+        ));
+        assert!(!PythonManager::asset_matches_version(
+            name,
+            "3.10",
+            "x86_64-unknown-linux-gnu"
+        ));
     }
 
     #[cfg(unix)]

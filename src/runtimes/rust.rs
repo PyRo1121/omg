@@ -120,11 +120,8 @@ impl RustManager {
             channel: "stable".to_string(),
         });
 
-        // Add channel aliases
-        versions.push(RustVersion {
-            version: "stable".to_string(),
-            channel: "stable".to_string(),
-        });
+        // Add rolling channel aliases. The concrete stable version above
+        // already represents the stable channel, so do not emit it twice.
         versions.push(RustVersion {
             version: "beta".to_string(),
             channel: "beta".to_string(),
@@ -518,7 +515,9 @@ impl RustManager {
             .get(&url)
             .send()
             .await
-            .context("Failed to fetch Rust version manifest. Check your internet connection.")?
+            .with_context(|| format!("Failed to fetch Rust manifest from {url}"))?
+            .error_for_status()
+            .with_context(|| format!("Rust manifest request failed for channel '{channel}'"))?
             .text()
             .await
             .context("Failed to read Rust version manifest")?;
