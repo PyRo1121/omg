@@ -81,8 +81,7 @@ fn execute_fast_system_update(suffix: &str) -> Result<()> {
     // official portion of delegated updates (`update --fast`, `--turbo`, and
     // the deferred-sync leg of plain `omg update`); without it those
     // upgrades were invisible to `omg history` / rollback.
-    let changes: Vec<PackageChange> = omg_lib::package_managers::get_update_list()
-        .unwrap_or_default()
+    let changes: Vec<PackageChange> = omg_lib::package_managers::get_update_list()?
         .into_iter()
         .map(|update| PackageChange {
             name: update.name,

@@ -58,11 +58,45 @@ fn fallback_home_dir() -> PathBuf {
     home::home_dir().unwrap_or_else(|| PathBuf::from("."))
 }
 
+fn elevated_user_home() -> Option<PathBuf> {
+    if !crate::core::is_root() {
+        return None;
+    }
+    elevated_home_from(
+        std::env::var("SUDO_USER").ok().as_deref(),
+        std::env::var("SUDO_HOME").ok().as_deref(),
+        std::env::var("DOAS_USER").ok().as_deref(),
+    )
+}
+
+fn elevated_home_from(
+    sudo_user: Option<&str>,
+    sudo_home: Option<&str>,
+    doas_user: Option<&str>,
+) -> Option<PathBuf> {
+    if let Some(user) = sudo_user.filter(|user| is_valid_username(user)) {
+        if let Some(home) = sudo_home.filter(|home| {
+            let path = std::path::Path::new(home);
+            path.is_absolute() && !home.contains('\0') && !home.contains("..")
+        }) {
+            return Some(PathBuf::from(home));
+        }
+        return Some(PathBuf::from(format!("/home/{user}")));
+    }
+    doas_user
+        .filter(|user| is_valid_username(user))
+        .map(|user| PathBuf::from(format!("/home/{user}")))
+}
+
 /// Data directory (default: XDG data dir/omg or ~/.omg).
+/// Elevated child processes keep using the invoking user's state directory.
 #[must_use]
 pub fn data_dir() -> PathBuf {
     env_path("OMG_DATA_DIR").unwrap_or_else(|| {
-        dirs::data_dir().map_or_else(|| fallback_home_dir().join(".omg"), |d| d.join("omg"))
+        elevated_user_home().map_or_else(
+            || dirs::data_dir().map_or_else(|| fallback_home_dir().join(".omg"), |d| d.join("omg")),
+            |home| home.join(".local/share/omg"),
+        )
     })
 }
 
@@ -100,45 +134,13 @@ fn is_valid_username(name: &str) -> bool {
 #[must_use]
 pub fn cache_dir() -> PathBuf {
     env_path("OMG_CACHE_DIR").unwrap_or_else(|| {
-        if let Ok(sudo_user) = std::env::var("SUDO_USER")
-            && crate::core::is_root()
-            && is_valid_username(&sudo_user)
-        {
-            // SUDO_HOME is environment-controlled and evaluated as root:
-            // apply the same charset/length rules as SUDO_USER before it
-            // becomes a path prefix.
-            // SUDO_HOME is an absolute HOME path (e.g. /var/home/alice on
-            // Silverblue), not a username — the old username validation
-            // rejected every legitimate value containing '/'.
-            let home = match std::env::var("SUDO_HOME") {
-                Ok(dir)
-                    if std::path::Path::new(&dir).is_absolute()
-                        && !dir.contains('\0')
-                        && !dir.contains("..") =>
-                {
-                    PathBuf::from(dir)
-                }
-                Ok(dir) => {
-                    tracing::warn!(
-                        "Ignoring unsafe SUDO_HOME {dir:?}; falling back to /home/{sudo_user}"
-                    );
-                    PathBuf::from(format!("/home/{sudo_user}"))
-                }
-                Err(_) => PathBuf::from(format!("/home/{sudo_user}")),
-            };
-
-            return home.join(".cache/omg");
-        }
-
-        if let Ok(doas_user) = std::env::var("DOAS_USER")
-            && crate::core::is_root()
-            && is_valid_username(&doas_user)
-        {
-            let home = PathBuf::from(format!("/home/{doas_user}"));
-            return home.join(".cache/omg");
-        }
-
-        dirs::cache_dir().map_or_else(|| fallback_home_dir().join(".cache/omg"), |d| d.join("omg"))
+        elevated_user_home().map_or_else(
+            || {
+                dirs::cache_dir()
+                    .map_or_else(|| fallback_home_dir().join(".cache/omg"), |d| d.join("omg"))
+            },
+            |home| home.join(".cache/omg"),
+        )
     })
 }
 
@@ -449,6 +451,23 @@ mod tests {
         assert!(!test_mode_value(Some("0"), true));
         assert!(!test_mode_value(Some(""), true));
         assert!(!test_mode_value(None, true));
+    }
+
+    #[test]
+    fn elevated_home_selection_is_stable_and_rejects_unsafe_overrides() {
+        assert_eq!(
+            elevated_home_from(Some("alice"), Some("/var/home/alice"), None),
+            Some(PathBuf::from("/var/home/alice"))
+        );
+        assert_eq!(
+            elevated_home_from(Some("alice"), Some("../../root"), None),
+            Some(PathBuf::from("/home/alice"))
+        );
+        assert_eq!(
+            elevated_home_from(None, None, Some("bob")),
+            Some(PathBuf::from("/home/bob"))
+        );
+        assert_eq!(elevated_home_from(Some("../root"), None, None), None);
     }
 
     #[test]
