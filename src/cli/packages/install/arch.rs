@@ -77,11 +77,7 @@ pub async fn install(packages: &[String], yes: bool, replacement_hops: u32) -> R
     // exactly one unresolved name skipped `pm.install` entirely, silently
     // dropping its official siblings from the transaction while still
     // reporting success for them.
-    let official: Vec<String> = packages
-        .iter()
-        .filter(|package| !missing_packages.contains(*package))
-        .cloned()
-        .collect();
+    let official = packages_excluding(packages, &missing_packages);
 
     let operation_result = if official.len() == packages.len() {
         match pm.install(packages).await {
@@ -90,7 +86,17 @@ pub async fn install(packages: &[String], yes: bool, replacement_hops: u32) -> R
                 let message = error.to_string();
                 if let Some(package_name) = extract_missing_package(&message, packages) {
                     missing_packages.push(package_name.clone());
-                    handle_missing_package(package_name, error, yes, replacement_hops).await
+                    let retry_official = packages_excluding(packages, &missing_packages);
+                    async {
+                        // ALPM transactions are atomic: the failed transaction
+                        // installed none of its siblings. Install those siblings
+                        // explicitly before routing the missing name to AUR.
+                        if !retry_official.is_empty() {
+                            pm.install(&retry_official).await?;
+                        }
+                        handle_missing_package(package_name, error, yes, replacement_hops).await
+                    }
+                    .await
                 } else {
                     Err(error)
                 }
@@ -133,6 +139,14 @@ pub async fn install(packages: &[String], yes: bool, replacement_hops: u32) -> R
 
     crate::core::usage::track_install_result(packages, true);
     Ok(())
+}
+
+fn packages_excluding(packages: &[String], excluded: &[String]) -> Vec<String> {
+    packages
+        .iter()
+        .filter(|package| !excluded.contains(*package))
+        .cloned()
+        .collect()
 }
 
 fn record_install_history(
@@ -571,6 +585,19 @@ mod tests {
         assert_eq!(
             extract_missing_package(error, &["firefox".to_string()]).as_deref(),
             Some("firefox")
+        );
+    }
+
+    #[test]
+    fn retry_plan_keeps_official_siblings_after_a_missing_package() {
+        let packages = vec![
+            "official-a".to_string(),
+            "missing".to_string(),
+            "official-b".to_string(),
+        ];
+        assert_eq!(
+            packages_excluding(&packages, &["missing".to_string()]),
+            ["official-a".to_string(), "official-b".to_string()]
         );
     }
 
