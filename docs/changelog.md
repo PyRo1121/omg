@@ -668,6 +668,7 @@ analyzer inference
 - **Ci**: Cross-platform install script and R2 release sync
 ### 🐛 Bug Fixes
 
+- Preserve dependencies in parallel workspaces
 - Fail workspace diff on git errors
 - Align managed tool storage and completion
 - Stage self-update beside installed binary
