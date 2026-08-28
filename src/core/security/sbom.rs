@@ -10,7 +10,6 @@ use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
 use crate::core::paths;
-#[cfg(feature = "arch")]
 use crate::package_managers::VersionDisplay;
 
 use super::vulnerability::PackageSource;

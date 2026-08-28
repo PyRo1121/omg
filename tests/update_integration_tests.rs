@@ -20,7 +20,7 @@ fn version_text(version: &omg_lib::package_managers::types::Version) -> String {
 }
 
 #[cfg(not(feature = "arch"))]
-const fn version_text(version: &omg_lib::package_managers::types::Version) -> &str {
+fn version_text(version: &omg_lib::package_managers::types::Version) -> &str {
     version.as_str()
 }
 
@@ -297,7 +297,7 @@ async fn test_concurrent_operations() {
     #[cfg(feature = "arch")]
     assert_eq!(package.version.to_string(), "122.0-1");
     #[cfg(not(feature = "arch"))]
-    assert_eq!(package.version, "122.0-1");
+    assert_eq!(version_text(&package.version), "122.0-1");
 }
 
 #[tokio::test]

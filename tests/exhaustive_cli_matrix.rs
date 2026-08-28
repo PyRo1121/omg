@@ -351,6 +351,7 @@ mod boundary_matrix {
         res.assert_stderr_contains("Invalid character");
     }
 
+    #[cfg(feature = "arch")]
     #[test]
     #[serial]
     fn test_empty_search() {

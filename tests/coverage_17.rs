@@ -1,3 +1,5 @@
+#![cfg(feature = "arch")]
+
 //! Contract tests for `src/package_managers/aur_sources.rs`.
 //!
 //! Pins:

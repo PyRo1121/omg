@@ -978,7 +978,7 @@ fn rollback_action(transaction: &crate::core::history::Transaction) -> Result<Ro
     }
 }
 
-#[cfg(any(feature = "arch", test))]
+#[cfg(feature = "arch")]
 fn find_cached_arch_package_in(
     cache_dir: &std::path::Path,
     package: &str,
@@ -1586,6 +1586,7 @@ mod tests {
         Ok(())
     }
 
+    #[cfg(feature = "arch")]
     #[test]
     fn arch_rollback_requires_the_exact_cached_version() -> Result<()> {
         use flate2::write::GzEncoder;

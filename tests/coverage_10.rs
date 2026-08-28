@@ -21,8 +21,10 @@ use std::sync::atomic::Ordering;
 use std::thread;
 use std::time::Duration;
 
+#[cfg(feature = "arch")]
+use omg_lib::core::telemetry::get_backend;
 use omg_lib::core::telemetry::{
-    TelemetrySession, Timer, end_session_and_flush, flush_events, get_backend, get_session_id,
+    TelemetrySession, Timer, end_session_and_flush, flush_events, get_session_id,
     get_startup_duration_ms, is_first_run, is_telemetry_opt_out, ping_install, record_startup_time,
     track_command_event, track_performance_event, track_session_start,
 };

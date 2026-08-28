@@ -1324,6 +1324,7 @@ mod fast_path_tests {
 
     #[cfg(feature = "arch")]
     use super::split_elevated_invocation;
+    #[cfg(feature = "arch")]
     use super::strip_internal_invocation_markers;
 
     #[cfg(feature = "arch")]

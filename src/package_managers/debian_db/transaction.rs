@@ -177,6 +177,17 @@ impl Transaction {
         })
     }
 
+    /// Return the private transaction workspace after `execute` initializes it.
+    ///
+    /// Transaction steps must never fall back to a shared directory: they may
+    /// write predictable package and rollback filenames while running as root.
+    fn transaction_temp_dir(&self) -> Result<PathBuf> {
+        self.temp_dir
+            .as_ref()
+            .map(|temp_dir| temp_dir.path().to_path_buf())
+            .context("Transaction temporary directory is not initialized")
+    }
+
     /// Add a package to install
     pub fn add_install(&mut self, name: String, version: String, url: String, size: u64) {
         self.to_install.push(PackageAction {
@@ -253,10 +264,7 @@ impl Transaction {
             .tcp_nodelay(true)
             .build()?;
 
-        let temp_dir = self
-            .temp_dir
-            .as_ref()
-            .map_or_else(|| PathBuf::from("/tmp"), |t| t.path().to_path_buf());
+        let temp_dir = self.transaction_temp_dir()?;
 
         // Collect all packages that need downloading
         let packages_to_download: Vec<(usize, String, String, String, Option<String>, u64)> = self
@@ -506,10 +514,7 @@ impl Transaction {
     /// leave two entries), and a pre-transaction copy of the status file is
     /// recorded for rollback before the first write.
     fn configure_packages(&mut self) -> Result<()> {
-        let temp_dir = self
-            .temp_dir
-            .as_ref()
-            .map_or_else(|| PathBuf::from("/tmp"), |t| t.path().to_path_buf());
+        let temp_dir = self.transaction_temp_dir()?;
 
         // Collect all status entries for batched write
         let mut status_entries: Vec<(String, String)> = Vec::new();
@@ -1853,6 +1858,21 @@ mod tests {
         assert_eq!(tx.state, TransactionState::Pending);
         assert!(tx.to_install.is_empty());
         assert!(tx.to_remove.is_empty());
+    }
+
+    #[test]
+    fn transaction_steps_reject_missing_private_workspace() {
+        let mut transaction = Transaction::new().expect("content store init");
+
+        let error = transaction
+            .configure_packages()
+            .expect_err("uninitialized transaction must fail closed");
+        assert!(
+            error
+                .to_string()
+                .contains("temporary directory is not initialized"),
+            "unexpected error: {error:#}"
+        );
     }
 
     #[test]

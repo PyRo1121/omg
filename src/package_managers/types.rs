@@ -208,6 +208,13 @@ impl VersionDisplay for DebVersion {
     }
 }
 
+#[cfg(not(feature = "arch"))]
+impl VersionDisplay for String {
+    fn version_string(&self) -> String {
+        self.clone()
+    }
+}
+
 /// Parse a version string, returning a zero version on failure.
 /// This is infallible and avoids `expect()/unwrap()` in hot paths.
 ///

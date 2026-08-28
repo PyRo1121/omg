@@ -341,6 +341,16 @@ pub fn get_package_manager() -> anyhow::Result<Arc<dyn PackageManager>> {
             #[cfg(all(
                 not(feature = "arch"),
                 not(feature = "debian"),
+                feature = "debian-pure"
+            ))]
+            return Err(anyhow::anyhow!(
+                "This build only provides the pure-Rust Debian indexing engine; \
+                 no live package-manager backend is available for the detected platform."
+            ));
+
+            #[cfg(all(
+                not(feature = "arch"),
+                not(feature = "debian"),
                 not(feature = "debian-pure"),
                 any(feature = "macos", target_os = "macos")
             ))]

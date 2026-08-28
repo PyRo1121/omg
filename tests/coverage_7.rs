@@ -1,3 +1,5 @@
+#![cfg(feature = "arch")]
+
 //! Contract tests for `src/package_managers/parallel_sync.rs` (cov-7).
 //!
 //! These tests drive `sync_databases_parallel()` end-to-end against a local

@@ -39,6 +39,7 @@ const SYNC_TXN_ID: &str = "11111111aaaa2222bbbb3333cccc4444";
 const FAILED_UPDATE_ID: &str = "aaaaaaaa111122223333444455556666";
 const NO_OLD_VERSION_ID: &str = "bbbbbbbb111122223333444455556666";
 const INSTALL_TXN_ID: &str = "cccccccc111122223333444455556666";
+#[cfg(feature = "arch")]
 const OFFICIAL_UPDATE_ID: &str = "dddddddd111122223333444455556666";
 
 /// Serialize one transaction matching `crate::core::history::Transaction`'s
