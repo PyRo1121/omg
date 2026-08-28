@@ -364,50 +364,95 @@ fn run_sequential(
     print_summary(command, success, failed)
 }
 
+fn dependency_levels(workspace: &Workspace, projects: &[&str]) -> Result<Vec<Vec<String>>> {
+    let mut remaining: std::collections::BTreeSet<String> =
+        projects.iter().map(|name| (*name).to_string()).collect();
+    let mut levels = Vec::new();
+
+    while !remaining.is_empty() {
+        let ready: Vec<String> = remaining
+            .iter()
+            .filter(|name| {
+                workspace.projects[*name]
+                    .depends_on
+                    .iter()
+                    .all(|dependency| !remaining.contains(dependency))
+            })
+            .cloned()
+            .collect();
+        anyhow::ensure!(
+            !ready.is_empty(),
+            "Circular dependency detected while scheduling parallel workspace tasks"
+        );
+        for name in &ready {
+            remaining.remove(name);
+        }
+        levels.push(ready);
+    }
+
+    Ok(levels)
+}
+
 async fn run_parallel(
     workspace: &Workspace,
     projects: &[&str],
     command: &str,
     args: &[String],
 ) -> Result<()> {
-    // Signature keeps Result<()> so sequential and parallel paths stay symmetric;
-    // per-project failures are aggregated in print_summary below.
     use tokio::task;
 
-    let mut handles = Vec::new();
+    let levels = dependency_levels(workspace, projects)?;
+    let selected: HashSet<&str> = projects.iter().copied().collect();
+    let mut failed_projects = HashSet::new();
+    let mut success = 0;
+    let mut failed = 0;
 
-    for name in projects {
-        if let Some(project) = workspace.projects.get(*name) {
+    for level in levels {
+        let mut handles = Vec::new();
+        for name in level {
+            let project = &workspace.projects[&name];
+            if project.depends_on.iter().any(|dependency| {
+                selected.contains(dependency.as_str()) && failed_projects.contains(dependency)
+            }) {
+                println!(
+                    "{} {} {}",
+                    style::error("✗"),
+                    style::package(&name),
+                    style::dim("skipped because a dependency failed")
+                );
+                failed_projects.insert(name);
+                failed += 1;
+                continue;
+            }
+
             let project = project.clone();
             let command = command.to_string();
             let args = args.to_vec();
-            let project_name = (*name).to_string();
-
+            let project_name = name.clone();
             handles.push(task::spawn_blocking(move || {
                 let result = run_project_command(&project.path, &project, &command, &args);
                 (project_name, result)
             }));
         }
-    }
 
-    let mut success = 0;
-    let mut failed = 0;
-
-    for handle in handles {
-        let (name, result) = handle.await?;
-        match result {
-            Ok(()) => {
-                println!(
-                    "{} {} {}",
-                    style::success("✓"),
-                    style::package(&name),
-                    style::dim("completed")
-                );
-                success += 1;
-            }
-            Err(e) => {
-                println!("{} {} {e}", style::error("✗"), style::package(&name));
-                failed += 1;
+        // Wait for the complete dependency level before starting dependents.
+        for handle in handles {
+            let (name, result) = handle.await?;
+            match result {
+                Ok(()) => {
+                    println!(
+                        "{} {} {}",
+                        style::success("✓"),
+                        style::package(&name),
+                        style::dim("completed")
+                    );
+                    success += 1;
+                }
+                Err(error) => {
+                    println!("{} {} {error}", style::error("✗"), style::package(&name));
+                    failed_projects.insert(name);
+                    failed += 1;
+                }
             }
         }
     }
@@ -744,6 +789,36 @@ mod tests {
             .insert("api".to_string(), project("api", &["db"]));
 
         assert_eq!(workspace.sorted_projects().unwrap(), ["db", "api", "web"]);
+        assert_eq!(
+            dependency_levels(&workspace, &["web", "db", "api"]).unwrap(),
+            vec![
+                vec!["db".to_string()],
+                vec!["api".to_string()],
+                vec!["web".to_string()]
+            ]
+        );
+    }
+
+    #[test]
+    fn independent_projects_share_a_parallel_level() {
+        let mut workspace = Workspace::default();
+        workspace
+            .projects
+            .insert("web".to_string(), project("web", &["api"]));
+        workspace
+            .projects
+            .insert("docs".to_string(), project("docs", &[]));
+        workspace
+            .projects
+            .insert("api".to_string(), project("api", &[]));
+
+        assert_eq!(
+            dependency_levels(&workspace, &["web", "docs", "api"]).unwrap(),
+            vec![
+                vec!["api".to_string(), "docs".to_string()],
+                vec!["web".to_string()]
+            ]
+        );
     }
 
     #[test]
