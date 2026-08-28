@@ -11,6 +11,7 @@
 //! - Binary cache: Use rkyv for zero-copy deserialization on subsequent loads
 //! - Fuzzy matching: nucleo-matcher for intelligent search ranking
 
+use std::cmp::Ordering;
 use std::future::Future;
 use std::pin::Pin;
 
@@ -40,6 +41,8 @@ const HOMEBREW_PREFIX_ARM: &str = "/opt/homebrew";
 const HOMEBREW_PREFIX_INTEL: &str = "/usr/local";
 /// Homebrew Cellar directory name
 const CELLAR_DIR: &str = "Cellar";
+/// Cask installation directory name
+const CASKROOM_DIR: &str = "Caskroom";
 /// Install receipt filename
 const INSTALL_RECEIPT: &str = "INSTALL_RECEIPT.json";
 /// Homebrew formula API endpoint
@@ -59,10 +62,12 @@ static INSTALLED_CACHE: LazyLock<RwLock<InstalledCache>> =
 /// Cache for installed package names with mtime-based invalidation
 #[derive(Default)]
 struct InstalledCache {
-    /// Set of installed package names for O(1) lookup
+    /// Set of installed formula and cask names for O(1) lookup
     packages: AHashSet<String>,
     /// Cellar directory mtime for invalidation
     cellar_mtime: Option<SystemTime>,
+    /// Caskroom directory mtime for invalidation
+    caskroom_mtime: Option<SystemTime>,
     /// Last cache refresh time for TTL
     last_refreshed: Option<Instant>,
 }
@@ -488,34 +493,109 @@ impl HomebrewPackageManager {
         Ok(())
     }
 
-    /// Read installed packages from Cellar directory
+    /// Read installed formulas from Cellar and casks from Caskroom.
     async fn read_installed_packages(&self) -> Result<Vec<LocalPackage>> {
         let mut packages = Vec::new();
 
-        // Check if Cellar directory exists
-        if !self.cellar.exists() {
-            return Ok(packages);
+        if self.cellar.exists() {
+            let mut entries = fs::read_dir(&self.cellar).await?;
+            while let Some(entry) = entries.next_entry().await? {
+                let name = entry.file_name().to_string_lossy().to_string();
+                if name.starts_with('.') {
+                    continue;
+                }
+
+                let pkg_path = entry.path();
+                packages.push(
+                    self.read_package_info(&pkg_path, &name)
+                        .await
+                        .with_context(|| format!("Failed to read Homebrew formula {name}"))?,
+                );
+            }
         }
 
-        let mut entries = fs::read_dir(&self.cellar).await?;
+        let caskroom = self.prefix.join(CASKROOM_DIR);
+        if caskroom.exists() {
+            let mut entries = fs::read_dir(&caskroom).await?;
+            while let Some(entry) = entries.next_entry().await? {
+                let name = entry.file_name().to_string_lossy().to_string();
+                if name.starts_with('.') {
+                    continue;
+                }
 
-        while let Some(entry) = entries.next_entry().await? {
-            let name = entry.file_name().to_string_lossy().to_string();
-
-            // Skip hidden files
-            if name.starts_with('.') {
-                continue;
-            }
-
-            let pkg_path = entry.path();
-
-            // Find the latest version
-            if let Ok(pkg) = self.read_package_info(&pkg_path, &name).await {
-                packages.push(pkg);
+                let mut versions = Vec::new();
+                let mut version_entries = fs::read_dir(entry.path()).await?;
+                while let Some(version_entry) = version_entries.next_entry().await? {
+                    let version = version_entry.file_name().to_string_lossy().to_string();
+                    if !version.starts_with('.') {
+                        versions.push(version);
+                    }
+                }
+                versions.sort_by(|a, b| Self::compare_homebrew_versions(a, b));
+                if let Some(version) = versions.pop() {
+                    packages.push(LocalPackage {
+                        name,
+                        version,
+                        description: String::new(),
+                        installed_on_request: true,
+                    });
+                }
             }
         }
 
         Ok(packages)
+    }
+
+    fn next_version_component(
+        chars: &mut std::iter::Peekable<std::str::Chars<'_>>,
+    ) -> Option<(bool, String)> {
+        let first = *chars.peek()?;
+        let numeric = first.is_ascii_digit();
+        let mut component = String::new();
+        while chars
+            .peek()
+            .is_some_and(|character| character.is_ascii_digit() == numeric)
+        {
+            if let Some(character) = chars.next() {
+                component.push(character);
+            }
+        }
+        Some((numeric, component))
+    }
+
+    /// Compare Homebrew version strings by numeric components before
+    /// falling back to their textual components.
+    fn compare_homebrew_versions(left: &str, right: &str) -> Ordering {
+        let mut left = left.chars().peekable();
+        let mut right = right.chars().peekable();
+
+        loop {
+            let left_component = Self::next_version_component(&mut left);
+            let right_component = Self::next_version_component(&mut right);
+            match (left_component, right_component) {
+                (None, None) => return Ordering::Equal,
+                (None, Some(_)) => return Ordering::Less,
+                (Some(_), None) => return Ordering::Greater,
+                (Some((left_numeric, left_value)), Some((right_numeric, right_value))) => {
+                    let ordering = if left_numeric && right_numeric {
+                        let left_trimmed = left_value.trim_start_matches('0');
+                        let right_trimmed = right_value.trim_start_matches('0');
+                        left_trimmed
+                            .len()
+                            .cmp(&right_trimmed.len())
+                            .then_with(|| left_trimmed.cmp(right_trimmed))
+                            .then_with(|| left_value.len().cmp(&right_value.len()).reverse())
+                    } else {
+                        left_numeric
+                            .cmp(&right_numeric)
+                            .then_with(|| left_value.cmp(&right_value))
+                    };
+                    if ordering != Ordering::Equal {
+                        return ordering;
+                    }
+                }
+            }
+        }
     }
 
     /// Read package information from directory
@@ -579,7 +659,6 @@ impl HomebrewPackageManager {
     /// - Returns top 50 results sorted by score
     ///
     /// Performance: O(n) where n = total packages (~7000), ~30-40ms per search
-    #[expect(clippy::unused_self)] // Part of consistent struct method API
     fn fuzzy_search(&self, cache: &FormulaCache, query: &str) -> Vec<Package> {
         let mut matcher = Matcher::new(MatcherConfig::DEFAULT);
         let pattern = Pattern::parse(query, CaseMatching::Ignore, Normalization::Smart);
@@ -649,7 +728,7 @@ impl HomebrewPackageManager {
                         version: parse_version_or_zero(cask.version.as_deref().unwrap_or("0")),
                         description: cask.desc.clone(),
                         source: PackageSource::Official,
-                        installed: false,
+                        installed: self.is_installed_fast(&cask.token).unwrap_or(false),
                     }
                 }
             })
@@ -658,21 +737,20 @@ impl HomebrewPackageManager {
 
     fn list_installed_sync(&self) -> Result<Vec<String>> {
         let mut names = Vec::new();
-
-        if !self.cellar.exists() {
-            return Ok(names);
-        }
-
-        let entries = std::fs::read_dir(&self.cellar)?;
-
-        for entry in entries {
-            let entry = entry.context("failed to read Homebrew Cellar entry")?;
-            let name = entry.file_name().to_string_lossy().to_string();
-            if !name.starts_with('.') {
-                names.push(name);
+        for root in [&self.cellar, &self.prefix.join(CASKROOM_DIR)] {
+            if !root.exists() {
+                continue;
+            }
+            for entry in std::fs::read_dir(root)? {
+                let entry = entry.context("failed to read Homebrew installed entry")?;
+                let name = entry.file_name().to_string_lossy().to_string();
+                if !name.starts_with('.') {
+                    names.push(name);
+                }
             }
         }
-
+        names.sort_unstable();
+        names.dedup();
         Ok(names)
     }
 
@@ -680,10 +758,16 @@ impl HomebrewPackageManager {
         let cellar_mtime = std::fs::metadata(&self.cellar)
             .ok()
             .and_then(|m| m.modified().ok());
+        let caskroom = self.prefix.join(CASKROOM_DIR);
+        let caskroom_mtime = std::fs::metadata(caskroom)
+            .ok()
+            .and_then(|m| m.modified().ok());
 
         let needs_refresh = {
             let cache = crate::core::sync::read_cache(&INSTALLED_CACHE);
-            cache.cellar_mtime != cellar_mtime || cache.packages.is_empty()
+            cache.cellar_mtime != cellar_mtime
+                || cache.caskroom_mtime != caskroom_mtime
+                || cache.packages.is_empty()
         };
 
         if needs_refresh {
@@ -693,6 +777,7 @@ impl HomebrewPackageManager {
             let mut cache = crate::core::sync::write_cache(&INSTALLED_CACHE);
             cache.packages = set;
             cache.cellar_mtime = cellar_mtime;
+            cache.caskroom_mtime = caskroom_mtime;
             cache.last_refreshed = Some(Instant::now());
         }
         Ok(())
@@ -838,7 +923,7 @@ impl PackageManager for HomebrewPackageManager {
                     version: parse_version_or_zero(cask.version.as_deref().unwrap_or("0")),
                     description: cask.desc.clone(),
                     source: PackageSource::Official,
-                    installed: false,
+                    installed: self.is_installed_fast(&cask.token)?,
                 }));
             }
 
@@ -917,20 +1002,27 @@ impl PackageManager for HomebrewPackageManager {
             let mut updates = Vec::new();
 
             for pkg in installed {
-                if let Some(&idx) = cache.formula_map.get(&pkg.name) {
-                    let formula = &cache.formulas[idx];
-                    if let Some(stable_version) = &formula.versions.stable {
-                        let current = parse_version_or_zero(&pkg.version);
-                        let available = parse_version_or_zero(stable_version);
+                let available_version = cache
+                    .formula_map
+                    .get(&pkg.name)
+                    .and_then(|&idx| cache.formulas[idx].versions.stable.clone())
+                    .or_else(|| {
+                        cache
+                            .cask_map
+                            .get(&pkg.name)
+                            .and_then(|&idx| cache.casks[idx].version.clone())
+                    });
+                if let Some(available_version) = available_version {
+                    let current = parse_version_or_zero(&pkg.version);
+                    let available = parse_version_or_zero(&available_version);
 
-                        if available > current {
-                            updates.push(UpdateInfo {
-                                name: pkg.name.clone(),
-                                old_version: pkg.version.clone(),
-                                new_version: stable_version.clone(),
-                                repo: "homebrew".to_string(),
-                            });
-                        }
+                    if available > current {
+                        updates.push(UpdateInfo {
+                            name: pkg.name.clone(),
+                            old_version: pkg.version.clone(),
+                            new_version: available_version,
+                            repo: "homebrew".to_string(),
+                        });
                     }
                 }
             }
@@ -986,6 +1078,42 @@ mod tests {
         assert!(results.is_ok());
         let results = results.unwrap();
         assert!(!results.is_empty());
+    }
+
+    #[tokio::test]
+    async fn installed_casks_are_included_and_numerically_sorted() -> Result<()> {
+        let root = tempfile::tempdir()?;
+        let cask_dir = root.path().join(CASKROOM_DIR).join("example");
+        fs::create_dir_all(cask_dir.join("1.9".to_string())).await?;
+        fs::create_dir_all(cask_dir.join("1.10".to_string())).await?;
+        let manager = HomebrewPackageManager {
+            prefix: root.path().to_path_buf(),
+            cellar: root.path().join(CELLAR_DIR),
+            cache: Arc::new(RwLock::new(None)),
+            client: crate::core::http::download_client().clone(),
+        };
+
+        let packages = manager.read_installed_packages().await?;
+        assert_eq!(packages.len(), 1);
+        assert_eq!(packages[0].name, "example");
+        assert_eq!(packages[0].version, "1.10");
+        Ok(())
+    }
+
+    #[test]
+    fn homebrew_versions_compare_numeric_components() {
+        assert_eq!(
+            HomebrewPackageManager::compare_homebrew_versions("1.10", "1.9"),
+            Ordering::Greater
+        );
+        assert_eq!(
+            HomebrewPackageManager::compare_homebrew_versions("2.0", "10.0"),
+            Ordering::Less
+        );
+        assert_eq!(
+            HomebrewPackageManager::compare_homebrew_versions("1.2_1", "1.2"),
+            Ordering::Greater
+        );
     }
 
     #[test]
