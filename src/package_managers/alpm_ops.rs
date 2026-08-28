@@ -14,7 +14,6 @@ use crate::core::paths;
 /// Compiled once at first use, then reused for all subsequent calls.
 static MIRRORLIST_REGEX: LazyLock<Regex> =
     LazyLock::new(|| Regex::new(r"^Server\s*=\s*([^#]+)").expect("valid regex pattern"));
-use crate::package_managers::pacman_db;
 use crate::package_managers::types::{PackageInfo, UpdateInfo, contains_ignore_case};
 
 /// Get comprehensive system status (counts + updates) in a single pass - FAST
@@ -116,21 +115,27 @@ pub(crate) fn collect_updates(alpm: &alpm::Alpm) -> Vec<UpdateInfo> {
 /// Get package info from sync DBs - INSTANT (<1ms)
 pub fn get_sync_pkg_info(name: &str) -> Result<Option<PackageInfo>> {
     if paths::test_mode() {
-        if let Some(pkg) = pacman_db::get_sync_package(name)? {
+        let manager = crate::package_managers::get_package_manager()?;
+        let package = futures::executor::block_on(manager.info(name))?;
+        if let Some(pkg) = package {
             return Ok(Some(PackageInfo {
                 name: pkg.name,
                 version: pkg.version,
-                description: pkg.desc,
-                url: Some(pkg.url),
-                size: pkg.isize,
+                description: pkg.description,
+                url: None,
+                size: 0,
                 // Saturate instead of wrapping: u64 -> i64 `as` casts wrap on
                 // overflow (https://doc.rust-lang.org/reference/expressions/operator-expr.html#numeric-cast).
-                install_size: Some(i64::try_from(pkg.isize).unwrap_or(i64::MAX)),
-                download_size: Some(pkg.csize),
-                repo: pkg.repo,
-                depends: pkg.depends,
+                install_size: None,
+                download_size: None,
+                repo: match pkg.source {
+                    crate::core::PackageSource::Official => "official",
+                    crate::core::PackageSource::Aur => "aur",
+                }
+                .to_string(),
+                depends: Vec::new(),
                 licenses: Vec::new(),
-                installed: false,
+                installed: pkg.installed,
             }));
         }
         return Ok(None);

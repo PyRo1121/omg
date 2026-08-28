@@ -16,20 +16,52 @@ pub mod common;
 
 use common::TestProject;
 
-// HANDOFF (src wave-2, still unresolved as of 2025-08-25): `install` against
-// a SEEDED mock package currently exits 1 with EMPTY diagnostics for both
-// `-y` and `--dry-run`. Root cause: install resolution goes through
-// `lookup_official_package` -> `get_sync_pkg_info`, which reads the pacman
-// sync db under `OMG_PACMAN_ROOT` and never consults the `MockPackageManager`
-// state file that seeding writes — so every seeded package looks missing and
-// the request is routed to the AUR-fallback/"not found" path before the mock
-// backend is ever reached (src/cli/packages/install/arch.rs:335,
-// src/package_managers/alpm_ops.rs:102). The success-path pins are withheld
-// rather than weakened. Re-add, once src settles:
-//   1. dry-run of a seeded package succeeds and names the package;
-//   2. dry-run of multiple seeded packages names both;
-//   3. dry run never prompts for a password and mutates no mock state;
-//   4. `-y` of a seeded-installed package succeeds or reports "already installed".
+#[test]
+fn test_mocked_install_seeded_package_dry_run_succeeds() {
+    let project = TestProject::new();
+    project.mock_available("firefox", "122.0").unwrap();
+
+    let result = project.run(&["install", "--dry-run", "firefox"]);
+    result.assert_success();
+    result.assert_stdout_contains("firefox");
+}
+
+#[test]
+fn test_mocked_install_dry_run_handles_multiple_seeded_packages() {
+    let project = TestProject::new();
+    project.mock_available("firefox", "122.0").unwrap();
+    project.mock_available("git", "2.43.0").unwrap();
+
+    let result = project.run(&["install", "--dry-run", "firefox", "git"]);
+    result.assert_success();
+    result.assert_stdout_contains("firefox");
+    result.assert_stdout_contains("git");
+}
+
+#[test]
+fn test_mocked_install_dry_run_does_not_change_state() {
+    let project = TestProject::new();
+    project.mock_available("firefox", "122.0").unwrap();
+
+    let state_path = project.data_dir.path().join("mock_state_pacman.json");
+    let before = std::fs::read(&state_path).unwrap();
+    let result = project.run(&["install", "--dry-run", "firefox"]);
+    result.assert_success();
+    assert_eq!(
+        std::fs::read(state_path).unwrap(),
+        before,
+        "dry run must not write mock package state"
+    );
+}
+
+#[test]
+fn test_mocked_install_seeded_installed_package_succeeds() {
+    let project = TestProject::new();
+    project.mock_install("firefox", "122.0").unwrap();
+
+    let result = project.run(&["install", "--yes", "firefox"]);
+    result.assert_success();
+}
 
 #[test]
 fn test_mocked_install_missing_package_fails_explicitly() {
