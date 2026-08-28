@@ -58,11 +58,6 @@ static DEBIAN_INDEX_CACHE: LazyLock<RwLock<DebianIndexCache>> =
 static DPKG_STATUS_CACHE: LazyLock<RwLock<DpkgStatusCache>> =
     LazyLock::new(|| RwLock::new(DpkgStatusCache::default()));
 
-/// SIMD-accelerated finder for "Status: install ok installed"
-/// Pre-compiled for faster dpkg/status parsing
-static STATUS_INSTALLED_FINDER: LazyLock<memmem::Finder<'static>> =
-    LazyLock::new(|| memmem::Finder::new(b"Status: install ok installed"));
-
 #[derive(Default)]
 struct DebianIndexCache {
     index: Option<DebianPackageIndex>,
@@ -1703,8 +1698,7 @@ pub fn list_installed_fast() -> Result<Vec<DpkgPackageEntry>> {
     let mut installed_set = AHashSet::new();
 
     for paragraph in status_paragraphs(&status_content) {
-        // Quick check if package is installed using SIMD-accelerated finder
-        if STATUS_INSTALLED_FINDER.find(paragraph.as_bytes()).is_none() {
+        if !status_paragraph_is_installed(paragraph) {
             continue;
         }
 
@@ -1851,7 +1845,7 @@ pub fn is_mmap_available() -> bool {
 /// Fails when the mmap index is not loaded (call [`ensure_mmap_loaded`]
 /// first) or the archived index fails validation.
 pub fn get_updates_from_mmap(
-    installed_map: &std::collections::HashMap<&str, &str>,
+    installed_map: &std::collections::HashMap<String, &str>,
 ) -> Result<Vec<(String, String, String)>> {
     let mmap_guard = crate::core::sync::read_cache(&DEBIAN_MMAP_INDEX);
     let Some(ref mmap) = *mmap_guard else {
@@ -1871,7 +1865,12 @@ pub fn get_updates_from_mmap(
             let pkg_name: &str = pkg.name.as_str();
             let pkg_version: &str = pkg.version.as_str();
 
-            let installed_ver = installed_map.get(pkg_name)?;
+            let installed_ver = installed_version_for_arch(
+                installed_map,
+                pkg_name,
+                pkg.architecture.as_str(),
+                debian_arch(),
+            )?;
             let available_ver = parse_version_or_zero(pkg_version);
             let installed_v = parse_version_or_zero(installed_ver);
 
@@ -1886,6 +1885,39 @@ pub fn get_updates_from_mmap(
         .collect();
 
     Ok(updates)
+}
+
+fn status_paragraph_is_installed(paragraph: &str) -> bool {
+    let Some(status) = paragraph
+        .lines()
+        .find_map(|line| line.strip_prefix("Status:"))
+    else {
+        return false;
+    };
+    let mut fields = status.split_whitespace();
+    fields.next().is_some()
+        && fields.next() == Some("ok")
+        && fields.next() == Some("installed")
+        && fields.next().is_none()
+}
+
+pub(crate) fn installed_version_for_arch<'a>(
+    installed_map: &'a std::collections::HashMap<String, &'a str>,
+    package_name: &str,
+    available_arch: &str,
+    host_arch: &str,
+) -> Option<&'a str> {
+    if available_arch != host_arch && available_arch != "all" {
+        return None;
+    }
+
+    let exact_key = format!("{package_name}:{available_arch}");
+    installed_map.get(&exact_key).copied().or_else(|| {
+        (available_arch == "all")
+            .then(|| installed_map.get(&format!("{package_name}:{host_arch}")))
+            .flatten()
+            .copied()
+    })
 }
 
 /// Split a dpkg-style control file into paragraphs separated by blank lines.
@@ -2453,6 +2485,39 @@ mod tests {
             package_size_from_status("Package: vim\nInstalled-Size: 3", "bash")
                 .expect("missing package is a miss"),
             None
+        );
+    }
+
+    #[test]
+    fn installed_status_accepts_held_packages_but_not_partial_states() {
+        assert!(status_paragraph_is_installed(
+            "Package: libc6\nStatus: hold ok installed\nVersion: 2.1"
+        ));
+        assert!(!status_paragraph_is_installed(
+            "Package: libc6\nStatus: install ok half-installed\nVersion: 2.1"
+        ));
+        assert!(!status_paragraph_is_installed(
+            "Package: libc6\nVersion: 2.1"
+        ));
+    }
+
+    #[test]
+    fn installed_version_lookup_rejects_foreign_architectures() {
+        let mut installed = std::collections::HashMap::new();
+        installed.insert("libc6:amd64".to_string(), "2.36-1");
+        installed.insert("libc6:i386".to_string(), "2.35-1");
+
+        assert_eq!(
+            installed_version_for_arch(&installed, "libc6", "amd64", "amd64"),
+            Some("2.36-1")
+        );
+        assert_eq!(
+            installed_version_for_arch(&installed, "libc6", "i386", "amd64"),
+            None
+        );
+        assert_eq!(
+            installed_version_for_arch(&installed, "libc6", "all", "amd64"),
+            Some("2.36-1")
         );
     }
 

@@ -386,10 +386,16 @@ fn compute_updates() -> Result<Vec<UpdateInfo>> {
         return Ok(Vec::new());
     }
 
-    // Build map of installed package names for O(1) lookup
-    let installed_map: HashMap<&str, &str> = installed
+    // Build an architecture-qualified map so foreign-architecture packages
+    // cannot be compared against the host package with the same name.
+    let installed_map: HashMap<String, &str> = installed
         .iter()
-        .map(|pkg| (pkg.name.as_str(), pkg.version.as_str()))
+        .map(|pkg| {
+            (
+                format!("{}:{}", pkg.name, pkg.architecture),
+                pkg.version.as_str(),
+            )
+        })
         .collect();
 
     // ULTRA-FAST PATH: mmap index (zero-copy, no full index load)
@@ -426,7 +432,12 @@ fn compute_updates() -> Result<Vec<UpdateInfo>> {
     let updates: Vec<UpdateInfo> = index_pkgs
         .par_iter()
         .filter_map(|pkg| {
-            let installed_ver = installed_map.get(pkg.name.as_str())?;
+            let installed_ver = debian_db::db::installed_version_for_arch(
+                &installed_map,
+                &pkg.name,
+                &pkg.architecture,
+                debian_db::debian_arch(),
+            )?;
             let available_ver = parse_version_or_zero(&pkg.version);
             let installed_v = parse_version_or_zero(installed_ver);
 
