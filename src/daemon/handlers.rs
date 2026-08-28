@@ -129,6 +129,35 @@ impl DaemonState {
         }
     }
 
+    fn uses_production_backends(&self) -> bool {
+        self.system_backends
+            .read()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .is_production()
+    }
+
+    pub(super) async fn status_counts(&self) -> anyhow::Result<(usize, usize, usize, usize)> {
+        if self.uses_production_backends() {
+            let pm_name = self.package_manager.name().to_string();
+            tokio::task::spawn_blocking(move || system_status_for_backend(&pm_name))
+                .await
+                .context("Status task panicked")?
+        } else {
+            self.package_manager.get_status(false).await
+        }
+    }
+
+    pub(super) async fn explicit_packages(&self) -> anyhow::Result<Vec<String>> {
+        if self.uses_production_backends() {
+            let pm_name = self.package_manager.name().to_string();
+            tokio::task::spawn_blocking(move || explicit_packages_for_backend(&pm_name))
+                .await
+                .context("Explicit package task panicked")?
+        } else {
+            self.package_manager.list_explicit().await
+        }
+    }
+
     pub fn new() -> anyhow::Result<Self> {
         let data_dir = crate::core::paths::daemon_data_dir();
         let persistent = Self::open_persistent_cache(&data_dir)?;
@@ -839,24 +868,7 @@ async fn handle_status(state: Arc<DaemonState>, id: RequestId) -> Response {
     // 3. Query the selected backend. Production uses the optimized native
     // status paths; dependency-injected states stay behind the package-manager
     // interface and never access host package databases.
-    let status_result = if state
-        .system_backends
-        .read()
-        .unwrap_or_else(std::sync::PoisonError::into_inner)
-        .is_production()
-    {
-        let state_clone = Arc::clone(&state);
-        match tokio::task::spawn_blocking(move || {
-            system_status_for_backend(state_clone.package_manager.name())
-        })
-        .await
-        {
-            Ok(result) => result,
-            Err(error) => return internal_error(id, format!("Status task panicked: {error}")),
-        }
-    } else {
-        state.package_manager.get_status(false).await
-    };
+    let status_result = state.status_counts().await;
 
     match status_result {
         Ok((total, explicit, orphans, updates)) => {
@@ -988,14 +1000,10 @@ async fn handle_list_explicit(state: Arc<DaemonState>, id: RequestId) -> Respons
         };
     }
 
-    let state_clone = Arc::clone(&state);
-    let packages_result = tokio::task::spawn_blocking(move || {
-        explicit_packages_for_backend(state_clone.package_manager.name())
-    })
-    .await;
+    let packages_result = state.explicit_packages().await;
 
     match packages_result {
-        Ok(Ok(packages)) => {
+        Ok(packages) => {
             let packages_arc = Arc::new(packages);
             state.cache.update_explicit_arc(Arc::clone(&packages_arc));
             Response::Success {
@@ -1005,8 +1013,7 @@ async fn handle_list_explicit(state: Arc<DaemonState>, id: RequestId) -> Respons
                 }),
             }
         }
-        Ok(Err(e)) => internal_error(id, format!("Failed to list explicit packages: {e}")),
-        Err(e) => internal_error(id, format!("List explicit task panicked: {e}")),
+        Err(error) => internal_error(id, format!("Failed to list explicit packages: {error}")),
     }
 }
 
@@ -1019,23 +1026,20 @@ async fn handle_explicit_count(state: Arc<DaemonState>, id: RequestId) -> Respon
         };
     }
 
-    let state_clone = Arc::clone(&state);
-    let count_result = tokio::task::spawn_blocking(move || {
-        explicit_packages_for_backend(state_clone.package_manager.name())
-            .map(|packages| packages.len())
-    })
-    .await;
+    let count_result = state
+        .explicit_packages()
+        .await
+        .map(|packages| packages.len());
 
     match count_result {
-        Ok(Ok(count)) => {
+        Ok(count) => {
             state.cache.update_explicit_count(count);
             Response::Success {
                 id,
                 result: ResponseResult::ExplicitCount(count),
             }
         }
-        Ok(Err(e)) => internal_error(id, format!("Failed to count explicit packages: {e}")),
-        Err(e) => internal_error(id, format!("Explicit count task panicked: {e}")),
+        Err(error) => internal_error(id, format!("Failed to count explicit packages: {error}")),
     }
 }
 
@@ -1288,6 +1292,31 @@ mod tests {
                 ..
             }
         ));
+    }
+
+    #[tokio::test]
+    async fn isolated_queries_use_the_injected_package_manager() {
+        let directory = tempfile::tempdir().expect("create temporary package state");
+        let package_manager = Arc::new(crate::package_managers::mock::MockPackageManager::new_in(
+            "arch",
+            directory.path(),
+        ));
+        package_manager
+            .install(&["firefox".to_string()])
+            .await
+            .expect("seed isolated package state");
+        let state =
+            DaemonState::new_isolated(directory.path(), PackageIndex::empty(), package_manager)
+                .expect("create isolated daemon state");
+
+        assert_eq!(
+            state.status_counts().await.expect("status counts"),
+            (1, 1, 0, 0)
+        );
+        assert_eq!(
+            state.explicit_packages().await.expect("explicit packages"),
+            vec!["firefox".to_string()]
+        );
     }
 
     #[test]

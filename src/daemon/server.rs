@@ -95,8 +95,7 @@ async fn run_with_status_path(
         tracing::info!("Background status worker started");
 
         async fn refresh_status(state: &Arc<DaemonState>, fast_status_path: &std::path::Path) {
-            let pm_name = state.package_manager.name().to_string();
-            let result = tokio::task::spawn_blocking(move || {
+            let versions = match tokio::task::spawn_blocking(|| {
                 use crate::cli::runtimes::{ensure_active_version, known_runtimes};
 
                 let mut versions = Vec::new();
@@ -114,21 +113,17 @@ async fn run_with_status_path(
                     }
                     Err(error) => tracing::warn!("Failed to list known runtimes: {error}"),
                 }
-
-                (
-                    versions,
-                    super::handlers::system_status_for_backend(&pm_name),
-                )
+                versions
             })
-            .await;
-
-            let (versions, status) = match result {
-                Ok(result) => result,
+            .await
+            {
+                Ok(versions) => versions,
                 Err(error) => {
-                    tracing::error!("Status refresh panic: {error}");
+                    tracing::error!("Runtime status task panicked: {error}");
                     return;
                 }
             };
+            let status = state.status_counts().await;
             state
                 .runtime_versions
                 .write()
@@ -186,22 +181,16 @@ async fn run_with_status_path(
         /// publication was skipped above (structural guarantee against the
         /// early-return regression this replaces).
         async fn prewarm_caches(state: &Arc<DaemonState>) {
-            // Pre-compute explicit package list for instant first query
-            let pm_name = state.package_manager.name().to_string();
-            let explicit = tokio::task::spawn_blocking(move || {
-                super::handlers::explicit_packages_for_backend(&pm_name)
-            })
-            .await;
-            match explicit {
-                Ok(Ok(packages)) => {
+            // Pre-compute explicit package list for instant first query.
+            // The state owns the backend choice so isolated daemons never
+            // fall through to a host package database.
+            match state.explicit_packages().await {
+                Ok(packages) => {
                     state.cache.update_explicit(packages);
                     tracing::debug!("Pre-warmed explicit package cache");
                 }
-                Ok(Err(error)) => {
-                    tracing::warn!("Failed to pre-warm explicit package cache: {error}");
-                }
                 Err(error) => {
-                    tracing::warn!("Explicit package cache pre-warm task failed: {error}");
+                    tracing::warn!("Failed to pre-warm explicit package cache: {error}");
                 }
             }
 
