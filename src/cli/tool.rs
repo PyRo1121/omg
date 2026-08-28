@@ -70,7 +70,7 @@ impl LocalCommandRunner for ToolCommands {
         match self {
             ToolCommands::Install { name } => install(name).await,
             ToolCommands::List => list(),
-            ToolCommands::Remove { name } => remove(name),
+            ToolCommands::Remove { name } => remove(name).await,
             ToolCommands::Update { name } => update(name).await,
             ToolCommands::Search { query } => search(query),
             ToolCommands::Registry => registry(),
@@ -252,46 +252,69 @@ pub fn registry_tool_names() -> Vec<String> {
 
 pub fn installed_tool_names() -> Result<Vec<String>> {
     let (tools_dir, _bin_dir) = get_dirs();
-    let mut names = Vec::new();
+    installed_tool_names_in(&tools_dir)
+}
 
-    match fs::read_dir(&tools_dir) {
-        Ok(entries) => {
-            for entry in entries {
-                let entry = entry.with_context(|| {
-                    format!(
-                        "Failed to read tool directory entry in {}",
-                        tools_dir.display()
-                    )
-                })?;
-                let path = entry.path();
-                if !crate::runtimes::common::is_valid_version_dir(&path) {
-                    continue;
-                }
-                for tool in fs::read_dir(&path).with_context(|| {
-                    format!("Failed to read managed tool directory {}", path.display())
-                })? {
-                    let tool = tool.with_context(|| {
-                        format!("Failed to read managed tool entry in {}", path.display())
-                    })?;
-                    if crate::runtimes::common::is_valid_version_dir(&tool.path())
-                        && let Some(name) = tool.file_name().to_str()
-                    {
-                        names.push(name.to_string());
-                    }
-                }
-            }
+fn installed_tool_names_in(tools_dir: &Path) -> Result<Vec<String>> {
+    let mut names = Vec::new();
+    let mut legacy_registry_paths = std::collections::HashSet::new();
+
+    for (name, _, _, _) in TOOL_REGISTRY {
+        let Some(entry) = find_registry_entry(name) else {
+            continue;
+        };
+        let (manager, package, _) = entry?;
+        if manager == "pacman" {
+            continue;
         }
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
-        Err(error) => {
-            return Err(error).with_context(|| {
-                format!("Failed to list managed tools in {}", tools_dir.display())
-            });
+        let current = tools_dir.join(manager).join(name);
+        let legacy = tools_dir.join(manager).join(package);
+        if current.is_dir() || legacy.is_dir() {
+            names.push((*name).to_string());
+        }
+        if current != legacy {
+            legacy_registry_paths.insert(legacy);
+        }
+    }
+
+    for manager in ["cargo", "npm", "pip", "go"] {
+        let manager_dir = tools_dir.join(manager);
+        let entries = match fs::read_dir(&manager_dir) {
+            Ok(entries) => entries,
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => continue,
+            Err(error) => {
+                return Err(error).with_context(|| {
+                    format!("Failed to list managed tools in {}", manager_dir.display())
+                });
+            }
+        };
+        for entry in entries {
+            let entry = entry.with_context(|| {
+                format!(
+                    "Failed to read managed tool entry in {}",
+                    manager_dir.display()
+                )
+            })?;
+            let path = entry.path();
+            if legacy_registry_paths.contains(&path) || !looks_like_tool_install(&path) {
+                continue;
+            }
+            if let Some(name) = entry.file_name().to_str() {
+                names.push(name.to_string());
+            }
         }
     }
 
     names.sort();
     names.dedup();
     Ok(names)
+}
+
+fn looks_like_tool_install(path: &Path) -> bool {
+    path.is_dir()
+        && (path.join("bin").is_dir()
+            || path.join("node_modules/.bin").is_dir()
+            || path.join("pyvenv.cfg").is_file())
 }
 
 /// Base directories
@@ -326,7 +349,7 @@ pub async fn install(name: &str) -> Result<()> {
             style::info(manager)
         );
         println!("  {} {}", style::dim("→"), desc);
-        return install_managed(manager, pkg, &tools_dir, &bin_dir).await;
+        return install_managed(manager, pkg, name, &tools_dir, &bin_dir).await;
     }
 
     // 2. Interactive Fallback
@@ -353,17 +376,25 @@ pub async fn install(name: &str) -> Result<()> {
 
     match selection {
         0 => crate::cli::packages::install(&[name.to_string()], false, false, false).await,
-        1 => install_managed("cargo", name, &tools_dir, &bin_dir).await,
-        2 => install_managed("npm", name, &tools_dir, &bin_dir).await,
-        3 => install_managed("pip", name, &tools_dir, &bin_dir).await,
-        4 => install_managed("go", name, &tools_dir, &bin_dir).await,
+        1 => install_managed("cargo", name, name, &tools_dir, &bin_dir).await,
+        2 => install_managed("npm", name, name, &tools_dir, &bin_dir).await,
+        3 => install_managed("pip", name, name, &tools_dir, &bin_dir).await,
+        4 => install_managed("go", name, name, &tools_dir, &bin_dir).await,
         _ => Ok(()),
     }
 }
 
-async fn install_managed(manager: &str, pkg: &str, tools_dir: &Path, bin_dir: &Path) -> Result<()> {
-    // Create isolation directory: ~/.local/share/omg/tools/<manager>/<pkg>
-    let install_dir = tools_dir.join(manager).join(pkg);
+async fn install_managed(
+    manager: &str,
+    pkg: &str,
+    install_name: &str,
+    tools_dir: &Path,
+    bin_dir: &Path,
+) -> Result<()> {
+    crate::core::security::validate_package_name(install_name)?;
+    // Keep storage flat and keyed by the user-facing registry name. Package
+    // identifiers such as Go module paths are installer inputs, not paths.
+    let install_dir = tools_dir.join(manager).join(install_name);
     match fs::symlink_metadata(&install_dir) {
         Ok(metadata) if metadata.is_dir() => {
             fs::remove_dir_all(&install_dir).with_context(|| {
@@ -607,20 +638,31 @@ pub fn list() -> Result<()> {
     Ok(())
 }
 
-pub fn remove(name: &str) -> Result<()> {
-    // SECURITY: Validate tool name
+pub async fn remove(name: &str) -> Result<()> {
     crate::core::security::validate_package_name(name)?;
 
     let (tools_dir, bin_dir) = get_dirs();
+    let mut candidates = Vec::new();
+    if let Some(entry) = find_registry_entry(name) {
+        let (manager, package, _) = entry?;
+        if manager == "pacman" {
+            return crate::cli::packages::remove(&[package.to_string()], false, false, false).await;
+        }
+        candidates.push((manager, tools_dir.join(manager).join(name)));
+        let legacy = tools_dir.join(manager).join(package);
+        if legacy != candidates[0].1 {
+            candidates.push((manager, legacy));
+        }
+    } else {
+        candidates.extend(
+            ["cargo", "npm", "pip", "go"]
+                .into_iter()
+                .map(|manager| (manager, tools_dir.join(manager).join(name))),
+        );
+    }
 
-    // We need to find which manager installed it.
-    // Check tools_dir/{manager}/{name}
-
-    let managers = ["cargo", "npm", "pip", "go"];
     let mut found = false;
-
-    for manager in managers {
-        let install_path = tools_dir.join(manager).join(name);
+    for (manager, install_path) in candidates {
         if crate::runtimes::common::is_valid_version_dir(&install_path) {
             println!(
                 "{} Removing {} from {}...",
@@ -633,13 +675,7 @@ pub fn remove(name: &str) -> Result<()> {
         }
     }
 
-    if !found {
-        println!(
-            "{}",
-            style::error(&format!("Tool '{name}' not found in managed storage"))
-        );
-        return Ok(());
-    }
+    anyhow::ensure!(found, "Tool '{name}' not found in managed storage");
 
     // Cleanup symlinks (broken links)
     println!("  {} Cleaning symlinks...", style::dim("→"));
@@ -697,7 +733,9 @@ pub async fn update(name: &str) -> Result<()> {
             );
             match find_registry_entry(&tool) {
                 Some(Ok((manager, pkg, _))) => {
-                    if let Err(error) = install_managed(manager, pkg, &tools_dir, &bin_dir).await {
+                    if let Err(error) =
+                        install_managed(manager, pkg, &tool, &tools_dir, &bin_dir).await
+                    {
                         println!(
                             "  {}",
                             style::error(&format!("Failed to update {tool}: {error}"))
@@ -739,7 +777,7 @@ pub async fn update(name: &str) -> Result<()> {
     match find_registry_entry(name) {
         Some(resolved) => {
             let (manager, pkg, _) = resolved?;
-            install_managed(manager, pkg, &tools_dir, &bin_dir).await?;
+            install_managed(manager, pkg, name, &tools_dir, &bin_dir).await?;
             println!("\n{}", style::success("Update complete!"));
         }
         None => {
@@ -835,4 +873,32 @@ pub fn registry() -> Result<()> {
     println!("Total: {} tools available", TOOL_REGISTRY.len());
     println!("\nInstall with: omg tool install <name>");
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn installed_names_resolve_flat_and_legacy_registry_layouts() {
+        let temp = tempfile::tempdir().expect("temp directory");
+        let tools = temp.path();
+        for path in [
+            "go/github.com/rakyll/hey/bin",
+            "cargo/diesel_cli/bin",
+            "go/glow/bin",
+            "cargo/custom-tool/bin",
+        ] {
+            fs::create_dir_all(tools.join(path)).expect("tool fixture");
+        }
+
+        let names = installed_tool_names_in(tools).expect("installed names");
+
+        assert!(names.contains(&"hey".to_string()));
+        assert!(names.contains(&"diesel".to_string()));
+        assert!(names.contains(&"glow".to_string()));
+        assert!(names.contains(&"custom-tool".to_string()));
+        assert!(!names.contains(&"github.com".to_string()));
+        assert!(!names.contains(&"diesel_cli".to_string()));
+    }
 }

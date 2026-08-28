@@ -19,7 +19,7 @@ use owo_colors::OwoColorize;
 use crate::package_managers::get_system_status;
 
 // Const slices for completion - avoids allocation on every call
-const TOOL_COMMANDS: &[&str] = &["install", "list", "remove"];
+const TOOL_COMMANDS: &[&str] = &["install", "list", "remove", "update", "search", "registry"];
 const ENV_COMMANDS: &[&str] = &["capture", "check", "share", "sync"];
 const NEW_TEMPLATES: &[&str] = &[
     "rust",
@@ -70,8 +70,11 @@ pub async fn complete(_shell: &str, current: &str, last: &str, full: Option<&str
             results
         }
         "remove" | "r" => {
-            // Remove should only show INSTALLED packages
-            let mut results = complete_installed_packages(&engine, current)?;
+            let mut results = if in_tool {
+                complete_installed_tools(&engine, current, false)?
+            } else {
+                complete_installed_packages(&engine, current)?
+            };
             results.truncate(limit);
             results
         }
@@ -136,6 +139,18 @@ fn complete_installed_packages(
     current: &str,
 ) -> Result<Vec<String>> {
     let names = get_installed_package_names()?;
+    Ok(engine.fuzzy_match(current, names))
+}
+
+fn complete_installed_tools(
+    engine: &crate::core::completion::CompletionEngine,
+    current: &str,
+    include_all: bool,
+) -> Result<Vec<String>> {
+    let mut names = crate::cli::tool::installed_tool_names()?;
+    if include_all {
+        names.push("all".to_string());
+    }
     Ok(engine.fuzzy_match(current, names))
 }
 
@@ -302,9 +317,12 @@ fn complete_fallback(
         return complete_runtime_versions(engine, current, last);
     }
 
-    // Fallback to tool/env subcommands if in those contexts
+    // Fallback to tool/env subcommands if in those contexts.
     if in_env {
         return Ok(complete_static_candidates(engine, current, ENV_COMMANDS));
+    }
+    if in_tool && last == "update" {
+        return complete_installed_tools(engine, current, true);
     }
     if in_tool {
         return Ok(complete_static_candidates(engine, current, TOOL_COMMANDS));
@@ -330,7 +348,8 @@ fn complete_runtime_versions(
 
     let fuzzy_installed = engine.fuzzy_match(current, installed_versions);
     suggestions.extend(fuzzy_installed);
-    suggestions.dedup();
+    let mut seen = std::collections::HashSet::new();
+    suggestions.retain(|suggestion| seen.insert(suggestion.clone()));
     Ok(engine.fuzzy_match(current, suggestions))
 }
 
@@ -502,7 +521,7 @@ pub fn status_sync() -> Result<()> {
             }
         } else {
             // Fallback to local probing if daemon is down
-            for rt_name in &["node", "python", "rust", "go", "bun", "java", "ruby"] {
+            for rt_name in crate::runtimes::SUPPORTED_RUNTIMES {
                 if let Some(v) = crate::runtimes::probe_version(rt_name) {
                     let label = runtime_display_name(rt_name);
                     println!("    {} {} {}", "·".cyan(), label, v.dimmed());
@@ -1444,6 +1463,14 @@ pub fn stats(json: bool) -> Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn tool_subcommand_completion_matches_the_command_enum() {
+        assert_eq!(
+            TOOL_COMMANDS,
+            &["install", "list", "remove", "update", "search", "registry"]
+        );
+    }
 
     #[test]
     fn package_completion_without_backend_is_an_error() {
