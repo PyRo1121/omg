@@ -668,6 +668,7 @@ analyzer inference
 - **Ci**: Cross-platform install script and R2 release sync
 ### 🐛 Bug Fixes
 
+- Make Debian configuration rollback-safe
 - Select exact runtime artifacts
 - Harden runtime release discovery
 - Honor audit output and export contracts
