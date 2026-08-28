@@ -503,7 +503,7 @@ jobs:
   # skipped macos result is accepted as passing.
   ci-success:
     name: "CI Success"
-    needs: [quick-gate, linux-matrix, macos]
+    needs: [quick-gate, linux-matrix, feature-intersections, macos]
     if: always()
     runs-on: ubuntu-latest
     timeout-minutes: 5
@@ -512,6 +512,7 @@ jobs:
         env:
           QUICK_GATE: ${{ needs.quick-gate.result }}
           LINUX_MATRIX: ${{ needs.linux-matrix.result }}
+          FEATURE_INTERSECTIONS: ${{ needs.feature-intersections.result }}
           MACOS: ${{ needs.macos.result }}
         run: |
           echo "## CI Results Summary" >> $GITHUB_STEP_SUMMARY
@@ -520,6 +521,7 @@ jobs:
           echo "|-----|--------|" >> $GITHUB_STEP_SUMMARY
           echo "| Quick Gate | $QUICK_GATE |" >> $GITHUB_STEP_SUMMARY
           echo "| Linux Matrix | $LINUX_MATRIX |" >> $GITHUB_STEP_SUMMARY
+          echo "| Feature Intersections | $FEATURE_INTERSECTIONS |" >> $GITHUB_STEP_SUMMARY
           echo "| macOS | $MACOS |" >> $GITHUB_STEP_SUMMARY
 
           if [[ "$QUICK_GATE" != "success" ]]; then
@@ -529,6 +531,7 @@ jobs:
 
           declare -A required_results=(
             ["Linux Matrix"]="$LINUX_MATRIX"
+            ["Feature Intersections"]="$FEATURE_INTERSECTIONS"
             ["macOS"]="$MACOS"
           )
           for job in "${!required_results[@]}"; do
