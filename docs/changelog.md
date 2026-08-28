@@ -668,6 +668,7 @@ analyzer inference
 - **Ci**: Cross-platform install script and R2 release sync
 ### 🐛 Bug Fixes
 
+- Validate historical AUR versions
 - Fail container status on runtime errors
 - Refresh databases for root fast updates
 - Emit UTC security timestamps
