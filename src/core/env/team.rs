@@ -126,12 +126,6 @@ impl TeamStatus {
     pub fn in_sync_count(&self) -> usize {
         self.members.iter().filter(|m| m.in_sync).count()
     }
-
-    /// Count members out of sync
-    #[must_use]
-    pub fn out_of_sync_count(&self) -> usize {
-        self.members.iter().filter(|m| !m.in_sync).count()
-    }
 }
 
 /// Team workspace manager

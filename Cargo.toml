@@ -124,7 +124,6 @@ futures = "0.3.32"
 # Serialization
 serde = { version = "1.0.228", features = ["derive"] }
 serde_json = "1.0.149"
-quick-xml = { version = "0.41", optional = true }
 toml = "1.0.3"
 bitcode = { version = "0.6", features = ["serde"] }
 
@@ -223,7 +222,6 @@ alpm-types = { version = "=0.11.1", git = "https://gitlab.archlinux.org/archlinu
 alpm-srcinfo = { version = "=0.6.2", git = "https://gitlab.archlinux.org/archlinux/alpm/alpm.git", package = "alpm-srcinfo", rev = "b5463fcd4b677e55792dfb0c708da9659db0368a", optional = true }
 alpm-db = { version = "=0.2.1", git = "https://gitlab.archlinux.org/archlinux/alpm/alpm.git", package = "alpm-db", rev = "b5463fcd4b677e55792dfb0c708da9659db0368a", optional = true }
 alpm-repo-db = { version = "=0.1.1", git = "https://gitlab.archlinux.org/archlinux/alpm/alpm.git", package = "alpm-repo-db", rev = "b5463fcd4b677e55792dfb0c708da9659db0368a", optional = true }
-alpm-pkginfo = { version = "=0.6.1", git = "https://gitlab.archlinux.org/archlinux/alpm/alpm.git", package = "alpm-pkginfo", rev = "b5463fcd4b677e55792dfb0c708da9659db0368a", optional = true }
 
 # Process execution
 which = "8.0"
@@ -363,7 +361,6 @@ arch = [
   "alpm-srcinfo",
   "alpm-db",
   "alpm-repo-db",
-  "alpm-pkginfo",
 ]
 # Optional PGP verification of package signatures (sequoia-openpgp).
 # Built against the MSRV pinned in rust-toolchain.toml / package.rust-version.
@@ -377,14 +374,13 @@ debian = ["ar", "rust-apt"]
 debian-pure = ["ar"]
 
 # Fedora/RHEL support (DNF/RPM) - Pure Rust, no system dependencies
-fedora = ["rusqlite", "quick-xml"]
+fedora = ["rusqlite"]
 
 # macOS/Homebrew support - Pure Rust
 macos = []
 
 license = [
 ] # Gates the `omg license` CLI subcommand only; Team/Enterprise/Fleet are ungated (see feature policy above)
-proptest = [] # Enable property-based tests
 docker_tests = [] # Enable tests that require running as root (e.g. in Docker)
 
 # ============================================================================

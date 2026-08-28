@@ -168,21 +168,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "alpm-pkginfo"
-version = "0.6.1"
-source = "git+https://gitlab.archlinux.org/archlinux/alpm/alpm.git?rev=b5463fcd4b677e55792dfb0c708da9659db0368a#b5463fcd4b677e55792dfb0c708da9659db0368a"
-dependencies = [
- "alpm-common",
- "alpm-parsers",
- "alpm-types",
- "fluent-i18n",
- "serde",
- "serde_with",
- "strum 0.27.2",
- "thiserror 2.0.20",
-]
-
-[[package]]
 name = "alpm-repo-db"
 version = "0.1.1"
 source = "git+https://gitlab.archlinux.org/archlinux/alpm/alpm.git?rev=b5463fcd4b677e55792dfb0c708da9659db0368a#b5463fcd4b677e55792dfb0c708da9659db0368a"
@@ -3712,7 +3697,6 @@ dependencies = [
  "ahash",
  "alpm",
  "alpm-db",
- "alpm-pkginfo",
  "alpm-repo-db",
  "alpm-srcinfo",
  "alpm-types",
@@ -3755,7 +3739,6 @@ dependencies = [
  "p256",
  "p384",
  "proptest",
- "quick-xml",
  "ratatui",
  "rayon",
  "rcgen",
@@ -4266,15 +4249,6 @@ name = "quick-error"
 version = "1.2.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "a1d01941d82fa2ab50be1e79e6714289dd7cde78eba4c074bc5a4374f650dfe0"
-
-[[package]]
-name = "quick-xml"
-version = "0.41.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "e660451e55124f798a69a5af3f49ccfbefbd41910eefd25caf2393e1f3473ec1"
-dependencies = [
- "memchr",
-]
 
 [[package]]
 name = "quinn"

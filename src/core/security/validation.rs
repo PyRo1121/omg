@@ -279,18 +279,6 @@ pub fn validate_package_names_or_files(names: &[String]) -> Result<(), Validatio
     Ok(())
 }
 
-/// Sanitize a package name by removing invalid characters
-/// Use this when you need to accept user input but ensure it's safe
-///
-/// # Warning
-/// Deletion-based sanitization can map hostile input onto an *unrelated but
-/// valid* package name (`"firef@ox!"` -> `"firefox"`). Prefer
-/// [`validate_package_name`] wherever rejection is possible.
-#[must_use]
-pub fn sanitize_package_name(name: &str) -> String {
-    name.chars().filter(|&c| is_safe_package_char(c)).collect()
-}
-
 /// Checks if a character is safe for package names
 #[inline]
 fn is_safe_package_char(c: char) -> bool {

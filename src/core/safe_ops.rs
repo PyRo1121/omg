@@ -6,7 +6,7 @@
 
 use anyhow::{Context, Result};
 use std::io::Write;
-use std::num::{NonZeroU32, NonZeroU64};
+use std::num::NonZeroU32;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
 
@@ -16,11 +16,6 @@ pub fn nonzero_u32(value: u32, context: &str) -> Result<NonZeroU32> {
     NonZeroU32::new(value).with_context(|| format!("{context}: value must be > 0, got {value}"))
 }
 
-/// Safe constructor for `NonZeroU64` with context
-pub fn nonzero_u64(value: u64, context: &str) -> Result<NonZeroU64> {
-    NonZeroU64::new(value).with_context(|| format!("{context}: value must be > 0, got {value}"))
-}
-
 /// Create a `NonZeroU32` with a default fallback value.
 ///
 /// If both `value` and `default` are zero, falls back to `NonZeroU32::MIN` (1).
@@ -28,11 +23,6 @@ pub fn nonzero_u32_or_default(value: u32, default: u32) -> NonZeroU32 {
     NonZeroU32::new(value)
         .or_else(|| NonZeroU32::new(default))
         .unwrap_or(NonZeroU32::MIN)
-}
-
-/// Safe alternative to `expect()` with better error context
-pub fn expect_or<T>(option: Option<T>, context: &str) -> Result<T> {
-    option.ok_or_else(|| anyhow::anyhow!("Expected value for {context} but found None"))
 }
 
 /// Validate only the basic string syntax of a path.
@@ -318,27 +308,6 @@ mod tests {
 
         let nz2 = nonzero_u32_or_default(50, 100);
         assert_eq!(nz2.get(), 50);
-    }
-
-    #[test]
-    fn test_expect_or_some() {
-        let option = Some(42);
-        let result = expect_or(option, "test value");
-        assert!(result.is_ok());
-        assert_eq!(result.unwrap(), 42);
-    }
-
-    #[test]
-    fn test_expect_or_none() {
-        let option: Option<i32> = None;
-        let result = expect_or(option, "test value");
-        assert!(result.is_err());
-        assert!(
-            result
-                .unwrap_err()
-                .to_string()
-                .contains("Expected value for test value")
-        );
     }
 
     #[test]

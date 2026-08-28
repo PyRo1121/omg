@@ -83,7 +83,14 @@ mod team_status_tests {
     #[test]
     fn test_out_of_sync_count() {
         let status = create_test_team_status();
-        assert_eq!(status.out_of_sync_count(), 1);
+        assert_eq!(
+            status
+                .members
+                .iter()
+                .filter(|member| !member.in_sync)
+                .count(),
+            1
+        );
     }
 
     #[test]
@@ -98,7 +105,14 @@ mod team_status_tests {
         };
 
         assert_eq!(status.in_sync_count(), 0);
-        assert_eq!(status.out_of_sync_count(), 0);
+        assert_eq!(
+            status
+                .members
+                .iter()
+                .filter(|member| !member.in_sync)
+                .count(),
+            0
+        );
     }
 
     #[test]
@@ -111,7 +125,14 @@ mod team_status_tests {
         }
 
         assert_eq!(status.in_sync_count(), 3);
-        assert_eq!(status.out_of_sync_count(), 0);
+        assert_eq!(
+            status
+                .members
+                .iter()
+                .filter(|member| !member.in_sync)
+                .count(),
+            0
+        );
     }
 
     #[test]
@@ -124,7 +145,14 @@ mod team_status_tests {
         }
 
         assert_eq!(status.in_sync_count(), 0);
-        assert_eq!(status.out_of_sync_count(), 3);
+        assert_eq!(
+            status
+                .members
+                .iter()
+                .filter(|member| !member.in_sync)
+                .count(),
+            3
+        );
     }
 }
 
@@ -832,7 +860,14 @@ mod edge_cases_tests {
         };
 
         assert_eq!(status.in_sync_count(), 1);
-        assert_eq!(status.out_of_sync_count(), 0);
+        assert_eq!(
+            status
+                .members
+                .iter()
+                .filter(|member| !member.in_sync)
+                .count(),
+            0
+        );
         assert_eq!(status.members.len(), 1);
     }
 
@@ -881,7 +916,7 @@ mod property_based_tests {
             };
 
             let in_sync = status.in_sync_count();
-            let out_of_sync = status.out_of_sync_count();
+            let out_of_sync = status.members.iter().filter(|member| !member.in_sync).count();
             let total = status.members.len();
 
             prop_assert_eq!(in_sync + out_of_sync, total);

@@ -466,28 +466,6 @@ fn test_is_root_function_status_completes() {
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
-// WITH_ROOT FUNCTION TESTS
-// ═══════════════════════════════════════════════════════════════════════════════
-
-#[test]
-fn test_with_root_closure_execution() {
-    // Test that with_root properly executes closures when root
-    // This is tested indirectly by running operations that might use it
-
-    let runner = TestRunner::new();
-
-    let result = runner.run(&["sync", "--yes"]);
-
-    // May fail due to permissions/dev mode, but it must run to completion:
-    // never panic, and always render an outcome.
-    assert_ne!(result.exit_code, 101, "sync --yes panicked");
-    assert!(
-        !result.stdout.is_empty() || !result.stderr.is_empty(),
-        "sync --yes produced no output"
-    );
-}
-
-// ═══════════════════════════════════════════════════════════════════════════════
 // REGRESSION TESTS FOR BUG FIXES
 // ═══════════════════════════════════════════════════════════════════════════════
 

@@ -72,12 +72,6 @@ pub struct DaemonState {
 }
 
 impl DaemonState {
-    /// Whether the package index has no entries. Intended for tests and
-    /// health reporting that must not reach into private state.
-    pub fn index_is_empty(&self) -> bool {
-        self.index_snapshot().is_empty()
-    }
-
     /// Clone the current immutable index snapshot without holding the read
     /// lock during searches.
     pub(super) fn index_snapshot(&self) -> Arc<PackageIndex> {

@@ -99,34 +99,10 @@ fn test_atomic_counter_integration() {
 }
 
 #[test]
-fn test_expect_or_error_handling() {
-    // Test Some value
-    let some_value = Some(42);
-    let result = expect_or(some_value, "test context");
-    assert!(result.is_ok());
-    assert_eq!(result.unwrap(), 42);
-
-    // Test None value
-    let none_value: Option<i32> = None;
-    let error_result = expect_or(none_value, "test context");
-    assert!(error_result.is_err());
-    assert!(
-        error_result
-            .unwrap_err()
-            .to_string()
-            .contains("Expected value for test context")
-    );
-}
-
-#[test]
 fn test_nonzero_constructors_edge_cases() {
     // Test boundary value of 1 (smallest valid)
     let nz1 = nonzero_u32(1, "boundary test").unwrap();
     assert_eq!(nz1.get(), 1);
-
-    // Test large values
-    let nz_large = nonzero_u64(u64::MAX, "max test").unwrap();
-    assert_eq!(nz_large.get(), u64::MAX);
 
     // Test with default fallback
     let nz_default = nonzero_u32_or_default(0, 999);

@@ -323,8 +323,7 @@ async fn test_update_type_detection() {
     );
 }
 
-// Property-based test using proptest
-#[cfg(feature = "proptest")]
+// Property-based update contracts run in the default test suite.
 mod proptest_tests {
     use super::*;
     use proptest::prelude::*;
@@ -376,14 +375,14 @@ mod proptest_tests {
 
             // Install
             let install_result = rt.block_on(
-                service.install(&[package_name.clone()], false)
+                service.install(std::slice::from_ref(&package_name), false)
             );
             prop_assert!(install_result.is_ok());
             prop_assert!(rt.block_on(pm.is_installed(&package_name)).unwrap());
 
             // Remove
             let remove_result = rt.block_on(
-                service.remove(&[package_name.clone()], false)
+                service.remove(std::slice::from_ref(&package_name), false)
             );
             prop_assert!(remove_result.is_ok());
             prop_assert!(!rt.block_on(pm.is_installed(&package_name)).unwrap());
