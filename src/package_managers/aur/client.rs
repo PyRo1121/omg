@@ -815,7 +815,7 @@ impl AurClient {
         use std::process::Stdio;
 
         crate::core::security::validate_package_name(package)?;
-        crate::core::security::validate_package_name(version)?;
+        crate::core::security::validate_version(version)?;
         require_unprivileged_builder(package, crate::core::is_root())?;
 
         let base = self.resolve_package_base(package).await;
@@ -966,6 +966,7 @@ impl AurClient {
 
     /// Extract `pkgver-pkgrel` from `.SRCINFO` text (first occurrences).
     fn srcinfo_version(content: &str) -> Option<String> {
+        let mut epoch: Option<&str> = None;
         let mut pkgver: Option<&str> = None;
         let mut pkgrel: Option<&str> = None;
         for line in content.lines() {
@@ -973,6 +974,7 @@ impl AurClient {
                 continue;
             };
             match key.trim() {
+                "epoch" if epoch.is_none() => epoch = Some(value.trim()),
                 "pkgver" if pkgver.is_none() => pkgver = Some(value.trim()),
                 "pkgrel" if pkgrel.is_none() => pkgrel = Some(value.trim()),
                 _ => {}
@@ -981,9 +983,12 @@ impl AurClient {
                 break;
             }
         }
+        let prefix = epoch
+            .filter(|value| !value.is_empty())
+            .map_or_else(String::new, |value| format!("{value}:"));
         match (pkgver, pkgrel) {
-            (Some(v), Some(r)) => Some(format!("{v}-{r}")),
-            (Some(v), None) => Some(v.to_string()),
+            (Some(v), Some(r)) => Some(format!("{prefix}{v}-{r}")),
+            (Some(v), None) => Some(format!("{prefix}{v}")),
             _ => None,
         }
     }
@@ -2854,8 +2859,10 @@ mod tests {
         );
         let mut tar = tar::Builder::new(encoder);
         for (name, content) in entries {
-            tar.append_data(&mut tar::Header::new_gnu(), name, *content)
-                .unwrap();
+            let mut header = tar::Header::new_gnu();
+            header.set_size(content.len() as u64);
+            header.set_cksum();
+            tar.append_data(&mut header, name, *content).unwrap();
         }
         tar.into_inner().unwrap().finish().unwrap();
     }
@@ -3152,6 +3159,10 @@ mod tests {
         let dup = "pkgver = 1.0\npkgrel = 2\npkgname = a\npkgver = 9.9\n";
         assert_eq!(AurClient::srcinfo_version(dup).as_deref(), Some("1.0-2"));
         assert_eq!(AurClient::srcinfo_version("pkgname = x"), None);
+        assert_eq!(
+            AurClient::srcinfo_version("epoch = 2\npkgver = 1.0~rc1\npkgrel = 3"),
+            Some("2:1.0~rc1-3".to_string())
+        );
     }
 
     #[test]
