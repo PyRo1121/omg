@@ -59,7 +59,14 @@ fn configured_repo_count() -> usize {
 
 pub async fn update_fast() -> Result<()> {
     modern_ui::print_phase_header("⚡", "Fast System Update", "sync + upgrade");
-    crate::package_managers::arch::run_privileged_operation("fullupdate", &[], run_sysupgrade).await
+    crate::package_managers::arch::run_privileged_operation("fullupdate", &[], run_full_sysupgrade)
+        .await
+}
+
+/// Refresh package databases before a root-side fast update.
+async fn run_full_sysupgrade() -> anyhow::Result<()> {
+    crate::package_managers::sync_databases_parallel().await?;
+    run_sysupgrade().await
 }
 
 /// Execute a full system upgrade and record it in history.
