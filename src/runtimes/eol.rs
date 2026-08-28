@@ -11,7 +11,7 @@ pub(crate) struct EolEntry {
     pub eol_date: &'static str,
 }
 
-/// Canonical EOL table sourced from endoflife.date (last reviewed 2026-02).
+/// Canonical EOL table sourced from endoflife.date (last reviewed 2026-08-28).
 pub(crate) const EOL_TABLE: &[EolEntry] = &[
     EolEntry {
         runtime: "node",
@@ -42,6 +42,26 @@ pub(crate) const EOL_TABLE: &[EolEntry] = &[
         runtime: "node",
         version_prefix: &[22],
         eol_date: "2027-04-30",
+    },
+    EolEntry {
+        runtime: "node",
+        version_prefix: &[23],
+        eol_date: "2025-06-01",
+    },
+    EolEntry {
+        runtime: "node",
+        version_prefix: &[24],
+        eol_date: "2028-04-30",
+    },
+    EolEntry {
+        runtime: "node",
+        version_prefix: &[25],
+        eol_date: "2026-06-01",
+    },
+    EolEntry {
+        runtime: "node",
+        version_prefix: &[26],
+        eol_date: "2029-04-30",
     },
     EolEntry {
         runtime: "python",
@@ -79,9 +99,14 @@ pub(crate) const EOL_TABLE: &[EolEntry] = &[
         eol_date: "2029-10-31",
     },
     EolEntry {
+        runtime: "python",
+        version_prefix: &[3, 14],
+        eol_date: "2030-10-31",
+    },
+    EolEntry {
         runtime: "go",
         version_prefix: &[1, 19],
-        eol_date: "2023-08-08",
+        eol_date: "2023-09-06",
     },
     EolEntry {
         runtime: "go",
@@ -91,12 +116,27 @@ pub(crate) const EOL_TABLE: &[EolEntry] = &[
     EolEntry {
         runtime: "go",
         version_prefix: &[1, 21],
-        eol_date: "2024-08-06",
+        eol_date: "2024-08-13",
     },
     EolEntry {
         runtime: "go",
         version_prefix: &[1, 22],
-        eol_date: "2025-02-06",
+        eol_date: "2025-02-11",
+    },
+    EolEntry {
+        runtime: "go",
+        version_prefix: &[1, 23],
+        eol_date: "2025-08-12",
+    },
+    EolEntry {
+        runtime: "go",
+        version_prefix: &[1, 24],
+        eol_date: "2026-02-10",
+    },
+    EolEntry {
+        runtime: "go",
+        version_prefix: &[1, 25],
+        eol_date: "2026-08-19",
     },
     EolEntry {
         runtime: "ruby",
@@ -119,6 +159,21 @@ pub(crate) const EOL_TABLE: &[EolEntry] = &[
         eol_date: "2026-03-31",
     },
     EolEntry {
+        runtime: "ruby",
+        version_prefix: &[3, 3],
+        eol_date: "2027-03-31",
+    },
+    EolEntry {
+        runtime: "ruby",
+        version_prefix: &[3, 4],
+        eol_date: "2028-03-31",
+    },
+    EolEntry {
+        runtime: "ruby",
+        version_prefix: &[4, 0],
+        eol_date: "2029-03-31",
+    },
+    EolEntry {
         runtime: "java",
         version_prefix: &[8],
         eol_date: "2030-12-31",
@@ -135,8 +190,48 @@ pub(crate) const EOL_TABLE: &[EolEntry] = &[
     },
     EolEntry {
         runtime: "java",
+        version_prefix: &[18],
+        eol_date: "2022-09-20",
+    },
+    EolEntry {
+        runtime: "java",
+        version_prefix: &[19],
+        eol_date: "2023-03-21",
+    },
+    EolEntry {
+        runtime: "java",
+        version_prefix: &[20],
+        eol_date: "2023-09-19",
+    },
+    EolEntry {
+        runtime: "java",
         version_prefix: &[21],
         eol_date: "2031-09-30",
+    },
+    EolEntry {
+        runtime: "java",
+        version_prefix: &[22],
+        eol_date: "2024-09-17",
+    },
+    EolEntry {
+        runtime: "java",
+        version_prefix: &[23],
+        eol_date: "2025-03-18",
+    },
+    EolEntry {
+        runtime: "java",
+        version_prefix: &[24],
+        eol_date: "2025-09-16",
+    },
+    EolEntry {
+        runtime: "java",
+        version_prefix: &[25],
+        eol_date: "2033-09-30",
+    },
+    EolEntry {
+        runtime: "java",
+        version_prefix: &[26],
+        eol_date: "2026-09-18",
     },
 ];
 
@@ -200,6 +295,28 @@ mod tests {
     #[test]
     fn unknown_runtime_has_no_eol_entry() {
         assert!(find_eol_entry("rust", &[1, 75]).is_none());
+    }
+
+    #[test]
+    fn lifecycle_table_contains_recent_eol_cycles() {
+        let expected = [
+            ("node", &[23][..], "2025-06-01"),
+            ("node", &[25][..], "2026-06-01"),
+            ("python", &[3, 14][..], "2030-10-31"),
+            ("go", &[1, 23][..], "2025-08-12"),
+            ("go", &[1, 24][..], "2026-02-10"),
+            ("go", &[1, 25][..], "2026-08-19"),
+            ("ruby", &[3, 4][..], "2028-03-31"),
+            ("java", &[24][..], "2025-09-16"),
+        ];
+
+        for (runtime, version, eol_date) in expected {
+            assert_eq!(
+                find_eol_entry(runtime, version).map(|entry| entry.eol_date),
+                Some(eol_date),
+                "missing or stale lifecycle row for {runtime} {version:?}"
+            );
+        }
     }
 
     #[test]
