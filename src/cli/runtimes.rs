@@ -117,8 +117,6 @@ pub async fn use_version(runtime: &str, version: Option<&str>) -> Result<()> {
     ui::print_header("OMG", &format!("Switching {runtime} to version {version}"));
     ui::print_spacer();
 
-    crate::core::usage::track_runtime_switch(&runtime);
-
     match runtime.as_str() {
         "node" => {
             install_or_use(&NodeManager::new(), strip_version_prefix(&version)).await?;
@@ -151,6 +149,7 @@ pub async fn use_version(runtime: &str, version: Option<&str>) -> Result<()> {
         ),
     }
 
+    crate::core::usage::track_runtime_switch(&runtime);
     Ok(())
 }
 

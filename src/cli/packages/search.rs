@@ -266,7 +266,13 @@ pub fn search_sync_cli_with_limit(
     let rt = tokio::runtime::Builder::new_current_thread()
         .enable_all()
         .build()?;
-    rt.block_on(search_internal(query, detailed, false, no_aur, limit))?;
+    rt.block_on(async {
+        search_internal(query, detailed, false, no_aur, limit).await?;
+        // This runtime is about to be dropped, so a fire-and-forget usage
+        // task would be cancelled. Flush at this owned shutdown boundary.
+        crate::core::usage::sync_usage_now().await;
+        Ok::<(), anyhow::Error>(())
+    })?;
     Ok(true)
 }
 

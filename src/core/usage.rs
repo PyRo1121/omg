@@ -373,6 +373,9 @@ impl UsageStats {
     /// Check if sync is needed (every 30 seconds for real-time dashboard)
     #[must_use]
     pub fn needs_sync(&self) -> bool {
+        if self.total_commands == 0 {
+            return false;
+        }
         let now = jiff::Timestamp::now().as_second();
         now - self.last_sync > 30 // 30 seconds for near real-time updates
     }
@@ -656,7 +659,11 @@ pub fn maybe_sync_background() {
         return;
     };
     if stats.needs_sync() || stats.needs_immediate_sync() {
-        tokio::spawn(async move {
+        let Ok(runtime) = tokio::runtime::Handle::try_current() else {
+            tracing::debug!("Deferring usage sync until an async shutdown boundary");
+            return;
+        };
+        runtime.spawn(async move {
             if let Err(e) = stats.sync(&license.key).await {
                 tracing::debug!("Usage sync failed: {e}");
             }
@@ -669,6 +676,9 @@ pub async fn sync_usage_now() {
     let Some((mut stats, license)) = sync_candidate() else {
         return;
     };
+    if stats.total_commands == 0 {
+        return;
+    }
     if let Err(e) = stats.sync(&license.key).await {
         tracing::debug!("Usage sync failed: {e}");
     }
@@ -677,6 +687,16 @@ pub async fn sync_usage_now() {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn empty_usage_never_requests_a_sync() {
+        let stats = UsageStats {
+            last_sync: 0,
+            ..Default::default()
+        };
+        assert!(!stats.needs_sync());
+        assert!(!stats.needs_immediate_sync());
+    }
 
     #[test]
     fn time_saved_human_formats_units() {
