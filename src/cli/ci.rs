@@ -41,19 +41,10 @@ pub fn init(provider: &str, advanced: bool) -> Result<()> {
 pub async fn validate() -> Result<()> {
     println!("{} Validating CI environment...\n", style::runtime("OMG"));
 
+    let lock_path = std::path::Path::new("omg.lock");
+    require_ci_lockfile(lock_path)?;
     let state = crate::core::env::fingerprint::EnvironmentState::capture().await?;
-
-    // Check for omg.lock
-    if !std::path::Path::new("omg.lock").exists() {
-        println!(
-            "  {} No omg.lock found - run {} first",
-            style::maybe_color("⚠", |t| t.yellow().to_string()),
-            style::command("omg env capture")
-        );
-        return Ok(());
-    }
-
-    let lock = crate::core::env::fingerprint::EnvironmentState::load("omg.lock")?;
+    let lock = crate::core::env::fingerprint::EnvironmentState::load(lock_path)?;
 
     if state.hash == lock.hash {
         println!(
@@ -72,6 +63,14 @@ pub async fn validate() -> Result<()> {
         );
         anyhow::bail!("Environment drift detected")
     }
+}
+
+fn require_ci_lockfile(path: &std::path::Path) -> Result<()> {
+    anyhow::ensure!(
+        path.is_file(),
+        "No omg.lock found; run 'omg env capture' before CI validation"
+    );
+    Ok(())
 }
 
 /// Generate cache manifest for CI
@@ -532,4 +531,20 @@ workflows:
     };
 
     write_config_file(".circleci/config.yml", config)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn ci_validation_fails_closed_without_lockfile() {
+        let directory = tempfile::tempdir().expect("temp directory");
+        let missing = directory.path().join("omg.lock");
+
+        let error =
+            require_ci_lockfile(&missing).expect_err("CI validation without a lockfile must fail");
+
+        assert!(error.to_string().contains("No omg.lock found"), "{error}");
+    }
 }
