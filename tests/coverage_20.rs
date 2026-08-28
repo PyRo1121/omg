@@ -399,7 +399,7 @@ fn hook_env_zsh_quotes_apostrophe_data_dir_posix_style() {
     let stdout = &result.stdout;
     let inner = stdout
         .strip_prefix("export PATH='")
-        .and_then(|rest| rest.strip_suffix("':\"$PATH\"\n"))
+        .and_then(|rest| rest.strip_suffix("':\"${_OMG_PATH_BASE:-$PATH}\"\n"))
         .map(std::string::ToString::to_string);
     let Some(inner) = inner else {
         panic!("stdout must be exactly one quoted export line, got {stdout:?}");
@@ -419,7 +419,7 @@ fn hook_env_zsh_quotes_apostrophe_data_dir_posix_style() {
 
 /// Contract: `omg hook-env -s fish` emits one `fish_add_path -g '<word>'`
 /// line per addition, fish-style quoting (`'` becomes `\'`), everything else
-/// verbatim.
+/// verbatim. The generated fish hook resets PATH before applying these lines.
 #[test]
 fn hook_env_fish_emits_fish_quoted_add_path() {
     let tmp = tempfile::tempdir().unwrap();

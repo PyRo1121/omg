@@ -489,6 +489,7 @@ fn test_hook_bash_generates_script() {
     // function plus PROMPT_COMMAND registration.
     result.assert_stdout_contains("_omg_hook");
     result.assert_stdout_contains("PROMPT_COMMAND");
+    result.assert_stdout_contains("_OMG_PATH_BASE");
 }
 
 #[test]
@@ -501,6 +502,8 @@ fn test_hook_zsh_generates_script() {
     // Zsh-specific wiring from ZSH_HOOK (src/hooks/mod.rs).
     result.assert_stdout_contains("_omg_hook");
     result.assert_stdout_contains("precmd_functions");
+    result.assert_stdout_contains("_omg_refresh_cache");
+    result.assert_stdout_contains("zmodload zsh/datetime");
 }
 
 #[test]
@@ -512,6 +515,7 @@ fn test_hook_fish_generates_script() {
     result.assert_success();
     // Fish uses function definitions with event handlers, not eval hooks.
     result.assert_stdout_contains("function _omg_hook");
+    result.assert_stdout_contains("set -gx PATH $_OMG_PATH_BASE");
 }
 
 #[test]

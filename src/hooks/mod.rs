@@ -143,11 +143,8 @@ pub fn hook_env(shell: &str) -> Result<()> {
     // Detect version files in current directory and parents
     let versions = detect_versions(&cwd)?;
 
-    if versions.is_empty() {
-        return Ok(());
-    }
-
-    // Build PATH modifications
+    // Build PATH modifications. An empty result is meaningful to the
+    // generated hooks, which reset PATH to the user's base PATH first.
     let path_additions = build_path_additions(&versions)?;
 
     if path_additions.is_empty() {
@@ -158,7 +155,8 @@ pub fn hook_env(shell: &str) -> Result<()> {
     //
     // SECURITY: each addition is emitted as a POSIX single-quoted word so no
     // component can break out of the assignment via `"`, `$(`, or backticks;
-    // `$PATH` stays outside the quoting so it still expands in the shell.
+    // The generated hooks reset PATH before evaluating this output. The
+    // fallback keeps direct `eval "$(omg hook-env ...)"` calls safe too.
     match shell.to_lowercase().as_str() {
         "zsh" | "bash" => {
             let additions = path_additions
@@ -166,7 +164,7 @@ pub fn hook_env(shell: &str) -> Result<()> {
                 .map(|path| posix_single_quoted(path))
                 .collect::<Vec<_>>()
                 .join(":");
-            println!("export PATH={additions}:\"$PATH\"");
+            println!("export PATH={additions}:\"${{_OMG_PATH_BASE:-$PATH}}\"");
         }
         "fish" => {
             for path in &path_additions {
@@ -585,9 +583,14 @@ const ZSH_HOOK: &str = r#"
 # OMG Shell Hook for Zsh
 # Add to ~/.zshrc: eval "$(omg hook zsh)"
 
+zmodload zsh/datetime
+
 _omg_hook() {
   trap -- '' SIGINT
+  if [[ -z "${_OMG_PATH_BASE+x}" ]]; then _OMG_PATH_BASE=$PATH; fi
+  export PATH="$_OMG_PATH_BASE"
   eval "$(\command omg hook-env -s zsh)"
+  _omg_refresh_cache
   trap - SIGINT
 }
 
@@ -671,6 +674,8 @@ const BASH_HOOK: &str = r#"
 _omg_hook() {
   local previous_exit_status=$?
   trap -- '' SIGINT
+  if [[ -z "${_OMG_PATH_BASE+x}" ]]; then _OMG_PATH_BASE=$PATH; fi
+  export PATH="$_OMG_PATH_BASE"
   eval "$(\command omg hook-env -s bash)"
   trap - SIGINT
   return $previous_exit_status
@@ -723,6 +728,10 @@ const FISH_HOOK: &str = r"
 # Add to ~/.config/fish/config.fish: omg hook fish | source
 
 function _omg_hook --on-variable PWD --on-event fish_prompt
+  if not set -q _OMG_PATH_BASE
+    set -g _OMG_PATH_BASE $PATH
+  end
+  set -gx PATH $_OMG_PATH_BASE
   omg hook-env -s fish | source
 end
 ";
