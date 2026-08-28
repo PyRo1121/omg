@@ -2794,6 +2794,7 @@ dependency-type: indirect
 
 ### 🔒 Security
 
+- Bound runtime archive downloads
 - Verify environment sync before replacement
 - Validate complete Fulcio chains
 - Bound and minimize secret scans
