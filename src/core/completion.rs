@@ -11,6 +11,10 @@ use nucleo_matcher::{
 
 use crate::core::paths;
 
+const MAX_AUR_COMPLETION_COMPRESSED_BYTES: usize = 16 * 1024 * 1024;
+const MAX_AUR_COMPLETION_DECOMPRESSED_BYTES: u64 = 64 * 1024 * 1024;
+const MAX_AUR_COMPLETION_PACKAGES: usize = 500_000;
+
 /// File-backed completion cache (single atomically-replaced JSON document).
 ///
 /// Replaces the former redb table: the cache holds two keys, which does not
@@ -195,16 +199,50 @@ impl CompletionEngine {
             .get(url)
             .timeout(std::time::Duration::from_secs(15))
             .send()
-            .await?;
-        let bytes = response.bytes().await?;
+            .await?
+            .error_for_status()?;
+        if response.content_length().is_some_and(|length| {
+            length > u64::try_from(MAX_AUR_COMPLETION_COMPRESSED_BYTES).unwrap_or(u64::MAX)
+        }) {
+            anyhow::bail!("AUR completion response exceeds compressed-size limit");
+        }
 
-        use std::io::Read;
-        let mut gz = flate2::read::GzDecoder::new(&bytes[..]);
-        let mut s = String::new();
-        gz.read_to_string(&mut s)?;
+        use futures::StreamExt as _;
+        let mut compressed = Vec::new();
+        let mut stream = response.bytes_stream();
+        while let Some(chunk) = stream.next().await {
+            let chunk = chunk.context("Failed to read AUR completion response")?;
+            if compressed.len().saturating_add(chunk.len()) > MAX_AUR_COMPLETION_COMPRESSED_BYTES {
+                anyhow::bail!("AUR completion response exceeds compressed-size limit");
+            }
+            compressed.extend_from_slice(&chunk);
+        }
 
-        Ok(s.lines().map(std::string::ToString::to_string).collect())
+        decode_aur_names(&compressed, MAX_AUR_COMPLETION_DECOMPRESSED_BYTES)
     }
+}
+
+fn decode_aur_names(compressed: &[u8], decompressed_limit: u64) -> Result<Vec<String>> {
+    use std::io::Read as _;
+
+    let decoder = flate2::read::GzDecoder::new(compressed);
+    let mut bounded = crate::runtimes::common::BudgetedReader::new(decoder, decompressed_limit);
+    let mut text = String::new();
+    bounded
+        .read_to_string(&mut text)
+        .context("AUR completion index exceeds decompressed-size limit")?;
+
+    let mut names = Vec::new();
+    for name in text.lines().filter(|name| !name.is_empty()) {
+        anyhow::ensure!(
+            names.len() < MAX_AUR_COMPLETION_PACKAGES,
+            "AUR completion index exceeds package-count limit"
+        );
+        crate::core::security::validate_package_name(name)
+            .context("AUR completion index contains an invalid package name")?;
+        names.push(name.to_string());
+    }
+    Ok(names)
 }
 
 fn read_optional_file(path: &Path) -> Result<Option<String>> {
@@ -220,6 +258,31 @@ fn read_optional_file(path: &Path) -> Result<Option<String>> {
 mod tests {
     use super::*;
     use tempfile::TempDir;
+
+    fn gzip_text(text: &[u8]) -> Vec<u8> {
+        use std::io::Write as _;
+
+        let mut encoder = flate2::write::GzEncoder::new(Vec::new(), flate2::Compression::best());
+        encoder.write_all(text).expect("compress fixture");
+        encoder.finish().expect("finish fixture")
+    }
+
+    #[test]
+    fn aur_completion_index_is_bounded_and_validated() {
+        let valid = gzip_text(b"package-one\npackage-two\n");
+        assert_eq!(
+            decode_aur_names(&valid, 1024).expect("valid package index"),
+            vec!["package-one", "package-two"]
+        );
+
+        let bomb = gzip_text(&vec![b'a'; 64 * 1024]);
+        let error = decode_aur_names(&bomb, 1024).expect_err("inflation must be bounded");
+        assert!(error.to_string().contains("decompressed-size limit"));
+
+        let invalid = gzip_text(b"valid\n../escape\n");
+        let error = decode_aur_names(&invalid, 1024).expect_err("invalid names must fail closed");
+        assert!(error.to_string().contains("invalid package name"));
+    }
 
     #[test]
     fn fuzzy_match_returns_matches() {

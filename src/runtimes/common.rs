@@ -76,6 +76,7 @@ pub(crate) const MAX_DECOMPRESSED_BYTES: u64 = 2 * 1024 * 1024 * 1024;
 pub(crate) struct BudgetedReader<R> {
     inner: R,
     remaining: u64,
+    limit: u64,
 }
 
 impl<R> BudgetedReader<R> {
@@ -86,6 +87,7 @@ impl<R> BudgetedReader<R> {
         Self {
             inner,
             remaining: budget,
+            limit: budget,
         }
     }
 }
@@ -103,7 +105,8 @@ impl<R: Read> Read for BudgetedReader<R> {
             return Err(std::io::Error::new(
                 std::io::ErrorKind::InvalidData,
                 format!(
-                    "decompressed data exceeds the maximum supported size of {MAX_DECOMPRESSED_BYTES} bytes"
+                    "decompressed data exceeds the configured limit of {} bytes",
+                    self.limit
                 ),
             ));
         }
@@ -1636,7 +1639,11 @@ mod tests {
             .expect_err("budget must abort the stream");
 
         assert_eq!(error.kind(), std::io::ErrorKind::InvalidData);
-        assert!(error.to_string().contains("maximum supported size"));
+        assert!(
+            error
+                .to_string()
+                .contains("configured limit of 1048576 bytes")
+        );
         // Allocation stopped at the budget instead of expanding to 64 MiB.
         assert!(sink.len() <= 1024 * 1024 + 64 * 1024);
     }
