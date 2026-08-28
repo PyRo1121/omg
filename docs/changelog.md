@@ -668,6 +668,7 @@ analyzer inference
 - **Ci**: Cross-platform install script and R2 release sync
 ### 🐛 Bug Fixes
 
+- Fail container status on runtime errors
 - Refresh databases for root fast updates
 - Emit UTC security timestamps
 - Synchronize usage only after valid activity
