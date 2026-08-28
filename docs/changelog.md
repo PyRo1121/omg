@@ -668,6 +668,7 @@ analyzer inference
 - **Ci**: Cross-platform install script and R2 release sync
 ### 🐛 Bug Fixes
 
+- Restore audited cryptography pins
 - Share canonical package download client policy
 - Centralize bounded HTTP retry policy
 - Sync repository index renames durably
