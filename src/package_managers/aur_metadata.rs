@@ -10,6 +10,7 @@ use std::time::{Duration, SystemTime};
 
 use anyhow::{Context, Result};
 use flate2::read::GzDecoder;
+use futures::StreamExt;
 use reqwest::header::{ETAG, IF_MODIFIED_SINCE, IF_NONE_MATCH, LAST_MODIFIED};
 use serde::{Deserialize, Serialize};
 use tokio::fs as tokio_fs;
@@ -20,6 +21,7 @@ use crate::core::paths;
 use crate::package_managers::aur_index::build_index;
 
 const AUR_META_URL: &str = "https://aur.archlinux.org/packages-meta-ext-v1.json.gz";
+const MAX_AUR_METADATA_BYTES: u64 = 256 * 1024 * 1024;
 
 #[derive(Debug, Default, Deserialize, Serialize)]
 struct AurMetaCache {
@@ -156,10 +158,27 @@ pub async fn sync_aur_metadata(
         .and_then(|v| v.to_str().ok())
         .map(String::from);
 
-    let bytes = response.bytes().await?;
+    if let Some(length) = response.content_length() {
+        anyhow::ensure!(
+            length <= MAX_AUR_METADATA_BYTES,
+            "AUR metadata declares {length} bytes, exceeding the {MAX_AUR_METADATA_BYTES}-byte limit"
+        );
+    }
+    let mut bytes = Vec::new();
+    let mut stream = response.bytes_stream();
+    while let Some(chunk) = stream.next().await {
+        let chunk = chunk.context("Failed to read AUR metadata")?;
+        let next_len = bytes
+            .len()
+            .checked_add(chunk.len())
+            .context("AUR metadata byte count overflowed")?;
+        anyhow::ensure!(
+            u64::try_from(next_len).unwrap_or(u64::MAX) <= MAX_AUR_METADATA_BYTES,
+            "AUR metadata exceeded the {MAX_AUR_METADATA_BYTES}-byte limit"
+        );
+        bytes.extend_from_slice(&chunk);
+    }
     {
-        // `reqwest::Bytes` is already owned and 'static; pass it straight
-        // through instead of copying the (potentially large) archive.
         let cache_path = cache_path.clone();
         tokio::task::spawn_blocking(move || persist_file_atomically(&cache_path, &bytes)).await??;
     }

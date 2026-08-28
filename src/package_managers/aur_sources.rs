@@ -6,6 +6,8 @@
 
 use std::path::Path;
 
+const MAX_AUR_SOURCE_BYTES: u64 = 1024 * 1024 * 1024;
+
 use alpm_srcinfo::SourceInfoV1;
 use alpm_types::SystemArchitecture;
 use anyhow::{Context, Result};
@@ -228,9 +230,14 @@ async fn download_file(url: &str, dest_path: &Path, pb: ProgressBar) -> Result<(
         return Err(anyhow::anyhow!("HTTP error: {}", response.status()));
     }
 
-    // Get content length for progress bar
+    // Get content length for progress bar and reject an oversized response
+    // before creating a large temporary file.
     let expected_length = response.content_length();
     if let Some(total) = expected_length {
+        anyhow::ensure!(
+            total <= MAX_AUR_SOURCE_BYTES,
+            "AUR source declares {total} bytes, exceeding the {MAX_AUR_SOURCE_BYTES}-byte limit"
+        );
         pb.set_length(total);
     }
 
@@ -279,7 +286,13 @@ async fn download_to_file(
             .await
             .context("Failed to write chunk to file")?;
 
-        downloaded += chunk.len() as u64;
+        downloaded = downloaded
+            .checked_add(u64::try_from(chunk.len()).context("AUR source chunk is too large")?)
+            .context("AUR source byte count overflowed")?;
+        anyhow::ensure!(
+            downloaded <= MAX_AUR_SOURCE_BYTES,
+            "AUR source exceeded the {MAX_AUR_SOURCE_BYTES}-byte limit"
+        );
         pb.set_position(downloaded);
     }
 

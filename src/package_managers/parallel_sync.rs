@@ -97,6 +97,7 @@ fn build_db_url(mirror_template: &str, repo: &str) -> String {
 
 const MAX_RETRIES: u32 = 3;
 const INITIAL_BACKOFF_MS: u64 = 100;
+const MAX_SYNC_DB_BYTES: u64 = 512 * 1024 * 1024;
 const MIRROR_RACE_TIMEOUT_MS: u64 = 2000;
 
 async fn race_mirrors(client: &Client, urls: &[String]) -> Option<usize> {
@@ -148,9 +149,24 @@ async fn race_mirrors(client: &Client, urls: &[String]) -> Option<usize> {
 }
 
 async fn download_response_to_dest(mut response: reqwest::Response, dest: &Path) -> Result<()> {
+    if let Some(length) = response.content_length() {
+        anyhow::ensure!(
+            length <= MAX_SYNC_DB_BYTES,
+            "Package database declares {length} bytes, exceeding the {MAX_SYNC_DB_BYTES}-byte limit"
+        );
+    }
+
     let (std_file, temporary_path) = begin_same_dir_temp(dest)?;
     let mut file = File::from_std(std_file);
+    let mut downloaded = 0_u64;
     while let Some(chunk) = response.chunk().await? {
+        downloaded = downloaded
+            .checked_add(u64::try_from(chunk.len()).context("Download chunk is too large")?)
+            .context("Package database byte count overflowed")?;
+        anyhow::ensure!(
+            downloaded <= MAX_SYNC_DB_BYTES,
+            "Package database exceeded the {MAX_SYNC_DB_BYTES}-byte limit"
+        );
         file.write_all(&chunk)
             .await
             .context("Write error during download")?;
