@@ -86,101 +86,130 @@ impl Ord for DebVersion {
     }
 }
 
-/// Character weight per Debian policy §5.6.12: `~` sorts before everything
-/// (including end of string), letters by ASCII, everything else after letters.
-#[cfg(not(feature = "arch"))]
-fn deb_char_order(c: u8) -> i64 {
-    match c {
-        b'~' => -1,
-        b'0'..=b'9' => 0,
-        _ => i64::from(c),
-    }
-}
-
-/// Compare two version fragments using the dpkg alternating
-/// non-digit/numeric-run algorithm.
-#[cfg(not(feature = "arch"))]
-fn compare_deb_fragments(mut a: &[u8], mut b: &[u8]) -> std::cmp::Ordering {
-    use std::cmp::Ordering;
-    while !a.is_empty() || !b.is_empty() {
-        // Compare leading runs of non-digit characters.
-        while (!a.is_empty() && !a[0].is_ascii_digit()) || (!b.is_empty() && !b[0].is_ascii_digit())
-        {
-            let ac = a.first().map_or(0, |&c| deb_char_order(c));
-            let bc = b.first().map_or(0, |&c| deb_char_order(c));
-            if ac != bc {
-                return ac.cmp(&bc);
-            }
-            if !a.is_empty() {
-                a = &a[1..];
-            }
-            if !b.is_empty() {
-                b = &b[1..];
-            }
-        }
-        // Skip leading zeros in numeric runs.
-        while a.first().is_some_and(|c| *c == b'0') {
-            a = &a[1..];
-        }
-        while b.first().is_some_and(|c| *c == b'0') {
-            b = &b[1..];
-        }
-        // Compare numeric runs by length then digits (both zero-trimmed).
-        let a_digits = a.iter().take_while(|c| c.is_ascii_digit()).count();
-        let b_digits = b.iter().take_while(|c| c.is_ascii_digit()).count();
-        match a_digits.cmp(&b_digits) {
-            Ordering::Equal => {}
+#[cfg(any(
+    not(feature = "arch"),
+    feature = "debian",
+    feature = "debian-pure",
+    test
+))]
+mod debian_version {
+    /// Compare two Debian package versions using Policy §5.6.12 ordering.
+    ///
+    /// This is the single comparator for both candidate-update ordering and
+    /// dependency constraint resolution. Numeric runs are compared as strings,
+    /// so repository-controlled versions cannot overflow an integer parser.
+    pub(crate) fn compare_deb_versions(a: &str, b: &str) -> std::cmp::Ordering {
+        let (epoch_a, rest_a) = split_deb_epoch(a);
+        let (epoch_b, rest_b) = split_deb_epoch(b);
+        match epoch_a.cmp(&epoch_b) {
+            std::cmp::Ordering::Equal => {}
             other => return other,
         }
-        let ordering = a[..a_digits].cmp(&b[..b_digits]);
-        if ordering != Ordering::Equal {
-            return ordering;
+
+        let (upstream_a, revision_a) = split_deb_revision(rest_a);
+        let (upstream_b, revision_b) = split_deb_revision(rest_b);
+        match compare_deb_part(upstream_a, upstream_b) {
+            std::cmp::Ordering::Equal => compare_deb_part(revision_a, revision_b),
+            other => other,
         }
-        a = &a[a_digits..];
-        b = &b[b_digits..];
     }
-    Ordering::Equal
+
+    fn split_deb_epoch(version: &str) -> (u64, &str) {
+        match version.split_once(':') {
+            Some((epoch, rest)) => (epoch.parse().unwrap_or(0), rest),
+            None => (0, version),
+        }
+    }
+
+    fn split_deb_revision(version: &str) -> (&str, &str) {
+        version.rsplit_once('-').unwrap_or((version, ""))
+    }
+
+    fn compare_deb_part(mut a: &str, mut b: &str) -> std::cmp::Ordering {
+        loop {
+            let (a_non_digit, a_after) = split_at_deb_digit(a);
+            let (b_non_digit, b_after) = split_at_deb_digit(b);
+            match compare_deb_non_digits(a_non_digit, b_non_digit) {
+                std::cmp::Ordering::Equal => {}
+                other => return other,
+            }
+
+            let (a_number, a_next) = split_at_deb_non_digit(a_after);
+            let (b_number, b_next) = split_at_deb_non_digit(b_after);
+            if a_number.is_empty() && b_number.is_empty() {
+                return std::cmp::Ordering::Equal;
+            }
+            match compare_deb_numeric_strings(a_number, b_number) {
+                std::cmp::Ordering::Equal => {}
+                other => return other,
+            }
+            a = a_next;
+            b = b_next;
+        }
+    }
+
+    fn split_at_deb_digit(value: &str) -> (&str, &str) {
+        value
+            .find(|character: char| character.is_ascii_digit())
+            .map_or((value, ""), |index| value.split_at(index))
+    }
+
+    fn split_at_deb_non_digit(value: &str) -> (&str, &str) {
+        value
+            .find(|character: char| !character.is_ascii_digit())
+            .map_or((value, ""), |index| value.split_at(index))
+    }
+
+    fn compare_deb_numeric_strings(a: &str, b: &str) -> std::cmp::Ordering {
+        let a = a.trim_start_matches('0');
+        let b = b.trim_start_matches('0');
+        a.len().cmp(&b.len()).then_with(|| a.cmp(b))
+    }
+
+    fn compare_deb_non_digits(a: &str, b: &str) -> std::cmp::Ordering {
+        let mut a = a.chars();
+        let mut b = b.chars();
+        loop {
+            match (a.next(), b.next()) {
+                (None, None) => return std::cmp::Ordering::Equal,
+                (Some(character), None) => {
+                    return if character == '~' {
+                        std::cmp::Ordering::Less
+                    } else {
+                        std::cmp::Ordering::Greater
+                    };
+                }
+                (None, Some(character)) => {
+                    return if character == '~' {
+                        std::cmp::Ordering::Greater
+                    } else {
+                        std::cmp::Ordering::Less
+                    };
+                }
+                (Some(a), Some(b)) => match deb_character_order(a).cmp(&deb_character_order(b)) {
+                    std::cmp::Ordering::Equal => {}
+                    other => return other,
+                },
+            }
+        }
+    }
+
+    fn deb_character_order(character: char) -> i64 {
+        match character {
+            '~' => -1,
+            character if character.is_ascii_alphabetic() => i64::from(u32::from(character)),
+            character => i64::from(u32::from(character)) + 256,
+        }
+    }
 }
 
-/// Split an optional epoch (`digits:`) from the rest of the version.
-#[cfg(not(feature = "arch"))]
-fn split_epoch(version: &str) -> (u64, &str) {
-    match version.split_once(':') {
-        Some((epoch, rest)) if !epoch.is_empty() && epoch.bytes().all(|c| c.is_ascii_digit()) => {
-            (epoch.parse::<u64>().unwrap_or(0), rest)
-        }
-        _ => (0, version),
-    }
-}
-
-/// dpkg-style full version comparison: epoch, upstream part, revision.
-#[cfg(not(feature = "arch"))]
-fn compare_deb_versions(a: &str, b: &str) -> std::cmp::Ordering {
-    use std::cmp::Ordering;
-    let (epoch_a, rest_a) = split_epoch(a);
-    let (epoch_b, rest_b) = split_epoch(b);
-    match epoch_a.cmp(&epoch_b) {
-        Ordering::Equal => {}
-        other => return other,
-    }
-    // Revision is everything after the LAST hyphen; upstream is before it.
-    let (upstream_a, revision_a) = match rest_a.rsplit_once('-') {
-        Some((up, rev)) => (up, Some(rev)),
-        None => (rest_a, None),
-    };
-    let (upstream_b, revision_b) = match rest_b.rsplit_once('-') {
-        Some((up, rev)) => (up, Some(rev)),
-        None => (rest_b, None),
-    };
-    match compare_deb_fragments(upstream_a.as_bytes(), upstream_b.as_bytes()) {
-        Ordering::Equal => {}
-        other => return other,
-    }
-    compare_deb_fragments(
-        revision_a.unwrap_or_default().as_bytes(),
-        revision_b.unwrap_or_default().as_bytes(),
-    )
-}
+#[cfg(any(
+    not(feature = "arch"),
+    feature = "debian",
+    feature = "debian-pure",
+    test
+))]
+pub(crate) use debian_version::compare_deb_versions;
 
 #[cfg(not(feature = "arch"))]
 pub type Version = DebVersion;
@@ -250,6 +279,24 @@ mod tests {
         let version = parse_version_or_zero("1:2.3.4-5");
         assert_eq!(version.version_string(), "1:2.3.4-5");
         assert_eq!(version.version_string(), "1:2.3.4-5");
+    }
+
+    #[test]
+    fn canonical_debian_comparator_orders_policy_edge_cases() {
+        use std::cmp::Ordering;
+
+        let cases = [
+            ("1.0~rc1", "1.0", Ordering::Less),
+            ("1.0a", "1.0+", Ordering::Less),
+            ("1.0+", "1.0.", Ordering::Less),
+            ("1.0000000000000000000001", "1.1", Ordering::Equal),
+            ("1.99999999999999999999999999", "1.10", Ordering::Greater),
+            ("2:0", "1:999999999999999999999", Ordering::Greater),
+        ];
+        for (left, right, expected) in cases {
+            assert_eq!(compare_deb_versions(left, right), expected);
+            assert_eq!(compare_deb_versions(right, left), expected.reverse());
+        }
     }
 
     #[cfg(not(feature = "arch"))]

@@ -10,7 +10,7 @@ use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
 use crate::core::paths;
-#[cfg(any(feature = "debian", feature = "debian-pure"))]
+#[cfg(any(feature = "arch", feature = "debian", feature = "debian-pure"))]
 use crate::package_managers::VersionDisplay;
 
 use super::vulnerability::PackageSource;
