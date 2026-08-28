@@ -291,7 +291,6 @@ impl DnfPackageManager {
                     payload[base..]
                         .iter()
                         .position(|&b| b == 0)
-                        .map(|npos| npos + 1)
                         .ok_or_else(|| anyhow::anyhow!("RPM tag {tag} string missing terminator"))?
                 }
                 _ => unreachable!("type range validated above"),
@@ -411,7 +410,7 @@ impl DnfPackageManager {
     fn run_dnf(&self, args: &[&str]) -> Result<()> {
         let mut cmd = Command::new("dnf");
 
-        let status = cmd.args(args).arg("-y").status()?;
+        let status = cmd.args(args).status()?;
 
         if status.success() {
             self.installed_cache.clear();
@@ -489,7 +488,7 @@ impl PackageManager for DnfPackageManager {
                 // Share caches so post-install invalidation reaches the caller.
                 let manager = self.cache_handle();
                 move || {
-                    let mut args = vec!["install", "--"];
+                    let mut args = vec!["install", "-y", "--"];
                     let pkg_refs: Vec<&str> = packages.iter().map(String::as_str).collect();
                     args.extend_from_slice(&pkg_refs);
                     manager.run_dnf(&args)
@@ -515,7 +514,7 @@ impl PackageManager for DnfPackageManager {
             tokio::task::spawn_blocking({
                 let manager = self.cache_handle();
                 move || {
-                    let mut args = vec!["remove", "--"];
+                    let mut args = vec!["remove", "-y", "--"];
                     let pkg_refs: Vec<&str> = packages.iter().map(String::as_str).collect();
                     args.extend_from_slice(&pkg_refs);
                     manager.run_dnf(&args)
@@ -535,7 +534,7 @@ impl PackageManager for DnfPackageManager {
 
             tokio::task::spawn_blocking({
                 let manager = self.cache_handle();
-                move || manager.run_dnf(&["upgrade"])
+                move || manager.run_dnf(&["upgrade", "-y"])
             })
             .await?
         })
@@ -553,7 +552,7 @@ impl PackageManager for DnfPackageManager {
 
             tokio::task::spawn_blocking({
                 let manager = self.cache_handle();
-                move || manager.run_dnf(&["makecache"])
+                move || manager.run_dnf(&["makecache", "-y"])
             })
             .await?
         })
@@ -813,6 +812,14 @@ mod tests {
     }
 
     #[test]
+    fn sqlite_string_values_exclude_rpm_terminators() {
+        let package =
+            DnfPackageManager::parse_package_from_blob(&minimal_named_rpm_header(b"bash\0"))
+                .expect("valid RPM name header");
+        assert_eq!(package.name, "bash");
+    }
+
+    #[test]
     fn test_parse_rpm_qa_line_rejects_truncated_row() {
         let error = DnfPackageManager::parse_rpm_qa_line("bash\t5.2.15")
             .expect_err("truncated rpm -qa line must not skip the package");
@@ -830,7 +837,7 @@ mod tests {
         header.extend_from_slice(&1000u32.to_be_bytes());
         header.extend_from_slice(&6u32.to_be_bytes());
         header.extend_from_slice(&0i32.to_be_bytes());
-        header.extend_from_slice(&(name.len() as u32).to_be_bytes());
+        header.extend_from_slice(&1u32.to_be_bytes());
         header.extend_from_slice(name);
         header
     }
