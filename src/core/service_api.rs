@@ -1,5 +1,7 @@
 //! Canonical OMG service endpoints shared by licensing and telemetry clients.
 
+/// Version of the language-neutral CLI service contract.
+pub const CONTRACT_VERSION: u64 = 1;
 /// Production API origin for the OMG licensing and telemetry service.
 pub const ORIGIN: &str = "https://omg-api.latham.cloud";
 /// Validate and activate a license key.
@@ -22,20 +24,38 @@ mod tests {
     use super::*;
 
     #[test]
-    fn every_service_endpoint_uses_the_production_origin() {
-        for endpoint in [
-            VALIDATE_LICENSE,
-            REPORT_USAGE,
-            INSTALL_PING,
-            CLI_BATCH,
-            TEAM_MEMBERS,
-            TEAM_POLICIES,
-            TEAM_AUDIT_LOG,
-        ] {
-            assert!(
-                endpoint.starts_with(ORIGIN),
-                "unexpected endpoint: {endpoint}"
+    fn rust_endpoints_match_the_language_neutral_contract() {
+        let contract: serde_json::Value =
+            serde_json::from_str(include_str!("../../contracts/service-api-v1.json"))
+                .expect("service contract must be valid JSON");
+        assert_eq!(contract["schemaVersion"].as_u64(), Some(CONTRACT_VERSION));
+        assert_eq!(contract["origin"].as_str(), Some(ORIGIN));
+
+        let expected = [
+            ("validateLicense", "POST", "none", VALIDATE_LICENSE),
+            ("reportUsage", "POST", "none", REPORT_USAGE),
+            ("installPing", "POST", "none", INSTALL_PING),
+            ("cliBatch", "POST", "none", CLI_BATCH),
+            ("teamMembers", "GET", "license-key", TEAM_MEMBERS),
+            ("teamPolicies", "GET", "license-key", TEAM_POLICIES),
+            ("teamAuditLog", "GET", "license-key", TEAM_AUDIT_LOG),
+        ];
+        let endpoints = contract["cliEndpoints"]
+            .as_object()
+            .expect("contract must define cliEndpoints");
+        assert_eq!(endpoints.len(), expected.len());
+
+        for (id, method, authentication, rust_endpoint) in expected {
+            let endpoint = &endpoints[id];
+            assert_eq!(endpoint["method"].as_str(), Some(method), "method for {id}");
+            assert_eq!(
+                endpoint["authentication"].as_str(),
+                Some(authentication),
+                "authentication for {id}"
             );
+            let path = endpoint["path"].as_str().unwrap_or_default();
+            assert!(!path.is_empty(), "missing path for {id}");
+            assert_eq!(rust_endpoint, format!("{ORIGIN}{path}"), "URL for {id}");
         }
     }
 }
