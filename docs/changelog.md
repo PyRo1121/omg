@@ -2782,6 +2782,7 @@ dependency-type: indirect
 
 ### 🔒 Security
 
+- Validate complete Fulcio chains
 - Bound and minimize secret scans
 - Validate Debian transaction identifiers
 - Harden Debian archive link extraction
