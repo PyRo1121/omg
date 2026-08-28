@@ -80,8 +80,18 @@ impl crate::package_managers::PackageManager for AptPackageManager {
     ) -> Pin<Box<dyn Future<Output = Result<()>> + Send + '_>> {
         let packages = packages.to_vec();
         Box::pin(async move {
-            // SECURITY: Validate package names
-            crate::core::security::validate_package_names(&packages)?;
+            crate::core::security::validate_debian_package_names_or_files(&packages)?;
+            #[cfg(unix)]
+            let packages = packages
+                .iter()
+                .map(|package| {
+                    if crate::core::security::is_local_debian_package_file(package) {
+                        return crate::core::security::validate_local_debian_package_file(package)
+                            .map(|path| path.to_string_lossy().into_owned());
+                    }
+                    Ok(package.clone())
+                })
+                .collect::<Result<Vec<_>>>()?;
 
             if !is_root() {
                 // Exact resolved package list goes straight to apt-get — no
@@ -489,10 +499,21 @@ fn install_blocking(packages: &[String]) -> Result<()> {
         });
 
     let cache = open_cache(&local_files)?;
-    for pkg_name in &names {
+    for spec in &names {
+        let (pkg_name, requested_version) = spec
+            .split_once('=')
+            .map_or((spec.as_str(), None), |(name, version)| {
+                (name, Some(version))
+            });
         let pkg = cache
             .get(pkg_name)
             .with_context(|| format!("Package not found: {pkg_name}"))?;
+        if let Some(version) = requested_version {
+            let candidate = pkg.get_version(version).with_context(|| {
+                format!("Version {version} of package {pkg_name} was not found")
+            })?;
+            candidate.set_candidate();
+        }
         pkg.mark_install(true, true);
         pkg.protect();
     }

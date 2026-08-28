@@ -751,7 +751,13 @@ fn command_requires_root(command: &Commands) -> bool {
 fn validate_package_security(command: &Commands) -> Result<()> {
     match command {
         Commands::Install { packages, .. } => {
-            // Install can accept package names OR local .pkg.tar.* files
+            #[cfg(any(feature = "debian", feature = "debian-pure"))]
+            if omg_lib::core::env::distro::is_debian_like() {
+                omg_lib::core::security::validate_debian_package_names_or_files(packages)?;
+            } else {
+                omg_lib::core::security::validate_package_names_or_files(packages)?;
+            }
+            #[cfg(not(any(feature = "debian", feature = "debian-pure")))]
             omg_lib::core::security::validate_package_names_or_files(packages)?;
         }
         Commands::Remove { packages, .. } => {

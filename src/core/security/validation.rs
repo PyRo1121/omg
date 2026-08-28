@@ -191,6 +191,19 @@ pub fn is_local_package_file(name: &str) -> bool {
     true
 }
 
+/// Return whether `name` is a local Debian package archive path.
+#[must_use]
+pub fn is_local_debian_package_file(name: &str) -> bool {
+    let path = std::path::Path::new(name);
+    matches!(
+        path.extension().and_then(std::ffi::OsStr::to_str),
+        Some(extension) if extension.eq_ignore_ascii_case("deb")
+            || extension.eq_ignore_ascii_case("ddeb")
+    ) && !name.starts_with('-')
+        && !name.contains("..")
+        && !name.contains('\0')
+}
+
 /// Resolve a local package archive through an ownership and mode boundary.
 ///
 /// The archive and its immediate directory must be owned by root or the
@@ -198,13 +211,10 @@ pub fn is_local_package_file(name: &str) -> bool {
 /// before canonicalization so another local account cannot swap the root-bound
 /// artifact through a writable directory between validation and ALPM loading.
 #[cfg(unix)]
-pub fn validate_local_package_file(path: &str) -> anyhow::Result<std::path::PathBuf> {
+fn validate_local_archive_file(path: &str, supported: bool) -> anyhow::Result<std::path::PathBuf> {
     use std::os::unix::fs::MetadataExt;
 
-    anyhow::ensure!(
-        is_local_package_file(path),
-        "not a supported local package archive path"
-    );
+    anyhow::ensure!(supported, "not a supported local package archive path");
     let input = std::path::Path::new(path);
     let link_metadata = std::fs::symlink_metadata(input)
         .map_err(|error| anyhow::anyhow!("Cannot inspect local package archive {path}: {error}"))?;
@@ -256,6 +266,18 @@ pub fn validate_local_package_file(path: &str) -> anyhow::Result<std::path::Path
     Ok(canonical)
 }
 
+/// Resolve a local Arch package archive through an ownership and mode boundary.
+#[cfg(unix)]
+pub fn validate_local_package_file(path: &str) -> anyhow::Result<std::path::PathBuf> {
+    validate_local_archive_file(path, is_local_package_file(path))
+}
+
+/// Resolve a local Debian package archive through an ownership and mode boundary.
+#[cfg(unix)]
+pub fn validate_local_debian_package_file(path: &str) -> anyhow::Result<std::path::PathBuf> {
+    validate_local_archive_file(path, is_local_debian_package_file(path))
+}
+
 /// Validates a package name or local package file path
 ///
 /// Accepts either a valid package name OR an existing local package file.
@@ -267,6 +289,22 @@ pub fn validate_package_name_or_file(name: &str) -> Result<(), ValidationError> 
 
     // Otherwise validate as package name
     validate_package_name(name)
+}
+
+/// Validate Debian package names, version-pinned specs, and local archives.
+pub fn validate_debian_package_name_or_file(name: &str) -> Result<(), ValidationError> {
+    if is_local_debian_package_file(name) {
+        return Ok(());
+    }
+    validate_debian_package_specs(&[name.to_string()])
+}
+
+/// Validate a collection of Debian package names, specs, or local archives.
+pub fn validate_debian_package_names_or_files(names: &[String]) -> Result<(), ValidationError> {
+    for name in names {
+        validate_debian_package_name_or_file(name)?;
+    }
+    Ok(())
 }
 
 /// Validates multiple package names or local package file paths
@@ -620,6 +658,15 @@ mod tests {
         assert!(!is_local_package_file("brave"));
         assert!(!is_local_package_file("brave-bin"));
         assert!(!is_local_package_file("python3"));
+    }
+
+    #[test]
+    fn debian_package_file_validation_accepts_supported_path_shapes() {
+        assert!(is_local_debian_package_file("./package.deb"));
+        assert!(is_local_debian_package_file("/tmp/package.ddeb"));
+        assert!(!is_local_debian_package_file("../package.deb"));
+        assert!(!is_local_debian_package_file("package.txt"));
+        assert!(validate_debian_package_name_or_file("curl=8.0-1").is_ok());
     }
 
     #[test]
