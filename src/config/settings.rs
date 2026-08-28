@@ -50,10 +50,12 @@ pub struct Settings {
     /// Enable shims (optional, default: false - use PATH modification)
     pub shims_enabled: bool,
 
-    /// OMG data directory
+    /// OMG data directory, resolved from the current environment at load time.
+    #[serde(skip, default = "paths::data_dir")]
     pub data_dir: PathBuf,
 
-    /// Daemon socket path
+    /// Daemon socket path, resolved from the current environment at load time.
+    #[serde(skip, default = "paths::socket_path")]
     pub socket_path: PathBuf,
 
     /// Default shell for hooks
@@ -310,10 +312,8 @@ impl Settings {
         }
 
         let content = toml::to_string_pretty(self).context("Failed to serialize config")?;
-        std::fs::write(&config_path, &content)
-            .with_context(|| format!("Failed to write config: {}", config_path.display()))?;
-
-        Ok(())
+        crate::core::safe_ops::atomic_write_file_sync(&config_path, content)
+            .with_context(|| format!("Failed to write config: {}", config_path.display()))
     }
 
     /// Get the config file path
@@ -327,5 +327,33 @@ impl Settings {
     #[must_use]
     pub fn versions_dir(&self) -> PathBuf {
         self.data_dir.join("versions")
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn serialized_settings_do_not_freeze_environment_resolved_paths() {
+        let settings = Settings::default();
+        let serialized = toml::to_string(&settings).expect("serialize settings");
+
+        assert!(!serialized.contains("data_dir"), "{serialized}");
+        assert!(!serialized.contains("socket_path"), "{serialized}");
+    }
+
+    #[test]
+    fn legacy_persisted_paths_are_ignored_on_read() {
+        let parsed: Settings = toml::from_str(
+            r#"
+                data_dir = "/stale/data"
+                socket_path = "/stale/socket"
+            "#,
+        )
+        .expect("legacy config remains readable");
+
+        assert_eq!(parsed.data_dir, paths::data_dir());
+        assert_eq!(parsed.socket_path, paths::socket_path());
     }
 }
