@@ -102,29 +102,27 @@ pub fn validate_package_name(name: &str) -> Result<(), ValidationError> {
     Ok(())
 }
 
-/// Validates multiple package names
 /// Validate Debian package specs that may pin a version (`name=1.2-3`).
 ///
-/// The NAME portion gets the full package-name security checks; the version
-/// portion is checked for control characters only — apt itself parses and
-/// rejects malformed versions, and dpkg's version charset is broader than
-/// pacman's.
+/// The package name uses the normal package-name rules. A pinned version uses
+/// the same bounded, injection-safe version grammar as other package-manager
+/// input, including Debian epochs and tilde ordering.
 pub fn validate_debian_package_specs(specs: &[String]) -> Result<(), ValidationError> {
     for spec in specs {
-        let name = match spec.split_once('=') {
-            Some((name, version)) => {
-                if version.is_empty() || version.chars().any(char::is_control) {
-                    return Err(ValidationError::VersionInvalidChar { character: '\0' });
-                }
-                name
-            }
-            None => spec.as_str(),
+        let Some((name, version)) = spec.split_once('=') else {
+            validate_package_name(spec)?;
+            continue;
         };
         validate_package_name(name)?;
+        if version.contains('=') {
+            return Err(ValidationError::VersionInvalidChar { character: '=' });
+        }
+        validate_version(version)?;
     }
     Ok(())
 }
 
+/// Validate multiple package names.
 pub fn validate_package_names(names: &[String]) -> Result<(), ValidationError> {
     for name in names {
         validate_package_name(name)?;
@@ -437,16 +435,26 @@ mod tests {
     }
 
     #[test]
-    fn debian_package_specs_reject_empty_and_control_versions() {
+    fn debian_package_specs_validate_names_and_versions() {
+        assert!(
+            validate_debian_package_specs(&[
+                "libc6=2:2.36-9~deb12u1".to_string(),
+                "ca-certificates".to_string(),
+            ])
+            .is_ok()
+        );
         assert!(matches!(
             validate_debian_package_specs(&["curl=".to_string()]),
-            Err(ValidationError::VersionInvalidChar { character: '\0' })
+            Err(ValidationError::VersionEmpty)
         ));
         assert!(matches!(
             validate_debian_package_specs(&["curl=1.2\n3".to_string()]),
-            Err(ValidationError::VersionInvalidChar { character: '\0' })
+            Err(ValidationError::VersionInvalidChar { character: '\n' })
         ));
-        assert!(validate_debian_package_specs(&["curl=1:8.0-1".to_string()]).is_ok());
+        assert!(matches!(
+            validate_debian_package_specs(&["curl=1=2".to_string()]),
+            Err(ValidationError::VersionInvalidChar { character: '=' })
+        ));
     }
 
     #[test]

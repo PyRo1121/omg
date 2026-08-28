@@ -1203,10 +1203,17 @@ pub async fn rollback(id: Option<String>, yes: bool) -> Result<()> {
             if crate::core::env::distro::is_debian_like() {
                 #[cfg(feature = "debian")]
                 {
+                    if !rebuild_from_aur.is_empty() {
+                        anyhow::bail!(
+                            "Cannot restore {} AUR package(s) on Debian; no AUR rollback backend is available",
+                            rebuild_from_aur.len()
+                        );
+                    }
                     let to_install: Vec<String> = packages
                         .iter()
                         .map(|(name, version)| format!("{name}={version}"))
                         .collect();
+                    crate::core::security::validate_debian_package_specs(&to_install)?;
                     println!(
                         "{} Restoring {} package(s)...",
                         style::info("→"),
@@ -1214,7 +1221,21 @@ pub async fn rollback(id: Option<String>, yes: bool) -> Result<()> {
                     );
                     let apt = crate::package_managers::AptPackageManager::new();
                     use crate::package_managers::PackageManager as _;
-                    apt.install(&to_install).await?;
+                    let result = apt.install(&to_install).await;
+                    let changes = packages
+                        .iter()
+                        .map(|(name, version)| crate::core::history::PackageChange {
+                            name: name.clone(),
+                            old_version: None,
+                            new_version: Some(version.clone()),
+                            source: "rollback".to_string(),
+                        })
+                        .collect();
+                    crate::core::history::HistoryManager::new()?.finish_operation(
+                        crate::core::history::TransactionType::Install,
+                        changes,
+                        result,
+                    )?;
                     println!("{}", style::success("✓ Rollback completed successfully"));
                     return Ok(());
                 }
