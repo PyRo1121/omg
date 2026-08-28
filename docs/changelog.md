@@ -3773,6 +3773,7 @@ the Debian backend), so it was removed from the metadata.
 - Normalize project formatting
 ### 🧪 Testing
 
+- Cover mock package installation
 - Pin PKGINFO identity parsing and key-id boundaries
 - Gate every enterprise state before side effects
 - Align privacy contracts with authenticated web ownership
