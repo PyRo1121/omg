@@ -111,6 +111,35 @@ struct GistFileResponse {
     content: Option<String>,
 }
 
+fn parse_gist_id(input: &str) -> Result<String> {
+    let gist_id = if input.starts_with("https://") {
+        let url = reqwest::Url::parse(input).context("Invalid Gist URL")?;
+        anyhow::ensure!(
+            url.scheme() == "https" && url.host_str() == Some("gist.github.com"),
+            "Gist URL must use https://gist.github.com"
+        );
+        anyhow::ensure!(
+            url.query().is_none() && url.fragment().is_none(),
+            "Gist URL must not contain a query or fragment"
+        );
+        url.path_segments()
+            .and_then(|mut segments| segments.rfind(|segment| !segment.is_empty()))
+            .context("Gist URL does not contain an ID")?
+            .to_string()
+    } else {
+        input.to_string()
+    };
+
+    anyhow::ensure!(
+        (7..=64).contains(&gist_id.len())
+            && gist_id
+                .chars()
+                .all(|character| character.is_ascii_hexdigit()),
+        "Gist ID must be 7 to 64 hexadecimal characters"
+    );
+    Ok(gist_id)
+}
+
 /// Share environment state to GitHub Gist
 fn sanitize_remote_error_body(body: &str) -> String {
     crate::cli::style::sanitize_terminal_text(body)
@@ -209,16 +238,7 @@ pub async fn sync(url_or_id: String) -> Result<()> {
 
     let client = shared_client();
 
-    // Determine if it's a URL or ID
-    let gist_id = if url_or_id.starts_with("https://gist.github.com/") {
-        url_or_id
-            .split('/')
-            .next_back()
-            .context("Invalid Gist URL")?
-    } else {
-        &url_or_id
-    };
-
+    let gist_id = parse_gist_id(&url_or_id)?;
     let api_url = format!("https://api.github.com/gists/{gist_id}");
 
     // Authorization is optional for reading public gists, but good if token exists
@@ -242,10 +262,19 @@ pub async fn sync(url_or_id: String) -> Result<()> {
             c.clone()
         } else {
             // Fetch raw if content is truncated/missing in metadata
-            client.get(&file.raw_url).send().await?.text().await?
+            client
+                .get(&file.raw_url)
+                .send()
+                .await?
+                .error_for_status()?
+                .text()
+                .await?
         };
 
-        std::fs::write("omg.lock", content).context("Failed to write omg.lock from Gist")?;
+        EnvironmentState::parse_lockfile(&content)
+            .context("Downloaded Gist contains an invalid omg.lock")?;
+        crate::core::safe_ops::atomic_write_file_sync("omg.lock", content)
+            .context("Failed to write omg.lock from Gist")?;
         execute_cmd(Cmd::batch([
             Cmd::success("omg.lock updated from Gist"),
             Cmd::info("Running environment check..."),
@@ -266,7 +295,26 @@ pub async fn sync(url_or_id: String) -> Result<()> {
 
 #[cfg(test)]
 mod tests {
-    use super::sanitize_remote_error_body;
+    use super::{parse_gist_id, sanitize_remote_error_body};
+
+    #[test]
+    fn gist_ids_are_extracted_and_strictly_validated() {
+        assert_eq!(
+            parse_gist_id("https://gist.github.com/alice/0123abcdef").unwrap(),
+            "0123abcdef"
+        );
+        assert_eq!(parse_gist_id("0123abcdef").unwrap(), "0123abcdef");
+
+        for invalid in [
+            "https://gist.github.com/",
+            "https://gist.github.com/alice/0123abcdef?file=omg.lock",
+            "https://example.com/alice/0123abcdef",
+            "not-a-gist-id",
+            "123",
+        ] {
+            assert!(parse_gist_id(invalid).is_err(), "accepted {invalid}");
+        }
+    }
 
     #[test]
     fn remote_error_body_is_terminal_safe_and_bounded() {

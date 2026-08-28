@@ -128,32 +128,33 @@ impl EnvironmentState {
         let path = path.as_ref();
         let content = fs::read_to_string(path)
             .with_context(|| format!("Failed to read lockfile {}", path.display()))?;
+        Self::parse_lockfile(&content)
+            .map_err(|error| anyhow::anyhow!("Invalid lockfile {}: {error}", path.display()))
+    }
+
+    /// Parse and verify lockfile content before it is persisted.
+    pub fn parse_lockfile(content: &str) -> Result<Self> {
         // Reject files written by a newer schema BEFORE parsing, so unknown
         // future fields produce an actionable message instead of accidental
         // best-effort deserialization.
-        if let Ok(raw) = toml::from_str::<toml::Value>(&content) {
+        if let Ok(raw) = toml::from_str::<toml::Value>(content) {
             let file_version = raw
                 .get("schema_version")
                 .and_then(toml::Value::as_integer)
                 .unwrap_or_else(|| i64::from(Self::SCHEMA_VERSION));
             if file_version > i64::from(Self::SCHEMA_VERSION) {
                 anyhow::bail!(
-                    "Lockfile {} was written by a newer omg (schema version {file_version}). \
-                     Upgrade omg to read it.",
-                    path.display()
+                    "Lockfile was written by a newer omg (schema version {file_version}). \
+                     Upgrade omg to read it."
                 );
             }
         }
-        let mut state: Self = toml::from_str(&content)
-            .with_context(|| format!("Failed to parse lockfile {}", path.display()))?;
+        let mut state: Self = toml::from_str(content).context("Failed to parse lockfile")?;
         let stored_hash = state.hash.clone();
         state.normalize();
         let calculated_hash = state.calculate_hash();
         if stored_hash != calculated_hash {
-            anyhow::bail!(
-                "Lockfile integrity check failed for {}: stored hash does not match contents",
-                path.display()
-            );
+            anyhow::bail!("Lockfile integrity check failed: stored hash does not match contents");
         }
         state.hash = calculated_hash;
         Ok(state)
