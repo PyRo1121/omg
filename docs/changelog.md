@@ -2780,6 +2780,7 @@ dependency-type: indirect
 
 ### 🔒 Security
 
+- Validate Debian transaction identifiers
 - Harden Debian archive link extraction
 - Bound AUR completion index inflation
 - Redact remote errors and URL credentials
