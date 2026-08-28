@@ -322,7 +322,7 @@ impl AuditLogger {
         // written by another process since this logger was created chain
         // correctly instead of sharing our stale prev_hash.
         let prev_hash = get_last_hash(&self.log_path)?;
-        let timestamp = jiff::Zoned::now()
+        let timestamp = jiff::Timestamp::now()
             .strftime("%Y-%m-%dT%H:%M:%S%.3fZ")
             .to_string();
         let id = uuid::Uuid::new_v4().to_string();

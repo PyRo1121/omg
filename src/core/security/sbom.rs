@@ -313,7 +313,7 @@ impl SbomGenerator {
                     }
                 })?;
 
-            let timestamp = jiff::Zoned::now()
+            let timestamp = jiff::Timestamp::now()
                 .strftime("%Y-%m-%dT%H:%M:%SZ")
                 .to_string();
             let serial_number = format!("urn:uuid:{}", uuid::Uuid::new_v4());
