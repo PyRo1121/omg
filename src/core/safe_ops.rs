@@ -97,7 +97,7 @@ pub fn write_executable(path: &Path, contents: &[u8], overwrite: bool) -> Result
         .persist(path)
         .map_err(|error| error.error)
         .with_context(|| format!("Failed to replace executable {}", path.display()))?;
-    std::fs::File::open(parent)?.sync_all()?;
+    sync_parent_directory_sync(path)?;
     Ok(true)
 }
 
@@ -117,6 +117,24 @@ pub fn create_private_marker(path: &Path, contents: &[u8]) -> Result<bool> {
         Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => Ok(false),
         Err(error) => Err(error).with_context(|| format!("Failed to create {}", path.display())),
     }
+}
+
+/// Make a persisted file replacement durable by syncing its parent directory.
+pub(crate) fn sync_parent_directory_sync(path: &Path) -> Result<()> {
+    let parent = path
+        .parent()
+        .filter(|parent| !parent.as_os_str().is_empty())
+        .unwrap_or_else(|| Path::new("."));
+    std::fs::File::open(parent)
+        .and_then(|directory| directory.sync_all())
+        .with_context(|| format!("Failed to sync parent directory: {}", parent.display()))
+}
+
+/// Async bridge for [`sync_parent_directory_sync`].
+pub(crate) async fn sync_parent_directory(path: PathBuf) -> Result<()> {
+    tokio::task::spawn_blocking(move || sync_parent_directory_sync(&path))
+        .await
+        .context("Parent-directory sync task failed")?
 }
 
 /// Safe file write with atomic operations
@@ -155,9 +173,7 @@ pub fn atomic_write_file_sync<P: AsRef<Path>, C: AsRef<[u8]>>(path: P, contents:
     // The rename above is only durable once the parent directory entry is
     // synced; without this, a crash can resurrect the previous version of the
     // file. https://lwn.net/Articles/457667/
-    std::fs::File::open(parent)
-        .and_then(|directory| directory.sync_all())
-        .with_context(|| format!("Failed to sync parent directory: {}", parent.display()))?;
+    sync_parent_directory_sync(&path)?;
     Ok(())
 }
 

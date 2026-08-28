@@ -81,6 +81,7 @@ async fn persist_same_dir_temp(
         .persist(dest)
         .map_err(|error| error.error)
         .with_context(|| format!("Failed to persist download at {}", dest.display()))?;
+    crate::core::safe_ops::sync_parent_directory(dest.to_path_buf()).await?;
     Ok(())
 }
 
