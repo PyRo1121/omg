@@ -438,32 +438,49 @@ fn verify_fulcio_chain(
         X509Certificate::from_der(der).ok().map(|(_, cert)| cert)
     }
 
+    fn certificate_valid_at(certificate: &X509Certificate<'_>, at: i64) -> bool {
+        let validity = certificate.validity();
+        at >= validity.not_before.timestamp() && at <= validity.not_after.timestamp()
+    }
+
+    fn certificate_is_ca(certificate: &X509Certificate<'_>) -> bool {
+        certificate.extensions().iter().any(|extension| {
+            matches!(
+                extension.parsed_extension(),
+                ParsedExtension::BasicConstraints(constraints) if constraints.ca
+            )
+        })
+    }
+
+    let at = i64::try_from(integrated_time).unwrap_or(i64::MAX);
     tracing::trace!(
         root_count = roots_owned.len(),
         "checking Fulcio certificate chain"
     );
-    let issued_directly_by_root = roots_owned
-        .iter()
-        .any(|root_der| parse_root(root_der).is_some_and(|root| leaf.issuer() == root.subject()));
-
-    if issued_directly_by_root {
-        for root_der in &roots_owned {
-            if let Some(root) = parse_root(root_der)
-                && root.subject() == leaf.issuer()
-                && !verify_x509_signature(
+    let issued_directly_by_root = roots_owned.iter().any(|root_der| {
+        parse_root(root_der).is_some_and(|root| {
+            leaf.issuer() == root.subject()
+                && certificate_valid_at(&root, at)
+                && certificate_is_ca(&root)
+                && verify_x509_signature(
                     root.public_key().raw,
                     leaf.tbs_certificate.as_ref(),
                     leaf.signature_value.data.as_ref(),
                     &leaf.signature_algorithm.algorithm.to_string(),
                 )
-            {
-                return None;
-            }
-        }
+        })
+    });
+
+    if issued_directly_by_root {
+        // At least one currently valid trust root verified the leaf. Other
+        // roots with the same subject do not invalidate that successful chain.
     } else if let Some(intermediate_der) = inter_der.as_deref() {
         let (_, intermediate) = X509Certificate::from_der(intermediate_der).ok()?;
 
-        if leaf.issuer() != intermediate.subject() {
+        if leaf.issuer() != intermediate.subject()
+            || !certificate_valid_at(&intermediate, at)
+            || !certificate_is_ca(&intermediate)
+        {
             return None;
         }
         if !verify_x509_signature(
@@ -477,6 +494,8 @@ fn verify_fulcio_chain(
         let chained_to_a_root = roots_owned.iter().any(|root_der| {
             parse_root(root_der).is_some_and(|root| {
                 intermediate.issuer() == root.subject()
+                    && certificate_valid_at(&root, at)
+                    && certificate_is_ca(&root)
                     && verify_x509_signature(
                         root.public_key().raw,
                         intermediate.tbs_certificate.as_ref(),
@@ -493,10 +512,9 @@ fn verify_fulcio_chain(
         return None;
     }
 
-    // Validity windows cover the moment Rekor recorded the entry.
-    let at = i64::try_from(integrated_time).unwrap_or(i64::MAX);
-    let leaf_validity = leaf.validity();
-    if at < leaf_validity.not_before.timestamp() || at > leaf_validity.not_after.timestamp() {
+    // Every certificate in the selected chain must cover the moment Rekor
+    // recorded the entry.
+    if !certificate_valid_at(&leaf, at) {
         return None;
     }
     // Fulcio profile constraints on the LEAF (audit sec2 F-05):
@@ -1184,6 +1202,43 @@ mod tests {
         assert!(signer.is_none());
     }
     #[test]
+    fn fulcio_chain_rejects_expired_intermediate_at_rekor_time() {
+        use rcgen::{CertificateParams, ExtendedKeyUsagePurpose, KeyPair};
+
+        let root_key = KeyPair::generate().unwrap();
+        let mut root_params = CertificateParams::new(vec!["root.example".to_string()]).unwrap();
+        root_params.is_ca = rcgen::IsCa::Ca(rcgen::BasicConstraints::Unconstrained);
+        let root = root_params.self_signed(&root_key).unwrap();
+
+        let intermediate_key = KeyPair::generate().unwrap();
+        let mut intermediate_params =
+            CertificateParams::new(vec!["intermediate.example".to_string()]).unwrap();
+        intermediate_params.is_ca = rcgen::IsCa::Ca(rcgen::BasicConstraints::Unconstrained);
+        intermediate_params.not_before = rcgen::date_time_ymd(2020, 1, 1);
+        intermediate_params.not_after = rcgen::date_time_ymd(2021, 1, 1);
+        let intermediate = intermediate_params
+            .signed_by(&intermediate_key, &root, &root_key)
+            .unwrap();
+
+        let leaf_key = KeyPair::generate().unwrap();
+        let mut leaf_params =
+            CertificateParams::new(vec!["signer@example.com".to_string()]).unwrap();
+        leaf_params.extended_key_usages = vec![ExtendedKeyUsagePurpose::CodeSigning];
+        let leaf = leaf_params
+            .signed_by(&leaf_key, &intermediate, &intermediate_key)
+            .unwrap();
+
+        let root_pem = root.pem();
+        let roots = [root_pem.as_str()];
+        let now = u64::try_from(jiff::Timestamp::now().as_second()).unwrap();
+
+        assert!(
+            verify_fulcio_chain(leaf.der(), now, &roots, &intermediate.pem()).is_none(),
+            "an expired intermediate must invalidate the chain"
+        );
+    }
+
+    #[test]
     fn fulcio_certificate_chain_binds_signer_identity() {
         use base64::Engine as _;
         use rcgen::{CertificateParams, DnType, ExtendedKeyUsagePurpose, KeyPair};
@@ -1256,10 +1311,10 @@ mod tests {
             "Fulcio SAN must be reported as the signer identity"
         );
 
-        // Wrong signature over the same chain -> unverified.
+        // Wrong signature over the same valid chain -> unverified.
         let entry = make_entry(&cert_pem, bad_sig.to_der().as_bytes(), now);
         let (verified, _) =
-            SlsaVerifier::verify_rekor_entry(&entry, &artifact_hash, &[], "").unwrap();
+            SlsaVerifier::verify_rekor_entry(&entry, &artifact_hash, &ca_roots, "").unwrap();
         assert!(
             !verified,
             "wrong signature must not verify even on a valid chain"
@@ -1268,7 +1323,7 @@ mod tests {
         // Entry recorded before the certificate existed -> unverified.
         let entry = make_entry(&cert_pem, good_sig.to_der().as_bytes(), 0);
         let (verified, signer) =
-            SlsaVerifier::verify_rekor_entry(&entry, &artifact_hash, &[], "").unwrap();
+            SlsaVerifier::verify_rekor_entry(&entry, &artifact_hash, &ca_roots, "").unwrap();
         assert!(
             !verified && signer.is_none(),
             "certificate validity window must gate verification"
