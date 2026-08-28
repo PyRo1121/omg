@@ -668,6 +668,7 @@ analyzer inference
 - **Ci**: Cross-platform install script and R2 release sync
 ### 🐛 Bug Fixes
 
+- Persist settings atomically without runtime paths
 - Stabilize license machine identity
 - Authorize snapshot restore before mutation
 - Make Debian configuration rollback-safe
