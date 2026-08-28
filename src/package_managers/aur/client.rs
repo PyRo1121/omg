@@ -2847,6 +2847,85 @@ pub struct AurPackageDetail {
 mod tests {
     use super::*;
 
+    fn write_tar_gz(path: &std::path::Path, entries: &[(&str, &[u8])]) {
+        let encoder = flate2::write::GzEncoder::new(
+            std::fs::File::create(path).unwrap(),
+            flate2::Compression::fast(),
+        );
+        let mut tar = tar::Builder::new(encoder);
+        for (name, content) in entries {
+            tar.append_data(&mut tar::Header::new_gnu(), name, *content)
+                .unwrap();
+        }
+        tar.into_inner().unwrap().finish().unwrap();
+    }
+
+    #[test]
+    fn pkginfo_parser_tolerates_partial_metadata_and_deduplicates_keys() {
+        assert_eq!(
+            AurClient::parse_pkginfo_name_version("pkgname = example\npkgver = 1.0-1\n"),
+            Some(("example".to_string(), "1.0-1".to_string()))
+        );
+        // First occurrence wins (guards against duplicate-key takeover).
+        assert_eq!(
+            AurClient::parse_pkginfo_name_version(
+                "pkgname = first\npkgname = second\npkgver = a\npkgver = b\n"
+            ),
+            Some(("first".to_string(), "a".to_string()))
+        );
+        // Missing either required key fails closed.
+        assert_eq!(
+            AurClient::parse_pkginfo_name_version("pkgname = example\n"),
+            None
+        );
+        assert_eq!(
+            AurClient::parse_pkginfo_name_version("pkgver = 1.0-1\n"),
+            None
+        );
+        assert_eq!(
+            AurClient::parse_pkginfo_name_version("desc = other stuff\n"),
+            None
+        );
+        // Value trimming is part of the tolerated surface.
+        assert_eq!(
+            AurClient::parse_pkginfo_name_version("  pkgname =   spaced  \n pkgver =  2.0 \n"),
+            Some(("spaced".to_string(), "2.0".to_string()))
+        );
+    }
+
+    #[test]
+    fn archive_identity_reader_requires_a_readable_root_pkginfo() {
+        let directory = tempfile::tempdir().unwrap();
+
+        let with_pkginfo = directory.path().join("with.pkg.tar.gz");
+        write_tar_gz(
+            &with_pkginfo,
+            &[(".PKGINFO", b"pkgname = example\npkgver = 1.0-1\n")],
+        );
+        assert_eq!(
+            AurClient::pkg_name_and_version_from_archive(&with_pkginfo),
+            Some(("example".to_string(), "1.0-1".to_string()))
+        );
+
+        // Corrupt gzip fails closed instead of yielding an identity.
+        let corrupt = directory.path().join("corrupt.pkg.tar.gz");
+        std::fs::write(&corrupt, b"not a gzip archive").unwrap();
+        assert_eq!(AurClient::pkg_name_and_version_from_archive(&corrupt), None);
+
+        // An archive without .PKGINFO cannot claim any identity.
+        let empty = directory.path().join("empty.pkg.tar.gz");
+        write_tar_gz(&empty, &[]);
+        assert_eq!(AurClient::pkg_name_and_version_from_archive(&empty), None);
+
+        // PKGINFO-like entries nested deeper than two components are ignored.
+        let deep = directory.path().join("deep.pkg.tar.gz");
+        write_tar_gz(
+            &deep,
+            &[("a/b/.PKGINFO", b"pkgname = deep\npkgver = 9.9\n")],
+        );
+        assert_eq!(AurClient::pkg_name_and_version_from_archive(&deep), None);
+    }
+
     /// Verify that bubblewrap's read-only root bind blocks writes outside
     /// the writable mounts our sandbox configures.
     ///
@@ -3308,6 +3387,17 @@ mod tests {
         // More than 64 chars is invalid
         let too_long = "A".repeat(65);
         assert_eq!(validate_pgp_key_id(&too_long), PgpKeyIdStatus::TooLong);
+    }
+
+    #[test]
+    fn test_pgp_key_id_boundary_64_chars_is_not_too_long() {
+        // Exactly 64 hex chars must pass the length limit and fall through to
+        // the non-standard-length classification (not be rejected as TooLong).
+        let max_hex = "A".repeat(64);
+        assert_eq!(
+            validate_pgp_key_id(&max_hex),
+            PgpKeyIdStatus::NonStandardLength
+        );
     }
 
     #[test]
