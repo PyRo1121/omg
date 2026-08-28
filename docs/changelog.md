@@ -668,6 +668,7 @@ analyzer inference
 - **Ci**: Cross-platform install script and R2 release sync
 ### 🐛 Bug Fixes
 
+- Honor audit output and export contracts
 - Refresh runtime EOL schedules
 - Resolve Rust preview component packages
 - Activate Python vendor launcher symlinks
