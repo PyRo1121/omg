@@ -209,12 +209,39 @@ impl Transaction {
         });
     }
 
+    fn validate_action_identifiers(&self) -> Result<()> {
+        for action in self
+            .to_install
+            .iter()
+            .chain(&self.to_upgrade)
+            .chain(&self.to_remove)
+        {
+            crate::core::security::validate_package_name(&action.name)
+                .with_context(|| format!("Invalid Debian package name: {:?}", action.name))?;
+            anyhow::ensure!(
+                !action.name.contains(['/', '\\']),
+                "Invalid Debian package name contains a path separator: {:?}",
+                action.name
+            );
+            if !action.version.is_empty() {
+                crate::core::security::validate_version(&action.version).with_context(|| {
+                    format!(
+                        "Invalid Debian package version for {}: {:?}",
+                        action.name, action.version
+                    )
+                })?;
+            }
+        }
+        Ok(())
+    }
+
     /// Execute the transaction with pipelined download+unpack
     ///
     /// OPTIMIZATION: Downloads and unpacks run concurrently. As soon as a package
     /// finishes downloading, it's queued for unpacking while other packages continue
     /// downloading. This overlaps I/O-bound (download) and CPU-bound (decompress) work.
     pub async fn execute(&mut self) -> Result<()> {
+        self.validate_action_identifiers()?;
         tracing::info!(
             "Starting pipelined transaction with {} packages",
             self.package_count()
@@ -687,6 +714,7 @@ impl Transaction {
     /// `indicatif` progress bars are thread-safe and keep drawing from the
     /// blocking thread.
     pub async fn execute_removal(&mut self) -> Result<()> {
+        self.validate_action_identifiers()?;
         if self.to_remove.is_empty() {
             return Ok(());
         }
@@ -2381,6 +2409,40 @@ mod tests {
     }
 
     // ─── wave-3 fixes ───
+
+    #[tokio::test]
+    async fn transaction_rejects_hostile_repository_identifiers_before_side_effects() {
+        let mut install = Transaction::new();
+        install.add_install(
+            "../../escape".to_string(),
+            "1.0".to_string(),
+            "https://example.invalid/package.deb".to_string(),
+            1,
+        );
+        let error = install
+            .execute()
+            .await
+            .expect_err("hostile package names must fail before download");
+        assert!(
+            error.to_string().contains("Invalid Debian package name"),
+            "{error}"
+        );
+        assert!(
+            install.temp_dir.is_none(),
+            "validation must precede temp-dir creation"
+        );
+
+        let mut removal = Transaction::new();
+        removal.add_remove("../outside".to_string());
+        let error = removal
+            .execute_removal()
+            .await
+            .expect_err("hostile removal names must fail before dpkg paths are built");
+        assert!(
+            error.to_string().contains("Invalid Debian package name"),
+            "{error}"
+        );
+    }
 
     #[tokio::test]
     async fn execute_removal_completes_for_empty_transaction() {
