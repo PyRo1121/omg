@@ -668,6 +668,7 @@ analyzer inference
 - **Ci**: Cross-platform install script and R2 release sync
 ### 🐛 Bug Fixes
 
+- Retain official siblings during AUR fallback
 - Align TUI actions and activity selection
 - Preserve user history across elevation
 - Handle poisoned runtime locks safely
