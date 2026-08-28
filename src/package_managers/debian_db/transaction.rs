@@ -254,15 +254,9 @@ impl Transaction {
     async fn download_and_unpack_pipelined(&mut self) -> Result<()> {
         use tokio::sync::mpsc;
 
-        // OPTIMIZATION: Memory-conscious HTTP client configuration
-        let client = reqwest::Client::builder()
-            .timeout(Duration::from_secs(300))
-            .connect_timeout(Duration::from_secs(10))
-            .pool_max_idle_per_host(MAX_CONCURRENT_PACKAGE_DOWNLOADS * 2)
-            .pool_idle_timeout(Duration::from_secs(60)) // Shorter timeout to release faster
-            .tcp_keepalive(Duration::from_secs(60))
-            .tcp_nodelay(true)
-            .build()?;
+        // Reuse the canonical large-download client so timeout, TLS, pooling,
+        // and User-Agent policy cannot drift between package backends.
+        let client = crate::core::http::download_client().clone();
 
         let temp_dir = self.transaction_temp_dir()?;
 

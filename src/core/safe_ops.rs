@@ -131,6 +131,7 @@ pub(crate) fn sync_parent_directory_sync(path: &Path) -> Result<()> {
 }
 
 /// Async bridge for [`sync_parent_directory_sync`].
+#[cfg(feature = "arch")]
 pub(crate) async fn sync_parent_directory(path: PathBuf) -> Result<()> {
     tokio::task::spawn_blocking(move || sync_parent_directory_sync(&path))
         .await
