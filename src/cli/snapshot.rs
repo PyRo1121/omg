@@ -150,7 +150,7 @@ pub fn list() -> Result<()> {
     for snap in index.snapshots.iter().rev() {
         let date = format_timestamp(snap.created_at);
         let msg = snap.message.as_deref().unwrap_or("-");
-        let short_hash = &snap.hash[..8.min(snap.hash.len())];
+        let short_hash = short_hash(&snap.hash);
 
         println!(
             "  {} {} {} {}",
@@ -275,47 +275,45 @@ pub async fn restore(id: &str, dry_run: bool, yes: bool) -> Result<()> {
         return Ok(());
     }
 
-    // Apply changes
+    let has_package_changes = !to_install.is_empty() || !to_remove.is_empty();
+    if has_package_changes && !yes {
+        println!();
+        println!(
+            "  {} Package changes found ({} to install, {} to remove):",
+            "⚠".yellow(),
+            to_install.len(),
+            to_remove.len()
+        );
+
+        if console::user_attended() {
+            let confirm = dialoguer::Confirm::new()
+                .with_prompt("Do you want to apply all snapshot changes?")
+                .default(false)
+                .interact()?;
+
+            if !confirm {
+                println!("  {} Snapshot restore cancelled", "ℹ".blue());
+                return Ok(());
+            }
+        } else {
+            anyhow::bail!(
+                "This command requires an interactive terminal or the --yes flag.\n\
+                 For automation, use: omg snapshot restore {id} --yes\n\
+                 Or run: sudo omg snapshot restore {id} --yes"
+            );
+        }
+    }
+
+    // Consent covers the complete restore. Do not mutate runtimes or packages
+    // before the package-change gate above succeeds.
     println!("  {}", "Applying changes...".bold());
 
-    // Switch runtimes
     for (runtime, _, target_ver) in &runtime_changes {
         println!("    Switching {runtime} to {target_ver}...");
         crate::cli::runtimes::use_version(runtime, Some(target_ver)).await?;
     }
 
-    // Install/remove packages
-    if !to_install.is_empty() || !to_remove.is_empty() {
-        println!();
-        if !yes {
-            // Check if we're in interactive mode
-            println!(
-                "  {} Package changes found ({} to install, {} to remove):",
-                "⚠".yellow(),
-                to_install.len(),
-                to_remove.len()
-            );
-
-            if console::user_attended() {
-                let confirm = dialoguer::Confirm::new()
-                    .with_prompt("Do you want to apply these package changes?")
-                    .default(false)
-                    .interact()?;
-
-                if !confirm {
-                    println!("  {} Package changes skipped", "ℹ".blue());
-                    return Ok(());
-                }
-            } else {
-                // Non-interactive mode: show clear error message
-                anyhow::bail!(
-                    "This command requires an interactive terminal or the --yes flag.\n\
-                     For automation, use: omg snapshot restore {id} --yes\n\
-                     Or run: sudo omg snapshot restore {id} --yes"
-                );
-            }
-        }
-
+    if has_package_changes {
         if !to_install.is_empty() {
             println!("    Installing {} packages...", to_install.len());
             crate::cli::packages::install(&to_install, true, false, false).await?;
@@ -331,6 +329,10 @@ pub async fn restore(id: &str, dry_run: bool, yes: bool) -> Result<()> {
     println!("  {} Snapshot restore complete!", "✓".green());
 
     Ok(())
+}
+
+fn short_hash(hash: &str) -> String {
+    hash.chars().take(8).collect()
 }
 
 /// Delete a snapshot
@@ -373,6 +375,12 @@ fn format_timestamp(ts: i64) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn short_hash_handles_multibyte_index_values_without_panicking() {
+        assert_eq!(short_hash("éééééééémore"), "éééééééé");
+        assert_eq!(short_hash("abc"), "abc");
+    }
 
     #[test]
     fn generated_ids_are_unique_and_wellformed() {
