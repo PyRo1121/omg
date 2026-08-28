@@ -50,10 +50,11 @@ pub mod workspace;
 #[cfg(feature = "license")]
 pub use args::LicenseCommands;
 pub use args::{
-    AuditCommands, CiCommands, Cli, Commands, ConfigCommands, ContainerCommands,
-    EnterpriseCommands, EnterprisePolicyCommands, EnvCommands, FleetCommands, GoldenPathCommands,
-    HooksCommands, MigrateCommands, PrivacyCommands, ServerCommands, ShellKind, SnapshotCommands,
-    TeamCommands, TeamRoleCommands, ToolCommands, TransactionTypeFilter, WorkspaceCommands,
+    AuditCommands, CiCommands, Cli, Commands, ComplianceFramework, ConfigCommands,
+    ContainerCommands, EnterpriseCommands, EnterprisePolicyCommands, EnterpriseReportType,
+    EnvCommands, FleetCommands, GoldenPathCommands, HooksCommands, MigrateCommands,
+    PrivacyCommands, ServerCommands, ShellKind, SnapshotCommands, TeamCommands, TeamRoleCommands,
+    ToolCommands, TransactionTypeFilter, WorkspaceCommands,
 };
 
 /// Parse an API timestamp string into Unix seconds.

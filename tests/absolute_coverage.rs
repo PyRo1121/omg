@@ -4,7 +4,11 @@
 pub mod alpm_harness;
 use anyhow::Result;
 use omg_lib::cli::run::RunCommand;
-use omg_lib::cli::{CliContext, EnvCommands, FleetCommands, LocalCommandRunner, ToolCommands};
+use omg_lib::cli::{
+    CliContext, ComplianceFramework, EnterpriseCommands, EnterprisePolicyCommands,
+    EnterpriseReportType, EnvCommands, FleetCommands, LocalCommandRunner, ServerCommands,
+    ToolCommands,
+};
 use serial_test::serial;
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -219,6 +223,52 @@ async fn test_fleet_status_requires_license() -> Result<()> {
     assert!(
         err.contains("Feature 'fleet' requires"),
         "fleet status without a license must name the gated feature, got: {err}"
+    );
+    Ok(())
+}
+
+#[tokio::test]
+#[serial]
+async fn enterprise_commands_gate_before_remote_or_filesystem_side_effects() -> Result<()> {
+    let data = tempdir()?;
+    let _isolated = EnvGuard::set(
+        "OMG_DATA_DIR",
+        data.path().to_str().expect("temp paths are valid UTF-8"),
+    );
+    let ctx = get_ctx();
+    let commands = [
+        EnterpriseCommands::Reports {
+            report_type: EnterpriseReportType::Monthly,
+        },
+        EnterpriseCommands::Policy {
+            command: EnterprisePolicyCommands::Show { scope: None },
+        },
+        EnterpriseCommands::AuditExport {
+            framework: ComplianceFramework::Soc2,
+            period: None,
+            output: "audit-evidence".to_string(),
+        },
+        EnterpriseCommands::LicenseScan { export: None },
+        EnterpriseCommands::Server {
+            command: ServerCommands::Mirror {
+                upstream: "https://registry.example.invalid".to_string(),
+            },
+        },
+    ];
+
+    for command in commands {
+        let error = command
+            .execute(&ctx)
+            .await
+            .expect_err("enterprise command must require a signed entitlement");
+        assert!(
+            error.to_string().contains("requires Enterprise tier"),
+            "enterprise gate must fail before side effects, got: {error:#}"
+        );
+    }
+    assert!(
+        !std::path::Path::new("audit-evidence").exists(),
+        "unlicensed audit export must not create its output directory"
     );
     Ok(())
 }
