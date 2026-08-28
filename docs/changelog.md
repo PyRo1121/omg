@@ -13,12 +13,16 @@ OMG is the fastest unified package manager for Linux, replacing pacman, yay, nvm
 ## [Unreleased]
 ### Cleanup
 
+- Remove inert runtime and cache paths
 - Remove final dead code and dependencies
 - Centralize runtime EOL matching
 - Delete unreachable runtime and package surfaces
 ### Cli
 
 - Route diagnostics and progress by output mode
+### Contract
+
+- Publish versioned CLI service routes
 ### Daemon
 
 - Bound audit logs and cache bytes
@@ -664,6 +668,10 @@ analyzer inference
 - **Ci**: Cross-platform install script and R2 release sync
 ### 🐛 Bug Fixes
 
+- Share canonical package download client policy
+- Centralize bounded HTTP retry policy
+- Sync repository index renames durably
+- Unify Debian version ordering across backends
 - Keep Fedora feature builds warning-clean
 - Fail closed without a private Debian transaction workspace
 - Align CLI with production service contracts
@@ -3726,6 +3734,7 @@ the Debian backend), so it was removed from the metadata.
 - Normalize project formatting
 ### 🧪 Testing
 
+- Pin PKGINFO identity parsing and key-id boundaries
 - Gate every enterprise state before side effects
 - Align privacy contracts with authenticated web ownership
 - Align state contracts with hardened product paths
