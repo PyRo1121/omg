@@ -13,7 +13,7 @@ use std::fs;
 use std::path::{Path, PathBuf};
 
 use super::common::{
-    GITHUB_USER_AGENT, GithubRelease, activate_version, begin_staged_install,
+    GITHUB_USER_AGENT, GithubRelease, activate_version_with_linked_binary, begin_staged_install,
     complete_staged_install, download_with_progress, extract_tar_gz, normalize_version,
     parse_sha256_digest, print_already_installed, print_installed, print_using,
     remove_file_best_effort, validate_download_filename, version_cmp,
@@ -121,7 +121,14 @@ impl PythonManager {
 
         if crate::core::paths::test_mode() {
             fs::create_dir_all(version_dir.join("bin"))?;
-            fs::write(version_dir.join("bin/python3"), "mock")?;
+            fs::write(version_dir.join("bin/python3.12"), "mock")?;
+            #[cfg(unix)]
+            std::os::unix::fs::symlink("python3.12", version_dir.join("bin/python3"))?;
+            #[cfg(not(unix))]
+            fs::copy(
+                version_dir.join("bin/python3.12"),
+                version_dir.join("bin/python3"),
+            )?;
             fs::write(
                 version_dir.join(super::common::TEST_RUNTIME_MARKER),
                 "debug-only synthetic runtime\n",
@@ -202,7 +209,11 @@ impl PythonManager {
     /// Switch to a specific version
     pub fn use_version(&self, version: &str) -> Result<()> {
         let version = normalize_version(version);
-        activate_version(&self.versions_dir, &version, Path::new("bin/python3"))?;
+        activate_version_with_linked_binary(
+            &self.versions_dir,
+            &version,
+            Path::new("bin/python3"),
+        )?;
         print_using("Python", &version, &self.versions_dir.join("current/bin"));
         Ok(())
     }
@@ -253,6 +264,30 @@ mod tests {
         assert!(PythonManager::is_semver_like("3.11.5"));
         assert!(!PythonManager::is_semver_like("3.12"));
         assert!(!PythonManager::is_semver_like("3"));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn python_manager_activates_vendor_symlink_layout() {
+        let temp = tempfile::tempdir().expect("temp dir");
+        let version_dir = temp.path().join("3.12.0");
+        fs::create_dir_all(version_dir.join("bin")).expect("bin dir");
+        fs::write(version_dir.join("bin/python3.12"), b"python").expect("python binary");
+        std::os::unix::fs::symlink("python3.12", version_dir.join("bin/python3"))
+            .expect("vendor launcher link");
+        let manager = PythonManager {
+            versions_dir: temp.path().to_path_buf(),
+            client: download_client(),
+        };
+
+        manager
+            .use_version("3.12.0")
+            .expect("vendor layout must activate");
+
+        assert_eq!(
+            fs::read_link(temp.path().join("current")).expect("current link"),
+            version_dir
+        );
     }
 
     #[test]

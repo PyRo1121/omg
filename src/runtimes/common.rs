@@ -871,6 +871,48 @@ pub(crate) fn activate_version(
     set_current_version(versions_dir, version)
 }
 
+/// Activate a runtime whose vendor launcher may be an internal symlink.
+///
+/// The resolved launcher must remain inside the real version directory and end
+/// at a regular file. Absolute or relative links that escape the version tree
+/// fail closed.
+pub(crate) fn activate_version_with_linked_binary(
+    versions_dir: &Path,
+    version: &str,
+    expected_binary: &Path,
+) -> Result<()> {
+    let version_dir = versions_dir.join(version);
+    let candidate = version_dir.join(expected_binary);
+    let metadata = fs::symlink_metadata(&candidate)
+        .with_context(|| format!("Failed to inspect runtime binary: {}", candidate.display()))?;
+    if metadata.is_file() {
+        return set_current_version(versions_dir, version);
+    }
+    if !metadata.file_type().is_symlink() {
+        anyhow::bail!(
+            "Expected a regular file or internal symlink at {}, found a special path",
+            candidate.display()
+        );
+    }
+
+    let canonical_version = fs::canonicalize(&version_dir).with_context(|| {
+        format!(
+            "Failed to resolve runtime version directory: {}",
+            version_dir.display()
+        )
+    })?;
+    let canonical_binary = fs::canonicalize(&candidate)
+        .with_context(|| format!("Failed to resolve runtime binary: {}", candidate.display()))?;
+    if !canonical_binary.starts_with(&canonical_version) {
+        anyhow::bail!(
+            "Runtime binary symlink escapes version directory: {}",
+            candidate.display()
+        );
+    }
+    require_regular_file(&canonical_binary)?;
+    set_current_version(versions_dir, version)
+}
+
 /// Create or update the "current" symlink
 pub(crate) fn set_current_version(versions_dir: &Path, version: &str) -> Result<()> {
     crate::core::security::validate_runtime_version(version)?;
@@ -1598,6 +1640,38 @@ mod tests {
             fs::read_link(temp.path().join("current")).unwrap(),
             version_dir
         );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn linked_runtime_binary_must_resolve_inside_the_version_directory() {
+        let temp = TempDir::new().unwrap();
+        let version_dir = temp.path().join("3.12.0");
+        fs::create_dir_all(version_dir.join("bin")).unwrap();
+        fs::write(version_dir.join("bin/python3.12"), b"python").unwrap();
+        std::os::unix::fs::symlink("python3.12", version_dir.join("bin/python3")).unwrap();
+
+        activate_version_with_linked_binary(temp.path(), "3.12.0", Path::new("bin/python3"))
+            .expect("an internal vendor symlink is safe");
+        assert_eq!(
+            fs::read_link(temp.path().join("current")).unwrap(),
+            version_dir
+        );
+
+        fs::remove_file(temp.path().join("current")).unwrap();
+        fs::remove_file(temp.path().join("3.12.0/bin/python3")).unwrap();
+        let outside = temp.path().join("outside-python");
+        fs::write(&outside, b"outside").unwrap();
+        std::os::unix::fs::symlink(&outside, temp.path().join("3.12.0/bin/python3")).unwrap();
+
+        let error =
+            activate_version_with_linked_binary(temp.path(), "3.12.0", Path::new("bin/python3"))
+                .expect_err("a vendor link may not escape the version directory");
+        assert!(
+            error.to_string().contains("escapes version directory"),
+            "{error}"
+        );
+        assert!(!temp.path().join("current").exists());
     }
 
     #[test]
