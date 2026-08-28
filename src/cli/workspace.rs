@@ -71,9 +71,8 @@ impl Workspace {
     pub fn save(&self) -> Result<()> {
         let content = toml::to_string_pretty(self).context("Failed to serialize workspace")?;
 
-        fs::write(WORKSPACE_FILE, content).context("Failed to write workspace file")?;
-
-        Ok(())
+        crate::core::safe_ops::atomic_write_file_sync(WORKSPACE_FILE, content)
+            .context("Failed to write workspace file")
     }
 
     /// Get topologically sorted projects (respecting dependencies)
@@ -82,7 +81,9 @@ impl Workspace {
         let mut visited = HashSet::new();
         let mut temp_mark = HashSet::new();
 
-        for name in self.projects.keys() {
+        let mut names: Vec<&String> = self.projects.keys().collect();
+        names.sort();
+        for name in names {
             self.visit_project(name, &mut visited, &mut temp_mark, &mut result)?;
         }
 
@@ -488,17 +489,12 @@ pub fn diff(branch: &str) -> Result<()> {
             continue;
         }
 
-        // Check git diff for omg.lock
-        let output = std::process::Command::new("git")
-            .args(["diff", branch, "--", "omg.lock"])
-            .current_dir(&project.path)
-            .output()
-            .context("Failed to run git diff")?;
+        let diff_bytes = git_lockfile_diff(Path::new(&project.path), branch)?;
 
-        if output.stdout.is_empty() {
+        if diff_bytes.is_empty() {
             println!("  {}", style::success("No changes"));
         } else {
-            let diff = String::from_utf8_lossy(&output.stdout);
+            let diff = String::from_utf8_lossy(&diff_bytes);
             // Skip the +++/--- file-header lines so they aren't counted as changes
             let added = diff
                 .lines()
@@ -519,6 +515,24 @@ pub fn diff(branch: &str) -> Result<()> {
     }
 
     Ok(())
+}
+
+fn git_lockfile_diff(project_path: &Path, branch: &str) -> Result<Vec<u8>> {
+    let output = std::process::Command::new("git")
+        .args(["diff", branch, "--", "omg.lock"])
+        .current_dir(project_path)
+        .output()
+        .with_context(|| format!("Failed to run git diff in {}", project_path.display()))?;
+    if !output.status.success() {
+        let stderr =
+            crate::cli::style::sanitize_terminal_text(&String::from_utf8_lossy(&output.stderr));
+        anyhow::bail!(
+            "git diff failed in {} against {branch}: {}",
+            project_path.display(),
+            stderr.trim()
+        );
+    }
+    Ok(output.stdout)
 }
 
 /// Sync all project environments
@@ -702,4 +716,43 @@ fn detect_project_commands(path: &Path) -> HashMap<String, String> {
     }
 
     commands
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn project(path: &str, depends_on: &[&str]) -> WorkspaceProject {
+        WorkspaceProject {
+            path: path.to_string(),
+            depends_on: depends_on.iter().map(|name| (*name).to_string()).collect(),
+            commands: HashMap::new(),
+        }
+    }
+
+    #[test]
+    fn sorted_projects_are_dependency_first_and_deterministic() {
+        let mut workspace = Workspace::default();
+        workspace
+            .projects
+            .insert("web".to_string(), project("web", &["api"]));
+        workspace
+            .projects
+            .insert("db".to_string(), project("db", &[]));
+        workspace
+            .projects
+            .insert("api".to_string(), project("api", &["db"]));
+
+        assert_eq!(workspace.sorted_projects().unwrap(), ["db", "api", "web"]);
+    }
+
+    #[test]
+    fn git_diff_failures_are_not_reported_as_no_changes() {
+        let directory = tempfile::tempdir().expect("temp directory");
+
+        let error = git_lockfile_diff(directory.path(), "main")
+            .expect_err("a non-repository must fail instead of returning an empty diff");
+
+        assert!(error.to_string().contains("git diff failed"), "{error}");
+    }
 }
