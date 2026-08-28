@@ -612,6 +612,14 @@ fn manifest_version(manifest: &toml::Value) -> Option<String> {
         .map(|value| value.split_whitespace().next().unwrap_or(value).to_string())
 }
 
+fn manifest_package_name(component: &str) -> &str {
+    match component {
+        "rustfmt" => "rustfmt-preview",
+        "clippy" => "clippy-preview",
+        other => other,
+    }
+}
+
 fn manifest_component_target<'a>(
     manifest: &'a toml::Value,
     component: &str,
@@ -619,7 +627,7 @@ fn manifest_component_target<'a>(
 ) -> Result<&'a toml::Value> {
     manifest
         .get("pkg")
-        .and_then(|pkg| pkg.get(component))
+        .and_then(|pkg| pkg.get(manifest_package_name(component)))
         .and_then(|pkg| pkg.get("target"))
         .and_then(|targets| targets.get(target))
         .ok_or_else(|| anyhow::anyhow!("Target '{target}' not found for component '{component}'"))
@@ -877,6 +885,31 @@ mod tests {
         assert!(
             triple.contains("linux") || triple.contains("darwin") || triple.contains("windows")
         );
+    }
+
+    #[test]
+    fn manifest_helpers_map_rustfmt_and_clippy_to_preview_packages() -> Result<()> {
+        let manifest: toml::Value = toml::from_str(
+            r#"
+[pkg.rustfmt-preview.target.x86_64-unknown-linux-gnu]
+xz_url = "https://example.invalid/rustfmt.tar.xz"
+xz_hash = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+
+[pkg.clippy-preview.target.x86_64-unknown-linux-gnu]
+xz_url = "https://example.invalid/clippy.tar.xz"
+xz_hash = "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+"#,
+        )?;
+
+        assert_eq!(
+            manifest_component_url(&manifest, "rustfmt", "x86_64-unknown-linux-gnu")?,
+            "https://example.invalid/rustfmt.tar.xz"
+        );
+        assert_eq!(
+            manifest_component_url(&manifest, "clippy", "x86_64-unknown-linux-gnu")?,
+            "https://example.invalid/clippy.tar.xz"
+        );
+        Ok(())
     }
 
     /// The manifest is fetched once per install and shared by every
