@@ -76,6 +76,12 @@ enum InstallReason {
     Dependency,
 }
 
+impl Default for DnfPackageManager {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl DnfPackageManager {
     #[must_use]
     pub fn new() -> Self {
