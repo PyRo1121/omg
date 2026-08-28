@@ -1,4 +1,4 @@
-use anyhow::Result;
+use anyhow::{Context, Result};
 use tokio::time::Duration;
 
 use crate::cli::style;
@@ -95,7 +95,7 @@ pub async fn run(network: bool, eol: bool) -> Result<()> {
     if eol {
         println!();
         println!("{}", style::header("Runtime EOL Status"));
-        issues += check_eol_runtimes();
+        issues += check_eol_runtimes()?;
     }
 
     println!();
@@ -167,9 +167,11 @@ async fn check_network() -> usize {
 }
 
 /// Check for end-of-life runtimes
-fn check_eol_runtimes() -> usize {
+fn check_eol_runtimes() -> Result<usize> {
     let mut issues = 0;
     let now = jiff::Timestamp::now();
+    let warning_ts = crate::runtimes::eol::eol_warning_cutoff(now)
+        .context("Failed to compute EOL warning window")?;
 
     // Get installed runtime versions
     let runtimes = ["node", "python", "rust", "go", "ruby", "java", "bun"];
@@ -187,13 +189,8 @@ fn check_eol_runtimes() -> usize {
                 let eol_timestamp = zoned.timestamp();
                 if now > eol_timestamp {
                     eol_warning = Some(format!("EOL since {}", entry.eol_date));
-                } else {
-                    let six_months = jiff::Span::new().months(6);
-                    if let Ok(warning_ts) = now.checked_add(six_months)
-                        && warning_ts > eol_timestamp
-                    {
-                        eol_warning = Some(format!("EOL on {}", entry.eol_date));
-                    }
+                } else if warning_ts > eol_timestamp {
+                    eol_warning = Some(format!("EOL on {}", entry.eol_date));
                 }
             }
 
@@ -224,7 +221,7 @@ fn check_eol_runtimes() -> usize {
         );
     }
 
-    issues
+    Ok(issues)
 }
 
 fn check_os() -> bool {

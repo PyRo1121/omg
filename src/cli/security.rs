@@ -36,7 +36,7 @@ use crate::cli::{AuditCommands, CliContext, LocalCommandRunner, style, ui};
 use crate::core::client::DaemonClient;
 use crate::core::license;
 use crate::core::security::{AuditLogger, AuditSeverity, SbomGenerator, SecurityPolicy};
-use crate::runtimes::eol::version_components;
+use crate::runtimes::eol::{eol_warning_cutoff, version_components};
 
 impl LocalCommandRunner for AuditCommands {
     async fn execute(&self, ctx: &CliContext) -> Result<()> {
@@ -1271,12 +1271,9 @@ pub fn check_eol(_ctx: &CliContext) -> Result<()> {
     println!("{} Checking runtime EOL status...\n", style::runtime("OMG"));
 
     let now = jiff::Timestamp::now();
-    // Loop-invariant warning window: a runtime within 6 months of its EOL date
-    // counts as "Ending Soon".
-    let six_months = jiff::Span::new().months(6);
-    let warning_ts = now
-        .checked_add(six_months)
-        .context("Failed to compute EOL warning window")?;
+    // Loop-invariant warning window: a runtime within six calendar months of
+    // its EOL date counts as "Ending Soon".
+    let warning_ts = eol_warning_cutoff(now).context("Failed to compute EOL warning window")?;
     let runtimes = ["node", "python", "rust", "go", "ruby", "java", "bun"];
     let mut issues = 0;
 

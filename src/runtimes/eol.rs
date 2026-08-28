@@ -169,6 +169,16 @@ pub(crate) fn find_eol_entry(
         .find(|e| e.runtime == runtime && version_components.starts_with(e.version_prefix))
 }
 
+/// Return the UTC timestamp six calendar months after `now`.
+///
+/// Calendar arithmetic must run on [`jiff::Zoned`]. `jiff::Timestamp` only
+/// supports fixed-duration units and rejects spans containing months.
+pub(crate) fn eol_warning_cutoff(now: jiff::Timestamp) -> Result<jiff::Timestamp, jiff::Error> {
+    now.to_zoned(jiff::tz::TimeZone::UTC)
+        .checked_add(jiff::Span::new().months(6))
+        .map(|zoned| zoned.timestamp())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -190,5 +200,20 @@ mod tests {
     #[test]
     fn unknown_runtime_has_no_eol_entry() {
         assert!(find_eol_entry("rust", &[1, 75]).is_none());
+    }
+
+    #[test]
+    fn warning_cutoff_uses_calendar_months_in_utc() {
+        let now = "2026-01-15T12:00:00Z"
+            .parse::<jiff::Timestamp>()
+            .expect("valid timestamp");
+        let expected = "2026-07-15T12:00:00Z"
+            .parse::<jiff::Timestamp>()
+            .expect("valid timestamp");
+
+        assert_eq!(
+            eol_warning_cutoff(now).expect("calendar arithmetic"),
+            expected
+        );
     }
 }
