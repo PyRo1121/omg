@@ -400,46 +400,40 @@ pub fn get_machine_id() -> String {
 }
 
 fn compute_machine_id() -> String {
-    let mut components = ["/etc/machine-id", "/sys/class/dmi/id/product_uuid"]
-        .into_iter()
-        .filter_map(|path| std::fs::read_to_string(path).ok())
+    // Use only the machine-id source that is stable across privilege changes.
+    // DMI identifiers are commonly root-readable only, so including every
+    // readable source produced different fingerprints before and after sudo.
+    let identity = std::fs::read_to_string("/etc/machine-id")
+        .ok()
         .map(|value| value.trim().to_string())
         .filter(|value| !value.is_empty())
-        .collect::<Vec<_>>();
+        .unwrap_or_else(persisted_machine_id_fallback);
 
-    if components.is_empty()
-        && let Ok(hostname) = std::fs::read_to_string("/etc/hostname")
-        && !hostname.trim().is_empty()
-    {
-        components.push(hostname.trim().to_string());
-    }
-
-    if components.is_empty() {
-        let fallback_path = crate::core::paths::data_dir().join("machine-id");
-        let fallback = std::fs::read_to_string(&fallback_path)
-            .ok()
-            .map(|value| value.trim().to_string())
-            .filter(|value| !value.is_empty())
-            .unwrap_or_else(|| {
-                let generated = uuid::Uuid::new_v4().to_string();
-                if let Some(parent) = fallback_path.parent()
-                    && let Err(error) = std::fs::create_dir_all(parent)
-                {
-                    tracing::warn!("Failed to create machine ID directory: {error}");
-                    return generated;
-                }
-                if let Err(error) = write_private_file(&fallback_path, generated.as_bytes()) {
-                    tracing::warn!("Failed to persist generated machine ID: {error}");
-                }
-                generated
-            });
-        components.push(fallback);
-    }
-
-    let hash = sha256_hex(components.join(":").as_bytes());
+    let hash = sha256_hex(identity.as_bytes());
     let fingerprint = &hash[..16];
     tracing::debug!("Generated machine ID fingerprint: {fingerprint}");
     fingerprint.to_string()
+}
+
+fn persisted_machine_id_fallback() -> String {
+    let fallback_path = crate::core::paths::data_dir().join("machine-id");
+    std::fs::read_to_string(&fallback_path)
+        .ok()
+        .map(|value| value.trim().to_string())
+        .filter(|value| !value.is_empty())
+        .unwrap_or_else(|| {
+            let generated = uuid::Uuid::new_v4().to_string();
+            if let Some(parent) = fallback_path.parent()
+                && let Err(error) = std::fs::create_dir_all(parent)
+            {
+                tracing::warn!("Failed to create machine ID directory: {error}");
+                return generated;
+            }
+            if let Err(error) = write_private_file(&fallback_path, generated.as_bytes()) {
+                tracing::warn!("Failed to persist generated machine ID: {error}");
+            }
+            generated
+        })
 }
 
 /// SHA256 hash as hex string
@@ -773,10 +767,18 @@ pub async fn activate_with_user(
         token: response.token,
         machine_id: Some(get_machine_id()),
     };
-
+    validate_activated_license(&stored)?;
     save_license(&stored)?;
 
     Ok(stored)
+}
+
+fn validate_activated_license(stored: &StoredLicense) -> Result<()> {
+    anyhow::ensure!(
+        stored.is_token_valid(),
+        "License server returned a token that failed local signature, expiry, or machine-binding verification"
+    );
+    Ok(())
 }
 
 /// Get current user tier
@@ -999,6 +1001,27 @@ mod tests {
 
         assert_eq!(stored.tier_enum(), Tier::Free);
         assert!(!stored.is_token_valid());
+    }
+
+    #[test]
+    fn activation_rejects_unverifiable_server_tokens() {
+        let stored = StoredLicense {
+            key: "license-1".to_string(),
+            tier: "pro".to_string(),
+            features: vec!["sbom".to_string()],
+            customer: None,
+            expires_at: None,
+            validated_at: jiff::Timestamp::now().as_second(),
+            token: Some("not-a-verifiable-token".to_string()),
+            machine_id: Some(get_machine_id()),
+        };
+
+        let error = validate_activated_license(&stored)
+            .expect_err("activation must fail before persisting an unusable token");
+        assert!(
+            error.to_string().contains("failed local signature"),
+            "{error}"
+        );
     }
 
     #[test]
