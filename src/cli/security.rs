@@ -25,7 +25,7 @@ fn read_audit_entries(
         logger.get_recent(limit)
     };
     match result {
-        Ok(entries) => Ok(entries),
+        Ok(entries) => Ok(entries.into_iter().take(limit).collect()),
         Err(error) if error.is_not_found() => Ok(Vec::new()),
         Err(error) => Err(error).context("Failed to read audit log entries"),
     }
@@ -40,7 +40,13 @@ use crate::runtimes::eol::{eol_warning_cutoff, version_components};
 
 impl LocalCommandRunner for AuditCommands {
     async fn execute(&self, ctx: &CliContext) -> Result<()> {
-        ui::print_spacer();
+        let machine_stdout = matches!(
+            self,
+            AuditCommands::Licenses { format, export: None, .. } if format.as_str() != "table"
+        );
+        if !machine_stdout {
+            ui::print_spacer();
+        }
         match self {
             AuditCommands::Scan => scan(ctx).await,
             AuditCommands::Sbom { output } => {
@@ -89,7 +95,9 @@ impl LocalCommandRunner for AuditCommands {
             } => export_compliance(framework.as_str(), period.clone(), output, ctx).await,
             AuditCommands::Eol => check_eol(ctx),
         }?;
-        ui::print_spacer();
+        if !machine_stdout {
+            ui::print_spacer();
+        }
         Ok(())
     }
 }
@@ -212,7 +220,7 @@ pub async fn generate_sbom(
 
 /// View audit log entries
 pub fn view_audit_log(
-    limit: usize,
+    limit: Option<usize>,
     severity_filter: Option<&str>,
     export: Option<String>,
     _ctx: &CliContext,
@@ -220,8 +228,9 @@ pub fn view_audit_log(
     // Require Team tier for audit logs
     license::require_feature("audit-log")?;
 
+    let effective_limit = limit.unwrap_or_else(|| if export.is_some() { usize::MAX } else { 20 });
     let logger = AuditLogger::new().context("Failed to open audit log")?;
-    let entries = read_audit_entries(&logger, limit, severity_filter)?;
+    let entries = read_audit_entries(&logger, effective_limit, severity_filter)?;
 
     if let Some(export_path) = export {
         println!(
@@ -246,12 +255,14 @@ pub fn view_audit_log(
             for entry in &entries {
                 let severity = entry.severity.to_string();
                 let event = format!("{:?}", entry.event_type);
+                let description = spreadsheet_safe_cell(&entry.description);
+                let resource = spreadsheet_safe_cell(&entry.resource);
                 wtr.write_record([
                     entry.timestamp.as_str(),
                     severity.as_str(),
                     event.as_str(),
-                    entry.description.as_str(),
-                    entry.resource.as_str(),
+                    description.as_ref(),
+                    resource.as_ref(),
                 ])?;
             }
             wtr.flush()?;
@@ -278,7 +289,7 @@ pub fn view_audit_log(
         return Ok(());
     }
 
-    for entry in entries.iter().take(limit) {
+    for entry in entries.iter().take(effective_limit) {
         let sev_str = entry.severity.to_string();
         let severity_color = match entry.severity {
             AuditSeverity::Debug => style::dim(&sev_str),
@@ -305,7 +316,7 @@ pub fn view_audit_log(
     println!(
         "\n  {} Showing {} of {} entries",
         style::maybe_color("ℹ", |t| t.blue().to_string()),
-        entries.len().min(limit),
+        entries.len().min(effective_limit),
         entries.len()
     );
 
@@ -719,6 +730,63 @@ fn token_is_permissive(token: &str) -> bool {
         || token.starts_with("apache-")
 }
 
+type LicenseRow = (String, String, String, LicenseCategory);
+
+fn spreadsheet_safe_cell(value: &str) -> std::borrow::Cow<'_, str> {
+    if value.starts_with(['=', '+', '-', '@']) {
+        std::borrow::Cow::Owned(format!("'{value}"))
+    } else {
+        std::borrow::Cow::Borrowed(value)
+    }
+}
+
+fn serialize_license_rows(format: &str, rows: &[LicenseRow]) -> Result<Vec<u8>> {
+    match format {
+        "json" => {
+            let data: Vec<_> = rows
+                .iter()
+                .map(|(name, license, version, category)| {
+                    serde_json::json!({
+                        "name": name,
+                        "version": version,
+                        "license": license,
+                        "category": format!("{category:?}")
+                    })
+                })
+                .collect();
+            serde_json::to_vec_pretty(&data).map_err(Into::into)
+        }
+        "csv" => {
+            let mut writer = csv::Writer::from_writer(Vec::new());
+            writer.write_record(["Package", "Version", "License", "Category"])?;
+            for (name, license, version, category) in rows {
+                let name = spreadsheet_safe_cell(name);
+                let version = spreadsheet_safe_cell(version);
+                let license = spreadsheet_safe_cell(license);
+                let category = format!("{category:?}");
+                writer.write_record([
+                    name.as_ref(),
+                    version.as_ref(),
+                    license.as_ref(),
+                    category.as_str(),
+                ])?;
+            }
+            writer
+                .into_inner()
+                .map_err(|error| anyhow::anyhow!("Failed to finish license CSV: {error}"))
+        }
+        "table" => {
+            use std::fmt::Write as _;
+            let mut content = String::from("Package\tVersion\tLicense\tCategory\n");
+            for (name, license, version, category) in rows {
+                let _ = writeln!(content, "{name}\t{version}\t{license}\t{category:?}");
+            }
+            Ok(content.into_bytes())
+        }
+        other => anyhow::bail!("Unsupported output format '{other}'"),
+    }
+}
+
 /// Scan for software license compliance
 pub fn scan_licenses(
     format: &str,
@@ -735,10 +803,12 @@ pub fn scan_licenses(
         anyhow::bail!("Unsupported output format '{format}'. Valid formats: table, json, csv");
     }
 
-    println!(
-        "{} Scanning installed packages for license information...\n",
-        style::runtime("OMG")
-    );
+    if export.is_some() || format == "table" {
+        println!(
+            "{} Scanning installed packages for license information...\n",
+            style::runtime("OMG")
+        );
+    }
 
     // Get installed packages and their licenses
     let packages = installed_packages_with_licenses()?;
@@ -750,7 +820,7 @@ pub fn scan_licenses(
         .map(|f| f.split(',').map(|s| s.trim().to_lowercase()).collect())
         .unwrap_or_default();
 
-    let filtered_packages: Vec<(String, String, String, LicenseCategory)> = packages
+    let filtered_packages: Vec<LicenseRow> = packages
         .into_iter()
         .filter(|(_, license, _)| {
             if filter_terms.is_empty() {
@@ -771,6 +841,16 @@ pub fn scan_licenses(
             (name, license, version, category)
         })
         .collect();
+
+    if export.is_none() && matches!(format, "json" | "csv") {
+        use std::io::Write as _;
+        let report = serialize_license_rows(format, &filtered_packages)?;
+        let mut stdout = std::io::stdout().lock();
+        stdout.write_all(&report)?;
+        stdout.write_all(b"\n")?;
+        stdout.flush()?;
+        return Ok(());
+    }
 
     // Print summary
     println!("  {}", style::header("License Summary"));
@@ -871,47 +951,8 @@ pub fn scan_licenses(
     if let Some(export_path) = export {
         let path = std::path::PathBuf::from(&export_path);
 
-        match format {
-            "json" => {
-                let data: Vec<_> = filtered_packages
-                    .iter()
-                    .map(|(name, license, version, category)| {
-                        serde_json::json!({
-                            "name": name,
-                            "version": version,
-                            "license": license,
-                            "category": format!("{category:?}")
-                        })
-                    })
-                    .collect();
-                let json = serde_json::to_string_pretty(&data)?;
-                std::fs::write(&path, json)?;
-            }
-            "csv" => {
-                let mut wtr = csv::Writer::from_path(&path)?;
-                wtr.write_record(["Package", "Version", "License", "Category"])?;
-                for (name, license, version, category) in &filtered_packages {
-                    let category_str = format!("{category:?}");
-                    wtr.write_record([
-                        name.as_str(),
-                        version.as_str(),
-                        license.as_str(),
-                        &category_str,
-                    ])?;
-                }
-                wtr.flush()?;
-            }
-            _ => {
-                // Table format (default) - just write as text
-                use std::fmt::Write as _;
-                let mut content = String::from("Package\tVersion\tLicense\tCategory\n");
-                for (name, license, version, category) in &filtered_packages {
-                    let category_str = format!("{category:?}");
-                    let _ = writeln!(content, "{name}\t{version}\t{license}\t{category_str}");
-                }
-                std::fs::write(&path, &content)?;
-            }
-        }
+        let report = serialize_license_rows(format, &filtered_packages)?;
+        std::fs::write(&path, report)?;
 
         println!(
             "{} Exported {} packages to {}",
@@ -1361,6 +1402,33 @@ pub fn check_eol(_ctx: &CliContext) -> Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn license_machine_formats_include_package_rows() {
+        let rows = vec![(
+            "demo".to_string(),
+            "MIT".to_string(),
+            "1.2.3".to_string(),
+            LicenseCategory::Permissive,
+        )];
+
+        let json = serialize_license_rows("json", &rows).expect("JSON report");
+        let value: serde_json::Value = serde_json::from_slice(&json).expect("valid JSON");
+        assert_eq!(value.as_array().map(Vec::len), Some(1));
+        assert_eq!(value[0]["name"], "demo");
+
+        let csv = serialize_license_rows("csv", &rows).expect("CSV report");
+        let csv = String::from_utf8(csv).expect("UTF-8 CSV");
+        assert!(csv.contains("Package,Version,License,Category"));
+        assert!(csv.contains("demo,1.2.3,MIT,Permissive"));
+    }
+
+    #[test]
+    fn csv_cells_neutralize_spreadsheet_formulas() {
+        assert_eq!(spreadsheet_safe_cell("=cmd()"), "'=cmd()");
+        assert_eq!(spreadsheet_safe_cell("+1"), "'+1");
+        assert_eq!(spreadsheet_safe_cell("normal"), "normal");
+    }
 
     #[test]
     fn limited_is_not_classified_as_mit() {

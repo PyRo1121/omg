@@ -1045,9 +1045,9 @@ pub enum AuditCommands {
     },
     /// View audit log entries
     Log {
-        /// Number of entries to show
-        #[arg(short, long, default_value = "20")]
-        limit: usize,
+        /// Number of entries to show (default: 20 on screen, all when exporting)
+        #[arg(short, long)]
+        limit: Option<usize>,
         /// Filter by severity (debug, info, warning, error, critical)
         #[arg(short, long, value_enum)]
         severity: Option<AuditLogSeverity>,
