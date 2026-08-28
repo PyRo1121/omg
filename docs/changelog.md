@@ -668,6 +668,8 @@ analyzer inference
 - **Ci**: Cross-platform install script and R2 release sync
 ### 🐛 Bug Fixes
 
+- Refresh runtime EOL schedules
+- Resolve Rust preview component packages
 - Activate Python vendor launcher symlinks
 - Hydrate cached Debian search state
 - Use calendar arithmetic for EOL warnings
