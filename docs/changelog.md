@@ -668,6 +668,7 @@ analyzer inference
 - **Ci**: Cross-platform install script and R2 release sync
 ### 🐛 Bug Fixes
 
+- Fail CI validation without a lockfile
 - Persist settings atomically without runtime paths
 - Stabilize license machine identity
 - Authorize snapshot restore before mutation
