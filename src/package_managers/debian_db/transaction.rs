@@ -549,16 +549,16 @@ impl Transaction {
             // fatal: an unpacked-but-unregistered package would be invisible
             // to dpkg tooling.
             let control_file = control_dir.join("control");
-            if control_file.exists() {
-                let entry = prepare_status_entry(&control_file)
-                    .with_context(|| format!("preparing dpkg status entry for {}", action.name))?;
-                status_entries.push((action.name.clone(), entry));
-            }
+            let entry = prepare_status_entry(&control_file)
+                .with_context(|| format!("preparing dpkg status entry for {}", action.name))?;
+            status_entries.push((action.name.clone(), entry));
 
             // Collect conffiles for batched copy
             let conffiles = control_dir.join("conffiles");
             if conffiles.exists() {
-                conffiles_to_copy.push((conffiles, action.name.clone()));
+                let destination =
+                    Path::new("/var/lib/dpkg/info").join(format!("{}.conffiles", action.name));
+                conffiles_to_copy.push((conffiles, destination));
             }
         }
 
@@ -570,10 +570,14 @@ impl Transaction {
         if !conffiles_to_copy.is_empty() {
             use rayon::prelude::*;
 
-            conffiles_to_copy.par_iter().try_for_each(|(src, name)| {
-                let dest = Path::new("/var/lib/dpkg/info").join(format!("{name}.conffiles"));
-                copy_conffile(src, &dest)
-            })?;
+            conffiles_to_copy
+                .par_iter()
+                .try_for_each(|(source, destination)| copy_conffile(source, destination))?;
+            self.installed_files.extend(
+                conffiles_to_copy
+                    .into_iter()
+                    .map(|(_, destination)| destination),
+            );
         }
 
         Ok(())
@@ -899,14 +903,20 @@ fn remove_file_if_present(path: &Path) -> Result<()> {
 }
 
 fn restore_backup(backup: &Path, original: &Path) -> Result<()> {
-    fs::copy(backup, original).with_context(|| {
+    let contents = fs::read(backup).with_context(|| {
         format!(
             "Failed to restore backup {} -> {}",
             backup.display(),
             original.display()
         )
     })?;
-    Ok(())
+    write_atomic(original, &contents).with_context(|| {
+        format!(
+            "Failed to restore backup {} -> {}",
+            backup.display(),
+            original.display()
+        )
+    })
 }
 
 fn copy_conffile(src: &Path, dest: &Path) -> Result<()> {
@@ -1618,13 +1628,9 @@ fn removal_step_failed(
 const DPKG_INFO_DIR: &str = "/var/lib/dpkg/info";
 
 fn dpkg_info_candidates(package_name: &str, extension: &str) -> [PathBuf; 3] {
-    // dpkg architecture names differ from Rust's target ARCH on the most
-    // common platform: x86_64 -> amd64 (audit A1). Probe the translated
-    // name first, then the raw Rust ARCH, then the unqualified fallback.
-    let arch = match std::env::consts::ARCH {
-        "x86_64" => "amd64",
-        other => other,
-    };
+    // Probe the canonical Debian architecture first, then the raw Rust ARCH
+    // for compatibility with old local state, then the unqualified fallback.
+    let arch = super::debian_arch();
     [
         Path::new(DPKG_INFO_DIR).join(format!("{package_name}:{arch}.{extension}")),
         Path::new(DPKG_INFO_DIR).join(format!(
@@ -1881,6 +1887,37 @@ mod tests {
     }
 
     #[test]
+    fn configure_rejects_packages_without_control_metadata() {
+        let workspace = TempDir::new().expect("workspace");
+        fs::create_dir_all(workspace.path().join("broken/DEBIAN")).expect("control dir");
+        let mut transaction = Transaction {
+            state: TransactionState::Configuring,
+            to_install: vec![PackageAction {
+                name: "broken".to_string(),
+                version: "1.0".to_string(),
+                deb_path: None,
+                url: None,
+                size: 0,
+                sha256: None,
+            }],
+            to_remove: Vec::new(),
+            to_upgrade: Vec::new(),
+            temp_dir: Some(workspace),
+            backups: HashMap::new(),
+            installed_files: Vec::new(),
+        };
+
+        let error = transaction
+            .configure_packages()
+            .expect_err("missing control metadata must fail the transaction");
+
+        assert!(
+            error.to_string().contains("preparing dpkg status entry"),
+            "{error}"
+        );
+    }
+
+    #[test]
     fn test_transaction_add_install() {
         let mut tx = Transaction::new();
         tx.add_install(
@@ -1934,11 +1971,10 @@ mod tests {
     #[test]
     fn test_dpkg_info_candidates_prefer_arch_qualified_name() {
         let [debian_arch, rust_arch, unqualified] = dpkg_info_candidates("curl", "list");
-        let expected_arch = match std::env::consts::ARCH {
-            "x86_64" => "amd64",
-            other => other,
-        };
-        assert!(debian_arch.ends_with(format!("curl:{expected_arch}.list")));
+        assert!(debian_arch.ends_with(format!(
+            "curl:{}.list",
+            crate::package_managers::debian_db::debian_arch()
+        )));
         assert!(rust_arch.ends_with(format!("curl:{}.list", std::env::consts::ARCH)));
         assert!(unqualified.ends_with("curl.list"));
     }
