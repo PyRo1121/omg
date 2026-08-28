@@ -499,6 +499,42 @@ fn optional_mtime(path: &Path) -> Result<Option<std::time::SystemTime>> {
     }
 }
 
+fn hydrate_index_cache(
+    cache: &mut DebianIndexCache,
+    index: DebianPackageIndex,
+    file_mtimes: HashMap<PathBuf, std::time::SystemTime>,
+    installed_set: AHashSet<String>,
+) {
+    let estimated_size = index
+        .packages
+        .iter()
+        .map(|package| package.name.len() + package.description.len() + 2)
+        .sum();
+    let mut search_buffer = Vec::with_capacity(estimated_size);
+    let mut package_offsets = Vec::with_capacity(index.packages.len() + 1);
+
+    for package in &index.packages {
+        package_offsets.push(search_buffer.len());
+        search_buffer.extend(package.name.bytes().map(|byte| byte.to_ascii_lowercase()));
+        search_buffer.push(b' ');
+        search_buffer.extend(
+            package
+                .description
+                .bytes()
+                .map(|byte| byte.to_ascii_lowercase()),
+        );
+        search_buffer.push(0);
+    }
+    package_offsets.push(search_buffer.len());
+
+    cache.index = Some(index);
+    cache.file_mtimes = file_mtimes;
+    cache.search_buffer = search_buffer;
+    cache.package_offsets = package_offsets;
+    cache.installed_set = installed_set;
+    cache.last_accessed = unix_now_secs();
+}
+
 pub fn ensure_index_loaded() -> Result<()> {
     let lists_dir = Path::new("/var/lib/apt/lists");
     if !lists_dir.exists() {
@@ -631,11 +667,12 @@ pub fn ensure_index_loaded() -> Result<()> {
             "LZ4 cache is fresh (newer than all {} Packages files), skipping rebuild",
             current_files.len()
         );
-        // Cache is valid - store in memory and return early
+        let installed_set = list_installed_fast()?
+            .into_iter()
+            .map(|package| package.name)
+            .collect();
         let mut cache = crate::core::sync::write_cache(&DEBIAN_INDEX_CACHE);
-        cache.index = Some(index);
-        cache.file_mtimes = current_files;
-        cache.last_accessed = unix_now_secs();
+        hydrate_index_cache(&mut cache, index, current_files, installed_set);
         return Ok(());
     }
 
@@ -798,35 +835,12 @@ pub fn ensure_index_loaded() -> Result<()> {
         }
     }
 
-    // Rebuild search buffer with pre-calculated capacity
-    // IMPORTANT: Store lowercased content for case-insensitive SIMD search
-    let estimated_size: usize = index
-        .packages
-        .iter()
-        .map(|p| p.name.len() + p.description.len() + 2)
-        .sum();
-    let mut search_buffer = Vec::with_capacity(estimated_size);
-    let mut package_offsets = Vec::with_capacity(index.packages.len() + 1);
-
-    for pkg in &index.packages {
-        package_offsets.push(search_buffer.len());
-        // Store lowercased for O(1) case-insensitive search
-        search_buffer.extend(pkg.name.bytes().map(|b| b.to_ascii_lowercase()));
-        search_buffer.push(b' ');
-        search_buffer.extend(pkg.description.bytes().map(|b| b.to_ascii_lowercase()));
-        search_buffer.push(0);
-    }
-    package_offsets.push(search_buffer.len());
-
-    let installed_set = list_installed_fast()?.into_iter().map(|p| p.name).collect();
-
+    let installed_set = list_installed_fast()?
+        .into_iter()
+        .map(|package| package.name)
+        .collect();
     let mut cache = crate::core::sync::write_cache(&DEBIAN_INDEX_CACHE);
-    cache.index = Some(index);
-    cache.file_mtimes = current_files;
-    cache.search_buffer = search_buffer;
-    cache.package_offsets = package_offsets;
-    cache.installed_set = installed_set;
-    cache.last_accessed = unix_now_secs();
+    hydrate_index_cache(&mut cache, index, current_files, installed_set);
 
     Ok(())
 }
@@ -2784,6 +2798,46 @@ mod tests {
         assert!(!deb.exists());
         assert!(other.exists());
     }
+
+    #[test]
+    fn loaded_index_cache_populates_all_derived_search_state() {
+        let mut index = DebianPackageIndex::new();
+        index.add_package(DebianPackage {
+            name: "bash".to_string(),
+            version: "5.2.15-2".to_string(),
+            description: "GNU shell".to_string(),
+            section: "shells".to_string(),
+            priority: "required".to_string(),
+            installed_size: 100,
+            maintainer: "Debian".to_string(),
+            architecture: "amd64".to_string(),
+            depends: vec![],
+            filename: "pool/main/b/bash/bash_amd64.deb".to_string(),
+            size: 100,
+            sha256: "x".to_string(),
+            homepage: "https://example.org".to_string(),
+            component: "main".to_string(),
+            suite: "bookworm".to_string(),
+        });
+        let current_files = HashMap::from([(
+            PathBuf::from("/var/lib/apt/lists/example_Packages"),
+            std::time::UNIX_EPOCH,
+        )]);
+        let installed_set = AHashSet::from_iter(["bash".to_string()]);
+        let mut cache = DebianIndexCache::default();
+
+        hydrate_index_cache(&mut cache, index, current_files.clone(), installed_set);
+
+        assert_eq!(cache.file_mtimes, current_files);
+        assert_eq!(cache.search_buffer, b"bash gnu shell\0");
+        assert_eq!(cache.package_offsets, vec![0, cache.search_buffer.len()]);
+        assert!(cache.installed_set.contains("bash"));
+        assert_eq!(
+            cache.index.as_ref().map(|index| index.packages.len()),
+            Some(1)
+        );
+    }
+
     #[test]
     fn partial_installed_set_must_not_answer_queries() {
         // Regression: a single-name scan insert used to poison the cache and
