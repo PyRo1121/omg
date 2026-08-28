@@ -863,8 +863,7 @@ fn draw_packages(f: &mut Frame, area: Rect, app: &App) {
         ],
     )
     .header(header)
-    .block(styled_block(" Packages"))
-    .row_highlight_style(Style::default().bg(colors::BG_HIGHLIGHT));
+    .block(styled_block(" Packages"));
 
     f.render_widget(table, *list_area);
 }
@@ -1014,29 +1013,6 @@ fn draw_security(f: &mut Frame, area: Rect, app: &App) {
             ),
         ]),
         Line::from(""),
-        Line::from(vec![
-            Span::styled(
-                " f ",
-                Style::default()
-                    .bg(colors::BG_LIGHT)
-                    .fg(colors::ACCENT_YELLOW),
-            ),
-            Span::styled(
-                " Fix Vulnerabilities",
-                Style::default().fg(colors::FG_PRIMARY),
-            ),
-        ]),
-        Line::from(""),
-        Line::from(vec![
-            Span::styled(
-                " p ",
-                Style::default()
-                    .bg(colors::BG_LIGHT)
-                    .fg(colors::ACCENT_BLUE),
-            ),
-            Span::styled(" Edit Policy", Style::default().fg(colors::FG_PRIMARY)),
-        ]),
-        Line::from(""),
         Line::from(""),
         Line::from(Span::styled(
             "Press 'a' to scan for vulnerabilities",
@@ -1055,7 +1031,8 @@ fn draw_activity(f: &mut Frame, area: Rect, app: &App) {
         .history
         .iter()
         .take(20)
-        .map(|t| {
+        .enumerate()
+        .map(|(index, t)| {
             let time = t.timestamp.strftime("%H:%M:%S").to_string();
             let type_color = transaction_color(t.transaction_type);
 
@@ -1088,6 +1065,11 @@ fn draw_activity(f: &mut Frame, area: Rect, app: &App) {
                 changes.push_str(&c.name);
             }
 
+            let style = if index == app.selected_index {
+                Style::default().bg(colors::BG_HIGHLIGHT)
+            } else {
+                Style::default()
+            };
             ListItem::new(vec![
                 header,
                 Line::from(Span::styled(
@@ -1095,6 +1077,7 @@ fn draw_activity(f: &mut Frame, area: Rect, app: &App) {
                     Style::default().fg(colors::FG_SECONDARY),
                 )),
             ])
+            .style(style)
         })
         .collect();
 
@@ -1259,8 +1242,7 @@ fn draw_team(f: &mut Frame, area: Rect, app: &App) {
             ],
         )
         .header(header)
-        .block(styled_block(" Members"))
-        .row_highlight_style(Style::default().bg(colors::BG_HIGHLIGHT));
+        .block(styled_block(" Members"));
 
         f.render_widget(table, *right);
     } else {
@@ -1475,6 +1457,14 @@ mod tests {
                 "{tab:?} must render {expected:?}"
             );
         }
+    }
+
+    #[test]
+    fn security_tab_advertises_only_implemented_actions() {
+        let rendered = render(Tab::Security, 120, 40);
+        assert!(rendered.contains("Run Security Audit"));
+        assert!(!rendered.contains("Fix Vulnerabilities"));
+        assert!(!rendered.contains("Edit Policy"));
     }
 
     #[test]

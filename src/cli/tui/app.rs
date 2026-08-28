@@ -583,7 +583,7 @@ impl App {
             KeyCode::Down | KeyCode::Char('j') => {
                 let max = match self.current_tab {
                     Tab::Packages => self.search_results.len().saturating_sub(1),
-                    Tab::Activity => self.history.len().saturating_sub(1),
+                    Tab::Activity => self.history.len().min(20).saturating_sub(1),
                     _ => 0,
                 };
                 if self.selected_index < max {
@@ -780,6 +780,27 @@ mod tests {
             "a cancelled query must not commit"
         );
         assert!(app.search_results.is_empty());
+    }
+
+    #[test]
+    fn activity_navigation_stays_within_the_rendered_history_window() {
+        let mut app = test_app();
+        app.current_tab = Tab::Activity;
+        app.history = (0..25)
+            .map(|index| crate::core::history::Transaction {
+                id: format!("tx-{index}"),
+                timestamp: jiff::Timestamp::now(),
+                transaction_type: crate::core::history::TransactionType::Install,
+                changes: Vec::new(),
+                success: true,
+            })
+            .collect();
+
+        for _ in 0..30 {
+            app.handle_key(KeyCode::Down);
+        }
+
+        assert_eq!(app.selected_index, 19);
     }
 
     #[test]
