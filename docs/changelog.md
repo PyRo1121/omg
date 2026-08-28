@@ -668,6 +668,7 @@ analyzer inference
 - **Ci**: Cross-platform install script and R2 release sync
 ### 🐛 Bug Fixes
 
+- Hydrate cached Debian search state
 - Use calendar arithmetic for EOL warnings
 - Restore audited cryptography pins
 - Share canonical package download client policy
