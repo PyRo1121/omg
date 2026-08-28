@@ -24,7 +24,7 @@ use super::common::{
 use crate::core::http::download_client;
 
 const GO_DOWNLOAD_URL: &str = "https://go.dev/dl";
-const GO_VERSIONS_URL: &str = "https://go.dev/dl/?mode=json";
+const GO_VERSIONS_URL: &str = "https://go.dev/dl/?mode=json&include=all";
 
 /// Go version info from go.dev
 #[derive(Debug, Clone, Deserialize)]
@@ -66,6 +66,8 @@ impl GoManager {
             .send()
             .await
             .context("Failed to fetch Go version list. Check your internet connection.")?
+            .error_for_status()
+            .context("Go version-list request failed")?
             .json()
             .await
             .context("Failed to parse Go version list from go.dev")
@@ -161,6 +163,11 @@ mod tests {
     fn test_go_manager_new() {
         let mgr = GoManager::new();
         assert!(mgr.versions_dir.ends_with("go"));
+    }
+
+    #[test]
+    fn available_versions_request_includes_historical_releases() {
+        assert!(GO_VERSIONS_URL.contains("include=all"));
     }
 
     #[tokio::test]

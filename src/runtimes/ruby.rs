@@ -44,11 +44,13 @@ impl RubyManager {
     pub async fn list_available(&self) -> Result<Vec<RubyVersion>> {
         let releases: Vec<GithubRelease> = self
             .client
-            .get(format!("{RUBY_VERSIONS_URL}?per_page=20"))
+            .get(format!("{RUBY_VERSIONS_URL}?per_page=100"))
             .header("User-Agent", GITHUB_USER_AGENT)
             .send()
             .await
             .context("Failed to fetch Ruby releases from GitHub")?
+            .error_for_status()
+            .context("GitHub Ruby release-list request failed")?
             .json()
             .await
             .context("Failed to parse Ruby release data")?;
@@ -102,7 +104,7 @@ impl RubyManager {
             .await
             .context("Failed to fetch Ruby release metadata")?
             .error_for_status()
-            .context("Ruby release metadata request failed")?
+            .with_context(|| format!("Ruby {version} release metadata was not found"))?
             .json()
             .await
             .context("Failed to parse Ruby release metadata")?;

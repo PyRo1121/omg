@@ -17,8 +17,8 @@ use serde::Deserialize;
 
 use super::common::{
     activate_version, begin_staged_install, complete_staged_install, download_with_progress,
-    extract_tar_gz, parse_sha256_digest, print_already_installed, print_installed,
-    remove_file_best_effort, validate_download_filename,
+    extract_tar_gz, normalize_version, parse_sha256_digest, print_already_installed,
+    print_installed, remove_file_best_effort, validate_download_filename,
 };
 use crate::core::http::download_client;
 
@@ -70,6 +70,8 @@ impl JavaManager {
             .send()
             .await
             .context("Failed to fetch Java versions from Adoptium")?
+            .error_for_status()
+            .context("Adoptium version-list request failed")?
             .json()
             .await
             .context("Failed to parse Java version data")?;
@@ -92,12 +94,13 @@ impl JavaManager {
 
     /// Install Java - PURE RUST, NO SUBPROCESS
     pub async fn install(&self, version: &str) -> Result<()> {
-        crate::core::security::validate_runtime_version(version)?;
-        let version_dir = self.versions_dir.join(version);
+        let version = normalize_version(version);
+        crate::core::security::validate_runtime_version(&version)?;
+        let version_dir = self.versions_dir.join(&version);
 
         if crate::runtimes::common::is_valid_version_dir(&version_dir) {
-            print_already_installed("Java", version);
-            return self.use_version(version);
+            print_already_installed("Java", &version);
+            return self.use_version(&version);
         }
 
         println!(
@@ -119,6 +122,8 @@ impl JavaManager {
             .send()
             .await
             .context("Failed to fetch JDK data from Adoptium")?
+            .error_for_status()
+            .with_context(|| format!("Adoptium has no JDK {version} for {arch}-{os}"))?
             .json()
             .await
             .context("Failed to parse JDK data")?;
@@ -139,18 +144,19 @@ impl JavaManager {
         println!("{} Extracting (pure Rust)...", "→".blue());
         let staging = begin_staged_install(&self.versions_dir)?;
         extract_tar_gz(&download_path, staging.path(), 1).await?;
-        complete_staged_install(&staging, &version_dir, version)?;
+        complete_staged_install(&staging, &version_dir, &version)?;
 
         remove_file_best_effort(&download_path, "runtime archive");
 
-        print_installed("Java", version);
-        self.use_version(version)
+        print_installed("Java", &version);
+        self.use_version(&version)
     }
 
     /// Switch to a specific version
     pub fn use_version(&self, version: &str) -> Result<()> {
-        let version_dir = self.versions_dir.join(version);
-        activate_version(&self.versions_dir, version, Path::new("bin/java"))?;
+        let version = normalize_version(version);
+        let version_dir = self.versions_dir.join(&version);
+        activate_version(&self.versions_dir, &version, Path::new("bin/java"))?;
 
         println!("{} Now using Java {version}", "✓".green());
         println!(
@@ -186,6 +192,26 @@ mod tests {
     fn test_java_manager_new() {
         let mgr = JavaManager::new();
         assert!(mgr.versions_dir.ends_with("java"));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn java_manager_normalizes_v_prefixed_versions() {
+        let temp = tempfile::tempdir().expect("temp dir");
+        let version_dir = temp.path().join("17");
+        fs::create_dir_all(version_dir.join("bin")).expect("bin dir");
+        fs::write(version_dir.join("bin/java"), b"java").expect("java binary");
+        let manager = JavaManager {
+            versions_dir: temp.path().to_path_buf(),
+            client: download_client(),
+        };
+
+        manager.use_version("v17").expect("v prefix must normalize");
+
+        assert_eq!(
+            fs::read_link(temp.path().join("current")).expect("current link"),
+            version_dir
+        );
     }
 
     #[test]
