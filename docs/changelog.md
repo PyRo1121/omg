@@ -11,6 +11,29 @@ OMG is the fastest unified package manager for Linux, replacing pacman, yay, nvm
 ---
 
 ## [Unreleased]
+### Cleanup
+
+- Remove final dead code and dependencies
+- Centralize runtime EOL matching
+- Delete unreachable runtime and package surfaces
+### Cli
+
+- Route diagnostics and progress by output mode
+### Daemon
+
+- Bound audit logs and cache bytes
+- Type package sources in protocol v2
+- Bound idle clients and coalesce refreshes
+### Quality
+
+- Keep all-target Clippy clean
+### Resilience
+
+- Recover rebuildable package caches after panic
+### Runtime
+
+- Remove mise fallback and backend selection
+- Manage Pi versions natively
 ### ♻️  Refactoring
 
 - **Daemon**: Delete unreachable post-frame heap guard
@@ -641,6 +664,9 @@ analyzer inference
 - **Ci**: Cross-platform install script and R2 release sync
 ### 🐛 Bug Fixes
 
+- Keep Fedora feature builds warning-clean
+- Fail closed without a private Debian transaction workspace
+- Align CLI with production service contracts
 - **Packages**: Normalize daemon package-source labels
 - **Enterprise**: Write durable exports atomically
 - **Deps**: Pin audited crypto/table versions after incompatible bulk bump
@@ -2447,6 +2473,11 @@ which newer clippy versions flag as an error with -D warnings.
 
 ### 👷 CI/CD
 
+- Add bounded weekly fuzz campaigns
+- Isolate write credentials and fail closed on dependencies
+- Pin Rust toolchain across release and analysis jobs
+- Pin container and Rust bootstrap inputs
+- Remove duplicate and no-op automation
 - Deploylint deploy-gate test
 - Align release feature capabilities across platforms
 
@@ -2506,6 +2537,8 @@ across history/faq/cli
 - Run Docker E2E tests explicitly
 ### 📚 Documentation
 
+- Remove obsolete mise runtime claims
+- Describe current daemon persistence and protocol
 - Fold wave-13 research verdicts into fedora plan + SpacetimeDB backend evaluation
 - Fedora engine plan — research verdicts (raw-rust RPM via zerocopy, rpmrepo_metadata, dnf5 bar)
 - Wave-12 blocker remediation roadmap (citation-backed audit)
@@ -2730,6 +2763,19 @@ dependency-type: indirect
 
 ### 🔒 Security
 
+- Bound AUR completion index inflation
+- Redact remote errors and URL credentials
+- Bound and normalize runtime archives
+- Confine synthetic test mode to debug builds
+- Harden release artifact trust
+- Harden hook runtime and pacman paths
+- Sanitize remote text before terminal rendering
+- Require consent for trusted local archives
+- Move history ownership out of package argv
+- Pin license token issuer and audience
+- Make AUR builds reviewed and isolated by default
+- Delegate Debian index trust to apt
+- Remove executable capability authorization
 - **Daemon**: Remove Request::Batch IPC variant entirely
 
 Batch had zero production senders: the CLI never constructs one, and its
@@ -3679,6 +3725,13 @@ the Debian backend), so it was removed from the metadata.
 - Normalize project formatting
 ### 🧪 Testing
 
+- Gate every enterprise state before side effects
+- Align privacy contracts with authenticated web ownership
+- Align state contracts with hardened product paths
+- Consent to local archives in history contracts
+- Render every TUI state with TestBackend
+- Enforce license expiry and machine binding
+- Normalize package fixture versions
 - **Env**: Share from captured lockfile directory
 - **Daemon**: Make startup status refresh hermetic and falsifiable
 - **Daemon**: Mutation-proof startup cache prewarming
