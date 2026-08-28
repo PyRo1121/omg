@@ -33,13 +33,13 @@ if find "$release_dir" -mindepth 1 -print -quit | grep -q .; then
   exit 73
 fi
 
-expected_names=()
+expected_names=("omg-v${version}.cdx.json")
 for archive in "${archives[@]}"; do
   expected_names+=("$archive" "${archive}.sha256")
 done
 
 mapfile -t discovered < <(
-  find "$artifact_dir" -type f \( -name '*.tar.gz' -o -name '*.tar.gz.sha256' \) \
+  find "$artifact_dir" -type f \( -name '*.tar.gz' -o -name '*.tar.gz.sha256' -o -name '*.cdx.json' \) \
     -printf '%f\n' | sort
 )
 mapfile -t expected_sorted < <(printf '%s\n' "${expected_names[@]}" | sort)
@@ -56,6 +56,12 @@ for name in "${expected_names[@]}"; do
   fi
   cp -- "${matches[0]}" "$release_dir/$name"
 done
+
+sbom="$release_dir/omg-v${version}.cdx.json"
+if [[ ! -s "$sbom" ]] || ! grep -q '"bomFormat"[[:space:]]*:[[:space:]]*"CycloneDX"' "$sbom"; then
+  echo "release SBOM is empty or not CycloneDX JSON" >&2
+  exit 65
+fi
 
 for archive in "${archives[@]}"; do
   checksum_file="$release_dir/${archive}.sha256"

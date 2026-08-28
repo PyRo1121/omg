@@ -88,6 +88,14 @@ mod privilege_escalation {
         let release = temp.path().join("release");
         std::fs::create_dir(&artifacts).expect("artifact directory");
 
+        let metadata = artifacts.join("release-metadata");
+        std::fs::create_dir(&metadata).expect("release metadata directory");
+        std::fs::write(
+            metadata.join("omg-v1.2.3.cdx.json"),
+            br#"{"bomFormat":"CycloneDX","specVersion":"1.5"}"#,
+        )
+        .expect("SBOM fixture");
+
         for platform in [
             "x86_64-linux-arch",
             "x86_64-linux-debian",
@@ -190,7 +198,9 @@ mod privilege_escalation {
         assert!(
             workflow.contains(
                 "actions/attest-build-provenance@977bb373ede98d70efdf65b84cb5f73e068dcc2a"
-            ) && workflow.contains("subject-path: \"release/*.tar.gz\"")
+            ) && workflow.contains("release/*.tar.gz")
+                && workflow.contains("release/*.cdx.json")
+                && workflow.contains("cargo-cyclonedx@0.5.9")
                 && workflow.contains("attestations: write")
                 && workflow.contains("id-token: write"),
             "published archives must receive GitHub/Sigstore provenance with minimal required permissions"
