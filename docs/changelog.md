@@ -2909,6 +2909,7 @@ the documented 'omg explicit' contract
 chore(deps): update rust crate git2 to 0.20 [security]
 ### 🔧 Maintenance
 
+- **Deps**: Update rust dependencies ([#90](https://github.com/PyRo1121/omg/issues/90))
 - **Deps**: Bump the dependencies group across 1 directory with 42 updates
 
 Bumps the dependencies group with 41 updates in the / directory:
