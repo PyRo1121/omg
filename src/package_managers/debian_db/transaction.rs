@@ -1469,7 +1469,7 @@ async fn download_package_streaming(
     let mut last_error = None;
     for attempt in 1..MAX_DOWNLOAD_RETRIES {
         let backoff =
-            Duration::from_millis(INITIAL_BACKOFF_MS.saturating_mul(1 << attempt.min(20)));
+            crate::core::http::retry_backoff(Duration::from_millis(INITIAL_BACKOFF_MS), attempt);
         progress.set_message(format!("retry {}/{}", attempt + 1, MAX_DOWNLOAD_RETRIES));
         tokio::time::sleep(backoff).await;
 

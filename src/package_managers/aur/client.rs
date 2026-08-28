@@ -612,18 +612,22 @@ impl AurClient {
         let mut last_error = None;
         for retry in 0..3u32 {
             if retry > 0 {
-                tokio::time::sleep(Duration::from_millis(100 * 2u64.pow(retry - 1))).await;
+                tokio::time::sleep(crate::core::http::retry_backoff(
+                    Duration::from_millis(100),
+                    retry - 1,
+                ))
+                .await;
             }
 
             match shared_client().get(&url).send().await {
                 Ok(resp) => {
-                    if resp.status().is_server_error() {
+                    if crate::core::http::is_retryable_status(resp.status()) {
                         last_error = Some(anyhow::anyhow!("AUR server error: {}", resp.status()));
                         continue;
                     }
                     return resp.json::<AurResponse>().await.map_err(Into::into);
                 }
-                Err(e) if e.is_timeout() || e.is_connect() => {
+                Err(e) if crate::core::http::is_retryable_error(&e) => {
                     last_error = Some(anyhow::anyhow!("Network error: {e}"));
                 }
                 Err(e) => return Err(e.into()),

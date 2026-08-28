@@ -67,6 +67,27 @@ fn build_client(timeout: Duration, connect_timeout: Duration, read_timeout: Dura
         .expect("Failed to build HTTP client - check TLS configuration")
 }
 
+/// Calculate bounded exponential backoff for a zero-based retry number.
+///
+/// The exponent is capped so attacker-influenced retry counters cannot overflow
+/// or create effectively unbounded sleeps.
+#[must_use]
+pub fn retry_backoff(initial: Duration, retry_number: u32) -> Duration {
+    initial.saturating_mul(1_u32 << retry_number.min(20))
+}
+
+/// Whether an HTTP status represents a transient server-side failure.
+#[must_use]
+pub fn is_retryable_status(status: reqwest::StatusCode) -> bool {
+    status.is_server_error()
+}
+
+/// Whether a request transport failure is safe to retry.
+#[must_use]
+pub fn is_retryable_error(error: &reqwest::Error) -> bool {
+    error.is_timeout() || error.is_connect()
+}
+
 /// Render a remote URL without credentials, query parameters, or fragments.
 ///
 /// Error messages and logs must not echo URL-embedded tokens. Invalid URLs are
@@ -100,6 +121,25 @@ pub fn download_client() -> &'static Client {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn retry_policy_is_bounded_and_rejects_client_errors() {
+        assert_eq!(
+            retry_backoff(Duration::from_millis(100), 0),
+            Duration::from_millis(100)
+        );
+        assert_eq!(
+            retry_backoff(Duration::from_millis(100), 2),
+            Duration::from_millis(400)
+        );
+        assert_eq!(
+            retry_backoff(Duration::MAX, u32::MAX),
+            Duration::MAX,
+            "backoff arithmetic must saturate"
+        );
+        assert!(is_retryable_status(reqwest::StatusCode::BAD_GATEWAY));
+        assert!(!is_retryable_status(reqwest::StatusCode::NOT_FOUND));
+    }
 
     #[test]
     fn redacted_urls_never_reflect_credentials_or_query_secrets() {

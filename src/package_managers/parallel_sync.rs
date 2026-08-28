@@ -214,7 +214,10 @@ async fn download_db(
 
         for retry in 0..MAX_RETRIES {
             if retry > 0 {
-                let backoff = Duration::from_millis(INITIAL_BACKOFF_MS * 2u64.pow(retry - 1));
+                let backoff = crate::core::http::retry_backoff(
+                    Duration::from_millis(INITIAL_BACKOFF_MS),
+                    retry - 1,
+                );
                 pb.set_message(format!("{repo_name} (retry {retry})"));
                 tokio::time::sleep(backoff).await;
             }
@@ -228,7 +231,7 @@ async fn download_db(
                 Ok(resp) => resp,
                 Err(e) => {
                     last_error = Some(anyhow::anyhow!("Failed to connect to {safe_url}: {e}"));
-                    if e.is_timeout() || e.is_connect() {
+                    if crate::core::http::is_retryable_error(&e) {
                         continue;
                     }
                     break;
@@ -240,7 +243,7 @@ async fn download_db(
                 return Ok(());
             }
 
-            if response.status().is_server_error() {
+            if crate::core::http::is_retryable_status(response.status()) {
                 last_error = Some(anyhow::anyhow!("HTTP {}: {safe_url}", response.status()));
                 continue;
             }
