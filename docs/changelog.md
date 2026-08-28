@@ -668,6 +668,7 @@ analyzer inference
 - **Ci**: Cross-platform install script and R2 release sync
 ### 🐛 Bug Fixes
 
+- Include Homebrew casks in package state
 - Record and validate Debian rollbacks
 - Replace stale runtime paths in shell hooks
 - Keep isolated daemon queries off host state
