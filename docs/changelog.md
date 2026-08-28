@@ -668,6 +668,7 @@ analyzer inference
 - **Ci**: Cross-platform install script and R2 release sync
 ### 🐛 Bug Fixes
 
+- Select exact runtime artifacts
 - Harden runtime release discovery
 - Honor audit output and export contracts
 - Refresh runtime EOL schedules
@@ -2779,6 +2780,7 @@ dependency-type: indirect
 
 ### 🔒 Security
 
+- Harden Debian archive link extraction
 - Bound AUR completion index inflation
 - Redact remote errors and URL credentials
 - Bound and normalize runtime archives
