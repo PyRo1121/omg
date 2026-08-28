@@ -1,6 +1,6 @@
 //! Container CLI commands
 
-use anyhow::Result;
+use anyhow::{Context, Result};
 
 use crate::cli::components::Components;
 use crate::cli::tea::Cmd;
@@ -95,24 +95,12 @@ pub fn status() -> Result<()> {
                 Cmd::spacer(),
                 Cmd::info("No running containers"),
             ]),
-            Err(e) => Cmd::batch([
-                Cmd::header("Container Status", format!("Runtime: {runtime_str}")),
-                Cmd::spacer(),
-                Cmd::error(format!("Failed to list containers: {e}")),
-            ]),
+            Err(e) => return Err(e).context("Failed to list containers"),
         }
     } else {
-        Cmd::batch([
-            Cmd::header("Container Status", "Runtime: Not found"),
-            Cmd::spacer(),
-            Components::error_with_suggestion(
-                "No container runtime detected",
-                "Install Docker or Podman to use container features",
-            ),
-            Cmd::println("\n  Installation guides:"),
-            Cmd::println("    Docker: https://docs.docker.com/engine/install/"),
-            Cmd::println("    Podman: https://podman.io/getting-started/installation"),
-        ])
+        anyhow::bail!(
+            "No container runtime detected. Install Docker or Podman to use container features."
+        );
     };
 
     execute_cmd(output);
