@@ -669,6 +669,7 @@ analyzer inference
 - **Ci**: Cross-platform install script and R2 release sync
 ### 🐛 Bug Fixes
 
+- Create missing fish config directories
 - Strip inline pacman configuration comments
 - Count unhealthy mirror responses
 - Reject unsupported APT clean-all work
