@@ -27,6 +27,37 @@ pub fn get_system_status() -> Result<(usize, usize, usize, usize)> {
 /// Open a libalpm handle against the configured pacman root/db with a
 /// canonical error context (audit typ01 C1: seven divergent inline copies).
 #[cfg(feature = "arch")]
+pub(crate) struct LocalPackageMetadata {
+    pub(crate) name: String,
+    pub(crate) version: crate::package_managers::types::Version,
+    pub(crate) license: Option<String>,
+}
+
+#[cfg(feature = "arch")]
+pub(crate) fn load_local_package_metadata(path: &str) -> Result<LocalPackageMetadata> {
+    let canonical = std::fs::canonicalize(path)
+        .with_context(|| format!("Failed to resolve local package file {path}"))?;
+    let canonical = canonical
+        .to_str()
+        .context("Local package path contains invalid UTF-8")?;
+    let alpm = open_default_alpm()?;
+    let package = alpm
+        .pkg_load(canonical, false, alpm::SigLevel::NONE)
+        .with_context(|| format!("Failed to read local package metadata from {path}"))?;
+    let licenses: Vec<String> = package
+        .licenses()
+        .iter()
+        .map(std::string::ToString::to_string)
+        .collect();
+
+    Ok(LocalPackageMetadata {
+        name: package.name().to_string(),
+        version: crate::package_managers::parse_version_or_zero(package.version().as_str()),
+        license: (!licenses.is_empty()).then(|| licenses.join(" AND ")),
+    })
+}
+
+#[cfg(feature = "arch")]
 pub fn open_default_alpm() -> anyhow::Result<alpm::Alpm> {
     use anyhow::Context as _;
 

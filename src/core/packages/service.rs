@@ -46,19 +46,45 @@ impl PackageService {
         let mut changes: Vec<PackageChange> = Vec::new();
 
         #[cfg(feature = "arch")]
+        let local_metadata = {
+            let mut metadata = std::collections::HashMap::new();
+            for package in packages
+                .iter()
+                .filter(|package| crate::core::security::is_local_package_file(package))
+            {
+                let path = package.clone();
+                let local = tokio::task::spawn_blocking(move || {
+                    crate::package_managers::alpm_ops::load_local_package_metadata(&path)
+                })
+                .await??;
+                let grade = self
+                    .policy
+                    .assign_grade(
+                        self.vulnerability_source.as_ref(),
+                        &local.name,
+                        &local.version,
+                        false,
+                    )
+                    .await?;
+                self.policy
+                    .check_package(&local.name, false, local.license.as_deref(), grade)?;
+                metadata.insert(package.clone(), local);
+            }
+            metadata
+        };
+
+        #[cfg(feature = "arch")]
         if let Some(aur) = &self.aur_client {
             let mut official = Vec::new();
             let mut aur_pkgs = Vec::new();
 
             for pkg in packages {
-                // Check if it's a local file
-                if pkg.ends_with(".pkg.tar.zst") || pkg.ends_with(".pkg.tar.xz") {
+                if let Some(local) = local_metadata.get(pkg) {
                     official.push(pkg.clone());
-                    // Note: Ideally we'd extract metadata for changes here, but keeping it simple for now
                     changes.push(PackageChange {
-                        name: pkg.clone(),
+                        name: local.name.clone(),
                         old_version: None,
-                        new_version: Some("local".to_string()),
+                        new_version: Some(local.version.version_string()),
                         source: "local".to_string(),
                     });
                     continue;
@@ -155,11 +181,18 @@ impl PackageService {
             self.finish_transaction(TransactionType::Install, changes, result)
         }
 
-        // Fallback for Arch without AUR (shouldn't happen in practice)
+        // Fallback for Arch without an AUR client.
         #[cfg(feature = "arch")]
         {
             for pkg in packages {
-                if let Some(info) = self.backend.info(pkg).await? {
+                if let Some(local) = local_metadata.get(pkg) {
+                    changes.push(PackageChange {
+                        name: local.name.clone(),
+                        old_version: None,
+                        new_version: Some(local.version.version_string()),
+                        source: "local".to_string(),
+                    });
+                } else if let Some(info) = self.backend.info(pkg).await? {
                     let grade = self
                         .policy
                         .assign_grade(
@@ -445,6 +478,55 @@ mod tests {
             .build()?;
 
         assert!(service.history.is_none());
+        Ok(())
+    }
+
+    #[cfg(feature = "arch")]
+    fn write_fake_local_package(path: &std::path::Path, name: &str, version: &str) -> Result<()> {
+        use flate2::{Compression, write::GzEncoder};
+        use tar::{Builder, EntryType, Header};
+
+        let pkginfo = format!(
+            "pkgname = {name}\npkgbase = {name}\nxdata = pkgtype=pkg\npkgver = {version}\n\
+             pkgdesc = local policy test\nbuilddate = 1700000000\npackager = test\n\
+             size = 1\narch = x86_64\nlicense = MIT\n"
+        );
+        let mut encoder = GzEncoder::new(std::fs::File::create(path)?, Compression::default());
+        let mut archive = Builder::new(&mut encoder);
+        let mut header = Header::new_gnu();
+        header.set_path(".PKGINFO")?;
+        header.set_size(pkginfo.len() as u64);
+        header.set_entry_type(EntryType::Regular);
+        header.set_mode(0o644);
+        header.set_cksum();
+        archive.append(&header, pkginfo.as_bytes())?;
+        archive.finish()?;
+        drop(archive);
+        encoder.finish()?.sync_all()?;
+        Ok(())
+    }
+
+    #[cfg(feature = "arch")]
+    #[tokio::test]
+    async fn local_archive_cannot_bypass_a_banned_package_policy() -> Result<()> {
+        let directory = tempfile::tempdir()?;
+        let archive = directory.path().join("renamed-1.0-1-x86_64.pkg.tar.gz");
+        write_fake_local_package(&archive, "banned-local", "1.0-1")?;
+
+        let mut policy = SecurityPolicy::default();
+        policy.banned_packages.push("banned-local".to_string());
+        let service =
+            PackageService::builder(Arc::new(crate::core::testing::TestPackageManager::new()))
+                .policy(policy)
+                .vulnerability_source(Arc::new(CleanVulnerabilitySource))
+                .without_history()
+                .build()?;
+
+        let error = service
+            .install(&[archive.display().to_string()], false)
+            .await
+            .expect_err("local package metadata must be checked by policy before installation");
+        assert!(error.to_string().contains("banned-local"), "{error:#}");
         Ok(())
     }
 

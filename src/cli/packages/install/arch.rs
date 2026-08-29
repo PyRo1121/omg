@@ -217,17 +217,7 @@ fn history_package_name(package: &str) -> String {
 }
 
 fn try_local_package_name(package: &str) -> Result<String> {
-    let package_path = std::fs::canonicalize(package)
-        .with_context(|| format!("Failed to resolve installed package file {package}"))?;
-    let package_path = package_path
-        .to_str()
-        .context("Installed package path contains invalid UTF-8")?;
-    let alpm = crate::package_managers::alpm_ops::open_default_alpm()
-        .context("Failed to initialize ALPM while recording package history")?;
-    let loaded = alpm
-        .pkg_load(package_path, false, alpm::SigLevel::NONE)
-        .with_context(|| format!("Failed to read installed package metadata from {package}"))?;
-    Ok(loaded.name().to_string())
+    Ok(crate::package_managers::alpm_ops::load_local_package_metadata(package)?.name)
 }
 
 pub async fn install_dry_run(packages: &[String]) -> Result<()> {
