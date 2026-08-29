@@ -678,6 +678,7 @@ analyzer inference
 - **Ci**: Cross-platform install script and R2 release sync
 ### 🐛 Bug Fixes
 
+- Render ALPM download progress placeholders
 - Honor unpinned JavaScript runtimes
 - Use base image package manager for runtimes
 - Move TUI daemon refresh off event loop
