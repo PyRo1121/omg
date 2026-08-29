@@ -517,7 +517,11 @@ pub fn run_task_advanced(
                     .map(std::string::ToString::to_string)
                     .collect();
                 args.push(task_name.to_string());
-                return execute_process(cmd, &args, extra_args);
+                return execute_process(
+                    cmd,
+                    &with_arg_separator(cmd, args, extra_args),
+                    extra_args,
+                );
             }
         }
 
