@@ -691,7 +691,7 @@ fn detect_js_package_manager(current_dir: &std::path::Path) -> Result<Option<Str
         return Ok(Some("npm".to_string()));
     }
 
-    Ok(Some("bun".to_string()))
+    Ok(Some("npm".to_string()))
 }
 
 fn detect_js_runtime(current_dir: &std::path::Path) -> Result<Option<(String, String)>> {
@@ -960,10 +960,18 @@ fn system_runtime_satisfies(command: &str, requested: &str) -> bool {
     if !output.status.success() {
         return false;
     }
+    if is_floating_runtime_request(requested) {
+        return true;
+    }
     let Ok(actual) = std::str::from_utf8(&output.stdout) else {
         return false;
     };
     runtime_version_satisfies(actual.trim().trim_start_matches('v'), requested)
+}
+
+fn is_floating_runtime_request(requested: &str) -> bool {
+    let requested = requested.trim_start_matches('v');
+    matches!(requested, "latest" | "lts") || requested.starts_with("lts/")
 }
 
 fn runtime_version_satisfies(actual: &str, requested: &str) -> bool {
@@ -971,6 +979,9 @@ fn runtime_version_satisfies(actual: &str, requested: &str) -> bool {
         return false;
     };
     let requested = requested.trim_start_matches('v');
+    if is_floating_runtime_request(requested) {
+        return true;
+    }
     VersionReq::parse(requested).is_ok_and(|requirement| requirement.matches(&actual))
 }
 
@@ -1272,8 +1283,28 @@ mod tests {
     fn runtime_pins_require_a_matching_semver_version() {
         assert!(runtime_version_satisfies("20.11.1", "20"));
         assert!(runtime_version_satisfies("20.11.1", "^20.0.0"));
+        assert!(runtime_version_satisfies("20.11.1", "lts"));
+        assert!(runtime_version_satisfies("20.11.1", "lts/iron"));
+        assert!(runtime_version_satisfies("1.2.3", "latest"));
         assert!(!runtime_version_satisfies("18.20.0", "20"));
         assert!(!runtime_version_satisfies("20.11.1", "not-a-version"));
+    }
+
+    #[test]
+    fn package_json_without_manager_metadata_defaults_to_npm() {
+        let project = TempDir::new().unwrap();
+        fs::write(project.path().join("package.json"), r#"{"scripts":{}}"#).unwrap();
+
+        assert_eq!(
+            detect_js_package_manager(project.path())
+                .unwrap()
+                .as_deref(),
+            Some("npm")
+        );
+        assert_eq!(
+            detect_js_runtime(project.path()).unwrap(),
+            Some(("node".to_string(), "lts".to_string()))
+        );
     }
 
     #[test]
