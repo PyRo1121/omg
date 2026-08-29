@@ -912,10 +912,31 @@ fn get_newest_db_mtime(sync_dir: &Path) -> Result<SystemTime> {
     Ok(newest)
 }
 
-/// Get modification time of local db directory
+/// Get modification time of local db directory.
+///
+/// A missing local database is an empty package set, matching
+/// [`parse_local_db`] instead of turning every lookup into an error.
 fn get_local_db_mtime(local_dir: &Path) -> Result<SystemTime> {
-    let meta = std::fs::metadata(local_dir)?;
-    Ok(meta.modified()?)
+    let meta = match std::fs::metadata(local_dir) {
+        Ok(meta) => meta,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+            return Ok(SystemTime::UNIX_EPOCH);
+        }
+        Err(error) => {
+            return Err(error).with_context(|| {
+                format!(
+                    "Failed to read local database metadata {}",
+                    local_dir.display()
+                )
+            });
+        }
+    };
+    meta.modified().with_context(|| {
+        format!(
+            "Failed to read local database modification time {}",
+            local_dir.display()
+        )
+    })
 }
 
 /// Force refresh of all caches (call after sync/install)
@@ -1281,6 +1302,18 @@ mod tests {
         assert!(
             result.is_err(),
             "unreadable sync dir must fail closed, got {result:?}"
+        );
+    }
+
+    #[test]
+    fn test_get_local_db_mtime_missing_dir_is_epoch() {
+        let missing = tempfile::TempDir::new()
+            .unwrap()
+            .path()
+            .join("does-not-exist");
+        assert_eq!(
+            get_local_db_mtime(&missing).unwrap(),
+            SystemTime::UNIX_EPOCH
         );
     }
 
