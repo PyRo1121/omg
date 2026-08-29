@@ -66,6 +66,7 @@ impl AlpmHarness {
         fs::create_dir_all(self.root_path.join("etc/pacman.d/gnupg"))?;
         fs::create_dir_all(self.db_path.join("local"))?;
         fs::create_dir_all(self.db_path.join("sync"))?;
+        fs::write(self.db_path.join("local/ALPM_DB_VERSION"), "9\n")?;
         Ok(())
     }
 
@@ -102,16 +103,24 @@ impl AlpmHarness {
             dir_header.set_cksum();
             builder.append(&dir_header, &mut std::io::empty())?;
 
+            let filename = format!("{}-{}-x86_64.pkg.tar.zst", pkg.name, pkg.version);
+            let package_desc = if pkg.desc.starts_with('%') {
+                pkg.desc.clone()
+            } else {
+                generate_desc(&pkg.name, &pkg.version).replace("A test package", &pkg.desc)
+            };
+            let desc =
+                format!("%FILENAME%\n{filename}\n\n%CSIZE%\n1\n\n%ISIZE%\n1\n\n{package_desc}");
             let mut file_header = Header::new_gnu();
             file_header.set_path(format!("{}desc", pkg_dir))?;
-            file_header.set_size(pkg.desc.len() as u64);
+            file_header.set_size(desc.len() as u64);
             file_header.set_entry_type(EntryType::Regular);
             file_header.set_mode(0o644);
             file_header.set_mtime(0);
             file_header.set_uid(0);
             file_header.set_gid(0);
             file_header.set_cksum();
-            builder.append(&file_header, pkg.desc.as_bytes())?;
+            builder.append(&file_header, desc.as_bytes())?;
         }
 
         builder.into_inner()?.finish()?;

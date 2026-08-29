@@ -58,6 +58,7 @@ const UPGRADE_NEW_VER: &str = "2.0.1-1";
 const DEP_ORPHAN_VER: &str = "1.0.0-1";
 
 struct Fixture {
+    _harness: AlpmHarness,
     root: PathBuf,
     conf: PathBuf,
     cache: PathBuf,
@@ -113,11 +114,8 @@ fn build_fixture() -> Fixture {
         "1",
     );
 
-    // The harness owns its TempDir; forgetting it keeps every seeded file
-    // alive for the whole test process instead of deleting them now.
-    std::mem::forget(harness);
-
     Fixture {
+        _harness: harness,
         cache: root.join("omg-cache"),
         conf,
         root,
@@ -143,14 +141,22 @@ fn seed_local_pkg(root: &Path, name: &str, version: &str, desc: &str, reason: &s
 /// Run `f` with every OMG path variable pointed at the isolated fixture.
 fn with_fixture_env<T>(f: impl FnOnce() -> T) -> T {
     let fx = fixture();
-    with_test_env(
+    omg_lib::package_managers::alpm_direct::clear_alpm_cache();
+    let result = with_test_env(
         &[
             ("OMG_PACMAN_ROOT", fx.root.to_str().unwrap()),
+            (
+                "OMG_PACMAN_DB_DIR",
+                fx.root.join("var/lib/pacman").to_str().unwrap(),
+            ),
             ("OMG_PACMAN_CONF", fx.conf.to_str().unwrap()),
             ("OMG_CACHE_DIR", fx.cache.to_str().unwrap()),
+            ("OMG_TEST_MODE", "0"),
         ],
-        f,
-    )
+        || f(),
+    );
+    omg_lib::package_managers::alpm_direct::clear_alpm_cache();
+    result
 }
 
 /// Execute an async PackageManager method on a dedicated single-thread runtime.
@@ -166,12 +172,10 @@ fn with_pm<T>(f: impl FnOnce(ArchPackageManager) -> T) -> T {
     with_fixture_env(|| f(ArchPackageManager::new()))
 }
 
-/// Tests that drive live ALPM fail on hosts without a pacman database at
-/// the fixture root. Callers should `report_skip` when this returns false.
+/// The fixture always creates a local ALPM database, so these tests never
+/// need to probe the host filesystem for a database.
 fn alpm_live() -> bool {
-    std::path::Path::new(&std::env::var("OMG_PACMAN_ROOT").unwrap_or_else(|_| "/".to_string()))
-        .join("var/lib/pacman/local")
-        .exists()
+    fixture().root.join("var/lib/pacman/local").is_dir()
 }
 
 fn find<'a>(packages: &'a [Package], name: &str) -> &'a Package {
@@ -186,7 +190,6 @@ fn find<'a>(packages: &'a [Package], name: &str) -> &'a Package {
 // ═══════════════════════════════════════════════════════════════════════════════
 
 #[test]
-#[ignore = "requires live ALPM database"]
 #[serial]
 fn manager_name_is_pacman() {
     if !alpm_live() {
@@ -197,7 +200,6 @@ fn manager_name_is_pacman() {
 }
 
 #[test]
-#[ignore = "requires live ALPM database"]
 #[serial]
 fn search_finds_uninstalled_package_with_exact_fields() {
     if !alpm_live() {
@@ -223,7 +225,6 @@ fn search_finds_uninstalled_package_with_exact_fields() {
 }
 
 #[test]
-#[ignore = "requires live ALPM database"]
 #[serial]
 fn search_marks_locally_installed_packages() {
     if !alpm_live() {
@@ -246,15 +247,14 @@ fn search_marks_locally_installed_packages() {
 }
 
 #[test]
-#[ignore = "requires live ALPM database"]
 #[serial]
 fn search_matches_descriptions_case_insensitively() {
     if !alpm_live() {
         common::report_skip("live ALPM database required");
         return;
     }
-    // 'OMG COVERAGE' appears only in SYNC_ONLY's %DESC%, in mixed case there.
-    let results = with_pm(|pm| block_on(pm.search("OMG COVERAGE"))).unwrap();
+    // 'ZEBRA DAEMON' appears only in SYNC_ONLY's description, in mixed case here.
+    let results = with_pm(|pm| block_on(pm.search("ZEBRA DAEMON"))).unwrap();
 
     assert_eq!(
         results.len(),
@@ -265,7 +265,6 @@ fn search_matches_descriptions_case_insensitively() {
 }
 
 #[test]
-#[ignore = "requires live ALPM database"]
 #[serial]
 fn search_prefix_returns_exactly_the_seeded_set() {
     if !alpm_live() {
@@ -296,7 +295,6 @@ fn search_prefix_returns_exactly_the_seeded_set() {
 }
 
 #[test]
-#[ignore = "requires live ALPM database"]
 #[serial]
 fn search_without_matches_returns_empty_vec() {
     if !alpm_live() {
@@ -311,7 +309,6 @@ fn search_without_matches_returns_empty_vec() {
 }
 
 #[test]
-#[ignore = "requires live ALPM database"]
 #[serial]
 fn info_local_package_returns_exact_details() {
     if !alpm_live() {
@@ -333,7 +330,6 @@ fn info_local_package_returns_exact_details() {
 }
 
 #[test]
-#[ignore = "requires live ALPM database"]
 #[serial]
 fn info_falls_back_to_sync_db_for_uninstalled_packages() {
     if !alpm_live() {
@@ -352,7 +348,6 @@ fn info_falls_back_to_sync_db_for_uninstalled_packages() {
 }
 
 #[test]
-#[ignore = "requires live ALPM database"]
 #[serial]
 fn info_unknown_package_is_ok_none() {
     if !alpm_live() {
@@ -367,7 +362,6 @@ fn info_unknown_package_is_ok_none() {
 }
 
 #[test]
-#[ignore = "requires live ALPM database"]
 #[serial]
 fn info_rejects_shell_metachar_names_with_named_error() {
     if !alpm_live() {
@@ -384,7 +378,6 @@ fn info_rejects_shell_metachar_names_with_named_error() {
 }
 
 #[test]
-#[ignore = "requires live ALPM database"]
 #[serial]
 fn list_installed_returns_exactly_the_local_seeds() {
     if !alpm_live() {
@@ -414,7 +407,6 @@ fn list_installed_returns_exactly_the_local_seeds() {
 }
 
 #[test]
-#[ignore = "requires live ALPM database"]
 #[serial]
 fn list_explicit_excludes_dependency_reason_packages() {
     if !alpm_live() {
@@ -433,7 +425,6 @@ fn list_explicit_excludes_dependency_reason_packages() {
 }
 
 #[test]
-#[ignore = "requires live ALPM database"]
 #[serial]
 fn is_installed_reflects_local_db_state() {
     if !alpm_live() {
@@ -450,7 +441,6 @@ fn is_installed_reflects_local_db_state() {
 }
 
 #[test]
-#[ignore = "requires live ALPM database"]
 #[serial]
 fn get_status_fast_counts_match_seeded_database() {
     if !alpm_live() {
@@ -466,7 +456,6 @@ fn get_status_fast_counts_match_seeded_database() {
 }
 
 #[test]
-#[ignore = "requires live ALPM database"]
 #[serial]
 fn list_updates_reports_the_exact_pending_update() {
     if !alpm_live() {
@@ -488,7 +477,6 @@ fn list_updates_reports_the_exact_pending_update() {
 }
 
 #[test]
-#[ignore = "requires live ALPM database"]
 #[serial]
 fn install_and_remove_of_empty_input_are_successful_noops() {
     if !alpm_live() {
@@ -522,7 +510,6 @@ fn install_and_remove_of_empty_input_are_successful_noops() {
 }
 
 #[test]
-#[ignore = "requires live ALPM database"]
 #[serial]
 fn install_rejects_invalid_name_before_any_privileged_operation() {
     if !alpm_live() {
@@ -539,7 +526,6 @@ fn install_rejects_invalid_name_before_any_privileged_operation() {
 }
 
 #[test]
-#[ignore = "requires live ALPM database"]
 #[serial]
 fn remove_rejects_option_injection_names_with_named_error() {
     if !alpm_live() {
