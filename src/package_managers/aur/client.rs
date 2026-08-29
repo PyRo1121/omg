@@ -3175,6 +3175,10 @@ mod tests {
             mounts,
             vec![cache_base.join("ccache"), cache_base.join("sccache")]
         );
+
+        let outside = directory.path().join("outside");
+        std::fs::create_dir(&outside).unwrap();
+        assert!(AurClient::sandbox_cache_mounts(&cache_base, &[outside]).is_err());
     }
 
     #[test]
