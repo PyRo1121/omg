@@ -334,15 +334,7 @@ fn session_state_expires_only_after_30_minutes_of_inactivity() {
     );
 }
 
-// KNOWN PRODUCT BUG (see cov-10.md): TelemetrySession::duration_secs() parses
-// started_at with strptime("%Y-%m-%dT%H:%M:%S%.fZ", ...) which ALWAYS fails
-// under jiff 0.2 (the trailing literal 'Z' does not satisfy the required
-// offset directive), so duration_secs() always returns 0 and every session
-// end event reports a zero duration.
 #[test]
-#[ignore = "KNOWN BUG: duration_secs() strptime pattern never parses its own \
-           started_at format under jiff 0.2, so it always returns 0; \
-           un-ignore once the parser accepts the emitted Zulu form"]
 fn duration_secs_reports_elapsed_time_for_valid_started_at() {
     use jiff::Timestamp;
 

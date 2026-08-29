@@ -477,6 +477,15 @@ impl TelemetrySession {
             session.format_version,
             SESSION_FORMAT_VERSION
         );
+        session
+            .started_at
+            .parse::<jiff::Timestamp>()
+            .with_context(|| {
+                format!(
+                    "Invalid telemetry session start timestamp: {}",
+                    session.started_at
+                )
+            })?;
         let now = jiff::Timestamp::now().as_second();
         Ok(Self {
             session_id: session.session_id,
@@ -541,12 +550,9 @@ impl TelemetrySession {
 
     /// Get session duration in seconds
     ///
-    /// `%.f` parses the optional fractional seconds emitted by `%.3f`, so the
-    /// persisted `started_at` round-trips even though write and parse formats
-    /// differ.
-    /// https://docs.rs/jiff/latest/jiff/fmt/strtime/index.html#supported-directives
+    /// Parse the RFC 3339 start time and return elapsed whole seconds.
     pub fn duration_secs(&self) -> u64 {
-        if let Ok(started) = jiff::Timestamp::strptime("%Y-%m-%dT%H:%M:%S%.fZ", &self.started_at) {
+        if let Ok(started) = self.started_at.parse::<jiff::Timestamp>() {
             let now = jiff::Timestamp::now().as_second();
             (now - started.as_second()).max(0) as u64
         } else {
@@ -953,6 +959,32 @@ mod tests {
                 .expect_err("forward session must be rejected")
                 .to_string()
                 .contains("Unsupported telemetry session format version")
+        );
+    }
+
+    #[test]
+    fn persisted_session_rejects_invalid_start_timestamp() {
+        let directory = tempfile::tempdir().expect("create temporary directory");
+        let path = directory.path().join("session.json");
+        std::fs::write(
+            &path,
+            serde_json::json!({
+                "format_version": SESSION_FORMAT_VERSION,
+                "session_id": "session-id",
+                "started_at": "not-a-timestamp",
+                "commands_run": 0,
+                "last_activity": 0
+            })
+            .to_string(),
+        )
+        .expect("write invalid session");
+
+        let error = TelemetrySession::load_from(&path)
+            .expect_err("invalid timestamp must not enter session state");
+        assert!(
+            error
+                .to_string()
+                .contains("Invalid telemetry session start")
         );
     }
 
