@@ -71,10 +71,15 @@ fi
 exit 0
 "#;
 
-/// Find the .git directory (handles submodules and worktrees)
-fn find_git_dir() -> Result<PathBuf> {
+/// Resolve the hook directory Git actually executes.
+///
+/// `git rev-parse --git-path hooks` honors `core.hooksPath` and the common
+/// repository directory used by linked worktrees. Appending `hooks` to
+/// `--git-dir` does neither.
+fn get_hooks_dir_at(cwd: &Path) -> Result<PathBuf> {
     let output = std::process::Command::new("git")
-        .args(["rev-parse", "--git-dir"])
+        .args(["rev-parse", "--git-path", "hooks"])
+        .current_dir(cwd)
         .output()
         .context("Failed to run git rev-parse")?;
 
@@ -82,14 +87,19 @@ fn find_git_dir() -> Result<PathBuf> {
         anyhow::bail!("Not a git repository");
     }
 
-    let git_dir = String::from_utf8_lossy(&output.stdout).trim().to_string();
-    Ok(PathBuf::from(git_dir))
+    let hooks = String::from_utf8_lossy(&output.stdout).trim().to_string();
+    anyhow::ensure!(!hooks.is_empty(), "Git returned an empty hooks path");
+    let hooks = PathBuf::from(hooks);
+    Ok(if hooks.is_absolute() {
+        hooks
+    } else {
+        cwd.join(hooks)
+    })
 }
 
-/// Get the hooks directory
+/// Get the hooks directory for the current repository.
 fn get_hooks_dir() -> Result<PathBuf> {
-    let git_dir = find_git_dir()?;
-    Ok(git_dir.join("hooks"))
+    get_hooks_dir_at(&std::env::current_dir().context("Failed to read current directory")?)
 }
 
 fn read_hook_file(path: &Path) -> Result<Option<String>> {
@@ -329,6 +339,60 @@ pub fn run_hook(hook_name: &str) -> Result<()> {
 #[expect(clippy::unwrap_used)]
 mod tests {
     use super::*;
+
+    fn git(cwd: &Path, args: &[&str]) {
+        let status = std::process::Command::new("git")
+            .args(args)
+            .current_dir(cwd)
+            .status()
+            .unwrap();
+        assert!(status.success(), "git {args:?} failed");
+    }
+
+    #[test]
+    fn hooks_path_honors_core_hooks_path() {
+        let directory = tempfile::tempdir().unwrap();
+        git(directory.path(), &["init", "-q"]);
+        git(
+            directory.path(),
+            &["config", "core.hooksPath", "custom-hooks"],
+        );
+
+        assert_eq!(
+            get_hooks_dir_at(directory.path()).unwrap(),
+            directory.path().join("custom-hooks")
+        );
+    }
+
+    #[test]
+    fn linked_worktree_uses_the_common_hooks_directory() {
+        let directory = tempfile::tempdir().unwrap();
+        let main = directory.path().join("main");
+        let worktree = directory.path().join("worktree");
+        fs::create_dir(&main).unwrap();
+        git(&main, &["init", "-q"]);
+        git(&main, &["config", "user.email", "test@example.test"]);
+        git(&main, &["config", "user.name", "Test User"]);
+        fs::write(main.join("tracked"), "test").unwrap();
+        git(&main, &["add", "tracked"]);
+        git(&main, &["commit", "-qm", "initial"]);
+        git(
+            &main,
+            &[
+                "worktree",
+                "add",
+                "-q",
+                "-b",
+                "test-worktree",
+                worktree.to_str().unwrap(),
+            ],
+        );
+
+        assert_eq!(
+            get_hooks_dir_at(&worktree).unwrap(),
+            main.join(".git/hooks")
+        );
+    }
 
     #[test]
     fn test_read_hook_file_missing_is_none() {
