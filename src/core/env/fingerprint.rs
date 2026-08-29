@@ -258,6 +258,7 @@ fn write_lockfile(path: &Path, content: &[u8]) -> Result<()> {
         .persist(path)
         .map_err(|error| error.error)
         .with_context(|| format!("Failed to replace lockfile {}", path.display()))?;
+    crate::core::safe_ops::sync_parent_directory_sync(path)?;
     Ok(())
 }
 

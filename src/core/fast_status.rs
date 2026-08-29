@@ -99,6 +99,12 @@ impl FastStatus {
                 ),
             )
         })?;
+        crate::core::safe_ops::sync_parent_directory_sync(path).map_err(|error| {
+            std::io::Error::other(format!(
+                "failed to sync fast status parent directory for {}: {error:#}",
+                path.display()
+            ))
+        })?;
         Ok(())
     }
 

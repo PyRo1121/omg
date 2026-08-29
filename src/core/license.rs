@@ -583,6 +583,7 @@ fn write_private_file(path: &Path, contents: &[u8]) -> Result<()> {
         .persist(path)
         .map_err(|error| error.error)
         .with_context(|| format!("Failed to replace private state file {}", path.display()))?;
+    crate::core::safe_ops::sync_parent_directory_sync(path)?;
     Ok(())
 }
 
