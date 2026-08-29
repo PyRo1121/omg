@@ -598,6 +598,11 @@ impl HomebrewPackageManager {
         }
     }
 
+    fn latest_installed_version(mut versions: Vec<(String, PathBuf)>) -> Option<(String, PathBuf)> {
+        versions.sort_by(|left, right| Self::compare_homebrew_versions(&left.0, &right.0));
+        versions.pop()
+    }
+
     /// Read package information from directory
     async fn read_package_info(&self, pkg_path: &Path, name: &str) -> Result<LocalPackage> {
         // Find version directories
@@ -611,9 +616,7 @@ impl HomebrewPackageManager {
             }
         }
 
-        // Use the latest version (last in sorted order)
-        versions.sort_by(|a, b| a.0.cmp(&b.0));
-        let Some((version, version_path)) = versions.last() else {
+        let Some((version, version_path)) = Self::latest_installed_version(versions) else {
             bail!("No versions found for package {name}");
         };
 
@@ -1043,6 +1046,22 @@ impl PackageManager for HomebrewPackageManager {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn installed_version_selection_uses_numeric_ordering() {
+        let directory = tempfile::tempdir().unwrap();
+        let older = directory.path().join("1.9");
+        let newer = directory.path().join("1.10");
+
+        let selected = HomebrewPackageManager::latest_installed_version(vec![
+            ("1.9".to_string(), older),
+            ("1.10".to_string(), newer.clone()),
+        ])
+        .unwrap();
+
+        assert_eq!(selected.0, "1.10");
+        assert_eq!(selected.1, newer);
+    }
 
     #[tokio::test]
     async fn test_detect_prefix() {

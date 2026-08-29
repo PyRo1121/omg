@@ -5,18 +5,36 @@
 //! be rebuilt after a panic. Stateful transaction locks must handle poisoning
 //! explicitly instead.
 
-#[cfg(any(test, feature = "debian", feature = "debian-pure", target_os = "macos"))]
+#[cfg(any(
+    test,
+    feature = "debian",
+    feature = "debian-pure",
+    feature = "macos",
+    target_os = "macos"
+))]
 use std::sync::{RwLock, RwLockReadGuard, RwLockWriteGuard};
 
 /// Acquire a read guard, recovering rebuildable cache state after poisoning.
-#[cfg(any(test, feature = "debian", feature = "debian-pure", target_os = "macos"))]
+#[cfg(any(
+    test,
+    feature = "debian",
+    feature = "debian-pure",
+    feature = "macos",
+    target_os = "macos"
+))]
 pub(crate) fn read_cache<T>(lock: &RwLock<T>) -> RwLockReadGuard<'_, T> {
     lock.read()
         .unwrap_or_else(std::sync::PoisonError::into_inner)
 }
 
 /// Acquire a write guard, recovering rebuildable cache state after poisoning.
-#[cfg(any(test, feature = "debian", feature = "debian-pure", target_os = "macos"))]
+#[cfg(any(
+    test,
+    feature = "debian",
+    feature = "debian-pure",
+    feature = "macos",
+    target_os = "macos"
+))]
 pub(crate) fn write_cache<T>(lock: &RwLock<T>) -> RwLockWriteGuard<'_, T> {
     lock.write()
         .unwrap_or_else(std::sync::PoisonError::into_inner)
