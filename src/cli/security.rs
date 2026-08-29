@@ -1168,6 +1168,29 @@ pub async fn fix_vulnerabilities(
     Ok(())
 }
 
+pub(crate) fn validate_compliance_export_inputs(
+    framework: &str,
+    period: Option<&str>,
+    output: &str,
+) -> Result<()> {
+    let valid_frameworks = ["soc2", "iso27001", "fedramp", "hipaa", "pci-dss"];
+    anyhow::ensure!(
+        valid_frameworks.contains(&framework.to_ascii_lowercase().as_str()),
+        "Invalid compliance framework: {framework}"
+    );
+    if let Some(period) = period {
+        anyhow::ensure!(
+            period.len() <= 64
+                && period
+                    .chars()
+                    .all(|character| character.is_ascii_alphanumeric() || character == '-'),
+            "Invalid period format"
+        );
+    }
+    crate::core::security::validate_relative_path(output)?;
+    Ok(())
+}
+
 /// Export compliance evidence for audit frameworks
 pub async fn export_compliance(
     framework: &str,
@@ -1175,6 +1198,7 @@ pub async fn export_compliance(
     output: &str,
     _ctx: &CliContext,
 ) -> Result<()> {
+    validate_compliance_export_inputs(framework, period.as_deref(), output)?;
     license::require_feature("compliance")?;
 
     println!(
@@ -1539,5 +1563,17 @@ mod tests {
                 .contains("not available without the Arch backend"),
             "got: {error}"
         );
+    }
+
+    #[test]
+    fn compliance_export_inputs_reject_unsafe_paths_and_periods() {
+        assert!(
+            validate_compliance_export_inputs("soc2", Some("2025-Q4"), "audit-evidence").is_ok()
+        );
+        assert!(
+            validate_compliance_export_inputs("soc2", Some("2025/04"), "audit-evidence").is_err()
+        );
+        assert!(validate_compliance_export_inputs("soc2", None, "/tmp/evidence").is_err());
+        assert!(validate_compliance_export_inputs("unknown", None, "audit-evidence").is_err());
     }
 }

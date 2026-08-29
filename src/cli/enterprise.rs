@@ -93,24 +93,13 @@ pub fn audit_export(
 ) -> Result<()> {
     use crate::cli::packages::execute_cmd;
 
-    // SECURITY: Validate all inputs
-    let valid_frameworks = ["soc2", "iso27001", "fedramp", "hipaa", "pci-dss"];
-    if !valid_frameworks.contains(&format.to_lowercase().as_str()) {
-        execute_cmd(Components::error_with_suggestion(
-            format!("Invalid compliance framework: {format}"),
-            "Valid frameworks: soc2, iso27001, fedramp, hipaa, pci-dss",
-        ))?;
-        anyhow::bail!("Invalid compliance framework: {format}");
-    }
-    if let Some(p) = period
-        && (p.len() > 64 || p.chars().any(|c| !c.is_ascii_alphanumeric() && c != '-'))
+    if let Err(error) =
+        crate::cli::security::validate_compliance_export_inputs(format, period, output)
     {
-        execute_cmd(Cmd::error("Invalid period format"))?;
-        anyhow::bail!("Invalid period format");
-    }
-    if let Err(e) = crate::core::security::validate_relative_path(output) {
-        execute_cmd(Cmd::error(format!("Invalid output path: {e}")))?;
-        return Err(e.into());
+        execute_cmd(Cmd::error(format!(
+            "Invalid compliance export input: {error}"
+        )))?;
+        return Err(error);
     }
 
     license::require_feature("audit-export")?;
