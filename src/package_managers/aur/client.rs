@@ -2381,15 +2381,15 @@ impl AurClient {
             return Ok(());
         }
 
-        let gnupg_home = dirs::home_dir()
-            .map(|home| home.join(".gnupg"))
+        let gnupg_home = std::env::var_os("GNUPGHOME")
+            .map(PathBuf::from)
+            .or_else(|| dirs::home_dir().map(|home| home.join(".gnupg")))
             .context("Cannot determine home directory for GnuPG keyring")?;
-        let keyring_path = gnupg_home.join("pubring.kbx");
 
         let mut missing_keys = Vec::with_capacity(pkgbuild.validpgpkeys.len());
         for key_id in &pkgbuild.validpgpkeys {
             require_fetchable_pgp_key_id(key_id)?;
-            match keyserver::is_key_in_keyring(key_id, &keyring_path) {
+            match keyserver::is_key_in_gnupg(key_id, &gnupg_home) {
                 Ok(true) => {}
                 Ok(false) => missing_keys.push(key_id.clone()),
                 Err(error) => {
@@ -2410,8 +2410,8 @@ impl AurClient {
                 Ok(cert) => {
                     let info = keyserver::get_key_info(&cert);
                     tracing::debug!("Fetched PGP key: {info}");
-                    keyserver::append_to_keyring(&cert, &keyring_path)
-                        .with_context(|| format!("Failed to save key {key_id} to keyring"))?;
+                    keyserver::import_key_into_gnupg(&cert, &gnupg_home)
+                        .with_context(|| format!("Failed to import key {key_id} into GnuPG"))?;
                 }
                 Err(error) => anyhow::bail!("Failed to fetch PGP key {key_id}: {error}"),
             }

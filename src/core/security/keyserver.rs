@@ -87,32 +87,21 @@ pub enum KeyserverError {
         #[source]
         source: SequoiaSource,
     },
-    #[error("Failed to parse keyring")]
-    KeyringParse {
-        #[source]
-        source: SequoiaSource,
-    },
-    #[error("Failed to parse certificate in keyring")]
-    KeyringCertificate {
-        #[source]
-        source: SequoiaSource,
-    },
-    #[error("Failed to open keyring: {path}")]
-    KeyringOpen {
-        path: String,
+    #[error("Failed to run GnuPG while {operation}")]
+    GnuPgLaunch {
+        operation: &'static str,
         #[source]
         source: io::Error,
+    },
+    #[error("GnuPG failed while {operation} (exit status: {status})")]
+    GnuPgFailed {
+        operation: &'static str,
+        status: std::process::ExitStatus,
     },
     #[error("Failed to serialize certificate")]
     Serialize {
         #[source]
         source: SequoiaSource,
-    },
-    #[error("Failed to write keyring: {path}")]
-    KeyringWrite {
-        path: String,
-        #[source]
-        source: io::Error,
     },
 }
 
@@ -265,77 +254,131 @@ pub async fn fetch_keys(key_ids: &[String]) -> Vec<(String, Result<Cert, Keyserv
         .await
 }
 
-/// Check whether a keyring file contains a certificate matching `key_id`.
-///
-/// A missing keyring is a miss (`Ok(false)`); a corrupt keyring fails
-/// closed with an error instead of looking like a miss.
-pub fn is_key_in_keyring(key_id: &str, keyring_path: &Path) -> Result<bool, KeyserverError> {
-    if !keyring_path.exists() {
+fn gnupg_listing_contains_key(listing: &str, key_id: &str) -> bool {
+    let key_id = key_id.trim_start_matches("0x").to_ascii_uppercase();
+    listing.lines().any(|line| {
+        let mut fields = line.split(':');
+        fields.next() == Some("fpr")
+            && fields
+                .nth(8)
+                .is_some_and(|fingerprint| fingerprint.to_ascii_uppercase().ends_with(&key_id))
+    })
+}
+
+fn gnupg_command(gnupg_home: &Path) -> std::process::Command {
+    let mut command = std::process::Command::new("gpg");
+    command
+        .arg("--no-options")
+        .arg("--batch")
+        .arg("--homedir")
+        .arg(gnupg_home);
+    command
+}
+
+/// Query GnuPG's native keybox instead of parsing `pubring.kbx` as OpenPGP packets.
+pub fn is_key_in_gnupg(key_id: &str, gnupg_home: &Path) -> Result<bool, KeyserverError> {
+    key_id
+        .parse::<KeyHandle>()
+        .map_err(|source| KeyserverError::InvalidLookupKeyId {
+            source: SequoiaSource(source),
+        })?;
+    if !gnupg_home.exists() {
         return Ok(false);
     }
 
-    let key_handle: KeyHandle =
-        key_id
-            .parse()
-            .map_err(|source| KeyserverError::InvalidLookupKeyId {
-                source: SequoiaSource(source),
-            })?;
-    let mut file =
-        std::fs::File::open(keyring_path).map_err(|source| KeyserverError::KeyringOpen {
-            path: keyring_path.display().to_string(),
+    let output = gnupg_command(gnupg_home)
+        .arg("--with-colons")
+        .arg("--fingerprint")
+        .arg("--list-keys")
+        .arg(key_id)
+        .output()
+        .map_err(|source| KeyserverError::GnuPgLaunch {
+            operation: "listing keys",
             source,
         })?;
-    let certs = sequoia_openpgp::cert::CertParser::from_reader(&mut file).map_err(|source| {
-        KeyserverError::KeyringParse {
-            source: SequoiaSource(source),
-        }
-    })?;
-
-    for cert in certs {
-        let cert = cert.map_err(|source| KeyserverError::KeyringCertificate {
-            source: SequoiaSource(source),
-        })?;
-        if cert
-            .keys()
-            .any(|k| k.key().key_handle().aliases(&key_handle))
-        {
-            return Ok(true);
-        }
+    if output.status.success() {
+        return Ok(gnupg_listing_contains_key(
+            &String::from_utf8_lossy(&output.stdout),
+            key_id,
+        ));
     }
 
-    Ok(false)
+    // A selector miss and a corrupt keybox both return non-zero. Validate the
+    // keyring separately so corruption still fails closed.
+    let status = gnupg_command(gnupg_home)
+        .arg("--list-keys")
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .status()
+        .map_err(|source| KeyserverError::GnuPgLaunch {
+            operation: "validating the keyring",
+            source,
+        })?;
+    if status.success() {
+        Ok(false)
+    } else {
+        Err(KeyserverError::GnuPgFailed {
+            operation: "validating the keyring",
+            status,
+        })
+    }
 }
 
-/// Append a certificate to a local keyring file atomically and durably.
-///
-/// The complete prior keyring plus the new certificate is published through a
-/// same-directory temporary file. A crash can therefore expose either the old
-/// or new keyring, never a truncated append that bricks every later lookup.
-pub fn append_to_keyring(cert: &Cert, keyring_path: &Path) -> Result<(), KeyserverError> {
+/// Import a verified certificate through GnuPG so it updates `pubring.kbx`
+/// using the keybox format GnuPG owns.
+pub fn import_key_into_gnupg(cert: &Cert, gnupg_home: &Path) -> Result<(), KeyserverError> {
     use sequoia_openpgp::serialize::Serialize;
+    use std::io::Write as _;
+    use std::os::unix::fs::PermissionsExt as _;
 
-    let path_str = keyring_path.display().to_string();
-    let mut contents = match std::fs::read(keyring_path) {
-        Ok(contents) => contents,
-        Err(source) if source.kind() == io::ErrorKind::NotFound => Vec::new(),
-        Err(source) => {
-            return Err(KeyserverError::KeyringOpen {
-                path: path_str,
+    if !gnupg_home.exists() {
+        std::fs::create_dir(gnupg_home).map_err(|source| KeyserverError::GnuPgLaunch {
+            operation: "creating the GnuPG home",
+            source,
+        })?;
+        std::fs::set_permissions(gnupg_home, std::fs::Permissions::from_mode(0o700)).map_err(
+            |source| KeyserverError::GnuPgLaunch {
+                operation: "securing the GnuPG home",
                 source,
-            });
-        }
-    };
+            },
+        )?;
+    }
 
-    cert.serialize(&mut contents)
+    let mut certificate =
+        tempfile::NamedTempFile::new().map_err(|source| KeyserverError::GnuPgLaunch {
+            operation: "staging a certificate",
+            source,
+        })?;
+    cert.serialize(&mut certificate)
         .map_err(|source| KeyserverError::Serialize {
             source: SequoiaSource(source),
         })?;
-    crate::core::safe_ops::atomic_write_file_sync(keyring_path, contents).map_err(|error| {
-        KeyserverError::KeyringWrite {
-            path: path_str,
-            source: io::Error::other(error),
-        }
-    })
+    certificate
+        .flush()
+        .and_then(|()| certificate.as_file().sync_all())
+        .map_err(|source| KeyserverError::GnuPgLaunch {
+            operation: "staging a certificate",
+            source,
+        })?;
+
+    let status = gnupg_command(gnupg_home)
+        .arg("--import")
+        .arg(certificate.path())
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .status()
+        .map_err(|source| KeyserverError::GnuPgLaunch {
+            operation: "importing a certificate",
+            source,
+        })?;
+    if status.success() {
+        Ok(())
+    } else {
+        Err(KeyserverError::GnuPgFailed {
+            operation: "importing a certificate",
+            status,
+        })
+    }
 }
 
 /// Extract display information (fingerprint, user IDs) from a certificate.
@@ -443,37 +486,33 @@ mod tests {
     }
 
     #[test]
-    fn append_to_keyring_atomically_preserves_existing_certificates() {
-        let temp = tempfile::tempdir().unwrap();
-        let keyring = temp.path().join("pubring.pgp");
-        let (first, _) = sequoia_openpgp::cert::prelude::CertBuilder::new()
-            .add_userid("first@example.test")
+    fn gnupg_import_round_trips_through_the_native_keybox() {
+        if which::which("gpg").is_err() {
+            return;
+        }
+        let home = tempfile::tempdir().expect("GnuPG home");
+        let (certificate, _) = sequoia_openpgp::cert::prelude::CertBuilder::new()
+            .add_userid("keybox-test@example.invalid")
             .generate()
-            .unwrap();
-        let (second, _) = sequoia_openpgp::cert::prelude::CertBuilder::new()
-            .add_userid("second@example.test")
-            .generate()
-            .unwrap();
+            .expect("test certificate");
+        let fingerprint = certificate.fingerprint().to_hex();
 
-        append_to_keyring(&first, &keyring).unwrap();
-        append_to_keyring(&second, &keyring).unwrap();
+        import_key_into_gnupg(&certificate, home.path()).expect("GnuPG import");
 
-        assert!(is_key_in_keyring(&first.fingerprint().to_hex(), &keyring).unwrap());
-        assert!(is_key_in_keyring(&second.fingerprint().to_hex(), &keyring).unwrap());
+        assert!(home.path().join("pubring.kbx").is_file());
+        assert!(is_key_in_gnupg(&fingerprint, home.path()).expect("GnuPG lookup"));
     }
 
     #[test]
-    fn is_key_in_keyring_fails_closed_on_corrupt_data() {
-        let temp = tempfile::NamedTempFile::new().unwrap();
-        std::fs::write(temp.path(), "this is not an OpenPGP certificate\n").unwrap();
-        let error = is_key_in_keyring("0123456789ABCDEF", temp.path())
-            .expect_err("corrupt keyring data must not look like a miss");
-        assert!(
-            matches!(
-                error,
-                KeyserverError::KeyringParse { .. } | KeyserverError::KeyringCertificate { .. }
-            ),
-            "got: {error}"
-        );
+    fn gnupg_listing_matches_full_fingerprints_and_long_key_ids() {
+        let listing = "pub:-:255:22:1234567890ABCDEF:0:0::::::\n\
+                       fpr:::::::::00112233445566778899AABBCCDDEEFF00112233:\n";
+
+        assert!(gnupg_listing_contains_key(
+            listing,
+            "00112233445566778899AABBCCDDEEFF00112233"
+        ));
+        assert!(gnupg_listing_contains_key(listing, "CCDDEEFF00112233"));
+        assert!(!gnupg_listing_contains_key(listing, "FFFFFFFFFFFFFFFF"));
     }
 }
