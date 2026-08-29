@@ -35,6 +35,10 @@ fn should_dispatch_key(key: KeyEvent) -> bool {
     !key.modifiers.contains(KeyModifiers::CONTROL)
 }
 
+fn should_refresh_daemon(in_flight: bool, elapsed: Duration) -> bool {
+    !in_flight && elapsed >= Duration::from_secs(REFRESH_INTERVAL_SECS)
+}
+
 fn should_refresh_team(tab: app::Tab, in_flight: bool, elapsed: Duration) -> bool {
     tab == app::Tab::Team
         && !in_flight
@@ -42,12 +46,12 @@ fn should_refresh_team(tab: app::Tab, in_flight: bool, elapsed: Duration) -> boo
 }
 
 pub async fn run() -> Result<()> {
-    let app = app::App::new().await?;
+    let app = app::App::new()?;
     run_tui_with_app(app).await
 }
 
 pub async fn run_with_tab(tab: app::Tab) -> Result<()> {
-    let app = app::App::new().await?.with_tab(tab);
+    let app = app::App::new()?.with_tab(tab);
     run_tui_with_app(app).await
 }
 
@@ -105,6 +109,17 @@ async fn run_app(
     let (action_tx, mut action_rx) = tokio::sync::mpsc::unbounded_channel::<ActionResult>();
     let (team_tx, mut team_rx) =
         tokio::sync::mpsc::unbounded_channel::<Option<crate::core::env::team::TeamStatus>>();
+    #[cfg(unix)]
+    let (daemon_tx, mut daemon_rx) = tokio::sync::mpsc::unbounded_channel::<(
+        bool,
+        Option<crate::daemon::protocol::StatusResult>,
+    )>();
+    #[cfg(unix)]
+    let mut daemon_refresh_in_flight = false;
+    #[cfg(unix)]
+    let mut last_daemon_refresh = Instant::now()
+        .checked_sub(Duration::from_secs(REFRESH_INTERVAL_SECS))
+        .unwrap_or_else(Instant::now);
     let mut team_refresh_in_flight = false;
     let mut last_team_refresh = Instant::now()
         .checked_sub(Duration::from_secs(TEAM_REFRESH_INTERVAL_SECS))
@@ -117,6 +132,14 @@ async fn run_app(
         while let Ok((label, result)) = action_rx.try_recv() {
             app.action_in_flight = false;
             report_action_result(app, result, label);
+        }
+        #[cfg(unix)]
+        while let Ok((connected, status)) = daemon_rx.try_recv() {
+            daemon_refresh_in_flight = false;
+            app.daemon_connected = connected;
+            if let Some(status) = status {
+                app.status = Some(status);
+            }
         }
         while let Ok(remote_status) = team_rx.try_recv() {
             team_refresh_in_flight = false;
@@ -185,7 +208,18 @@ async fn run_app(
         }
 
         // Update app state
-        app.tick().await?;
+        app.tick()?;
+
+        #[cfg(unix)]
+        if should_refresh_daemon(daemon_refresh_in_flight, last_daemon_refresh.elapsed()) {
+            daemon_refresh_in_flight = true;
+            last_daemon_refresh = Instant::now();
+            let sender = daemon_tx.clone();
+            tokio::spawn(async move {
+                let status = app::App::fetch_daemon_status().await;
+                let _ = sender.send(status);
+            });
+        }
 
         if should_refresh_team(
             app.current_tab,
@@ -318,6 +352,18 @@ fn force_refresh(app: &mut app::App) {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn daemon_refresh_runs_in_background_only_when_due() {
+        let due = Duration::from_secs(REFRESH_INTERVAL_SECS);
+
+        assert!(should_refresh_daemon(false, due));
+        assert!(!should_refresh_daemon(true, due));
+        assert!(!should_refresh_daemon(
+            false,
+            due - Duration::from_millis(1)
+        ));
+    }
+
     #[test]
     fn team_refresh_runs_in_background_only_when_visible_and_due() {
         let due = Duration::from_secs(TEAM_REFRESH_INTERVAL_SECS);

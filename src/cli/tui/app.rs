@@ -106,9 +106,9 @@ impl App {
         }
     }
 
-    pub async fn new() -> Result<Self> {
+    pub fn new() -> Result<Self> {
         let mut app = Self::initial(true);
-        app.refresh().await?;
+        app.refresh()?;
         Ok(app)
     }
 
@@ -125,33 +125,13 @@ impl App {
         self
     }
 
-    pub async fn refresh(&mut self) -> Result<()> {
+    pub fn refresh(&mut self) -> Result<()> {
         if !self.external_refresh_enabled {
             return Ok(());
         }
 
-        // Check if daemon is connected
-        #[cfg(unix)]
-        {
-            match crate::core::client::DaemonClient::connect().await {
-                Ok(mut client) => {
-                    self.daemon_connected = true;
-                    if let Ok(crate::daemon::protocol::ResponseResult::Status(status)) = client
-                        .call(crate::daemon::protocol::Request::Status { id: 0 })
-                        .await
-                    {
-                        self.status = Some(status);
-                    }
-                }
-                Err(_) => self.daemon_connected = false,
-            }
-        }
-        #[cfg(not(unix))]
-        {
-            self.daemon_connected = false;
-        }
-
-        // 2. Fetch history
+        // 1. Fetch history. Daemon I/O is scheduled separately by the event
+        // loop so its request timeout can never freeze input or rendering.
         if let Ok(history_mgr) = crate::core::history::HistoryManager::new()
             && let Ok(entries) = history_mgr.load()
         {
@@ -166,6 +146,21 @@ impl App {
         self.load_local_team_status();
 
         Ok(())
+    }
+
+    #[cfg(unix)]
+    pub(crate) async fn fetch_daemon_status() -> (bool, Option<StatusResult>) {
+        let Ok(mut client) = crate::core::client::DaemonClient::connect().await else {
+            return (false, None);
+        };
+        let status = match client
+            .call(crate::daemon::protocol::Request::Status { id: 0 })
+            .await
+        {
+            Ok(crate::daemon::protocol::ResponseResult::Status(status)) => Some(status),
+            _ => None,
+        };
+        (true, status)
     }
 
     fn load_local_team_status(&mut self) {
@@ -530,9 +525,9 @@ impl App {
         self.last_query_change = Instant::now();
     }
 
-    pub async fn tick(&mut self) -> Result<()> {
+    pub fn tick(&mut self) -> Result<()> {
         if self.last_tick.elapsed() >= std::time::Duration::from_secs(5) {
-            self.refresh().await?;
+            self.refresh()?;
             self.last_tick = Instant::now();
         }
 
@@ -727,7 +722,7 @@ mod tests {
     async fn detached_refresh_never_enables_external_state() {
         let mut app = App::new_detached();
         let last_update = app.last_update;
-        app.refresh().await.unwrap();
+        app.refresh().unwrap();
 
         assert!(!app.external_refresh_enabled);
         assert_eq!(app.last_update, last_update);
