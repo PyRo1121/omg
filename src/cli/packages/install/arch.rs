@@ -23,12 +23,33 @@ const MISSING_FROM_REPOS_MARKER: &str = "not found in any configured repository"
 
 use super::MAX_REPLACEMENT_HOPS;
 
+async fn enforce_install_policy(
+    policy: &crate::core::security::SecurityPolicy,
+    scanner: &dyn crate::core::security::vulnerability::VulnerabilitySource,
+    name: &str,
+    version: &crate::package_managers::types::Version,
+    is_aur: bool,
+    license: Option<&str>,
+) -> Result<()> {
+    if crate::core::paths::test_mode() {
+        return policy
+            .check_source(name, is_aur, license)
+            .map_err(Into::into);
+    }
+
+    let grade = policy.assign_grade(scanner, name, version, !is_aur).await?;
+    policy
+        .check_package(name, is_aur, license, grade)
+        .map_err(Into::into)
+}
+
 pub async fn install(packages: &[String], yes: bool, replacement_hops: u32) -> Result<()> {
     let resolution_start = Instant::now();
 
     let pm = get_package_manager()?;
     let policy =
         crate::core::security::SecurityPolicy::load_default().map_err(anyhow::Error::from)?;
+    let vulnerability_scanner = crate::core::security::vulnerability::VulnerabilityScanner::new();
 
     modern_ui::print_phase_header(
         "📦",
@@ -52,7 +73,15 @@ pub async fn install(packages: &[String], yes: bool, replacement_hops: u32) -> R
     let mut missing_packages = Vec::new();
     for pkg in packages {
         if is_local_package_file(pkg) {
-            policy.check_source(pkg, false, None)?;
+            // A local archive has no repository-signature evidence at this
+            // boundary. Keep it Community so require_pgp/minimum-grade policy
+            // cannot mistake a path for a verified official package.
+            policy.check_package(
+                pkg,
+                false,
+                None,
+                crate::core::security::SecurityGrade::Community,
+            )?;
             modern_ui::finish_info(&pb, &format!("Local package: {pkg}"));
             continue;
         }
@@ -67,7 +96,15 @@ pub async fn install(packages: &[String], yes: bool, replacement_hops: u32) -> R
         if is_official {
             let info = crate::package_managers::get_sync_pkg_info(pkg)?
                 .with_context(|| format!("Official package metadata disappeared for {pkg}"))?;
-            policy.check_source(pkg, false, info.licenses.first().map(String::as_str))?;
+            enforce_install_policy(
+                &policy,
+                &vulnerability_scanner,
+                pkg,
+                &info.version,
+                false,
+                info.licenses.first().map(String::as_str),
+            )
+            .await?;
         } else {
             missing_packages.push(pkg.clone());
         }
@@ -495,7 +532,16 @@ async fn try_aur_package(pkg_name: &str) -> Result<crate::core::Package> {
 async fn handle_aur_package(aur_pkg: crate::core::Package, yes: bool) -> Result<()> {
     let policy =
         crate::core::security::SecurityPolicy::load_default().map_err(anyhow::Error::from)?;
-    policy.check_source(&aur_pkg.name, true, None)?;
+    let vulnerability_scanner = crate::core::security::vulnerability::VulnerabilityScanner::new();
+    enforce_install_policy(
+        &policy,
+        &vulnerability_scanner,
+        &aur_pkg.name,
+        &aur_pkg.version,
+        true,
+        None,
+    )
+    .await?;
     modern_ui::print_aur_package_info(
         &aur_pkg.name,
         &aur_pkg.version.to_string(),
@@ -587,6 +633,57 @@ fn installed_package_version(name: &str) -> Option<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::future::Future;
+    use std::pin::Pin;
+
+    struct VulnerableSource;
+
+    impl crate::core::security::vulnerability::VulnerabilitySource for VulnerableSource {
+        fn scan_package<'a>(
+            &'a self,
+            _name: &'a str,
+            _version: &'a crate::package_managers::types::Version,
+        ) -> Pin<
+            Box<
+                dyn Future<
+                        Output = std::result::Result<
+                            Vec<crate::core::security::vulnerability::VulnerabilityReport>,
+                            crate::core::security::vulnerability::VulnerabilityError,
+                        >,
+                    > + Send
+                    + 'a,
+            >,
+        > {
+            Box::pin(async {
+                Ok(vec![
+                    crate::core::security::vulnerability::VulnerabilityReport {
+                        id: "CVE-test".to_string(),
+                        summary: "known vulnerability".to_string(),
+                        score: None,
+                    },
+                ])
+            })
+        }
+    }
+
+    #[tokio::test]
+    async fn install_policy_rejects_known_vulnerabilities() {
+        let policy = crate::core::security::SecurityPolicy::default();
+        let version = crate::package_managers::parse_version_or_zero("1.0-1");
+
+        let error = enforce_install_policy(
+            &policy,
+            &VulnerableSource,
+            "example",
+            &version,
+            false,
+            Some("MIT"),
+        )
+        .await
+        .expect_err("vulnerable packages must be below the default Community grade");
+
+        assert!(error.to_string().contains("below required minimum"));
+    }
 
     #[test]
     fn missing_target_is_extracted_from_canonical_diagnostic() {
