@@ -229,38 +229,15 @@ impl PrivilegeChecker for MockPrivilegeChecker {
     }
 }
 
-/// Global privilege checker (can be swapped in tests)
-#[cfg(test)]
-static PRIVILEGE_CHECKER: std::sync::OnceLock<std::sync::Arc<dyn PrivilegeChecker>> =
-    std::sync::OnceLock::new();
-
-#[cfg(test)]
-pub fn set_privilege_checker(checker: std::sync::Arc<dyn PrivilegeChecker>) {
-    let _ = PRIVILEGE_CHECKER.set(checker);
-}
-
-#[cfg(test)]
-pub fn get_privilege_checker() -> std::sync::Arc<dyn PrivilegeChecker> {
-    PRIVILEGE_CHECKER
-        .get()
-        .cloned()
-        .unwrap_or_else(|| std::sync::Arc::new(SystemPrivilegeChecker))
-}
-
 /// Check if we're running as root
 #[must_use]
 pub fn is_root() -> bool {
-    #[cfg(test)]
-    {
-        get_privilege_checker().is_root()
-    }
-
-    #[cfg(all(not(test), unix))]
+    #[cfg(unix)]
     {
         rustix::process::geteuid().is_root()
     }
 
-    #[cfg(all(not(test), not(unix)))]
+    #[cfg(not(unix))]
     {
         false
     }
@@ -768,16 +745,6 @@ mod tests {
         assert_eq!(log.len(), 1);
         assert_eq!(log[0].0, "install");
         assert_eq!(log[0].1, args);
-    }
-
-    #[test]
-    fn test_global_privilege_checker() {
-        let mock = std::sync::Arc::new(MockPrivilegeChecker::new());
-        set_privilege_checker(mock.clone());
-
-        let retrieved = get_privilege_checker();
-        // The retrieved checker should work the same as the mock
-        assert_eq!(retrieved.is_root(), mock.is_root());
     }
 
     #[test]
