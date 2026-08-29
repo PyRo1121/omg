@@ -678,6 +678,7 @@ analyzer inference
 - **Ci**: Cross-platform install script and R2 release sync
 ### 🐛 Bug Fixes
 
+- Reject symlinked Debian extraction parents
 - Enforce policy on local package archives
 - Resolve Go checksums from release manifest
 - Enforce configured install grading across backends
