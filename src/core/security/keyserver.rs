@@ -306,44 +306,36 @@ pub fn is_key_in_keyring(key_id: &str, keyring_path: &Path) -> Result<bool, Keys
     Ok(false)
 }
 
-/// Append a certificate to a local keyring file, durably.
+/// Append a certificate to a local keyring file atomically and durably.
 ///
-/// A keyring entry lost to a crash would silently downgrade later
-/// signature verification, so the append is flushed with `sync_all`.
+/// The complete prior keyring plus the new certificate is published through a
+/// same-directory temporary file. A crash can therefore expose either the old
+/// or new keyring, never a truncated append that bricks every later lookup.
 pub fn append_to_keyring(cert: &Cert, keyring_path: &Path) -> Result<(), KeyserverError> {
     use sequoia_openpgp::serialize::Serialize;
-    use std::fs::OpenOptions;
-    use std::io::Write;
 
     let path_str = keyring_path.display().to_string();
-    let mut file = OpenOptions::new()
-        .create(true)
-        .append(true)
-        .open(keyring_path)
-        .map_err(|source| KeyserverError::KeyringOpen {
-            path: path_str.clone(),
-            source,
-        })?;
+    let mut contents = match std::fs::read(keyring_path) {
+        Ok(contents) => contents,
+        Err(source) if source.kind() == io::ErrorKind::NotFound => Vec::new(),
+        Err(source) => {
+            return Err(KeyserverError::KeyringOpen {
+                path: path_str,
+                source,
+            });
+        }
+    };
 
-    let mut buf = Vec::new();
-    cert.serialize(&mut buf)
+    cert.serialize(&mut contents)
         .map_err(|source| KeyserverError::Serialize {
             source: SequoiaSource(source),
         })?;
-    file.write_all(&buf)
-        .map_err(|source| KeyserverError::KeyringWrite {
-            path: path_str.clone(),
-            source,
-        })?;
-    // Durability: a keyring entry lost to a crash would silently downgrade
-    // later signature verification.
-    file.sync_all()
-        .map_err(|source| KeyserverError::KeyringWrite {
+    crate::core::safe_ops::atomic_write_file_sync(keyring_path, contents).map_err(|error| {
+        KeyserverError::KeyringWrite {
             path: path_str,
-            source,
-        })?;
-
-    Ok(())
+            source: io::Error::other(error),
+        }
+    })
 }
 
 /// Extract display information (fingerprint, user IDs) from a certificate.
@@ -448,6 +440,26 @@ mod tests {
             user_ids: vec![],
         };
         assert_eq!(format!("{info}"), "ABCD1234");
+    }
+
+    #[test]
+    fn append_to_keyring_atomically_preserves_existing_certificates() {
+        let temp = tempfile::tempdir().unwrap();
+        let keyring = temp.path().join("pubring.pgp");
+        let (first, _) = sequoia_openpgp::cert::prelude::CertBuilder::new()
+            .add_userid("first@example.test")
+            .generate()
+            .unwrap();
+        let (second, _) = sequoia_openpgp::cert::prelude::CertBuilder::new()
+            .add_userid("second@example.test")
+            .generate()
+            .unwrap();
+
+        append_to_keyring(&first, &keyring).unwrap();
+        append_to_keyring(&second, &keyring).unwrap();
+
+        assert!(is_key_in_keyring(&first.fingerprint().to_hex(), &keyring).unwrap());
+        assert!(is_key_in_keyring(&second.fingerprint().to_hex(), &keyring).unwrap());
     }
 
     #[test]
