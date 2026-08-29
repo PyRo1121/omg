@@ -669,6 +669,7 @@ analyzer inference
 - **Ci**: Cross-platform install script and R2 release sync
 ### 🐛 Bug Fixes
 
+- Treat missing pacman local database as empty
 - Remove global privilege checker state
 - Serialize environment runtimes deterministically
 - Select exact release archive assets
