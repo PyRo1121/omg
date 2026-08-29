@@ -993,6 +993,8 @@ pub struct CachedUpdate {
 pub fn check_updates_cached() -> Result<Vec<CachedUpdate>> {
     let pacman_config = crate::core::pacman_conf::PacmanConfig::parse(paths::pacman_conf_path())
         .context("Failed to load update filters from pacman.conf")?;
+    let ignored_packages = compile_ignore_patterns(&pacman_config.ignore_pkg, "IgnorePkg")?;
+    let ignored_groups = compile_ignore_patterns(&pacman_config.ignore_group, "IgnoreGroup")?;
     let sync_dir = paths::pacman_sync_dir();
     let local_dir = paths::pacman_local_dir();
 
@@ -1014,11 +1016,7 @@ pub fn check_updates_cached() -> Result<Vec<CachedUpdate>> {
                 .packages
                 .get(name)
                 .filter(|sync_pkg| {
-                    !sync_package_is_ignored(
-                        sync_pkg,
-                        &pacman_config.ignore_pkg,
-                        &pacman_config.ignore_group,
-                    )
+                    !sync_package_is_ignored(sync_pkg, &ignored_packages, &ignored_groups)
                 })
                 .filter(|sync_pkg| local_pkg.version < sync_pkg.version)
                 .map(|sync_pkg| (name, local_pkg, sync_pkg))
@@ -1037,16 +1035,28 @@ pub fn check_updates_cached() -> Result<Vec<CachedUpdate>> {
     Ok(updates)
 }
 
+fn compile_ignore_patterns(patterns: &[String], setting: &str) -> Result<globset::GlobSet> {
+    let mut builder = globset::GlobSetBuilder::new();
+    for pattern in patterns {
+        let glob = globset::Glob::new(pattern)
+            .with_context(|| format!("Invalid {setting} pattern {pattern:?}"))?;
+        builder.add(glob);
+    }
+    builder
+        .build()
+        .with_context(|| format!("Failed to compile {setting} patterns"))
+}
+
 fn sync_package_is_ignored(
     package: &SyncDbPackage,
-    ignored_packages: &[String],
-    ignored_groups: &[String],
+    ignored_packages: &globset::GlobSet,
+    ignored_groups: &globset::GlobSet,
 ) -> bool {
-    ignored_packages.iter().any(|name| name == &package.name)
+    ignored_packages.is_match(&package.name)
         || package
             .groups
             .iter()
-            .any(|group| ignored_groups.iter().any(|ignored| ignored == group))
+            .any(|group| ignored_groups.is_match(group))
 }
 
 /// Get a specific local package - FAST (<1ms)
@@ -1207,21 +1217,20 @@ mod tests {
         let mut package = SyncDbPackage::default();
         package.name = "linux".to_string();
         package.groups = vec!["kernel".to_string()];
-        assert!(sync_package_is_ignored(
-            &package,
-            &["linux".to_string()],
-            &[]
-        ));
-        assert!(sync_package_is_ignored(
-            &package,
-            &[],
-            &["kernel".to_string()]
-        ));
-        assert!(!sync_package_is_ignored(
-            &package,
-            &[],
-            &["base".to_string()]
-        ));
+        let packages = compile_ignore_patterns(&["linux".to_string()], "IgnorePkg").unwrap();
+        let groups = compile_ignore_patterns(&["kernel".to_string()], "IgnoreGroup").unwrap();
+        let none = compile_ignore_patterns(&[], "empty").unwrap();
+        assert!(sync_package_is_ignored(&package, &packages, &none));
+        assert!(sync_package_is_ignored(&package, &none, &groups));
+        let base = compile_ignore_patterns(&["base".to_string()], "IgnoreGroup").unwrap();
+        assert!(!sync_package_is_ignored(&package, &none, &base));
+
+        package.name = "linux-zen".to_string();
+        package.groups = vec!["kernel-zen".to_string()];
+        let packages = compile_ignore_patterns(&["linux-*".to_string()], "IgnorePkg").unwrap();
+        let groups = compile_ignore_patterns(&["kernel-*".to_string()], "IgnoreGroup").unwrap();
+        assert!(sync_package_is_ignored(&package, &packages, &none));
+        assert!(sync_package_is_ignored(&package, &none, &groups));
     }
 
     #[test]

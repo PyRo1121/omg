@@ -238,6 +238,10 @@ urlencoding = "2.1"
 # Data parallelism
 rayon = "1.11.0"
 
+# Pacman IgnorePkg/IgnoreGroup shell-style pattern matching
+# (already present transitively; direct because the Arch cache path uses it)
+globset = { version = "0.4.18", optional = true }
+
 # Security (Phase 4.2) - PURE RUST crypto backend (for package verification, not secrets)
 sequoia-openpgp = { version = "2.2.0-pqc.1", default-features = false, features = [
   "crypto-rust",
@@ -361,6 +365,7 @@ arch = [
   "alpm-srcinfo",
   "alpm-db",
   "alpm-repo-db",
+  "globset",
 ]
 # Optional PGP verification of package signatures (sequoia-openpgp).
 # Built against the MSRV pinned in rust-toolchain.toml / package.rust-version.

@@ -3719,6 +3719,7 @@ dependencies = [
  "flate2",
  "fst",
  "futures",
+ "globset",
  "governor",
  "hex",
  "home",
