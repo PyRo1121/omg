@@ -678,6 +678,7 @@ analyzer inference
 - **Ci**: Cross-platform install script and R2 release sync
 ### 🐛 Bug Fixes
 
+- Refresh TUI team data off the event loop
 - Reserve TUI control keys from actions
 - Evaluate full ALSA vulnerability ranges
 - Manage AUR signing keys through GnuPG
