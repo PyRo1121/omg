@@ -61,7 +61,7 @@ fn validate_container_ref(kind: &str, value: &str) -> Result<()> {
         execute_cmd(crate::cli::components::Components::error_with_suggestion(
             format!("Invalid {kind} name"),
             "Names must not contain control characters or shell operators",
-        ));
+        ))?;
         anyhow::bail!("Invalid {kind} name");
     }
     Ok(())
@@ -103,7 +103,7 @@ pub fn status() -> Result<()> {
         );
     };
 
-    execute_cmd(output);
+    execute_cmd(output)?;
     Ok(())
 }
 
@@ -130,7 +130,7 @@ pub fn run(
         execute_cmd(Components::error_with_suggestion(
             "Invalid container name",
             "Container names must be alphanumeric with hyphens or underscores only",
-        ));
+        ))?;
         anyhow::bail!("Invalid container name");
     }
 
@@ -143,7 +143,7 @@ pub fn run(
 
     execute_cmd(Components::loading(format!(
         "Running in {image} container..."
-    )));
+    )))?;
 
     let config = ContainerConfig {
         image: image.to_string(),
@@ -219,7 +219,7 @@ pub fn shell(
     execute_cmd(Cmd::batch([
         Components::loading(format!("Starting shell in {} container...", config.image)),
         Cmd::card("Container Configuration", details),
-    ]));
+    ]))?;
 
     let exit_code = manager.shell(&config)?;
 
@@ -245,7 +245,7 @@ pub fn build(
         execute_cmd(Components::error_with_suggestion(
             "Invalid tag name",
             "Tags must not contain control characters or semicolons",
-        ));
+        ))?;
         anyhow::bail!("Invalid tag name");
     }
     if let Some(ref df) = dockerfile
@@ -254,7 +254,7 @@ pub fn build(
         execute_cmd(Components::error_with_suggestion(
             "Invalid Dockerfile path",
             format!("Path validation failed: {e}"),
-        ));
+        ))?;
         return Err(e.into());
     }
 
@@ -269,7 +269,7 @@ pub fn build(
         execute_cmd(Components::error_with_suggestion(
             &error_msg,
             "Use -f/--dockerfile to specify a path",
-        ));
+        ))?;
         anyhow::bail!("{error_msg}");
     }
 
@@ -289,7 +289,7 @@ pub fn build(
     execute_cmd(Cmd::batch([
         Components::loading(format!("Building image: {tag}")),
         Cmd::card("Build Configuration", build_details),
-    ]));
+    ]))?;
 
     manager.build_with_options(
         &dockerfile_path,
@@ -302,7 +302,7 @@ pub fn build(
 
     execute_cmd(Components::complete(format!(
         "Image {tag} built successfully"
-    )));
+    )))?;
 
     Ok(())
 }
@@ -319,7 +319,7 @@ pub fn list() -> Result<()> {
         execute_cmd(Cmd::batch([
             Cmd::header("Running Containers", "No active containers"),
             Cmd::spacer(),
-        ]));
+        ]))?;
         return Ok(());
     }
 
@@ -343,7 +343,7 @@ pub fn list() -> Result<()> {
         ),
         Cmd::spacer(),
         Cmd::card("Active Containers", container_list),
-    ]));
+    ]))?;
 
     Ok(())
 }
@@ -360,7 +360,7 @@ pub fn images() -> Result<()> {
         execute_cmd(Cmd::batch([
             Cmd::header("Container Images", "No images found"),
             Cmd::spacer(),
-        ]));
+        ]))?;
         return Ok(());
     }
 
@@ -384,7 +384,7 @@ pub fn images() -> Result<()> {
         ),
         Cmd::spacer(),
         Cmd::card("Available Images", image_list),
-    ]));
+    ]))?;
 
     Ok(())
 }
@@ -397,13 +397,13 @@ pub fn pull(image: &str) -> Result<()> {
 
     let manager = ContainerManager::new()?;
 
-    execute_cmd(Components::loading(format!("Pulling image: {image}")));
+    execute_cmd(Components::loading(format!("Pulling image: {image}")))?;
 
     manager.pull(image)?;
 
     execute_cmd(Components::complete(format!(
         "Image {image} pulled successfully"
-    )));
+    )))?;
 
     Ok(())
 }
@@ -418,13 +418,13 @@ pub fn stop(container: &str) -> Result<()> {
 
     execute_cmd(Components::loading(format!(
         "Stopping container: {container}"
-    )));
+    )))?;
 
     manager.stop(container)?;
 
     execute_cmd(Components::complete(format!(
         "Container {container} stopped"
-    )));
+    )))?;
 
     Ok(())
 }
@@ -456,7 +456,7 @@ pub fn init(base_image: Option<String>) -> Result<()> {
         execute_cmd(Components::error_with_suggestion(
             "Dockerfile.omg already exists",
             "Remove it first or use a different name",
-        ));
+        ))?;
         anyhow::bail!("Dockerfile.omg already exists");
     }
 
@@ -500,7 +500,7 @@ pub fn init(base_image: Option<String>) -> Result<()> {
         Cmd::card("Configuration", details),
         Cmd::println("\n  Build with:"),
         Cmd::println("    omg container build -t myapp ."),
-    ]));
+    ]))?;
 
     Ok(())
 }

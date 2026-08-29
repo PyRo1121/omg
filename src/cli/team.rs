@@ -19,7 +19,7 @@ fn open_team_workspace() -> Result<TeamWorkspace> {
         execute_cmd(Components::error_with_suggestion(
             "Not a team workspace",
             "Run 'omg team init <team-id>' first",
-        ));
+        ))?;
         anyhow::bail!("Not a team workspace");
     }
     Ok(workspace)
@@ -110,7 +110,7 @@ pub fn init(team_id: &str, name: Option<&str>, _ctx: &CliContext) -> Result<()> 
         execute_cmd(Components::error_with_suggestion(
             "Invalid team ID",
             "Team IDs must be alphanumeric with /, -, or _ allowed",
-        ));
+        ))?;
         return Err(error);
     }
     if let Some(n) = name
@@ -118,7 +118,7 @@ pub fn init(team_id: &str, name: Option<&str>, _ctx: &CliContext) -> Result<()> 
     {
         execute_cmd(Cmd::error(
             "Invalid team name (too long or contains control characters)",
-        ));
+        ))?;
         anyhow::bail!("Invalid team name");
     }
 
@@ -129,7 +129,7 @@ pub fn init(team_id: &str, name: Option<&str>, _ctx: &CliContext) -> Result<()> 
 
     let display_name = name.unwrap_or(team_id);
 
-    execute_cmd(Components::loading("Initializing team workspace..."));
+    execute_cmd(Components::loading("Initializing team workspace..."))?;
 
     workspace.init(team_id, display_name)?;
 
@@ -144,7 +144,7 @@ pub fn init(team_id: &str, name: Option<&str>, _ctx: &CliContext) -> Result<()> 
         Cmd::println("  1. Run 'omg env capture' to capture your environment"),
         Cmd::println("  2. Commit 'omg.lock' to your repo"),
         Cmd::println("  3. Teammates run 'omg team pull' to sync"),
-    ]));
+    ]))?;
 
     Ok(())
 }
@@ -156,11 +156,11 @@ pub async fn join(remote_url: &str, _ctx: &CliContext) -> Result<()> {
         execute_cmd(Components::error_with_suggestion(
             "Only HTTPS URLs allowed for security",
             "Use https:// instead of http://",
-        ));
+        ))?;
         anyhow::bail!("Only HTTPS URLs allowed for security");
     }
     if remote_url.len() > 1024 || remote_url.chars().any(char::is_control) {
-        execute_cmd(Cmd::error("Invalid remote URL"));
+        execute_cmd(Cmd::error("Invalid remote URL"))?;
         anyhow::bail!("Invalid remote URL");
     }
     validate_team_remote(remote_url)?;
@@ -177,7 +177,7 @@ pub async fn join(remote_url: &str, _ctx: &CliContext) -> Result<()> {
         workspace.init(&team_id, &team_id)?;
     }
 
-    execute_cmd(Components::loading("Joining team..."));
+    execute_cmd(Components::loading("Joining team..."))?;
 
     workspace.join(remote_url)?;
 
@@ -188,13 +188,13 @@ pub async fn join(remote_url: &str, _ctx: &CliContext) -> Result<()> {
         execute_cmd(Cmd::batch([
             Cmd::success("Joined team successfully!"),
             Components::status_summary(vec![("Status", "In sync")]),
-        ]));
+        ]))?;
     } else {
         execute_cmd(Cmd::batch([
             Cmd::success("Joined team successfully!"),
             Cmd::warning("Drift detected"),
             Cmd::info("Run 'omg env check' to see differences"),
-        ]));
+        ]))?;
     }
 
     Ok(())
@@ -252,7 +252,7 @@ pub async fn status(_ctx: &CliContext) -> Result<()> {
         Cmd::card("Team Information", details),
         Cmd::spacer(),
         Cmd::card("Members", member_list),
-    ]));
+    ]))?;
 
     Ok(())
 }
@@ -261,14 +261,14 @@ pub async fn status(_ctx: &CliContext) -> Result<()> {
 pub async fn push(_ctx: &CliContext) -> Result<()> {
     let workspace = open_team_workspace()?;
 
-    execute_cmd(Components::loading("Pushing environment to team lock..."));
+    execute_cmd(Components::loading("Pushing environment to team lock..."))?;
 
     workspace.push().await?;
 
     execute_cmd(Cmd::batch([
         Cmd::success("Team lock updated!"),
         Cmd::info("Don't forget to commit and push omg.lock to share with teammates"),
-    ]));
+    ]))?;
 
     Ok(())
 }
@@ -277,18 +277,18 @@ pub async fn push(_ctx: &CliContext) -> Result<()> {
 pub async fn pull(_ctx: &CliContext) -> Result<()> {
     let workspace = open_team_workspace()?;
 
-    execute_cmd(Components::loading("Pulling team lock..."));
+    execute_cmd(Components::loading("Pulling team lock..."))?;
 
     let in_sync = workspace.pull().await?;
 
     if in_sync {
-        execute_cmd(Components::complete("Environment is in sync with team!"));
+        execute_cmd(Components::complete("Environment is in sync with team!"))?;
         Ok(())
     } else {
         execute_cmd(Cmd::batch([
             Cmd::warning("Environment drift detected!"),
             Cmd::info("Run 'omg env check' to see differences"),
-        ]));
+        ]))?;
         anyhow::bail!("Environment drift detected")
     }
 }
@@ -305,7 +305,7 @@ pub async fn members(_ctx: &CliContext) -> Result<()> {
             Cmd::header("Team Members", "No members found"),
             Cmd::spacer(),
             Cmd::info("Team members will appear here once they activate with your license key"),
-        ]));
+        ]))?;
         return Ok(());
     }
 
@@ -348,7 +348,7 @@ pub async fn members(_ctx: &CliContext) -> Result<()> {
         ),
         Cmd::spacer(),
         Cmd::card("Active Members", member_list),
-    ]));
+    ]))?;
 
     Ok(())
 }
@@ -396,7 +396,7 @@ pub mod roles {
             Cmd::header("Team Roles", "Available roles"),
             Cmd::spacer(),
             Cmd::card("Role Permissions", role_list),
-        ]));
+        ]))?;
 
         Ok(())
     }
@@ -460,25 +460,25 @@ pub mod golden_path {
             execute_cmd(Components::error_with_suggestion(
                 "Invalid template name",
                 "Template names must be alphanumeric with hyphens only",
-            ));
+            ))?;
             anyhow::bail!("Invalid template name (alphanumeric and hyphens only)");
         }
         if let Some(v) = node
             && let Err(e) = crate::core::security::validate_runtime_version(v)
         {
-            execute_cmd(Cmd::error(format!("Invalid Node version: {e}")));
+            execute_cmd(Cmd::error(format!("Invalid Node version: {e}")))?;
             return Err(e.into());
         }
         if let Some(v) = python
             && let Err(e) = crate::core::security::validate_runtime_version(v)
         {
-            execute_cmd(Cmd::error(format!("Invalid Python version: {e}")));
+            execute_cmd(Cmd::error(format!("Invalid Python version: {e}")))?;
             return Err(e.into());
         }
         if let Some(p) = packages {
             for pkg in p.split(',') {
                 if let Err(e) = crate::core::security::validate_package_name(pkg.trim()) {
-                    execute_cmd(Cmd::error(format!("Invalid package name: {e}")));
+                    execute_cmd(Cmd::error(format!("Invalid package name: {e}")))?;
                     return Err(e.into());
                 }
             }
@@ -530,7 +530,7 @@ pub mod golden_path {
             Cmd::info(format!(
                 "Developers can now use: omg new {name} <project-name>"
             )),
-        ]));
+        ]))?;
 
         Ok(())
     }
@@ -554,7 +554,7 @@ pub mod golden_path {
                 ),
                 Cmd::spacer(),
                 Cmd::info("Create new: omg team golden-path create <name>"),
-            ]));
+            ]))?;
         } else {
             let mut template_list = vec![];
             for t in &config.templates {
@@ -574,7 +574,7 @@ pub mod golden_path {
                 ),
                 Cmd::spacer(),
                 Cmd::card("Available Templates", template_list),
-            ]));
+            ]))?;
         }
 
         Ok(())
@@ -589,9 +589,9 @@ pub mod golden_path {
 
         if config.templates.len() < original_len {
             config.save()?;
-            execute_cmd(Cmd::success(format!("Deleted template '{name}'")));
+            execute_cmd(Cmd::success(format!("Deleted template '{name}'")))?;
         } else {
-            execute_cmd(Cmd::warning(format!("Template '{name}' not found")));
+            execute_cmd(Cmd::warning(format!("Template '{name}' not found")))?;
         }
 
         Ok(())
@@ -609,7 +609,7 @@ pub fn compliance(export: Option<&str>, enforce: bool, _ctx: &CliContext) -> Res
         execute_cmd(Cmd::warning(
             "Enforcement mode requested, but no compliance evaluation engine \
              exists locally; nothing can be enforced yet",
-        ));
+        ))?;
     }
 
     if let Some(path) = export {
@@ -626,7 +626,7 @@ pub fn compliance(export: Option<&str>, enforce: bool, _ctx: &CliContext) -> Res
             "Compliance scoring is not computed locally; \
              view evaluated results on the dashboard",
         ),
-    ]));
+    ]))?;
 
     Ok(())
 }
@@ -656,7 +656,7 @@ pub async fn activity(days: u32, _ctx: &CliContext) -> Result<()> {
                 "No recent activity",
             ),
             Cmd::spacer(),
-        ]));
+        ]))?;
         return Ok(());
     }
 
@@ -678,7 +678,7 @@ pub async fn activity(days: u32, _ctx: &CliContext) -> Result<()> {
         ),
         Cmd::spacer(),
         Cmd::card("Recent Activity", activity_list),
-    ]));
+    ]))?;
 
     Ok(())
 }

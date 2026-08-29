@@ -26,7 +26,7 @@ impl LocalCommandRunner for EnvCommands {
 pub async fn capture() -> Result<()> {
     use crate::cli::packages::execute_cmd;
 
-    execute_cmd(Components::loading("Capturing environment state..."));
+    execute_cmd(Components::loading("Capturing environment state..."))?;
 
     let state = EnvironmentState::capture().await?;
     state.save("omg.lock")?;
@@ -42,7 +42,7 @@ pub async fn capture() -> Result<()> {
             ],
         ),
         Components::complete("Environment state saved to omg.lock"),
-    ]));
+    ]))?;
 
     Ok(())
 }
@@ -55,11 +55,11 @@ pub async fn check() -> Result<()> {
         execute_cmd(Components::error_with_suggestion(
             "No omg.lock file found",
             "Run 'omg env capture' to create an environment lockfile",
-        ));
+        ))?;
         anyhow::bail!("No omg.lock file found");
     }
 
-    execute_cmd(Components::loading("Checking for environment drift..."));
+    execute_cmd(Components::loading("Checking for environment drift..."))?;
 
     let expected = EnvironmentState::load("omg.lock")?;
     let current = EnvironmentState::capture().await?;
@@ -71,7 +71,7 @@ pub async fn check() -> Result<()> {
             Cmd::warning("Environment drift detected"),
             Cmd::spacer(),
             Cmd::println("  The following differences were found:"),
-        ]));
+        ]))?;
         report.print();
         anyhow::bail!("Environment drift detected");
     }
@@ -83,7 +83,7 @@ pub async fn check() -> Result<()> {
             Some("Environment Status"),
             vec![("Lockfile", "omg.lock"), ("Status", "No drift detected")],
         ),
-    ]));
+    ]))?;
 
     Ok(())
 }
@@ -154,7 +154,7 @@ pub async fn share(description: String, public: bool) -> Result<()> {
 
     // SECURITY: Validate description
     if description.len() > 1000 {
-        execute_cmd(Cmd::error("Description too long (max 1000 characters)"));
+        execute_cmd(Cmd::error("Description too long (max 1000 characters)"))?;
         anyhow::bail!("Description too long");
     }
 
@@ -162,7 +162,7 @@ pub async fn share(description: String, public: bool) -> Result<()> {
         execute_cmd(Components::error_with_suggestion(
             "No omg.lock file found",
             "Run 'omg env capture' to create an environment lockfile",
-        ));
+        ))?;
         anyhow::bail!("No omg.lock file found");
     }
 
@@ -180,7 +180,7 @@ pub async fn share(description: String, public: bool) -> Result<()> {
         files,
     };
 
-    execute_cmd(Components::loading("Uploading to GitHub Gist..."));
+    execute_cmd(Components::loading("Uploading to GitHub Gist..."))?;
 
     let client = shared_client();
 
@@ -198,7 +198,7 @@ pub async fn share(description: String, public: bool) -> Result<()> {
         tracing::debug!(status = %status, body_bytes = body.len(), "GitHub Gist request failed");
         execute_cmd(Cmd::error(format!(
             "Failed to create gist: {status} - {safe_body}"
-        )));
+        )))?;
         anyhow::bail!("Failed to create gist: {status} - {safe_body}");
     }
 
@@ -220,7 +220,7 @@ pub async fn share(description: String, public: bool) -> Result<()> {
                 ),
             ],
         ),
-    ]));
+    ]))?;
 
     Ok(())
 }
@@ -230,16 +230,16 @@ pub async fn sync(url_or_id: String) -> Result<()> {
     use crate::cli::packages::execute_cmd;
 
     if url_or_id.len() > 255 || url_or_id.chars().any(char::is_control) {
-        execute_cmd(Cmd::error("Invalid Gist URL or ID"));
+        execute_cmd(Cmd::error("Invalid Gist URL or ID"))?;
         anyhow::bail!("Invalid Gist URL or ID");
     }
 
-    execute_cmd(Components::loading("Syncing environment..."));
+    execute_cmd(Components::loading("Syncing environment..."))?;
     sync_lockfile(&url_or_id, Path::new(".")).await?;
     execute_cmd(Cmd::batch([
         Cmd::success("omg.lock updated from Gist"),
         Cmd::info("Running environment check..."),
-    ]));
+    ]))?;
     check().await
 }
 

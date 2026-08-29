@@ -45,7 +45,7 @@ pub async fn reports(report_type: &str, _ctx: &CliContext) -> Result<()> {
 
     execute_cmd(Components::loading(format!(
         "Generating {report_type} report..."
-    )));
+    )))?;
 
     let report = generate_report(report_type).await?;
     let filename = format!(
@@ -79,7 +79,7 @@ pub async fn reports(report_type: &str, _ctx: &CliContext) -> Result<()> {
         ),
         Cmd::spacer(),
         Cmd::card("Report Contents", report_sections),
-    ]));
+    ]))?;
 
     Ok(())
 }
@@ -99,17 +99,17 @@ pub fn audit_export(
         execute_cmd(Components::error_with_suggestion(
             format!("Invalid compliance framework: {format}"),
             "Valid frameworks: soc2, iso27001, fedramp, hipaa, pci-dss",
-        ));
+        ))?;
         anyhow::bail!("Invalid compliance framework: {format}");
     }
     if let Some(p) = period
         && (p.len() > 64 || p.chars().any(|c| !c.is_ascii_alphanumeric() && c != '-'))
     {
-        execute_cmd(Cmd::error("Invalid period format"));
+        execute_cmd(Cmd::error("Invalid period format"))?;
         anyhow::bail!("Invalid period format");
     }
     if let Err(e) = crate::core::security::validate_relative_path(output) {
-        execute_cmd(Cmd::error(format!("Invalid output path: {e}")));
+        execute_cmd(Cmd::error(format!("Invalid output path: {e}")))?;
         return Err(e.into());
     }
 
@@ -117,7 +117,7 @@ pub fn audit_export(
 
     execute_cmd(Components::loading(format!(
         "Exporting {format} audit evidence..."
-    )));
+    )))?;
 
     let period_str = period.unwrap_or("current");
     fs::create_dir_all(output)?;
@@ -153,7 +153,7 @@ pub fn audit_export(
         Cmd::card("Generated Files", file_list),
         Cmd::spacer(),
         Components::complete("Ready for auditor review"),
-    ]));
+    ]))?;
 
     Ok(())
 }
@@ -229,7 +229,7 @@ pub fn license_scan(export: Option<&str>, _ctx: &CliContext) -> Result<()> {
         } else {
             Cmd::none()
         },
-    ]));
+    ]))?;
 
     Ok(())
 }
@@ -246,7 +246,7 @@ pub mod policy {
                 || s.chars()
                     .any(|c| !c.is_ascii_alphanumeric() && c != ':' && c != '-'))
         {
-            execute_cmd(Cmd::error("Invalid policy scope"));
+            execute_cmd(Cmd::error("Invalid policy scope"))?;
             anyhow::bail!("Invalid policy scope");
         }
 
@@ -259,7 +259,7 @@ pub mod policy {
                 Cmd::header("Policy Configuration", "No active policies"),
                 Cmd::spacer(),
                 Cmd::info("Enterprise policies can be configured in the dashboard"),
-            ]));
+            ]))?;
             return Ok(());
         }
 
@@ -286,7 +286,7 @@ pub mod policy {
             ),
             Cmd::spacer(),
             Cmd::card("Active Policies", policy_list),
-        ]));
+        ]))?;
 
         Ok(())
     }
@@ -306,11 +306,11 @@ pub mod server {
             execute_cmd(Components::error_with_suggestion(
                 "Only HTTPS upstreams allowed for security",
                 "Use https:// instead of http://",
-            ));
+            ))?;
             anyhow::bail!("Only HTTPS upstreams allowed for security");
         }
         if upstream.len() > 1024 || upstream.chars().any(char::is_control) {
-            execute_cmd(Cmd::error("Invalid upstream URL"));
+            execute_cmd(Cmd::error("Invalid upstream URL"))?;
             anyhow::bail!("Invalid upstream URL");
         }
 
@@ -318,7 +318,7 @@ pub mod server {
 
         execute_cmd(Components::loading(
             "Checking upstream and syncing local databases...",
-        ));
+        ))?;
 
         // The upstream must actually participate: verify it is reachable
         // instead of accepting the URL and only running a local sync.
@@ -362,7 +362,7 @@ pub mod server {
         execute_cmd(Cmd::batch([
             Cmd::success("Mirror check complete!"),
             Components::kv_list(Some("Sync Status"), status),
-        ]));
+        ]))?;
 
         Ok(())
     }

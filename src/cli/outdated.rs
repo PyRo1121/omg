@@ -22,7 +22,7 @@ pub async fn run(json: bool) -> Result<()> {
 
     // SECURITY: This command has no string inputs, but we validate environment state
     if !json {
-        crate::cli::packages::execute_cmd(Components::loading("Checking for updates"));
+        crate::cli::packages::execute_cmd(Components::loading("Checking for updates"))?;
     }
 
     let pm = get_package_manager()?;
@@ -33,7 +33,7 @@ pub async fn run(json: bool) -> Result<()> {
         if json {
             println!("[]");
         } else {
-            crate::cli::packages::execute_cmd(Components::up_to_date());
+            crate::cli::packages::execute_cmd(Components::up_to_date())?;
         }
         return Ok(());
     }
@@ -152,7 +152,7 @@ pub async fn run(json: bool) -> Result<()> {
     // Actions
     commands.push(Cmd::info("Run 'omg update' to update all packages"));
 
-    crate::cli::packages::execute_cmd(Cmd::batch(commands));
+    crate::cli::packages::execute_cmd(Cmd::batch(commands))?;
 
     Ok(())
 }

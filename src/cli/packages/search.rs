@@ -134,7 +134,7 @@ async fn search_internal(
     if display_packages.is_empty() {
         use crate::cli::components::Components;
         use crate::cli::packages::execute_cmd;
-        execute_cmd(Components::no_results(query));
+        execute_cmd(Components::no_results(query))?;
         return Ok(());
     }
 
@@ -304,7 +304,7 @@ fn search_sync_official_only(query: &str, limit: usize) -> Result<bool> {
         if res.packages.is_empty() {
             use crate::cli::components::Components;
             use crate::cli::packages::execute_cmd;
-            execute_cmd(Components::no_results(query));
+            execute_cmd(Components::no_results(query))?;
             return Ok(true);
         }
 

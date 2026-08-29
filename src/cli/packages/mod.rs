@@ -74,22 +74,37 @@ macro_rules! dispatch_backend {
 }
 pub(crate) use dispatch_backend;
 
-/// Execute a `Cmd<()>` in fallback context (non-Elm mode)
+#[cfg(test)]
+mod tests {
+    use super::execute_cmd;
+    use crate::cli::tea::Cmd;
+
+    #[test]
+    fn fallback_executor_propagates_cmd_errors() {
+        let error = execute_cmd(Cmd::error("package operation failed"))
+            .expect_err("fallback Cmd::Error must fail the command");
+        assert!(error.to_string().contains("package operation failed"));
+    }
+}
+
+/// Execute a `Cmd<()>` in fallback context (non-Elm mode).
 ///
 /// This provides a simple println-based execution for reliability
 /// in CI/non-TTY environments where the Elm UI might not be available.
-pub(crate) fn execute_cmd(cmd: crate::cli::tea::Cmd<()>) {
+/// A rendered [`Cmd::Error`] is also returned as a failure so callers cannot
+/// accidentally report a failed command as successful.
+pub(crate) fn execute_cmd(cmd: crate::cli::tea::Cmd<()>) -> anyhow::Result<()> {
     use crate::cli::tea::Cmd;
     use std::io::Write;
 
-    fn execute_inner(cmd: Cmd<()>) {
+    fn execute_inner(cmd: Cmd<()>) -> anyhow::Result<()> {
         match cmd {
             Cmd::None | Cmd::Msg(()) | Cmd::Exec(_) => {
                 // Not supported or applicable in fallback mode
             }
             Cmd::Batch(cmds) => {
                 for c in cmds {
-                    execute_inner(c);
+                    execute_inner(c)?;
                 }
             }
             Cmd::PrintLn(output) => {
@@ -108,6 +123,7 @@ pub(crate) fn execute_cmd(cmd: crate::cli::tea::Cmd<()>) {
                 // User-facing failure: stderr so it stays visible even when
                 // stdout is redirected or consumed by progress rendering.
                 eprintln!("✗ {msg}");
+                anyhow::bail!("{msg}");
             }
             Cmd::Header(title, body) => {
                 println!("\n[{title}] {body}");
@@ -123,11 +139,13 @@ pub(crate) fn execute_cmd(cmd: crate::cli::tea::Cmd<()>) {
                 println!();
             }
         }
+        Ok(())
     }
 
-    execute_inner(cmd);
+    execute_inner(cmd)?;
 
-    // Ensure output is flushed
-    let _ = std::io::stdout().flush();
-    let _ = std::io::stderr().flush();
+    // Ensure output is flushed.
+    std::io::stdout().flush()?;
+    std::io::stderr().flush()?;
+    Ok(())
 }

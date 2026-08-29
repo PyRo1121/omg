@@ -84,7 +84,7 @@ pub async fn status(_ctx: &CliContext) -> Result<()> {
         },
         Cmd::spacer(),
         Cmd::println("Manage your fleet at: https://pyro1121.com/dashboard"),
-    ]));
+    ]))?;
 
     Ok(())
 }
