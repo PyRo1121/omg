@@ -1,6 +1,9 @@
 use anyhow::Result;
 use crossterm::{
-    event::{self, DisableMouseCapture, EnableMouseCapture, Event, KeyCode, KeyEventKind},
+    event::{
+        self, DisableMouseCapture, EnableMouseCapture, Event, KeyCode, KeyEvent, KeyEventKind,
+        KeyModifiers,
+    },
     execute,
     terminal::{EnterAlternateScreen, LeaveAlternateScreen, disable_raw_mode, enable_raw_mode},
 };
@@ -21,6 +24,15 @@ const SEARCH_DEBOUNCE_MS: u64 = 250;
 
 /// Outcome of a background action: `(label, Ok(summary-or-empty))`.
 type ActionResult = (&'static str, anyhow::Result<String>);
+
+fn should_quit(key: KeyEvent, search_mode: bool) -> bool {
+    (key.code == KeyCode::Char('c') && key.modifiers.contains(KeyModifiers::CONTROL))
+        || (key.code == KeyCode::Char('q') && key.modifiers.is_empty() && !search_mode)
+}
+
+fn should_dispatch_key(key: KeyEvent) -> bool {
+    !key.modifiers.contains(KeyModifiers::CONTROL)
+}
 
 pub async fn run() -> Result<()> {
     let app = app::App::new().await?;
@@ -104,10 +116,13 @@ async fn run_app(
         {
             // Only process key press events, ignore release
             if key.kind == KeyEventKind::Press {
-                // Exit on 'q' - check this first for quick exit, but only outside
-                // search mode so queries containing 'q' can still be typed.
-                if key.code == KeyCode::Char('q') && !app.search_mode {
+                if should_quit(key, app.search_mode) {
                     return Ok(());
+                }
+                // Control-modified characters must never fall through to a
+                // destructive single-key action or become search text.
+                if !should_dispatch_key(key) {
+                    continue;
                 }
 
                 // While typing a query, global shortcuts must not fire AND
@@ -262,4 +277,18 @@ fn force_refresh(app: &mut app::App) {
     app.last_tick = std::time::Instant::now()
         .checked_sub(Duration::from_secs(REFRESH_INTERVAL_SECS + 1))
         .unwrap_or_else(std::time::Instant::now);
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    #[test]
+    fn control_c_quits_instead_of_dispatching_a_dashboard_action() {
+        let interrupt = KeyEvent::new(KeyCode::Char('c'), KeyModifiers::CONTROL);
+        let update = KeyEvent::new(KeyCode::Char('u'), KeyModifiers::CONTROL);
+
+        assert!(should_quit(interrupt, false));
+        assert!(should_quit(interrupt, true));
+        assert!(!should_dispatch_key(update));
+    }
 }
