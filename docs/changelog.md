@@ -669,6 +669,7 @@ analyzer inference
 - **Ci**: Cross-platform install script and R2 release sync
 ### 🐛 Bug Fixes
 
+- Surface invalid cached rollback archives
 - Create missing fish config directories
 - Strip inline pacman configuration comments
 - Count unhealthy mirror responses
