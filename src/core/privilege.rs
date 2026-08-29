@@ -58,19 +58,29 @@ pub fn set_yes_flag(value: bool) {
 /// Dev/test mode bails without touching sudo. A password requirement in a
 /// non-interactive session, or a nonzero child status, is returned as an
 /// error.
+fn reject_privileged_program_in_dev_mode(
+    dev_mode: bool,
+    program: &str,
+    args: &[&str],
+) -> anyhow::Result<()> {
+    anyhow::ensure!(
+        !dev_mode,
+        "Privilege elevation not supported in development mode.\n\
+         \n\
+         Options:\n\
+         • Prime sudo credentials: omg doctor --turbo\n\
+         • Run directly with sudo: sudo {program} {args:?}"
+    );
+    Ok(())
+}
+
 pub async fn run_privileged_program(program: &str, args: &[&str]) -> anyhow::Result<()> {
     // Detect dev/test mode — identical contract to run_self_sudo.
-    let is_test_mode =
-        crate::core::paths::test_mode() || std::env::var("CARGO_PRIMARY_PACKAGE").is_ok();
-    if is_test_mode {
-        anyhow::bail!(
-            "Privilege elevation not supported in development mode.\n\
-             \n\
-             Options:\n\
-             • Prime sudo credentials: omg doctor --turbo\n\
-             • Run directly with sudo: sudo {program} {args:?}"
-        );
-    }
+    reject_privileged_program_in_dev_mode(
+        crate::core::paths::test_mode() || std::env::var("CARGO_PRIMARY_PACKAGE").is_ok(),
+        program,
+        args,
+    )?;
 
     // Pre-flight: validate/refresh credentials WITHOUT running the payload,
     // so a password requirement is detected before any partial work.
@@ -655,6 +665,16 @@ mod tests {
             format!("-n -- /usr/bin/omg {ELEVATED_MARKER} sync"),
             "cached credentials must keep the payload noninteractive"
         );
+    }
+
+    #[test]
+    fn privileged_program_dev_mode_rejection_is_actionable() {
+        let error = reject_privileged_program_in_dev_mode(true, "apt-get", &["update"])
+            .expect_err("development mode must reject external elevation");
+        let message = error.to_string();
+        assert!(message.contains("development mode"));
+        assert!(message.contains("apt-get"));
+        assert!(message.contains("sudo"));
     }
 
     #[tokio::test]

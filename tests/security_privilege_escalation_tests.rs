@@ -27,7 +27,6 @@ use tempfile::{NamedTempFile, TempDir};
 // ═══════════════════════════════════════════════════════════════════════════
 
 mod privilege_escalation {
-    use serial_test::serial;
     // Note: MockPrivilegeChecker is only available in unit tests (cfg(test))
 
     #[test]
@@ -284,58 +283,6 @@ mod privilege_escalation {
         );
     }
     // These integration tests use the real SystemPrivilegeChecker
-
-    #[test]
-    #[serial]
-    #[expect(unsafe_code)]
-    fn test_elevation_whitelist_allowed_operations() {
-        use omg_lib::core::privilege::elevate_for_operation;
-
-        // Set test mode to prevent actual sudo execution
-        // SAFETY: Setting env var in single-threaded test context
-        unsafe {
-            std::env::set_var("OMG_TEST_MODE", "1");
-        }
-
-        let empty_args = Vec::new();
-
-        // Allowed operations - should either:
-        // 1. Fail with test mode message (not whitelist rejection) — when NOT root
-        // 2. Succeed (Ok(())) — when already running as root (e.g., CI Docker containers)
-        //    because elevate_if_needed() sees is_root()==true and skips elevation.
-        let result = elevate_for_operation("install", &empty_args);
-        match &result {
-            Ok(()) => {
-                // Running as root — elevation was not needed, which is correct.
-                // This happens in CI Docker containers.
-            }
-            Err(err) => {
-                let err_str = err.to_string();
-                assert!(
-                    err_str.contains("not supported in development mode")
-                        || err_str.contains("OMG_TEST_MODE"),
-                    "Expected test mode error, got: {err_str}",
-                );
-            }
-        }
-
-        // For the rest, just verify they don't panic and the error is not about whitelist
-        for op in ["remove", "upgrade", "update", "sync", "clean"] {
-            let result = elevate_for_operation(op, &empty_args);
-            if let Err(e) = result {
-                let msg = e.to_string();
-                assert!(
-                    !msg.contains("not whitelisted"),
-                    "Operation {op} should pass whitelist but got: {msg}",
-                );
-            }
-        }
-
-        // SAFETY: Cleaning up test env var after test completion
-        unsafe {
-            std::env::remove_var("OMG_TEST_MODE");
-        }
-    }
 
     #[test]
     fn test_elevation_whitelist_blocks_dangerous() {

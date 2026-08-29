@@ -206,36 +206,6 @@ fn test_sudo_n_flag_fallback_on_password_required() {
 }
 
 #[test]
-fn test_privileged_program_fail_closed_in_dev_mode() {
-    // Contract (src/core/privilege.rs, run_privileged_program): in dev/test
-    // builds external-program elevation must bail BEFORE touching sudo, and
-    // the error must be actionable: it names the mode, the program, and the
-    // sudo fallback.
-    use omg_lib::core::privilege;
-
-    let result = temp_env::with_vars([("OMG_TEST_MODE", Some("1"))], || {
-        tokio::runtime::Runtime::new()
-            .expect("tokio runtime")
-            .block_on(privilege::run_privileged_program("apt-get", &["update"]))
-    });
-
-    let err = result.expect_err("dev/test builds must refuse privilege elevation");
-    let message = err.to_string();
-    assert!(
-        message.contains("development mode"),
-        "error must explain the dev-mode limitation: {message}"
-    );
-    assert!(
-        message.contains("apt-get"),
-        "error must name the program it refused to elevate: {message}"
-    );
-    assert!(
-        message.contains("sudo"),
-        "error must suggest the manual sudo alternative: {message}"
-    );
-}
-
-#[test]
 fn test_elevate_rejects_injection_style_operations() {
     // Contract (src/core/privilege.rs, ALLOWED_ROOT_OPS): the whitelist is an
     // exact string match, so shell metacharacters or concatenated commands can
