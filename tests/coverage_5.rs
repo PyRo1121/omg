@@ -211,6 +211,22 @@ fn join_rejects_overlong_url() {
     );
 }
 
+/// Contract: unsupported HTTPS remotes are rejected before the team workspace
+/// is initialized, so the following pull cannot be guaranteed to work.
+#[test]
+#[serial]
+fn join_rejects_unsupported_https_remote_before_mutation() {
+    clear_license();
+    let project = TestProject::new();
+    let res = project.run(&["team", "join", "https://github.com/acme/backend"]);
+    res.assert_failure();
+    res.assert_stderr_contains("gist.github.com");
+    assert!(
+        !workspace_marker_exists(&project),
+        "unsupported remotes must not initialize a workspace"
+    );
+}
+
 // ═══════════════════════════════════════════════════════════════════════════
 // team status
 // ═══════════════════════════════════════════════════════════════════════════

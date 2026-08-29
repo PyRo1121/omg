@@ -76,17 +76,42 @@ impl LocalCommandRunner for TeamCommands {
 }
 
 /// Initialize a new team workspace
+fn validate_team_id(team_id: &str) -> Result<()> {
+    anyhow::ensure!(
+        !team_id.is_empty()
+            && team_id
+                .chars()
+                .all(|c| c.is_ascii_alphanumeric() || matches!(c, '/' | '-' | '_')),
+        "Invalid team ID: {team_id}"
+    );
+    Ok(())
+}
+
+fn validate_team_remote(remote_url: &str) -> Result<()> {
+    let url = reqwest::Url::parse(remote_url).context("Invalid remote URL")?;
+    anyhow::ensure!(
+        url.scheme() == "https" && url.host_str() == Some("gist.github.com"),
+        "Team remotes must be HTTPS gist.github.com URLs"
+    );
+    anyhow::ensure!(
+        url.path_segments()
+            .into_iter()
+            .flatten()
+            .any(|segment| !segment.is_empty()),
+        "Team remote URL must include a Gist ID"
+    );
+    Ok(())
+}
+
+/// Initialize a new team workspace.
 pub fn init(team_id: &str, name: Option<&str>, _ctx: &CliContext) -> Result<()> {
     // SECURITY: Validate team_id
-    if team_id
-        .chars()
-        .any(|c| !c.is_ascii_alphanumeric() && c != '/' && c != '-' && c != '_')
-    {
+    if let Err(error) = validate_team_id(team_id) {
         execute_cmd(Components::error_with_suggestion(
             "Invalid team ID",
             "Team IDs must be alphanumeric with /, -, or _ allowed",
         ));
-        anyhow::bail!("Invalid team ID: {team_id}");
+        return Err(error);
     }
     if let Some(n) = name
         && (n.len() > 128 || n.chars().any(char::is_control))
@@ -138,6 +163,7 @@ pub async fn join(remote_url: &str, _ctx: &CliContext) -> Result<()> {
         execute_cmd(Cmd::error("Invalid remote URL"));
         anyhow::bail!("Invalid remote URL");
     }
+    validate_team_remote(remote_url)?;
 
     // Require Team tier for team sync features
     license::require_feature("team-sync")?;
@@ -147,6 +173,7 @@ pub async fn join(remote_url: &str, _ctx: &CliContext) -> Result<()> {
     if !workspace.is_team_workspace() {
         // Auto-init if not a team workspace
         let team_id = extract_team_id(remote_url);
+        validate_team_id(&team_id)?;
         workspace.init(&team_id, &team_id)?;
     }
 
@@ -327,32 +354,20 @@ pub async fn members(_ctx: &CliContext) -> Result<()> {
 }
 
 fn extract_team_id(url: &str) -> String {
-    // Extract team ID from URL
-    // e.g., "https://github.com/mycompany/frontend" -> "mycompany/frontend"
-    // e.g., "https://gist.github.com/user/abc123" -> "gist-abc123"
-
-    if url.contains("gist.github.com") {
-        // Take the last non-empty path segment so trailing slashes and query
-        // strings do not yield an empty ID.
-        let id = url
-            .split(['/', '?'])
-            .rev()
-            .find(|segment| !segment.is_empty())
-            .unwrap_or("team");
-        format!("gist-{}", prefix(id, 8))
-    } else if url.contains("github.com") {
-        // strip_suffix instead of trim_end_matches so a repo legitimately named
-        // e.g. "foo.git.git" is only stripped once.
-        url.strip_suffix(".git")
-            .unwrap_or(url)
-            .split("github.com/")
-            .nth(1) // More idiomatic than .last() when we want the element after split
-            .filter(|id| !id.is_empty())
-            .unwrap_or("team")
-            .to_string()
-    } else {
-        "team".to_string()
+    let Ok(url) = reqwest::Url::parse(url) else {
+        return "team".to_string();
+    };
+    if url.host_str() != Some("gist.github.com") {
+        return "team".to_string();
     }
+    let id = url
+        .path_segments()
+        .into_iter()
+        .flatten()
+        .rev()
+        .find(|segment| !segment.is_empty())
+        .unwrap_or("team");
+    format!("gist-{}", prefix(id, 8))
 }
 
 /// Interactive team dashboard (TUI)
