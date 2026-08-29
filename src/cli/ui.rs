@@ -74,6 +74,14 @@ impl Style {
 
     pub fn render<S: Display>(&self, text: S) -> String {
         let s = text.to_string();
+        if !crate::cli::style::colors_enabled() {
+            return format!(
+                "{}{}{}",
+                " ".repeat(self.padding_left),
+                s,
+                " ".repeat(self.padding_right)
+            );
+        }
 
         // Apply colors and styles
         let mut styled = match self.fg {
@@ -217,4 +225,23 @@ pub fn print_card(title: &str, content: Vec<String>) {
     }
 
     println!("\n{table}");
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn styles_are_plain_when_no_color_is_set() {
+        temp_env::with_var("NO_COLOR", Some("1"), || {
+            let rendered = Style::new()
+                .foreground(Color::Green)
+                .bold(true)
+                .padding_left(1)
+                .padding_right(1)
+                .render("ok");
+            assert_eq!(rendered, " ok ");
+            assert!(!rendered.contains('\u{1b}'));
+        });
+    }
 }

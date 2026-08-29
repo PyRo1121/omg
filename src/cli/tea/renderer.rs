@@ -130,10 +130,15 @@ impl<W: Write> Renderer<W> {
         use comfy_table::presets::UTF8_FULL;
 
         let mut table = Table::new();
+        let rendered_title = if self.no_color {
+            title.to_string()
+        } else {
+            crate::cli::ui::Style::new().bold(true).render(title)
+        };
         table
             .load_preset(UTF8_FULL)
             .apply_modifier(UTF8_ROUND_CORNERS)
-            .set_header(vec![crate::cli::ui::Style::new().bold(true).render(title)]);
+            .set_header(vec![rendered_title]);
         for line in content {
             table.add_row(vec![line.clone()]);
         }
@@ -168,6 +173,19 @@ mod tests {
 
         let output = String::from_utf8(cursor.into_inner()).unwrap();
         assert_eq!(output, "test\n");
+    }
+
+    #[test]
+    fn card_does_not_emit_ansi_when_no_color_is_set() {
+        temp_env::with_var("NO_COLOR", Some("1"), || {
+            let mut cursor = Cursor::new(Vec::new());
+            let mut renderer = Renderer::with_writer(&mut cursor);
+            renderer
+                .card("Title", &["content".to_string()])
+                .expect("card renders");
+            let output = String::from_utf8(cursor.into_inner()).expect("UTF-8 output");
+            assert!(!output.contains('\u{1b}'));
+        });
     }
 
     #[test]
