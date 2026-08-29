@@ -3835,6 +3835,7 @@ the Debian backend), so it was removed from the metadata.
 - Normalize project formatting
 ### 🧪 Testing
 
+- Remove process environment races
 - Detach TUI state tests from host services
 - Run ALPM coverage against seeded databases
 - Cover mock package installation
