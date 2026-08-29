@@ -177,6 +177,7 @@ struct MakepkgEnv {
     pkgdest: PathBuf,
     srcdest: PathBuf,
     builddir: PathBuf,
+    compiler_cache_dirs: Vec<PathBuf>,
     extra_env: Vec<(String, String)>,
 }
 
@@ -1940,7 +1941,12 @@ impl AurClient {
             })?;
 
             // Verify all writable paths are inside user's cache directory (not /etc, /root, etc.)
-            let cache_base = paths::cache_dir();
+            let cache_base = paths::cache_dir().canonicalize().with_context(|| {
+                format!(
+                    "Failed to canonicalize cache directory: {}",
+                    paths::cache_dir().display()
+                )
+            })?;
             for (name, path) in [
                 ("pkgdest", &pkgdest_canonical),
                 ("srcdest", &srcdest_canonical),
@@ -1955,6 +1961,8 @@ impl AurClient {
                     );
                 }
             }
+            let compiler_cache_mounts =
+                Self::sandbox_cache_mounts(&cache_base, &env.compiler_cache_dirs)?;
 
             let pkg_dir_str = pkg_dir_canonical.to_string_lossy();
             let (build_user_name, home) = build_identity();
@@ -2014,6 +2022,11 @@ impl AurClient {
             cmd.args(["--bind"]);
             cmd.arg(&*builddir_str);
             cmd.arg(&*builddir_str);
+            for cache_dir in &compiler_cache_mounts {
+                cmd.args(["--bind"]);
+                cmd.arg(cache_dir);
+                cmd.arg(cache_dir);
+            }
             cmd.args([
                 "--tmpfs",
                 "/tmp",
@@ -2157,6 +2170,9 @@ impl AurClient {
             .env("SRCDEST", &env.srcdest)
             .env("BUILDDIR", &env.builddir)
             .stdin(Stdio::null());
+        for (key, value) in &env.extra_env {
+            cmd.env(key, value);
+        }
 
         self.run_logged_build_command(&mut cmd, package)
             .await
@@ -2380,6 +2396,35 @@ impl AurClient {
         Ok(())
     }
 
+    fn sandbox_cache_mounts(cache_base: &Path, cache_dirs: &[PathBuf]) -> Result<Vec<PathBuf>> {
+        let cache_base = cache_base.canonicalize().with_context(|| {
+            format!(
+                "Failed to canonicalize cache directory: {}",
+                cache_base.display()
+            )
+        })?;
+        let mut mounts = Vec::with_capacity(cache_dirs.len());
+
+        for cache_dir in cache_dirs {
+            let canonical = cache_dir.canonicalize().with_context(|| {
+                format!(
+                    "Failed to canonicalize compiler cache directory: {}",
+                    cache_dir.display()
+                )
+            })?;
+            anyhow::ensure!(
+                canonical.starts_with(&cache_base),
+                "Security: compiler cache directory escapes cache directory: {}",
+                canonical.display()
+            );
+            if !mounts.contains(&canonical) {
+                mounts.push(canonical);
+            }
+        }
+
+        Ok(mounts)
+    }
+
     fn makepkg_env(&self, pkg_dir: &Path) -> Result<MakepkgEnv> {
         let jobs = std::thread::available_parallelism().map_or(1, std::num::NonZero::get);
         let makeflags = self
@@ -2460,6 +2505,7 @@ impl AurClient {
             }
         }
 
+        let mut compiler_cache_dirs = Vec::new();
         let mut extra_env = Vec::new();
 
         if self.settings.aur.enable_ccache {
@@ -2470,6 +2516,13 @@ impl AurClient {
                 .clone()
                 .unwrap_or_else(|| self.build_dir.join("_ccache"));
             create_dir_as_user_sync(&ccache_dir)?;
+            let ccache_dir = ccache_dir.canonicalize().with_context(|| {
+                format!(
+                    "Failed to canonicalize ccache directory: {}",
+                    ccache_dir.display()
+                )
+            })?;
+            compiler_cache_dirs.push(ccache_dir.clone());
             extra_env.push((
                 "CCACHE_DIR".to_string(),
                 ccache_dir.to_string_lossy().into_owned(),
@@ -2488,6 +2541,15 @@ impl AurClient {
                 .clone()
                 .unwrap_or_else(|| self.build_dir.join("_sccache"));
             create_dir_as_user_sync(&sccache_dir)?;
+            let sccache_dir = sccache_dir.canonicalize().with_context(|| {
+                format!(
+                    "Failed to canonicalize sccache directory: {}",
+                    sccache_dir.display()
+                )
+            })?;
+            if !compiler_cache_dirs.contains(&sccache_dir) {
+                compiler_cache_dirs.push(sccache_dir.clone());
+            }
             extra_env.push(("RUSTC_WRAPPER".to_string(), "sccache".to_string()));
             extra_env.push((
                 "SCCACHE_DIR".to_string(),
@@ -2500,6 +2562,7 @@ impl AurClient {
             pkgdest,
             srcdest,
             builddir,
+            compiler_cache_dirs,
             extra_env,
         })
     }
@@ -3094,6 +3157,23 @@ mod tests {
             AurClient::makepkg_dependency_args().last(),
             Some(&"PACMAN_AUTH=/usr/bin/sudo"),
             "makepkg's default sudo -k would invalidate omg's live credential"
+        );
+    }
+
+    #[test]
+    fn sandbox_cache_mounts_include_configured_compiler_caches() {
+        let directory = tempfile::tempdir().unwrap();
+        let cache_base = directory.path().join("cache");
+        let ccache = cache_base.join("ccache");
+        let sccache = cache_base.join("sccache");
+        std::fs::create_dir_all(&ccache).unwrap();
+        std::fs::create_dir_all(&sccache).unwrap();
+
+        let mounts = AurClient::sandbox_cache_mounts(&cache_base, &[ccache, sccache]).unwrap();
+
+        assert_eq!(
+            mounts,
+            vec![cache_base.join("ccache"), cache_base.join("sccache")]
         );
     }
 
