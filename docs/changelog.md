@@ -668,6 +668,7 @@ analyzer inference
 - **Ci**: Cross-platform install script and R2 release sync
 ### 🐛 Bug Fixes
 
+- Reject conflicting run modes
 - Invalidate pacman caches on file-set changes
 - Enforce package policy during installs
 - Keep mock package queries isolated
