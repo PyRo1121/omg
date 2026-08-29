@@ -2614,6 +2614,7 @@ across history/faq/cli
 - Run Docker E2E tests explicitly
 ### 📚 Documentation
 
+- Align examples with the CLI
 - Remove obsolete mise runtime claims
 - Describe current daemon persistence and protocol
 - Fold wave-13 research verdicts into fedora plan + SpacetimeDB backend evaluation
