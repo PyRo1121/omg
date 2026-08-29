@@ -1,6 +1,7 @@
 use anyhow::{Context, Result};
 use dialoguer::{Confirm, Select, theme::ColorfulTheme};
 use owo_colors::OwoColorize;
+use semver::{Version, VersionReq};
 use serde::Deserialize;
 use std::collections::HashMap;
 use std::future::Future;
@@ -876,8 +877,9 @@ fn find_rust_toolchain_file(start: &Path) -> Option<PathBuf> {
 fn ensure_node_runtime(version: &str) -> Result<String> {
     let normalized = version.trim_start_matches('v');
 
-    // Check if Node is available via system first (nvm, fnm, volta, or system node)
-    if which::which("node").is_ok() {
+    // A system executable is usable only when its reported version satisfies
+    // the project pin. Merely finding `node` used to bypass the pin entirely.
+    if system_runtime_satisfies("node", normalized) {
         return Ok(normalized.to_string());
     }
 
@@ -886,7 +888,10 @@ fn ensure_node_runtime(version: &str) -> Result<String> {
     let installed = node_manager
         .list_installed()
         .context("Failed to list installed Node.js versions")?;
-    if installed.iter().any(|v| v == normalized) {
+    if installed
+        .iter()
+        .any(|installed_version| runtime_version_satisfies(installed_version, normalized))
+    {
         return Ok(normalized.to_string());
     }
 
@@ -912,8 +917,9 @@ fn ensure_node_runtime(version: &str) -> Result<String> {
 fn ensure_bun_runtime(version: &str) -> Result<String> {
     let normalized = version.trim_start_matches('v');
 
-    // Check if Bun is available via system first
-    if which::which("bun").is_ok() {
+    // Check the executable's version instead of treating any Bun on PATH as
+    // a match for the project's pin.
+    if system_runtime_satisfies("bun", normalized) {
         return Ok(normalized.to_string());
     }
 
@@ -922,7 +928,10 @@ fn ensure_bun_runtime(version: &str) -> Result<String> {
     let installed = bun_manager
         .list_installed()
         .context("Failed to list installed Bun versions")?;
-    if installed.iter().any(|v| v == normalized) {
+    if installed
+        .iter()
+        .any(|installed_version| runtime_version_satisfies(installed_version, normalized))
+    {
         return Ok(normalized.to_string());
     }
 
@@ -938,6 +947,27 @@ fn ensure_bun_runtime(version: &str) -> Result<String> {
     } else {
         anyhow::bail!("Bun setup cancelled");
     }
+}
+
+fn system_runtime_satisfies(command: &str, requested: &str) -> bool {
+    let Ok(output) = Command::new(command).arg("--version").output() else {
+        return false;
+    };
+    if !output.status.success() {
+        return false;
+    }
+    let Ok(actual) = std::str::from_utf8(&output.stdout) else {
+        return false;
+    };
+    runtime_version_satisfies(actual.trim().trim_start_matches('v'), requested)
+}
+
+fn runtime_version_satisfies(actual: &str, requested: &str) -> bool {
+    let Ok(actual) = Version::parse(actual.trim_start_matches('v')) else {
+        return false;
+    };
+    let requested = requested.trim_start_matches('v');
+    VersionReq::parse(requested).is_ok_and(|requirement| requirement.matches(&actual))
 }
 
 fn nvm_resolve_version(version: &str) -> Result<Option<String>> {
@@ -1232,6 +1262,14 @@ mod tests {
         assert!(validate_executable_command("").is_err());
         assert!(validate_executable_command("bad\u{0}cmd").is_err());
         assert!(validate_executable_command("cmd\n").is_err());
+    }
+
+    #[test]
+    fn runtime_pins_require_a_matching_semver_version() {
+        assert!(runtime_version_satisfies("20.11.1", "20"));
+        assert!(runtime_version_satisfies("20.11.1", "^20.0.0"));
+        assert!(!runtime_version_satisfies("18.20.0", "20"));
+        assert!(!runtime_version_satisfies("20.11.1", "not-a-version"));
     }
 
     #[test]
