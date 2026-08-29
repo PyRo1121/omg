@@ -853,13 +853,31 @@ fn ensure_local_cache_loaded(local_dir: &Path) -> Result<()> {
     })
 }
 
-/// Get newest modification time of sync DBs
+/// Get a modification time that changes when sync files are added, removed,
+/// or replaced. The directory timestamp covers additions/removals even when
+/// a copied file preserves an older mtime; the newest entry covers in-place
+/// replacements.
 fn get_newest_db_mtime(sync_dir: &Path) -> Result<SystemTime> {
     if !sync_dir.exists() {
         return Ok(SystemTime::UNIX_EPOCH);
     }
 
+    let directory_mtime = std::fs::metadata(sync_dir)
+        .with_context(|| {
+            format!(
+                "Failed to read sync directory metadata {}",
+                sync_dir.display()
+            )
+        })?
+        .modified()
+        .with_context(|| {
+            format!(
+                "Failed to read modification time for {}",
+                sync_dir.display()
+            )
+        })?;
     let mut newest = SystemTime::UNIX_EPOCH;
+    let mut saw_entry = false;
     for entry in std::fs::read_dir(sync_dir).with_context(|| {
         format!(
             "Failed to read pacman sync directory {}",
@@ -872,6 +890,7 @@ fn get_newest_db_mtime(sync_dir: &Path) -> Result<SystemTime> {
                 sync_dir.display()
             )
         })?;
+        saw_entry = true;
         let path = entry.path();
         let meta = entry.metadata().with_context(|| {
             format!(
@@ -887,6 +906,9 @@ fn get_newest_db_mtime(sync_dir: &Path) -> Result<SystemTime> {
         }
     }
 
+    if saw_entry && directory_mtime > newest {
+        newest = directory_mtime;
+    }
     Ok(newest)
 }
 
@@ -1308,6 +1330,22 @@ mod tests {
             .join("does-not-exist");
         let mtime = get_newest_db_mtime(&missing).unwrap();
         assert_eq!(mtime, SystemTime::UNIX_EPOCH);
+    }
+
+    #[test]
+    fn sync_directory_additions_and_removals_change_cache_identity() {
+        let temp_dir = tempfile::TempDir::new().unwrap();
+        let database = temp_dir.path().join("core.db");
+        let empty = get_newest_db_mtime(temp_dir.path()).unwrap();
+        assert_eq!(empty, SystemTime::UNIX_EPOCH);
+
+        std::fs::write(&database, b"database").unwrap();
+        let populated = get_newest_db_mtime(temp_dir.path()).unwrap();
+        assert!(populated > SystemTime::UNIX_EPOCH);
+
+        std::fs::remove_file(database).unwrap();
+        let removed = get_newest_db_mtime(temp_dir.path()).unwrap();
+        assert_eq!(removed, SystemTime::UNIX_EPOCH);
     }
 
     #[test]
