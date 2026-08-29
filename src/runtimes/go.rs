@@ -31,6 +31,14 @@ const GO_VERSIONS_URL: &str = "https://go.dev/dl/?mode=json&include=all";
 pub(crate) struct GoVersion {
     version: String,
     stable: bool,
+    #[serde(default)]
+    files: Vec<GoVersionFile>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+struct GoVersionFile {
+    filename: String,
+    sha256: String,
 }
 
 impl GoVersion {
@@ -113,19 +121,10 @@ impl GoManager {
         self.use_version(&version)
     }
 
-    /// Fetch SHA256 checksum from go.dev
+    /// Fetch the release manifest and select the vendor checksum for this archive.
     async fn fetch_checksum(&self, filename: &str) -> Result<String> {
-        let url = format!("{GO_DOWNLOAD_URL}/{filename}.sha256");
-        let text = self
-            .client
-            .get(&url)
-            .send()
-            .await?
-            .error_for_status()
-            .context("Failed to fetch Go checksum")?
-            .text()
-            .await?;
-        parse_sha256_digest(&text, &url)
+        let releases = self.list_available().await?;
+        checksum_for_file(&releases, filename)
     }
 
     /// Switch to a specific version
@@ -149,6 +148,15 @@ impl GoManager {
 // Generate common runtime manager methods (list_installed, current_version)
 crate::runtimes::common::impl_runtime_common!(GoManager);
 
+fn checksum_for_file(releases: &[GoVersion], filename: &str) -> Result<String> {
+    let checksum = releases
+        .iter()
+        .flat_map(|release| &release.files)
+        .find(|file| file.filename == filename)
+        .with_context(|| format!("Go release manifest has no checksum for {filename}"))?;
+    parse_sha256_digest(&checksum.sha256, GO_VERSIONS_URL)
+}
+
 fn go_platform() -> Result<String> {
     let os = super::common::host_os_tag("Go", "linux", "darwin")?;
     let arch = super::common::host_arch_tag("Go", "amd64", "arm64")?;
@@ -168,6 +176,24 @@ mod tests {
     #[test]
     fn available_versions_request_includes_historical_releases() {
         assert!(GO_VERSIONS_URL.contains("include=all"));
+    }
+
+    #[test]
+    fn checksum_comes_from_the_matching_release_manifest_file() {
+        let releases = vec![GoVersion {
+            version: "go1.27.0".to_string(),
+            stable: true,
+            files: vec![GoVersionFile {
+                filename: "go1.27.0.linux-amd64.tar.gz".to_string(),
+                sha256: "a".repeat(64),
+            }],
+        }];
+
+        assert_eq!(
+            checksum_for_file(&releases, "go1.27.0.linux-amd64.tar.gz").unwrap(),
+            "a".repeat(64)
+        );
+        assert!(checksum_for_file(&releases, "go1.27.0.darwin-amd64.tar.gz").is_err());
     }
 
     #[tokio::test]
