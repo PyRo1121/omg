@@ -15,6 +15,30 @@ use std::time::Duration;
 use omg_lib::package_managers::debian_db::{DependencyResolver, Transaction};
 
 #[cfg(any(feature = "debian", feature = "debian-pure"))]
+const TRANSACTION_PACKAGES: [&str; 20] = [
+    "vim",
+    "curl",
+    "git",
+    "htop",
+    "tmux",
+    "build-essential",
+    "gcc",
+    "make",
+    "python3",
+    "nodejs",
+    "gcc-multilib",
+    "gdb",
+    "valgrind",
+    "strace",
+    "ltrace",
+    "binutils",
+    "automake",
+    "autoconf",
+    "libtool",
+    "pkg-config",
+];
+
+#[cfg(any(feature = "debian", feature = "debian-pure"))]
 fn bench_install_resolution(c: &mut Criterion) {
     let mut group = c.benchmark_group("install_resolution");
     group.measurement_time(Duration::from_secs(20));
@@ -73,7 +97,9 @@ fn bench_install_resolution(c: &mut Criterion) {
                 let mut resolver =
                     DependencyResolver::new().expect("resolver creation should succeed");
                 for pkg in pkgs {
-                    let _ = resolver.add_package(pkg);
+                    resolver
+                        .add_package(pkg)
+                        .expect("benchmark package must exist in the configured index");
                 }
                 let result = resolver.resolve();
                 std::hint::black_box(result)
@@ -102,10 +128,10 @@ fn bench_install_transaction_creation(c: &mut Criterion) {
                     let mut resolver =
                         DependencyResolver::new().expect("resolver creation should succeed");
 
-                    // Add n packages
-                    let packages = ["vim", "curl", "git", "htop", "tmux"];
-                    for pkg in packages.iter().take(n) {
-                        let _ = resolver.add_package(pkg);
+                    for pkg in TRANSACTION_PACKAGES.iter().take(n) {
+                        resolver
+                            .add_package(pkg)
+                            .expect("benchmark package must exist in the configured index");
                     }
 
                     let resolution = resolver.resolve().expect("resolution should succeed");
@@ -138,7 +164,9 @@ fn bench_install_dependency_graph_sizes(c: &mut Criterion) {
             b.iter(|| {
                 let mut resolver =
                     DependencyResolver::new().expect("resolver creation should succeed");
-                let _ = resolver.add_package(p);
+                resolver
+                    .add_package(p)
+                    .expect("benchmark package must exist in the configured index");
                 let result = resolver.resolve();
                 std::hint::black_box(result)
             });
@@ -173,44 +201,6 @@ fn bench_install_batch_processing(c: &mut Criterion) {
                 std::hint::black_box(seen)
             });
         });
-    }
-
-    group.finish();
-}
-
-#[cfg(any(feature = "debian", feature = "debian-pure"))]
-fn bench_install_conflict_detection(c: &mut Criterion) {
-    let mut group = c.benchmark_group("conflict_detection");
-    group.measurement_time(Duration::from_secs(10));
-    group.sample_size(30);
-
-    // Test conflict detection with different package counts
-    let package_counts = vec![1, 5, 10, 20];
-
-    for count in package_counts {
-        group.throughput(Throughput::Elements(count as u64));
-        group.bench_with_input(
-            BenchmarkId::new("file_conflict_check", count),
-            &count,
-            |b, &n| {
-                b.iter(|| {
-                    let mut resolver =
-                        DependencyResolver::new().expect("resolver creation should succeed");
-
-                    let packages = ["vim", "curl", "git", "htop", "tmux"];
-                    for pkg in packages.iter().take(n) {
-                        let _ = resolver.add_package(pkg);
-                    }
-
-                    let resolution = resolver.resolve().expect("resolution should succeed");
-                    let tx = Transaction::from_resolution(resolution);
-
-                    // Note: check_file_conflicts requires actual file system access
-                    // This benchmark measures transaction creation only
-                    std::hint::black_box(tx)
-                });
-            },
-        );
     }
 
     group.finish();
@@ -258,7 +248,6 @@ criterion_group!(
     bench_install_transaction_creation,
     bench_install_dependency_graph_sizes,
     bench_install_batch_processing,
-    bench_install_conflict_detection,
     bench_install_memory_allocation
 );
 
