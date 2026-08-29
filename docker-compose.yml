@@ -7,8 +7,8 @@
 #   docker compose run --build debian    # Debian (apt/rust-apt) smoke
 #   docker compose run --build fedora    # Fedora (dnf/rpm sqlite) smoke
 #
-# The Debian service also runs scripts/debian-smoke-test.sh for the deeper
-# mutation-path checks used since the wave-6 protocol work.
+# The Debian service runs the binary built in Dockerfile.apt. The deeper
+# Debian smoke image is built separately by scripts/debian-smoke-test.sh.
 
 services:
   arch:
@@ -16,21 +16,18 @@ services:
       context: .
       dockerfile: Dockerfile.arch-e2e
     command: >
-      bash -c "cargo build --release --locked -j 2 &&
-               ./target/release/omg --version &&
-               ./target/release/omg status --fast &&
-               ./target/release/omg search shell | head -5"
+      bash -c "/usr/local/bin/omg --version &&
+               /usr/local/bin/omg status --fast &&
+               /usr/local/bin/omg search shell | head -5"
 
   debian:
     build:
       context: .
       dockerfile: Dockerfile.apt
     command: >
-      bash -c "cargo build --release --locked -j 2 --no-default-features
-               --features debian,pgp,license &&
-               ./target/release/omg --version &&
-               ./target/release/omg status --fast &&
-               bash scripts/debian-smoke-test.sh"
+      bash -c "/usr/local/bin/omg --version &&
+               /usr/local/bin/omg status --fast &&
+               /usr/local/bin/omg search bash | head -5"
 
   fedora:
     build:
