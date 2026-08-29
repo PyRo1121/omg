@@ -423,7 +423,7 @@ impl TeamWorkspace {
         // comparison that never saw the team's lock.
         if let Some(remote_url) = &config.remote_url {
             if remote_url.contains("gist.github.com") {
-                crate::cli::env::sync(remote_url.clone()).await?;
+                crate::cli::env::sync_at(remote_url, &self.root).await?;
             } else {
                 anyhow::bail!(
                     "Unsupported team remote URL '{}': pull currently supports only gist.github.com remotes",

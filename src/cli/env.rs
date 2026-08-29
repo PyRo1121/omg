@@ -6,6 +6,7 @@ use crate::core::http::shared_client;
 use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
+use std::path::Path;
 
 impl LocalCommandRunner for EnvCommands {
     async fn execute(&self, _ctx: &CliContext) -> Result<()> {
@@ -224,72 +225,68 @@ pub async fn share(description: String, public: bool) -> Result<()> {
     Ok(())
 }
 
-/// Sync environment from Gist
+/// Sync environment from Gist into the current directory.
 pub async fn sync(url_or_id: String) -> Result<()> {
     use crate::cli::packages::execute_cmd;
 
-    // SECURITY: Basic validation for input
     if url_or_id.len() > 255 || url_or_id.chars().any(char::is_control) {
         execute_cmd(Cmd::error("Invalid Gist URL or ID"));
         anyhow::bail!("Invalid Gist URL or ID");
     }
 
     execute_cmd(Components::loading("Syncing environment..."));
+    sync_lockfile(&url_or_id, Path::new(".")).await?;
+    execute_cmd(Cmd::batch([
+        Cmd::success("omg.lock updated from Gist"),
+        Cmd::info("Running environment check..."),
+    ]));
+    check().await
+}
+
+/// Fetch and validate a Gist lockfile into an explicit workspace root.
+///
+/// Team pulls use this entry point so a caller's process directory cannot
+/// redirect the lockfile write away from the team workspace.
+pub(crate) async fn sync_at(url_or_id: &str, root: &Path) -> Result<()> {
+    sync_lockfile(url_or_id, root).await
+}
+
+async fn sync_lockfile(url_or_id: &str, root: &Path) -> Result<()> {
+    if url_or_id.len() > 255 || url_or_id.chars().any(char::is_control) {
+        anyhow::bail!("Invalid Gist URL or ID");
+    }
 
     let client = shared_client();
-
-    let gist_id = parse_gist_id(&url_or_id)?;
+    let gist_id = parse_gist_id(url_or_id)?;
     let api_url = format!("https://api.github.com/gists/{gist_id}");
 
-    // Authorization is optional for reading public gists, but good if token exists
     let mut req = client.get(&api_url);
     if let Ok(token) = std::env::var("GITHUB_TOKEN") {
         req = req.header("Authorization", format!("token {token}"));
     }
 
-    let response = req.send().await?;
-
-    if !response.status().is_success() {
-        let status = response.status();
-        execute_cmd(Cmd::error(format!("Failed to fetch Gist: {status}")));
-        anyhow::bail!("Failed to fetch Gist: {status}");
-    }
-
+    let response = req.send().await?.error_for_status()?;
     let gist_resp: GistResponse = response.json().await?;
-
-    if let Some(file) = gist_resp.files.get("omg.lock") {
-        let content = if let Some(c) = &file.content {
-            c.clone()
-        } else {
-            // Fetch raw if content is truncated/missing in metadata
-            client
-                .get(&file.raw_url)
-                .send()
-                .await?
-                .error_for_status()?
-                .text()
-                .await?
-        };
-
-        EnvironmentState::parse_lockfile(&content)
-            .context("Downloaded Gist contains an invalid omg.lock")?;
-        crate::core::safe_ops::atomic_write_file_sync("omg.lock", content)
-            .context("Failed to write omg.lock from Gist")?;
-        execute_cmd(Cmd::batch([
-            Cmd::success("omg.lock updated from Gist"),
-            Cmd::info("Running environment check..."),
-        ]));
-
-        // Auto-check
-        check().await?;
+    let file = gist_resp
+        .files
+        .get("omg.lock")
+        .context("Gist does not contain omg.lock")?;
+    let content = if let Some(content) = &file.content {
+        content.clone()
     } else {
-        execute_cmd(Components::error_with_suggestion(
-            "Gist does not contain omg.lock",
-            "Ensure the Gist was created with 'omg env share'",
-        ));
-        anyhow::bail!("Gist does not contain omg.lock");
-    }
+        client
+            .get(&file.raw_url)
+            .send()
+            .await?
+            .error_for_status()?
+            .text()
+            .await?
+    };
 
+    EnvironmentState::parse_lockfile(&content)
+        .context("Downloaded Gist contains an invalid omg.lock")?;
+    crate::core::safe_ops::atomic_write_file_sync(root.join("omg.lock"), content)
+        .context("Failed to write omg.lock from Gist")?;
     Ok(())
 }
 
