@@ -27,18 +27,12 @@ static SHARED_CLIENT: LazyLock<Client> = LazyLock::new(|| {
 ///
 /// Uses `.read_timeout()` to detect stalled downloads - this timeout resets after
 /// each successful read, unlike `.timeout()` which covers the entire request.
-#[expect(clippy::expect_used)] // System misconfiguration or build issue; documented in build_client
 static DOWNLOAD_CLIENT: LazyLock<Client> = LazyLock::new(|| {
-    Client::builder()
-        .user_agent("omg-package-manager")
-        .timeout(DOWNLOAD_TIMEOUT)
-        .connect_timeout(DOWNLOAD_CONNECT_TIMEOUT)
-        .read_timeout(DOWNLOAD_READ_TIMEOUT)
-        .pool_max_idle_per_host(32)
-        .pool_idle_timeout(Duration::from_secs(90))
-        .tcp_nodelay(true)
-        .build()
-        .expect("Failed to build download HTTP client - check TLS configuration")
+    build_client(
+        DOWNLOAD_TIMEOUT,
+        DOWNLOAD_CONNECT_TIMEOUT,
+        DOWNLOAD_READ_TIMEOUT,
+    )
 });
 
 /// Build HTTP client with standard configuration.
