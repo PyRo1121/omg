@@ -1321,7 +1321,7 @@ impl AurClient {
                 &cache_key,
             )
             .await?
-            .and_then(|mut archives| archives.pop())
+            .and_then(|archives| Self::select_cached_artifact(archives, package))
         {
             return Ok(cached);
         }
@@ -1513,6 +1513,16 @@ impl AurClient {
     /// SEC02-02): the key file lives in the same user-writable tree as
     /// attacker-executing builds, so the artifact itself must carry the
     /// identity before it is trusted for install.
+    fn select_cached_artifact(archives: Vec<PathBuf>, package: &str) -> Option<PathBuf> {
+        let mut archives = archives.into_iter();
+        let archive = archives.next()?;
+        if archives.next().is_some() || !Self::cached_archive_matches(&archive, package) {
+            tracing::warn!("Rejecting cached build for {package}: archive identity did not match");
+            return None;
+        }
+        Some(archive)
+    }
+
     fn cached_archive_matches(archive: &Path, package: &str) -> bool {
         let Some((name, _version)) = Self::pkg_name_and_version_from_archive(archive) else {
             tracing::warn!(
@@ -2897,6 +2907,21 @@ mod tests {
         assert_eq!(
             AurClient::parse_pkginfo_name_version("  pkgname =   spaced  \n pkgver =  2.0 \n"),
             Some(("spaced".to_string(), "2.0".to_string()))
+        );
+    }
+
+    #[test]
+    fn build_only_rejects_cached_archives_with_mismatched_identity() {
+        let directory = tempfile::tempdir().unwrap();
+        let archive = directory.path().join("requested.pkg.tar.gz");
+        write_tar_gz(
+            &archive,
+            &[(".PKGINFO", b"pkgname = different\npkgver = 1.0-1\n")],
+        );
+
+        assert_eq!(
+            AurClient::select_cached_artifact(vec![archive], "requested"),
+            None
         );
     }
 
