@@ -668,6 +668,7 @@ analyzer inference
 - **Ci**: Cross-platform install script and R2 release sync
 ### 🐛 Bug Fixes
 
+- Sort environment diff output
 - Format durations and popularity accurately
 - Label partial update download estimates
 - Honor search limits through the daemon
