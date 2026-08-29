@@ -669,6 +669,7 @@ analyzer inference
 ### 🐛 Bug Fixes
 
 - Mount AUR compiler caches in sandbox
+- Mount AUR compiler caches in sandbox
 - Validate cached AUR dependency artifacts
 - Remove misleading status output
 - Propagate fallback command errors
