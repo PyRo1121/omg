@@ -364,19 +364,19 @@ pub enum Commands {
         args: Vec<String>,
 
         /// Watch mode: re-run task on file changes
-        #[arg(short, long)]
+        #[arg(short, long, conflicts_with_all = ["parallel", "using", "all"])]
         watch: bool,
 
         /// Run multiple tasks in parallel (comma-separated)
-        #[arg(short, long)]
+        #[arg(short, long, conflicts_with_all = ["watch", "using", "all"])]
         parallel: bool,
 
         /// Ecosystem to use (e.g., node, rust, python, make)
-        #[arg(short, long)]
+        #[arg(short, long, conflicts_with_all = ["watch", "parallel", "all"])]
         using: Option<String>,
 
         /// Run task across all detected ecosystems
-        #[arg(short, long)]
+        #[arg(short, long, conflicts_with_all = ["watch", "parallel", "using"])]
         all: bool,
     },
 
@@ -1246,6 +1246,21 @@ mod tests {
     #[test]
     fn verify_cli() {
         Cli::command().debug_assert();
+    }
+
+    #[test]
+    fn run_modes_cannot_be_combined() {
+        for args in [
+            ["omg", "run", "build", "--watch", "--parallel"].as_slice(),
+            ["omg", "run", "build", "--watch", "--using", "node"].as_slice(),
+            ["omg", "run", "build", "--parallel", "--all"].as_slice(),
+            ["omg", "run", "build", "--using", "node", "--all"].as_slice(),
+        ] {
+            assert!(
+                Cli::try_parse_from(args.iter().copied()).is_err(),
+                "conflicting run modes unexpectedly parsed: {args:?}"
+            );
+        }
     }
 
     #[test]
