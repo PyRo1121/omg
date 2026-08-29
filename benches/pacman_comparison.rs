@@ -184,18 +184,21 @@ fn bench_comprehensive_comparison(c: &mut Criterion) {
     // Workflow: search + info + check installed
     group.bench_function("omg_workflow", |b| {
         b.iter(|| {
-            run_omg(&["search", "firefox"]);
-            run_omg(&["info", "bash"]);
-            run_omg(&["status"]);
+            assert!(run_omg(&["search", "firefox"]), "OMG search should succeed");
+            assert!(run_omg(&["info", "bash"]), "OMG info should succeed");
+            assert!(run_omg(&["status"]), "OMG status should succeed");
             black_box(());
         });
     });
 
     group.bench_function("pacman_workflow", |b| {
         b.iter(|| {
-            run_pacman(&["-Ss", "firefox"]);
-            run_pacman(&["-Si", "bash"]);
-            run_pacman(&["-Q"]);
+            assert!(
+                run_pacman(&["-Ss", "firefox"]),
+                "Pacman search should succeed"
+            );
+            assert!(run_pacman(&["-Si", "bash"]), "Pacman info should succeed");
+            assert!(run_pacman(&["-Q"]), "Pacman list should succeed");
             black_box(());
         });
     });
