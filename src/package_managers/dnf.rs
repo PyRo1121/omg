@@ -20,7 +20,7 @@ use std::pin::Pin;
 
 use anyhow::{Context, Result};
 use dashmap::DashMap;
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::sync::Arc;
@@ -42,7 +42,6 @@ mod rpm_tags {
     pub const VERSION: u32 = 1001;
     pub const RELEASE: u32 = 1002;
     pub const SUMMARY: u32 = 1004;
-    pub const REASON: u32 = 1160; // User/Dependency
 }
 
 // RPM header data types (librpm numbering): 1=CHAR 2=INT8 3=INT16 4=INT32
@@ -108,8 +107,16 @@ impl DnfPackageManager {
 
         // Fallback to reading from SQLite database
         let db_path = self.rpm_db_path.clone();
-        let packages =
+        let mut packages =
             tokio::task::spawn_blocking(move || Self::read_rpm_database(&db_path)).await??;
+        let user_installed = tokio::task::spawn_blocking(Self::read_user_installed_names).await??;
+        for package in &mut packages {
+            package.reason = if user_installed.contains(&package.name) {
+                InstallReason::User
+            } else {
+                InstallReason::Dependency
+            };
+        }
 
         // Populate cache
         for pkg in &packages {
@@ -144,7 +151,7 @@ impl DnfPackageManager {
             .args([
                 "-qa",
                 "--queryformat",
-                "%{NAME}\t%{VERSION}\t%{RELEASE}\t%{SUMMARY}\t%{REASON}\n",
+                "%{NAME}\t%{VERSION}\t%{RELEASE}\t%{SUMMARY}\n",
             ])
             .output()
             .context("Failed to execute rpm -qa")?;
@@ -166,17 +173,42 @@ impl DnfPackageManager {
         Ok(packages)
     }
 
+    fn parse_user_installed_names(output: &[u8]) -> Result<HashSet<String>> {
+        let output =
+            std::str::from_utf8(output).context("dnf user-installed output was not UTF-8")?;
+        Ok(output
+            .lines()
+            .map(str::trim)
+            .filter(|name| !name.is_empty())
+            .map(ToOwned::to_owned)
+            .collect())
+    }
+
+    fn read_user_installed_names() -> Result<HashSet<String>> {
+        let output = Command::new("dnf")
+            .args(["repoquery", "--userinstalled", "--qf", "%{name}"])
+            .output()
+            .context("Failed to execute dnf repoquery --userinstalled")?;
+        if !output.status.success() {
+            anyhow::bail!(
+                "dnf repoquery --userinstalled failed: {}",
+                String::from_utf8_lossy(&output.stderr).trim()
+            );
+        }
+        Self::parse_user_installed_names(&output.stdout)
+    }
+
     fn parse_rpm_qa_line(line: &str) -> Result<InstalledPackage> {
         let fields: Vec<&str> = line.split('\t').collect();
-        if fields.len() < 5 {
+        if fields.len() < 4 {
             anyhow::bail!(
-                "malformed rpm -qa output: expected 5 fields, got {}",
+                "malformed rpm -qa output: expected 4 fields, got {}",
                 fields.len()
             );
         }
 
-        let reason = match fields[4] {
-            "0" | "user" => InstallReason::User,
+        let reason = match fields.get(4).copied() {
+            Some("0" | "user") => InstallReason::User,
             _ => InstallReason::Dependency,
         };
 
@@ -312,8 +344,8 @@ impl DnfPackageManager {
 
     /// Parse an RPM blob into an `InstalledPackage`
     ///
-    /// Extracts name, version, release, summary, and installation reason from
-    /// the RPM header blob format.
+    /// Extracts name, version, release, and summary from the RPM header blob.
+    /// Installation reason is loaded from DNF's system-state query.
     fn parse_package_from_blob(blob: &[u8]) -> Result<InstalledPackage> {
         let tags = Self::parse_rpm_header(blob)?;
 
@@ -324,40 +356,17 @@ impl DnfPackageManager {
                 .unwrap_or_default()
         };
 
-        // Helper to extract i64 from tag data (big-endian)
-        let get_i64 = |tag: u32| -> i64 {
-            tags.get(&tag)
-                .and_then(|data| {
-                    if data.len() >= 4 {
-                        // RPM uses 32-bit integers for most fields
-                        Some(i64::from(i32::from_be_bytes([
-                            data[0], data[1], data[2], data[3],
-                        ])))
-                    } else {
-                        None
-                    }
-                })
-                .unwrap_or(0)
-        };
-
         let name = get_string(rpm_tags::NAME);
         if name.is_empty() {
             anyhow::bail!("RPM header missing NAME tag");
         }
-
-        let reason_val = get_i64(rpm_tags::REASON);
-        let reason = if reason_val == 0 {
-            InstallReason::User
-        } else {
-            InstallReason::Dependency
-        };
 
         Ok(InstalledPackage {
             name,
             version: get_string(rpm_tags::VERSION),
             release: get_string(rpm_tags::RELEASE),
             summary: get_string(rpm_tags::SUMMARY),
-            reason,
+            reason: InstallReason::Dependency,
         })
     }
 
@@ -798,6 +807,15 @@ mod tests {
             error.to_string().contains("Invalid RPM header magic"),
             "got: {error}"
         );
+    }
+
+    #[test]
+    fn user_installed_output_is_parsed_as_a_name_set() {
+        let names = DnfPackageManager::parse_user_installed_names(b"bash\n\nvim\n")
+            .expect("valid dnf output");
+        assert!(names.contains("bash"));
+        assert!(names.contains("vim"));
+        assert_eq!(names.len(), 2);
     }
 
     #[test]
