@@ -81,6 +81,8 @@ pub struct Transaction {
     backups: HashMap<PathBuf, PathBuf>,
     /// Files installed by this transaction
     installed_files: Vec<PathBuf>,
+    /// Extracted paths grouped by package for dpkg `.list` manifests.
+    installed_files_by_package: HashMap<String, Vec<PathBuf>>,
 }
 
 impl Default for Transaction {
@@ -157,6 +159,7 @@ impl Transaction {
             temp_dir: None,
             backups: HashMap::new(),
             installed_files: Vec::new(),
+            installed_files_by_package: HashMap::new(),
         }
     }
 
@@ -171,6 +174,7 @@ impl Transaction {
             temp_dir: None,
             backups: HashMap::new(),
             installed_files: Vec::new(),
+            installed_files_by_package: HashMap::new(),
         }
     }
 
@@ -413,6 +417,7 @@ impl Transaction {
         let unpack_handle = tokio::task::spawn_blocking(move || {
             let rt = tokio::runtime::Handle::current();
             let mut installed_files = Vec::new();
+            let mut installed_files_by_package = HashMap::new();
             let mut unpack_errors = Vec::new();
 
             // OPTIMIZATION: Process packages immediately instead of batching
@@ -421,7 +426,8 @@ impl Transaction {
                 tracing::debug!("Unpacking {} immediately", name);
                 match unpack_deb_standalone(&deb_path, &name, &temp_dir_unpack) {
                     Ok(files) => {
-                        installed_files.extend(files);
+                        installed_files.extend(files.iter().cloned());
+                        installed_files_by_package.insert(name.clone(), files);
                         tracing::debug!("Unpacked {} successfully", name);
                     }
                     Err(e) => {
@@ -446,7 +452,7 @@ impl Transaction {
                 }
             }
 
-            (installed_files, unpack_errors)
+            (installed_files, installed_files_by_package, unpack_errors)
         });
 
         // Run downloads concurrently
@@ -459,8 +465,9 @@ impl Transaction {
         overall.finish_and_clear();
 
         // Wait for unpacking to complete
-        let (installed_files, unpack_errors) = unpack_handle.await?;
+        let (installed_files, installed_files_by_package, unpack_errors) = unpack_handle.await?;
         self.installed_files = installed_files;
+        self.installed_files_by_package = installed_files_by_package;
 
         // Check for download failures
         let mut downloaded_paths: HashMap<usize, PathBuf> = HashMap::new();
@@ -531,53 +538,72 @@ impl Transaction {
     fn configure_packages(&mut self) -> Result<()> {
         let temp_dir = self.transaction_temp_dir()?;
 
-        // Collect all status entries for batched write
+        // Collect status and dpkg metadata before running postinst. Maintainer
+        // scripts may query their own status or conffile registration.
         let mut status_entries: Vec<(String, String)> = Vec::new();
-        let mut conffiles_to_copy = Vec::new();
+        let mut control_files_to_copy = Vec::new();
+        let mut postinst_scripts = Vec::new();
 
         for action in self.to_install.iter().chain(self.to_upgrade.iter()) {
             let extract_dir = temp_dir.join(&action.name);
             let control_dir = extract_dir.join("DEBIAN");
 
-            // Run postinst script if exists (must be sequential for dependencies)
-            let postinst = control_dir.join("postinst");
-            if postinst.exists() {
-                run_maintainer_script(&postinst, &action.name, "configure")?;
-            }
-
-            // Prepare dpkg status entry for batched write. A failure here is
-            // fatal: an unpacked-but-unregistered package would be invisible
-            // to dpkg tooling.
             let control_file = control_dir.join("control");
             let entry = prepare_status_entry(&control_file)
                 .with_context(|| format!("preparing dpkg status entry for {}", action.name))?;
             status_entries.push((action.name.clone(), entry));
 
-            // Collect conffiles for batched copy
-            let conffiles = control_dir.join("conffiles");
-            if conffiles.exists() {
-                let destination =
-                    Path::new("/var/lib/dpkg/info").join(format!("{}.conffiles", action.name));
-                conffiles_to_copy.push((conffiles, destination));
+            for extension in [
+                "conffiles",
+                "md5sums",
+                "preinst",
+                "postinst",
+                "prerm",
+                "postrm",
+                "triggers",
+                "shlibs",
+            ] {
+                let source = control_dir.join(extension);
+                if source.exists() {
+                    let destination =
+                        Path::new(DPKG_INFO_DIR).join(format!("{}.{}", action.name, extension));
+                    control_files_to_copy.push((source, destination));
+                }
             }
+
+            let postinst = control_dir.join("postinst");
+            if postinst.exists() {
+                postinst_scripts.push((postinst, action.name.clone()));
+            }
+        }
+
+        let package_names: Vec<String> = self
+            .to_install
+            .iter()
+            .chain(self.to_upgrade.iter())
+            .map(|action| action.name.clone())
+            .collect();
+        for package_name in package_names {
+            let package_files = self
+                .installed_files_by_package
+                .get(&package_name)
+                .with_context(|| format!("missing extracted file list for {package_name}"))?;
+            let list_path =
+                write_dpkg_file_list(Path::new(DPKG_INFO_DIR), &package_name, package_files)?;
+            self.installed_files.push(list_path);
+        }
+
+        for (source, destination) in control_files_to_copy {
+            copy_control_file(&source, &destination)?;
+            self.installed_files.push(destination);
         }
 
         if !status_entries.is_empty() {
             self.record_dpkg_status_entries(&status_entries, &temp_dir)?;
         }
 
-        // Copy conffiles (can be done in parallel with rayon)
-        if !conffiles_to_copy.is_empty() {
-            use rayon::prelude::*;
-
-            conffiles_to_copy
-                .par_iter()
-                .try_for_each(|(source, destination)| copy_conffile(source, destination))?;
-            self.installed_files.extend(
-                conffiles_to_copy
-                    .into_iter()
-                    .map(|(_, destination)| destination),
-            );
+        for (postinst, package_name) in postinst_scripts {
+            run_maintainer_script(&postinst, &package_name, "configure")?;
         }
 
         Ok(())
@@ -919,10 +945,10 @@ fn restore_backup(backup: &Path, original: &Path) -> Result<()> {
     })
 }
 
-fn copy_conffile(src: &Path, dest: &Path) -> Result<()> {
+fn copy_control_file(src: &Path, dest: &Path) -> Result<()> {
     fs::copy(src, dest).with_context(|| {
         format!(
-            "Failed to copy conffiles {} -> {}",
+            "Failed to copy dpkg control file {} -> {}",
             src.display(),
             dest.display()
         )
@@ -1633,6 +1659,45 @@ fn removal_step_failed(
 
 const DPKG_INFO_DIR: &str = "/var/lib/dpkg/info";
 
+fn write_dpkg_file_list(
+    info_dir: &Path,
+    package_name: &str,
+    installed_files: &[PathBuf],
+) -> Result<PathBuf> {
+    fs::create_dir_all(info_dir).with_context(|| {
+        format!(
+            "Failed to create dpkg info directory {}",
+            info_dir.display()
+        )
+    })?;
+    let mut lines = Vec::with_capacity(installed_files.len());
+    for path in installed_files {
+        let mut line = path
+            .to_str()
+            .context("Installed package path contains invalid UTF-8")?
+            .to_string();
+        anyhow::ensure!(
+            !line.contains(['\n', '\r']),
+            "Installed package path contains a line break"
+        );
+        if fs::symlink_metadata(path)?.file_type().is_dir() && !line.ends_with('/') {
+            line.push('/');
+        }
+        lines.push(line);
+    }
+    lines.sort_unstable();
+    lines.dedup();
+    let contents = if lines.is_empty() {
+        String::new()
+    } else {
+        format!("{}\n", lines.join("\n"))
+    };
+    let destination = info_dir.join(format!("{package_name}.list"));
+    write_atomic(&destination, contents.as_bytes())?;
+    fs::set_permissions(&destination, fs::Permissions::from_mode(0o644))?;
+    Ok(destination)
+}
+
 fn dpkg_info_candidates(package_name: &str, extension: &str) -> [PathBuf; 3] {
     // Probe the canonical Debian architecture first, then the raw Rust ARCH
     // for compatibility with old local state, then the unqualified fallback.
@@ -1870,6 +1935,27 @@ mod tests {
     use super::*;
 
     #[test]
+    fn dpkg_file_list_records_files_and_directories_for_removal() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let info_dir = temp.path().join("info");
+        let installed_dir = temp.path().join("usr/share/example");
+        let installed_file = installed_dir.join("payload");
+        fs::create_dir_all(&installed_dir).expect("installed dir");
+        fs::write(&installed_file, b"payload").expect("installed file");
+
+        let list_path = write_dpkg_file_list(
+            &info_dir,
+            "example",
+            &[installed_dir.clone(), installed_file.clone()],
+        )
+        .expect("write dpkg file list");
+        let contents = fs::read_to_string(list_path).expect("read file list");
+
+        assert!(contents.contains(&format!("{}/\n", installed_dir.display())));
+        assert!(contents.contains(&format!("{}\n", installed_file.display())));
+    }
+
+    #[test]
     fn test_transaction_new() {
         let tx = Transaction::new();
         assert_eq!(tx.state, TransactionState::Pending);
@@ -1911,6 +1997,7 @@ mod tests {
             temp_dir: Some(workspace),
             backups: HashMap::new(),
             installed_files: Vec::new(),
+            installed_files_by_package: HashMap::from([("broken".to_string(), Vec::new())]),
         };
 
         let error = transaction
@@ -2042,23 +2129,25 @@ mod tests {
     }
 
     #[test]
-    fn copy_conffile_rejects_missing_source() {
+    fn copy_control_file_rejects_missing_source() {
         let dir = tempfile::TempDir::new().expect("temp dir");
-        let error = copy_conffile(&dir.path().join("src"), &dir.path().join("dest"))
-            .expect_err("missing conffiles must not look copied");
+        let error = copy_control_file(&dir.path().join("src"), &dir.path().join("dest"))
+            .expect_err("missing control file must not look copied");
         assert!(
-            error.to_string().contains("Failed to copy conffiles"),
+            error
+                .to_string()
+                .contains("Failed to copy dpkg control file"),
             "got: {error}"
         );
     }
 
     #[test]
-    fn copy_conffile_writes_destination() {
+    fn copy_control_file_writes_destination() {
         let dir = tempfile::TempDir::new().expect("temp dir");
         let src = dir.path().join("src");
         let dest = dir.path().join("dest");
         std::fs::write(&src, b"/etc/foo.conf\n").expect("conffiles");
-        copy_conffile(&src, &dest).expect("copy");
+        copy_control_file(&src, &dest).expect("copy");
         assert_eq!(std::fs::read(&dest).expect("copied"), b"/etc/foo.conf\n");
     }
 
@@ -2554,6 +2643,7 @@ mod tests {
             temp_dir: None,
             backups: HashMap::from([(original.clone(), backup)]),
             installed_files: vec![stuck],
+            installed_files_by_package: HashMap::new(),
         };
 
         let error = tx
