@@ -3,16 +3,27 @@ use anyhow::{Context, Result};
 use crate::cli::modern_ui;
 use crate::package_managers::get_package_manager;
 
+use super::enforce_install_policy;
+
 pub async fn install(packages: &[String]) -> Result<()> {
     let pm = get_package_manager()?;
     let policy =
         crate::core::security::SecurityPolicy::load_default().map_err(anyhow::Error::from)?;
+    let vulnerability_scanner = crate::core::security::vulnerability::VulnerabilityScanner::new();
     for package in packages {
         let info = pm
             .info(package)
             .await?
             .with_context(|| format!("Package not found: {package}"))?;
-        policy.check_source(&info.name, false, None)?;
+        enforce_install_policy(
+            &policy,
+            &vulnerability_scanner,
+            &info.name,
+            &info.version,
+            false,
+            None,
+        )
+        .await?;
     }
 
     modern_ui::print_phase_header(

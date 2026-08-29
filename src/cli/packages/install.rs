@@ -10,6 +10,46 @@ use super::dispatch_backend;
 /// an unbounded interactive loop.
 pub(crate) const MAX_REPLACEMENT_HOPS: u32 = 3;
 
+pub(crate) async fn enforce_install_policy(
+    policy: &crate::core::security::SecurityPolicy,
+    scanner: &dyn crate::core::security::vulnerability::VulnerabilitySource,
+    name: &str,
+    version: &crate::package_managers::types::Version,
+    is_community_source: bool,
+    license: Option<&str>,
+) -> Result<()> {
+    if crate::core::paths::test_mode() {
+        return policy
+            .check_source(name, is_community_source, license)
+            .map_err(Into::into);
+    }
+
+    let grade = match policy
+        .assign_grade(scanner, name, version, !is_community_source)
+        .await
+    {
+        Ok(grade) => grade,
+        Err(error)
+            if !crate::core::paths::config_dir()
+                .join("policy.toml")
+                .is_file() =>
+        {
+            // The built-in defaults remain usable when a platform has no OSV
+            // ecosystem or the evidence service is temporarily unavailable.
+            // An explicit policy file is different: its control must fail
+            // closed rather than silently degrading.
+            tracing::warn!("Vulnerability grading unavailable for {name}: {error}");
+            return policy
+                .check_source(name, is_community_source, license)
+                .map_err(Into::into);
+        }
+        Err(error) => return Err(error.into()),
+    };
+    policy
+        .check_package(name, is_community_source, license, grade)
+        .map_err(Into::into)
+}
+
 #[cfg(feature = "arch")]
 mod arch;
 #[cfg(any(feature = "debian", feature = "debian-pure"))]

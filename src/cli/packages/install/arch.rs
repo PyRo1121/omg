@@ -21,27 +21,7 @@ use crate::package_managers::get_package_manager;
 /// fallback; everything else propagates verbatim.
 const MISSING_FROM_REPOS_MARKER: &str = "not found in any configured repository";
 
-use super::MAX_REPLACEMENT_HOPS;
-
-async fn enforce_install_policy(
-    policy: &crate::core::security::SecurityPolicy,
-    scanner: &dyn crate::core::security::vulnerability::VulnerabilitySource,
-    name: &str,
-    version: &crate::package_managers::types::Version,
-    is_aur: bool,
-    license: Option<&str>,
-) -> Result<()> {
-    if crate::core::paths::test_mode() {
-        return policy
-            .check_source(name, is_aur, license)
-            .map_err(Into::into);
-    }
-
-    let grade = policy.assign_grade(scanner, name, version, !is_aur).await?;
-    policy
-        .check_package(name, is_aur, license, grade)
-        .map_err(Into::into)
-}
+use super::{MAX_REPLACEMENT_HOPS, enforce_install_policy};
 
 pub async fn install(packages: &[String], yes: bool, replacement_hops: u32) -> Result<()> {
     let resolution_start = Instant::now();

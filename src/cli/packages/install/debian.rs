@@ -3,20 +3,36 @@ use anyhow::{Context, Result};
 use crate::cli::modern_ui;
 use crate::package_managers::get_package_manager;
 
+use super::enforce_install_policy;
+
 pub async fn install(packages: &[String]) -> Result<()> {
     let pm = get_package_manager()?;
     let policy =
         crate::core::security::SecurityPolicy::load_default().map_err(anyhow::Error::from)?;
+    let vulnerability_scanner = crate::core::security::vulnerability::VulnerabilityScanner::new();
     for package in packages {
         if crate::core::security::is_local_debian_package_file(package) {
-            policy.check_source(package, false, None)?;
+            policy.check_package(
+                package,
+                false,
+                None,
+                crate::core::security::SecurityGrade::Community,
+            )?;
             continue;
         }
         let info = pm
             .info(package)
             .await?
             .with_context(|| format!("Package not found: {package}"))?;
-        policy.check_source(&info.name, false, None)?;
+        enforce_install_policy(
+            &policy,
+            &vulnerability_scanner,
+            &info.name,
+            &info.version,
+            false,
+            None,
+        )
+        .await?;
     }
 
     modern_ui::print_phase_header(
