@@ -22,7 +22,7 @@ RUN pacman -Syu --noconfirm && \
 RUN curl --proto '=https' --tlsv1.2 -fsSL \
         https://static.rust-lang.org/rustup/archive/1.28.2/x86_64-unknown-linux-gnu/rustup-init \
         -o /usr/local/bin/rustup-init \
-    && echo "20a06e644b0d9bd2fbdbfd52d42540bdde820ea7df86e92e533c073da0cdd43  /usr/local/bin/rustup-init" | sha256sum --check \
+    && echo "20a06e644b0d9bd2fbdbfd52d42540bdde820ea7df86e92e533c073da0cdd43c  /usr/local/bin/rustup-init" | sha256sum --check \
     && chmod +x /usr/local/bin/rustup-init \
     && /usr/local/bin/rustup-init -y --profile minimal --default-toolchain 1.93.1 \
     && rm -f /usr/local/bin/rustup-init
