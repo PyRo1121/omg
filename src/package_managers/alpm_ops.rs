@@ -14,6 +14,9 @@ use crate::core::paths;
 /// Compiled once at first use, then reused for all subsequent calls.
 static MIRRORLIST_REGEX: LazyLock<Regex> =
     LazyLock::new(|| Regex::new(r"^Server\s*=\s*([^#]+)").expect("valid regex pattern"));
+const DOWNLOAD_SPINNER_TEMPLATE: &str = "  {spinner:.cyan} {msg:30}";
+const DOWNLOAD_BAR_TEMPLATE: &str =
+    "  {spinner:.cyan} {msg:30} {bar:30.cyan/blue} {bytes}/{total_bytes}";
 use crate::package_managers::types::{PackageInfo, UpdateInfo, contains_ignore_case};
 
 /// Get comprehensive system status (counts + updates) in a single pass - FAST
@@ -483,40 +486,38 @@ fn setup_alpm_callbacks(
     let dl_pb_map = std::sync::Arc::new(dashmap::DashMap::<String, indicatif::ProgressBar>::new());
     let mp_clone = mp.clone();
 
-    alpm.set_dl_cb(dl_pb_map, move |filename, event, map| {
-        match event.event() {
-            alpm::DownloadEvent::Init(_) => {
-                if map.len() < MAX_CONCURRENT_DOWNLOAD_BARS {
-                    let pb = mp_clone.add(indicatif::ProgressBar::new_spinner());
+    alpm.set_dl_cb(dl_pb_map, move |filename, event, map| match event.event() {
+        alpm::DownloadEvent::Init(_) => {
+            if map.len() < MAX_CONCURRENT_DOWNLOAD_BARS {
+                let pb = mp_clone.add(indicatif::ProgressBar::new_spinner());
+                pb.set_style(
+                    indicatif::ProgressStyle::default_spinner()
+                        .template(DOWNLOAD_SPINNER_TEMPLATE)
+                        .expect("valid template"),
+                );
+                pb.set_message(format!("⬇ {filename}"));
+                map.insert(filename.to_string(), pb);
+            }
+        }
+        alpm::DownloadEvent::Progress(prog) => {
+            if let Some(pb) = map.get(filename) {
+                if pb.length().is_none() && prog.total > 0 {
+                    pb.set_length(u64::try_from(prog.total).unwrap_or(0));
                     pb.set_style(
-                        indicatif::ProgressStyle::default_spinner()
-                            .template("  {{spinner:.cyan}} {{msg:30}}")
-                            .expect("valid template"),
+                        indicatif::ProgressStyle::default_bar()
+                            .template(DOWNLOAD_BAR_TEMPLATE)
+                            .expect("valid template")
+                            .progress_chars("█▓▒░ "),
                     );
                     pb.set_message(format!("⬇ {filename}"));
-                    map.insert(filename.to_string(), pb);
                 }
+                pb.set_position(u64::try_from(prog.downloaded).unwrap_or(0));
             }
-            alpm::DownloadEvent::Progress(prog) => {
-                if let Some(pb) = map.get(filename) {
-                    if pb.length().is_none() && prog.total > 0 {
-                        pb.set_length(u64::try_from(prog.total).unwrap_or(0));
-                        pb.set_style(
-                            indicatif::ProgressStyle::default_bar()
-                                .template("  {{spinner:.cyan}} {{msg:30}} {{bar:30.cyan/blue}} {{bytes}}/{{total_bytes}}")
-                                .expect("valid template")
-                                .progress_chars("█▓▒░ "),
-                        );
-                        pb.set_message(format!("⬇ {filename}"));
-                    }
-                    pb.set_position(u64::try_from(prog.downloaded).unwrap_or(0));
-                }
-            }
-            alpm::DownloadEvent::Retry(_) => {}
-            alpm::DownloadEvent::Completed(_) => {
-                if let Some((_, pb)) = map.remove(filename) {
-                    pb.finish_and_clear();
-                }
+        }
+        alpm::DownloadEvent::Retry(_) => {}
+        alpm::DownloadEvent::Completed(_) => {
+            if let Some((_, pb)) = map.remove(filename) {
+                pb.finish_and_clear();
             }
         }
     });
@@ -903,9 +904,20 @@ fn configure_mirrors(alpm: &mut alpm::Alpm) -> Result<()> {
 #[cfg(test)]
 mod tests {
     use super::{
-        format_no_syncdb_error, format_trans_prepare_error, is_keyring_related_error,
-        package_base_name,
+        DOWNLOAD_BAR_TEMPLATE, DOWNLOAD_SPINNER_TEMPLATE, format_no_syncdb_error,
+        format_trans_prepare_error, is_keyring_related_error, package_base_name,
     };
+
+    #[test]
+    fn download_templates_use_live_indicatif_placeholders() {
+        for template in [DOWNLOAD_SPINNER_TEMPLATE, DOWNLOAD_BAR_TEMPLATE] {
+            assert!(
+                !template.contains("{{"),
+                "escaped placeholders render literally"
+            );
+            indicatif::ProgressStyle::with_template(template).expect("valid progress template");
+        }
+    }
 
     #[test]
     fn base_name_parses_simple_and_dash_containing_pkgbases() {
