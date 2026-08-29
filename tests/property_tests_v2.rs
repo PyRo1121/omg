@@ -242,20 +242,6 @@ fn test_package_name_rejection_path_traversal() {
     assert!(security::validate_package_name("foo/../../bar").is_err());
 }
 
-#[test]
-fn test_search_model_initialization() {
-    use omg_lib::cli::tea::SearchModel;
-    let model = SearchModel::new();
-    assert_eq!(model.state, omg_lib::cli::tea::SearchState::Idle);
-}
-
-#[test]
-fn test_search_model_with_query() {
-    use omg_lib::cli::tea::SearchModel;
-    let model = SearchModel::new().with_query("firefox".to_string());
-    assert_eq!(model.query, "firefox");
-}
-
 // ═══════════════════════════════════════════════════════════════════════════════
 // CLI ARGUMENT PARSING PROPERTIES
 // ═══════════════════════════════════════════════════════════════════════════════

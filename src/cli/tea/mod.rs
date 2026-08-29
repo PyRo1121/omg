@@ -77,7 +77,6 @@ mod renderer;
 
 // Model implementations
 mod info_model;
-mod search_model;
 mod status_model;
 mod update_model;
 mod wrappers;
@@ -96,7 +95,6 @@ pub use cmd::{StyledTextConfig, TextStyle};
 
 // Re-export models
 pub use info_model::{InfoModel, InfoMsg, InfoSource};
-pub use search_model::{SearchModel, SearchMsg, SearchResult, SearchState};
 pub use status_model::{StatusData, StatusModel, StatusMsg};
 pub use update_model::UpdateType;
 
