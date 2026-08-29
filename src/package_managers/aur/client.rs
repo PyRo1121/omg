@@ -683,8 +683,20 @@ impl AurClient {
             return Ok(None);
         }
 
-        // Sync metadata (this will be fast if already fresh)
-        sync_aur_metadata(shared_client(), &self.settings, false).await?;
+        // Sync metadata (this will be fast if already fresh). A transient
+        // archive failure must not prevent the direct RPC fallback below.
+        let sync_result = sync_aur_metadata(shared_client(), &self.settings, false).await;
+        self.load_metadata_archive_after_sync(sync_result).await
+    }
+
+    async fn load_metadata_archive_after_sync(
+        &self,
+        sync_result: Result<()>,
+    ) -> Result<Option<AurResponse>> {
+        if let Err(error) = sync_result {
+            tracing::warn!("AUR metadata archive unavailable; falling back to RPC: {error}");
+            return Ok(None);
+        }
 
         let path = metadata_path();
         if path.exists() {
@@ -3158,6 +3170,21 @@ mod tests {
             Some(&"PACMAN_AUTH=/usr/bin/sudo"),
             "makepkg's default sudo -k would invalidate omg's live credential"
         );
+    }
+
+    #[tokio::test]
+    async fn metadata_sync_failure_allows_rpc_fallback() {
+        let client = AurClient {
+            build_dir: tempfile::tempdir().unwrap().path().to_path_buf(),
+            settings: Settings::default(),
+        };
+
+        let archive = client
+            .load_metadata_archive_after_sync(Err(anyhow::anyhow!("metadata server unavailable")))
+            .await
+            .unwrap();
+
+        assert!(archive.is_none());
     }
 
     #[test]
