@@ -288,7 +288,15 @@ impl DependencyResolver {
                 continue;
             }
             if let Some(pkg) = self.available.get(name) {
-                let dependencies = pkg.depends.iter().map(|dep| parse_dep_name(dep)).collect();
+                let dependencies = pkg
+                    .depends
+                    .iter()
+                    .flat_map(|raw| {
+                        let dependency = parse_dependency(raw);
+                        std::iter::once(dependency.name)
+                            .chain(dependency.alternatives.into_iter().map(|alt| alt.name))
+                    })
+                    .collect();
                 self.dep_graph.insert(name.clone(), dependencies);
             }
         }
@@ -539,20 +547,6 @@ fn parse_version_constraint(s: &str) -> Option<VersionConstraint> {
     None
 }
 
-/// Extract just the package name from a dependency string
-#[inline]
-fn parse_dep_name(s: &str) -> String {
-    let s = s.trim();
-    // OPTIMIZATION: Manual character search for common delimiters (faster than find)
-    let bytes = s.as_bytes();
-    for (i, &b) in bytes.iter().enumerate() {
-        if b == b'(' || b == b'|' || b == b':' {
-            return s[..i].trim().to_string();
-        }
-    }
-    s.to_string()
-}
-
 /// Compare two Debian version strings
 ///
 /// Format: `[epoch:]upstream_version[-debian_revision]`
@@ -649,13 +643,6 @@ mod tests {
     }
 
     #[test]
-    fn test_parse_dep_name() {
-        assert_eq!(parse_dep_name("libc6"), "libc6");
-        assert_eq!(parse_dep_name("libc6 (>= 2.38)"), "libc6");
-        assert_eq!(parse_dep_name("libc6:amd64"), "libc6");
-    }
-
-    #[test]
     fn test_parse_dependency_with_arch_qualifier() {
         // Test :any (multi-arch: allows any architecture)
         let dep = parse_dependency("perl:any");
@@ -716,6 +703,49 @@ mod tests {
         let resolution = resolver.resolve().expect("resolvable");
 
         assert_eq!(resolution.to_install, ["base", "pkg-a"]);
+    }
+
+    #[test]
+    fn resolved_alternative_is_ordered_before_its_dependent() {
+        for _ in 0..64 {
+            let mut resolver = DependencyResolver {
+                available: HashMap::from([
+                    (
+                        "mail-transport-agent".to_string(),
+                        test_package("mail-transport-agent", "1.0", &[]),
+                    ),
+                    (
+                        "pkg-a".to_string(),
+                        test_package(
+                            "pkg-a",
+                            "1.0",
+                            &["default-mta (>= 1) | mail-transport-agent"],
+                        ),
+                    ),
+                ]),
+                installed: HashMap::new(),
+                selected: HashSet::new(),
+                dep_graph: HashMap::new(),
+            };
+            resolver.add_package("pkg-a").expect("known package");
+
+            let resolution = resolver.resolve().expect("alternative is resolvable");
+            let dependency = resolution
+                .to_install
+                .iter()
+                .position(|name| name == "mail-transport-agent")
+                .expect("resolved alternative in install set");
+            let dependent = resolution
+                .to_install
+                .iter()
+                .position(|name| name == "pkg-a")
+                .expect("dependent in install set");
+            assert!(
+                dependency < dependent,
+                "resolved alternative must be installed first: {:?}",
+                resolution.to_install
+            );
+        }
     }
 
     #[test]
