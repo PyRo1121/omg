@@ -668,6 +668,7 @@ analyzer inference
 - **Ci**: Cross-platform install script and R2 release sync
 ### 🐛 Bug Fixes
 
+- Keep mock package queries isolated
 - Validate persisted telemetry timestamps
 - Honor no-color output in shared UI
 - Retain daemon package metadata
