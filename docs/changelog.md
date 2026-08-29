@@ -668,6 +668,7 @@ analyzer inference
 - **Ci**: Cross-platform install script and R2 release sync
 ### 🐛 Bug Fixes
 
+- Label partial update download estimates
 - Honor search limits through the daemon
 - Reject conflicting run modes
 - Invalidate pacman caches on file-set changes
