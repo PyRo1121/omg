@@ -668,6 +668,7 @@ analyzer inference
 - **Ci**: Cross-platform install script and R2 release sync
 ### 🐛 Bug Fixes
 
+- Fall back from unavailable AUR metadata
 - Mount AUR compiler caches in sandbox
 - Mount AUR compiler caches in sandbox
 - Validate cached AUR dependency artifacts
