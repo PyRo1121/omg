@@ -11,7 +11,7 @@ use crossterm::{
     terminal::{self, ClearType},
 };
 use std::io::{self, IsTerminal, Write};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::process::Command;
 
 /// RAII guard restoring terminal state even when a menu exits via `?` or an
@@ -731,6 +731,19 @@ pub(crate) fn shell_rc_has_hook(shell: Shell) -> bool {
         .is_some_and(|content| content.contains("omg hook"))
 }
 
+fn ensure_shell_config_parent(config_path: &Path) -> Result<()> {
+    let parent = config_path
+        .parent()
+        .filter(|parent| !parent.as_os_str().is_empty())
+        .context("Shell configuration path has no parent directory")?;
+    std::fs::create_dir_all(parent).with_context(|| {
+        format!(
+            "Failed to create shell config directory {}",
+            parent.display()
+        )
+    })
+}
+
 fn install_shell_hook(stdout: &mut io::Stdout, shell: Shell, start_daemon: bool) -> Result<()> {
     let config_path = resolve_config_path(shell)?;
     let hook_cmd = shell.hook_command();
@@ -757,6 +770,7 @@ fn install_shell_hook(stdout: &mut io::Stdout, shell: Shell, start_daemon: bool)
     }
 
     // Append hook to config
+    ensure_shell_config_parent(&config_path)?;
     let mut file = std::fs::OpenOptions::new()
         .create(true)
         .append(true)
@@ -988,6 +1002,16 @@ fn print_completion(stdout: &mut io::Stdout, state: &WizardState) -> Result<()> 
 #[expect(clippy::unwrap_used)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn shell_hook_parent_directory_is_created_before_opening_rc_file() {
+        let directory = tempfile::tempdir().unwrap();
+        let config_path = directory.path().join(".config/fish/config.fish");
+
+        ensure_shell_config_parent(&config_path).unwrap();
+
+        assert!(config_path.parent().unwrap().is_dir());
+    }
 
     #[test]
     fn test_read_optional_shell_rc_missing_is_none() {

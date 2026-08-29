@@ -132,7 +132,7 @@ fn init_defaults_installs_bash_hook_in_bashrc() {
 }
 
 /// SHELL=fish routes to ~/.config/fish/config.fish with the source-based
-/// hook (when the fish config directory already exists).
+/// hook and creates the missing config directory.
 #[test]
 fn init_defaults_installs_fish_hook_in_fish_config() {
     let project = TestProject::new();
@@ -161,14 +161,10 @@ fn init_defaults_installs_fish_hook_in_fish_config() {
     );
 }
 
-/// KNOWN PRODUCT BUG (cov-15): install_shell_hook creates the config file but
-/// never creates its PARENT directory. With SHELL=fish on a machine that has
-/// no ~/.config/fish/, `omg init --defaults` aborts with exit 1 instead of
-/// scaffolding the directory, so daemon config and omg.lock capture never run.
-/// Until fixed, this pins the failure mode: exit 1, stderr names the operation
-/// AND the exact path, and no partial config file may be left behind.
+/// Regression: a first-run fish setup must create `~/.config/fish/` before
+/// appending the hook instead of failing during `omg init --defaults`.
 #[test]
-fn init_fish_missing_config_dir_fails_with_exact_path_in_error() {
+fn init_fish_missing_config_dir_is_created() {
     let project = TestProject::new();
     let home = tempfile::TempDir::new().expect("home tempdir");
     // Deliberately do NOT create ~/.config/fish.
@@ -181,16 +177,11 @@ fn init_fish_missing_config_dir_fails_with_exact_path_in_error() {
         ],
     );
 
-    result.assert_failure();
-    let expected_path = format!(
-        "Failed to open {}/.config/fish/config.fish",
-        home.path().display()
-    );
-    result.assert_stderr_contains(&expected_path);
-    assert!(result.stderr.contains("No such file or directory"));
+    result.assert_success();
+    result.assert_stdout_contains("Installing fish hook...");
     assert!(
-        !home.path().join(".config/fish/config.fish").exists(),
-        "failed hook install must not leave a partial config"
+        home.path().join(".config/fish/config.fish").is_file(),
+        "init must create the missing fish config directory and file"
     );
 }
 
