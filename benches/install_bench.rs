@@ -101,7 +101,9 @@ fn bench_install_resolution(c: &mut Criterion) {
                         .add_package(pkg)
                         .expect("benchmark package must exist in the configured index");
                 }
-                let result = resolver.resolve();
+                let result = resolver
+                    .resolve()
+                    .expect("benchmark dependency resolution must succeed");
                 std::hint::black_box(result)
             });
         });
@@ -167,7 +169,9 @@ fn bench_install_dependency_graph_sizes(c: &mut Criterion) {
                 resolver
                     .add_package(p)
                     .expect("benchmark package must exist in the configured index");
-                let result = resolver.resolve();
+                let result = resolver
+                    .resolve()
+                    .expect("benchmark dependency resolution must succeed");
                 std::hint::black_box(result)
             });
         });

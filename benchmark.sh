@@ -173,7 +173,10 @@ run_bench() {
     
     # Warmup
     for ((i=1; i<=warm; i++)); do
-        eval "$cmd" > /dev/null 2>&1
+        if ! eval "$cmd" > /dev/null 2>&1; then
+            echo "FAILED: $label warmup command exited non-zero" >&2
+            return 1
+        fi
     done
     
     local total=0
@@ -182,7 +185,10 @@ run_bench() {
     
     for ((i=1; i<=iters; i++)); do
         local start=$(date +%s%N)
-        eval "$cmd" > /dev/null 2>&1
+        if ! eval "$cmd" > /dev/null 2>&1; then
+            echo "FAILED: $label benchmark command exited non-zero" >&2
+            return 1
+        fi
         local end=$(date +%s%N)
         local diff=$(( ($end - $start) / 1000000 ))
         

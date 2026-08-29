@@ -63,9 +63,13 @@ benchmark_install() {
     local start=$(date +%s.%N)
 
     if [ "$tool" = "omg" ]; then
-        ./target/release/omg install "$package" --noconfirm
-    else
-        yay -S --noconfirm "$package"
+        if ! ./target/release/omg install "$package" --yes; then
+            echo "error: OMG install failed for $package" >&2
+            return 1
+        fi
+    elif ! yay -S --noconfirm "$package"; then
+        echo "error: yay install failed for $package" >&2
+        return 1
     fi
 
     local end=$(date +%s.%N)

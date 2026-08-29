@@ -230,15 +230,15 @@ if [ -x "$OMG_FAST" ]; then
             --export-json "$EXPORT_DIR/explicit.json" \
             --command-name "OMG (omg-fast)" "$OMG_FAST ec" \
             --command-name "OMG (daemon)" "$OMG explicit --count" \
-            --command-name "pacman" "pacman -Qe | wc -l" \
-            --command-name "yay" "yay -Qe | wc -l"
+            --command-name "pacman" "bash -o pipefail -c 'pacman -Qe | wc -l'" \
+            --command-name "yay" "bash -o pipefail -c 'yay -Qe | wc -l'"
     elif command -v pacman &>/dev/null; then
         hyperfine --warmup $WARMUP --min-runs $MIN_RUNS \
             --export-markdown "$EXPORT_DIR/explicit.md" \
             --export-json "$EXPORT_DIR/explicit.json" \
             --command-name "OMG (omg-fast)" "$OMG_FAST ec" \
             --command-name "OMG (daemon)" "$OMG explicit --count" \
-            --command-name "pacman" "pacman -Qe | wc -l"
+            --command-name "pacman" "bash -o pipefail -c 'pacman -Qe | wc -l'"
     else
         hyperfine --warmup $WARMUP --min-runs $MIN_RUNS \
             --export-markdown "$EXPORT_DIR/explicit.md" \
@@ -252,7 +252,7 @@ else
             --export-markdown "$EXPORT_DIR/explicit.md" \
             --export-json "$EXPORT_DIR/explicit.json" \
             --command-name "OMG (daemon)" "$OMG explicit --count" \
-            --command-name "pacman" "pacman -Qe | wc -l"
+            --command-name "pacman" "bash -o pipefail -c 'pacman -Qe | wc -l'"
     else
         hyperfine --warmup $WARMUP --min-runs $MIN_RUNS \
             --export-markdown "$EXPORT_DIR/explicit.md" \
