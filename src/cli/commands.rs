@@ -1002,7 +1002,7 @@ fn find_cached_arch_package_in(
     cache_dir: &std::path::Path,
     package: &str,
     version: &str,
-) -> Result<std::path::PathBuf> {
+) -> Result<Option<std::path::PathBuf>> {
     let prefix = format!("{package}-{version}-");
     let mut matches = Vec::new();
     for entry in std::fs::read_dir(cache_dir)
@@ -1023,10 +1023,7 @@ fn find_cached_arch_package_in(
     }
     matches.sort_unstable();
     let Some(candidate) = matches.into_iter().next() else {
-        anyhow::bail!(
-            "Package {package} {version} is not available in the pacman cache at {}",
-            cache_dir.display()
-        );
+        return Ok(None);
     };
     // SECURITY (audit sec04 F2): this archive feeds a privileged restore.
     // Verify its embedded .PKGINFO actually names the requested package and
@@ -1049,7 +1046,7 @@ fn find_cached_arch_package_in(
             candidate.display()
         );
     }
-    Ok(candidate)
+    Ok(Some(candidate))
 }
 
 #[cfg(feature = "arch")]
@@ -1059,9 +1056,7 @@ fn find_cached_arch_package(package: &str, version: &str) -> Result<std::path::P
         if !cache_dir.exists() {
             continue;
         }
-        std::fs::read_dir(cache_dir)
-            .with_context(|| format!("Failed to read pacman cache: {}", cache_dir.display()))?;
-        if let Ok(path) = find_cached_arch_package_in(cache_dir, package, version) {
+        if let Some(path) = find_cached_arch_package_in(cache_dir, package, version)? {
             return Ok(path);
         }
     }
@@ -1659,10 +1654,10 @@ mod tests {
 
         // Build real archives with embedded .PKGINFO (the rollback identity
         // check now fails closed when it cannot read one).
-        let make_archive = |path: &std::path::Path, pkgver: &str| -> Result<()> {
+        let make_archive = |path: &std::path::Path, pkgname: &str, pkgver: &str| -> Result<()> {
             let enc = GzEncoder::new(std::fs::File::create(path)?, flate2::Compression::fast());
             let mut tar = tar::Builder::new(enc);
-            let pkginfo = format!("pkgname = example\npkgver = {pkgver}\npkgrel = 1\n");
+            let pkginfo = format!("pkgname = {pkgname}\npkgver = {pkgver}\npkgrel = 1\n");
             let mut header = tar::Header::new_gnu();
             header.set_size(pkginfo.len() as u64);
             header.set_mode(0o644);
@@ -1673,17 +1668,24 @@ mod tests {
         };
 
         let expected = directory.path().join("example-1.0-1-x86_64.pkg.tar.gz");
-        make_archive(&expected, "1.0-1")?;
+        make_archive(&expected, "example", "1.0-1")?;
         make_archive(
             &directory.path().join("example-2.0-1-x86_64.pkg.tar.gz"),
+            "example",
             "2.0-1",
         )?;
 
         assert_eq!(
             find_cached_arch_package_in(directory.path(), "example", "1.0-1")?,
-            expected
+            Some(expected)
         );
-        assert!(find_cached_arch_package_in(directory.path(), "example", "3.0-1").is_err());
+        assert!(find_cached_arch_package_in(directory.path(), "example", "3.0-1")?.is_none());
+
+        let mismatched = directory.path().join("example-4.0-1-x86_64.pkg.tar.gz");
+        make_archive(&mismatched, "other", "4.0-1")?;
+        let error = find_cached_arch_package_in(directory.path(), "example", "4.0-1")
+            .expect_err("mismatched archive identity must fail closed");
+        assert!(error.to_string().contains("claims"), "got: {error}");
         Ok(())
     }
 
