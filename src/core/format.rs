@@ -11,9 +11,12 @@ pub fn truncate(s: &str, max: usize) -> String {
     if s.len() <= max {
         return s.to_string();
     }
+    if max <= 3 {
+        return ".".repeat(max);
+    }
     // Reserve room for the ellipsis, then back off to a char boundary so the
     // slice stays valid UTF-8 even for multibyte input.
-    let mut end = max.saturating_sub(3);
+    let mut end = max - 3;
     while end > 0 && !s.is_char_boundary(end) {
         end -= 1;
     }
@@ -64,8 +67,11 @@ mod tests {
     }
 
     #[test]
-    fn truncate_with_tiny_max_yields_ellipsis_only() {
-        assert_eq!(truncate("hello", 2), "...");
+    fn truncate_with_tiny_max_stays_within_the_limit() {
+        assert_eq!(truncate("hello", 0), "");
+        assert_eq!(truncate("hello", 1), ".");
+        assert_eq!(truncate("hello", 2), "..");
+        assert_eq!(truncate("hello", 3), "...");
     }
 
     #[test]
