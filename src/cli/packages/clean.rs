@@ -21,6 +21,11 @@ use crate::package_managers::debian_db::{clean_package_cache, list_orphans_fast}
     clippy::needless_return,
     reason = "additive backend feature branches return before compiled fallbacks"
 )]
+#[cfg(any(test, feature = "debian"))]
+fn apt_cleanup_requests_unsupported_work(cache: bool, aur: bool, all: bool) -> bool {
+    cache || aur || all
+}
+
 pub async fn clean(orphans: bool, cache: bool, aur: bool, all: bool, dry_run: bool) -> Result<()> {
     if dry_run {
         crate::cli::modern_ui::print_phase_header("🧹", "Clean Preview", "dry run");
@@ -56,7 +61,7 @@ pub async fn clean(orphans: bool, cache: bool, aur: bool, all: bool, dry_run: bo
 
         #[cfg(all(feature = "debian", not(feature = "debian-pure")))]
         {
-            if cache || aur {
+            if apt_cleanup_requests_unsupported_work(cache, aur, all) {
                 anyhow::bail!("Cache and AUR cleanup are not supported on the APT backend");
             }
             let do_orphans = orphans || all;
@@ -409,6 +414,14 @@ fn report_cache_clean(result: Result<(usize, u64)>) -> Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn apt_all_requests_unsupported_cache_cleanup() {
+        assert!(apt_cleanup_requests_unsupported_work(false, false, true));
+        assert!(apt_cleanup_requests_unsupported_work(true, false, false));
+        assert!(apt_cleanup_requests_unsupported_work(false, true, false));
+        assert!(!apt_cleanup_requests_unsupported_work(false, false, false));
+    }
 
     #[test]
     fn cache_clean_failure_returns_err() {
