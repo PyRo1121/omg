@@ -78,8 +78,8 @@ omg install firefox chromium brave-bin
 # Install AUR package (auto-detected)
 omg install visual-studio-code-bin
 
-# Install as dependency
-omg install --asdeps libfoo
+# Install a package (dependency marking is handled by the backend)
+omg install libfoo
 ```
 
 ### Installation Lifecycle

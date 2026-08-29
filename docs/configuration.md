@@ -66,27 +66,25 @@ default_shell = "zsh"
 # Automatically check for runtime updates on install (default: false)
 auto_update = false
 
-# Runtime backend preference
-
 # ═══════════════════════════════════════════════════════════════════════════
 # AUR BUILD SETTINGS
 # ═══════════════════════════════════════════════════════════════════════════
 
 [aur]
-# Build method: "bubblewrap" (secure), "chroot", or "native" (default)
-build_method = "native"
+# Build method: "bubblewrap" (secure, default), "chroot", or "native"
+build_method = "bubblewrap"
 
 # Number of parallel AUR builds
 build_concurrency = 8
 
-# Require interactive PKGBUILD review before building (default: false)
-review_pkgbuild = false
+# Require interactive PKGBUILD review before building (default: true)
+review_pkgbuild = true
 
 # Use stricter makepkg flags (cleanbuild/verifysource) (default: true)
 secure_makepkg = true
 
-# Allow native builds without sandboxing (default: true)
-allow_unsafe_builds = true
+# Allow native builds without sandboxing (default: false)
+allow_unsafe_builds = false
 
 # Use AUR metadata archive for bulk update checks (default: true)
 use_metadata_archive = true
@@ -131,9 +129,9 @@ enable_sccache = false
 
 | Setting | Type | Default | Description |
 | --------- | ------ | --------- | ------------- |
-| `build_method` | string | `"native"` | Build isolation method (`bubblewrap`, `chroot`, `native`) |
+| `build_method` | string | `"bubblewrap"` | Build isolation method (`bubblewrap`, `chroot`, `native`) |
 | `build_concurrency` | int | CPU count | Parallel AUR builds |
-| `review_pkgbuild` | bool | `false` | Require manual PKGBUILD review |
+| `review_pkgbuild` | bool | `true` | Require manual PKGBUILD review |
 | `secure_makepkg` | bool | `true` | Use cleanbuild/verifysource |
 | `use_metadata_archive` | bool | `true` | Use bulk metadata for fast updates |
 | `cache_builds` | bool | `true` | Cache built packages |
@@ -423,23 +421,12 @@ cache_builds = true
 # ~/.config/omg/config.toml
 auto_update = false
 
-[daemon]
-refresh_interval = 60
-cache_ttl = 60
-
 [aur]
 build_concurrency = 4
 cache_builds = false
 ```
 
 ### Enterprise/Secure
-
-```toml
-# ~/.config/omg/config.toml
-[daemon]
-max_cache_entries = 5000
-cache_ttl = 600
-```
 
 ```toml
 # ~/.config/omg/policy.toml

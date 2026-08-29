@@ -1401,14 +1401,14 @@ omg enterprise <SUBCOMMAND>
 **Examples:**
 
 ```bash
-# Generate monthly report (JSON is the only implemented format)
-omg enterprise reports --type monthly --format json
+# Generate monthly report (reports are written as JSON)
+omg enterprise reports --report-type monthly
 
 # Export SOC2 compliance evidence
-omg enterprise audit-export --format soc2 --period 2025-Q4
+omg enterprise audit-export --framework soc2 --period 2025-Q4
 
-# Scan for license issues, exporting results to a file
-omg enterprise license-scan --export license-report.csv
+# Scan for license issues and export CSV results
+omg enterprise license-scan --export csv
 
 # Show current policies
 omg enterprise policy show

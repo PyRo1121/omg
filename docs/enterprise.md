@@ -46,7 +46,7 @@ flowchart LR
 Export comprehensive audit evidence for compliance frameworks (SOC2, ISO27001, FedRAMP).
 
 ```bash
-omg enterprise audit-export --format soc2 --output ./evidence
+omg enterprise audit-export --framework soc2 --output ./evidence
 ```
 
 **Generates:**
@@ -68,7 +68,7 @@ omg enterprise license-scan
 
 - **Inventory**: Break down dependencies by license type (MIT, Apache, GPL, etc.).
 - **Violations**: Flag forbidden licenses based on your organization's policy.
-- **Export**: Generate CSV or SPDX reports.
+- **Export**: Generate CSV or JSON reports.
 
 ```bash
 omg enterprise license-scan --export csv

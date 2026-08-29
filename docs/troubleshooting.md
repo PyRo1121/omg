@@ -320,8 +320,8 @@ which -a node
 # 4. Verify symlink
 ls -la ~/.local/share/omg/versions/node/current
 
-# 5. Force update symlink
-omg use node 20.10.0 --force
+# 5. Recreate the active version link
+omg use node 20.10.0
 
 # 6. Restart shell
 exec zsh

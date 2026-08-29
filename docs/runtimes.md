@@ -193,8 +193,8 @@ When multiple version files exist in the same directory:
 ### Override Auto-Detection
 
 ```bash
-# Force specific version (ignores version files)
-omg use node 18 --force
+# Switch to a specific version
+omg use node 18
 
 # Show which version file is active
 omg which node --verbose
@@ -346,10 +346,10 @@ source ~/.bashrc  # For bash
 cat .nvmrc  # Should contain version like "20.10.0" or "20"
 ```
 
-**Force specific version:**
+**Switch to a specific version:**
 
 ```bash
-omg use node 20 --force
+omg use node 20
 ```
 
 **Verify shell hook is installed:**

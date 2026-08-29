@@ -505,13 +505,10 @@ use_omg() {
 
 ### asdf
 
-**Migrate from asdf:**
+**Use an existing asdf `.tool-versions` file:**
 
 ```bash
-# Migrate .tool-versions
-omg migrate from-asdf
-
-# Or use .tool-versions directly (OMG reads it)
+# OMG reads .tool-versions directly
 cat .tool-versions
 # node 20.10.0
 # python 3.12.0
