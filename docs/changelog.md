@@ -670,6 +670,7 @@ analyzer inference
 - **Ci**: Cross-platform install script and R2 release sync
 ### 🐛 Bug Fixes
 
+- Parse Debian installed states consistently
 - Install hooks at Git's effective path
 - Publish PGP keyring updates atomically
 - Keep tiny truncations within byte limits
