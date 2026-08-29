@@ -58,6 +58,10 @@ pub struct App {
 
     /// Last time the search query was modified; used to debounce searches.
     pub last_query_change: Instant,
+
+    /// Whether refresh may consult daemon, history, workspace, and license API
+    /// adapters. Detached apps keep state-machine/render tests hermetic.
+    pub(crate) external_refresh_enabled: bool,
 }
 
 #[derive(Debug, Clone, Default)]
@@ -71,8 +75,8 @@ pub struct SystemMetrics {
 }
 
 impl App {
-    pub async fn new() -> Result<Self> {
-        let mut app = Self {
+    fn initial(external_refresh_enabled: bool) -> Self {
+        Self {
             status: None,
             team_status: None,
             history: Vec::new(),
@@ -92,9 +96,21 @@ impl App {
             usage_stats: crate::core::usage::UsageStats::load().unwrap_or_default(),
             action_in_flight: false,
             last_query_change: Instant::now(),
-        };
+            external_refresh_enabled,
+        }
+    }
+
+    pub async fn new() -> Result<Self> {
+        let mut app = Self::initial(true);
         app.refresh().await?;
         Ok(app)
+    }
+
+    /// Construct the TUI state machine without reading host state or making
+    /// network/daemon calls. A later explicit [`Self::refresh`] remains local.
+    #[must_use]
+    pub fn new_detached() -> Self {
+        Self::initial(false)
     }
 
     #[must_use]
@@ -104,6 +120,11 @@ impl App {
     }
 
     pub async fn refresh(&mut self) -> Result<()> {
+        if !self.external_refresh_enabled {
+            self.update_system_metrics();
+            return Ok(());
+        }
+
         // Check if daemon is connected
         #[cfg(unix)]
         {
@@ -688,34 +709,27 @@ mod tests {
     use super::*;
 
     fn test_app() -> App {
-        App {
-            status: None,
-            team_status: None,
-            history: Vec::new(),
-            last_tick: Instant::now(),
-            current_tab: Tab::Packages,
-            selected_index: 0,
-            show_popup: false,
-            search_query: String::new(),
-            search_mode: false,
-            daemon_connected: false,
-            search_results: vec![crate::package_managers::SyncPackage {
-                name: "firefox".to_string(),
-                version: crate::package_managers::parse_version_or_zero("1.0"),
-                description: "Browser".to_string(),
-                repo: "official".to_string(),
-                download_size: 0,
-                installed: false,
-            }],
-            search_error: None,
-            action_error: None,
-            system_metrics: SystemMetrics::default(),
-            last_update: Instant::now(),
-            prev_cpu_sample: None,
-            usage_stats: crate::core::usage::UsageStats::default(),
-            action_in_flight: false,
-            last_query_change: Instant::now(),
-        }
+        let mut app = App::new_detached().with_tab(Tab::Packages);
+        app.search_results = vec![crate::package_managers::SyncPackage {
+            name: "firefox".to_string(),
+            version: crate::package_managers::parse_version_or_zero("1.0"),
+            description: "Browser".to_string(),
+            repo: "official".to_string(),
+            download_size: 0,
+            installed: false,
+        }];
+        app
+    }
+
+    #[tokio::test]
+    async fn detached_refresh_never_enables_external_state() {
+        let mut app = App::new_detached();
+        app.refresh().await.unwrap();
+
+        assert!(!app.external_refresh_enabled);
+        assert!(!app.daemon_connected);
+        assert!(app.history.is_empty());
+        assert!(app.team_status.is_none());
     }
 
     #[test]

@@ -274,10 +274,7 @@ mod app_state_tests {
     #[tokio::test]
     #[serial]
     async fn test_app_creation() {
-        let result = App::new().await;
-        assert!(result.is_ok());
-
-        let app = result.unwrap();
+        let app = App::new_detached();
         assert_eq!(app.current_tab, Tab::Dashboard);
         assert_eq!(app.selected_index, 0);
         assert!(!app.show_popup);
@@ -288,17 +285,14 @@ mod app_state_tests {
     #[tokio::test]
     #[serial]
     async fn test_app_with_team_tab() {
-        let result = App::new().await;
-        assert!(result.is_ok());
-
-        let app = result.unwrap().with_tab(Tab::Team);
+        let app = App::new_detached().with_tab(Tab::Team);
         assert_eq!(app.current_tab, Tab::Team);
     }
 
     #[tokio::test]
     #[serial]
     async fn test_app_initial_state() {
-        let app = App::new().await.unwrap();
+        let app = App::new_detached();
 
         assert_eq!(app.selected_index, 0);
         assert!(!app.show_popup);
@@ -315,7 +309,7 @@ mod tab_navigation_tests {
     #[tokio::test]
     #[serial]
     async fn test_numeric_tab_switching() {
-        let mut app = App::new().await.unwrap();
+        let mut app = App::new_detached();
 
         // Test switching to each tab via numeric keys
         app.handle_key(KeyCode::Char('1'));
@@ -340,7 +334,7 @@ mod tab_navigation_tests {
     #[tokio::test]
     #[serial]
     async fn test_tab_key_navigation_forward() {
-        let mut app = App::new().await.unwrap();
+        let mut app = App::new_detached();
 
         assert_eq!(app.current_tab, Tab::Dashboard);
 
@@ -366,7 +360,7 @@ mod tab_navigation_tests {
     #[tokio::test]
     #[serial]
     async fn test_backtab_navigation_backward() {
-        let mut app = App::new().await.unwrap();
+        let mut app = App::new_detached();
 
         assert_eq!(app.current_tab, Tab::Dashboard);
 
@@ -457,7 +451,7 @@ mod search_and_selection_tests {
     #[tokio::test]
     #[serial]
     async fn test_search_mode_activation() {
-        let mut app = App::new().await.unwrap();
+        let mut app = App::new_detached();
         app.current_tab = Tab::Packages;
 
         assert!(!app.search_mode);
@@ -470,7 +464,7 @@ mod search_and_selection_tests {
     #[tokio::test]
     #[serial]
     async fn test_search_query_input() {
-        let mut app = App::new().await.unwrap();
+        let mut app = App::new_detached();
         app.current_tab = Tab::Packages;
         app.search_mode = true;
 
@@ -485,7 +479,7 @@ mod search_and_selection_tests {
     #[tokio::test]
     #[serial]
     async fn test_search_backspace() {
-        let mut app = App::new().await.unwrap();
+        let mut app = App::new_detached();
         app.current_tab = Tab::Packages;
         app.search_mode = true;
         app.search_query = "test".to_string();
@@ -506,7 +500,7 @@ mod search_and_selection_tests {
     #[tokio::test]
     #[serial]
     async fn test_escape_exits_search_mode() {
-        let mut app = App::new().await.unwrap();
+        let mut app = App::new_detached();
         app.current_tab = Tab::Packages;
         app.search_mode = true;
         app.search_query = "test".to_string();
@@ -522,7 +516,7 @@ mod search_and_selection_tests {
     #[tokio::test]
     #[serial]
     async fn test_enter_exits_search_mode() {
-        let mut app = App::new().await.unwrap();
+        let mut app = App::new_detached();
         app.current_tab = Tab::Packages;
         app.search_mode = true;
 
@@ -533,7 +527,7 @@ mod search_and_selection_tests {
     #[tokio::test]
     #[serial]
     async fn test_list_navigation() {
-        let mut app = App::new().await.unwrap();
+        let mut app = App::new_detached();
         app.current_tab = Tab::Packages;
 
         // Populate some search results
@@ -592,7 +586,7 @@ mod search_and_selection_tests {
     #[tokio::test]
     #[serial]
     async fn test_vim_navigation_keys() {
-        let mut app = App::new().await.unwrap();
+        let mut app = App::new_detached();
         app.current_tab = Tab::Packages;
 
         app.search_results = vec![
@@ -632,7 +626,7 @@ mod refresh_and_tick_tests {
     #[tokio::test]
     #[serial]
     async fn test_tick_updates_metrics() {
-        let mut app = App::new().await.unwrap();
+        let mut app = App::new_detached();
 
         // Age the metrics timer deterministically so tick() must refresh it;
         // this asserts the observable post-condition instead of relying on a
@@ -652,7 +646,7 @@ mod refresh_and_tick_tests {
     #[tokio::test]
     #[serial]
     async fn test_refresh_interval_elapsed_triggers_full_refresh() {
-        let mut app = App::new().await.unwrap();
+        let mut app = App::new_detached();
 
         // Age the refresh timer so tick() must take the full-refresh branch
         // (App::tick: `last_tick.elapsed() >= 5s` => refresh + reset).
@@ -675,7 +669,7 @@ mod popup_tests {
     #[tokio::test]
     #[serial]
     async fn test_popup_show_hide() {
-        let mut app = App::new().await.unwrap();
+        let mut app = App::new_detached();
 
         assert!(!app.show_popup);
 
@@ -689,7 +683,7 @@ mod popup_tests {
     #[tokio::test]
     #[serial]
     async fn test_popup_on_package_selection() {
-        let mut app = App::new().await.unwrap();
+        let mut app = App::new_detached();
         app.current_tab = Tab::Packages;
 
         app.search_results = vec![SyncPackage {
@@ -708,7 +702,7 @@ mod popup_tests {
     #[tokio::test]
     #[serial]
     async fn test_popup_not_shown_on_empty_results() {
-        let mut app = App::new().await.unwrap();
+        let mut app = App::new_detached();
         app.current_tab = Tab::Packages;
 
         assert!(app.search_results.is_empty());
@@ -725,7 +719,7 @@ mod system_metrics_tests {
     #[tokio::test]
     #[serial]
     async fn test_system_metrics_are_valid_percentages() {
-        let app = App::new().await.unwrap();
+        let app = App::new_detached();
 
         // CPU and memory are rendered as percentages: they must be finite
         // and bounded to [0, 100] whether they are still the defaults or
@@ -762,7 +756,7 @@ mod app_getter_tests {
     #[tokio::test]
     #[serial]
     async fn getters_map_daemon_status_fields() {
-        let mut app = App::new().await.unwrap();
+        let mut app = App::new_detached();
         app.status = Some(sample_status());
 
         assert_eq!(app.get_total_packages(), 120);
@@ -778,7 +772,7 @@ mod app_getter_tests {
     #[tokio::test]
     #[serial]
     async fn getters_fall_back_without_daemon_status() {
-        let mut app = App::new().await.unwrap();
+        let mut app = App::new_detached();
         app.status = None;
 
         assert_eq!(app.get_total_packages(), 0);
@@ -791,7 +785,7 @@ mod app_getter_tests {
     #[tokio::test]
     #[serial]
     async fn vulnerability_count_is_none_when_scan_did_not_run() {
-        let mut app = App::new().await.unwrap();
+        let mut app = App::new_detached();
         let mut status = sample_status();
         status.vulnerabilities_scanned = false;
         app.status = Some(status);
@@ -809,7 +803,7 @@ mod edge_cases_tests {
     #[tokio::test]
     #[serial]
     async fn test_navigation_with_empty_lists() {
-        let mut app = App::new().await.unwrap();
+        let mut app = App::new_detached();
         app.current_tab = Tab::Packages;
 
         assert!(app.search_results.is_empty());
@@ -826,7 +820,7 @@ mod edge_cases_tests {
     #[tokio::test]
     #[serial]
     async fn test_search_mode_only_on_packages_tab() {
-        let mut app = App::new().await.unwrap();
+        let mut app = App::new_detached();
 
         // Try activating search on Dashboard - should not work
         app.current_tab = Tab::Dashboard;

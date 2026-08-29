@@ -1402,30 +1402,9 @@ fn draw_popup(f: &mut Frame, app: &App) {
 mod tests {
     use super::*;
     use ratatui::{Terminal, backend::TestBackend};
-    use std::time::Instant;
 
     fn app_on(tab: Tab) -> App {
-        App {
-            status: None,
-            team_status: None,
-            history: Vec::new(),
-            last_tick: Instant::now(),
-            current_tab: tab,
-            selected_index: 0,
-            show_popup: false,
-            search_query: String::new(),
-            search_mode: false,
-            daemon_connected: false,
-            search_results: Vec::new(),
-            search_error: None,
-            action_error: None,
-            system_metrics: crate::cli::tui::app::SystemMetrics::default(),
-            last_update: Instant::now(),
-            prev_cpu_sample: None,
-            usage_stats: crate::core::usage::UsageStats::default(),
-            action_in_flight: false,
-            last_query_change: Instant::now(),
-        }
+        App::new_detached().with_tab(tab)
     }
 
     fn render(tab: Tab, width: u16, height: u16) -> String {
