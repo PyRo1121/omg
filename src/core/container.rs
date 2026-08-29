@@ -408,6 +408,12 @@ impl ContainerManager {
                 (*version).to_string()
             };
             let version = version.as_str();
+            if !is_debian_base(base_image)
+                && let Some(package) = runtime_system_package(base_image, runtime, version)
+            {
+                push_package_install(&mut dockerfile, base_image, &package);
+                continue;
+            }
             match *runtime {
                 "node" => {
                     dockerfile.push_str("# Install Node.js\n");
@@ -532,15 +538,47 @@ fn is_safe_image_reference(image: &str) -> bool {
 
 /// Whether [`push_package_install`] knows how to emit an install line for
 /// this base-image family.
+fn is_debian_base(base_image: &str) -> bool {
+    base_image.contains("ubuntu") || base_image.contains("debian")
+}
+
 fn push_package_install_supported(base_image: &str) -> bool {
-    base_image.contains("ubuntu")
-        || base_image.contains("debian")
+    is_debian_base(base_image)
         || base_image.contains("arch")
         || base_image.contains("alpine")
         || base_image.contains("fedora")
         || base_image.contains("rhel")
         || base_image.contains("centos")
         || base_image.contains("opensuse")
+}
+
+fn runtime_system_package(base_image: &str, runtime: &str, version: &str) -> Option<String> {
+    match runtime {
+        "node" => Some("nodejs".to_string()),
+        "python" if base_image.contains("arch") => Some("python".to_string()),
+        "python" => Some("python3".to_string()),
+        "java" if base_image.contains("arch") => Some("jdk-openjdk".to_string()),
+        "java" if base_image.contains("alpine") => {
+            let major = version.split('.').next().filter(|part| {
+                !part.is_empty() && part.chars().all(|character| character.is_ascii_digit())
+            });
+            Some(format!("openjdk{}", major.unwrap_or("21")))
+        }
+        "java"
+            if base_image.contains("fedora")
+                || base_image.contains("rhel")
+                || base_image.contains("centos")
+                || base_image.contains("opensuse") =>
+        {
+            let major = version.split('.').next().filter(|part| {
+                !part.is_empty() && part.chars().all(|character| character.is_ascii_digit())
+            });
+            Some(format!("java-{}-openjdk-devel", major.unwrap_or("21")))
+        }
+        "java" => Some("java".to_string()),
+        "ruby" => Some("ruby".to_string()),
+        _ => None,
+    }
 }
 
 /// Append the distribution-appropriate package-install command for `package`
@@ -696,6 +734,28 @@ mod tests {
 
         assert!(error.to_string().contains("status Some(17)"));
         assert!(error.to_string().contains("daemon unavailable"));
+    }
+
+    #[test]
+    fn non_debian_runtime_installs_use_the_base_image_package_manager() {
+        let manager = ContainerManager::with_runtime(ContainerRuntime::Docker);
+        let dockerfile = manager.generate_dockerfile(
+            "archlinux:latest",
+            &[
+                ("node", "lts"),
+                ("python", "3.12"),
+                ("java", "21"),
+                ("ruby", "3.3"),
+            ],
+        );
+
+        assert!(!dockerfile.contains("apt-get"), "{dockerfile}");
+        for package in ["nodejs", "python", "jdk-openjdk", "ruby"] {
+            assert!(
+                dockerfile.contains(&format!("pacman -S --noconfirm {package}")),
+                "missing {package}: {dockerfile}"
+            );
+        }
     }
 
     #[test]
