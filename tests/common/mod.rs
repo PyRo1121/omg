@@ -232,17 +232,25 @@ pub fn run_omg_with_env(args: &[&str], env_vars: &[(&str, &str)]) -> CommandResu
 }
 
 /// Run an OMG command with full options
+fn command_timeout(env_vars: &[(&str, &str)]) -> Duration {
+    let configured = env_vars
+        .iter()
+        .find(|(key, _)| *key == "OMG_TEST_COMMAND_TIMEOUT_SECS")
+        .map(|(_, value)| (*value).to_string())
+        .or_else(|| env::var("OMG_TEST_COMMAND_TIMEOUT_SECS").ok());
+    configured
+        .and_then(|value| value.parse::<u64>().ok())
+        .filter(|seconds| *seconds > 0)
+        .map_or(Duration::from_secs(60), Duration::from_secs)
+}
+
 pub fn run_omg_with_options(
     args: &[&str],
     dir: Option<&Path>,
     env_vars: &[(&str, &str)],
 ) -> CommandResult {
     let start = Instant::now();
-    let command_timeout = env::var("OMG_TEST_COMMAND_TIMEOUT_SECS")
-        .ok()
-        .and_then(|value| value.parse::<u64>().ok())
-        .filter(|seconds| *seconds > 0)
-        .map_or(Duration::from_secs(60), Duration::from_secs);
+    let command_timeout = command_timeout(env_vars);
 
     let mut cmd = Command::new(env!("CARGO_BIN_EXE_omg"));
     cmd.args(args)
@@ -643,4 +651,16 @@ macro_rules! require_ubuntu {
             return;
         }
     };
+}
+
+#[cfg(test)]
+mod tests {
+    use super::command_timeout;
+    use std::time::Duration;
+
+    #[test]
+    fn explicit_timeout_overrides_inherited_timeout() {
+        let timeout = command_timeout(&[("OMG_TEST_COMMAND_TIMEOUT_SECS", "2")]);
+        assert_eq!(timeout, Duration::from_secs(2));
+    }
 }
