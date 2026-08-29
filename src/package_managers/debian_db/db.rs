@@ -1161,8 +1161,9 @@ fn find_info_from_apt_lists_fast(name: &str) -> Result<Option<Package>> {
 fn append_dependencies(value: &str, dependencies: &mut Vec<String>) {
     dependencies.reserve(value.matches(',').count() + 1);
     for dependency in value.split(',') {
-        if let Some(package) = dependency.split_whitespace().next() {
-            dependencies.push(package.to_string());
+        let dependency = dependency.trim();
+        if !dependency.is_empty() {
+            dependencies.push(dependency.to_string());
         }
     }
 }
@@ -1194,7 +1195,7 @@ fn parse_paragraph_str(paragraph: &str, component: &str, suite: &str) -> Result<
                         description.push_str(value);
                     }
                 }
-                Some("Depends") => append_dependencies(value, &mut depends),
+                Some("Depends" | "Pre-Depends") => append_dependencies(value, &mut depends),
                 _ => {}
             }
             continue;
@@ -1222,7 +1223,7 @@ fn parse_paragraph_str(paragraph: &str, component: &str, suite: &str) -> Result<
             }
             b"Maintainer" => maintainer = value.to_string(),
             b"Architecture" => architecture = value.to_string(),
-            b"Depends" => append_dependencies(value, &mut depends),
+            b"Depends" | b"Pre-Depends" => append_dependencies(value, &mut depends),
             b"Filename" => filename = value.to_string(),
             b"Size" => {
                 size = value
@@ -2355,7 +2356,20 @@ mod tests {
 
         let package = parse_paragraph_str(paragraph, "main", "bookworm")?;
 
-        assert_eq!(package.depends, ["libc6", "libreadline8", "libtinfo6"]);
+        assert_eq!(
+            package.depends,
+            [
+                "libc6 (>= 2.38)",
+                "libreadline8 (>= 8.1)",
+                "libtinfo6 | ncurses-term"
+            ]
+        );
+        let pre_depends = parse_paragraph_str(
+            "Package: init-system\nPre-Depends: libc6 (>= 2.36)\n",
+            "main",
+            "bookworm",
+        )?;
+        assert_eq!(pre_depends.depends, ["libc6 (>= 2.36)"]);
         Ok(())
     }
 
