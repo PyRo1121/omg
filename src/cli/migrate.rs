@@ -3,7 +3,7 @@
 use anyhow::Result;
 use owo_colors::OwoColorize;
 use serde::{Deserialize, Serialize};
-use std::collections::HashMap;
+use std::collections::BTreeMap;
 use std::fs;
 
 use crate::cli::style;
@@ -19,7 +19,7 @@ pub struct MigrationManifest {
     pub version: String,
     pub source_distro: String,
     pub created_at: i64,
-    pub runtimes: HashMap<String, String>,
+    pub runtimes: BTreeMap<String, String>,
     pub packages: Vec<PackageMapping>,
 }
 

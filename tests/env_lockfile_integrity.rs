@@ -16,12 +16,12 @@ pub mod common;
 
 use common::TestProject;
 use omg_lib::core::env::fingerprint::EnvironmentState;
-use std::collections::HashMap;
+use std::collections::BTreeMap;
 
 fn sample_state() -> EnvironmentState {
     let mut state = EnvironmentState {
         schema_version: omg_lib::core::env::fingerprint::EnvironmentState::SCHEMA_VERSION,
-        runtimes: HashMap::new(),
+        runtimes: BTreeMap::new(),
         packages: vec!["curl".to_string(), "git".to_string()],
         timestamp: 1_700_000_000,
         hash: String::new(),
@@ -116,7 +116,7 @@ fn env_check_fails_on_tampered_lockfile_integrity() {
     // Write a valid-schema lockfile whose contents contradict its stored hash.
     let mut state = EnvironmentState {
         schema_version: omg_lib::core::env::fingerprint::EnvironmentState::SCHEMA_VERSION,
-        runtimes: HashMap::new(),
+        runtimes: BTreeMap::new(),
         packages: vec![],
         timestamp: 0,
         hash: "0000000000000000000000000000000000000000000000000000000000000000".to_string(),

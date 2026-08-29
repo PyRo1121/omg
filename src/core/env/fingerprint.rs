@@ -7,7 +7,7 @@ use anyhow::{Context, Result};
 use owo_colors::OwoColorize;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
-use std::collections::HashMap;
+use std::collections::BTreeMap;
 use std::fs;
 use std::path::Path;
 use tokio::task;
@@ -18,14 +18,14 @@ use crate::runtimes::{
 
 /// Represents the captured state of the environment
 #[derive(Debug, Serialize, Deserialize, PartialEq, Eq, Clone)]
-#[expect(clippy::unsafe_derive_deserialize)] // Struct fields are all owned safe types (HashMap, Vec, String, i64); no unsafe in fields
+#[expect(clippy::unsafe_derive_deserialize)] // Struct fields are all owned safe types (BTreeMap, Vec, String, i64); no unsafe in fields
 pub struct EnvironmentState {
     /// Lockfile schema version. Written on save; `load` rejects files written
     /// by a NEWER schema instead of guessing at unknown fields.
     #[serde(default = "default_schema_version")]
     pub schema_version: u32,
     /// Runtime versions (`runtime_name` -> version)
-    pub runtimes: HashMap<String, String>,
+    pub runtimes: BTreeMap<String, String>,
     /// Explicitly installed system packages
     pub packages: Vec<String>,
     /// Timestamp of capture
@@ -44,7 +44,7 @@ impl EnvironmentState {
 
     /// Capture the current environment state
     pub async fn capture() -> Result<Self> {
-        let mut runtimes = HashMap::new();
+        let mut runtimes = BTreeMap::new();
 
         // Capture runtimes in parallel
         let (node, python, rust, go, ruby, java, bun) = tokio::join!(
@@ -384,6 +384,24 @@ impl DriftReport {
 mod tests {
     use super::*;
 
+    #[test]
+    fn lockfile_runtime_keys_are_serialized_in_order() {
+        let mut state = EnvironmentState {
+            schema_version: EnvironmentState::SCHEMA_VERSION,
+            runtimes: std::collections::BTreeMap::from([
+                ("zsh".to_string(), "1".to_string()),
+                ("bash".to_string(), "2".to_string()),
+            ]),
+            packages: Vec::new(),
+            timestamp: 0,
+            hash: String::new(),
+        };
+        state.hash = state.calculate_hash();
+
+        let serialized = toml::to_string_pretty(&state).expect("serialize lockfile");
+        assert!(serialized.find("bash =").unwrap() < serialized.find("zsh =").unwrap());
+    }
+
     #[cfg(unix)]
     #[test]
     fn save_creates_owner_only_lockfile() {
@@ -393,7 +411,7 @@ mod tests {
         let path = directory.path().join("omg.lock");
         let state = EnvironmentState {
             schema_version: EnvironmentState::SCHEMA_VERSION,
-            runtimes: HashMap::new(),
+            runtimes: BTreeMap::new(),
             packages: vec!["foo".to_string()],
             timestamp: 0,
             hash: "abc".to_string(),
@@ -437,7 +455,7 @@ mod tests {
         let path = directory.path().join("omg.lock");
         let state = EnvironmentState {
             schema_version: EnvironmentState::SCHEMA_VERSION,
-            runtimes: HashMap::from([("node".to_string(), " 22 ".to_string())]),
+            runtimes: BTreeMap::from([("node".to_string(), " 22 ".to_string())]),
             packages: vec!["zlib".to_string(), "curl".to_string()],
             timestamp: 0,
             hash: "stale".to_string(),
@@ -457,7 +475,7 @@ mod tests {
         let path = directory.path().join("omg.lock");
         let mut state = EnvironmentState {
             schema_version: EnvironmentState::SCHEMA_VERSION,
-            runtimes: HashMap::new(),
+            runtimes: BTreeMap::new(),
             packages: vec!["curl".to_string()],
             timestamp: 0,
             hash: String::new(),

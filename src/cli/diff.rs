@@ -2,7 +2,7 @@
 
 use anyhow::Result;
 use owo_colors::OwoColorize;
-use std::collections::{HashMap, HashSet};
+use std::collections::{BTreeMap, HashSet};
 
 use crate::cli::style;
 use crate::core::env::fingerprint::EnvironmentState;
@@ -143,7 +143,7 @@ pub async fn run(from: Option<&str>, to: &str) -> Result<()> {
     Ok(())
 }
 
-fn diff_runtimes(from: &HashMap<String, String>, to: &HashMap<String, String>) -> Vec<String> {
+fn diff_runtimes(from: &BTreeMap<String, String>, to: &BTreeMap<String, String>) -> Vec<String> {
     let mut changes = Vec::new();
 
     let all_runtimes: HashSet<_> = from.keys().chain(to.keys()).collect();
@@ -218,11 +218,11 @@ mod tests {
 
     #[test]
     fn diff_output_is_sorted_for_reproducible_reports() {
-        let from = HashMap::from([
+        let from = BTreeMap::from([
             ("zsh".to_string(), "5".to_string()),
             ("bash".to_string(), "4".to_string()),
         ]);
-        let to = HashMap::from([
+        let to = BTreeMap::from([
             ("fish".to_string(), "3".to_string()),
             ("bash".to_string(), "5".to_string()),
         ]);
