@@ -668,6 +668,7 @@ analyzer inference
 - **Ci**: Cross-platform install script and R2 release sync
 ### 🐛 Bug Fixes
 
+- Read DNF install reasons from system state
 - Honor pacman ignore rules in cached updates
 - Honor quiet output mode
 - Make Compose smoke services runnable
