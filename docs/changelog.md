@@ -678,6 +678,7 @@ analyzer inference
 - **Ci**: Cross-platform install script and R2 release sync
 ### 🐛 Bug Fixes
 
+- Resolve Go checksums from release manifest
 - Enforce configured install grading across backends
 - Render Tea state transitions without duplicate errors
 - Enforce security grading on Arch installs
