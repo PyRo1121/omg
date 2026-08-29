@@ -668,6 +668,7 @@ analyzer inference
 - **Ci**: Cross-platform install script and R2 release sync
 ### 🐛 Bug Fixes
 
+- Keep macOS backend feature checks clean
 - Validate compliance export inputs consistently
 - Preserve full Debian search cache results
 - Clean AUR rollback error messages
