@@ -625,22 +625,18 @@ mod refresh_and_tick_tests {
 
     #[tokio::test]
     #[serial]
-    async fn test_tick_updates_metrics() {
+    async fn detached_tick_does_not_probe_host_metrics() {
         let mut app = App::new_detached();
-
-        // Age the metrics timer deterministically so tick() must refresh it;
-        // this asserts the observable post-condition instead of relying on a
-        // wall-clock sleep.
         app.last_update = std::time::Instant::now()
             .checked_sub(std::time::Duration::from_secs(10))
             .unwrap_or_else(std::time::Instant::now);
+        let aged_update = app.last_update;
 
         app.tick().await.unwrap();
 
-        assert!(
-            app.last_update.elapsed() < std::time::Duration::from_secs(1),
-            "tick should refresh last_update once the metrics interval elapsed"
-        );
+        assert_eq!(app.last_update, aged_update);
+        assert_eq!(app.system_metrics.cpu_usage, 0.0);
+        assert_eq!(app.system_metrics.memory_usage, 0.0);
     }
 
     #[tokio::test]

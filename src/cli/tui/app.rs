@@ -93,7 +93,11 @@ impl App {
             system_metrics: SystemMetrics::default(),
             last_update: Instant::now(),
             prev_cpu_sample: None,
-            usage_stats: crate::core::usage::UsageStats::load().unwrap_or_default(),
+            usage_stats: if external_refresh_enabled {
+                crate::core::usage::UsageStats::load().unwrap_or_default()
+            } else {
+                crate::core::usage::UsageStats::default()
+            },
             action_in_flight: false,
             last_query_change: Instant::now(),
             external_refresh_enabled,
@@ -121,7 +125,6 @@ impl App {
 
     pub async fn refresh(&mut self) -> Result<()> {
         if !self.external_refresh_enabled {
-            self.update_system_metrics();
             return Ok(());
         }
 
@@ -537,7 +540,9 @@ impl App {
         }
 
         // Update metrics more frequently
-        if self.last_update.elapsed() >= std::time::Duration::from_secs(1) {
+        if self.external_refresh_enabled
+            && self.last_update.elapsed() >= std::time::Duration::from_secs(1)
+        {
             self.update_system_metrics();
             self.last_update = Instant::now();
         }
@@ -724,9 +729,11 @@ mod tests {
     #[tokio::test]
     async fn detached_refresh_never_enables_external_state() {
         let mut app = App::new_detached();
+        let last_update = app.last_update;
         app.refresh().await.unwrap();
 
         assert!(!app.external_refresh_enabled);
+        assert_eq!(app.last_update, last_update);
         assert!(!app.daemon_connected);
         assert!(app.history.is_empty());
         assert!(app.team_status.is_none());
