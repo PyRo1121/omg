@@ -64,8 +64,6 @@ pub enum InfoState {
     Idle,
     Loading,
     Complete,
-    Failed,
-    NotFound,
 }
 
 /// Info messages
@@ -83,7 +81,6 @@ pub struct InfoModel {
     pub package_name: String,
     pub info: Option<PackageInfo>,
     pub state: InfoState,
-    pub error: Option<String>,
 }
 
 impl Default for InfoModel {
@@ -92,7 +89,6 @@ impl Default for InfoModel {
             package_name: String::new(),
             info: None,
             state: InfoState::Idle,
-            error: None,
         }
     }
 }
@@ -149,14 +145,12 @@ impl Model for InfoModel {
             }
             InfoMsg::NotFound(pkg) => {
                 self.package_name = pkg;
-                self.state = InfoState::NotFound;
+                self.state = InfoState::Idle;
                 Cmd::error(format!("Package '{}' not found", self.package_name))
             }
             InfoMsg::Error(err) => {
-                self.state = InfoState::Failed;
-                let message = format!("Failed to fetch info: {err}");
-                self.error = Some(err);
-                Cmd::error(message)
+                self.state = InfoState::Idle;
+                Cmd::error(format!("Failed to fetch info: {err}"))
             }
         }
     }
@@ -253,19 +247,6 @@ impl Model for InfoModel {
                     output
                 } else {
                     "No info available".to_string()
-                }
-            }
-            InfoState::NotFound => {
-                format!(
-                    "\n✗ Package '{}' not found in official repositories or AUR.\n",
-                    style::package(&self.package_name).red()
-                )
-            }
-            InfoState::Failed => {
-                if let Some(err) = &self.error {
-                    format!("\n✗ Failed to fetch info: {}\n", err.red())
-                } else {
-                    "\n✗ Failed to fetch info\n".to_string()
                 }
             }
         }

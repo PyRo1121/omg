@@ -162,10 +162,6 @@ impl<M: Model> Program<M> {
         self.renderer.flush()?;
 
         self.process_cmd(init_cmd)?;
-
-        // Render final view
-        self.render()?;
-
         Ok(())
     }
 
@@ -187,14 +183,22 @@ impl<M: Model> Program<M> {
             }
             match cmd {
                 Cmd::None => {}
-                Cmd::Msg(msg) => queue.push(self.model.update(msg)),
+                Cmd::Msg(msg) => {
+                    let next = self.model.update(msg);
+                    self.render()?;
+                    queue.push(next);
+                }
                 Cmd::Batch(cmds) => {
                     // Reversed pushes keep the original batch order (LIFO).
                     for cmd in cmds.into_iter().rev() {
                         queue.push(cmd);
                     }
                 }
-                Cmd::Exec(f) => queue.push(self.model.update(f())),
+                Cmd::Exec(f) => {
+                    let next = self.model.update(f());
+                    self.render()?;
+                    queue.push(next);
+                }
                 other => execute_output_cmd(&mut self.renderer, other)?,
             }
         }
@@ -215,8 +219,8 @@ impl<M: Model> Program<M> {
 /// Execute the output-only variants of [`Cmd`] against a renderer.
 ///
 /// Control-flow variants (`None`/`Msg`/`Batch`/`Exec`) are left to the caller.
-/// `Cmd::Error` prints the styled error **and** yields `Err`, so programs that
-/// report user errors exit non-zero instead of swallowing them into logs.
+/// `Cmd::Error` yields `Err` without printing. Process-level error reporting
+/// has one owner, so a failing command is never rendered twice.
 fn execute_output_cmd<M>(renderer: &mut Renderer, cmd: Cmd<M>) -> io::Result<()> {
     match cmd {
         Cmd::None | Cmd::Msg(_) | Cmd::Batch(_) | Cmd::Exec(_) => {}
@@ -232,10 +236,7 @@ fn execute_output_cmd<M>(renderer: &mut Renderer, cmd: Cmd<M>) -> io::Result<()>
         Cmd::Warning(msg) => {
             renderer.warning(&msg)?;
         }
-        Cmd::Error(msg) => {
-            renderer.error(&msg)?;
-            return Err(io::Error::other(msg));
-        }
+        Cmd::Error(msg) => return Err(io::Error::other(msg)),
         Cmd::Header(title, body) => {
             renderer.header(&title, &body)?;
         }
@@ -257,8 +258,8 @@ fn execute_output_cmd<M>(renderer: &mut Renderer, cmd: Cmd<M>) -> io::Result<()>
 /// Run a pre-built command tree against a fresh renderer without a model.
 ///
 /// Unlike the println-based fallback executor, this honors the Elm rendering
-/// path and treats `Cmd::Error` as program failure: the styled message is
-/// printed and the returned error propagates so the CLI exits non-zero.
+/// path and treats `Cmd::Error` as program failure. The returned error reaches
+/// the process-level reporter, which prints it exactly once.
 /// Control-flow commands (`None`/`Msg`/`Batch`/`Exec`) carry no output here
 /// and are ignored, matching the fallback executor's contract.
 pub fn run_report(cmd: Cmd<()>) -> io::Result<()> {
@@ -374,6 +375,50 @@ mod tests {
     fn test_view() {
         let model = CounterModel { count: 42 };
         assert_eq!(model.view(), "Current count: 42");
+    }
+
+    struct RenderCountingModel {
+        state: usize,
+        rendered_states: std::sync::Arc<std::sync::Mutex<Vec<usize>>>,
+    }
+
+    impl Model for RenderCountingModel {
+        type Msg = usize;
+
+        fn init(&self) -> Cmd<Self::Msg> {
+            Cmd::msg(1)
+        }
+
+        fn update(&mut self, state: Self::Msg) -> Cmd<Self::Msg> {
+            self.state = state;
+            if state == 1 { Cmd::msg(2) } else { Cmd::none() }
+        }
+
+        fn view(&self) -> String {
+            self.rendered_states
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner)
+                .push(self.state);
+            String::new()
+        }
+    }
+
+    #[test]
+    fn program_renders_intermediate_model_states() {
+        let rendered_states = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+        Program::new(RenderCountingModel {
+            state: 0,
+            rendered_states: std::sync::Arc::clone(&rendered_states),
+        })
+        .run()
+        .unwrap();
+
+        assert_eq!(
+            *rendered_states
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner),
+            [0, 1, 2]
+        );
     }
 
     struct ErrorModel;

@@ -91,8 +91,8 @@ mod tests {
 ///
 /// This provides a simple println-based execution for reliability
 /// in CI/non-TTY environments where the Elm UI might not be available.
-/// A rendered [`Cmd::Error`] is also returned as a failure so callers cannot
-/// accidentally report a failed command as successful.
+/// [`Cmd::Error`] is returned without printing so the process-level reporter
+/// remains the single owner of user-facing failures.
 pub(crate) fn execute_cmd(cmd: crate::cli::tea::Cmd<()>) -> anyhow::Result<()> {
     use crate::cli::tea::Cmd;
     use std::io::Write;
@@ -119,12 +119,7 @@ pub(crate) fn execute_cmd(cmd: crate::cli::tea::Cmd<()>) -> anyhow::Result<()> {
             Cmd::Warning(msg) => {
                 println!("  ⚠ {msg}");
             }
-            Cmd::Error(msg) => {
-                // User-facing failure: stderr so it stays visible even when
-                // stdout is redirected or consumed by progress rendering.
-                eprintln!("✗ {msg}");
-                anyhow::bail!("{msg}");
-            }
+            Cmd::Error(msg) => anyhow::bail!("{msg}"),
             Cmd::Header(title, body) => {
                 println!("\n[{title}] {body}");
             }
