@@ -678,6 +678,7 @@ analyzer inference
 - **Ci**: Cross-platform install script and R2 release sync
 ### 🐛 Bug Fixes
 
+- Reserve TUI control keys from actions
 - Evaluate full ALSA vulnerability ranges
 - Manage AUR signing keys through GnuPG
 - Persist Debian package ownership metadata
