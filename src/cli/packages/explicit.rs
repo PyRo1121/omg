@@ -35,6 +35,19 @@ fn print_count(count: usize, json: bool) -> Result<()> {
     reason = "additive backend feature branches return before compiled fallbacks"
 )]
 pub fn explicit_sync_with_json(count: bool, json: bool) -> Result<()> {
+    if crate::core::paths::test_mode() {
+        // Test mode must observe the isolated mock state before consulting a
+        // real daemon, fast-status file, or host package database.
+        let packages = crate::package_managers::list_explicit_fast()
+            .context("Failed to list explicitly installed test packages")?;
+        if count {
+            print_count(packages.len(), json)?;
+        } else {
+            display_explicit_list(packages, json)?;
+        }
+        return Ok(());
+    }
+
     #[cfg(unix)]
     if let Ok(mut client) = DaemonClient::connect_sync() {
         let request = if count {
@@ -77,23 +90,6 @@ pub fn explicit_sync_with_json(count: bool, json: bool) -> Result<()> {
         }
     } else {
         tracing::debug!("Daemon unavailable for explicit listing; using direct backend");
-    }
-
-    #[cfg(any(feature = "debian", feature = "debian-pure"))]
-    if crate::core::paths::test_mode() {
-        // Test mode must observe the isolated mock state, never the host
-        // dpkg database.
-        let packages = crate::package_managers::mock::MockPackageManager::new(
-            &std::env::var("OMG_TEST_DISTRO").unwrap_or_else(|_| "debian".to_string()),
-        )
-        .list_explicit_sync()
-        .context("Failed to list explicitly installed packages")?;
-        if count {
-            print_count(packages.len(), json)?;
-        } else {
-            display_explicit_list(packages, json)?;
-        }
-        return Ok(());
     }
 
     #[cfg(any(feature = "debian", feature = "debian-pure"))]

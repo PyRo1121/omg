@@ -530,21 +530,9 @@ fn test_explicit_list() {
     );
 }
 
-/// SUSPECTED PRODUCT BUG (tst11): `explicit --count` bypasses the hermetic
-/// test-mode backend on Arch builds. The list path routes through
-/// `list_explicit_fast`, which honors `OMG_TEST_MODE`
-/// (src/package_managers/mod.rs:93-99), and the Debian branch of
-/// `explicit_sync_with_json` documents the intent — "Test mode must observe
-/// the isolated mock state, never the host dpkg database"
-/// (src/cli/packages/explicit.rs). The Arch `--count` path instead falls
-/// through to `pacman_db::get_explicit_count()` against /var/lib/pacman,
-/// printing the host's package count (observed: 273) where the contract
-/// requires 0.
-///
-/// The intended contract is pinned here and `#[ignore]`d only so the suite
-/// stays green while the bug is open; delete the attribute when fixed.
+/// Regression: count and list queries must both read the isolated mock state
+/// before consulting a daemon, fast-status snapshot, or host package database.
 #[test]
-#[ignore = "SUSPECTED PRODUCT BUG tst11: explicit --count reads the host pacman DB in test mode"]
 fn test_explicit_count_observes_mock_state() {
     let project = TestProject::new();
     project.mock_install("git", "2.43.0").unwrap();
