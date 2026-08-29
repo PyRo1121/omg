@@ -143,8 +143,8 @@ pub async fn run() -> Result<()> {
         }
 
         // Get system status from daemon
+        println!();
         if let Ok(ResponseResult::Status(status)) = client.call(Request::Status { id: 0 }).await {
-            println!();
             println!("  {}", style::header("Package Cache"));
             let total_str = status.total_packages.to_string();
             let explicit_str = status.explicit_packages.to_string();
@@ -185,6 +185,13 @@ pub async fn run() -> Result<()> {
                     println!("    {}: {}", style::runtime(name), style::version(version));
                 }
             }
+        } else {
+            // Metrics failures are reported above; do the same for the
+            // package-cache request instead of silently omitting the section.
+            println!(
+                "  {} Failed to get package cache status from daemon",
+                style::warning("⚠")
+            );
         }
 
         println!();

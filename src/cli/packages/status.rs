@@ -199,12 +199,6 @@ fn display_status_report(
 
     writeln!(
         stdout,
-        "\n  {} Environment Status:",
-        style::maybe_color("🌍", |t| t.bold().to_string())
-    )?;
-
-    writeln!(
-        stdout,
         "\n  {} {}",
         style::arrow("Tip:"),
         style::dim("Use 'omg clean' to remove orphans and free up disk space.")

@@ -31,7 +31,9 @@ impl UpdateType {
 
         match (Version::parse(old_str), Version::parse(new_str)) {
             (Ok(old), Ok(new)) => {
-                if new.major > old.major {
+                if new <= old {
+                    Self::Unknown
+                } else if new.major > old.major {
                     Self::Major
                 } else if new.minor > old.minor {
                     Self::Minor
@@ -73,6 +75,18 @@ mod tests {
         assert_eq!(
             UpdateType::from_versions("1.20.0-1", "1.21.0-1"),
             UpdateType::Minor
+        );
+    }
+
+    #[test]
+    fn non_increasing_versions_are_not_updates() {
+        assert_eq!(
+            UpdateType::from_versions("2.0.0", "1.9.9"),
+            UpdateType::Unknown
+        );
+        assert_eq!(
+            UpdateType::from_versions("1.2.3", "1.2.3"),
+            UpdateType::Unknown
         );
     }
 }
