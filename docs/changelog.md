@@ -670,6 +670,7 @@ analyzer inference
 - **Ci**: Cross-platform install script and R2 release sync
 ### 🐛 Bug Fixes
 
+- Correct Arch smoke image checksum
 - Isolate explicit counts in test mode
 - Honor globbed pacman ignore patterns
 - Parse Debian installed states consistently
