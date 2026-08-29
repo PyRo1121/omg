@@ -3784,6 +3784,7 @@ the Debian backend), so it was removed from the metadata.
 - Normalize project formatting
 ### 🧪 Testing
 
+- Run ALPM coverage against seeded databases
 - Cover mock package installation
 - Pin PKGINFO identity parsing and key-id boundaries
 - Gate every enterprise state before side effects
