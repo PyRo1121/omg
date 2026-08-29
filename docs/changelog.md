@@ -13,6 +13,7 @@ OMG is the fastest unified package manager for Linux, replacing pacman, yay, nvm
 ## [Unreleased]
 ### Bench
 
+- Compare equivalent durable IO work
 - Fail closed in comparison workflows
 - Use honest install workloads
 ### Cleanup
