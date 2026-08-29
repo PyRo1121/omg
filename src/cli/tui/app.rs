@@ -24,6 +24,7 @@ pub struct App {
     #[cfg(not(unix))]
     pub status: Option<()>,
     pub team_status: Option<TeamStatus>,
+    pub(crate) team_status_is_remote: bool,
     pub history: Vec<Transaction>,
     pub last_tick: Instant,
     pub current_tab: Tab,
@@ -79,6 +80,7 @@ impl App {
         Self {
             status: None,
             team_status: None,
+            team_status_is_remote: false,
             history: Vec::new(),
             last_tick: Instant::now(),
             current_tab: Tab::Dashboard,
@@ -159,60 +161,55 @@ impl App {
         // 3. Update system metrics
         self.update_system_metrics();
 
-        // 4. Fetch team status if in a team workspace
-        self.fetch_team_status().await;
+        // 4. Refresh local team state. Remote member data is fetched by the
+        // event loop on a background task only while the Team tab is visible.
+        self.load_local_team_status();
 
         Ok(())
     }
 
-    async fn fetch_team_status(&mut self) {
-        // 1. Try to load local team workspace status
+    fn load_local_team_status(&mut self) {
         if let Ok(cwd) = std::env::current_dir()
             && let Ok(workspace) = crate::core::env::team::TeamWorkspace::new(&cwd)
             && workspace.is_team_workspace()
             && let Ok(status) = workspace.load_status()
         {
             self.team_status = Some(status);
+            self.team_status_is_remote = false;
         }
+    }
 
-        // 2. If we have a Team+ license, try to fetch real-time member data from the API
-        if let Some(license) = crate::core::license::load_license() {
-            let tier = license.tier_enum();
-            if matches!(
-                tier,
-                crate::core::license::Tier::Team | crate::core::license::Tier::Enterprise
-            ) && let Ok(members) = crate::core::license::fetch_team_members().await
-            {
-                // If we don't have a local team workspace, create a synthetic one from API data
-                if self.team_status.is_none() {
-                    self.team_status = Some(crate::core::env::team::TeamStatus {
-                        format_version: crate::core::env::team::TeamStatus::STATUS_FORMAT_VERSION,
-                        config: crate::core::env::team::TeamConfig {
-                            team_id: "fleet".to_string(),
-                            name: format!(
-                                "{} Fleet",
-                                license.customer.as_deref().unwrap_or("Your")
-                            ),
-                            ..Default::default()
-                        },
-                        lock_hash: String::new(),
-                        members: members
-                            .into_iter()
-                            .map(|m| crate::core::env::team::TeamMember {
-                                id: m.machine_id,
-                                name: m.hostname.unwrap_or_else(|| "Unknown".to_string()),
-                                env_hash: String::new(),
-                                last_sync: crate::cli::parse_timestamp_opt(&m.last_seen_at)
-                                    .unwrap_or(0),
-                                in_sync: m.is_active,
-                                drift_summary: None,
-                            })
-                            .collect(),
-                        updated_at: jiff::Timestamp::now().as_second(),
-                    });
-                }
-            }
+    pub(crate) async fn fetch_remote_team_status() -> Option<TeamStatus> {
+        let license = crate::core::license::load_license()?;
+        let tier = license.tier_enum();
+        if !matches!(
+            tier,
+            crate::core::license::Tier::Team | crate::core::license::Tier::Enterprise
+        ) {
+            return None;
         }
+        let members = crate::core::license::fetch_team_members().await.ok()?;
+        Some(crate::core::env::team::TeamStatus {
+            format_version: crate::core::env::team::TeamStatus::STATUS_FORMAT_VERSION,
+            config: crate::core::env::team::TeamConfig {
+                team_id: "fleet".to_string(),
+                name: format!("{} Fleet", license.customer.as_deref().unwrap_or("Your")),
+                ..Default::default()
+            },
+            lock_hash: String::new(),
+            members: members
+                .into_iter()
+                .map(|member| crate::core::env::team::TeamMember {
+                    id: member.machine_id,
+                    name: member.hostname.unwrap_or_else(|| "Unknown".to_string()),
+                    env_hash: String::new(),
+                    last_sync: crate::cli::parse_timestamp_opt(&member.last_seen_at).unwrap_or(0),
+                    in_sync: member.is_active,
+                    drift_summary: None,
+                })
+                .collect(),
+            updated_at: jiff::Timestamp::now().as_second(),
+        })
     }
 
     fn update_system_metrics(&mut self) {

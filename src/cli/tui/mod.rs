@@ -10,7 +10,7 @@ use crossterm::{
 use ratatui::{Terminal, backend::CrosstermBackend};
 use std::future::Future;
 use std::io;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 pub mod app;
 mod ui;
@@ -18,6 +18,7 @@ mod ui;
 // Constants for TUI behavior
 const POLL_TIMEOUT_MS: u64 = 100;
 const REFRESH_INTERVAL_SECS: u64 = 5;
+const TEAM_REFRESH_INTERVAL_SECS: u64 = 5 * 60;
 /// Minimum idle time after the last keystroke before a search is dispatched,
 /// so typing does not fire one daemon/apt query per character.
 const SEARCH_DEBOUNCE_MS: u64 = 250;
@@ -32,6 +33,12 @@ fn should_quit(key: KeyEvent, search_mode: bool) -> bool {
 
 fn should_dispatch_key(key: KeyEvent) -> bool {
     !key.modifiers.contains(KeyModifiers::CONTROL)
+}
+
+fn should_refresh_team(tab: app::Tab, in_flight: bool, elapsed: Duration) -> bool {
+    tab == app::Tab::Team
+        && !in_flight
+        && elapsed >= Duration::from_secs(TEAM_REFRESH_INTERVAL_SECS)
 }
 
 pub async fn run() -> Result<()> {
@@ -96,6 +103,12 @@ async fn run_app(
 ) -> Result<()> {
     let mut last_search = String::new();
     let (action_tx, mut action_rx) = tokio::sync::mpsc::unbounded_channel::<ActionResult>();
+    let (team_tx, mut team_rx) =
+        tokio::sync::mpsc::unbounded_channel::<Option<crate::core::env::team::TeamStatus>>();
+    let mut team_refresh_in_flight = false;
+    let mut last_team_refresh = Instant::now()
+        .checked_sub(Duration::from_secs(TEAM_REFRESH_INTERVAL_SECS))
+        .unwrap_or_else(Instant::now);
 
     loop {
         // Apply completed background actions before drawing. Messages arrive
@@ -104,6 +117,15 @@ async fn run_app(
         while let Ok((label, result)) = action_rx.try_recv() {
             app.action_in_flight = false;
             report_action_result(app, result, label);
+        }
+        while let Ok(remote_status) = team_rx.try_recv() {
+            team_refresh_in_flight = false;
+            if let Some(status) = remote_status
+                && (app.team_status.is_none() || app.team_status_is_remote)
+            {
+                app.team_status = Some(status);
+                app.team_status_is_remote = true;
+            }
         }
 
         // Draw UI
@@ -164,6 +186,20 @@ async fn run_app(
 
         // Update app state
         app.tick().await?;
+
+        if should_refresh_team(
+            app.current_tab,
+            team_refresh_in_flight,
+            last_team_refresh.elapsed(),
+        ) {
+            team_refresh_in_flight = true;
+            last_team_refresh = Instant::now();
+            let sender = team_tx.clone();
+            tokio::spawn(async move {
+                let status = app::App::fetch_remote_team_status().await;
+                let _ = sender.send(status);
+            });
+        }
     }
 }
 
@@ -282,6 +318,20 @@ fn force_refresh(app: &mut app::App) {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn team_refresh_runs_in_background_only_when_visible_and_due() {
+        let due = Duration::from_secs(TEAM_REFRESH_INTERVAL_SECS);
+
+        assert!(should_refresh_team(app::Tab::Team, false, due));
+        assert!(!should_refresh_team(app::Tab::Dashboard, false, due));
+        assert!(!should_refresh_team(app::Tab::Team, true, due));
+        assert!(!should_refresh_team(
+            app::Tab::Team,
+            false,
+            due - Duration::from_secs(1)
+        ));
+    }
+
     #[test]
     fn control_c_quits_instead_of_dispatching_a_dashboard_action() {
         let interrupt = KeyEvent::new(KeyCode::Char('c'), KeyModifiers::CONTROL);
