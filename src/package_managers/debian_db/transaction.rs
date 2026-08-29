@@ -1214,7 +1214,13 @@ fn ensure_parent_dirs_recorded(
         }
         seen.insert(ancestor.to_path_buf());
         match fs::symlink_metadata(ancestor) {
-            Ok(_) => {}
+            Ok(metadata) if metadata.file_type().is_dir() => {}
+            Ok(_) => {
+                anyhow::bail!(
+                    "Extraction parent {} is not a directory",
+                    ancestor.display()
+                );
+            }
             Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
                 missing.push(ancestor.to_path_buf());
             }
@@ -2190,6 +2196,27 @@ mod tests {
             fs::read(root.join("tool")).expect("payload"),
             b"package payload"
         );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn preexisting_parent_symlink_cannot_escape_the_extraction_root() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let root = temp.path().join("root");
+        let outside = temp.path().join("outside");
+        fs::create_dir(&root).expect("root");
+        fs::create_dir(&outside).expect("outside");
+        std::os::unix::fs::symlink(&outside, root.join("usr")).expect("parent symlink");
+        let data = build_tar(|builder| {
+            append_regular_file(builder, "./usr/payload", b"must remain confined");
+            Ok(())
+        });
+
+        let error = extract_tar_to_root_at(&root, &data)
+            .expect_err("preexisting parent symlinks must be rejected");
+
+        assert!(error.to_string().contains("not a directory"), "{error}");
+        assert!(!outside.join("payload").exists());
     }
 
     #[test]
