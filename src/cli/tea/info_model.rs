@@ -37,6 +37,10 @@ impl InfoSource {
     }
 }
 
+fn non_negative_install_size(size: i64) -> Option<u64> {
+    u64::try_from(size).ok()
+}
+
 /// Package information structure
 #[derive(Debug, Clone)]
 pub struct PackageInfo {
@@ -317,7 +321,7 @@ async fn fetch_info(package: &str) -> InfoMsg {
                         source: InfoSource::Official,
                         repo: info.repo,
                         url: info.url,
-                        size: info.install_size.map(|s| s as u64),
+                        size: info.install_size.and_then(non_negative_install_size),
                         licenses: vec![],
                         maintainer: None,
                         popularity: None,
@@ -340,7 +344,7 @@ async fn fetch_info(package: &str) -> InfoMsg {
                         source: InfoSource::Official,
                         repo: "apt".to_string(),
                         url: info.url,
-                        size: info.install_size.map(|s| s as u64),
+                        size: info.install_size.and_then(non_negative_install_size),
                         licenses: vec![],
                         maintainer: None,
                         popularity: None,
@@ -500,6 +504,13 @@ mod tests {
         let view = model.view();
         assert!(view.contains("test-pkg"));
         assert!(view.contains("Official Repository"));
+    }
+
+    #[test]
+    fn negative_install_sizes_are_not_cast_to_huge_values() {
+        assert_eq!(non_negative_install_size(-1), None);
+        assert_eq!(non_negative_install_size(0), Some(0));
+        assert_eq!(non_negative_install_size(42), Some(42));
     }
 
     #[test]
