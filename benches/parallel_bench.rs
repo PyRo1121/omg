@@ -1,7 +1,8 @@
-//! Debian Parallel Operations Benchmarks
+//! Synthetic async and CPU scheduler microbenchmarks
 //!
-//! Tests different concurrency levels for downloads and unpacking to determine
-//! optimal settings for `MAX_CONCURRENT` values.
+//! These workloads use sleeps, allocations, and sorting to compare executor
+//! overhead. They do not exercise OMG's downloader or archive decoders and
+//! must not be used to select production concurrency limits.
 //!
 //! Run with: `cargo bench --features debian-pure --bench parallel_bench`
 
@@ -203,12 +204,12 @@ fn bench_parallel_channel_throughput(c: &mut Criterion) {
 }
 
 #[cfg(any(feature = "debian", feature = "debian-pure"))]
-fn bench_parallel_concurrent_downloads(c: &mut Criterion) {
+fn bench_synthetic_concurrent_tasks(c: &mut Criterion) {
     use futures::stream::{self, StreamExt};
 
     let rt = tokio::runtime::Runtime::new().unwrap();
 
-    let mut group = c.benchmark_group("concurrent_downloads");
+    let mut group = c.benchmark_group("synthetic_concurrent_tasks");
     group.measurement_time(Duration::from_secs(20));
     group.sample_size(20);
 
@@ -218,7 +219,7 @@ fn bench_parallel_concurrent_downloads(c: &mut Criterion) {
     for concurrency in concurrency_levels {
         group.throughput(Throughput::Elements(download_count as u64));
         group.bench_with_input(
-            BenchmarkId::new("simulated_downloads", concurrency),
+            BenchmarkId::new("sleep_and_allocate", concurrency),
             &concurrency,
             |b, &n| {
                 b.iter(|| {
@@ -248,21 +249,22 @@ fn bench_parallel_concurrent_downloads(c: &mut Criterion) {
 }
 
 #[cfg(any(feature = "debian", feature = "debian-pure"))]
-fn bench_parallel_decompression_workers(c: &mut Criterion) {
+fn bench_synthetic_sort_workers(c: &mut Criterion) {
     use rayon::prelude::*;
 
-    let mut group = c.benchmark_group("decompression_workers");
+    let mut group = c.benchmark_group("synthetic_sort_workers");
     group.measurement_time(Duration::from_secs(15));
     group.sample_size(20);
 
-    // Simulate parallel decompression of packages
+    // Compare CPU worker scheduling with repeated sorting; this is not an
+    // archive-decompression benchmark.
     let worker_counts = vec![4, 8, 12, 16, 20, 24];
     let package_count = 32;
 
     for workers in worker_counts {
         group.throughput(Throughput::Elements(package_count as u64));
         group.bench_with_input(
-            BenchmarkId::new("parallel_decompress", workers),
+            BenchmarkId::new("repeated_sort", workers),
             &workers,
             |b, &n| {
                 b.iter(|| {
@@ -377,8 +379,8 @@ criterion_group!(
     bench_parallel_rayon_processing,
     bench_parallel_batch_sizes,
     bench_parallel_channel_throughput,
-    bench_parallel_concurrent_downloads,
-    bench_parallel_decompression_workers,
+    bench_synthetic_concurrent_tasks,
+    bench_synthetic_sort_workers,
     bench_parallel_task_spawning
 );
 
