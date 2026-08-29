@@ -182,8 +182,12 @@ fn format_duration(duration: Duration) -> String {
     let seconds = duration.as_secs();
     if seconds < 60 {
         format!("{seconds}s")
-    } else {
+    } else if seconds < 3_600 {
         format!("{}m {:02}s", seconds / 60, seconds % 60)
+    } else {
+        let hours = seconds / 3_600;
+        let minutes = (seconds % 3_600) / 60;
+        format!("{hours}h {minutes:02}m {:02}s", seconds % 60)
     }
 }
 
@@ -574,5 +578,6 @@ mod tests {
     fn elapsed_time_stays_compact() {
         assert_eq!(format_duration(Duration::from_secs(9)), "9s");
         assert_eq!(format_duration(Duration::from_secs(125)), "2m 05s");
+        assert_eq!(format_duration(Duration::from_secs(3_725)), "1h 02m 05s");
     }
 }

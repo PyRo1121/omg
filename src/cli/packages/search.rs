@@ -363,7 +363,7 @@ fn write_package_line<W: Write>(
             w,
             " {} {}",
             style::info(&format!("↑{votes}")),
-            style::info(&format!("{:.1}%", pkg.popularity.unwrap_or(0.0)))
+            style::info(&format!("{:.1}", pkg.popularity.unwrap_or(0.0)))
         )?;
     }
     if pkg.out_of_date == Some(true) {
@@ -464,6 +464,23 @@ mod tests {
         assert!(formatted.contains("yay"));
         assert!(formatted.contains("12.0.0"));
         assert!(formatted.contains("AUR"));
+    }
+
+    #[test]
+    fn aur_popularity_is_not_rendered_as_a_percentage() {
+        let package = DisplayPackage {
+            name: "yay".to_string(),
+            version: "12.0.0".to_string(),
+            description: "AUR helper".to_string(),
+            source: "AUR".to_string(),
+            votes: Some(10),
+            popularity: Some(0.73),
+            maintainer: None,
+            out_of_date: None,
+        };
+        let formatted = format_package(&package);
+        assert!(formatted.contains("0.7"));
+        assert!(!formatted.contains("0.7%"));
     }
 
     #[test]
