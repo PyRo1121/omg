@@ -668,6 +668,7 @@ analyzer inference
 - **Ci**: Cross-platform install script and R2 release sync
 ### 🐛 Bug Fixes
 
+- Validate shell hook status files
 - Write team pulls in workspace root
 - Validate supported team remotes
 - Sort environment diff output
