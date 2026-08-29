@@ -27,6 +27,8 @@ pub async fn install(packages: &[String], yes: bool, replacement_hops: u32) -> R
     let resolution_start = Instant::now();
 
     let pm = get_package_manager()?;
+    let policy =
+        crate::core::security::SecurityPolicy::load_default().map_err(anyhow::Error::from)?;
 
     modern_ui::print_phase_header(
         "📦",
@@ -50,6 +52,7 @@ pub async fn install(packages: &[String], yes: bool, replacement_hops: u32) -> R
     let mut missing_packages = Vec::new();
     for pkg in packages {
         if is_local_package_file(pkg) {
+            policy.check_source(pkg, false, None)?;
             modern_ui::finish_info(&pb, &format!("Local package: {pkg}"));
             continue;
         }
@@ -61,7 +64,11 @@ pub async fn install(packages: &[String], yes: bool, replacement_hops: u32) -> R
         )
         .await?;
 
-        if !is_official {
+        if is_official {
+            let info = crate::package_managers::get_sync_pkg_info(pkg)?
+                .with_context(|| format!("Official package metadata disappeared for {pkg}"))?;
+            policy.check_source(pkg, false, info.licenses.first().map(String::as_str))?;
+        } else {
             missing_packages.push(pkg.clone());
         }
     }
@@ -486,6 +493,9 @@ async fn try_aur_package(pkg_name: &str) -> Result<crate::core::Package> {
 }
 
 async fn handle_aur_package(aur_pkg: crate::core::Package, yes: bool) -> Result<()> {
+    let policy =
+        crate::core::security::SecurityPolicy::load_default().map_err(anyhow::Error::from)?;
+    policy.check_source(&aur_pkg.name, true, None)?;
     modern_ui::print_aur_package_info(
         &aur_pkg.name,
         &aur_pkg.version.to_string(),

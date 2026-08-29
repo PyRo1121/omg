@@ -389,9 +389,14 @@ impl PackageServiceBuilder {
             HistoryConfiguration::Disabled => None,
         };
 
+        let policy = match self.policy {
+            Some(policy) => policy,
+            None => SecurityPolicy::load_default().map_err(|error| anyhow::anyhow!(error))?,
+        };
+
         Ok(PackageService {
             backend: self.backend,
-            policy: self.policy.unwrap_or_default(),
+            policy,
             vulnerability_source: self.vulnerability_source,
             history,
             #[cfg(feature = "arch")]

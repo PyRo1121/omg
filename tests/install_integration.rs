@@ -64,6 +64,33 @@ fn test_mocked_install_seeded_installed_package_succeeds() {
 }
 
 #[test]
+fn test_mocked_install_honors_banned_package_policy() {
+    let project = TestProject::new();
+    project.mock_available("firefox", "122.0").unwrap();
+    std::fs::write(
+        project.config_dir.path().join("policy.toml"),
+        "banned_packages = [\"firefox\"]\n",
+    )
+    .unwrap();
+
+    let result = project.run(&["install", "--yes", "firefox"]);
+    result.assert_failure();
+    assert!(
+        result.combined_output().contains("banned"),
+        "policy failure must name the ban: {}",
+        result.combined_output()
+    );
+    let state: serde_json::Value = serde_json::from_str(
+        &std::fs::read_to_string(project.data_dir.path().join("mock_state_pacman.json")).unwrap(),
+    )
+    .unwrap();
+    assert!(
+        state["installed"].get("firefox").is_none(),
+        "banned package must not install"
+    );
+}
+
+#[test]
 fn test_mocked_install_missing_package_fails_explicitly() {
     let project = TestProject::new();
     let fake_pkg = "this-package-does-not-exist-12345";

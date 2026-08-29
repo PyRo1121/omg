@@ -1,10 +1,19 @@
-use anyhow::Result;
+use anyhow::{Context, Result};
 
 use crate::cli::modern_ui;
 use crate::package_managers::get_package_manager;
 
 pub async fn install(packages: &[String]) -> Result<()> {
     let pm = get_package_manager()?;
+    let policy =
+        crate::core::security::SecurityPolicy::load_default().map_err(anyhow::Error::from)?;
+    for package in packages {
+        let info = pm
+            .info(package)
+            .await?
+            .with_context(|| format!("Package not found: {package}"))?;
+        policy.check_source(&info.name, false, None)?;
+    }
 
     modern_ui::print_phase_header(
         "📦",

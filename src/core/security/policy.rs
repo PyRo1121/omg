@@ -156,6 +156,24 @@ impl SecurityPolicy {
         Ok(SecurityGrade::Community)
     }
 
+    /// Check a package using the trust grade supplied by its source.
+    ///
+    /// Official repository metadata is treated as `Verified`; AUR and local
+    /// inputs remain `Community` until a dedicated verification result exists.
+    pub fn check_source(
+        &self,
+        name: &str,
+        is_aur: bool,
+        license: Option<&str>,
+    ) -> Result<(), PolicyError> {
+        let grade = if is_aur {
+            SecurityGrade::Community
+        } else {
+            SecurityGrade::Verified
+        };
+        self.check_package(name, is_aur, license, grade)
+    }
+
     /// Check if a package is allowed by policy
     pub fn check_package(
         &self,
@@ -251,6 +269,19 @@ mod tests {
         assert!(SecurityGrade::Locked > SecurityGrade::Verified);
         assert!(SecurityGrade::Verified > SecurityGrade::Community);
         assert!(SecurityGrade::Community > SecurityGrade::Risk);
+    }
+
+    #[test]
+    fn source_policy_assigns_verified_grade_only_to_official_packages() {
+        let policy = SecurityPolicy {
+            minimum_grade: SecurityGrade::Verified,
+            ..SecurityPolicy::default()
+        };
+        assert!(policy.check_source("system", false, None).is_ok());
+        assert!(matches!(
+            policy.check_source("community", true, None),
+            Err(PolicyError::GradeTooLow { .. })
+        ));
     }
 
     #[test]
