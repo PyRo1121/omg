@@ -1,11 +1,11 @@
-//! I/O Performance Benchmarks for Debian Operations
+//! Generic filesystem I/O strategy benchmarks
 //!
 //! Compares different I/O strategies:
 //! - Direct write vs buffered vs mmap
 //! - Streaming vs buffered downloads
 //! - File size impact on different strategies
 //!
-//! Run with: `cargo bench --features debian-pure --bench io_bench`
+//! Run with: `cargo bench --bench io_bench`
 
 #![expect(clippy::unwrap_used)]
 #![expect(clippy::cast_sign_loss)]
@@ -69,6 +69,7 @@ fn bench_write_strategies(c: &mut Criterion) {
                     let mut writer = BufWriter::new(file);
                     writer.write_all(test_data).unwrap();
                     writer.flush().unwrap();
+                    writer.get_ref().sync_all().unwrap();
                     std::hint::black_box(&path);
                 });
             },
@@ -87,6 +88,7 @@ fn bench_write_strategies(c: &mut Criterion) {
                     let mut writer = BufWriter::with_capacity(64 * 1024, file);
                     writer.write_all(test_data).unwrap();
                     writer.flush().unwrap();
+                    writer.get_ref().sync_all().unwrap();
                     std::hint::black_box(&path);
                 });
             },
@@ -193,8 +195,9 @@ fn bench_read_strategies(c: &mut Criterion) {
                     // SAFETY: File is opened read-only and mmap lifetime is bounded by this closure
                     #[expect(unsafe_code)]
                     let mmap = unsafe { memmap2::Mmap::map(&file).unwrap() };
-                    let len = mmap.len();
-                    std::hint::black_box(len)
+                    // Materialize every mapped byte so this measures reading
+                    // the file, not only lazy mapping setup and `len()`.
+                    std::hint::black_box(mmap.to_vec())
                 });
             },
         );
@@ -213,7 +216,7 @@ fn bench_read_strategies(c: &mut Criterion) {
                         match file.read(&mut chunk) {
                             Ok(0) => break,
                             Ok(n) => buffer.extend_from_slice(&chunk[..n]),
-                            Err(_) => break,
+                            Err(error) => panic!("chunked benchmark read failed: {error}"),
                         }
                     }
                     std::hint::black_box(buffer)
@@ -258,6 +261,7 @@ fn bench_async_io(c: &mut Criterion) {
                         let mut file = tokio::fs::File::create(&path).await.unwrap();
                         file.write_all(test_data).await.unwrap();
                         file.flush().await.unwrap();
+                        file.sync_all().await.unwrap();
                         std::hint::black_box(test_data.len())
                     })
                 });
