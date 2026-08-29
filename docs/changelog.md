@@ -668,6 +668,7 @@ analyzer inference
 - **Ci**: Cross-platform install script and R2 release sync
 ### 🐛 Bug Fixes
 
+- Bound and order vulnerability advisory scans
 - Preserve task flags in fallback execution
 - Sync parent directories after durable writes
 - Validate shell hook status files
