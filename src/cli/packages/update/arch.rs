@@ -447,8 +447,13 @@ fn update_dry_run(updates: &[UpdateInfo]) -> Result<()> {
 
     ui::print_spacer();
     println!("  {} Total updates: {}", style::info("→"), updates.len());
+    let estimate_label = if updates.len() > 50 {
+        "Estimated download (first 50)"
+    } else {
+        "Estimated download"
+    };
     println!(
-        "  {} Estimated download: {:.2} MB",
+        "  {} {estimate_label}: {:.2} MB",
         style::info("→"),
         total_download as f64 / 1024.0 / 1024.0
     );
