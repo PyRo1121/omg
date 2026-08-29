@@ -668,6 +668,7 @@ analyzer inference
 - **Ci**: Cross-platform install script and R2 release sync
 ### 🐛 Bug Fixes
 
+- Keep explicit cache epochs coherent
 - Honor per-command test timeouts
 - Bound and order vulnerability advisory scans
 - Preserve task flags in fallback execution
