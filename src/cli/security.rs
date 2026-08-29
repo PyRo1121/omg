@@ -20,7 +20,10 @@ fn read_audit_entries(
             "critical" => AuditSeverity::Critical,
             _ => anyhow::bail!("Invalid severity: {sev}"),
         };
-        logger.filter_by_severity(min_severity)
+        logger.filter_by_severity(min_severity).map(|mut entries| {
+            entries.reverse();
+            entries
+        })
     } else {
         logger.get_recent(limit)
     };
@@ -1426,6 +1429,32 @@ pub fn check_eol(_ctx: &CliContext) -> Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn severity_filter_returns_the_newest_matching_entries() {
+        let directory = tempfile::tempdir().expect("audit directory");
+        let mut logger =
+            AuditLogger::new_in(directory.path().join("audit.jsonl")).expect("audit logger");
+        for description in ["first", "second", "third"] {
+            logger
+                .log(
+                    crate::core::security::audit::AuditEventType::PolicyViolation,
+                    AuditSeverity::Error,
+                    "policy",
+                    description,
+                )
+                .expect("audit entry");
+        }
+
+        let entries = read_audit_entries(&logger, 2, Some("error")).expect("filtered entries");
+        assert_eq!(
+            entries
+                .iter()
+                .map(|entry| entry.description.as_str())
+                .collect::<Vec<_>>(),
+            ["third", "second"]
+        );
+    }
 
     #[test]
     fn license_machine_formats_include_package_rows() {
