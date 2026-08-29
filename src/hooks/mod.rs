@@ -123,8 +123,16 @@ pub fn print_hook(shell: &str) -> Result<()> {
             anyhow::bail!("Unsupported shell: {shell}. Supported: zsh, bash, fish");
         }
     };
+    let status_path = paths::fast_status_path().to_string_lossy().into_owned();
+    let quoted_status_path = match shell.to_lowercase().as_str() {
+        "fish" => fish_single_quoted(&status_path),
+        _ => posix_single_quoted(&status_path),
+    };
 
-    println!("{script}");
+    println!(
+        "{}",
+        script.replace("__OMG_STATUS_FILE__", &quoted_status_path)
+    );
     Ok(())
 }
 
@@ -622,9 +630,20 @@ typeset -g _OMG_UPDATES=0
 typeset -g _OMG_CACHE_TIME=0
 
 # Refresh cache from status file (called by prompt hook)
+_omg_status_file_valid() {
+  local f=__OMG_STATUS_FILE__
+  [[ -f "$f" && ! -L "$f" && -O "$f" ]] || return 1
+  [[ "$(wc -c < "$f" 2>/dev/null)" -eq 32 ]] || return 1
+  [[ "$(od -An -N4 -tu4 "$f" 2>/dev/null)" -eq 1330464595 ]] || return 1
+  [[ "$(od -An -j4 -N1 -tu1 "$f" 2>/dev/null)" -eq 1 ]] || return 1
+  local timestamp=$(od -An -j24 -N8 -tu8 "$f" 2>/dev/null)
+  local now=$EPOCHSECONDS
+  (( now < timestamp || now - timestamp <= 300 ))
+}
+
 _omg_refresh_cache() {
-  local f="${XDG_RUNTIME_DIR:-/tmp}/omg.status"
-  [[ -f "$f" ]] || return
+  local f=__OMG_STATUS_FILE__
+  _omg_status_file_valid || return
   local now=$EPOCHSECONDS
   # Only refresh every 60 seconds
   (( now - _OMG_CACHE_TIME < 60 )) && return
@@ -642,23 +661,23 @@ omg-uc() { echo ${_OMG_UPDATES:-0}; }
 
 # Fresh read (~1ms) - reads file directly, 10x faster than pacman
 omg-explicit-count() {
-  local f="${XDG_RUNTIME_DIR:-/tmp}/omg.status"
-  [[ -f "$f" ]] || { command omg explicit --count; return; }
+  local f=__OMG_STATUS_FILE__
+  _omg_status_file_valid || { command omg explicit --count; return; }
   od -An -j12 -N4 -tu4 "$f" 2>/dev/null | tr -d ' '
 }
 omg-total-count() {
-  local f="${XDG_RUNTIME_DIR:-/tmp}/omg.status"
-  [[ -f "$f" ]] || { echo 0; return; }
+  local f=__OMG_STATUS_FILE__
+  _omg_status_file_valid || { echo 0; return; }
   od -An -j8 -N4 -tu4 "$f" 2>/dev/null | tr -d ' '
 }
 omg-orphan-count() {
-  local f="${XDG_RUNTIME_DIR:-/tmp}/omg.status"
-  [[ -f "$f" ]] || { echo 0; return; }
+  local f=__OMG_STATUS_FILE__
+  _omg_status_file_valid || { echo 0; return; }
   od -An -j16 -N4 -tu4 "$f" 2>/dev/null | tr -d ' '
 }
 omg-updates-count() {
-  local f="${XDG_RUNTIME_DIR:-/tmp}/omg.status"
-  [[ -f "$f" ]] || { echo 0; return; }
+  local f=__OMG_STATUS_FILE__
+  _omg_status_file_valid || { echo 0; return; }
   od -An -j20 -N4 -tu4 "$f" 2>/dev/null | tr -d ' '
 }
 
@@ -695,24 +714,35 @@ fi
 #   omg-uc / omg-updates-count   - available updates count
 # ═══════════════════════════════════════════════════════════════════════════════
 
+_omg_status_file_valid() {
+  local f=__OMG_STATUS_FILE__
+  [[ -f "$f" && ! -L "$f" && -O "$f" ]] || return 1
+  [[ "$(wc -c < "$f" 2>/dev/null)" -eq 32 ]] || return 1
+  [[ "$(od -An -N4 -tu4 "$f" 2>/dev/null)" -eq 1330464595 ]] || return 1
+  [[ "$(od -An -j4 -N1 -tu1 "$f" 2>/dev/null)" -eq 1 ]] || return 1
+  local timestamp=$(od -An -j24 -N8 -tu8 "$f" 2>/dev/null)
+  local now=$(date +%s)
+  (( now < timestamp || now - timestamp <= 300 ))
+}
+
 omg-explicit-count() {
-  local f="${XDG_RUNTIME_DIR:-/tmp}/omg.status"
-  [[ -f "$f" ]] || { command omg explicit --count; return; }
+  local f=__OMG_STATUS_FILE__
+  _omg_status_file_valid || { command omg explicit --count; return; }
   od -An -j12 -N4 -tu4 "$f" 2>/dev/null | tr -d ' '
 }
 omg-total-count() {
-  local f="${XDG_RUNTIME_DIR:-/tmp}/omg.status"
-  [[ -f "$f" ]] || { echo 0; return; }
+  local f=__OMG_STATUS_FILE__
+  _omg_status_file_valid || { echo 0; return; }
   od -An -j8 -N4 -tu4 "$f" 2>/dev/null | tr -d ' '
 }
 omg-orphan-count() {
-  local f="${XDG_RUNTIME_DIR:-/tmp}/omg.status"
-  [[ -f "$f" ]] || { echo 0; return; }
+  local f=__OMG_STATUS_FILE__
+  _omg_status_file_valid || { echo 0; return; }
   od -An -j16 -N4 -tu4 "$f" 2>/dev/null | tr -d ' '
 }
 omg-updates-count() {
-  local f="${XDG_RUNTIME_DIR:-/tmp}/omg.status"
-  [[ -f "$f" ]] || { echo 0; return; }
+  local f=__OMG_STATUS_FILE__
+  _omg_status_file_valid || { echo 0; return; }
   od -An -j20 -N4 -tu4 "$f" 2>/dev/null | tr -d ' '
 }
 

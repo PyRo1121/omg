@@ -515,6 +515,29 @@ fn print_hook_rejects_unknown_shell_with_exact_message() {
     );
 }
 
+/// Contract: generated status readers use the same resolved socket directory
+/// as the daemon, rather than a shared `/tmp/omg.status` fallback.
+#[test]
+#[serial]
+fn hook_scripts_embed_the_resolved_status_path_and_validation() {
+    let socket = tempfile::tempdir().unwrap();
+    let socket_path = socket.path().join("omg.sock");
+    let expected = socket.path().join("omg.status");
+    with_test_env(
+        &[("OMG_SOCKET_PATH", socket_path.to_str().unwrap())],
+        || {
+            let zsh = run_omg(&["hook", "zsh"]);
+            zsh.assert_success();
+            assert!(
+                zsh.stdout
+                    .contains(&format!("local f='{}'", expected.display()))
+            );
+            assert!(zsh.stdout.contains("! -L \"$f\" && -O \"$f\""));
+            assert!(!zsh.stdout.contains("${XDG_RUNTIME_DIR:-/tmp}/omg.status"));
+        },
+    );
+}
+
 /// Contract: `omg hook <shell>` prints each shell's integration script with
 /// its load-bearing wiring intact (the eval line, prompt registration).
 #[test]
