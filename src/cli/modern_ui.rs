@@ -195,6 +195,10 @@ fn format_duration(duration: Duration) -> String {
 #[must_use]
 #[expect(clippy::expect_used, clippy::literal_string_with_formatting_args)]
 pub fn modern_spinner(phase: &str, action: &str) -> ProgressBar {
+    if output_mode() == OutputMode::Quiet {
+        return ProgressBar::hidden();
+    }
+
     let pb = ProgressBar::new_spinner();
 
     // Bun-style dots spinner
@@ -224,6 +228,10 @@ pub fn modern_spinner(phase: &str, action: &str) -> ProgressBar {
 
 /// Finish spinner with success
 pub fn finish_success(pb: &ProgressBar, phase: &str, result: &str) {
+    if output_mode() == OutputMode::Quiet {
+        pb.finish_and_clear();
+        return;
+    }
     if crate::cli::style::colors_enabled() {
         pb.finish_with_message(format!(
             "{} {} {}",
@@ -238,6 +246,10 @@ pub fn finish_success(pb: &ProgressBar, phase: &str, result: &str) {
 
 /// Finish spinner with info message
 pub fn finish_info(pb: &ProgressBar, msg: &str) {
+    if output_mode() == OutputMode::Quiet {
+        pb.finish_and_clear();
+        return;
+    }
     if crate::cli::style::colors_enabled() {
         pb.finish_with_message(format!("{} {}", "·".blue(), msg.dimmed()));
     } else {
@@ -256,6 +268,9 @@ pub fn finish_clear(pb: &ProgressBar) {
 
 /// Print a phase header (install, update, etc.)
 pub fn print_phase_header(icon: &str, phase: &str, context: &str) {
+    if output_mode() == OutputMode::Quiet {
+        return;
+    }
     if crate::cli::style::colors_enabled() {
         println!("\n{} {} {}", icon, phase.bold(), context.dimmed());
     } else {
@@ -265,6 +280,9 @@ pub fn print_phase_header(icon: &str, phase: &str, context: &str) {
 
 /// Print a minimal section divider
 pub fn print_section(label: &str) {
+    if output_mode() == OutputMode::Quiet {
+        return;
+    }
     println!();
     if crate::cli::style::colors_enabled() {
         println!("  {} {}", "·".dimmed(), label.bold());
@@ -279,6 +297,9 @@ pub fn print_section(label: &str) {
 
 /// Success state - clean checkmark with message
 pub fn print_success(msg: &str) {
+    if output_mode() == OutputMode::Quiet {
+        return;
+    }
     println!();
     if crate::cli::style::colors_enabled() {
         println!("  {} {}", "✓".green().bold(), msg.bold());
@@ -290,6 +311,9 @@ pub fn print_success(msg: &str) {
 
 /// Success with package list
 pub fn print_success_with_packages(msg: &str, packages: &[String]) {
+    if output_mode() == OutputMode::Quiet {
+        return;
+    }
     println!();
     if crate::cli::style::colors_enabled() {
         println!("  {} {}", "✓".green().bold(), msg.bold());
@@ -345,6 +369,9 @@ pub fn print_warning(msg: &str) {
 
 /// Info message - neutral informational
 pub fn print_info(msg: &str) {
+    if output_mode() == OutputMode::Quiet {
+        return;
+    }
     if crate::cli::style::colors_enabled() {
         println!("  {} {}", "·".blue(), msg.dimmed());
     } else {
@@ -362,6 +389,9 @@ pub fn print_info(msg: &str) {
 
 /// Print update summary (pnpm-style)
 pub fn print_update_summary(updates: &[crate::package_managers::types::UpdateInfo]) {
+    if output_mode() == OutputMode::Quiet {
+        return;
+    }
     println!();
 
     let total = updates.len();
@@ -465,6 +495,9 @@ pub fn print_up_to_date() {
 
 /// Print AUR package info with security notice
 pub fn print_aur_package_info(name: &str, version: &str, description: &str) {
+    if output_mode() == OutputMode::Quiet {
+        return;
+    }
     println!();
 
     if crate::cli::style::colors_enabled() {
@@ -503,6 +536,9 @@ pub fn print_aur_package_info(name: &str, version: &str, description: &str) {
 
 /// Print AUR build progress phase
 pub fn print_aur_build_phase(phase: &str, package: &str) {
+    if output_mode() == OutputMode::Quiet {
+        return;
+    }
     if crate::cli::style::colors_enabled() {
         println!("  {} {} {}", "·".magenta(), phase.dimmed(), package.cyan());
     } else {
@@ -517,6 +553,14 @@ pub fn print_aur_build_phase(phase: &str, package: &str) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn quiet_spinners_are_hidden() {
+        configure_output(0, true);
+        let progress = modern_spinner("phase", "action");
+        assert!(progress.is_hidden());
+        configure_output(0, false);
+    }
 
     #[test]
     fn output_policy_prioritizes_quiet_and_verbose() {
