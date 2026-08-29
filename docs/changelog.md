@@ -670,6 +670,7 @@ analyzer inference
 - **Ci**: Cross-platform install script and R2 release sync
 ### 🐛 Bug Fixes
 
+- Publish PGP keyring updates atomically
 - Keep tiny truncations within byte limits
 - Report filtered policies and license shares
 - Surface invalid cached rollback archives
