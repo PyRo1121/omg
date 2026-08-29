@@ -74,6 +74,27 @@ fn oversized_search_value_is_not_admitted_to_the_byte_bounded_cache() {
 }
 
 #[test]
+fn status_refresh_invalidates_the_previous_explicit_list() {
+    let cache = PackageCache::new_with_ttls(10, 600, 60);
+    cache.update_explicit(vec!["old-package".to_string()]);
+    assert_eq!(cache.get_explicit().unwrap().as_slice(), ["old-package"]);
+
+    cache.update_status(Arc::new(StatusResult {
+        total_packages: 100,
+        explicit_packages: 2,
+        orphan_packages: 5,
+        updates_available: 2,
+        security_vulnerabilities: 0,
+        vulnerabilities_scanned: true,
+        runtime_versions: vec![],
+    }));
+
+    cache.sync();
+    assert_eq!(cache.get_explicit_count(), Some(2));
+    assert!(cache.get_explicit().is_none());
+}
+
+#[test]
 fn test_system_status_cache() {
     let cache = PackageCache::new(10, 60);
     let status = StatusResult {

@@ -137,7 +137,7 @@ impl PackageCache {
             max_size,
             system_status: build_cache(1, status_ttl),
             explicit_packages: build_cache(1, status_ttl),
-            explicit_count: build_cache(1, ttl),
+            explicit_count: build_cache(1, status_ttl),
         }
     }
 
@@ -154,6 +154,10 @@ impl PackageCache {
     /// Also refreshes the explicit-count cache: both values belong to the
     /// same status-refresh epoch and are published together by the worker.
     pub fn update_status(&self, result: Arc<StatusResult>) {
+        // A status refresh and an explicit-list refresh are separate backend
+        // reads. Invalidate the old list before publishing the new count so
+        // callers cannot observe values from different refresh epochs.
+        self.explicit_packages.invalidate(KEY_EXPLICIT);
         self.explicit_count
             .insert(KEY_EXPLICIT_COUNT, result.explicit_packages);
         self.system_status.insert(KEY_STATUS, result);
