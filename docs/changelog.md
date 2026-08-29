@@ -676,6 +676,7 @@ analyzer inference
 - **Ci**: Cross-platform install script and R2 release sync
 ### 🐛 Bug Fixes
 
+- Enforce security grading on Arch installs
 - Correct Arch smoke image checksum
 - Isolate explicit counts in test mode
 - Honor globbed pacman ignore patterns
