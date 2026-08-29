@@ -6,8 +6,9 @@ Supports both hyperfine JSON output and markdown report parsing.
 Checks for performance regressions against historical baseline.
 """
 import json
-import sys
+import math
 import os
+import sys
 
 def extract_search_time_from_hyperfine(json_path):
     """Extract search time from hyperfine JSON output."""
@@ -75,14 +76,16 @@ def check_regression():
         print("❌ Could not extract current search time from any source.")
         return 1
 
-    baseline_search_ms = baseline.get('search_ms')
-    if baseline_search_ms is None or baseline_search_ms == 0:
+    try:
+        baseline_search_ms = float(baseline.get('search_ms', 0))
+    except (TypeError, ValueError):
+        baseline_search_ms = 0.0
+    if not math.isfinite(baseline_search_ms) or baseline_search_ms <= 0:
         print("Invalid baseline search time.")
-        return 0
+        return 1
 
     # Default tolerance 35%: tight enough to catch real regressions, loose
     # enough for shared-runner noise. Override via OMG_PERF_THRESHOLD.
-    import os
     try:
         threshold = float(os.environ.get("OMG_PERF_THRESHOLD", "1.35"))
     except ValueError:
