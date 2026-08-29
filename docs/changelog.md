@@ -668,6 +668,7 @@ analyzer inference
 - **Ci**: Cross-platform install script and R2 release sync
 ### 🐛 Bug Fixes
 
+- Validate cached AUR dependency artifacts
 - Remove misleading status output
 - Propagate fallback command errors
 - Keep explicit cache epochs coherent
