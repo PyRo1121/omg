@@ -72,6 +72,31 @@ impl Default for PkgBuild {
     }
 }
 
+fn strip_inline_comment(line: &str) -> &str {
+    let mut quote = None;
+    let mut escaped = false;
+
+    for (index, character) in line.char_indices() {
+        if escaped {
+            escaped = false;
+            continue;
+        }
+        if character == '\\' && quote != Some('\'') {
+            escaped = true;
+            continue;
+        }
+
+        match quote {
+            Some(delimiter) if character == delimiter => quote = None,
+            None if character == '\'' || character == '"' => quote = Some(character),
+            None if character == '#' => return &line[..index],
+            Some(_) | None => {}
+        }
+    }
+
+    line
+}
+
 impl PkgBuild {
     /// Parse a PKGBUILD file
     ///
@@ -101,7 +126,7 @@ impl PkgBuild {
                 continue;
             };
             let key = key.trim();
-            let val = val.trim();
+            let val = strip_inline_comment(val).trim();
             if !key
                 .chars()
                 .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '_')
@@ -112,6 +137,7 @@ impl PkgBuild {
             if val.starts_with('(') && !val.ends_with(')') {
                 let mut array_content = val.to_string();
                 for next_line in lines.by_ref() {
+                    let next_line = strip_inline_comment(next_line);
                     array_content.push(' ');
                     array_content.push_str(next_line);
                     if next_line.contains(')') {
@@ -166,14 +192,36 @@ impl PkgBuild {
     }
 }
 
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn inline_comments_do_not_absorb_following_assignments() {
+        let package = PkgBuild::parse_content(
+            r#"
+                pkgname = "demo" # package name
+                pkgver = "1.2.3" # release version
+                pkgrel = "1" # package release
+                depends = ("openssl" "zlib") # dependency list
+                source = ("https://example.test/archive#fragment") # source URL
+            "#,
+        )
+        .expect("valid PKGBUILD metadata");
+
+        assert_eq!(package.name, "demo");
+        assert_eq!(package.version.to_string(), "1.2.3");
+        assert_eq!(package.release, "1");
+        assert_eq!(package.depends, ["openssl", "zlib"]);
+        assert_eq!(package.sources, ["https://example.test/archive#fragment"]);
+    }
+}
+
 fn parse_array(val: &str) -> Vec<String> {
     // Remove comments and join lines
     let cleaned = val
         .lines()
-        .map(|line| {
-            // Remove inline comments
-            line.split('#').next().unwrap_or("")
-        })
+        .map(strip_inline_comment)
         .collect::<Vec<_>>()
         .join(" ");
 
