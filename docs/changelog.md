@@ -668,6 +668,7 @@ analyzer inference
 - **Ci**: Cross-platform install script and R2 release sync
 ### 🐛 Bug Fixes
 
+- Honor Node and Bun version pins
 - Support safe Debian archive installs
 - Include Homebrew casks in package state
 - Record and validate Debian rollbacks
