@@ -668,6 +668,7 @@ analyzer inference
 - **Ci**: Cross-platform install script and R2 release sync
 ### 🐛 Bug Fixes
 
+- Preserve full Debian search cache results
 - Clean AUR rollback error messages
 - Fall back from unavailable AUR metadata
 - Mount AUR compiler caches in sandbox
