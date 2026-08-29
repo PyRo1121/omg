@@ -815,6 +815,19 @@ impl AurClient {
             .collect())
     }
 
+    fn historical_version_not_found_message(base: &str, version: &str) -> String {
+        format!(
+            "version {version} of '{base}' was not found in the AUR git history (the repository may have been force-pushed since it was installed)"
+        )
+    }
+
+    fn historical_build_failure_message(package: &str, version: &str, log_path: &Path) -> String {
+        format!(
+            "Historical build of {package} {version} failed; check {}\n  → The AUR may no longer support building this version (changed sources/dependencies)",
+            log_path.display()
+        )
+    }
+
     /// Rebuild `package` at historical `version` from the AUR repository's
     /// git history and install the resulting archive.
     ///
@@ -913,7 +926,8 @@ impl AurClient {
 
         let Some(sha) = matched_sha else {
             anyhow::bail!(
-                "version {version} of '{base}' was not found in the AUR git history \\\n                 (the repository may have been force-pushed since it was installed)"
+                "{}",
+                Self::historical_version_not_found_message(&base, version)
             );
         };
 
@@ -960,8 +974,12 @@ impl AurClient {
             .with_context(|| format!("Failed to run makepkg for '{package}'"))?;
         if !status.success() {
             anyhow::bail!(
-                "Historical build of {package} {version} failed; check {}\\n  → The AUR may \\\n                 no longer support building this version (changed sources/dependencies)",
-                self.build_dir.join("_logs").display()
+                "{}",
+                Self::historical_build_failure_message(
+                    package,
+                    version,
+                    &self.build_dir.join("_logs"),
+                )
             );
         }
 
@@ -3170,6 +3188,21 @@ mod tests {
             Some(&"PACMAN_AUTH=/usr/bin/sudo"),
             "makepkg's default sudo -k would invalidate omg's live credential"
         );
+    }
+
+    #[test]
+    fn rollback_errors_do_not_contain_literal_escape_text() {
+        let not_found = AurClient::historical_version_not_found_message("example", "1.0-1");
+        assert!(!not_found.contains('\\'));
+
+        let build_failed = AurClient::historical_build_failure_message(
+            "example",
+            "1.0-1",
+            Path::new("/var/log/omg/example.log"),
+        );
+        assert!(build_failed.contains('\n'));
+        assert!(!build_failed.contains("\\n"));
+        assert!(!build_failed.contains("\\\\"));
     }
 
     #[tokio::test]
