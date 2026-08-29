@@ -2087,29 +2087,21 @@ pub fn get_package_version(package_name: &str) -> Result<Option<String>> {
 }
 
 fn installed_version_from_status(content: &str, package_name: &str) -> Option<String> {
-    for paragraph in status_paragraphs(content) {
-        let mut in_package = false;
-        let mut is_installed = false;
-        let mut version = None;
-
-        for line in paragraph.lines() {
-            if let Some(pkg) = line.strip_prefix("Package: ") {
-                in_package = pkg.trim() == package_name;
-            } else if in_package {
-                if let Some(ver) = line.strip_prefix("Version: ") {
-                    version = Some(ver.trim().to_string());
-                } else if line.starts_with("Status: ") && line.contains("installed") {
-                    is_installed = true;
-                }
-            }
-        }
-
-        if in_package && is_installed {
-            return version;
-        }
-    }
-
-    None
+    status_paragraphs(content)
+        .filter(|paragraph| status_paragraph_is_installed(paragraph))
+        .find_map(|paragraph| {
+            let name = paragraph
+                .lines()
+                .find_map(|line| line.strip_prefix("Package: "))?
+                .trim();
+            (name == package_name).then(|| {
+                paragraph
+                    .lines()
+                    .find_map(|line| line.strip_prefix("Version: "))
+                    .map(str::trim)
+                    .map(str::to_string)
+            })?
+        })
 }
 
 /// Load APT Auto-Installed names from `extended_states`.
@@ -2221,18 +2213,18 @@ fn build_dependency_map() -> Result<HashMap<String, Vec<String>>> {
     }
 
     let content = fs::read_to_string(status_path)?;
+    Ok(dependency_map_from_status(&content))
+}
+
+fn dependency_map_from_status(content: &str) -> HashMap<String, Vec<String>> {
     let mut dep_map = HashMap::new();
 
-    for paragraph in status_paragraphs(&content) {
+    for paragraph in status_paragraphs(content) {
         let mut current_pkg = String::new();
         let mut current_deps: Vec<String> = Vec::new();
-        let mut is_installed = false;
-
         for line in paragraph.lines() {
             if let Some(pkg) = line.strip_prefix("Package: ") {
                 current_pkg = pkg.trim().to_string();
-            } else if line.starts_with("Status: ") && line.contains("installed") {
-                is_installed = true;
             } else if let Some(deps_str) = line
                 .strip_prefix("Depends: ")
                 .or_else(|| line.strip_prefix("Pre-Depends: "))
@@ -2241,12 +2233,15 @@ fn build_dependency_map() -> Result<HashMap<String, Vec<String>>> {
             }
         }
 
-        if is_installed && !current_pkg.is_empty() && !current_deps.is_empty() {
+        if status_paragraph_is_installed(paragraph)
+            && !current_pkg.is_empty()
+            && !current_deps.is_empty()
+        {
             dep_map.insert(current_pkg, current_deps);
         }
     }
 
-    Ok(dep_map)
+    dep_map
 }
 
 /// Clean the APT package cache at `/var/cache/apt/archives/`
@@ -2546,6 +2541,20 @@ mod tests {
         let (deps, reverse) = dependencies_from_status(last_is_reverse, "vim");
         assert_eq!(deps, vec!["libc6".to_string()]);
         assert_eq!(reverse, vec!["gvim".to_string()]);
+    }
+
+    #[test]
+    fn incomplete_dpkg_states_are_not_treated_as_installed() {
+        let content = "Package: partial\nStatus: install ok half-installed\nVersion: 1.0\nDepends: libc6\n\nPackage: complete\nStatus: hold ok installed\nVersion: 2.0\nDepends: libc6";
+
+        assert_eq!(installed_version_from_status(content, "partial"), None);
+        assert_eq!(
+            installed_version_from_status(content, "complete").as_deref(),
+            Some("2.0")
+        );
+        let dependencies = dependency_map_from_status(content);
+        assert!(!dependencies.contains_key("partial"));
+        assert_eq!(dependencies["complete"], ["libc6"]);
     }
 
     #[test]

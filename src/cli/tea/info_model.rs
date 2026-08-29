@@ -37,6 +37,7 @@ impl InfoSource {
     }
 }
 
+#[cfg(any(test, feature = "arch", feature = "debian"))]
 fn non_negative_install_size(size: i64) -> Option<u64> {
     u64::try_from(size).ok()
 }
