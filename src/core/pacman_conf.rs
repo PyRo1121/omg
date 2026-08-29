@@ -32,6 +32,10 @@ pub struct PacmanConfig {
     pub repos: Vec<RepoConfig>,
 }
 
+fn strip_inline_comment(line: &str) -> &str {
+    line.split('#').next().unwrap_or_default().trim_end()
+}
+
 impl PacmanConfig {
     pub fn parse<P: AsRef<Path>>(path: P) -> Result<Self> {
         let content = std::fs::read_to_string(path.as_ref())
@@ -46,9 +50,9 @@ impl PacmanConfig {
         let mut current_repo: Option<RepoConfig> = None;
 
         for line in content.lines() {
-            let line = line.trim();
+            let line = strip_inline_comment(line.trim()).trim();
 
-            if line.is_empty() || line.starts_with('#') {
+            if line.is_empty() {
                 continue;
             }
 
@@ -242,6 +246,20 @@ mod tests {
                 .expect_err("missing pacman config must be reported explicitly");
             assert!(error.to_string().contains("does not exist"));
         });
+    }
+
+    #[test]
+    fn inline_comments_are_removed_from_values() {
+        let config = PacmanConfig::parse_str(
+            "[options]\nIgnorePkg = linux # keep the kernel pinned\n\n[core]\nServer = https://mirror.example/$repo/$arch # primary\n",
+        )
+        .expect("valid pacman configuration");
+
+        assert_eq!(config.ignore_pkg, ["linux"]);
+        assert_eq!(
+            config.repos[0].servers,
+            ["https://mirror.example/$repo/$arch"]
+        );
     }
 
     #[test]
