@@ -3844,6 +3844,7 @@ the Debian backend), so it was removed from the metadata.
 - Normalize project formatting
 ### 🧪 Testing
 
+- Keep detached TUI state free of host reads
 - Remove process environment races
 - Detach TUI state tests from host services
 - Run ALPM coverage against seeded databases
