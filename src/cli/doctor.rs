@@ -6,6 +6,22 @@ use crate::cli::style;
 use crate::core::client::DaemonClient;
 use crate::core::http::shared_client;
 
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn non_success_non_redirect_mirror_status_is_an_issue() {
+        assert!(mirror_status_is_issue(
+            reqwest::StatusCode::INTERNAL_SERVER_ERROR
+        ));
+        assert!(!mirror_status_is_issue(reqwest::StatusCode::OK));
+        assert!(!mirror_status_is_issue(
+            reqwest::StatusCode::TEMPORARY_REDIRECT
+        ));
+    }
+}
+
 /// Mirror endpoints to test connectivity
 const MIRROR_ENDPOINTS: &[(&str, &str)] = &[
     ("Arch Linux", "https://archlinux.org"),
@@ -13,6 +29,10 @@ const MIRROR_ENDPOINTS: &[(&str, &str)] = &[
     ("GitHub", "https://github.com"),
     ("AUR", "https://aur.archlinux.org"),
 ];
+
+fn mirror_status_is_issue(status: reqwest::StatusCode) -> bool {
+    !status.is_success() && !status.is_redirection()
+}
 
 // EOL data lives in `runtimes::eol` (shared with security.rs).
 
@@ -125,15 +145,16 @@ async fn check_network() -> usize {
             Ok(Ok(response)) => {
                 let latency = start.elapsed().as_millis();
                 let status = response.status();
-                if status.is_success() || status.is_redirection() {
-                    println!("  {} {} ({} ms)", style::success("✓"), name, latency);
-                } else {
+                if mirror_status_is_issue(status) {
                     println!(
                         "  {} {} (HTTP {})",
                         style::warning("⚠"),
                         name,
                         status.as_u16()
                     );
+                    issues += 1;
+                } else {
+                    println!("  {} {} ({} ms)", style::success("✓"), name, latency);
                 }
             }
             Ok(Err(e)) => {
