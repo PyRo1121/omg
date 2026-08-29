@@ -62,7 +62,7 @@ jobs:
           VERSION=$(awk -F'"' '/^version =/ {print $2; exit}' Cargo.toml)
           mkdir -p "omg-v${VERSION}-x86_64-linux-arch"
           cp target/release/omg "omg-v${VERSION}-x86_64-linux-arch/"
-          cp target/release/omgd "omg-v${VERSION}-x86_64-linux-arch/" 2>/dev/null || true
+          cp target/release/omgd "omg-v${VERSION}-x86_64-linux-arch/"
           cp README.md LICENSE "omg-v${VERSION}-x86_64-linux-arch/"
           tar -czvf "omg-v${VERSION}-x86_64-linux-arch.tar.gz" "omg-v${VERSION}-x86_64-linux-arch"
           sha256sum "omg-v${VERSION}-x86_64-linux-arch.tar.gz" > "omg-v${VERSION}-x86_64-linux-arch.tar.gz.sha256"
@@ -287,7 +287,12 @@ jobs:
 
       - name: Generate locked CycloneDX SBOM
         run: |
-          VERSION="${GITHUB_REF#refs/tags/v}"
+          if [[ "$GITHUB_REF" == refs/tags/v* ]]; then
+            VERSION="${GITHUB_REF#refs/tags/v}"
+          else
+            VERSION=$(awk -F'"' '/^version =/ {print $2; exit}' Cargo.toml)
+          fi
+          test -n "$VERSION"
           cargo metadata --locked --format-version 1 > /dev/null
           cargo cyclonedx --format json --all-features --target all \
             --override-filename "omg-v${VERSION}.cdx"
@@ -306,7 +311,12 @@ jobs:
 
       - name: Collect and verify exact release files
         run: |
-          VERSION="${GITHUB_REF#refs/tags/v}"
+          if [[ "$GITHUB_REF" == refs/tags/v* ]]; then
+            VERSION="${GITHUB_REF#refs/tags/v}"
+          else
+            VERSION=$(awk -F'"' '/^version =/ {print $2; exit}' Cargo.toml)
+          fi
+          test -n "$VERSION"
           ./scripts/collect-release-artifacts.sh "$VERSION" artifacts release
 
       - name: Attest release archives and SBOM
@@ -320,7 +330,12 @@ jobs:
       - name: Generate Release Notes
         id: release_notes
         run: |
-          VERSION="${GITHUB_REF#refs/tags/v}"
+          if [[ "$GITHUB_REF" == refs/tags/v* ]]; then
+            VERSION="${GITHUB_REF#refs/tags/v}"
+          else
+            VERSION=$(awk -F'"' '/^version =/ {print $2; exit}' Cargo.toml)
+          fi
+          test -n "$VERSION"
 
           cat > release_notes.md << 'EOF_HEADER'
           ## Installation
@@ -424,22 +439,19 @@ jobs:
         with:
           path: artifacts
 
+      - name: Resolve release version
+        run: |
+          if [[ "$GITHUB_REF" == refs/tags/v* ]]; then
+            VERSION="${GITHUB_REF#refs/tags/v}"
+          else
+            VERSION=$(awk -F'"' '/^version =/ {print $2; exit}' Cargo.toml)
+          fi
+          test -n "$VERSION"
+          echo "VERSION=$VERSION" >> "$GITHUB_ENV"
+
       - name: Collect and verify exact release files
         run: |
-          VERSION="${GITHUB_REF#refs/tags/v}"
           ./scripts/collect-release-artifacts.sh "$VERSION" artifacts release
-
-      - name: Upload latest-version marker
-        env:
-          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
-          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
-        run: |
-          VERSION="${GITHUB_REF#refs/tags/v}"
-          echo -n "$VERSION" > release/latest-version
-          npx --yes wrangler@4.123.0 r2 object put "omg-releases/latest-version" \
-            --file=release/latest-version \
-            --content-type="text/plain"
-          echo "✓ Updated latest-version → $VERSION"
 
       - name: Upload release artifacts to R2
         env:
@@ -464,3 +476,16 @@ jobs:
               --content-type="text/plain"
             echo "✓ Uploaded $basename"
           done
+
+      # Publish this last: clients only learn about the new version after every
+      # archive and checksum is already present in R2.
+      - name: Upload latest-version marker
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+        run: |
+          echo -n "$VERSION" > release/latest-version
+          npx --yes wrangler@4.123.0 r2 object put "omg-releases/latest-version" \
+            --file=release/latest-version \
+            --content-type="text/plain"
+          echo "✓ Updated latest-version → $VERSION"
