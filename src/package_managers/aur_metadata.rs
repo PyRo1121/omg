@@ -54,6 +54,23 @@ pub struct AurJsonPackage {
     pub last_modified: Option<i64>,
 }
 
+fn metadata_request(
+    client: &reqwest::Client,
+    meta_cache: &AurMetaCache,
+    cache_exists: bool,
+) -> reqwest::RequestBuilder {
+    let mut request = client.get(AUR_META_URL);
+    if cache_exists {
+        if let Some(etag) = &meta_cache.etag {
+            request = request.header(IF_NONE_MATCH, etag);
+        }
+        if let Some(last_modified) = &meta_cache.last_modified {
+            request = request.header(IF_MODIFIED_SINCE, last_modified);
+        }
+    }
+    request
+}
+
 /// Sync AUR metadata: Download if newer, update cache, rebuild index
 #[instrument(skip(client, settings))]
 pub async fn sync_aur_metadata(
@@ -70,7 +87,7 @@ pub async fn sync_aur_metadata(
     let index_path = index_path();
 
     // Check TTL if not forced
-    if !force && cache_path.exists() {
+    if !force && cache_path.is_file() {
         let ttl = settings.aur.metadata_cache_ttl_secs;
         let cache_path_clone = cache_path.clone();
         let is_fresh = tokio::task::spawn_blocking(move || {
@@ -101,21 +118,19 @@ pub async fn sync_aur_metadata(
         tokio_fs::create_dir_all(parent).await?;
     }
 
-    // Prepare request
-    let mut req = client.get(AUR_META_URL);
-    if let Some(etag) = &meta_cache.etag {
-        req = req.header(IF_NONE_MATCH, etag);
-    }
-    if let Some(last_modified) = &meta_cache.last_modified {
-        req = req.header(IF_MODIFIED_SINCE, last_modified);
-    }
-
-    let response = req.send().await?;
+    // Prepare a conditional request only when the body it validates is present.
+    let response = metadata_request(client, &meta_cache, cache_path.is_file())
+        .send()
+        .await?;
 
     if response.status() == reqwest::StatusCode::NOT_MODIFIED {
+        anyhow::ensure!(
+            cache_path.is_file(),
+            "AUR metadata server returned 304 but the cached archive is missing"
+        );
         // Cache is still valid on server side
         // Touch the file to update mtime so we don't check again immediately
-        if cache_path.exists() {
+        if cache_path.is_file() {
             let touched = tokio::task::spawn_blocking({
                 let cache_path = cache_path.clone();
                 move || -> std::io::Result<()> {
@@ -136,7 +151,7 @@ pub async fn sync_aur_metadata(
         }
 
         // Ensure index exists
-        if !index_path.exists() && cache_path.exists() {
+        if !index_path.exists() && cache_path.is_file() {
             info!("Rebuilding missing AUR index...");
             rebuild_index(&cache_path, &index_path).await?;
         }
@@ -263,12 +278,36 @@ fn persist_file_atomically(dest: &Path, data: &[u8]) -> Result<()> {
     file.persist(dest)
         .map_err(|error| error.error)
         .with_context(|| format!("Failed to persist AUR metadata at {}", dest.display()))?;
+    crate::core::safe_ops::sync_parent_directory_sync(dest)?;
     Ok(())
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn metadata_request_uses_validators_only_with_cached_archive() {
+        let client = reqwest::Client::new();
+        let meta = AurMetaCache {
+            etag: Some("\"etag-value\"".to_string()),
+            last_modified: Some("Wed, 21 Oct 2015 07:28:00 GMT".to_string()),
+        };
+
+        let with_archive = metadata_request(&client, &meta, true).build().unwrap();
+        assert_eq!(
+            with_archive.headers().get(IF_NONE_MATCH).unwrap(),
+            "\"etag-value\""
+        );
+        assert_eq!(
+            with_archive.headers().get(IF_MODIFIED_SINCE).unwrap(),
+            "Wed, 21 Oct 2015 07:28:00 GMT"
+        );
+
+        let without_archive = metadata_request(&client, &meta, false).build().unwrap();
+        assert!(without_archive.headers().get(IF_NONE_MATCH).is_none());
+        assert!(without_archive.headers().get(IF_MODIFIED_SINCE).is_none());
+    }
 
     #[test]
     fn aur_metadata_persist_round_trips() {
