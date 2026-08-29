@@ -427,7 +427,8 @@ async fn handle_debian_search(
     let task_index = Arc::clone(&index);
     let query_for_task = query.clone();
     let searched =
-        tokio::task::spawn_blocking(move || task_index.search(&query_for_task, limit)).await;
+        tokio::task::spawn_blocking(move || task_index.search(&query_for_task, MAX_SEARCH_LIMIT))
+            .await;
 
     let mut results = match searched {
         Ok(results) => results,
@@ -440,9 +441,10 @@ async fn handle_debian_search(
     state.with_current_index(&index, || {
         state.cache.insert_debian_arc(query, Arc::clone(&results));
     });
+    let response_results = results.iter().take(limit).cloned().collect();
     Response::Success {
         id,
-        result: ResponseResult::DebianSearch(Arc::unwrap_or_clone(results)),
+        result: ResponseResult::DebianSearch(response_results),
     }
 }
 
@@ -1278,6 +1280,49 @@ mod tests {
             panic!("stale snapshot action must not run");
         }));
         assert!(state.with_current_index(&current_snapshot, || {}));
+    }
+
+    #[tokio::test]
+    async fn debian_search_cache_preserves_results_for_larger_limits() {
+        let directory = tempfile::tempdir().expect("create isolated search directory");
+        let package_manager: Arc<dyn PackageManager> = Arc::new(
+            crate::package_managers::mock::MockPackageManager::new_in("arch", directory.path()),
+        );
+        let index = PackageIndex::from_records(&[
+            ("pkg-alpha", "1.0", "alpha"),
+            ("pkg-beta", "1.0", "beta"),
+            ("pkg-gamma", "1.0", "gamma"),
+        ]);
+        let state = Arc::new(
+            DaemonState::new_isolated(directory.path(), index, package_manager)
+                .expect("create isolated daemon state"),
+        );
+
+        let request = |id, limit| Request::DebianSearch {
+            id,
+            query: "pkg".to_string(),
+            limit: Some(limit),
+        };
+        let first = handle_request(state.clone(), request(1, 1)).await;
+        let second = handle_request(state, request(2, 3)).await;
+
+        let Response::Success {
+            result: ResponseResult::DebianSearch(first),
+            ..
+        } = first
+        else {
+            panic!("first Debian search must succeed");
+        };
+        let Response::Success {
+            result: ResponseResult::DebianSearch(second),
+            ..
+        } = second
+        else {
+            panic!("second Debian search must succeed");
+        };
+
+        assert_eq!(first.len(), 1);
+        assert_eq!(second.len(), 3);
     }
 
     #[tokio::test]
