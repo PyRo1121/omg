@@ -163,12 +163,10 @@ pub fn license_scan(export: Option<&str>, _ctx: &CliContext) -> Result<()> {
 
     let scan = perform_license_scan()?;
 
-    // Display results
-    let mut license_inventory = vec![];
-    for (license, count) in &scan.by_license {
-        let pct = (*count as f32 / scan.total as f32) * 100.0;
-        license_inventory.push(format!("{license}: {count} packages ({pct:.0}%)"));
-    }
+    // Display results. Percentages are license assignments over all observed
+    // assignments, not packages: a package may legitimately declare more than
+    // one license, so package-count denominators can exceed 100%.
+    let license_inventory = license_inventory_rows(&scan);
 
     let mut violations = vec![];
     for violation in &scan.violations {
@@ -253,7 +251,6 @@ pub mod policy {
         }
 
         let mut policy_list = vec![];
-        let policy_count = policies.len();
         for p in &policies {
             if let Some(s) = scope
                 && p.scope != s
@@ -268,6 +265,7 @@ pub mod policy {
             ));
         }
 
+        let policy_count = policy_list.len();
         execute_cmd(Cmd::batch([
             Cmd::header(
                 "Policy Configuration",
@@ -536,6 +534,24 @@ fn perform_license_scan() -> Result<LicenseScan> {
     }
 }
 
+fn license_inventory_rows(scan: &LicenseScan) -> Vec<String> {
+    let assignments = scan.by_license.values().copied().sum::<usize>();
+    let mut rows = scan
+        .by_license
+        .iter()
+        .map(|(license, count)| {
+            let percentage = if assignments == 0 {
+                0.0
+            } else {
+                (*count as f32 / assignments as f32) * 100.0
+            };
+            format!("{license}: {count} assignments ({percentage:.0}%)")
+        })
+        .collect::<Vec<_>>();
+    rows.sort_unstable();
+    rows
+}
+
 fn generate_license_csv(scan: &LicenseScan) -> String {
     use std::fmt::Write;
     let mut csv = "license,count\n".to_string();
@@ -543,4 +559,37 @@ fn generate_license_csv(scan: &LicenseScan) -> String {
         let _ = writeln!(csv, "{license},{count}");
     }
     csv
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn license_inventory_handles_empty_and_multi_license_scans() {
+        let empty = LicenseScan {
+            total: 0,
+            by_license: HashMap::new(),
+            violations: Vec::new(),
+            unknown: Vec::new(),
+        };
+        assert!(license_inventory_rows(&empty).is_empty());
+
+        let scan = LicenseScan {
+            total: 2,
+            by_license: HashMap::from([("MIT".to_string(), 2), ("Apache-2.0".to_string(), 1)]),
+            violations: Vec::new(),
+            unknown: Vec::new(),
+        };
+        let rows = license_inventory_rows(&scan);
+        assert!(
+            rows.iter()
+                .any(|row| row.contains("MIT: 2 assignments (67%)"))
+        );
+        assert!(
+            rows.iter()
+                .any(|row| row.contains("Apache-2.0: 1 assignments (33%)"))
+        );
+        assert!(!rows.iter().any(|row| row.contains("NaN")));
+    }
 }
