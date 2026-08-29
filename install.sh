@@ -287,12 +287,19 @@ install_from_release() {
   fi
 
   # Find download URL for the artifact
-  local asset_url
-  asset_url=$(printf "%s" "$release_json" |
-    grep -Eo '"browser_download_url"\s*:\s*"[^"]+"' |
-    cut -d '"' -f4 |
-    grep -F "$artifact_name" |
-    head -n1)
+  local asset_url=""
+  while IFS= read -r candidate; do
+    case "$candidate" in
+    *"/$artifact_name")
+      asset_url="$candidate"
+      break
+      ;;
+    esac
+  done < <(
+    printf "%s" "$release_json" |
+      grep -Eo '"browser_download_url"\s*:\s*"[^"]+"' |
+      cut -d '"' -f4
+  )
 
   if [[ -z "$asset_url" ]]; then
     warn "No prebuilt binary found for ${detected_os}/${detected_distro}/${detected_arch} (artifact: ${artifact_name})"
