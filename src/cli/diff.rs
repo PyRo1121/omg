@@ -149,6 +149,7 @@ fn diff_runtimes(from: &HashMap<String, String>, to: &HashMap<String, String>) -
     let all_runtimes: HashSet<_> = from.keys().chain(to.keys()).collect();
 
     for runtime in all_runtimes {
+        let runtime = runtime.as_str();
         match (from.get(runtime), to.get(runtime)) {
             (Some(from_ver), Some(to_ver)) if from_ver != to_ver => {
                 changes.push(format!(
@@ -178,6 +179,7 @@ fn diff_runtimes(from: &HashMap<String, String>, to: &HashMap<String, String>) -
         }
     }
 
+    changes.sort_unstable();
     changes
 }
 
@@ -202,5 +204,42 @@ fn diff_packages(from: &[String], to: &[String]) -> PackageDiff {
         .map(std::string::ToString::to_string)
         .collect();
 
+    let mut added = added;
+    let mut removed = removed;
+    added.sort_unstable();
+    removed.sort_unstable();
+
     PackageDiff { added, removed }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn diff_output_is_sorted_for_reproducible_reports() {
+        let from = HashMap::from([
+            ("zsh".to_string(), "5".to_string()),
+            ("bash".to_string(), "4".to_string()),
+        ]);
+        let to = HashMap::from([
+            ("fish".to_string(), "3".to_string()),
+            ("bash".to_string(), "5".to_string()),
+        ]);
+        assert_eq!(
+            diff_runtimes(&from, &to),
+            vec![
+                "+ fish (added @ 3)".to_string(),
+                "- zsh → (removed, was 5)".to_string(),
+                "bash 4 → 5".to_string(),
+            ]
+        );
+
+        let packages = diff_packages(
+            &["z".to_string(), "a".to_string()],
+            &["c".to_string(), "b".to_string()],
+        );
+        assert_eq!(packages.added, ["b", "c"]);
+        assert_eq!(packages.removed, ["a", "z"]);
+    }
 }
