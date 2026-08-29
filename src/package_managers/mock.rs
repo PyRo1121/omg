@@ -265,7 +265,8 @@ impl PackageManager for MockPackageManager {
             Ok(pkgs
                 .values()
                 .filter(|p| {
-                    p.name.contains(&query) || p.description.to_lowercase().contains(&query)
+                    p.name.to_lowercase().contains(&query)
+                        || p.description.to_lowercase().contains(&query)
                 })
                 .map(|p| Package {
                     name: p.name.clone(),
@@ -399,7 +400,8 @@ impl PackageManager for MockPackageManager {
             // explicit = explicitly installed packages (in mock, all are explicit since no dependency tracking)
             let total = state.installed.len();
             let explicit = total; // All installed packages are explicit in the mock
-            Ok((total, explicit, 0, 0))
+            let updates = self.list_updates().await?.len();
+            Ok((total, explicit, 0, updates))
         })
     }
 
@@ -494,6 +496,23 @@ mod tests {
         let pm2 = MockPackageManager::new_in("arch", dir.path());
         let installed = futures::executor::block_on(pm2.list_explicit())?;
         assert!(installed.iter().any(|package| package == "test-pkg"));
+        Ok(())
+    }
+
+    #[test]
+    fn mock_search_and_status_are_case_insensitive_and_consistent() -> Result<()> {
+        let dir = tempdir()?;
+        let package_manager = MockPackageManager::new_in("arch", dir.path());
+        package_manager
+            .db
+            .add_package("UpperCase", "1.0.0", "Example package", "extra");
+        package_manager.set_installed_version("UpperCase", "1.0.0")?;
+        package_manager.set_available_version("UpperCase", "2.0.0")?;
+
+        let search = futures::executor::block_on(package_manager.search("uppercase"))?;
+        assert_eq!(search.len(), 1);
+        let status = futures::executor::block_on(package_manager.get_status(false))?;
+        assert_eq!(status.3, 1, "status must expose the pending mock update");
         Ok(())
     }
 

@@ -129,6 +129,22 @@ fn local_packages_from_debian_db() -> anyhow::Result<Vec<LocalPackage>> {
 }
 
 pub fn list_installed_fast() -> anyhow::Result<Vec<LocalPackage>> {
+    if crate::core::paths::test_mode() {
+        let manager = get_package_manager()?;
+        return futures::executor::block_on(manager.list_installed()).map(|packages| {
+            packages
+                .into_iter()
+                .map(|package| LocalPackage {
+                    name: package.name,
+                    version: package.version,
+                    description: package.description,
+                    install_size: 0,
+                    reason: "explicit",
+                })
+                .collect()
+        });
+    }
+
     #[cfg(any(feature = "debian", feature = "debian-pure"))]
     if crate::core::env::distro::is_debian_like() {
         return local_packages_from_debian_db();
@@ -148,6 +164,11 @@ pub fn list_installed_fast() -> anyhow::Result<Vec<LocalPackage>> {
 }
 
 pub fn is_installed_fast(name: &str) -> anyhow::Result<bool> {
+    if crate::core::paths::test_mode() {
+        let manager = get_package_manager()?;
+        return futures::executor::block_on(manager.is_installed(name));
+    }
+
     #[cfg(any(feature = "debian", feature = "debian-pure"))]
     if crate::core::env::distro::is_debian_like() {
         return debian_db::is_installed_fast(name);
@@ -190,6 +211,28 @@ fn package_info_from_debian_db(name: &str) -> anyhow::Result<Option<types::Packa
 }
 
 pub fn get_package_info(name: &str) -> anyhow::Result<Option<types::PackageInfo>> {
+    if crate::core::paths::test_mode() {
+        let manager = get_package_manager()?;
+        let package = futures::executor::block_on(manager.info(name))?;
+        return Ok(package.map(|package| types::PackageInfo {
+            name: package.name,
+            version: package.version,
+            description: package.description,
+            url: None,
+            size: 0,
+            install_size: None,
+            download_size: None,
+            repo: match package.source {
+                crate::core::PackageSource::Official => "official",
+                crate::core::PackageSource::Aur => "aur",
+            }
+            .to_string(),
+            depends: Vec::new(),
+            licenses: Vec::new(),
+            installed: package.installed,
+        }));
+    }
+
     #[cfg(any(feature = "debian", feature = "debian-pure"))]
     if crate::core::env::distro::is_debian_like() {
         return package_info_from_debian_db(name);
@@ -209,6 +252,10 @@ pub fn get_package_info(name: &str) -> anyhow::Result<Option<types::PackageInfo>
 }
 
 pub fn list_orphans_fast() -> anyhow::Result<Vec<String>> {
+    if crate::core::paths::test_mode() {
+        return Ok(Vec::new());
+    }
+
     #[cfg(any(feature = "debian", feature = "debian-pure"))]
     if crate::core::env::distro::is_debian_like() {
         return debian_db::list_orphans_fast();
@@ -234,6 +281,12 @@ fn counts_from_debian_db() -> anyhow::Result<(usize, usize, usize)> {
 }
 
 pub fn get_counts() -> anyhow::Result<(usize, usize, usize)> {
+    if crate::core::paths::test_mode() {
+        let manager = get_package_manager()?;
+        let (total, explicit, orphans, _) = futures::executor::block_on(manager.get_status(false))?;
+        return Ok((total, explicit, orphans));
+    }
+
     #[cfg(any(feature = "debian", feature = "debian-pure"))]
     if crate::core::env::distro::is_debian_like() {
         return counts_from_debian_db();
@@ -253,6 +306,11 @@ pub fn get_counts() -> anyhow::Result<(usize, usize, usize)> {
 }
 
 pub fn get_system_status() -> anyhow::Result<(usize, usize, usize, usize)> {
+    if crate::core::paths::test_mode() {
+        let manager = get_package_manager()?;
+        return futures::executor::block_on(manager.get_status(false));
+    }
+
     #[cfg(any(feature = "debian", feature = "debian-pure"))]
     if crate::core::env::distro::is_debian_like() {
         return debian_db::get_counts_fast();
