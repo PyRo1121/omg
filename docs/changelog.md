@@ -669,6 +669,7 @@ analyzer inference
 - **Ci**: Cross-platform install script and R2 release sync
 ### 🐛 Bug Fixes
 
+- Make release publication atomic
 - Reject negative package install sizes
 - Keep macOS backend feature checks clean
 - Validate compliance export inputs consistently
