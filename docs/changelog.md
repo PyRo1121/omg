@@ -669,6 +669,7 @@ analyzer inference
 - **Ci**: Cross-platform install script and R2 release sync
 ### 🐛 Bug Fixes
 
+- Reject unsupported APT clean-all work
 - Parse PKGBUILD inline comments safely
 - Reject missing AUR metadata cache validators
 - Treat missing pacman local database as empty
