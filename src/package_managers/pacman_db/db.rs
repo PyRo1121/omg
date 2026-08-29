@@ -152,6 +152,8 @@ pub struct SyncDbPackage {
     pub depends: Vec<String>,
     pub makedepends: Vec<String>,
     pub optdepends: Vec<String>,
+    #[serde(default)]
+    pub groups: Vec<String>,
     pub provides: Vec<String>,
     pub conflicts: Vec<String>,
     pub replaces: Vec<String>,
@@ -173,6 +175,7 @@ impl Default for SyncDbPackage {
             depends: Vec::new(),
             makedepends: Vec::new(),
             optdepends: Vec::new(),
+            groups: Vec::new(),
             provides: Vec::new(),
             conflicts: Vec::new(),
             replaces: Vec::new(),
@@ -314,6 +317,11 @@ macro_rules! sync_pkg_from_desc {
                 .iter()
                 .map(std::string::ToString::to_string)
                 .collect(),
+            groups: $desc
+                .groups
+                .iter()
+                .map(std::string::ToString::to_string)
+                .collect(),
             provides: $desc
                 .provides
                 .iter()
@@ -417,6 +425,7 @@ fn parse_desc_manual(content: &str, repo: &str) -> Result<SyncDbPackage> {
             "%CONFLICTS%" => pkg.conflicts.push(line.to_string()),
             "%REPLACES%" => pkg.replaces.push(line.to_string()),
             "%OPTDEPENDS%" => pkg.optdepends.push(line.to_string()),
+            "%GROUPS%" => pkg.groups.push(line.to_string()),
             "%MAKEDEPENDS%" => pkg.makedepends.push(line.to_string()),
             "%LICENSE%" => pkg.licenses.push(line.to_string()),
             _ => {}
@@ -939,6 +948,8 @@ pub struct CachedUpdate {
 /// Cached update check across all configured repositories.
 #[instrument]
 pub fn check_updates_cached() -> Result<Vec<CachedUpdate>> {
+    let pacman_config = crate::core::pacman_conf::PacmanConfig::parse(paths::pacman_conf_path())
+        .context("Failed to load update filters from pacman.conf")?;
     let sync_dir = paths::pacman_sync_dir();
     let local_dir = paths::pacman_local_dir();
 
@@ -959,6 +970,13 @@ pub fn check_updates_cached() -> Result<Vec<CachedUpdate>> {
             sync_cache
                 .packages
                 .get(name)
+                .filter(|sync_pkg| {
+                    !sync_package_is_ignored(
+                        sync_pkg,
+                        &pacman_config.ignore_pkg,
+                        &pacman_config.ignore_group,
+                    )
+                })
                 .filter(|sync_pkg| local_pkg.version < sync_pkg.version)
                 .map(|sync_pkg| (name, local_pkg, sync_pkg))
         })
@@ -974,6 +992,18 @@ pub fn check_updates_cached() -> Result<Vec<CachedUpdate>> {
         .collect();
 
     Ok(updates)
+}
+
+fn sync_package_is_ignored(
+    package: &SyncDbPackage,
+    ignored_packages: &[String],
+    ignored_groups: &[String],
+) -> bool {
+    ignored_packages.iter().any(|name| name == &package.name)
+        || package
+            .groups
+            .iter()
+            .any(|group| ignored_groups.iter().any(|ignored| ignored == group))
 }
 
 /// Get a specific local package - FAST (<1ms)
@@ -1127,6 +1157,28 @@ mod tests {
             "bash must be found, got keys {:?}",
             parsed.keys()
         );
+    }
+
+    #[test]
+    fn cached_update_filters_honour_ignored_packages_and_groups() {
+        let mut package = SyncDbPackage::default();
+        package.name = "linux".to_string();
+        package.groups = vec!["kernel".to_string()];
+        assert!(sync_package_is_ignored(
+            &package,
+            &["linux".to_string()],
+            &[]
+        ));
+        assert!(sync_package_is_ignored(
+            &package,
+            &[],
+            &["kernel".to_string()]
+        ));
+        assert!(!sync_package_is_ignored(
+            &package,
+            &[],
+            &["base".to_string()]
+        ));
     }
 
     #[test]
