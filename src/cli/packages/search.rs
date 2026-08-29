@@ -83,7 +83,7 @@ async fn search_internal(
 ) -> Result<()> {
     validate_search_query(query)?;
 
-    let official_search = async { search_official_packages(query).await };
+    let official_search = async { search_official_packages(query, limit).await };
 
     // Skip AUR search if --no-aur flag is set (for benchmarks/official-only searches)
     let aur_search = async {
@@ -101,7 +101,7 @@ async fn search_internal(
     // Official results are authoritative and remain useful when optional AUR
     // enrichment is unavailable. Run both concurrently, but bound AUR latency.
     let (official_result, aur_result) = tokio::join!(official_search, aur_search);
-    let mut display_packages = official_result?;
+    let (mut display_packages, official_total) = official_result?;
     let aur_packages = match aur_result {
         Ok(packages) => packages,
         Err(error) if !display_packages.is_empty() => {
@@ -118,7 +118,9 @@ async fn search_internal(
         .into_iter()
         .filter(|p| !official_names.contains(p.name.as_str()))
         .collect();
+    let aur_count = deduped_aur.len();
     display_packages.extend(deduped_aur);
+    let total_matches = official_total.saturating_add(aur_count);
 
     crate::core::usage::track_search_result(true);
 
@@ -145,14 +147,11 @@ async fn search_internal(
         write_package_line(&mut stdout, pkg, desc_width)?;
     }
 
-    if display_packages.len() > limit {
+    if total_matches > limit {
         writeln!(
             stdout,
             "  {}",
-            style::dim(&format!(
-                "(+{} more packages...)",
-                display_packages.len() - limit
-            ))
+            style::dim(&format!("(+{} more packages...)", total_matches - limit))
         )?;
     }
 
@@ -162,25 +161,30 @@ async fn search_internal(
     Ok(())
 }
 
-async fn search_official_packages(query: &str) -> Result<Vec<DisplayPackage>> {
+async fn search_official_packages(
+    query: &str,
+    limit: usize,
+) -> Result<(Vec<DisplayPackage>, usize)> {
     #[cfg(unix)]
     if let Ok(mut client) = DaemonClient::connect().await {
-        match client.search(query, Some(50)).await {
+        match client.search(query, Some(limit)).await {
             Ok(res) => {
-                return Ok(res
-                    .packages
-                    .into_iter()
-                    .map(|pkg| DisplayPackage {
-                        name: pkg.name,
-                        version: pkg.version,
-                        description: pkg.description,
-                        source: pkg.source.label().to_string(),
-                        votes: None,
-                        popularity: None,
-                        maintainer: None,
-                        out_of_date: None,
-                    })
-                    .collect());
+                return Ok((
+                    res.packages
+                        .into_iter()
+                        .map(|pkg| DisplayPackage {
+                            name: pkg.name,
+                            version: pkg.version,
+                            description: pkg.description,
+                            source: pkg.source.label().to_string(),
+                            votes: None,
+                            popularity: None,
+                            maintainer: None,
+                            out_of_date: None,
+                        })
+                        .collect(),
+                    res.total,
+                ));
             }
             Err(error) => {
                 tracing::debug!("Daemon search failed for {query}: {error}");
@@ -193,10 +197,14 @@ async fn search_official_packages(query: &str) -> Result<Vec<DisplayPackage>> {
         .search(query)
         .await
         .with_context(|| format!("Failed to search official repositories for {query}"))?;
-    Ok(packages
-        .into_iter()
-        .map(DisplayPackage::from_package)
-        .collect())
+    let total = packages.len();
+    Ok((
+        packages
+            .into_iter()
+            .map(DisplayPackage::from_package)
+            .collect(),
+        total,
+    ))
 }
 
 #[cfg(feature = "arch")]
