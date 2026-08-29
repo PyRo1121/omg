@@ -161,6 +161,8 @@ struct CompactPackageInfo {
     size: u64,
     download_size: u64,
     repo_offset: u32,
+    depends: Vec<String>,
+    licenses: Vec<String>,
     source: WirePackageSource,
 }
 
@@ -220,6 +222,8 @@ impl PackageIndex {
         size: u64,
         download_size: u64,
         repo: &str,
+        depends: &[String],
+        licenses: &[String],
     ) {
         let name_lower = name.to_ascii_lowercase();
         let idx = self.items.len();
@@ -233,6 +237,8 @@ impl PackageIndex {
             size,
             download_size,
             repo_offset: self.pool.intern(repo),
+            depends: depends.to_vec(),
+            licenses: licenses.to_vec(),
             source: WirePackageSource::Official,
         });
         self.trigrams.insert(&name_lower, idx as u32);
@@ -256,7 +262,7 @@ impl PackageIndex {
     pub(crate) fn from_records(records: &[(&str, &str, &str)]) -> Self {
         let mut index = Self::with_capacity(records.len());
         for &(name, version, description) in records {
-            index.push(name, version, description, "", 0, 0, "extra");
+            index.push(name, version, description, "", 0, 0, "extra", &[], &[]);
         }
         index
     }
@@ -307,6 +313,8 @@ impl PackageIndex {
                 pkg.installed_size,
                 pkg.size,
                 &pkg.section,
+                &pkg.depends,
+                &[],
             );
         }
         Ok(index)
@@ -326,6 +334,8 @@ impl PackageIndex {
                 pkg.isize,
                 pkg.csize,
                 &pkg.repo,
+                &pkg.depends,
+                &pkg.licenses,
             );
         }
         Ok(index)
@@ -475,8 +485,8 @@ impl PackageIndex {
             size: item.size,
             download_size: item.download_size,
             repo: self.pool.get(item.repo_offset).to_string(),
-            depends: Vec::new(),
-            licenses: Vec::new(),
+            depends: item.depends.clone(),
+            licenses: item.licenses.clone(),
             source: item.source,
         })
     }
@@ -582,6 +592,28 @@ mod tests {
         assert_eq!(firefox.version, "146.0");
         assert_eq!(firefox.source, WirePackageSource::Official);
         assert!(index.get("missing").is_none());
+    }
+
+    #[test]
+    fn exact_lookup_preserves_dependency_and_license_metadata() {
+        let mut index = PackageIndex::empty();
+        let depends = vec!["openssl".to_string()];
+        let licenses = vec!["MIT".to_string()];
+        index.push(
+            "example",
+            "1.0.0",
+            "example package",
+            "https://example.invalid",
+            10,
+            5,
+            "extra",
+            &depends,
+            &licenses,
+        );
+
+        let info = index.get("example").expect("metadata entry");
+        assert_eq!(info.depends, depends);
+        assert_eq!(info.licenses, licenses);
     }
 
     #[test]
