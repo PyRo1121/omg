@@ -122,28 +122,32 @@ pub async fn import(manifest_path: &str, dry_run: bool) -> Result<()> {
         style::maybe_color("Package mapping:", |t| t.bold().to_string())
     );
 
-    let mut to_install = Vec::new();
+    let package_plan =
+        plan_package_migration(&manifest.packages, &manifest.source_distro, &target_distro);
 
-    for pkg in &manifest.packages {
-        let target_pkg = map_package(&pkg.original_name, &manifest.source_distro, &target_distro);
-
-        if target_pkg != pkg.original_name {
-            println!(
-                "    {} {} → {}",
-                style::maybe_color("✓", |t| t.green().to_string()),
-                style::dim(&pkg.original_name),
-                style::maybe_color(&target_pkg, |t| t.cyan().to_string())
-            );
+    for (original, target) in &package_plan.mapped {
+        println!(
+            "    {} {} → {}",
+            style::maybe_color("✓", |t| t.green().to_string()),
+            style::dim(original),
+            style::maybe_color(target, |t| t.cyan().to_string())
+        );
+    }
+    if !package_plan.unmapped.is_empty() {
+        println!("    Unmapped (kept original names):");
+        for package in &package_plan.unmapped {
+            println!("      - {package}");
         }
-        to_install.push(target_pkg);
     }
 
     println!();
     println!(
-        "  Mapped: {}/{} packages",
-        style::version(&to_install.len().to_string()),
-        manifest.packages.len()
+        "  Mapped: {}/{} packages ({} unmapped)",
+        style::version(&package_plan.mapped.len().to_string()),
+        manifest.packages.len(),
+        package_plan.unmapped.len()
     );
+    let to_install = package_plan.to_install;
 
     // Runtimes
     println!();
@@ -217,7 +221,6 @@ fn finish_apply(runtime_failures: usize, package_failed: bool) -> Result<()> {
             "  {} Migration complete!",
             style::maybe_color("✓", |t| t.green().to_string())
         );
-        println!("  Some packages may need manual installation - check the unmapped list above.");
         Ok(())
     } else {
         anyhow::bail!(
@@ -225,6 +228,35 @@ fn finish_apply(runtime_failures: usize, package_failed: bool) -> Result<()> {
             if package_failed { "failed" } else { "ok" }
         )
     }
+}
+
+struct PackageMigrationPlan {
+    to_install: Vec<String>,
+    mapped: Vec<(String, String)>,
+    unmapped: Vec<String>,
+}
+
+fn plan_package_migration(
+    packages: &[PackageMapping],
+    source_distro: &str,
+    target_distro: &str,
+) -> PackageMigrationPlan {
+    let mut plan = PackageMigrationPlan {
+        to_install: Vec::with_capacity(packages.len()),
+        mapped: Vec::new(),
+        unmapped: Vec::new(),
+    };
+    for package in packages {
+        let target = map_package(&package.original_name, source_distro, target_distro);
+        if target == package.original_name {
+            plan.unmapped.push(package.original_name.clone());
+        } else {
+            plan.mapped
+                .push((package.original_name.clone(), target.clone()));
+        }
+        plan.to_install.push(target);
+    }
+    plan
 }
 
 fn create_package_mapping(name: &str) -> PackageMapping {
@@ -324,6 +356,20 @@ mod tests {
     #[test]
     fn apply_success_is_ok() {
         assert!(finish_apply(0, false).is_ok());
+    }
+
+    #[test]
+    fn migration_plan_distinguishes_mapped_and_unmapped_packages() {
+        let packages = vec![
+            create_package_mapping("base-devel"),
+            create_package_mapping("custom-tool"),
+        ];
+
+        let plan = plan_package_migration(&packages, "arch", "debian");
+
+        assert_eq!(plan.to_install, vec!["build-essential", "custom-tool"]);
+        assert_eq!(plan.mapped.len(), 1);
+        assert_eq!(plan.unmapped, vec!["custom-tool"]);
     }
 
     #[test]
