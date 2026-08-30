@@ -687,6 +687,7 @@ analyzer inference
 - **Ci**: Cross-platform install script and R2 release sync
 ### 🐛 Bug Fixes
 
+- Parse PKGBUILD arrays without losing quoting
 - Keep Debian package URLs within their suite
 - Spool runtime XZ extraction to bounded disk
 - Validate runtime path ancestor permissions
