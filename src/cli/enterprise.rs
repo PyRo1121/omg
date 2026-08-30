@@ -114,7 +114,7 @@ pub fn audit_export(
 
     // Generate audit files
     let files = vec![
-        ("access-control-matrix.csv", generate_access_control_csv()),
+        ("limitations.json", generate_audit_export_limitations()?),
         ("change-log.json", generate_change_log_json()?),
         ("policy-enforcement.json", generate_policy_json()?),
         ("installed-packages.csv", generate_installed_packages_csv()?),
@@ -401,13 +401,14 @@ async fn generate_report(report_type: &str) -> Result<Report> {
     })
 }
 
-fn generate_access_control_csv() -> String {
-    let mut csv = "user,role,scope,permissions\n".to_string();
-    // In a real system, we'd fetch this from the identity provider or local policy DB
-    // For now we use the current user as a base
-    let user = std::env::var("USER").unwrap_or_else(|_| "unknown".to_string());
-    let _ = std::fmt::write(&mut csv, format_args!("{user},owner,global,all\n"));
-    csv
+fn generate_audit_export_limitations() -> Result<String> {
+    serde_json::to_string_pretty(&serde_json::json!({
+        "unavailable_evidence": [{
+            "artifact": "access-control-matrix",
+            "reason": "No authoritative identity-provider role source is configured; OMG will not fabricate access-control evidence."
+        }]
+    }))
+    .context("Failed to serialize audit export limitations")
 }
 
 fn generate_change_log_json() -> Result<String> {
@@ -582,6 +583,15 @@ fn generate_license_csv(scan: &LicenseScan) -> Result<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn audit_export_limitations_do_not_fabricate_access_control_evidence() {
+        let limitations = generate_audit_export_limitations().expect("limitations JSON");
+
+        assert!(limitations.contains("access-control-matrix"));
+        assert!(limitations.contains("authoritative"));
+        assert!(!limitations.contains("owner,global,all"));
+    }
 
     #[test]
     fn enterprise_csv_exports_quote_fields_and_neutralize_formulas() {
