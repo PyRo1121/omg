@@ -52,6 +52,8 @@ impl BunManager {
             .send()
             .await
             .context("Failed to fetch Bun releases from GitHub")?
+            .error_for_status()
+            .context("Bun releases request failed")?
             .json()
             .await
             .context("Failed to parse Bun release data")?;
