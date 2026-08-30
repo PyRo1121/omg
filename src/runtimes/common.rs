@@ -843,22 +843,49 @@ pub(crate) fn is_valid_version_dir(version_dir: &Path) -> bool {
 /// writable by group/other users. This prevents a repository pin from making
 /// an attacker-writable runtime tree shadow ordinary commands.
 #[must_use]
-pub(crate) fn is_trusted_runtime_bin_dir(path: &Path) -> bool {
-    let Ok(metadata) = fs::symlink_metadata(path) else {
-        return false;
-    };
-    if !metadata.file_type().is_dir() {
+fn is_trusted_runtime_dir_chain(path: &Path, boundary: &Path) -> bool {
+    if !path.starts_with(boundary) {
         return false;
     }
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::MetadataExt as _;
-        let current_uid = nix::unistd::geteuid().as_raw();
-        if (metadata.uid() != 0 && metadata.uid() != current_uid) || metadata.mode() & 0o022 != 0 {
+    for directory in path.ancestors() {
+        let Ok(metadata) = fs::symlink_metadata(directory) else {
+            return false;
+        };
+        if !metadata.file_type().is_dir() {
             return false;
         }
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::MetadataExt as _;
+            let current_uid = nix::unistd::geteuid().as_raw();
+            if (metadata.uid() != 0 && metadata.uid() != current_uid)
+                || metadata.mode() & 0o022 != 0
+            {
+                return false;
+            }
+        }
+        if directory == boundary {
+            return true;
+        }
     }
-    true
+    false
+}
+
+#[must_use]
+pub(crate) fn is_trusted_runtime_bin_dir(path: &Path) -> bool {
+    let data_dir = crate::core::paths::data_dir();
+    if path.starts_with(&data_dir) {
+        return is_trusted_runtime_dir_chain(path, &data_dir);
+    }
+    if let Some(home) = home::home_dir()
+        && path.starts_with(&home)
+    {
+        return is_trusted_runtime_dir_chain(path, &home);
+    }
+    // Non-standard roots have no trustworthy ownership boundary. Keep the
+    // leaf-only fallback for system-managed paths such as `/opt`, while all
+    // user-controlled runtime layouts above validate their full chain.
+    is_trusted_runtime_dir_chain(path, path)
 }
 
 /// Require a regular file at `path`. Symlinks, directories, and missing paths fail closed.
@@ -1661,9 +1688,15 @@ mod tests {
         fs::create_dir(&bin).unwrap();
         fs::set_permissions(&bin, fs::Permissions::from_mode(0o775)).unwrap();
 
-        assert!(!is_trusted_runtime_bin_dir(&bin));
+        assert!(!is_trusted_runtime_dir_chain(&bin, temp.path()));
         fs::set_permissions(&bin, fs::Permissions::from_mode(0o755)).unwrap();
-        assert!(is_trusted_runtime_bin_dir(&bin));
+        assert!(is_trusted_runtime_dir_chain(&bin, temp.path()));
+
+        fs::set_permissions(temp.path(), fs::Permissions::from_mode(0o775)).unwrap();
+        assert!(
+            !is_trusted_runtime_dir_chain(&bin, temp.path()),
+            "a writable ancestor must invalidate the runtime path"
+        );
     }
 
     #[test]
