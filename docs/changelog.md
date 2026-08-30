@@ -368,6 +368,7 @@ std::io imports); format touched files with rustfmt
 - Reuse atomic download helper for mise installs
 ### ⚡ Performance
 
+- Validate Debian mmap indexes once
 - Fail closed on invalid performance baselines
 - Wave-4 scrutiny round — concurrency, boundaries, perf, API surface, errors
 
