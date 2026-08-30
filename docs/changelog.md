@@ -681,6 +681,7 @@ analyzer inference
 - **Ci**: Cross-platform install script and R2 release sync
 ### 🐛 Bug Fixes
 
+- Compare mock updates numerically
 - Elevate APT orphan removal consistently
 - Fail task prompts clearly without a terminal
 - Reuse detected package manager for task fallback
