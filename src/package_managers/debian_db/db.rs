@@ -242,17 +242,6 @@ impl DebianMmapIndex {
     }
 }
 
-impl Drop for DebianMmapIndex {
-    fn drop(&mut self) {
-        // Mmap::drop() will automatically unmap the memory and close the file descriptor
-        // This explicit Drop impl documents the cleanup behavior for memory leak audits
-        tracing::debug!(
-            "Unmapping Debian package index (size: {} bytes)",
-            self.mmap.len()
-        );
-    }
-}
-
 /// A Debian package entry optimized for zero-copy access
 ///
 /// `suite` records the distribution the entry was parsed from (derived from
@@ -1358,9 +1347,6 @@ pub fn search_fast(query: &str) -> Result<Vec<Package>> {
 
     // Fallback: load full index (needed for empty queries or when FST/mmap unavailable)
     ensure_index_loaded()?;
-    if query.is_empty() {
-        ensure_fst_loaded();
-    }
 
     let guard = crate::core::sync::read_cache(&DEBIAN_INDEX_CACHE);
     let index = guard.index.as_ref().context(
