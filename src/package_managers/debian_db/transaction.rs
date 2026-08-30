@@ -14,7 +14,7 @@
 
 use std::collections::HashMap;
 use std::fs::{self, File};
-use std::io::Read;
+use std::io::{BufReader, Read, Seek, SeekFrom, Write};
 use std::os::unix::fs::PermissionsExt;
 use std::path::{Component, Path, PathBuf};
 use std::process::Command;
@@ -59,6 +59,47 @@ const MAX_DOWNLOAD_RETRIES: u32 = 3;
 /// streaming budget ([`crate::runtimes::common::MAX_DECOMPRESSED_BYTES`]);
 /// this bounds raw buffering of untrusted archive members.
 const MAX_DEB_MEMBER_BYTES: u64 = 2 * 1024 * 1024 * 1024;
+
+struct BudgetedWriter<W> {
+    inner: W,
+    written: u64,
+    budget: u64,
+}
+
+impl<W> BudgetedWriter<W> {
+    fn new(inner: W, budget: u64) -> Self {
+        Self {
+            inner,
+            written: 0,
+            budget,
+        }
+    }
+
+    fn into_inner(self) -> W {
+        self.inner
+    }
+}
+
+impl<W: Write> Write for BudgetedWriter<W> {
+    fn write(&mut self, buffer: &[u8]) -> std::io::Result<usize> {
+        let remaining = self.budget.saturating_sub(self.written);
+        if u64::try_from(buffer.len()).unwrap_or(u64::MAX) > remaining {
+            return Err(std::io::Error::other(format!(
+                "decompressed archive exceeds the {} byte limit",
+                self.budget
+            )));
+        }
+        let written = self.inner.write(buffer)?;
+        self.written = self
+            .written
+            .saturating_add(u64::try_from(written).unwrap_or(u64::MAX));
+        Ok(written)
+    }
+
+    fn flush(&mut self) -> std::io::Result<()> {
+        self.inner.flush()
+    }
+}
 
 /// Initial backoff for retries (doubles each retry)
 const INITIAL_BACKOFF_MS: u64 = 200;
@@ -925,6 +966,54 @@ fn copy_control_file(src: &Path, dest: &Path) -> Result<()> {
     Ok(())
 }
 
+fn with_decompressed_tar<R, T>(
+    reader: R,
+    member_name: &str,
+    temp_dir: &Path,
+    consume: impl FnOnce(&mut dyn Read) -> Result<T>,
+) -> Result<T>
+where
+    R: Read,
+{
+    let budget = BudgetedSink::max_budget();
+    if member_name.ends_with(".tar.zst") || member_name.ends_with(".tar.zstd") {
+        let decoder = ruzstd::decoding::StreamingDecoder::new(reader)
+            .map_err(|error| anyhow::anyhow!("Failed to create zstd decoder: {error}"))?;
+        let mut bounded = BudgetedReader::new(decoder, budget);
+        return consume(&mut bounded);
+    }
+    if member_name.ends_with(".tar.gz") {
+        let decoder = flate2::read::GzDecoder::new(reader);
+        let mut bounded = BudgetedReader::new(decoder, budget);
+        return consume(&mut bounded);
+    }
+    if member_name.ends_with(".tar.xz") {
+        // lzma-rs exposes Read -> Write rather than a streaming Read decoder.
+        // Decompress into an anonymous file under the transaction directory,
+        // bounding writes before they reach disk, then rewind for tar parsing.
+        let output = tempfile::tempfile_in(temp_dir).with_context(|| {
+            format!(
+                "Failed to create temporary XZ output in {}",
+                temp_dir.display()
+            )
+        })?;
+        let mut output = BudgetedWriter::new(output, budget);
+        lzma_rs::xz_decompress(&mut BufReader::new(reader), &mut output)
+            .map_err(|error| anyhow::anyhow!("Failed to decompress XZ payload: {error}"))?;
+        let mut output = output.into_inner();
+        output.seek(SeekFrom::Start(0))?;
+        return consume(&mut output);
+    }
+    if Path::new(member_name)
+        .extension()
+        .is_some_and(|extension| extension.eq_ignore_ascii_case("tar"))
+    {
+        let mut bounded = BudgetedReader::new(reader, budget);
+        return consume(&mut bounded);
+    }
+    anyhow::bail!("Unsupported Debian archive member compression: {member_name}")
+}
+
 /// Standalone function to unpack a .deb file (for use in pipelined processing)
 ///
 /// This is separate from the Transaction method to allow concurrent unpacking
@@ -945,68 +1034,53 @@ fn unpack_deb_standalone(
         .with_context(|| format!("Failed to open .deb file: {}", deb_path.display()))?;
     let mut archive = ar::Archive::new(deb_file);
 
-    let mut control_tar: Option<Vec<u8>> = None;
-    let mut data_tar: Option<Vec<u8>> = None;
+    let mut control_seen = false;
+    let mut data_seen = false;
+    let mut installed_files = Vec::new();
 
     while let Some(entry) = archive.next_entry() {
-        let mut entry = entry?;
-        let name = String::from_utf8_lossy(entry.header().identifier()).to_string();
-
-        // Bound the raw buffering of each untrusted archive member; the
-        // decompression budget applies later, to the payload itself.
-        let mut contents = Vec::new();
-        (&mut entry)
-            .take(MAX_DEB_MEMBER_BYTES.saturating_add(1))
-            .read_to_end(&mut contents)
-            .with_context(|| format!("Failed to read {name} from .deb archive"))?;
-        if u64::try_from(contents.len()).unwrap_or(u64::MAX) > MAX_DEB_MEMBER_BYTES {
-            anyhow::bail!("Archive member {name} exceeds the {MAX_DEB_MEMBER_BYTES} byte limit");
-        }
+        let entry = entry?;
+        let name = String::from_utf8_lossy(entry.header().identifier())
+            .trim_end_matches('/')
+            .to_string();
+        anyhow::ensure!(
+            entry.header().size() <= MAX_DEB_MEMBER_BYTES,
+            "Archive member {name} exceeds the {MAX_DEB_MEMBER_BYTES} byte limit"
+        );
 
         if name.starts_with("control.tar") {
-            control_tar = Some(contents);
-        } else if name.starts_with("data.tar") {
-            data_tar = Some(contents);
-        }
-    }
+            anyhow::ensure!(
+                !control_seen,
+                "Debian archive contains multiple control members"
+            );
+            anyhow::ensure!(
+                !data_seen,
+                "Debian archive control member follows data member"
+            );
+            control_seen = true;
 
-    // Extract control.tar to get maintainer scripts
-    if let Some(control_data) = control_tar {
-        let control_dir = extract_dir.join("DEBIAN");
-        fs::create_dir_all(&control_dir)?;
-        extract_tar_auto(&control_data, &control_dir)?;
+            let control_dir = extract_dir.join("DEBIAN");
+            fs::create_dir_all(&control_dir)?;
+            with_decompressed_tar(entry, &name, temp_dir, |reader| {
+                extract_tar_stream(reader, &control_dir)
+            })?;
 
-        // Run preinst script if exists
-        let preinst = control_dir.join("preinst");
-        if preinst.exists() {
-            run_maintainer_script(&preinst, package_name, "install")?;
-        }
-    }
-
-    // Extract data.tar to filesystem. On mid-extraction failure the partial
-    // manifest of already-written files is recovered and returned alongside
-    // the error so rollback tracking never loses residue (audit A2).
-    let installed_files = if let Some(data) = data_tar {
-        match extract_tar_to_root(&data) {
-            Ok(files) => files,
-            Err(error) => {
-                let partial = error
-                    .downcast_ref::<PartialExtractionError>()
-                    .map(|e| e.installed_files.clone())
-                    .unwrap_or_default();
-                if !partial.is_empty() {
-                    tracing::warn!(
-                        "Partial extraction wrote {} file(s); recovered for rollback tracking",
-                        partial.len()
-                    );
-                }
-                return Err(error);
+            let preinst = control_dir.join("preinst");
+            if preinst.exists() {
+                run_maintainer_script(&preinst, package_name, "install")?;
             }
+        } else if name.starts_with("data.tar") {
+            anyhow::ensure!(control_seen, "Debian archive is missing its control member");
+            anyhow::ensure!(!data_seen, "Debian archive contains multiple data members");
+            data_seen = true;
+            installed_files = with_decompressed_tar(entry, &name, temp_dir, |reader| {
+                extract_tar_stream_to_root_at(Path::new("/"), reader)
+            })?;
         }
-    } else {
-        Vec::new()
-    };
+    }
 
+    anyhow::ensure!(control_seen, "Debian archive is missing its control member");
+    anyhow::ensure!(data_seen, "Debian archive is missing its data member");
     Ok(installed_files)
 }
 
@@ -1158,12 +1232,14 @@ fn extract_tar_stream(reader: &mut dyn Read, dest: &Path) -> Result<()> {
 /// reader over the decompressed tar bytes. Every decoder is wrapped so the
 /// decompressed-size budget is enforced while bytes are produced; a bomb
 /// aborts mid-stream instead of exhausting memory.
+#[cfg(test)]
 fn tar_payload_reader(data: &[u8]) -> Result<Box<dyn Read + '_>> {
     tar_payload_reader_with_budget(data, BudgetedSink::max_budget())
 }
 
 /// [`tar_payload_reader`] with an explicit budget; tests use a small budget
 /// so the abort path is exercisable without gigabyte allocations.
+#[cfg(test)]
 fn tar_payload_reader_with_budget(data: &[u8], budget: u64) -> Result<Box<dyn Read + '_>> {
     if data.len() > 4 && data.starts_with(b"\x28\xb5\x2f\xfd") {
         // Zstd: Fast decompression, good compression
@@ -1237,12 +1313,6 @@ fn ensure_parent_dirs_recorded(
     Ok(())
 }
 
-/// Extract a tar archive with auto-detection of compression
-fn extract_tar_auto(data: &[u8], dest: &Path) -> Result<()> {
-    let mut reader = tar_payload_reader(data)?;
-    extract_tar_stream(reader.as_mut(), dest)
-}
-
 /// Extract a data.tar payload into the filesystem root with dpkg-like
 /// semantics and hardened handling of untrusted entries:
 ///
@@ -1257,15 +1327,10 @@ fn extract_tar_auto(data: &[u8], dest: &Path) -> Result<()> {
 /// - hard links are re-created against the already-extracted tree after all
 ///   files exist;
 /// - any other entry type (devices, FIFOs) fails the install explicitly.
-fn extract_tar_to_root(data: &[u8]) -> Result<Vec<PathBuf>> {
-    extract_tar_to_root_at(Path::new("/"), data)
-}
-
-/// [`extract_tar_to_root`] against an explicit root; tests use a temporary
-/// directory, production uses `/`.
+///
 /// Error wrapper carrying the files already written before a mid-extraction
 /// failure, so the caller can merge them into rollback tracking instead of
-/// leaving untracked residue under `/` (audit A2).
+/// leaving untracked residue under `/`.
 #[derive(Debug)]
 struct PartialExtractionError {
     source: anyhow::Error,
@@ -1325,20 +1390,21 @@ fn write_archive_regular_file(entry: &mut dyn Read, entry_path: &Path, mode: u32
     Ok(())
 }
 
+#[cfg(test)]
 fn extract_tar_to_root_at(root: &Path, data: &[u8]) -> Result<Vec<PathBuf>> {
+    let mut reader = tar_payload_reader(data)?;
+    extract_tar_stream_to_root_at(root, reader.as_mut())
+}
+
+fn extract_tar_stream_to_root_at(root: &Path, reader: &mut dyn Read) -> Result<Vec<PathBuf>> {
     // Inner scope owns the manifest so ANY failure can carry the files
     // already written back to the caller (audit A2): without this, a
     // mid-extraction error left untracked residue under `/` that rollback
     // could never see.
     let inner = |installed_files: &mut Vec<PathBuf>| -> anyhow::Result<()> {
-        let mut reader = tar_payload_reader(data)?;
-        let mut archive = tar::Archive::new(reader.as_mut());
+        let mut archive = tar::Archive::new(reader);
 
-        tracing::debug!(
-            "Extracting data.tar ({} compressed bytes) into {}",
-            data.len(),
-            root.display()
-        );
+        tracing::debug!("Extracting data.tar into {}", root.display());
 
         let mut pending_links = Vec::new();
         let mut seen_dirs: std::collections::HashSet<PathBuf> = std::collections::HashSet::new();
@@ -2480,6 +2546,33 @@ mod tests {
         assert!(!dir.exists(), "top dir removed last");
         // Re-running removal is a no-op (rollback idempotence).
         remove_file_if_present(&file).expect("missing path tolerated");
+    }
+
+    #[test]
+    fn uncompressed_deb_member_is_consumed_lazily() {
+        let mut payload = std::io::Cursor::new(vec![0_u8; 4096]);
+        let temp = tempfile::tempdir().expect("temp dir");
+
+        let byte = with_decompressed_tar(&mut payload, "data.tar", temp.path(), |reader| {
+            let mut byte = [0_u8; 1];
+            reader.read_exact(&mut byte)?;
+            Ok(byte[0])
+        })
+        .expect("consume first byte");
+
+        assert_eq!(byte, 0);
+        assert_eq!(payload.position(), 1, "member must not be buffered eagerly");
+    }
+
+    #[test]
+    fn budgeted_writer_rejects_output_before_exceeding_limit() {
+        let mut writer = BudgetedWriter::new(Vec::new(), 4);
+        writer.write_all(b"1234").expect("write within budget");
+        let error = writer
+            .write_all(b"5")
+            .expect_err("write beyond budget must fail");
+        assert_eq!(error.kind(), std::io::ErrorKind::Other);
+        assert_eq!(writer.into_inner(), b"1234");
     }
 
     #[test]
