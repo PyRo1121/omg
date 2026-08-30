@@ -55,7 +55,11 @@ fn env_path(var: &str) -> Option<PathBuf> {
 
 #[inline]
 fn fallback_home_dir() -> PathBuf {
-    home::home_dir().unwrap_or_else(|| PathBuf::from("."))
+    // Never make persistent application state depend on the caller's current
+    // directory. `/var/empty` is intentionally non-user-writable on Unix, so
+    // an environment with no resolvable home fails explicitly instead of
+    // scattering relative `.omg` directories through arbitrary projects.
+    home::home_dir().unwrap_or_else(|| PathBuf::from("/var/empty"))
 }
 
 fn elevated_user_home() -> Option<PathBuf> {
