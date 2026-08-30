@@ -204,6 +204,17 @@ mod privilege_escalation {
                 && workflow.contains("id-token: write"),
             "published archives must receive GitHub/Sigstore provenance with minimal required permissions"
         );
+        let publish_release = workflow
+            .find("softprops/action-gh-release@3bb12739c298aeb8a4eeaf626c5b8d85266b0e65")
+            .expect("verified artifacts must be published to a GitHub Release");
+        let attestation = workflow
+            .find("actions/attest-build-provenance@977bb373ede98d70efdf65b84cb5f73e068dcc2a")
+            .expect("release attestation step must exist");
+        assert!(
+            attestation < publish_release,
+            "release artifacts must be attested before GitHub publication"
+        );
+
         let r2_job = workflow
             .split("  sync-r2:")
             .nth(1)
@@ -211,6 +222,16 @@ mod privilege_escalation {
         assert!(
             r2_job.contains("environment: production"),
             "R2 promotion must pass through the protected production environment"
+        );
+        let round_trip = r2_job
+            .find("Verify round-trip integrity of uploaded objects")
+            .expect("R2 uploads must be verified after publication");
+        let latest_marker = r2_job
+            .find("Upload latest-version marker")
+            .expect("R2 promotion marker step must exist");
+        assert!(
+            round_trip < latest_marker,
+            "clients must not discover an R2 release before its objects are verified"
         );
     }
 

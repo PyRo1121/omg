@@ -23,11 +23,83 @@ env:
 
 jobs:
   # ════════════════════════════════════════════════════════════════════════════
+  # GATE ON CI
+  #
+  # release.yml triggers independently of ci.yml, so without this job a tag
+  # could be published while CI is red. Publishing is only allowed for a
+  # commit that already has a *successful* CI run. The only bypass is a pure
+  # no-op dry run via workflow_dispatch.
+  # ════════════════════════════════════════════════════════════════════════════
+  gate-on-ci:
+    name: "Gate on CI"
+    runs-on: ubuntu-latest
+    # Long enough to watch (not just poll) an in-progress CI run to completion;
+    # a tag pushed seconds after `main` lands must not miss the run.
+    timeout-minutes: 40
+    permissions:
+      actions: read
+    steps:
+      - name: Require successful CI run for this commit
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          if [[ "$GITHUB_EVENT_NAME" == "workflow_dispatch" && "${{ inputs.dry_run }}" == "true" ]]; then
+            echo "No-op dry run requested — CI gate not required"
+            exit 0
+          fi
+
+          # Any *completed successful* run for this commit satisfies the gate.
+          if gh run list \
+              --repo "$GITHUB_REPOSITORY" \
+              --workflow ci.yml \
+              --commit "$GITHUB_SHA" \
+              --status success \
+              --limit 1 \
+            | grep -q .; then
+            echo "✓ CI gate passed for $GITHUB_SHA"
+            exit 0
+          fi
+
+          # No completed run yet: if one is in progress or queued, WAIT for it
+          # instead of failing on a just-pushed tag (the gate previously raced
+          # tags pushed to main immediately after the commit landed).
+          echo "No completed CI run yet; waiting for in-flight runs..."
+          pending="$(gh run list \
+            --repo "$GITHUB_REPOSITORY" \
+            --workflow ci.yml \
+            --commit "$GITHUB_SHA" \
+            --json databaseId,status \
+            --jq '.[] | select(.status == "in_progress" or .status == "queued") | .databaseId')"
+
+          if [[ -z "$pending" ]]; then
+            echo "::error::No successful or in-progress CI run found for commit $GITHUB_SHA. Fix CI before releasing, or re-tag after CI passes." >&2
+            exit 1
+          fi
+
+          failed=false
+          while IFS= read -r run_id; do
+            [ -n "$run_id" ] || continue
+            echo "Watching CI run $run_id for $GITHUB_SHA..."
+            # gh run watch exits non-zero if the watched run fails; treat every
+            # leg of the check as mandatory — a red CI blocks the release.
+            if ! gh run watch "$run_id" --repo "$GITHUB_REPOSITORY" --exit-status; then
+              echo "::error::CI run $run_id failed for commit $GITHUB_SHA. Releases may only be built from green commits." >&2
+              failed=true
+            fi
+          done <<< "$pending"
+
+          if [[ "$failed" == "true" ]]; then
+            exit 1
+          fi
+          echo "✓ CI gate passed for $GITHUB_SHA"
+
+  # ════════════════════════════════════════════════════════════════════════════
   # BUILD RELEASE ARTIFACTS
   # ════════════════════════════════════════════════════════════════════════════
 
   build-arch:
     name: "Build Arch"
+    needs: gate-on-ci
     runs-on: ubuntu-latest
     timeout-minutes: 30
     container: archlinux:latest@sha256:b0deabeb3d283da2c7f7dbf0eea051b7b2cd0554e0b737cc457fd21683bdcdd1
@@ -74,6 +146,7 @@ jobs:
 
   build-debian:
     name: "Build Debian"
+    needs: gate-on-ci
     runs-on: ubuntu-latest
     timeout-minutes: 30
     container:
@@ -137,6 +210,7 @@ jobs:
 
   build-ubuntu:
     name: "Build Ubuntu"
+    needs: gate-on-ci
     runs-on: ubuntu-latest
     timeout-minutes: 30
     steps:
@@ -155,7 +229,10 @@ jobs:
             cmake
 
       - name: Install Rust toolchain
+        # Match rust-toolchain.toml (1.93.1) instead of floating "stable"
         uses: dtolnay/rust-toolchain@4360b52568e2003a75bf9bc1d59f33a8e3fc893c # stable
+        with:
+          toolchain: "1.93.1"
 
       - name: Build
         run: cargo build --release --no-default-features --features debian,pgp,license --locked
@@ -176,6 +253,7 @@ jobs:
 
   build-fedora:
     name: "Build Fedora"
+    needs: gate-on-ci
     runs-on: ubuntu-latest
     timeout-minutes: 30
     container:
@@ -225,6 +303,7 @@ jobs:
 
   build-macos:
     name: "Build macOS (ARM64)"
+    needs: gate-on-ci
     runs-on: macos-14
     timeout-minutes: 30
     steps:
@@ -233,7 +312,10 @@ jobs:
           persist-credentials: false
 
       - name: Install Rust toolchain
+        # Match rust-toolchain.toml (1.93.1) instead of floating "stable"
         uses: dtolnay/rust-toolchain@4360b52568e2003a75bf9bc1d59f33a8e3fc893c # stable
+        with:
+          toolchain: "1.93.1"
 
       - name: Build
         run: cargo build --release --no-default-features --features macos,pgp,license --locked
@@ -329,6 +411,9 @@ jobs:
 
       - name: Generate Release Notes
         id: release_notes
+        # Single source of truth for the notes structure lives in the script;
+        # keep the generated verification section in sync with how artifacts
+        # are actually attested and checked by install.sh / self-update.
         run: |
           if [[ "$GITHUB_REF" == refs/tags/v* ]]; then
             VERSION="${GITHUB_REF#refs/tags/v}"
@@ -337,81 +422,18 @@ jobs:
           fi
           test -n "$VERSION"
 
-          cat > release_notes.md << 'EOF_HEADER'
-          ## Installation
-
-          **Quick Install (Linux/macOS):**
-          ```bash
-          curl -fsSL https://pyro1121.com/install.sh | bash
-          ```
-
-          **Windows Subsystem for Linux:** Use the Linux installer inside your WSL distribution.
-
-          EOF_HEADER
-
-          echo "" >> release_notes.md
-          echo "## What's New in v${VERSION}" >> release_notes.md
-          echo "" >> release_notes.md
-
-          if ./scripts/extract-release-notes.sh "${VERSION}" >> release_notes.md 2>/dev/null; then
-            echo "✓ Extracted changelog for v${VERSION}"
-          else
-            echo "⚠ No changelog found, using generic message"
-            echo "See [full changelog](https://github.com/PyRo1121/omg/blob/main/docs/changelog.md) for details." >> release_notes.md
-          fi
-
-          cat >> release_notes.md << EOF_FOOTER
-
-          ---
-
-          ## Platform Support
-
-          | Platform | Architecture | Binary |
-          |----------|--------------|--------|
-          | Arch Linux | x86_64 | \`omg-v${VERSION}-x86_64-linux-arch.tar.gz\` |
-          | Debian | x86_64 | \`omg-v${VERSION}-x86_64-linux-debian.tar.gz\` |
-          | Ubuntu | x86_64 | \`omg-v${VERSION}-x86_64-linux-ubuntu.tar.gz\` |
-          | Fedora/RHEL | x86_64 | \`omg-v${VERSION}-x86_64-linux-fedora.tar.gz\` |
-          | macOS | ARM64 | \`omg-v${VERSION}-aarch64-darwin.tar.gz\` |
-          | WSL | x86_64 | Use the binary matching the installed Linux distribution |
-
-          ## Verification
-
-          Verify the downloaded archive before extracting or installing it:
-
-          **Linux:**
-          \`\`\`bash
-          sha256sum -c omg-v${VERSION}-*.sha256
-          \`\`\`
-
-          **macOS:**
-          \`\`\`bash
-          shasum -a 256 -c omg-v${VERSION}-*.sha256
-          \`\`\`
-
-          ## Manual Installation
-
-          **Linux/macOS:**
-          \`\`\`bash
-          tar -xzf omg-v${VERSION}-*.tar.gz
-          cd omg-v${VERSION}-*
-          sudo cp omg /usr/local/bin/
-          \`\`\`
-
-          ---
-
-          **Full Changelog**: https://github.com/PyRo1121/omg/blob/main/docs/changelog.md
-          EOF_FOOTER
+          ./scripts/gen-release-notes.sh "${VERSION}" > release_notes.md
 
           echo ""
-          echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+          echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
           echo "Generated Release Notes Preview:"
-          echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+          echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
           cat release_notes.md
-          echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+          echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
 
-      - uses: softprops/action-gh-release@3bb12739c298aeb8a4eeaf626c5b8d85266b0e65 # v2
+      - name: Publish GitHub Release
         if: github.event_name == 'push' || (github.event_name == 'workflow_dispatch' && github.event.inputs.dry_run == 'false')
+        uses: softprops/action-gh-release@3bb12739c298aeb8a4eeaf626c5b8d85266b0e65 # v2
         with:
           body_path: release_notes.md
           files: release/*
@@ -453,16 +475,21 @@ jobs:
         run: |
           ./scripts/collect-release-artifacts.sh "$VERSION" artifacts release
 
+      - name: Install pinned wrangler from vendored lockfile
+        run: npm ci --prefix .github/deps/release-tools
+
       - name: Upload release artifacts to R2
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
         run: |
+          WRANGLER="$PWD/.github/deps/release-tools/node_modules/.bin/wrangler"
+          "$WRANGLER" --version
           for artifact in release/omg-v*.tar.gz; do
             [ -f "$artifact" ] || continue
             basename=$(basename "$artifact")
             content_type="application/octet-stream"
-            npx --yes wrangler@4.123.0 r2 object put "omg-releases/$basename" \
+            "$WRANGLER" r2 object put "omg-releases/$basename" \
               --file="$artifact" \
               --content-type="$content_type"
             echo "✓ Uploaded $basename"
@@ -471,21 +498,59 @@ jobs:
           for checksum in release/omg-v*.sha256; do
             [ -f "$checksum" ] || continue
             basename=$(basename "$checksum")
-            npx --yes wrangler@4.123.0 r2 object put "omg-releases/$basename" \
+            "$WRANGLER" r2 object put "omg-releases/$basename" \
               --file="$checksum" \
               --content-type="text/plain"
             echo "✓ Uploaded $basename"
           done
 
+      - name: Verify round-trip integrity of uploaded objects
+        # Fail closed: if a single uploaded object cannot be re-downloaded
+        # byte-identical, abort *before* the latest-version marker publishes
+        # the release to clients.
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+        run: |
+          WRANGLER="$PWD/.github/deps/release-tools/node_modules/.bin/wrangler"
+          verify_dir="$(mktemp -d)"
+
+          for artifact in release/omg-v*.tar.gz; do
+            [ -f "$artifact" ] || continue
+            basename=$(basename "$artifact")
+            "$WRANGLER" r2 object get "omg-releases/$basename" \
+              --file="$verify_dir/$basename" >/dev/null
+            expected=$(sha256sum "$artifact" | awk '{print $1}')
+            actual=$(sha256sum "$verify_dir/$basename" | awk '{print $1}')
+            if [[ "$actual" != "$expected" ]]; then
+              echo "::error::Round-trip verification failed for $basename"
+              exit 1
+            fi
+            echo "✓ Round-trip verified: $basename"
+          done
+
+          for checksum in release/omg-v*.sha256; do
+            [ -f "$checksum" ] || continue
+            basename=$(basename "$checksum")
+            "$WRANGLER" r2 object get "omg-releases/$basename" \
+              --file="$verify_dir/$basename" >/dev/null
+            if ! cmp -s "$checksum" "$verify_dir/$basename"; then
+              echo "::error::Round-trip verification failed for $basename"
+              exit 1
+            fi
+            echo "✓ Round-trip verified: $basename"
+          done
+
       # Publish this last: clients only learn about the new version after every
-      # archive and checksum is already present in R2.
+      # archive and checksum is present in R2 AND round-trip verified.
       - name: Upload latest-version marker
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
         run: |
+          WRANGLER="$PWD/.github/deps/release-tools/node_modules/.bin/wrangler"
           echo -n "$VERSION" > release/latest-version
-          npx --yes wrangler@4.123.0 r2 object put "omg-releases/latest-version" \
+          "$WRANGLER" r2 object put "omg-releases/latest-version" \
             --file=release/latest-version \
             --content-type="text/plain"
           echo "✓ Updated latest-version → $VERSION"

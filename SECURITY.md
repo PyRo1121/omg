@@ -198,6 +198,37 @@ Features:
 - Vulnerability reporting (`omg --json audit scan`)
 - Policy enforcement (`policy.toml`)
 
+## Release Incident Response
+
+If a published release is (or may be) compromised, follow this runbook.
+
+### Signals
+
+- `sync-r2` round-trip verification failure (byte-identical re-download check)
+- A gitleaks / TruffleHog alert on any commit
+- Client reports of checksum or attestation verification failures
+- Unexpected commits to `.github/workflows/` on `main`
+
+### Immediate containment (first hour)
+
+1. **Stop exposure:** remove the affected archives, `.sha256` sidecars, and the SBOM from the GitHub Release, and delete the corresponding `omg-releases/` objects in R2. If a good earlier version exists, run `./scripts/r2-rollback.sh <previous-version>` so update checks resolve to it.
+2. **Revoke tokens:** delete `CLOUDFLARE_API_TOKEN` immediately — do not wait for analysis. Rotate per the procedure in [docs/release-operations.md](docs/release-operations.md).
+3. **Freeze releases:** no new tags until containment is confirmed.
+
+### Assessment
+
+4. Determine blast radius: compare attestation provenance (`gh attestation verify … -R PyRo1121/omg`) and checksums for every published archive against the CI-generated artifacts (upload artifacts in the release run, plus `attest-build-provenance` records).
+5. If CI itself is suspect, review workflow diffs, runner logs, and the vendored npm lockfile integrity (`.github/deps/release-tools/package-lock.json` has registered integrity hashes for every transitive dependency).
+
+### Recovery
+
+6. Fix the root cause on `main` and let CI go green.
+7. Re-tag and let the full pipeline rebuild, attest, verify, and publish.
+8. Publish a security advisory (and a changelog entry) describing the incident, affected versions, and remediation.
+9. File a post-mortem; add regression tests where the failure slipped through.
+
+Full release procedures and credential rotation: see [docs/release-operations.md](docs/release-operations.md).
+
 ## Contact
 
 Security Team: **<olen@latham.cloud>**

@@ -14,9 +14,12 @@ omg-binary
 cargo.lock
 
 # ---- Lock files (non-Cargo) ----
+# (except the vendored lockfile for SHA-pinned release tooling, which must
+# be committed so npm ci verifies integrity of the wrangler dependency tree)
 omg.lock
 bun.lock
 package-lock.json
+!.github/deps/release-tools/package-lock.json
 
 # ---- Node / JS ----
 node_modules/
