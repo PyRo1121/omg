@@ -678,6 +678,7 @@ analyzer inference
 - **Ci**: Cross-platform install script and R2 release sync
 ### 🐛 Bug Fixes
 
+- Classify OSV CVSS vector severity
 - Enforce search limits for JSON output
 - Normalize runtime version prefixes safely
 - Require explicit runtime telemetry consent
