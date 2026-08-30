@@ -127,6 +127,9 @@ fn execute_fast_system_update(suffix: &str) -> Result<()> {
 fn split_elevated_invocation(args: &[String]) -> Option<(&str, &[String])> {
     let command = args.get(1)?;
     let separator_pos = args.iter().position(|a| a == "--")?;
+    if separator_pos < 2 {
+        return None;
+    }
     // The minimal transaction path honors exactly `omg <cmd> -- pkgs...`.
     // ANY flag-looking token anywhere in the elevated invocation (before or
     // after the separator) selects behavior this path cannot honor, so the
@@ -1421,6 +1424,8 @@ mod fast_path_tests {
     fn elevated_invocations_without_separator_or_command_are_rejected() {
         assert!(split_elevated_invocation(&args(&["omg"])).is_none());
         assert!(split_elevated_invocation(&args(&["omg", "update"])).is_none());
+        assert!(split_elevated_invocation(&args(&["--", "update"])).is_none());
+        assert!(split_elevated_invocation(&args(&["omg", "--", "update"])).is_none());
         // `update --` with no trailing tokens stays on the fast path (empty
         // package list), matching the original elevated behavior.
         let argv = args(&["omg", "update", "--"]);
