@@ -287,6 +287,7 @@ fn try_parse_version_file(
 pub fn detect_versions(start: &Path) -> Result<HashMap<String, String>> {
     let mut versions = HashMap::new();
     let mut current = Some(start.to_path_buf());
+    let mut is_start_directory = true;
 
     while let Some(dir) = current {
         for (filename, runtime) in VERSION_FILES {
@@ -296,11 +297,24 @@ pub fn detect_versions(start: &Path) -> Result<HashMap<String, String>> {
 
             let file_path = dir.join(filename);
             if file_path.exists() {
-                try_parse_version_file(filename, &file_path, runtime, &dir, &mut versions)?;
+                let previous_versions = versions.clone();
+                if let Err(error) =
+                    try_parse_version_file(filename, &file_path, runtime, &dir, &mut versions)
+                {
+                    versions = previous_versions;
+                    if is_start_directory {
+                        return Err(error);
+                    }
+                    tracing::warn!(
+                        "Ignoring invalid ancestor runtime pin {}: {error:#}",
+                        file_path.display()
+                    );
+                }
             }
         }
 
         current = dir.parent().map(std::path::Path::to_path_buf);
+        is_start_directory = false;
     }
 
     Ok(versions)
@@ -986,6 +1000,19 @@ mod tests {
             result.is_err(),
             "unreadable pin file must fail closed, got {result:?}"
         );
+    }
+
+    #[test]
+    fn malformed_ancestor_pin_does_not_break_child_detection() {
+        let root = tempdir().unwrap();
+        let child = root.path().join("project");
+        fs::create_dir(&child).unwrap();
+        fs::write(root.path().join("package.json"), "not json").unwrap();
+        fs::write(child.join(".nvmrc"), "20.10.0").unwrap();
+
+        let versions = detect_versions(&child).expect("ancestor parse failure must be isolated");
+
+        assert_eq!(versions.get("node"), Some(&"20.10.0".to_string()));
     }
 
     #[test]
