@@ -226,7 +226,10 @@ async fn run_with_status_path(
 
         // Track last cleanup time for periodic mmap cleanup
         let mut last_cleanup = std::time::Instant::now();
-        let mut last_socket_check = std::time::Instant::now();
+        let mut socket_health = tokio::time::interval(SOCKET_HEALTH_CHECK_INTERVAL);
+        socket_health.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
+        // Consume the immediate first tick; the listener was just bound.
+        socket_health.tick().await;
 
         loop {
             tokio::select! {
@@ -253,19 +256,16 @@ async fn run_with_status_path(
                         }
                         last_cleanup = std::time::Instant::now();
                     }
-
-                    // Socket health check: verify socket file still exists
-                    if last_socket_check.elapsed() >= SOCKET_HEALTH_CHECK_INTERVAL {
-                        if !socket_path.exists() {
-                            tracing::error!(
-                                "Socket file {} has been removed externally! Initiating shutdown.",
-                                socket_path.display()
-                            );
-                            // Cancel the parent shutdown token to stop the accept loop
-                            shutdown_trigger.cancel();
-                            break;
-                        }
-                        last_socket_check = std::time::Instant::now();
+                }
+                _ = socket_health.tick() => {
+                    if !socket_path.exists() {
+                        tracing::error!(
+                            "Socket file {} has been removed externally! Initiating shutdown.",
+                            socket_path.display()
+                        );
+                        // Cancel the parent shutdown token to stop the accept loop.
+                        shutdown_trigger.cancel();
+                        break;
                     }
                 }
             }
