@@ -678,6 +678,7 @@ analyzer inference
 - **Ci**: Cross-platform install script and R2 release sync
 ### 🐛 Bug Fixes
 
+- Keep setup running when daemon startup fails
 - Report unmapped migration packages honestly
 - Preserve build settings when setup skips tuning
 - Report invalid stored licenses honestly
