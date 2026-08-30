@@ -296,6 +296,36 @@ async fn download_db(
     Err(last_error.unwrap_or_else(|| anyhow::anyhow!("No mirrors available")))
 }
 
+struct DatabasePublication {
+    staged: PathBuf,
+    destination: PathBuf,
+    backup: Option<PathBuf>,
+    published: bool,
+}
+
+fn rollback_database_publication(publications: &mut [DatabasePublication]) -> Vec<String> {
+    let mut errors = Vec::new();
+    for publication in publications.iter_mut().rev() {
+        if publication.published
+            && let Err(error) = std::fs::rename(&publication.destination, &publication.staged)
+        {
+            errors.push(format!(
+                "failed to withdraw {}: {error}",
+                publication.destination.display()
+            ));
+        }
+        if let Some(backup) = &publication.backup
+            && let Err(error) = std::fs::rename(backup, &publication.destination)
+        {
+            errors.push(format!(
+                "failed to restore {}: {error}",
+                publication.destination.display()
+            ));
+        }
+    }
+    errors
+}
+
 fn commit_staged_databases(
     databases: &[(PathBuf, PathBuf)],
     failed_downloads: usize,
@@ -304,15 +334,78 @@ fn commit_staged_databases(
         failed_downloads == 0,
         "Failed to sync {failed_downloads} database(s); live databases were left unchanged"
     );
-    for (staged, destination) in databases {
-        std::fs::rename(staged, destination).with_context(|| {
-            format!(
-                "Failed to publish staged package database {} to {}",
-                staged.display(),
-                destination.display()
-            )
-        })?;
-        crate::core::safe_ops::sync_parent_directory_sync(destination)?;
+
+    let mut publications = databases
+        .iter()
+        .map(|(staged, destination)| DatabasePublication {
+            staged: staged.clone(),
+            destination: destination.clone(),
+            backup: None,
+            published: false,
+        })
+        .collect::<Vec<_>>();
+
+    for publication in &publications {
+        let metadata = std::fs::symlink_metadata(&publication.staged)
+            .with_context(|| format!("Missing staged database {}", publication.staged.display()))?;
+        anyhow::ensure!(
+            metadata.file_type().is_file(),
+            "Staged database is not a regular file: {}",
+            publication.staged.display()
+        );
+    }
+
+    for index in 0..publications.len() {
+        match std::fs::symlink_metadata(&publications[index].destination) {
+            Ok(_) => {}
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => continue,
+            Err(error) => {
+                let rollback_errors = rollback_database_publication(&mut publications);
+                anyhow::bail!(
+                    "Failed to inspect live database {}: {error}; rollback errors: {}",
+                    publications[index].destination.display(),
+                    rollback_errors.join("; ")
+                );
+            }
+        }
+        let backup = publications[index]
+            .staged
+            .with_extension(format!("omg-backup-{index}"));
+        if let Err(error) = std::fs::rename(&publications[index].destination, &backup) {
+            let rollback_errors = rollback_database_publication(&mut publications);
+            anyhow::bail!(
+                "Failed to stage live database {} for replacement: {error}; rollback errors: {}",
+                publications[index].destination.display(),
+                rollback_errors.join("; ")
+            );
+        }
+        publications[index].backup = Some(backup);
+    }
+
+    for index in 0..publications.len() {
+        if let Err(error) = std::fs::rename(
+            &publications[index].staged,
+            &publications[index].destination,
+        ) {
+            let failed_destination = publications[index].destination.display().to_string();
+            let rollback_errors = rollback_database_publication(&mut publications);
+            anyhow::bail!(
+                "Failed to publish staged package database to {failed_destination}: {error}; rollback errors: {}",
+                rollback_errors.join("; ")
+            );
+        }
+        publications[index].published = true;
+    }
+
+    for publication in &publications {
+        if let Some(backup) = &publication.backup {
+            std::fs::remove_file(backup).with_context(|| {
+                format!("Failed to remove database backup {}", backup.display())
+            })?;
+        }
+    }
+    for publication in &publications {
+        crate::core::safe_ops::sync_parent_directory_sync(&publication.destination)?;
     }
     Ok(())
 }
@@ -538,6 +631,32 @@ mod tests {
 
         assert!(error.to_string().contains("1 database"));
         assert_eq!(std::fs::read(live).expect("live database"), b"old");
+    }
+
+    #[test]
+    fn publication_failure_restores_every_live_database() {
+        let directory = tempfile::tempdir().expect("database directory");
+        let core_live = directory.path().join("core.db");
+        let core_staged = directory.path().join("core.staged");
+        let extra_staged = directory.path().join("extra.staged");
+        let extra_live = directory.path().join("missing-parent/extra.db");
+        std::fs::write(&core_live, b"old-core").expect("seed live core");
+        std::fs::write(&core_staged, b"new-core").expect("stage core");
+        std::fs::write(&extra_staged, b"new-extra").expect("stage extra");
+
+        let error = commit_staged_databases(
+            &[
+                (core_staged.clone(), core_live.clone()),
+                (extra_staged.clone(), extra_live),
+            ],
+            0,
+        )
+        .expect_err("a mid-publication failure must roll back earlier databases");
+
+        assert!(error.to_string().contains("Failed to publish"), "{error}");
+        assert_eq!(std::fs::read(core_live).unwrap(), b"old-core");
+        assert_eq!(std::fs::read(core_staged).unwrap(), b"new-core");
+        assert_eq!(std::fs::read(extra_staged).unwrap(), b"new-extra");
     }
 
     #[test]
