@@ -67,12 +67,19 @@ pub struct DaemonClient {
     request_id: AtomicU64,
 }
 
+fn is_truthy_env_value(value: &str) -> bool {
+    matches!(
+        value.trim().to_ascii_lowercase().as_str(),
+        "1" | "true" | "yes" | "on"
+    )
+}
+
 impl DaemonClient {
     pub(crate) fn daemon_disabled() -> bool {
-        matches!(
-            std::env::var("OMG_DISABLE_DAEMON").as_deref(),
-            Ok("1" | "true" | "TRUE")
-        ) || paths::test_mode()
+        std::env::var("OMG_DISABLE_DAEMON")
+            .as_deref()
+            .is_ok_and(is_truthy_env_value)
+            || paths::test_mode()
     }
 
     /// Connect to the daemon
@@ -463,5 +470,26 @@ impl SyncDaemonClient {
         let id = self.request_id.fetch_add(1, Ordering::SeqCst);
         let response = self.call(&Request::Status { id })?;
         extract_response(&response, id, as_status)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::is_truthy_env_value;
+
+    #[test]
+    fn daemon_disable_values_are_case_insensitive_and_explicit() {
+        for value in ["1", "true", "TRUE", "True", " yes ", "ON"] {
+            assert!(
+                is_truthy_env_value(value),
+                "{value:?} should disable daemon use"
+            );
+        }
+        for value in ["", "0", "false", "no", "off", "enabled"] {
+            assert!(
+                !is_truthy_env_value(value),
+                "{value:?} should not disable daemon use"
+            );
+        }
     }
 }
