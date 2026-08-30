@@ -1952,13 +1952,20 @@ fn dependencies_from_status(content: &str, package_name: &str) -> (Vec<String>, 
     let mut reverse_deps = Vec::new();
 
     for paragraph in status_paragraphs(content) {
+        if !status_paragraph_is_installed(paragraph) {
+            continue;
+        }
+
         let mut current_pkg = String::new();
         let mut current_deps = Vec::new();
 
         for line in paragraph.lines() {
             if let Some(pkg) = line.strip_prefix("Package: ") {
                 current_pkg = pkg.trim().to_string();
-            } else if let Some(deps_str) = line.strip_prefix("Depends: ") {
+            } else if let Some(deps_str) = line
+                .strip_prefix("Depends: ")
+                .or_else(|| line.strip_prefix("Pre-Depends: "))
+            {
                 append_dependency_names(deps_str, &mut current_deps);
             }
         }
@@ -2583,15 +2590,24 @@ mod tests {
 
     #[test]
     fn test_dependencies_from_status_last_paragraph_without_trailing_blank() {
-        let last_is_target = "Package: gvim\nDepends: vim\n\nPackage: vim\nDepends: libc6";
+        let last_is_target = "Package: gvim\nStatus: install ok installed\nDepends: vim\n\nPackage: vim\nStatus: install ok installed\nDepends: libc6";
         let (deps, reverse) = dependencies_from_status(last_is_target, "vim");
         assert_eq!(deps, vec!["libc6".to_string()]);
         assert_eq!(reverse, vec!["gvim".to_string()]);
 
-        let last_is_reverse = "Package: vim\nDepends: libc6\n\nPackage: gvim\nDepends: vim";
+        let last_is_reverse = "Package: vim\nStatus: install ok installed\nDepends: libc6\n\nPackage: gvim\nStatus: install ok installed\nDepends: vim";
         let (deps, reverse) = dependencies_from_status(last_is_reverse, "vim");
         assert_eq!(deps, vec!["libc6".to_string()]);
         assert_eq!(reverse, vec!["gvim".to_string()]);
+    }
+
+    #[test]
+    fn dependencies_include_pre_depends_and_ignore_removed_reverse_dependencies() {
+        let content = "Package: target\nStatus: install ok installed\nPre-Depends: init-system (>= 1)\nDepends: libc6\n\nPackage: live-client\nStatus: install ok installed\nDepends: target\n\nPackage: removed-client\nStatus: deinstall ok config-files\nDepends: target";
+
+        let (dependencies, reverse) = dependencies_from_status(content, "target");
+        assert_eq!(dependencies, ["init-system", "libc6"]);
+        assert_eq!(reverse, ["live-client"]);
     }
 
     #[test]
