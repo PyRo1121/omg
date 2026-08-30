@@ -685,6 +685,7 @@ analyzer inference
 - **Ci**: Cross-platform install script and R2 release sync
 ### 🐛 Bug Fixes
 
+- Defer malformed fast-path invocations
 - Reject misplaced elevated separators
 - Account for APT cache symlinks safely
 - Exclude inactive packages from Debian size totals
