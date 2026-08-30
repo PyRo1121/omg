@@ -1280,6 +1280,29 @@ impl std::fmt::Display for PartialExtractionError {
 
 impl std::error::Error for PartialExtractionError {}
 
+fn track_partial_extraction<F>(extract: F) -> Result<Vec<PathBuf>>
+where
+    F: FnOnce(&mut Vec<PathBuf>) -> Result<()>,
+{
+    let mut installed_files = Vec::new();
+    let outcome = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        extract(&mut installed_files)
+    }));
+    match outcome {
+        Ok(Ok(())) => Ok(installed_files),
+        Ok(Err(source)) => Err(PartialExtractionError {
+            source,
+            installed_files,
+        }
+        .into()),
+        Err(_) => Err(PartialExtractionError {
+            source: anyhow::anyhow!("Archive extraction panicked"),
+            installed_files,
+        }
+        .into()),
+    }
+}
+
 fn write_archive_regular_file(entry: &mut dyn Read, entry_path: &Path, mode: u32) -> Result<()> {
     let parent = entry_path
         .parent()
@@ -1386,15 +1409,7 @@ fn extract_tar_to_root_at(root: &Path, data: &[u8]) -> Result<Vec<PathBuf>> {
         Ok(())
     };
 
-    let mut installed_files = Vec::new();
-    match inner(&mut installed_files) {
-        Ok(()) => Ok(installed_files),
-        Err(source) => Err(PartialExtractionError {
-            source,
-            installed_files,
-        }
-        .into()),
-    }
+    track_partial_extraction(inner)
 }
 
 /// Run a maintainer script (preinst, postinst, prerm, postrm)
@@ -2594,6 +2609,22 @@ mod tests {
                 || error.to_string().contains("Failed"),
             "unexpected error: {error:#}"
         );
+    }
+
+    #[test]
+    fn extraction_panic_preserves_partial_rollback_manifest() {
+        let written = PathBuf::from("/already-written");
+        let error = track_partial_extraction(|installed_files| {
+            installed_files.push(written.clone());
+            panic!("decoder panic");
+        })
+        .expect_err("extraction panics must become tracked failures");
+
+        let partial = error
+            .downcast_ref::<PartialExtractionError>()
+            .expect("partial extraction error");
+        assert_eq!(partial.installed_files, vec![written]);
+        assert!(partial.source.to_string().contains("panicked"));
     }
 
     #[test]
