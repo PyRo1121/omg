@@ -2322,12 +2322,14 @@ fn remove_deb_files(dir: &Path) -> Result<(usize, u64)> {
         if !filename
             .rsplit_once('.')
             .is_some_and(|(_, ext)| ext.eq_ignore_ascii_case("deb"))
-            || !path.is_file()
         {
             continue;
         }
-        let meta = fs::metadata(&path)
-            .with_context(|| format!("Failed to read APT cache file {}", path.display()))?;
+        let meta = fs::symlink_metadata(&path)
+            .with_context(|| format!("Failed to inspect APT cache entry {}", path.display()))?;
+        if !meta.file_type().is_file() && !meta.file_type().is_symlink() {
+            continue;
+        }
         fs::remove_file(&path)
             .with_context(|| format!("Failed to remove APT cache file {}", path.display()))?;
         freed += meta.len();
@@ -2977,6 +2979,27 @@ mod tests {
         assert_eq!(freed, 3);
         assert!(!deb.exists());
         assert!(other.exists());
+    }
+
+    #[test]
+    fn remove_deb_files_unlinks_symlinks_without_counting_their_targets() {
+        let dir = tempfile::TempDir::new().expect("temp dir");
+        let target = dir.path().join("target");
+        let link = dir.path().join("cached.deb");
+        std::fs::write(&target, b"large target contents").expect("target");
+        std::os::unix::fs::symlink(&target, &link).expect("cache symlink");
+        let link_size = std::fs::symlink_metadata(&link)
+            .expect("link metadata")
+            .len();
+
+        let (removed, freed) = remove_deb_files(dir.path()).expect("cache cleanup");
+        assert_eq!(removed, 1);
+        assert_eq!(freed, link_size);
+        assert!(std::fs::symlink_metadata(&link).is_err());
+        assert!(
+            target.exists(),
+            "cleanup must not remove the symlink target"
+        );
     }
 
     #[test]
