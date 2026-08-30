@@ -901,6 +901,15 @@ async fn handle_status(state: Arc<DaemonState>, id: RequestId) -> Response {
 }
 
 /// Handle security audit request
+fn vulnerability_score(score: &str) -> Option<f64> {
+    score.parse::<f64>().ok().or_else(|| {
+        score
+            .parse::<cvss::Cvss>()
+            .ok()
+            .map(|vector| vector.score())
+    })
+}
+
 async fn handle_security_audit(state: Arc<DaemonState>, id: RequestId) -> Response {
     GLOBAL_METRICS.inc_security_audit_requests();
     use crate::core::security::vulnerability::VulnerabilityScanner;
@@ -952,9 +961,10 @@ async fn handle_security_audit(state: Arc<DaemonState>, id: RequestId) -> Respon
         let mapped: Vec<Vulnerability> = vulns
             .into_iter()
             .map(|v| {
-                if let Some(score_str) = &v.score
-                    && let Ok(score) = score_str.parse::<f32>()
-                    && score >= 7.0
+                if v.score
+                    .as_deref()
+                    .and_then(vulnerability_score)
+                    .is_some_and(|score| score >= 7.0)
                 {
                     high_severity += 1;
                 }
@@ -1252,6 +1262,16 @@ mod tests {
             DaemonState::new_isolated(directory.path(), PackageIndex::empty(), package_manager)
                 .expect("create isolated daemon state");
         (directory, Arc::new(state))
+    }
+
+    #[test]
+    fn vulnerability_score_parses_osv_cvss_vectors() {
+        assert_eq!(vulnerability_score("7.5"), Some(7.5));
+        assert_eq!(
+            vulnerability_score("CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:H/I:H/A:H"),
+            Some(9.8)
+        );
+        assert_eq!(vulnerability_score("not-a-score"), None);
     }
 
     #[test]
