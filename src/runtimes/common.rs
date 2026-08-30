@@ -4,7 +4,7 @@
 
 use std::cmp::Ordering;
 use std::fs::{self, File};
-use std::io::{BufReader, Read, Write};
+use std::io::{BufReader, Read, Seek, SeekFrom, Write};
 use std::path::{Path, PathBuf};
 
 use anyhow::{Context, Result};
@@ -122,6 +122,47 @@ impl<R: Read> Read for BudgetedReader<R> {
 /// budgeted reader is not available: the sink errors as soon as the budget is
 /// exhausted, so the backing buffer stops growing at the cap instead of after
 /// decompression has completed.
+pub(crate) struct BudgetedWriter<W> {
+    inner: W,
+    written: u64,
+    budget: u64,
+}
+
+impl<W> BudgetedWriter<W> {
+    pub(crate) fn new(inner: W, budget: u64) -> Self {
+        Self {
+            inner,
+            written: 0,
+            budget,
+        }
+    }
+
+    pub(crate) fn into_inner(self) -> W {
+        self.inner
+    }
+}
+
+impl<W: Write> Write for BudgetedWriter<W> {
+    fn write(&mut self, buffer: &[u8]) -> std::io::Result<usize> {
+        let remaining = self.budget.saturating_sub(self.written);
+        if u64::try_from(buffer.len()).unwrap_or(u64::MAX) > remaining {
+            return Err(std::io::Error::other(format!(
+                "decompressed archive exceeds the {} byte limit",
+                self.budget
+            )));
+        }
+        let written = self.inner.write(buffer)?;
+        self.written = self
+            .written
+            .saturating_add(u64::try_from(written).unwrap_or(u64::MAX));
+        Ok(written)
+    }
+
+    fn flush(&mut self) -> std::io::Result<()> {
+        self.inner.flush()
+    }
+}
+
 pub(crate) struct BudgetedSink {
     buf: Vec<u8>,
     remaining: u64,
@@ -158,12 +199,12 @@ impl BudgetedSink {
     }
 }
 
-struct BudgetedWriter<'a, W> {
+struct BorrowedBudgetedWriter<'a, W> {
     inner: W,
     remaining: &'a mut u64,
 }
 
-impl<W: Write> Write for BudgetedWriter<'_, W> {
+impl<W: Write> Write for BorrowedBudgetedWriter<'_, W> {
     fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
         let length = u64::try_from(buf.len()).map_err(|_| {
             std::io::Error::new(std::io::ErrorKind::InvalidData, "impossible write size")
@@ -195,7 +236,7 @@ fn copy_with_budget<R: Read, W: Write>(
 ) -> std::io::Result<u64> {
     std::io::copy(
         reader,
-        &mut BudgetedWriter {
+        &mut BorrowedBudgetedWriter {
             inner: writer,
             remaining,
         },
@@ -532,17 +573,23 @@ pub(crate) async fn extract_tar_xz(
         pb.set_style(extract_progress_style());
         pb.set_message("Decompressing XZ...");
 
-        // Pure Rust XZ decompression with the decompressed-size budget
-        // enforced during streaming: the sink stops accepting bytes at the
-        // budget, so a bomb aborts instead of exhausting memory before a
-        // post-hoc size check could run.
-        let mut sink = BudgetedSink::with_default_budget();
-        lzma_rs::xz_decompress(&mut BufReader::new(file), &mut sink)
-            .context("Failed to decompress XZ archive")?;
-        let decompressed = sink.into_inner();
-
-        let mut archive = tar::Archive::new(decompressed.as_slice());
+        // lzma-rs exposes Read -> Write rather than a streaming decoder.
+        // Keep the bounded output on disk so a valid large archive does not
+        // require its entire decompressed tar payload on the heap.
         fs::create_dir_all(&dest_dir)?;
+        let output = tempfile::tempfile_in(&dest_dir).with_context(|| {
+            format!(
+                "Failed to create temporary XZ output in {}",
+                dest_dir.display()
+            )
+        })?;
+        let mut output = BudgetedWriter::new(output, MAX_DECOMPRESSED_BYTES);
+        lzma_rs::xz_decompress(&mut BufReader::new(file), &mut output)
+            .context("Failed to decompress XZ archive")?;
+        let mut output = output.into_inner();
+        output.seek(SeekFrom::Start(0))?;
+
+        let mut archive = tar::Archive::new(output);
         extract_tar_entries(&mut archive, &dest_dir, strip_components, &pb)?;
 
         pb.finish_and_clear();

@@ -14,7 +14,7 @@
 
 use std::collections::HashMap;
 use std::fs::{self, File};
-use std::io::{BufReader, Read, Seek, SeekFrom, Write};
+use std::io::{BufReader, Read, Seek, SeekFrom};
 use std::os::unix::fs::PermissionsExt;
 use std::path::{Component, Path, PathBuf};
 use std::process::Command;
@@ -28,7 +28,7 @@ use tempfile::TempDir;
 
 use super::resolver::ResolutionResult;
 use super::validation::require_verified_deb;
-use crate::runtimes::common::{BudgetedReader, BudgetedSink};
+use crate::runtimes::common::{BudgetedReader, BudgetedSink, BudgetedWriter};
 
 /// Transaction state
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -59,47 +59,6 @@ const MAX_DOWNLOAD_RETRIES: u32 = 3;
 /// streaming budget ([`crate::runtimes::common::MAX_DECOMPRESSED_BYTES`]);
 /// this bounds raw buffering of untrusted archive members.
 const MAX_DEB_MEMBER_BYTES: u64 = 2 * 1024 * 1024 * 1024;
-
-struct BudgetedWriter<W> {
-    inner: W,
-    written: u64,
-    budget: u64,
-}
-
-impl<W> BudgetedWriter<W> {
-    fn new(inner: W, budget: u64) -> Self {
-        Self {
-            inner,
-            written: 0,
-            budget,
-        }
-    }
-
-    fn into_inner(self) -> W {
-        self.inner
-    }
-}
-
-impl<W: Write> Write for BudgetedWriter<W> {
-    fn write(&mut self, buffer: &[u8]) -> std::io::Result<usize> {
-        let remaining = self.budget.saturating_sub(self.written);
-        if u64::try_from(buffer.len()).unwrap_or(u64::MAX) > remaining {
-            return Err(std::io::Error::other(format!(
-                "decompressed archive exceeds the {} byte limit",
-                self.budget
-            )));
-        }
-        let written = self.inner.write(buffer)?;
-        self.written = self
-            .written
-            .saturating_add(u64::try_from(written).unwrap_or(u64::MAX));
-        Ok(written)
-    }
-
-    fn flush(&mut self) -> std::io::Result<()> {
-        self.inner.flush()
-    }
-}
 
 /// Initial backoff for retries (doubles each retry)
 const INITIAL_BACKOFF_MS: u64 = 200;
@@ -2566,6 +2525,8 @@ mod tests {
 
     #[test]
     fn budgeted_writer_rejects_output_before_exceeding_limit() {
+        use std::io::Write as _;
+
         let mut writer = BudgetedWriter::new(Vec::new(), 4);
         writer.write_all(b"1234").expect("write within budget");
         let error = writer
