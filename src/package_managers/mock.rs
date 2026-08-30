@@ -238,11 +238,6 @@ impl MockPackageManager {
         let data = serde_json::to_vec(state).context("failed to serialize mock state")?;
         crate::core::safe_ops::atomic_write_file_sync(path, data)
     }
-
-    #[cfg(not(feature = "arch"))]
-    fn is_newer(old: &str, new: &str) -> bool {
-        matches!(old.cmp(new), std::cmp::Ordering::Less)
-    }
 }
 
 impl PackageManager for MockPackageManager {
@@ -429,12 +424,8 @@ impl PackageManager for MockPackageManager {
                         .get(pkg_name)
                         .map_or_else(|| "unknown".to_string(), |p| p.repo.clone());
 
-                    #[cfg(feature = "arch")]
                     let is_update_needed =
                         parse_version_or_zero(available_ver) > parse_version_or_zero(installed_ver);
-
-                    #[cfg(not(feature = "arch"))]
-                    let is_update_needed = Self::is_newer(installed_ver, available_ver);
 
                     if is_update_needed {
                         updates.push(UpdateInfo {
@@ -513,6 +504,23 @@ mod tests {
         assert_eq!(search.len(), 1);
         let status = futures::executor::block_on(package_manager.get_status(false))?;
         assert_eq!(status.3, 1, "status must expose the pending mock update");
+        Ok(())
+    }
+
+    #[test]
+    fn mock_updates_compare_numeric_version_components() -> Result<()> {
+        let dir = tempdir()?;
+        let package_manager = MockPackageManager::new_in("debian", dir.path());
+        package_manager
+            .db
+            .add_package("example", "0.10", "Example package", "main");
+        package_manager.set_installed_version("example", "0.9")?;
+        package_manager.set_available_version("example", "0.10")?;
+
+        let updates = futures::executor::block_on(package_manager.list_updates())?;
+        assert_eq!(updates.len(), 1);
+        assert_eq!(updates[0].old_version, "0.9");
+        assert_eq!(updates[0].new_version, "0.10");
         Ok(())
     }
 
