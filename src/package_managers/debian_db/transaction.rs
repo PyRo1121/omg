@@ -789,7 +789,7 @@ fn remove_packages_sequentially(
 ) -> Result<()> {
     // Process packages in dependency order (leaves first).
     for package_name in packages_to_remove {
-        let pb = multi.add(ProgressBar::new(5));
+        let pb = multi.add(ProgressBar::new(6));
         pb.set_style(
             ProgressStyle::default_bar()
                 .template("  {prefix:.cyan} [{bar:25.red/blue}] {msg}")
