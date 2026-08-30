@@ -678,6 +678,7 @@ analyzer inference
 - **Ci**: Cross-platform install script and R2 release sync
 ### 🐛 Bug Fixes
 
+- Preserve build settings when setup skips tuning
 - Report invalid stored licenses honestly
 - Sanitize generated development container names
 - Schedule daemon socket health independently
