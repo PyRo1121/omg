@@ -7,6 +7,7 @@ use crate::cli::tea::Cmd;
 
 use crate::core::container::{
     ContainerConfig, ContainerManager, ContainerRuntime, detect_runtime, dev_container_config,
+    normalized_base_image,
 };
 
 /// Parse environment variables from strict `KEY=VALUE` entries.
@@ -460,7 +461,8 @@ pub fn init(base_image: Option<String>) -> Result<()> {
         anyhow::bail!("Dockerfile.omg already exists");
     }
 
-    let base = base_image.unwrap_or_else(|| "ubuntu:24.04".to_string());
+    let requested_base = base_image.unwrap_or_else(|| "ubuntu:24.04".to_string());
+    let base = normalized_base_image(&requested_base).to_string();
 
     // Detect runtimes from project
     let mut runtimes: Vec<(&str, String)> = Vec::new();

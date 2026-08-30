@@ -365,14 +365,7 @@ impl ContainerManager {
     /// text; they are replaced with safe fallbacks (or the runtime entry is
     /// skipped) and reported via `tracing::warn!`.
     pub fn generate_dockerfile(&self, base_image: &str, runtimes: &[(&str, &str)]) -> String {
-        let base_image = if is_safe_image_reference(base_image) {
-            base_image
-        } else {
-            tracing::warn!(
-                "Refusing unsafe base image {base_image:?}; falling back to ubuntu:24.04"
-            );
-            "ubuntu:24.04"
-        };
+        let base_image = normalized_base_image(base_image);
 
         let mut dockerfile = format!("FROM {base_image}\n\n");
         dockerfile.push_str("# OMG Development Environment\n");
@@ -532,6 +525,15 @@ impl ContainerManager {
 /// Whether an image reference consists only of safe Docker-reference
 /// characters. Anything else (shell metacharacters, whitespace, option-like
 /// prefixes, traversal) must never reach a generated Dockerfile.
+pub(crate) fn normalized_base_image(image: &str) -> &str {
+    if is_safe_image_reference(image) {
+        image
+    } else {
+        tracing::warn!("Refusing unsafe base image {image:?}; falling back to ubuntu:24.04");
+        "ubuntu:24.04"
+    }
+}
+
 fn is_safe_image_reference(image: &str) -> bool {
     crate::core::security::validate_image_ref(image).is_ok()
 }
@@ -794,6 +796,15 @@ mod tests {
 
         let dockerfile_arch = manager.generate_dockerfile("archlinux:latest", &[("vim", "latest")]);
         assert!(dockerfile_arch.contains("pacman -S --noconfirm vim"));
+    }
+
+    #[test]
+    fn unsafe_base_image_normalizes_to_the_reported_fallback() {
+        assert_eq!(
+            normalized_base_image("ubuntu:24.04\nRUN evil"),
+            "ubuntu:24.04"
+        );
+        assert_eq!(normalized_base_image("alpine:3.21"), "alpine:3.21");
     }
 
     #[test]
