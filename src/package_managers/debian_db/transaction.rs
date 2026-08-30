@@ -14,7 +14,7 @@
 
 use std::collections::HashMap;
 use std::fs::{self, File};
-use std::io::{Read, Write};
+use std::io::Read;
 use std::os::unix::fs::PermissionsExt;
 use std::path::{Component, Path, PathBuf};
 use std::process::Command;
@@ -637,7 +637,7 @@ impl Transaction {
         self.backups.insert(status_path.to_path_buf(), backup_path);
 
         let updated = merge_status_entries(&current, entries);
-        write_atomic(status_path, updated.as_bytes())
+        crate::core::safe_ops::atomic_write_file_sync(status_path, updated.as_bytes())
             .context("Failed to persist updated dpkg status")?;
 
         tracing::debug!("Merged {} dpkg status entries atomically", entries.len());
@@ -888,23 +888,6 @@ fn merge_status_entries(current: &str, entries: &[(String, String)]) -> String {
     out
 }
 
-/// Atomically replace `dest` with `data` via temp file + fsync + rename.
-fn write_atomic(dest: &Path, data: &[u8]) -> Result<()> {
-    use tempfile::NamedTempFile;
-
-    let parent = dest.parent().unwrap_or_else(|| Path::new("."));
-    let mut temp = NamedTempFile::new_in(parent)
-        .with_context(|| format!("Failed to create temporary file in {}", parent.display()))?;
-    temp.write_all(data)?;
-    temp.as_file_mut()
-        .sync_all()
-        .context("Failed to sync temporary file")?;
-    temp.persist(dest)
-        .map_err(|error| error.error)
-        .with_context(|| format!("Failed to persist {}", dest.display()))?;
-    Ok(())
-}
-
 fn remove_file_if_present(path: &Path) -> Result<()> {
     // Rollback walks `installed_files` in reverse so children are removed
     // before the directories created for them. A directory that still has
@@ -936,7 +919,7 @@ fn restore_backup(backup: &Path, original: &Path) -> Result<()> {
             original.display()
         )
     })?;
-    write_atomic(original, &contents).with_context(|| {
+    crate::core::safe_ops::atomic_write_file_sync(original, &contents).with_context(|| {
         format!(
             "Failed to restore backup {} -> {}",
             backup.display(),
@@ -1693,7 +1676,7 @@ fn write_dpkg_file_list(
         format!("{}\n", lines.join("\n"))
     };
     let destination = info_dir.join(format!("{package_name}.list"));
-    write_atomic(&destination, contents.as_bytes())?;
+    crate::core::safe_ops::atomic_write_file_sync(&destination, contents.as_bytes())?;
     fs::set_permissions(&destination, fs::Permissions::from_mode(0o644))?;
     Ok(destination)
 }
@@ -1844,7 +1827,7 @@ fn update_dpkg_status_for_removal(package_name: &str) -> Result<()> {
         anyhow::bail!("Package {package_name} not found in dpkg status");
     }
 
-    write_atomic(status_path, updated_content.as_bytes())
+    crate::core::safe_ops::atomic_write_file_sync(status_path, updated_content.as_bytes())
         .context("Failed to persist updated status file")?;
 
     tracing::debug!(
