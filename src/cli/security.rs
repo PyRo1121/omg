@@ -6,6 +6,11 @@
 use anyhow::{Context, Result};
 use owo_colors::OwoColorize;
 
+fn write_private_export(path: &std::path::Path, contents: impl AsRef<[u8]>) -> Result<()> {
+    crate::core::safe_ops::atomic_write_file_sync(path, contents)
+        .with_context(|| format!("Failed to write security export to {}", path.display()))
+}
+
 fn read_audit_entries(
     logger: &AuditLogger,
     limit: usize,
@@ -252,28 +257,35 @@ pub fn view_audit_log(
         };
 
         if format == "csv" {
-            let mut wtr = csv::Writer::from_path(&path)
-                .with_context(|| format!("Failed to create CSV file {}", path.display()))?;
-            wtr.write_record(["Timestamp", "Severity", "Event", "Description", "Resource"])?;
-            for entry in &entries {
-                let severity = entry.severity.to_string();
-                let event = format!("{:?}", entry.event_type);
-                let description = spreadsheet_safe_cell(&entry.description);
-                let resource = spreadsheet_safe_cell(&entry.resource);
-                wtr.write_record([
-                    entry.timestamp.as_str(),
-                    severity.as_str(),
-                    event.as_str(),
-                    description.as_ref(),
-                    resource.as_ref(),
+            let mut csv = Vec::new();
+            {
+                let mut writer = csv::Writer::from_writer(&mut csv);
+                writer.write_record([
+                    "Timestamp",
+                    "Severity",
+                    "Event",
+                    "Description",
+                    "Resource",
                 ])?;
+                for entry in &entries {
+                    let severity = entry.severity.to_string();
+                    let event = format!("{:?}", entry.event_type);
+                    let description = spreadsheet_safe_cell(&entry.description);
+                    let resource = spreadsheet_safe_cell(&entry.resource);
+                    writer.write_record([
+                        entry.timestamp.as_str(),
+                        severity.as_str(),
+                        event.as_str(),
+                        description.as_ref(),
+                        resource.as_ref(),
+                    ])?;
+                }
+                writer.flush()?;
             }
-            wtr.flush()?;
+            write_private_export(&path, csv)?;
         } else {
-            let json = serde_json::to_string_pretty(&entries)?;
-            std::fs::write(&path, json).with_context(|| {
-                format!("Failed to write audit log export to {}", path.display())
-            })?;
+            let json = serde_json::to_vec_pretty(&entries)?;
+            write_private_export(&path, json)?;
         }
         println!(
             "{} Export successful",
@@ -955,7 +967,7 @@ pub fn scan_licenses(
         let path = std::path::PathBuf::from(&export_path);
 
         let report = serialize_license_rows(format, &filtered_packages)?;
-        std::fs::write(&path, report)?;
+        write_private_export(&path, report)?;
 
         println!(
             "{} Exported {} packages to {}",
@@ -1231,8 +1243,7 @@ pub async fn export_compliance(
             let entries = read_audit_entries(&logger, 1000, None)?;
             let json = serde_json::to_string_pretty(&entries)?;
             let log_path = output_dir.join(format!("audit-log-{timestamp}.json"));
-            std::fs::write(&log_path, json)
-                .with_context(|| format!("Failed to write {}", log_path.display()))?;
+            write_private_export(&log_path, json)?;
             println!(
                 "  {} Audit log: {}",
                 style::success("✓"),
@@ -1251,7 +1262,7 @@ pub async fn export_compliance(
                     .context("Failed to run security audit for compliance export")?;
                 let json = serde_json::to_string_pretty(&scan)?;
                 let scan_path = output_dir.join(format!("vulnerability-scan-{timestamp}.json"));
-                std::fs::write(&scan_path, json)?;
+                write_private_export(&scan_path, json)?;
                 println!(
                     "  {} Vulnerability scan: {}",
                     style::success("✓"),
@@ -1285,11 +1296,10 @@ pub async fn export_compliance(
                     .context("Failed to load security policy")?,
             });
             let config_path = output_dir.join(format!("config-snapshot-{timestamp}.json"));
-            std::fs::write(
+            write_private_export(
                 &config_path,
                 serde_json::to_string_pretty(&config_snapshot)?,
-            )
-            .with_context(|| format!("Failed to write {}", config_path.display()))?;
+            )?;
             println!(
                 "  {} Configuration: {}",
                 style::success("✓"),
@@ -1429,6 +1439,30 @@ pub fn check_eol(_ctx: &CliContext) -> Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[cfg(unix)]
+    #[test]
+    fn security_exports_replace_permissive_files_with_private_atomic_files() {
+        use std::os::unix::fs::PermissionsExt as _;
+
+        let directory = tempfile::tempdir().expect("export directory");
+        let export = directory.path().join("audit.json");
+        std::fs::write(&export, b"old").expect("seed export");
+        std::fs::set_permissions(&export, std::fs::Permissions::from_mode(0o644))
+            .expect("set permissive fixture mode");
+
+        write_private_export(&export, b"new").expect("private export");
+
+        assert_eq!(
+            std::fs::metadata(&export)
+                .expect("export metadata")
+                .permissions()
+                .mode()
+                & 0o777,
+            0o600
+        );
+        assert_eq!(std::fs::read(&export).expect("export contents"), b"new");
+    }
 
     #[test]
     fn severity_filter_returns_the_newest_matching_entries() {
