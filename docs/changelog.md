@@ -3912,6 +3912,7 @@ the Debian backend), so it was removed from the metadata.
 - Normalize project formatting
 ### 🧪 Testing
 
+- Bound daemon lifecycle probes
 - Align integration tests with current feature APIs
 - Exercise production migration version validation
 - Align AUR downgrade version validation
