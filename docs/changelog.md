@@ -48,6 +48,7 @@ OMG is the fastest unified package manager for Linux, replacing pacman, yay, nvm
 - Manage Pi versions natively
 ### ♻️  Refactoring
 
+- Remove dead Debian cache work
 - Remove unusable Debian install builder
 - Remove impossible Debian transaction state
 - Use executable-aware tool detection
