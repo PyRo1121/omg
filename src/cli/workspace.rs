@@ -563,8 +563,12 @@ pub fn diff(branch: &str) -> Result<()> {
 }
 
 fn git_lockfile_diff(project_path: &Path, branch: &str) -> Result<Vec<u8>> {
+    anyhow::ensure!(
+        !branch.trim_start().starts_with('-'),
+        "Git branch or revision must not begin with '-'"
+    );
     let output = std::process::Command::new("git")
-        .args(["diff", branch, "--", "omg.lock"])
+        .args(["diff", "--no-ext-diff", branch, "--", "omg.lock"])
         .current_dir(project_path)
         .output()
         .with_context(|| format!("Failed to run git diff in {}", project_path.display()))?;
@@ -806,6 +810,19 @@ mod tests {
                 vec!["web".to_string()]
             ]
         );
+    }
+
+    #[test]
+    fn git_diff_rejects_option_injection_before_spawning_git() {
+        let directory = tempfile::tempdir().expect("temp directory");
+        let output = directory.path().join("injected-output");
+        let branch = format!("--output={}", output.display());
+
+        let error = git_lockfile_diff(directory.path(), &branch)
+            .expect_err("option-like revisions must be rejected");
+
+        assert!(error.to_string().contains("must not begin with '-'"));
+        assert!(!output.exists());
     }
 
     #[test]
