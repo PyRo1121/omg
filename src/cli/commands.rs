@@ -497,11 +497,13 @@ pub fn status_sync() -> Result<()> {
         }
     }
 
-    // Daemon status
+    // Daemon status: a stale socket node is not a running daemon.
     #[cfg(unix)]
     {
-        let socket = crate::core::client::default_socket_path();
-        if socket.exists() {
+        let running = crate::core::client::DaemonClient::connect_sync()
+            .and_then(|mut client| client.ping_sync())
+            .is_ok();
+        if running {
             println!("  {} {}", "Daemon".bold(), "Running".green());
         } else {
             println!("  {} {}", "Daemon".bold(), "Offline".dimmed());
