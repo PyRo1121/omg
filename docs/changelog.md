@@ -3876,6 +3876,7 @@ the Debian backend), so it was removed from the metadata.
 - Normalize project formatting
 ### 🧪 Testing
 
+- Exercise production migration version validation
 - Align AUR downgrade version validation
 - Use packages provided by mock fixtures
 - Align rollback cache refusal contracts
