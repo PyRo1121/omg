@@ -678,6 +678,7 @@ analyzer inference
 - **Ci**: Cross-platform install script and R2 release sync
 ### 🐛 Bug Fixes
 
+- Remove inert configuration options
 - Reject workspace diff option injection
 - Restore all-target Clippy cleanliness
 - Rename workspace sync to check
