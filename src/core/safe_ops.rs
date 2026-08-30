@@ -8,14 +8,6 @@ use anyhow::{Context, Result};
 use std::io::Write;
 use std::num::NonZeroU32;
 use std::path::{Path, PathBuf};
-use std::sync::atomic::{AtomicU64, Ordering};
-
-/// Safe constructor for `NonZeroU32` with context
-pub fn nonzero_u32(value: u32, context: &str) -> Result<NonZeroU32> {
-    // `anyhow::Context` is also implemented for `Option`, mapping `None` to an error.
-    NonZeroU32::new(value).with_context(|| format!("{context}: value must be > 0, got {value}"))
-}
-
 /// Create a `NonZeroU32` with a default fallback value.
 ///
 /// If both `value` and `default` are zero, falls back to `NonZeroU32::MIN` (1).
@@ -178,145 +170,11 @@ pub fn atomic_write_file_sync<P: AsRef<Path>, C: AsRef<[u8]>>(path: P, contents:
     Ok(())
 }
 
-/// Database transaction helper with automatic rollback on error
-pub struct TransactionGuard<T> {
-    inner: Option<T>,
-}
-
-// SAFETY: The expects below guard a logical invariant — `inner` is `Some` until
-// `commit()` consumes it. Calling `inner()`/`inner_mut()` after `commit()` is a
-// programming error (use-after-move), so panicking is correct.
-#[expect(clippy::expect_used)]
-impl<T> TransactionGuard<T> {
-    /// Create a new transaction guard
-    pub fn new(transaction: T) -> Self {
-        Self {
-            inner: Some(transaction),
-        }
-    }
-
-    /// Get a reference to the inner transaction
-    #[must_use]
-    pub fn inner(&self) -> &T {
-        self.inner.as_ref().expect("Transaction already consumed")
-    }
-
-    /// Get a mutable reference to the inner transaction
-    pub fn inner_mut(&mut self) -> &mut T {
-        self.inner.as_mut().expect("Transaction already consumed")
-    }
-
-    /// Commit the transaction (preventing rollback)
-    pub fn commit(mut self) -> T {
-        self.inner.take().expect("Transaction already consumed")
-    }
-}
-
-impl<T> Drop for TransactionGuard<T> {
-    fn drop(&mut self) {
-        if self.inner.is_some() {
-            // Transaction will be dropped without explicit commit
-            // The underlying transaction implementation should handle rollback
-            tracing::warn!("Transaction dropped without commit - rollback will occur");
-        }
-    }
-}
-
-/// Atomic counter for safe increment operations
-pub struct AtomicCounter {
-    value: AtomicU64,
-}
-
-impl AtomicCounter {
-    /// Create a new atomic counter
-    pub fn new(initial: u64) -> Self {
-        Self {
-            value: AtomicU64::new(initial),
-        }
-    }
-
-    /// Increment and return the new value
-    pub fn increment(&self) -> u64 {
-        self.value.fetch_add(1, Ordering::SeqCst) + 1
-    }
-
-    /// Get the current value
-    #[must_use]
-    pub fn get(&self) -> u64 {
-        self.value.load(Ordering::SeqCst)
-    }
-
-    /// Reset to a specific value
-    pub fn reset(&self, new_value: u64) {
-        self.value.store(new_value, Ordering::SeqCst);
-    }
-}
-
-/// Rate limiter helper with safe initialization
-#[derive(Debug)]
-pub struct RateLimiterConfig {
-    pub requests_per_second: NonZeroU32,
-    pub burst_size: NonZeroU32,
-}
-
-impl RateLimiterConfig {
-    /// Create a new rate limiter config with safe defaults
-    pub fn new() -> Result<Self> {
-        Ok(Self {
-            requests_per_second: nonzero_u32(100, "rate limiter requests per second")?,
-            burst_size: nonzero_u32(200, "rate limiter burst size")?,
-        })
-    }
-
-    /// Create with custom values
-    pub fn with_values(requests_per_second: u32, burst_size: u32) -> Result<Self> {
-        Ok(Self {
-            requests_per_second: nonzero_u32(
-                requests_per_second,
-                "rate limiter requests per second",
-            )?,
-            burst_size: nonzero_u32(burst_size, "rate limiter burst size")?,
-        })
-    }
-}
-
-impl Default for RateLimiterConfig {
-    fn default() -> Self {
-        Self {
-            // SAFETY: 100 and 200 are known non-zero constants; these cannot fail.
-            requests_per_second: NonZeroU32::new(100).expect("100 is non-zero"),
-            burst_size: NonZeroU32::new(200).expect("200 is non-zero"),
-        }
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
     use tempfile::TempDir;
     use tokio::fs;
-
-    #[test]
-    fn test_nonzero_u32_success() {
-        let result = nonzero_u32(42, "test");
-        assert!(result.is_ok());
-        assert_eq!(result.unwrap().get(), 42);
-    }
-
-    #[test]
-    fn test_nonzero_u32_zero() {
-        let result = nonzero_u32(0, "test");
-        assert!(result.is_err());
-        let err = result.unwrap_err();
-        // anyhow wraps errors, so check the chain
-        let found = err
-            .chain()
-            .any(|e| e.to_string().contains("value must be > 0, got 0"));
-        assert!(
-            found,
-            "Error chain should contain 'value must be > 0, got 0'"
-        );
-    }
 
     #[test]
     fn test_nonzero_u32_or_default() {
@@ -397,72 +255,5 @@ mod tests {
 
         let read_content = std::fs::read_to_string(&file_path).unwrap();
         assert_eq!(read_content, "Hello, world!");
-    }
-
-    #[test]
-    fn test_transaction_guard_commit() {
-        let guard = TransactionGuard::new("transaction_data");
-        let data = guard.commit();
-        assert_eq!(data, "transaction_data");
-    }
-
-    #[test]
-    fn test_transaction_guard_drop() {
-        // This test verifies that dropping without commit logs a warning
-        // In a real implementation, the transaction type would handle rollback
-        let _guard = TransactionGuard::new("transaction_data");
-        // Guard drops here without commit - should log warning
-    }
-
-    #[test]
-    fn test_atomic_counter() {
-        let counter = AtomicCounter::new(10);
-        assert_eq!(counter.get(), 10);
-
-        let new_value = counter.increment();
-        assert_eq!(new_value, 11);
-        assert_eq!(counter.get(), 11);
-
-        counter.reset(5);
-        assert_eq!(counter.get(), 5);
-    }
-
-    #[test]
-    fn test_rate_limiter_config_new() {
-        let config = RateLimiterConfig::new();
-        assert!(config.is_ok());
-
-        let config = config.unwrap();
-        assert_eq!(config.requests_per_second.get(), 100);
-        assert_eq!(config.burst_size.get(), 200);
-    }
-
-    #[test]
-    fn test_rate_limiter_config_with_values() {
-        let config = RateLimiterConfig::with_values(50, 150);
-        assert!(config.is_ok());
-
-        let config = config.unwrap();
-        assert_eq!(config.requests_per_second.get(), 50);
-        assert_eq!(config.burst_size.get(), 150);
-    }
-
-    #[test]
-    fn test_rate_limiter_config_zero_values() {
-        let config = RateLimiterConfig::with_values(0, 0);
-        assert!(config.is_err());
-        let err = config.unwrap_err();
-        // Check the error chain for the inner error message
-        let found = err
-            .chain()
-            .any(|e| e.to_string().contains("value must be > 0"));
-        assert!(found, "Error chain should contain 'value must be > 0'");
-    }
-
-    #[test]
-    fn test_rate_limiter_config_default() {
-        let config = RateLimiterConfig::default();
-        assert_eq!(config.requests_per_second.get(), 100);
-        assert_eq!(config.burst_size.get(), 200);
     }
 }

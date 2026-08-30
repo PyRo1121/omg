@@ -8,19 +8,6 @@ use tempfile::TempDir;
 use tokio::fs;
 
 #[tokio::test]
-async fn test_safe_rate_limiter_integration() {
-    // Test that safe rate limiter config works with governor
-    let config = RateLimiterConfig::new().unwrap();
-    assert_eq!(config.requests_per_second.get(), 100);
-    assert_eq!(config.burst_size.get(), 200);
-
-    // Test custom values
-    let custom_config = RateLimiterConfig::with_values(50, 150).unwrap();
-    assert_eq!(custom_config.requests_per_second.get(), 50);
-    assert_eq!(custom_config.burst_size.get(), 150);
-}
-
-#[tokio::test]
 async fn test_safe_file_operations_integration() {
     let temp_dir = TempDir::new().unwrap();
     let file_path = temp_dir.path().join("integration_test.txt");
@@ -63,47 +50,7 @@ async fn test_path_validation_integration() {
 }
 
 #[test]
-fn test_transaction_guard_integration() {
-    // Test that transaction guard works correctly
-    let transaction_data = "important_transaction_data";
-    let guard = TransactionGuard::new(transaction_data);
-
-    // Test accessing data
-    assert_eq!(guard.inner(), &"important_transaction_data");
-
-    // Test mutable access
-    let mut mutable_guard = TransactionGuard::new("mutable_data");
-    *mutable_guard.inner_mut() = "modified_data";
-    assert_eq!(mutable_guard.inner(), &"modified_data");
-
-    // Test commit
-    let committed_data = TransactionGuard::new("commit_test").commit();
-    assert_eq!(committed_data, "commit_test");
-}
-
-#[test]
-fn test_atomic_counter_integration() {
-    let counter = AtomicCounter::new(10);
-
-    // Test initial value
-    assert_eq!(counter.get(), 10);
-
-    // Test increment
-    let new_value = counter.increment();
-    assert_eq!(new_value, 11);
-    assert_eq!(counter.get(), 11);
-
-    // Test reset
-    counter.reset(5);
-    assert_eq!(counter.get(), 5);
-}
-
-#[test]
-fn test_nonzero_constructors_edge_cases() {
-    // Test boundary value of 1 (smallest valid)
-    let nz1 = nonzero_u32(1, "boundary test").unwrap();
-    assert_eq!(nz1.get(), 1);
-
+fn test_nonzero_fallback_edge_cases() {
     // Test with default fallback
     let nz_default = nonzero_u32_or_default(0, 999);
     assert_eq!(nz_default.get(), 999);
