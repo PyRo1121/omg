@@ -617,7 +617,10 @@ macro_rules! ensure_runtime_impl {
             .list_installed()
             .with_context(|| format!("Failed to list installed {} versions", $runtime_name))?;
 
-        if installed.iter().any(|v| v == &normalized) {
+        if installed
+            .iter()
+            .any(|version| runtime_version_satisfies(version, &normalized))
+        {
             return Ok(normalized);
         }
 
@@ -1269,6 +1272,8 @@ mod tests {
     fn runtime_pins_require_a_matching_semver_version() {
         assert!(runtime_version_satisfies("20.11.1", "20"));
         assert!(runtime_version_satisfies("20.11.1", "^20.0.0"));
+        assert!(runtime_version_satisfies("3.12.7", "3.12"));
+        assert!(runtime_version_satisfies("1.22.5", "1.22"));
         assert!(runtime_version_satisfies("20.11.1", "lts"));
         assert!(runtime_version_satisfies("20.11.1", "lts/iron"));
         assert!(runtime_version_satisfies("1.2.3", "latest"));
