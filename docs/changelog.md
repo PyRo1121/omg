@@ -687,6 +687,7 @@ analyzer inference
 - **Ci**: Cross-platform install script and R2 release sync
 ### 🐛 Bug Fixes
 
+- Validate Debian removal package names
 - Keep fast DNF status local
 - Preserve multilib packages in DNF cache
 - Stream Debian archive members during extraction
