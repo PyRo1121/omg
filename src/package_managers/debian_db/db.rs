@@ -99,17 +99,15 @@ impl Default for DpkgStatusCache {
     }
 }
 
-/// Answer an install query from the cache only when the cache holds a
-/// **complete** dpkg/status parse.
-///
-/// A partial population (e.g. a single-name insert left behind by a scan
-/// fallback) must never answer queries: treating `{curl}` as the full set
-/// would report every other installed package as absent.
-fn cached_installed_state(cache: &DpkgStatusCache, name: &str) -> Option<bool> {
-    if cache.packages.is_empty() {
-        return None;
-    }
-    Some(cache.installed_set.contains(name))
+fn installed_cache_is_current(
+    cache: &DpkgStatusCache,
+    status_mtime: std::time::SystemTime,
+    extended_states_mtime: Option<std::time::SystemTime>,
+) -> bool {
+    !cache.packages.is_empty()
+        && cache.status_mtime == status_mtime
+        && cache.extended_states_mtime == extended_states_mtime
+        && !is_access_expired(cache.last_accessed.load(Ordering::Relaxed))
 }
 
 /// Names of all installed packages from the dpkg-status cache.
@@ -124,11 +122,7 @@ fn installed_names() -> Result<Arc<AHashSet<String>>> {
 
     {
         let cache = crate::core::sync::read_cache(&DPKG_STATUS_CACHE);
-        if !cache.packages.is_empty()
-            && cache.status_mtime == status_mtime
-            && cache.extended_states_mtime == extended_states_mtime
-            && !is_access_expired(cache.last_accessed.load(Ordering::Relaxed))
-        {
+        if installed_cache_is_current(&cache, status_mtime, extended_states_mtime) {
             cache
                 .last_accessed
                 .store(unix_now_secs(), Ordering::Relaxed);
@@ -1798,22 +1792,12 @@ pub fn is_installed_fast(name: &str) -> Result<bool> {
         return Ok(matches!(name, "apt" | "git"));
     }
 
-    // Answer from the cache only when it holds a complete dpkg/status parse;
-    // a partial population must never answer queries (false negatives).
-    {
-        let cache = crate::core::sync::read_cache(&DPKG_STATUS_CACHE);
-        if let Some(installed) = cached_installed_state(&cache, name) {
-            return Ok(installed);
-        }
-    }
-
-    // Cold or partial cache: atomically populate the complete installed set
-    // once instead of answering from a single-name scan. The cache writer
-    // builds the full state and swaps it in under one lock acquisition.
-    list_installed_fast()
-        .with_context(|| format!("failed to determine whether '{name}' is installed"))?;
-    let cache = crate::core::sync::read_cache(&DPKG_STATUS_CACHE);
-    Ok(cache.installed_set.contains(name))
+    // `installed_names` validates dpkg/status and extended_states mtimes plus
+    // the cache TTL before answering. A hot lookup must not outlive a package
+    // transaction performed by another process.
+    installed_names()
+        .map(|installed| installed.contains(name))
+        .with_context(|| format!("failed to determine whether '{name}' is installed"))
 }
 
 pub fn list_explicit_fast() -> Result<Vec<String>> {
@@ -2994,32 +2978,24 @@ mod tests {
     }
 
     #[test]
-    fn partial_installed_set_must_not_answer_queries() {
-        // Regression: a single-name scan insert used to poison the cache and
-        // make every other installed package report as not installed.
-        let mut cache = DpkgStatusCache {
-            installed_set: std::sync::Arc::new({
-                let mut set = ahash::AHashSet::new();
-                set.insert("curl".to_string());
-                set
-            }),
+    fn installed_cache_rejects_changed_dpkg_source_mtimes() {
+        let cached_mtime = std::time::UNIX_EPOCH + std::time::Duration::from_secs(10);
+        let current_mtime = std::time::UNIX_EPOCH + std::time::Duration::from_secs(11);
+        let cache = DpkgStatusCache {
+            packages: vec![DpkgPackageEntry {
+                name: "curl".to_string(),
+                version: "1.0".to_string(),
+                description: String::new(),
+                architecture: "amd64".to_string(),
+                is_explicit: true,
+            }],
+            status_mtime: cached_mtime,
+            last_accessed: AtomicU64::new(unix_now_secs()),
             ..DpkgStatusCache::default()
         };
-        assert_eq!(
-            cached_installed_state(&cache, "vim"),
-            None,
-            "partial cache must fall through to a full population"
-        );
 
-        cache.packages.push(DpkgPackageEntry {
-            name: "curl".to_string(),
-            version: "1.0".to_string(),
-            description: String::new(),
-            architecture: "amd64".to_string(),
-            is_explicit: true,
-        });
-        assert_eq!(cached_installed_state(&cache, "curl"), Some(true));
-        assert_eq!(cached_installed_state(&cache, "vim"), Some(false));
+        assert!(installed_cache_is_current(&cache, cached_mtime, None));
+        assert!(!installed_cache_is_current(&cache, current_mtime, None));
     }
 
     #[test]

@@ -436,6 +436,7 @@ fn generate_policy_json() -> Result<String> {
     serde_json::to_string_pretty(&policy).context("Failed to serialize security policy")
 }
 
+#[cfg(any(feature = "arch", test))]
 fn serialize_installed_packages_csv_rows(
     rows: impl IntoIterator<Item = (String, String, String)>,
 ) -> Result<String> {
