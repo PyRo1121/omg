@@ -303,6 +303,7 @@ impl PackageManager for MockPackageManager {
                     .unwrap_or_else(|| "0".to_string());
                 state.installed.insert(pkg.clone(), version);
             }
+            drop(pkgs);
             self.save_state(&state)?;
             Ok(())
         })
