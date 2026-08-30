@@ -196,11 +196,12 @@ impl DebianMmapIndex {
         let file = File::open(path)
             .with_context(|| format!("Failed to open mmap index at {}", path.display()))?;
 
-        // SAFETY: the file descriptor is read-only, the mapping is owned by
-        // this value, and every archived access is validated by rkyv before
-        // data is exposed.
+        // SAFETY: the file descriptor is read-only and the mapping is owned
+        // by this value for its full lifetime.
         #[expect(unsafe_code)]
         let mmap = unsafe { Mmap::map(&file)? };
+        rkyv::access::<rkyv::Archived<DebianPackageIndex>, rkyv::rancor::Error>(&mmap)
+            .map_err(|error| anyhow::anyhow!("Corrupted Debian package index: {error}"))?;
 
         Ok(Self {
             mmap,
@@ -208,14 +209,18 @@ impl DebianMmapIndex {
         })
     }
 
-    fn archive(&self) -> Result<&rkyv::Archived<DebianPackageIndex>> {
-        rkyv::access::<rkyv::Archived<DebianPackageIndex>, rkyv::rancor::Error>(&self.mmap)
-            .map_err(|error| anyhow::anyhow!("Corrupted Debian package index: {error}"))
+    fn archive(&self) -> &rkyv::Archived<DebianPackageIndex> {
+        // SAFETY: `open` validates the entire immutable mapping before
+        // constructing `Self`, and `mmap` cannot be mutated afterward.
+        #[expect(unsafe_code)]
+        unsafe {
+            rkyv::access_unchecked::<rkyv::Archived<DebianPackageIndex>>(&self.mmap)
+        }
     }
 
     /// Look up one package without deserializing the full index.
     pub fn get(&self, name: &str) -> Result<Option<&rkyv::Archived<DebianPackage>>> {
-        let archive = self.archive()?;
+        let archive = self.archive();
         let Some(index) = archive.name_to_idx.get(name) else {
             return Ok(None);
         };
@@ -224,7 +229,7 @@ impl DebianMmapIndex {
 
     /// Access all archived packages without deserializing the index.
     pub fn packages(&self) -> Result<&rkyv::vec::ArchivedVec<rkyv::Archived<DebianPackage>>> {
-        Ok(&self.archive()?.packages)
+        Ok(&self.archive().packages)
     }
 
     #[must_use]
@@ -2447,10 +2452,9 @@ mod tests {
         let test_file = temp_dir.path().join("corrupted.rkyv");
         std::fs::write(&test_file, b"corrupted data").unwrap();
 
-        let index = DebianMmapIndex::open(&test_file).unwrap();
-        let result = index.get("vim");
+        let result = DebianMmapIndex::open(&test_file);
 
-        assert!(result.is_err(), "Should fail to access corrupted archive");
+        assert!(result.is_err(), "Should reject a corrupted archive at open");
     }
 
     #[test]
@@ -2459,10 +2463,9 @@ mod tests {
         let test_file = temp_dir.path().join("empty.rkyv");
         std::fs::write(&test_file, b"").unwrap();
 
-        let index = DebianMmapIndex::open(&test_file).unwrap();
-        let result = index.get("vim");
+        let result = DebianMmapIndex::open(&test_file);
 
-        assert!(result.is_err(), "Should fail to access empty file");
+        assert!(result.is_err(), "Should reject an empty archive at open");
     }
 
     #[test]
@@ -2471,10 +2474,9 @@ mod tests {
         let test_file = temp_dir.path().join("corrupted.rkyv");
         std::fs::write(&test_file, vec![0xFF; 100]).unwrap();
 
-        let index = DebianMmapIndex::open(&test_file).unwrap();
-        let result = index.packages();
+        let result = DebianMmapIndex::open(&test_file);
 
-        assert!(result.is_err(), "Should fail to access corrupted file");
+        assert!(result.is_err(), "Should reject a corrupted archive at open");
     }
 
     #[test]
