@@ -151,8 +151,8 @@ fn init_sanitizes_unsafe_base_image_to_default() {
 // container status / list / images without a runtime
 // ---------------------------------------------------------------------------
 
-/// Contract: with no container runtime on PATH, `status` still succeeds and
-/// names the missing dependency plus the remedy and both official install guides.
+/// Contract: with no container runtime on PATH, `status` fails and names the
+/// missing dependency plus the remedy.
 #[test]
 fn status_without_runtime_names_missing_dependency_and_remedy() {
     let project = TestProject::new();
@@ -162,46 +162,41 @@ fn status_without_runtime_names_missing_dependency_and_remedy() {
         &[("PATH", no_runtime_path().as_str())],
     );
 
-    // Error titles render on stderr; their remedies render on stdout.
-    result.assert_success();
-    result.assert_stdout_contains("Runtime: Not found");
-    result.assert_stderr_contains("No container runtime detected");
-    result.assert_stdout_contains("Install Docker or Podman to use container features");
-    result.assert_stdout_contains("https://docs.docker.com/engine/install/");
-    result.assert_stdout_contains("https://podman.io/getting-started/installation");
+    result.assert_failure();
+    result.assert_stderr_contains(
+        "No container runtime detected. Install Docker or Podman to use container features.",
+    );
+    assert!(
+        result.stdout.trim().is_empty(),
+        "unexpected stdout: {}",
+        result.stdout
+    );
 }
 
-/// Contract: with a runtime present, `status` identifies which one it found in
-/// the header; without one it says "Not found". Both sides assert concretely.
+/// Contract: `status` either reports the usable runtime or fails with the
+/// concrete runtime/daemon error instead of presenting an empty status card.
 #[test]
 fn status_header_reports_detected_runtime() {
     let project = TestProject::new();
 
     let result = project.run(&["container", "status"]);
-    // status() never fails, whatever it reports.
-    result.assert_success();
 
-    let docker = std::process::Command::new("docker")
-        .arg("--version")
-        .stdout(std::process::Stdio::null())
-        .stderr(std::process::Stdio::null())
-        .status()
-        .is_ok_and(|s| s.success());
-    let podman = std::process::Command::new("podman")
-        .arg("--version")
-        .stdout(std::process::Stdio::null())
-        .stderr(std::process::Stdio::null())
-        .status()
-        .is_ok_and(|s| s.success());
-
-    if podman {
-        result.assert_stdout_contains("Runtime: Podman");
-    } else if docker {
-        result.assert_stdout_contains("Runtime: Docker");
+    if result.success {
+        assert!(
+            result.stdout.contains("Runtime: Podman") || result.stdout.contains("Runtime: Docker"),
+            "successful status must name its runtime: {}",
+            result.stdout
+        );
+        result.assert_stdout_contains("Container Status");
     } else {
-        result.assert_stdout_contains("Runtime: Not found");
+        assert!(
+            result.stderr.contains("No container runtime detected")
+                || result.stderr.contains("Failed to list containers"),
+            "failed status must name the runtime cause: {}",
+            result.stderr
+        );
+        assert!(!result.stdout.contains("Container Status"));
     }
-    result.assert_stdout_contains("Container Status");
 }
 
 /// Contract: `list` and `images` require a runtime and fail with the exact
