@@ -111,9 +111,12 @@ impl TrigramIndex {
         if bytes.len() < 3 {
             return;
         }
+        let mut seen = ahash::AHashSet::with_capacity(bytes.len().saturating_sub(2));
         for window in bytes.windows(3) {
             let trigram = [window[0], window[1], window[2]];
-            self.postings.entry(trigram).or_default().push(idx);
+            if seen.insert(trigram) {
+                self.postings.entry(trigram).or_default().push(idx);
+            }
         }
     }
 
@@ -557,6 +560,16 @@ mod tests {
             ("python", "3.13.1", "High-level scripting language"),
             ("git", "2.47.1", "Distributed version control system"),
         ])
+    }
+
+    #[test]
+    fn repeated_name_trigrams_do_not_duplicate_search_results() {
+        let index = PackageIndex::from_records(&[("aaaa", "1.0", "repeated trigram")]);
+
+        let results = index.search("aaa", 10);
+
+        assert_eq!(results.len(), 1);
+        assert_eq!(results[0].name, "aaaa");
     }
 
     #[test]
