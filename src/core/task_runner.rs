@@ -809,23 +809,9 @@ fn execute_process(cmd: &str, args: &[String], extra_args: &[String]) -> Result<
     // reject legitimate relative-path tools like `./gradlew` or `./mvnw`.
     validate_executable_command(cmd)?;
 
-    // SECURITY: Validate extra_args to prevent command injection
-    for arg in extra_args {
-        // Check for shell metacharacters that could be dangerous
-        if arg.contains(';')
-            || arg.contains('|')
-            || arg.contains('&')
-            || arg.contains('`')
-            || arg.contains('$')
-            || arg.contains('\n')
-        {
-            anyhow::bail!("Invalid argument '{arg}' - contains shell metacharacters");
-        }
-        // Warn about potentially dangerous options (but allow them)
-        if arg.starts_with("--") && (arg.contains("eval") || arg.contains("exec")) {
-            tracing::warn!("Potentially dangerous argument: {}", arg);
-        }
-    }
+    // Arguments are passed directly to `Command::args` without a shell.
+    // Preserve metacharacters verbatim for filters, regular expressions, and
+    // literal values such as `$HOME`.
 
     command.args(args);
     command.args(extra_args);

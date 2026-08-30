@@ -187,15 +187,18 @@ fn unknown_command_executes_as_passthrough_from_path() {
 // ═══════════════════════════════════════════════════════════════════════════════
 
 #[test]
-fn shell_metacharacter_in_extra_args_is_rejected_before_spawn() {
-    // Contract: extra args containing shell metacharacters fail closed with
-    // "Invalid argument '<arg>' - contains shell metacharacters".
+fn shell_metacharacters_in_extra_args_are_passed_verbatim() {
     let project = TestProject::new();
+    let shims = tempfile::tempdir().expect("shim dir");
+    write_shim(shims.path(), "mytool", &echo_shim_body("ARGS"));
 
-    let result = project.run_with_env(&["run", "echo", "--", "a;b"], &[]);
+    let result = project.run_with_env(
+        &["run", "mytool", "--", "a;b|$HOME", "x&y"],
+        &[path_env(shims.path())],
+    );
 
-    result.assert_failure();
-    result.assert_stderr_contains("Invalid argument 'a;b' - contains shell metacharacters");
+    result.assert_success();
+    result.assert_stdout_contains("ARGS: a;b|$HOME x&y");
 }
 
 #[test]
