@@ -678,6 +678,7 @@ analyzer inference
 - **Ci**: Cross-platform install script and R2 release sync
 ### 🐛 Bug Fixes
 
+- Deduplicate package trigram postings
 - Reject special files during secret scans
 - Reject unsafe environment lockfile types
 - Neutralize enterprise CSV formulas
