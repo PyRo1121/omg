@@ -17,6 +17,23 @@ pub fn run(package: &str) -> Result<()> {
     Ok(())
 }
 
+fn newest_transactions_for_package<'a>(
+    transactions: &'a [crate::core::history::Transaction],
+    package: &str,
+) -> Vec<&'a crate::core::history::Transaction> {
+    let mut relevant: Vec<_> = transactions
+        .iter()
+        .filter(|transaction| {
+            transaction
+                .changes
+                .iter()
+                .any(|change| change.name == package)
+        })
+        .collect();
+    relevant.sort_by(|left, right| right.timestamp.cmp(&left.timestamp));
+    relevant
+}
+
 fn build_blame_output(package: &str) -> Result<Cmd<()>> {
     // First check if package is installed
     let (is_installed, version, install_reason) = get_package_info(package)?;
@@ -54,10 +71,7 @@ fn build_blame_output(package: &str) -> Result<Cmd<()>> {
     let history = HistoryManager::new()?;
     let transactions = history.load()?;
 
-    let relevant: Vec<_> = transactions
-        .iter()
-        .filter(|t| t.changes.iter().any(|c| c.name == package))
-        .collect();
+    let relevant = newest_transactions_for_package(&transactions, package);
 
     if relevant.is_empty() {
         use crate::cli::tea::{StyledTextConfig, TextStyle};
@@ -69,7 +83,6 @@ fn build_blame_output(package: &str) -> Result<Cmd<()>> {
     } else {
         let txn_content: Vec<String> = relevant
             .iter()
-            .rev()
             .take(10)
             .filter_map(|txn| {
                 // Safe: we filtered for transactions containing this package above
@@ -236,6 +249,45 @@ fn show_required_by(_package: &str) -> Result<Cmd<()>> {
 
 fn format_timestamp(ts: i64) -> String {
     crate::cli::format_short_timestamp(ts)
+}
+
+#[cfg(test)]
+mod ordering_tests {
+    use super::*;
+    use crate::core::history::{PackageChange, Transaction};
+
+    fn transaction(id: &str, timestamp: &str, package: &str) -> Transaction {
+        Transaction {
+            id: id.to_string(),
+            timestamp: timestamp.parse().expect("timestamp"),
+            transaction_type: TransactionType::Install,
+            changes: vec![PackageChange {
+                name: package.to_string(),
+                old_version: None,
+                new_version: Some("1.0".to_string()),
+                source: "test".to_string(),
+            }],
+            success: true,
+        }
+    }
+
+    #[test]
+    fn package_history_is_sorted_by_timestamp_not_storage_order() {
+        let history = vec![
+            transaction("new", "2026-01-02T00:00:00Z", "vim"),
+            transaction("other", "2026-01-03T00:00:00Z", "bash"),
+            transaction("old", "2026-01-01T00:00:00Z", "vim"),
+        ];
+
+        let relevant = newest_transactions_for_package(&history, "vim");
+        assert_eq!(
+            relevant
+                .iter()
+                .map(|entry| entry.id.as_str())
+                .collect::<Vec<_>>(),
+            ["new", "old"]
+        );
+    }
 }
 
 #[cfg(all(
