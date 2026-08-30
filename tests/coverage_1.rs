@@ -9,7 +9,7 @@
 //!    with EXACT validation-error messages before any network or filesystem
 //!    side effect.
 //! 3. `AurClient::downgrade_from_history()` validates its VERSION argument
-//!    with the same hardened package-name rules (path traversal rejected).
+//!    with the bounded package-version grammar before performing I/O.
 //! 4. `AurClient::downgrade_from_history()` validates its PACKAGE argument
 //!    before anything else (leading `-` rejected: option injection guard).
 //! 5. The manual `Debug` impl never leaks `Settings` (user-specific paths,
@@ -34,7 +34,7 @@ const ERR_INVALID_CHAR_SEMICOLON: &str =
     "Invalid character ';' in package name. Only alphanumeric, -, _, ., +, @, / allowed";
 const ERR_EMPTY_NAME: &str = "Package name cannot be empty";
 const ERR_LEADING_DASH: &str = "Package name cannot start with '-' (option injection protection)";
-const ERR_PATH_TRAVERSAL: &str = "Package name cannot contain '..' (path traversal protection)";
+const ERR_INVALID_VERSION_CHAR: &str = "Invalid character ' ' in version string";
 
 use omg_lib::config::{AurBuildMethod, Settings};
 use omg_lib::package_managers::AurClient;
@@ -152,24 +152,23 @@ fn install_rejects_injection_style_names_before_any_io() {
     });
 }
 
-/// `downgrade_from_history()` validates the VERSION argument with the full
-/// package-name rule set: a traversal payload as version must be rejected
-/// before resolve_package_base(), directory creation under `_rollback/`, or
-/// any git invocation. The package name here is deliberately valid so ONLY
-/// the version-validation line can produce this error.
+/// `downgrade_from_history()` validates the VERSION argument before
+/// resolve_package_base(), directory creation under `_rollback/`, or any git
+/// invocation. The package name here is deliberately valid so only the
+/// version-validation line can produce this error.
 #[test]
 #[serial]
-fn downgrade_rejects_traversal_payload_in_version_argument() {
+fn downgrade_rejects_invalid_version_character_before_any_io() {
     with_hermetic_dirs("[aur]\n", || {
         let client = AurClient::new().expect("client construction");
         let runtime = rt();
 
         let error = runtime
-            .block_on(client.downgrade_from_history("zzz-omg-nonexistent-9x7", "1..0"))
-            .expect_err("traversal version must be rejected before any IO");
+            .block_on(client.downgrade_from_history("zzz-omg-nonexistent-9x7", "1 0"))
+            .expect_err("unsafe version character must be rejected before any IO");
         assert_eq!(
             error.to_string(),
-            ERR_PATH_TRAVERSAL,
+            ERR_INVALID_VERSION_CHAR,
             "downgrade_from_history must validate its version argument"
         );
     });
