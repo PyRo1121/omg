@@ -13,9 +13,7 @@ use std::path::Path;
 pub struct DependencyInfo {
     /// Dependencies that need to be installed
     pub missing: Vec<String>,
-    /// Dependencies already installed
-    pub satisfied: Vec<String>,
-    /// Total dependency count
+    /// Total dependency expressions inspected
     pub total: usize,
 }
 
@@ -38,7 +36,6 @@ pub fn check_dependencies(pkg_dir: &Path) -> Result<DependencyInfo> {
         // No .SRCINFO means we can't pre-check, fallback to makepkg
         return Ok(DependencyInfo {
             missing: Vec::new(),
-            satisfied: Vec::new(),
             total: 0,
         });
     }
@@ -90,72 +87,22 @@ pub fn check_dependencies(pkg_dir: &Path) -> Result<DependencyInfo> {
     all_deps.sort();
     all_deps.dedup();
 
-    let total = all_deps.len();
+    let dependency_count = all_deps.len();
 
-    // Check which ones are installed using alpm
-    let (satisfied, missing) = crate::package_managers::alpm_direct::with_handle(|alpm| {
-        let localdb = alpm.localdb();
-        let mut satisfied = Vec::with_capacity(total);
-        let mut missing = Vec::with_capacity(total / 4 + 1);
-
-        for dep in all_deps {
-            // Extract package name (strip version constraints like >=, <=, =, >, <)
-            let pkg_name = extract_package_name(&dep);
-
-            if localdb.pkg(pkg_name).is_ok() {
-                satisfied.push(dep);
-            } else {
-                missing.push(dep);
-            }
-        }
-
-        Ok((satisfied, missing))
+    // Ask libalpm to evaluate the complete dependency expression. A package
+    // with the right name but an older version is not a satisfier, while a
+    // compatible virtual provider can be.
+    let missing = crate::package_managers::alpm_direct::with_handle(|alpm| {
+        let installed = alpm.localdb().pkgs();
+        Ok(all_deps
+            .into_iter()
+            .filter(|dependency| installed.find_satisfier(dependency.clone()).is_none())
+            .collect::<Vec<_>>())
     })?;
 
+    debug_assert!(missing.len() <= dependency_count);
     Ok(DependencyInfo {
         missing,
-        satisfied,
-        total,
+        total: dependency_count,
     })
-}
-
-/// Extract package name from a dependency string, stripping version constraints
-///
-/// Handles formats like:
-/// - "package" -> "package"
-/// - "package>=1.0" -> "package"
-/// - "package>1.0" -> "package"
-/// - "package=1.0" -> "package"
-/// - "package<=1.0" -> "package"
-/// - "package<1.0" -> "package"
-fn extract_package_name(dep: &str) -> &str {
-    // Find the first occurrence of any version operator
-    let operators = ['>', '<', '='];
-
-    for (i, c) in dep.char_indices() {
-        if operators.contains(&c) {
-            return &dep[..i];
-        }
-    }
-
-    dep
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn test_extract_package_name() {
-        assert_eq!(extract_package_name("gcc"), "gcc");
-        assert_eq!(extract_package_name("gcc>=10"), "gcc");
-        assert_eq!(extract_package_name("gcc>10"), "gcc");
-        assert_eq!(extract_package_name("gcc=10"), "gcc");
-        assert_eq!(extract_package_name("gcc<=10"), "gcc");
-        assert_eq!(extract_package_name("gcc<10"), "gcc");
-        assert_eq!(
-            extract_package_name("lib32-gcc-libs>=10.2"),
-            "lib32-gcc-libs"
-        );
-    }
 }

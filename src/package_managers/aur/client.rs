@@ -1665,7 +1665,6 @@ impl AurClient {
             tracing::warn!("Unable to inspect dependencies for {}: {}", package, e);
             crate::package_managers::aur_deps::DependencyInfo {
                 missing: Vec::new(),
-                satisfied: Vec::new(),
                 total: 0,
             }
         });
