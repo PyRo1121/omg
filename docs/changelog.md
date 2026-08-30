@@ -687,6 +687,7 @@ analyzer inference
 - **Ci**: Cross-platform install script and R2 release sync
 ### 🐛 Bug Fixes
 
+- Validate runtime path ancestor permissions
 - Roll back partial database publication
 - Validate Debian removal package names
 - Keep fast DNF status local
