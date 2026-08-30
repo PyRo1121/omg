@@ -153,15 +153,6 @@ fn bench_runtime_resolution(c: &mut Criterion) {
         });
     });
 
-    // Benchmark native runtime path resolution
-    group.bench_function("native_runtime_bin_path", |b| {
-        b.iter(|| {
-            let result =
-                runtime_resolver::native_runtime_bin_path(black_box("node"), black_box("20.0.0"));
-            black_box(result);
-        });
-    });
-
     group.finish();
 }
 
