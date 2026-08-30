@@ -126,7 +126,7 @@ impl FastStatus {
         let now = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
             .map_or(0, |d| d.as_secs());
-        if now.saturating_sub(status.timestamp) > FAST_STATUS_FRESHNESS_SECS {
+        if status.timestamp > now || now - status.timestamp > FAST_STATUS_FRESHNESS_SECS {
             return None;
         }
 
@@ -179,6 +179,18 @@ mod tests {
 
         let mut status = FastStatus::new(100, 50, 0, 0);
         status.magic = 0xDEAD_BEEF;
+        status.write_to_file(&path).unwrap();
+
+        assert!(FastStatus::read_from_file(&path).is_none());
+    }
+
+    #[test]
+    fn future_status_is_rejected() {
+        let dir = tempdir().unwrap();
+        let path = dir.path().join("future.bin");
+
+        let mut status = FastStatus::new(100, 50, 0, 0);
+        status.timestamp = u64::MAX;
         status.write_to_file(&path).unwrap();
 
         assert!(FastStatus::read_from_file(&path).is_none());
