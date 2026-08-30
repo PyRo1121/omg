@@ -888,6 +888,22 @@ fn omgd_sibling_path() -> Option<PathBuf> {
         .filter(|path| path.is_file())
 }
 
+fn systemd_quote_exec_path(path: &Path) -> String {
+    let mut quoted = String::with_capacity(path.as_os_str().len() + 2);
+    quoted.push('"');
+    for character in path.to_string_lossy().chars() {
+        match character {
+            '\\' => quoted.push_str("\\\\"),
+            '"' => quoted.push_str("\\\""),
+            '%' => quoted.push_str("%%"),
+            '$' => quoted.push_str("$$"),
+            _ => quoted.push(character),
+        }
+    }
+    quoted.push('"');
+    quoted
+}
+
 fn create_systemd_service() -> Result<()> {
     let home = std::env::var("HOME")?;
     let service_dir = format!("{home}/.config/systemd/user");
@@ -897,7 +913,7 @@ fn create_systemd_service() -> Result<()> {
     // historical %h/.local/bin location when it cannot be resolved.
     let exec_start = omgd_sibling_path().map_or_else(
         || "ExecStart=%h/.local/bin/omgd --foreground".to_owned(),
-        |path| format!("ExecStart={} --foreground", path.display()),
+        |path| format!("ExecStart={} --foreground", systemd_quote_exec_path(&path)),
     );
 
     let service_content = format!(
@@ -1019,6 +1035,15 @@ fn print_completion(stdout: &mut io::Stdout, state: &WizardState) -> Result<()> 
 #[expect(clippy::unwrap_used)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn systemd_exec_paths_are_quoted_and_escape_unit_expansion() {
+        let path = Path::new(r#"/opt/OMG $Build%/omg\"daemon"#);
+        assert_eq!(
+            systemd_quote_exec_path(path),
+            r#""/opt/OMG $$Build%%/omg\\\"daemon""#
+        );
+    }
 
     #[test]
     fn disabled_daemon_forces_manual_wizard_startup() {
