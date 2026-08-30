@@ -3943,6 +3943,7 @@ the Debian backend), so it was removed from the metadata.
 - Normalize project formatting
 ### 🧪 Testing
 
+- Require precise Debian removal failures
 - Align task overrides with Node ecosystem
 - Bound daemon lifecycle probes
 - Align integration tests with current feature APIs
