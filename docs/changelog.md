@@ -2697,6 +2697,7 @@ across history/faq/cli
 - Run Docker E2E tests explicitly
 ### 📚 Documentation
 
+- Describe observed enterprise report evidence
 - Record upstream ALPM compatibility research
 - Align examples with the CLI
 - Remove obsolete mise runtime claims
