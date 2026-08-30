@@ -729,12 +729,8 @@ pub enum WorkspaceCommands {
         #[arg(default_value = "main")]
         branch: String,
     },
-    /// Sync all project environments
-    Sync {
-        /// Skip confirmation
-        #[arg(short = 'y', long)]
-        yes: bool,
-    },
+    /// Check all project environments without changing them
+    Check,
     /// Show workspace status
     Status,
 }
@@ -1261,6 +1257,12 @@ mod tests {
                 "conflicting run modes unexpectedly parsed: {args:?}"
             );
         }
+    }
+
+    #[test]
+    fn workspace_environment_command_is_truthfully_named() {
+        assert!(Cli::try_parse_from(["omg", "workspace", "check"]).is_ok());
+        assert!(Cli::try_parse_from(["omg", "workspace", "sync"]).is_err());
     }
 
     #[test]

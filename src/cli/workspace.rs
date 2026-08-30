@@ -580,30 +580,17 @@ fn git_lockfile_diff(project_path: &Path, branch: &str) -> Result<Vec<u8>> {
     Ok(output.stdout)
 }
 
-/// Sync all project environments
-pub fn sync(yes: bool) -> Result<()> {
+/// Check all project environments without mutating them.
+pub fn check() -> Result<()> {
     let workspace = Workspace::load()?;
 
     println!(
-        "{} Syncing workspace environments...\n",
+        "{} Checking workspace environments...\n",
         style::header("OMG")
     );
 
-    if !yes {
-        let confirm = dialoguer::Confirm::new()
-            .with_prompt("Sync all project environments?")
-            .default(true)
-            .interact()?;
-
-        if !confirm {
-            println!("{}", style::dim("Cancelled"));
-            return Ok(());
-        }
-    }
-
-    // NOTE: This delegates to the read-only `omg env check`, so it verifies
-    // environment health rather than mutating anything. Projects needing
-    // attention make the command exit nonzero so scripts can detect it.
+    // Projects needing attention make the command exit nonzero so scripts can
+    // distinguish a healthy workspace from an incomplete environment.
     let mut ok_count = 0usize;
     let mut attention_count = 0usize;
     let mut error_count = 0usize;

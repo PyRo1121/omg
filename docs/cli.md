@@ -637,7 +637,7 @@ omg workspace <SUBCOMMAND>
 | `list` | List all projects in the workspace |
 | `run <command> [-p] [--filter]` | Run a command across all projects |
 | `diff [branch]` | Show environment diff across workspace vs a branch (default: main) |
-| `sync [-y]` | Sync all project environments |
+| `check` | Check all project environments without changing them |
 | `status` | Show workspace status |
 
 ---
