@@ -328,10 +328,7 @@ fn try_fast_explicit_count(args: &[String]) -> bool {
         return false;
     }
 
-    if args.len() >= 2
-        && args[1] == "explicit"
-        && args.iter().any(|a| matches!(a.as_str(), "--count" | "-c"))
-    {
+    if args.len() == 3 && args[1] == "explicit" && matches!(args[2].as_str(), "--count" | "-c") {
         if let Some(count) = omg_lib::core::fast_status::FastStatus::read_explicit_count() {
             println!("{count}");
             return true;
@@ -432,7 +429,11 @@ fn try_fast_info(args: &[String]) -> bool {
 }
 
 fn try_fast_completions(args: &[String]) -> Result<bool> {
-    if args.len() >= 3 && args[1] == "completions" {
+    if matches!(args.len(), 3 | 4)
+        && args[1] == "completions"
+        && (args.len() == 3 || args[3] == "--stdout")
+        && !has_json_flag(args)
+    {
         let shell = &args[2];
         if shell.starts_with('-') {
             return Ok(false);
@@ -448,7 +449,7 @@ fn try_fast_completions(args: &[String]) -> Result<bool> {
             return Ok(true);
         }
 
-        let stdout = args.iter().any(|a| a == "--stdout");
+        let stdout = args.len() == 4;
 
         match shell.to_lowercase().as_str() {
             "bash" | "zsh" | "fish" => {
@@ -557,18 +558,7 @@ fn try_fast_hooks(args: &[String]) -> bool {
                 }
             }
             "hook-env" => {
-                // args[1] is the "hook-env" token itself, so scanning from
-                // args[2] finds the same shell argument the old scan did —
-                // without ever invoking hook_env("") (which always fails and
-                // should simply defer to the full CLI path). get(2..) keeps
-                // bare `omg hook-env` invocations panic-free.
-                if let Some(shell) = args
-                    .get(2..)
-                    .into_iter()
-                    .flatten()
-                    .map(String::as_str)
-                    .find(|shell| !shell.starts_with('-'))
-                    && hooks::hook_env(shell).is_ok()
+                if args.len() == 3 && !args[2].starts_with('-') && hooks::hook_env(&args[2]).is_ok()
                 {
                     return true;
                 }
@@ -1328,14 +1318,16 @@ async fn dispatch_command(command: &Commands, ctx: &omg_lib::cli::CliContext) ->
 
 #[cfg(test)]
 mod fast_path_tests {
-    use super::{has_all_flag, has_json_flag, parse_fast_list_tail};
+    use super::{
+        has_all_flag, has_json_flag, parse_fast_list_tail, try_fast_completions,
+        try_fast_explicit_count, try_fast_hooks,
+    };
 
     #[cfg(feature = "arch")]
     use super::split_elevated_invocation;
     #[cfg(feature = "arch")]
     use super::strip_internal_invocation_markers;
 
-    #[cfg(feature = "arch")]
     fn args(list: &[&str]) -> Vec<String> {
         list.iter().map(std::string::ToString::to_string).collect()
     }
@@ -1432,6 +1424,20 @@ mod fast_path_tests {
         let parsed =
             split_elevated_invocation(&argv).map(|(command, pkgs)| (command, pkgs.to_vec()));
         assert_eq!(parsed, Some(("update", Vec::new())));
+    }
+
+    #[test]
+    fn malformed_fast_path_tails_defer_to_clap() {
+        assert!(!try_fast_explicit_count(&args(&[
+            "omg", "explicit", "extra", "--count",
+        ])));
+        assert!(
+            !try_fast_completions(&args(&["omg", "completions", "bash", "--stdout", "extra",]))
+                .expect("fast completion parser")
+        );
+        assert!(!try_fast_hooks(&args(&[
+            "omg", "hook-env", "bash", "extra",
+        ])));
     }
 
     #[test]
