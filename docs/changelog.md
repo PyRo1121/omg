@@ -678,6 +678,7 @@ analyzer inference
 - **Ci**: Cross-platform install script and R2 release sync
 ### 🐛 Bug Fixes
 
+- Isolate malformed ancestor runtime pins
 - Surface Python release HTTP failures
 - Bound Rust gzip component decompression
 - Surface Bun release HTTP failures
