@@ -506,11 +506,13 @@ impl HomebrewPackageManager {
                 }
 
                 let pkg_path = entry.path();
-                packages.push(
-                    self.read_package_info(&pkg_path, &name)
-                        .await
-                        .with_context(|| format!("Failed to read Homebrew formula {name}"))?,
-                );
+                match self.read_package_info(&pkg_path, &name).await {
+                    Ok(package) => packages.push(package),
+                    Err(error) => tracing::warn!(
+                        "Skipping unreadable Homebrew formula {}: {error:#}",
+                        pkg_path.display()
+                    ),
+                }
             }
         }
 
@@ -1145,8 +1147,8 @@ mod tests {
     async fn installed_casks_are_included_and_numerically_sorted() -> Result<()> {
         let root = tempfile::tempdir()?;
         let cask_dir = root.path().join(CASKROOM_DIR).join("example");
-        fs::create_dir_all(cask_dir.join("1.9".to_string())).await?;
-        fs::create_dir_all(cask_dir.join("1.10".to_string())).await?;
+        fs::create_dir_all(cask_dir.join("1.9")).await?;
+        fs::create_dir_all(cask_dir.join("1.10")).await?;
         let manager = HomebrewPackageManager {
             prefix: root.path().to_path_buf(),
             cellar: root.path().join(CELLAR_DIR),
@@ -1158,6 +1160,25 @@ mod tests {
         assert_eq!(packages.len(), 1);
         assert_eq!(packages[0].name, "example");
         assert_eq!(packages[0].version, "1.10");
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn malformed_cellar_entry_does_not_hide_valid_formulas() -> Result<()> {
+        let root = tempfile::tempdir()?;
+        let cellar = root.path().join(CELLAR_DIR);
+        fs::create_dir_all(cellar.join("empty-formula")).await?;
+        fs::create_dir_all(cellar.join("valid-formula").join("1.0")).await?;
+        let manager = HomebrewPackageManager {
+            prefix: root.path().to_path_buf(),
+            cellar,
+            cache: Arc::new(RwLock::new(None)),
+            client: crate::core::http::download_client().clone(),
+        };
+
+        let packages = manager.read_installed_packages().await?;
+        assert_eq!(packages.len(), 1);
+        assert_eq!(packages[0].name, "valid-formula");
         Ok(())
     }
 
