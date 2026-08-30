@@ -686,6 +686,7 @@ analyzer inference
 - **Ci**: Cross-platform install script and R2 release sync
 ### 🐛 Bug Fixes
 
+- Stream Debian archive members during extraction
 - Reject conflicting AUR source destinations
 - Reject future AUR cache timestamps
 - Order AUR builds by build dependencies
