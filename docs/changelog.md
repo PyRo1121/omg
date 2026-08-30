@@ -678,6 +678,7 @@ analyzer inference
 - **Ci**: Cross-platform install script and R2 release sync
 ### 🐛 Bug Fixes
 
+- Quote systemd daemon executable paths
 - Remove estimated enterprise report metrics
 - Stop fabricating access control evidence
 - Fail secret scans with critical findings
