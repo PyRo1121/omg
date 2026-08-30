@@ -5,8 +5,6 @@
 
 use anyhow::{Context, Result};
 use std::num::NonZero;
-use std::path::Path;
-use std::process::Command;
 
 /// System hardware information
 #[derive(Debug, Clone)]
@@ -60,7 +58,7 @@ impl SystemInfo {
     pub fn recommend(&self) -> BuildRecommendation {
         let mut explanation = Vec::new();
 
-        // MAKEFLAGS - use all cores, with load limit
+        // MAKEFLAGS - use all detected logical cores.
         let makeflags = if self.cpu_cores > 1 {
             explanation.push(format!(
                 "Using -j{} for parallel compilation ({}x speedup potential)",
@@ -97,7 +95,7 @@ impl SystemInfo {
         let disable_secure_makepkg = self.ram_gb >= 16.0;
         if self.ram_gb >= 16.0 {
             explanation.push(format!(
-                "{:.0}GB RAM detected → disabling cleanbuild for faster rebuilds",
+                "{:.0}GB RAM detected → disabling secure clean builds for faster rebuilds",
                 self.ram_gb
             ));
         } else if self.ram_gb < 8.0 {
@@ -175,22 +173,9 @@ fn ram_gb_from_meminfo(content: &str) -> Result<f64> {
     anyhow::bail!("MemTotal not found in /proc/meminfo")
 }
 
-/// Check if a tool is available in PATH
+/// Check whether an executable tool can be resolved from `PATH`.
 fn is_tool_available(name: &str) -> bool {
-    // Check PATH first
-    if let Ok(path) = std::env::var("PATH")
-        && path
-            .split(':')
-            .any(|dir| Path::new(dir).join(name).exists())
-    {
-        return true;
-    }
-
-    // Fallback to which command
-    Command::new("which")
-        .args(["--", name])
-        .output()
-        .is_ok_and(|o| o.status.success())
+    which::which(name).is_ok()
 }
 
 #[cfg(test)]
