@@ -14,6 +14,14 @@ use std::path::Path;
 use crate::cli::security::spreadsheet_safe_cell;
 use crate::core::license;
 
+fn artifact_stamp() -> String {
+    format!(
+        "{}-{}",
+        jiff::Timestamp::now().as_nanosecond(),
+        std::process::id()
+    )
+}
+
 impl LocalCommandRunner for EnterpriseCommands {
     async fn execute(&self, ctx: &CliContext) -> Result<()> {
         match self {
@@ -49,11 +57,7 @@ pub async fn reports(report_type: &str, _ctx: &CliContext) -> Result<()> {
     )))?;
 
     let report = generate_report(report_type).await?;
-    let filename = format!(
-        "omg-report-{}-{}.json",
-        report_type,
-        jiff::Timestamp::now().as_second()
-    );
+    let filename = format!("omg-report-{report_type}-{}.json", artifact_stamp());
 
     let content = serde_json::to_string_pretty(&report)?;
     crate::core::safe_ops::atomic_write_file_sync(&filename, &content)?;
@@ -199,11 +203,7 @@ pub fn license_scan(export: Option<&str>, _ctx: &CliContext) -> Result<()> {
         },
         if let Some(format) = export {
             Cmd::batch([Cmd::spacer(), {
-                let filename = format!(
-                    "license-scan-{}.{}",
-                    jiff::Timestamp::now().as_second(),
-                    format
-                );
+                let filename = format!("license-scan-{}.{}", artifact_stamp(), format);
                 let content = if format.eq_ignore_ascii_case("csv") {
                     generate_license_csv(&scan)?
                 } else {
