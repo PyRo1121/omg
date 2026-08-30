@@ -174,14 +174,19 @@ pub fn parse_sources_list_content(content: &str, source_file: &Path) -> Result<V
         line_num += 1;
         let line = line.trim();
 
-        // Skip empty lines and comments
-        if line.is_empty() || line.starts_with('#') {
+        if line.is_empty() {
             continue;
         }
 
-        // Check for disabled entries (commented with #)
+        // APT disables legacy entries by commenting out the complete `deb` or
+        // `deb-src` line. Preserve those entries for configuration tooling,
+        // while continuing to ignore ordinary prose comments.
         let (line, enabled) = if let Some(stripped) = line.strip_prefix('#') {
-            (stripped.trim(), false)
+            let disabled_line = stripped.trim();
+            if !disabled_line.starts_with("deb ") && !disabled_line.starts_with("deb-src ") {
+                continue;
+            }
+            (disabled_line, false)
         } else {
             (line, true)
         };
@@ -646,6 +651,19 @@ random text here
             "got: {error}"
         );
     }
+    #[test]
+    fn commented_source_entries_are_preserved_as_disabled() {
+        let repos = parse_sources_list_content(
+            "# deb https://example.com/debian stable main\n# ordinary comment\n",
+            Path::new("/t.list"),
+        )
+        .expect("parse sources");
+
+        assert_eq!(repos.len(), 1);
+        assert_eq!(repos[0].uri, "https://example.com/debian");
+        assert!(!repos[0].enabled);
+    }
+
     #[test]
     fn source_line_type_must_be_a_complete_word() {
         assert!(
