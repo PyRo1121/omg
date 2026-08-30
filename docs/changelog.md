@@ -678,6 +678,7 @@ analyzer inference
 - **Ci**: Cross-platform install script and R2 release sync
 ### 🐛 Bug Fixes
 
+- Stop fabricating access control evidence
 - Fail secret scans with critical findings
 - Compare oversized runtime version components
 - Count only hidden active fleet members
