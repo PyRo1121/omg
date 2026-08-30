@@ -678,6 +678,7 @@ analyzer inference
 - **Ci**: Cross-platform install script and R2 release sync
 ### 🐛 Bug Fixes
 
+- Isolate malformed ancestor completion metadata
 - Make completion caching best effort
 - Normalize generated Debian runtime packages
 - Invalidate stale Debian installed state
