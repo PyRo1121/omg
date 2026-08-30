@@ -168,6 +168,27 @@ fn unlisted_task_falls_back_to_npm_run_prefix_from_marker_file() {
 }
 
 #[test]
+fn unlisted_js_task_uses_the_detected_package_manager() {
+    let project = TestProject::new();
+    write_npm_project(&project, &[("build", "webpack")]);
+    std::fs::write(
+        project.path().join("pnpm-lock.yaml"),
+        "lockfileVersion: '9.0'\n",
+    )
+    .expect("pnpm lockfile");
+
+    let shims = tempfile::tempdir().expect("shim dir");
+    write_shim(shims.path(), "pnpm", &echo_shim_body("ARGS"));
+    write_shim(shims.path(), "node", "#!/bin/sh\necho v20.11.1\n");
+
+    let result = project.run_with_env(&["run", "lint"], &[path_env(shims.path())]);
+
+    result.assert_success();
+    result.assert_stdout_contains("Task 'lint' not found, trying 'pnpm run lint'");
+    result.assert_stdout_contains("ARGS: run lint");
+}
+
+#[test]
 fn unknown_command_executes_as_passthrough_from_path() {
     // Contract: with no manifests and no matching fallback marker, the task
     // name itself is executed argv-directly from PATH with its extra args.

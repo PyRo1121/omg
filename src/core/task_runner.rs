@@ -490,10 +490,14 @@ pub fn run_task_advanced(
     if matches.is_empty() {
         let current_dir = std::env::current_dir()?;
 
-        // Ordered fallback table: (marker_files, command, args_before_task)
+        // Ordered fallback table: (marker_files, command, args_before_task).
+        // Reuse the package-manager detector so known and fallback scripts
+        // cannot diverge merely because the requested script was not listed.
+        let js_package_manager =
+            detect_js_package_manager(&current_dir)?.unwrap_or_else(|| "npm".to_string());
         let fallbacks: &[(&[&str], &str, &[&str])] = &[
             (&["Makefile"], "make", &[]),
-            (&["package.json"], "npm", &["run"]),
+            (&["package.json"], js_package_manager.as_str(), &["run"]),
             (&["Taskfile.yml", "Taskfile.yaml"], "task", &[]),
             (&["Rakefile"], "rake", &[]),
             (&["Pipfile"], "pipenv", &["run"]),
