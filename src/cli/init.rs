@@ -190,7 +190,7 @@ impl Default for WizardState {
         Self {
             shell: None,
             daemon_startup: DaemonStartup::OnShellInit,
-            telemetry_enabled: true,
+            telemetry_enabled: false,
             build_config: None,
             capture_env: true,
         }

@@ -130,7 +130,7 @@ impl Default for Settings {
             socket_path,
             default_shell: "zsh".to_string(),
             auto_update: false,
-            telemetry_enabled: true,
+            telemetry_enabled: false,
             aur: AurBuildSettings::default(),
         }
     }
@@ -333,6 +333,11 @@ impl Settings {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn telemetry_requires_explicit_opt_in() {
+        assert!(!Settings::default().telemetry_enabled);
+    }
 
     #[test]
     fn serialized_settings_do_not_freeze_environment_resolved_paths() {
