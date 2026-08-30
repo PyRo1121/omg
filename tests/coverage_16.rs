@@ -153,7 +153,7 @@ fn with_fixture_env<T>(f: impl FnOnce() -> T) -> T {
             ("OMG_CACHE_DIR", fx.cache.to_str().unwrap()),
             ("OMG_TEST_MODE", "0"),
         ],
-        || f(),
+        f,
     );
     omg_lib::package_managers::alpm_direct::clear_alpm_cache();
     result

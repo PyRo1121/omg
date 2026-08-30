@@ -10,7 +10,6 @@
 #![expect(clippy::unwrap_used)]
 #![expect(clippy::cast_sign_loss)]
 #![expect(clippy::cast_possible_truncation)]
-#![expect(clippy::match_same_arms)]
 #![expect(clippy::identity_op)]
 
 use criterion::{BenchmarkId, Criterion, Throughput, criterion_group, criterion_main};

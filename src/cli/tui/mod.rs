@@ -360,7 +360,8 @@ mod tests {
         assert!(!should_refresh_daemon(true, due));
         assert!(!should_refresh_daemon(
             false,
-            due - Duration::from_millis(1)
+            due.checked_sub(Duration::from_millis(1))
+                .expect("test duration remains positive")
         ));
     }
 
@@ -374,7 +375,8 @@ mod tests {
         assert!(!should_refresh_team(
             app::Tab::Team,
             false,
-            due - Duration::from_secs(1)
+            due.checked_sub(Duration::from_secs(1))
+                .expect("test duration remains positive")
         ));
     }
 

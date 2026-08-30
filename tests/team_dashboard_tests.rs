@@ -635,8 +635,8 @@ mod refresh_and_tick_tests {
         app.tick().unwrap();
 
         assert_eq!(app.last_update, aged_update);
-        assert_eq!(app.system_metrics.cpu_usage, 0.0);
-        assert_eq!(app.system_metrics.memory_usage, 0.0);
+        assert!(app.system_metrics.cpu_usage.abs() <= f32::EPSILON);
+        assert!(app.system_metrics.memory_usage.abs() <= f32::EPSILON);
     }
 
     #[tokio::test]

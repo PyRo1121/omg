@@ -74,19 +74,6 @@ macro_rules! dispatch_backend {
 }
 pub(crate) use dispatch_backend;
 
-#[cfg(test)]
-mod tests {
-    use super::execute_cmd;
-    use crate::cli::tea::Cmd;
-
-    #[test]
-    fn fallback_executor_propagates_cmd_errors() {
-        let error = execute_cmd(Cmd::error("package operation failed"))
-            .expect_err("fallback Cmd::Error must fail the command");
-        assert!(error.to_string().contains("package operation failed"));
-    }
-}
-
 /// Execute a `Cmd<()>` in fallback context (non-Elm mode).
 ///
 /// This provides a simple println-based execution for reliability
@@ -151,4 +138,17 @@ pub(crate) fn execute_cmd(cmd: crate::cli::tea::Cmd<()>) -> anyhow::Result<()> {
     std::io::stdout().flush()?;
     std::io::stderr().flush()?;
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::execute_cmd;
+    use crate::cli::tea::Cmd;
+
+    #[test]
+    fn fallback_executor_propagates_cmd_errors() {
+        let error = execute_cmd(Cmd::error("package operation failed"))
+            .expect_err("fallback Cmd::Error must fail the command");
+        assert!(error.to_string().contains("package operation failed"));
+    }
 }

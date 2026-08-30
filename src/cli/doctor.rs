@@ -6,22 +6,6 @@ use crate::cli::style;
 use crate::core::client::DaemonClient;
 use crate::core::http::shared_client;
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn non_success_non_redirect_mirror_status_is_an_issue() {
-        assert!(mirror_status_is_issue(
-            reqwest::StatusCode::INTERNAL_SERVER_ERROR
-        ));
-        assert!(!mirror_status_is_issue(reqwest::StatusCode::OK));
-        assert!(!mirror_status_is_issue(
-            reqwest::StatusCode::TEMPORARY_REDIRECT
-        ));
-    }
-}
-
 /// Mirror endpoints to test connectivity
 const MIRROR_ENDPOINTS: &[(&str, &str)] = &[
     ("Arch Linux", "https://archlinux.org"),
@@ -466,4 +450,20 @@ pub fn enable_turbo_mode() -> Result<()> {
     println!("  Prompt-light sudo credential caching is only available on Linux.");
     println!();
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn non_success_non_redirect_mirror_status_is_an_issue() {
+        assert!(mirror_status_is_issue(
+            reqwest::StatusCode::INTERNAL_SERVER_ERROR
+        ));
+        assert!(!mirror_status_is_issue(reqwest::StatusCode::OK));
+        assert!(!mirror_status_is_issue(
+            reqwest::StatusCode::TEMPORARY_REDIRECT
+        ));
+    }
 }

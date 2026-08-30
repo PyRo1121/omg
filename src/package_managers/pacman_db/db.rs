@@ -1214,9 +1214,11 @@ mod tests {
 
     #[test]
     fn cached_update_filters_honour_ignored_packages_and_groups() {
-        let mut package = SyncDbPackage::default();
-        package.name = "linux".to_string();
-        package.groups = vec!["kernel".to_string()];
+        let mut package = SyncDbPackage {
+            name: "linux".to_string(),
+            groups: vec!["kernel".to_string()],
+            ..SyncDbPackage::default()
+        };
         let packages = compile_ignore_patterns(&["linux".to_string()], "IgnorePkg").unwrap();
         let groups = compile_ignore_patterns(&["kernel".to_string()], "IgnoreGroup").unwrap();
         let none = compile_ignore_patterns(&[], "empty").unwrap();

@@ -192,31 +192,6 @@ impl PkgBuild {
     }
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn inline_comments_do_not_absorb_following_assignments() {
-        let package = PkgBuild::parse_content(
-            r#"
-                pkgname = "demo" # package name
-                pkgver = "1.2.3" # release version
-                pkgrel = "1" # package release
-                depends = ("openssl" "zlib") # dependency list
-                source = ("https://example.test/archive#fragment") # source URL
-            "#,
-        )
-        .expect("valid PKGBUILD metadata");
-
-        assert_eq!(package.name, "demo");
-        assert_eq!(package.version.to_string(), "1.2.3");
-        assert_eq!(package.release, "1");
-        assert_eq!(package.depends, ["openssl", "zlib"]);
-        assert_eq!(package.sources, ["https://example.test/archive#fragment"]);
-    }
-}
-
 fn parse_array(val: &str) -> Vec<String> {
     // Remove comments and join lines
     let cleaned = val
@@ -242,4 +217,29 @@ fn parse_array(val: &str) -> Vec<String> {
             }
         })
         .collect()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn inline_comments_do_not_absorb_following_assignments() {
+        let package = PkgBuild::parse_content(
+            r#"
+                pkgname = "demo" # package name
+                pkgver = "1.2.3" # release version
+                pkgrel = "1" # package release
+                depends = ("openssl" "zlib") # dependency list
+                source = ("https://example.test/archive#fragment") # source URL
+            "#,
+        )
+        .expect("valid PKGBUILD metadata");
+
+        assert_eq!(package.name, "demo");
+        assert_eq!(package.version.to_string(), "1.2.3");
+        assert_eq!(package.release, "1");
+        assert_eq!(package.depends, ["openssl", "zlib"]);
+        assert_eq!(package.sources, ["https://example.test/archive#fragment"]);
+    }
 }
