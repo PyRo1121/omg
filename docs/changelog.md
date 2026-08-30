@@ -681,6 +681,7 @@ analyzer inference
 - **Ci**: Cross-platform install script and R2 release sync
 ### 🐛 Bug Fixes
 
+- Isolate invalid Homebrew version entries
 - Release mock database lock before persistence
 - Stabilize Homebrew installed cache refresh
 - Preserve Homebrew cask install intent
