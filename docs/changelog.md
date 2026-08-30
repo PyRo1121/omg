@@ -678,6 +678,7 @@ analyzer inference
 - **Ci**: Cross-platform install script and R2 release sync
 ### 🐛 Bug Fixes
 
+- Schedule daemon socket health independently
 - Deduplicate package trigram postings
 - Reject special files during secret scans
 - Reject unsafe environment lockfile types
