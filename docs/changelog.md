@@ -685,6 +685,7 @@ analyzer inference
 - **Ci**: Cross-platform install script and R2 release sync
 ### 🐛 Bug Fixes
 
+- Probe daemon health before reporting running
 - Reject ambiguous rollback prefixes
 - Record AUR rollback outcomes honestly
 - Harden daemon startup contracts
