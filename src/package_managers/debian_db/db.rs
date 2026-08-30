@@ -840,9 +840,49 @@ pub fn ensure_index_loaded() -> Result<()> {
     Ok(())
 }
 
+fn disk_cache_is_fresh(cache_path: &Path, lists_dir: &Path) -> bool {
+    let Ok(cache_mtime) = fs::metadata(cache_path).and_then(|metadata| metadata.modified()) else {
+        return false;
+    };
+    let Ok(entries) = fs::read_dir(lists_dir) else {
+        return false;
+    };
+    let mut found_package_list = false;
+    for entry in entries {
+        let Ok(entry) = entry else {
+            return false;
+        };
+        let path = entry.path();
+        let Some(filename) = path.file_name().and_then(|name| name.to_str()) else {
+            continue;
+        };
+        if !filename.contains("_Packages")
+            || path
+                .extension()
+                .is_some_and(|extension| extension.eq_ignore_ascii_case("diff"))
+        {
+            continue;
+        }
+        let Ok(package_mtime) = fs::metadata(&path).and_then(|metadata| metadata.modified()) else {
+            return false;
+        };
+        found_package_list = true;
+        if package_mtime > cache_mtime {
+            return false;
+        }
+    }
+    found_package_list
+}
+
 /// Ensure FST index is loaded (if available on disk)
 /// Returns `Ok(())` whether FST is available or not - FST is optional optimization
 fn ensure_fst_loaded() {
+    let fst_path = paths::cache_dir().join("debian_index_v7.fst");
+    if !disk_cache_is_fresh(&fst_path, Path::new("/var/lib/apt/lists")) {
+        *crate::core::sync::write_cache(&DEBIAN_FST_INDEX) = None;
+        return;
+    }
+
     // Check if already loaded
     {
         let guard = crate::core::sync::read_cache(&DEBIAN_FST_INDEX);
@@ -861,11 +901,6 @@ fn ensure_fst_loaded() {
     }
 
     // Try to load from disk
-    let fst_path = paths::cache_dir().join("debian_index_v7.fst");
-    if !fst_path.exists() {
-        return; // FST not available yet, will fall back to SIMD search
-    }
-
     if let Ok(fst_index) = FstIndex::open(&fst_path) {
         let mut guard = crate::core::sync::write_cache(&DEBIAN_FST_INDEX);
         *guard = Some(fst_index);
@@ -879,6 +914,12 @@ fn ensure_fst_loaded() {
 /// Used by the ultra-fast search and update paths to avoid loading the full index.
 #[must_use]
 pub fn ensure_mmap_loaded() -> bool {
+    let mmap_path = paths::cache_dir().join("debian_index_v7.mmap");
+    if !disk_cache_is_fresh(&mmap_path, Path::new("/var/lib/apt/lists")) {
+        *crate::core::sync::write_cache(&DEBIAN_MMAP_INDEX) = None;
+        return false;
+    }
+
     // Check if already loaded
     {
         let guard = crate::core::sync::read_cache(&DEBIAN_MMAP_INDEX);
@@ -895,11 +936,6 @@ pub fn ensure_mmap_loaded() -> bool {
     }
 
     // Try to load from disk
-    let mmap_path = paths::cache_dir().join("debian_index_v7.mmap");
-    if !mmap_path.exists() {
-        return false;
-    }
-
     if let Ok(mmap_index) = DebianMmapIndex::open(&mmap_path) {
         let mut guard = crate::core::sync::write_cache(&DEBIAN_MMAP_INDEX);
         *guard = Some(mmap_index);
@@ -2305,6 +2341,37 @@ mod tests {
     /// Serializes every test that mutates process-global `OMG_TEST_MODE`;
     /// env vars are shared by all parallel test threads.
     static ENV_LOCK: LazyLock<std::sync::Mutex<()>> = LazyLock::new(|| std::sync::Mutex::new(()));
+
+    #[test]
+    fn disk_cache_older_than_an_apt_package_list_is_stale() -> Result<()> {
+        use std::fs::FileTimes;
+        use std::time::{Duration, UNIX_EPOCH};
+
+        let directory = tempfile::tempdir()?;
+        let lists = directory.path().join("lists");
+        std::fs::create_dir(&lists)?;
+        let cache = directory.path().join("debian_index_v7.mmap");
+        let packages = lists.join("mirror_dists_stable_main_binary-amd64_Packages");
+        std::fs::write(&cache, b"cache")?;
+        std::fs::write(&packages, b"Package: demo\n")?;
+        std::fs::File::options()
+            .write(true)
+            .open(&cache)?
+            .set_times(FileTimes::new().set_modified(UNIX_EPOCH + Duration::from_secs(10)))?;
+        std::fs::File::options()
+            .write(true)
+            .open(&packages)?
+            .set_times(FileTimes::new().set_modified(UNIX_EPOCH + Duration::from_secs(20)))?;
+
+        assert!(!disk_cache_is_fresh(&cache, &lists));
+
+        std::fs::File::options()
+            .write(true)
+            .open(&cache)?
+            .set_times(FileTimes::new().set_modified(UNIX_EPOCH + Duration::from_secs(30)))?;
+        assert!(disk_cache_is_fresh(&cache, &lists));
+        Ok(())
+    }
 
     #[test]
     fn parse_paragraph_reads_required_and_numeric_fields() -> Result<()> {
