@@ -66,8 +66,9 @@ pub async fn status(_ctx: &CliContext) -> Result<()> {
         machine_list.push(format!("{} {:<20} {:<10} v{}", "💻", hostname, os, ver));
     }
 
-    if total_machines > 10 {
-        machine_list.push(format!("... and {} more", total_machines - 10));
+    let remaining_active = remaining_active_machine_count(active_machines, machine_list.len());
+    if remaining_active > 0 {
+        machine_list.push(format!("... and {remaining_active} more"));
     }
 
     execute_cmd(Cmd::batch([
@@ -89,8 +90,25 @@ pub async fn status(_ctx: &CliContext) -> Result<()> {
     Ok(())
 }
 
+fn remaining_active_machine_count(active: usize, shown: usize) -> usize {
+    active.saturating_sub(shown)
+}
+
 fn generate_health_bar(pct: f32) -> String {
     let filled = ((pct / 10.0).round() as usize).min(10);
     let empty = 10 - filled;
     format!("{}{}", "█".repeat(filled), "░".repeat(empty))
+}
+
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn active_machine_overflow_excludes_inactive_members() {
+        let active_machines = 12usize;
+        let shown_active_machines = 10usize;
+        assert_eq!(
+            super::remaining_active_machine_count(active_machines, shown_active_machines),
+            2
+        );
+    }
 }
