@@ -3864,6 +3864,7 @@ the Debian backend), so it was removed from the metadata.
 - Normalize project formatting
 ### 🧪 Testing
 
+- Align rollback cache refusal contracts
 - Align container status failure contracts
 - Keep detached TUI state free of host reads
 - Remove process environment races
