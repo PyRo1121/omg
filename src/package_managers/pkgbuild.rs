@@ -97,6 +97,37 @@ fn strip_inline_comment(line: &str) -> &str {
     line
 }
 
+fn array_expression_complete(value: &str) -> Result<bool> {
+    let mut quote = None;
+    let mut escaped = false;
+    let mut depth = 0_u32;
+
+    for character in value.chars() {
+        if escaped {
+            escaped = false;
+            continue;
+        }
+        if character == '\\' && quote != Some('\'') {
+            escaped = true;
+            continue;
+        }
+        match quote {
+            Some(delimiter) if character == delimiter => quote = None,
+            None if character == '\'' || character == '"' => quote = Some(character),
+            None if character == '(' => depth = depth.saturating_add(1),
+            None if character == ')' => {
+                anyhow::ensure!(depth > 0, "unexpected closing parenthesis in array");
+                depth -= 1;
+                if depth == 0 {
+                    return Ok(true);
+                }
+            }
+            Some(_) | None => {}
+        }
+    }
+    Ok(false)
+}
+
 impl PkgBuild {
     /// Parse a PKGBUILD file
     ///
@@ -134,15 +165,14 @@ impl PkgBuild {
                 continue;
             }
 
-            if val.starts_with('(') && !val.ends_with(')') {
+            if val.starts_with('(') {
                 let mut array_content = val.to_string();
-                for next_line in lines.by_ref() {
-                    let next_line = strip_inline_comment(next_line);
+                while !array_expression_complete(&array_content)? {
+                    let Some(next_line) = lines.next() else {
+                        anyhow::bail!("unterminated array assignment for {key}");
+                    };
                     array_content.push(' ');
-                    array_content.push_str(next_line);
-                    if next_line.contains(')') {
-                        break;
-                    }
+                    array_content.push_str(strip_inline_comment(next_line));
                 }
                 vars.insert(key.to_string(), array_content);
             } else {
@@ -166,9 +196,9 @@ impl PkgBuild {
             result
         };
         let scalar = |key: &str| vars.get(key).map_or_else(String::new, |v| substitute(v));
-        let array = |key: &str| {
+        let array = |key: &str| -> Result<Vec<String>> {
             vars.get(key)
-                .map_or_else(Vec::new, |v| parse_array(&substitute(v)))
+                .map_or_else(|| Ok(Vec::new()), |value| parse_array(&substitute(value)))
         };
 
         Ok(Self {
@@ -181,47 +211,114 @@ impl PkgBuild {
             release: scalar("pkgrel"),
             description: scalar("pkgdesc"),
             url: scalar("url"),
-            license: array("license"),
-            depends: array("depends"),
-            makedepends: array("makedepends"),
-            checkdepends: array("checkdepends"),
-            sources: array("source"),
-            sha256sums: array("sha256sums"),
-            validpgpkeys: array("validpgpkeys"),
+            license: array("license")?,
+            depends: array("depends")?,
+            makedepends: array("makedepends")?,
+            checkdepends: array("checkdepends")?,
+            sources: array("source")?,
+            sha256sums: array("sha256sums")?,
+            validpgpkeys: array("validpgpkeys")?,
         })
     }
 }
 
-fn parse_array(val: &str) -> Vec<String> {
-    // Remove comments and join lines
-    let cleaned = val
+fn parse_array(value: &str) -> Result<Vec<String>> {
+    let cleaned = value
         .lines()
         .map(strip_inline_comment)
         .collect::<Vec<_>>()
         .join(" ");
-
-    // Remove parentheses
     let trimmed = cleaned.trim();
-    let trimmed = trimmed.strip_prefix('(').unwrap_or(trimmed);
-    let trimmed = trimmed.strip_suffix(')').unwrap_or(trimmed);
+    let inner = trimmed
+        .strip_prefix('(')
+        .and_then(|value| value.strip_suffix(')'))
+        .context("array value must be enclosed in parentheses")?;
 
-    // Parse items - handle both quoted and unquoted
-    trimmed
-        .split_whitespace()
-        .filter_map(|s| {
-            let token = s.trim_matches('"').trim_matches('\'');
-            if token.is_empty() {
-                None
-            } else {
-                Some(token.to_string())
+    let mut items = Vec::new();
+    let mut token = String::new();
+    let mut token_started = false;
+    let mut quote = None;
+    let mut escaped = false;
+
+    for character in inner.chars() {
+        if escaped {
+            token.push(character);
+            token_started = true;
+            escaped = false;
+            continue;
+        }
+        if character == '\\' && quote != Some('\'') {
+            escaped = true;
+            token_started = true;
+            continue;
+        }
+        match quote {
+            Some(delimiter) if character == delimiter => quote = None,
+            Some(_) => token.push(character),
+            None if character == '\'' || character == '"' => {
+                quote = Some(character);
+                token_started = true;
             }
-        })
-        .collect()
+            None if character.is_whitespace() => {
+                if token_started {
+                    items.push(std::mem::take(&mut token));
+                    token_started = false;
+                }
+            }
+            None => {
+                token.push(character);
+                token_started = true;
+            }
+        }
+    }
+
+    anyhow::ensure!(quote.is_none(), "unterminated quote in array");
+    anyhow::ensure!(!escaped, "unterminated escape in array");
+    if token_started {
+        items.push(token);
+    }
+    Ok(items)
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn arrays_preserve_quoted_items_with_spaces() {
+        let package = PkgBuild::parse_content(
+            r#"
+                pkgname=demo
+                pkgver=1
+                pkgrel=1
+                source=("named source::https://example.test/archive.tar.gz" 'local patch.diff')
+            "#,
+        )
+        .expect("valid quoted array");
+
+        assert_eq!(
+            package.sources,
+            [
+                "named source::https://example.test/archive.tar.gz",
+                "local patch.diff"
+            ]
+        );
+    }
+
+    #[test]
+    fn unterminated_array_is_rejected() {
+        let error = PkgBuild::parse_content(
+            r#"
+                pkgname=demo
+                pkgver=1
+                pkgrel=1
+                depends=("openssl"
+            "#,
+        )
+        .expect_err("unterminated arrays must not absorb the remainder of the file");
+
+        assert!(error.to_string().contains("unterminated array"), "{error}");
+    }
 
     #[test]
     fn inline_comments_do_not_absorb_following_assignments() {
