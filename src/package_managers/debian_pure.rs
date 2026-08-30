@@ -510,9 +510,10 @@ fn populate_package_urls(tx: &mut debian_db::Transaction) -> Result<()> {
 
 /// Resolve one action's `version`/`size`/`sha256`/`url`.
 ///
-/// Repository selection: exact suite+component match first, then suite-only
-/// (for flat or componentless entries), then any repo publishing the
-/// component. An empty index `suite` degrades to component matching.
+/// Repository selection requires the package's recorded suite, preferring an
+/// exact suite+component match and allowing suite-only fallback for flat or
+/// componentless entries. Component-only matching is unsafe because distinct
+/// suites may use different mirror roots.
 fn populate_action_url(
     action: &mut debian_db::PackageAction,
     package_map: &std::collections::HashMap<String, debian_db::DebianPackage>,
@@ -541,8 +542,7 @@ fn populate_action_url(
             repos
                 .iter()
                 .find(|r| !pkg.suite.is_empty() && r.suite == pkg.suite)
-        })
-        .or_else(|| repos.iter().find(|r| r.components.contains(&pkg.component)));
+        });
     let Some(repo) = repo else {
         anyhow::bail!(
             "no enabled repository provides suite {:?} / component {:?} for package {}",
@@ -570,8 +570,11 @@ fn populate_action_url(
 
 #[cfg(all(test, unix))]
 mod tests {
-    use super::update_apt_lists;
+    use super::{populate_action_url, update_apt_lists};
+    use crate::package_managers::debian_db::{DebianPackage, PackageAction, RepoType, Repository};
+    use std::collections::HashMap;
     use std::os::unix::fs::PermissionsExt;
+    use std::path::PathBuf;
 
     fn fake_apt_script(body: &str) -> (tempfile::TempDir, std::path::PathBuf) {
         let directory = tempfile::tempdir().expect("temporary fake apt directory");
@@ -583,6 +586,52 @@ mod tests {
         permissions.set_mode(0o700);
         std::fs::set_permissions(&program, permissions).expect("make fake apt executable");
         (directory, program)
+    }
+
+    #[test]
+    fn package_url_does_not_cross_repository_suites_by_component() {
+        let package = DebianPackage {
+            name: "example".to_string(),
+            version: "1.0".to_string(),
+            description: String::new(),
+            section: "utils".to_string(),
+            priority: "optional".to_string(),
+            installed_size: 1,
+            maintainer: String::new(),
+            architecture: "amd64".to_string(),
+            depends: Vec::new(),
+            filename: "pool/main/e/example/example_1.0_amd64.deb".to_string(),
+            size: 1,
+            sha256: "a".repeat(64),
+            homepage: String::new(),
+            component: "main".to_string(),
+            suite: "bookworm-security".to_string(),
+        };
+        let packages = HashMap::from([(package.name.clone(), package)]);
+        let repos = vec![Repository {
+            repo_type: RepoType::Binary,
+            uri: "https://deb.example/debian".to_string(),
+            suite: "bookworm".to_string(),
+            components: vec!["main".to_string()],
+            arch: None,
+            signed_by: None,
+            enabled: true,
+            source_file: PathBuf::from("sources.list"),
+            options: HashMap::new(),
+        }];
+        let mut action = PackageAction {
+            name: "example".to_string(),
+            version: String::new(),
+            deb_path: None,
+            url: None,
+            size: 0,
+            sha256: None,
+        };
+
+        let error = populate_action_url(&mut action, &packages, &repos)
+            .expect_err("a component match from another suite must not select its mirror root");
+        assert!(error.to_string().contains("bookworm-security"), "{error}");
+        assert!(action.url.is_none());
     }
 
     #[tokio::test]
