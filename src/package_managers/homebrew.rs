@@ -532,14 +532,17 @@ impl HomebrewPackageManager {
                     continue;
                 }
 
-                let mut versions = Vec::new();
-                let mut version_entries = fs::read_dir(entry.path()).await?;
-                while let Some(version_entry) = version_entries.next_entry().await? {
-                    let version = version_entry.file_name().to_string_lossy().to_string();
-                    if !version.starts_with('.') {
-                        versions.push((version, version_entry.path()));
+                let package_path = entry.path();
+                let versions = match Self::read_version_directories(&package_path).await {
+                    Ok(versions) => versions,
+                    Err(error) => {
+                        tracing::warn!(
+                            "Skipping unreadable Homebrew cask {}: {error:#}",
+                            package_path.display()
+                        );
+                        continue;
                     }
-                }
+                };
                 if let Some((version, version_path)) = Self::latest_installed_version(versions) {
                     let receipt_path = version_path.join(INSTALL_RECEIPT);
                     let installed_on_request = match fs::read_to_string(&receipt_path).await {
@@ -624,19 +627,21 @@ impl HomebrewPackageManager {
         versions.pop()
     }
 
-    /// Read package information from directory
-    async fn read_package_info(&self, pkg_path: &Path, name: &str) -> Result<LocalPackage> {
-        // Find version directories
+    async fn read_version_directories(package_path: &Path) -> Result<Vec<(String, PathBuf)>> {
         let mut versions = Vec::new();
-        let mut entries = fs::read_dir(pkg_path).await?;
-
+        let mut entries = fs::read_dir(package_path).await?;
         while let Some(entry) = entries.next_entry().await? {
             let version = entry.file_name().to_string_lossy().to_string();
-            if !version.starts_with('.') {
+            if !version.starts_with('.') && entry.file_type().await?.is_dir() {
                 versions.push((version, entry.path()));
             }
         }
+        Ok(versions)
+    }
 
+    /// Read package information from directory
+    async fn read_package_info(&self, pkg_path: &Path, name: &str) -> Result<LocalPackage> {
+        let versions = Self::read_version_directories(pkg_path).await?;
         let Some((version, version_path)) = Self::latest_installed_version(versions) else {
             bail!("No versions found for package {name}");
         };
@@ -1165,8 +1170,10 @@ mod tests {
     #[tokio::test]
     async fn installed_casks_are_included_and_numerically_sorted() -> Result<()> {
         let root = tempfile::tempdir()?;
-        let cask_dir = root.path().join(CASKROOM_DIR).join("example");
+        let caskroom = root.path().join(CASKROOM_DIR);
+        let cask_dir = caskroom.join("example");
         fs::create_dir_all(cask_dir.join("1.9")).await?;
+        fs::write(caskroom.join("interrupted-install"), b"not a directory").await?;
         let newest = cask_dir.join("1.10");
         fs::create_dir_all(&newest).await?;
         fs::write(
@@ -1208,7 +1215,9 @@ mod tests {
         let root = tempfile::tempdir()?;
         let cellar = root.path().join(CELLAR_DIR);
         fs::create_dir_all(cellar.join("empty-formula")).await?;
-        fs::create_dir_all(cellar.join("valid-formula").join("1.0")).await?;
+        let valid_formula = cellar.join("valid-formula");
+        fs::create_dir_all(valid_formula.join("1.0")).await?;
+        fs::write(valid_formula.join("9.9"), b"stray file").await?;
         let manager = HomebrewPackageManager {
             prefix: root.path().to_path_buf(),
             cellar,
