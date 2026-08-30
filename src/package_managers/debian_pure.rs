@@ -148,6 +148,7 @@ impl PackageManager for PureDebianPackageManager {
         Box::pin(async move {
             use std::time::Instant;
 
+            crate::core::security::validate_package_names(&packages)?;
             let start = Instant::now();
             tracing::info!(
                 "Starting pure Rust package removal for {} packages",
