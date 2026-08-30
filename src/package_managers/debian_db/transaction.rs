@@ -1711,6 +1711,14 @@ fn run_removal_maintainer_script(package_name: &str, kind: &str) -> Result<()> {
 }
 
 /// Remove package files from the filesystem
+fn path_exists_without_following_symlinks(path: &Path) -> Result<bool> {
+    match fs::symlink_metadata(path) {
+        Ok(_) => Ok(true),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(false),
+        Err(error) => Err(error).with_context(|| format!("Failed to inspect {}", path.display())),
+    }
+}
+
 fn remove_package_files(package_name: &str) -> Result<()> {
     let list_path = existing_dpkg_info_file(package_name, "list")
         .ok_or_else(|| anyhow::anyhow!("No .list file found for {package_name}"))?;
@@ -1742,7 +1750,7 @@ fn remove_package_files(package_name: &str) -> Result<()> {
     let mut removed_count = 0;
 
     for file_path in &files_to_remove {
-        if !file_path.exists() {
+        if !path_exists_without_following_symlinks(file_path)? {
             continue;
         }
 
@@ -1757,11 +1765,11 @@ fn remove_package_files(package_name: &str) -> Result<()> {
         tracing::trace!("Removed: {}", file_path.display());
     }
 
-    // Try to remove empty directories (bottom-up)
-    dirs_to_remove.reverse();
+    // Try to remove empty directories deepest-first, independent of the
+    // ordering used by the package's `.list` file.
+    dirs_to_remove.sort_by_key(|path| std::cmp::Reverse(path.components().count()));
     for dir_path in &dirs_to_remove {
-        if dir_path.exists()
-            && dir_path.is_dir()
+        if fs::symlink_metadata(dir_path).is_ok_and(|metadata| metadata.file_type().is_dir())
             && let Ok(mut entries) = fs::read_dir(dir_path)
             && entries.next().is_none()
             && let Err(e) = fs::remove_dir(dir_path)
@@ -2089,6 +2097,20 @@ mod tests {
         std::fs::write(&path, b"pkg").expect("installed file");
         remove_file_if_present(&path).expect("rollback remove");
         assert!(!path.exists());
+    }
+
+    #[test]
+    fn dangling_symlinks_are_present_for_package_removal() {
+        let dir = tempfile::TempDir::new().expect("temp dir");
+        let link = dir.path().join("dangling-link");
+        std::os::unix::fs::symlink(dir.path().join("missing-target"), &link)
+            .expect("create dangling symlink");
+
+        assert!(!link.exists(), "Path::exists follows the missing target");
+        assert!(
+            path_exists_without_following_symlinks(&link).expect("inspect symlink"),
+            "package removal must still unlink dangling symlinks"
+        );
     }
 
     #[test]
