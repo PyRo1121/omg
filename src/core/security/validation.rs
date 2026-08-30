@@ -29,6 +29,14 @@ pub enum ValidationError {
     PackageNamePathTraversal,
     #[error("Package name cannot start with '/'")]
     PackageNameAbsolute,
+    #[error("Container image reference cannot be empty")]
+    ImageRefEmpty,
+    #[error("Container image reference too long (max {max} characters)")]
+    ImageRefTooLong { max: usize },
+    #[error("Container image reference must start with an ASCII letter or digit")]
+    ImageRefMustStartAlphanumeric,
+    #[error("Invalid character '{character}' in container image reference")]
+    ImageRefInvalidChar { character: char },
     #[error("Version cannot be empty")]
     VersionEmpty,
     #[error("Version string too long (max {max} characters)")]
@@ -138,23 +146,23 @@ pub fn validate_package_names(names: &[String]) -> Result<(), ValidationError> {
 /// alphanumeric character, and rejects traversal and option injection.
 pub fn validate_image_ref(image: &str) -> Result<(), ValidationError> {
     if image.is_empty() {
-        return Err(ValidationError::PackageNameEmpty);
+        return Err(ValidationError::ImageRefEmpty);
     }
     if image.len() > 256 {
-        return Err(ValidationError::PackageNameTooLong { max: 256 });
+        return Err(ValidationError::ImageRefTooLong { max: 256 });
     }
     let invalid = image
         .chars()
         .find(|&c| !(c.is_ascii_alphanumeric() || matches!(c, '.' | '_' | '-' | '/' | ':' | '@')));
     if let Some(character) = invalid {
-        return Err(ValidationError::PackageNameInvalidChar { character });
+        return Err(ValidationError::ImageRefInvalidChar { character });
     }
     if !image
         .chars()
         .next()
         .is_some_and(|c| c.is_ascii_alphanumeric())
     {
-        return Err(ValidationError::PackageNameStartsWithDash);
+        return Err(ValidationError::ImageRefMustStartAlphanumeric);
     }
     Ok(())
 }
@@ -704,9 +712,19 @@ mod tests {
 
     #[test]
     fn hostile_image_references_are_rejected() {
-        assert!(validate_image_ref("").is_err());
-        assert!(validate_image_ref("evil;rm -rf /").is_err());
-        assert!(validate_image_ref("-flag").is_err());
+        assert_eq!(validate_image_ref(""), Err(ValidationError::ImageRefEmpty));
+        assert_eq!(
+            validate_image_ref(&"a".repeat(257)),
+            Err(ValidationError::ImageRefTooLong { max: 256 })
+        );
+        assert!(matches!(
+            validate_image_ref("evil;rm -rf /"),
+            Err(ValidationError::ImageRefInvalidChar { character: ';' })
+        ));
+        assert_eq!(
+            validate_image_ref("-flag"),
+            Err(ValidationError::ImageRefMustStartAlphanumeric)
+        );
         assert!(validate_image_ref("img$(whoami)").is_err());
         assert!(validate_image_ref("a b").is_err());
         assert!(validate_image_ref("../etc/passwd").is_err());
