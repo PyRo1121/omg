@@ -678,6 +678,7 @@ analyzer inference
 - **Ci**: Cross-platform install script and R2 release sync
 ### 🐛 Bug Fixes
 
+- Normalize scaffold stack aliases
 - Fail scaffolds when child commands fail
 - Keep setup running when daemon startup fails
 - Report unmapped migration packages honestly
