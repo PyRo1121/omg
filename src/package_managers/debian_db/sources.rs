@@ -397,8 +397,13 @@ fn expand_deb822_stanza(stanza: &HashMap<String, String>, source_file: &Path) ->
     // Parse architectures
     let arch = stanza.get("architectures").cloned();
 
-    // Parse signed-by
-    let signed_by = stanza.get("signed-by").map(PathBuf::from);
+    // A deb822 Signed-By value can be either a keyring path/fingerprint or an
+    // inline armored public key. Only path-shaped values belong in the typed
+    // filesystem field; preserve inline key material verbatim in options.
+    let signed_by_value = stanza.get("signed-by");
+    let signed_by = signed_by_value
+        .filter(|value| !value.contains('\n'))
+        .map(PathBuf::from);
 
     // Check if enabled
     let enabled = stanza
@@ -421,6 +426,11 @@ fn expand_deb822_stanza(stanza: &HashMap<String, String>, source_file: &Path) ->
         {
             options.insert(key.clone(), value.clone());
         }
+    }
+    if signed_by.is_none()
+        && let Some(value) = signed_by_value
+    {
+        options.insert("signed-by".to_string(), value.clone());
     }
 
     // Expand all combinations
@@ -695,19 +705,32 @@ random text here
     }
 
     #[test]
-    fn deb822_multiline_values_are_preserved() {
-        let content = "Types: deb\nURIs: http://example.com\nSuites: stable\nComponents: main\nSigned-By:\n -----BEGIN KEY-----\n abcdef\n -----END KEY-----\n";
+    fn deb822_inline_signing_keys_remain_data_not_paths() {
+        let content = "Types: deb\nURIs: http://example.com\nSuites: stable\nSigned-By:\n -----BEGIN PGP PUBLIC KEY BLOCK-----\n abcdef\n -----END PGP PUBLIC KEY BLOCK-----\n";
 
         let repos = parse_deb822_content(content, Path::new("/t.sources")).expect("parse");
         assert_eq!(repos.len(), 1);
-        let signed_by = repos[0]
-            .signed_by
-            .as_ref()
-            .expect("signed-by must populate the typed field");
-        let signed_by = signed_by.to_string_lossy();
         assert!(
-            signed_by.contains("BEGIN KEY") && signed_by.contains("abcdef"),
-            "continuation lines must be kept: {signed_by:?}"
+            repos[0].signed_by.is_none(),
+            "inline key material must not become a filesystem path"
+        );
+        assert_eq!(
+            repos[0].options.get("signed-by").map(String::as_str),
+            Some(
+                "\n-----BEGIN PGP PUBLIC KEY BLOCK-----\nabcdef\n-----END PGP PUBLIC KEY BLOCK-----"
+            )
+        );
+    }
+
+    #[test]
+    fn deb822_multiline_values_are_preserved() {
+        let content = "Types: deb\nURIs: http://example.com\nSuites: stable\nComponents: main\nX-Notes: first\n second\n third\n";
+
+        let repos = parse_deb822_content(content, Path::new("/t.sources")).expect("parse");
+        assert_eq!(repos.len(), 1);
+        assert_eq!(
+            repos[0].options.get("x-notes").map(String::as_str),
+            Some("first\nsecond\nthird")
         );
     }
 }
