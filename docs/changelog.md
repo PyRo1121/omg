@@ -678,6 +678,7 @@ analyzer inference
 - **Ci**: Cross-platform install script and R2 release sync
 ### 🐛 Bug Fixes
 
+- Normalize runtime version prefixes safely
 - Require explicit runtime telemetry consent
 - Preserve Bash prompt command arrays
 - Quote systemd daemon executable paths
