@@ -678,6 +678,7 @@ analyzer inference
 - **Ci**: Cross-platform install script and R2 release sync
 ### 🐛 Bug Fixes
 
+- Count only hidden active fleet members
 - Report effective container base image
 - Reject future-dated fast status snapshots
 - Isolate malformed ancestor runtime pins
