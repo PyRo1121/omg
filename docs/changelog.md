@@ -680,6 +680,7 @@ analyzer inference
 - **Ci**: Cross-platform install script and R2 release sync
 ### 🐛 Bug Fixes
 
+- Harden ALPM package metadata access
 - Match partial runtime version pins
 - Preserve task arguments without shell filtering
 - Move daemon audit writes off executor threads
