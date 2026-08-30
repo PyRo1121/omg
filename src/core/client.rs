@@ -24,8 +24,8 @@ use tokio_util::codec::{Framed, LengthDelimitedCodec};
 
 #[cfg(unix)]
 use crate::daemon::protocol::{
-    DetailedPackageInfo, PackageInfo, Request, Response, ResponseResult, SearchResult,
-    SecurityAuditResult, StatusResult, UpdateEntry,
+    DetailedPackageInfo, MAX_FRAME_SIZE, PackageInfo, Request, Response, ResponseResult,
+    SearchResult, SecurityAuditResult, StatusResult, UpdateEntry,
 };
 #[cfg(unix)]
 use std::os::unix::net::UnixStream as SyncUnixStream;
@@ -45,10 +45,10 @@ fn connect_sync_stream() -> Result<SyncUnixStream> {
         .with_context(|| format!("Failed to connect to daemon at {}", socket_path.display()))?;
 
     stream
-        .set_read_timeout(Some(Duration::from_secs(30)))
+        .set_read_timeout(Some(REQUEST_TIMEOUT))
         .context("Failed to set daemon read timeout")?;
     stream
-        .set_write_timeout(Some(Duration::from_secs(30)))
+        .set_write_timeout(Some(REQUEST_TIMEOUT))
         .context("Failed to set daemon write timeout")?;
 
     Ok(stream)
@@ -117,7 +117,7 @@ impl DaemonClient {
                     let framed = Framed::new(
                         stream,
                         LengthDelimitedCodec::builder()
-                            .max_frame_length(10 * 1024 * 1024)
+                            .max_frame_length(MAX_FRAME_SIZE)
                             .new_codec(),
                     );
                     return Ok(Self {
