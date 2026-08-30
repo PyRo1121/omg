@@ -429,6 +429,32 @@ fn async_call_detects_response_id_mismatch_with_exact_message() {
     daemon.take_requests();
 }
 
+/// Contract: an Error response carrying a foreign id is rejected before its
+/// payload is attributed to the current request.
+#[test]
+#[serial]
+fn async_call_rejects_error_for_a_different_request() {
+    let mut daemon = MockDaemon::spawn(Box::new(|_request| {
+        Some(fixed_response_frame(&Response::Error {
+            id: 999,
+            code: -1002,
+            message: "stale error".into(),
+        }))
+    }));
+    let sock = daemon.socket_path.clone();
+    with_client_env(None, None, Some(&sock), || {
+        block(async {
+            let mut client = DaemonClient::connect_to(sock.clone())
+                .await
+                .expect("connect");
+            let err = expect_err(client.ping().await);
+            assert_eq!(err.to_string(), "Request ID mismatch: sent 1, got 999");
+            drop(client);
+        });
+    });
+    daemon.take_requests();
+}
+
 /// Contract: a Response::Error surfaces as the exact string
 /// "Daemon error (<code>): <message>".
 #[test]

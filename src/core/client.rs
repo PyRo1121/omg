@@ -322,10 +322,13 @@ fn decode_response(frame: &[u8], expected_id: u64) -> Result<ResponseResult> {
             Ok(result)
         }
         Response::Error {
-            id: _,
+            id: resp_id,
             code,
             message,
         } => {
+            if resp_id != expected_id {
+                anyhow::bail!("Request ID mismatch: sent {expected_id}, got {resp_id}");
+            }
             anyhow::bail!("Daemon error ({code}): {message}");
         }
     }
