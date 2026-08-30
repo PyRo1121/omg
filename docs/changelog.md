@@ -686,6 +686,7 @@ analyzer inference
 - **Ci**: Cross-platform install script and R2 release sync
 ### 🐛 Bug Fixes
 
+- Correlate daemon error response ids
 - Keep state paths independent of working directory
 - Honor pacman configuration includes
 - Avoid enterprise artifact filename collisions
