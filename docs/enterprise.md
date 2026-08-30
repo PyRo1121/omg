@@ -18,26 +18,18 @@ These features require an Enterprise license.
 
 ## 📋 Executive Reports
 
-Generate high-level reports for stakeholders. OMG's reporting engine aggregates telemetry from across your fleet to provide actionable insights.
+Generate JSON reports containing observed fleet and local process counters. OMG does not estimate savings, remediation totals, or compliance scores.
 
 ```bash
-# Generate a JSON report
-omg enterprise reports compliance json
+omg enterprise reports --report-type monthly
 
-# Supported types:
-# - compliance: Overall system health and policy adherence
-# - security: Vulnerability trends and remediation
-# - usage: Team adoption and package usage stats
+# Supported report types:
+# - monthly
+# - quarterly
+# - custom
 ```
 
-### Reporting Flow
-
-```mermaid
-flowchart LR
-    Fleet[Fleet Machines] -- Telemetry --> SaaS[OMG SaaS/Self-Hosted]
-    SaaS -- Aggregate --> Engine[Reporting Engine]
-    Engine -- Format --> Output[PDF/JSON/CSV Report]
-```
+Reports include the fetched fleet-machine count plus observed validation failures, rate-limit events, and security-audit requests for the running process.
 
 ---
 
@@ -50,11 +42,11 @@ omg enterprise audit-export --framework soc2 --output ./evidence
 ```
 
 **Generates:**
-- `access-control-matrix.csv`: User permissions and roles.
-- `change-log.json`: Immutable log of system changes.
-- `policy-enforcement.json`: Proof of policy active enforcement.
-- `vulnerability-remediation.csv`: Timeline of CVE fixes.
-- `sbom-inventory.json`: Complete software bill of materials.
+- `limitations.json`: Evidence that could not be produced from an authoritative source. Access-control matrices are listed here rather than fabricated.
+- `change-log.json`: Recent entries from the local audit log.
+- `policy-enforcement.json`: The currently loaded security policy.
+- `installed-packages.csv`: Installed package inventory.
+- `sbom-inventory.json`: Installed-package SBOM inventory.
 
 ---
 
