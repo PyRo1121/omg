@@ -681,6 +681,7 @@ analyzer inference
 - **Ci**: Cross-platform install script and R2 release sync
 ### 🐛 Bug Fixes
 
+- Align Debian removal progress length
 - Reuse durable atomic writes for dpkg state
 - Isolate invalid Homebrew version entries
 - Release mock database lock before persistence
