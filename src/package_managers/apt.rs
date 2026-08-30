@@ -383,7 +383,6 @@ pub fn list_explicit() -> Result<Vec<String>> {
     Ok(explicit)
 }
 
-/// List all available package names
 /// All available package names across configured repositories, sorted and
 /// deduplicated.
 pub fn list_all_package_names() -> Result<Vec<String>> {
@@ -399,7 +398,6 @@ pub fn list_all_package_names() -> Result<Vec<String>> {
     Ok(names)
 }
 
-/// List orphaned packages
 /// Auto-installed packages that no longer have dependents
 /// (`apt-get autoremove` candidates).
 pub fn list_orphans() -> Result<Vec<String>> {
@@ -413,16 +411,25 @@ pub fn list_orphans() -> Result<Vec<String>> {
     Ok(orphans)
 }
 
-/// Remove all auto-removable orphan packages via the APT FFI.
-pub fn remove_orphans() -> Result<()> {
-    let orphans = list_orphans()?;
+/// Remove all auto-removable orphan packages with the same elevation contract
+/// as other mutating APT operations.
+pub async fn remove_orphans() -> Result<()> {
+    let orphans = tokio::task::spawn_blocking(list_orphans)
+        .await
+        .context("APT orphan listing task failed")??;
     if orphans.is_empty() {
         return Ok(());
     }
-    remove_blocking(&orphans)
+    if !is_root() {
+        crate::core::privilege::run_privileged_program("apt-get", &["autoremove", "-y"]).await?;
+        return Ok(());
+    }
+    tokio::task::spawn_blocking(move || remove_blocking(&orphans))
+        .await
+        .context("APT orphan removal task failed")??;
+    Ok(())
 }
 
-/// List packages with available updates
 /// Upgradable packages as `(name, installed_version, candidate_version)`.
 pub fn list_updates() -> Result<Vec<(String, String, String)>> {
     let cache = open_cache(&[])?;

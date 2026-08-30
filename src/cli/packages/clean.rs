@@ -99,9 +99,7 @@ pub async fn clean(orphans: bool, cache: bool, aur: bool, all: bool, dry_run: bo
                 println!("  {} No changes made (dry run)", "ℹ".blue().dimmed());
                 return Ok(());
             }
-            tokio::task::spawn_blocking(crate::package_managers::apt_remove_orphans)
-                .await
-                .context("APT orphan removal task failed")??;
+            crate::package_managers::apt_remove_orphans().await?;
             return Ok(());
         }
     }
@@ -200,7 +198,7 @@ pub async fn clean(orphans: bool, cache: bool, aur: bool, all: bool, dry_run: bo
                 not(feature = "debian-pure")
             ))]
             {
-                apt_remove_orphans()?;
+                apt_remove_orphans().await?;
             }
         }
 
