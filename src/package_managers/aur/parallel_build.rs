@@ -44,6 +44,52 @@ impl BuildJob {
     }
 }
 
+#[derive(Debug, Default)]
+pub struct ParallelBuildSummary {
+    succeeded_outputs: Vec<String>,
+    failed_outputs: Vec<String>,
+    first_error: Option<anyhow::Error>,
+}
+
+impl ParallelBuildSummary {
+    #[must_use]
+    pub fn succeeded_output_count(&self) -> usize {
+        self.succeeded_outputs.len()
+    }
+
+    #[must_use]
+    pub fn failed_output_count(&self) -> usize {
+        self.failed_outputs.len()
+    }
+
+    #[must_use]
+    pub fn first_error(&self) -> Option<&anyhow::Error> {
+        self.first_error.as_ref()
+    }
+
+    fn record_job_result(&mut self, job: &BuildJob, result: Result<()>) {
+        match result {
+            Ok(()) => self.succeeded_outputs.extend(job.outputs.iter().cloned()),
+            Err(error) => {
+                self.failed_outputs.extend(job.outputs.iter().cloned());
+                self.first_error.get_or_insert(error);
+            }
+        }
+    }
+
+    fn record_skipped(&mut self, job: &BuildJob) {
+        self.failed_outputs.extend(job.outputs.iter().cloned());
+    }
+
+    fn merge(&mut self, mut other: Self) {
+        self.succeeded_outputs.append(&mut other.succeeded_outputs);
+        self.failed_outputs.append(&mut other.failed_outputs);
+        if self.first_error.is_none() {
+            self.first_error = other.first_error;
+        }
+    }
+}
+
 pub struct ParallelBuilder {
     client: Arc<AurClient>,
     max_concurrent: usize,
@@ -63,9 +109,9 @@ impl ParallelBuilder {
         }
     }
 
-    pub async fn build_packages(&self, jobs: Vec<BuildJob>) -> Result<()> {
+    pub async fn build_packages(&self, jobs: Vec<BuildJob>) -> Result<ParallelBuildSummary> {
         if jobs.is_empty() {
-            return Ok(());
+            return Ok(ParallelBuildSummary::default());
         }
 
         // Start a shared sudoloop for the entire parallel build session.
@@ -91,13 +137,30 @@ impl ParallelBuilder {
             build_levels.len()
         );
 
+        let mut summary = ParallelBuildSummary::default();
         for (level_idx, level) in build_levels.iter().enumerate() {
-            self.build_level(level_idx + 1, build_levels.len(), level, &jobs_by_package)
+            let level_summary = self
+                .build_level(level_idx + 1, build_levels.len(), level, &jobs_by_package)
                 .await?;
+            let wave_failed = level_summary.failed_output_count() > 0;
+            summary.merge(level_summary);
+
+            if wave_failed {
+                // Preserve the existing fail-fast dependency behavior. Later
+                // waves were not attempted, so none of their outputs can be
+                // reported as upgraded.
+                for blocked_package in build_levels.iter().skip(level_idx + 1).flatten() {
+                    let blocked_job = jobs_by_package.get(blocked_package).with_context(|| {
+                        format!("Missing build job for package base '{blocked_package}'")
+                    })?;
+                    summary.record_skipped(blocked_job);
+                }
+                break;
+            }
         }
 
         // _sudoloop is dropped here after all waves complete
-        Ok(())
+        Ok(summary)
     }
 
     #[must_use]
@@ -169,7 +232,7 @@ impl ParallelBuilder {
         total_levels: usize,
         packages: &[String],
         jobs: &HashMap<String, BuildJob>,
-    ) -> Result<()> {
+    ) -> Result<ParallelBuildSummary> {
         use owo_colors::OwoColorize;
 
         // Builds within a wave run concurrently; the final `pacman -U` step
@@ -190,6 +253,7 @@ impl ParallelBuilder {
         let concurrency = Self::concurrency_for_level(self.max_concurrent, packages.len());
 
         let mut tasks = JoinSet::new();
+        let mut in_flight_jobs = HashMap::new();
         let mut package_iter = packages.iter();
 
         for _ in 0..concurrency {
@@ -199,33 +263,41 @@ impl ParallelBuilder {
                     .get(pkg)
                     .cloned()
                     .with_context(|| format!("Missing build job for package base '{pkg}'"))?;
+                let task_job = job.clone();
 
-                tasks.spawn(async move {
-                    tracing::info!("Building {} for outputs {:?}", job.package, job.outputs);
+                let task = tasks.spawn(async move {
+                    tracing::info!(
+                        "Building {} for outputs {:?}",
+                        task_job.package,
+                        task_job.outputs
+                    );
                     client
-                        .install_package_outputs(&job.package, &job.outputs)
+                        .install_package_outputs(&task_job.package, &task_job.outputs)
                         .await
-                        .with_context(|| format!("Failed to build {}", job.package))
+                        .with_context(|| format!("Failed to build {}", task_job.package))
                 });
+                in_flight_jobs.insert(task.id(), job);
             }
         }
 
         // A failed package must not detach its already-running siblings. In
         // particular, aborting a `setsid -w makepkg` task kills the waiter but
         // can leave the compiler process group alive and still writing to the
-        // terminal. Drain the current independent wave, remember its first
-        // failure, and stop before any dependent wave starts.
-        let mut first_error = None;
-        while let Some(result) = tasks.join_next().await {
-            match result {
-                Ok(Ok(())) => {}
-                Ok(Err(error)) => {
-                    first_error.get_or_insert(error);
+        // terminal. Drain the current independent wave, record each result,
+        // and stop before any dependent wave starts.
+        let mut summary = ParallelBuildSummary::default();
+        while let Some(result) = tasks.join_next_with_id().await {
+            let (task_id, build_result) = match result {
+                Ok((task_id, build_result)) => (task_id, build_result),
+                Err(join_error) => {
+                    let task_id = join_error.id();
+                    (task_id, Err(join_error.into()))
                 }
-                Err(error) => {
-                    first_error.get_or_insert_with(|| error.into());
-                }
-            }
+            };
+            let job = in_flight_jobs
+                .remove(&task_id)
+                .with_context(|| format!("Missing build job for completed task {task_id}"))?;
+            summary.record_job_result(&job, build_result);
 
             if let Some(pkg) = package_iter.next() {
                 let client = Arc::clone(&self.client);
@@ -233,18 +305,24 @@ impl ParallelBuilder {
                     .get(pkg)
                     .cloned()
                     .with_context(|| format!("Missing build job for package base '{pkg}'"))?;
+                let task_job = job.clone();
 
-                tasks.spawn(async move {
-                    tracing::info!("Building {} for outputs {:?}", job.package, job.outputs);
+                let task = tasks.spawn(async move {
+                    tracing::info!(
+                        "Building {} for outputs {:?}",
+                        task_job.package,
+                        task_job.outputs
+                    );
                     client
-                        .install_package_outputs(&job.package, &job.outputs)
+                        .install_package_outputs(&task_job.package, &task_job.outputs)
                         .await
-                        .with_context(|| format!("Failed to build {}", job.package))
+                        .with_context(|| format!("Failed to build {}", task_job.package))
                 });
+                in_flight_jobs.insert(task.id(), job);
             }
         }
 
-        first_error.map_or(Ok(()), Err)
+        Ok(summary)
     }
 }
 
@@ -305,6 +383,27 @@ mod tests {
         assert_eq!(ParallelBuilder::concurrency_for_level(0, 5), 1);
         assert_eq!(ParallelBuilder::concurrency_for_level(2, 5), 2);
         assert_eq!(ParallelBuilder::concurrency_for_level(8, 3), 3);
+    }
+
+    #[test]
+    fn partial_wave_counts_successful_and_failed_outputs_separately() {
+        let mut summary = ParallelBuildSummary::default();
+        let postgresql = BuildJob::for_package_base(
+            "postgresql18".to_string(),
+            vec!["postgresql18".to_string(), "postgresql18-libs".to_string()],
+            vec![],
+        );
+        let huggingface = BuildJob::new("python-huggingface-hub-git".to_string(), vec![]);
+
+        summary.record_job_result(&postgresql, Ok(()));
+        summary.record_job_result(&huggingface, Err(anyhow::anyhow!("build failed")));
+
+        assert_eq!(summary.succeeded_output_count(), 2);
+        assert_eq!(summary.failed_output_count(), 1);
+        assert_eq!(
+            summary.first_error().map(ToString::to_string).as_deref(),
+            Some("build failed")
+        );
     }
 
     #[test]

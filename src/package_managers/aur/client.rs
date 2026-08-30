@@ -46,6 +46,16 @@ use crate::package_managers::{get_potential_aur_packages, pacman_db};
 const AUR_RPC_URL: &str = "https://aur.archlinux.org/rpc";
 const AUR_GIT_URL: &str = "https://aur.archlinux.org";
 const AUR_RPC_MAX_URI: usize = 4400;
+const AUR_GIT_PULL_ARGS: &[&str] = &[
+    "-c",
+    "core.hooksPath=/dev/null",
+    "-c",
+    "protocol.file.allow=user",
+    "-c",
+    "pull.rebase=false",
+    "pull",
+    "--ff-only",
+];
 
 /// Process-wide lock around pacman database mutations (`pacman -U` or a
 /// direct ALPM transaction). Pacman serializes installs on
@@ -211,6 +221,51 @@ fn configure_build_environment(command: &mut Command, home: &Path, user: &str) {
         .env("LOGNAME", user)
         .env("LANG", "C.UTF-8")
         .env("LC_ALL", "C.UTF-8");
+}
+
+/// Make `/etc/resolv.conf` usable when it points outside the read-only `/etc`
+/// mount, as systemd-resolved and NetworkManager commonly do under `/run`.
+fn configure_sandbox_resolver(command: &mut Command) -> Result<()> {
+    configure_sandbox_resolver_at(command, "/etc/resolv.conf".as_ref())
+}
+
+fn configure_sandbox_resolver_at(command: &mut Command, resolver_config: &Path) -> Result<()> {
+    let resolver = match resolver_config.canonicalize() {
+        Ok(resolved) => resolved,
+        // A host without a resolver (container, offline chroot, dangling
+        // symlink to an unmounted /run) has nothing to bind; skipping keeps
+        // the sandbox identical to the host instead of failing every build.
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(()),
+        Err(error) => {
+            return Err(error).with_context(|| {
+                format!(
+                    "Failed to resolve {} for the AUR sandbox",
+                    resolver_config.display()
+                )
+            });
+        }
+    };
+    if resolver.starts_with("/etc") {
+        return Ok(());
+    }
+    anyhow::ensure!(
+        resolver.is_file(),
+        "AUR sandbox resolver target is not a file: {}",
+        resolver.display()
+    );
+
+    let mut parents: Vec<_> = resolver
+        .parent()
+        .into_iter()
+        .flat_map(Path::ancestors)
+        .filter(|path| *path != Path::new("/"))
+        .collect();
+    parents.reverse();
+    for parent in parents {
+        command.arg("--dir").arg(parent);
+    }
+    command.arg("--ro-bind").arg(&resolver).arg(&resolver);
+    Ok(())
 }
 
 fn build_identity() -> (String, PathBuf) {
@@ -1767,17 +1822,8 @@ impl AurClient {
             // core.hooksPath would execute as the real user on this pull.
             // Hooks are disabled outright and global/system config is
             // isolated so repository-local config cannot inject behavior.
-            cmd.args([
-                "git",
-                "-C",
-                pkg_dir_str.as_ref(),
-                "-c",
-                "core.hooksPath=/dev/null",
-                "-c",
-                "protocol.file.allow=user",
-                "pull",
-                "--ff-only",
-            ]);
+            cmd.args(["git", "-C", pkg_dir_str.as_ref()]);
+            cmd.args(AUR_GIT_PULL_ARGS);
             cmd.env("GIT_TERMINAL_PROMPT", "0");
             cmd.env("GIT_CONFIG_NOSYSTEM", "1");
             configure_auxiliary_output(&mut cmd);
@@ -1809,14 +1855,7 @@ impl AurClient {
             command
                 .arg("-C")
                 .arg(pkg_dir)
-                .args([
-                    "-c",
-                    "core.hooksPath=/dev/null",
-                    "-c",
-                    "protocol.file.allow=user",
-                    "pull",
-                    "--ff-only",
-                ])
+                .args(AUR_GIT_PULL_ARGS)
                 .env("GIT_TERMINAL_PROMPT", "0")
                 .env("GIT_CONFIG_NOSYSTEM", "1")
                 .stdin(std::process::Stdio::null());
@@ -2039,6 +2078,7 @@ impl AurClient {
                 "--tmpfs",
             ]);
             cmd.arg(&*home_str);
+            configure_sandbox_resolver(&mut cmd)?;
 
             cmd.args(["--bind"]);
             cmd.arg(&*pkg_dir_str);
@@ -3051,6 +3091,46 @@ mod tests {
         assert_eq!(AurClient::pkg_name_and_version_from_archive(&deep), None);
     }
 
+    #[test]
+    fn sandbox_mounts_external_resolver_target() {
+        let resolver = std::fs::canonicalize("/etc/resolv.conf").unwrap();
+        if resolver.starts_with("/etc") {
+            return;
+        }
+
+        let mut command = Command::new("bwrap");
+        configure_sandbox_resolver(&mut command).unwrap();
+        let args: Vec<_> = command.as_std().get_args().collect();
+
+        assert!(args.contains(&resolver.as_os_str()));
+        assert!(
+            resolver
+                .parent()
+                .is_some_and(|parent| args.contains(&parent.as_os_str()))
+        );
+    }
+
+    /// A host without a usable resolver (container, chroot, dangling
+    /// /etc/resolv.conf symlink) must not fail every AUR build at sandbox
+    /// setup; there is simply nothing to mount.
+    #[test]
+    fn sandbox_resolver_setup_skips_when_the_host_has_no_resolver() {
+        let temp = tempfile::tempdir().unwrap();
+
+        let missing = temp.path().join("resolv.conf");
+        let mut command = Command::new("bwrap");
+        configure_sandbox_resolver_at(&mut command, &missing).unwrap();
+        assert_eq!(command.as_std().get_args().count(), 0);
+
+        // Same for a dangling symlink (e.g. points into an unmounted /run).
+        let dangling = temp.path().join("dangling");
+        std::os::unix::fs::symlink(temp.path().join("unmounted/run/resolv.conf"), &dangling)
+            .unwrap();
+        let mut command = Command::new("bwrap");
+        configure_sandbox_resolver_at(&mut command, &dangling).unwrap();
+        assert_eq!(command.as_std().get_args().count(), 0);
+    }
+
     /// Verify that bubblewrap's read-only root bind blocks writes outside
     /// the writable mounts our sandbox configures.
     ///
@@ -3637,6 +3717,115 @@ mod tests {
         assert!(
             invalid.to_string().contains("non-hex chars"),
             "got: {invalid}"
+        );
+    }
+
+    #[test]
+    fn aur_pull_overrides_user_rebase_configuration() {
+        let temp = tempfile::tempdir().unwrap();
+        let remote = temp.path().join("remote.git");
+        let seed = temp.path().join("seed");
+        let checkout = temp.path().join("checkout");
+
+        let git = |args: &[&std::ffi::OsStr]| {
+            std::process::Command::new("git")
+                .args(args)
+                .output()
+                .unwrap()
+        };
+        assert!(
+            git(&["init".as_ref(), "--bare".as_ref(), remote.as_os_str()])
+                .status
+                .success()
+        );
+        assert!(git(&["init".as_ref(), seed.as_os_str()]).status.success());
+        assert!(
+            git(&[
+                "-C".as_ref(),
+                seed.as_os_str(),
+                "config".as_ref(),
+                "user.email".as_ref(),
+                "test@example.invalid".as_ref(),
+            ])
+            .status
+            .success()
+        );
+        assert!(
+            git(&[
+                "-C".as_ref(),
+                seed.as_os_str(),
+                "config".as_ref(),
+                "user.name".as_ref(),
+                "OMG test".as_ref(),
+            ])
+            .status
+            .success()
+        );
+        std::fs::write(seed.join("PKGBUILD"), "pkgver=1\n").unwrap();
+        assert!(
+            git(&[
+                "-C".as_ref(),
+                seed.as_os_str(),
+                "add".as_ref(),
+                "PKGBUILD".as_ref(),
+            ])
+            .status
+            .success()
+        );
+        assert!(
+            git(&[
+                "-C".as_ref(),
+                seed.as_os_str(),
+                "commit".as_ref(),
+                "-m".as_ref(),
+                "initial".as_ref(),
+            ])
+            .status
+            .success()
+        );
+        assert!(
+            git(&[
+                "-C".as_ref(),
+                seed.as_os_str(),
+                "remote".as_ref(),
+                "add".as_ref(),
+                "origin".as_ref(),
+                remote.as_os_str(),
+            ])
+            .status
+            .success()
+        );
+        assert!(
+            git(&[
+                "-C".as_ref(),
+                seed.as_os_str(),
+                "push".as_ref(),
+                "-u".as_ref(),
+                "origin".as_ref(),
+                "HEAD".as_ref(),
+            ])
+            .status
+            .success()
+        );
+        assert!(
+            git(&["clone".as_ref(), remote.as_os_str(), checkout.as_os_str(),])
+                .status
+                .success()
+        );
+        std::fs::write(checkout.join("PKGBUILD"), "pkgver=2\n").unwrap();
+
+        let mut pull_args: Vec<&std::ffi::OsStr> = vec!["-C".as_ref(), checkout.as_os_str()];
+        pull_args.extend(
+            AUR_GIT_PULL_ARGS
+                .iter()
+                .map(|arg| std::ffi::OsStr::new(*arg)),
+        );
+        let pull = git(&pull_args);
+
+        assert!(
+            pull.status.success(),
+            "dirty VCS PKGBUILDs must not inherit pull.rebase=true: {}",
+            String::from_utf8_lossy(&pull.stderr)
         );
     }
 

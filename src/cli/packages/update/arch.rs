@@ -370,11 +370,11 @@ pub async fn update(check_only: bool, yes: bool, dry_run: bool) -> Result<()> {
                 aur_build_concurrency(std::env::var("OMG_AUR_PARALLEL").ok().as_deref());
             let builder = ParallelBuilder::new(client, max_concurrent);
 
-            if let Err(e) = builder.build_packages(jobs).await {
-                println!("  {} Failed to build AUR packages: {e:#}", "✗".red());
-                failed_count += aur_packages.len();
-            } else {
-                installed_count += aur_packages.len();
+            let build_summary = builder.build_packages(jobs).await?;
+            installed_count += build_summary.succeeded_output_count();
+            failed_count += build_summary.failed_output_count();
+            if let Some(error) = build_summary.first_error() {
+                println!("  {} Failed to build AUR packages: {error:#}", "✗".red());
             }
         }
 

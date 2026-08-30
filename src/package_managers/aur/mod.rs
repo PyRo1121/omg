@@ -9,4 +9,4 @@ mod parallel_build;
 mod utils;
 
 pub use client::{AurClient, AurPackageDetail, search_detailed};
-pub use parallel_build::{BuildJob, ParallelBuilder};
+pub use parallel_build::{BuildJob, ParallelBuildSummary, ParallelBuilder};
