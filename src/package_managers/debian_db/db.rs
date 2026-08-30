@@ -2026,6 +2026,9 @@ fn status_size_bytes(size_str: &str, package_name: &str) -> Result<i64> {
 
 fn package_size_from_status(content: &str, package_name: &str) -> Result<Option<i64>> {
     for paragraph in status_paragraphs(content) {
+        if !status_paragraph_is_installed(paragraph) {
+            continue;
+        }
         let mut in_package = false;
         for line in paragraph.lines() {
             if let Some(pkg) = line.strip_prefix("Package: ") {
@@ -2043,6 +2046,9 @@ fn packages_with_sizes_from_status(content: &str) -> Result<Vec<(String, i64)>> 
     let mut results = Vec::new();
 
     for paragraph in status_paragraphs(content) {
+        if !status_paragraph_is_installed(paragraph) {
+            continue;
+        }
         let mut current_pkg = String::new();
         let mut current_size: i64 = 0;
 
@@ -2515,12 +2521,12 @@ mod tests {
 
     #[test]
     fn test_packages_with_sizes_from_status_last_paragraph_without_trailing_blank() {
-        let without_blank = "Package: apt\nInstalled-Size: 4\n\nPackage: vim\nInstalled-Size: 3";
+        let without_blank = "Package: apt\nStatus: install ok installed\nInstalled-Size: 4\n\nPackage: vim\nStatus: install ok installed\nInstalled-Size: 3";
         assert_eq!(
             packages_with_sizes_from_status(without_blank).expect("valid sizes"),
             vec![("apt".to_string(), 4 * 1024), ("vim".to_string(), 3 * 1024),]
         );
-        let with_blank = "Package: vim\nInstalled-Size: 3\n\n";
+        let with_blank = "Package: vim\nStatus: install ok installed\nInstalled-Size: 3\n\n";
         assert_eq!(
             packages_with_sizes_from_status(with_blank).expect("valid sizes"),
             vec![("vim".to_string(), 3 * 1024)]
@@ -2529,7 +2535,7 @@ mod tests {
 
     #[test]
     fn test_installed_size_parse_rejects_corrupt_values() {
-        let corrupt = "Package: vim\nInstalled-Size: not-a-number";
+        let corrupt = "Package: vim\nStatus: install ok installed\nInstalled-Size: not-a-number";
         let error = package_size_from_status(corrupt, "vim")
             .expect_err("corrupt Installed-Size must not look like zero bytes");
         assert!(
@@ -2543,15 +2549,32 @@ mod tests {
             "got: {list_error}"
         );
         assert_eq!(
-            package_size_from_status("Package: vim\nInstalled-Size: 3", "vim")
-                .expect("valid size")
-                .expect("installed"),
+            package_size_from_status(
+                "Package: vim\nStatus: install ok installed\nInstalled-Size: 3",
+                "vim",
+            )
+            .expect("valid size")
+            .expect("installed"),
             3 * 1024
         );
         assert_eq!(
-            package_size_from_status("Package: vim\nInstalled-Size: 3", "bash")
-                .expect("missing package is a miss"),
+            package_size_from_status(
+                "Package: vim\nStatus: install ok installed\nInstalled-Size: 3",
+                "bash",
+            )
+            .expect("missing package is a miss"),
             None
+        );
+    }
+
+    #[test]
+    fn package_sizes_ignore_removed_and_partial_dpkg_states() {
+        let content = "Package: installed\nStatus: install ok installed\nInstalled-Size: 3\n\nPackage: removed\nStatus: deinstall ok config-files\nInstalled-Size: 8\n\nPackage: partial\nStatus: install ok half-installed\nInstalled-Size: 5";
+
+        assert_eq!(package_size_from_status(content, "removed").unwrap(), None);
+        assert_eq!(
+            packages_with_sizes_from_status(content).unwrap(),
+            [("installed".to_string(), 3 * 1024)]
         );
     }
 
