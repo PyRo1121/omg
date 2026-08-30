@@ -485,6 +485,15 @@ pub fn show_policy(_ctx: &CliContext) -> Result<()> {
     Ok(())
 }
 
+fn enforce_secret_scan_result(result: &crate::core::security::SecretScanResult) -> Result<()> {
+    anyhow::ensure!(
+        !result.has_critical(),
+        "Secret scan failed: {} critical secret finding(s) require remediation",
+        result.critical_count
+    );
+    Ok(())
+}
+
 /// Scan for leaked secrets
 pub fn scan_secrets(path: Option<String>, _ctx: &CliContext) -> Result<()> {
     // Require Pro tier for secret scanning
@@ -601,7 +610,7 @@ pub fn scan_secrets(path: Option<String>, _ctx: &CliContext) -> Result<()> {
         );
     }
 
-    Ok(())
+    enforce_secret_scan_result(&result)
 }
 
 /// Check SLSA provenance for a package
@@ -1508,6 +1517,23 @@ mod tests {
         let csv = String::from_utf8(csv).expect("UTF-8 CSV");
         assert!(csv.contains("Package,Version,License,Category"));
         assert!(csv.contains("demo,1.2.3,MIT,Permissive"));
+    }
+
+    #[test]
+    fn critical_secret_findings_fail_the_command() {
+        use crate::core::security::secrets::{SecretFinding, SecretSeverity, SecretType};
+
+        let result = crate::core::security::SecretScanResult::from_findings(vec![SecretFinding {
+            secret_type: SecretType::PrivateKey,
+            file_path: "fixture.env".to_string(),
+            line_number: 1,
+            redacted: "***".to_string(),
+            severity: SecretSeverity::Critical,
+        }]);
+
+        let error = enforce_secret_scan_result(&result)
+            .expect_err("critical leaked secrets must produce a failing exit status");
+        assert!(error.to_string().contains("critical secret"));
     }
 
     #[test]
