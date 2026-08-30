@@ -16,6 +16,37 @@ pub struct OutdatedPackage {
     pub repo: String,
 }
 
+struct UpdateGroups<'a> {
+    major: Vec<&'a OutdatedPackage>,
+    minor: Vec<&'a OutdatedPackage>,
+    patch: Vec<&'a OutdatedPackage>,
+    unknown: Vec<&'a OutdatedPackage>,
+}
+
+impl UpdateGroups<'_> {
+    fn total(&self) -> usize {
+        self.major.len() + self.minor.len() + self.patch.len() + self.unknown.len()
+    }
+}
+
+fn group_updates(updates: &[OutdatedPackage]) -> UpdateGroups<'_> {
+    let mut groups = UpdateGroups {
+        major: Vec::new(),
+        minor: Vec::new(),
+        patch: Vec::new(),
+        unknown: Vec::new(),
+    };
+    for update in updates {
+        match update.update_type {
+            UpdateType::Major => groups.major.push(update),
+            UpdateType::Minor => groups.minor.push(update),
+            UpdateType::Patch => groups.patch.push(update),
+            UpdateType::Unknown => groups.unknown.push(update),
+        }
+    }
+    groups
+}
+
 /// Show outdated packages
 pub async fn run(json: bool) -> Result<()> {
     use crate::cli::components::Components;
@@ -56,32 +87,22 @@ pub async fn run(json: bool) -> Result<()> {
         return Ok(());
     }
 
-    let major: Vec<_> = outdated
-        .iter()
-        .filter(|p| matches!(p.update_type, UpdateType::Major))
-        .collect();
-    let minor: Vec<_> = outdated
-        .iter()
-        .filter(|p| matches!(p.update_type, UpdateType::Minor))
-        .collect();
-    let patch: Vec<_> = outdated
-        .iter()
-        .filter(|p| matches!(p.update_type, UpdateType::Patch))
-        .collect();
+    let groups = group_updates(&outdated);
 
     let mut commands = vec![
         Cmd::spacer(),
         Cmd::header(
             "Available Updates",
-            format!("{} packages total", outdated.len()),
+            format!("{} packages total", groups.total()),
         ),
         Cmd::spacer(),
     ];
 
-    if !major.is_empty() {
+    if !groups.major.is_empty() {
         commands.push(Cmd::card(
             "Major Updates (may have breaking changes)".to_string(),
-            major
+            groups
+                .major
                 .iter()
                 .map(|p| {
                     format!(
@@ -95,21 +116,22 @@ pub async fn run(json: bool) -> Result<()> {
     }
 
     // Minor updates
-    if !minor.is_empty() {
-        let minor_count = minor.len().min(10);
+    if !groups.minor.is_empty() {
+        let minor_count = groups.minor.len().min(10);
         commands.push(Cmd::card(
             "Minor Updates (new features)".to_string(),
-            minor
+            groups
+                .minor
                 .iter()
                 .take(minor_count)
                 .map(|p| format!("{} {} → {}", p.name, p.current_version, p.new_version))
                 .collect(),
         ));
 
-        if minor.len() > 10 {
+        if groups.minor.len() > 10 {
             use crate::cli::tea::{StyledTextConfig, TextStyle};
             commands.push(Cmd::styled_text(StyledTextConfig {
-                text: format!("... and {} more minor updates", minor.len() - 10),
+                text: format!("... and {} more minor updates", groups.minor.len() - 10),
                 style: TextStyle::Muted,
             }));
         }
@@ -117,24 +139,42 @@ pub async fn run(json: bool) -> Result<()> {
     }
 
     // Patch updates
-    if !patch.is_empty() {
-        let patch_count = patch.len().min(5);
+    if !groups.patch.is_empty() {
+        let patch_count = groups.patch.len().min(5);
         commands.push(Cmd::card(
             "Patch Updates (bug fixes)".to_string(),
-            patch
+            groups
+                .patch
                 .iter()
                 .take(patch_count)
                 .map(|p| format!("{} {} → {}", p.name, p.current_version, p.new_version))
                 .collect(),
         ));
 
-        if patch.len() > 5 {
+        if groups.patch.len() > 5 {
             use crate::cli::tea::{StyledTextConfig, TextStyle};
             commands.push(Cmd::styled_text(StyledTextConfig {
-                text: format!("... and {} more patch updates", patch.len() - 5),
+                text: format!("... and {} more patch updates", groups.patch.len() - 5),
                 style: TextStyle::Muted,
             }));
         }
+        commands.push(Cmd::spacer());
+    }
+
+    if !groups.unknown.is_empty() {
+        commands.push(Cmd::card(
+            "Other Updates (unclassified versions)".to_string(),
+            groups
+                .unknown
+                .iter()
+                .map(|package| {
+                    format!(
+                        "{} {} → {} ({})",
+                        package.name, package.current_version, package.new_version, package.repo
+                    )
+                })
+                .collect(),
+        ));
         commands.push(Cmd::spacer());
     }
 
@@ -142,9 +182,10 @@ pub async fn run(json: bool) -> Result<()> {
     commands.push(Components::kv_list(
         Some("Summary"),
         vec![
-            ("Major Updates", &major.len().to_string()),
-            ("Minor Updates", &minor.len().to_string()),
-            ("Patch Updates", &patch.len().to_string()),
+            ("Major Updates", &groups.major.len().to_string()),
+            ("Minor Updates", &groups.minor.len().to_string()),
+            ("Patch Updates", &groups.patch.len().to_string()),
+            ("Other Updates", &groups.unknown.len().to_string()),
         ],
     ));
     commands.push(Cmd::spacer());
@@ -166,6 +207,22 @@ fn classify_update(old: &str, new: &str) -> UpdateType {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn unknown_versions_remain_visible_in_output_groups() {
+        let packages = vec![OutdatedPackage {
+            name: "rolling-package".to_string(),
+            current_version: "release-a".to_string(),
+            new_version: "release-b".to_string(),
+            update_type: UpdateType::Unknown,
+            repo: "custom".to_string(),
+        }];
+
+        let groups = group_updates(&packages);
+
+        assert_eq!(groups.unknown.len(), 1);
+        assert_eq!(groups.total(), packages.len());
+    }
 
     #[test]
     fn classify_update_uses_version_change_not_cve_status() {
