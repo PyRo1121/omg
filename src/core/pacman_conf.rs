@@ -1,6 +1,7 @@
 //! Parser for /etc/pacman.conf to extract repository configuration
 
-use std::path::Path;
+use std::collections::HashSet;
+use std::path::{Path, PathBuf};
 
 use anyhow::{Context, Result};
 
@@ -36,11 +37,58 @@ fn strip_inline_comment(line: &str) -> &str {
     line.split('#').next().unwrap_or_default().trim_end()
 }
 
+fn load_config_with_includes(
+    path: &Path,
+    visited: &mut HashSet<PathBuf>,
+    output: &mut String,
+) -> Result<()> {
+    let canonical = path
+        .canonicalize()
+        .with_context(|| format!("Failed to resolve pacman configuration {}", path.display()))?;
+    anyhow::ensure!(
+        visited.insert(canonical.clone()),
+        "Pacman configuration include cycle at {}",
+        canonical.display()
+    );
+
+    let content = std::fs::read_to_string(&canonical)
+        .with_context(|| format!("Failed to read {}", canonical.display()))?;
+    for raw_line in content.lines() {
+        let line = strip_inline_comment(raw_line).trim();
+        let include = line
+            .split_once('=')
+            .filter(|(key, _)| key.trim() == "Include")
+            .map(|(_, value)| value.trim());
+        if let Some(include) = include {
+            anyhow::ensure!(!include.is_empty(), "Pacman Include path cannot be empty");
+            anyhow::ensure!(
+                !include.contains(['*', '?', '[']),
+                "Globbed pacman Include paths are not supported: {include}"
+            );
+            let include_path = Path::new(include);
+            let resolved = if include_path.is_absolute() {
+                include_path.to_path_buf()
+            } else {
+                canonical
+                    .parent()
+                    .context("Pacman configuration has no parent directory")?
+                    .join(include_path)
+            };
+            load_config_with_includes(&resolved, visited, output)?;
+        } else {
+            output.push_str(raw_line);
+            output.push('\n');
+        }
+    }
+
+    visited.remove(&canonical);
+    Ok(())
+}
+
 impl PacmanConfig {
     pub fn parse<P: AsRef<Path>>(path: P) -> Result<Self> {
-        let content = std::fs::read_to_string(path.as_ref())
-            .with_context(|| format!("Failed to read {}", path.as_ref().display()))?;
-
+        let mut content = String::new();
+        load_config_with_includes(path.as_ref(), &mut HashSet::new(), &mut content)?;
         Self::parse_str(&content)
     }
 
@@ -193,12 +241,15 @@ impl PacmanConfig {
                 .with_context(|| format!("Failed to read mirrorlist: {include_path}"))?;
 
             for line in mirrorlist.lines() {
-                let line = line.trim();
-                if line.starts_with("Server")
-                    && let Some(eq_pos) = line.find('=')
+                let line = strip_inline_comment(line).trim();
+                if let Some((key, url)) = line.split_once('=')
+                    && key.trim() == "Server"
                 {
-                    let url = line[eq_pos + 1..].trim();
-                    servers.push(url.replace("$repo", &repo.name).replace("$arch", arch));
+                    servers.push(
+                        url.trim()
+                            .replace("$repo", &repo.name)
+                            .replace("$arch", arch),
+                    );
                 }
             }
         }
@@ -246,6 +297,44 @@ mod tests {
                 .expect_err("missing pacman config must be reported explicitly");
             assert!(error.to_string().contains("does not exist"));
         });
+    }
+
+    #[test]
+    fn file_parser_applies_includes_in_options_and_repository_sections() {
+        let directory = tempfile::tempdir().expect("temp dir");
+        let options = directory.path().join("options.conf");
+        let mirrors = directory.path().join("mirrors.conf");
+        std::fs::write(&options, "HoldPkg = pacman glibc\n").expect("write options");
+        std::fs::write(
+            &mirrors,
+            "Server = https://mirror.example/$repo/$arch # preferred\n",
+        )
+        .expect("write mirrors");
+        let config_path = directory.path().join("pacman.conf");
+        std::fs::write(
+            &config_path,
+            "[options]\nInclude = options.conf\n[core]\nInclude = mirrors.conf\n",
+        )
+        .expect("write config");
+
+        let config = PacmanConfig::parse(&config_path).expect("parse included config");
+        assert_eq!(config.hold_pkg, ["pacman", "glibc"]);
+        assert_eq!(
+            config.resolve_servers(&config.repos[0], "x86_64").unwrap(),
+            ["https://mirror.example/core/x86_64"]
+        );
+    }
+
+    #[test]
+    fn file_parser_rejects_include_cycles() {
+        let directory = tempfile::tempdir().expect("temp dir");
+        let first = directory.path().join("first.conf");
+        let second = directory.path().join("second.conf");
+        std::fs::write(&first, "Include = second.conf\n").expect("write first");
+        std::fs::write(&second, "Include = first.conf\n").expect("write second");
+
+        let error = PacmanConfig::parse(&first).expect_err("include cycles must fail");
+        assert!(error.to_string().contains("include cycle"), "{error}");
     }
 
     #[test]
