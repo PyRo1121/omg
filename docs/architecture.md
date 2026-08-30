@@ -315,7 +315,7 @@ Package Download
 
 ### Audit Log
 
-Hash-chained, tamper-proof logging:
+Hash-chained, tamper-evident logging:
 - Location: `~/.local/share/omg/audit/audit.jsonl`
 - Format: JSON Lines
 - Each entry contains hash of previous entry

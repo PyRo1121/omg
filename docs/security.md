@@ -6,7 +6,7 @@ description: Vulnerability scanning, SBOM, PGP verification, and audit logging
 
 # Security Model
 
-OMG implements enterprise-grade security with defense-in-depth: vulnerability scanning, PGP verification, SLSA provenance, SBOM generation, secret scanning, tamper-proof audit logging, and configurable security policies. All operations are user-isolated with minimal privilege requirements.
+OMG implements enterprise-grade security with defense-in-depth: vulnerability scanning, PGP verification, SLSA provenance, SBOM generation, secret scanning, tamper-evident audit logging, and configurable security policies. All operations are user-isolated with minimal privilege requirements.
 
 ## Quick Reference
 
@@ -447,7 +447,7 @@ A: Telemetry failure never changes the command result. Unsent events remain in t
 
 ## Audit Logging
 
-OMG maintains tamper-proof audit logs for compliance and forensics.
+OMG maintains hash-chained, tamper-evident audit logs for compliance and forensics. The local chain detects modification of retained entries; it cannot independently prove that a privileged filesystem actor did not truncate or delete log history.
 
 ### Usage
 

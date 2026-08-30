@@ -263,7 +263,7 @@ Node.js, Bun, Python, Go, Rust, Ruby, Java, and Pi are managed natively. Auto-de
 
 ### 🛡️ Enterprise Security
 
-SLSA provenance, PGP verification, CycloneDX SBOM, secret scanning, tamper-proof audit logs. Security grading on every install. Policy enforcement via `policy.toml`.
+SLSA provenance, PGP verification, CycloneDX SBOM, secret scanning, and tamper-evident audit logs. Security grading on every install. Policy enforcement via `policy.toml`.
 
 ### 👥 Team Sync
 

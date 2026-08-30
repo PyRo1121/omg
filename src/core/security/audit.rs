@@ -1,12 +1,13 @@
-//! Tamper-proof audit logging with cryptographic integrity verification
+//! Tamper-evident audit logging with cryptographic integrity verification.
 //!
 //! Provides append-only audit logs with SHA-256 chain verification to detect
-//! tampering, log rotation, and compliance-ready event tracking.
+//! modification of retained entries. The local chain alone cannot prove that
+//! an attacker with filesystem access did not truncate or delete log history.
 
 #[cfg(unix)]
 use nix::libc;
 use std::fs::{File, OpenOptions};
-use std::io::{self, BufRead, BufReader, Write};
+use std::io::{self, BufRead, BufReader, Read, Seek, SeekFrom, Write};
 #[cfg(unix)]
 use std::os::unix::fs::OpenOptionsExt;
 use std::path::{Path, PathBuf};
@@ -20,6 +21,10 @@ use crate::core::paths;
 const DEFAULT_MAX_AUDIT_BYTES: u64 = 16 * 1024 * 1024;
 const DEFAULT_AUDIT_ARCHIVES: usize = 5;
 const MAX_AUDIT_FIELD_BYTES: usize = 4096;
+/// Audit entries contain two bounded user-controlled fields plus fixed-size
+/// metadata. Refuse an unexpectedly large trailing line instead of restoring
+/// the former full-log scan on every append.
+const MAX_AUDIT_ENTRY_BYTES: usize = 128 * 1024;
 
 /// Failures creating, reading, or appending the integrity-bound audit log.
 #[derive(Debug, Error)]
@@ -326,7 +331,8 @@ impl AuditLogger {
             .strftime("%Y-%m-%dT%H:%M:%S%.3fZ")
             .to_string();
         let id = uuid::Uuid::new_v4().to_string();
-        let user = std::env::var("USER").unwrap_or_else(|_| "unknown".to_string());
+        let user =
+            bounded_audit_field(&std::env::var("USER").unwrap_or_else(|_| "unknown".to_string()));
         let path_str = self.log_path.display().to_string();
 
         let mut entry = AuditEntry {
@@ -636,14 +642,79 @@ fn read_all_entries(path: &Path) -> Result<Vec<AuditEntry>, AuditError> {
 }
 
 fn get_last_hash(path: &Path) -> Result<String, AuditError> {
-    let entries = read_all_entries(path)?;
-    match entries.last() {
-        None => Ok("genesis".to_string()),
-        Some(entry) => entry.hash.clone().ok_or_else(|| AuditError::MissingHash {
+    let mut file = match open_read_file(path) {
+        Ok(file) => file,
+        Err(AuditError::Open { source, .. }) if source.kind() == io::ErrorKind::NotFound => {
+            return Ok("genesis".to_string());
+        }
+        Err(error) => return Err(error),
+    };
+    let length = file
+        .metadata()
+        .map_err(|source| AuditError::Read {
             path: path.display().to_string(),
-            line: entries.len(),
-        }),
+            source,
+        })?
+        .len();
+    if length == 0 {
+        return Ok("genesis".to_string());
     }
+
+    let max_tail_bytes = u64::try_from(MAX_AUDIT_ENTRY_BYTES + 2).unwrap_or(u64::MAX);
+    let tail_start = length.saturating_sub(max_tail_bytes);
+    file.seek(SeekFrom::Start(tail_start))
+        .map_err(|source| AuditError::Read {
+            path: path.display().to_string(),
+            source,
+        })?;
+    let mut tail = Vec::with_capacity(usize::try_from(length - tail_start).unwrap_or(0));
+    file.read_to_end(&mut tail)
+        .map_err(|source| AuditError::Read {
+            path: path.display().to_string(),
+            source,
+        })?;
+
+    while tail
+        .last()
+        .is_some_and(|byte| matches!(byte, b'\n' | b'\r'))
+    {
+        tail.pop();
+    }
+    if tail.is_empty() {
+        return Ok("genesis".to_string());
+    }
+    let line_start = tail
+        .iter()
+        .rposition(|byte| *byte == b'\n')
+        .map_or(0, |index| index + 1);
+    if tail_start > 0 && line_start == 0 {
+        return Err(AuditError::Read {
+            path: path.display().to_string(),
+            source: io::Error::new(
+                io::ErrorKind::InvalidData,
+                format!("trailing audit entry exceeds {MAX_AUDIT_ENTRY_BYTES} bytes"),
+            ),
+        });
+    }
+    let line_number = if tail_start == 0 {
+        memchr::memchr_iter(b'\n', &tail[..line_start]).count() + 1
+    } else {
+        0
+    };
+    let line = std::str::from_utf8(&tail[line_start..]).map_err(|source| AuditError::Read {
+        path: path.display().to_string(),
+        source: io::Error::new(io::ErrorKind::InvalidData, source),
+    })?;
+    let entry =
+        serde_json::from_str::<AuditEntry>(line).map_err(|source| AuditError::CorruptLine {
+            path: path.display().to_string(),
+            line: line_number,
+            source,
+        })?;
+    entry.hash.ok_or_else(|| AuditError::MissingHash {
+        path: path.display().to_string(),
+        line: line_number,
+    })
 }
 
 /// Report from audit log integrity verification

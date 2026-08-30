@@ -187,7 +187,7 @@ OMG rejects unsupported names with a list of native runtimes. It never downloads
 - **PGP verification** (Sequoia-OpenPGP)
 - **SLSA provenance** (Sigstore/Rekor)
 - **Secret scanning** (20+ credential patterns)
-- **Audit logging** (tamper-proof, hash-chained)
+- **Audit logging** (tamper-evident, hash-chained)
 - **Policy enforcement** (grade-based blocking)
 
 ### What are security grades?
@@ -205,7 +205,7 @@ Yes. OMG:
 - Verifies PGP signatures on official packages
 - Runs without root (except for system package installs via sudo)
 - Uses HTTPS for all network requests
-- Maintains tamper-proof audit logs
+- Maintains tamper-evident audit logs
 
 ---
 

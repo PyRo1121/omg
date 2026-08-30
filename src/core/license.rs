@@ -244,7 +244,7 @@ impl Feature {
             Self::Fleet => "Fleet Management",
             Self::TeamSync => "Team Environment Sync",
             Self::TeamConfig => "Shared Team Configs",
-            Self::AuditLog => "Tamper-proof Audit Logs",
+            Self::AuditLog => "Tamper-evident Audit Logs",
             Self::Policy => "Policy Enforcement",
             Self::Slsa => "SLSA Provenance Verification",
             Self::Sso => "SSO/SAML Integration",
