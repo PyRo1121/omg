@@ -174,6 +174,7 @@ async fn check_network() -> usize {
 /// Check for end-of-life runtimes
 fn check_eol_runtimes() -> Result<usize> {
     let mut issues = 0;
+    let mut probed = 0;
     let now = jiff::Timestamp::now();
     let warning_ts = crate::runtimes::eol::eol_warning_cutoff(now)
         .context("Failed to compute EOL warning window")?;
@@ -183,14 +184,25 @@ fn check_eol_runtimes() -> Result<usize> {
 
     for runtime in &runtimes {
         if let Some(version) = crate::runtimes::probe_version(runtime) {
-            // Check against EOL dates
+            probed += 1;
+            // Check against EOL dates. The canonical table is application
+            // data, so malformed dates are a defect and must not silently
+            // classify an unsupported runtime as healthy.
             let mut eol_warning = None;
 
             let components = crate::runtimes::eol::version_components(&version);
-            if let Some(entry) = crate::runtimes::eol::find_eol_entry(runtime, &components)
-                && let Ok(eol_date) = jiff::civil::Date::strptime("%Y-%m-%d", entry.eol_date)
-                && let Ok(zoned) = eol_date.at(0, 0, 0, 0).to_zoned(jiff::tz::TimeZone::UTC)
-            {
+            if let Some(entry) = crate::runtimes::eol::find_eol_entry(runtime, &components) {
+                let eol_date = jiff::civil::Date::strptime("%Y-%m-%d", entry.eol_date)
+                    .with_context(|| {
+                        format!(
+                            "Invalid EOL date {:?} for {runtime} in the canonical runtime table",
+                            entry.eol_date
+                        )
+                    })?;
+                let zoned = eol_date
+                    .at(0, 0, 0, 0)
+                    .to_zoned(jiff::tz::TimeZone::UTC)
+                    .context("Failed to convert runtime EOL date to UTC")?;
                 let eol_timestamp = zoned.timestamp();
                 if now > eol_timestamp {
                     eol_warning = Some(format!("EOL since {}", entry.eol_date));
@@ -219,10 +231,12 @@ fn check_eol_runtimes() -> Result<usize> {
         }
     }
 
-    if issues == 0 {
+    if probed == 0 {
+        println!("  {}", style::dim("No managed runtimes were detected."));
+    } else if issues == 0 {
         println!(
             "  {}",
-            style::dim("All runtimes are within support period.")
+            style::dim("All detected runtimes are within support period.")
         );
     }
 
