@@ -73,17 +73,18 @@ impl Style {
     }
 
     pub fn render<S: Display>(&self, text: S) -> String {
-        let s = text.to_string();
+        let s = format!(
+            "{}{}{}",
+            " ".repeat(self.padding_left),
+            text,
+            " ".repeat(self.padding_right)
+        );
         if !crate::cli::style::colors_enabled() {
-            return format!(
-                "{}{}{}",
-                " ".repeat(self.padding_left),
-                s,
-                " ".repeat(self.padding_right)
-            );
+            return s;
         }
 
-        // Apply colors and styles
+        // Apply colors and styles to the padded payload so background colors
+        // cover the full component width.
         let mut styled = match self.fg {
             Some(Color::Red) => s.red().to_string(),
             Some(Color::Green) => s.green().to_string(),
@@ -117,11 +118,7 @@ impl Style {
             styled = styled.italic().to_string();
         }
 
-        // Apply padding
-        let left_pad = " ".repeat(self.padding_left);
-        let right_pad = " ".repeat(self.padding_right);
-
-        format!("{left_pad}{styled}{right_pad}")
+        styled
     }
 }
 
@@ -186,10 +183,14 @@ pub fn print_dry_run_footer() {
     );
 }
 
+fn format_kv_key(key: &str) -> String {
+    let padded = format!("{key:>12}");
+    Style::new().foreground(Color::Gray).render(padded)
+}
+
 /// Print a key-value pair with consistent formatting.
 pub fn print_kv(key: &str, value: &str) {
-    let key_style = Style::new().foreground(Color::Gray);
-    println!("  {:>12}: {}", key_style.render(key), value);
+    println!("  {}: {}", format_kv_key(key), value);
 }
 
 /// Get a themed `ColorfulTheme` for dialoguer prompts.
@@ -230,6 +231,34 @@ pub fn print_card(title: &str, content: Vec<String>) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn colored_background_covers_component_padding() {
+        temp_env::with_vars(
+            [("NO_COLOR", None::<&str>), ("OMG_COLORS", Some("always"))],
+            || {
+                let rendered = Style::new()
+                    .background(Color::Cyan)
+                    .padding_left(1)
+                    .padding_right(1)
+                    .render("ok");
+                assert!(rendered.starts_with('\u{1b}'), "{rendered:?}");
+                assert!(rendered.contains(" ok "), "{rendered:?}");
+                assert!(!rendered.ends_with(' '), "{rendered:?}");
+            },
+        );
+    }
+
+    #[test]
+    fn colored_key_value_labels_keep_plain_text_alignment() {
+        temp_env::with_vars(
+            [("NO_COLOR", None::<&str>), ("OMG_COLORS", Some("always"))],
+            || {
+                let rendered = format_kv_key("Name");
+                assert!(rendered.contains("        Name"), "{rendered:?}");
+            },
+        );
+    }
 
     #[test]
     fn styles_are_plain_when_no_color_is_set() {
