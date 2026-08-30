@@ -123,6 +123,7 @@ async fn search_internal(
     let total_matches = official_total.saturating_add(aur_count);
 
     crate::core::usage::track_search_result(true);
+    truncate_search_results(&mut display_packages, limit);
 
     if json {
         let json_str = serde_json::to_string_pretty(&display_packages)
@@ -159,6 +160,10 @@ async fn search_internal(
     stdout.flush()?;
 
     Ok(())
+}
+
+fn truncate_search_results(packages: &mut Vec<DisplayPackage>, limit: usize) {
+    packages.truncate(limit);
 }
 
 async fn search_official_packages(
@@ -406,6 +411,26 @@ mod tests {
         let mut buf = Vec::new();
         write_package_line(&mut buf, pkg, 50).expect("in-memory writer cannot fail");
         String::from_utf8(buf).expect("writer only emits UTF-8")
+    }
+
+    #[test]
+    fn output_limit_applies_before_json_serialization() {
+        let mut packages = (0..3)
+            .map(|index| DisplayPackage {
+                name: format!("package-{index}"),
+                version: "1".to_string(),
+                description: String::new(),
+                source: "official".to_string(),
+                votes: None,
+                popularity: None,
+                maintainer: None,
+                out_of_date: None,
+            })
+            .collect::<Vec<_>>();
+
+        truncate_search_results(&mut packages, 2);
+        let json = serde_json::to_value(&packages).expect("serialize search results");
+        assert_eq!(json.as_array().map(Vec::len), Some(2));
     }
 
     #[test]
