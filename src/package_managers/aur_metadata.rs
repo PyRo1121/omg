@@ -58,6 +58,10 @@ pub struct AurJsonPackage {
     pub last_modified: Option<i64>,
 }
 
+fn modified_within_ttl(modified: SystemTime, ttl: Duration) -> bool {
+    modified.elapsed().is_ok_and(|age| age < ttl)
+}
+
 fn metadata_request(
     client: &reqwest::Client,
     meta_cache: &AurMetaCache,
@@ -97,7 +101,7 @@ pub async fn sync_aur_metadata(
         let is_fresh = tokio::task::spawn_blocking(move || {
             std::fs::metadata(&cache_path_clone)
                 .and_then(|m| m.modified())
-                .is_ok_and(|m| m.elapsed().unwrap_or_default() < Duration::from_secs(ttl))
+                .is_ok_and(|modified| modified_within_ttl(modified, Duration::from_secs(ttl)))
         })
         .await?;
 
@@ -289,6 +293,12 @@ fn persist_file_atomically(dest: &Path, data: &[u8]) -> Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn future_cache_timestamp_is_not_fresh() {
+        let future = SystemTime::now() + Duration::from_secs(3600);
+        assert!(!modified_within_ttl(future, Duration::from_secs(7200)));
+    }
 
     #[test]
     fn metadata_request_uses_validators_only_with_cached_archive() {
