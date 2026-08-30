@@ -678,6 +678,7 @@ analyzer inference
 - **Ci**: Cross-platform install script and R2 release sync
 ### 🐛 Bug Fixes
 
+- Preview local Arch package archives
 - Classify OSV CVSS vector severity
 - Enforce search limits for JSON output
 - Normalize runtime version prefixes safely
