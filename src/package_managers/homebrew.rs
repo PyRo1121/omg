@@ -722,7 +722,7 @@ impl HomebrewPackageManager {
                         ),
                         description: formula.desc.clone(),
                         source: PackageSource::Official,
-                        installed: !formula.installed.is_empty(),
+                        installed: self.is_installed_fast(&formula.name).unwrap_or(false),
                     }
                 } else {
                     let cask = &cache.casks[idx];
@@ -787,10 +787,18 @@ impl HomebrewPackageManager {
     }
 
     pub fn is_installed_fast(&self, package: &str) -> Result<bool> {
+        let cellar_mtime = std::fs::metadata(&self.cellar)
+            .ok()
+            .and_then(|metadata| metadata.modified().ok());
+        let caskroom_mtime = std::fs::metadata(self.prefix.join(CASKROOM_DIR))
+            .ok()
+            .and_then(|metadata| metadata.modified().ok());
         {
             let cache = crate::core::sync::read_cache(&INSTALLED_CACHE);
             if let Some(last) = cache.last_refreshed
                 && last.elapsed().as_secs() < INSTALLED_CACHE_TTL_SECS
+                && cache.cellar_mtime == cellar_mtime
+                && cache.caskroom_mtime == caskroom_mtime
             {
                 return Ok(cache.packages.contains(package));
             }
@@ -914,7 +922,7 @@ impl PackageManager for HomebrewPackageManager {
                     ),
                     description: formula.desc.clone(),
                     source: PackageSource::Official,
-                    installed: !formula.installed.is_empty(),
+                    installed: self.is_installed_fast(&formula.name)?,
                 }));
             }
 
@@ -1097,6 +1105,40 @@ mod tests {
         assert!(results.is_ok());
         let results = results.unwrap();
         assert!(!results.is_empty());
+    }
+
+    #[test]
+    fn formula_search_uses_local_cellar_for_installed_state() -> Result<()> {
+        let root = tempfile::tempdir()?;
+        let cellar = root.path().join(CELLAR_DIR);
+        std::fs::create_dir_all(cellar.join("wget").join("1.0"))?;
+        let manager = HomebrewPackageManager {
+            prefix: root.path().to_path_buf(),
+            cellar,
+            cache: Arc::new(RwLock::new(None)),
+            client: crate::core::http::download_client().clone(),
+        };
+        let cache = HomebrewPackageManager::build_cache(
+            vec![FormulaInfo {
+                name: "wget".to_string(),
+                full_name: "wget".to_string(),
+                desc: "Internet file retriever".to_string(),
+                homepage: None,
+                versions: FormulaVersions {
+                    stable: Some("1.0".to_string()),
+                    head: None,
+                    bottle: None,
+                },
+                installed: Vec::new(),
+            }],
+            Vec::new(),
+        );
+
+        let packages = manager.fuzzy_search(&cache, "wget");
+
+        assert_eq!(packages.len(), 1);
+        assert!(packages[0].installed);
+        Ok(())
     }
 
     #[tokio::test]
