@@ -61,6 +61,8 @@ impl PythonManager {
             .send()
             .await
             .context("Failed to fetch Python releases from GitHub")?
+            .error_for_status()
+            .context("Python releases request failed")?
             .json()
             .await
             .context("Failed to parse Python release data")?;
@@ -165,6 +167,8 @@ impl PythonManager {
             .send()
             .await
             .context("Failed to fetch Python releases")?
+            .error_for_status()
+            .context("Python releases request failed")?
             .json()
             .await
             .context("Failed to parse Python release data")?;
