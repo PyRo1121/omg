@@ -678,6 +678,7 @@ analyzer inference
 - **Ci**: Cross-platform install script and R2 release sync
 ### 🐛 Bug Fixes
 
+- Require explicit runtime telemetry consent
 - Preserve Bash prompt command arrays
 - Quote systemd daemon executable paths
 - Remove estimated enterprise report metrics
