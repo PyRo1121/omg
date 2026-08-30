@@ -20,10 +20,11 @@ use std::path::{Path, PathBuf};
 use tar::Archive;
 
 use super::common::{
-    BudgetedSink, activate_version, begin_staged_install, complete_staged_install,
-    copy_regular_tree, download_with_progress, get_current_version, is_valid_version_dir,
-    list_installed_versions, parse_sha256_digest, print_already_installed, print_installed,
-    print_using, remove_file_best_effort, replace_staged_install, validate_download_filename,
+    BudgetedReader, BudgetedSink, MAX_DECOMPRESSED_BYTES, activate_version, begin_staged_install,
+    complete_staged_install, copy_regular_tree, download_with_progress, get_current_version,
+    is_valid_version_dir, list_installed_versions, parse_sha256_digest, print_already_installed,
+    print_installed, print_using, remove_file_best_effort, replace_staged_install,
+    validate_download_filename,
 };
 use crate::core::archive::stripped_archive_path;
 use crate::core::http::download_client;
@@ -255,11 +256,20 @@ impl RustManager {
             let mut archive = Archive::new(decompressed.as_slice());
             Self::extract_component_entries(&mut archive, dest_dir)
         } else {
-            let file = File::open(archive_path)?;
-            let decoder = GzDecoder::new(file);
-            let mut archive = Archive::new(decoder);
-            Self::extract_component_entries(&mut archive, dest_dir)
+            Self::extract_gzip_component_with_budget(archive_path, dest_dir, MAX_DECOMPRESSED_BYTES)
         }
+    }
+
+    fn extract_gzip_component_with_budget(
+        archive_path: &Path,
+        dest_dir: &Path,
+        budget: u64,
+    ) -> Result<()> {
+        let file = File::open(archive_path)?;
+        let decoder = GzDecoder::new(file);
+        let bounded = BudgetedReader::new(decoder, budget);
+        let mut archive = Archive::new(bounded);
+        Self::extract_component_entries(&mut archive, dest_dir)
     }
 
     fn extract_component_entries<R: std::io::Read>(
@@ -739,6 +749,30 @@ mod tests {
         assert!(name.starts_with("stable-"));
         // Platform-agnostic check: should contain any valid OS component
         assert!(name.contains("linux") || name.contains("darwin") || name.contains("windows"));
+    }
+
+    #[test]
+    fn gzip_component_extraction_enforces_decompressed_budget() -> Result<()> {
+        use flate2::{Compression, write::GzEncoder};
+
+        let tar = component_archive(
+            "rustc-1.0.0-target/rustc/bin/rustc",
+            EntryType::Regular,
+            &[b'x'; 256],
+        )?;
+        let directory = TempDir::new()?;
+        let archive_path = directory.path().join("rustc.tar.gz");
+        let mut encoder = GzEncoder::new(Vec::new(), Compression::fast());
+        encoder.write_all(&tar)?;
+        fs::write(&archive_path, encoder.finish()?)?;
+
+        let destination = TempDir::new()?;
+        let error =
+            RustManager::extract_gzip_component_with_budget(&archive_path, destination.path(), 128)
+                .expect_err("oversized decompressed archive must fail");
+
+        assert!(error.to_string().contains("decompressed data exceeds"));
+        Ok(())
     }
 
     #[test]
