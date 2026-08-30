@@ -686,6 +686,7 @@ analyzer inference
 - **Ci**: Cross-platform install script and R2 release sync
 ### 🐛 Bug Fixes
 
+- Honor AUR dependency version constraints
 - Bound encoded AUR RPC request lengths
 - Parse daemon disable settings consistently
 - Correlate daemon error response ids
