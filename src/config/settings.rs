@@ -2,7 +2,7 @@
 
 use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
-use std::path::{Path, PathBuf};
+use std::path::{Component, Path, PathBuf};
 
 use crate::core::paths;
 
@@ -16,26 +16,29 @@ const MAX_CACHE_TTL_SECS: u64 = 7 * 24 * 60 * 60;
 fn validate_config_path(path: &Path, field_name: &str) -> Result<()> {
     let path_str = path.to_string_lossy();
 
-    // Check for path traversal
-    if path_str.contains("..") {
-        anyhow::bail!("Config error: {field_name} contains path traversal sequence '..'");
+    if path
+        .components()
+        .any(|component| component == Component::ParentDir)
+    {
+        anyhow::bail!("Config error: {field_name} contains a parent-directory component");
     }
 
-    // Check for null bytes
     if path_str.contains('\0') {
         anyhow::bail!("Config error: {field_name} contains null byte");
     }
 
-    // Reject absolute paths outside of home/cache directories for safety
     if path.is_absolute() {
-        let is_safe = path_str.starts_with("/home/")
-            || path_str.starts_with("/tmp/")
-            || path_str.starts_with("/var/cache/")
-            || path_str.starts_with("/var/tmp/");
+        let home = dirs::home_dir();
+        let temp = std::env::temp_dir();
+        let is_safe = home.as_ref().is_some_and(|home| path.starts_with(home))
+            || path.starts_with(&temp)
+            || path.starts_with("/var/cache")
+            || path.starts_with("/var/tmp");
 
         if !is_safe {
             anyhow::bail!(
-                "Config error: {field_name} absolute path must be under /home/, /tmp/, or /var/cache/"
+                "Config error: {field_name} absolute path must be under the current home directory, {}, /var/cache, or /var/tmp",
+                temp.display()
             );
         }
     }
@@ -322,6 +325,20 @@ impl Settings {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn config_paths_check_components_instead_of_dot_substrings() {
+        assert!(validate_config_path(Path::new("pkg..cache/output"), "pkgdest").is_ok());
+        assert!(validate_config_path(Path::new("cache/../escape"), "pkgdest").is_err());
+    }
+
+    #[test]
+    fn config_paths_accept_the_current_home_and_reject_unrelated_roots() {
+        if let Some(home) = dirs::home_dir() {
+            assert!(validate_config_path(&home.join(".cache/omg"), "pkgdest").is_ok());
+        }
+        assert!(validate_config_path(Path::new("/etc/omg-output"), "pkgdest").is_err());
+    }
 
     #[test]
     fn telemetry_requires_explicit_opt_in() {
