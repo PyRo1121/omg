@@ -304,7 +304,7 @@ OMG offers two telemetry levels:
 
 #### 1. Basic Install Tracking (Always Optional)
 
-The install telemetry system is **opt-in via environment variable** and sends minimal, anonymous data:
+The installer asks for explicit consent, defaults to **No**, and sends minimal anonymous data only after opt-in:
 
 - **Anonymous Install ID**: A unique UUID generated per installation (not tied to user)
 - **Platform**: OS and architecture (e.g., `linux-x86_64`, `macos-arm64`)
@@ -314,8 +314,7 @@ The install telemetry system is **opt-in via environment variable** and sends mi
 
 This data enables the GitHub badge to show real install counts. No personal information is collected.
 
-**Opt-out:** Skip telemetry during installation with `OMG_NO_TELEMETRY=1` (note: the
-variable must be set for the installer's bash, not for curl):
+**Non-interactive opt-out:** Skip the consent prompt and keep telemetry disabled with `OMG_NO_TELEMETRY=1` (the variable must be set for the installer's bash, not for curl):
 
 ```bash
 curl -fsSL https://pyro1121.com/install.sh | OMG_NO_TELEMETRY=1 bash
@@ -333,7 +332,7 @@ disable collection.
 
 #### 2. Enhanced Telemetry (License Only)
 
-Enhanced telemetry is **only activated when a user has a valid license key**. This is explicit opt-in—no license = no data collection.
+Enhanced telemetry is disabled by default and activates only when the user explicitly enables runtime telemetry and has a valid license key. Either missing condition means no enhanced collection.
 
 When enabled, enhanced telemetry collects:
 

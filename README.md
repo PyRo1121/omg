@@ -218,8 +218,8 @@ echo 'omg hook fish | source' >> ~/.config/fish/config.fish
 
 OMG prioritizes your privacy with optional, transparent telemetry:
 
-- **Basic Install Tracking**: Anonymous install counts (no PII collected). Opt-out at install time with `OMG_NO_TELEMETRY=1` (set it for the installer's bash: `curl -fsSL https://pyro1121.com/install.sh | OMG_NO_TELEMETRY=1 bash`). At runtime, `OMG_TELEMETRY=0` also disables collection.
-- **Enhanced Telemetry**: Only when you have a license key. Tracks commands, performance, and features to improve the product.
+- **Basic Install Tracking**: Anonymous install counts (no PII collected). The installer asks for consent and defaults to **No**. `OMG_NO_TELEMETRY=1` skips the prompt and disables collection (set it for the installer's bash: `curl -fsSL https://pyro1121.com/install.sh | OMG_NO_TELEMETRY=1 bash`).
+- **Enhanced Telemetry**: Disabled by default. Requires both explicit runtime opt-in and a valid license key; when enabled, it tracks command summaries, performance, and feature usage.
 - **No Collection**: Never collects passwords, credentials, home paths, or sensitive data.
 - **Always Reversible**: Disable anytime via `omg config set telemetry.enabled false`.
 
