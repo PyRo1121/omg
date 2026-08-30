@@ -126,8 +126,7 @@ impl EnvironmentState {
     /// Load and verify state from an omg.lock file.
     pub fn load<P: AsRef<Path>>(path: P) -> Result<Self> {
         let path = path.as_ref();
-        let content = fs::read_to_string(path)
-            .with_context(|| format!("Failed to read lockfile {}", path.display()))?;
+        let content = read_lockfile(path)?;
         Self::parse_lockfile(&content)
             .map_err(|error| anyhow::anyhow!("Invalid lockfile {}: {error}", path.display()))
     }
@@ -218,6 +217,48 @@ fn fingerprint_requires_backend() -> Result<Vec<String>> {
     anyhow::bail!(
         "Environment fingerprinting is not available without an Arch or Debian package backend"
     )
+}
+
+fn read_lockfile(path: &Path) -> Result<String> {
+    use std::io::Read as _;
+
+    const MAX_LOCKFILE_BYTES: u64 = 16 * 1024 * 1024;
+
+    let metadata = fs::symlink_metadata(path)
+        .with_context(|| format!("Failed to inspect lockfile {}", path.display()))?;
+    anyhow::ensure!(
+        metadata.file_type().is_file(),
+        "Refusing to read lockfile that is not a regular file: {}",
+        path.display()
+    );
+
+    let mut options = fs::OpenOptions::new();
+    options.read(true);
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::OpenOptionsExt as _;
+        options.custom_flags(nix::libc::O_NOFOLLOW | nix::libc::O_NONBLOCK);
+    }
+    let file = options
+        .open(path)
+        .with_context(|| format!("Failed to open lockfile {} safely", path.display()))?;
+    anyhow::ensure!(
+        file.metadata()?.file_type().is_file(),
+        "Refusing to read lockfile that is not a regular file: {}",
+        path.display()
+    );
+
+    let mut bytes = Vec::new();
+    file.take(MAX_LOCKFILE_BYTES + 1)
+        .read_to_end(&mut bytes)
+        .with_context(|| format!("Failed to read lockfile {}", path.display()))?;
+    anyhow::ensure!(
+        bytes.len() as u64 <= MAX_LOCKFILE_BYTES,
+        "Lockfile exceeds the {} byte limit: {}",
+        MAX_LOCKFILE_BYTES,
+        path.display()
+    );
+    String::from_utf8(bytes).with_context(|| format!("Lockfile is not UTF-8: {}", path.display()))
 }
 
 fn write_lockfile(path: &Path, content: &[u8]) -> Result<()> {
@@ -427,6 +468,31 @@ mod tests {
         assert_eq!(
             mode, 0o600,
             "lockfile must not be group or world accessible, got {mode:o}"
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn load_rejects_symlinked_lockfiles() {
+        use std::os::unix::fs::symlink;
+
+        let directory = tempfile::TempDir::new().expect("temp dir");
+        let target = directory.path().join("target.lock");
+        let link = directory.path().join("omg.lock");
+        let state = EnvironmentState {
+            schema_version: EnvironmentState::SCHEMA_VERSION,
+            runtimes: BTreeMap::new(),
+            packages: vec!["curl".to_string()],
+            timestamp: 0,
+            hash: String::new(),
+        };
+        state.save(&target).expect("save target lockfile");
+        symlink(&target, &link).expect("create lockfile symlink");
+
+        let error = EnvironmentState::load(&link).expect_err("symlinked lockfile must be rejected");
+        assert!(
+            error.to_string().contains("regular file"),
+            "error must name the rejected file type: {error}"
         );
     }
 
