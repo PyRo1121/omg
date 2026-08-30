@@ -840,7 +840,13 @@ impl AurClient {
                 .or_default()
                 .insert(info.name.clone());
 
-            for dependency in info.depends.as_deref().unwrap_or_default() {
+            for dependency in info
+                .depends
+                .iter()
+                .chain(info.make_depends.iter())
+                .chain(info.check_depends.iter())
+                .flatten()
+            {
                 let dependency = dependency_name(dependency);
                 if !requested.contains(dependency) {
                     continue;
@@ -3447,6 +3453,37 @@ mod tests {
         assert_eq!(jobs.len(), 1);
         assert_eq!(jobs[0].package, "postgresql18");
         assert_eq!(jobs[0].outputs, vec!["postgresql18-libs".to_string()]);
+    }
+
+    #[test]
+    fn update_build_jobs_include_cross_base_build_dependencies() {
+        let response: AurResponse = serde_json::from_str(
+            r#"{
+                "results": [
+                    {
+                        "Name": "compiler-git",
+                        "Version": "1.0-1",
+                        "PackageBase": "compiler-git"
+                    },
+                    {
+                        "Name": "application-git",
+                        "Version": "1.0-1",
+                        "PackageBase": "application-git",
+                        "MakeDepends": ["compiler-git>=1.0"]
+                    }
+                ]
+            }"#,
+        )
+        .expect("valid AUR RPC fixture");
+        let requested = vec!["application-git".to_string(), "compiler-git".to_string()];
+
+        let jobs = AurClient::build_jobs_from_package_info(&requested, &response.results)
+            .expect("cross-base build plan");
+        let application = jobs
+            .iter()
+            .find(|job| job.package == "application-git")
+            .expect("application job");
+        assert_eq!(application.dependencies, ["compiler-git"]);
     }
 
     #[test]

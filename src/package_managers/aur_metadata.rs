@@ -40,6 +40,10 @@ pub struct AurJsonPackage {
     pub package_base: Option<String>,
     #[serde(default, rename = "Depends")]
     pub depends: Option<Vec<String>>,
+    #[serde(default, rename = "MakeDepends")]
+    pub make_depends: Option<Vec<String>>,
+    #[serde(default, rename = "CheckDepends")]
+    pub check_depends: Option<Vec<String>>,
     #[serde(rename = "Description")]
     pub description: Option<String>,
     #[serde(rename = "Maintainer")]
