@@ -253,7 +253,7 @@ fn missing_node_runtime_fails_closed_when_install_prompt_unavailable() {
     // Contract: with node absent from PATH, absent from OMG-managed versions,
     // and absent from nvm, running an npm task must NOT silently execute; the
     // install confirmation cannot be answered in a non-TTY session, so omg
-    // fails closed ("IO error: not a terminal").
+    // fails closed with an actionable non-interactive remedy.
     //
     // Hermeticity: PATH points at an empty dir, OMG_DATA_DIR isolates the
     // managed-version listing, NVM_DIR isolates the nvm lookup.
@@ -278,7 +278,8 @@ fn missing_node_runtime_fails_closed_when_install_prompt_unavailable() {
     );
 
     result.assert_failure();
-    result.assert_stderr_contains("IO error: not a terminal");
+    result.assert_stderr_contains("Interactive confirmation required");
+    result.assert_stderr_contains("Install the dependency manually");
     assert!(
         !result.stdout.contains("ARGS:"),
         "no task may be executed when runtime resolution fails; got: {}",

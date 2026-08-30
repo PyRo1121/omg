@@ -430,6 +430,11 @@ impl TaskDetector {
                 .map(|t| format!("{} (via {})", t.ecosystem, t.source))
                 .collect();
 
+            if !console::user_attended() {
+                anyhow::bail!(
+                    "Task '{task_name}' exists in multiple ecosystems; rerun with --using <ecosystem>"
+                );
+            }
             println!(
                 "{} Found '{}' in multiple ecosystems:",
                 "OMG".cyan().bold(),
@@ -580,6 +585,19 @@ fn validate_executable_command(cmd: &str) -> anyhow::Result<()> {
     Ok(())
 }
 
+fn confirm_interactively(prompt: &str) -> Result<bool> {
+    if !console::user_attended() {
+        anyhow::bail!(
+            "Interactive confirmation required: {prompt} Install the dependency manually or rerun from an attended terminal."
+        );
+    }
+    Confirm::with_theme(&ColorfulTheme::default())
+        .with_prompt(prompt)
+        .default(true)
+        .interact()
+        .context("Failed to read interactive confirmation")
+}
+
 fn run_async<F, T>(future: F) -> Result<T>
 where
     F: Future<Output = Result<T>> + Send,
@@ -632,11 +650,7 @@ macro_rules! ensure_runtime_impl {
             "{} '{}' is missing. Install now?",
             $runtime_name, normalized
         );
-        if Confirm::with_theme(&ColorfulTheme::default())
-            .with_prompt(prompt)
-            .default(true)
-            .interact()?
-        {
+        if confirm_interactively(&prompt)? {
             run_async($manager.install(&normalized))?;
             Ok(normalized)
         } else {
@@ -765,11 +779,7 @@ fn execute_process(cmd: &str, args: &[String], extra_args: &[String]) -> Result<
                 || !status.missing_targets.is_empty()
             {
                 let prompt = format!("Rust toolchain '{}' is missing. Install now?", status.name);
-                if Confirm::with_theme(&ColorfulTheme::default())
-                    .with_prompt(prompt)
-                    .default(true)
-                    .interact()?
-                {
+                if confirm_interactively(&prompt)? {
                     run_async(rust_manager.ensure_toolchain(&request))?;
                 } else {
                     anyhow::bail!("Rust toolchain setup cancelled");
@@ -898,11 +908,7 @@ fn ensure_node_runtime(version: &str) -> Result<String> {
     }
 
     let prompt = format!("Node.js '{normalized}' is missing. Install now?");
-    if Confirm::with_theme(&ColorfulTheme::default())
-        .with_prompt(prompt)
-        .default(true)
-        .interact()?
-    {
+    if confirm_interactively(&prompt)? {
         let resolved = run_async(node_manager.resolve_alias(normalized))?;
         run_async(node_manager.install(&resolved))?;
         Ok(resolved)
@@ -933,11 +939,7 @@ fn ensure_bun_runtime(version: &str) -> Result<String> {
     }
 
     let prompt = format!("Bun '{normalized}' is missing. Install now?");
-    if Confirm::with_theme(&ColorfulTheme::default())
-        .with_prompt(prompt)
-        .default(true)
-        .interact()?
-    {
+    if confirm_interactively(&prompt)? {
         let resolved = run_async(bun_manager.resolve_alias(normalized))?;
         run_async(bun_manager.install(&resolved))?;
         Ok(resolved)
@@ -1040,11 +1042,7 @@ fn ensure_js_package_manager(command: &str) -> Result<()> {
     }
 
     let prompt = format!("{command} is missing. Enable via corepack now?");
-    if Confirm::with_theme(&ColorfulTheme::default())
-        .with_prompt(prompt)
-        .default(true)
-        .interact()?
-    {
+    if confirm_interactively(&prompt)? {
         let status = Command::new("corepack")
             .args(["prepare", "--", &format!("{command}@latest"), "--activate"])
             .status()
