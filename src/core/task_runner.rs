@@ -1365,10 +1365,10 @@ build = "node"
         .unwrap();
 
         let detector = TaskDetector::new(temp.path().to_path_buf()).unwrap();
-        // Explicitly use 'bun' (default for package.json in detector if no lockfile)
-        let matches = detector.resolve("test", Some("bun"), false).unwrap();
+        // npm-backed package.json tasks belong to the Node ecosystem.
+        let matches = detector.resolve("test", Some("node"), false).unwrap();
         assert_eq!(matches.len(), 1);
-        assert_eq!(matches[0].ecosystem, Ecosystem::Bun);
+        assert_eq!(matches[0].ecosystem, Ecosystem::Node);
     }
 
     #[tokio::test]
@@ -1395,12 +1395,12 @@ build = "node"
             r#"{"scripts": {"test": "echo node"}}"#,
         )
         .unwrap();
-        fs::write(temp.path().join(".omg.toml"), "[scripts]\ntest = \"bun\"").unwrap();
+        fs::write(temp.path().join(".omg.toml"), "[scripts]\ntest = \"node\"").unwrap();
 
         let detector = TaskDetector::new(temp.path().to_path_buf()).unwrap();
         let matches = detector.resolve("test", None, false).unwrap();
         assert_eq!(matches.len(), 1);
-        assert_eq!(matches[0].ecosystem, Ecosystem::Bun);
+        assert_eq!(matches[0].ecosystem, Ecosystem::Node);
     }
 
     #[test]
