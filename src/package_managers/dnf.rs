@@ -623,7 +623,7 @@ impl PackageManager for DnfPackageManager {
 
     fn get_status(
         &self,
-        _fast: bool,
+        fast: bool,
     ) -> Pin<Box<dyn Future<Output = Result<(usize, usize, usize, usize)>> + Send + '_>> {
         Box::pin(async move {
             let installed = self.load_installed_packages().await?;
@@ -638,38 +638,41 @@ impl PackageManager for DnfPackageManager {
             // guessing. Documented as unsupported in the backend docs.
             let orphans = 0;
 
-            // Count available updates via the dnf CLI, mirroring how this
-            // backend already executes transactions. `check-update` exits 0
-            // with no updates and 100 when updates are available; any other
-            // outcome means the count is unavailable, which must not fail the
-            // whole status command.
-            let updates = tokio::task::spawn_blocking(|| {
-                Command::new("dnf")
-                    .args(["-q", "--cacheonly", "check-update"])
-                    .output()
-            })
-            .await
-            .context("dnf check-update task failed")?
-            .map_or_else(
-                |error| {
-                    tracing::debug!("dnf CLI unavailable for update count: {error}");
-                    0
-                },
-                |output| match output.status.code() {
-                    Some(0) => 0,
-                    Some(100) => String::from_utf8_lossy(&output.stdout)
-                        .lines()
-                        .filter(|line| !line.trim().is_empty())
-                        .count(),
-                    _ => {
-                        tracing::debug!(
-                            "dnf check-update returned {:?}; update count unavailable",
-                            output.status.code()
-                        );
+            // Fast status is a local installed-state query and must not spawn
+            // DNF. Full status may use the cache-only CLI update check;
+            // `check-update` exits 0 with no updates and 100 when updates are
+            // available.
+            let updates = if fast {
+                0
+            } else {
+                tokio::task::spawn_blocking(|| {
+                    Command::new("dnf")
+                        .args(["-q", "--cacheonly", "check-update"])
+                        .output()
+                })
+                .await
+                .context("dnf check-update task failed")?
+                .map_or_else(
+                    |error| {
+                        tracing::debug!("dnf CLI unavailable for update count: {error}");
                         0
-                    }
-                },
-            );
+                    },
+                    |output| match output.status.code() {
+                        Some(0) => 0,
+                        Some(100) => String::from_utf8_lossy(&output.stdout)
+                            .lines()
+                            .filter(|line| !line.trim().is_empty())
+                            .count(),
+                        _ => {
+                            tracing::debug!(
+                                "dnf check-update returned {:?}; update count unavailable",
+                                output.status.code()
+                            );
+                            0
+                        }
+                    },
+                )
+            };
 
             Ok((total, explicit, orphans, updates))
         })
