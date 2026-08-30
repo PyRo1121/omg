@@ -563,10 +563,10 @@ mod workflow_tests {
     #[test]
     fn test_search_then_info() {
         // Workflow: search for package, then get info
-        let search_result = run_omg(&["search", "bash"]);
+        let search_result = run_omg(&["search", "git"]);
         search_result.assert_success();
 
-        let info_result = run_omg(&["info", "bash"]);
+        let info_result = run_omg(&["info", "git"]);
         info_result.assert_success();
     }
 

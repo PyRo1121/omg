@@ -129,7 +129,7 @@ fn test_status_command() {
 #[test]
 fn test_install_dry_run() {
     // ===== ARRANGE =====
-    let package = "vim";
+    let package = "git";
 
     // ===== ACT =====
     let result = run_omg(&["install", "--dry-run", package]);
