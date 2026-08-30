@@ -22,6 +22,7 @@ use std::time::SystemTime;
 use tracing::instrument;
 
 use crate::core::paths;
+use crate::runtimes::common::{BudgetedReader, BudgetedSink};
 
 /// TTL for cache eviction safety net (30 minutes)
 const CACHE_TTL_SECS: u64 = 30 * 60;
@@ -218,13 +219,14 @@ pub fn parse_sync_db(path: &Path, repo_name: &str) -> Result<HashMap<String, Syn
         file.rewind()?;
 
         if magic[0..2] == [0x1f, 0x8b] {
-            Box::new(GzDecoder::new(file))
+            Box::new(BudgetedReader::new(
+                GzDecoder::new(file),
+                BudgetedSink::max_budget(),
+            ))
         } else if magic[0..4] == [0x28, 0xb5, 0x2f, 0xfd] {
-            let mut decoder = ruzstd::decoding::StreamingDecoder::new(file)
+            let decoder = ruzstd::decoding::StreamingDecoder::new(file)
                 .map_err(|e| anyhow::anyhow!("zstd init: {e}"))?;
-            let mut decompressed = Vec::new();
-            std::io::copy(&mut decoder, &mut decompressed)?;
-            Box::new(std::io::Cursor::new(decompressed))
+            Box::new(BudgetedReader::new(decoder, BudgetedSink::max_budget()))
         } else {
             // Unknown magic: fall back to gzip, matching pacman defaults.
             Box::new(GzDecoder::new(file))

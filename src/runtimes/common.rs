@@ -178,7 +178,6 @@ impl BudgetedSink {
 
     /// The configured maximum budget, for callers that delegate the choice.
     /// Only Debian-side extraction delegates today.
-    #[cfg(any(feature = "debian", feature = "debian-pure"))]
     pub(crate) fn max_budget() -> u64 {
         MAX_DECOMPRESSED_BYTES
     }
