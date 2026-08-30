@@ -35,10 +35,6 @@ use omg_lib::daemon::server;
 #[command(version)]
 #[command(about = "OMG Daemon for fast package operations")]
 struct Args {
-    /// Run in foreground (don't daemonize)
-    #[arg(short, long)]
-    foreground: bool,
-
     /// Socket path (default: $`XDG_RUNTIME_DIR/omg.sock`)
     #[arg(short, long)]
     socket: Option<PathBuf>,
@@ -61,8 +57,8 @@ async fn main() -> Result<()> {
     ));
 
     // Initialize tracing with Sentry integration
-    let env_filter = tracing_subscriber::EnvFilter::from_default_env()
-        .add_directive(tracing::Level::INFO.into());
+    let env_filter = tracing_subscriber::EnvFilter::try_from_default_env()
+        .unwrap_or_else(|_| tracing_subscriber::EnvFilter::new("info"));
 
     let sentry_layer = sentry_tracing::layer().event_filter(|md| match md.level() {
         &tracing::Level::ERROR => EventFilter::Event,
@@ -114,7 +110,7 @@ async fn main() -> Result<()> {
         }
     };
 
-    // 2. Check if daemon is already responding on the socket. The ping is kept
+    // Check if daemon is already responding on the socket. The ping is kept
     // for compatibility with daemons from versions that did not take the lock;
     // once every daemon holds the claim, the lock alone decides.
     if socket_path.exists() {
@@ -127,35 +123,10 @@ async fn main() -> Result<()> {
                 socket_path.display()
             );
         }
-        // Only remove the stale node if it actually looks like ours: a
-        // socket owned by this user (or root). Anything else means someone
-        // placed a foreign object at our path - refuse rather than delete.
-        match std::fs::metadata(&socket_path) {
-            Ok(meta)
-                if {
-                    use std::os::unix::fs::FileTypeExt;
-                    meta.file_type().is_socket()
-                } =>
-            {
-                use std::os::unix::fs::MetadataExt;
-                let uid = meta.uid();
-                if uid != nix::unistd::getuid().as_raw() && uid != 0 {
-                    anyhow::bail!(
-                        "Refusing to remove {}: not a socket we own (uid {uid})",
-                        socket_path.display()
-                    );
-                }
-            }
-            Ok(_) => {
-                tracing::debug!("Stale path {:?} is not a socket; removing", socket_path);
-            }
-            Err(e) => return Err(e).context("Failed to stat stale socket"),
-        }
-        tracing::debug!("Removing stale socket at {:?}", socket_path);
-        std::fs::remove_file(&socket_path)?;
+        remove_stale_socket(&socket_path)?;
     }
 
-    // 3. Create Unix socket listener. The node is created owner-only
+    // Create Unix socket listener. The node is created owner-only
     // (umask tightened around bind) so there is no window where the socket
     // accepts connections from other users before the explicit 0600 below.
     let listener = {
@@ -205,6 +176,28 @@ async fn main() -> Result<()> {
     }
 
     Ok(()) // `_socket_guard` removes the socket file on drop
+}
+
+fn remove_stale_socket(socket_path: &std::path::Path) -> Result<()> {
+    use std::os::unix::fs::{FileTypeExt, MetadataExt};
+
+    let metadata = std::fs::symlink_metadata(socket_path)
+        .with_context(|| format!("Failed to inspect stale socket {}", socket_path.display()))?;
+    anyhow::ensure!(
+        metadata.file_type().is_socket(),
+        "Refusing to remove {}: stale daemon path is not a socket",
+        socket_path.display()
+    );
+    let uid = metadata.uid();
+    anyhow::ensure!(
+        uid == nix::unistd::getuid().as_raw() || uid == 0,
+        "Refusing to remove {}: not a socket we own (uid {uid})",
+        socket_path.display()
+    );
+
+    tracing::debug!("Removing stale socket at {:?}", socket_path);
+    std::fs::remove_file(socket_path)
+        .with_context(|| format!("Failed to remove stale socket {}", socket_path.display()))
 }
 
 /// RAII guard that removes the daemon socket file when dropped.
@@ -276,12 +269,50 @@ fn claim_daemon_lock(socket_path: &std::path::Path) -> Result<DaemonClaim> {
     })?;
 
     // Record the owning pid for operators inspecting the runtime directory.
-    let _ = lock_file.set_len(0);
-    let _ = writeln!(lock_file, "{}", std::process::id());
+    lock_file.set_len(0).with_context(|| {
+        format!(
+            "Failed to truncate daemon lock file {}",
+            lock_path.display()
+        )
+    })?;
+    writeln!(lock_file, "{}", std::process::id())
+        .with_context(|| format!("Failed to record daemon pid in {}", lock_path.display()))?;
 
     Ok(DaemonClaim {
         _lock_file: lock_file,
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn stale_socket_cleanup_rejects_non_socket_paths() {
+        let directory = tempfile::tempdir().expect("temp directory");
+        let path = directory.path().join("omg.sock");
+        std::fs::write(&path, b"foreign data").expect("foreign path");
+
+        let error = remove_stale_socket(&path).expect_err("regular files must be preserved");
+        assert!(error.to_string().contains("is not a socket"), "{error}");
+        assert!(path.exists());
+    }
+
+    #[test]
+    fn stale_socket_cleanup_removes_owned_socket() {
+        let directory = tempfile::tempdir().expect("temp directory");
+        let path = directory.path().join("omg.sock");
+        let listener = std::os::unix::net::UnixListener::bind(&path).expect("socket");
+
+        remove_stale_socket(&path).expect("owned socket cleanup");
+        assert!(!path.exists());
+        drop(listener);
+    }
+
+    #[test]
+    fn removed_foreground_flag_is_rejected() {
+        assert!(Args::try_parse_from(["omgd", "--foreground"]).is_err());
+    }
 }
 
 // Windows stub - daemon not supported
