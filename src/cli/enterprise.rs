@@ -11,6 +11,7 @@ use std::collections::HashMap;
 use std::fs;
 use std::path::Path;
 
+use crate::cli::security::spreadsheet_safe_cell;
 use crate::core::license;
 
 impl LocalCommandRunner for EnterpriseCommands {
@@ -206,7 +207,7 @@ pub fn license_scan(export: Option<&str>, _ctx: &CliContext) -> Result<()> {
                     format
                 );
                 let content = if format.eq_ignore_ascii_case("csv") {
-                    generate_license_csv(&scan)
+                    generate_license_csv(&scan)?
                 } else {
                     serde_json::to_string_pretty(&scan)?
                 };
@@ -428,24 +429,35 @@ fn generate_policy_json() -> Result<String> {
     serde_json::to_string_pretty(&policy).context("Failed to serialize security policy")
 }
 
+fn serialize_installed_packages_csv_rows(
+    rows: impl IntoIterator<Item = (String, String, String)>,
+) -> Result<String> {
+    let mut writer = csv::Writer::from_writer(Vec::new());
+    writer.write_record(["package", "version", "description"])?;
+    for (name, version, description) in rows {
+        let name = spreadsheet_safe_cell(&name);
+        let version = spreadsheet_safe_cell(&version);
+        let description = spreadsheet_safe_cell(&description);
+        writer.write_record([&*name, &*version, &*description])?;
+    }
+    let bytes = writer
+        .into_inner()
+        .map_err(|error| anyhow::anyhow!("Failed to finish installed-package CSV: {error}"))?;
+    String::from_utf8(bytes).context("Installed-package CSV was not UTF-8")
+}
+
 fn generate_installed_packages_csv() -> Result<String> {
     #[cfg(feature = "arch")]
     {
-        let mut csv = String::from("package,version,description\n");
         let packages = crate::package_managers::list_installed_fast()
             .context("Failed to list installed packages for enterprise export")?;
-        for pkg in packages {
-            let _ = std::fmt::write(
-                &mut csv,
-                format_args!(
-                    "{},{},{}\n",
-                    pkg.name,
-                    pkg.version,
-                    pkg.description.replace(',', " ")
-                ),
-            );
-        }
-        Ok(csv)
+        serialize_installed_packages_csv_rows(packages.into_iter().map(|package| {
+            (
+                package.name,
+                package.version.to_string(),
+                package.description,
+            )
+        }))
     }
 
     #[cfg(not(feature = "arch"))]
@@ -552,18 +564,44 @@ fn license_inventory_rows(scan: &LicenseScan) -> Vec<String> {
     rows
 }
 
-fn generate_license_csv(scan: &LicenseScan) -> String {
-    use std::fmt::Write;
-    let mut csv = "license,count\n".to_string();
-    for (license, count) in &scan.by_license {
-        let _ = writeln!(csv, "{license},{count}");
+fn generate_license_csv(scan: &LicenseScan) -> Result<String> {
+    let mut writer = csv::Writer::from_writer(Vec::new());
+    writer.write_record(["license", "count"])?;
+    let mut licenses: Vec<_> = scan.by_license.iter().collect();
+    licenses.sort_unstable_by(|(left, _), (right, _)| left.cmp(right));
+    for (license, count) in licenses {
+        let license = spreadsheet_safe_cell(license);
+        writer.write_record([&*license, count.to_string().as_str()])?;
     }
-    csv
+    let bytes = writer
+        .into_inner()
+        .map_err(|error| anyhow::anyhow!("Failed to finish license CSV: {error}"))?;
+    String::from_utf8(bytes).context("License CSV was not UTF-8")
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn enterprise_csv_exports_quote_fields_and_neutralize_formulas() {
+        let installed = serialize_installed_packages_csv_rows([(
+            "=package".to_string(),
+            "+1.0".to_string(),
+            "description, with comma".to_string(),
+        )])
+        .expect("installed package CSV");
+        assert!(installed.contains("'=package,'+1.0,\"description, with comma\""));
+
+        let scan = LicenseScan {
+            total: 1,
+            by_license: HashMap::from([("=HYPERLINK(\"https://example.com\")".to_string(), 1)]),
+            violations: Vec::new(),
+            unknown: Vec::new(),
+        };
+        let licenses = generate_license_csv(&scan).expect("license CSV");
+        assert!(licenses.contains("\"'=HYPERLINK(\"\"https://example.com\"\")\",1"));
+    }
 
     #[test]
     fn license_inventory_handles_empty_and_multi_license_scans() {

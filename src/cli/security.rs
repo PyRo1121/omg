@@ -747,7 +747,7 @@ fn token_is_permissive(token: &str) -> bool {
 
 type LicenseRow = (String, String, String, LicenseCategory);
 
-fn spreadsheet_safe_cell(value: &str) -> std::borrow::Cow<'_, str> {
+pub(crate) fn spreadsheet_safe_cell(value: &str) -> std::borrow::Cow<'_, str> {
     if value.starts_with(['=', '+', '-', '@']) {
         std::borrow::Cow::Owned(format!("'{value}"))
     } else {
