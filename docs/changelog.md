@@ -678,6 +678,7 @@ analyzer inference
 - **Ci**: Cross-platform install script and R2 release sync
 ### 🐛 Bug Fixes
 
+- Report partial parallel AUR build outcomes
 - Remove invalid local lockfile sync hint
 - Display unclassified package updates
 - Normalize scaffold stack aliases
@@ -2684,6 +2685,7 @@ across history/faq/cli
 - Run Docker E2E tests explicitly
 ### 📚 Documentation
 
+- Record upstream ALPM compatibility research
 - Align examples with the CLI
 - Remove obsolete mise runtime claims
 - Describe current daemon persistence and protocol
@@ -3881,6 +3883,7 @@ the Debian backend), so it was removed from the metadata.
 - Normalize project formatting
 ### 🧪 Testing
 
+- Align integration tests with current feature APIs
 - Exercise production migration version validation
 - Align AUR downgrade version validation
 - Use packages provided by mock fixtures
