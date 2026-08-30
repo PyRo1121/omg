@@ -206,6 +206,8 @@ pub enum SecretError {
         #[source]
         source: io::Error,
     },
+    #[error("Refusing to scan '{path}' because it is not a regular file")]
+    UnsupportedFileType { path: String },
     #[error("File '{path}' exceeds the maximum secret-scan size of {max} bytes ({size} bytes)")]
     FileTooLarge { path: String, size: u64, max: u64 },
     #[error("Directory nesting exceeds the maximum scan depth of {max} at '{path}'")]
@@ -227,10 +229,13 @@ impl SecretScanner {
     pub fn scan_file<P: AsRef<Path>>(&self, path: P) -> Result<Vec<SecretFinding>, SecretError> {
         let path = path.as_ref();
         let path_str = path.display().to_string();
-        let metadata = std::fs::metadata(path).map_err(|source| SecretError::Read {
+        let metadata = std::fs::symlink_metadata(path).map_err(|source| SecretError::Read {
             path: path_str.clone(),
             source,
         })?;
+        if !metadata.file_type().is_file() {
+            return Err(SecretError::UnsupportedFileType { path: path_str });
+        }
         if metadata.len() > Self::MAX_FILE_BYTES {
             return Err(SecretError::FileTooLarge {
                 path: path_str,
@@ -239,10 +244,28 @@ impl SecretScanner {
             });
         }
 
-        let file = std::fs::File::open(path).map_err(|source| SecretError::Read {
+        let mut options = std::fs::OpenOptions::new();
+        options.read(true);
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::OpenOptionsExt as _;
+            options.custom_flags(nix::libc::O_NOFOLLOW | nix::libc::O_NONBLOCK);
+        }
+        let file = options.open(path).map_err(|source| SecretError::Read {
             path: path_str.clone(),
             source,
         })?;
+        if !file
+            .metadata()
+            .map_err(|source| SecretError::Read {
+                path: path_str.clone(),
+                source,
+            })?
+            .file_type()
+            .is_file()
+        {
+            return Err(SecretError::UnsupportedFileType { path: path_str });
+        }
         let mut content = String::new();
         let bytes_read = file
             .take(Self::MAX_FILE_BYTES + 1)
@@ -372,7 +395,7 @@ impl SecretScanner {
                 }
 
                 self.scan_directory_recursive(&entry_path, findings, depth + 1)?;
-            } else if Self::is_scannable_file(&entry_path) {
+            } else if file_type.is_file() && Self::is_scannable_file(&entry_path) {
                 findings.extend(self.scan_file(&entry_path)?);
             }
         }
@@ -614,6 +637,21 @@ mod tests {
         let longer = SecretScanner::redact("пароль12345678");
         assert!(longer.contains('*'), "got: {longer}");
         assert!(longer.contains("..."), "got: {longer}");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn scan_file_rejects_symlinks_before_reading() {
+        let temp = tempfile::TempDir::new().expect("temp directory");
+        let target = temp.path().join("secret.env");
+        let link = temp.path().join("link.env");
+        std::fs::write(&target, "API_KEY=real-secret-value").expect("write target");
+        std::os::unix::fs::symlink(&target, &link).expect("create symlink");
+
+        let error = SecretScanner::new()
+            .scan_file(&link)
+            .expect_err("symlink must not be scanned");
+        assert!(matches!(error, SecretError::UnsupportedFileType { .. }));
     }
 
     #[test]
