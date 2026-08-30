@@ -682,16 +682,36 @@ fn detect_container_shell(image: &str) -> &'static str {
     }
 }
 
-/// Create a development container config for the current project
-pub fn dev_container_config(project_dir: &Path) -> ContainerConfig {
+fn development_container_name(project_dir: &Path) -> String {
     let project_name = project_dir
         .file_name()
-        .and_then(|n| n.to_str())
-        .unwrap_or("omg-dev");
+        .and_then(|name| name.to_str())
+        .unwrap_or("omg");
+    let mut sanitized = String::with_capacity(project_name.len().min(251));
+    for character in project_name.chars() {
+        if sanitized.len() >= 251 {
+            break;
+        }
+        if character.is_ascii_alphanumeric() || matches!(character, '.' | '_' | '-') {
+            sanitized.push(character);
+        } else if !sanitized.ends_with('-') {
+            sanitized.push('-');
+        }
+    }
+    let sanitized = sanitized.trim_matches(['.', '_', '-']);
+    let project_name = if sanitized.is_empty() {
+        "omg"
+    } else {
+        sanitized
+    };
+    format!("{project_name}-dev")
+}
 
+/// Create a development container config for the current project
+pub fn dev_container_config(project_dir: &Path) -> ContainerConfig {
     ContainerConfig {
         image: "ubuntu:24.04".to_string(),
-        name: Some(format!("{project_name}-dev")),
+        name: Some(development_container_name(project_dir)),
         env: vec![("TERM".to_string(), "xterm-256color".to_string())],
         volumes: vec![(project_dir.display().to_string(), "/app".to_string())],
         workdir: Some("/app".to_string()),
@@ -703,6 +723,13 @@ pub fn dev_container_config(project_dir: &Path) -> ContainerConfig {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn dev_container_config_sanitizes_project_directory_name() {
+        let config = dev_container_config(Path::new("/workspace/My Project!"));
+
+        assert_eq!(config.name.as_deref(), Some("My-Project-dev"));
+    }
 
     #[test]
     fn test_container_config_default() {
