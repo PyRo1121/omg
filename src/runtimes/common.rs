@@ -1083,7 +1083,12 @@ pub(crate) fn version_cmp(a: &str, b: &str) -> Ordering {
 /// Normalize a version string by stripping a single leading 'v' prefix.
 #[must_use]
 pub(crate) fn normalize_version(version: &str) -> String {
-    version.strip_prefix('v').unwrap_or(version).to_owned()
+    let bytes = version.as_bytes();
+    if matches!(bytes.first(), Some(b'v' | b'V')) && bytes.get(1).is_some_and(u8::is_ascii_digit) {
+        version[1..].to_owned()
+    } else {
+        version.to_owned()
+    }
 }
 
 /// Parse and validate a SHA-256 digest returned by a runtime vendor.
@@ -1200,6 +1205,13 @@ mod tests {
             downloadable.assets[0].browser_download_url.as_deref(),
             Some("https://example.invalid/runtime.tgz")
         );
+    }
+
+    #[test]
+    fn normalize_version_accepts_common_v_prefix_case() {
+        assert_eq!(normalize_version("v1.2.3"), "1.2.3");
+        assert_eq!(normalize_version("V1.2.3"), "1.2.3");
+        assert_eq!(normalize_version("version1"), "version1");
     }
 
     #[test]
