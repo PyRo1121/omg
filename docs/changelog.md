@@ -678,6 +678,7 @@ analyzer inference
 - **Ci**: Cross-platform install script and R2 release sync
 ### 🐛 Bug Fixes
 
+- Preserve inline APT signing keys as data
 - Preserve disabled legacy APT sources
 - Write security exports as private atomic files
 - Preserve fallback error suggestions
