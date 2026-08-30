@@ -120,49 +120,66 @@ impl CompletionEngine {
         let mut dir = Some(start);
 
         while let Some(path) = dir {
-            match runtime {
-                "node" => {
-                    let pkg_json = path.join("package.json");
-                    if let Some(content) = read_optional_file(&pkg_json)? {
-                        let value: serde_json::Value = serde_json::from_str(&content)
-                            .with_context(|| format!("Failed to parse {}", pkg_json.display()))?;
-                        if let Some(s) = value
-                            .get("engines")
-                            .and_then(|engines| engines.get("node"))
-                            .and_then(serde_json::Value::as_str)
-                        {
-                            suggestions.push(s.to_string());
+            let suggestion_checkpoint = suggestions.len();
+            let probe_result = (|| -> Result<()> {
+                match runtime {
+                    "node" => {
+                        let pkg_json = path.join("package.json");
+                        if let Some(content) = read_optional_file(&pkg_json)? {
+                            let value: serde_json::Value = serde_json::from_str(&content)
+                                .with_context(|| {
+                                    format!("Failed to parse {}", pkg_json.display())
+                                })?;
+                            if let Some(s) = value
+                                .get("engines")
+                                .and_then(|engines| engines.get("node"))
+                                .and_then(serde_json::Value::as_str)
+                            {
+                                suggestions.push(s.to_string());
+                            }
+                        }
+                        let nvmrc = path.join(".nvmrc");
+                        if let Some(content) = read_optional_file(&nvmrc)? {
+                            suggestions.push(content.trim().to_string());
                         }
                     }
-                    let nvmrc = path.join(".nvmrc");
-                    if let Some(content) = read_optional_file(&nvmrc)? {
-                        suggestions.push(content.trim().to_string());
-                    }
-                }
-                "python" => {
-                    let py_version = path.join(".python-version");
-                    if let Some(content) = read_optional_file(&py_version)? {
-                        suggestions.push(content.trim().to_string());
-                    }
-                }
-                "rust" => {
-                    let toolchain = path.join("rust-toolchain");
-                    if let Some(content) = read_optional_file(&toolchain)? {
-                        suggestions.push(content.trim().to_string());
-                    } else {
-                        let toolchain_toml = path.join("rust-toolchain.toml");
-                        if let Some(content) = read_optional_file(&toolchain_toml)?
-                            && content.contains("channel = \"")
-                            && let Some(v) = content
-                                .split("channel = \"")
-                                .nth(1)
-                                .and_then(|s| s.split('"').next())
-                        {
-                            suggestions.push(v.to_string());
+                    "python" => {
+                        let py_version = path.join(".python-version");
+                        if let Some(content) = read_optional_file(&py_version)? {
+                            suggestions.push(content.trim().to_string());
                         }
                     }
+                    "rust" => {
+                        let toolchain = path.join("rust-toolchain");
+                        if let Some(content) = read_optional_file(&toolchain)? {
+                            suggestions.push(content.trim().to_string());
+                        } else {
+                            let toolchain_toml = path.join("rust-toolchain.toml");
+                            if let Some(content) = read_optional_file(&toolchain_toml)?
+                                && content.contains("channel = \"")
+                                && let Some(v) = content
+                                    .split("channel = \"")
+                                    .nth(1)
+                                    .and_then(|s| s.split('"').next())
+                            {
+                                suggestions.push(v.to_string());
+                            }
+                        }
+                    }
+                    _ => {}
                 }
-                _ => {}
+                Ok(())
+            })();
+
+            if let Err(error) = probe_result {
+                suggestions.truncate(suggestion_checkpoint);
+                if path == start {
+                    return Err(error);
+                }
+                tracing::warn!(
+                    "Ignoring invalid ancestor runtime completion metadata in {}: {error:#}",
+                    path.display()
+                );
             }
             if !suggestions.is_empty() {
                 break;
@@ -363,6 +380,17 @@ mod tests {
             result.is_err(),
             "unreadable pin must fail closed, got {result:?}"
         );
+    }
+
+    #[test]
+    fn malformed_ancestor_metadata_does_not_break_child_completions() {
+        let temp_dir = TempDir::new().unwrap();
+        let child = temp_dir.path().join("project");
+        std::fs::create_dir(&child).unwrap();
+        std::fs::write(temp_dir.path().join("package.json"), "not json").unwrap();
+
+        let suggestions = CompletionEngine::probe_context_from(&child, "node").unwrap();
+        assert!(suggestions.is_empty());
     }
 
     #[test]
