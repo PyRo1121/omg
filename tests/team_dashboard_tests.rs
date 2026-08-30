@@ -632,7 +632,7 @@ mod refresh_and_tick_tests {
             .unwrap_or_else(std::time::Instant::now);
         let aged_update = app.last_update;
 
-        app.tick().await.unwrap();
+        app.tick().unwrap();
 
         assert_eq!(app.last_update, aged_update);
         assert_eq!(app.system_metrics.cpu_usage, 0.0);
@@ -650,7 +650,7 @@ mod refresh_and_tick_tests {
             .checked_sub(std::time::Duration::from_secs(10))
             .expect("10s before now is representable on Linux");
 
-        app.tick().await.expect("tick should not fail");
+        app.tick().expect("tick should not fail");
 
         // If the branch had not been taken, last_tick would still be the aged
         // instant (~10s old). A fresh reset proves the refresh ran.

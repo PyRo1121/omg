@@ -223,6 +223,10 @@ fn test_hash_verification_test_vectors() {
 /// regardless of product behavior. These tests pin the fail-closed error
 /// paths of [`PgpVerifier`] and [`require_detached_signature_files`] with no
 /// external state.
+///
+/// Gated behind the `pgp` feature because `omg_lib::core::security::pgp` is
+/// only compiled when it is enabled.
+#[cfg(feature = "pgp")]
 #[test]
 fn test_pgp_verification_fail_closed_contracts() {
     use omg_lib::core::security::pgp::{
