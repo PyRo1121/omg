@@ -681,6 +681,7 @@ analyzer inference
 - **Ci**: Cross-platform install script and R2 release sync
 ### 🐛 Bug Fixes
 
+- Reuse detected package manager for task fallback
 - Refuse implicit ALPM conflict removals
 - Report container image validation errors accurately
 - Harden ALPM package metadata access
