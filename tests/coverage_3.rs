@@ -249,13 +249,9 @@ fn rollback_install_removes_packages_and_records_rollback_history() {
 // refusal BEFORE ArchPackageManager::install would ever run — no privileged
 // operation is reachable from these tests.
 //
-// NOTE (product bug cov3-bug-1, see report): find_cached_arch_package
-// discards inner errors (`if let Ok(path)`), so the specific "refusing to
-// install" diagnostics from find_cached_arch_package_in are unreachable via
-// the CLI — every cache failure surfaces as the generic "not available in
-// configured pacman caches" error. These tests pin that observable behavior:
-// an unsatisfiable/mismatched cache must still refuse BEFORE any install is
-// attempted, naming package, version and searched dirs.
+// Cache misses and invalid matching archives have distinct diagnostics. Both
+// paths must refuse BEFORE any install is attempted and name the affected
+// package artifact or searched cache directory.
 // ═════════════════════════════════════════════════════════════════════
 
 #[cfg(feature = "arch")]
@@ -316,7 +312,7 @@ mod arch_cache_contracts {
 
         let result = project.run(&["rollback", OFFICIAL_UPDATE_ID, "--yes"]);
 
-        assert_unsatisfiable_cache_refusal(&result);
+        assert_cache_miss_refusal(&result);
     }
 
     /// Shared contract: when the pacman cache cannot satisfy a restore,
@@ -324,7 +320,7 @@ mod arch_cache_contracts {
     /// the requested package, its version and the searched directories — and
     /// must NEVER print completion output. Applies equally to an empty cache
     /// and to archives present but rejected by the .PKGINFO identity check.
-    fn assert_unsatisfiable_cache_refusal(result: &CommandResult) {
+    fn assert_cache_miss_refusal(result: &CommandResult) {
         result.assert_failure();
         let stderr = &result.stderr;
         assert!(
@@ -344,6 +340,21 @@ mod arch_cache_contracts {
         assert!(!result.stdout.contains("Rollback completed successfully"));
     }
 
+    fn assert_invalid_cache_refusal(result: &CommandResult) {
+        result.assert_failure();
+        assert!(
+            result.stderr.contains("refusing to install"),
+            "invalid matching archive must fail explicitly:\n{}",
+            result.stderr
+        );
+        assert!(
+            result.stderr.contains("example") && result.stderr.contains("1.0-1"),
+            "refusal must name the expected package and version:\n{}",
+            result.stderr
+        );
+        assert!(!result.stdout.contains("Rollback completed successfully"));
+    }
+
     #[test]
     fn rollback_refuses_cached_archive_whose_pkginfo_disagrees() {
         require_arch!();
@@ -360,7 +371,7 @@ mod arch_cache_contracts {
 
         let result = project.run(&["rollback", OFFICIAL_UPDATE_ID, "--yes"]);
 
-        assert_unsatisfiable_cache_refusal(&result);
+        assert_invalid_cache_refusal(&result);
     }
 
     #[test]
@@ -374,7 +385,7 @@ mod arch_cache_contracts {
 
         let result = project.run(&["rollback", OFFICIAL_UPDATE_ID, "--yes"]);
 
-        assert_unsatisfiable_cache_refusal(&result);
+        assert_invalid_cache_refusal(&result);
     }
 }
 
