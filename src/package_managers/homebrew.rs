@@ -527,16 +527,28 @@ impl HomebrewPackageManager {
                 while let Some(version_entry) = version_entries.next_entry().await? {
                     let version = version_entry.file_name().to_string_lossy().to_string();
                     if !version.starts_with('.') {
-                        versions.push(version);
+                        versions.push((version, version_entry.path()));
                     }
                 }
-                versions.sort_by(|a, b| Self::compare_homebrew_versions(a, b));
-                if let Some(version) = versions.pop() {
+                if let Some((version, version_path)) = Self::latest_installed_version(versions) {
+                    let receipt_path = version_path.join(INSTALL_RECEIPT);
+                    let installed_on_request = match fs::read_to_string(&receipt_path).await {
+                        Ok(data) => serde_json::from_str::<InstallReceipt>(&data)
+                            .ok()
+                            .and_then(|receipt| receipt.installed_on_request)
+                            .unwrap_or_default(),
+                        Err(error) if error.kind() == std::io::ErrorKind::NotFound => false,
+                        Err(error) => {
+                            return Err(error).with_context(|| {
+                                format!("Failed to read {}", receipt_path.display())
+                            });
+                        }
+                    };
                     packages.push(LocalPackage {
                         name,
                         version,
                         description: String::new(),
-                        installed_on_request: true,
+                        installed_on_request,
                     });
                 }
             }
@@ -1142,7 +1154,13 @@ mod tests {
         let root = tempfile::tempdir()?;
         let cask_dir = root.path().join(CASKROOM_DIR).join("example");
         fs::create_dir_all(cask_dir.join("1.9")).await?;
-        fs::create_dir_all(cask_dir.join("1.10")).await?;
+        let newest = cask_dir.join("1.10");
+        fs::create_dir_all(&newest).await?;
+        fs::write(
+            newest.join(INSTALL_RECEIPT),
+            r#"{"installed_on_request":true}"#,
+        )
+        .await?;
         let manager = HomebrewPackageManager {
             prefix: root.path().to_path_buf(),
             cellar: root.path().join(CELLAR_DIR),
@@ -1154,6 +1172,7 @@ mod tests {
         assert_eq!(packages.len(), 1);
         assert_eq!(packages[0].name, "example");
         assert_eq!(packages[0].version, "1.10");
+        assert!(packages[0].installed_on_request);
         Ok(())
     }
 
