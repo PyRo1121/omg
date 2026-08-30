@@ -103,8 +103,16 @@ pub(crate) fn execute_cmd(cmd: crate::cli::tea::Cmd<()>) -> anyhow::Result<()> {
                 // Not supported or applicable in fallback mode
             }
             Cmd::Batch(cmds) => {
-                for c in cmds {
-                    execute_inner(c)?;
+                let mut first_error = None;
+                for command in cmds {
+                    if let Err(error) = execute_inner(command)
+                        && first_error.is_none()
+                    {
+                        first_error = Some(error);
+                    }
+                }
+                if let Some(error) = first_error {
+                    return Err(error);
                 }
             }
             Cmd::PrintLn(output) => {

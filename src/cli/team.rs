@@ -107,11 +107,10 @@ fn validate_team_remote(remote_url: &str) -> Result<()> {
 pub fn init(team_id: &str, name: Option<&str>, _ctx: &CliContext) -> Result<()> {
     // SECURITY: Validate team_id
     if let Err(error) = validate_team_id(team_id) {
-        execute_cmd(Components::error_with_suggestion(
-            "Invalid team ID",
+        return execute_cmd(Components::error_with_suggestion(
+            error.to_string(),
             "Team IDs must be alphanumeric with /, -, or _ allowed",
-        ))?;
-        return Err(error);
+        ));
     }
     if let Some(n) = name
         && (n.len() > 128 || n.chars().any(char::is_control))
@@ -457,11 +456,10 @@ pub mod golden_path {
     ) -> Result<()> {
         // SECURITY: Validate all inputs
         if name.chars().any(|c| !c.is_ascii_alphanumeric() && c != '-') {
-            execute_cmd(Components::error_with_suggestion(
-                "Invalid template name",
+            return execute_cmd(Components::error_with_suggestion(
+                "Invalid template name (alphanumeric and hyphens only)",
                 "Template names must be alphanumeric with hyphens only",
-            ))?;
-            anyhow::bail!("Invalid template name (alphanumeric and hyphens only)");
+            ));
         }
         if let Some(v) = node
             && let Err(e) = crate::core::security::validate_runtime_version(v)
