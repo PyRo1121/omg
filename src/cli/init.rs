@@ -157,6 +157,14 @@ pub enum DaemonStartup {
     Manual,
 }
 
+fn effective_daemon_startup(selected: DaemonStartup, daemon_disabled: bool) -> DaemonStartup {
+    if daemon_disabled {
+        DaemonStartup::Manual
+    } else {
+        selected
+    }
+}
+
 impl DaemonStartup {
     fn name(self) -> &'static str {
         match self {
@@ -219,7 +227,10 @@ pub async fn run_interactive(skip_shell: bool, skip_daemon: bool) -> Result<()> 
 
     // Step 2: Daemon startup preference
     if !skip_daemon {
-        state.daemon_startup = select_daemon_startup(&mut stdout)?;
+        state.daemon_startup = effective_daemon_startup(
+            select_daemon_startup(&mut stdout)?,
+            crate::core::client::DaemonClient::daemon_disabled(),
+        );
         println!();
     }
 
@@ -815,23 +826,20 @@ fn configure_daemon_startup(stdout: &mut io::Stdout, startup: DaemonStartup) -> 
                 ResetColor
             )?;
         }
-        DaemonStartup::OnDemand => {
-            Command::new(omgd_sibling_path().unwrap_or_else(|| PathBuf::from("omgd")))
-                .arg("--")
-                // Detach stdio: the daemon outlives this process, and an
-                // inherited pipe would keep the parent's readers open forever.
-                .stdin(std::process::Stdio::null())
-                .stdout(std::process::Stdio::null())
-                .stderr(std::process::Stdio::null())
-                .spawn()
-                .context("Failed to start the OMG daemon")?;
-            execute!(
+        DaemonStartup::OnDemand => match start_on_demand_daemon() {
+            Ok(()) => execute!(
                 stdout,
                 SetForegroundColor(Color::Green),
                 Print(" ✓ (started)\n"),
                 ResetColor
-            )?;
-        }
+            )?,
+            Err(error) => execute!(
+                stdout,
+                SetForegroundColor(Color::Yellow),
+                Print(format!(" (not started: {error}; continuing setup)\n")),
+                ResetColor
+            )?,
+        },
         DaemonStartup::Systemd => {
             // Create systemd user service
             create_systemd_service()?;
@@ -852,6 +860,20 @@ fn configure_daemon_startup(stdout: &mut io::Stdout, startup: DaemonStartup) -> 
         }
     }
 
+    Ok(())
+}
+
+fn start_on_demand_daemon() -> Result<()> {
+    let daemon = omgd_sibling_path().context("matching omgd binary was not found next to omg")?;
+    Command::new(daemon)
+        .arg("--")
+        // Detach stdio: the daemon outlives this process, and an inherited
+        // pipe would keep the parent's readers open forever.
+        .stdin(std::process::Stdio::null())
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .spawn()
+        .context("Failed to start the OMG daemon")?;
     Ok(())
 }
 
@@ -997,6 +1019,18 @@ fn print_completion(stdout: &mut io::Stdout, state: &WizardState) -> Result<()> 
 #[expect(clippy::unwrap_used)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn disabled_daemon_forces_manual_wizard_startup() {
+        assert_eq!(
+            effective_daemon_startup(DaemonStartup::OnShellInit, true),
+            DaemonStartup::Manual
+        );
+        assert_eq!(
+            effective_daemon_startup(DaemonStartup::OnDemand, false),
+            DaemonStartup::OnDemand
+        );
+    }
 
     #[test]
     fn skipping_build_recommendations_preserves_existing_settings() {
