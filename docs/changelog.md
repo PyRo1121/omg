@@ -678,6 +678,7 @@ analyzer inference
 - **Ci**: Cross-platform install script and R2 release sync
 ### 🐛 Bug Fixes
 
+- Invalidate stale Debian installed state
 - Validate config paths by components
 - Preserve styled component alignment
 - Remove inert configuration options
