@@ -54,8 +54,8 @@ pub struct DnfPackageManager {
     rpm_db_path: PathBuf,
     /// Path to yum repository configuration (used by the `dnf` CLI)
     repos_dir: PathBuf,
-    /// Installed packages cache (name -> package info)
-    installed_cache: Arc<DashMap<String, InstalledPackage>>,
+    /// Installed packages cache (name -> every installed architecture/build)
+    installed_cache: Arc<DashMap<String, Vec<InstalledPackage>>>,
 }
 
 /// Installed package information from RPM database
@@ -91,18 +91,26 @@ impl DnfPackageManager {
         }
     }
 
+    fn cached_installed_packages(&self) -> Option<Vec<InstalledPackage>> {
+        if self.installed_cache.is_empty() {
+            return None;
+        }
+        Some(
+            self.installed_cache
+                .iter()
+                .flat_map(|entry| entry.value().clone())
+                .collect(),
+        )
+    }
+
     /// Load installed packages from RPM `SQLite` database
     ///
     /// Reads directly from `/var/lib/rpm/rpmdb.sqlite` and parses RPM header blobs
     /// to extract package metadata. Caches results in memory for subsequent calls.
     async fn load_installed_packages(&self) -> Result<Vec<InstalledPackage>> {
-        // Check if we have cached data
-        if !self.installed_cache.is_empty() {
-            return Ok(self
-                .installed_cache
-                .iter()
-                .map(|entry| entry.value().clone())
-                .collect());
+        // Check if we have cached data.
+        if let Some(cached) = self.cached_installed_packages() {
+            return Ok(cached);
         }
 
         // Fallback to reading from SQLite database
@@ -120,7 +128,10 @@ impl DnfPackageManager {
 
         // Populate cache
         for pkg in &packages {
-            self.installed_cache.insert(pkg.name.clone(), pkg.clone());
+            self.installed_cache
+                .entry(pkg.name.clone())
+                .or_default()
+                .push(pkg.clone());
         }
 
         Ok(packages)
@@ -816,6 +827,39 @@ mod tests {
         assert!(names.contains("bash"));
         assert!(names.contains("vim"));
         assert_eq!(names.len(), 2);
+    }
+
+    #[test]
+    fn installed_cache_preserves_duplicate_multilib_names() {
+        let manager = DnfPackageManager::new();
+        for release in ["1.fc42.x86_64", "1.fc42.i686"] {
+            manager
+                .installed_cache
+                .entry("glibc".to_string())
+                .or_default()
+                .push(InstalledPackage {
+                    name: "glibc".to_string(),
+                    version: "2.41".to_string(),
+                    release: release.to_string(),
+                    summary: "C library".to_string(),
+                    reason: InstallReason::Dependency,
+                });
+        }
+
+        let cached = manager
+            .cached_installed_packages()
+            .expect("populated cache");
+        assert_eq!(cached.len(), 2);
+        assert!(
+            cached
+                .iter()
+                .any(|package| package.release.ends_with("x86_64"))
+        );
+        assert!(
+            cached
+                .iter()
+                .any(|package| package.release.ends_with("i686"))
+        );
     }
 
     #[test]
