@@ -296,6 +296,27 @@ async fn download_db(
     Err(last_error.unwrap_or_else(|| anyhow::anyhow!("No mirrors available")))
 }
 
+fn commit_staged_databases(
+    databases: &[(PathBuf, PathBuf)],
+    failed_downloads: usize,
+) -> Result<()> {
+    anyhow::ensure!(
+        failed_downloads == 0,
+        "Failed to sync {failed_downloads} database(s); live databases were left unchanged"
+    );
+    for (staged, destination) in databases {
+        std::fs::rename(staged, destination).with_context(|| {
+            format!(
+                "Failed to publish staged package database {} to {}",
+                staged.display(),
+                destination.display()
+            )
+        })?;
+        crate::core::safe_ops::sync_parent_directory_sync(destination)?;
+    }
+    Ok(())
+}
+
 /// Synchronize package databases in parallel - BLAZING FAST
 ///
 /// This is 3-5x faster than `pacman -Sy` because:
@@ -318,6 +339,13 @@ pub async fn sync_databases_parallel() -> Result<()> {
             .await
             .with_context(|| format!("Failed to create {}", sync_dir.display()))?;
     }
+
+    // Download the complete repository set into a same-filesystem staging
+    // directory. A failed mirror must not leave a mix of old and new live DBs.
+    let staging = tempfile::Builder::new()
+        .prefix(".omg-sync-")
+        .tempdir_in(&sync_dir)
+        .with_context(|| format!("Failed to stage databases in {}", sync_dir.display()))?;
 
     // Set up progress bars
     let mp = MultiProgress::new();
@@ -404,13 +432,16 @@ pub async fn sync_databases_parallel() -> Result<()> {
     let repos_count = repos_to_sync.len();
     let mut tasks = tokio::task::JoinSet::new();
 
-    for (i, (_, urls, dest)) in repos_to_sync.into_iter().enumerate() {
+    let mut staged_databases = Vec::with_capacity(repos_count);
+    for (i, (_, urls, destination)) in repos_to_sync.into_iter().enumerate() {
         let client = client.clone();
         let Some(pb) = progress_bars.get(i).cloned() else {
             continue;
         };
+        let staged = staging.path().join(format!("{i}.db"));
+        staged_databases.push((staged.clone(), destination));
 
-        tasks.spawn(async move { download_db(&client, urls, &dest, &pb).await });
+        tasks.spawn(async move { download_db(&client, urls, &staged, &pb).await });
     }
 
     // Wait for all downloads
@@ -430,16 +461,14 @@ pub async fn sync_databases_parallel() -> Result<()> {
 
     println!();
 
-    if errors.is_empty() {
-        crate::package_managers::alpm_direct::clear_alpm_cache();
-        println!("{} Databases synchronized successfully!\n", "✓".green());
-        Ok(())
-    } else {
-        for e in &errors {
-            tracing::error!("Sync error: {}", e);
-        }
-        anyhow::bail!("Failed to sync {} database(s)", errors.len())
+    for error in &errors {
+        tracing::error!("Sync error: {error}");
     }
+    commit_staged_databases(&staged_databases, errors.len())?;
+
+    crate::package_managers::alpm_direct::clear_alpm_cache();
+    println!("{} Databases synchronized successfully!\n", "✓".green());
+    Ok(())
 }
 
 /// Repositories that are synced from the mirrorlist instead of their own
@@ -495,6 +524,21 @@ fn get_custom_repos() -> Result<Vec<(String, Vec<String>)>> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn failed_staged_set_does_not_replace_live_databases() {
+        let directory = tempfile::tempdir().expect("database directory");
+        let live = directory.path().join("core.db");
+        let staged = directory.path().join("core.db.staged");
+        std::fs::write(&live, b"old").expect("seed live database");
+        std::fs::write(&staged, b"new").expect("seed staged database");
+
+        let error = commit_staged_databases(&[(staged, live.clone())], 1)
+            .expect_err("failed download set must not publish");
+
+        assert!(error.to_string().contains("1 database"));
+        assert_eq!(std::fs::read(live).expect("live database"), b"old");
+    }
 
     #[test]
     fn server_line_parser_requires_literal_server_key() {
