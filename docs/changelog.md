@@ -683,6 +683,7 @@ analyzer inference
 - **Ci**: Cross-platform install script and R2 release sync
 ### 🐛 Bug Fixes
 
+- Exclude inactive packages from Debian size totals
 - Honor dpkg dependency state and pre-depends
 - Remove dangling Debian package symlinks
 - Preserve rollback tracking across extraction panics
