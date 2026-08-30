@@ -98,14 +98,7 @@ pub async fn import(manifest_path: &str, dry_run: bool) -> Result<()> {
     let content = fs::read_to_string(&manifest_path)?;
     let manifest: MigrationManifest = serde_json::from_str(&content)?;
 
-    // Reject unknown forward versions instead of misreading their fields.
-    anyhow::ensure!(
-        manifest.version == MANIFEST_FORMAT_VERSION,
-        "Unsupported migration manifest version '{}' (this build reads '{}'); \
-         regenerate the manifest with a matching omg version",
-        manifest.version,
-        MANIFEST_FORMAT_VERSION
-    );
+    validate_manifest_version(&manifest)?;
 
     let target_distro = format!("{:?}", detect_distro()).to_lowercase();
 
@@ -228,6 +221,17 @@ fn finish_apply(runtime_failures: usize, package_failed: bool) -> Result<()> {
             if package_failed { "failed" } else { "ok" }
         )
     }
+}
+
+fn validate_manifest_version(manifest: &MigrationManifest) -> Result<()> {
+    anyhow::ensure!(
+        manifest.version == MANIFEST_FORMAT_VERSION,
+        "Unsupported migration manifest version '{}' (this build reads '{}'); \
+         regenerate the manifest with a matching omg version",
+        manifest.version,
+        MANIFEST_FORMAT_VERSION
+    );
+    Ok(())
 }
 
 struct PackageMigrationPlan {
@@ -416,16 +420,8 @@ mod tests {
         assert_eq!(supported.version, MANIFEST_FORMAT_VERSION);
 
         let future = write_and_parse("2.0");
-        let error = (|| -> Result<()> {
-            anyhow::ensure!(
-                future.version == MANIFEST_FORMAT_VERSION,
-                "Unsupported migration manifest version '{}' (this build reads '{}')",
-                future.version,
-                MANIFEST_FORMAT_VERSION
-            );
-            Ok(())
-        })()
-        .expect_err("forward versions must be rejected, not silently imported");
+        let error = validate_manifest_version(&future)
+            .expect_err("forward versions must be rejected, not silently imported");
         assert!(
             error
                 .to_string()
