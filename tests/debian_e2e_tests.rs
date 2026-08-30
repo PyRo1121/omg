@@ -559,23 +559,6 @@ fn test_transaction_empty() {
     assert_eq!(tx.total_download_size(), 0);
 }
 
-#[test]
-fn test_transaction_add_install() {
-    let mut tx = Transaction::new();
-
-    tx.add_install(
-        "vim".to_string(),
-        "9.0.0".to_string(),
-        "http://example.com/vim.deb".to_string(),
-        2_048_000,
-    );
-
-    assert_eq!(tx.to_install.len(), 1);
-    assert_eq!(tx.to_install[0].name, "vim");
-    assert_eq!(tx.to_install[0].version, "9.0.0");
-    assert_eq!(tx.total_download_size(), 2_048_000);
-}
-
 // ============================================================================
 // Integration Tests
 // ============================================================================

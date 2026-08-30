@@ -187,18 +187,6 @@ impl Transaction {
             .context("Transaction temporary directory is not initialized")
     }
 
-    /// Add a package to install
-    pub fn add_install(&mut self, name: String, version: String, url: String, size: u64) {
-        self.to_install.push(PackageAction {
-            name,
-            version,
-            deb_path: None,
-            url: Some(url),
-            size,
-            sha256: None,
-        });
-    }
-
     /// Add a package to remove
     pub fn add_remove(&mut self, name: String) {
         self.to_remove.push(PackageAction {
@@ -1992,23 +1980,26 @@ mod tests {
     }
 
     #[test]
-    fn test_transaction_add_install() {
-        let mut tx = Transaction::new();
-        tx.add_install(
-            "vim".to_string(),
-            "9.0".to_string(),
-            "http://example.com/vim.deb".to_string(),
-            1024,
-        );
-        assert_eq!(tx.to_install.len(), 1);
-        assert_eq!(tx.to_install[0].name, "vim");
-    }
-
-    #[test]
     fn test_transaction_sizes() {
         let mut tx = Transaction::new();
-        tx.add_install("pkg1".to_string(), "1.0".to_string(), String::new(), 1000);
-        tx.add_install("pkg2".to_string(), "1.0".to_string(), String::new(), 2000);
+        tx.to_install = vec![
+            PackageAction {
+                name: "pkg1".to_string(),
+                version: "1.0".to_string(),
+                deb_path: None,
+                url: Some("https://example.invalid/pkg1.deb".to_string()),
+                size: 1000,
+                sha256: Some("0".repeat(64)),
+            },
+            PackageAction {
+                name: "pkg2".to_string(),
+                version: "1.0".to_string(),
+                deb_path: None,
+                url: Some("https://example.invalid/pkg2.deb".to_string()),
+                size: 2000,
+                sha256: Some("1".repeat(64)),
+            },
+        ];
         assert_eq!(tx.total_download_size(), 3000);
         assert_eq!(tx.package_count(), 2);
     }
@@ -2546,12 +2537,14 @@ mod tests {
     #[tokio::test]
     async fn transaction_rejects_hostile_repository_identifiers_before_side_effects() {
         let mut install = Transaction::new();
-        install.add_install(
-            "../../escape".to_string(),
-            "1.0".to_string(),
-            "https://example.invalid/package.deb".to_string(),
-            1,
-        );
+        install.to_install.push(PackageAction {
+            name: "../../escape".to_string(),
+            version: "1.0".to_string(),
+            deb_path: None,
+            url: Some("https://example.invalid/package.deb".to_string()),
+            size: 1,
+            sha256: Some("0".repeat(64)),
+        });
         let error = install
             .execute()
             .await
