@@ -72,6 +72,16 @@ struct InstalledCache {
     last_refreshed: Option<Instant>,
 }
 
+fn installed_cache_requires_rebuild(
+    cache: &InstalledCache,
+    cellar_mtime: Option<SystemTime>,
+    caskroom_mtime: Option<SystemTime>,
+) -> bool {
+    cache.last_refreshed.is_none()
+        || cache.cellar_mtime != cellar_mtime
+        || cache.caskroom_mtime != caskroom_mtime
+}
+
 /// Install receipt metadata from Homebrew
 #[derive(Debug, Clone, Deserialize, Serialize)]
 struct InstallReceipt {
@@ -768,42 +778,45 @@ impl HomebrewPackageManager {
         Ok(names)
     }
 
-    fn refresh_installed_cache_if_needed(&self) -> Result<()> {
-        let cellar_mtime = std::fs::metadata(&self.cellar)
-            .ok()
-            .and_then(|m| m.modified().ok());
-        let caskroom = self.prefix.join(CASKROOM_DIR);
-        let caskroom_mtime = std::fs::metadata(caskroom)
-            .ok()
-            .and_then(|m| m.modified().ok());
-
-        let needs_refresh = {
-            let cache = crate::core::sync::read_cache(&INSTALLED_CACHE);
-            cache.cellar_mtime != cellar_mtime
-                || cache.caskroom_mtime != caskroom_mtime
-                || cache.packages.is_empty()
-        };
-
-        if needs_refresh {
-            let names = self.list_installed_sync()?;
-            let set: AHashSet<String> = names.into_iter().collect();
-
-            let mut cache = crate::core::sync::write_cache(&INSTALLED_CACHE);
-            cache.packages = set;
-            cache.cellar_mtime = cellar_mtime;
-            cache.caskroom_mtime = caskroom_mtime;
-            cache.last_refreshed = Some(Instant::now());
-        }
-        Ok(())
-    }
-
-    pub fn is_installed_fast(&self, package: &str) -> Result<bool> {
+    fn installed_root_mtimes(&self) -> (Option<SystemTime>, Option<SystemTime>) {
         let cellar_mtime = std::fs::metadata(&self.cellar)
             .ok()
             .and_then(|metadata| metadata.modified().ok());
         let caskroom_mtime = std::fs::metadata(self.prefix.join(CASKROOM_DIR))
             .ok()
             .and_then(|metadata| metadata.modified().ok());
+        (cellar_mtime, caskroom_mtime)
+    }
+
+    fn refresh_installed_cache(
+        &self,
+        cellar_mtime: Option<SystemTime>,
+        caskroom_mtime: Option<SystemTime>,
+    ) -> Result<()> {
+        let needs_rebuild = {
+            let cache = crate::core::sync::read_cache(&INSTALLED_CACHE);
+            installed_cache_requires_rebuild(&cache, cellar_mtime, caskroom_mtime)
+        };
+
+        let refreshed_packages = if needs_rebuild {
+            Some(self.list_installed_sync()?.into_iter().collect())
+        } else {
+            None
+        };
+        let mut cache = crate::core::sync::write_cache(&INSTALLED_CACHE);
+        if let Some(packages) = refreshed_packages {
+            cache.packages = packages;
+            cache.cellar_mtime = cellar_mtime;
+            cache.caskroom_mtime = caskroom_mtime;
+        }
+        // An unchanged but expired cache remains valid; renew its TTL without
+        // rewalking the Cellar. Empty package sets are valid on fresh systems.
+        cache.last_refreshed = Some(Instant::now());
+        Ok(())
+    }
+
+    pub fn is_installed_fast(&self, package: &str) -> Result<bool> {
+        let (cellar_mtime, caskroom_mtime) = self.installed_root_mtimes();
         {
             let cache = crate::core::sync::read_cache(&INSTALLED_CACHE);
             if let Some(last) = cache.last_refreshed
@@ -815,7 +828,7 @@ impl HomebrewPackageManager {
             }
         }
 
-        self.refresh_installed_cache_if_needed()?;
+        self.refresh_installed_cache(cellar_mtime, caskroom_mtime)?;
 
         Ok(crate::core::sync::read_cache(&INSTALLED_CACHE)
             .packages
@@ -1174,6 +1187,20 @@ mod tests {
         assert_eq!(packages[0].version, "1.10");
         assert!(packages[0].installed_on_request);
         Ok(())
+    }
+
+    #[test]
+    fn empty_installed_cache_is_valid_after_initial_refresh() {
+        let now = SystemTime::now();
+        let cache = InstalledCache {
+            packages: AHashSet::new(),
+            cellar_mtime: Some(now),
+            caskroom_mtime: None,
+            last_refreshed: Some(Instant::now()),
+        };
+
+        assert!(!installed_cache_requires_rebuild(&cache, Some(now), None));
+        assert!(installed_cache_requires_rebuild(&cache, None, None));
     }
 
     #[tokio::test]
