@@ -133,14 +133,16 @@ pub async fn run(from: Option<&str>, to: &str) -> Result<()> {
     println!();
 
     if total_changes > 0 {
-        println!(
-            "  {} To sync to the target environment:",
-            style::dim("Hint:")
-        );
-        println!("       {}", style::command(&format!("omg env sync {to}")));
+        println!("  {} {}", style::dim("Hint:"), target_lockfile_hint(to));
     }
 
     Ok(())
+}
+
+fn target_lockfile_hint(target: &str) -> String {
+    format!(
+        "Apply the runtime and package changes listed above to match {target}; local lockfiles are comparison inputs, not sync remotes."
+    )
 }
 
 fn diff_runtimes(from: &BTreeMap<String, String>, to: &BTreeMap<String, String>) -> Vec<String> {
@@ -215,6 +217,13 @@ fn diff_packages(from: &[String], to: &[String]) -> PackageDiff {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn target_lockfile_hint_does_not_suggest_remote_sync_command() {
+        let hint = target_lockfile_hint("target.lock");
+        assert!(!hint.contains("env sync"));
+        assert!(hint.contains("target.lock"));
+    }
 
     #[test]
     fn diff_output_is_sorted_for_reproducible_reports() {
