@@ -76,6 +76,11 @@ mod privilege_escalation {
             installer.contains("refusing to install unverified binaries"),
             "a missing checksum must fail closed"
         );
+        assert!(
+            installer.contains("gh attestation verify \"$download_file\"")
+                && installer.contains("Build provenance verification failed"),
+            "the installer must fail closed on rejected provenance when GitHub CLI is available"
+        );
     }
 
     #[test]
