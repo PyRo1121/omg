@@ -38,6 +38,18 @@ jobs:
           prefix-key: fuzz
           cache-on-failure: true
 
+      - name: Restore fuzz corpus
+        # Persist the corpus between weekly campaigns so each run continues
+        # from where the previous one stopped instead of re-discovering the
+        # same shallow inputs. Keyed by run_id so every completed campaign
+        # saves a fresh snapshot; restore-keys fall back to the newest corpus.
+        uses: actions/cache@caa296126883cff596d87d8935842f9db880ef25 # v5
+        with:
+          path: fuzz/corpus
+          key: fuzz-corpus-${{ github.run_id }}
+          restore-keys: |
+            fuzz-corpus-
+
       - name: Install cargo-fuzz
         uses: taiki-e/install-action@82cd3e7658a6f96c86c0234aeeda1748937cb0a1 # v2
         with:
