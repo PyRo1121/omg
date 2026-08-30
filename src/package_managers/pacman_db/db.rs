@@ -65,19 +65,14 @@ fn load_sync_packages(sync_dir: &Path) -> Result<HashMap<String, SyncDbPackage>>
 }
 
 fn collect_sync_db_paths(sync_dir: &Path) -> Result<Vec<(PathBuf, String)>> {
-    // Pre-allocate for standard repos (core, extra, multilib) plus potential custom repos
-    let mut dbs = Vec::with_capacity(8);
-
     if !sync_dir.exists() {
-        return Ok(dbs);
+        return Ok(Vec::new());
     }
 
-    for db_name in &["core", "extra", "multilib"] {
-        let db_path = sync_dir.join(format!("{db_name}.db"));
-        if db_path.exists() {
-            dbs.push((db_path, (*db_name).to_string()));
-        }
-    }
+    let config = crate::core::pacman_conf::PacmanConfig::parse(paths::pacman_conf_path())
+        .context("Failed to read pacman repository priority")?;
+    let repo_order = config.get_repo_names();
+    let mut available = HashMap::with_capacity(repo_order.len());
 
     for entry in std::fs::read_dir(sync_dir).with_context(|| {
         format!(
@@ -110,21 +105,15 @@ fn collect_sync_db_paths(sync_dir: &Path) -> Result<Vec<(PathBuf, String)>> {
             continue;
         }
 
-        // Extract repo name (file_stem gives us the name without .db)
-        let name = path
-            .file_stem()
-            .and_then(|n| n.to_str())
-            .map(str::to_string);
-
-        // Skip standard repos (already added above)
-        if let Some(name) = name
-            && !matches!(name.as_str(), "core" | "extra" | "multilib")
-        {
-            dbs.push((path, name));
+        if let Some(name) = path.file_stem().and_then(|name| name.to_str()) {
+            available.insert(name.to_string(), path);
         }
     }
 
-    Ok(dbs)
+    Ok(repo_order
+        .into_iter()
+        .filter_map(|name| available.remove(name).map(|path| (path, name.to_string())))
+        .collect())
 }
 
 #[derive(Default, Serialize, Deserialize)]
@@ -1236,8 +1225,38 @@ mod tests {
     }
 
     #[test]
+    #[serial_test::serial]
+    fn sync_database_order_follows_pacman_configuration() {
+        let temp_dir = tempfile::tempdir().unwrap();
+        std::fs::write(temp_dir.path().join("core.db"), b"core").unwrap();
+        std::fs::write(temp_dir.path().join("custom.db"), b"custom").unwrap();
+        let config = temp_dir.path().join("pacman.conf");
+        std::fs::write(
+            &config,
+            "[options]\n[custom]\nServer = https://custom.example/$repo/$arch\n[core]\nServer = https://core.example/$repo/$arch\n",
+        )
+        .unwrap();
+
+        temp_env::with_var("OMG_PACMAN_CONF", Some(config.as_os_str()), || {
+            let names = collect_sync_db_paths(temp_dir.path())
+                .unwrap()
+                .into_iter()
+                .map(|(_, name)| name)
+                .collect::<Vec<_>>();
+            assert_eq!(names, ["custom", "core"]);
+        });
+    }
+
+    #[test]
+    #[serial_test::serial]
     fn test_collect_sync_db_paths_excludes_sig_files() {
         let temp_dir = tempfile::TempDir::new().unwrap();
+        let config = temp_dir.path().join("pacman.conf");
+        std::fs::write(
+            &config,
+            "[options]\n[core]\nServer = https://core.example/$repo/$arch\n[extra]\nServer = https://extra.example/$repo/$arch\n[custom-repo]\nServer = https://custom.example/$repo/$arch\n",
+        )
+        .unwrap();
 
         std::fs::write(temp_dir.path().join("core.db"), b"dummy").unwrap();
         std::fs::write(temp_dir.path().join("core.db.sig"), b"signature").unwrap();
@@ -1247,7 +1266,9 @@ mod tests {
         std::fs::write(temp_dir.path().join("custom-repo.db.sig"), b"signature").unwrap();
         std::fs::write(temp_dir.path().join("not-a-db.txt"), b"text").unwrap();
 
-        let db_paths = collect_sync_db_paths(temp_dir.path()).unwrap();
+        let db_paths = temp_env::with_var("OMG_PACMAN_CONF", Some(config.as_os_str()), || {
+            collect_sync_db_paths(temp_dir.path()).unwrap()
+        });
 
         let collected_names: Vec<_> = db_paths
             .iter()
