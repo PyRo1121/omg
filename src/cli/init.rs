@@ -228,7 +228,7 @@ pub async fn run_interactive(skip_shell: bool, skip_daemon: bool) -> Result<()> 
     println!();
 
     // Step 4: Build optimization
-    state.build_config = Some(select_build_config(&mut stdout)?);
+    state.build_config = select_build_config(&mut stdout)?;
     println!();
 
     // Step 5: Environment capture
@@ -541,7 +541,7 @@ fn select_daemon_startup(stdout: &mut io::Stdout) -> Result<DaemonStartup> {
     run_menu(stdout, &options, 0, |opt| opt.name().to_owned())
 }
 
-fn select_build_config(stdout: &mut io::Stdout) -> Result<BuildRecommendation> {
+fn select_build_config(stdout: &mut io::Stdout) -> Result<Option<BuildRecommendation>> {
     let sysinfo = SystemInfo::detect()?;
     let recommendation = sysinfo.recommend();
 
@@ -607,19 +607,14 @@ fn select_build_config(stdout: &mut io::Stdout) -> Result<BuildRecommendation> {
     // Confirm
     let applies = select_binary_menu(stdout, "Apply recommended settings", "Skip (use defaults)")?;
 
-    Ok(if applies {
-        recommendation
-    } else {
-        // Default: no optimizations
-        BuildRecommendation {
-            makeflags: String::new(),
-            enable_ccache: false,
-            enable_sccache: false,
-            disable_secure_makepkg: false,
-            build_concurrency: 1,
-            explanation: Vec::new(),
-        }
-    })
+    Ok(select_build_recommendation(recommendation, applies))
+}
+
+fn select_build_recommendation(
+    recommendation: BuildRecommendation,
+    applies: bool,
+) -> Option<BuildRecommendation> {
+    applies.then_some(recommendation)
 }
 
 fn apply_build_config(stdout: &mut io::Stdout, config: &BuildRecommendation) -> Result<()> {
@@ -1002,6 +997,26 @@ fn print_completion(stdout: &mut io::Stdout, state: &WizardState) -> Result<()> 
 #[expect(clippy::unwrap_used)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn skipping_build_recommendations_preserves_existing_settings() {
+        let recommendation = BuildRecommendation {
+            makeflags: "-j8".to_string(),
+            enable_ccache: true,
+            enable_sccache: false,
+            disable_secure_makepkg: false,
+            build_concurrency: 8,
+            explanation: Vec::new(),
+        };
+
+        assert!(select_build_recommendation(recommendation.clone(), false).is_none());
+        assert_eq!(
+            select_build_recommendation(recommendation, true)
+                .expect("apply selection")
+                .build_concurrency,
+            8
+        );
+    }
 
     #[test]
     fn shell_hook_parent_directory_is_created_before_opening_rc_file() {
