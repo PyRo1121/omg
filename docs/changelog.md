@@ -687,6 +687,7 @@ analyzer inference
 - **Ci**: Cross-platform install script and R2 release sync
 ### 🐛 Bug Fixes
 
+- Honor pacman repository priority in direct database reads
 - Parse PKGBUILD arrays without losing quoting
 - Keep Debian package URLs within their suite
 - Spool runtime XZ extraction to bounded disk
