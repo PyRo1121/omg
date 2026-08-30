@@ -1049,19 +1049,32 @@ pub(crate) fn list_installed_versions(versions_dir: &Path) -> Result<Vec<String>
 /// by swapping arguments (`sort_by(|a, b| version_cmp(b, a))`).
 #[must_use]
 pub(crate) fn version_cmp(a: &str, b: &str) -> Ordering {
-    let a_parts = a
-        .split(|c: char| !c.is_ascii_digit())
-        .filter_map(|part| part.parse::<u32>().ok());
-    let b_parts = b
-        .split(|c: char| !c.is_ascii_digit())
-        .filter_map(|part| part.parse::<u32>().ok());
-    let max_len = a_parts.clone().count().max(b_parts.clone().count());
+    fn numeric_parts(version: &str) -> Vec<&str> {
+        version
+            .split(|character: char| !character.is_ascii_digit())
+            .filter(|part| !part.is_empty())
+            .collect()
+    }
 
-    a_parts
-        .chain(std::iter::repeat(0))
-        .zip(b_parts.chain(std::iter::repeat(0)))
-        .take(max_len)
-        .map(|(a_part, b_part)| a_part.cmp(&b_part))
+    fn compare_numeric_parts(left: &str, right: &str) -> Ordering {
+        let left = left.trim_start_matches('0');
+        let right = right.trim_start_matches('0');
+        let left = if left.is_empty() { "0" } else { left };
+        let right = if right.is_empty() { "0" } else { right };
+        left.len().cmp(&right.len()).then_with(|| left.cmp(right))
+    }
+
+    let a_parts = numeric_parts(a);
+    let b_parts = numeric_parts(b);
+    let max_len = a_parts.len().max(b_parts.len());
+
+    (0..max_len)
+        .map(|index| {
+            compare_numeric_parts(
+                a_parts.get(index).copied().unwrap_or("0"),
+                b_parts.get(index).copied().unwrap_or("0"),
+            )
+        })
         .find(|&ordering| ordering != Ordering::Equal)
         .unwrap_or(Ordering::Equal)
 }
@@ -1196,6 +1209,15 @@ mod tests {
         assert_eq!(version_cmp("1.0.0", "1.0.1"), Ordering::Less);
         assert_eq!(version_cmp("2.0.0", "1.9.9"), Ordering::Greater);
         assert_eq!(version_cmp("22.0.0", "20.10.0"), Ordering::Greater);
+    }
+
+    #[test]
+    fn version_cmp_preserves_oversized_numeric_components() {
+        assert_eq!(version_cmp("1.42949672960.0", "1.9.0"), Ordering::Greater);
+        assert_eq!(
+            version_cmp("1.00000000000000000010", "1.9"),
+            Ordering::Greater
+        );
     }
 
     #[test]
