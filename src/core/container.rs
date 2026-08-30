@@ -414,13 +414,16 @@ impl ContainerManager {
                     // The NodeSource setup script only accepts a numeric major
                     // version; alias symbolic requests to the supported LTS
                     // major. https://github.com/nodesource/distributions
-                    dockerfile.push_str(if matches!(version, "lts" | "latest") {
-                        "20"
-                    } else {
-                        version
-                    });
+                    let node_major = version
+                        .split('.')
+                        .next()
+                        .filter(|major| major.chars().all(|c| c.is_ascii_digit()))
+                        .unwrap_or("20");
+                    dockerfile.push_str(node_major);
                     dockerfile.push('\n');
-                    dockerfile.push_str("RUN curl -fsSL https://deb.nodesource.com/setup_${NODE_VERSION}.x | bash - \\\n");
+                    dockerfile.push_str("RUN curl -fsSL -o /tmp/nodesource-setup.sh https://deb.nodesource.com/setup_${NODE_VERSION}.x \\\n");
+                    dockerfile.push_str("    && bash /tmp/nodesource-setup.sh \\\n");
+                    dockerfile.push_str("    && rm -f /tmp/nodesource-setup.sh \\\n");
                     dockerfile.push_str("    && apt-get install -y nodejs \\\n");
                     dockerfile.push_str("    && rm -rf /var/lib/apt/lists/*\n\n");
                 }
@@ -474,14 +477,14 @@ impl ContainerManager {
                 }
                 "java" => {
                     dockerfile.push_str("# Install Java\n");
-                    let java_pkg = if version == "latest" || version == "lts" || version.is_empty()
-                    {
-                        "default-jdk".to_string()
-                    } else if version.chars().all(|c| c.is_ascii_digit()) {
-                        format!("openjdk-{version}-jdk")
-                    } else {
-                        version.to_string()
-                    };
+                    let java_pkg = version
+                        .split('.')
+                        .next()
+                        .filter(|major| major.chars().all(|c| c.is_ascii_digit()))
+                        .map_or_else(
+                            || "default-jdk".to_string(),
+                            |major| format!("openjdk-{major}-jdk"),
+                        );
                     dockerfile.push_str("RUN apt-get update && apt-get install -y ");
                     dockerfile.push_str(&java_pkg);
                     dockerfile.push_str(" \\\n");
@@ -489,10 +492,15 @@ impl ContainerManager {
                 }
                 "ruby" => {
                     dockerfile.push_str("# Install Ruby\n");
-                    let ruby_pkg = if version == "latest" || version.is_empty() {
+                    let ruby_components: Vec<&str> = version
+                        .split('.')
+                        .take(2)
+                        .filter(|component| component.chars().all(|c| c.is_ascii_digit()))
+                        .collect();
+                    let ruby_pkg = if ruby_components.is_empty() {
                         "ruby-full".to_string()
                     } else {
-                        format!("ruby{version}")
+                        format!("ruby{}", ruby_components.join("."))
                     };
                     dockerfile.push_str("RUN apt-get update && apt-get install -y ");
                     dockerfile.push_str(&ruby_pkg);
@@ -860,7 +868,20 @@ mod tests {
             &[("node", "20.10.0"), ("go", "1.22.5")],
         );
         assert!(dockerfile.contains("FROM debian:bookworm-slim\n"));
-        assert!(dockerfile.contains("NODE_VERSION=20.10.0"));
+        assert!(dockerfile.contains("NODE_VERSION=20"));
         assert!(dockerfile.contains("GO_VERSION=1.22.5"));
+        assert!(!dockerfile.contains("curl -fsSL https://deb.nodesource.com"));
+    }
+
+    #[test]
+    fn debian_runtime_packages_normalize_dotted_versions() {
+        let manager = ContainerManager::with_runtime(ContainerRuntime::Docker);
+        let dockerfile =
+            manager.generate_dockerfile("ubuntu:24.04", &[("java", "17.0.12"), ("ruby", "3.1.2")]);
+
+        assert!(dockerfile.contains("apt-get install -y openjdk-17-jdk"));
+        assert!(dockerfile.contains("apt-get install -y ruby3.1"));
+        assert!(!dockerfile.contains("openjdk-17.0.12"));
+        assert!(!dockerfile.contains("ruby3.1.2"));
     }
 }
