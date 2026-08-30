@@ -678,6 +678,7 @@ analyzer inference
 - **Ci**: Cross-platform install script and R2 release sync
 ### 🐛 Bug Fixes
 
+- Reject future-dated fast status snapshots
 - Isolate malformed ancestor runtime pins
 - Surface Python release HTTP failures
 - Bound Rust gzip component decompression
