@@ -300,7 +300,7 @@ pub async fn remove_orphans() -> AnyhowResult<()> {
 }
 
 pub async fn list_explicit() -> AnyhowResult<Vec<String>> {
-    crate::package_managers::list_explicit_fast()
+    tokio::task::spawn_blocking(crate::package_managers::list_explicit_fast).await?
 }
 
 pub async fn is_installed(package: &str) -> AnyhowResult<bool> {

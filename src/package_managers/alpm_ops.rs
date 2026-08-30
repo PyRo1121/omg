@@ -187,12 +187,12 @@ pub fn get_pkg_info_from_db(alpm: &alpm::Alpm, name: &str) -> Result<Option<Pack
                 version: super::types::parse_version_or_zero(pkg.version()),
                 description: pkg.desc().unwrap_or("").to_string(),
                 url: pkg.url().map(std::string::ToString::to_string),
-                // libalpm's installed size is i64; a negative value (corrupt
-                // DB) must not wrap into a huge u64 via `as`.
+                // libalpm's size fields are i64; negative values from a
+                // corrupt database must not wrap into huge u64 values.
                 // https://doc.rust-lang.org/reference/expressions/operator-expr.html#numeric-cast
                 size: u64::try_from(pkg.isize()).unwrap_or(0),
                 install_size: Some(pkg.isize()),
-                download_size: Some(pkg.size() as u64),
+                download_size: Some(u64::try_from(pkg.size()).unwrap_or(0)),
                 repo: db.name().to_string(),
                 depends: pkg.depends().iter().map(|d| d.name().to_string()).collect(),
                 licenses: pkg
