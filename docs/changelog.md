@@ -678,6 +678,7 @@ analyzer inference
 - **Ci**: Cross-platform install script and R2 release sync
 ### 🐛 Bug Fixes
 
+- Reject special files during secret scans
 - Reject unsafe environment lockfile types
 - Neutralize enterprise CSV formulas
 - Preserve inline APT signing keys as data
