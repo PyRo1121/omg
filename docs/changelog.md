@@ -687,6 +687,7 @@ analyzer inference
 - **Ci**: Cross-platform install script and R2 release sync
 ### 🐛 Bug Fixes
 
+- Keep Debian package URLs within their suite
 - Spool runtime XZ extraction to bounded disk
 - Validate runtime path ancestor permissions
 - Roll back partial database publication
