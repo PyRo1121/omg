@@ -681,6 +681,7 @@ analyzer inference
 - **Ci**: Cross-platform install script and R2 release sync
 ### 🐛 Bug Fixes
 
+- Refuse implicit ALPM conflict removals
 - Report container image validation errors accurately
 - Harden ALPM package metadata access
 - Match partial runtime version pins
