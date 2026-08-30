@@ -33,12 +33,25 @@ impl PersistedCompletionCache {
     }
 
     fn load() -> Self {
-        match std::fs::read_to_string(Self::path()) {
-            Ok(content) => serde_json::from_str(&content).unwrap_or_else(|error| {
+        std::fs::read_to_string(Self::path())
+            .map_or_else(|_| Self::default(), |content| Self::decode(&content))
+    }
+
+    fn decode(content: &str) -> Self {
+        match serde_json::from_str::<Self>(content) {
+            Ok(cache) if cache.format_version == Self::FORMAT_VERSION => cache,
+            Ok(cache) => {
+                tracing::debug!(
+                    "Discarding completion cache format version {} (expected {})",
+                    cache.format_version,
+                    Self::FORMAT_VERSION
+                );
+                Self::default()
+            }
+            Err(error) => {
                 tracing::debug!("Discarding malformed completion cache: {error}");
                 Self::default()
-            }),
-            Err(_) => Self::default(),
+            }
         }
     }
 
@@ -185,7 +198,9 @@ impl CompletionEngine {
         cache
             .entries
             .insert("aur_last_refresh".to_string(), Timestamp::now().to_string());
-        cache.save()?;
+        if let Err(error) = cache.save() {
+            tracing::warn!("AUR completion cache could not be persisted: {error:#}");
+        }
 
         Ok(names)
     }
@@ -265,6 +280,18 @@ mod tests {
         let mut encoder = flate2::write::GzEncoder::new(Vec::new(), flate2::Compression::best());
         encoder.write_all(text).expect("compress fixture");
         encoder.finish().expect("finish fixture")
+    }
+
+    #[test]
+    fn completion_cache_rejects_unknown_format_versions() {
+        let decoded = PersistedCompletionCache::decode(
+            r#"{"format_version":99,"entries":{"aur_packages":"unsafe"}}"#,
+        );
+        assert_eq!(
+            decoded.format_version,
+            PersistedCompletionCache::FORMAT_VERSION
+        );
+        assert!(decoded.entries.is_empty());
     }
 
     #[test]
