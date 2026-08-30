@@ -5,6 +5,11 @@ use std::process::Command;
 
 use crate::cli::style;
 
+fn require_command_success(status: std::process::ExitStatus, operation: &str) -> Result<()> {
+    anyhow::ensure!(status.success(), "{operation} failed with {status}");
+    Ok(())
+}
+
 /// Create a new project
 pub fn run(stack: &str, name: &str) -> Result<()> {
     // SECURITY: Validate project name (reuse package name rules as they are safe for directories)
@@ -45,11 +50,12 @@ pub fn run(stack: &str, name: &str) -> Result<()> {
     // 2. Initialize Git if not present
     if !target_dir.join(".git").exists() {
         println!("  {} Initializing git...", style::dim("→"));
-        Command::new("git")
+        let status = Command::new("git")
             .arg("init")
             .current_dir(&target_dir)
-            .output()
-            .context("Failed to init git")?;
+            .status()
+            .context("Failed to launch git init")?;
+        require_command_success(status, "git init")?;
     }
 
     println!("\n{}", style::success("Project created successfully! 🚀"));
@@ -65,9 +71,7 @@ fn scaffold_rust(name: &str) -> Result<()> {
     let status = Command::new("cargo").args(["new", name]).status()?;
     pb.finish_and_clear();
 
-    if !status.success() {
-        anyhow::bail!("cargo new failed");
-    }
+    require_command_success(status, "cargo new")?;
 
     println!("  {} Created Cargo project", style::success("✓"));
     Ok(())
@@ -88,9 +92,7 @@ fn scaffold_react(name: &str) -> Result<()> {
         .status()?;
     pb.finish_and_clear();
 
-    if !status.success() {
-        anyhow::bail!("npm create vite failed");
-    }
+    require_command_success(status, "npm create vite")?;
 
     println!("  {} Created React (Vite+TS) project", style::success("✓"));
 
@@ -99,11 +101,9 @@ fn scaffold_react(name: &str) -> Result<()> {
     let status = Command::new("npm")
         .arg("install")
         .current_dir(name)
-        .status()?;
-
-    if !status.success() {
-        println!("  {} npm install failed (non-fatal)", style::warning("⚠"));
-    }
+        .status()
+        .context("Failed to launch npm install")?;
+    require_command_success(status, "npm install")?;
 
     Ok(())
 }
@@ -163,10 +163,12 @@ fn scaffold_node(name: &str) -> Result<()> {
     println!("  {} Created Node+TS template", style::success("✓"));
 
     println!("  {} Installing dependencies...", style::dim("→"));
-    Command::new("npm")
+    let status = Command::new("npm")
         .arg("install")
         .current_dir(root)
-        .status()?;
+        .status()
+        .context("Failed to launch npm install")?;
+    require_command_success(status, "npm install")?;
 
     Ok(())
 }
@@ -177,20 +179,25 @@ fn scaffold_python(name: &str) -> Result<()> {
 
     pb.finish_and_clear();
 
-    // Fallback if poetry not found
-    if status.is_err() {
-        println!(
-            "  {} Poetry not found, using venv fallback...",
-            style::warning("⚠")
-        );
-        std::fs::create_dir_all(name)?;
-        Command::new("python")
-            .args(["-m", "venv", ".venv"])
-            .current_dir(name)
-            .status()?;
-        std::fs::write(Path::new(name).join("requirements.txt"), "")?;
-        std::fs::write(Path::new(name).join("main.py"), "print('Hello from OMG!')")?;
-        return Ok(());
+    match status {
+        Ok(status) => require_command_success(status, "poetry new")?,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+            println!(
+                "  {} Poetry not found, using venv fallback...",
+                style::warning("⚠")
+            );
+            std::fs::create_dir_all(name)?;
+            let status = Command::new("python")
+                .args(["-m", "venv", ".venv"])
+                .current_dir(name)
+                .status()
+                .context("Failed to launch python venv")?;
+            require_command_success(status, "python venv")?;
+            std::fs::write(Path::new(name).join("requirements.txt"), "")?;
+            std::fs::write(Path::new(name).join("main.py"), "print('Hello from OMG!')")?;
+            return Ok(());
+        }
+        Err(error) => return Err(error).context("Failed to launch poetry new"),
     }
 
     println!("  {} Created Python (Poetry) project", style::success("✓"));
@@ -202,10 +209,12 @@ fn scaffold_go(name: &str) -> Result<()> {
     let root = Path::new(name);
 
     // go mod init
-    Command::new("go")
+    let status = Command::new("go")
         .args(["mod", "init", name])
         .current_dir(root)
-        .status()?;
+        .status()
+        .context("Failed to launch go mod init")?;
+    require_command_success(status, "go mod init")?;
 
     // main.go
     std::fs::write(
@@ -309,4 +318,22 @@ fn lock_runtimes(target_dir: &Path, stack: &str) -> Result<()> {
     }
 
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn failed_scaffold_commands_are_errors() {
+        let status = Command::new("sh")
+            .args(["-c", "exit 23"])
+            .status()
+            .expect("run fixture command");
+
+        let error = require_command_success(status, "fixture scaffold")
+            .expect_err("non-zero scaffold command must fail");
+        assert!(error.to_string().contains("fixture scaffold"));
+        assert!(error.to_string().contains("23"));
+    }
 }
