@@ -2626,9 +2626,9 @@ mod tests {
             .await
             .expect_err("unknown package must fail loudly");
         assert!(
-            error.to_string().contains("not installed")
-                || error.to_string().contains("no version")
-                || error.to_string().contains("Failed"),
+            error
+                .to_string()
+                .contains("omg-wave3-definitely-not-installed is not installed"),
             "unexpected error: {error:#}"
         );
     }
