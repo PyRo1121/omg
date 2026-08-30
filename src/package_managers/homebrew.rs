@@ -239,11 +239,6 @@ impl HomebrewPackageManager {
         Ok(Self::cache_dir()?.join("formula.rkyv"))
     }
 
-    /// Get the cache metadata file path
-    fn cache_metadata_path() -> Result<PathBuf> {
-        Ok(Self::cache_dir()?.join("cache.meta"))
-    }
-
     /// Find Homebrew's native API cache directory
     ///
     /// Homebrew caches API responses in these locations:
@@ -340,10 +335,11 @@ impl HomebrewPackageManager {
 
         let cask_path = cache_dir.join("cask.json");
         let casks: Vec<CaskInfo> = if cask_path.exists() {
-            match fs::read_to_string(&cask_path).await {
-                Ok(cask_content) => serde_json::from_str(&cask_content).unwrap_or_default(),
-                Err(_) => Vec::new(),
-            }
+            let cask_content = fs::read_to_string(&cask_path)
+                .await
+                .with_context(|| format!("Failed to read {}", cask_path.display()))?;
+            serde_json::from_str(&cask_content)
+                .with_context(|| format!("Failed to parse {}", cask_path.display()))?
         } else {
             Vec::new()
         };
@@ -365,12 +361,11 @@ impl HomebrewPackageManager {
     /// Cache is invalidated if:
     /// - File doesn't exist
     /// - File is older than 24 hours
-    /// - File is corrupted (checksum mismatch)
+    /// - File cannot be deserialized as the current rkyv schema
     ///
     /// Returns `Ok(None)` if cache is unavailable or stale.
     async fn load_cache_from_disk(&self) -> Result<Option<FormulaCache>> {
         let cache_path = Self::binary_cache_path()?;
-        let _meta_path = Self::cache_metadata_path()?;
 
         // Check if cache exists and is recent (24 hours)
         let Ok(meta) = fs::metadata(&cache_path).await else {
@@ -404,7 +399,9 @@ impl HomebrewPackageManager {
             rkyv::to_bytes::<rkyv::rancor::Error>(&(cache.formulas.clone(), cache.casks.clone()))
                 .context("Failed to serialize cache")?;
 
-        fs::write(&cache_path, &data).await?;
+        crate::core::safe_ops::atomic_write_file(&cache_path, &data)
+            .await
+            .with_context(|| format!("Failed to write {}", cache_path.display()))?;
 
         Ok(())
     }
@@ -1086,9 +1083,6 @@ mod tests {
     async fn test_cache_paths() {
         let binary_cache = HomebrewPackageManager::binary_cache_path();
         assert!(binary_cache.is_ok());
-
-        let meta_cache = HomebrewPackageManager::cache_metadata_path();
-        assert!(meta_cache.is_ok());
     }
 
     #[tokio::test]
