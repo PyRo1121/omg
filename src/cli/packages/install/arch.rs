@@ -220,6 +220,25 @@ fn try_local_package_name(package: &str) -> Result<String> {
     Ok(crate::package_managers::alpm_ops::load_local_package_metadata(package)?.name)
 }
 
+fn local_archive_preview(package: &str) -> Result<Option<(String, u64)>> {
+    if !is_local_package_file(package) {
+        return Ok(None);
+    }
+
+    let path = std::path::Path::new(package);
+    let metadata = std::fs::symlink_metadata(path)
+        .with_context(|| format!("Failed to inspect local package archive {package}"))?;
+    anyhow::ensure!(
+        metadata.file_type().is_file(),
+        "Local package archive must be a regular file: {package}"
+    );
+    let name = path
+        .file_name()
+        .and_then(|name| name.to_str())
+        .context("Local package archive name is not valid UTF-8")?;
+    Ok(Some((name.to_string(), metadata.len())))
+}
+
 pub async fn install_dry_run(packages: &[String]) -> Result<()> {
     use comfy_table::{Table, modifiers::UTF8_ROUND_CORNERS, presets::UTF8_FULL};
     use owo_colors::OwoColorize;
@@ -237,6 +256,18 @@ pub async fn install_dry_run(packages: &[String]) -> Result<()> {
     let mut daemon_client = SyncDaemonClient::acquire().ok();
 
     for pkg_name in packages {
+        if let Some((name, size)) = local_archive_preview(pkg_name)? {
+            let size_mb = size as f64 / 1024.0 / 1024.0;
+            total_size += size;
+            table.add_row(vec![
+                name.bold().to_string(),
+                "local".cyan().to_string(),
+                format!("{size_mb:.2} MB"),
+                format!("{} Local archive", "✓".green()),
+            ]);
+            continue;
+        }
+
         #[cfg(unix)]
         {
             if let Some(client) = daemon_client.as_mut() {
@@ -653,6 +684,18 @@ mod tests {
         .expect_err("vulnerable packages must be below the default Community grade");
 
         assert!(error.to_string().contains("below required minimum"));
+    }
+
+    #[test]
+    fn dry_run_recognizes_local_archives_without_repository_lookup() {
+        let directory = tempfile::tempdir().expect("temporary directory");
+        let archive = directory.path().join("fixture.pkg.tar.zst");
+        std::fs::write(&archive, b"archive").expect("write archive fixture");
+
+        let preview = local_archive_preview(archive.to_str().expect("UTF-8 path"))
+            .expect("inspect local archive")
+            .expect("classify local archive");
+        assert_eq!(preview, ("fixture.pkg.tar.zst".to_string(), 7));
     }
 
     #[test]
