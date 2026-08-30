@@ -147,7 +147,7 @@ fn show_dependency_chain_for_pkg(
                 .iter()
                 .take(10)
                 .map(|dep| {
-                    let installed = localdb.pkg(dep.name().as_bytes()).is_ok();
+                    let installed = localdb.pkgs().find_satisfier(dep.to_string()).is_some();
                     let status = if installed {
                         "✓ installed"
                     } else {
@@ -237,7 +237,10 @@ fn build_dependency_path(
 
         if let Ok(pkg) = localdb.pkg(current.as_bytes()) {
             for dep in pkg.depends() {
-                let dep_name = dep.name().to_string();
+                let Some(satisfier) = localdb.pkgs().find_satisfier(dep.to_string()) else {
+                    continue;
+                };
+                let dep_name = satisfier.name().to_string();
                 if !visited.contains(&dep_name) {
                     visited.insert(dep_name.clone());
                     parent.insert(dep_name.clone(), current.clone());

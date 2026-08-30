@@ -99,17 +99,17 @@ pub(crate) fn open_local_alpm() -> Result<alpm::Alpm> {
     })
 }
 
-/// Names of locally installed packages whose depends list references `package`.
+/// Names of locally installed packages that require `package`.
+///
+/// Delegating to libalpm preserves its dependency semantics, including
+/// version constraints and virtual dependencies satisfied through `provides`.
 #[cfg(feature = "arch")]
 pub(crate) fn local_reverse_deps(handle: &alpm::Alpm, package: &str) -> Vec<String> {
-    let localdb = handle.localdb();
-    let mut required_by = Vec::new();
-    for pkg in localdb.pkgs() {
-        if pkg.depends().iter().any(|dep| dep.name() == package) {
-            required_by.push(pkg.name().to_string());
-        }
-    }
-    required_by
+    handle
+        .localdb()
+        .pkg(package.as_bytes())
+        .map(|installed| installed.required_by().into_iter().collect())
+        .unwrap_or_default()
 }
 
 /// Global context for CLI command execution
@@ -136,4 +136,38 @@ pub struct CliContext {
 pub trait LocalCommandRunner {
     /// Execute the command
     async fn execute(&self, ctx: &CliContext) -> Result<()>;
+}
+
+#[cfg(all(test, feature = "arch"))]
+mod tests {
+    use super::*;
+    use std::fs;
+
+    fn write_local_package(db: &std::path::Path, name: &str, extra: &str) {
+        let package_dir = db.join("local").join(format!("{name}-1.0-1"));
+        fs::create_dir_all(&package_dir).expect("create local package fixture");
+        fs::write(
+            package_dir.join("desc"),
+            format!("%NAME%\n{name}\n\n%VERSION%\n1.0-1\n\n%ARCH%\nany\n\n%REASON%\n1\n\n{extra}"),
+        )
+        .expect("write local package metadata");
+    }
+
+    #[test]
+    fn reverse_dependencies_include_virtual_providers() {
+        let directory = tempfile::tempdir().expect("temporary ALPM root");
+        let db = directory.path().join("var/lib/pacman");
+        fs::create_dir_all(db.join("local")).expect("create local database");
+        fs::write(db.join("local/ALPM_DB_VERSION"), "9\n").expect("write database version");
+        write_local_package(&db, "provider", "%PROVIDES%\nvirtual-api=1\n\n");
+        write_local_package(&db, "consumer", "%DEPENDS%\nvirtual-api>=1\n\n");
+
+        let handle = alpm::Alpm::new(
+            directory.path().to_string_lossy().into_owned(),
+            db.to_string_lossy().into_owned(),
+        )
+        .expect("open isolated ALPM database");
+
+        assert_eq!(local_reverse_deps(&handle, "provider"), ["consumer"]);
+    }
 }
