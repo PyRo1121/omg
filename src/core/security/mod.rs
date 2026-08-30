@@ -11,7 +11,8 @@ pub mod validation;
 pub mod vulnerability;
 
 pub use audit::{
-    AuditError, AuditEventType, AuditLogger, AuditSeverity, audit_log, init_audit_logger,
+    AuditError, AuditEventType, AuditLogger, AuditSeverity, audit_log, audit_log_nonblocking,
+    init_audit_logger,
 };
 pub use policy::{PolicyError, SecurityGrade, SecurityPolicy};
 pub use sbom::{Sbom, SbomError, SbomGenerator};

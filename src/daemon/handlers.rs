@@ -16,7 +16,7 @@ use super::protocol::{
     WirePackageSource, error_codes,
 };
 use crate::core::metrics::GLOBAL_METRICS;
-use crate::core::security::{AuditEventType, AuditSeverity, audit_log};
+use crate::core::security::{AuditEventType, AuditSeverity, audit_log_nonblocking};
 use crate::package_managers::{PackageManager, VersionDisplay, get_package_manager};
 #[cfg(feature = "arch")]
 use crate::package_managers::{alpm_worker::AlpmWorker, search_detailed};
@@ -285,7 +285,7 @@ pub async fn handle_request(state: Arc<DaemonState>, request: Request) -> Respon
     // SECURITY: Enforce rate limiting
     if state.rate_limiter.check().is_err() {
         tracing::warn!("Rate limit exceeded for request");
-        audit_log(
+        audit_log_nonblocking(
             AuditEventType::PolicyViolation,
             AuditSeverity::Warning,
             "daemon_handler",
@@ -985,7 +985,7 @@ async fn handle_security_audit(state: Arc<DaemonState>, id: RequestId) -> Respon
         vulnerabilities,
     };
 
-    audit_log(
+    audit_log_nonblocking(
         AuditEventType::SecurityAudit,
         AuditSeverity::Info,
         "daemon_handler",
@@ -1064,7 +1064,7 @@ async fn handle_explicit_count(state: Arc<DaemonState>, id: RequestId) -> Respon
 #[inline(never)]
 fn validation_error(id: RequestId, message: impl Into<String>) -> Response {
     let msg = message.into();
-    audit_log(
+    audit_log_nonblocking(
         AuditEventType::PolicyViolation,
         AuditSeverity::Warning,
         "daemon_handler",

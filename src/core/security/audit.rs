@@ -738,6 +738,40 @@ impl AuditIntegrityReport {
 static AUDIT_LOGGER: std::sync::LazyLock<std::sync::Mutex<Option<AuditLogger>>> =
     std::sync::LazyLock::new(|| std::sync::Mutex::new(None));
 
+const AUDIT_QUEUE_CAPACITY: usize = 1024;
+
+struct QueuedAuditEvent {
+    event: AuditEventType,
+    severity: AuditSeverity,
+    resource: String,
+    description: String,
+}
+
+/// Daemon callers enqueue owned events so filesystem locking, serialization,
+/// and durability syncs run on one dedicated blocking writer thread rather
+/// than a Tokio executor thread.
+static AUDIT_QUEUE: std::sync::LazyLock<std::sync::mpsc::SyncSender<QueuedAuditEvent>> =
+    std::sync::LazyLock::new(|| {
+        let (sender, receiver) =
+            std::sync::mpsc::sync_channel::<QueuedAuditEvent>(AUDIT_QUEUE_CAPACITY);
+        if let Err(error) = std::thread::Builder::new()
+            .name("omg-audit-writer".to_string())
+            .spawn(move || {
+                while let Ok(message) = receiver.recv() {
+                    record_global(
+                        message.event,
+                        message.severity,
+                        &message.resource,
+                        &message.description,
+                    );
+                }
+            })
+        {
+            tracing::error!("Failed to start audit writer thread: {error}");
+        }
+        sender
+    });
+
 /// Initialize the global audit logger eagerly.
 ///
 /// Optional: [`audit_log`] lazily self-initializes the same global on first
@@ -792,6 +826,42 @@ pub fn audit_log(
     description: &str,
 ) {
     record_global(event, severity, resource, description);
+}
+
+/// Queue an audit event without performing filesystem I/O on the caller.
+///
+/// The bounded queue deliberately drops events after emitting a tracing error
+/// when saturated: untrusted daemon clients cannot create unbounded memory or
+/// blocked-task growth by flooding the audit path.
+pub fn audit_log_nonblocking(
+    event: AuditEventType,
+    severity: AuditSeverity,
+    resource: &str,
+    description: &str,
+) {
+    let message = QueuedAuditEvent {
+        event,
+        severity,
+        resource: bounded_audit_field(resource),
+        description: bounded_audit_field(description),
+    };
+    match AUDIT_QUEUE.try_send(message) {
+        Ok(()) => {}
+        Err(std::sync::mpsc::TrySendError::Full(message)) => {
+            tracing::error!(
+                "Audit queue is full; dropping event {} for {}",
+                message.event,
+                message.resource
+            );
+        }
+        Err(std::sync::mpsc::TrySendError::Disconnected(message)) => {
+            tracing::error!(
+                "Audit writer is unavailable; dropping event {} for {}",
+                message.event,
+                message.resource
+            );
+        }
+    }
 }
 
 #[cfg(test)]

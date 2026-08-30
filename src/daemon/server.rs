@@ -18,7 +18,7 @@ use tokio_util::sync::CancellationToken;
 use super::handlers::{DaemonState, handle_request};
 use super::protocol::{Request, Response, error_codes};
 use crate::core::metrics::GLOBAL_METRICS;
-use crate::core::security::{AuditEventType, AuditSeverity, audit_log};
+use crate::core::security::{AuditEventType, AuditSeverity, audit_log_nonblocking};
 
 /// Request handling timeout (30 seconds should be sufficient for most operations)
 const REQUEST_TIMEOUT: Duration = Duration::from_secs(30);
@@ -517,7 +517,7 @@ async fn handle_client_with_idle_timeout(
             Err(error) => {
                 let msg = format!("Failed to deserialize request: {error}");
                 tracing::warn!("{msg}");
-                audit_log(
+                audit_log_nonblocking(
                     AuditEventType::PolicyViolation,
                     AuditSeverity::Warning,
                     "daemon_server",
@@ -535,7 +535,7 @@ async fn handle_client_with_idle_timeout(
         // SECURITY: Enforce per-connection rate limiting
         if rate_limiter.check().is_err() {
             tracing::warn!("Client rate limit exceeded for request {}", request_id);
-            audit_log(
+            audit_log_nonblocking(
                 AuditEventType::PolicyViolation,
                 AuditSeverity::Warning,
                 "daemon_server",
