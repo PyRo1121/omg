@@ -10,6 +10,17 @@ fn require_command_success(status: std::process::ExitStatus, operation: &str) ->
     Ok(())
 }
 
+fn canonical_stack(stack: &str) -> Option<&'static str> {
+    match stack.to_ascii_lowercase().as_str() {
+        "rust" | "rs" => Some("rust"),
+        "react" | "react-ts" => Some("react"),
+        "node" | "ts" | "typescript" => Some("node"),
+        "python" | "py" => Some("python"),
+        "go" | "golang" => Some("go"),
+        _ => None,
+    }
+}
+
 /// Create a new project
 pub fn run(stack: &str, name: &str) -> Result<()> {
     // SECURITY: Validate project name (reuse package name rules as they are safe for directories)
@@ -27,15 +38,16 @@ pub fn run(stack: &str, name: &str) -> Result<()> {
         style::package(name)
     );
 
-    match stack.to_lowercase().as_str() {
-        "rust" | "rs" => scaffold_rust(name)?,
-        "react" | "react-ts" => scaffold_react(name)?,
-        "node" | "ts" | "typescript" => scaffold_node(name)?,
-        "python" | "py" => scaffold_python(name)?,
-        "go" | "golang" => scaffold_go(name)?,
-        _ => {
-            anyhow::bail!("Unknown stack: {stack}. Supported: rust, react, node, python, go");
-        }
+    let canonical_stack = canonical_stack(stack).ok_or_else(|| {
+        anyhow::anyhow!("Unknown stack: {stack}. Supported: rust, react, node, python, go")
+    })?;
+    match canonical_stack {
+        "rust" => scaffold_rust(name)?,
+        "react" => scaffold_react(name)?,
+        "node" => scaffold_node(name)?,
+        "python" => scaffold_python(name)?,
+        "go" => scaffold_go(name)?,
+        _ => unreachable!("canonical_stack returned an unknown family"),
     }
 
     // Post-scaffold setup
@@ -44,7 +56,7 @@ pub fn run(stack: &str, name: &str) -> Result<()> {
     // 1. Create .tool-versions if not present
     let tool_versions_path = target_dir.join(".tool-versions");
     if !tool_versions_path.exists() {
-        lock_runtimes(&target_dir, stack)?;
+        lock_runtimes(&target_dir, canonical_stack)?;
     }
 
     // 2. Initialize Git if not present
@@ -323,6 +335,15 @@ fn lock_runtimes(target_dir: &Path, stack: &str) -> Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn stack_aliases_share_their_runtime_lock_family() {
+        assert_eq!(canonical_stack("react-ts"), Some("react"));
+        assert_eq!(canonical_stack("typescript"), Some("node"));
+        assert_eq!(canonical_stack("py"), Some("python"));
+        assert_eq!(canonical_stack("golang"), Some("go"));
+        assert_eq!(canonical_stack("rs"), Some("rust"));
+    }
 
     #[test]
     fn failed_scaffold_commands_are_errors() {
