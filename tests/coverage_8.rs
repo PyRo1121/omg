@@ -651,12 +651,11 @@ fn mode_mismatch_between_transports_is_named_explicitly() {
     );
 }
 
-/// Contract: SyncDaemonClient round-trips multiple calls over one connection —
-/// explicit_count() yields the exact usize payload, call(Ping) yields the exact
-/// Ping payload, and request ids increment 1, 2 as observed by the daemon.
+/// Contract: SyncDaemonClient round-trips multiple generic calls over one
+/// connection and preserves the exact response payloads and request IDs.
 #[test]
 #[serial]
-fn sync_client_roundtrip_pins_explicit_count_and_ping_payloads() {
+fn sync_client_roundtrip_pins_response_payloads() {
     let mut daemon = MockDaemon::spawn(Box::new(|request| match request.id() {
         1 => Some(echo_frame(request, &ResponseResult::ExplicitCount(42))),
         _ => Some(echo_frame(request, &ping_pong("pong"))),
@@ -664,7 +663,10 @@ fn sync_client_roundtrip_pins_explicit_count_and_ping_payloads() {
     let sock = daemon.socket_path.clone();
     with_client_env(None, None, Some(&sock), || {
         let mut client = SyncDaemonClient::acquire().expect("acquire");
-        assert_eq!(client.explicit_count().expect("explicit_count"), 42);
+        let explicit = client
+            .call(&Request::ExplicitCount { id: 1 })
+            .expect("explicit count round-trip");
+        assert!(matches!(explicit, ResponseResult::ExplicitCount(42)));
         let response = client
             .call(&Request::Ping { id: 2 })
             .expect("sync ping round-trip");
@@ -700,7 +702,7 @@ fn sync_client_detects_id_mismatch_and_daemon_errors() {
     let sock = daemon.socket_path.clone();
     with_client_env(None, None, Some(&sock), || {
         let mut client = SyncDaemonClient::acquire().expect("acquire");
-        let err = client.explicit_count().unwrap_err();
+        let err = client.call(&Request::ExplicitCount { id: 1 }).unwrap_err();
         assert_eq!(
             err.to_string(),
             "Request ID mismatch: sent 1, got 7",
@@ -749,7 +751,7 @@ fn sync_client_rejects_wrong_protocol_version() {
     let sock = daemon.socket_path.clone();
     with_client_env(None, None, Some(&sock), || {
         let mut client = SyncDaemonClient::acquire().expect("acquire");
-        let err = client.explicit_count().unwrap_err();
+        let err = client.call(&Request::ExplicitCount { id: 1 }).unwrap_err();
         assert_eq!(
             err.to_string(),
             format!(

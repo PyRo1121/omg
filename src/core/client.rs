@@ -24,8 +24,8 @@ use tokio_util::codec::{Framed, LengthDelimitedCodec};
 
 #[cfg(unix)]
 use crate::daemon::protocol::{
-    DetailedPackageInfo, MAX_FRAME_SIZE, PackageInfo, Request, Response, ResponseResult,
-    SearchResult, SecurityAuditResult, StatusResult, UpdateEntry,
+    DetailedPackageInfo, MAX_FRAME_SIZE, Request, Response, ResponseResult, SearchResult,
+    SecurityAuditResult, StatusResult, UpdateEntry,
 };
 #[cfg(unix)]
 use std::os::unix::net::UnixStream as SyncUnixStream;
@@ -171,11 +171,6 @@ impl DaemonClient {
         })
     }
 
-    /// Check if daemon is running
-    pub async fn is_running() -> bool {
-        Self::connect().await.is_ok()
-    }
-
     /// Send a request and get response
     pub async fn call(&mut self, request: Request) -> Result<ResponseResult> {
         let id = request.id();
@@ -287,13 +282,6 @@ impl DaemonClient {
         extract_response(&response, id, as_audit)
     }
 
-    /// List explicitly installed packages
-    pub async fn list_explicit(&mut self) -> Result<Vec<String>> {
-        let id = self.request_id.fetch_add(1, Ordering::SeqCst);
-        let response = self.call(Request::Explicit { id }).await?;
-        extract_response(&response, id, as_explicit)
-    }
-
     /// Get fuzzy suggestions for a package name
     pub async fn suggest(&mut self, query: &str, limit: Option<usize>) -> Result<Vec<String>> {
         let id = self.request_id.fetch_add(1, Ordering::SeqCst);
@@ -305,23 +293,6 @@ impl DaemonClient {
             })
             .await?;
         extract_response(&response, id, as_suggest)
-    }
-
-    /// Search for Debian packages via daemon
-    pub async fn debian_search(
-        &mut self,
-        query: &str,
-        limit: Option<usize>,
-    ) -> Result<Vec<PackageInfo>> {
-        let id = self.request_id.fetch_add(1, Ordering::SeqCst);
-        let response = self
-            .call(Request::DebianSearch {
-                id,
-                query: query.to_string(),
-                limit,
-            })
-            .await?;
-        extract_response(&response, id, as_debian_search)
     }
 }
 
@@ -417,33 +388,9 @@ fn as_audit(response: &ResponseResult) -> Option<SecurityAuditResult> {
     }
 }
 
-fn as_explicit(response: &ResponseResult) -> Option<Vec<String>> {
-    if let ResponseResult::Explicit(value) = response {
-        Some(value.packages.clone())
-    } else {
-        None
-    }
-}
-
 fn as_suggest(response: &ResponseResult) -> Option<Vec<String>> {
     if let ResponseResult::Suggest(value) = response {
         Some(value.clone())
-    } else {
-        None
-    }
-}
-
-fn as_debian_search(response: &ResponseResult) -> Option<Vec<PackageInfo>> {
-    if let ResponseResult::DebianSearch(value) = response {
-        Some(value.clone())
-    } else {
-        None
-    }
-}
-
-fn as_explicit_count(response: &ResponseResult) -> Option<usize> {
-    if let ResponseResult::ExplicitCount(value) = response {
-        Some(*value)
     } else {
         None
     }
@@ -506,13 +453,6 @@ impl SyncDaemonClient {
             limit,
         })?;
         extract_response(&response, id, as_search)
-    }
-
-    /// Get explicit package count
-    pub fn explicit_count(&mut self) -> Result<usize> {
-        let id = self.request_id.fetch_add(1, Ordering::SeqCst);
-        let response = self.call(&Request::ExplicitCount { id })?;
-        extract_response(&response, id, as_explicit_count)
     }
 
     /// Get system status
