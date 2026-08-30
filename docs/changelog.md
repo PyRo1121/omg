@@ -678,6 +678,7 @@ analyzer inference
 - **Ci**: Cross-platform install script and R2 release sync
 ### 🐛 Bug Fixes
 
+- Enforce PGP signature hash policy
 - Preview local Arch package archives
 - Classify OSV CVSS vector severity
 - Enforce search limits for JSON output
