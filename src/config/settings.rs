@@ -47,9 +47,6 @@ fn validate_config_path(path: &Path, field_name: &str) -> Result<()> {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(default)]
 pub struct Settings {
-    /// Enable shims (optional, default: false - use PATH modification)
-    pub shims_enabled: bool,
-
     /// OMG data directory, resolved from the current environment at load time.
     #[serde(skip, default = "paths::data_dir")]
     pub data_dir: PathBuf,
@@ -57,12 +54,6 @@ pub struct Settings {
     /// Daemon socket path, resolved from the current environment at load time.
     #[serde(skip, default = "paths::socket_path")]
     pub socket_path: PathBuf,
-
-    /// Default shell for hooks
-    pub default_shell: String,
-
-    /// Auto-update runtime versions on install
-    pub auto_update: bool,
 
     /// Whether telemetry is enabled
     pub telemetry_enabled: bool,
@@ -125,11 +116,8 @@ impl Default for Settings {
         let socket_path = paths::socket_path();
 
         Self {
-            shims_enabled: false, // PATH modification is default (faster)
             data_dir,
             socket_path,
-            default_shell: "zsh".to_string(),
-            auto_update: false,
             telemetry_enabled: false,
             aur: AurBuildSettings::default(),
         }
@@ -169,15 +157,7 @@ impl Settings {
     fn validate_known_keys(content: &str) -> Result<()> {
         let table: toml::Table = toml::from_str(content).context("Config is not valid TOML")?;
 
-        const ROOT_KEYS: [&str; 7] = [
-            "shims_enabled",
-            "data_dir",
-            "socket_path",
-            "default_shell",
-            "auto_update",
-            "telemetry_enabled",
-            "aur",
-        ];
+        const ROOT_KEYS: [&str; 2] = ["telemetry_enabled", "aur"];
         const AUR_KEYS: [&str; 15] = [
             "build_method",
             "build_concurrency",
@@ -199,7 +179,16 @@ impl Settings {
         // Legacy sections written by older omg releases. They carry no
         // settings the current schema consumes; recognize them so existing
         // installs keep working, but tell the user they are ignored.
-        const LEGACY_KEYS: [&str; 3] = ["cache", "general", "security"];
+        const LEGACY_KEYS: [&str; 8] = [
+            "cache",
+            "general",
+            "security",
+            "data_dir",
+            "socket_path",
+            "shims_enabled",
+            "default_shell",
+            "auto_update",
+        ];
 
         let mut unknown = Vec::new();
         for key in table.keys() {
@@ -344,8 +333,15 @@ mod tests {
         let settings = Settings::default();
         let serialized = toml::to_string(&settings).expect("serialize settings");
 
-        assert!(!serialized.contains("data_dir"), "{serialized}");
-        assert!(!serialized.contains("socket_path"), "{serialized}");
+        for obsolete in [
+            "data_dir",
+            "socket_path",
+            "shims_enabled",
+            "default_shell",
+            "auto_update",
+        ] {
+            assert!(!serialized.contains(obsolete), "{serialized}");
+        }
     }
 
     #[test]
@@ -354,6 +350,9 @@ mod tests {
             r#"
                 data_dir = "/stale/data"
                 socket_path = "/stale/socket"
+                shims_enabled = true
+                default_shell = "fish"
+                auto_update = true
             "#,
         )
         .expect("legacy config remains readable");

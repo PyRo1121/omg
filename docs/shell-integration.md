@@ -440,29 +440,13 @@ ls -la ~/.local/share/omg/versions/node/current
 
 ## ⚙️ Configuration Options
 
-### Shims vs Hooks
+### PATH Hooks
 
-OMG offers two PATH management methods:
+OMG uses shell hooks for runtime switching:
 
-#### Hooks (Default, Recommended)
-
-- Faster runtime switching
-- PATH modified on directory change
-- Works with all terminals
-
-#### Shims
-
-- Wrapper scripts for each binary (intended for better IDE compatibility)
-- Slightly slower execution
-
-The `shims_enabled` setting exists in `~/.config/omg/config.toml`:
-
-```toml
-shims_enabled = true
-```
-
-> Note: shim generation is not wired up in the CLI yet — today only PATH-based
-> hook switching is fully functional. Treat `shims_enabled` as reserved.
+- PATH is updated on directory changes.
+- No wrapper or shim executable layer is installed.
+- Bash, Zsh, and Fish hooks are selected explicitly with `omg hook <shell>`.
 
 ### Runtime Resolution
 

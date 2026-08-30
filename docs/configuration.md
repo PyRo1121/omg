@@ -49,22 +49,11 @@ The main configuration file controls daemon behavior, runtime settings, and feat
 # GENERAL SETTINGS
 # ═══════════════════════════════════════════════════════════════════════════
 
-# Enable shim system for IDE compatibility (default: false)
-# Shims are slower than PATH modification but work with all IDEs
-shims_enabled = false
+# Runtime telemetry is opt-in (default: false)
+telemetry_enabled = false
 
-# Override data directory (default: ~/.local/share/omg)
-# data_dir = "/custom/path/omg"
-
-# Override socket path (default: $XDG_RUNTIME_DIR/omg.sock)
-# socket_path = "/run/user/1000/omg.sock"
-
-# Default shell for hooks and completions
-# Options: "zsh", "bash", "fish"
-default_shell = "zsh"
-
-# Automatically check for runtime updates on install (default: false)
-auto_update = false
+# Data and socket locations are resolved from XDG environment variables.
+# They are not configurable in this file.
 
 # ═══════════════════════════════════════════════════════════════════════════
 # AUR BUILD SETTINGS
@@ -119,11 +108,7 @@ enable_sccache = false
 
 | Setting | Type | Default | Description |
 | --------- | ------ | --------- | ------------- |
-| `shims_enabled` | bool | `false` | Use shims instead of PATH modification |
-| `data_dir` | string | `~/.local/share/omg` | Override data directory |
-| `socket_path` | string | XDG runtime | Override socket path |
-| `default_shell` | string | `"zsh"` | Default shell for hooks |
-| `auto_update` | bool | `false` | Auto-check for updates |
+| `telemetry_enabled` | bool | `false` | Enable licensed runtime telemetry |
 
 #### AUR Settings
 
@@ -407,8 +392,6 @@ aur = "https://aur.archlinux.org"
 
 ```toml
 # ~/.config/omg/config.toml
-default_shell = "zsh"
-
 [aur]
 build_concurrency = 16
 enable_ccache = true
@@ -419,7 +402,7 @@ cache_builds = true
 
 ```toml
 # ~/.config/omg/config.toml
-auto_update = false
+telemetry_enabled = false
 
 [aur]
 build_concurrency = 4
@@ -485,11 +468,8 @@ Real-world configuration examples for different use cases.
 # ~/.config/omg/config.toml
 # Most users can skip this - OMG works with zero config!
 
-# Optional: Enable auto-updates for runtimes
-auto_update = true
-
-# Optional: Prefer your shell
-default_shell = "zsh"
+# Runtime telemetry remains disabled unless explicitly enabled.
+telemetry_enabled = false
 ```
 
 **Policy (optional):**
@@ -511,8 +491,8 @@ default_shell = "zsh"
 # ~/.config/omg/config.toml
 # Share this in your team's dotfiles repo
 
-# Disable auto-update to prevent version drift
-auto_update = false
+# Keep runtime telemetry local by default.
+telemetry_enabled = false
 
 # Team-friendly AUR settings
 [aur]
@@ -601,9 +581,6 @@ allow_aur = false
 ```toml
 # ~/.config/omg/config.toml
 # For VPS, Raspberry Pi, or resource-constrained systems
-
-# Minimal shims
-shims_enabled = false
 
 # Conservative parallelism
 [aur]

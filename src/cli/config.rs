@@ -17,7 +17,6 @@ pub fn get(key: &str) -> Result<()> {
     let settings = Settings::load().context("Failed to load OMG settings")?;
 
     let value = match key {
-        "shims.enabled" => settings.shims_enabled.to_string(),
         "data_dir" => settings.data_dir.display().to_string(),
         "socket" => settings.socket_path.display().to_string(),
         "telemetry.enabled" => settings.telemetry_enabled.to_string(),
@@ -30,7 +29,6 @@ pub fn get(key: &str) -> Result<()> {
             .makeflags
             .as_deref()
             .map_or_else(|| "(not set)".to_string(), str::to_string),
-        "default_shell" => settings.default_shell,
         _ => anyhow::bail!("Unknown config key: '{key}'"),
     };
 
@@ -99,21 +97,11 @@ pub fn set(key: &str, value: &str) -> Result<()> {
                 Some(value.to_string())
             };
         }
-        "default_shell" => {
-            if !matches!(value, "bash" | "zsh" | "fish") {
-                anyhow::bail!("Invalid shell. Valid values: bash, zsh, fish");
-            }
-            settings.default_shell = value.to_string();
-        }
-        "shims.enabled" => {
-            settings.shims_enabled = value.parse().context("Invalid boolean value")?;
-        }
         _ => {
             anyhow::bail!(
                 "Unknown config key: '{key}'. \
                  Writable keys: telemetry.enabled, aur.build_concurrency, aur.enable_ccache, \
-                 aur.enable_sccache, aur.secure_makepkg, aur.makeflags, \
-                 default_shell, shims.enabled"
+                 aur.enable_sccache, aur.secure_makepkg, aur.makeflags"
             );
         }
     }
@@ -152,17 +140,6 @@ pub fn list() -> Result<()> {
         style::info("telemetry.enabled"),
         settings.telemetry_enabled
     );
-    println!(
-        "    {} = {}",
-        style::info("default_shell"),
-        settings.default_shell
-    );
-    println!(
-        "    {} = {}",
-        style::info("shims.enabled"),
-        settings.shims_enabled
-    );
-
     // AUR settings
     println!();
     println!("  {}", style::dim("AUR Build:"));
@@ -259,16 +236,6 @@ pub fn validate() -> Result<()> {
                     style::warning("⚠"),
                     settings.aur.build_concurrency
                 );
-            }
-
-            // Check default shell
-            if !matches!(settings.default_shell.as_str(), "bash" | "zsh" | "fish") {
-                println!(
-                    "  {} Invalid default_shell: {}",
-                    style::error("✗"),
-                    settings.default_shell
-                );
-                issues += 1;
             }
         }
         Err(e) => {

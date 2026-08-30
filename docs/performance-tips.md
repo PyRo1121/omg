@@ -242,23 +242,9 @@ omg sync  # Forces immediate index rebuild
 
 ## Runtime Version Switching
 
-### PATH vs Shims
+### PATH Hooks
 
-OMG defaults to PATH modification (faster):
-
-```toml
-shims_enabled = false  # Default
-```
-
-**Performance comparison:**
-
-- **PATH modification:** <1ms overhead
-- **Shims:** 10-50ms overhead (binary wrapper)
-
-**When to use shims:**
-
-- You need persistent version switching across all shells
-- Your setup doesn't allow PATH modification
+OMG switches native runtime versions through shell hooks that update `PATH` when the working directory changes. It does not install executable shims or wrapper binaries.
 
 ### Native Runtime Resolution
 

@@ -1029,8 +1029,8 @@ omg config list
 # Get a specific value
 omg config get data_dir
 
-# Set a value
-omg config set default_shell zsh
+# Set AUR build concurrency
+omg config set aur.build_concurrency 8
 
 # Disable telemetry
 omg config set telemetry.enabled false
@@ -1040,10 +1040,8 @@ omg config set telemetry.enabled false
 
 - `data_dir` — Data directory path (read-only via CLI)
 - `socket` — Daemon socket path (read-only via CLI)
-- `default_shell` — Default shell for hooks
 - `telemetry.enabled` — Enable/disable telemetry
 - `aur.build_concurrency`, `aur.enable_ccache`, `aur.enable_sccache`, `aur.secure_makepkg`, `aur.makeflags` — AUR build tuning
-- `shims.enabled` — Shim system toggle
 
 ---
 

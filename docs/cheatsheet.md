@@ -291,10 +291,7 @@ omg config reset -y             # Reset to defaults
 ### Common Config Options (`~/.config/omg/config.toml`)
 
 ```toml
-shims_enabled = false           # Use PATH modification (default) instead of shims
-auto_update = true              # Auto-update runtimes on install
-default_shell = "zsh"           # Default shell for hooks
-telemetry_enabled = true        # Anonymous telemetry toggle
+telemetry_enabled = false       # Runtime telemetry is opt-in
 
 [aur]
 build_concurrency = 8           # Parallel AUR builds
