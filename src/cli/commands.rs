@@ -1071,6 +1071,19 @@ fn find_cached_arch_package(package: &str, version: &str) -> Result<std::path::P
     )
 }
 
+fn history_entry_by_prefix<'a>(
+    entries: &'a [crate::core::history::Transaction],
+    prefix: &str,
+) -> Result<&'a crate::core::history::Transaction> {
+    let mut matches = entries.iter().filter(|entry| entry.id.starts_with(prefix));
+    let first = matches.next().context("Transaction ID not found")?;
+    anyhow::ensure!(
+        matches.next().is_none(),
+        "Transaction ID prefix '{prefix}' is ambiguous; provide more characters"
+    );
+    Ok(first)
+}
+
 #[allow(
     clippy::unused_async,
     reason = "feature-gated implementations await while fallback builds do not"
@@ -1085,10 +1098,7 @@ pub async fn rollback(id: Option<String>, yes: bool) -> Result<()> {
     let entries = history_mgr.load()?;
 
     let target = if let Some(target_id) = id {
-        entries
-            .iter()
-            .find(|e| e.id.starts_with(&target_id))
-            .context("Transaction ID not found")?
+        history_entry_by_prefix(&entries, &target_id)?
     } else {
         // Interactive selection
         if entries.is_empty() {
@@ -1619,6 +1629,23 @@ mod tests {
         assert!(normalize_transaction_id("../../history").is_err());
         assert!(normalize_transaction_id("b69d428a-f73b-441c-8d8c").is_err());
         Ok(())
+    }
+
+    #[test]
+    fn rollback_rejects_ambiguous_transaction_prefixes() {
+        let mut first = transaction(
+            crate::core::history::TransactionType::Install,
+            "core",
+            None,
+            true,
+        );
+        first.id = "abcd1111".to_string();
+        let mut second = first.clone();
+        second.id = "abcd2222".to_string();
+
+        let error = history_entry_by_prefix(&[first, second], "abcd")
+            .expect_err("ambiguous prefixes must not pick an arbitrary transaction");
+        assert!(error.to_string().contains("ambiguous"), "{error}");
     }
 
     #[test]
