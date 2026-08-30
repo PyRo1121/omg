@@ -678,6 +678,7 @@ analyzer inference
 - **Ci**: Cross-platform install script and R2 release sync
 ### 🐛 Bug Fixes
 
+- Preserve fallback error suggestions
 - Show runtime switch confirmations by default
 - Reject stale Debian fast-path indexes
 - Report Homebrew formula install state
