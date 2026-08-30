@@ -2700,6 +2700,7 @@ across history/faq/cli
 - Run Docker E2E tests explicitly
 ### 📚 Documentation
 
+- Describe telemetry as opt in
 - Describe observed enterprise report evidence
 - Record upstream ALPM compatibility research
 - Align examples with the CLI
