@@ -1245,7 +1245,7 @@ pub async fn rollback(id: Option<String>, yes: bool) -> Result<()> {
             }
 
             #[cfg(feature = "arch")]
-            {
+            if !packages.is_empty() {
                 let cached_packages = packages
                     .iter()
                     .map(|(name, version)| {
@@ -1274,7 +1274,6 @@ pub async fn rollback(id: Option<String>, yes: bool) -> Result<()> {
                     changes,
                     result,
                 )?;
-                println!("{}", style::success("✓ Rollback completed successfully"));
             }
 
             #[cfg(not(feature = "arch"))]
@@ -1296,6 +1295,7 @@ pub async fn rollback(id: Option<String>, yes: bool) -> Result<()> {
                     rebuild_from_aur.len()
                 );
                 let client = crate::package_managers::AurClient::new()?;
+                let mut restored = Vec::new();
                 let mut failed: Vec<(String, String)> = Vec::new();
                 for (name, version) in &rebuild_from_aur {
                     if let Err(error) = client.downgrade_from_history(name, version).await {
@@ -1303,16 +1303,36 @@ pub async fn rollback(id: Option<String>, yes: bool) -> Result<()> {
                         failed.push((name.clone(), version.clone()));
                     } else {
                         println!("  {} {name} downgraded to {version}", style::success("✓"));
+                        restored.push((name.clone(), version.clone()));
                     }
+                }
+                if !restored.is_empty() {
+                    let changes = restored
+                        .iter()
+                        .map(|(name, version)| crate::core::history::PackageChange {
+                            name: name.clone(),
+                            old_version: None,
+                            new_version: Some(version.clone()),
+                            source: "rollback-aur".to_string(),
+                        })
+                        .collect();
+                    crate::core::history::HistoryManager::new()?.finish_operation(
+                        crate::core::history::TransactionType::Install,
+                        changes,
+                        Ok(()),
+                    )?;
                 }
                 if !failed.is_empty() {
                     anyhow::bail!(
-                        "{} official package(s) restored; {} AUR package(s) could not be \\\n                         downgraded automatically (see messages above)",
+                        "{} official package(s) restored; {} AUR package(s) could not be downgraded automatically (see messages above)",
                         packages.len(),
                         failed.len()
                     );
                 }
             }
+
+            #[cfg(feature = "arch")]
+            println!("{}", style::success("✓ Rollback completed successfully"));
         }
     }
 
