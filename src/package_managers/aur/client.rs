@@ -770,7 +770,11 @@ impl AurClient {
         let mut current_len = AUR_RPC_INFO_BASE_LEN;
 
         for name in names {
-            let arg_len = "&arg[]=".len() + name.len();
+            // `rpc_info_chunk` percent-encodes every name before appending it
+            // to the query string. Account for the wire length, not UTF-8
+            // source bytes, or names containing valid `+`/`@` characters can
+            // push a supposedly bounded request over the URI limit.
+            let arg_len = "&arg[]=".len() + urlencoding::encode(name).len();
             if !current.is_empty() && current_len + arg_len > AUR_RPC_MAX_URI {
                 chunks.push(current);
                 current = Vec::with_capacity(100);
@@ -3516,7 +3520,7 @@ mod tests {
         for (idx, chunk) in chunks.iter().enumerate() {
             let mut url_len = AUR_RPC_INFO_BASE_LEN;
             for name in chunk {
-                url_len += "&arg[]=".len() + name.len();
+                url_len += "&arg[]=".len() + urlencoding::encode(name).len();
             }
             assert!(
                 url_len <= AUR_RPC_MAX_URI,
@@ -3545,13 +3549,29 @@ mod tests {
         for chunk in &chunks {
             let mut url_len = AUR_RPC_INFO_BASE_LEN;
             for name in chunk {
-                url_len += "&arg[]=".len() + name.len();
+                url_len += "&arg[]=".len() + urlencoding::encode(name).len();
             }
             assert!(url_len <= AUR_RPC_MAX_URI);
         }
 
         let total: usize = chunks.iter().map(Vec::len).sum();
         assert_eq!(total, 4);
+    }
+
+    #[test]
+    fn chunk_aur_names_accounts_for_percent_encoding() {
+        let names = (0..220)
+            .map(|index| format!("package+variant+{index:04}"))
+            .collect::<Vec<_>>();
+
+        let chunks = AurClient::chunk_aur_names(&names);
+        assert!(chunks.len() > 1, "encoded request must be split");
+        for chunk in chunks {
+            let url_len = chunk.iter().fold(AUR_RPC_INFO_BASE_LEN, |length, name| {
+                length + "&arg[]=".len() + urlencoding::encode(name).len()
+            });
+            assert!(url_len <= AUR_RPC_MAX_URI, "wire URI length was {url_len}");
+        }
     }
 
     #[test]
