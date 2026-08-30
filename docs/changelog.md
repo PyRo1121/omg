@@ -687,6 +687,7 @@ analyzer inference
 - **Ci**: Cross-platform install script and R2 release sync
 ### 🐛 Bug Fixes
 
+- Verify release provenance before client installation
 - Stream bounded pacman database decompression
 - Honor pacman repository priority in direct database reads
 - Parse PKGBUILD arrays without losing quoting
@@ -2715,6 +2716,8 @@ which newer clippy versions flag as an error with -D warnings.
 
 ### 👷 CI/CD
 
+- Make release publication verifiable and recoverable
+- Harden recurring workflow execution
 - Require feature intersection checks
 - Add bounded weekly fuzz campaigns
 - Isolate write credentials and fail closed on dependencies
