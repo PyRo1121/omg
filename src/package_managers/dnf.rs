@@ -218,17 +218,14 @@ impl DnfPackageManager {
             );
         }
 
-        let reason = match fields.get(4).copied() {
-            Some("0" | "user") => InstallReason::User,
-            _ => InstallReason::Dependency,
-        };
-
         Ok(InstalledPackage {
             name: fields[0].to_string(),
             version: fields[1].to_string(),
             release: fields[2].to_string(),
             summary: fields[3].to_string(),
-            reason,
+            // The query emits four fields and install reasons are populated
+            // separately from `dnf repoquery --userinstalled`.
+            reason: InstallReason::Dependency,
         })
     }
 
@@ -868,12 +865,12 @@ mod tests {
     #[test]
     fn test_parse_rpm_qa_line_reads_installed_package() {
         let pkg = DnfPackageManager::parse_rpm_qa_line(
-            "bash\t5.2.15\t1.fc39\tThe GNU Bourne Again shell\t0",
+            "bash\t5.2.15\t1.fc39\tThe GNU Bourne Again shell",
         )
         .expect("valid rpm -qa line");
         assert_eq!(pkg.name, "bash");
         assert_eq!(pkg.version, "5.2.15");
-        assert_eq!(pkg.reason, InstallReason::User);
+        assert_eq!(pkg.reason, InstallReason::Dependency);
     }
 
     #[test]
