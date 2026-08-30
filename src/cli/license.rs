@@ -130,6 +130,20 @@ fn print_feature_group(
     }
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum StoredLicenseStatus {
+    Active,
+    Invalid,
+}
+
+fn stored_license_status(stored: &StoredLicense) -> StoredLicenseStatus {
+    if stored.is_token_valid() {
+        StoredLicenseStatus::Active
+    } else {
+        StoredLicenseStatus::Invalid
+    }
+}
+
 /// Show current license status
 pub fn status() -> Result<()> {
     println!("{} License Status\n", style::runtime("OMG"));
@@ -140,18 +154,31 @@ pub fn status() -> Result<()> {
     let tier = stored.as_ref().map_or(Tier::Free, StoredLicense::tier_enum);
 
     if let Some(stored) = &stored {
-        println!("  Status: {} ✓", style::version("Active"));
+        match stored_license_status(stored) {
+            StoredLicenseStatus::Active => {
+                println!("  Status: {} ✓", style::version("Active"));
+                if let Some(customer) = &stored.customer {
+                    println!("  Customer: {customer}");
+                }
+                if let Some(expires) = &stored.expires_at {
+                    println!("  Expires: {expires}");
+                }
+            }
+            StoredLicenseStatus::Invalid => {
+                println!(
+                    "  Status: {} (using Free tier)",
+                    style::maybe_color("Invalid or expired", |text| text.yellow().to_string())
+                );
+                if let Some(expires) = &stored.expires_at {
+                    println!("  Stored expiry: {expires}");
+                }
+            }
+        }
         println!(
             "  Tier: {} {}",
             style::runtime(tier.display_name()),
             style::dim(tier.price())
         );
-        if let Some(customer) = &stored.customer {
-            println!("  Customer: {customer}");
-        }
-        if let Some(expires) = &stored.expires_at {
-            println!("  Expires: {expires}");
-        }
     } else {
         println!(
             "  Status: {} (Free tier)",
@@ -245,6 +272,22 @@ pub fn check_feature(feature_name: &str) -> Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn invalid_stored_license_is_not_displayed_as_active() {
+        let stored = StoredLicense {
+            key: "OMG-invalid".to_string(),
+            tier: "enterprise".to_string(),
+            features: vec!["policy".to_string()],
+            customer: None,
+            expires_at: Some("2000-01-01".to_string()),
+            validated_at: 0,
+            token: Some("not-a-jwt".to_string()),
+            machine_id: None,
+        };
+
+        assert_eq!(stored_license_status(&stored), StoredLicenseStatus::Invalid);
+    }
 
     #[test]
     fn activation_failure_returns_err() {
