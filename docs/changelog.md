@@ -678,6 +678,7 @@ analyzer inference
 - **Ci**: Cross-platform install script and R2 release sync
 ### 🐛 Bug Fixes
 
+- Move daemon audit writes off executor threads
 - Bound audit chain tail reads
 - Share daemon client protocol limits
 - Isolate malformed ancestor completion metadata
