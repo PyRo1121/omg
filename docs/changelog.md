@@ -685,6 +685,7 @@ analyzer inference
 - **Ci**: Cross-platform install script and R2 release sync
 ### 🐛 Bug Fixes
 
+- Avoid enterprise artifact filename collisions
 - Report runtime EOL checks honestly
 - Sort package history by timestamp
 - Probe daemon health before reporting running
