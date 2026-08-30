@@ -678,6 +678,7 @@ analyzer inference
 - **Ci**: Cross-platform install script and R2 release sync
 ### 🐛 Bug Fixes
 
+- Remove invalid local lockfile sync hint
 - Display unclassified package updates
 - Normalize scaffold stack aliases
 - Fail scaffolds when child commands fail
