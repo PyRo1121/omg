@@ -113,6 +113,7 @@ impl ParallelBuilder {
         if jobs.is_empty() {
             return Ok(ParallelBuildSummary::default());
         }
+        Self::validate_unique_jobs(&jobs)?;
 
         // Start a shared sudoloop for the entire parallel build session.
         // This keeps credentials alive across all waves and prevents
@@ -161,6 +162,18 @@ impl ParallelBuilder {
 
         // _sudoloop is dropped here after all waves complete
         Ok(summary)
+    }
+
+    fn validate_unique_jobs(jobs: &[BuildJob]) -> Result<()> {
+        let mut package_bases = HashSet::with_capacity(jobs.len());
+        for job in jobs {
+            anyhow::ensure!(
+                package_bases.insert(job.package.as_str()),
+                "Duplicate AUR build job for package base '{}'",
+                job.package
+            );
+        }
+        Ok(())
     }
 
     #[must_use]
@@ -343,6 +356,21 @@ mod tests {
         assert_eq!(graph.get("a").unwrap().len(), 0);
         assert!(graph.get("b").unwrap().contains("a"));
         assert!(graph.get("c").unwrap().contains("b"));
+    }
+
+    #[test]
+    fn duplicate_package_base_jobs_are_rejected() {
+        let jobs = vec![
+            BuildJob::new("shared-base".to_string(), Vec::new()),
+            BuildJob::new("shared-base".to_string(), Vec::new()),
+        ];
+
+        let error = ParallelBuilder::validate_unique_jobs(&jobs)
+            .expect_err("duplicate package bases must not be silently collapsed");
+        assert!(
+            error.to_string().contains("Duplicate AUR build job"),
+            "{error}"
+        );
     }
 
     #[test]
