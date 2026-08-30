@@ -12,7 +12,7 @@ use openpgp::cert::CertParser;
 use openpgp::crypto::hash::Context;
 use openpgp::parse::Parse;
 use openpgp::parse::{PacketParser, PacketParserResult};
-use openpgp::policy::StandardPolicy;
+use openpgp::policy::{HashAlgoSecurity, Policy, StandardPolicy};
 use sequoia_openpgp as openpgp;
 use thiserror::Error;
 
@@ -263,6 +263,14 @@ impl PgpVerifier {
     /// plausibly issued it. Shared by [`Self::verify_detached`] and
     /// [`Self::verify_memory`]; returns true on the first successful check.
     fn matches_any_trusted_cert(&self, sig: &openpgp::packet::Signature, hasher: &Context) -> bool {
+        if self
+            .policy
+            .signature(sig, HashAlgoSecurity::CollisionResistance)
+            .is_err()
+        {
+            return false;
+        }
+
         let issuers = sig.get_issuers();
         for cert in &self.certs {
             let relevant_cert = issuers.is_empty()
@@ -343,6 +351,61 @@ mod tests {
             .verify_detached(std::path::Path::new("/nonexistent.data"), sig_file.path())
             .expect_err("missing package blob must fail");
         assert!(matches!(err, PgpError::PackageOpen { .. }), "got: {err}");
+    }
+
+    fn signed_fixture(hash: openpgp::types::HashAlgorithm) -> (PgpVerifier, Vec<u8>) {
+        use openpgp::cert::prelude::CertBuilder;
+        use openpgp::packet::signature::SignatureBuilder;
+        use openpgp::serialize::Serialize as _;
+        use openpgp::types::SignatureType;
+
+        let (cert, _) = CertBuilder::general_purpose(Some("omg-test@example.invalid"))
+            .generate()
+            .expect("generate test certificate");
+        let policy = StandardPolicy::new();
+        let mut signer = cert
+            .keys()
+            .secret()
+            .with_policy(&policy, None)
+            .for_signing()
+            .next()
+            .expect("test signing key")
+            .key()
+            .clone()
+            .into_keypair()
+            .expect("test keypair");
+        let signature = SignatureBuilder::new(SignatureType::Binary)
+            .set_hash_algo(hash)
+            .sign_message(&mut signer, b"test data")
+            .expect("sign test data");
+        let mut serialized = Vec::new();
+        Packet::from(signature)
+            .serialize(&mut serialized)
+            .expect("serialize signature");
+        (
+            PgpVerifier {
+                policy: StandardPolicy::new(),
+                certs: vec![cert],
+            },
+            serialized,
+        )
+    }
+
+    #[test]
+    fn valid_sha256_signature_is_accepted() {
+        let (verifier, signature) = signed_fixture(openpgp::types::HashAlgorithm::SHA256);
+        verifier
+            .verify_memory(b"test data", &signature)
+            .expect("valid trusted SHA-256 signature");
+    }
+
+    #[test]
+    fn sha1_signature_is_rejected_by_policy() {
+        let (verifier, signature) = signed_fixture(openpgp::types::HashAlgorithm::SHA1);
+        assert!(matches!(
+            verifier.verify_memory(b"test data", &signature),
+            Err(PgpError::NoValidSignature)
+        ));
     }
 
     #[test]
