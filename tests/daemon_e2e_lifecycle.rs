@@ -89,8 +89,17 @@ impl DaemonTestFixture {
         false
     }
 
-    /// Check if daemon is responsive by sending ping
+    /// Check if daemon is responsive by sending ping.
+    ///
+    /// The whole probe is bounded so a peer that accepts a connection and
+    /// stalls cannot hang the lifecycle suite indefinitely.
     async fn is_daemon_responsive(&self) -> bool {
+        tokio::time::timeout(Duration::from_secs(1), self.probe_daemon())
+            .await
+            .unwrap_or(false)
+    }
+
+    async fn probe_daemon(&self) -> bool {
         use tokio::io::{AsyncReadExt, AsyncWriteExt};
         use tokio::net::UnixStream;
 
@@ -118,6 +127,9 @@ impl DaemonTestFixture {
             return false;
         }
         let resp_len = u32::from_be_bytes(len_buf) as usize;
+        if resp_len > omg_lib::daemon::protocol::MAX_FRAME_SIZE {
+            return false;
+        }
 
         // Read response body
         let mut resp_bytes = vec![0u8; resp_len];
