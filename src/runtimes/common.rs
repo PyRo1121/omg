@@ -1101,7 +1101,7 @@ pub(crate) fn print_installed(runtime: &str, version: &str) {
     let check = check_green.bold();
     let rt = runtime.cyan();
     let ver = version.yellow();
-    tracing::info!("\n{check} {rt} {ver} installed successfully!");
+    println!("\n{check} {rt} {ver} installed successfully!");
 }
 
 /// Print version switch message
@@ -1110,16 +1110,16 @@ pub(crate) fn print_using(runtime: &str, version: &str, bin_path: &Path) {
     let check = "✓".green();
     let rt = runtime.cyan();
     let ver = version.yellow();
-    tracing::info!("{check} Now using {rt} {ver}");
+    println!("{check} Now using {rt} {ver}");
 
     let path_label = "PATH:".dimmed();
     let path_display = bin_path.display();
-    tracing::info!("  {path_label} {path_display}");
+    println!("  {path_label} {path_display}");
 }
 
 /// Print already installed message
 pub(crate) fn print_already_installed(runtime: &str, version: &str) {
-    tracing::info!(
+    println!(
         "{} {} {} is already installed",
         "✓".green(),
         runtime.cyan(),

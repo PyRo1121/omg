@@ -125,6 +125,27 @@ fn test_use_node_with_version() {
     }
 }
 
+#[cfg(unix)]
+#[test]
+fn successful_runtime_switch_is_visible_at_default_verbosity() {
+    let project = TestProject::new();
+    let binary = project
+        .data_dir
+        .path()
+        .join("versions/node/20.10.0/bin/node");
+    std::fs::create_dir_all(binary.parent().expect("runtime bin directory"))
+        .expect("create runtime version");
+    std::fs::write(&binary, b"#!/bin/sh\n").expect("write runtime binary");
+
+    let result = project.run(&["use", "node", "20.10.0"]);
+
+    result.assert_success();
+    result.assert_stdout_contains("Now using");
+    result.assert_stdout_contains("Node.js");
+    result.assert_stdout_contains("20.10.0");
+    result.assert_stdout_contains("PATH:");
+}
+
 #[test]
 fn test_use_python_with_version() {
     init_test_env();
