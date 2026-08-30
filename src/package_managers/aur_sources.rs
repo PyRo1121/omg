@@ -4,6 +4,7 @@
 //! them concurrently before makepkg runs. This dramatically improves build times
 //! for packages with multiple source files (10-60 second savings).
 
+use std::collections::HashMap;
 use std::path::Path;
 
 const MAX_AUR_SOURCE_BYTES: u64 = 1024 * 1024 * 1024;
@@ -122,6 +123,20 @@ pub struct SourceDownloadSummary {
     pub failed: usize,
 }
 
+fn validate_unique_destinations(sources: &[SourceFile]) -> Result<()> {
+    let mut urls_by_filename = HashMap::with_capacity(sources.len());
+    for source in sources {
+        if let Some(previous_url) = urls_by_filename.insert(&source.filename, &source.url) {
+            anyhow::ensure!(
+                previous_url == &source.url,
+                "AUR sources map filename {:?} to multiple URLs",
+                source.filename
+            );
+        }
+    }
+    Ok(())
+}
+
 /// Download sources concurrently (up to 8 at a time)
 ///
 /// Downloads are skipped if a regular file already exists in SRCDEST.
@@ -131,6 +146,13 @@ pub async fn download_sources(sources: Vec<SourceFile>, srcdest: &Path) -> Sourc
         return SourceDownloadSummary {
             succeeded: 0,
             failed: 0,
+        };
+    }
+    if let Err(error) = validate_unique_destinations(&sources) {
+        warn!("Skipping ambiguous AUR source pre-download: {error}");
+        return SourceDownloadSummary {
+            succeeded: 0,
+            failed: sources.len(),
         };
     }
 
@@ -329,6 +351,24 @@ async fn download_to_file(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn conflicting_source_destinations_are_rejected() {
+        let sources = vec![
+            SourceFile {
+                url: "https://example.com/base.tar.gz".to_string(),
+                filename: "source.tar.gz".to_string(),
+            },
+            SourceFile {
+                url: "https://arch.example.com/arch.tar.gz".to_string(),
+                filename: "source.tar.gz".to_string(),
+            },
+        ];
+
+        let error = validate_unique_destinations(&sources)
+            .expect_err("different URLs must not race for one destination");
+        assert!(error.to_string().contains("multiple URLs"), "{error}");
+    }
 
     #[test]
     fn test_extract_http_source_simple() {
