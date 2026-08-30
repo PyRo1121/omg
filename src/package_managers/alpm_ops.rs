@@ -437,9 +437,32 @@ fn setup_alpm_callbacks(
     main_pb.set_prefix("");
 
     alpm.set_question_cb((), |question, ()| match question.question() {
-        alpm::Question::InstallIgnorepkg(mut q) => q.set_install(true),
-        alpm::Question::Replace(q) => q.set_replace(true),
-        alpm::Question::Conflict(mut q) => q.set_remove(true),
+        alpm::Question::InstallIgnorepkg(mut q) => {
+            tracing::warn!("Installing explicitly requested package despite IgnorePkg");
+            q.set_install(true);
+        }
+        alpm::Question::Replace(q) => {
+            tracing::warn!(
+                "Replacing {} with {}/{} as part of the confirmed transaction",
+                q.oldpkg().name(),
+                q.newdb().name(),
+                q.newpkg().name()
+            );
+            q.set_replace(true);
+        }
+        alpm::Question::Conflict(mut q) => {
+            let conflict = q.conflict();
+            tracing::error!(
+                "Refusing implicit removal of conflicting package {} while installing {} ({})",
+                conflict.package2().name(),
+                conflict.package1().name(),
+                conflict.reason()
+            );
+            // Match pacman's fail-closed [y/N] default. A high-level explicit
+            // conflict-resolution contract is required before this may remove
+            // a package the user did not request.
+            q.set_remove(false);
+        }
         alpm::Question::RemovePkgs(mut q) => q.set_skip(false),
         alpm::Question::SelectProvider(mut q) => q.set_index(0),
         alpm::Question::ImportKey(mut q) => {
