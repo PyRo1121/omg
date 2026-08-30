@@ -37,8 +37,6 @@ pub enum TransactionState {
     Pending,
     /// Downloading packages
     Downloading,
-    /// Unpacking packages
-    Unpacking,
     /// Configuring packages
     Configuring,
     /// Transaction completed successfully
