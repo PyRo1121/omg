@@ -59,12 +59,10 @@ pub async fn reports(report_type: &str, _ctx: &CliContext) -> Result<()> {
     crate::core::safe_ops::atomic_write_file_sync(&filename, &content)?;
 
     let report_sections = vec![
-        "Executive Summary".to_string(),
-        "Compliance Score Trend".to_string(),
-        "Vulnerability Remediation Timeline".to_string(),
-        "Team Adoption Metrics".to_string(),
-        "Cost Savings Analysis".to_string(),
-        "Recommendations".to_string(),
+        "Observed fleet machine count".to_string(),
+        "Validation failure count".to_string(),
+        "Rate-limit event count".to_string(),
+        "Security audit request count".to_string(),
     ];
 
     execute_cmd(Cmd::batch([
@@ -368,10 +366,24 @@ struct Report {
 
 #[derive(Debug, Serialize, Deserialize)]
 struct ReportSummary {
-    compliance_score: f32,
     total_machines: usize,
-    vulnerabilities_fixed: usize,
-    cost_savings_estimate: String,
+    validation_failures: u64,
+    rate_limit_hits: u64,
+    security_audit_requests: u64,
+}
+
+fn observed_report_summary(
+    total_machines: usize,
+    validation_failures: u64,
+    rate_limit_hits: u64,
+    security_audit_requests: u64,
+) -> ReportSummary {
+    ReportSummary {
+        total_machines,
+        validation_failures,
+        rate_limit_hits,
+        security_audit_requests,
+    }
 }
 
 async fn generate_report(report_type: &str) -> Result<Report> {
@@ -383,21 +395,15 @@ async fn generate_report(report_type: &str) -> Result<Report> {
 
     let metrics = crate::core::metrics::GLOBAL_METRICS.snapshot();
 
-    // Calculate a real compliance score based on validation failures and security audits
-    let base_score = 100.0;
-    let penalty =
-        (metrics.validation_failures as f32).mul_add(0.5, metrics.rate_limit_hits as f32 * 0.1);
-    let compliance_score = (base_score - penalty).max(0.0);
-
     Ok(Report {
         generated_at: jiff::Timestamp::now().as_second(),
         kind: report_type.to_string(),
-        summary: ReportSummary {
-            compliance_score,
-            total_machines: machine_count,
-            vulnerabilities_fixed: metrics.security_audit_requests as usize, // Use as proxy for now
-            cost_savings_estimate: format!("${}", machine_count * 120), // Estimate $120 saved per machine
-        },
+        summary: observed_report_summary(
+            machine_count,
+            metrics.validation_failures,
+            metrics.rate_limit_hits,
+            metrics.security_audit_requests,
+        ),
     })
 }
 
@@ -583,6 +589,16 @@ fn generate_license_csv(scan: &LicenseScan) -> Result<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn executive_summary_uses_observed_counters_without_estimates() {
+        let summary = observed_report_summary(3, 4, 5, 6);
+
+        assert_eq!(summary.total_machines, 3);
+        assert_eq!(summary.validation_failures, 4);
+        assert_eq!(summary.rate_limit_hits, 5);
+        assert_eq!(summary.security_audit_requests, 6);
+    }
 
     #[test]
     fn audit_export_limitations_do_not_fabricate_access_control_evidence() {
