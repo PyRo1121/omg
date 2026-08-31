@@ -692,6 +692,7 @@ analyzer inference
 - **Ci**: Cross-platform install script and R2 release sync
 ### 🐛 Bug Fixes
 
+- Saturate APT installed package sizes
 - Validate install targets at command entry
 - Preview embedded local package metadata
 - Reject unsafe pacman repository names
