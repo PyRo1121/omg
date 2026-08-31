@@ -284,7 +284,7 @@ OMG automatically detects version files in your project:
 channel = "stable"  # or "nightly", "1.75.0"
 components = ["rustfmt", "clippy"]
 targets = ["x86_64-unknown-linux-gnu"]
-profile = "minimal"  # or "default", "complete"
+profile = "minimal"  # or "default"
 ```
 
 ### .tool-versions Format

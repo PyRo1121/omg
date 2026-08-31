@@ -6,7 +6,7 @@
 //! - Full toolchain management (stable, beta, nightly, dated)
 //! - Component installation (rustfmt, clippy, rust-src, etc.)
 //! - Cross-compilation target support
-//! - Profile-based installation (minimal, default, complete)
+//! - Profile-based installation (minimal or default)
 //! - rust-toolchain.toml support
 
 use anyhow::{Context, Result};
@@ -601,7 +601,7 @@ fn default_host_triple() -> Result<String> {
 fn profile_components(profile: &str) -> Result<Vec<String>> {
     let components = match profile {
         "minimal" => vec!["rustc", "cargo", "rust-std"],
-        "default" | "complete" => vec![
+        "default" => vec![
             "rustc",
             "cargo",
             "rust-std",
@@ -911,6 +911,7 @@ mod tests {
         let default = profile_components("default").unwrap();
         assert!(default.contains(&"clippy".to_string()));
         assert!(default.contains(&"rustfmt".to_string()));
+        assert!(profile_components("complete").is_err());
     }
 
     #[test]
