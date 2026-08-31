@@ -53,6 +53,7 @@ mod all_platforms {
     use super::*;
 
     #[tokio::test]
+    #[serial]
     async fn test_arch_mock() -> Result<()> {
         let pm = MockPackageManager::arch();
         assert_eq!(pm.name(), "pacman");
@@ -65,6 +66,7 @@ mod all_platforms {
     }
 
     #[tokio::test]
+    #[serial]
     async fn test_debian_mock() -> Result<()> {
         let pm = MockPackageManager::debian();
         assert_eq!(pm.name(), "apt");
@@ -77,6 +79,7 @@ mod all_platforms {
     }
 
     #[tokio::test]
+    #[serial]
     async fn test_fedora_mock() -> Result<()> {
         let pm = MockPackageManager::fedora();
         assert_eq!(pm.name(), "dnf");
@@ -92,6 +95,7 @@ mod all_platforms {
     }
 
     #[tokio::test]
+    #[serial]
     async fn test_macos_mock() -> Result<()> {
         let pm = MockPackageManager::macos();
         assert_eq!(pm.name(), "homebrew");
@@ -245,6 +249,7 @@ mod search_functionality {
     use super::*;
 
     #[tokio::test]
+    #[serial]
     async fn test_fuzzy_search_across_platforms() -> Result<()> {
         let platforms = vec![
             MockPackageManager::arch(),
@@ -263,6 +268,7 @@ mod search_functionality {
     }
 
     #[tokio::test]
+    #[serial]
     async fn test_description_search() -> Result<()> {
         let pm = MockPackageManager::fedora();
 
@@ -276,6 +282,7 @@ mod search_functionality {
     }
 
     #[tokio::test]
+    #[serial]
     async fn test_empty_search() -> Result<()> {
         let pm = MockPackageManager::arch();
 
@@ -290,6 +297,7 @@ mod package_info {
     use super::*;
 
     #[tokio::test]
+    #[serial]
     async fn test_info_all_platforms() -> Result<()> {
         let test_cases = vec![
             (MockPackageManager::arch(), "git"),
@@ -311,6 +319,7 @@ mod package_info {
     }
 
     #[tokio::test]
+    #[serial]
     async fn test_info_nonexistent() -> Result<()> {
         let pm = MockPackageManager::fedora();
 

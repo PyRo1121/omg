@@ -1,13 +1,11 @@
 #![cfg(feature = "arch")]
 
-//! S-tier E2E Tests: Daemon Caching Layer
-//!
-//! Comprehensive tests for cache hit/miss rates, invalidation, coherency,
-//! memory pressure handling, and corruption recovery.
+//! Daemon cache hit/miss rates, invalidation, coherency, and memory pressure.
 
 use anyhow::Result;
 use omg_lib::daemon::cache::PackageCache;
 use omg_lib::daemon::handlers::{DaemonState, handle_request};
+use omg_lib::daemon::index::PackageIndex;
 use omg_lib::daemon::protocol::{
     PackageInfo, Request, Response, ResponseResult, WirePackageSource,
 };
@@ -25,17 +23,14 @@ impl CacheTestFixture {
     fn new() -> Result<Self> {
         let temp_dir = TempDir::new()?;
         let data_dir = temp_dir.path().join("data");
-        std::fs::create_dir_all(&data_dir)?;
-
-        #[expect(unsafe_code)]
-        unsafe {
-            std::env::set_var("OMG_DAEMON_DATA_DIR", &data_dir);
-            std::env::set_var("OMG_DATA_DIR", &data_dir);
-        }
-
-        omg_lib::core::security::init_audit_logger()?;
-
-        let state = Arc::new(DaemonState::new()?);
+        let package_manager = Arc::new(
+            omg_lib::package_managers::mock::MockPackageManager::new_in("arch", &data_dir),
+        );
+        let state = Arc::new(DaemonState::new_isolated(
+            &data_dir,
+            PackageIndex::empty(),
+            package_manager,
+        )?);
 
         Ok(Self {
             _temp_dir: temp_dir,
@@ -57,7 +52,7 @@ impl CacheTestFixture {
 }
 
 // ============================================================================
-// Test 1: Cache Hit/Miss Rates
+// Cache Hit/Miss Rates
 // ============================================================================
 
 #[tokio::test]
@@ -118,7 +113,7 @@ async fn test_cache_hit_rate_tracking() -> Result<()> {
 }
 
 // ============================================================================
-// Test 2: Cache Invalidation
+// Cache Invalidation
 // ============================================================================
 
 #[tokio::test]
@@ -183,18 +178,18 @@ async fn test_explicit_cache_clear() -> Result<()> {
 }
 
 // ============================================================================
-// Test 3: Cache Coherency with System
+// Repeated Status Consistency
 // ============================================================================
 
 #[tokio::test]
 #[serial]
-async fn test_status_cache_coherency() -> Result<()> {
+async fn test_repeated_status_reads_are_consistent() -> Result<()> {
     let fixture = CacheTestFixture::new()?;
 
     // First status request
     let status1 = fixture.send_request(Request::Status { id: 1 }).await;
 
-    // Second status request (should be cached)
+    // A second live status read over unchanged isolated state must agree.
     let status2 = fixture.send_request(Request::Status { id: 2 }).await;
 
     // Both should succeed and return same data
@@ -211,11 +206,11 @@ async fn test_status_cache_coherency() -> Result<()> {
         ) => {
             assert_eq!(
                 s1.total_packages, s2.total_packages,
-                "Cached status should match original"
+                "repeated total package counts must agree"
             );
             assert_eq!(
                 s1.explicit_packages, s2.explicit_packages,
-                "Cached explicit count should match"
+                "repeated explicit package counts must agree"
             );
         }
         _ => unreachable!("Status requests should succeed"),
@@ -285,7 +280,7 @@ async fn test_package_info_cache_coherency() -> Result<()> {
 }
 
 // ============================================================================
-// Test 4: Missing Package Errors
+// Missing Package Errors
 // ============================================================================
 
 #[tokio::test]
@@ -333,7 +328,7 @@ async fn test_missing_package_returns_error_consistently() -> Result<()> {
 }
 
 // ============================================================================
-// Test 5: Memory Pressure Handling
+// Memory Pressure Handling
 // ============================================================================
 
 #[tokio::test]
@@ -342,6 +337,8 @@ async fn test_lru_eviction_behavior() -> Result<()> {
     // Create small cache (3 entries max)
     let cache = PackageCache::new(3, 300);
 
+    // PackageCache budgets about 64 KiB per configured entry; 60 KiB payloads
+    // make three entries fit while a fourth forces one LRU eviction.
     let result = |name: &str| {
         Arc::new(vec![PackageInfo {
             name: name.to_string(),
@@ -377,11 +374,3 @@ async fn test_lru_eviction_behavior() -> Result<()> {
 
     Ok(())
 }
-
-// ============================================================================
-// Test 6: Persistent Cache (Disk-backed)
-// ============================================================================
-
-// ============================================================================
-// Test 8: Cache Performance Metrics
-// ============================================================================

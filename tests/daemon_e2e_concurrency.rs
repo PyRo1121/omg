@@ -1,12 +1,10 @@
 #![cfg(feature = "arch")]
 
-//! S-tier E2E Tests: Daemon Concurrency and Thread Safety
-//!
-//! Comprehensive tests for concurrent clients, request queuing, deadlock
-//! prevention, race conditions, and thread safety guarantees.
+//! Daemon concurrent clients, request queuing, races, and thread safety.
 
 use anyhow::Result;
 use omg_lib::daemon::handlers::{DaemonState, handle_request};
+use omg_lib::daemon::index::PackageIndex;
 use omg_lib::daemon::protocol::{Request, Response, ResponseResult};
 use serial_test::serial;
 use std::sync::Arc;
@@ -31,17 +29,14 @@ impl ConcurrencyTestFixture {
     fn new() -> Result<Self> {
         let temp_dir = TempDir::new()?;
         let data_dir = temp_dir.path().join("data");
-        std::fs::create_dir_all(&data_dir)?;
-
-        #[expect(unsafe_code)]
-        unsafe {
-            std::env::set_var("OMG_DAEMON_DATA_DIR", &data_dir);
-            std::env::set_var("OMG_DATA_DIR", &data_dir);
-        }
-
-        omg_lib::core::security::init_audit_logger()?;
-
-        let state = Arc::new(DaemonState::new()?);
+        let package_manager = Arc::new(
+            omg_lib::package_managers::mock::MockPackageManager::new_in("arch", &data_dir),
+        );
+        let state = Arc::new(DaemonState::new_isolated(
+            &data_dir,
+            PackageIndex::empty(),
+            package_manager,
+        )?);
 
         Ok(Self {
             _temp_dir: temp_dir,
@@ -51,7 +46,7 @@ impl ConcurrencyTestFixture {
 }
 
 // ============================================================================
-// Test 1: Concurrent Read Operations
+// Concurrent Read Operations
 // ============================================================================
 
 #[tokio::test]
@@ -77,7 +72,7 @@ async fn test_concurrent_search_requests() -> Result<()> {
 
     // Wait for all requests to complete. Valid short queries are always
     // answerable (handle_search returns Success for them, and the per-state
-    // quota is 100/s with burst 200 — src/daemon/handlers.rs:207), so every
+    // quota is 100/s with burst 200, so every
     // one of the 50 requests must succeed.
     let mut success_count = 0;
     for handle in handles {
@@ -146,7 +141,7 @@ async fn test_concurrent_status_requests() -> Result<()> {
 }
 
 // ============================================================================
-// Test 2: Concurrent Read + Write Operations
+// Concurrent Read + Write Operations
 // ============================================================================
 
 #[tokio::test]
@@ -281,7 +276,7 @@ async fn test_no_deadlock_with_recursive_locks() -> Result<()> {
 }
 
 // ============================================================================
-// Test 5: Race Condition Testing
+// Race Condition Testing
 // ============================================================================
 
 #[tokio::test]
@@ -385,7 +380,7 @@ async fn test_no_race_in_metrics_updates() -> Result<()> {
 }
 
 // ============================================================================
-// Test 6: Thread Safety Verification
+// Thread Safety Verification
 // ============================================================================
 
 #[tokio::test]

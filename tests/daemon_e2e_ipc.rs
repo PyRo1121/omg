@@ -123,7 +123,7 @@ impl IpcTestFixture {
 }
 
 // ============================================================================
-// Test 1: Basic Request-Response
+// Basic Request-Response
 // ============================================================================
 
 #[tokio::test]
@@ -148,7 +148,7 @@ async fn test_basic_ping_request() -> Result<()> {
 }
 
 // ============================================================================
-// Test 2: Message Serialization Edge Cases
+// Message Serialization Edge Cases
 // ============================================================================
 
 #[tokio::test]
@@ -248,7 +248,7 @@ async fn test_empty_request_handling() -> Result<()> {
 }
 
 // ============================================================================
-// Test 3: Connection Pooling and Concurrency
+// Connection Pooling and Concurrency
 // ============================================================================
 
 #[tokio::test]
@@ -324,7 +324,7 @@ async fn test_sequential_requests_on_single_connection() -> Result<()> {
 }
 
 // ============================================================================
-// Test 4: Timeout Handling
+// Timeout Handling
 // ============================================================================
 
 #[tokio::test]
@@ -364,7 +364,7 @@ async fn test_client_disconnect_during_request() -> Result<()> {
 }
 
 // ============================================================================
-// Test 5: Protocol Error Handling
+// Protocol Error Handling
 // ============================================================================
 
 #[tokio::test]
@@ -438,7 +438,7 @@ async fn test_invalid_package_name_injection() -> Result<()> {
 }
 
 // ============================================================================
-// Test 7: Request ID Validation
+// Request ID Validation
 // ============================================================================
 
 #[tokio::test]
@@ -470,7 +470,7 @@ async fn test_request_id_preservation() -> Result<()> {
 }
 
 // ============================================================================
-// Test 8: Connection Lifecycle
+// Connection Lifecycle
 // ============================================================================
 
 #[tokio::test]
