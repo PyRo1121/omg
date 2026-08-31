@@ -2792,7 +2792,11 @@ impl AurClient {
                 .iter()
                 .map(|path| path.to_string_lossy().into_owned())
                 .collect();
-            crate::package_managers::execute_transaction(packages, false, false, None)?;
+            tokio::task::spawn_blocking(move || {
+                crate::package_managers::execute_transaction(packages, false, false, None)
+            })
+            .await
+            .context("Direct ALPM install worker failed")??;
         } else {
             // Refresh sudo credentials right before install to prevent timeout
             if let Some(sl) = sudoloop {
