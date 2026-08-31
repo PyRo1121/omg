@@ -7,7 +7,7 @@ use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::Duration;
 
-use anyhow::Result;
+use anyhow::{Context, Result};
 use futures::sink::SinkExt;
 use futures::stream::StreamExt;
 use governor::{Quota, RateLimiter};
@@ -56,7 +56,10 @@ async fn wait_for_termination_signal() -> Result<()> {
     #[cfg(unix)]
     {
         let mut signal = tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate())?;
-        signal.recv().await;
+        signal
+            .recv()
+            .await
+            .context("SIGTERM listener closed unexpectedly")?;
         Ok(())
     }
 
@@ -78,6 +81,10 @@ pub async fn run(
         crate::core::paths::fast_status_path(),
     )
     .await
+}
+
+fn validate_signal_result(result: std::io::Result<()>, signal: &str) -> Result<()> {
+    result.with_context(|| format!("Failed to listen for {signal}"))
 }
 
 fn daemon_shutdown_result(internal_failure: Option<String>) -> Result<()> {
@@ -311,6 +318,13 @@ async fn run_with_status_path(
 
     tracing::info!("Daemon ready, binary IPC enabled");
 
+    // Register signal listeners once. Recreating them after every accepted
+    // connection leaves gaps where process signals can be lost.
+    let ctrl_c = tokio::signal::ctrl_c();
+    tokio::pin!(ctrl_c);
+    let termination_signal = wait_for_termination_signal();
+    tokio::pin!(termination_signal);
+
     let mut internal_failure = None;
     loop {
         tokio::select! {
@@ -324,14 +338,15 @@ async fn run_with_status_path(
                 break;
             }
 
-            _ = tokio::signal::ctrl_c() => {
+            result = &mut ctrl_c => {
+                validate_signal_result(result, "SIGINT")?;
                 tracing::info!("Interrupt signal received, cleaning up...");
                 shutdown_token.cancel();
                 break;
             }
 
-            result = wait_for_termination_signal() => {
-                result?;
+            result = &mut termination_signal => {
+                result.context("Failed to listen for SIGTERM")?;
                 tracing::info!("Termination signal received, cleaning up...");
                 shutdown_token.cancel();
                 break;
@@ -660,7 +675,6 @@ async fn handle_client_with_idle_timeout(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use anyhow::Context as _;
 
     #[test]
     fn oversized_daemon_responses_return_an_error_frame() {
@@ -681,6 +695,20 @@ mod tests {
             }
             Response::Success { .. } => panic!("oversized response must become an error"),
         }
+    }
+
+    #[test]
+    fn signal_listener_failures_are_not_treated_as_shutdown_signals() {
+        validate_signal_result(Ok(()), "SIGINT").expect("received signal");
+        let error = validate_signal_result(
+            Err(std::io::Error::new(
+                std::io::ErrorKind::Unsupported,
+                "signals unavailable",
+            )),
+            "SIGINT",
+        )
+        .expect_err("listener registration failure must propagate");
+        assert!(error.to_string().contains("Failed to listen for SIGINT"));
     }
 
     #[test]
