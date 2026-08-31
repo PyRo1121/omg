@@ -702,6 +702,7 @@ analyzer inference
 - **Ci**: Cross-platform install script and R2 release sync
 ### 🐛 Bug Fixes
 
+- Reject ignored system upgrade targets
 - Honor configured pacman database roots
 - Surface libalpm transaction warnings
 - Reject partial ALPM worker initialization
