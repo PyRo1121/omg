@@ -42,13 +42,21 @@ impl TestPackageManager {
 
     /// Mark a package as installed
     pub fn install_package(&self, name: &str) {
-        self.installed
-            .lock()
-            .expect("lock poisoned")
-            .insert(name.to_string());
-        // Update the package in the database
-        if let Some(pkg) = self.packages.lock().expect("lock poisoned").get_mut(name) {
-            pkg.installed = true;
+        self.set_installed_state(name, true);
+    }
+
+    /// Keep the canonical package record and installed-name index consistent.
+    /// Locks are always acquired packages-first to avoid AB-BA deadlocks.
+    fn set_installed_state(&self, name: &str, installed: bool) {
+        let mut packages = self.packages.lock().expect("lock poisoned");
+        let mut installed_names = self.installed.lock().expect("lock poisoned");
+        if installed {
+            installed_names.insert(name.to_string());
+        } else {
+            installed_names.remove(name);
+        }
+        if let Some(package) = packages.get_mut(name) {
+            package.installed = installed;
         }
     }
 
@@ -133,8 +141,8 @@ impl PackageManager for TestPackageManager {
         let packages = packages.to_vec();
         Box::pin(async move {
             self.ensure_operation_succeeds("Install")?;
-            for pkg in packages {
-                self.installed.lock().expect("lock poisoned").insert(pkg);
+            for package in packages {
+                self.set_installed_state(&package, true);
             }
             Ok(())
         })
@@ -144,8 +152,8 @@ impl PackageManager for TestPackageManager {
         let packages = packages.to_vec();
         Box::pin(async move {
             self.ensure_operation_succeeds("Remove")?;
-            for pkg in packages {
-                self.installed.lock().expect("lock poisoned").remove(&pkg);
+            for package in packages {
+                self.set_installed_state(&package, false);
             }
             Ok(())
         })
@@ -178,8 +186,8 @@ impl PackageManager for TestPackageManager {
     fn list_installed(&self) -> Pin<Box<dyn Future<Output = Result<Vec<Package>>> + Send + '_>> {
         Box::pin(async move {
             self.ensure_operation_succeeds("List installed")?;
-            let installed_set = self.installed.lock().expect("lock poisoned");
             let pkgs = self.packages.lock().expect("lock poisoned");
+            let installed_set = self.installed.lock().expect("lock poisoned");
             Ok(pkgs
                 .values()
                 .filter(|p| installed_set.contains(&p.name))
@@ -267,6 +275,7 @@ mod tests {
         // Install
         pm.install(&["test".to_string()]).await.unwrap();
         assert!(pm.is_installed("test").await.unwrap());
+        assert!(pm.info("test").await.unwrap().unwrap().installed);
 
         // List installed
         let installed = pm.list_installed().await.unwrap();
@@ -275,6 +284,7 @@ mod tests {
         // Remove
         pm.remove(&["test".to_string()]).await.unwrap();
         assert!(!pm.is_installed("test").await.unwrap());
+        assert!(!pm.info("test").await.unwrap().unwrap().installed);
     }
 
     #[tokio::test]
