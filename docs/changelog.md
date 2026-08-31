@@ -48,6 +48,7 @@ OMG is the fastest unified package manager for Linux, replacing pacman, yay, nvm
 - Manage Pi versions natively
 ### ♻️  Refactoring
 
+- Type AUR not-found errors
 - Share missing repository diagnostics
 - Remove unused AUR info path
 - Remove unreachable DNF reason parsing
@@ -4004,6 +4005,7 @@ the Debian backend), so it was removed from the metadata.
 - Normalize project formatting
 ### 🧪 Testing
 
+- Exercise AUR replacement budget
 - Enforce telemetry queue and circuit invariants
 - Require precise Debian removal failures
 - Align task overrides with Node ecosystem
