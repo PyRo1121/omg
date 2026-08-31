@@ -1,16 +1,13 @@
-#![cfg(feature = "arch")]
 #![expect(
     clippy::unwrap_used,
     clippy::expect_used,
     clippy::pedantic,
     clippy::nursery
 )]
-//! AUR Dependency Resolution & Parallel Build Tests
+//! AUR dependency-graph and build-wave planning contracts.
 //!
-//! Comprehensive testing of dependency graph construction, topological sorting,
-//! circular dependency detection, and parallel build orchestration.
-//!
-//! Run with: `OMG_RUN_SYSTEM_TESTS=1 cargo test --features arch --test aur_dependency_resolution`
+//! Run real AUR scenarios with both `OMG_RUN_SYSTEM_TESTS=1` and
+//! `OMG_RUN_NETWORK_TESTS=1`.
 
 #![cfg(all(feature = "arch", target_os = "linux"))]
 
@@ -409,9 +406,10 @@ fn test_parallel_mixed_parallelism() {
 // REAL-WORLD DEPENDENCY SCENARIOS
 // ============================================================================
 
-#[tokio::test]
-async fn test_realworld_aur_helper_dependencies() {
+#[test]
+fn test_realworld_aur_helper_dependencies() {
     require_system_tests!();
+    require_network_tests!();
     require_arch!();
 
     println!("\n=== Test: Real-World AUR Helper Dependencies ===");
@@ -436,9 +434,10 @@ async fn test_realworld_aur_helper_dependencies() {
     println!("✓ Real-world dependencies resolved");
 }
 
-#[tokio::test]
-async fn test_realworld_optional_dependencies_metadata() {
+#[test]
+fn test_realworld_optional_dependencies_metadata() {
     require_system_tests!();
+    require_network_tests!();
     require_arch!();
 
     println!("\n=== Test: Optional Dependencies Handling ===");
@@ -450,10 +449,8 @@ async fn test_realworld_optional_dependencies_metadata() {
     let result = run_omg(&["install", package]);
     result.assert_success();
 
-    // Contract: `pacman -Qi` always renders an "Optional Deps" field for an
-    // installed package ("None" when there are none), so after a successful
-    // install the package database must expose this package's optional-deps
-    // metadata. Optional deps are reported but never auto-installed.
+    // Contract: after installation, pacman's local database exposes the AUR
+    // package's optional-dependency metadata rather than dropping the field.
     let info = Command::new("pacman")
         .args(["-Qi", package])
         .output()
@@ -465,7 +462,7 @@ async fn test_realworld_optional_dependencies_metadata() {
         "pacman -Qi {package} must list the 'Optional Deps' field:\n{output}"
     );
 
-    println!("✓ Optional dependencies metadata present (not auto-installed)");
+    println!("✓ Optional dependencies metadata present");
 }
 
 // ============================================================================
@@ -528,14 +525,10 @@ fn test_edge_duplicate_dependencies() {
 fn cleanup_package(package: &str) {
     use std::fs;
 
-    let cache_dir = dirs::cache_dir()
-        .expect("Failed to get cache dir")
-        .join("omg")
-        .join("aur")
-        .join(package);
+    let cache_dir = omg_lib::core::paths::cache_dir().join("aur").join(package);
 
     if cache_dir.exists() {
-        fs::remove_dir_all(&cache_dir).ok();
+        fs::remove_dir_all(&cache_dir).expect("Failed to clear the AUR package cache");
     }
 
     let _ = Command::new("sudo")
