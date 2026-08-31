@@ -164,8 +164,6 @@ pub fn get_sync_pkg_info(name: &str) -> Result<Option<PackageInfo>> {
                 description: pkg.description,
                 url: None,
                 size: 0,
-                // Saturate instead of wrapping: u64 -> i64 `as` casts wrap on
-                // overflow (https://doc.rust-lang.org/reference/expressions/operator-expr.html#numeric-cast).
                 install_size: None,
                 download_size: None,
                 repo: match pkg.source {
@@ -269,9 +267,6 @@ pub fn clean_cache(keep_versions: usize) -> Result<(usize, u64)> {
         });
 
         for old in versions.into_iter().skip(keep_versions) {
-            // Only credit bytes that were actually freed; failed removals are
-            // reported so callers are not told space was reclaimed when it
-            // was not.
             // Only credit bytes that were actually freed; failures are
             // logged with their cause so callers are not told space was
             // reclaimed when it was not.
