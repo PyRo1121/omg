@@ -4053,6 +4053,7 @@ the Debian backend), so it was removed from the metadata.
 - Normalize project formatting
 ### 🧪 Testing
 
+- Refresh the isolated fuzz lockfile
 - Replace AUR graph lint suppressions
 - Replace weak Arch smoke assertions
 - Strengthen Arch command behavior contracts
