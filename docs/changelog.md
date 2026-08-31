@@ -694,6 +694,7 @@ analyzer inference
 - **Ci**: Cross-platform install script and R2 release sync
 ### 🐛 Bug Fixes
 
+- Fetch PGP keys for historical AUR builds
 - Continue official updates after AUR lookup failure
 - Lock audit log readers against writers
 - Preserve modes during atomic file replacement
