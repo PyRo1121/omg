@@ -1,7 +1,4 @@
-//! Parallel database synchronization - 3-5x FASTER than pacman -Sy
-//!
-//! Downloads all repository databases in parallel using async I/O,
-//! with progress bars and smart mirror selection.
+//! Parallel package-database synchronization with bounded mirror selection.
 
 use std::path::{Path, PathBuf};
 use std::time::Duration;
@@ -99,10 +96,20 @@ const MAX_RETRIES: u32 = 3;
 const INITIAL_BACKOFF_MS: u64 = 100;
 const MAX_SYNC_DB_BYTES: u64 = 512 * 1024 * 1024;
 const MIRROR_RACE_TIMEOUT_MS: u64 = 2000;
+const MAX_MIRRORS_PER_REPO: usize = 5;
+/// Repositories synced from the system mirrorlist instead of their own
+/// `Server` entries. Keep in sync with `pacman_db::collect_sync_db_paths`.
+const MIRRORLIST_REPOS: [&str; 6] = [
+    "core",
+    "extra",
+    "multilib",
+    "core-testing",
+    "extra-testing",
+    "multilib-testing",
+];
 
 async fn race_mirrors(client: &Client, urls: &[String]) -> Option<usize> {
     use futures::future::select_all;
-    use std::time::Duration;
 
     if urls.is_empty() {
         return None;
@@ -410,12 +417,7 @@ fn commit_staged_databases(
     Ok(())
 }
 
-/// Synchronize package databases in parallel - BLAZING FAST
-///
-/// This is 3-5x faster than `pacman -Sy` because:
-/// 1. Downloads all databases simultaneously (parallel I/O)
-/// 2. Uses HTTP/2 connection pooling
-/// 3. Shows real-time progress for each database
+/// Synchronize configured package databases concurrently.
 #[expect(clippy::literal_string_with_formatting_args, clippy::expect_used)] // Static indicatif templates are always valid; braces are template syntax
 pub async fn sync_databases_parallel() -> Result<()> {
     let mirrors = get_mirrors()?;
@@ -466,24 +468,13 @@ pub async fn sync_databases_parallel() -> Result<()> {
     let mut repos_to_sync: Vec<(String, Vec<String>, PathBuf)> =
         Vec::with_capacity(configured_repos.len());
 
-    // Standard repos (use mirrorlist)
-    let standard_repos: std::collections::HashSet<&str> = [
-        "core",
-        "extra",
-        "multilib",
-        "core-testing",
-        "extra-testing",
-        "multilib-testing",
-    ]
-    .into_iter()
-    .collect();
-
+    // Standard repos use the system mirrorlist.
     for repo in &configured_repos {
-        if standard_repos.contains(repo.as_str()) {
+        if MIRRORLIST_REPOS.contains(&repo.as_str()) {
             let repo_urls: Vec<String> = mirrors
                 .iter()
                 .map(|m| build_db_url(m, repo))
-                .take(5)
+                .take(MAX_MIRRORS_PER_REPO)
                 .collect();
             let dest = sync_dir.join(format!("{repo}.db"));
             repos_to_sync.push((repo.clone(), repo_urls, dest));
@@ -563,17 +554,6 @@ pub async fn sync_databases_parallel() -> Result<()> {
     println!("{} Databases synchronized successfully!\n", "✓".green());
     Ok(())
 }
-
-/// Repositories that are synced from the mirrorlist instead of their own
-/// `Server` entries. Keep in sync with `pacman_db::collect_sync_db_paths`.
-const MIRRORLIST_REPOS: [&str; 6] = [
-    "core",
-    "extra",
-    "multilib",
-    "core-testing",
-    "extra-testing",
-    "multilib-testing",
-];
 
 /// Resolve custom (non-mirrorlist) repositories from pacman.conf.
 ///
