@@ -141,10 +141,12 @@ impl TaskDetector {
         };
 
         let path = self.current_dir.join("package.json");
+        let mut has_install_script = false;
         if let Some(content) = read_optional_file(&path)? {
             let pkg: PackageJson = serde_json::from_str(&content)
                 .with_context(|| format!("Failed to parse {}", path.display()))?;
             if let Some(scripts) = pkg.scripts {
+                has_install_script = scripts.contains_key("install");
                 for (name, _) in scripts {
                     tasks.push(Task {
                         name: name.clone(),
@@ -157,13 +159,15 @@ impl TaskDetector {
             }
         }
 
-        tasks.push(Task {
-            name: "install".to_string(),
-            command: package_manager,
-            args: vec!["install".to_string()],
-            source: "package.json".to_string(),
-            ecosystem: js_ecosystem,
-        });
+        if !has_install_script {
+            tasks.push(Task {
+                name: "install".to_string(),
+                command: package_manager,
+                args: vec!["install".to_string()],
+                source: "package.json".to_string(),
+                ecosystem: js_ecosystem,
+            });
+        }
         Ok(())
     }
 
@@ -1437,6 +1441,28 @@ build = "node"
         let detector = TaskDetector::new(temp.path().to_path_buf()).unwrap();
         assert_eq!(detector.config.scripts.get("test").unwrap(), "rust");
         assert_eq!(detector.config.scripts.get("build").unwrap(), "node");
+    }
+
+    #[test]
+    fn package_install_script_does_not_collide_with_synthetic_install_task() {
+        let temp = TempDir::new().unwrap();
+        fs::write(
+            temp.path().join("package.json"),
+            r#"{"scripts":{"install":"node setup.js"}}"#,
+        )
+        .unwrap();
+
+        let detector = TaskDetector::new(temp.path().to_path_buf()).unwrap();
+        let install_tasks = detector
+            .detect()
+            .unwrap()
+            .into_iter()
+            .filter(|task| task.name == "install")
+            .collect::<Vec<_>>();
+
+        assert_eq!(install_tasks.len(), 1);
+        assert_eq!(install_tasks[0].command, "npm");
+        assert_eq!(install_tasks[0].args, ["run", "install"]);
     }
 
     #[tokio::test]
