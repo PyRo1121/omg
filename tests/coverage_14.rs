@@ -7,7 +7,7 @@
 //! index contents, mock package-manager state) plus exact error strings for
 //! every rejection path.
 
-#![cfg(feature = "arch")]
+#![cfg(any(feature = "arch", feature = "debian", feature = "debian-pure"))]
 #![expect(clippy::unwrap_used, clippy::expect_used, clippy::pedantic)]
 
 pub mod common;
@@ -27,6 +27,7 @@ const FAKE_PKG: &str = "omg-contract-fake-pkg";
 /// install_reason 0 = explicit and 1 = dependency. The layout mirrors what
 /// pacman writes on disk (`<root>/var/lib/pacman/local/<name>-<ver>/desc`),
 /// including the `ALPM_DB_VERSION` marker libalpm validates on open.
+#[cfg(feature = "arch")]
 fn install_fake_local_db(project: &TestProject, packages: &[(&str, &str, u8, &[&str])]) {
     let local = project
         .pacman_root
@@ -115,6 +116,7 @@ fn read_mock_state(
 // omg why
 // ---------------------------------------------------------------------------
 
+#[cfg(feature = "arch")]
 mod why_contracts {
     use super::*;
 
@@ -144,28 +146,15 @@ mod why_contracts {
     /// verbatim from the local DB, marks each of its dependencies as
     /// installed or not, and assesses removal safety as a user decision.
     #[test]
-    #[ignore = "requires live pacman with specific packages installed"]
     fn explicit_package_reports_reason_dependencies_and_safety() {
-        // Requires live pacman: `omg why` queries real installed state.
-        let probe = std::process::Command::new("/usr/bin/pacman")
-            .args(["-Qi", "bash"])
-            .stdout(std::process::Stdio::null())
-            .stderr(std::process::Stdio::null())
-            .status();
-        if !probe.is_ok_and(|s| s.success()) {
-            eprintln!("skipping: no live pacman database");
-            return;
-        }
         let project = TestProject::new();
         install_fake_local_db(
             &project,
             &[
-                ("alpha", "3.2-1", 0, &["beta"]),
+                ("alpha", "3.2-1", 0, &["beta", "missingdep"]),
                 ("beta", "2.0-1", 1, &[]),
-                ("missingdep", "9.9-1", 0, &[]),
             ],
         );
-        // alpha depends on beta (installed) and missingdep (absent).
 
         let result = project.run(&["why", "alpha"]);
 
@@ -548,7 +537,6 @@ mod snapshot_contracts {
     /// the installation and completion, and afterwards the environment
     /// matches the snapshot.
     #[test]
-    #[ignore = "requires live pacman database"]
     fn restore_yes_applies_missing_package_install() {
         let project = TestProject::new();
         project.mock_available(FAKE_PKG, "7.1").expect("seed mock");

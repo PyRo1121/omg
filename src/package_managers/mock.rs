@@ -257,7 +257,7 @@ impl PackageManager for MockPackageManager {
                 .packages
                 .lock()
                 .unwrap_or_else(std::sync::PoisonError::into_inner);
-            Ok(pkgs
+            let mut results: Vec<Package> = pkgs
                 .values()
                 .filter(|p| {
                     p.name.to_lowercase().contains(&query)
@@ -270,7 +270,24 @@ impl PackageManager for MockPackageManager {
                     source: PackageSource::Official,
                     installed: state.installed.contains_key(&p.name),
                 })
-                .collect())
+                .collect();
+            results.extend(
+                state
+                    .available
+                    .iter()
+                    .filter(|(name, _)| {
+                        !pkgs.contains_key(*name) && name.to_lowercase().contains(&query)
+                    })
+                    .map(|(name, version)| Package {
+                        name: name.clone(),
+                        version: parse_version_or_zero(version),
+                        description: String::new(),
+                        source: PackageSource::Official,
+                        installed: state.installed.contains_key(name),
+                    }),
+            );
+            results.sort_by(|left, right| left.name.cmp(&right.name));
+            Ok(results)
         })
     }
 
@@ -341,13 +358,26 @@ impl PackageManager for MockPackageManager {
                 .packages
                 .lock()
                 .unwrap_or_else(std::sync::PoisonError::into_inner);
-            Ok(pkgs.get(&package).map(|p| Package {
-                name: p.name.clone(),
-                version: parse_version_or_zero(&p.version),
-                description: p.description.clone(),
-                source: PackageSource::Official,
-                installed: state.installed.contains_key(&p.name),
-            }))
+            Ok(pkgs.get(&package).map_or_else(
+                || {
+                    state.available.get(&package).map(|version| Package {
+                        name: package.clone(),
+                        version: parse_version_or_zero(version),
+                        description: String::new(),
+                        source: PackageSource::Official,
+                        installed: state.installed.contains_key(&package),
+                    })
+                },
+                |p| {
+                    Some(Package {
+                        name: p.name.clone(),
+                        version: parse_version_or_zero(&p.version),
+                        description: p.description.clone(),
+                        source: PackageSource::Official,
+                        installed: state.installed.contains_key(&p.name),
+                    })
+                },
+            ))
         })
     }
 
@@ -505,6 +535,24 @@ mod tests {
         assert_eq!(search.len(), 1);
         let status = futures::executor::block_on(package_manager.get_status(false))?;
         assert_eq!(status.3, 1, "status must expose the pending mock update");
+        Ok(())
+    }
+
+    #[test]
+    fn available_only_packages_are_searchable_and_have_info() -> Result<()> {
+        let dir = tempdir()?;
+        let package_manager = MockPackageManager::new_in("arch", dir.path());
+        package_manager.set_available_version("fixture-only", "2.4.0")?;
+
+        let search = futures::executor::block_on(package_manager.search("fixture"))?;
+        assert_eq!(search.len(), 1);
+        assert_eq!(search[0].name, "fixture-only");
+        assert_eq!(search[0].version.to_string(), "2.4.0");
+
+        let info = futures::executor::block_on(package_manager.info("fixture-only"))?
+            .expect("available-only package info");
+        assert_eq!(info.version.to_string(), "2.4.0");
+        assert!(!info.installed);
         Ok(())
     }
 

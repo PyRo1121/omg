@@ -68,7 +68,7 @@ pub async fn install(packages: &[String], yes: bool, replacement_hops: u32) -> R
         .await?;
 
         if is_official {
-            let info = crate::package_managers::get_sync_pkg_info(pkg)?
+            let info = get_official_package_info(pkg)?
                 .with_context(|| format!("Official package metadata disappeared for {pkg}"))?;
             enforce_install_policy(
                 &policy,
@@ -397,9 +397,19 @@ async fn lookup_official_package(
         }
     }
 
-    crate::package_managers::get_sync_pkg_info(package)
+    get_official_package_info(package)
         .map(|info| info.is_some())
         .with_context(|| format!("Failed to look up {package} in official repositories"))
+}
+
+fn get_official_package_info(
+    package: &str,
+) -> Result<Option<crate::package_managers::types::PackageInfo>> {
+    if crate::core::paths::test_mode() {
+        crate::package_managers::get_package_info(package)
+    } else {
+        crate::package_managers::get_sync_pkg_info(package)
+    }
 }
 
 /// Handle a package that could not be resolved in the official repositories:
