@@ -785,11 +785,9 @@ fn execute_process(cmd: &str, args: &[String], extra_args: &[String]) -> Result<
     // then release the lock before running the actual task processes.
     let setup_guard = lock_task_setup();
     if let Some(toolchain_file) = find_rust_toolchain_file(&current_dir) {
-        // First check if Rust is available via system (rustup) - if so, let rustup handle it
-        let has_system_rust = which::which("rustc").is_ok() || which::which("cargo").is_ok();
-
-        if !has_system_rust {
-            // Only use OMG's Rust manager if no system Rust is available
+        // Only rustup proxy executables honor rust-toolchain files. A distro
+        // rustc/cargo on PATH must not silently bypass the project pin.
+        if !rustup_controls_system_rust() {
             let rust_manager = RustManager::new();
             let request = RustManager::parse_toolchain_file(&toolchain_file)?;
             let status = rust_manager.toolchain_status(&request)?;
@@ -806,7 +804,8 @@ fn execute_process(cmd: &str, args: &[String], extra_args: &[String]) -> Result<
                 }
             }
         }
-        // If system Rust exists, rustup will handle toolchain switching automatically
+        // When all system executables are rustup proxies, rustup owns project
+        // toolchain switching and OMG must not install a competing toolchain.
     }
     let mut versions = hooks::detect_versions(&current_dir)?;
     if let Some((runtime, default_version)) = detect_js_runtime(&current_dir)? {
@@ -884,6 +883,36 @@ fn execute_process(cmd: &str, args: &[String], extra_args: &[String]) -> Result<
     }
 
     Ok(())
+}
+
+#[cfg(unix)]
+fn same_executable_file(left: &Path, right: &Path) -> bool {
+    use std::os::unix::fs::MetadataExt as _;
+
+    let Ok(left) = left.metadata() else {
+        return false;
+    };
+    let Ok(right) = right.metadata() else {
+        return false;
+    };
+    left.dev() == right.dev() && left.ino() == right.ino()
+}
+
+#[cfg(not(unix))]
+fn same_executable_file(left: &Path, right: &Path) -> bool {
+    match (left.canonicalize(), right.canonicalize()) {
+        (Ok(left), Ok(right)) => left == right,
+        _ => false,
+    }
+}
+
+fn rustup_controls_system_rust() -> bool {
+    let Ok(rustup) = which::which("rustup") else {
+        return false;
+    };
+    ["rustc", "cargo"].into_iter().all(|command| {
+        which::which(command).is_ok_and(|executable| same_executable_file(&rustup, &executable))
+    })
 }
 
 fn find_rust_toolchain_file(start: &Path) -> Option<PathBuf> {
@@ -1317,6 +1346,21 @@ mod tests {
         assert!(validate_executable_command("").is_err());
         assert!(validate_executable_command("bad\u{0}cmd").is_err());
         assert!(validate_executable_command("cmd\n").is_err());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn rustup_proxy_detection_compares_executable_identity() {
+        let directory = TempDir::new().unwrap();
+        let rustup = directory.path().join("rustup");
+        let proxy = directory.path().join("rustc");
+        let distro_rustc = directory.path().join("distro-rustc");
+        fs::write(&rustup, "rustup").unwrap();
+        fs::write(&distro_rustc, "rustc").unwrap();
+        std::os::unix::fs::symlink(&rustup, &proxy).unwrap();
+
+        assert!(same_executable_file(&rustup, &proxy));
+        assert!(!same_executable_file(&rustup, &distro_rustc));
     }
 
     #[test]
