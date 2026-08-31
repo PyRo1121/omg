@@ -22,7 +22,7 @@ pub enum ValidationError {
     #[error("Package name cannot start with '.' (hidden file protection)")]
     PackageNameStartsWithDot,
     #[error(
-        "Invalid character '{character}' in package name. Only alphanumeric, -, _, ., +, @, / allowed"
+        "Invalid character {character:?} in package name. Only alphanumeric, -, _, ., +, @, / allowed"
     )]
     PackageNameInvalidChar { character: char },
     #[error("Package name cannot contain '..' (path traversal protection)")]
@@ -35,7 +35,7 @@ pub enum ValidationError {
     ImageRefTooLong { max: usize },
     #[error("Container image reference must start with an ASCII letter or digit")]
     ImageRefMustStartAlphanumeric,
-    #[error("Invalid character '{character}' in container image reference")]
+    #[error("Invalid character {character:?} in container image reference")]
     ImageRefInvalidChar { character: char },
     #[error("Version cannot be empty")]
     VersionEmpty,
@@ -43,7 +43,7 @@ pub enum ValidationError {
     VersionTooLong { max: usize },
     #[error("Version cannot be a filesystem path component")]
     VersionPathComponent,
-    #[error("Invalid character '{character}' in version string")]
+    #[error("Invalid character {character:?} in version string")]
     VersionInvalidChar { character: char },
     #[error("Runtime version name 'current' is reserved")]
     RuntimeVersionReserved,
@@ -416,6 +416,18 @@ pub fn validate_relative_path(path: &str) -> Result<(), ValidationError> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn validation_errors_escape_rejected_control_characters() {
+        for error in [
+            validate_package_name("pkg\x1b]0;spoofed\x07").expect_err("escape is invalid"),
+            validate_image_ref("image\nspoofed").expect_err("newline is invalid"),
+            validate_version("1.0\rspoofed").expect_err("carriage return is invalid"),
+        ] {
+            let message = error.to_string();
+            assert!(!message.chars().any(char::is_control), "{message:?}");
+        }
+    }
 
     #[test]
     fn test_valid_package_names() {
