@@ -1394,7 +1394,6 @@ omg enterprise <SUBCOMMAND>
 | `policy show` | Show current policies |
 | `audit-export` | Export compliance evidence |
 | `license-scan` | Scan for license compliance |
-| `server mirror` | Sync/mirror packages from upstream |
 
 **Examples:**
 
@@ -1410,17 +1409,13 @@ omg enterprise license-scan --export csv
 
 # Show current policies
 omg enterprise policy show
-
-# Mirror packages from an upstream registry (self-hosted server)
-omg enterprise server mirror [--upstream https://registry.example.com]
 ```
 
 **Report types:** monthly, quarterly, custom
 **Compliance frameworks:** soc2, iso27001, fedramp, hipaa, pci-dss
 
-> Note: policy *management* beyond viewing (`policy show`) and self-hosted server
-> initialization are not available in the CLI yet — only `policy show` and
-> `server mirror` exist today.
+> Note: policy management beyond `policy show` and self-hosted registry
+> management are not available in the CLI.
 
 ---
 

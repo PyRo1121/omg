@@ -1207,11 +1207,6 @@ pub enum EnterpriseCommands {
         #[arg(long, value_enum)]
         export: Option<LicenseExportFormat>,
     },
-    /// Initialize self-hosted/air-gapped server
-    Server {
-        #[command(subcommand)]
-        command: ServerCommands,
-    },
 }
 
 #[derive(Subcommand, Debug)]
@@ -1221,16 +1216,6 @@ pub enum EnterprisePolicyCommands {
         /// Scope to show
         #[arg(short, long)]
         scope: Option<String>,
-    },
-}
-
-#[derive(Subcommand, Debug)]
-pub enum ServerCommands {
-    /// Sync/mirror packages from upstream
-    Mirror {
-        /// Upstream registry URL
-        #[arg(long, default_value = "https://registry.pyro1121.com")]
-        upstream: String,
     },
 }
 
@@ -1263,6 +1248,11 @@ mod tests {
     fn workspace_environment_command_is_truthfully_named() {
         assert!(Cli::try_parse_from(["omg", "workspace", "check"]).is_ok());
         assert!(Cli::try_parse_from(["omg", "workspace", "sync"]).is_err());
+    }
+
+    #[test]
+    fn enterprise_does_not_advertise_unimplemented_mirroring() {
+        assert!(Cli::try_parse_from(["omg", "enterprise", "server", "mirror"]).is_err());
     }
 
     #[test]

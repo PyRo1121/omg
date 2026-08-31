@@ -2,9 +2,7 @@
 
 use crate::cli::components::Components;
 use crate::cli::tea::Cmd;
-use crate::cli::{
-    CliContext, EnterpriseCommands, EnterprisePolicyCommands, LocalCommandRunner, ServerCommands,
-};
+use crate::cli::{CliContext, EnterpriseCommands, EnterprisePolicyCommands, LocalCommandRunner};
 use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
@@ -39,9 +37,6 @@ impl LocalCommandRunner for EnterpriseCommands {
             EnterpriseCommands::LicenseScan { export } => {
                 license_scan(export.as_ref().map(|value| value.as_str()), ctx)
             }
-            EnterpriseCommands::Server { command } => match command {
-                ServerCommands::Mirror { upstream } => server::mirror(upstream, ctx).await,
-            },
         }
     }
 }
@@ -272,82 +267,6 @@ pub mod policy {
             ),
             Cmd::spacer(),
             Cmd::card("Active Policies", policy_list),
-        ]))?;
-
-        Ok(())
-    }
-}
-
-/// Self-hosted server management
-pub mod server {
-    use super::{CliContext, Result, license};
-    use crate::cli::components::Components;
-    use crate::cli::packages::execute_cmd;
-    use crate::cli::tea::Cmd;
-    use anyhow::Context;
-
-    pub async fn mirror(upstream: &str, _ctx: &CliContext) -> Result<()> {
-        // SECURITY: Basic URL validation
-        if !upstream.starts_with("https://") {
-            execute_cmd(Components::error_with_suggestion(
-                "Only HTTPS upstreams allowed for security",
-                "Use https:// instead of http://",
-            ))?;
-            anyhow::bail!("Only HTTPS upstreams allowed for security");
-        }
-        if upstream.len() > 1024 || upstream.chars().any(char::is_control) {
-            execute_cmd(Cmd::error("Invalid upstream URL"))?;
-            anyhow::bail!("Invalid upstream URL");
-        }
-
-        license::require_feature("self-hosted")?;
-
-        execute_cmd(Components::loading(
-            "Checking upstream and syncing local databases...",
-        ))?;
-
-        // The upstream must actually participate: verify it is reachable
-        // instead of accepting the URL and only running a local sync.
-        let reachability = crate::core::http::shared_client()
-            .get(upstream)
-            .timeout(std::time::Duration::from_secs(10))
-            .send()
-            .await;
-        let upstream_reachable = matches!(&reachability, Ok(res) if res.status().is_success());
-        if !upstream_reachable {
-            let detail = match reachability {
-                Ok(res) => format!("upstream returned {}", res.status()),
-                Err(e) => format!("could not reach upstream: {e}"),
-            };
-            anyhow::bail!("Mirror sync aborted: {detail}");
-        }
-
-        let pm = crate::package_managers::get_package_manager()?;
-        pm.sync().await?;
-
-        // Check for updates to show meaningful status
-        let updates = pm
-            .list_updates()
-            .await
-            .context("Failed to list available updates after mirror sync")?;
-
-        let status = vec![
-            ("Upstream", upstream.to_string()),
-            ("Upstream reachable", "Yes".to_string()),
-            ("Local databases", "Synced".to_string()),
-            (
-                "Updates available",
-                if updates.is_empty() {
-                    "0".to_string()
-                } else {
-                    updates.len().to_string()
-                },
-            ),
-        ];
-
-        execute_cmd(Cmd::batch([
-            Cmd::success("Mirror check complete!"),
-            Components::kv_list(Some("Sync Status"), status),
         ]))?;
 
         Ok(())

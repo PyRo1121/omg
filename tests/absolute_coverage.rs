@@ -6,8 +6,7 @@ use anyhow::Result;
 use omg_lib::cli::run::RunCommand;
 use omg_lib::cli::{
     CliContext, ComplianceFramework, EnterpriseCommands, EnterprisePolicyCommands,
-    EnterpriseReportType, EnvCommands, FleetCommands, LocalCommandRunner, ServerCommands,
-    ToolCommands,
+    EnterpriseReportType, EnvCommands, FleetCommands, LocalCommandRunner, ToolCommands,
 };
 use serial_test::serial;
 use std::fs;
@@ -249,11 +248,6 @@ async fn enterprise_commands_gate_before_remote_or_filesystem_side_effects() -> 
             output: "audit-evidence".to_string(),
         },
         EnterpriseCommands::LicenseScan { export: None },
-        EnterpriseCommands::Server {
-            command: ServerCommands::Mirror {
-                upstream: "https://registry.example.invalid".to_string(),
-            },
-        },
     ];
 
     for command in commands {

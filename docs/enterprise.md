@@ -101,29 +101,6 @@ graph TD
 
 ---
 
-## 🏢 Self-Hosted Server
+## Self-hosting
 
-Run your own OMG registry and control plane for air-gapped or private environments. Complete data sovereignty for your organization.
-
-### Initialization
-
-```bash
-omg enterprise server init \
-  --license-key "YOUR-KEY" \
-  --storage /mnt/data/omg \
-  --domain registry.internal.corp
-```
-
-### Mirroring
-
-Sync packages from upstream (official repos, npm, PyPI) to your private mirror.
-
-```bash
-omg enterprise server mirror --upstream https://registry.npmjs.org
-```
-
-**Benefits:**
-- **Control**: Exactly which packages enter your network.
-- **Security**: Scan packages before they reach developers.
-- **Reliability**: Continue working during internet outages.
-- **Performance**: Near-instant downloads over local network.
+OMG does not currently provide self-hosted registry initialization or package mirroring commands. Use the native mirroring tools for each package ecosystem.
