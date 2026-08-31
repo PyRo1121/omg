@@ -470,18 +470,13 @@ fn handle_missing_package(
                     new_pkg.green().bold()
                 );
                 println!();
-                if replacement_hops == 0 {
-                    anyhow::bail!(
-                        "Aborting after {MAX_REPLACEMENT_HOPS} replacement attempts; \
-                         install '{new_pkg}' explicitly if intended"
-                    );
-                }
+                let remaining_hops = consume_replacement_hop(replacement_hops, &new_pkg)?;
                 return super::install_with_replacement_budget(
                     &[new_pkg],
                     yes,
                     false,
                     false,
-                    replacement_hops - 1,
+                    remaining_hops,
                     super::MutationConfirmation::AlreadyConfirmed,
                 )
                 .await;
@@ -494,6 +489,14 @@ fn handle_missing_package(
         }
 
         Err(original_error)
+    })
+}
+
+fn consume_replacement_hop(remaining_hops: u32, replacement: &str) -> Result<u32> {
+    remaining_hops.checked_sub(1).ok_or_else(|| {
+        anyhow::anyhow!(
+            "Aborting after {MAX_REPLACEMENT_HOPS} replacement attempts; install '{replacement}' explicitly if intended"
+        )
     })
 }
 
@@ -808,6 +811,10 @@ mod tests {
 
     #[test]
     fn replacement_budget_bounds_interactive_recursion() {
-        assert_eq!(MAX_REPLACEMENT_HOPS, 3);
+        assert_eq!(consume_replacement_hop(2, "next").unwrap(), 1);
+        assert_eq!(consume_replacement_hop(1, "next").unwrap(), 0);
+        let error = consume_replacement_hop(0, "next").unwrap_err();
+        assert!(error.to_string().contains("replacement attempts"));
+        assert!(error.to_string().contains("install 'next' explicitly"));
     }
 }
