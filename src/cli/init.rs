@@ -5,7 +5,7 @@
 use anyhow::{Context, Result};
 use crossterm::{
     cursor,
-    event::{self, Event, KeyCode, KeyEventKind},
+    event::{self, Event, KeyCode, KeyEvent, KeyEventKind, KeyModifiers},
     execute,
     style::{Color, Print, ResetColor, SetForegroundColor, Stylize},
     terminal::{self, ClearType},
@@ -60,10 +60,16 @@ fn write_menu_line(stdout: &mut io::Stdout, text: &str, highlighted: bool) -> Re
 use crate::config::Settings;
 use crate::core::sysinfo::{BuildRecommendation, SystemInfo};
 
+fn is_menu_cancel_key(key: &KeyEvent) -> bool {
+    key.code == KeyCode::Char('q')
+        || (key.modifiers.contains(KeyModifiers::CONTROL)
+            && matches!(key.code, KeyCode::Char('c' | 'd')))
+}
+
 /// Core interactive single-select menu loop shared by all wizard prompts.
 ///
 /// Renders each option via `render` (highlighting the active row), then
-/// handles ↑/↓ navigation, Enter to confirm, and q to cancel. Raw mode is
+/// handles ↑/↓ navigation, Enter to confirm, and q, Ctrl+C, or Ctrl+D to cancel. Raw mode is
 /// enabled here and restored on every exit path via [`RawModeGuard`].
 ///
 /// Non-press key events fall through to the `MoveUp` redraw instead of
@@ -96,11 +102,13 @@ fn run_menu<T: Copy>(
         if let Event::Key(key) = event::read()?
             && key.kind == KeyEventKind::Press
         {
+            if is_menu_cancel_key(&key) {
+                anyhow::bail!("Setup cancelled");
+            }
             match key.code {
                 KeyCode::Up => selected = selected.saturating_sub(1),
                 KeyCode::Down => selected = (selected + 1).min(options.len() - 1),
                 KeyCode::Enter => return Ok(options[selected]),
-                KeyCode::Char('q') => anyhow::bail!("Setup cancelled"),
                 _ => {}
             }
         }
@@ -1035,6 +1043,22 @@ fn print_completion(stdout: &mut io::Stdout, state: &WizardState) -> Result<()> 
 #[expect(clippy::unwrap_used)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn raw_mode_menu_recognizes_interrupt_keys() {
+        for code in [KeyCode::Char('c'), KeyCode::Char('d')] {
+            let key = KeyEvent::new(code, KeyModifiers::CONTROL);
+            assert!(is_menu_cancel_key(&key));
+        }
+        assert!(is_menu_cancel_key(&KeyEvent::new(
+            KeyCode::Char('q'),
+            KeyModifiers::NONE
+        )));
+        assert!(!is_menu_cancel_key(&KeyEvent::new(
+            KeyCode::Char('c'),
+            KeyModifiers::NONE
+        )));
+    }
 
     #[test]
     fn systemd_exec_paths_are_quoted_and_escape_unit_expansion() {
