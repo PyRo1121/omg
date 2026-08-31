@@ -62,6 +62,17 @@ fn modified_within_ttl(modified: SystemTime, ttl: Duration) -> bool {
     modified.elapsed().is_ok_and(|age| age < ttl)
 }
 
+pub(crate) fn metadata_index_is_fresh(
+    archive_path: &Path,
+    index_path: &Path,
+    ttl: Duration,
+) -> bool {
+    index_path.is_file()
+        && std::fs::metadata(archive_path)
+            .and_then(|metadata| metadata.modified())
+            .is_ok_and(|modified| modified_within_ttl(modified, ttl))
+}
+
 fn metadata_request(
     client: &reqwest::Client,
     meta_cache: &AurMetaCache,
@@ -298,6 +309,28 @@ mod tests {
     fn future_cache_timestamp_is_not_fresh() {
         let future = SystemTime::now() + Duration::from_secs(3600);
         assert!(!modified_within_ttl(future, Duration::from_secs(7200)));
+    }
+
+    #[test]
+    fn binary_index_freshness_follows_the_archive_ttl() {
+        let directory = tempfile::tempdir().unwrap();
+        let archive = directory.path().join("metadata.json.gz");
+        let index = directory.path().join("metadata.rkyv");
+        std::fs::write(&archive, b"archive").unwrap();
+        std::fs::write(&index, b"index").unwrap();
+
+        assert!(metadata_index_is_fresh(
+            &archive,
+            &index,
+            Duration::from_secs(60)
+        ));
+        assert!(!metadata_index_is_fresh(&archive, &index, Duration::ZERO));
+        std::fs::remove_file(&archive).unwrap();
+        assert!(!metadata_index_is_fresh(
+            &archive,
+            &index,
+            Duration::from_secs(60)
+        ));
     }
 
     #[test]

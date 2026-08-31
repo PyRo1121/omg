@@ -33,7 +33,8 @@ use super::utils::{
 use super::super::aur_deps::check_dependencies;
 use super::super::aur_index::AurIndex;
 use super::super::aur_metadata::{
-    AurJsonPackage, index_path, metadata_path, read_metadata_archive, sync_aur_metadata,
+    AurJsonPackage, index_path, metadata_index_is_fresh, metadata_path, read_metadata_archive,
+    sync_aur_metadata,
 };
 use super::super::aur_sources::{download_sources, parse_sources};
 #[cfg(feature = "pgp")]
@@ -379,42 +380,61 @@ impl AurClient {
         self.settings.aur.build_concurrency.max(1)
     }
 
+    async fn fresh_metadata_index_path(&self) -> Option<PathBuf> {
+        if !self.settings.aur.use_metadata_archive {
+            return None;
+        }
+
+        let archive_path = metadata_path();
+        let index_path = index_path();
+        let ttl = Duration::from_secs(self.settings.aur.metadata_cache_ttl_secs);
+        match tokio::task::spawn_blocking({
+            let index_path = index_path.clone();
+            move || metadata_index_is_fresh(&archive_path, &index_path, ttl)
+        })
+        .await
+        {
+            Ok(true) => Some(index_path),
+            Ok(false) => None,
+            Err(error) => {
+                warn!("AUR metadata freshness check failed: {error}");
+                None
+            }
+        }
+    }
+
     /// Search AUR packages
     pub async fn search(&self, query: &str) -> Result<Vec<Package>> {
         validate_search_query(query)?;
 
-        // Try fast binary index first if enabled and available
-        if self.settings.aur.use_metadata_archive {
-            let index_path = index_path();
-            if index_path.exists() {
-                let query_owned = query.to_string();
-                let result = tokio::task::spawn_blocking(move || -> Result<Vec<Package>> {
-                    let index = AurIndex::open(&index_path)?;
-                    let entries = index.search(&query_owned, 50)?;
-                    Ok(entries
-                        .into_iter()
-                        .map(|e| Package {
-                            name: e.name.as_str().to_string(),
-                            version: crate::package_managers::parse_version_or_zero(
-                                e.version.as_str(),
-                            ),
-                            description: e
-                                .description
-                                .as_ref()
-                                .map(|s| s.as_str().to_string())
-                                .unwrap_or_default(),
-                            source: PackageSource::Aur,
-                            installed: false,
-                        })
-                        .collect())
-                })
-                .await?;
+        // Try the binary index only while its source archive is within the
+        // configured TTL. Stale indexes fall through to the live RPC.
+        if let Some(index_path) = self.fresh_metadata_index_path().await {
+            let query_owned = query.to_string();
+            let result = tokio::task::spawn_blocking(move || -> Result<Vec<Package>> {
+                let index = AurIndex::open(&index_path)?;
+                let entries = index.search(&query_owned, 50)?;
+                Ok(entries
+                    .into_iter()
+                    .map(|e| Package {
+                        name: e.name.as_str().to_string(),
+                        version: crate::package_managers::parse_version_or_zero(e.version.as_str()),
+                        description: e
+                            .description
+                            .as_ref()
+                            .map(|s| s.as_str().to_string())
+                            .unwrap_or_default(),
+                        source: PackageSource::Aur,
+                        installed: false,
+                    })
+                    .collect())
+            })
+            .await?;
 
-                if let Ok(packages) = result
-                    && !packages.is_empty()
-                {
-                    return Ok(packages);
-                }
+            if let Ok(packages) = result
+                && !packages.is_empty()
+            {
+                return Ok(packages);
             }
         }
 
@@ -506,9 +526,8 @@ impl AurClient {
         // SECURITY: Validate package name
         crate::core::security::validate_package_name(package)?;
 
-        // Try fast binary index first
-        let index_path = index_path();
-        if index_path.exists() {
+        // Try the binary index only while its source archive is fresh.
+        if let Some(index_path) = self.fresh_metadata_index_path().await {
             let package_owned = package.to_string();
             let result = tokio::task::spawn_blocking(move || -> Result<Option<Package>> {
                 let index = AurIndex::open(&index_path)?;
@@ -592,9 +611,8 @@ impl AurClient {
             }
         }
 
-        // 2. Try fast binary index first
-        let index_path = index_path();
-        if index_path.exists() {
+        // 2. Try the binary index only while its source archive is fresh.
+        if let Some(index_path) = self.fresh_metadata_index_path().await {
             let result = tokio::task::spawn_blocking(
                 move || -> Result<Option<(Vec<(String, Version, Version)>, Vec<String>)>> {
                     let index = match AurIndex::open(&index_path) {
