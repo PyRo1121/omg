@@ -100,6 +100,8 @@ impl NodeManager {
             .send()
             .await
             .context("Failed to fetch Node.js version list. Check your internet connection.")?
+            .error_for_status()
+            .context("Node.js version list request failed")?
             .json()
             .await
             .context("Failed to parse Node.js version list from nodejs.org")
