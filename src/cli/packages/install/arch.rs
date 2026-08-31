@@ -510,8 +510,14 @@ async fn try_get_suggestions(query: &str) -> Vec<String> {
     Vec::new()
 }
 
+#[derive(Debug, thiserror::Error, PartialEq, Eq)]
+enum AurLookupError {
+    #[error("Package not found in AUR")]
+    NotFound,
+}
+
 fn is_aur_not_found(error: &anyhow::Error) -> bool {
-    error.to_string().contains("Package not found in AUR")
+    error.downcast_ref::<AurLookupError>() == Some(&AurLookupError::NotFound)
 }
 
 fn select_aur_candidate(
@@ -530,8 +536,7 @@ fn select_aur_candidate(
 async fn resolve_aur_package(pkg_name: &str) -> Result<(crate::core::Package, bool)> {
     let aur = AurClient::new()?;
     let results = aur.search(pkg_name).await?;
-    select_aur_candidate(&results, pkg_name)
-        .ok_or_else(|| anyhow::anyhow!("Package not found in AUR"))
+    select_aur_candidate(&results, pkg_name).ok_or_else(|| AurLookupError::NotFound.into())
 }
 
 async fn try_aur_package(pkg_name: &str) -> Result<crate::core::Package> {
@@ -729,6 +734,15 @@ mod tests {
             source: crate::core::PackageSource::Aur,
             installed: false,
         }
+    }
+
+    #[test]
+    fn aur_not_found_classification_is_typed() {
+        let not_found = anyhow::Error::new(AurLookupError::NotFound);
+        assert!(is_aur_not_found(&not_found));
+        assert!(!is_aur_not_found(&anyhow::anyhow!(
+            "Package not found in AUR"
+        )));
     }
 
     #[test]
