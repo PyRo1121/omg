@@ -2955,6 +2955,9 @@ fn validate_search_query(query: &str) -> Result<()> {
     if query.chars().any(char::is_control) {
         anyhow::bail!("Search query contains invalid control characters");
     }
+    if query.trim().len() < 2 {
+        anyhow::bail!("Search query must contain at least 2 non-whitespace bytes");
+    }
     Ok(())
 }
 
@@ -4033,6 +4036,9 @@ mod tests {
         assert!(validate_search_query("normal package").is_ok());
         assert!(validate_search_query(&"x".repeat(AUR_SEARCH_MAX_BYTES)).is_ok());
         assert!(validate_search_query(&"x".repeat(AUR_SEARCH_MAX_BYTES + 1)).is_err());
+        assert!(validate_search_query("").is_err());
+        assert!(validate_search_query("   ").is_err());
+        assert!(validate_search_query("x").is_err());
         assert!(validate_search_query("package\nname").is_err());
         assert!(validate_search_query("package\0name").is_err());
     }
