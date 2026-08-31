@@ -3778,7 +3778,6 @@ dependencies = [
  "toml",
  "tracing",
  "tracing-subscriber",
- "trait-variant",
  "unicode-width",
  "urlencoding",
  "uuid",
@@ -6173,17 +6172,6 @@ dependencies = [
  "tracing-core",
  "tracing-log",
  "tracing-serde",
-]
-
-[[package]]
-name = "trait-variant"
-version = "0.1.3"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "b19a4867a870f6edc4c283f2b455804b1879c0baf0e642f26b03ed8ee262d9d3"
-dependencies = [
- "proc-macro2",
- "quote",
- "syn 2.0.114",
 ]
 
 [[package]]

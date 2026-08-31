@@ -2,9 +2,6 @@
 //!
 //! Handles command-line argument parsing and command definitions.
 
-// trait_variant macro generates Send bounds correctly but clippy can't see through the expansion
-#![expect(clippy::future_not_send)]
-
 use anyhow::Result;
 
 mod args;
@@ -120,18 +117,10 @@ pub struct CliContext {
     pub no_color: bool,
 }
 
-/// A trait for modular CLI command execution with Send bounds
-///
-/// Uses `trait_variant` to generate Send-bounded async trait for multi-threaded execution.
-/// This is the 2026 best practice for async traits with tokio multi-threaded runtime.
-///
-/// The macro generates:
-/// - `CommandRunner`: Send-bounded variant for multi-threaded executors (default)
-/// - `LocalCommandRunner`: Non-Send variant for single-threaded executors
-#[trait_variant::make(CommandRunner: Send)]
+/// Execute a CLI command using process-local terminal state.
 #[allow(
-    clippy::future_not_send,
-    reason = "trait_variant generates the Send-bounded public variant"
+    async_fn_in_trait,
+    reason = "this project owns every implementation and does not expose the trait as a stable library API"
 )]
 pub trait LocalCommandRunner {
     /// Execute the command
