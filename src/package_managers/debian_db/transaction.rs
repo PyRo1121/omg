@@ -922,7 +922,16 @@ fn copy_control_file(src: &Path, dest: &Path) -> Result<()> {
             dest.display()
         )
     })?;
-    Ok(())
+    fs::File::open(dest)
+        .with_context(|| format!("Failed to reopen copied control file {}", dest.display()))?
+        .sync_all()
+        .with_context(|| format!("Failed to sync copied control file {}", dest.display()))?;
+    crate::core::safe_ops::sync_parent_directory_sync(dest).with_context(|| {
+        format!(
+            "Failed to sync dpkg control directory after copying {}",
+            dest.display()
+        )
+    })
 }
 
 fn with_decompressed_tar<R, T>(
@@ -2181,8 +2190,24 @@ mod tests {
         let src = dir.path().join("src");
         let dest = dir.path().join("dest");
         std::fs::write(&src, b"/etc/foo.conf\n").expect("conffiles");
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            std::fs::set_permissions(&src, std::fs::Permissions::from_mode(0o755))
+                .expect("source permissions");
+        }
+
         copy_control_file(&src, &dest).expect("copy");
+
         assert_eq!(std::fs::read(&dest).expect("copied"), b"/etc/foo.conf\n");
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            assert_eq!(
+                std::fs::metadata(&dest).unwrap().permissions().mode() & 0o777,
+                0o755
+            );
+        }
     }
 
     // ─── data.tar extraction hardening ───
