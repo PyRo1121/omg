@@ -23,8 +23,7 @@ use super::common::{
     BudgetedReader, BudgetedSink, MAX_DECOMPRESSED_BYTES, activate_version, begin_staged_install,
     complete_staged_install, copy_regular_tree, download_with_progress, get_current_version,
     is_valid_version_dir, list_installed_versions, parse_sha256_digest, print_already_installed,
-    print_installed, print_using, remove_file_best_effort, replace_staged_install,
-    validate_download_filename,
+    print_installed, print_using, replace_staged_install, validate_download_filename,
 };
 use crate::core::archive::stripped_archive_path;
 use crate::core::http::download_client;
@@ -449,12 +448,15 @@ impl RustManager {
             .ok_or_else(|| anyhow::anyhow!("Invalid download URL for {component}"))?;
         let filename = validate_download_filename(filename)?;
         let checksum = manifest_component_checksum(manifest, component, target, url)?;
-        let download_path = self.versions_dir.join(filename);
+        let download_dir = tempfile::Builder::new()
+            .prefix(".rust-component-")
+            .tempdir_in(&self.versions_dir)
+            .context("Failed to create temporary Rust component directory")?;
+        let download_path = download_dir.path().join(filename);
 
         download_with_progress(self.client, url, &download_path, &checksum).await?;
         tracing::info!("{} Extracting {}...", "→".blue(), component);
         Self::extract_component(&download_path, dest_dir)?;
-        remove_file_best_effort(&download_path, "Rust component archive");
         Ok(())
     }
 
