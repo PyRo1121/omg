@@ -1258,13 +1258,6 @@ mod tests {
     #[test]
     fn bounded_choices_fail_during_argument_parsing() {
         let invalid: &[&[&str]] = &[
-            &[
-                "omg",
-                "run",
-                "test",
-                "--runtime-backend",
-                "native-then-mise",
-            ],
             &["omg", "new", "unknown", "project"],
             &["omg", "audit", "log", "--severity", "unknown"],
             &["omg", "audit", "licenses", "--format", "unknown"],
@@ -1280,7 +1273,6 @@ mod tests {
                 "unknown",
             ],
             &["omg", "enterprise", "license-scan", "--export", "unknown"],
-            &["omg", "enterprise", "reports", "--format", "json"],
         ];
 
         for args in invalid {
@@ -1289,6 +1281,21 @@ mod tests {
                 "bounded invalid choice unexpectedly parsed: {args:?}"
             );
         }
+    }
+
+    #[test]
+    fn removed_cli_flags_stay_rejected() {
+        assert!(
+            Cli::try_parse_from([
+                "omg",
+                "run",
+                "test",
+                "--runtime-backend",
+                "native-then-mise"
+            ])
+            .is_err()
+        );
+        assert!(Cli::try_parse_from(["omg", "enterprise", "reports", "--format", "json"]).is_err());
     }
 
     #[test]
