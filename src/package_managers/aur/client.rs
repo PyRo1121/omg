@@ -1525,10 +1525,13 @@ impl AurClient {
                     continue;
                 }
 
-                // Confirm exact pkgname via .PKGINFO when available
-                if let Ok(Some(parsed_name)) = Self::pkg_name_from_archive(&entry.path())
-                    && !expected_names.iter().any(|name| name == &parsed_name)
-                {
+                // Filename matching is only a candidate filter. The archive's
+                // embedded identity is authoritative; unreadable or absent
+                // metadata must never select an artifact for installation.
+                let Ok(Some(parsed_name)) = Self::pkg_name_from_archive(&entry.path()) else {
+                    continue;
+                };
+                if !expected_names.iter().any(|name| name == &parsed_name) {
                     continue;
                 }
 
@@ -3052,6 +3055,18 @@ mod tests {
         assert_eq!(
             AurClient::parse_pkginfo_name_version("  pkgname =   spaced  \n pkgver =  2.0 \n"),
             Some(("spaced".to_string(), "2.0".to_string()))
+        );
+    }
+
+    #[test]
+    fn built_package_discovery_rejects_unreadable_archive_identity() {
+        let directory = tempfile::tempdir().unwrap();
+        let archive = directory.path().join("requested-1.0-1-x86_64.pkg.tar.zst");
+        std::fs::write(&archive, b"not a package archive").unwrap();
+
+        assert_eq!(
+            AurClient::find_package_in_dir(directory.path(), &["requested".to_string()]),
+            None
         );
     }
 
