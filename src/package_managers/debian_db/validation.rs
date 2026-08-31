@@ -6,6 +6,7 @@
 
 #![cfg(any(feature = "debian", feature = "debian-pure"))]
 
+use std::os::unix::fs::MetadataExt;
 use std::path::Path;
 
 use anyhow::{Context, Result};
@@ -23,9 +24,9 @@ pub fn check_disk_space(download_size: u64, installed_size: u64, temp_dir: &Path
     let available = available_bytes(download_path)?;
     // Saturating headroom math: absurd sizes degrade to "needs everything"
     // instead of wrapping into a false pass.
-    let required = download_size.saturating_add(download_size / 10);
+    let download_required = download_size.saturating_add(download_size / 10);
 
-    if available < required {
+    if available < download_required {
         anyhow::bail!(
             "Insufficient disk space in {}: {} MB available, {} MB required\n\
                 💡 Free up space with:\n\
@@ -34,13 +35,17 @@ pub fn check_disk_space(download_size: u64, installed_size: u64, temp_dir: &Path
                 - Check: df -h {}",
             download_path.display(),
             available / 1_048_576,
-            required / 1_048_576,
+            download_required / 1_048_576,
             download_path.display()
         );
     }
 
-    let available = available_bytes(Path::new("/"))?;
-    let required = installed_size.saturating_add(installed_size / 5);
+    let root_path = Path::new("/");
+    let available = available_bytes(root_path)?;
+    let install_required = installed_size.saturating_add(installed_size / 5);
+    let shares_root_filesystem =
+        std::fs::metadata(download_path)?.dev() == std::fs::metadata(root_path)?.dev();
+    let required = root_space_required(download_required, install_required, shares_root_filesystem);
 
     if available < required {
         anyhow::bail!(
@@ -55,6 +60,18 @@ pub fn check_disk_space(download_size: u64, installed_size: u64, temp_dir: &Path
     }
 
     Ok(())
+}
+
+fn root_space_required(
+    download_required: u64,
+    install_required: u64,
+    shares_root_filesystem: bool,
+) -> u64 {
+    if shares_root_filesystem {
+        download_required.saturating_add(install_required)
+    } else {
+        install_required
+    }
 }
 
 fn available_bytes(path: &Path) -> Result<u64> {
@@ -171,6 +188,13 @@ mod tests {
             err.to_string().contains("hash mismatch"),
             "tampered package must fail verification, got: {err}"
         );
+    }
+
+    #[test]
+    fn shared_filesystem_budget_includes_download_and_install_footprints() {
+        assert_eq!(root_space_required(110, 120, true), 230);
+        assert_eq!(root_space_required(110, 120, false), 120);
+        assert_eq!(root_space_required(u64::MAX, 1, true), u64::MAX);
     }
 
     #[test]
