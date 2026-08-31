@@ -1,14 +1,36 @@
 //! Wire-format tests for the Debian IPC protocol variants.
 //!
-//! `Request::DebianSearch` and `ResponseResult::DebianSearch` cross a process
-//! boundary (CLI ⇄ daemon over length-prefixed JSON, see
-//! src/daemon/protocol.rs `encode_frame`/`decode_frame`). These tests pin the
-//! exact serde representation — externally tagged enum variant names plus
-//! field names and types — so a rename or shape change on either side of the
-//! socket is caught here instead of at runtime.
+//! `Request::DebianSearch` and `ResponseResult::DebianSearch` cross the daemon
+//! socket as versioned bitcode frames. The JSON tests pin their human-readable
+//! Serde representation. The frame test exercises the actual `encode_frame`,
+//! `split_frame`, and bitcode decode path.
 
 #![expect(clippy::unwrap_used)]
-use omg_lib::daemon::protocol::{PackageInfo, Request, ResponseResult, WirePackageSource};
+use omg_lib::daemon::protocol::{
+    PackageInfo, Request, ResponseResult, WirePackageSource, encode_frame, split_frame,
+};
+
+#[test]
+fn test_debian_search_request_bitcode_frame_round_trip() {
+    let request = Request::DebianSearch {
+        id: 7,
+        query: "apt".to_string(),
+        limit: Some(25),
+    };
+
+    let frame = encode_frame(&request).unwrap();
+    let (_, payload) = split_frame(&frame).unwrap();
+    let decoded: Request = bitcode::deserialize(payload).unwrap();
+
+    match decoded {
+        Request::DebianSearch { id, query, limit } => {
+            assert_eq!(id, 7);
+            assert_eq!(query, "apt");
+            assert_eq!(limit, Some(25));
+        }
+        _ => unreachable!("Wrong bitcode variant decoded"),
+    }
+}
 
 /// The request must serialize with its externally-tagged variant name
 /// `"DebianSearch"` and round-trip every field.
