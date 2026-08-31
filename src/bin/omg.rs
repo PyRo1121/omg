@@ -154,6 +154,18 @@ fn split_elevated_invocation(args: &[String]) -> Option<(&str, &[String])> {
 /// ULTRA-FAST elevated path - when we're re-exec'd with sudo, skip ALL initialization
 /// and go straight to the transaction. This eliminates ~150ms of startup overhead.
 #[cfg(feature = "arch")]
+fn validate_fast_install_consent(packages: &[String], parent_validated: bool) -> Result<()> {
+    let includes_local_file = packages
+        .iter()
+        .any(|package| omg_lib::core::security::is_local_package_file(package));
+    anyhow::ensure!(
+        !includes_local_file || parent_validated,
+        "Local package archives require explicit consent: pass --allow-local-file after reviewing the archive source"
+    );
+    Ok(())
+}
+
+#[cfg(feature = "arch")]
 fn try_fast_elevated(
     args: &[String],
     reexec_elevated: bool,
@@ -179,8 +191,14 @@ fn try_fast_elevated(
     // Handle commands that may have packages
     match command {
         "install" if !packages.is_empty() => {
-            // Validate package names or local package files (security)
+            // Validate package names or local package files (security).
             omg_lib::core::security::validate_package_names_or_files(&packages).ok()?;
+            // The parent marker proves this is a delegated flow that already
+            // passed the CLI's --allow-local-file gate. Direct root fast-path
+            // invocations must fall through to clap to establish consent.
+            if let Err(error) = validate_fast_install_consent(&packages, parent_records) {
+                return Some(Err(error));
+            }
             // Direct transaction with minimal success output
             let result = omg_lib::package_managers::execute_transaction(
                 packages.clone(),
@@ -1334,12 +1352,25 @@ mod fast_path_tests {
     };
 
     #[cfg(feature = "arch")]
-    use super::split_elevated_invocation;
-    #[cfg(feature = "arch")]
-    use super::strip_internal_invocation_markers;
+    use super::{
+        split_elevated_invocation, strip_internal_invocation_markers, validate_fast_install_consent,
+    };
 
     fn args(list: &[&str]) -> Vec<String> {
         list.iter().map(std::string::ToString::to_string).collect()
+    }
+
+    #[cfg(feature = "arch")]
+    #[test]
+    fn elevated_local_archive_requires_parent_validated_consent() {
+        let packages = vec!["/var/cache/pkg/example-1.0-1-x86_64.pkg.tar.zst".to_string()];
+        let error = validate_fast_install_consent(&packages, false)
+            .expect_err("direct root fast path must not bypass local-file consent");
+        assert!(error.to_string().contains("--allow-local-file"));
+        validate_fast_install_consent(&packages, true)
+            .expect("validated parent flow may delegate its approved archive");
+        validate_fast_install_consent(&["ripgrep".to_string()], false)
+            .expect("repository package does not require local-file consent");
     }
 
     #[cfg(feature = "arch")]
