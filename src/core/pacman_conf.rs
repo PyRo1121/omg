@@ -26,6 +26,9 @@ pub struct PacmanConfig {
     pub no_upgrade: Vec<String>,
     pub no_extract: Vec<String>,
     pub architecture: Option<String>,
+    pub sig_level: Option<String>,
+    pub local_file_sig_level: Option<String>,
+    pub remote_file_sig_level: Option<String>,
     pub repos: Vec<RepoConfig>,
 }
 
@@ -156,6 +159,19 @@ impl PacmanConfig {
         Ok(config)
     }
 
+    fn append_signature_option(option: &mut Option<String>, value: Option<&str>) {
+        let Some(value) = value else {
+            return;
+        };
+        match option {
+            Some(existing) => {
+                existing.push(' ');
+                existing.push_str(value);
+            }
+            None => *option = Some(value.to_string()),
+        }
+    }
+
     fn parse_option(config: &mut PacmanConfig, key: &str, value: Option<&str>) {
         match key {
             "DBPath" => config.db_path = value.map(String::from),
@@ -176,6 +192,13 @@ impl PacmanConfig {
                 }
             }
             "Architecture" => config.architecture = value.map(String::from),
+            "SigLevel" => Self::append_signature_option(&mut config.sig_level, value),
+            "LocalFileSigLevel" => {
+                Self::append_signature_option(&mut config.local_file_sig_level, value);
+            }
+            "RemoteFileSigLevel" => {
+                Self::append_signature_option(&mut config.remote_file_sig_level, value);
+            }
             "HoldPkg" => {
                 if let Some(v) = value {
                     config
@@ -222,7 +245,7 @@ impl PacmanConfig {
                     repo.servers.push(v.to_string());
                 }
             }
-            "SigLevel" => repo.sig_level = value.map(String::from),
+            "SigLevel" => Self::append_signature_option(&mut repo.sig_level, value),
             "Include" => repo.include = value.map(String::from),
             _ => {}
         }
@@ -365,6 +388,31 @@ mod tests {
         assert_eq!(
             config.repos[0].servers,
             ["https://mirror.example/$repo/$arch"]
+        );
+    }
+
+    #[test]
+    fn signature_policy_directives_are_preserved_in_order() {
+        let config = PacmanConfig::parse_str(
+            "[options]\nSigLevel = Required DatabaseOptional\nSigLevel = TrustedOnly\nLocalFileSigLevel = PackageOptional\nRemoteFileSigLevel = PackageRequired\n\n[core]\nSigLevel = PackageRequired\nSigLevel = DatabaseNever\n",
+        )
+        .expect("valid signature policy");
+
+        assert_eq!(
+            config.sig_level.as_deref(),
+            Some("Required DatabaseOptional TrustedOnly")
+        );
+        assert_eq!(
+            config.local_file_sig_level.as_deref(),
+            Some("PackageOptional")
+        );
+        assert_eq!(
+            config.remote_file_sig_level.as_deref(),
+            Some("PackageRequired")
+        );
+        assert_eq!(
+            config.repos[0].sig_level.as_deref(),
+            Some("PackageRequired DatabaseNever")
         );
     }
 

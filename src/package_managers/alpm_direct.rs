@@ -3,7 +3,7 @@
 //! Queries libalpm through a cached per-thread handle instead of spawning a
 //! pacman subprocess for each query.
 
-use alpm::{Alpm, PackageReason, SigLevel};
+use alpm::{Alpm, PackageReason};
 use anyhow::{Context, Result};
 
 use std::cell::RefCell;
@@ -25,24 +25,29 @@ thread_local! {
 fn create_alpm_handle() -> Result<Alpm> {
     use crate::package_managers::alpm_ops::open_default_alpm;
     let alpm = open_default_alpm().context("Failed to initialize ALPM handle")?;
-
-    let repos = crate::core::pacman_conf::get_configured_repos()
+    let config = crate::core::pacman_conf::PacmanConfig::parse(paths::pacman_conf_path())
         .context("Failed to load repositories from pacman.conf")?;
+    let signatures = crate::package_managers::alpm_ops::configure_signature_policy(&alpm, &config)?;
 
     let mut registered = 0;
-    for db_name in &repos {
-        match alpm.register_syncdb(db_name.as_str(), SigLevel::USE_DEFAULT) {
+    for repo in &config.repos {
+        let siglevel = crate::package_managers::alpm_ops::repository_siglevel(
+            signatures.default,
+            repo.sig_level.as_deref(),
+        )?;
+        match alpm.register_syncdb(repo.name.as_str(), siglevel) {
             Ok(_) => {
                 registered += 1;
-                tracing::trace!("Registered sync database: {db_name}");
+                tracing::trace!("Registered sync database: {}", repo.name);
             }
             Err(e) => {
-                let sync_path = paths::pacman_sync_dir().join(format!("{db_name}.db"));
+                let sync_path = paths::pacman_sync_dir().join(format!("{}.db", repo.name));
                 if sync_path.exists() {
-                    tracing::warn!("Failed to register repo '{db_name}': {e}");
+                    tracing::warn!("Failed to register repo '{}': {e}", repo.name);
                 } else {
                     tracing::debug!(
-                        "Repo '{db_name}' not synced yet (missing {sync_path:?}). Run 'omg sync' first."
+                        "Repo '{}' not synced yet (missing {sync_path:?}). Run 'omg sync' first.",
+                        repo.name
                     );
                 }
             }
