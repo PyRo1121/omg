@@ -702,6 +702,7 @@ analyzer inference
 - **Ci**: Cross-platform install script and R2 release sync
 ### 🐛 Bug Fixes
 
+- Enforce safe Debian removals
 - Validate pure Debian mutations early
 - Report accurate Debian system status
 - Compile mixed package backends
