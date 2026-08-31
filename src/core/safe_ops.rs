@@ -149,8 +149,24 @@ pub fn atomic_write_file_sync<P: AsRef<Path>, C: AsRef<[u8]>>(path: P, contents:
     std::fs::create_dir_all(parent)
         .with_context(|| format!("Failed to create parent directory: {}", parent.display()))?;
 
+    let existing_permissions = match std::fs::symlink_metadata(&path) {
+        Ok(metadata) if metadata.file_type().is_file() => Some(metadata.permissions()),
+        Ok(_) => None,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => None,
+        Err(error) => {
+            return Err(error)
+                .with_context(|| format!("Failed to inspect existing file: {}", path.display()));
+        }
+    };
+
     let mut temporary = tempfile::NamedTempFile::new_in(parent)
         .with_context(|| format!("Failed to create temporary file in {}", parent.display()))?;
+    if let Some(permissions) = existing_permissions {
+        temporary
+            .as_file_mut()
+            .set_permissions(permissions)
+            .with_context(|| format!("Failed to preserve permissions for {}", path.display()))?;
+    }
     temporary
         .as_file_mut()
         .write_all(contents.as_ref())
@@ -197,6 +213,25 @@ mod tests {
         let path = "";
         let result = validate_path_syntax(path);
         assert!(result.is_err());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn atomic_write_preserves_existing_file_mode() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let directory = TempDir::new().unwrap();
+        let path = directory.path().join("shared-state.json");
+        std::fs::write(&path, b"old").unwrap();
+        std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o640)).unwrap();
+
+        atomic_write_file_sync(&path, b"new").unwrap();
+
+        assert_eq!(
+            std::fs::metadata(&path).unwrap().permissions().mode() & 0o777,
+            0o640
+        );
+        assert_eq!(std::fs::read(&path).unwrap(), b"new");
     }
 
     #[tokio::test]
