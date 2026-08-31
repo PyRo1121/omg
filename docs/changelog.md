@@ -702,6 +702,7 @@ analyzer inference
 - **Ci**: Cross-platform install script and R2 release sync
 ### 🐛 Bug Fixes
 
+- Bound Debian dependency traversal
 - Tolerate Debian dependency cycles
 - Isolate Debian dependency architectures
 - Revalidate projected Debian dependencies
