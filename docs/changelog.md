@@ -688,6 +688,7 @@ analyzer inference
 - **Ci**: Cross-platform install script and R2 release sync
 ### 🐛 Bug Fixes
 
+- Validate package info requests at entry
 - Make recursive package removal explicit
 - Honor package mutation confirmation flags
 - Order only selected Debian alternatives
