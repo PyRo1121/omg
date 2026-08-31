@@ -2,8 +2,9 @@ use anyhow::{Context, Result};
 
 use crate::cli::{style, ui};
 
-/// Arch dry run: accurate, because the ALPM transaction always sets
-/// `RECURSE | UNNEEDED`, so orphaned dependencies really are removed.
+/// Preview explicitly requested packages. Recursive dependency cleanup is
+/// disclosed separately because calculating libalpm's complete removal set
+/// requires preparing the privileged transaction.
 pub fn remove_dry_run(packages: &[String], recursive: bool) -> Result<()> {
     let package_info = packages
         .iter()
@@ -17,7 +18,7 @@ pub fn remove_dry_run(packages: &[String], recursive: bool) -> Result<()> {
     crate::cli::modern_ui::print_phase_header("🗑️", "Remove Preview", "dry run");
     println!();
     println!(
-        "  {} The following packages would be removed:\n",
+        "  {} The following requested packages would be removed:\n",
         style::info("→")
     );
 
@@ -36,14 +37,14 @@ pub fn remove_dry_run(packages: &[String], recursive: bool) -> Result<()> {
 
     if recursive {
         println!(
-            "\n  {} Orphaned dependencies would also be removed",
+            "\n  {} Additional unneeded dependencies would also be removed; their names and sizes are not included in this preview",
             style::info("→")
         );
     }
 
     ui::print_spacer();
     println!(
-        "  {} Space that would be freed: {:.2} MB",
+        "  {} Requested-package space that would be freed: {:.2} MB",
         style::info("→"),
         total_size as f64 / 1024.0 / 1024.0
     );

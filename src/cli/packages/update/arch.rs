@@ -59,8 +59,13 @@ fn configured_repo_count() -> usize {
 
 pub async fn update_fast() -> Result<()> {
     modern_ui::print_phase_header("⚡", "Fast System Update", "sync + upgrade");
-    crate::package_managers::arch::run_privileged_operation("fullupdate", &[], run_full_sysupgrade)
-        .await
+    crate::package_managers::arch::run_privileged_operation(
+        "fullupdate",
+        &[],
+        &[],
+        run_full_sysupgrade,
+    )
+    .await
 }
 
 /// Refresh package databases before a root-side fast update.
@@ -78,7 +83,11 @@ async fn run_sysupgrade() -> anyhow::Result<()> {
     let updates = crate::package_managers::get_update_list()?;
     let changes = history_changes(&updates);
     let result = tokio::task::spawn_blocking(|| {
-        crate::package_managers::execute_transaction(Vec::new(), false, true, None)
+        crate::package_managers::execute_transaction(
+            Vec::new(),
+            crate::package_managers::TransactionKind::SystemUpgrade,
+            None,
+        )
     })
     .await
     .context("System upgrade task failed")?;
@@ -115,7 +124,7 @@ pub async fn update_turbo() -> Result<()> {
     );
     println!();
 
-    crate::package_managers::arch::run_privileged_operation("turboupdate", &[], run_sysupgrade)
+    crate::package_managers::arch::run_privileged_operation("turboupdate", &[], &[], run_sysupgrade)
         .await
 }
 
@@ -327,6 +336,7 @@ pub async fn update(check_only: bool, yes: bool, dry_run: bool) -> Result<()> {
                 );
                 crate::package_managers::arch::run_privileged_operation(
                     "fullupdate",
+                    &[],
                     &[],
                     || async { Ok(()) },
                 )

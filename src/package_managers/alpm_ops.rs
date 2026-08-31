@@ -358,21 +358,25 @@ impl Drop for AlpmTransaction<'_> {
     }
 }
 
-/// Execute a libalpm transaction (install/remove/sysupgrade).
+/// Requested ALPM transaction behavior.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum TransactionKind {
+    Install,
+    Remove { remove_unneeded: bool },
+    SystemUpgrade,
+}
+
+/// Execute a libalpm transaction.
 ///
 /// The `handle` parameter exists for callers that already own a configured
 /// ALPM handle (e.g. an elevated fast path); every current caller passes
 /// [`None`], which creates and configures a fresh handle. NOTE(wave2): the
 /// `Some(handle)` branch skips repository registration that the `None`
 /// branch performs — if you ever pass a handle, it must already have sync
-/// databases registered. Collapsing the `Option` and the boolean flags into
-/// a `TransactionKind` enum is deferred to the orchestrator because the
-/// signature is consumed by out-of-scope callers (`src/bin/omg.rs`,
-/// `src/package_managers/aur/client.rs`).
+/// databases registered.
 pub fn execute_transaction(
     packages: Vec<String>,
-    remove: bool,
-    sysupgrade: bool,
+    kind: TransactionKind,
     handle: Option<&mut alpm::Alpm>,
 ) -> Result<()> {
     let pacman_config = crate::core::pacman_conf::PacmanConfig::parse(paths::pacman_conf_path())
@@ -383,8 +387,7 @@ pub fn execute_transaction(
         configure_mirrors(alpm)?;
         let mp = indicatif::MultiProgress::new();
         let main_pb = setup_alpm_callbacks(alpm, &mp);
-        let tx_guard =
-            prepare_alpm_transaction(alpm, packages, remove, sysupgrade, &pacman_config)?;
+        let tx_guard = prepare_alpm_transaction(alpm, packages, kind, &pacman_config)?;
         commit_alpm_transaction(tx_guard.0, &main_pb)?;
         return Ok(());
     }
@@ -414,8 +417,7 @@ pub fn execute_transaction(
 
     let mp = indicatif::MultiProgress::new();
     let main_pb = setup_alpm_callbacks(&alpm, &mp);
-    let tx_guard =
-        prepare_alpm_transaction(&mut alpm, packages, remove, sysupgrade, &pacman_config)?;
+    let tx_guard = prepare_alpm_transaction(&mut alpm, packages, kind, &pacman_config)?;
     commit_alpm_transaction(tx_guard.0, &main_pb)?;
 
     Ok(())
@@ -548,42 +550,48 @@ fn setup_alpm_callbacks(
     main_pb
 }
 
+fn transaction_flags(kind: TransactionKind) -> alpm::TransFlag {
+    let mut flags = alpm::TransFlag::NEEDED;
+    if matches!(
+        kind,
+        TransactionKind::Remove {
+            remove_unneeded: true
+        }
+    ) {
+        flags |= alpm::TransFlag::RECURSE | alpm::TransFlag::UNNEEDED;
+    }
+    flags
+}
+
 /// Prepare an ALPM transaction for execution
 fn prepare_alpm_transaction<'a>(
     alpm: &'a mut alpm::Alpm,
     packages: Vec<String>,
-    remove: bool,
-    sysupgrade: bool,
+    kind: TransactionKind,
     pacman_config: &crate::core::pacman_conf::PacmanConfig,
 ) -> Result<AlpmTransaction<'a>> {
-    use alpm::TransFlag;
-
-    let mut flags = TransFlag::NEEDED;
-    if remove {
-        flags |= TransFlag::RECURSE | TransFlag::UNNEEDED;
-    }
-
-    alpm.trans_init(flags).map_err(|e| match e {
-        alpm::Error::HandleLock => {
-            anyhow::anyhow!(
-                "✗ Database is locked by another process.\n  \
+    alpm.trans_init(transaction_flags(kind))
+        .map_err(|e| match e {
+            alpm::Error::HandleLock => {
+                anyhow::anyhow!(
+                    "✗ Database is locked by another process.\n  \
                  → Check if pacman, yay, or another package manager is running.\n  \
                  → If no other process is running, remove: /var/lib/pacman/db.lck"
-            )
-        }
-        _ => anyhow::anyhow!("Failed to initialize transaction: {e}"),
-    })?;
+                )
+            }
+            _ => anyhow::anyhow!("Failed to initialize transaction: {e}"),
+        })?;
 
     let tx_guard = AlpmTransaction(alpm);
 
-    if sysupgrade {
+    if kind == TransactionKind::SystemUpgrade {
         tx_guard
             .0
             .sync_sysupgrade(false)
             .context("Failed to setup sysupgrade")?;
     } else {
         for pkg_name in packages {
-            if remove {
+            if matches!(kind, TransactionKind::Remove { .. }) {
                 if pacman_config.hold_pkg.iter().any(|held| held == &pkg_name) {
                     anyhow::bail!(
                         "Package '{pkg_name}' is protected by HoldPkg in pacman.conf and cannot be removed"
@@ -927,9 +935,24 @@ fn configure_mirrors(alpm: &mut alpm::Alpm) -> Result<()> {
 #[cfg(test)]
 mod tests {
     use super::{
-        DOWNLOAD_BAR_TEMPLATE, DOWNLOAD_SPINNER_TEMPLATE, format_no_syncdb_error,
-        format_trans_prepare_error, is_keyring_related_error, package_base_name,
+        DOWNLOAD_BAR_TEMPLATE, DOWNLOAD_SPINNER_TEMPLATE, TransactionKind, format_no_syncdb_error,
+        format_trans_prepare_error, is_keyring_related_error, package_base_name, transaction_flags,
     };
+
+    #[test]
+    fn recursive_removal_flags_are_opt_in() {
+        let explicit = transaction_flags(TransactionKind::Remove {
+            remove_unneeded: false,
+        });
+        assert!(!explicit.contains(alpm::TransFlag::RECURSE));
+        assert!(!explicit.contains(alpm::TransFlag::UNNEEDED));
+
+        let recursive = transaction_flags(TransactionKind::Remove {
+            remove_unneeded: true,
+        });
+        assert!(recursive.contains(alpm::TransFlag::RECURSE));
+        assert!(recursive.contains(alpm::TransFlag::UNNEEDED));
+    }
 
     #[test]
     fn download_templates_use_live_indicatif_placeholders() {

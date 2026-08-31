@@ -24,7 +24,7 @@ use alpm_harness::{AlpmHarness, HarnessPkg};
 use common::serial;
 use omg_lib::package_managers::alpm_direct::clear_alpm_cache;
 use omg_lib::package_managers::alpm_ops::{
-    execute_transaction, get_update_list, open_default_alpm,
+    TransactionKind, execute_transaction, get_update_list, open_default_alpm,
 };
 use tempfile::{TempDir, tempdir};
 
@@ -287,8 +287,9 @@ fn execute_transaction_bails_when_pacman_conf_has_no_repositories() -> anyhow::R
     let fake = FakePacman::new(&pacman_conf(&[], &[]))?;
 
     fake.run(|| {
-        let error = execute_transaction(vec!["anything".to_string()], false, false, None)
-            .expect_err("transaction must fail when pacman.conf declares no repositories");
+        let error =
+            execute_transaction(vec!["anything".to_string()], TransactionKind::Install, None)
+                .expect_err("transaction must fail when pacman.conf declares no repositories");
         let rendered = error.to_string();
         assert!(
             rendered.contains("pacman configuration contains no repositories"),
@@ -312,8 +313,14 @@ fn execute_transaction_refuses_to_remove_holdpkg_protected_package() -> anyhow::
         .add_sync_pkg("core", &HarnessPkg::new("bash", "5.2-1"))?;
 
     fake.run(|| {
-        let error = execute_transaction(vec!["glibc".to_string()], true, false, None)
-            .expect_err("removing a HoldPkg-protected package must fail");
+        let error = execute_transaction(
+            vec!["glibc".to_string()],
+            TransactionKind::Remove {
+                remove_unneeded: false,
+            },
+            None,
+        )
+        .expect_err("removing a HoldPkg-protected package must fail");
         let rendered = error.to_string();
         assert!(
             rendered.contains("Package 'glibc' is protected by HoldPkg"),
@@ -342,8 +349,7 @@ fn execute_transaction_names_missing_package_with_recovery_steps() -> anyhow::Re
     fake.run(|| {
         let error = execute_transaction(
             vec!["cov6-definitely-missing-pkg".to_string()],
-            false,
-            false,
+            TransactionKind::Install,
             None,
         )
         .expect_err("installing an unknown package must fail");
@@ -380,7 +386,7 @@ fn execute_transaction_sysupgrade_on_current_system_succeeds_without_touching_an
         .add_sync_pkg("core", &HarnessPkg::new("uptodate", "2.0-1"))?;
 
     fake.run(|| {
-        execute_transaction(Vec::new(), false, true, None)
+        execute_transaction(Vec::new(), TransactionKind::SystemUpgrade, None)
             .expect("sysupgrade with no pending updates must report success (nothing to do)");
     });
     Ok(())
@@ -410,7 +416,7 @@ fn execute_transaction_sysupgrade_with_pending_update_fails_at_commit_without_se
     )?;
 
     fake.run(|| {
-        let error = execute_transaction(Vec::new(), false, true, None)
+        let error = execute_transaction(Vec::new(), TransactionKind::SystemUpgrade, None)
             .expect_err("committing an upgrade with no reachable server must fail");
         let rendered = error.to_string();
         // Either phase may fail first depending on keyring state: preparation

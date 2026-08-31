@@ -18,11 +18,7 @@ mod generic;
 ///
 /// # Arguments
 /// * `packages` - Package names to remove (each is validated)
-/// * `recursive` - *Advisory only.* The Arch backend always cleans unneeded
-///   dependencies (libalpm `RECURSE | UNNEEDED`), while the Debian and
-///   generic backends never do. The flag is kept for CLI symmetry until
-///   per-backend recursion policy is decided; the dry runs state the truth
-///   for their backend.
+/// * `recursive` - Also remove unneeded dependencies on backends that support it
 /// * `yes` - Skip the package-removal confirmation
 /// * `dry_run` - Preview what would be removed without touching the system
 pub async fn remove(packages: &[String], recursive: bool, yes: bool, dry_run: bool) -> Result<()> {
@@ -36,6 +32,8 @@ pub async fn remove(packages: &[String], recursive: bool, yes: bool, dry_run: bo
         }
     }
 
+    validate_removal_mode(recursive)?;
+
     if dry_run {
         return remove_dry_run(packages, recursive);
     }
@@ -45,7 +43,43 @@ pub async fn remove(packages: &[String], recursive: bool, yes: bool, dry_run: bo
         return Ok(());
     }
 
-    super::common::remove_via_service(packages).await
+    remove_packages(packages, recursive).await
+}
+
+// The Arch-only build cannot fail this check, while Debian/generic builds
+// reject unsupported recursion. Keep one cross-feature contract at the call site.
+#[cfg_attr(feature = "arch", allow(clippy::unnecessary_wraps))]
+fn validate_removal_mode(recursive: bool) -> Result<()> {
+    dispatch_backend! {
+        debian: {
+            anyhow::ensure!(!recursive, "Recursive removal is not supported by the Debian backend");
+            Ok(())
+        },
+        arch: { let _ = recursive; Ok(()) },
+        generic: {
+            anyhow::ensure!(!recursive, "Recursive removal is not supported by this package backend");
+            Ok(())
+        },
+    }
+}
+
+async fn remove_packages(packages: &[String], recursive: bool) -> Result<()> {
+    dispatch_backend! {
+        debian: {
+            let _ = recursive;
+            super::common::remove_via_service(packages).await
+        },
+        arch: {
+            let manager = std::sync::Arc::new(
+                crate::package_managers::ArchPackageManager::with_recursive_removal(recursive),
+            );
+            super::common::remove_with_manager(packages, manager).await
+        },
+        generic: {
+            let _ = recursive;
+            super::common::remove_via_service(packages).await
+        },
+    }
 }
 
 #[allow(
@@ -64,5 +98,29 @@ fn remove_dry_run(packages: &[String], recursive: bool) -> Result<()> {
         debian: { debian::remove_dry_run(packages); Ok(()) },
         arch: { arch::remove_dry_run(packages, recursive) },
         generic: { generic::remove_dry_run(packages) },
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::validate_removal_mode;
+
+    #[cfg(feature = "arch")]
+    #[test]
+    fn arch_accepts_explicit_and_recursive_removal_modes() {
+        validate_removal_mode(false).unwrap();
+        validate_removal_mode(true).unwrap();
+    }
+
+    #[cfg(not(feature = "arch"))]
+    #[test]
+    fn unsupported_backends_reject_recursive_removal() {
+        validate_removal_mode(false).unwrap();
+        let error = validate_removal_mode(true).unwrap_err();
+        assert!(
+            error
+                .to_string()
+                .contains("Recursive removal is not supported")
+        );
     }
 }

@@ -333,8 +333,8 @@ pub fn get_system_status() -> anyhow::Result<(usize, usize, usize, usize)> {
 pub use alpm_direct::clear_alpm_cache;
 #[cfg(feature = "arch")]
 pub use alpm_ops::{
-    clean_cache, display_pkg_info, execute_transaction, get_sync_pkg_info, get_update_list,
-    list_orphans_direct,
+    TransactionKind, clean_cache, display_pkg_info, execute_transaction, get_sync_pkg_info,
+    get_update_list, list_orphans_direct,
 };
 #[cfg(feature = "arch")]
 pub use arch::{ArchPackageManager, is_installed, list_explicit, list_orphans, remove_orphans};

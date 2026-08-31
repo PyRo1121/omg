@@ -2802,7 +2802,11 @@ impl AurClient {
                 .map(|path| path.to_string_lossy().into_owned())
                 .collect();
             tokio::task::spawn_blocking(move || {
-                crate::package_managers::execute_transaction(packages, false, false, None)
+                crate::package_managers::execute_transaction(
+                    packages,
+                    crate::package_managers::TransactionKind::Install,
+                    None,
+                )
             })
             .await
             .context("Direct ALPM install worker failed")??;

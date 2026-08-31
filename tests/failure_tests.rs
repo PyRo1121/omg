@@ -8,7 +8,7 @@
 pub mod alpm_harness;
 use alpm_harness::{AlpmHarness, HarnessPkg};
 use anyhow::Result;
-use omg_lib::package_managers::alpm_ops;
+use omg_lib::package_managers::alpm_ops::{self, TransactionKind};
 use serial_test::serial;
 
 use omg_lib::core::paths;
@@ -46,8 +46,7 @@ fn test_conflicting_packages_fails_gracefully() -> Result<()> {
     // Execute transaction using the injected handle
     let result = alpm_ops::execute_transaction(
         vec!["pkg-a".to_string(), "pkg-b".to_string()],
-        false,
-        false,
+        TransactionKind::Install,
         Some(&mut alpm),
     );
 
@@ -105,7 +104,8 @@ fn test_unwritable_database_dir_fails_gracefully() -> Result<()> {
     // friendly locked-database mapping from prepare_alpm_transaction
     // (src/package_managers/alpm_ops.rs:472-481), never panic and never
     // report a missing package instead of the database problem.
-    let result = alpm_ops::execute_transaction(vec!["pkg-a".to_string()], false, false, None);
+    let result =
+        alpm_ops::execute_transaction(vec!["pkg-a".to_string()], TransactionKind::Install, None);
 
     assert!(
         result.is_err(),
@@ -143,8 +143,11 @@ fn test_missing_dependency_fails_gracefully() -> Result<()> {
     let mut alpm = harness.alpm()?;
     alpm.register_syncdb("core", alpm::SigLevel::NONE)?;
 
-    let result =
-        alpm_ops::execute_transaction(vec!["pkg-a".to_string()], false, false, Some(&mut alpm));
+    let result = alpm_ops::execute_transaction(
+        vec!["pkg-a".to_string()],
+        TransactionKind::Install,
+        Some(&mut alpm),
+    );
 
     assert!(
         result.is_err(),
@@ -184,8 +187,7 @@ fn test_locked_database_shows_friendly_message() -> Result<()> {
     // when the handle is NOT provided (production path).
     let result = alpm_ops::execute_transaction(
         vec!["any-pkg".to_string()],
-        false,
-        false,
+        TransactionKind::Install,
         None, // No injected handle, force creation of new one
     );
 

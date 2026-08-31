@@ -91,7 +91,11 @@ fn execute_fast_system_update(suffix: &str) -> Result<()> {
         })
         .collect();
 
-    let result = omg_lib::package_managers::execute_transaction(Vec::new(), false, true, None);
+    let result = omg_lib::package_managers::execute_transaction(
+        Vec::new(),
+        omg_lib::package_managers::TransactionKind::SystemUpgrade,
+        None,
+    );
 
     // Record regardless of outcome (failures are part of history) with the
     // TRUE transaction result — a failed upgrade must not be recorded as a
@@ -180,8 +184,7 @@ fn try_fast_elevated(
             // Direct transaction with minimal success output
             let result = omg_lib::package_managers::execute_transaction(
                 packages.clone(),
-                false,
-                false,
+                omg_lib::package_managers::TransactionKind::Install,
                 None,
             );
             let result = if parent_records {
@@ -201,8 +204,13 @@ fn try_fast_elevated(
         "remove" if !packages.is_empty() => {
             // Validate package names (security)
             omg_lib::core::security::validate_package_names(&packages).ok()?;
-            let result =
-                omg_lib::package_managers::execute_transaction(packages.clone(), true, false, None);
+            let result = omg_lib::package_managers::execute_transaction(
+                packages.clone(),
+                omg_lib::package_managers::TransactionKind::Remove {
+                    remove_unneeded: false,
+                },
+                None,
+            );
             let result = if parent_records {
                 result
             } else {

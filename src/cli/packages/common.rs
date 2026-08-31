@@ -287,11 +287,19 @@ pub(crate) async fn confirm_package_mutation(
 
 /// Removal orchestration shared by every compiled backend: usage tracking
 /// and success reporting around `PackageService::remove`.
+#[cfg(not(feature = "arch"))]
 pub(crate) async fn remove_via_service(packages: &[String]) -> Result<()> {
+    let manager = crate::package_managers::get_package_manager()?;
+    remove_with_manager(packages, manager).await
+}
+
+pub(crate) async fn remove_with_manager(
+    packages: &[String],
+    manager: std::sync::Arc<dyn crate::package_managers::PackageManager>,
+) -> Result<()> {
     use crate::core::packages::PackageService;
 
-    let pm = crate::package_managers::get_package_manager()?;
-    let service = PackageService::new(pm)?;
+    let service = PackageService::new(manager)?;
 
     crate::cli::modern_ui::print_phase_header(
         "🗑️",

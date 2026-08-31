@@ -87,6 +87,7 @@ pub async fn install(
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum MutationConfirmation {
     Required,
+    #[cfg(feature = "arch")]
     AlreadyConfirmed,
 }
 

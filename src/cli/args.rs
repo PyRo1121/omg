@@ -80,7 +80,7 @@ pub enum Commands {
         /// Package names to remove
         #[arg(required = true)]
         packages: Vec<String>,
-        /// Also remove unused dependencies
+        /// Also remove unused dependencies (Arch backend only)
         #[arg(short, long)]
         recursive: bool,
         /// Skip confirmation

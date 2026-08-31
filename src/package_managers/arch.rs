@@ -5,21 +5,21 @@ use anyhow::Result as AnyhowResult;
 use owo_colors::OwoColorize;
 
 use crate::core::{Package, PackageSource, can_write_pacman_db, privilege};
-use crate::package_managers::{get_system_status, invalidate_caches, traits::PackageManager};
+use crate::package_managers::{
+    TransactionKind, get_system_status, invalidate_caches, traits::PackageManager,
+};
 
 /// Arch Linux package manager (ALPM) implementation
-pub struct ArchPackageManager;
+pub struct ArchPackageManager {
+    remove_unneeded: bool,
+}
 
 /// Run an ALPM transaction on a blocking thread.
 /// Shared by install/remove/update and orphan removal; every caller passes
 /// `None` for the ALPM handle (see `execute_transaction`).
-async fn run_alpm_transaction(
-    packages: Vec<String>,
-    remove: bool,
-    sysupgrade: bool,
-) -> AnyhowResult<()> {
+async fn run_alpm_transaction(packages: Vec<String>, kind: TransactionKind) -> AnyhowResult<()> {
     tokio::task::spawn_blocking(move || {
-        crate::package_managers::execute_transaction(packages, remove, sysupgrade, None)
+        crate::package_managers::execute_transaction(packages, kind, None)
     })
     .await??;
     Ok(())
@@ -28,7 +28,14 @@ async fn run_alpm_transaction(
 impl ArchPackageManager {
     #[must_use]
     pub const fn new() -> Self {
-        Self
+        Self {
+            remove_unneeded: false,
+        }
+    }
+
+    #[must_use]
+    pub const fn with_recursive_removal(remove_unneeded: bool) -> Self {
+        Self { remove_unneeded }
     }
 }
 
@@ -45,6 +52,7 @@ impl Default for ArchPackageManager {
 pub async fn run_privileged_operation<F, Fut>(
     command: &str,
     packages: &[String],
+    command_options: &[&str],
     operation: F,
 ) -> AnyhowResult<()>
 where
@@ -60,7 +68,9 @@ where
 
     // FALLBACK: Elevate via sudo (uses ultra-fast elevated path)
     tracing::debug!("Elevating privileges for {command}");
-    let mut args = vec![command, "--"];
+    let mut args = vec![command];
+    args.extend_from_slice(command_options);
+    args.push("--");
     args.extend(packages.iter().map(String::as_str));
     // For package-mutating delegations the PARENT owns the history record (it
     // has richer change metadata and AUR handling); the child must stay silent
@@ -116,9 +126,9 @@ impl PackageManager for ArchPackageManager {
             }
             crate::core::security::validate_package_names_or_files(&packages)?;
 
-            run_privileged_operation("install", &packages, || {
+            run_privileged_operation("install", &packages, &[], || {
                 let pkgs = packages.clone();
-                async move { run_alpm_transaction(pkgs, false, false).await }
+                async move { run_alpm_transaction(pkgs, TransactionKind::Install).await }
             })
             .await
         })
@@ -135,9 +145,20 @@ impl PackageManager for ArchPackageManager {
             }
             crate::core::security::validate_package_names(&packages)?;
 
-            run_privileged_operation("remove", &packages, || {
+            let remove_unneeded = self.remove_unneeded;
+            let command_options = if remove_unneeded {
+                // The parent already confirmed this exact mutation. `--yes`
+                // prevents the privileged full-CLI fallback from prompting a
+                // second time after `--recursive` bypasses the minimal path.
+                &["--recursive", "--yes"][..]
+            } else {
+                &[][..]
+            };
+            run_privileged_operation("remove", &packages, command_options, || {
                 let pkgs = packages.clone();
-                async move { run_alpm_transaction(pkgs, true, false).await }
+                async move {
+                    run_alpm_transaction(pkgs, TransactionKind::Remove { remove_unneeded }).await
+                }
             })
             .await
         })
@@ -145,9 +166,9 @@ impl PackageManager for ArchPackageManager {
 
     fn update(&self) -> Pin<Box<dyn Future<Output = AnyhowResult<()>> + Send + '_>> {
         Box::pin(async move {
-            run_privileged_operation("update", &[], || async {
+            run_privileged_operation("update", &[], &[], || async {
                 tracing::info!("{} Starting full system upgrade...", "OMG".cyan().bold());
-                run_alpm_transaction(Vec::new(), false, true).await
+                run_alpm_transaction(Vec::new(), TransactionKind::SystemUpgrade).await
             })
             .await
         })
@@ -155,7 +176,7 @@ impl PackageManager for ArchPackageManager {
 
     fn sync(&self) -> Pin<Box<dyn Future<Output = AnyhowResult<()>> + Send + '_>> {
         Box::pin(async move {
-            run_privileged_operation("sync", &[], || async {
+            run_privileged_operation("sync", &[], &[], || async {
                 crate::package_managers::sync_databases_parallel().await?;
                 Ok(())
             })
@@ -292,9 +313,17 @@ pub async fn remove_orphans() -> AnyhowResult<()> {
 
     // Reuse the standard privileged-operation path so non-root users get the
     // same sudo elevation as install/remove instead of a raw ALPM failure.
-    run_privileged_operation("remove", &orphans, || {
+    run_privileged_operation("remove", &orphans, &[], || {
         let pkgs = orphans.clone();
-        async move { run_alpm_transaction(pkgs, true, false).await }
+        async move {
+            run_alpm_transaction(
+                pkgs,
+                TransactionKind::Remove {
+                    remove_unneeded: false,
+                },
+            )
+            .await
+        }
     })
     .await
 }
