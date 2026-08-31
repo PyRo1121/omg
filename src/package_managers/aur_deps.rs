@@ -32,49 +32,7 @@ pub fn check_dependencies(pkg_dir: &Path) -> Result<DependencyInfo> {
 
     let srcinfo = SourceInfoV1::from_string(&content).context("Failed to parse .SRCINFO")?;
 
-    let base = &srcinfo.base;
-    let estimated_deps =
-        base.dependencies.len() + base.make_dependencies.len() + base.check_dependencies.len();
-    let mut all_deps = Vec::with_capacity(estimated_deps + 16);
-
-    // Collect runtime dependencies from base
-    for dep in &base.dependencies {
-        all_deps.push(dep.to_string());
-    }
-
-    // Collect make dependencies from base
-    for dep in &base.make_dependencies {
-        all_deps.push(dep.name.to_string());
-    }
-
-    // Collect check dependencies from base
-    for dep in &base.check_dependencies {
-        all_deps.push(dep.name.to_string());
-    }
-
-    // Also collect architecture-specific dependencies if available
-    if let Some(arch) = super::aur::utils::current_arch()
-        && let Some(arch_props) = base.architecture_properties.get(&arch)
-    {
-        for dep in &arch_props.dependencies {
-            all_deps.push(dep.to_string());
-        }
-        for dep in &arch_props.make_dependencies {
-            all_deps.push(dep.name.to_string());
-        }
-        for dep in &arch_props.check_dependencies {
-            all_deps.push(dep.name.to_string());
-        }
-    }
-
-    // Note: Split packages have Override<Vec> for dependencies which may override
-    // or clear base dependencies. For simplicity, we rely on base dependencies
-    // which covers the common case. makepkg will handle any edge cases.
-
-    // Remove duplicates
-    all_deps.sort();
-    all_deps.dedup();
-
+    let all_deps = dependency_expressions(&srcinfo);
     let dependency_count = all_deps.len();
 
     // Ask libalpm to evaluate the complete dependency expression. A package
@@ -93,4 +51,62 @@ pub fn check_dependencies(pkg_dir: &Path) -> Result<DependencyInfo> {
         missing,
         total: dependency_count,
     })
+}
+
+fn dependency_expressions(srcinfo: &SourceInfoV1) -> Vec<String> {
+    let base = &srcinfo.base;
+    let estimated_deps =
+        base.dependencies.len() + base.make_dependencies.len() + base.check_dependencies.len();
+    let mut dependencies = Vec::with_capacity(estimated_deps + 16);
+
+    dependencies.extend(base.dependencies.iter().map(ToString::to_string));
+    dependencies.extend(base.make_dependencies.iter().map(ToString::to_string));
+    dependencies.extend(base.check_dependencies.iter().map(ToString::to_string));
+
+    if let Some(arch) = super::aur::utils::current_arch()
+        && let Some(arch_props) = base.architecture_properties.get(&arch)
+    {
+        dependencies.extend(arch_props.dependencies.iter().map(ToString::to_string));
+        dependencies.extend(arch_props.make_dependencies.iter().map(ToString::to_string));
+        dependencies.extend(
+            arch_props
+                .check_dependencies
+                .iter()
+                .map(ToString::to_string),
+        );
+    }
+
+    // Split packages have Override<Vec> dependencies which may replace or
+    // clear base dependencies. makepkg remains the final authority for those
+    // package-specific overrides.
+    dependencies.sort();
+    dependencies.dedup();
+    dependencies
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{SourceInfoV1, dependency_expressions};
+
+    #[test]
+    fn preserves_version_constraints_for_all_dependency_kinds() {
+        let srcinfo = SourceInfoV1::from_string(
+            "pkgbase = example\n\
+             \tpkgdesc = dependency constraint fixture\n\
+             \tpkgver = 1.0.0\n\
+             \tpkgrel = 1\n\
+             \tarch = any\n\
+             \tdepends = runtime>=1.2\n\
+             \tmakedepends = compiler=3.4\n\
+             \tcheckdepends = test-runner<5\n\
+             \n\
+             pkgname = example\n",
+        )
+        .expect("valid .SRCINFO fixture");
+
+        assert_eq!(
+            dependency_expressions(&srcinfo),
+            ["compiler=3.4", "runtime>=1.2", "test-runner<5"]
+        );
+    }
 }
