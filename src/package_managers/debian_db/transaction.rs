@@ -1460,6 +1460,10 @@ fn extract_tar_stream_to_root_at(root: &Path, reader: &mut dyn Read) -> Result<V
                         format!("Failed to create directory {}", entry_path.display())
                     });
                 }
+                let mode = entry.header().mode()?;
+                fs::set_permissions(&entry_path, fs::Permissions::from_mode(mode)).with_context(
+                    || format!("Failed to apply directory mode to {}", entry_path.display()),
+                )?;
                 installed_files.push(entry_path);
                 continue;
             }
@@ -2397,6 +2401,30 @@ mod tests {
         let escaped = temp.path().parent().expect("tempdir parent").join("pwned");
         assert!(!escaped.exists(), "nothing may land outside the root");
         assert!(!temp.path().join("lib").exists());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn archive_directory_modes_are_applied() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let data = build_tar(|builder| {
+            let mut header = tar::Header::new_gnu();
+            header.set_entry_type(tar::EntryType::Directory);
+            header.set_size(0);
+            header.set_mode(0o750);
+            header.set_cksum();
+            builder.append_data(&mut header, "./private", std::io::empty())
+        });
+
+        extract_tar_to_root_at(temp.path(), &data).expect("directory extraction");
+
+        use std::os::unix::fs::PermissionsExt;
+        let mode = fs::metadata(temp.path().join("private"))
+            .expect("directory metadata")
+            .permissions()
+            .mode()
+            & 0o777;
+        assert_eq!(mode, 0o750);
     }
 
     #[cfg(unix)]
