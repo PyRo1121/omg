@@ -777,6 +777,14 @@ fn local_package_siglevel(kind: TransactionKind, configured: alpm::SigLevel) -> 
     }
 }
 
+fn validate_transaction_targets(kind: TransactionKind, packages: &[String]) -> Result<()> {
+    anyhow::ensure!(
+        kind != TransactionKind::SystemUpgrade || packages.is_empty(),
+        "System upgrade transactions do not accept explicit package targets"
+    );
+    Ok(())
+}
+
 fn transaction_flags(kind: TransactionKind) -> alpm::TransFlag {
     let mut flags = alpm::TransFlag::NEEDED;
     if matches!(kind, TransactionKind::Remove { recursive: true }) {
@@ -795,6 +803,7 @@ fn prepare_alpm_transaction<'a>(
     kind: TransactionKind,
     pacman_config: &crate::core::pacman_conf::PacmanConfig,
 ) -> Result<AlpmTransaction<'a>> {
+    validate_transaction_targets(kind, &packages)?;
     alpm.trans_init(transaction_flags(kind))
         .map_err(|e| match e {
             alpm::Error::HandleLock => {
@@ -1202,7 +1211,7 @@ mod tests {
         classify_alpm_log_level, configure_signature_policy, ensure_mirror_servers,
         ensure_removals_not_held, format_trans_prepare_error, is_keyring_related_error,
         local_package_siglevel, package_base_name, register_configured_syncdbs,
-        repository_siglevel, signature_policy, transaction_flags,
+        repository_siglevel, signature_policy, transaction_flags, validate_transaction_targets,
     };
 
     #[test]
@@ -1336,6 +1345,20 @@ mod tests {
         let error = ensure_removals_not_held(["anything"], &["[".to_string()])
             .expect_err("invalid HoldPkg patterns must not be ignored");
         assert!(error.to_string().contains("Invalid HoldPkg pattern"));
+    }
+
+    #[test]
+    fn system_upgrade_rejects_targets_instead_of_discarding_them() {
+        validate_transaction_targets(TransactionKind::SystemUpgrade, &[])
+            .expect("targetless system upgrade");
+        let error = validate_transaction_targets(
+            TransactionKind::SystemUpgrade,
+            &["explicit-target".to_string()],
+        )
+        .expect_err("explicit target must not be silently discarded");
+        assert!(error.to_string().contains("explicit package targets"));
+        validate_transaction_targets(TransactionKind::Install, &["package".to_string()])
+            .expect("install accepts targets");
     }
 
     #[test]
