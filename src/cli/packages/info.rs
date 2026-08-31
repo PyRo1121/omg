@@ -16,7 +16,7 @@ use crate::package_managers::VersionDisplay;
 use crate::package_managers::get_package_manager;
 
 #[cfg(feature = "arch")]
-use crate::package_managers::{AurClient, search_detailed};
+use crate::package_managers::search_detailed;
 
 const DAEMON_INFO_TIMEOUT: Duration = Duration::from_secs(3);
 #[cfg(feature = "arch")]
@@ -106,61 +106,6 @@ pub fn info_sync(package: &str) -> Result<bool> {
     }
 
     Ok(false)
-}
-
-/// Show AUR package information (Async fallback) - Arch only
-#[cfg(feature = "arch")]
-pub async fn info_aur(package: &str) -> Result<()> {
-    let aur = AurClient::new()?;
-    let Some(info) = aur.info(package).await? else {
-        anyhow::bail!("Package '{package}' not found. Try: omg search {package}");
-    };
-
-    ui::print_header("OMG", "AUR Package Information");
-    ui::print_spacer();
-
-    ui::print_kv("Name", &style::package(&info.name));
-    ui::print_kv("Version", &style::version(&info.version.to_string()));
-    ui::print_kv(
-        "Description",
-        &style::sanitize_terminal_text(&info.description),
-    );
-
-    // Query detailed info for better UX
-    if let Ok(detailed) = search_detailed(package).await
-        && let Some(d) = detailed.into_iter().find(|p| p.name == info.name)
-    {
-        ui::print_kv(
-            "URL",
-            &style::url(&style::sanitize_terminal_text(
-                d.url.as_deref().unwrap_or_default(),
-            )),
-        );
-        ui::print_kv("Popularity", &format!("{:.2}", d.popularity));
-        if let Some(license) = d.license
-            && !license.is_empty()
-        {
-            ui::print_kv("License", &license.join(", "));
-        }
-    }
-
-    ui::print_spacer();
-    ui::print_warning("Source: Arch User Repository (AUR)");
-    ui::print_spacer();
-    Ok(())
-}
-
-/// AUR information stub for builds without the Arch backend.
-///
-/// The async signature is preserved so callers compile uniformly across
-/// feature combinations, but no AUR lookup can be performed here.
-#[cfg(not(feature = "arch"))]
-#[allow(
-    clippy::unused_async,
-    reason = "the non-Arch implementation preserves the asynchronous command interface"
-)]
-pub async fn info_aur(package: &str) -> Result<()> {
-    anyhow::bail!("AUR information requires an Arch-enabled build; '{package}' was not resolved");
 }
 
 /// Helper to display detailed info from daemon
