@@ -702,6 +702,7 @@ analyzer inference
 - **Ci**: Cross-platform install script and R2 release sync
 ### 🐛 Bug Fixes
 
+- Durably persist dpkg control files
 - Resolve Debian best package candidates
 - Validate cached AUR package names
 - Expire stale AUR binary indexes
