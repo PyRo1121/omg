@@ -325,15 +325,17 @@ impl RustManager {
 }
 
 impl RustManager {
-    pub fn parse_toolchain_file(path: &Path) -> Result<RustToolchainRequest> {
+    pub(crate) fn parse_toolchain_content(
+        path: &Path,
+        content: &str,
+    ) -> Result<RustToolchainRequest> {
         let is_toml = path
             .file_name()
             .and_then(|name| name.to_str())
             .is_some_and(|name| name == "rust-toolchain.toml");
 
         if is_toml {
-            let content = fs::read_to_string(path)?;
-            let parsed: RustToolchainFile = toml::from_str(&content)?;
+            let parsed: RustToolchainFile = toml::from_str(content)?;
             return Ok(RustToolchainRequest {
                 channel: parsed.toolchain.channel,
                 profile: parsed.toolchain.profile,
@@ -342,11 +344,15 @@ impl RustManager {
             });
         }
 
-        let channel = fs::read_to_string(path)?.trim().to_string();
         Ok(RustToolchainRequest {
-            channel,
+            channel: content.trim().to_string(),
             ..Default::default()
         })
+    }
+
+    pub fn parse_toolchain_file(path: &Path) -> Result<RustToolchainRequest> {
+        let content = fs::read_to_string(path)?;
+        Self::parse_toolchain_content(path, &content)
     }
 
     async fn install_with_profile(
