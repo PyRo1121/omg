@@ -691,10 +691,8 @@ fn detect_js_package_manager(current_dir: &std::path::Path) -> Result<Option<Str
     let pkg: PackageJson = serde_json::from_str(&content)
         .with_context(|| format!("Failed to parse {}", path.display()))?;
 
-    if let Some(package_manager) = pkg.package_manager
-        && let Some(name) = parse_package_manager_name(&package_manager)
-    {
-        return Ok(Some(name));
+    if let Some(package_manager) = pkg.package_manager {
+        return parse_package_manager_name(&package_manager).map(Some);
     }
 
     if current_dir.join("bun.lockb").exists() {
@@ -1014,15 +1012,22 @@ fn resolve_nvm_alias(nvm_dir: &std::path::Path, alias: &str) -> Result<Option<St
     }
 }
 
-fn parse_package_manager_name(value: &str) -> Option<String> {
+fn parse_package_manager_name(value: &str) -> Result<String> {
     let trimmed = value.trim();
-    let (name, _) = trimmed.rsplit_once('@').unwrap_or((trimmed, ""));
-    let name = name.trim();
-    if name.is_empty() {
-        None
-    } else {
-        Some(name.to_lowercase())
+    anyhow::ensure!(!trimmed.is_empty(), "packageManager must not be empty");
+    let (name, version) = trimmed.rsplit_once('@').unwrap_or((trimmed, ""));
+    let name = name.trim().to_ascii_lowercase();
+    anyhow::ensure!(
+        matches!(name.as_str(), "npm" | "pnpm" | "yarn" | "bun"),
+        "Unsupported packageManager {value:?}; expected npm, pnpm, yarn, or bun"
+    );
+    if trimmed.contains('@') {
+        anyhow::ensure!(
+            !version.trim().is_empty(),
+            "packageManager {value:?} has an empty version"
+        );
     }
+    Ok(name)
 }
 
 fn ensure_js_package_manager(command: &str) -> Result<()> {
@@ -1281,6 +1286,28 @@ mod tests {
         assert!(runtime_version_satisfies("1.2.3", "latest"));
         assert!(!runtime_version_satisfies("18.20.0", "20"));
         assert!(!runtime_version_satisfies("20.11.1", "not-a-version"));
+    }
+
+    #[test]
+    fn package_manager_metadata_is_restricted_to_known_executables() {
+        assert_eq!(parse_package_manager_name("pnpm@9.15.0").unwrap(), "pnpm");
+        assert_eq!(parse_package_manager_name("bun").unwrap(), "bun");
+        for invalid in ["./repo-script", "unknown@1.0.0", "npm@", ""] {
+            assert!(
+                parse_package_manager_name(invalid).is_err(),
+                "unsafe packageManager unexpectedly accepted: {invalid:?}"
+            );
+        }
+
+        let project = TempDir::new().unwrap();
+        fs::write(
+            project.path().join("package.json"),
+            r#"{"packageManager":"./repo-script","scripts":{}}"#,
+        )
+        .unwrap();
+        let error = detect_js_package_manager(project.path())
+            .expect_err("repo-controlled executable path must fail");
+        assert!(error.to_string().contains("Unsupported packageManager"));
     }
 
     #[test]
