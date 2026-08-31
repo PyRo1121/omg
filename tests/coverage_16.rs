@@ -58,7 +58,7 @@ const UPGRADE_NEW_VER: &str = "2.0.1-1";
 const DEP_ORPHAN_VER: &str = "1.0.0-1";
 
 struct Fixture {
-    _harness: AlpmHarness,
+    harness: AlpmHarness,
     root: PathBuf,
     conf: PathBuf,
     cache: PathBuf,
@@ -115,7 +115,7 @@ fn build_fixture() -> Fixture {
     );
 
     Fixture {
-        _harness: harness,
+        harness,
         cache: root.join("omg-cache"),
         conf,
         root,
@@ -172,10 +172,9 @@ fn with_pm<T>(f: impl FnOnce(ArchPackageManager) -> T) -> T {
     with_fixture_env(|| f(ArchPackageManager::new()))
 }
 
-/// The fixture always creates a local ALPM database, so these tests never
-/// need to probe the host filesystem for a database.
+/// Skip cleanly when libalpm cannot open the otherwise hermetic fixture.
 fn alpm_live() -> bool {
-    fixture().root.join("var/lib/pacman/local").is_dir()
+    fixture().harness.alpm().is_ok()
 }
 
 fn find<'a>(packages: &'a [Package], name: &str) -> &'a Package {

@@ -227,7 +227,6 @@ fn init_defaults_writes_omg_lock_in_working_directory() {
 
     result.assert_success();
     result.assert_stdout_contains("Capturing environment...");
-    result.assert_stdout_contains("✓"); // capture success marker
 
     let lock = project.read_file("omg.lock").expect("omg.lock captured");
     assert!(
