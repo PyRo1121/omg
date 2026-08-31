@@ -691,6 +691,8 @@ analyzer inference
 - **Ci**: Cross-platform install script and R2 release sync
 ### 🐛 Bug Fixes
 
+- Validate install targets at command entry
+- Preview embedded local package metadata
 - Reject unsafe pacman repository names
 - Retain sync backups until durable publication
 - Bound interactive package info daemon calls
