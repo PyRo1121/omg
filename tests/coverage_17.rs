@@ -17,43 +17,88 @@ use std::fs;
 use std::io::{Read as _, Write as _};
 use std::net::TcpListener;
 use std::path::Path;
+use std::sync::Arc;
+use std::sync::atomic::{AtomicUsize, Ordering};
+use std::time::Duration;
 
 use omg_lib::package_managers::aur_sources::{SourceFile, download_sources, parse_sources};
 
-/// Tiny one-shot HTTP server bound to an ephemeral localhost port. Serves up
-/// to `max_requests` trivial 200 responses, then stops. Used to prove that
-/// hostile filenames never reach a real fetch.
-fn serve_local_http(max_requests: usize) -> String {
-    let listener = TcpListener::bind("127.0.0.1:0").expect("bind localhost");
-    let addr = listener.local_addr().expect("local addr");
-    std::thread::spawn(move || {
-        for _ in 0..max_requests {
-            let Ok((mut conn, _)) = listener.accept() else {
-                break;
-            };
-            let mut buf = [0u8; 1024];
-            let _ = conn.read(&mut buf);
-            let body = "hello";
-            let _ = write!(
-                conn,
-                "HTTP/1.1 200 OK\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
-                body.len()
-            );
+/// Local HTTP server with observable requests and deterministic shutdown.
+struct LocalHttpServer {
+    base_url: String,
+    requests: Arc<AtomicUsize>,
+    shutdown: Option<std::sync::mpsc::Sender<()>>,
+    thread: Option<std::thread::JoinHandle<()>>,
+}
+
+impl LocalHttpServer {
+    fn start(max_requests: usize) -> Self {
+        let listener = TcpListener::bind("127.0.0.1:0").expect("bind localhost");
+        listener
+            .set_nonblocking(true)
+            .expect("set listener nonblocking");
+        let addr = listener.local_addr().expect("local addr");
+        let requests = Arc::new(AtomicUsize::new(0));
+        let thread_requests = Arc::clone(&requests);
+        let (shutdown_tx, shutdown_rx) = std::sync::mpsc::channel();
+        let thread = std::thread::spawn(move || {
+            while thread_requests.load(Ordering::Relaxed) < max_requests {
+                if shutdown_rx.try_recv().is_ok() {
+                    break;
+                }
+                match listener.accept() {
+                    Ok((mut conn, _)) => {
+                        thread_requests.fetch_add(1, Ordering::Relaxed);
+                        let mut buf = [0u8; 1024];
+                        let _ = conn.read(&mut buf);
+                        let body = "hello";
+                        let _ = write!(
+                            conn,
+                            "HTTP/1.1 200 OK\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
+                            body.len()
+                        );
+                    }
+                    Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => {
+                        std::thread::sleep(Duration::from_millis(5));
+                    }
+                    Err(_) => break,
+                }
+            }
+        });
+        Self {
+            base_url: format!("http://{addr}"),
+            requests,
+            shutdown: Some(shutdown_tx),
+            thread: Some(thread),
         }
-    });
-    format!("http://{addr}")
+    }
+
+    fn request_count(&self) -> usize {
+        self.requests.load(Ordering::Relaxed)
+    }
+}
+
+impl Drop for LocalHttpServer {
+    fn drop(&mut self) {
+        if let Some(shutdown) = self.shutdown.take() {
+            let _ = shutdown.send(());
+        }
+        if let Some(thread) = self.thread.take() {
+            thread.join().expect("local HTTP server thread panicked");
+        }
+    }
 }
 
 /// Minimal valid .SRCINFO body with the given extra lines appended to the
 /// pkgbase section.
-fn srcinfo_body(extra: &[&str]) -> String {
+fn srcinfo_body<S: AsRef<str>>(extra: &[S]) -> String {
     let mut content = String::from("pkgbase = example\n");
     content.push_str("\tpkgver = 1.0.0\n");
     content.push_str("\tpkgrel = 1\n");
     content.push_str("\tpkgdesc = test package\n");
     for line in extra {
         content.push('\t');
-        content.push_str(line);
+        content.push_str(line.as_ref());
         content.push('\n');
     }
     content.push('\n');
@@ -157,9 +202,12 @@ fn parse_sources_includes_current_arch_specific_sources_only() {
         "i686" => Some("i686"),
         _ => None,
     };
-    let mut extra = vec!["arch = x86_64", "source = https://common.example.com/c.tgz"];
+    let mut extra = vec![
+        "arch = x86_64".to_string(),
+        "source = https://common.example.com/c.tgz".to_string(),
+    ];
     if let Some(arch) = current {
-        extra.push(format!("source_{arch} = https://arch.example.com/a.tgz").leak());
+        extra.push(format!("source_{arch} = https://arch.example.com/a.tgz"));
     }
     // A foreign-architecture entry that must be ignored on any host.
     let foreign = if current == Some("x86_64") {
@@ -167,7 +215,9 @@ fn parse_sources_includes_current_arch_specific_sources_only() {
     } else {
         "x86_64"
     };
-    extra.push(format!("source_{foreign} = https://foreign.example.com/f.tgz").leak());
+    extra.push(format!(
+        "source_{foreign} = https://foreign.example.com/f.tgz"
+    ));
 
     let dir = tempfile::tempdir().unwrap();
     write_srcinfo(dir.path(), &srcinfo_body(&extra));
@@ -237,12 +287,12 @@ async fn download_sources_rejects_hostile_filenames_without_writes() {
         "..",
         "",
     ];
-    let base_url = serve_local_http(hostile.len());
+    let server = LocalHttpServer::start(hostile.len());
 
     let sources: Vec<SourceFile> = hostile
         .iter()
         .map(|name| SourceFile {
-            url: format!("{base_url}/payload"),
+            url: format!("{}/payload", server.base_url),
             filename: (*name).to_string(),
         })
         .collect();
@@ -255,6 +305,11 @@ async fn download_sources_rejects_hostile_filenames_without_writes() {
         "every hostile name must count as failed"
     );
     assert_eq!(summary.succeeded, 0);
+    assert_eq!(
+        server.request_count(),
+        0,
+        "hostile filenames must be rejected before network access"
+    );
 
     // Nothing may exist next to (or above) SRCDEST: the escape target
     // `parent/escape.txt` would appear here if path traversal were allowed.
