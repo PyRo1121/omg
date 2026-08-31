@@ -363,7 +363,13 @@ impl Drop for AlpmTransaction<'_> {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum TransactionKind {
     Install,
-    Remove { recursive: bool },
+    /// Install archives produced by OMG's AUR build pipeline. AUR artifacts
+    /// are normally unsigned, so verify a detached signature when present but
+    /// do not require one, matching pacman's default local-file policy.
+    InstallAurArtifact,
+    Remove {
+        recursive: bool,
+    },
     SystemUpgrade,
 }
 
@@ -550,6 +556,14 @@ fn setup_alpm_callbacks(
     main_pb
 }
 
+fn local_package_siglevel(kind: TransactionKind) -> alpm::SigLevel {
+    if kind == TransactionKind::InstallAurArtifact {
+        alpm::SigLevel::PACKAGE | alpm::SigLevel::PACKAGE_OPTIONAL
+    } else {
+        alpm::SigLevel::PACKAGE
+    }
+}
+
 fn transaction_flags(kind: TransactionKind) -> alpm::TransFlag {
     let mut flags = alpm::TransFlag::NEEDED;
     if matches!(kind, TransactionKind::Remove { recursive: true }) {
@@ -611,7 +625,11 @@ fn prepare_alpm_transaction<'a>(
 
                     let pkg = tx_guard
                         .0
-                        .pkg_load(canonical_str.to_string(), true, alpm::SigLevel::PACKAGE)
+                        .pkg_load(
+                            canonical_str.to_string(),
+                            true,
+                            local_package_siglevel(kind),
+                        )
                         .map_err(|e| {
                             anyhow::anyhow!("Failed to load local package {pkg_name}: {e}")
                         })?;
@@ -986,7 +1004,7 @@ mod tests {
     use super::{
         DOWNLOAD_BAR_TEMPLATE, DOWNLOAD_SPINNER_TEMPLATE, TransactionKind, ensure_mirror_servers,
         ensure_removals_not_held, format_no_syncdb_error, format_trans_prepare_error,
-        is_keyring_related_error, package_base_name, transaction_flags,
+        is_keyring_related_error, local_package_siglevel, package_base_name, transaction_flags,
     };
 
     #[test]
@@ -1005,6 +1023,17 @@ mod tests {
             .add_server("https://mirror.example/$repo/os/$arch")
             .expect("add test mirror");
         assert!(ensure_mirror_servers(&alpm).is_ok());
+    }
+
+    #[test]
+    fn aur_artifacts_allow_missing_signatures_but_verify_present_ones() {
+        let regular = local_package_siglevel(TransactionKind::Install);
+        assert!(regular.contains(alpm::SigLevel::PACKAGE));
+        assert!(!regular.contains(alpm::SigLevel::PACKAGE_OPTIONAL));
+
+        let aur = local_package_siglevel(TransactionKind::InstallAurArtifact);
+        assert!(aur.contains(alpm::SigLevel::PACKAGE));
+        assert!(aur.contains(alpm::SigLevel::PACKAGE_OPTIONAL));
     }
 
     #[test]

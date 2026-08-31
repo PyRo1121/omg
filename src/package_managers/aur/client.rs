@@ -2899,7 +2899,7 @@ impl AurClient {
             tokio::task::spawn_blocking(move || {
                 crate::package_managers::execute_transaction(
                     packages,
-                    crate::package_managers::TransactionKind::Install,
+                    crate::package_managers::TransactionKind::InstallAurArtifact,
                     None,
                 )
             })
