@@ -404,15 +404,44 @@ fn commit_staged_databases(
         publications[index].published = true;
     }
 
-    for publication in &publications {
-        if let Some(backup) = &publication.backup {
-            std::fs::remove_file(backup).with_context(|| {
-                format!("Failed to remove database backup {}", backup.display())
-            })?;
+    // Make the complete new set durable while rollback copies still exist.
+    // If a directory sync fails, restore every previous database before the
+    // staging directory (which owns the backups) is dropped.
+    for index in 0..publications.len() {
+        if let Err(error) =
+            crate::core::safe_ops::sync_parent_directory_sync(&publications[index].destination)
+        {
+            let failed_destination = publications[index].destination.display().to_string();
+            let mut rollback_errors = rollback_database_publication(&mut publications);
+            for publication in &publications {
+                if let Err(sync_error) =
+                    crate::core::safe_ops::sync_parent_directory_sync(&publication.destination)
+                {
+                    rollback_errors.push(format!(
+                        "failed to sync rollback for {}: {sync_error}",
+                        publication.destination.display()
+                    ));
+                }
+            }
+            anyhow::bail!(
+                "Failed to sync published package database {failed_destination}: {error}; rollback errors: {}",
+                rollback_errors.join("; ")
+            );
         }
     }
+
+    // Backup removal is cleanup after a durable commit. A stale backup in the
+    // staging directory must not turn a successful publication into a false
+    // transaction failure; TempDir cleanup gets another chance to remove it.
     for publication in &publications {
-        crate::core::safe_ops::sync_parent_directory_sync(&publication.destination)?;
+        if let Some(backup) = &publication.backup
+            && let Err(error) = std::fs::remove_file(backup)
+        {
+            tracing::warn!(
+                "Failed to remove database backup {} after commit: {error}",
+                backup.display()
+            );
+        }
     }
     Ok(())
 }
