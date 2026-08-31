@@ -687,6 +687,7 @@ analyzer inference
 - **Ci**: Cross-platform install script and R2 release sync
 ### 🐛 Bug Fixes
 
+- Order only selected Debian alternatives
 - Keep mock package state consistent
 - Fail closed when telemetry settings are invalid
 - Validate AUR package-base responses
@@ -2793,6 +2794,7 @@ across history/faq/cli
 - Run Docker E2E tests explicitly
 ### 📚 Documentation
 
+- Disclose telemetry behavior accurately
 - Describe telemetry as opt in
 - Describe observed enterprise report evidence
 - Record upstream ALPM compatibility research
