@@ -1,12 +1,10 @@
 use anyhow::Result;
 use crossterm::{
-    event::{
-        self, DisableMouseCapture, EnableMouseCapture, Event, KeyCode, KeyEvent, KeyEventKind,
-        KeyModifiers,
-    },
+    event::{self, Event, KeyCode, KeyEvent, KeyEventKind, KeyModifiers},
     execute,
     terminal::{EnterAlternateScreen, LeaveAlternateScreen, disable_raw_mode, enable_raw_mode},
 };
+use futures::FutureExt;
 use ratatui::{Terminal, backend::CrosstermBackend};
 use std::future::Future;
 use std::io;
@@ -61,7 +59,7 @@ async fn run_tui_with_app(mut app: app::App) -> Result<()> {
     // terminal state on failure, or the user's shell is left in raw mode.
     enable_raw_mode()?;
     let mut stdout = io::stdout();
-    if let Err(err) = execute!(stdout, EnterAlternateScreen, EnableMouseCapture) {
+    if let Err(err) = execute!(stdout, EnterAlternateScreen) {
         disable_raw_mode()?;
         return Err(err.into());
     }
@@ -72,30 +70,34 @@ async fn run_tui_with_app(mut app: app::App) -> Result<()> {
         Ok(terminal) => terminal,
         Err(err) => {
             disable_raw_mode()?;
-            execute!(io::stdout(), LeaveAlternateScreen, DisableMouseCapture)?;
+            execute!(io::stdout(), LeaveAlternateScreen)?;
             return Err(err.into());
         }
     };
     let mut terminal = terminal;
 
-    // Run the app
-    let res = run_app(&mut terminal, &mut app).await;
-
-    // Restore terminal - always execute cleanup even if app failed
+    // Catch panics from the event loop so raw mode and the alternate screen
+    // are restored before the panic resumes.
+    let app_result = std::panic::AssertUnwindSafe(run_app(&mut terminal, &mut app))
+        .catch_unwind()
+        .await;
     let cleanup_result = cleanup_terminal(&mut terminal);
 
-    // Return the first error if any occurred
-    res.and(cleanup_result)
+    match app_result {
+        Ok(result) => result.and(cleanup_result),
+        Err(payload) => {
+            if let Err(error) = cleanup_result {
+                tracing::error!("Failed to restore terminal after TUI panic: {error}");
+            }
+            std::panic::resume_unwind(payload)
+        }
+    }
 }
 
 /// Cleanup terminal state - extracted to ensure consistent cleanup
 fn cleanup_terminal(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>) -> Result<()> {
     disable_raw_mode()?;
-    execute!(
-        terminal.backend_mut(),
-        LeaveAlternateScreen,
-        DisableMouseCapture
-    )?;
+    execute!(terminal.backend_mut(), LeaveAlternateScreen)?;
     terminal.show_cursor()?;
     terminal.clear()?;
     Ok(())
