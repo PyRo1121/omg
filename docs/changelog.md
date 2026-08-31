@@ -692,6 +692,7 @@ analyzer inference
 - **Ci**: Cross-platform install script and R2 release sync
 ### 🐛 Bug Fixes
 
+- Lock audit log readers against writers
 - Preserve modes during atomic file replacement
 - Fail on missing audit entry hashes
 - Preserve PGP key fetch result order
