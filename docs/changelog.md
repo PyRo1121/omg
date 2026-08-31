@@ -702,6 +702,7 @@ analyzer inference
 - **Ci**: Cross-platform install script and R2 release sync
 ### 🐛 Bug Fixes
 
+- Preserve parent history ownership
 - Ignore generated watch outputs
 - Offload single parallel task execution
 - Ignore colon-bearing Make assignments
