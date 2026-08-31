@@ -588,7 +588,6 @@ fn sync_databases_blocking() -> Result<()> {
     Ok(())
 }
 
-#[expect(clippy::cast_possible_wrap)] // Package sizes fit in i64; clamped to i64::MAX via unwrap_or
 fn map_local_package(pkg: &rust_apt::Package<'_>) -> LocalPackage {
     let version = pkg
         .installed()
@@ -608,7 +607,9 @@ fn map_local_package(pkg: &rust_apt::Package<'_>) -> LocalPackage {
         name: pkg.name().to_string(),
         version,
         description: summary,
-        install_size: pkg.installed().map_or(0, |v| v.installed_size() as i64),
+        install_size: pkg.installed().map_or(0, |version| {
+            i64::try_from(version.installed_size()).unwrap_or(i64::MAX)
+        }),
         reason,
     }
 }
