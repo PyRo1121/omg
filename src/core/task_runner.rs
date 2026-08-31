@@ -13,6 +13,14 @@ use crate::hooks;
 use crate::runtimes::rust::RustManager;
 use crate::runtimes::{BunManager, NodeManager};
 
+static TASK_SETUP_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+fn lock_task_setup() -> std::sync::MutexGuard<'static, ()> {
+    TASK_SETUP_LOCK
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub enum Ecosystem {
     Node,
@@ -762,6 +770,10 @@ fn execute_process(cmd: &str, args: &[String], extra_args: &[String]) -> Result<
     // Detect required runtime versions and inject them into PATH
     // This ensures 'npm' uses the correct node version, 'cargo' uses correct rust channel, etc.
     let current_dir = std::env::current_dir()?;
+    // Parallel tasks share one terminal and one managed-runtime store. Keep
+    // prompts and runtime/corepack installation inside a single setup owner,
+    // then release the lock before running the actual task processes.
+    let setup_guard = lock_task_setup();
     if let Some(toolchain_file) = find_rust_toolchain_file(&current_dir) {
         // First check if Rust is available via system (rustup) - if so, let rustup handle it
         let has_system_rust = which::which("rustc").is_ok() || which::which("cargo").is_ok();
@@ -809,6 +821,7 @@ fn execute_process(cmd: &str, args: &[String], extra_args: &[String]) -> Result<
         }
     }
     let mut path_additions = hooks::build_path_additions(&versions)?;
+    drop(setup_guard);
 
     // Auto-activate python virtual environment if present
     // Check for .venv or venv in current directory
@@ -1318,6 +1331,37 @@ mod tests {
             detect_js_runtime(project.path()).unwrap(),
             Some(("node".to_string(), "lts".to_string()))
         );
+    }
+
+    #[test]
+    fn parallel_task_setup_has_one_process_wide_owner() {
+        use std::sync::atomic::{AtomicUsize, Ordering};
+        use std::sync::{Arc, Barrier};
+
+        let barrier = Arc::new(Barrier::new(4));
+        let active = Arc::new(AtomicUsize::new(0));
+        let violations = Arc::new(AtomicUsize::new(0));
+        let threads = (0..4)
+            .map(|_| {
+                let barrier = Arc::clone(&barrier);
+                let active = Arc::clone(&active);
+                let violations = Arc::clone(&violations);
+                std::thread::spawn(move || {
+                    barrier.wait();
+                    let _guard = lock_task_setup();
+                    if active.fetch_add(1, Ordering::SeqCst) != 0 {
+                        violations.fetch_add(1, Ordering::SeqCst);
+                    }
+                    std::thread::sleep(std::time::Duration::from_millis(2));
+                    active.fetch_sub(1, Ordering::SeqCst);
+                })
+            })
+            .collect::<Vec<_>>();
+
+        for thread in threads {
+            thread.join().unwrap();
+        }
+        assert_eq!(violations.load(Ordering::SeqCst), 0);
     }
 
     #[test]
