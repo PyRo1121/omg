@@ -702,6 +702,7 @@ analyzer inference
 - **Ci**: Cross-platform install script and R2 release sync
 ### 🐛 Bug Fixes
 
+- Enforce local archive consent in fast path
 - Distinguish rustup proxies from system Rust
 - Share Rust toolchain parsing
 - Propagate daemon internal failures
