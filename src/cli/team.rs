@@ -313,9 +313,9 @@ pub async fn members(_ctx: &CliContext) -> Result<()> {
     let mut member_list = vec![];
     for member in &members {
         let last_seen_ts = crate::cli::parse_timestamp_opt(&member.last_seen_at);
-        let in_sync = recently_active(&member.last_seen_at, now);
+        let is_active = recently_active(&member.last_seen_at, now);
 
-        let sync_icon = if in_sync { "✓" } else { "⚠" };
+        let activity_icon = if is_active { "●" } else { "○" };
         let hostname = member.hostname.as_deref().unwrap_or(&member.machine_id);
         let last_sync =
             last_seen_ts.map_or_else(|| "unknown".to_string(), crate::cli::format_short_timestamp);
@@ -327,7 +327,7 @@ pub async fn members(_ctx: &CliContext) -> Result<()> {
 
         member_list.push(format!(
             "{} {} ({})",
-            sync_icon,
+            activity_icon,
             hostname,
             prefix(&member.machine_id, 8)
         ));
@@ -335,7 +335,7 @@ pub async fn members(_ctx: &CliContext) -> Result<()> {
         member_list.push(format!("  Platform: {platform}"));
     }
 
-    let in_sync_count = members
+    let active_count = members
         .iter()
         .filter(|m| recently_active(&m.last_seen_at, now))
         .count();
@@ -343,10 +343,14 @@ pub async fn members(_ctx: &CliContext) -> Result<()> {
     execute_cmd(Cmd::batch([
         Cmd::header(
             "Team Members",
-            format!("{} member(s), {} in sync", members.len(), in_sync_count),
+            format!(
+                "{} member(s), {} active in the last hour",
+                members.len(),
+                active_count
+            ),
         ),
         Cmd::spacer(),
-        Cmd::card("Active Members", member_list),
+        Cmd::card("Members", member_list),
     ]))?;
 
     Ok(())

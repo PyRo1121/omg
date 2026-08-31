@@ -439,7 +439,7 @@ async fn install_managed(
             let status = Command::new("npm")
                 .args(["install", "--prefix", install_path, "--", pkg])
                 .stdout(std::process::Stdio::null())
-                .stderr(std::process::Stdio::null()) // Silence noisy npm
+                .stderr(std::process::Stdio::inherit())
                 .status()?;
 
             if !status.success() {

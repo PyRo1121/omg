@@ -840,7 +840,7 @@ pub enum TeamCommands {
     },
     /// Join an existing team by remote URL
     Join {
-        /// Remote URL (GitHub repo or Gist)
+        /// GitHub Gist URL or ID
         url: String,
     },
     /// Show team status and member sync state

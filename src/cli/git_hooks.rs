@@ -2,7 +2,7 @@
 //!
 //! Installs and manages Git hooks for environment synchronization:
 //! - pre-commit: Warn if omg.lock changed but not staged
-//! - post-checkout: Auto-run `omg env sync` on branch switch
+//! - post-checkout: Suggest `omg env check` when the lockfile changes
 //! - post-merge: Notify of environment changes
 
 use anyhow::{Context, Result};
