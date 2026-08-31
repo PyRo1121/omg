@@ -702,6 +702,7 @@ analyzer inference
 - **Ci**: Cross-platform install script and R2 release sync
 ### 🐛 Bug Fixes
 
+- Expire stale AUR binary indexes
 - Reject partial ALPM repository sets
 - Allow unsigned AUR build artifacts
 - Protect recursive removals with HoldPkg
