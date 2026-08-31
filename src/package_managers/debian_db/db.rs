@@ -1685,13 +1685,26 @@ fn parse_status_paragraph(paragraph: &str) -> Option<(String, String, String, St
     let mut version = String::new();
     let mut description = String::new();
     let mut arch = String::new();
+    let mut current_field = None;
 
     for line in paragraph.lines() {
+        if line.starts_with(' ') || line.starts_with('\t') {
+            if current_field == Some("Description") && !description.is_empty() {
+                let value = line.trim_start();
+                description.push('\n');
+                if value != "." {
+                    description.push_str(value);
+                }
+            }
+            continue;
+        }
         let Some(colon_pos) = memchr::memchr(b':', line.as_bytes()) else {
+            current_field = None;
             continue;
         };
         let key = &line[..colon_pos];
         let value = line[colon_pos + 1..].trim_start();
+        current_field = Some(key);
 
         match key.as_bytes() {
             b"Package" => name = value.to_string(),
@@ -2468,6 +2481,16 @@ mod tests {
             "command line tool for transferring data\ncurl is a tool to transfer data from or to a server\n\nusing one of the supported protocols."
         );
         Ok(())
+    }
+
+    #[test]
+    fn status_parser_preserves_description_continuations() {
+        let paragraph = "Package: demo\nVersion: 1.0\nArchitecture: amd64\nDescription: first line\n second line\n .\n final line\n";
+
+        let (_, _, description, _) =
+            parse_status_paragraph(paragraph).expect("valid status paragraph");
+
+        assert_eq!(description, "first line\nsecond line\n\nfinal line");
     }
 
     #[test]
