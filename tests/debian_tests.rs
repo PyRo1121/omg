@@ -944,8 +944,8 @@ mod integration_scenarios {
 
     #[test]
     fn scenario_debian_to_ubuntu_migration() {
-        let debian_project = TestProject::new();
-        let ubuntu_project = TestProject::new();
+        let debian_project = TestProject::for_distro("debian");
+        let ubuntu_project = TestProject::for_distro("ubuntu");
 
         // Simulate Debian environment
         debian_project.with_tool_versions(&[("nodejs", "20.10.0")]);
