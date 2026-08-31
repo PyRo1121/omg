@@ -687,6 +687,7 @@ analyzer inference
 - **Ci**: Cross-platform install script and R2 release sync
 ### 🐛 Bug Fixes
 
+- Validate all AUR search queries consistently
 - Require embedded identity for built AUR artifacts
 - Bound AUR archive metadata decompression
 - Bound AUR package metadata reads
