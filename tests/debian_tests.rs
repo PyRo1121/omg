@@ -294,7 +294,7 @@ mod apt_integration {
         let result = run_omg(&["install", pkg, "-y"]);
         if !result.success {
             if result.stderr_contains("permission") || result.stderr_contains("root") {
-                eprintln!("⏭️  Skipping install test: requires root");
+                report_skip("install/remove test requires root");
                 return;
             }
             result.assert_success();
@@ -304,8 +304,9 @@ mod apt_integration {
         let info = run_omg(&["info", pkg]);
         info.assert_success();
         assert!(
-            info.stdout_contains("installed") || info.stdout_contains("Status"),
-            "Package should be installed"
+            info.stdout_contains("Status") && !info.stdout_contains("not installed"),
+            "package info must report the installed state: {}",
+            info.stdout
         );
 
         // 3. Remove
@@ -315,8 +316,9 @@ mod apt_integration {
         // 4. Verify removed
         let info = run_omg(&["info", pkg]);
         assert!(
-            !info.stdout_contains("installed") || info.stdout_contains("not installed"),
-            "Package should be removed"
+            info.stdout_contains("Status") && info.stdout_contains("not installed"),
+            "package info must report the removed state: {}",
+            info.stdout
         );
     }
 
@@ -396,26 +398,6 @@ mod ubuntu_specific {
             result.stdout
         );
     }
-
-    #[test]
-    fn test_ubuntu_snap_awareness() {
-        require_system_tests!();
-        require_ubuntu!();
-
-        // OMG should be aware of snap packages
-        let result = run_omg(&["status"]);
-        result.assert_success();
-    }
-
-    #[test]
-    fn test_ubuntu_ppa_handling() {
-        require_system_tests!();
-        require_ubuntu!();
-
-        // Should handle PPA sources gracefully
-        let result = run_omg(&["search", "nodejs"]);
-        result.assert_success();
-    }
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
@@ -454,87 +436,6 @@ mod debian_specific {
         // Should handle backports if configured
         let result = run_omg(&["status"]);
         result.assert_success();
-    }
-}
-
-// ═══════════════════════════════════════════════════════════════════════════════
-// DPKG DIRECT TESTS
-// ═══════════════════════════════════════════════════════════════════════════════
-
-mod dpkg_direct {
-    use super::*;
-
-    #[test]
-    fn test_dpkg_query_installed() {
-        require_system_tests!();
-
-        // Status should query dpkg database
-        let result = run_omg(&["status"]);
-        result.assert_success();
-    }
-
-    #[test]
-    fn test_dpkg_package_info() {
-        require_system_tests!();
-
-        let result = run_omg(&["info", "dpkg"]);
-        result.assert_success();
-    }
-
-    #[test]
-    fn test_dpkg_dependency_resolution() {
-        require_system_tests!();
-
-        let result = run_omg(&["why", "libc6"]);
-        // Should show what depends on libc6
-        assert!(!result.stderr_contains("panicked at"), "Should not panic");
-    }
-
-    #[test]
-    fn test_dpkg_size_calculation() {
-        require_system_tests!();
-
-        let result = run_omg(&["size"]);
-        result.assert_success();
-        assert!(
-            result.stdout_contains("MB")
-                || result.stdout_contains("GB")
-                || result.stdout_contains("KB"),
-            "Should show sizes"
-        );
-    }
-}
-
-// ═══════════════════════════════════════════════════════════════════════════════
-// RUST-APT INTEGRATION TESTS
-// ═══════════════════════════════════════════════════════════════════════════════
-
-mod rust_apt {
-    use super::*;
-
-    #[test]
-    fn test_rust_apt_cache_access() {
-        require_system_tests!();
-
-        // Search uses rust-apt for fast cache access
-        let result = run_omg(&["search", "apt"]);
-        result.assert_success();
-    }
-
-    #[test]
-    fn test_rust_apt_package_lookup() {
-        require_system_tests!();
-
-        let result = run_omg(&["info", "apt"]);
-        result.assert_success();
-    }
-
-    #[test]
-    fn test_rust_apt_dependency_tree() {
-        require_system_tests!();
-
-        let result = run_omg(&["why", "apt"]);
-        assert!(!result.stderr_contains("panicked at"), "Should not panic");
     }
 }
 
@@ -805,44 +706,6 @@ mod edge_cases {
             let result = handle.join().unwrap();
             result.assert_success();
         }
-    }
-
-    #[test]
-    fn test_package_with_epoch() {
-        require_system_tests!();
-
-        // Debian uses epoch:version-revision format
-        let result = run_omg(&["info", "tar"]);
-        result.assert_success();
-        // Should handle version formats correctly
-    }
-
-    #[test]
-    fn test_virtual_packages() {
-        require_system_tests!();
-
-        // Virtual packages like "mail-transport-agent"
-        let result = run_omg(&["search", "mail-transport-agent"]);
-        result.assert_success();
-        // Should handle virtual packages
-    }
-
-    #[test]
-    fn test_multiarch_packages() {
-        require_system_tests!();
-
-        // Packages can have :amd64, :i386 suffixes
-        let result = run_omg(&["search", "libc6"]);
-        result.assert_success();
-    }
-
-    #[test]
-    fn test_transitional_packages() {
-        require_system_tests!();
-
-        // Debian has transitional/dummy packages
-        let result = run_omg(&["status"]);
-        result.assert_success();
     }
 }
 

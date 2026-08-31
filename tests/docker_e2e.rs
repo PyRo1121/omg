@@ -132,8 +132,7 @@ fn test_docker_omg_info() {
     assert!(success, "Info should succeed");
     let plain = strip_ansi(&stdout);
     assert!(plain.contains("bash"), "Should show bash package info");
-    // Contract: display_pkg_info (src/package_managers/alpm_ops.rs:246-272)
-    // prints "<name> <version>" plus labeled fields; the description and
+    // display_pkg_info prints "<name> <version>" plus labeled fields; the description and
     // repository lines must be present.
     assert!(
         plain.contains("Description:"),
@@ -263,8 +262,7 @@ fn test_docker_nonexistent_package() {
 
     let (_success, stdout, stderr) = run_in_docker(&["omg", "info", "package-does-not-exist-xyz"]);
 
-    // Contract: every info lookup path bails with this message for missing
-    // packages (e.g. src/cli/packages/info.rs:115).
+    // Every info lookup path bails with this message for missing packages.
     let combined = format!("{stdout}{stderr}");
     let plain = strip_ansi(&combined);
     assert!(
