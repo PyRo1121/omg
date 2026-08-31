@@ -203,7 +203,7 @@ impl DependencyResolver {
 
         // The shared read-only resolver cannot mutate `dep_graph`; record
         // edges once after either collection strategy completes.
-        self.record_dependency_edges(&to_install);
+        self.record_dependency_edges(&to_install)?;
 
         // Topologically sort the install order
         let sorted = self.topological_sort(&to_install)?;
@@ -263,7 +263,8 @@ impl DependencyResolver {
 
         // Parse and resolve dependencies
         for dep_str in &pkg.depends {
-            let dep = parse_dependency(dep_str);
+            let dep = parse_dependency(dep_str)
+                .with_context(|| format!("Invalid dependency '{dep_str}' for package '{name}'"))?;
             match self.resolve_dependency(&dep, visited, to_install) {
                 Ok(()) => {}
                 Err(e) => {
@@ -288,26 +289,27 @@ impl DependencyResolver {
     }
 
     /// Populate dependency edges for a fully resolved package closure.
-    fn record_dependency_edges(&mut self, packages: &[String]) {
+    fn record_dependency_edges(&mut self, packages: &[String]) -> Result<()> {
         for name in packages {
             if self.dep_graph.contains_key(name) {
                 continue;
             }
             if let Some(pkg) = self.available.get(name) {
-                let dependencies = pkg
-                    .depends
-                    .iter()
-                    .filter_map(|raw| {
-                        let dependency = parse_dependency(raw);
-                        match self.dependency_target(&dependency) {
-                            Some(DependencyTarget::Available(name)) => Some(name),
-                            Some(DependencyTarget::Installed) | None => None,
-                        }
-                    })
-                    .collect();
+                let mut dependencies = HashSet::new();
+                for raw in &pkg.depends {
+                    let dependency = parse_dependency(raw).with_context(|| {
+                        format!("Invalid dependency '{raw}' for package '{name}'")
+                    })?;
+                    if let Some(DependencyTarget::Available(name)) =
+                        self.dependency_target(&dependency)
+                    {
+                        dependencies.insert(name);
+                    }
+                }
                 self.dep_graph.insert(name.clone(), dependencies);
             }
         }
+        Ok(())
     }
 
     /// Resolve a single dependency
@@ -479,11 +481,11 @@ fn similarity_prefix(name: &str) -> &str {
 }
 
 /// Parse a dependency string like "libc6 (>= 2.38)"
-fn parse_dependency(s: &str) -> Dependency {
+fn parse_dependency(s: &str) -> Result<Dependency> {
     let mut parts = s.trim().split('|').map(str::trim);
-    let mut dependency = parse_single_dep(parts.next().unwrap_or_default());
-    dependency.alternatives = parts.map(parse_single_dep).collect();
-    dependency
+    let mut dependency = parse_single_dep(parts.next().unwrap_or_default())?;
+    dependency.alternatives = parts.map(parse_single_dep).collect::<Result<Vec<_>>>()?;
+    Ok(dependency)
 }
 
 /// Parse a single dependency without alternatives
@@ -500,66 +502,68 @@ fn strip_arch_qualifier(name: &str) -> &str {
 }
 
 #[inline]
-fn parse_single_dep(s: &str) -> Dependency {
+fn parse_single_dep(s: &str) -> Result<Dependency> {
     // OPTIMIZATION: Use memchr for faster parenthesis search (SIMD)
     if let Some(paren_start) = memchr::memchr(b'(', s.as_bytes()) {
         let raw_name = s[..paren_start].trim();
         let name = strip_arch_qualifier(raw_name).to_string();
-        if let Some(paren_end) = memchr::memchr(b')', s.as_bytes()) {
-            let constraint_str = &s[paren_start + 1..paren_end];
-            if let Some(constraint) = parse_version_constraint(constraint_str) {
-                return Dependency {
-                    name,
-                    version_constraint: Some(constraint),
-                    alternatives: Vec::new(),
-                };
-            }
-        }
-        return Dependency {
+        anyhow::ensure!(!name.is_empty(), "dependency package name is empty");
+        let constraint_start = paren_start + 1;
+        let remainder = &s[constraint_start..];
+        let relative_end = memchr::memchr(b')', remainder.as_bytes())
+            .context("dependency version constraint is missing a closing parenthesis")?;
+        let constraint_str = &remainder[..relative_end];
+        let constraint = parse_version_constraint(constraint_str)?;
+        return Ok(Dependency {
             name,
-            version_constraint: None,
+            version_constraint: Some(constraint),
             alternatives: Vec::new(),
-        };
+        });
     }
 
-    Dependency {
-        name: strip_arch_qualifier(s.trim()).to_string(),
+    anyhow::ensure!(
+        !s.contains(')'),
+        "dependency contains a closing parenthesis without an opening parenthesis"
+    );
+    let name = strip_arch_qualifier(s.trim()).to_string();
+    anyhow::ensure!(!name.is_empty(), "dependency package name is empty");
+    Ok(Dependency {
+        name,
         version_constraint: None,
         alternatives: Vec::new(),
-    }
+    })
 }
 
 /// Parse a version constraint like `">= 2.38"`
 /// OPTIMIZATION: Inline and use byte comparisons for faster parsing
 #[inline]
-fn parse_version_constraint(s: &str) -> Option<VersionConstraint> {
+fn parse_version_constraint(s: &str) -> Result<VersionConstraint> {
     let s = s.trim();
-    let bytes = s.as_bytes();
-
-    // Fast path: Check first two bytes for two-char operators
-    if bytes.len() >= 2 {
-        let op = match (bytes[0], bytes[1]) {
-            (b'>', b'=') => VersionOp::Ge,
-            (b'>', b'>') => VersionOp::Gt,
-            (b'<', b'=') => VersionOp::Le,
-            (b'<', b'<') => VersionOp::Lt,
-            _ => {
-                // Single-char operator '='
-                if bytes[0] == b'=' {
-                    let version = s[1..].trim().to_string();
-                    return Some(VersionConstraint {
-                        op: VersionOp::Eq,
-                        version,
-                    });
-                }
-                return None;
-            }
-        };
-        let version = s[2..].trim().to_string();
-        return Some(VersionConstraint { op, version });
-    }
-
-    None
+    let (op, version) = if let Some(version) = s.strip_prefix(">=") {
+        (VersionOp::Ge, version)
+    } else if let Some(version) = s.strip_prefix(">>") {
+        (VersionOp::Gt, version)
+    } else if let Some(version) = s.strip_prefix("<=") {
+        (VersionOp::Le, version)
+    } else if let Some(version) = s.strip_prefix("<<") {
+        (VersionOp::Lt, version)
+    } else if let Some(version) = s.strip_prefix('=') {
+        (VersionOp::Eq, version)
+    } else if let Some(version) = s.strip_prefix('>') {
+        // Legacy dpkg syntax: `>` is an alias for `>=`.
+        (VersionOp::Ge, version)
+    } else if let Some(version) = s.strip_prefix('<') {
+        // Legacy dpkg syntax: `<` is an alias for `<=`.
+        (VersionOp::Le, version)
+    } else {
+        anyhow::bail!("unsupported dependency version constraint '{s}'");
+    };
+    let version = version.trim();
+    anyhow::ensure!(!version.is_empty(), "dependency version is empty");
+    Ok(VersionConstraint {
+        op,
+        version: version.to_string(),
+    })
 }
 
 /// Compare two Debian version strings
@@ -633,15 +637,37 @@ mod tests {
     }
 
     #[test]
+    fn malformed_parentheses_do_not_panic() {
+        let parsed = std::panic::catch_unwind(|| parse_dependency("a)b (>= 1"));
+        assert!(parsed.is_ok(), "malformed repository data must not panic");
+        assert!(parsed.unwrap().is_err(), "malformed data must fail closed");
+    }
+
+    #[test]
+    fn malformed_constraints_fail_closed() {
+        assert!(parse_dependency("libc6 (!= 2.38)").is_err());
+        assert!(parse_dependency("libc6 (>= )").is_err());
+        assert!(parse_dependency(" | libc6").is_err());
+    }
+
+    #[test]
+    fn legacy_constraint_operators_remain_supported() {
+        let less = parse_dependency("libc6 (< 3.0)").unwrap();
+        assert_eq!(less.version_constraint.unwrap().op, VersionOp::Le);
+        let greater = parse_dependency("libc6 (> 2.0)").unwrap();
+        assert_eq!(greater.version_constraint.unwrap().op, VersionOp::Ge);
+    }
+
+    #[test]
     fn test_parse_dependency_simple() {
-        let dep = parse_dependency("libc6");
+        let dep = parse_dependency("libc6").unwrap();
         assert_eq!(dep.name, "libc6");
         assert!(dep.version_constraint.is_none());
     }
 
     #[test]
     fn test_parse_dependency_with_version() {
-        let dep = parse_dependency("libc6 (>= 2.38)");
+        let dep = parse_dependency("libc6 (>= 2.38)").unwrap();
         assert_eq!(dep.name, "libc6");
         assert!(dep.version_constraint.is_some());
         let vc = dep.version_constraint.unwrap();
@@ -651,7 +677,7 @@ mod tests {
 
     #[test]
     fn test_parse_dependency_alternatives() {
-        let dep = parse_dependency("libssl1.1 | libssl3");
+        let dep = parse_dependency("libssl1.1 | libssl3").unwrap();
         assert_eq!(dep.name, "libssl1.1");
         assert_eq!(dep.alternatives.len(), 1);
         assert_eq!(dep.alternatives[0].name, "libssl3");
@@ -660,16 +686,16 @@ mod tests {
     #[test]
     fn test_parse_dependency_with_arch_qualifier() {
         // Test :any (multi-arch: allows any architecture)
-        let dep = parse_dependency("perl:any");
+        let dep = parse_dependency("perl:any").unwrap();
         assert_eq!(dep.name, "perl");
         assert!(dep.version_constraint.is_none());
 
         // Test :native (same as build architecture)
-        let dep = parse_dependency("build-essential:native");
+        let dep = parse_dependency("build-essential:native").unwrap();
         assert_eq!(dep.name, "build-essential");
 
         // Test with version constraint
-        let dep = parse_dependency("libc6:amd64 (>= 2.38)");
+        let dep = parse_dependency("libc6:amd64 (>= 2.38)").unwrap();
         assert_eq!(dep.name, "libc6");
         assert!(dep.version_constraint.is_some());
     }
