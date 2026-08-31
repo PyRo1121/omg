@@ -692,6 +692,8 @@ analyzer inference
 - **Ci**: Cross-platform install script and R2 release sync
 ### 🐛 Bug Fixes
 
+- Fail on missing audit entry hashes
+- Preserve PGP key fetch result order
 - Deduplicate concurrent PGP key fetches
 - Show every parallel ALPM download
 - Saturate APT installed package sizes
