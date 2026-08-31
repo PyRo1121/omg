@@ -1,5 +1,4 @@
 #![cfg(feature = "arch")]
-#![expect(clippy::pedantic)]
 
 //! Coverage 18: contract tests for `handle_client` early-reject paths in
 //! `src/daemon/server.rs`, driven end-to-end through the REAL server
@@ -169,7 +168,9 @@ async fn read_response(stream: &mut UnixStream) -> Result<Response> {
 /// [`READ_TIMEOUT`], and no further frame bytes were pushed onto the wire.
 async fn expect_eof(stream: &mut UnixStream, ctx: &str) {
     match timeout(READ_TIMEOUT, try_read_raw_frame(stream)).await {
-        Err(_) => panic!("{ctx}: expected the server to close the connection, but it stayed open"),
+        Err(error) => panic!(
+            "{ctx}: expected the server to close the connection, but it stayed open: {error}"
+        ),
         Ok(Err(e)) => panic!("{ctx}: expected clean EOF, got I/O error: {e}"),
         Ok(Ok(None)) => {}
         Ok(Ok(Some(bytes))) => panic!(
@@ -317,7 +318,9 @@ async fn four_kib_frame_reaches_protocol_parser_before_rejection() -> Result<()>
             assert_eq!(code, error_codes::PARSE_ERROR);
             assert!(message.contains("protocol version") || message.contains("frame header"));
         }
-        other => anyhow::bail!("expected parse-error response, got {other:?}"),
+        other @ Response::Success { .. } => {
+            anyhow::bail!("expected parse-error response, got {other:?}")
+        }
     }
     expect_eof(&mut stream, "4 KiB malformed frame").await;
 
@@ -386,9 +389,9 @@ async fn oversized_frame_tears_down_silently_without_any_response_frame() -> Res
     // teardown, so ConnectionReset/ConnectionAborted/BrokenPipe pass too.
     let outcome = timeout(READ_TIMEOUT, try_read_raw_frame(&mut stream)).await;
     match outcome {
-        Err(_) => panic!(
+        Err(error) => panic!(
             "oversized frame: server neither answered nor closed the connection \
-             (codec cap missing?)"
+             (codec cap missing?): {error}"
         ),
         Ok(Err(e))
             if matches!(
@@ -492,7 +495,9 @@ async fn rate_limited_burst_rejects_with_exact_envelope_and_keeps_connection_ope
             Response::Success { id, .. } => {
                 assert_eq!(*id, i as u64, "served response must echo its request id");
             }
-            other => panic!("request {i} was neither served nor rate-limited, got {other:?}"),
+            other @ Response::Error { .. } => {
+                panic!("request {i} was neither served nor rate-limited, got {other:?}")
+            }
         }
     }
 
@@ -503,7 +508,9 @@ async fn rate_limited_burst_rejects_with_exact_envelope_and_keeps_connection_ope
     send_raw_frame(&mut stream, &follow_up).await?;
     match read_response(&mut stream).await? {
         Response::Success { id, .. } => assert_eq!(id, 4242),
-        other => panic!("connection must stay usable after a rate-limit rejection, got {other:?}"),
+        other @ Response::Error { .. } => {
+            panic!("connection must stay usable after a rate-limit rejection, got {other:?}")
+        }
     }
     Ok(())
 }
