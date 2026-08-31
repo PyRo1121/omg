@@ -36,36 +36,25 @@ fn newest_transactions_for_package<'a>(
 
 fn build_blame_output(package: &str) -> Result<Cmd<()>> {
     // First check if package is installed
-    let (is_installed, version, install_reason) = get_package_info(package)?;
-
-    if !is_installed {
+    let Some((version, install_reason)) = get_package_info(package)? else {
         use crate::cli::components::Components;
         return Ok(Components::error_with_suggestion(
             format!("Package '{package}' is not installed"),
             "Try 'omg search' to find available packages",
         ));
-    }
+    };
 
     let mut commands = vec![Cmd::header("Package History", package), Cmd::spacer()];
 
-    // Package info
-    if let Some(ver) = &version {
-        use crate::cli::components::Components;
-        commands.push(Components::kv_list(
-            Some("Package Information"),
-            vec![
-                ("Name", package),
-                ("Version", ver),
-                ("Install Reason", &install_reason),
-            ],
-        ));
-    } else {
-        use crate::cli::components::Components;
-        commands.push(Components::kv_list(
-            Some("Package Information"),
-            vec![("Name", package), ("Install Reason", &install_reason)],
-        ));
-    }
+    use crate::cli::components::Components;
+    commands.push(Components::kv_list(
+        Some("Package Information"),
+        vec![
+            ("Name", package),
+            ("Version", &version),
+            ("Install Reason", &install_reason),
+        ],
+    ));
 
     // Search transaction history
     let history = HistoryManager::new()?;
@@ -133,7 +122,7 @@ fn build_blame_output(package: &str) -> Result<Cmd<()>> {
 }
 
 #[cfg(feature = "arch")]
-fn get_package_info(package: &str) -> Result<(bool, Option<String>, String)> {
+fn get_package_info(package: &str) -> Result<Option<(String, String)>> {
     #[cfg(any(feature = "debian", feature = "debian-pure"))]
     if crate::core::env::distro::is_debian_like() {
         return get_package_info_debian(package);
@@ -151,9 +140,9 @@ fn get_package_info(package: &str) -> Result<(bool, Option<String>, String)> {
                 alpm::PackageReason::Explicit => style::version("explicit (user installed)"),
                 alpm::PackageReason::Depend => style::path("dependency"),
             };
-            Ok((true, Some(pkg.version().to_string()), reason))
+            Ok(Some((pkg.version().to_string(), reason)))
         }
-        Err(alpm::Error::PkgNotFound) => Ok((false, None, "not installed".to_string())),
+        Err(alpm::Error::PkgNotFound) => Ok(None),
         Err(error) => Err(anyhow::anyhow!(
             "Failed to look up '{package}' in the local database: {error}"
         )),
@@ -161,7 +150,7 @@ fn get_package_info(package: &str) -> Result<(bool, Option<String>, String)> {
 }
 
 #[cfg(any(feature = "debian", feature = "debian-pure"))]
-fn get_package_info_debian(package: &str) -> Result<(bool, Option<String>, String)> {
+fn get_package_info_debian(package: &str) -> Result<Option<(String, String)>> {
     use crate::cli::style;
     use crate::package_managers::debian_db;
 
@@ -175,9 +164,9 @@ fn get_package_info_debian(package: &str) -> Result<(bool, Option<String>, Strin
                 style::version("explicit (user installed)")
             };
 
-            Ok((true, Some(version), reason))
+            Ok(Some((version, reason)))
         }
-        None => Ok((false, None, "not installed".to_string())),
+        None => Ok(None),
     }
 }
 
@@ -185,12 +174,12 @@ fn get_package_info_debian(package: &str) -> Result<(bool, Option<String>, Strin
     any(feature = "debian", feature = "debian-pure"),
     not(feature = "arch")
 ))]
-fn get_package_info(package: &str) -> Result<(bool, Option<String>, String)> {
+fn get_package_info(package: &str) -> Result<Option<(String, String)>> {
     get_package_info_debian(package)
 }
 
 #[cfg(not(any(feature = "arch", feature = "debian", feature = "debian-pure")))]
-fn get_package_info(_package: &str) -> Result<(bool, Option<String>, String)> {
+fn get_package_info(_package: &str) -> Result<Option<(String, String)>> {
     anyhow::bail!("Package information is not available without an Arch or Debian package backend");
 }
 
