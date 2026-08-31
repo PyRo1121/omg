@@ -320,9 +320,7 @@ fn execute_transaction_refuses_to_remove_holdpkg_protected_package() -> anyhow::
     fake.run(|| {
         let error = execute_transaction(
             vec!["glibc".to_string()],
-            TransactionKind::Remove {
-                remove_unneeded: false,
-            },
+            TransactionKind::Remove { recursive: false },
             None,
         )
         .expect_err("removing a HoldPkg-protected package must fail");

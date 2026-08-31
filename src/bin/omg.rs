@@ -206,9 +206,7 @@ fn try_fast_elevated(
             omg_lib::core::security::validate_package_names(&packages).ok()?;
             let result = omg_lib::package_managers::execute_transaction(
                 packages.clone(),
-                omg_lib::package_managers::TransactionKind::Remove {
-                    remove_unneeded: false,
-                },
+                omg_lib::package_managers::TransactionKind::Remove { recursive: false },
                 None,
             );
             let result = if parent_records {

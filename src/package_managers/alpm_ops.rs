@@ -363,7 +363,7 @@ impl Drop for AlpmTransaction<'_> {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum TransactionKind {
     Install,
-    Remove { remove_unneeded: bool },
+    Remove { recursive: bool },
     SystemUpgrade,
 }
 
@@ -552,13 +552,11 @@ fn setup_alpm_callbacks(
 
 fn transaction_flags(kind: TransactionKind) -> alpm::TransFlag {
     let mut flags = alpm::TransFlag::NEEDED;
-    if matches!(
-        kind,
-        TransactionKind::Remove {
-            remove_unneeded: true
-        }
-    ) {
-        flags |= alpm::TransFlag::RECURSE | alpm::TransFlag::UNNEEDED;
+    if matches!(kind, TransactionKind::Remove { recursive: true }) {
+        // Match `pacman -Rs`: recurse into dependencies that become unneeded,
+        // but do not set `UNNEEDED` (`pacman -Ru`), which would silently drop
+        // still-required explicit targets from the transaction.
+        flags |= alpm::TransFlag::RECURSE;
     }
     flags
 }
@@ -968,18 +966,14 @@ mod tests {
     }
 
     #[test]
-    fn recursive_removal_flags_are_opt_in() {
-        let explicit = transaction_flags(TransactionKind::Remove {
-            remove_unneeded: false,
-        });
+    fn recursive_removal_matches_pacman_rs_flags() {
+        let explicit = transaction_flags(TransactionKind::Remove { recursive: false });
         assert!(!explicit.contains(alpm::TransFlag::RECURSE));
         assert!(!explicit.contains(alpm::TransFlag::UNNEEDED));
 
-        let recursive = transaction_flags(TransactionKind::Remove {
-            remove_unneeded: true,
-        });
+        let recursive = transaction_flags(TransactionKind::Remove { recursive: true });
         assert!(recursive.contains(alpm::TransFlag::RECURSE));
-        assert!(recursive.contains(alpm::TransFlag::UNNEEDED));
+        assert!(!recursive.contains(alpm::TransFlag::UNNEEDED));
     }
 
     #[test]

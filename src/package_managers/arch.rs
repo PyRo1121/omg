@@ -11,7 +11,7 @@ use crate::package_managers::{
 
 /// Arch Linux package manager (ALPM) implementation
 pub struct ArchPackageManager {
-    remove_unneeded: bool,
+    recursive_removal: bool,
 }
 
 /// Run an ALPM transaction on a blocking thread.
@@ -29,13 +29,13 @@ impl ArchPackageManager {
     #[must_use]
     pub const fn new() -> Self {
         Self {
-            remove_unneeded: false,
+            recursive_removal: false,
         }
     }
 
     #[must_use]
-    pub const fn with_recursive_removal(remove_unneeded: bool) -> Self {
-        Self { remove_unneeded }
+    pub const fn with_recursive_removal(recursive_removal: bool) -> Self {
+        Self { recursive_removal }
     }
 }
 
@@ -145,8 +145,8 @@ impl PackageManager for ArchPackageManager {
             }
             crate::core::security::validate_package_names(&packages)?;
 
-            let remove_unneeded = self.remove_unneeded;
-            let command_options = if remove_unneeded {
+            let recursive = self.recursive_removal;
+            let command_options = if recursive {
                 // The parent already confirmed this exact mutation. `--yes`
                 // prevents the privileged full-CLI fallback from prompting a
                 // second time after `--recursive` bypasses the minimal path.
@@ -157,7 +157,7 @@ impl PackageManager for ArchPackageManager {
             run_privileged_operation("remove", &packages, command_options, || {
                 let pkgs = packages.clone();
                 async move {
-                    run_alpm_transaction(pkgs, TransactionKind::Remove { remove_unneeded }).await
+                    run_alpm_transaction(pkgs, TransactionKind::Remove { recursive }).await
                 }
             })
             .await
@@ -318,9 +318,7 @@ pub async fn remove_orphans() -> AnyhowResult<()> {
         async move {
             run_alpm_transaction(
                 pkgs,
-                TransactionKind::Remove {
-                    remove_unneeded: false,
-                },
+                TransactionKind::Remove { recursive: false },
             )
             .await
         }
