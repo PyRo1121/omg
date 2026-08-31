@@ -69,6 +69,8 @@ pub enum AuditError {
     MissingHash { path: String, line: usize },
     #[error("Global audit logger state is poisoned")]
     LoggerPoisoned,
+    #[error("Audit entry invariant failed: {message}")]
+    EntryInvariant { message: &'static str },
     #[error("Failed to unlock audit log '{path}'")]
     Unlock {
         path: String,
@@ -89,6 +91,7 @@ impl AuditError {
             | Self::CorruptLine { .. }
             | Self::MissingHash { .. }
             | Self::LoggerPoisoned
+            | Self::EntryInvariant { .. }
             | Self::Unlock { .. } => false,
         }
     }
@@ -367,7 +370,9 @@ impl AuditLogger {
             path: path_str,
             source,
         })?;
-        self.last_hash = entry.hash.take().unwrap_or_default();
+        self.last_hash = entry.hash.take().ok_or(AuditError::EntryInvariant {
+            message: "computed hash disappeared before publication",
+        })?;
 
         // Structured fields keep the tracing output queryable (event_type,
         // severity, hash-chain linkage) without touching the on-disk JSONL
