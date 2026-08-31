@@ -173,6 +173,7 @@ fn require_unprivileged_builder(package: &str, is_root: bool) -> Result<()> {
 pub struct AurClient {
     build_dir: PathBuf,
     settings: Settings,
+    package_base_locks: Arc<dashmap::DashMap<String, Arc<tokio::sync::Mutex<()>>>>,
 }
 
 impl std::fmt::Debug for AurClient {
@@ -356,7 +357,21 @@ impl AurClient {
         Ok(Self {
             build_dir,
             settings,
+            package_base_locks: Arc::new(dashmap::DashMap::new()),
         })
+    }
+
+    fn package_base_lock(&self, package_base: &str) -> Arc<tokio::sync::Mutex<()>> {
+        Arc::clone(
+            self.package_base_locks
+                .entry(package_base.to_string())
+                .or_insert_with(|| Arc::new(tokio::sync::Mutex::new(())))
+                .value(),
+        )
+    }
+
+    fn package_base_marker(package_base: &str) -> String {
+        format!("pkgbase:{package_base}")
     }
 
     #[must_use]
@@ -1154,6 +1169,12 @@ impl AurClient {
 
         require_unprivileged_builder(package, crate::core::is_root())?;
 
+        // Every checkout and build for one package base shares a directory.
+        // Serialize each checkout and build phase so parallel jobs cannot
+        // pull, clean, or run makepkg in that directory concurrently.
+        let package_lock = self.package_base_lock(package);
+        let package_checkout_guard = package_lock.lock().await;
+
         // Prompt before starting the build, then keep the credential alive so
         // package installation cannot unexpectedly prompt midway through.
         Self::preacquire_install_privileges(package, "AUR build").await?;
@@ -1243,7 +1264,9 @@ impl AurClient {
         let env = self.makepkg_env(&pkg_dir)?;
 
         let aur_deps = self.missing_aur_dependencies(&pkg_dir, package).await?;
-        let mut dependency_builds = AHashSet::from_iter([package.to_string()]);
+        let mut dependency_builds =
+            AHashSet::from_iter([package.to_string(), Self::package_base_marker(package)]);
+        drop(package_checkout_guard);
         for dep in aur_deps {
             crate::cli::modern_ui::print_info(&format!(
                 "Installing AUR dependency for {package}: {dep}"
@@ -1254,6 +1277,8 @@ impl AurClient {
             Self::install_built_package(&dep_pkg, sudoloop.as_ref()).await?;
             crate::cli::modern_ui::print_success(&format!("Installed dependency: {dep}"));
         }
+
+        let _package_build_guard = package_lock.lock().await;
 
         // Best-effort pre-download: makepkg still fetches anything we miss.
         match parse_sources(&pkg_dir) {
@@ -1352,7 +1377,23 @@ impl AurClient {
     ) -> BoxFuture<'a, Result<PathBuf>> {
         async move {
             Self::enter_dependency_build(in_flight, package)?;
-            let result = self.build_only_inner(package, in_flight, sudoloop).await;
+            let package_base = match self.resolve_package_base(package).await {
+                Ok(package_base) => package_base,
+                Err(error) => {
+                    in_flight.remove(package);
+                    return Err(error);
+                }
+            };
+            let base_marker = Self::package_base_marker(&package_base);
+            if let Err(error) = Self::enter_package_base(in_flight, &package_base) {
+                in_flight.remove(package);
+                return Err(error);
+            }
+
+            let result = self
+                .build_only_inner(package, &package_base, in_flight, sudoloop)
+                .await;
+            in_flight.remove(&base_marker);
             in_flight.remove(package);
             result
         }
@@ -1366,25 +1407,35 @@ impl AurClient {
         Ok(())
     }
 
+    fn enter_package_base(in_flight: &mut AHashSet<String>, package_base: &str) -> Result<()> {
+        if !in_flight.insert(Self::package_base_marker(package_base)) {
+            anyhow::bail!(
+                "Circular AUR package-base dependency detected while resolving '{package_base}'"
+            );
+        }
+        Ok(())
+    }
+
     #[instrument(skip(self, in_flight, sudoloop))]
     async fn build_only_inner(
         &self,
         package: &str,
+        package_base: &str,
         in_flight: &mut AHashSet<String>,
         sudoloop: Option<&crate::core::sudoloop::SudoLoop>,
     ) -> Result<PathBuf> {
         crate::core::security::validate_package_name(package)?;
+        let package_lock = self.package_base_lock(package_base);
+        let package_checkout_guard = package_lock.lock().await;
 
         // A dependency may be a split-package OUTPUT whose AUR repository is
         // named after its package base (e.g. `postgresql18-libs` lives in
         // `postgresql18.git`). Clone/build the base; cache and artifact
         // lookups stay scoped to the requested output.
-        let package_base = self.resolve_package_base(package).await?;
-
         create_dir_as_user(&self.build_dir).await?;
 
         // SECURITY: Validate package directory is safe (prevents symlink attacks)
-        let pkg_dir = validate_build_dir(&self.build_dir, &package_base)?;
+        let pkg_dir = validate_build_dir(&self.build_dir, package_base)?;
         let pkgbuild_path = pkg_dir.join("PKGBUILD");
 
         if pkg_dir.exists() && pkgbuild_path.exists() {
@@ -1400,11 +1451,11 @@ impl AurClient {
                         package_base,
                         cleanup_err
                     );
-                    AurError::GitPullFailed(package_base.clone())
+                    AurError::GitPullFailed(package_base.to_string())
                 })?;
-                self.git_clone(&package_base).await.map_err(|clone_err| {
+                self.git_clone(package_base).await.map_err(|clone_err| {
                     tracing::warn!("Recovery clone failed for {}: {}", package_base, clone_err);
-                    AurError::GitPullFailed(package_base.clone())
+                    AurError::GitPullFailed(package_base.to_string())
                 })?;
             }
         } else {
@@ -1419,9 +1470,9 @@ impl AurClient {
                     );
                 }
             }
-            self.git_clone(&package_base).await.map_err(|e| {
+            self.git_clone(package_base).await.map_err(|e| {
                 tracing::warn!("Git clone failed for {}: {}", package_base, e);
-                AurError::GitCloneFailed(package_base.clone())
+                AurError::GitCloneFailed(package_base.to_string())
             })?;
         }
 
@@ -1434,7 +1485,9 @@ impl AurClient {
         }
         Self::fetch_missing_pgp_keys(&pkgbuild_path).await?;
 
-        for dependency in self.missing_aur_dependencies(&pkg_dir, package).await? {
+        let missing_dependencies = self.missing_aur_dependencies(&pkg_dir, package).await?;
+        drop(package_checkout_guard);
+        for dependency in missing_dependencies {
             crate::cli::modern_ui::print_info(&format!(
                 "Installing AUR dependency for {package}: {dependency}"
             ));
@@ -1443,6 +1496,7 @@ impl AurClient {
             crate::cli::modern_ui::print_success(&format!("Installed dependency: {dependency}"));
         }
 
+        let _package_build_guard = package_lock.lock().await;
         let env = self.makepkg_env(&pkg_dir)?;
         let cache_key = self.cache_key(&pkg_dir, &env.makeflags)?;
         if let Some(cached) = self
@@ -3395,6 +3449,16 @@ mod tests {
         assert!(error.to_string().contains("Circular AUR dependency"));
         AurClient::enter_dependency_build(&mut in_flight, "leaf-package")
             .expect("a new dependency should enter the build set");
+
+        let base_marker = AurClient::package_base_marker("root-base");
+        in_flight.insert(base_marker);
+        let error = AurClient::enter_package_base(&mut in_flight, "root-base")
+            .expect_err("a split output must not re-enter its package base");
+        assert!(
+            error
+                .to_string()
+                .contains("Circular AUR package-base dependency")
+        );
     }
 
     #[test]
@@ -3426,6 +3490,7 @@ mod tests {
         let client = AurClient {
             build_dir: tempfile::tempdir().unwrap().path().to_path_buf(),
             settings: Settings::default(),
+            package_base_locks: Arc::new(dashmap::DashMap::new()),
         };
 
         let archive = client
@@ -3434,6 +3499,29 @@ mod tests {
             .unwrap();
 
         assert!(archive.is_none());
+    }
+
+    #[test]
+    fn cloned_clients_serialize_work_for_the_same_package_base() {
+        let directory = tempfile::tempdir().unwrap();
+        let client = AurClient {
+            build_dir: directory.path().to_path_buf(),
+            settings: Settings::default(),
+            package_base_locks: Arc::new(dashmap::DashMap::new()),
+        };
+        let cloned = client.clone();
+
+        let first = client.package_base_lock("shared-base");
+        let second = cloned.package_base_lock("shared-base");
+        let unrelated = cloned.package_base_lock("unrelated-base");
+        assert!(Arc::ptr_eq(&first, &second));
+        assert!(!Arc::ptr_eq(&first, &unrelated));
+
+        let guard = first.try_lock().expect("first package-base lock");
+        assert!(second.try_lock().is_err());
+        assert!(unrelated.try_lock().is_ok());
+        drop(guard);
+        assert!(second.try_lock().is_ok());
     }
 
     #[test]
