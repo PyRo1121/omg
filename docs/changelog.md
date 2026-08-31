@@ -702,6 +702,7 @@ analyzer inference
 - **Ci**: Cross-platform install script and R2 release sync
 ### 🐛 Bug Fixes
 
+- Preserve unchanged databases during staged sync
 - Handle empty Java container versions
 - Reject nested ALPM handle access cleanly
 - Restore terminal state after TUI panics
@@ -4044,6 +4045,7 @@ the Debian backend), so it was removed from the metadata.
 - Normalize project formatting
 ### 🧪 Testing
 
+- Exercise daemon missing-socket retry policy
 - Remove vacuous Debian integration cases
 - Clean daemon lifecycle contracts
 - Remove ambient license cleanup and stale helpers
