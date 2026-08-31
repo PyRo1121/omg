@@ -65,6 +65,7 @@ const INITIAL_BACKOFF_MS: u64 = 200;
 
 const DPKG_FRONTEND_LOCK_PATH: &str = "/var/lib/dpkg/lock-frontend";
 const DPKG_DATABASE_LOCK_PATH: &str = "/var/lib/dpkg/lock";
+const MAINTAINER_SCRIPT_TIMEOUT: Duration = Duration::from_secs(15 * 60);
 static DPKG_TRANSACTION_LOCK: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
 
 struct DpkgLockGuard {
@@ -1518,19 +1519,72 @@ fn extract_tar_stream_to_root_at(root: &Path, reader: &mut dyn Read) -> Result<V
     track_partial_extraction(inner)
 }
 
-/// Run a maintainer script (preinst, postinst, prerm, postrm)
-fn run_maintainer_script(script: &Path, package_name: &str, arg: &str) -> Result<()> {
-    // Make executable
-    let mut perms = fs::metadata(script)?.permissions();
-    perms.set_mode(0o755);
-    fs::set_permissions(script, perms)?;
+fn maintainer_script_name(script: &Path) -> Result<&str> {
+    let filename = script
+        .file_name()
+        .and_then(std::ffi::OsStr::to_str)
+        .context("Maintainer script path has no UTF-8 filename")?;
+    let name = filename.rsplit_once('.').map_or(filename, |(_, name)| name);
+    anyhow::ensure!(
+        matches!(name, "preinst" | "postinst" | "prerm" | "postrm"),
+        "Unsupported maintainer script name: {name}"
+    );
+    Ok(name)
+}
 
-    let status = Command::new(script)
+fn run_maintainer_script_with_timeout(
+    script: &Path,
+    package_name: &str,
+    arg: &str,
+    timeout: Duration,
+) -> Result<()> {
+    use std::os::unix::process::CommandExt;
+
+    let script_name = maintainer_script_name(script)?;
+    let mut permissions = fs::metadata(script)?.permissions();
+    permissions.set_mode(0o755);
+    fs::set_permissions(script, permissions)?;
+
+    let mut command = Command::new(script);
+    command
         .arg(arg)
+        .env("DPKG_ROOT", "")
+        .env("DPKG_ADMINDIR", "/var/lib/dpkg")
         .env("DPKG_MAINTSCRIPT_PACKAGE", package_name)
         .env("DPKG_MAINTSCRIPT_ARCH", super::debian_arch())
-        .status()
+        .env("DPKG_MAINTSCRIPT_NAME", script_name)
+        .env("DPKG_MAINTSCRIPT_DEBUG", "0")
+        .process_group(0);
+    let mut child = command
+        .spawn()
         .with_context(|| format!("Failed to run {}", script.display()))?;
+    let process_group = nix::unistd::Pid::from_raw(
+        i32::try_from(child.id()).context("Maintainer script process ID exceeds i32")?,
+    );
+    let started = std::time::Instant::now();
+    let status = loop {
+        if let Some(status) = child
+            .try_wait()
+            .with_context(|| format!("Failed to wait for {}", script.display()))?
+        {
+            break status;
+        }
+        if started.elapsed() >= timeout {
+            if let Err(error) =
+                nix::sys::signal::killpg(process_group, nix::sys::signal::Signal::SIGKILL)
+            {
+                tracing::warn!(%error, script = %script.display(), "Failed to kill timed-out maintainer script process group");
+                let _ = child.kill();
+            }
+            let _ = child.wait();
+            anyhow::bail!(
+                "Maintainer script {} timed out after {} seconds",
+                script.display(),
+                timeout.as_secs()
+            );
+        }
+        std::thread::sleep(Duration::from_millis(50));
+    };
 
     if !status.success() {
         anyhow::bail!(
@@ -1539,8 +1593,12 @@ fn run_maintainer_script(script: &Path, package_name: &str, arg: &str) -> Result
             status.code()
         );
     }
-
     Ok(())
+}
+
+/// Run a maintainer script (preinst, postinst, prerm, postrm).
+fn run_maintainer_script(script: &Path, package_name: &str, arg: &str) -> Result<()> {
+    run_maintainer_script_with_timeout(script, package_name, arg, MAINTAINER_SCRIPT_TIMEOUT)
 }
 
 /// Prepare a status entry from a control file (for batched writing)
@@ -2031,6 +2089,44 @@ pub fn dry_run(result: &ResolutionResult) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn maintainer_scripts_receive_the_dpkg_environment_contract() {
+        let directory = tempfile::tempdir().expect("tempdir");
+        let script = directory.path().join("demo.postinst");
+        let body = format!(
+            "#!/bin/sh\n\
+             [ \"$DPKG_ROOT\" = \"\" ] || exit 10\n\
+             [ \"$DPKG_ADMINDIR\" = \"/var/lib/dpkg\" ] || exit 11\n\
+             [ \"$DPKG_MAINTSCRIPT_PACKAGE\" = \"demo\" ] || exit 12\n\
+             [ \"$DPKG_MAINTSCRIPT_ARCH\" = \"{}\" ] || exit 13\n\
+             [ \"$DPKG_MAINTSCRIPT_NAME\" = \"postinst\" ] || exit 14\n\
+             [ \"$DPKG_MAINTSCRIPT_DEBUG\" = \"0\" ] || exit 15\n\
+             [ \"$1\" = \"configure\" ] || exit 16\n",
+            super::super::debian_arch()
+        );
+        fs::write(&script, body).expect("write maintainer script");
+
+        run_maintainer_script_with_timeout(&script, "demo", "configure", Duration::from_secs(2))
+            .expect("maintainer script contract");
+    }
+
+    #[test]
+    fn timed_out_maintainer_script_is_terminated() {
+        let directory = tempfile::tempdir().expect("tempdir");
+        let script = directory.path().join("demo.postinst");
+        fs::write(&script, "#!/bin/sh\nexec sleep 5\n").expect("write maintainer script");
+
+        let error = run_maintainer_script_with_timeout(
+            &script,
+            "demo",
+            "configure",
+            Duration::from_millis(100),
+        )
+        .expect_err("hung maintainer script must time out");
+
+        assert!(error.to_string().contains("timed out"), "{error:#}");
+    }
 
     #[test]
     fn dpkg_file_list_records_files_and_directories_for_removal() {
