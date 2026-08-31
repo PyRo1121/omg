@@ -92,12 +92,10 @@ pub fn validate_build_dir(build_root: &Path, package_name: &str) -> Result<PathB
         }
     }
 
-    // Validate path stays inside build_root
-    if pkg_dir.exists() {
-        validate_path_inside(build_root, &pkg_dir)?;
-    }
-
-    Ok(pkg_dir)
+    // Validate containment even before the package directory exists. Waiting
+    // until after creation lets an untrusted name containing `..` escape the
+    // build root before there is anything to canonicalize.
+    validate_path_inside(build_root, &pkg_dir)
 }
 
 #[inline]
@@ -273,6 +271,18 @@ mod tests {
             is_symlink(&missing).is_err(),
             "missing path must propagate an error instead of reporting 'not a symlink'"
         );
+    }
+
+    #[test]
+    fn validate_build_dir_rejects_nonexistent_traversal_target() {
+        let temp = tempfile::tempdir().expect("temp dir");
+        let build_root = temp.path().join("root");
+        std::fs::create_dir_all(&build_root).expect("build root");
+
+        let error = validate_build_dir(&build_root, "../outside")
+            .expect_err("nonexistent traversal target must be rejected");
+        assert!(error.to_string().contains("escapes base directory"));
+        assert!(!temp.path().join("outside").exists());
     }
 
     #[test]
