@@ -148,20 +148,26 @@ pub async fn install(packages: &[String], yes: bool, replacement_hops: u32) -> R
 
     record_install_history(packages, &missing_packages, operation_result)?;
 
-    modern_ui::print_success_with_packages(
-        &format!(
-            "Installed {} {}",
-            packages.len(),
-            if packages.len() == 1 {
-                "package"
-            } else {
-                "packages"
-            }
-        ),
-        packages,
-    );
+    // AUR and replacement installs report and track their actual identities
+    // inside the dedicated path. Only report requested packages completed by
+    // this official/local transaction, avoiding duplicate or false outcomes.
+    let installed_requested = packages_excluding(packages, &missing_packages);
+    if !installed_requested.is_empty() {
+        modern_ui::print_success_with_packages(
+            &format!(
+                "Installed {} {}",
+                installed_requested.len(),
+                if installed_requested.len() == 1 {
+                    "package"
+                } else {
+                    "packages"
+                }
+            ),
+            &installed_requested,
+        );
 
-    crate::core::usage::track_install_result(packages, true);
+        crate::core::usage::track_install_result(&installed_requested, true);
+    }
     Ok(())
 }
 
@@ -178,11 +184,25 @@ fn record_install_history(
     aur_packages: &[String],
     operation_result: Result<()>,
 ) -> Result<()> {
-    use crate::core::history::{HistoryManager, PackageChange, TransactionType};
+    use crate::core::history::{HistoryManager, TransactionType};
+
+    let changes = parent_install_changes(packages, aur_packages);
+    if changes.is_empty() {
+        return operation_result;
+    }
+
+    HistoryManager::new()?.finish_operation(TransactionType::Install, changes, operation_result)
+}
+
+fn parent_install_changes(
+    packages: &[String],
+    aur_packages: &[String],
+) -> Vec<crate::core::history::PackageChange> {
+    use crate::core::history::PackageChange;
 
     // Packages handled by the dedicated AUR path record their own entries
     // with the actual installed identity; skip them here to avoid doubles.
-    let changes = packages
+    packages
         .iter()
         .filter(|package| !aur_packages.contains(*package))
         .map(|package| PackageChange {
@@ -198,9 +218,7 @@ fn record_install_history(
             }
             .to_string(),
         })
-        .collect();
-
-    HistoryManager::new()?.finish_operation(TransactionType::Install, changes, operation_result)
+        .collect()
 }
 
 fn history_package_name(package: &str) -> String {
@@ -570,15 +588,14 @@ async fn handle_aur_package(aur_pkg: crate::core::Package, yes: bool) -> Result<
     };
 
     if !should_install {
-        // Record the aborted attempt like any other failed mutation so
-        // history shows why nothing changed.
-        record_aur_history(
+        // Record the aborted attempt once. The parent recorder skips its empty
+        // official-package change set, so this remains the sole history entry.
+        modern_ui::print_error("Installation cancelled");
+        return record_aur_history(
             &aur_pkg.name,
             None,
-            Err(anyhow::anyhow!("cancelled by user")),
-        )?;
-        modern_ui::print_error("Installation cancelled");
-        anyhow::bail!("Installation cancelled by user");
+            Err(anyhow::anyhow!("Installation cancelled by user")),
+        );
     }
 
     modern_ui::print_aur_build_phase("Building", &aur_pkg.name);
@@ -707,6 +724,13 @@ mod tests {
             extract_missing_package(error, &["firefox".to_string()]).as_deref(),
             Some("firefox")
         );
+    }
+
+    #[test]
+    fn parent_outcome_excludes_packages_recorded_by_the_aur_path() {
+        let requested = vec!["aur-only".to_string()];
+        assert!(parent_install_changes(&requested, &requested).is_empty());
+        assert!(packages_excluding(&requested, &requested).is_empty());
     }
 
     #[test]
