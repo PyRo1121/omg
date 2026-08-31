@@ -114,15 +114,14 @@ pub async fn fetch_key(key_id: &str) -> Result<Cert, KeyserverError> {
 ///
 /// The response is bounded in size, matched against the requested key
 /// handle, and the whole fetch is bounded by a hard timeout.
-pub async fn fetch_key_from(key_id: &str, keyserver_url: &str) -> Result<Cert, KeyserverError> {
+async fn fetch_key_from(key_id: &str, keyserver_url: &str) -> Result<Cert, KeyserverError> {
     let key_handle: KeyHandle = key_id
         .parse()
         .map_err(|source| KeyserverError::InvalidKeyId {
             key_id: key_id.to_string(),
             source: SequoiaSource(source),
         })?;
-    let lookup_url = keyserver_lookup_url(keyserver_url, &key_handle)?;
-    let safe_keyserver = crate::core::http::redact_url(keyserver_url);
+    let (lookup_url, safe_keyserver) = keyserver_lookup_url(keyserver_url, &key_handle)?;
 
     let fetch = async {
         let response = shared_client()
@@ -203,7 +202,7 @@ pub async fn fetch_key_from(key_id: &str, keyserver_url: &str) -> Result<Cert, K
 fn keyserver_lookup_url(
     keyserver_url: &str,
     key_handle: &KeyHandle,
-) -> Result<Url, KeyserverError> {
+) -> Result<(Url, String), KeyserverError> {
     let normalized = if let Some(authority) = keyserver_url.strip_prefix("hkps://") {
         format!("https://{authority}")
     } else {
@@ -236,7 +235,7 @@ fn keyserver_lookup_url(
         .append_pair("op", "get")
         .append_pair("options", "mr")
         .append_pair("search", &format!("0x{key_handle:X}"));
-    Ok(url)
+    Ok((url, safe_keyserver))
 }
 
 /// Fetch many keys concurrently (bounded), keeping each key's result
@@ -434,7 +433,7 @@ mod tests {
 
     #[test]
     fn keyserver_lookup_normalizes_hkps_and_replaces_untrusted_path() {
-        let url = keyserver_lookup_url(
+        let (url, _) = keyserver_lookup_url(
             "hkps://keyserver.ubuntu.com/untrusted?old=value#fragment",
             &test_key_handle(),
         )
