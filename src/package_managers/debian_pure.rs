@@ -130,7 +130,7 @@ impl PackageManager for PureDebianPackageManager {
 
             // 5. Execute transaction (downloads, unpacks, configures)
             tx.execute().await
-                .context("Transaction failed. System may be in inconsistent state. Try: omg install --fix-broken")?;
+                .context("Transaction failed. System may be inconsistent. Repair with: sudo apt-get install -f")?;
 
             let elapsed = start.elapsed();
             tracing::info!(
@@ -256,7 +256,7 @@ impl PackageManager for PureDebianPackageManager {
                 .context("Debian upgrade preparation task failed")??;
 
             tx.execute().await.context(
-                "Upgrade transaction failed. System may need repair. Try: omg install --fix-broken",
+                "Upgrade transaction failed. System may be inconsistent. Repair with: sudo apt-get install -f",
             )?;
 
             let elapsed = start.elapsed();
