@@ -37,6 +37,10 @@ const SOCKET_HEALTH_CHECK_INTERVAL: Duration = Duration::from_secs(60);
 /// Close clients that hold a connection without sending a complete frame.
 const CLIENT_IDLE_TIMEOUT: Duration = Duration::from_secs(60);
 
+/// Bound response writes so a local client that stops reading cannot retain a
+/// connection permit indefinitely.
+const CLIENT_WRITE_TIMEOUT: Duration = Duration::from_secs(5);
+
 /// Per-connection rate limit (requests per second)
 const CLIENT_RATE_LIMIT_HZ: u32 = 50;
 /// Per-connection burst size
@@ -406,6 +410,31 @@ impl Drop for ConnectionGuard {
     }
 }
 
+async fn await_client_write(
+    write: impl std::future::Future<Output = std::io::Result<()>>,
+    timeout: Duration,
+) -> Result<()> {
+    tokio::time::timeout(timeout, write)
+        .await
+        .map_err(|_| anyhow::anyhow!("Daemon client write timed out after {timeout:?}"))??;
+    Ok(())
+}
+
+async fn send_response_frame(
+    framed: &mut tokio_util::codec::Framed<tokio::net::UnixStream, LengthDelimitedCodec>,
+    response_bytes: Vec<u8>,
+) -> Result<()> {
+    let response_len = response_bytes.len();
+    if let Err(error) =
+        await_client_write(framed.send(response_bytes.into()), CLIENT_WRITE_TIMEOUT).await
+    {
+        GLOBAL_METRICS.inc_requests_failed();
+        return Err(error);
+    }
+    GLOBAL_METRICS.add_bytes_sent(response_len as u64);
+    Ok(())
+}
+
 /// Handle a single client connection
 /// Encode and send one error frame, accounting bytes sent. The shared tail
 /// of every early-reject path in `handle_client` (audit typ01 C2): without
@@ -417,9 +446,10 @@ async fn send_error_response(
     message: String,
 ) {
     let response = Response::Error { id, code, message };
-    if let Ok(response_bytes) = crate::daemon::protocol::encode_frame(&response) {
-        GLOBAL_METRICS.add_bytes_sent(response_bytes.len() as u64);
-        let _ = framed.send(response_bytes.into()).await;
+    if let Ok(response_bytes) = crate::daemon::protocol::encode_frame(&response)
+        && let Err(error) = send_response_frame(framed, response_bytes).await
+    {
+        tracing::warn!("Failed to send daemon error response: {error}");
     }
 }
 
@@ -580,8 +610,7 @@ async fn handle_client_with_idle_timeout(
 
         // Encode and send response
         let response_bytes = crate::daemon::protocol::encode_frame(&response)?;
-        GLOBAL_METRICS.add_bytes_sent(response_bytes.len() as u64);
-        framed.send(response_bytes.into()).await?;
+        send_response_frame(&mut framed, response_bytes).await?;
     }
 
     tracing::debug!("Client disconnected");
@@ -592,6 +621,19 @@ async fn handle_client_with_idle_timeout(
 mod tests {
     use super::*;
     use anyhow::Context as _;
+
+    #[tokio::test]
+    async fn daemon_client_writes_have_a_deadline() {
+        let stalled = std::future::pending::<std::io::Result<()>>();
+        let error = await_client_write(stalled, Duration::from_millis(1))
+            .await
+            .expect_err("stalled client write must time out");
+        assert!(error.to_string().contains("write timed out"));
+
+        await_client_write(std::future::ready(Ok(())), Duration::from_secs(1))
+            .await
+            .expect("completed write must succeed");
+    }
 
     #[test]
     fn fast_status_reader_ttl_matches_daemon_writer_cadence() {
