@@ -696,6 +696,7 @@ analyzer inference
 - **Ci**: Cross-platform install script and R2 release sync
 ### 🐛 Bug Fixes
 
+- Reject unsupported Rust complete profiles
 - Isolate Rust component downloads
 - Reject Node version-list HTTP errors
 - Report accurate CLI status and failures
