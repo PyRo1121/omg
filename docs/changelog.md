@@ -702,6 +702,7 @@ analyzer inference
 - **Ci**: Cross-platform install script and R2 release sync
 ### 🐛 Bug Fixes
 
+- Account for shared Debian disk usage
 - Bound Debian maintainer scripts
 - Preserve Debian archive directory modes
 - Preserve dpkg description continuations
