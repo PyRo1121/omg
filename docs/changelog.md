@@ -702,6 +702,7 @@ analyzer inference
 - **Ci**: Cross-platform install script and R2 release sync
 ### 🐛 Bug Fixes
 
+- Serialize parallel task setup
 - Coalesce watch events during task runs
 - Validate manifest package managers
 - Report every parallel AUR failure
