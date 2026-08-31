@@ -63,6 +63,69 @@ const MAX_DEB_MEMBER_BYTES: u64 = 2 * 1024 * 1024 * 1024;
 /// Initial backoff for retries (doubles each retry)
 const INITIAL_BACKOFF_MS: u64 = 200;
 
+const DPKG_FRONTEND_LOCK_PATH: &str = "/var/lib/dpkg/lock-frontend";
+const DPKG_DATABASE_LOCK_PATH: &str = "/var/lib/dpkg/lock";
+static DPKG_TRANSACTION_LOCK: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
+
+struct DpkgLockGuard {
+    frontend: File,
+    database: File,
+}
+
+impl Drop for DpkgLockGuard {
+    fn drop(&mut self) {
+        for file in [&self.database, &self.frontend] {
+            let unlock = nix::libc::flock {
+                l_type: nix::libc::F_UNLCK as _,
+                l_whence: nix::libc::SEEK_SET as _,
+                l_start: 0,
+                l_len: 0,
+                l_pid: 0,
+            };
+            if let Err(error) = nix::fcntl::fcntl(file, nix::fcntl::FcntlArg::F_SETLK(&unlock)) {
+                tracing::warn!("Failed to release dpkg transaction lock: {error}");
+            }
+        }
+    }
+}
+
+fn acquire_dpkg_locks_at(frontend_path: &Path, database_path: &Path) -> Result<DpkgLockGuard> {
+    fn acquire(path: &Path) -> Result<File> {
+        let file = fs::OpenOptions::new()
+            .create(true)
+            .read(true)
+            .write(true)
+            .truncate(false)
+            .open(path)
+            .with_context(|| format!("Failed to open dpkg lock {}", path.display()))?;
+        let lock = nix::libc::flock {
+            l_type: nix::libc::F_WRLCK as _,
+            l_whence: nix::libc::SEEK_SET as _,
+            l_start: 0,
+            l_len: 0,
+            l_pid: 0,
+        };
+        nix::fcntl::fcntl(&file, nix::fcntl::FcntlArg::F_SETLKW(&lock))
+            .with_context(|| format!("Failed to acquire dpkg lock {}", path.display()))?;
+        Ok(file)
+    }
+
+    let frontend = acquire(frontend_path)?;
+    let database = acquire(database_path)?;
+    Ok(DpkgLockGuard { frontend, database })
+}
+
+async fn acquire_dpkg_locks() -> Result<DpkgLockGuard> {
+    tokio::task::spawn_blocking(|| {
+        acquire_dpkg_locks_at(
+            Path::new(DPKG_FRONTEND_LOCK_PATH),
+            Path::new(DPKG_DATABASE_LOCK_PATH),
+        )
+    })
+    .await
+    .context("dpkg lock worker failed")?
+}
+
 /// A package transaction
 pub struct Transaction {
     /// Current state
@@ -232,6 +295,11 @@ impl Transaction {
     /// downloading. This overlaps I/O-bound (download) and CPU-bound (decompress) work.
     pub async fn execute(&mut self) -> Result<()> {
         self.validate_action_identifiers()?;
+        // POSIX record locks interoperate with apt/dpkg but are process-wide,
+        // so pair them with a Tokio mutex to serialize transactions inside
+        // this process as well. Keep both locks through rollback/completion.
+        let _process_lock = DPKG_TRANSACTION_LOCK.lock().await;
+        let _dpkg_locks = acquire_dpkg_locks().await?;
         tracing::info!(
             "Starting pipelined transaction with {} packages",
             self.package_count()
@@ -2155,6 +2223,19 @@ mod tests {
         std::fs::write(&backup, b"old").expect("backup");
         restore_backup(&backup, &original).expect("restore");
         assert_eq!(std::fs::read(&original).expect("restored"), b"old");
+    }
+
+    #[test]
+    fn dpkg_lock_files_are_created_and_locked() {
+        let directory = tempfile::tempdir().expect("temp dir");
+        let frontend = directory.path().join("lock-frontend");
+        let database = directory.path().join("lock");
+
+        let guard = acquire_dpkg_locks_at(&frontend, &database).expect("dpkg locks");
+
+        assert!(frontend.is_file());
+        assert!(database.is_file());
+        drop(guard);
     }
 
     #[test]
