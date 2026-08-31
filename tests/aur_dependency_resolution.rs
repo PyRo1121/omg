@@ -1,9 +1,3 @@
-#![expect(
-    clippy::unwrap_used,
-    clippy::expect_used,
-    clippy::pedantic,
-    clippy::nursery
-)]
 //! AUR dependency-graph and build-wave planning contracts.
 //!
 //! Run real AUR scenarios with both `OMG_RUN_SYSTEM_TESTS=1` and
