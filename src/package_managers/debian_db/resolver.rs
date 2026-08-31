@@ -19,7 +19,9 @@ use std::collections::{HashMap, HashSet, VecDeque};
 
 use anyhow::{Context, Result};
 
-use super::{DebianPackage, get_detailed_best_candidates, list_installed_fast};
+use super::{
+    DebianPackage, DpkgPackageEntry, debian_arch, get_detailed_best_candidates, list_installed_fast,
+};
 
 /// A dependency specification parsed from the Depends: field
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -101,10 +103,7 @@ impl DependencyResolver {
             available.insert(pkg.name.clone(), pkg);
         }
 
-        let installed: HashMap<String, String> = installed_list
-            .into_iter()
-            .map(|p| (p.name, p.version))
-            .collect();
+        let installed = installed_versions_for_resolver(installed_list);
 
         Ok(Self {
             available,
@@ -529,17 +528,41 @@ fn parse_dependency(s: &str) -> Result<Dependency> {
     Ok(dependency)
 }
 
-/// Parse a single dependency without alternatives
-/// Strip architecture qualifier from package name (e.g., "perl:any" -> "perl")
-/// Debian multi-arch qualifiers: `:any`, `:native`, `:amd64`, `:i386`, etc.
-#[inline]
-fn strip_arch_qualifier(name: &str) -> &str {
-    // OPTIMIZATION: Use memchr for faster colon search (SIMD-accelerated)
-    if let Some(colon_pos) = memchr::memchr(b':', name.as_bytes()) {
-        &name[..colon_pos]
-    } else {
-        name
+/// Keep only installed versions that can satisfy dependencies for the host
+/// architecture. Native entries win over architecture-independent entries,
+/// and foreign-architecture entries never overwrite either.
+fn installed_versions_for_resolver(
+    installed: impl IntoIterator<Item = DpkgPackageEntry>,
+) -> HashMap<String, String> {
+    let mut versions = HashMap::new();
+    for package in installed {
+        if package.architecture == debian_arch() {
+            versions.insert(package.name, package.version);
+        } else if package.architecture == "all" {
+            versions.entry(package.name).or_insert(package.version);
+        }
     }
+    versions
+}
+
+/// Parse and validate a dependency package name. The pure resolver has only
+/// native and architecture-independent repository candidates, so qualifiers
+/// that require Multi-Arch metadata or a foreign candidate fail explicitly.
+fn parse_dependency_name(raw_name: &str) -> Result<String> {
+    let raw_name = raw_name.trim();
+    let (name, qualifier) = raw_name
+        .split_once(':')
+        .map_or((raw_name, None), |(name, qualifier)| {
+            (name, Some(qualifier))
+        });
+    anyhow::ensure!(!name.is_empty(), "dependency package name is empty");
+    if let Some(qualifier) = qualifier {
+        anyhow::ensure!(
+            qualifier == "native" || qualifier == debian_arch(),
+            "dependency architecture qualifier ':{qualifier}' is not supported by the pure Debian resolver"
+        );
+    }
+    Ok(name.to_string())
 }
 
 #[inline]
@@ -547,8 +570,7 @@ fn parse_single_dep(s: &str) -> Result<Dependency> {
     // OPTIMIZATION: Use memchr for faster parenthesis search (SIMD)
     if let Some(paren_start) = memchr::memchr(b'(', s.as_bytes()) {
         let raw_name = s[..paren_start].trim();
-        let name = strip_arch_qualifier(raw_name).to_string();
-        anyhow::ensure!(!name.is_empty(), "dependency package name is empty");
+        let name = parse_dependency_name(raw_name)?;
         let constraint_start = paren_start + 1;
         let remainder = &s[constraint_start..];
         let relative_end = memchr::memchr(b')', remainder.as_bytes())
@@ -566,8 +588,7 @@ fn parse_single_dep(s: &str) -> Result<Dependency> {
         !s.contains(')'),
         "dependency contains a closing parenthesis without an opening parenthesis"
     );
-    let name = strip_arch_qualifier(s.trim()).to_string();
-    anyhow::ensure!(!name.is_empty(), "dependency package name is empty");
+    let name = parse_dependency_name(s)?;
     Ok(Dependency {
         name,
         version_constraint: None,
@@ -725,20 +746,49 @@ mod tests {
     }
 
     #[test]
-    fn test_parse_dependency_with_arch_qualifier() {
-        // Test :any (multi-arch: allows any architecture)
-        let dep = parse_dependency("perl:any").unwrap();
-        assert_eq!(dep.name, "perl");
-        assert!(dep.version_constraint.is_none());
+    fn unsupported_dependency_architectures_fail_closed() {
+        assert!(parse_dependency("libc6:any").is_err());
+        let foreign_arch = if super::super::debian_arch() == "i386" {
+            "amd64"
+        } else {
+            "i386"
+        };
+        assert!(parse_dependency(&format!("libc6:{foreign_arch}")).is_err());
+    }
 
+    #[test]
+    fn test_parse_dependency_with_arch_qualifier() {
         // Test :native (same as build architecture)
         let dep = parse_dependency("build-essential:native").unwrap();
         assert_eq!(dep.name, "build-essential");
 
-        // Test with version constraint
-        let dep = parse_dependency("libc6:amd64 (>= 2.38)").unwrap();
+        // Test with a host-architecture version constraint.
+        let dep =
+            parse_dependency(&format!("libc6:{} (>= 2.38)", super::super::debian_arch())).unwrap();
         assert_eq!(dep.name, "libc6");
         assert!(dep.version_constraint.is_some());
+    }
+
+    #[test]
+    fn foreign_installed_versions_cannot_shadow_native_versions() {
+        let host_arch = super::super::debian_arch();
+        let foreign_arch = if host_arch == "i386" { "amd64" } else { "i386" };
+        let entry = |architecture: &str, version: &str| DpkgPackageEntry {
+            name: "libc6".to_string(),
+            version: version.to_string(),
+            description: String::new(),
+            architecture: architecture.to_string(),
+            is_explicit: false,
+        };
+
+        let versions = installed_versions_for_resolver([
+            entry(host_arch, "2.36"),
+            entry(foreign_arch, "2.31"),
+        ]);
+        assert_eq!(versions.get("libc6").map(String::as_str), Some("2.36"));
+
+        let foreign_only = installed_versions_for_resolver([entry(foreign_arch, "2.31")]);
+        assert!(!foreign_only.contains_key("libc6"));
     }
 
     #[test]
