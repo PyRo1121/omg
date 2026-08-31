@@ -48,6 +48,7 @@ OMG is the fastest unified package manager for Linux, replacing pacman, yay, nvm
 - Manage Pi versions natively
 ### ♻️  Refactoring
 
+- Remove unused keyserver API work
 - Remove redundant audit log delegation
 - Remove unused APT orphan export
 - Centralize parallel sync repository policy
