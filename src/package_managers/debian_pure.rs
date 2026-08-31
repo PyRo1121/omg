@@ -41,6 +41,23 @@ impl PureDebianPackageManager {
     }
 }
 
+fn validate_pure_mutation_with_privileges(packages: &[String], has_privileges: bool) -> Result<()> {
+    anyhow::ensure!(!packages.is_empty(), "No packages specified");
+    crate::core::security::validate_package_names(packages)?;
+    anyhow::ensure!(
+        has_privileges,
+        "Pure Debian package transactions require root privileges"
+    );
+    Ok(())
+}
+
+fn validate_pure_mutation(packages: &[String]) -> Result<()> {
+    validate_pure_mutation_with_privileges(
+        packages,
+        crate::core::paths::test_mode() || crate::core::is_root(),
+    )
+}
+
 impl PackageManager for PureDebianPackageManager {
     fn name(&self) -> &'static str {
         "apt-pure"
@@ -67,6 +84,7 @@ impl PackageManager for PureDebianPackageManager {
         Box::pin(async move {
             use std::time::Instant;
 
+            validate_pure_mutation(&packages)?;
             let start = Instant::now();
             tracing::info!("Starting pure Rust install for {} packages", packages.len());
 
@@ -148,7 +166,7 @@ impl PackageManager for PureDebianPackageManager {
         Box::pin(async move {
             use std::time::Instant;
 
-            crate::core::security::validate_package_names(&packages)?;
+            validate_pure_mutation(&packages)?;
             let start = Instant::now();
             tracing::info!(
                 "Starting pure Rust package removal for {} packages",
@@ -195,6 +213,10 @@ impl PackageManager for PureDebianPackageManager {
         Box::pin(async move {
             use std::time::Instant;
 
+            anyhow::ensure!(
+                crate::core::paths::test_mode() || crate::core::is_root(),
+                "Pure Debian package transactions require root privileges"
+            );
             let start = Instant::now();
             tracing::info!("Starting pure Rust system upgrade");
 
@@ -626,7 +648,7 @@ fn populate_action_url(
 
 #[cfg(all(test, unix))]
 mod tests {
-    use super::{populate_action_url, update_apt_lists};
+    use super::{populate_action_url, update_apt_lists, validate_pure_mutation_with_privileges};
     use crate::package_managers::debian_db::{DebianPackage, PackageAction, RepoType, Repository};
     use std::collections::HashMap;
     use std::os::unix::fs::PermissionsExt;
@@ -642,6 +664,25 @@ mod tests {
         permissions.set_mode(0o700);
         std::fs::set_permissions(&program, permissions).expect("make fake apt executable");
         (directory, program)
+    }
+
+    #[test]
+    fn pure_mutations_validate_inputs_and_privileges_before_work() {
+        let package = vec!["demo".to_string()];
+        validate_pure_mutation_with_privileges(&package, true).expect("valid privileged request");
+
+        let error = validate_pure_mutation_with_privileges(&package, false)
+            .expect_err("unprivileged mutation must fail");
+        assert!(error.to_string().contains("root privileges"), "{error:#}");
+
+        let invalid = vec!["../demo".to_string()];
+        let error = validate_pure_mutation_with_privileges(&invalid, true)
+            .expect_err("invalid package name must fail");
+        assert!(error.to_string().contains("cannot start"), "{error:#}");
+
+        let empty = validate_pure_mutation_with_privileges(&[], true)
+            .expect_err("empty package request must fail");
+        assert!(empty.to_string().contains("No packages"), "{empty:#}");
     }
 
     #[test]
