@@ -389,7 +389,7 @@ pub fn execute_transaction(
         let mp = indicatif::MultiProgress::new();
         let main_pb = setup_alpm_callbacks(alpm, &mp);
         let tx_guard = prepare_alpm_transaction(alpm, packages, kind, &pacman_config)?;
-        commit_alpm_transaction(tx_guard.0, &main_pb)?;
+        commit_alpm_transaction(tx_guard.0, &main_pb, kind, &pacman_config.hold_pkg)?;
         return Ok(());
     }
 
@@ -419,7 +419,7 @@ pub fn execute_transaction(
     let mp = indicatif::MultiProgress::new();
     let main_pb = setup_alpm_callbacks(&alpm, &mp);
     let tx_guard = prepare_alpm_transaction(&mut alpm, packages, kind, &pacman_config)?;
-    commit_alpm_transaction(tx_guard.0, &main_pb)?;
+    commit_alpm_transaction(tx_guard.0, &main_pb, kind, &pacman_config.hold_pkg)?;
 
     Ok(())
 }
@@ -590,11 +590,10 @@ fn prepare_alpm_transaction<'a>(
     } else {
         for pkg_name in packages {
             if matches!(kind, TransactionKind::Remove { .. }) {
-                if pacman_config.hold_pkg.iter().any(|held| held == &pkg_name) {
-                    anyhow::bail!(
-                        "Package '{pkg_name}' is protected by HoldPkg in pacman.conf and cannot be removed"
-                    );
-                }
+                ensure_removals_not_held(
+                    std::iter::once(pkg_name.as_str()),
+                    &pacman_config.hold_pkg,
+                )?;
                 if let Ok(pkg) = tx_guard.0.localdb().pkg(pkg_name.as_str()) {
                     tx_guard.0.trans_remove_pkg(pkg).map_err(|e| {
                         anyhow::anyhow!("Failed to add {pkg_name} to removal list: {e}")
@@ -800,11 +799,54 @@ pub(crate) fn configure_package_filters(
         .context("Failed to configure ignored package groups")
 }
 
-fn commit_alpm_transaction(alpm: &mut alpm::Alpm, main_pb: &indicatif::ProgressBar) -> Result<()> {
+fn ensure_removals_not_held<'a>(
+    package_names: impl IntoIterator<Item = &'a str>,
+    hold_pkg: &[String],
+) -> Result<()> {
+    let matchers = hold_pkg
+        .iter()
+        .map(|pattern| {
+            globset::Glob::new(pattern)
+                .with_context(|| format!("Invalid HoldPkg pattern '{pattern}' in pacman.conf"))
+                .map(|glob| (pattern, glob.compile_matcher()))
+        })
+        .collect::<Result<Vec<_>>>()?;
+
+    for package_name in package_names {
+        if let Some((pattern, _)) = matchers
+            .iter()
+            .find(|(_, matcher)| matcher.is_match(package_name))
+        {
+            anyhow::bail!(
+                "Package '{package_name}' is protected by HoldPkg pattern '{pattern}' in pacman.conf and cannot be removed"
+            );
+        }
+    }
+    Ok(())
+}
+
+fn commit_alpm_transaction(
+    alpm: &mut alpm::Alpm,
+    main_pb: &indicatif::ProgressBar,
+    kind: TransactionKind,
+    hold_pkg: &[String],
+) -> Result<()> {
     main_pb.set_message("Preparing transaction...");
 
     alpm.trans_prepare()
         .map_err(|e| anyhow::anyhow!(format_trans_prepare_error(&e.to_string())))?;
+
+    // RECURSE expands the removal set during preparation. Validate the final
+    // set, not only the user's explicit targets, so dependencies protected by
+    // HoldPkg cannot be removed as a cascade.
+    if matches!(kind, TransactionKind::Remove { .. }) {
+        ensure_removals_not_held(
+            alpm.trans_remove()
+                .into_iter()
+                .map(|package| package.name()),
+            hold_pkg,
+        )?;
+    }
 
     if alpm.trans_add().is_empty() && alpm.trans_remove().is_empty() {
         main_pb.finish_and_clear();
@@ -943,8 +985,8 @@ fn ensure_mirror_servers(alpm: &alpm::Alpm) -> Result<()> {
 mod tests {
     use super::{
         DOWNLOAD_BAR_TEMPLATE, DOWNLOAD_SPINNER_TEMPLATE, TransactionKind, ensure_mirror_servers,
-        format_no_syncdb_error, format_trans_prepare_error, is_keyring_related_error,
-        package_base_name, transaction_flags,
+        ensure_removals_not_held, format_no_syncdb_error, format_trans_prepare_error,
+        is_keyring_related_error, package_base_name, transaction_flags,
     };
 
     #[test]
@@ -963,6 +1005,26 @@ mod tests {
             .add_server("https://mirror.example/$repo/os/$arch")
             .expect("add test mirror");
         assert!(ensure_mirror_servers(&alpm).is_ok());
+    }
+
+    #[test]
+    fn hold_pkg_patterns_cover_explicit_and_cascade_removals() {
+        let patterns = vec!["linux".to_string(), "kde-*".to_string()];
+
+        ensure_removals_not_held(["bash"], &patterns).expect("unheld package");
+        let explicit = ensure_removals_not_held(["linux"], &patterns)
+            .expect_err("explicit HoldPkg entry must be rejected");
+        assert!(explicit.to_string().contains("HoldPkg pattern 'linux'"));
+        let cascade = ensure_removals_not_held(["kde-libs"], &patterns)
+            .expect_err("glob-protected cascade must be rejected");
+        assert!(cascade.to_string().contains("HoldPkg pattern 'kde-*'"));
+    }
+
+    #[test]
+    fn invalid_hold_pkg_patterns_fail_closed() {
+        let error = ensure_removals_not_held(["anything"], &["[".to_string()])
+            .expect_err("invalid HoldPkg patterns must not be ignored");
+        assert!(error.to_string().contains("Invalid HoldPkg pattern"));
     }
 
     #[test]
