@@ -702,6 +702,7 @@ analyzer inference
 - **Ci**: Cross-platform install script and R2 release sync
 ### 🐛 Bug Fixes
 
+- Install local Debian archives through apt-get
 - Preserve unchanged databases during staged sync
 - Handle empty Java container versions
 - Reject nested ALPM handle access cleanly
