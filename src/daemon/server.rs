@@ -80,6 +80,13 @@ pub async fn run(
     .await
 }
 
+fn daemon_shutdown_result(internal_failure: Option<String>) -> Result<()> {
+    match internal_failure {
+        Some(failure) => anyhow::bail!(failure),
+        None => Ok(()),
+    }
+}
+
 async fn run_with_status_path(
     listener: UnixListener,
     state: Arc<DaemonState>,
@@ -87,6 +94,8 @@ async fn run_with_status_path(
     fast_status_path: PathBuf,
 ) -> Result<()> {
     let shutdown_token = CancellationToken::new();
+    let (internal_failure_tx, mut internal_failure_rx) =
+        tokio::sync::mpsc::unbounded_channel::<String>();
 
     // Budget for concurrent client connections; permits are released when a
     // connection task ends.
@@ -97,6 +106,7 @@ async fn run_with_status_path(
     let worker_token = shutdown_token.child_token();
     // Clone the parent token so the health check can trigger a full shutdown
     let shutdown_trigger = shutdown_token.clone();
+    let health_failure_tx = internal_failure_tx.clone();
 
     let worker_handle = tokio::spawn(async move {
         tracing::info!("Background status worker started");
@@ -266,10 +276,12 @@ async fn run_with_status_path(
                 }
                 _ = socket_health.tick() => {
                     if !socket_path.exists() {
-                        tracing::error!(
-                            "Socket file {} has been removed externally! Initiating shutdown.",
+                        let failure = format!(
+                            "Daemon socket {} was removed externally",
                             socket_path.display()
                         );
+                        tracing::error!("{failure}; initiating shutdown");
+                        let _ = health_failure_tx.send(failure);
                         // Cancel the parent shutdown token to stop the accept loop.
                         shutdown_trigger.cancel();
                         break;
@@ -285,12 +297,13 @@ async fn run_with_status_path(
     {
         let state_monitor = Arc::clone(&state);
         let shutdown_monitor = shutdown_token.clone();
+        let worker_failure_tx = internal_failure_tx;
         tokio::spawn(async move {
-            if worker_handle.await.is_err() {
+            if let Err(error) = worker_handle.await {
                 state_monitor.inc_background_worker_failures();
-                tracing::error!(
-                    "Background status worker terminated unexpectedly; initiating shutdown"
-                );
+                let failure = format!("Background status worker terminated unexpectedly: {error}");
+                tracing::error!("{failure}; initiating shutdown");
+                let _ = worker_failure_tx.send(failure);
                 shutdown_monitor.cancel();
             }
         });
@@ -298,11 +311,18 @@ async fn run_with_status_path(
 
     tracing::info!("Daemon ready, binary IPC enabled");
 
+    let mut internal_failure = None;
     loop {
         tokio::select! {
             // biased: always check shutdown signal first to avoid accepting
             // new connections after shutdown was requested
             biased;
+
+            Some(failure) = internal_failure_rx.recv() => {
+                internal_failure = Some(failure);
+                shutdown_token.cancel();
+                break;
+            }
 
             _ = tokio::signal::ctrl_c() => {
                 tracing::info!("Interrupt signal received, cleaning up...");
@@ -385,7 +405,7 @@ async fn run_with_status_path(
         }
     }
 
-    Ok(())
+    daemon_shutdown_result(internal_failure)
 }
 
 /// Maximum request size to prevent `DoS` attacks. This also bounds the sole
@@ -621,6 +641,14 @@ async fn handle_client_with_idle_timeout(
 mod tests {
     use super::*;
     use anyhow::Context as _;
+
+    #[test]
+    fn internal_daemon_failures_produce_unsuccessful_exit_results() {
+        assert!(daemon_shutdown_result(None).is_ok());
+        let error = daemon_shutdown_result(Some("worker crashed".to_string()))
+            .expect_err("internal failure must make daemon exit unsuccessfully");
+        assert_eq!(error.to_string(), "worker crashed");
+    }
 
     #[tokio::test]
     async fn daemon_client_writes_have_a_deadline() {
