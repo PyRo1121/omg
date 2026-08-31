@@ -3992,6 +3992,7 @@ the Debian backend), so it was removed from the metadata.
 - Normalize project formatting
 ### 🧪 Testing
 
+- Enforce telemetry queue and circuit invariants
 - Require precise Debian removal failures
 - Align task overrides with Node ecosystem
 - Bound daemon lifecycle probes
