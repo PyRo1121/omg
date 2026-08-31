@@ -406,7 +406,7 @@ pub fn execute_transaction(
         anyhow::bail!("pacman configuration contains no repositories");
     }
 
-    register_transaction_syncdbs(&alpm, &pacman_config)?;
+    register_configured_syncdbs(&alpm, &pacman_config)?;
 
     configure_mirrors(&mut alpm)?;
 
@@ -418,7 +418,7 @@ pub fn execute_transaction(
     Ok(())
 }
 
-fn register_transaction_syncdbs(
+pub(crate) fn register_configured_syncdbs(
     alpm: &alpm::Alpm,
     pacman_config: &crate::core::pacman_conf::PacmanConfig,
 ) -> Result<()> {
@@ -1167,7 +1167,7 @@ mod tests {
         DOWNLOAD_BAR_TEMPLATE, DOWNLOAD_SPINNER_TEMPLATE, TransactionKind,
         configure_signature_policy, ensure_mirror_servers, ensure_removals_not_held,
         format_trans_prepare_error, is_keyring_related_error, local_package_siglevel,
-        package_base_name, register_transaction_syncdbs, repository_siglevel, signature_policy,
+        package_base_name, register_configured_syncdbs, repository_siglevel, signature_policy,
         transaction_flags,
     };
 
@@ -1186,7 +1186,7 @@ mod tests {
             ..Default::default()
         };
 
-        let error = register_transaction_syncdbs(&alpm, &config)
+        let error = register_configured_syncdbs(&alpm, &config)
             .expect_err("a failed configured repository must abort registration");
         assert!(
             error

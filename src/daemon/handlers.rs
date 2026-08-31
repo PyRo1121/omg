@@ -40,11 +40,11 @@ enum SystemBackendAccess {
 }
 
 impl SystemBackendAccess {
-    fn production() -> Self {
-        Self::Production {
+    fn production() -> anyhow::Result<Self> {
+        Ok(Self::Production {
             #[cfg(feature = "arch")]
-            alpm_worker: std::sync::Arc::new(AlpmWorker::new()),
-        }
+            alpm_worker: std::sync::Arc::new(AlpmWorker::new()?),
+        })
     }
 
     fn is_production(&self) -> bool {
@@ -121,14 +121,17 @@ impl DaemonState {
     /// sync databases from disk. Called by RefreshIndex (after `omg sync`):
     /// without this, a worker created before the sync serves its frozen
     /// in-memory update list until daemon restart.
-    fn refresh_system_backends(&self) {
+    fn refresh_system_backends(&self) -> anyhow::Result<()> {
+        if !self.uses_production_backends() {
+            return Ok(());
+        }
+        let replacement = SystemBackendAccess::production()?;
         let mut backends = self
             .system_backends
             .write()
             .unwrap_or_else(std::sync::PoisonError::into_inner);
-        if backends.is_production() {
-            *backends = SystemBackendAccess::production();
-        }
+        *backends = replacement;
+        Ok(())
     }
 
     fn uses_production_backends(&self) -> bool {
@@ -172,7 +175,7 @@ impl DaemonState {
             persistent,
             index,
             package_manager,
-            SystemBackendAccess::production(),
+            SystemBackendAccess::production()?,
         ))
     }
 
@@ -380,8 +383,10 @@ async fn handle_refresh_index(state: Arc<DaemonState>, id: RequestId) -> Respons
         Err(error) => return internal_error(id, format!("Index rebuild task failed: {error}")),
     };
 
+    if let Err(error) = state.refresh_system_backends() {
+        return internal_error(id, format!("Failed to refresh package backends: {error:#}"));
+    }
     let packages = state.replace_index(index);
-    state.refresh_system_backends();
     // Drop the persisted snapshot too: it predates the index swap and would
     // otherwise be resurrected into the memory cache by the next status call.
     state.persistent.invalidate_status();
