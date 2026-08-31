@@ -613,21 +613,25 @@ fn connection_refused_is_retried_but_missing_socket_fails_fast() {
         });
     });
 
-    // Missing socket file: not retryable, immediate failure, no suffix.
-    let fast_start = Instant::now();
-    let err = with_client_env(None, None, Some(&dead_socket), || {
-        DaemonClient::connect_sync().map(|_| ()).unwrap_err()
+    // A path that was never bound produces ENOENT. Exercise the async retry
+    // policy itself and require that this non-retryable error returns at once.
+    let missing_socket = refused_dir.path().join("never-existed.sock");
+    with_client_env(None, None, Some(&missing_socket), || {
+        block(async {
+            let fast_start = Instant::now();
+            let err = expect_err(DaemonClient::connect_to(missing_socket.clone()).await);
+            let fast_elapsed = fast_start.elapsed();
+            let msg = err.to_string();
+            assert!(
+                msg.contains("Failed to connect to daemon at ") && !msg.contains("after retries"),
+                "ENOENT must fail fast without the retry suffix: {msg}"
+            );
+            assert!(
+                fast_elapsed < Duration::from_millis(70),
+                "non-retryable error must not sleep; took {fast_elapsed:?}"
+            );
+        });
     });
-    let fast_elapsed = fast_start.elapsed();
-    let msg = err.to_string();
-    assert!(
-        msg.contains("Failed to connect to daemon at ") && !msg.contains("after retries"),
-        "ENOENT must fail fast without the retry suffix: {msg}"
-    );
-    assert!(
-        fast_elapsed < Duration::from_millis(70),
-        "non-retryable error must not sleep; took {fast_elapsed:?}"
-    );
 }
 
 /// Contract: mixing transports is rejected explicitly — call_sync on an async

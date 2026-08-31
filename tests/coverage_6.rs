@@ -91,34 +91,39 @@ impl FakePacman {
     /// handles from leaking between tests that point at different roots.
     fn run<R>(&self, f: impl FnOnce() -> R) -> R {
         clear_alpm_cache();
-        let vars: Vec<(String, OsString)> = vec![
-            ("OMG_TEST_MODE".into(), OsString::new()), // unset: force ALPM paths
-            ("OMG_DISABLE_TELEMETRY".into(), "1".into()),
-            ("OMG_DISABLE_DAEMON".into(), "1".into()),
+        let vars: Vec<(String, Option<OsString>)> = vec![
+            ("OMG_TEST_MODE".into(), None),
+            ("OMG_DISABLE_TELEMETRY".into(), Some("1".into())),
+            ("OMG_DISABLE_DAEMON".into(), Some("1".into())),
             (
                 "OMG_DATA_DIR".into(),
-                self._data_dir.path().as_os_str().into(),
+                Some(self._data_dir.path().as_os_str().into()),
             ),
             (
                 "OMG_CONFIG_DIR".into(),
-                self._config_dir.path().as_os_str().into(),
+                Some(self._config_dir.path().as_os_str().into()),
             ),
             (
                 "OMG_CACHE_DIR".into(),
-                self._config_dir.path().join("cache").as_os_str().into(),
+                Some(self._config_dir.path().join("cache").as_os_str().into()),
             ),
             (
                 "OMG_PACMAN_ROOT".into(),
-                self.harness.root().as_os_str().into(),
+                Some(self.harness.root().as_os_str().into()),
             ),
             (
                 "OMG_PACMAN_DB_DIR".into(),
-                self.harness.db_path().as_os_str().into(),
+                Some(self.harness.db_path().as_os_str().into()),
             ),
-            ("OMG_PACMAN_CONF".into(), self.conf_file.as_os_str().into()),
+            (
+                "OMG_PACMAN_CONF".into(),
+                Some(self.conf_file.as_os_str().into()),
+            ),
         ];
-        let vars: Vec<(&str, Option<&OsString>)> =
-            vars.iter().map(|(k, v)| (k.as_str(), Some(v))).collect();
+        let vars: Vec<(&str, Option<&OsString>)> = vars
+            .iter()
+            .map(|(key, value)| (key.as_str(), value.as_ref()))
+            .collect();
         let result = temp_env::with_vars(vars, f);
         clear_alpm_cache();
         result
