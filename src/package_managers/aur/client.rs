@@ -1878,7 +1878,7 @@ impl AurClient {
         let spinner = create_spinner("Cloning repository...");
 
         if let Some(user) = original_user() {
-            let home = original_user_home();
+            let home = original_user_home()?;
             let dest_str = dest.to_string_lossy();
 
             let mut cmd = Command::new("sudo");
@@ -1976,7 +1976,7 @@ impl AurClient {
         let spinner = create_spinner("Pulling latest changes...");
 
         if let Some(user) = original_user() {
-            let home = original_user_home();
+            let home = original_user_home()?;
             let pkg_dir_str = pkg_dir.to_string_lossy();
 
             let mut cmd = Command::new("sudo");
