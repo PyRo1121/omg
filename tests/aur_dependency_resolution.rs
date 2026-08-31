@@ -121,8 +121,8 @@ fn test_toposort_simple_sequence() {
 
     let mut graph = HashMap::new();
     graph.insert("a".to_string(), HashSet::new());
-    graph.insert("b".to_string(), ["a".to_string()].into_iter().collect());
-    graph.insert("c".to_string(), ["b".to_string()].into_iter().collect());
+    graph.insert("b".to_string(), HashSet::from(["a".to_string()]));
+    graph.insert("c".to_string(), HashSet::from(["b".to_string()]));
 
     let levels = ParallelBuilder::topological_levels(&graph).unwrap();
 
@@ -158,14 +158,8 @@ fn test_toposort_diamond_pattern() {
 
     let mut graph = HashMap::new();
     graph.insert("base".to_string(), HashSet::new());
-    graph.insert(
-        "left".to_string(),
-        ["base".to_string()].into_iter().collect(),
-    );
-    graph.insert(
-        "right".to_string(),
-        ["base".to_string()].into_iter().collect(),
-    );
+    graph.insert("left".to_string(), HashSet::from(["base".to_string()]));
+    graph.insert("right".to_string(), HashSet::from(["base".to_string()]));
     graph.insert(
         "top".to_string(),
         ["left".to_string(), "right".to_string()]
@@ -203,15 +197,15 @@ fn test_toposort_complex_graph() {
 
     let mut graph = HashMap::new();
     graph.insert("a".to_string(), HashSet::new());
-    graph.insert("b".to_string(), ["a".to_string()].into_iter().collect());
-    graph.insert("c".to_string(), ["b".to_string()].into_iter().collect());
-    graph.insert("d".to_string(), ["c".to_string()].into_iter().collect());
-    graph.insert("e".to_string(), ["c".to_string()].into_iter().collect());
+    graph.insert("b".to_string(), HashSet::from(["a".to_string()]));
+    graph.insert("c".to_string(), HashSet::from(["b".to_string()]));
+    graph.insert("d".to_string(), HashSet::from(["c".to_string()]));
+    graph.insert("e".to_string(), HashSet::from(["c".to_string()]));
     graph.insert(
         "f".to_string(),
         ["d".to_string(), "e".to_string()].into_iter().collect(),
     );
-    graph.insert("g".to_string(), ["e".to_string()].into_iter().collect());
+    graph.insert("g".to_string(), HashSet::from(["e".to_string()]));
     graph.insert(
         "h".to_string(),
         ["f".to_string(), "g".to_string()].into_iter().collect(),
@@ -240,8 +234,8 @@ fn test_circular_simple_cycle() {
     println!("\n=== Test: Circular Dependency - Simple Cycle ===");
 
     let mut graph = HashMap::new();
-    graph.insert("a".to_string(), ["b".to_string()].into_iter().collect());
-    graph.insert("b".to_string(), ["a".to_string()].into_iter().collect());
+    graph.insert("a".to_string(), HashSet::from(["b".to_string()]));
+    graph.insert("b".to_string(), HashSet::from(["a".to_string()]));
 
     let result = ParallelBuilder::topological_levels(&graph);
 
@@ -256,9 +250,9 @@ fn test_circular_three_node_cycle() {
     println!("\n=== Test: Circular Dependency - Three Node Cycle ===");
 
     let mut graph = HashMap::new();
-    graph.insert("a".to_string(), ["b".to_string()].into_iter().collect());
-    graph.insert("b".to_string(), ["c".to_string()].into_iter().collect());
-    graph.insert("c".to_string(), ["a".to_string()].into_iter().collect());
+    graph.insert("a".to_string(), HashSet::from(["b".to_string()]));
+    graph.insert("b".to_string(), HashSet::from(["c".to_string()]));
+    graph.insert("c".to_string(), HashSet::from(["a".to_string()]));
 
     let result = ParallelBuilder::topological_levels(&graph);
 
@@ -273,7 +267,7 @@ fn test_circular_self_dependency() {
     println!("\n=== Test: Circular Dependency - Self Loop ===");
 
     let mut graph = HashMap::new();
-    graph.insert("a".to_string(), ["a".to_string()].into_iter().collect());
+    graph.insert("a".to_string(), HashSet::from(["a".to_string()]));
 
     let result = ParallelBuilder::topological_levels(&graph);
 
@@ -293,12 +287,12 @@ fn test_circular_complex_with_cycle() {
     // Valid deps plus a cycle
     let mut graph = HashMap::new();
     graph.insert("a".to_string(), HashSet::new());
-    graph.insert("b".to_string(), ["a".to_string()].into_iter().collect());
+    graph.insert("b".to_string(), HashSet::from(["a".to_string()]));
     graph.insert(
         "c".to_string(),
         ["b".to_string(), "d".to_string()].into_iter().collect(),
     );
-    graph.insert("d".to_string(), ["c".to_string()].into_iter().collect()); // c -> d -> c cycle
+    graph.insert("d".to_string(), HashSet::from(["c".to_string()])); // c -> d -> c cycle
 
     let result = ParallelBuilder::topological_levels(&graph);
 
@@ -321,7 +315,7 @@ fn test_parallel_maximum_parallelism() {
 
     // 10 independent packages should all be in level 0
     let jobs: Vec<BuildJob> = (0..10)
-        .map(|i| BuildJob::new(format!("pkg-{}", i), vec![]))
+        .map(|i| BuildJob::new(format!("pkg-{i}"), vec![]))
         .collect();
 
     let graph = ParallelBuilder::build_dependency_graph(&jobs);
@@ -341,9 +335,9 @@ fn test_parallel_minimum_parallelism() {
     let jobs: Vec<BuildJob> = (0..5)
         .map(|i| {
             if i == 0 {
-                BuildJob::new(format!("pkg-{}", i), vec![])
+                BuildJob::new(format!("pkg-{i}"), vec![])
             } else {
-                BuildJob::new(format!("pkg-{}", i), vec![format!("pkg-{}", i - 1)])
+                BuildJob::new(format!("pkg-{i}"), vec![format!("pkg-{}", i - 1)])
             }
         })
         .collect();
