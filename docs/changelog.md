@@ -48,6 +48,7 @@ OMG is the fastest unified package manager for Linux, replacing pacman, yay, nvm
 - Manage Pi versions natively
 ### ♻️  Refactoring
 
+- Gate backend-only decompression budget API
 - Simplify Rust toolchain installation
 - Share AUR architecture detection
 - Remove unused pacman configuration fields
@@ -701,6 +702,7 @@ analyzer inference
 - **Ci**: Cross-platform install script and R2 release sync
 ### 🐛 Bug Fixes
 
+- Handle empty Java container versions
 - Reject nested ALPM handle access cleanly
 - Restore terminal state after TUI panics
 - Do not assign SLSA levels without provenance
@@ -4042,6 +4044,7 @@ the Debian backend), so it was removed from the metadata.
 - Normalize project formatting
 ### 🧪 Testing
 
+- Exercise snapshot restore through mock packages
 - Isolate telemetry configuration state
 - Reject destructive ALPM fixture rewrites
 - Strengthen Arch command contracts
