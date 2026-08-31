@@ -1086,6 +1086,25 @@ fn ensure_js_package_manager(command: &str) -> Result<()> {
 
 // Runtime resolution functions moved to core::runtime_resolver module
 
+fn is_ignored_watch_path(path: &Path) -> bool {
+    path.components().any(|component| {
+        matches!(
+            component.as_os_str().to_str(),
+            Some(
+                "target"
+                    | "node_modules"
+                    | ".git"
+                    | "dist"
+                    | "build"
+                    | "out"
+                    | ".next"
+                    | "coverage"
+                    | "__pycache__"
+            )
+        )
+    })
+}
+
 /// Run a task in watch mode - re-run on file changes
 ///
 /// Synchronous and blocking by design: the process lives in the watch loop.
@@ -1113,14 +1132,11 @@ pub fn run_task_watch(task_name: &str, extra_args: &[String]) -> Result<()> {
     let mut watcher = RecommendedWatcher::new(
         move |res: std::result::Result<notify::Event, notify::Error>| {
             if let Ok(event) = res {
-                let ignored = event.paths.iter().any(|path| {
-                    path.components().any(|component| {
-                        matches!(
-                            component.as_os_str().to_str(),
-                            Some("target" | "node_modules" | ".git")
-                        )
-                    })
-                });
+                // Mixed-path events (for example a rename from source into an
+                // output directory) still matter when any path is outside the
+                // ignored trees.
+                let ignored = !event.paths.is_empty()
+                    && event.paths.iter().all(|path| is_ignored_watch_path(path));
                 if !ignored {
                     let _ = tx.send(event);
                 }
@@ -1384,6 +1400,28 @@ mod tests {
             thread.join().unwrap();
         }
         assert_eq!(violations.load(Ordering::SeqCst), 0);
+    }
+
+    #[test]
+    fn watch_filter_ignores_common_generated_trees_only() {
+        for generated in [
+            "target/debug/app",
+            "node_modules/pkg/index.js",
+            ".git/index",
+            "dist/app.js",
+            "build/output",
+            "out/index.html",
+            ".next/cache/item",
+            "coverage/report.html",
+            "__pycache__/module.pyc",
+        ] {
+            assert!(
+                is_ignored_watch_path(Path::new(generated)),
+                "generated path was not ignored: {generated}"
+            );
+        }
+        assert!(!is_ignored_watch_path(Path::new("src/build.rs")));
+        assert!(!is_ignored_watch_path(Path::new("tests/output.rs")));
     }
 
     #[test]
