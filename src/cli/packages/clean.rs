@@ -3,6 +3,7 @@
 #[cfg(any(feature = "arch", feature = "debian-pure"))]
 use anyhow::Context;
 use anyhow::Result;
+use owo_colors::OwoColorize;
 
 #[cfg(any(feature = "debian", feature = "debian-pure"))]
 use crate::core::env::distro::is_debian_like;
@@ -129,7 +130,6 @@ pub async fn clean(orphans: bool, cache: bool, aur: bool, all: bool, dry_run: bo
                 let orphan_list =
                     list_orphans_direct().context("Failed to list orphan packages")?;
                 if !orphan_list.is_empty() {
-                    use owo_colors::OwoColorize;
                     println!(
                         "  {} {} orphan packages can be removed",
                         "·".dimmed(),
@@ -139,7 +139,6 @@ pub async fn clean(orphans: bool, cache: bool, aur: bool, all: bool, dry_run: bo
                 }
             }
 
-            use owo_colors::OwoColorize;
             println!(
                 "  {} To clear package cache: {}",
                 "·".dimmed(),
@@ -166,7 +165,6 @@ pub async fn clean(orphans: bool, cache: bool, aur: bool, all: bool, dry_run: bo
                 if dry_run {
                     let orphan_list =
                         list_orphans_direct().context("Failed to list orphan packages")?;
-                    use owo_colors::OwoColorize;
                     println!(
                         "  {} Would remove {} orphan packages:",
                         "→".cyan(),
@@ -206,7 +204,6 @@ pub async fn clean(orphans: bool, cache: bool, aur: bool, all: bool, dry_run: bo
             #[cfg(feature = "arch")]
             {
                 if dry_run {
-                    use owo_colors::OwoColorize;
                     println!(
                         "  {} Would clear package cache (keep 1 recent version)",
                         "→".cyan()
@@ -221,7 +218,6 @@ pub async fn clean(orphans: bool, cache: bool, aur: bool, all: bool, dry_run: bo
                             .and_then(|history| history.rollback_referenced_versions(30));
                     match rollback_versions {
                         Ok(referenced) if !referenced.is_empty() => {
-                            use owo_colors::OwoColorize;
                             println!(
                                 "  {} Cleaning will remove cached versions referenced by recent rollback plans:",
                                 "⚠".yellow().bold()
@@ -241,7 +237,6 @@ pub async fn clean(orphans: bool, cache: bool, aur: bool, all: bool, dry_run: bo
                     match clean_cache(1) {
                         // Keep 1 version by default
                         Ok((removed, freed)) => {
-                            use owo_colors::OwoColorize;
                             println!(
                                 "  {} Removed {} files, freed {:.2} MB",
                                 "✓".green().bold(),
@@ -271,7 +266,6 @@ pub async fn clean(orphans: bool, cache: bool, aur: bool, all: bool, dry_run: bo
             #[cfg(feature = "arch")]
             {
                 if dry_run {
-                    use owo_colors::OwoColorize;
                     println!("  {} Would clean all AUR build directories", "→".cyan());
                 } else {
                     let aur_client = AurClient::new()?;
@@ -286,7 +280,6 @@ pub async fn clean(orphans: bool, cache: bool, aur: bool, all: bool, dry_run: bo
 
         if dry_run {
             println!();
-            use owo_colors::OwoColorize;
             println!("  {} No changes made (dry run)", "ℹ".blue().dimmed());
             println!();
         } else {
@@ -304,8 +297,6 @@ async fn handle_debian_pure_clean(
     all: bool,
     dry_run: bool,
 ) -> Result<()> {
-    use owo_colors::OwoColorize;
-
     let do_orphans = orphans || all;
     let do_cache = cache || all;
 
@@ -393,7 +384,6 @@ async fn handle_debian_pure_clean(
 fn report_cache_clean(result: Result<(usize, u64)>) -> Result<()> {
     match result {
         Ok((removed, freed)) => {
-            use owo_colors::OwoColorize;
             println!(
                 "  {} Removed {} files, freed {:.2} MB",
                 "✓".green().bold(),
