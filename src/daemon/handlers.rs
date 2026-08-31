@@ -40,6 +40,13 @@ enum SystemBackendAccess {
 }
 
 impl SystemBackendAccess {
+    #[cfg_attr(
+        not(feature = "arch"),
+        allow(
+            clippy::unnecessary_wraps,
+            reason = "AlpmWorker::new is fallible only with the arch feature"
+        )
+    )]
     fn production() -> anyhow::Result<Self> {
         Ok(Self::Production {
             #[cfg(feature = "arch")]
