@@ -702,6 +702,7 @@ analyzer inference
 - **Ci**: Cross-platform install script and R2 release sync
 ### 🐛 Bug Fixes
 
+- Offload single parallel task execution
 - Ignore colon-bearing Make assignments
 - Avoid duplicate package install tasks
 - Serialize parallel task setup
