@@ -258,7 +258,7 @@ pub async fn fetch_keys(key_ids: &[String]) -> Vec<(String, Result<Cert, Keyserv
             let result = fetch_key(&key_id).await;
             (key_id, result)
         })
-        .buffer_unordered(MAX_CONCURRENT_KEY_FETCHES)
+        .buffered(MAX_CONCURRENT_KEY_FETCHES)
         .collect()
         .await
 }
