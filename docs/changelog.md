@@ -702,6 +702,7 @@ analyzer inference
 - **Ci**: Cross-platform install script and R2 release sync
 ### 🐛 Bug Fixes
 
+- Record Arch orphan removals
 - Preserve parent history ownership
 - Ignore generated watch outputs
 - Offload single parallel task execution
