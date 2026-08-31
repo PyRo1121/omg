@@ -1,10 +1,7 @@
 #![cfg(feature = "arch")]
 #![expect(clippy::unwrap_used, clippy::pedantic)]
 
-//! S-tier E2E Tests: Daemon Lifecycle Management
-//!
-//! Comprehensive tests for daemon startup, shutdown, restart, crash recovery,
-//! and process supervision scenarios.
+//! Daemon startup, shutdown, restart, crash recovery, and process supervision.
 
 use anyhow::Result;
 use serial_test::serial;
@@ -296,7 +293,7 @@ async fn test_daemon_graceful_shutdown() -> Result<()> {
         if let Ok(Some(_)) = daemon.child.try_wait() {
             break;
         }
-        std::thread::sleep(Duration::from_millis(100));
+        sleep(Duration::from_millis(100)).await;
     }
 
     // Verify socket is cleaned up (daemon handles SIGINT and cleans up properly)
@@ -417,7 +414,7 @@ async fn test_rapid_restart_stability() -> Result<()> {
 }
 
 // ============================================================================
-// Test 6: Socket Cleanup on Abnormal Exit
+// Test 5: Socket Cleanup on Abnormal Exit
 // ============================================================================
 
 #[tokio::test]
@@ -449,7 +446,7 @@ async fn test_socket_cleanup_on_crash() -> Result<()> {
 }
 
 // ============================================================================
-// Test 7: Resource Cleanup Verification
+// Test 6: Resource Cleanup Verification
 // ============================================================================
 
 #[tokio::test]

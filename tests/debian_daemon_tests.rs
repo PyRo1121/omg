@@ -1,15 +1,13 @@
-#[cfg(any(feature = "debian", feature = "debian-pure"))]
+#![cfg(any(feature = "debian", feature = "debian-pure"))]
+
 use omg_lib::daemon::handlers::DaemonState;
-#[cfg(any(feature = "debian", feature = "debian-pure"))]
 use serial_test::serial;
-#[cfg(any(feature = "debian", feature = "debian-pure"))]
 use std::sync::Arc;
 
 // Both tests below mutate the process environment through
 // `temp_env::with_vars`. Concurrent setenv/getenv from libtest's default
 // parallel threads is racy and was observed to SIGSEGV the test process, so
 // they are serialized with `#[serial]`.
-#[cfg(any(feature = "debian", feature = "debian-pure"))]
 #[test]
 #[serial]
 fn test_daemon_initialization_debian_mock() {
@@ -35,12 +33,9 @@ fn test_daemon_initialization_debian_mock() {
     let _state = state_result.unwrap();
 }
 
-#[cfg(any(feature = "debian", feature = "debian-pure"))]
 use omg_lib::daemon::handlers::handle_request;
-#[cfg(any(feature = "debian", feature = "debian-pure"))]
 use omg_lib::daemon::protocol::{Request, Response, ResponseResult};
 
-#[cfg(any(feature = "debian", feature = "debian-pure"))]
 #[tokio::test]
 #[serial]
 async fn test_handle_debian_search() {

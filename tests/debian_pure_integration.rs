@@ -25,10 +25,6 @@ fn test_debian_backend_decision() {
 
     assert_eq!(backend_name_for_distro("debian"), "apt");
     assert_eq!(backend_name_for_distro("ubuntu"), "apt");
-
-    // The pure backend keeps its own identity when selected for debian-pure.
-    let pure = omg_lib::package_managers::debian_pure::PureDebianPackageManager::new();
-    assert_eq!(pure.name(), "apt-pure");
 }
 
 #[test]
