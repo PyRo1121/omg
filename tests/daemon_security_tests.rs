@@ -7,16 +7,36 @@ use serial_test::serial;
 use std::sync::Arc;
 use tempfile::TempDir;
 
-/// Initialize a daemon state for tests that require a working backend.
+/// Initialize an isolated daemon state for tests that require a working backend.
 ///
-/// Under backend-less feature combos the index cannot build; such runs skip
-/// observably (printed reason + counted) instead of failing the suite.
-fn init_state_or_skip(context: &str) -> Option<Arc<DaemonState>> {
-    match DaemonState::new() {
-        Ok(state) => Some(Arc::new(state)),
-        Err(e) => {
+/// Under backend-less feature combinations the index cannot build. Those runs
+/// report a counted skip instead of failing the suite.
+fn init_state_or_skip(context: &str) -> Option<(TempDir, Arc<DaemonState>)> {
+    #[cfg(feature = "arch")]
+    {
+        omg_lib::package_managers::clear_alpm_cache();
+        omg_lib::package_managers::invalidate_caches().expect("Failed to invalidate caches");
+    }
+
+    let temp_dir = TempDir::new().unwrap();
+    let state = temp_env::with_vars(
+        [
+            ("OMG_DAEMON_DATA_DIR", Some(temp_dir.path().as_os_str())),
+            ("OMG_DATA_DIR", Some(temp_dir.path().as_os_str())),
+        ],
+        || {
+            omg_lib::core::security::init_audit_logger()
+                .map_err(anyhow::Error::from)
+                .and_then(|()| DaemonState::new())
+                .map(Arc::new)
+        },
+    );
+
+    match state {
+        Ok(state) => Some((temp_dir, state)),
+        Err(error) => {
             common::report_skip(&format!(
-                "{context}: no usable package database on this combo: {e:#}"
+                "{context}: no usable package database on this combo: {error:#}"
             ));
             None
         }
@@ -25,31 +45,8 @@ fn init_state_or_skip(context: &str) -> Option<Arc<DaemonState>> {
 
 #[tokio::test]
 #[serial]
-#[expect(unsafe_code)] // Test setup requires env var modification
 async fn test_global_rate_limiting() {
-    // Clear all caches before changing environment
-    #[cfg(feature = "arch")]
-    {
-        omg_lib::package_managers::clear_alpm_cache();
-        omg_lib::package_managers::invalidate_caches().expect("Failed to invalidate caches");
-    }
-
-    // Setup temporary environment
-    let temp_dir = TempDir::new().unwrap();
-    // SAFETY: Test setup - modifying environment variables for isolated test execution.
-    // This test is marked with #[serial] to prevent concurrent access.
-    unsafe {
-        std::env::set_var("OMG_DAEMON_DATA_DIR", temp_dir.path());
-        std::env::set_var("OMG_DATA_DIR", temp_dir.path());
-    }
-
-    // Initialize audit logger (needed for handlers)
-    omg_lib::core::security::init_audit_logger().expect("Failed to init audit logger");
-
-    // Initialize daemon state
-    // We need to handle potential failure if the index fails to build,
-    // but for tests we expect it to work or fail gracefully
-    let Some(state) = init_state_or_skip("daemon security test") else {
+    let Some((_temp_dir, state)) = init_state_or_skip("daemon security test") else {
         return;
     };
 
@@ -75,28 +72,8 @@ async fn test_global_rate_limiting() {
 
 #[tokio::test]
 #[serial]
-#[expect(unsafe_code)] // Test setup requires env var modification
 async fn test_input_validation_audit() {
-    // Clear all caches before changing environment
-    #[cfg(feature = "arch")]
-    {
-        omg_lib::package_managers::clear_alpm_cache();
-        omg_lib::package_managers::invalidate_caches().expect("Failed to invalidate caches");
-    }
-
-    // Setup temporary environment
-    let temp_dir = TempDir::new().unwrap();
-    // SAFETY: Test setup - modifying environment variables for isolated test execution.
-    // This test is marked with #[serial] to prevent concurrent access.
-    unsafe {
-        std::env::set_var("OMG_DAEMON_DATA_DIR", temp_dir.path());
-        std::env::set_var("OMG_DATA_DIR", temp_dir.path());
-    }
-
-    // Initialize audit logger
-    omg_lib::core::security::init_audit_logger().expect("Failed to init audit logger");
-
-    let Some(state) = init_state_or_skip("daemon security test") else {
+    let Some((temp_dir, state)) = init_state_or_skip("daemon security test") else {
         return;
     };
 
@@ -124,43 +101,28 @@ async fn test_input_validation_audit() {
     let audit_dir = temp_dir.path().join("audit");
     let audit_file = audit_dir.join("audit.jsonl");
 
-    // Wait a brief moment for async writing if necessary (though audit logging is blocking currently)
-    std::thread::sleep(std::time::Duration::from_millis(100));
+    let content = tokio::time::timeout(std::time::Duration::from_secs(2), async {
+        loop {
+            if let Ok(content) = tokio::fs::read_to_string(&audit_file).await
+                && content.contains("policy_violation")
+                && content.contains("Invalid package name")
+            {
+                break content;
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+        }
+    })
+    .await
+    .unwrap_or_else(|_| panic!("Audit event was not written to {audit_file:?}"));
 
-    if audit_file.exists() {
-        let content = std::fs::read_to_string(&audit_file).expect("Audit log file should exist");
-        assert!(
-            content.contains("policy_violation"),
-            "Log should contain policy_violation"
-        );
-        assert!(
-            content.contains("Invalid package name"),
-            "Log should contain error details"
-        );
-    } else {
-        unreachable!("Audit log file not found at {audit_file:?}");
-    }
+    assert!(content.contains("policy_violation"));
+    assert!(content.contains("Invalid package name"));
 }
 
 #[tokio::test]
 #[serial]
-#[expect(unsafe_code)]
 async fn test_health_endpoint_returns_status() {
-    #[cfg(feature = "arch")]
-    {
-        omg_lib::package_managers::clear_alpm_cache();
-        omg_lib::package_managers::invalidate_caches().expect("Failed to invalidate caches");
-    }
-
-    let temp_dir = TempDir::new().unwrap();
-    unsafe {
-        std::env::set_var("OMG_DAEMON_DATA_DIR", temp_dir.path());
-        std::env::set_var("OMG_DATA_DIR", temp_dir.path());
-    }
-
-    omg_lib::core::security::init_audit_logger().expect("Failed to init audit logger");
-
-    let Some(state) = init_state_or_skip("daemon security test") else {
+    let Some((_temp_dir, state)) = init_state_or_skip("daemon security test") else {
         return;
     };
 
@@ -196,23 +158,8 @@ async fn test_health_endpoint_returns_status() {
 
 #[tokio::test]
 #[serial]
-#[expect(unsafe_code)]
 async fn test_ping_returns_pong() {
-    #[cfg(feature = "arch")]
-    {
-        omg_lib::package_managers::clear_alpm_cache();
-        omg_lib::package_managers::invalidate_caches().expect("Failed to invalidate caches");
-    }
-
-    let temp_dir = TempDir::new().unwrap();
-    unsafe {
-        std::env::set_var("OMG_DAEMON_DATA_DIR", temp_dir.path());
-        std::env::set_var("OMG_DATA_DIR", temp_dir.path());
-    }
-
-    omg_lib::core::security::init_audit_logger().expect("Failed to init audit logger");
-
-    let Some(state) = init_state_or_skip("daemon security test") else {
+    let Some((_temp_dir, state)) = init_state_or_skip("daemon security test") else {
         return;
     };
 
@@ -234,23 +181,8 @@ async fn test_ping_returns_pong() {
 
 #[tokio::test]
 #[serial]
-#[expect(unsafe_code)]
 async fn test_cache_stats_handler() {
-    #[cfg(feature = "arch")]
-    {
-        omg_lib::package_managers::clear_alpm_cache();
-        omg_lib::package_managers::invalidate_caches().expect("Failed to invalidate caches");
-    }
-
-    let temp_dir = TempDir::new().unwrap();
-    unsafe {
-        std::env::set_var("OMG_DAEMON_DATA_DIR", temp_dir.path());
-        std::env::set_var("OMG_DATA_DIR", temp_dir.path());
-    }
-
-    omg_lib::core::security::init_audit_logger().expect("Failed to init audit logger");
-
-    let Some(state) = init_state_or_skip("daemon security test") else {
+    let Some((_temp_dir, state)) = init_state_or_skip("daemon security test") else {
         return;
     };
 
@@ -274,23 +206,8 @@ async fn test_cache_stats_handler() {
 
 #[tokio::test]
 #[serial]
-#[expect(unsafe_code)]
 async fn test_cache_clear_handler() {
-    #[cfg(feature = "arch")]
-    {
-        omg_lib::package_managers::clear_alpm_cache();
-        omg_lib::package_managers::invalidate_caches().expect("Failed to invalidate caches");
-    }
-
-    let temp_dir = TempDir::new().unwrap();
-    unsafe {
-        std::env::set_var("OMG_DAEMON_DATA_DIR", temp_dir.path());
-        std::env::set_var("OMG_DATA_DIR", temp_dir.path());
-    }
-
-    omg_lib::core::security::init_audit_logger().expect("Failed to init audit logger");
-
-    let Some(state) = init_state_or_skip("daemon security test") else {
+    let Some((_temp_dir, state)) = init_state_or_skip("daemon security test") else {
         return;
     };
 
@@ -312,23 +229,8 @@ async fn test_cache_clear_handler() {
 
 #[tokio::test]
 #[serial]
-#[expect(unsafe_code)]
 async fn test_explicit_count_handler() {
-    #[cfg(feature = "arch")]
-    {
-        omg_lib::package_managers::clear_alpm_cache();
-        omg_lib::package_managers::invalidate_caches().expect("Failed to invalidate caches");
-    }
-
-    let temp_dir = TempDir::new().unwrap();
-    unsafe {
-        std::env::set_var("OMG_DAEMON_DATA_DIR", temp_dir.path());
-        std::env::set_var("OMG_DATA_DIR", temp_dir.path());
-    }
-
-    omg_lib::core::security::init_audit_logger().expect("Failed to init audit logger");
-
-    let Some(state) = init_state_or_skip("daemon security test") else {
+    let Some((_temp_dir, state)) = init_state_or_skip("daemon security test") else {
         return;
     };
 
