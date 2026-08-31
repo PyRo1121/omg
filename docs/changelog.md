@@ -702,6 +702,7 @@ analyzer inference
 - **Ci**: Cross-platform install script and R2 release sync
 ### 🐛 Bug Fixes
 
+- Share Rust toolchain parsing
 - Propagate daemon internal failures
 - Bound daemon client writes
 - Record Arch orphan removals
