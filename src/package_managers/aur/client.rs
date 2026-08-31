@@ -903,6 +903,12 @@ impl AurClient {
         crate::core::security::validate_package_name(package)?;
         crate::core::security::validate_version(version)?;
         require_unprivileged_builder(package, crate::core::is_root())?;
+        Self::preacquire_install_privileges(package, "AUR rollback").await?;
+        let sudoloop = if crate::core::sudoloop::can_use_sudoloop() {
+            Some(crate::core::sudoloop::SudoLoop::start())
+        } else {
+            None
+        };
 
         let base = self.resolve_package_base(package).await?;
 
@@ -1052,7 +1058,7 @@ impl AurClient {
             return Err(AurError::PackageArchiveNotFound(package.to_string()).into());
         };
 
-        Self::install_built_packages(&[archive], None).await?;
+        Self::install_built_packages(&[archive], sudoloop.as_ref()).await?;
         Ok(())
     }
 
@@ -1100,6 +1106,41 @@ impl AurClient {
             .await
     }
 
+    async fn preacquire_install_privileges(package: &str, purpose: &str) -> Result<()> {
+        if crate::core::caps::can_write_pacman_db() {
+            return Ok(());
+        }
+
+        if !console::user_attended() {
+            let status = tokio::process::Command::new("sudo")
+                .args(["-n", "true"])
+                .stdin(std::process::Stdio::null())
+                .stdout(std::process::Stdio::null())
+                .stderr(std::process::Stdio::null())
+                .status()
+                .await
+                .context("Failed to check non-interactive sudo availability")?;
+            if !status.success() {
+                anyhow::bail!(
+                    "{purpose} for '{package}' needs sudo, but this non-interactive session does not have passwordless sudo"
+                );
+            }
+        }
+
+        let status = tokio::process::Command::new("sudo")
+            .arg("-v")
+            .stdin(std::process::Stdio::inherit())
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::inherit())
+            .status()
+            .await
+            .with_context(|| format!("Failed to acquire sudo credentials for {purpose}"))?;
+        if !status.success() {
+            anyhow::bail!("Failed to acquire sudo credentials for {purpose} of '{package}'");
+        }
+        Ok(())
+    }
+
     pub(crate) async fn install_package_outputs(
         &self,
         package: &str,
@@ -1115,47 +1156,9 @@ impl AurClient {
 
         require_unprivileged_builder(package, crate::core::is_root())?;
 
-        // Pre-acquire sudo credentials before starting the build.
-        // This ensures the sudoloop has a valid timestamp to refresh,
-        // and the user is prompted for their password upfront rather
-        // than mid-build when it would be confusing.
-        // (`require_unprivileged_builder` already rejected root, so only
-        // the pacman-db capability decides whether sudo is needed.)
-        if !crate::core::caps::can_write_pacman_db() {
-            if !console::user_attended() {
-                let status = tokio::process::Command::new("sudo")
-                    .args(["-n", "true"])
-                    .stdin(std::process::Stdio::null())
-                    .stdout(std::process::Stdio::null())
-                    .stderr(std::process::Stdio::null())
-                    .status()
-                    .await
-                    .context("Failed to check non-interactive sudo availability")?;
-                if !status.success() {
-                    anyhow::bail!(
-                        "AUR builds need sudo to install build dependencies, but this is a non-interactive session without passwordless sudo.\n  \
-                         → Run from a real terminal, or configure sudo NOPASSWD for build operations.\n  \
-                         → Then retry: omg install {package}"
-                    );
-                }
-            }
-
-            let status = tokio::process::Command::new("sudo")
-                .arg("-v")
-                .stdin(std::process::Stdio::inherit())
-                .stdout(std::process::Stdio::null())
-                .stderr(std::process::Stdio::inherit())
-                .status()
-                .await
-                .context("Failed to acquire sudo credentials for AUR build")?;
-            if !status.success() {
-                anyhow::bail!(
-                    "Failed to acquire sudo credentials required for AUR dependency installation.\n  \
-                     → Re-run in an interactive terminal and authenticate when prompted.\n  \
-                     → Then retry: omg install {package}"
-                );
-            }
-        }
+        // Prompt before starting the build, then keep the credential alive so
+        // package installation cannot unexpectedly prompt midway through.
+        Self::preacquire_install_privileges(package, "AUR build").await?;
 
         // Start sudoloop for long build operations.
         // Now that credentials are pre-acquired, the loop will keep
