@@ -1,15 +1,13 @@
 #![cfg(any(feature = "debian", feature = "debian-pure"))]
 #![expect(clippy::unwrap_used, clippy::expect_used, clippy::pedantic)]
-//! Comprehensive Debian/Ubuntu Integration Tests
+//! Hermetic Debian/Ubuntu CLI integration tests.
 //!
-//! Enterprise-grade test coverage for Debian and Ubuntu package management.
+//! Commands run against isolated Debian or Ubuntu mock package data and never
+//! mutate the host. Enable the extended cases with:
+//! `OMG_RUN_SYSTEM_TESTS=1 OMG_TEST_DISTRO=debian cargo test --locked --no-default-features --features debian-pure --test debian_tests`.
 //!
-//! Run: `cargo test --test debian_tests --features debian`
-//! With system tests: `OMG_RUN_SYSTEM_TESTS=1` cargo test --test debian_tests --features debian`
-//! On Ubuntu: `OMG_TEST_DISTRO=ubuntu cargo test --test debian_tests --features debian`
-//!
-//! Note: System tests require real package operations and will modify your system!
-//! Only run these tests in disposable containers or development environments.
+//! Real package-system coverage lives in `scripts/debian-smoke-test.sh` and
+//! must run inside a disposable container.
 
 pub mod common;
 pub mod platform_semantics;
@@ -686,12 +684,12 @@ mod security {
     use super::*;
 
     #[test]
-    fn test_audit_scan() {
+    fn test_audit_scan_requires_an_entitlement() {
         require_system_tests!();
 
         let result = run_omg(&["audit", "scan"]);
-        assert_audit_scan_completed(&result);
-        assert_debian_platform_purity(&result, "Debian audit scan");
+        result.assert_failure();
+        result.assert_stderr_contains("Feature 'audit' requires Pro tier");
     }
 
     #[test]
@@ -749,10 +747,10 @@ mod security {
     fn test_gpg_verification_awareness() {
         require_system_tests!();
 
-        // OMG should respect GPG verification
         let result = run_omg(&["audit", "policy"]);
-        assert!(!result.stderr_contains("panicked at"), "Should not panic");
-        assert_debian_platform_purity(&result, "Debian gpg verification awareness");
+        result.assert_success();
+        result.assert_stdout_contains("OMG Security Policy Status");
+        result.assert_stdout_contains("PGP Required:");
     }
 }
 

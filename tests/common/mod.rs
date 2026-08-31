@@ -249,6 +249,8 @@ pub fn run_omg_with_options(
     dir: Option<&Path>,
     env_vars: &[(&str, &str)],
 ) -> CommandResult {
+    #[cfg(not(debug_assertions))]
+    panic!("Hermetic CLI tests require the debug profile; release binaries ignore OMG_TEST_MODE");
     let start = Instant::now();
     let command_timeout = command_timeout(env_vars);
 
