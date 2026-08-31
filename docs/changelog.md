@@ -4029,6 +4029,8 @@ the Debian backend), so it was removed from the metadata.
 - Normalize project formatting
 ### 🧪 Testing
 
+- Share daemon rate-limit contracts
+- Remove fabricated Debian Packages URL coverage
 - Cover Debian daemon bitcode framing
 - Isolate daemon security environments
 - Make Debian integration coverage hermetic
