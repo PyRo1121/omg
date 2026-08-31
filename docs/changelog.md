@@ -688,6 +688,7 @@ analyzer inference
 - **Ci**: Cross-platform install script and R2 release sync
 ### 🐛 Bug Fixes
 
+- Align AUR dry-run package selection
 - Deduplicate package install targets
 - Report AUR install outcomes once
 - Validate package info requests at entry
