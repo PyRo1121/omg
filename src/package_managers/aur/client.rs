@@ -1142,9 +1142,6 @@ impl AurClient {
                 "pkgrel" if pkgrel.is_none() => pkgrel = Some(value.trim()),
                 _ => {}
             }
-            if pkgver.is_some() && pkgrel.is_some() {
-                break;
-            }
         }
         let prefix = epoch
             .filter(|value| !value.is_empty())
@@ -3729,8 +3726,9 @@ mod tests {
         let dup = "pkgver = 1.0\npkgrel = 2\npkgname = a\npkgver = 9.9\n";
         assert_eq!(AurClient::srcinfo_version(dup).as_deref(), Some("1.0-2"));
         assert_eq!(AurClient::srcinfo_version("pkgname = x"), None);
+        // makepkg emits epoch after pkgver/pkgrel in the pkgbase section.
         assert_eq!(
-            AurClient::srcinfo_version("epoch = 2\npkgver = 1.0~rc1\npkgrel = 3"),
+            AurClient::srcinfo_version("pkgver = 1.0~rc1\npkgrel = 3\nepoch = 2"),
             Some("2:1.0~rc1-3".to_string())
         );
     }
