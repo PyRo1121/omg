@@ -687,6 +687,7 @@ analyzer inference
 - **Ci**: Cross-platform install script and R2 release sync
 ### 🐛 Bug Fixes
 
+- Bound AUR archive metadata decompression
 - Bound AUR package metadata reads
 - Isolate malformed pacman sync entries
 - Verify release provenance before client installation
