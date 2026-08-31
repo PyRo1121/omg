@@ -362,8 +362,11 @@ mod new_features {
         require_arch!();
 
         let result = run_omg(&["why", "glibc", "--reverse"]);
-        // Should show what depends on glibc
-        assert!(!result.stderr_contains("panicked at"), "Should not panic");
+        result.assert_success();
+        assert!(
+            result.combined_output().contains("glibc"),
+            "reverse dependency report must name glibc"
+        );
     }
 
     #[test]
@@ -371,9 +374,8 @@ mod new_features {
         require_system_tests!();
         require_arch!();
 
-        // outdated always exits 0 unless the backend errors
-        // (src/cli/outdated.rs:20); after success it must report either the
-        // up-to-date state or the update table.
+        // `cli::outdated` exits successfully unless the backend errors; after
+        // success it must report either the up-to-date state or the table.
         let result = run_omg(&["outdated"]);
         result.assert_success();
         let output = result.combined_output();
@@ -388,9 +390,8 @@ mod new_features {
         require_system_tests!();
         require_arch!();
 
-        // --json prints '[]' when current, else a JSON array of updates
-        // (src/cli/outdated.rs:33/55). The stdout must parse as a JSON array
-        // on every path.
+        // `cli::outdated --json` prints `[]` when current and otherwise a JSON
+        // array of updates, so stdout must parse as an array on every path.
         let result = run_omg(&["outdated", "--json"]);
         result.assert_success();
         let value: serde_json::Value = serde_json::from_str(result.stdout.trim())
@@ -427,18 +428,24 @@ mod new_features {
         require_arch!();
 
         let result = run_omg(&["blame", "pacman"]);
-        // Should show install history
-        assert!(!result.stderr_contains("panicked at"), "Should not panic");
+        result.assert_success();
+        assert!(
+            result.combined_output().contains("pacman"),
+            "package history report must name pacman"
+        );
     }
 
     #[test]
     fn test_diff_command() {
         let project = TestProject::new();
-        project.with_omg_lock(locks::VALID_LOCK);
+        project.run(&["env", "capture"]).assert_success();
 
         let result = project.run(&["diff", "omg.lock"]);
-        // Should compare against current state
-        assert!(!result.stderr_contains("panicked at"), "Should not panic");
+        result.assert_success();
+        assert!(
+            result.combined_output().contains("Environment"),
+            "environment diff must render its report"
+        );
     }
 
     #[test]
@@ -467,8 +474,7 @@ mod new_features {
     fn test_ci_init_github() {
         let project = TestProject::new();
         let result = project.run(&["ci", "init", "--provider", "github"]);
-        // Contract pinned at src/cli/ci.rs:301: the GitHub provider writes
-        // .github/workflows/ci.yml into the project.
+        // The GitHub branch of `cli::ci::write_config_file` writes this path.
         assert!(
             !result.stderr_contains("panicked at"),
             "ci init must not panic:\n{}",
@@ -559,9 +565,8 @@ mod security {
 
     #[test]
     fn test_audit_secrets_scan() {
-        // Secret scanning is Pro-tier; the scanner's
-        // password pattern matches 'password=secret123'
-        // (src/core/security/secrets.rs:176).
+        // Secret scanning is Pro-tier; the scanner's password pattern matches
+        // the planted `password=secret123` value.
         let project = TestProject::new();
         project.create_file("config.txt", "password=secret123");
 
