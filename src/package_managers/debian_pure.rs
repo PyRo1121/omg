@@ -468,18 +468,13 @@ fn populate_package_urls(tx: &mut debian_db::Transaction) -> Result<()> {
         anyhow::bail!("No enabled repositories found");
     }
 
-    // OPTIMIZATION: Look up all packages (can be optimized with get_packages_by_names later)
-    //
-    // SECURITY (audit ADV-18-01): duplicate index entries must resolve to the
-    // FIRST occurrence (repository priority order), not an arbitrary
-    // last-wins pick from HashMap::from_iter — a later duplicate from a
-    // lower-priority component could otherwise substitute a wrong-version
-    // download silently.
-    let all_packages = debian_db::get_detailed_packages()?;
-    let mut package_map: std::collections::HashMap<_, _> = std::collections::HashMap::new();
-    for pkg in all_packages {
-        package_map.entry(pkg.name.clone()).or_insert(pkg);
-    }
+    // URL resolution must use the same deterministic name candidate as the
+    // dependency resolver. Re-keying raw index entries here would reintroduce
+    // first/last-wins behavior across suites and architectures.
+    let package_map: std::collections::HashMap<_, _> = debian_db::get_detailed_best_candidates()?
+        .into_iter()
+        .map(|package| (package.name.clone(), package))
+        .collect();
 
     for action in &mut tx.to_install {
         populate_action_url(action, &package_map, &repos)
@@ -534,6 +529,13 @@ fn populate_action_url(
             action.name
         );
     }
+    anyhow::ensure!(
+        action.version.is_empty() || action.version == pkg.version,
+        "resolved version {} for package {} does not match download candidate {}",
+        action.version,
+        action.name,
+        pkg.version
+    );
 
     let repo = repos
         .iter()
@@ -631,6 +633,52 @@ mod tests {
         let error = populate_action_url(&mut action, &packages, &repos)
             .expect_err("a component match from another suite must not select its mirror root");
         assert!(error.to_string().contains("bookworm-security"), "{error}");
+        assert!(action.url.is_none());
+    }
+
+    #[test]
+    fn package_url_rejects_a_candidate_version_mismatch() {
+        let package = DebianPackage {
+            name: "example".to_string(),
+            version: "2.0".to_string(),
+            description: String::new(),
+            section: "utils".to_string(),
+            priority: "optional".to_string(),
+            installed_size: 1,
+            maintainer: String::new(),
+            architecture: "amd64".to_string(),
+            depends: Vec::new(),
+            filename: "pool/example_2.0_amd64.deb".to_string(),
+            size: 1,
+            sha256: "a".repeat(64),
+            homepage: String::new(),
+            component: "main".to_string(),
+            suite: "stable".to_string(),
+        };
+        let packages = HashMap::from([(package.name.clone(), package)]);
+        let repos = vec![Repository {
+            repo_type: RepoType::Binary,
+            uri: "https://deb.example/debian".to_string(),
+            suite: "stable".to_string(),
+            components: vec!["main".to_string()],
+            arch: None,
+            signed_by: None,
+            enabled: true,
+            source_file: PathBuf::from("sources.list"),
+            options: HashMap::new(),
+        }];
+        let mut action = PackageAction {
+            name: "example".to_string(),
+            version: "1.0".to_string(),
+            deb_path: None,
+            url: None,
+            size: 0,
+            sha256: None,
+        };
+
+        let error = populate_action_url(&mut action, &packages, &repos)
+            .expect_err("download metadata must match the resolved version");
+        assert!(error.to_string().contains("resolved version"), "{error:#}");
         assert!(action.url.is_none());
     }
 
