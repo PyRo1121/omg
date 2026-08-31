@@ -1112,17 +1112,23 @@ pub(crate) fn list_installed_versions(versions_dir: &Path) -> Result<Vec<String>
         versions.push(name);
     }
 
-    versions.sort_by(|a, b| version_cmp(b, a));
+    versions.sort_by(|a, b| version_cmp(b, a).then_with(|| b.cmp(a)));
     Ok(versions)
 }
 
-/// Compare version strings by numeric dot-separated parts (ascending).
+/// Compare version strings in ascending order.
 ///
-/// Non-numeric segments are ignored, so pre-release suffixes compare equal to
-/// their release ("1.0.0-beta" == "1.0.0"); callers produce descending order
-/// by swapping arguments (`sort_by(|a, b| version_cmp(b, a))`).
+/// Semantic versions use SemVer precedence, including pre-release ordering.
+/// Other vendor formats fall back to unbounded numeric component comparison.
 #[must_use]
 pub(crate) fn version_cmp(a: &str, b: &str) -> Ordering {
+    if let (Ok(a), Ok(b)) = (
+        semver::Version::parse(a.trim_start_matches(['v', 'V'])),
+        semver::Version::parse(b.trim_start_matches(['v', 'V'])),
+    ) {
+        return a.cmp(&b);
+    }
+
     fn numeric_parts(version: &str) -> Vec<&str> {
         version
             .split(|character: char| !character.is_ascii_digit())
@@ -1295,6 +1301,15 @@ mod tests {
         assert_eq!(version_cmp("1.0.0", "1.0.1"), Ordering::Less);
         assert_eq!(version_cmp("2.0.0", "1.9.9"), Ordering::Greater);
         assert_eq!(version_cmp("22.0.0", "20.10.0"), Ordering::Greater);
+        assert_eq!(version_cmp("1.0.0-beta.2", "1.0.0"), Ordering::Less);
+        assert_eq!(version_cmp("1.0.0-rc.10", "1.0.0-rc.2"), Ordering::Greater);
+    }
+
+    #[test]
+    fn equal_runtime_versions_have_a_deterministic_directory_order() {
+        let mut versions = ["1.0".to_string(), "1.0.0".to_string()];
+        versions.sort_by(|a, b| version_cmp(b, a).then_with(|| b.cmp(a)));
+        assert_eq!(versions, ["1.0.0", "1.0"]);
     }
 
     #[test]
