@@ -31,6 +31,8 @@ use crate::core::{Package, PackageSource};
 
 /// TTL for cache eviction safety net (30 minutes)
 const CACHE_TTL_SECS: u64 = 30 * 60;
+const DEBIAN_INDEX_CACHE_MAGIC: [u8; 4] = *b"ODXI";
+const DEBIAN_INDEX_CACHE_FORMAT_VERSION: u32 = 1;
 
 /// Current time as unix seconds (`0` if the clock is before the epoch).
 fn unix_now_secs() -> u64 {
@@ -529,6 +531,24 @@ fn hydrate_index_cache(
     cache.last_accessed = unix_now_secs();
 }
 
+fn decode_debian_index_cache(compressed: &[u8]) -> Result<DebianPackageIndex> {
+    anyhow::ensure!(compressed.len() >= 8, "cache header is truncated");
+    anyhow::ensure!(
+        compressed[..4] == DEBIAN_INDEX_CACHE_MAGIC,
+        "cache magic is invalid"
+    );
+    let format_version =
+        u32::from_le_bytes([compressed[4], compressed[5], compressed[6], compressed[7]]);
+    anyhow::ensure!(
+        format_version == DEBIAN_INDEX_CACHE_FORMAT_VERSION,
+        "unsupported cache format version {format_version}"
+    );
+    let bytes = lz4_flex::decompress_size_prepended(&compressed[8..])
+        .context("cache payload is not valid LZ4 data")?;
+    rkyv::from_bytes::<DebianPackageIndex, rkyv::rancor::Error>(&bytes)
+        .context("cache payload is not a valid Debian package index")
+}
+
 pub fn ensure_index_loaded() -> Result<()> {
     let lists_dir = Path::new("/var/lib/apt/lists");
     if !lists_dir.exists() {
@@ -595,9 +615,6 @@ pub fn ensure_index_loaded() -> Result<()> {
     // Cache files carry a magic + format-version header so a mismatched or
     // corrupt artifact is rejected with a resync instead of undefined
     // deserialization behavior.
-    const CACHE_MAGIC: [u8; 4] = *b"ODXI";
-    const CACHE_FORMAT_VERSION: u32 = 1;
-
     let cache_path = paths::cache_dir().join("debian_index_v7.lz4");
     let mmap_path = paths::cache_dir().join("debian_index_v7.mmap");
 
@@ -616,21 +633,19 @@ pub fn ensure_index_loaded() -> Result<()> {
                 .all(|pkg_mtime| cache_mtime >= *pkg_mtime);
         }
 
-        if let Ok(compressed) = fs::read(&cache_path)
-            && compressed.len() >= 8
-            && compressed[0..4] == CACHE_MAGIC
-            && u32::from_le_bytes([compressed[4], compressed[5], compressed[6], compressed[7]])
-                == CACHE_FORMAT_VERSION
-        {
-            if let Ok(bytes) = lz4_flex::decompress_size_prepended(&compressed[8..])
-                && let Ok(idx) = rkyv::from_bytes::<DebianPackageIndex, rkyv::rancor::Error>(&bytes)
-            {
-                index = Some(idx);
-            }
-        } else if cache_path.exists() {
-            tracing::debug!(
-                "debian index cache has an unrecognized format; rebuilding (run 'omg sync' if this persists)"
-            );
+        match fs::read(&cache_path) {
+            Ok(compressed) => match decode_debian_index_cache(&compressed) {
+                Ok(cached_index) => index = Some(cached_index),
+                Err(error) => tracing::debug!(
+                    %error,
+                    "Debian index cache is invalid; rebuilding"
+                ),
+            },
+            Err(error) => tracing::debug!(
+                %error,
+                path = %cache_path.display(),
+                "Failed to read Debian index cache; rebuilding"
+            ),
         }
     }
 
@@ -710,18 +725,18 @@ pub fn ensure_index_loaded() -> Result<()> {
 
         // Save compressed version for space efficiency, prefixed with the
         // magic + format-version header the read path validates.
-        let mut framed = Vec::with_capacity(8 + bytes.len());
-        framed.extend_from_slice(&CACHE_MAGIC);
-        framed.extend_from_slice(&CACHE_FORMAT_VERSION.to_le_bytes());
-        framed.extend_from_slice(&bytes);
-        let compressed = lz4_flex::compress_prepend_size(&framed);
+        let compressed = lz4_flex::compress_prepend_size(&bytes);
+        let mut framed = Vec::with_capacity(8 + compressed.len());
+        framed.extend_from_slice(&DEBIAN_INDEX_CACHE_MAGIC);
+        framed.extend_from_slice(&DEBIAN_INDEX_CACHE_FORMAT_VERSION.to_le_bytes());
+        framed.extend_from_slice(&compressed);
 
         // Atomic write for compressed cache
         let parent = cache_path.parent().unwrap_or_else(|| Path::new("."));
         let mut temp_cache =
             NamedTempFile::new_in(parent).context("Failed to create temporary cache file")?;
         temp_cache
-            .write_all(&compressed)
+            .write_all(&framed)
             .context("Failed to write compressed cache data")?;
         temp_cache
             .as_file_mut()
@@ -2354,6 +2369,49 @@ mod tests {
     /// Serializes every test that mutates process-global `OMG_TEST_MODE`;
     /// env vars are shared by all parallel test threads.
     static ENV_LOCK: LazyLock<std::sync::Mutex<()>> = LazyLock::new(|| std::sync::Mutex::new(()));
+
+    #[test]
+    fn compressed_index_cache_round_trips_with_a_plain_header() -> Result<()> {
+        let mut index = DebianPackageIndex::new();
+        index.add_package(DebianPackage {
+            name: "demo".to_string(),
+            version: "1.0".to_string(),
+            description: String::new(),
+            section: String::new(),
+            priority: String::new(),
+            installed_size: 0,
+            maintainer: String::new(),
+            architecture: debian_arch().to_string(),
+            depends: Vec::new(),
+            filename: String::new(),
+            size: 0,
+            sha256: String::new(),
+            homepage: String::new(),
+            component: "main".to_string(),
+            suite: "stable".to_string(),
+        });
+        let bytes = rkyv::to_bytes::<rkyv::rancor::Error>(&index)?;
+        let compressed = lz4_flex::compress_prepend_size(&bytes);
+        let mut framed = Vec::new();
+        framed.extend_from_slice(&DEBIAN_INDEX_CACHE_MAGIC);
+        framed.extend_from_slice(&DEBIAN_INDEX_CACHE_FORMAT_VERSION.to_le_bytes());
+        framed.extend_from_slice(&compressed);
+
+        let decoded = decode_debian_index_cache(&framed)?;
+        assert_eq!(
+            decoded.get("demo").map(|package| package.version.as_str()),
+            Some("1.0")
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn malformed_index_cache_headers_fail_closed() {
+        assert!(decode_debian_index_cache(b"short").is_err());
+        assert!(decode_debian_index_cache(b"NOPE\x01\x00\x00\x00bad").is_err());
+        assert!(decode_debian_index_cache(b"ODXI\x02\x00\x00\x00bad").is_err());
+        assert!(decode_debian_index_cache(b"ODXI\x01\x00\x00\x00bad").is_err());
+    }
 
     #[test]
     fn disk_cache_older_than_an_apt_package_list_is_stale() -> Result<()> {
