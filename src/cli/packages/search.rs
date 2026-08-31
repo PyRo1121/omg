@@ -244,9 +244,6 @@ fn search_aur_packages(
     std::future::ready(Ok(Vec::new()))
 }
 
-fn search_sync_cli(query: &str, detailed: bool, no_aur: bool) -> Result<bool> {
-    search_sync_cli_with_limit(query, detailed, no_aur, 50)
-}
 pub fn search_sync_cli_with_limit(
     query: &str,
     detailed: bool,
@@ -568,13 +565,13 @@ mod tests {
     }
 
     #[test]
-    fn test_search_sync_cli_validation() {
-        assert!(!search_sync_cli("a".repeat(101).as_str(), false, true).unwrap());
+    fn test_search_sync_cli_with_limit_validation() {
+        assert!(!search_sync_cli_with_limit("a".repeat(101).as_str(), false, true, 50).unwrap());
 
-        assert!(!search_sync_cli("test\x00query", false, true).unwrap());
+        assert!(!search_sync_cli_with_limit("test\x00query", false, true, 50).unwrap());
 
-        assert!(!search_sync_cli("../passwd", false, true).unwrap());
+        assert!(!search_sync_cli_with_limit("../passwd", false, true, 50).unwrap());
 
-        assert!(!search_sync_cli("test;ls", false, true).unwrap());
+        assert!(!search_sync_cli_with_limit("test;ls", false, true, 50).unwrap());
     }
 }
