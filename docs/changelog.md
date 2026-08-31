@@ -4042,6 +4042,7 @@ the Debian backend), so it was removed from the metadata.
 - Normalize project formatting
 ### 🧪 Testing
 
+- Isolate telemetry configuration state
 - Reject destructive ALPM fixture rewrites
 - Strengthen Arch command contracts
 - Assert synchronized daemon cache statistics
