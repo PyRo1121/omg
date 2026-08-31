@@ -3,7 +3,7 @@
 //! These tests run actual install/remove operations in Docker containers
 //! to verify real system integration without modifying the host.
 //!
-//! Run with: `OMG_RUN_DOCKER_TESTS=1 cargo test --locked --features arch --test docker_e2e -- --ignored --test-threads=1`
+//! Run with: `OMG_RUN_DOCKER_TESTS=1 cargo test --locked --no-default-features --features pgp,license --test docker_e2e -- --ignored --test-threads=1`
 
 use std::process::Command;
 use std::sync::OnceLock;
@@ -26,15 +26,6 @@ fn docker_available() -> bool {
 }
 
 fn build_docker_image() -> bool {
-    if !std::path::Path::new("target/release/omg").exists() {
-        eprintln!("Binary not found. Run: cargo build --release --features arch");
-        return false;
-    }
-
-    // Copy binary
-    std::fs::copy("target/release/omg", "omg-binary").expect("Failed to copy binary");
-
-    // Build image
     let status = Command::new("docker")
         .args([
             "build",
@@ -46,9 +37,6 @@ fn build_docker_image() -> bool {
         ])
         .status()
         .expect("Failed to build Docker image");
-
-    // Cleanup
-    let _ = std::fs::remove_file("omg-binary");
 
     status.success()
 }
