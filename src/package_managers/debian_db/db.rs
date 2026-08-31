@@ -1955,20 +1955,40 @@ pub fn get_updates_from_mmap(
                 pkg.architecture.as_str(),
                 debian_arch(),
             )?;
-            let available_ver = parse_version_or_zero(pkg_version);
-            let installed_v = parse_version_or_zero(installed_ver);
-
-            (available_ver > installed_v).then(|| {
-                (
-                    pkg_name.to_string(),
-                    (*installed_ver).to_string(),
-                    pkg_version.to_string(),
-                )
-            })
+            (crate::package_managers::types::compare_deb_versions(pkg_version, installed_ver)
+                == std::cmp::Ordering::Greater)
+                .then(|| {
+                    (
+                        pkg_name.to_string(),
+                        (*installed_ver).to_string(),
+                        pkg_version.to_string(),
+                    )
+                })
         })
         .collect();
 
-    Ok(updates)
+    Ok(best_update_versions(updates))
+}
+
+pub(crate) fn best_update_versions(
+    updates: impl IntoIterator<Item = (String, String, String)>,
+) -> Vec<(String, String, String)> {
+    let mut best = HashMap::<String, (String, String)>::new();
+    for (name, old_version, new_version) in updates {
+        let replace = best.get(&name).is_none_or(|(_, existing_new)| {
+            crate::package_managers::types::compare_deb_versions(&new_version, existing_new)
+                == std::cmp::Ordering::Greater
+        });
+        if replace {
+            best.insert(name, (old_version, new_version));
+        }
+    }
+    let mut updates: Vec<_> = best
+        .into_iter()
+        .map(|(name, (old_version, new_version))| (name, old_version, new_version))
+        .collect();
+    updates.sort_unstable_by(|left, right| left.0.cmp(&right.0));
+    updates
 }
 
 fn status_paragraph_is_installed(paragraph: &str) -> bool {
@@ -2701,6 +2721,24 @@ mod tests {
         assert_eq!(
             packages_with_sizes_from_status(content).unwrap(),
             [("installed".to_string(), 3 * 1024)]
+        );
+    }
+
+    #[test]
+    fn update_candidates_are_deduplicated_with_debian_version_ordering() {
+        let updates = best_update_versions([
+            ("zlib".to_string(), "1.0".to_string(), "2.0~rc1".to_string()),
+            ("zlib".to_string(), "1.0".to_string(), "2.0".to_string()),
+            ("apt".to_string(), "1.0".to_string(), "1.1".to_string()),
+            ("apt".to_string(), "1.0".to_string(), "1.1".to_string()),
+        ]);
+
+        assert_eq!(
+            updates,
+            [
+                ("apt".to_string(), "1.0".to_string(), "1.1".to_string()),
+                ("zlib".to_string(), "1.0".to_string(), "2.0".to_string()),
+            ]
         );
     }
 

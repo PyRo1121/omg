@@ -423,14 +423,14 @@ fn compute_updates() -> Result<Vec<UpdateInfo>> {
     }
 
     // Fallback: Load full index and use parallel comparison
-    use crate::package_managers::types::parse_version_or_zero;
     use rayon::prelude::*;
 
     debian_db::ensure_index_loaded()?;
     let index_pkgs = debian_db::get_detailed_packages()?;
 
-    // Parallel version comparisons using rayon
-    let updates: Vec<UpdateInfo> = index_pkgs
+    // Parallel version comparisons using Debian's ordering regardless of
+    // which other package-manager features are enabled in this build.
+    let candidates: Vec<_> = index_pkgs
         .par_iter()
         .filter_map(|pkg| {
             let installed_ver = debian_db::db::installed_version_for_arch(
@@ -439,19 +439,27 @@ fn compute_updates() -> Result<Vec<UpdateInfo>> {
                 &pkg.architecture,
                 debian_db::debian_arch(),
             )?;
-            let available_ver = parse_version_or_zero(&pkg.version);
-            let installed_v = parse_version_or_zero(installed_ver);
-
-            (available_ver > installed_v).then(|| UpdateInfo {
-                name: pkg.name.clone(),
-                old_version: (*installed_ver).to_string(),
-                new_version: pkg.version.clone(),
-                repo: "official".to_string(),
-            })
+            (crate::package_managers::types::compare_deb_versions(&pkg.version, installed_ver)
+                == std::cmp::Ordering::Greater)
+                .then(|| {
+                    (
+                        pkg.name.clone(),
+                        (*installed_ver).to_string(),
+                        pkg.version.clone(),
+                    )
+                })
         })
         .collect();
 
-    Ok(updates)
+    Ok(debian_db::db::best_update_versions(candidates)
+        .into_iter()
+        .map(|(name, old_version, new_version)| UpdateInfo {
+            name,
+            old_version,
+            new_version,
+            repo: "official".to_string(),
+        })
+        .collect())
 }
 
 /// Populate package URLs in a transaction by looking up package info from the
