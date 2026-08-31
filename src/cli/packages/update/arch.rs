@@ -263,9 +263,15 @@ pub async fn update(check_only: bool, yes: bool, dry_run: bool) -> Result<()> {
                     }
                     packages
                 }
-                Err(e) => {
+                Err(error) => {
                     modern_ui::finish_clear(&aur_pb);
-                    return Err(e).context("Failed to check AUR updates");
+                    if official_count == 0 {
+                        return Err(error).context("Failed to check AUR updates");
+                    }
+                    modern_ui::print_warning(&format!(
+                        "AUR update check failed; continuing with official updates: {error:#}"
+                    ));
+                    Vec::new()
                 }
             }
         }
