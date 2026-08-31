@@ -336,10 +336,8 @@ pub async fn install_dry_run(packages: &[String]) -> Result<()> {
                 ]);
             }
             Ok(None) => {
-                let aur = AurClient::new()?;
-                let info = aur
-                    .info(pkg_name)
-                    .await?
+                let (info, _) = resolve_aur_package(pkg_name)
+                    .await
                     .with_context(|| format!("Package '{pkg_name}' was not found"))?;
                 table.add_row(vec![
                     info.name.bold().to_string(),
@@ -519,34 +517,44 @@ fn is_aur_not_found(error: &anyhow::Error) -> bool {
     error.to_string().contains("Package not found in AUR")
 }
 
-async fn try_aur_package(pkg_name: &str) -> Result<crate::core::Package> {
+fn select_aur_candidate(
+    results: &[crate::core::Package],
+    pkg_name: &str,
+) -> Option<(crate::core::Package, bool)> {
+    let exact_match = results.iter().find(|package| package.name == pkg_name);
+    let bin_name = format!("{pkg_name}-bin");
+    let bin_match = results.iter().find(|package| package.name == bin_name);
+
+    bin_match
+        .map(|package| (package.clone(), exact_match.is_some()))
+        .or_else(|| exact_match.cloned().map(|package| (package, false)))
+}
+
+async fn resolve_aur_package(pkg_name: &str) -> Result<(crate::core::Package, bool)> {
     let aur = AurClient::new()?;
     let results = aur.search(pkg_name).await?;
+    select_aur_candidate(&results, pkg_name)
+        .ok_or_else(|| anyhow::anyhow!("Package not found in AUR"))
+}
 
-    let exact_match = results.iter().find(|p| p.name == pkg_name);
-    let bin_name = format!("{pkg_name}-bin");
-    let bin_match = results.iter().find(|p| p.name == bin_name);
+async fn try_aur_package(pkg_name: &str) -> Result<crate::core::Package> {
+    let (package, preferred_binary) = resolve_aur_package(pkg_name).await?;
 
-    if let Some(bin_pkg) = bin_match {
-        if exact_match.is_some() {
-            use owo_colors::OwoColorize;
-            println!();
-            println!(
-                "  {} Found pre-built binary package: {}",
-                "→".cyan().bold(),
-                bin_pkg.name.green().bold()
-            );
-            println!(
-                "  {} This installs in seconds instead of compiling from source",
-                "ℹ".blue()
-            );
-        }
-        return Ok(bin_pkg.clone());
+    if preferred_binary {
+        use owo_colors::OwoColorize;
+        println!();
+        println!(
+            "  {} Found pre-built binary package: {}",
+            "→".cyan().bold(),
+            package.name.green().bold()
+        );
+        println!(
+            "  {} This installs in seconds instead of compiling from source",
+            "ℹ".blue()
+        );
     }
 
-    exact_match
-        .cloned()
-        .ok_or_else(|| anyhow::anyhow!("Package not found in AUR"))
+    Ok(package)
 }
 
 async fn handle_aur_package(aur_pkg: crate::core::Package, yes: bool) -> Result<()> {
@@ -714,6 +722,31 @@ mod tests {
             .expect("inspect local archive")
             .expect("classify local archive");
         assert_eq!(preview, ("fixture.pkg.tar.zst".to_string(), 7));
+    }
+
+    fn aur_package(name: &str) -> crate::core::Package {
+        crate::core::Package {
+            name: name.to_string(),
+            version: crate::package_managers::parse_version_or_zero("1.0-1"),
+            description: String::new(),
+            source: crate::core::PackageSource::Aur,
+            installed: false,
+        }
+    }
+
+    #[test]
+    fn dry_run_and_install_share_aur_binary_preference() {
+        let packages = vec![aur_package("example"), aur_package("example-bin")];
+        let (selected, preferred_binary) =
+            select_aur_candidate(&packages, "example").expect("candidate");
+        assert_eq!(selected.name, "example-bin");
+        assert!(preferred_binary);
+
+        let only_binary = vec![aur_package("binary-only-bin")];
+        let (selected, preferred_binary) =
+            select_aur_candidate(&only_binary, "binary-only").expect("binary candidate");
+        assert_eq!(selected.name, "binary-only-bin");
+        assert!(!preferred_binary);
     }
 
     #[test]
