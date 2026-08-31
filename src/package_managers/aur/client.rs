@@ -1004,9 +1004,8 @@ impl AurClient {
             anyhow::bail!("Failed to checkout commit {sha} of '{base}'");
         }
 
-        // Same hardened build pipeline as regular installs (validation,
-        // makepkg env, sandboxing method). Review prompts are skipped: a
-        // rollback rebuilds code the user already had installed.
+        // Use the same hardened validation, environment, and sandboxing
+        // pipeline as regular installs.
         let pkg_dir = validate_build_dir(
             repo_dir
                 .parent()
@@ -1023,7 +1022,9 @@ impl AurClient {
         // alone does not prove the PKGBUILD is the one originally installed.
         // ALWAYS show the review prompt during rollback rebuilds,
         // independent of the user's day-to-day review preference.
-        Self::review_pkgbuild(&pkg_dir.join("PKGBUILD")).await?;
+        let pkgbuild_path = pkg_dir.join("PKGBUILD");
+        Self::review_pkgbuild(&pkgbuild_path).await?;
+        Self::fetch_missing_pgp_keys(&pkgbuild_path).await?;
         println!(
             "  {} Building {package} {version} from history...",
             "→".blue()
