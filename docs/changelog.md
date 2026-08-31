@@ -697,6 +697,7 @@ analyzer inference
 - **Ci**: Cross-platform install script and R2 release sync
 ### 🐛 Bug Fixes
 
+- Reject nested ALPM handle access cleanly
 - Restore terminal state after TUI panics
 - Do not assign SLSA levels without provenance
 - Reject unsupported Rust complete profiles
