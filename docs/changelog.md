@@ -702,6 +702,7 @@ analyzer inference
 - **Ci**: Cross-platform install script and R2 release sync
 ### 🐛 Bug Fixes
 
+- Preserve dpkg description continuations
 - Align Debian index cache framing
 - Recommend a real Debian repair command
 - Bound Debian dependency traversal
