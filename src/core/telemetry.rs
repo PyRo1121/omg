@@ -79,14 +79,15 @@ pub fn is_telemetry_opt_out() -> bool {
         return true;
     }
 
-    // Check settings file
-    if let Ok(settings) = crate::config::Settings::load()
-        && !settings.telemetry_enabled
-    {
-        return true;
+    // Configuration errors fail closed. A malformed settings file must not
+    // silently reverse a user's privacy choice and re-enable telemetry.
+    match crate::config::Settings::load() {
+        Ok(settings) => !settings.telemetry_enabled,
+        Err(error) => {
+            tracing::warn!("Disabling telemetry because settings could not be loaded: {error:#}");
+            true
+        }
     }
-
-    false
 }
 
 /// Case-insensitive check of an environment variable against a set of

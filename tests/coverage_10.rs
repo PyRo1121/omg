@@ -114,44 +114,66 @@ fn opt_out_env_values_and_settings_file_gate_telemetry() {
     let config_dir = TempDir::new().expect("temp config dir");
     let config_str = config_dir.path().to_string_lossy().into_owned();
 
-    // Nothing set, defaults enabled, no test mode ⇒ telemetry allowed.
-    HermeticEnv::offline(&TempDir::new().unwrap()).run(|| assert!(!is_telemetry_opt_out()));
+    fs::write(
+        config_dir.path().join("config.toml"),
+        "telemetry_enabled = true\n",
+    )
+    .expect("write enabling config");
+
+    // Explicit opt-in, no env override, no test mode ⇒ telemetry allowed.
+    HermeticEnv::offline(&TempDir::new().unwrap()).run(|| {
+        temp_env::with_var("OMG_CONFIG_DIR", Some(config_str.as_str()), || {
+            assert!(!is_telemetry_opt_out());
+        });
+    });
 
     // Every accepted OMG_TELEMETRY value opts out, case-insensitively.
     for value in ["0", "false", "off", "no", "OFF", "False", "No"] {
         HermeticEnv::offline(&TempDir::new().unwrap()).run(|| {
-            temp_env::with_var("OMG_TELEMETRY", Some(value), || {
-                assert!(is_telemetry_opt_out(), "OMG_TELEMETRY={value} must opt out");
-            });
+            temp_env::with_vars(
+                [
+                    ("OMG_CONFIG_DIR", Some(config_str.as_str())),
+                    ("OMG_TELEMETRY", Some(value)),
+                ],
+                || assert!(is_telemetry_opt_out(), "OMG_TELEMETRY={value} must opt out"),
+            );
         });
     }
 
     // Every accepted OMG_DISABLE_TELEMETRY value opts out, case-insensitively.
     for value in ["1", "true", "on", "yes", "YES", "On"] {
         HermeticEnv::offline(&TempDir::new().unwrap()).run(|| {
-            temp_env::with_var("OMG_DISABLE_TELEMETRY", Some(value), || {
-                assert!(
-                    is_telemetry_opt_out(),
-                    "OMG_DISABLE_TELEMETRY={value} must opt out"
-                );
-            });
+            temp_env::with_vars(
+                [
+                    ("OMG_CONFIG_DIR", Some(config_str.as_str())),
+                    ("OMG_DISABLE_TELEMETRY", Some(value)),
+                ],
+                || {
+                    assert!(
+                        is_telemetry_opt_out(),
+                        "OMG_DISABLE_TELEMETRY={value} must opt out"
+                    );
+                },
+            );
         });
     }
 
-    // Non-opt-out values must NOT disable telemetry (env parsing is a set
-    // membership check, not a truthiness check).
+    // Non-opt-out values must NOT disable an explicit opt-in (env parsing is
+    // a set-membership check, not a truthiness check).
     HermeticEnv::offline(&TempDir::new().unwrap()).run(|| {
-        temp_env::with_var("OMG_TELEMETRY", Some("1"), || {
-            assert!(
-                !is_telemetry_opt_out(),
-                "OMG_TELEMETRY=1 must keep telemetry on"
-            );
-        });
-        temp_env::with_var("OMG_DISABLE_TELEMETRY", Some("0"), || {
-            assert!(
-                !is_telemetry_opt_out(),
-                "OMG_DISABLE_TELEMETRY=0 must keep telemetry on"
-            );
+        temp_env::with_var("OMG_CONFIG_DIR", Some(config_str.as_str()), || {
+            temp_env::with_var("OMG_TELEMETRY", Some("1"), || {
+                assert!(
+                    !is_telemetry_opt_out(),
+                    "OMG_TELEMETRY=1 must keep telemetry on"
+                );
+            });
+            temp_env::with_var("OMG_DISABLE_TELEMETRY", Some("0"), || {
+                assert!(
+                    !is_telemetry_opt_out(),
+                    "OMG_DISABLE_TELEMETRY=0 must keep telemetry on"
+                );
+            });
         });
     });
 
@@ -182,6 +204,22 @@ fn opt_out_env_values_and_settings_file_gate_telemetry() {
             assert!(
                 !is_telemetry_opt_out(),
                 "settings telemetry_enabled=true must keep telemetry on"
+            );
+        });
+    });
+
+    // A malformed settings file must fail closed. Configuration errors must
+    // never silently reverse a persisted privacy choice.
+    fs::write(
+        config_dir.path().join("config.toml"),
+        "telemetry_enabled = false\nunknown_privacy_setting = true\n",
+    )
+    .expect("write malformed config");
+    HermeticEnv::offline(&TempDir::new().unwrap()).run(|| {
+        temp_env::with_var("OMG_CONFIG_DIR", Some(config_str.as_str()), || {
+            assert!(
+                is_telemetry_opt_out(),
+                "invalid settings must disable telemetry until the configuration is repaired"
             );
         });
     });
