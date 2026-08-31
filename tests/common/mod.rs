@@ -43,12 +43,9 @@ pub fn init_test_env() {
     INIT.call_once(|| {
         // SAFETY: This is the suite's single deliberate process-environment
         // mutation outside a scoped guard. The three constants are written
-        // exactly once via `Once::call_once`, each in one atomic `set_var`
-        // call, and every child process receives the same values explicitly
-        // via `Command::env` in `run_omg_with_options`. A concurrent reader
-        // can therefore observe either the unset default or the final
-        // constant — never a partial value — which every call site treats as
-        // equivalent.
+        // once via `Once::call_once` before tests mutate environment state
+        // under `#[serial]`. Child processes either receive explicit values
+        // from `run_omg_with_options` or inherit these stable constants.
         unsafe {
             std::env::set_var("OMG_TEST_MODE", "1");
             std::env::set_var("OMG_DISABLE_TELEMETRY", "1");

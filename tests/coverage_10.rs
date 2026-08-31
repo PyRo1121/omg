@@ -68,6 +68,7 @@ fn assert_uuid_v4(value: &str) {
 /// config/data isolated into fresh temp directories.
 struct HermeticEnv {
     vars: Vec<(&'static str, Option<String>)>,
+    _config_dir: TempDir,
 }
 
 impl HermeticEnv {
@@ -76,11 +77,15 @@ impl HermeticEnv {
     /// instead of reaching the real telemetry endpoint.
     fn offline(data: &TempDir) -> Self {
         let proxy = "http://127.0.0.1:9".to_string();
+        let config_dir = TempDir::new().expect("isolated telemetry config dir");
         let vars = vec![
             ("OMG_TEST_MODE", None),
             ("OMG_TELEMETRY", None),
             ("OMG_DISABLE_TELEMETRY", None),
-            ("OMG_CONFIG_DIR", None),
+            (
+                "OMG_CONFIG_DIR",
+                Some(config_dir.path().to_string_lossy().into_owned()),
+            ),
             (
                 "OMG_DATA_DIR",
                 Some(data.path().to_string_lossy().into_owned()),
@@ -90,7 +95,10 @@ impl HermeticEnv {
             ("ALL_PROXY", Some(proxy)),
             ("NO_PROXY", Some(String::new())),
         ];
-        Self { vars }
+        Self {
+            vars,
+            _config_dir: config_dir,
+        }
     }
 
     fn run<R>(&self, f: impl FnOnce() -> R) -> R {
@@ -436,6 +444,7 @@ fn startup_duration_is_observable_monotonic_elapsed_time() {
 }
 
 #[test]
+#[serial]
 fn timer_reports_at_least_the_slept_duration_in_milliseconds() {
     let timer = Timer::new("cov10_probe");
     thread::sleep(Duration::from_millis(30));
