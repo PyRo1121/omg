@@ -702,6 +702,7 @@ analyzer inference
 - **Ci**: Cross-platform install script and R2 release sync
 ### 🐛 Bug Fixes
 
+- Honor interrupts in setup menus
 - Skip virtualenv activation scripts
 - Serialize AUR package-base builds
 - Reject undersized AUR search queries
