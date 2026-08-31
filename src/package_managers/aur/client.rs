@@ -920,6 +920,10 @@ impl AurClient {
             .collect())
     }
 
+    fn rollback_worktree_name(base: &str) -> String {
+        format!("{base}-{}", uuid::Uuid::new_v4())
+    }
+
     fn historical_version_not_found_message(base: &str, version: &str) -> String {
         format!(
             "version {version} of '{base}' was not found in the AUR git history (the repository may have been force-pushed since it was installed)"
@@ -955,16 +959,11 @@ impl AurClient {
 
         let base = self.resolve_package_base(package).await?;
 
-        // Isolated work tree; stamp prevents collisions between rollbacks.
+        // Isolated work tree; a UUID prevents concurrent rollbacks of the
+        // same package base from sharing or deleting one another's checkout.
         let work = self.build_dir.join("_rollback");
         create_dir_as_user(&work).await?;
-        let stamp = std::time::SystemTime::now()
-            .duration_since(std::time::SystemTime::UNIX_EPOCH)
-            .map_or(0_u64, |d| d.as_secs());
-        let repo_dir = work.join(format!("{base}-{stamp}"));
-        if repo_dir.exists() {
-            remove_dir_as_user(&repo_dir).await.ok();
-        }
+        let repo_dir = work.join(Self::rollback_worktree_name(&base));
         create_dir_as_user(&repo_dir).await?;
 
         // Full-history partial clone (blobs fetched on demand at checkout).
@@ -3510,6 +3509,15 @@ mod tests {
             Some(&"PACMAN_AUTH=/usr/bin/sudo"),
             "makepkg's default sudo -k would invalidate omg's live credential"
         );
+    }
+
+    #[test]
+    fn rollback_worktrees_are_unique_for_the_same_package_base() {
+        let first = AurClient::rollback_worktree_name("example");
+        let second = AurClient::rollback_worktree_name("example");
+        assert!(first.starts_with("example-"));
+        assert!(second.starts_with("example-"));
+        assert_ne!(first, second);
     }
 
     #[test]
