@@ -256,9 +256,25 @@ pub fn parse_sync_db(path: &Path, repo_name: &str) -> Result<HashMap<String, Syn
                 )
             })?;
 
-            let pkg = parse_desc_content(&content, repo_name)?;
-            if !pkg.name.is_empty() {
-                packages.insert(pkg.name.clone(), pkg);
+            match parse_desc_content(&content, repo_name) {
+                Ok(pkg) if !pkg.name.is_empty() => {
+                    packages.insert(pkg.name.clone(), pkg);
+                }
+                Ok(_) => {
+                    tracing::warn!(
+                        repo = repo_name,
+                        entry = %entry_path.display(),
+                        "Ignoring sync database entry without a package name"
+                    );
+                }
+                Err(error) => {
+                    tracing::warn!(
+                        repo = repo_name,
+                        entry = %entry_path.display(),
+                        error = %error,
+                        "Ignoring malformed sync database package entry"
+                    );
+                }
             }
         }
     }
@@ -1201,6 +1217,36 @@ mod tests {
             "bash must be found, got keys {:?}",
             parsed.keys()
         );
+    }
+
+    #[test]
+    fn malformed_sync_package_does_not_hide_valid_repository_entries() {
+        let temp = tempfile::tempdir().unwrap();
+        let path = temp.path().join("custom.db");
+        let invalid = b"%NAME%\nbroken\n\n%VERSION%\nnot a version!!!\n\n";
+        let valid = b"%NAME%\ngood\n\n%VERSION%\n1.0-1\n\n";
+
+        let mut tar = tar::Builder::new(Vec::new());
+        for (entry_path, content) in [
+            ("broken-1/desc", invalid.as_slice()),
+            ("good-1.0-1/desc", valid.as_slice()),
+        ] {
+            let mut header = tar::Header::new_gnu();
+            header.set_size(content.len() as u64);
+            header.set_mode(0o644);
+            header.set_cksum();
+            tar.append_data(&mut header, entry_path, content).unwrap();
+        }
+        let raw = tar.into_inner().unwrap();
+        let mut compressed = Vec::new();
+        flate2::write::GzEncoder::new(&mut compressed, flate2::Compression::fast())
+            .write_all(&raw)
+            .unwrap();
+        std::fs::write(&path, compressed).unwrap();
+
+        let packages = parse_sync_db(&path, "custom").unwrap();
+        assert!(packages.contains_key("good"));
+        assert!(!packages.contains_key("broken"));
     }
 
     #[test]
