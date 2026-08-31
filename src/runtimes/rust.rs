@@ -104,7 +104,7 @@ impl RustManager {
         }
     }
 
-    /// List available Rust versions (stable, beta, nightly + recent releases)
+    /// List the stable version and the rolling beta and nightly channels.
     pub async fn list_available(&self) -> Result<Vec<RustVersion>> {
         let mut versions = Vec::new();
 
@@ -151,7 +151,7 @@ impl RustManager {
         Self::reject_invalid_toolchain_path(&version_dir)?;
         if is_valid_version_dir(&version_dir) {
             print_already_installed("Rust", &toolchain.name());
-            return self.use_version(version);
+            return self.activate_toolchain(&toolchain);
         }
 
         let prefix = "OMG".cyan().bold().to_string();
@@ -160,7 +160,7 @@ impl RustManager {
 
         self.install_with_profile(&toolchain, "default", &[], &[])
             .await?;
-        self.use_version(version)?;
+        self.activate_toolchain(&toolchain)?;
 
         Ok(())
     }
@@ -315,9 +315,7 @@ impl RustManager {
         Ok(())
     }
 
-    /// Switch to a specific version
-    pub fn use_version(&self, version: &str) -> Result<()> {
-        let toolchain = RustToolchainSpec::parse(version)?;
+    fn activate_toolchain(&self, toolchain: &RustToolchainSpec) -> Result<()> {
         let toolchain_name = toolchain.name();
         activate_version(&self.versions_dir, &toolchain_name, Path::new("bin/rustc"))?;
         let bin_dir = self.versions_dir.join("current/bin");
@@ -381,11 +379,13 @@ impl RustManager {
         }
 
         for target in targets {
-            self.install_component(dest_dir, "rust-std", target, &manifest)
-                .await?;
+            if is_additional_target(target, &toolchain.host) {
+                self.install_component(dest_dir, "rust-std", target, &manifest)
+                    .await?;
+            }
         }
 
-        let mut metadata = Self::read_metadata(dest_dir)?;
+        let mut metadata = RustToolchainMetadata::default();
         metadata.components.extend(required_components);
         metadata.targets.extend(targets.iter().cloned());
         Self::write_metadata(dest_dir, &metadata)?;
@@ -422,8 +422,10 @@ impl RustManager {
                 .await?;
         }
         for target in targets {
-            self.install_component(staging.path(), "rust-std", target, &manifest)
-                .await?;
+            if is_additional_target(target, &toolchain.host) {
+                self.install_component(staging.path(), "rust-std", target, &manifest)
+                    .await?;
+            }
         }
 
         let mut metadata = Self::read_metadata(staging.path())?;
@@ -596,6 +598,10 @@ fn default_host_triple() -> Result<String> {
         ("aarch64", "windows") => Ok("aarch64-pc-windows-msvc".to_string()),
         (arch, os) => anyhow::bail!("Unsupported host platform: {arch}-{os}"),
     }
+}
+
+fn is_additional_target(target: &str, host: &str) -> bool {
+    target != host
 }
 
 fn profile_components(profile: &str) -> Result<Vec<String>> {
@@ -899,6 +905,18 @@ mod tests {
             .expect_err("regular files must be rejected");
         assert!(error.to_string().contains("non-directory"));
         Ok(())
+    }
+
+    #[test]
+    fn host_target_does_not_require_a_second_standard_library_download() {
+        assert!(!is_additional_target(
+            "x86_64-unknown-linux-gnu",
+            "x86_64-unknown-linux-gnu"
+        ));
+        assert!(is_additional_target(
+            "wasm32-unknown-unknown",
+            "x86_64-unknown-linux-gnu"
+        ));
     }
 
     #[test]
