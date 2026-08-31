@@ -207,6 +207,7 @@ impl DependencyResolver {
 
         // Topologically sort the install order
         let sorted = self.topological_sort(&to_install)?;
+        self.validate_projected_dependencies(&sorted)?;
 
         // Calculate sizes and determine upgrades
         let mut final_install = Vec::with_capacity(sorted.len());
@@ -380,6 +381,46 @@ impl DependencyResolver {
                         .then(|| DependencyTarget::Available(candidate.name.clone()))
                 })
             })
+    }
+
+    /// Re-check every package in the plan against the versions that the plan
+    /// will leave installed. This prevents one requested upgrade from
+    /// invalidating a dependency that was satisfied by the pre-transaction
+    /// installed state during the initial walk.
+    fn validate_projected_dependencies(&self, packages: &[String]) -> Result<()> {
+        let mut projected = self.installed.clone();
+        for name in packages {
+            if let Some(package) = self.available.get(name) {
+                projected.insert(name.clone(), package.version.clone());
+            }
+        }
+
+        for name in packages {
+            let Some(package) = self.available.get(name) else {
+                continue;
+            };
+            for raw in &package.depends {
+                let dependency = parse_dependency(raw)
+                    .with_context(|| format!("Invalid dependency '{raw}' for package '{name}'"))?;
+                let satisfied = std::iter::once(&dependency)
+                    .chain(dependency.alternatives.iter())
+                    .any(|candidate| {
+                        projected.get(&candidate.name).is_some_and(|version| {
+                            candidate
+                                .version_constraint
+                                .as_ref()
+                                .is_none_or(|constraint| {
+                                    Self::version_satisfies(version, constraint)
+                                })
+                        })
+                    });
+                anyhow::ensure!(
+                    satisfied,
+                    "Planned version changes leave dependency '{raw}' for package '{name}' unsatisfied"
+                );
+            }
+        }
+        Ok(())
     }
 
     /// Check if a version satisfies a constraint
@@ -822,6 +863,36 @@ mod tests {
         };
         assert!(position("pkg-b") < position("pkg-a"));
         assert!(position("pkg-a") < position("pkg-c"));
+    }
+
+    #[test]
+    fn planned_upgrade_cannot_break_another_planned_dependency() {
+        let mut resolver = DependencyResolver {
+            available: HashMap::from([
+                ("shared".to_string(), test_package("shared", "3.0", &[])),
+                (
+                    "needs-new".to_string(),
+                    test_package("needs-new", "1.0", &["shared (>= 2.0)"]),
+                ),
+                (
+                    "needs-old".to_string(),
+                    test_package("needs-old", "1.0", &["shared (< 2.0)"]),
+                ),
+            ]),
+            installed: HashMap::from([("shared".to_string(), "1.0".to_string())]),
+            selected: HashSet::new(),
+            dep_graph: HashMap::new(),
+        };
+        resolver.add_package("needs-new").expect("known package");
+        resolver.add_package("needs-old").expect("known package");
+
+        let error = resolver
+            .resolve()
+            .expect_err("the projected upgrade would violate needs-old");
+        assert!(
+            error.to_string().contains("needs-old") && error.to_string().contains("shared (< 2.0)"),
+            "{error:#}"
+        );
     }
 
     #[test]
