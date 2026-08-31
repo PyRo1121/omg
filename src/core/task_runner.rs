@@ -1221,12 +1221,24 @@ fn parse_parallel_task_names(tasks: &str) -> Result<Vec<String>> {
     Ok(task_names)
 }
 
+async fn run_on_blocking_worker<T: Send + 'static>(
+    work: impl FnOnce() -> Result<T> + Send + 'static,
+) -> Result<T> {
+    tokio::task::spawn_blocking(work)
+        .await
+        .context("Task worker panicked")?
+}
+
 /// Run multiple tasks in parallel (comma-separated task names).
 pub async fn run_tasks_parallel(tasks_str: &str, extra_args: &[String]) -> Result<()> {
-    let task_names = parse_parallel_task_names(tasks_str)?;
+    let mut task_names = parse_parallel_task_names(tasks_str)?;
 
     if task_names.len() == 1 {
-        return run_task(&task_names[0], extra_args);
+        let task = task_names
+            .pop()
+            .context("Single parallel task was unexpectedly missing")?;
+        let args = extra_args.to_vec();
+        return run_on_blocking_worker(move || run_task(&task, &args)).await;
     }
 
     println!(
@@ -1407,6 +1419,16 @@ mod tests {
         process_watch_events(&receiver, std::time::Duration::from_millis(1), || runs += 1);
 
         assert_eq!(runs, 1);
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn single_parallel_task_work_uses_a_blocking_worker() {
+        let reactor_thread = std::thread::current().id();
+        let worker_thread = run_on_blocking_worker(|| Ok(std::thread::current().id()))
+            .await
+            .unwrap();
+
+        assert_ne!(worker_thread, reactor_thread);
     }
 
     #[test]
