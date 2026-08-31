@@ -12,14 +12,8 @@ use crate::core::client::SyncDaemonClient;
 use crate::core::security::is_local_package_file;
 #[cfg(unix)]
 use crate::daemon::protocol::WirePackageSource;
-use crate::package_managers::AurClient;
-use crate::package_managers::get_package_manager;
-
-/// Marker emitted by the ALPM transaction layer when a requested sync
-/// package is absent from every configured repository. This exact diagnostic
-/// is the only signal allowed to route a failed install into the AUR
-/// fallback; everything else propagates verbatim.
-const MISSING_FROM_REPOS_MARKER: &str = "not found in any configured repository";
+use crate::package_managers::alpm_ops::MISSING_FROM_REPOS_MARKER;
+use crate::package_managers::{AurClient, get_package_manager};
 
 use super::{MAX_REPLACEMENT_HOPS, enforce_install_policy};
 

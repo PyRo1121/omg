@@ -15,6 +15,8 @@ use crate::core::paths;
 static MIRRORLIST_REGEX: LazyLock<Regex> =
     LazyLock::new(|| Regex::new(r"^Server\s*=\s*([^#]+)").expect("valid regex pattern"));
 const DOWNLOAD_SPINNER_TEMPLATE: &str = "  {spinner:.cyan} {msg:30}";
+/// Stable cross-layer marker for a requested package absent from every sync repository.
+pub const MISSING_FROM_REPOS_MARKER: &str = "not found in any configured repository";
 const DOWNLOAD_BAR_TEMPLATE: &str =
     "  {spinner:.cyan} {msg:30} {bar:30.cyan/blue} {bytes}/{total_bytes}";
 use crate::package_managers::types::{PackageInfo, UpdateInfo, contains_ignore_case};
@@ -638,7 +640,7 @@ fn prepare_alpm_transaction<'a>(
                 }
                 if !found {
                     anyhow::bail!(
-                        "✗ Package '{pkg_name}' not found in any configured repository.\n  \
+                        "✗ Package '{pkg_name}' {MISSING_FROM_REPOS_MARKER}.\n  \
                          → Run 'omg sync' to update package databases\n  \
                          → Search AUR: omg search {pkg_name}\n  \
                          → Check package name at: https://archlinux.org/packages/"
