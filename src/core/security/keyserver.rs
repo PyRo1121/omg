@@ -242,9 +242,18 @@ fn keyserver_lookup_url(
 /// Fetch many keys concurrently (bounded), keeping each key's result
 /// separate. Discarding the returned results silently is almost always a
 /// bug, hence `#[must_use]`.
+fn deduplicate_key_ids(key_ids: &[String]) -> Vec<String> {
+    let mut seen = std::collections::HashSet::with_capacity(key_ids.len());
+    key_ids
+        .iter()
+        .filter(|key_id| seen.insert(key_id.as_str()))
+        .cloned()
+        .collect()
+}
+
 #[must_use]
 pub async fn fetch_keys(key_ids: &[String]) -> Vec<(String, Result<Cert, KeyserverError>)> {
-    stream::iter(key_ids.iter().cloned())
+    stream::iter(deduplicate_key_ids(key_ids))
         .map(|key_id| async move {
             let result = fetch_key(&key_id).await;
             (key_id, result)
@@ -465,6 +474,12 @@ mod tests {
             matches!(error, KeyserverError::CredentialsNotAllowed),
             "got: {error}"
         );
+    }
+
+    #[test]
+    fn key_fetches_deduplicate_ids_in_request_order() {
+        let ids = vec!["AAAA".to_string(), "BBBB".to_string(), "AAAA".to_string()];
+        assert_eq!(deduplicate_key_ids(&ids), ["AAAA", "BBBB"]);
     }
 
     #[test]
