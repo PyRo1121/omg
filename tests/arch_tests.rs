@@ -70,15 +70,15 @@ mod pacman_integration {
     }
 
     #[test]
-    fn test_search_with_regex() {
+    fn test_search_rejects_regex_metacharacters() {
         require_system_tests!();
         require_arch!();
 
         let result = run_omg(&["search", "^linux$"]);
-        // Should handle regex-like patterns
+        result.assert_failure();
         assert!(
-            !result.stderr_contains("panicked at"),
-            "Should not panic on regex"
+            result.combined_output().contains("shell metacharacters"),
+            "regex metacharacters must be rejected at the search boundary"
         );
         assert_arch_platform_purity(&result, "Arch search regex");
     }
@@ -103,10 +103,10 @@ mod pacman_integration {
         require_system_tests!();
         require_arch!();
 
-        // A package that exists but might not be installed
+        // A package that exists but might not be installed.
         let result = run_omg(&["info", "firefox"]);
-        // Should succeed whether installed or not
-        assert!(!result.stderr_contains("panicked at"), "Should not panic");
+        result.assert_success();
+        assert_package_info(&result, "firefox");
     }
 
     #[test]
@@ -115,10 +115,10 @@ mod pacman_integration {
         require_arch!();
 
         let result = run_omg(&["info", "this-package-definitely-does-not-exist-12345"]);
-        // Should fail gracefully
+        result.assert_failure();
         assert!(
-            !result.success || result.contains("not found"),
-            "Should indicate package not found"
+            result.combined_output().contains("not found"),
+            "missing package failure must name its cause"
         );
     }
 
@@ -160,7 +160,6 @@ mod pacman_integration {
 
         let result = run_omg(&["update", "--check"]);
         result.assert_success();
-        assert!(!result.stderr_contains("panicked at"), "Should not panic");
         assert_arch_platform_purity(&result, "Arch update check");
     }
 
@@ -168,8 +167,12 @@ mod pacman_integration {
     fn test_update_check_with_mock_updates() {
         let project = TestProject::new();
 
-        project.mock_install("firefox", "122.0").ok();
-        project.mock_available("firefox", "123.0").ok();
+        project
+            .mock_install("firefox", "122.0")
+            .expect("seed installed firefox");
+        project
+            .mock_available("firefox", "123.0")
+            .expect("seed available firefox");
 
         let result = project.run(&["update", "--check"]);
         result.assert_success();
@@ -186,7 +189,6 @@ mod pacman_integration {
             "update check must show the available version, got:\n{}",
             result.stdout
         );
-        assert!(!result.stderr_contains("panicked at"), "Should not panic");
         assert_arch_platform_purity(&result, "Arch mock update check");
     }
 
@@ -195,14 +197,17 @@ mod pacman_integration {
         let project = TestProject::new();
         project.with_security_policy(policies::STRICT_POLICY);
 
-        project.mock_install("firefox", "123.0").ok();
-        project.mock_available("firefox", "123.0").ok();
+        project
+            .mock_install("firefox", "123.0")
+            .expect("seed installed firefox");
+        project
+            .mock_available("firefox", "123.0")
+            .expect("seed available firefox");
 
         let result = project.run(&["update", "--check"]);
         result.assert_success();
 
         result.assert_stdout_contains("up to date");
-        assert!(!result.stderr_contains("panicked at"), "Should not panic");
         assert_arch_platform_purity(&result, "Arch mock up-to-date check");
     }
 
@@ -315,10 +320,13 @@ mod alpm_direct {
         require_system_tests!();
         require_arch!();
 
-        // Why command uses ALPM for dependency tracking
+        // Why command uses ALPM for dependency tracking.
         let result = run_omg(&["why", "glibc"]);
-        // Should show what depends on glibc
-        assert!(!result.stderr_contains("panicked at"), "Should not panic");
+        result.assert_success();
+        assert!(
+            result.combined_output().contains("glibc"),
+            "dependency report must name glibc"
+        );
     }
 
     #[test]
@@ -473,52 +481,30 @@ mod new_features {
     #[test]
     fn test_ci_init_github() {
         let project = TestProject::new();
-        let result = project.run(&["ci", "init", "--provider", "github"]);
+        let result = project.run(&["ci", "init", "github"]);
+        result.assert_success();
         // The GitHub branch of `cli::ci::write_config_file` writes this path.
         assert!(
-            !result.stderr_contains("panicked at"),
-            "ci init must not panic:\n{}",
-            result.combined_output()
+            project.file_exists(".github/workflows/ci.yml"),
+            "ci init github must generate the workflow file",
         );
-        if result.success {
-            assert!(
-                project.file_exists(".github/workflows/ci.yml"),
-                "ci init github must generate the workflow file",
-            );
-        } else {
-            assert!(
-                !result.stderr.trim().is_empty(),
-                "ci init failure must name its cause"
-            );
-        }
     }
 
     #[test]
     fn test_migrate_export() {
         let project = TestProject::new();
         let result = project.run(&["migrate", "export", "--output", "manifest.json"]);
+        result.assert_success();
         // Export atomically writes the requested path as JSON.
-        if result.success {
-            let content = project
-                .read_file("manifest.json")
-                .expect("migrate export must write its output file on success");
-            let manifest: serde_json::Value =
-                serde_json::from_str(&content).expect("migration manifest must be valid JSON");
-            assert!(
-                manifest.get("version").is_some(),
-                "manifest must carry a format version, got: {manifest}"
-            );
-        } else {
-            assert!(
-                !result.stderr.trim().is_empty(),
-                "migrate export failure must name its cause:\n{}",
-                result.stderr
-            );
-            assert!(
-                !result.stderr_contains("panicked at"),
-                "migrate export must not panic"
-            );
-        }
+        let content = project
+            .read_file("manifest.json")
+            .expect("migrate export must write its output file on success");
+        let manifest: serde_json::Value =
+            serde_json::from_str(&content).expect("migration manifest must be valid JSON");
+        assert!(
+            manifest.get("version").is_some(),
+            "manifest must carry a format version, got: {manifest}"
+        );
     }
 }
 
