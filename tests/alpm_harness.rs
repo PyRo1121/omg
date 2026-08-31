@@ -70,7 +70,7 @@ impl AlpmHarness {
         Ok(())
     }
 
-    #[allow(dead_code)] // used by failure_tests.rs
+    #[allow(dead_code)]
     pub fn alpm(&self) -> Result<Alpm> {
         let alpm = Alpm::new(
             self.root_path.to_str().unwrap(),
@@ -135,12 +135,12 @@ impl AlpmHarness {
         &self.db_path
     }
 
-    /// Add a sync package carrying the metadata libalpm requires to plan a
-    /// real install (`%FILENAME%`, `%CSIZE%`, `%ISIZE%`), backed by a
-    /// placeholder payload in the harness cache. Unlike [`Self::add_sync_pkg`],
-    /// a transaction over this package passes `trans_prepare`. Commit still
-    /// needs a configured sync server, which the harness intentionally does
-    /// not provide.
+    /// Add a sync package backed by a placeholder payload in the harness
+    /// cache, with `%CSIZE%` and `%ISIZE%` matching that payload. Both this and
+    /// [`Self::add_sync_pkg`] support transaction preparation; use this form
+    /// when a test also depends on a cached package artifact or realistic sizes.
+    /// Commit still needs a configured sync server, which the harness does not
+    /// provide.
     pub fn add_installable_sync_pkg(&self, db_name: &str, pkg: &HarnessPkg) -> Result<()> {
         let filename = format!("{}-{}-x86_64.pkg.tar.gz", pkg.name, pkg.version);
         let pkg_path = self.root_path.join("var/cache/pacman/pkg").join(&filename);
