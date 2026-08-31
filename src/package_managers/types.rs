@@ -309,7 +309,7 @@ mod tests {
         assert!(v("5.10-1") > v("5.9-1"));
         assert!(v("10.0") > v("2.0"));
         assert!(v("20251231") > v("20250101"));
-        assert!(v("2.0") > v("1:1.0"), "epoch dominates upstream part");
+        assert!(v("2.0") < v("1:1.0"), "epoch dominates upstream part");
         assert!(v("1.0") > v("1.0~rc1"), "tilde sorts before everything");
         assert!(v("1.0-2") > v("1.0-1"));
         assert_eq!(v("1.0"), v("1.0"));

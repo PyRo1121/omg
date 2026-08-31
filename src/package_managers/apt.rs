@@ -341,7 +341,7 @@ pub fn get_sync_pkg_info(name: &str) -> Result<Option<PackageInfo>> {
 
     Ok(Some(PackageInfo {
         name: pkg.name().to_string(),
-        version: version.version().to_string(),
+        version: parse_version_or_zero(version.version()),
         description: version.summary().unwrap_or_default(),
         url: None,
         size: version.size(),
@@ -497,16 +497,12 @@ fn open_cache(local_files: &[String]) -> Result<Cache> {
 }
 
 fn install_blocking(packages: &[String]) -> Result<()> {
-    let (local_files, names): (Vec<String>, Vec<String>) =
-        packages.iter().cloned().partition(|pkg| {
-            let path = std::path::Path::new(pkg);
-            path.extension().is_some_and(|ext| {
-                ext.eq_ignore_ascii_case("deb") || ext.eq_ignore_ascii_case("ddeb")
-            })
-        });
+    if contains_local_debian_package(packages) {
+        return install_with_apt_get_blocking(packages);
+    }
 
-    let cache = open_cache(&local_files)?;
-    for spec in &names {
+    let cache = open_cache(&[])?;
+    for spec in packages {
         let (pkg_name, requested_version) = spec
             .split_once('=')
             .map_or((spec.as_str(), None), |(name, version)| {
@@ -534,6 +530,29 @@ fn install_blocking(packages: &[String]) -> Result<()> {
     cache
         .commit(&mut acquire_progress, &mut install_progress)
         .map_err(|e| anyhow!("APT commit error: {e:?}"))?;
+
+    Ok(())
+}
+
+fn contains_local_debian_package(packages: &[String]) -> bool {
+    packages
+        .iter()
+        .any(|package| crate::core::security::is_local_debian_package_file(package))
+}
+
+fn install_with_apt_get_blocking(packages: &[String]) -> Result<()> {
+    let status = std::process::Command::new("apt-get")
+        .args(["install", "-y", "--"])
+        .args(packages)
+        .status()
+        .context("Failed to run apt-get for local Debian package installation")?;
+
+    if !status.success() {
+        anyhow::bail!(
+            "apt-get failed to install local Debian package with exit code {}",
+            status.code().unwrap_or(1)
+        );
+    }
 
     Ok(())
 }
@@ -605,7 +624,7 @@ fn map_local_package(pkg: &rust_apt::Package<'_>) -> LocalPackage {
     };
     LocalPackage {
         name: pkg.name().to_string(),
-        version,
+        version: parse_version_or_zero(&version),
         description: summary,
         install_size: pkg.installed().map_or(0, |version| {
             i64::try_from(version.installed_size()).unwrap_or(i64::MAX)
@@ -655,4 +674,24 @@ fn local_to_packages(local_pkgs: Vec<LocalPackage>) -> Vec<Package> {
             installed: true,
         })
         .collect()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::contains_local_debian_package;
+
+    #[test]
+    fn local_debian_package_selects_apt_get_installation() {
+        assert!(contains_local_debian_package(
+            &["/tmp/demo.deb".to_string()]
+        ));
+        assert!(contains_local_debian_package(&[
+            "curl".to_string(),
+            "/tmp/demo.ddeb".to_string(),
+        ]));
+        assert!(!contains_local_debian_package(&[
+            "curl".to_string(),
+            "libssl-dev".to_string(),
+        ]));
+    }
 }
