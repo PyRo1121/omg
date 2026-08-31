@@ -702,6 +702,8 @@ analyzer inference
 - **Ci**: Cross-platform install script and R2 release sync
 ### 🐛 Bug Fixes
 
+- Honor pacman signature policies
+- Gate shared removal by selected backends
 - Enforce safe Debian removals
 - Validate pure Debian mutations early
 - Report accurate Debian system status
