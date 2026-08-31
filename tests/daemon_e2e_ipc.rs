@@ -1,10 +1,6 @@
 #![cfg(feature = "arch")]
-#![expect(clippy::pedantic)]
 
-//! S-tier E2E Tests: IPC Communication
-//!
-//! Comprehensive tests for Unix socket communication, message serialization,
-//! request/response handling, timeouts, and connection pooling.
+//! Unix socket request, response, timeout, and connection contracts.
 
 use anyhow::Result;
 use omg_lib::daemon::handlers::{DaemonState, handle_request};
@@ -25,7 +21,7 @@ struct IpcTestFixture {
 }
 
 impl IpcTestFixture {
-    async fn new() -> Result<Self> {
+    fn new() -> Result<Self> {
         let temp_dir = TempDir::new()?;
         let socket_path = temp_dir.path().join("test.sock");
         let data_dir = temp_dir.path().join("data");
@@ -63,7 +59,7 @@ impl IpcTestFixture {
                 let state = Arc::clone(&state);
                 tokio::spawn(async move {
                     if let Err(e) = Self::handle_connection(stream, state).await {
-                        eprintln!("Connection error: {}", e);
+                        eprintln!("Connection error: {e}");
                     }
                 });
             }
@@ -129,7 +125,7 @@ impl IpcTestFixture {
 #[tokio::test]
 #[serial]
 async fn test_basic_ping_request() -> Result<()> {
-    let fixture = IpcTestFixture::new().await?;
+    let fixture = IpcTestFixture::new()?;
     let _server = fixture.start_server().await?;
 
     let mut stream = fixture.connect().await?;
@@ -154,7 +150,7 @@ async fn test_basic_ping_request() -> Result<()> {
 #[tokio::test]
 #[serial]
 async fn test_large_request_handling() -> Result<()> {
-    let fixture = IpcTestFixture::new().await?;
+    let fixture = IpcTestFixture::new()?;
     let _server = fixture.start_server().await?;
 
     let mut stream = fixture.connect().await?;
@@ -184,7 +180,7 @@ async fn test_large_request_handling() -> Result<()> {
 #[tokio::test]
 #[serial]
 async fn test_oversized_query_rejection() -> Result<()> {
-    let fixture = IpcTestFixture::new().await?;
+    let fixture = IpcTestFixture::new()?;
     let _server = fixture.start_server().await?;
 
     let mut stream = fixture.connect().await?;
@@ -218,7 +214,7 @@ async fn test_oversized_query_rejection() -> Result<()> {
 #[tokio::test]
 #[serial]
 async fn test_empty_request_handling() -> Result<()> {
-    let fixture = IpcTestFixture::new().await?;
+    let fixture = IpcTestFixture::new()?;
     let _server = fixture.start_server().await?;
 
     let mut stream = fixture.connect().await?;
@@ -254,7 +250,7 @@ async fn test_empty_request_handling() -> Result<()> {
 #[tokio::test]
 #[serial]
 async fn test_multiple_concurrent_connections() -> Result<()> {
-    let fixture = IpcTestFixture::new().await?;
+    let fixture = IpcTestFixture::new()?;
     let _server = fixture.start_server().await?;
 
     // Spawn 10 concurrent clients
@@ -300,7 +296,7 @@ async fn test_multiple_concurrent_connections() -> Result<()> {
 #[tokio::test]
 #[serial]
 async fn test_sequential_requests_on_single_connection() -> Result<()> {
-    let fixture = IpcTestFixture::new().await?;
+    let fixture = IpcTestFixture::new()?;
     let _server = fixture.start_server().await?;
 
     let mut stream = fixture.connect().await?;
@@ -330,7 +326,7 @@ async fn test_sequential_requests_on_single_connection() -> Result<()> {
 #[tokio::test]
 #[serial]
 async fn test_client_disconnect_during_request() -> Result<()> {
-    let fixture = IpcTestFixture::new().await?;
+    let fixture = IpcTestFixture::new()?;
     let _server = fixture.start_server().await?;
 
     {
@@ -370,7 +366,7 @@ async fn test_client_disconnect_during_request() -> Result<()> {
 #[tokio::test]
 #[serial]
 async fn test_malformed_request_handling() -> Result<()> {
-    let fixture = IpcTestFixture::new().await?;
+    let fixture = IpcTestFixture::new()?;
     let _server = fixture.start_server().await?;
 
     let mut stream = fixture.connect().await?;
@@ -395,8 +391,7 @@ async fn test_malformed_request_handling() -> Result<()> {
     .await;
 
     match outcome {
-        Err(_) | Ok(Err(_)) => {}
-        Ok(Ok(Response::Error { .. })) => {}
+        Err(_) | Ok(Err(_) | Ok(Response::Error { .. })) => {}
         Ok(Ok(Response::Success { id, .. })) => panic!(
             "server answered request id {id} on a connection that previously \n            received a malformed frame",
         ),
@@ -408,7 +403,7 @@ async fn test_malformed_request_handling() -> Result<()> {
 #[tokio::test]
 #[serial]
 async fn test_invalid_package_name_injection() -> Result<()> {
-    let fixture = IpcTestFixture::new().await?;
+    let fixture = IpcTestFixture::new()?;
     let _server = fixture.start_server().await?;
 
     let mut stream = fixture.connect().await?;
@@ -444,7 +439,7 @@ async fn test_invalid_package_name_injection() -> Result<()> {
 #[tokio::test]
 #[serial]
 async fn test_request_id_preservation() -> Result<()> {
-    let fixture = IpcTestFixture::new().await?;
+    let fixture = IpcTestFixture::new()?;
     let _server = fixture.start_server().await?;
 
     let mut stream = fixture.connect().await?;
@@ -476,7 +471,7 @@ async fn test_request_id_preservation() -> Result<()> {
 #[tokio::test]
 #[serial]
 async fn test_connection_close_after_response() -> Result<()> {
-    let fixture = IpcTestFixture::new().await?;
+    let fixture = IpcTestFixture::new()?;
     let _server = fixture.start_server().await?;
 
     {
@@ -501,7 +496,7 @@ async fn test_connection_close_after_response() -> Result<()> {
 #[tokio::test]
 #[serial]
 async fn test_idle_connection_stability() -> Result<()> {
-    let fixture = IpcTestFixture::new().await?;
+    let fixture = IpcTestFixture::new()?;
     let _server = fixture.start_server().await?;
 
     let mut stream = fixture.connect().await?;
