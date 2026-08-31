@@ -253,6 +253,14 @@ fn run_with_fixture_env<T>(
                 "OMG_DATA_DIR",
                 Some(fixture.root.path().join("data").as_os_str()),
             ),
+            (
+                "NO_PROXY",
+                Some(std::ffi::OsStr::new("127.0.0.1,localhost")),
+            ),
+            (
+                "no_proxy",
+                Some(std::ffi::OsStr::new("127.0.0.1,localhost")),
+            ),
         ],
         f,
     )

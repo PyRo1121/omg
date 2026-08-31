@@ -185,10 +185,11 @@ async fn download_response_to_dest(mut response: reqwest::Response, dest: &Path)
 async fn download_db(
     client: &Client,
     urls: Vec<String>,
-    dest: &PathBuf,
+    staged_dest: &Path,
+    live_dest: &Path,
     pb: &ProgressBar,
 ) -> Result<()> {
-    let repo_name = dest.file_stem().map_or_else(
+    let repo_name = live_dest.file_stem().map_or_else(
         || "unknown".to_string(),
         |s| s.to_string_lossy().to_string(),
     );
@@ -213,8 +214,8 @@ async fn download_db(
 
     pb.set_message(repo_name.clone());
 
-    let existing_mtime = if dest.exists() {
-        tokio::fs::metadata(dest)
+    let existing_mtime = if live_dest.exists() {
+        tokio::fs::metadata(live_dest)
             .await
             .ok()
             .and_then(|m| m.modified().ok())
@@ -262,6 +263,11 @@ async fn download_db(
             };
 
             if response.status() == reqwest::StatusCode::NOT_MODIFIED {
+                tokio::fs::copy(live_dest, staged_dest)
+                    .await
+                    .with_context(|| {
+                        format!("Failed to stage unchanged database {}", live_dest.display())
+                    })?;
                 pb.finish_with_message(format!("{repo_name} ✓"));
                 return Ok(());
             }
@@ -289,7 +295,7 @@ async fn download_db(
                 );
             }
 
-            if let Err(e) = download_response_to_dest(response, dest).await {
+            if let Err(e) = download_response_to_dest(response, staged_dest).await {
                 last_error = Some(e);
                 continue;
             }
@@ -552,9 +558,9 @@ pub async fn sync_databases_parallel() -> Result<()> {
             continue;
         };
         let staged = staging.path().join(format!("{i}.db"));
-        staged_databases.push((staged.clone(), destination));
+        staged_databases.push((staged.clone(), destination.clone()));
 
-        tasks.spawn(async move { download_db(&client, urls, &staged, &pb).await });
+        tasks.spawn(async move { download_db(&client, urls, &staged, &destination, &pb).await });
     }
 
     // Wait for all downloads
