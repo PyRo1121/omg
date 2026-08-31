@@ -47,6 +47,7 @@ use crate::runtimes::common::{BudgetedReader, BudgetedWriter, MAX_DECOMPRESSED_B
 const AUR_RPC_URL: &str = "https://aur.archlinux.org/rpc";
 const AUR_GIT_URL: &str = "https://aur.archlinux.org";
 const AUR_RPC_MAX_URI: usize = 4400;
+const AUR_SEARCH_MAX_BYTES: usize = 100;
 const AUR_GIT_PULL_ARGS: &[&str] = &[
     "-c",
     "core.hooksPath=/dev/null",
@@ -365,15 +366,7 @@ impl AurClient {
 
     /// Search AUR packages
     pub async fn search(&self, query: &str) -> Result<Vec<Package>> {
-        // Basic length check for search query
-        if query.len() > 100 {
-            anyhow::bail!("Search query too long (max 100 chars)");
-        }
-
-        // Prevent control characters
-        if query.chars().any(char::is_control) {
-            anyhow::bail!("Search query contains invalid control characters");
-        }
+        validate_search_query(query)?;
 
         // Try fast binary index first if enabled and available
         if self.settings.aur.use_metadata_archive {
@@ -2897,12 +2890,19 @@ fn dependency_name(dep: &str) -> &str {
     dep.find(['>', '<', '=']).map_or(dep, |idx| &dep[..idx])
 }
 
+fn validate_search_query(query: &str) -> Result<()> {
+    if query.len() > AUR_SEARCH_MAX_BYTES {
+        anyhow::bail!("Search query too long (max {AUR_SEARCH_MAX_BYTES} bytes)");
+    }
+    if query.chars().any(char::is_control) {
+        anyhow::bail!("Search query contains invalid control characters");
+    }
+    Ok(())
+}
+
 /// Search AUR with detailed info
 pub async fn search_detailed(query: &str) -> Result<Vec<AurPackageDetail>> {
-    // SECURITY: Basic validation for search query
-    if query.len() > 100 {
-        anyhow::bail!("Search query too long");
-    }
+    validate_search_query(query)?;
 
     let url = format!(
         "{AUR_RPC_URL}?v=5&type=search&arg={}",
@@ -3946,6 +3946,15 @@ mod tests {
             .expect_err("root builds must be rejected");
         assert!(error.to_string().contains("must not be built as root"));
         assert!(error.to_string().contains("omg install example"));
+    }
+
+    #[test]
+    fn search_query_validation_is_shared_by_all_aur_search_paths() {
+        assert!(validate_search_query("normal package").is_ok());
+        assert!(validate_search_query(&"x".repeat(AUR_SEARCH_MAX_BYTES)).is_ok());
+        assert!(validate_search_query(&"x".repeat(AUR_SEARCH_MAX_BYTES + 1)).is_err());
+        assert!(validate_search_query("package\nname").is_err());
+        assert!(validate_search_query("package\0name").is_err());
     }
 
     #[test]
