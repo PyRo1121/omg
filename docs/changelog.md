@@ -4045,6 +4045,7 @@ the Debian backend), so it was removed from the metadata.
 - Normalize project formatting
 ### 🧪 Testing
 
+- Isolate daemon cache and concurrency fixtures
 - Exercise daemon missing-socket retry policy
 - Remove vacuous Debian integration cases
 - Clean daemon lifecycle contracts
