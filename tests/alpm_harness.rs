@@ -85,6 +85,10 @@ impl AlpmHarness {
 
     pub fn add_sync_pkgs(&self, db_name: &str, pkgs: &[HarnessPkg]) -> Result<()> {
         let db_path = self.db_path.join("sync").join(format!("{}.db", db_name));
+        anyhow::ensure!(
+            !db_path.exists(),
+            "Sync database '{db_name}' already exists; add all of its packages in one call"
+        );
         let file = File::create(&db_path)?;
         let encoder = GzEncoder::new(file, Compression::default());
         let mut builder = Builder::new(encoder);

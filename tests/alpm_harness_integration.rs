@@ -47,14 +47,7 @@ fn test_harness_package_search() -> Result<()> {
 }
 
 #[test]
-fn test_harness_version_comparison() -> Result<()> {
-    let harness = AlpmHarness::new()?;
-
-    harness.add_sync_pkg("core", &HarnessPkg::new("vim", "9.0.2000-1"))?;
-    harness.add_sync_pkg("core", &HarnessPkg::new("neovim", "0.9.5-1"))?;
-
-    let _alpm = harness.alpm()?;
-
+fn test_alpm_version_comparison() {
     // Test version comparison
     let v1 = alpm::Version::new("9.0.2000-1");
     let v2 = alpm::Version::new("9.0.1999-1");
@@ -62,7 +55,18 @@ fn test_harness_version_comparison() -> Result<()> {
 
     assert!(v1 > v2, "9.0.2000 > 9.0.1999");
     assert!(v3 > v1, "9.0.2000-2 > 9.0.2000-1 (pkg release)");
+}
 
+#[test]
+fn repeated_sync_database_writes_are_rejected() -> Result<()> {
+    let harness = AlpmHarness::new()?;
+    harness.add_sync_pkg("core", &HarnessPkg::new("vim", "9.0.2000-1"))?;
+
+    let error = harness
+        .add_sync_pkg("core", &HarnessPkg::new("neovim", "0.9.5-1"))
+        .expect_err("a repeated database write must not silently truncate the first package");
+
+    assert!(error.to_string().contains("already exists"));
     Ok(())
 }
 
@@ -131,15 +135,7 @@ fn test_harness_package_not_found() -> Result<()> {
 }
 
 #[test]
-fn test_harness_epoch_version_comparison() -> Result<()> {
-    let harness = AlpmHarness::new()?;
-
-    // Test epoch handling (epoch:version-release)
-    harness.add_sync_pkg("core", &HarnessPkg::new("package-a", "1:2.0-1"))?;
-    harness.add_sync_pkg("core", &HarnessPkg::new("package-b", "3.0-1"))?;
-
-    let _alpm = harness.alpm()?;
-
+fn test_alpm_epoch_version_comparison() {
     let v_with_epoch = alpm::Version::new("1:2.0-1");
     let v_without_epoch = alpm::Version::new("3.0-1");
 
@@ -148,8 +144,6 @@ fn test_harness_epoch_version_comparison() -> Result<()> {
         v_with_epoch > v_without_epoch,
         "1:2.0-1 > 3.0-1 (epoch wins)"
     );
-
-    Ok(())
 }
 
 #[test]
