@@ -144,11 +144,23 @@ pub fn original_user() -> Option<String> {
     build_user()
 }
 
-pub fn original_user_home() -> Option<PathBuf> {
-    original_user().map(|user| {
-        std::env::var("SUDO_HOME")
-            .map_or_else(|_| PathBuf::from(format!("/home/{user}")), PathBuf::from)
-    })
+fn require_account_home(user: &str, home: Option<PathBuf>) -> anyhow::Result<PathBuf> {
+    let home = home.with_context(|| format!("Original user '{user}' has no system account"))?;
+    anyhow::ensure!(
+        home.is_absolute(),
+        "System account for '{user}' has a non-absolute home: {}",
+        home.display()
+    );
+    Ok(home)
+}
+
+pub fn original_user_home() -> anyhow::Result<Option<PathBuf>> {
+    let Some(user) = original_user() else {
+        return Ok(None);
+    };
+    let account = nix::unistd::User::from_name(&user)
+        .with_context(|| format!("Failed to resolve system account for original user '{user}'"))?;
+    require_account_home(&user, account.map(|account| account.dir)).map(Some)
 }
 
 fn sudo_as_user_command(
@@ -247,6 +259,20 @@ pub fn create_dir_as_user_sync(path: &Path) -> Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn account_home_never_invents_a_home_directory() {
+        assert_eq!(
+            require_account_home("alice", Some(PathBuf::from("/var/home/alice"))).unwrap(),
+            PathBuf::from("/var/home/alice")
+        );
+        let missing =
+            require_account_home("alice", None).expect_err("missing account record must fail");
+        assert!(missing.to_string().contains("no system account"));
+        let relative = require_account_home("alice", Some(PathBuf::from("home/alice")))
+            .expect_err("relative account home must fail");
+        assert!(relative.to_string().contains("non-absolute"));
+    }
 
     #[test]
     fn sudo_as_user_command_always_separates_path_from_options() {

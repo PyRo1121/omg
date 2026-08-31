@@ -81,8 +81,8 @@ pub(crate) fn format_short_timestamp(ts: i64) -> String {
 pub(crate) fn open_local_alpm() -> Result<alpm::Alpm> {
     // `Alpm::new` takes `S: Into<Vec<u8>>`; own the strings so the owned
     // `PathBuf`s stay available for the error message below.
-    let root = crate::core::paths::pacman_root();
-    let db_path = crate::core::paths::pacman_db_dir();
+    let root = crate::core::paths::pacman_root_result()?;
+    let db_path = crate::core::paths::pacman_db_dir_result()?;
     alpm::Alpm::new(
         root.to_string_lossy().into_owned(),
         db_path.to_string_lossy().into_owned(),

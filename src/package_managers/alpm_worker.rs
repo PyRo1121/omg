@@ -4,7 +4,10 @@ use std::thread;
 use anyhow::{Context, Result};
 use tokio::sync::oneshot;
 
-use super::alpm_ops::{collect_updates, configure_package_filters, get_pkg_info_from_db};
+use super::alpm_ops::{
+    collect_updates, configure_package_filters, configure_signature_policy, get_pkg_info_from_db,
+    register_configured_syncdbs,
+};
 use super::types::{PackageInfo, UpdateInfo};
 use crate::core::paths;
 
@@ -17,62 +20,40 @@ pub struct AlpmWorker {
     tx: mpsc::Sender<AlpmRequest>,
 }
 
-impl Default for AlpmWorker {
-    fn default() -> Self {
-        Self::new()
-    }
+fn initialize_alpm_worker() -> Result<alpm::Alpm> {
+    let root = paths::pacman_root_result()?.to_string_lossy().into_owned();
+    let db_path = paths::pacman_db_dir_result()?
+        .to_string_lossy()
+        .into_owned();
+    let mut alpm = alpm::Alpm::new(root, db_path).context("Failed to initialize ALPM worker")?;
+    let config = crate::core::pacman_conf::PacmanConfig::parse(paths::pacman_conf_path())
+        .context("Failed to load pacman.conf for ALPM worker")?;
+    configure_signature_policy(&alpm, &config)?;
+    register_configured_syncdbs(&alpm, &config)?;
+    configure_package_filters(&mut alpm, &config)?;
+    Ok(alpm)
 }
 
 impl AlpmWorker {
-    #[must_use]
-    pub fn new() -> Self {
+    pub fn new() -> Result<Self> {
         let (tx, rx) = mpsc::channel();
+        let (ready_tx, ready_rx) = mpsc::sync_channel(1);
 
         thread::spawn(move || {
-            let root = paths::pacman_root().to_string_lossy().into_owned();
-            let db_path = paths::pacman_db_dir().to_string_lossy().into_owned();
-            let mut alpm = match alpm::Alpm::new(root, db_path) {
-                Ok(a) => a,
-                Err(e) => {
-                    tracing::error!("Failed to initialize ALPM worker: {e}");
-                    return;
-                }
-            };
-
-            let repos = match crate::core::pacman_conf::get_configured_repos() {
-                Ok(repos) => repos,
+            let alpm = match initialize_alpm_worker() {
+                Ok(alpm) => alpm,
                 Err(error) => {
-                    tracing::error!("Failed to load repositories from pacman.conf: {error}");
+                    let message = format!("{error:#}");
+                    tracing::error!("Failed to initialize ALPM worker: {message}");
+                    let _ = ready_tx.send(Err(message));
                     return;
                 }
             };
 
-            let mut registered = 0;
-            for db_name in &repos {
-                match alpm.register_syncdb(db_name.as_str(), alpm::SigLevel::USE_DEFAULT) {
-                    Ok(_) => registered += 1,
-                    Err(e) => tracing::debug!("Failed to register repo '{db_name}': {e}"),
-                }
+            tracing::info!("ALPM hot worker ready ({} repos)", alpm.syncdbs().len());
+            if ready_tx.send(Ok(())).is_err() {
+                return;
             }
-
-            if registered == 0 {
-                tracing::warn!("No sync databases registered in ALPM worker");
-            } else {
-                // Apply pacman.conf ignore filters so worker answers agree
-                // with the CLI path (`alpm_ops::get_update_list`).
-                match crate::core::pacman_conf::PacmanConfig::parse(paths::pacman_conf_path()) {
-                    Ok(config) => {
-                        if let Err(e) = configure_package_filters(&mut alpm, &config) {
-                            tracing::warn!("Failed to configure update filters: {e}");
-                        }
-                    }
-                    Err(error) => {
-                        tracing::warn!("Failed to load pacman.conf filters: {error}");
-                    }
-                }
-            }
-
-            tracing::info!("ALPM hot worker ready ({registered} repos)");
 
             while let Ok(req) = rx.recv() {
                 match req {
@@ -88,7 +69,11 @@ impl AlpmWorker {
             tracing::debug!("ALPM worker shutting down");
         });
 
-        Self { tx }
+        ready_rx
+            .recv()
+            .context("ALPM worker exited during initialization")?
+            .map_err(anyhow::Error::msg)?;
+        Ok(Self { tx })
     }
 
     pub async fn get_info(&self, name: String) -> Result<Option<PackageInfo>> {
@@ -105,5 +90,37 @@ impl AlpmWorker {
 
         rx.await
             .context("ALPM worker disconnected (it may have failed to initialize)")?
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::AlpmWorker;
+
+    #[test]
+    #[serial_test::serial]
+    fn initialization_errors_are_returned_to_the_caller() {
+        let directory = tempfile::tempdir().expect("temporary ALPM paths");
+        let database = directory.path().join("db");
+        std::fs::create_dir(&database).expect("database directory");
+        let config = directory.path().join("pacman.conf");
+        std::fs::write(
+            &config,
+            "[options]\nSigLevel = PackageSometimes\n\n[core]\nServer = https://example.invalid\n",
+        )
+        .expect("pacman config");
+
+        temp_env::with_vars(
+            [
+                ("OMG_PACMAN_DB_DIR", Some(database.as_os_str())),
+                ("OMG_PACMAN_CONF", Some(config.as_os_str())),
+            ],
+            || {
+                let Err(error) = AlpmWorker::new() else {
+                    panic!("invalid worker policy must fail");
+                };
+                assert!(error.to_string().contains("PackageSometimes"), "{error:#}");
+            },
+        );
     }
 }

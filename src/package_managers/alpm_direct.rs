@@ -3,7 +3,7 @@
 //! Queries libalpm through a cached per-thread handle instead of spawning a
 //! pacman subprocess for each query.
 
-use alpm::{Alpm, PackageReason, SigLevel};
+use alpm::{Alpm, PackageReason};
 use anyhow::{Context, Result};
 
 use std::cell::RefCell;
@@ -25,35 +25,11 @@ thread_local! {
 fn create_alpm_handle() -> Result<Alpm> {
     use crate::package_managers::alpm_ops::open_default_alpm;
     let alpm = open_default_alpm().context("Failed to initialize ALPM handle")?;
-
-    let repos = crate::core::pacman_conf::get_configured_repos()
+    let config = crate::core::pacman_conf::PacmanConfig::parse(paths::pacman_conf_path())
         .context("Failed to load repositories from pacman.conf")?;
-
-    let mut registered = 0;
-    for db_name in &repos {
-        match alpm.register_syncdb(db_name.as_str(), SigLevel::USE_DEFAULT) {
-            Ok(_) => {
-                registered += 1;
-                tracing::trace!("Registered sync database: {db_name}");
-            }
-            Err(e) => {
-                let sync_path = paths::pacman_sync_dir().join(format!("{db_name}.db"));
-                if sync_path.exists() {
-                    tracing::warn!("Failed to register repo '{db_name}': {e}");
-                } else {
-                    tracing::debug!(
-                        "Repo '{db_name}' not synced yet (missing {sync_path:?}). Run 'omg sync' first."
-                    );
-                }
-            }
-        }
-    }
-
-    if registered == 0 {
-        tracing::warn!(
-            "No sync databases registered. Package search may return empty results. Run 'omg sync'."
-        );
-    }
+    crate::package_managers::alpm_ops::configure_signature_policy(&alpm, &config)?;
+    crate::package_managers::alpm_ops::register_configured_syncdbs(&alpm, &config)
+        .context("Failed to register the complete pacman repository set")?;
 
     Ok(alpm)
 }
@@ -394,7 +370,7 @@ mod tests {
     /// The libalpm-backed queries read the real system database; skip them in
     /// environments without an installed pacman local db (CI containers).
     fn real_pacman_db_available() -> bool {
-        paths::pacman_local_dir().exists()
+        paths::pacman_local_dir_result().is_ok_and(|path| path.exists())
     }
 
     #[test]

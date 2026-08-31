@@ -1053,7 +1053,7 @@ fn find_cached_arch_package_in(
 
 #[cfg(feature = "arch")]
 fn find_cached_arch_package(package: &str, version: &str) -> Result<std::path::PathBuf> {
-    let cache_dirs = crate::core::paths::pacman_cache_dirs();
+    let cache_dirs = crate::core::paths::pacman_cache_dirs_result()?;
     for cache_dir in &cache_dirs {
         if !cache_dir.exists() {
             continue;

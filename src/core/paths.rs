@@ -180,6 +180,37 @@ pub fn pacman_root() -> PathBuf {
         .unwrap_or_else(|| PathBuf::from("/"))
 }
 
+#[cfg(feature = "arch")]
+fn require_absolute_pacman_path(path: PathBuf, setting: &str) -> anyhow::Result<PathBuf> {
+    anyhow::ensure!(
+        path.is_absolute(),
+        "{setting} must be an absolute path: {}",
+        path.display()
+    );
+    Ok(path)
+}
+
+/// Resolve pacman's root using test override, explicit environment, then
+/// pacman.conf precedence. Unlike [`pacman_root`], configuration errors are
+/// surfaced instead of silently selecting the host root.
+#[cfg(feature = "arch")]
+pub fn pacman_root_result() -> anyhow::Result<PathBuf> {
+    #[cfg(any(test, debug_assertions))]
+    if let Some(root) = overridden_pacman_root() {
+        return require_absolute_pacman_path(root, "pacman root override");
+    }
+    if let Some(root) = env_path("OMG_PACMAN_ROOT").filter(|path| !path.as_os_str().is_empty()) {
+        return require_absolute_pacman_path(root, "OMG_PACMAN_ROOT");
+    }
+    let config = crate::core::pacman_conf::PacmanConfig::parse(pacman_conf_path())?;
+    require_absolute_pacman_path(
+        config
+            .root_dir
+            .map_or_else(|| PathBuf::from("/"), PathBuf::from),
+        "RootDir",
+    )
+}
+
 fn pacman_env_dir(name: &str, require_root_owned: bool) -> Option<PathBuf> {
     let path = env_path(name).filter(|path| !path.as_os_str().is_empty())?;
     #[cfg(unix)]
@@ -222,6 +253,43 @@ pub fn pacman_db_dir() -> PathBuf {
         .unwrap_or_else(|| pacman_root().join("var/lib/pacman"))
 }
 
+/// Resolve pacman's database path using test override, explicit environment,
+/// then pacman.conf. A configured RootDir relocates the default DBPath exactly
+/// as pacman's `setdefaults` does.
+#[cfg(feature = "arch")]
+pub fn pacman_db_dir_result() -> anyhow::Result<PathBuf> {
+    #[cfg(any(test, debug_assertions))]
+    {
+        let guard = get_overrides()
+            .read()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        if let Some(ref db) = guard.pacman_db_dir {
+            return require_absolute_pacman_path(db.clone(), "pacman database override");
+        }
+    }
+    if let Some(db) = pacman_env_dir("OMG_PACMAN_DB_DIR", crate::core::privilege::is_root()) {
+        return require_absolute_pacman_path(db, "OMG_PACMAN_DB_DIR");
+    }
+
+    let config = crate::core::pacman_conf::PacmanConfig::parse(pacman_conf_path())?;
+    if let Some(db) = config.db_path {
+        return require_absolute_pacman_path(PathBuf::from(db), "DBPath");
+    }
+    let root = if let Some(root) =
+        env_path("OMG_PACMAN_ROOT").filter(|path| !path.as_os_str().is_empty())
+    {
+        require_absolute_pacman_path(root, "OMG_PACMAN_ROOT")?
+    } else {
+        require_absolute_pacman_path(
+            config
+                .root_dir
+                .map_or_else(|| PathBuf::from("/"), PathBuf::from),
+            "RootDir",
+        )?
+    };
+    Ok(root.join("var/lib/pacman"))
+}
+
 /// Pacman sync database directory (default: /var/lib/pacman/sync).
 #[must_use]
 pub fn pacman_sync_dir() -> PathBuf {
@@ -229,11 +297,27 @@ pub fn pacman_sync_dir() -> PathBuf {
         .unwrap_or_else(|| pacman_db_dir().join("sync"))
 }
 
+#[cfg(feature = "arch")]
+pub fn pacman_sync_dir_result() -> anyhow::Result<PathBuf> {
+    if let Some(sync) = pacman_env_dir("OMG_PACMAN_SYNC_DIR", crate::core::privilege::is_root()) {
+        return require_absolute_pacman_path(sync, "OMG_PACMAN_SYNC_DIR");
+    }
+    Ok(pacman_db_dir_result()?.join("sync"))
+}
+
 /// Pacman local database directory (default: /var/lib/pacman/local).
 #[must_use]
 pub fn pacman_local_dir() -> PathBuf {
     pacman_env_dir("OMG_PACMAN_LOCAL_DIR", crate::core::privilege::is_root())
         .unwrap_or_else(|| pacman_db_dir().join("local"))
+}
+
+#[cfg(feature = "arch")]
+pub fn pacman_local_dir_result() -> anyhow::Result<PathBuf> {
+    if let Some(local) = pacman_env_dir("OMG_PACMAN_LOCAL_DIR", crate::core::privilege::is_root()) {
+        return require_absolute_pacman_path(local, "OMG_PACMAN_LOCAL_DIR");
+    }
+    Ok(pacman_db_dir_result()?.join("local"))
 }
 
 /// Pacman package cache directories in configured priority order.
@@ -281,10 +365,48 @@ fn configured_pacman_cache_dirs() -> Option<Vec<PathBuf>> {
     None
 }
 
+#[cfg(feature = "arch")]
+pub fn pacman_cache_dirs_result() -> anyhow::Result<Vec<PathBuf>> {
+    if let Some(cache_dir) = pacman_env_dir("OMG_PACMAN_CACHE_DIR", true) {
+        return Ok(vec![require_absolute_pacman_path(
+            cache_dir,
+            "OMG_PACMAN_CACHE_DIR",
+        )?]);
+    }
+
+    let root = pacman_root_result()?;
+    if !pacman_root_overridden() {
+        let config = crate::core::pacman_conf::PacmanConfig::parse(pacman_conf_path())?;
+        if !config.cache_dirs.is_empty() {
+            return Ok(config
+                .cache_dirs
+                .into_iter()
+                .map(PathBuf::from)
+                .map(|path| {
+                    if path.is_absolute() {
+                        path
+                    } else {
+                        root.join(path)
+                    }
+                })
+                .collect());
+        }
+    }
+    Ok(vec![root.join("var/cache/pacman/pkg")])
+}
+
 /// Pacman cache root directory (default: /var/cache/pacman).
 #[must_use]
 pub fn pacman_cache_root_dir() -> PathBuf {
     env_path("OMG_PACMAN_CACHE_ROOT_DIR").unwrap_or_else(|| pacman_root().join("var/cache/pacman"))
+}
+
+#[cfg(feature = "arch")]
+pub fn pacman_cache_root_dir_result() -> anyhow::Result<PathBuf> {
+    if let Some(root) = env_path("OMG_PACMAN_CACHE_ROOT_DIR") {
+        return require_absolute_pacman_path(root, "OMG_PACMAN_CACHE_ROOT_DIR");
+    }
+    Ok(pacman_root_result()?.join("var/cache/pacman"))
 }
 
 /// Pacman mirrorlist path (default: /etc/pacman.d/mirrorlist).
@@ -564,6 +686,53 @@ mod tests {
             let root = pacman_root();
             assert_eq!(root, PathBuf::from("/"));
         });
+    }
+
+    #[cfg(feature = "arch")]
+    #[test]
+    #[serial_test::serial]
+    fn pacman_paths_honor_rootdir_and_dbpath_from_configuration() {
+        let directory = tempfile::tempdir().expect("temporary config directory");
+        let config = directory.path().join("pacman.conf");
+        std::fs::write(&config, "[options]\nRootDir = /srv/arch-root\n")
+            .expect("write pacman config");
+
+        temp_env::with_vars(
+            [
+                ("OMG_PACMAN_CONF", Some(config.as_os_str())),
+                ("OMG_PACMAN_ROOT", None::<&std::ffi::OsStr>),
+                ("OMG_PACMAN_DB_DIR", None::<&std::ffi::OsStr>),
+            ],
+            || {
+                assert_eq!(
+                    pacman_root_result().unwrap(),
+                    PathBuf::from("/srv/arch-root")
+                );
+                assert_eq!(
+                    pacman_db_dir_result().unwrap(),
+                    PathBuf::from("/srv/arch-root/var/lib/pacman")
+                );
+            },
+        );
+
+        std::fs::write(
+            &config,
+            "[options]\nRootDir = /srv/arch-root\nDBPath = /srv/pacman-db\n",
+        )
+        .expect("rewrite pacman config");
+        temp_env::with_vars(
+            [
+                ("OMG_PACMAN_CONF", Some(config.as_os_str())),
+                ("OMG_PACMAN_ROOT", None::<&std::ffi::OsStr>),
+                ("OMG_PACMAN_DB_DIR", None::<&std::ffi::OsStr>),
+            ],
+            || {
+                assert_eq!(
+                    pacman_db_dir_result().unwrap(),
+                    PathBuf::from("/srv/pacman-db")
+                );
+            },
+        );
     }
 
     #[cfg(unix)]

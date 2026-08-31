@@ -48,7 +48,8 @@ impl BuildJob {
 pub struct ParallelBuildSummary {
     succeeded_outputs: Vec<String>,
     failed_outputs: Vec<String>,
-    first_error: Option<anyhow::Error>,
+    skipped_outputs: Vec<String>,
+    failures: Vec<(String, anyhow::Error)>,
 }
 
 impl ParallelBuildSummary {
@@ -63,8 +64,19 @@ impl ParallelBuildSummary {
     }
 
     #[must_use]
-    pub fn first_error(&self) -> Option<&anyhow::Error> {
-        self.first_error.as_ref()
+    pub fn skipped_output_count(&self) -> usize {
+        self.skipped_outputs.len()
+    }
+
+    pub fn failures(&self) -> impl Iterator<Item = (&str, &anyhow::Error)> {
+        self.failures
+            .iter()
+            .map(|(package_base, error)| (package_base.as_str(), error))
+    }
+
+    #[must_use]
+    pub fn skipped_outputs(&self) -> &[String] {
+        &self.skipped_outputs
     }
 
     fn record_job_result(&mut self, job: &BuildJob, result: Result<()>) {
@@ -72,21 +84,20 @@ impl ParallelBuildSummary {
             Ok(()) => self.succeeded_outputs.extend(job.outputs.iter().cloned()),
             Err(error) => {
                 self.failed_outputs.extend(job.outputs.iter().cloned());
-                self.first_error.get_or_insert(error);
+                self.failures.push((job.package.clone(), error));
             }
         }
     }
 
     fn record_skipped(&mut self, job: &BuildJob) {
-        self.failed_outputs.extend(job.outputs.iter().cloned());
+        self.skipped_outputs.extend(job.outputs.iter().cloned());
     }
 
     fn merge(&mut self, mut other: Self) {
         self.succeeded_outputs.append(&mut other.succeeded_outputs);
         self.failed_outputs.append(&mut other.failed_outputs);
-        if self.first_error.is_none() {
-            self.first_error = other.first_error;
-        }
+        self.skipped_outputs.append(&mut other.skipped_outputs);
+        self.failures.append(&mut other.failures);
     }
 }
 
@@ -428,9 +439,43 @@ mod tests {
 
         assert_eq!(summary.succeeded_output_count(), 2);
         assert_eq!(summary.failed_output_count(), 1);
+        assert_eq!(summary.skipped_output_count(), 0);
         assert_eq!(
-            summary.first_error().map(ToString::to_string).as_deref(),
-            Some("build failed")
+            summary
+                .failures()
+                .map(|(package, error)| (package, error.to_string()))
+                .collect::<Vec<_>>(),
+            [("python-huggingface-hub-git", "build failed".to_string())]
+        );
+    }
+
+    #[test]
+    fn failures_and_dependency_skips_remain_distinct() {
+        let mut summary = ParallelBuildSummary::default();
+        let first = BuildJob::new("first-base".to_string(), vec![]);
+        let second = BuildJob::new("second-base".to_string(), vec![]);
+        let blocked = BuildJob::for_package_base(
+            "blocked-base".to_string(),
+            vec!["blocked-one".to_string(), "blocked-two".to_string()],
+            vec!["first-base".to_string()],
+        );
+
+        summary.record_job_result(&first, Err(anyhow::anyhow!("first failure")));
+        summary.record_job_result(&second, Err(anyhow::anyhow!("second failure")));
+        summary.record_skipped(&blocked);
+
+        assert_eq!(summary.failed_output_count(), 2);
+        assert_eq!(summary.skipped_output_count(), 2);
+        assert_eq!(summary.skipped_outputs(), ["blocked-one", "blocked-two"]);
+        assert_eq!(
+            summary
+                .failures()
+                .map(|(package, error)| (package, error.to_string()))
+                .collect::<Vec<_>>(),
+            [
+                ("first-base", "first failure".to_string()),
+                ("second-base", "second failure".to_string())
+            ]
         );
     }
 

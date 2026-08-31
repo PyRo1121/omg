@@ -14,42 +14,6 @@ use crate::config::Settings;
 use crate::core::{http::download_client, paths};
 use crate::package_managers::aur_metadata::sync_aur_metadata;
 
-fn get_configured_repos() -> Result<Vec<String>> {
-    crate::core::pacman_conf::get_configured_repos()
-        .context("Failed to load repositories from pacman.conf")
-}
-
-/// Extract the URL from a `Server = <url>` mirrorlist line.
-fn parse_server_line(line: &str) -> Option<&str> {
-    let rest = line.strip_prefix("Server")?;
-    let rest = rest.trim_start();
-    rest.strip_prefix('=').map(str::trim)
-}
-
-/// Parse all mirrors from mirrorlist
-fn get_mirrors() -> Result<Vec<String>> {
-    let mirrorlist_path = paths::pacman_mirrorlist_path();
-    let mirrorlist = std::fs::read_to_string(&mirrorlist_path)
-        .with_context(|| format!("Failed to read {}", mirrorlist_path.display()))?;
-
-    let mut mirrors = Vec::with_capacity(16);
-    for line in mirrorlist.lines().map(str::trim) {
-        // Skip comments and empty lines
-        if line.starts_with('#') || line.is_empty() {
-            continue;
-        }
-        if let Some(url) = parse_server_line(line) {
-            mirrors.push(url.to_string());
-        }
-    }
-
-    if mirrors.is_empty() {
-        anyhow::bail!("No mirrors found in {}", mirrorlist_path.display());
-    }
-
-    Ok(mirrors)
-}
-
 fn begin_same_dir_temp(dest: &Path) -> Result<(std::fs::File, tempfile::TempPath)> {
     let parent = dest.parent().unwrap_or_else(|| Path::new("."));
     std::fs::create_dir_all(parent)
@@ -97,17 +61,6 @@ const INITIAL_BACKOFF_MS: u64 = 100;
 const MAX_SYNC_DB_BYTES: u64 = 512 * 1024 * 1024;
 const MIRROR_RACE_TIMEOUT_MS: u64 = 2000;
 const MAX_MIRRORS_PER_REPO: usize = 5;
-/// Repositories synced from the system mirrorlist instead of their own
-/// `Server` entries. Keep in sync with `pacman_db::collect_sync_db_paths`.
-const MIRRORLIST_REPOS: [&str; 6] = [
-    "core",
-    "extra",
-    "multilib",
-    "core-testing",
-    "extra-testing",
-    "multilib-testing",
-];
-
 async fn race_mirrors(client: &Client, urls: &[String]) -> Option<usize> {
     use futures::future::select_all;
 
@@ -455,15 +408,19 @@ fn commit_staged_databases(
 /// Synchronize configured package databases concurrently.
 #[expect(clippy::literal_string_with_formatting_args, clippy::expect_used)] // Static indicatif templates are always valid; braces are template syntax
 pub async fn sync_databases_parallel() -> Result<()> {
-    let mirrors = get_mirrors()?;
-
     println!(
         "{} Synchronizing package databases...\n",
         "OMG".cyan().bold()
     );
 
+    // Resolve the complete repository policy before creating staging files or
+    // starting the independent AUR refresh.
+    let config = crate::core::pacman_conf::PacmanConfig::parse(paths::pacman_conf_path())
+        .context("Failed to load repository servers from pacman.conf")?;
+    let repository_urls = repository_database_urls(&config, std::env::consts::ARCH)?;
+
     // Sync directory (we should already be root at this point)
-    let sync_dir = paths::pacman_sync_dir();
+    let sync_dir = paths::pacman_sync_dir_result()?;
     if !sync_dir.exists() {
         tokio::fs::create_dir_all(&sync_dir)
             .await
@@ -498,38 +455,15 @@ pub async fn sync_databases_parallel() -> Result<()> {
         })
     };
 
-    // Collect all repos to sync from pacman.conf
-    let configured_repos = get_configured_repos()?;
-    let mut repos_to_sync: Vec<(String, Vec<String>, PathBuf)> =
-        Vec::with_capacity(configured_repos.len());
-
-    // Standard repos use the system mirrorlist.
-    for repo in &configured_repos {
-        if MIRRORLIST_REPOS.contains(&repo.as_str()) {
-            let repo_urls: Vec<String> = mirrors
-                .iter()
-                .map(|m| build_db_url(m, repo))
-                .take(MAX_MIRRORS_PER_REPO)
-                .collect();
-            let dest = sync_dir.join(format!("{repo}.db"));
-            repos_to_sync.push((repo.clone(), repo_urls, dest));
-        }
-    }
-
-    // Custom repos from pacman.conf (have their own Server= lines)
-    if let Ok(custom_repos) = get_custom_repos() {
-        for (repo_name, mut urls) in custom_repos {
-            let dest = sync_dir.join(format!("{repo_name}.db"));
-            for url in &mut urls {
-                if !url.ends_with('/') {
-                    url.push('/');
-                }
-                url.push_str(&repo_name);
-                url.push_str(".db");
-            }
-            repos_to_sync.push((repo_name, urls, dest));
-        }
-    }
+    // Repository names do not imply a mirror source: an enterprise [core]
+    // override must never be replaced with the host's global mirrorlist.
+    let repos_to_sync: Vec<(String, Vec<String>, PathBuf)> = repository_urls
+        .into_iter()
+        .map(|(name, urls)| {
+            let destination = sync_dir.join(format!("{name}.db"));
+            (name, urls, destination)
+        })
+        .collect();
 
     // Create progress bars
     let progress_bars: Vec<ProgressBar> = repos_to_sync
@@ -590,43 +524,34 @@ pub async fn sync_databases_parallel() -> Result<()> {
     Ok(())
 }
 
-/// Resolve custom (non-mirrorlist) repositories from pacman.conf.
-///
-/// Uses the shared [`crate::core::pacman_conf::PacmanConfig`] parser and the
-/// configured pacman.conf path so custom repos honor path overrides and test
-/// mode, and `$repo`/`$arch` placeholders follow the running architecture.
-fn get_custom_repos() -> Result<Vec<(String, Vec<String>)>> {
-    let conf_path = paths::pacman_conf_path();
-    let config = crate::core::pacman_conf::PacmanConfig::parse(&conf_path)
-        .with_context(|| format!("Failed to parse {}", conf_path.display()))?;
-
-    let mut repos = Vec::with_capacity(4);
-    let arch = std::env::consts::ARCH;
-    for repo in &config.repos {
-        if MIRRORLIST_REPOS.contains(&repo.name.as_str()) {
-            continue;
-        }
-        match config.resolve_servers(repo, arch) {
-            Ok(servers) if !servers.is_empty() => {
-                repos.push((repo.name.clone(), servers));
-            }
-            Ok(_) => {
-                tracing::debug!(
-                    "Custom repo '{}' has no resolvable servers; skipping",
-                    repo.name
-                );
-            }
-            Err(error) => {
-                // One broken custom repo must not abort syncing the others.
-                tracing::warn!(
-                    "Failed to resolve servers for repo '{}': {error}",
-                    repo.name
-                );
-            }
-        }
-    }
-
-    Ok(repos)
+fn repository_database_urls(
+    config: &crate::core::pacman_conf::PacmanConfig,
+    architecture: &str,
+) -> Result<Vec<(String, Vec<String>)>> {
+    anyhow::ensure!(
+        !config.repos.is_empty(),
+        "pacman configuration contains no repositories"
+    );
+    config
+        .repos
+        .iter()
+        .map(|repo| {
+            let servers = config
+                .resolve_servers(repo, architecture)
+                .with_context(|| format!("Failed to resolve servers for repo '{}'", repo.name))?;
+            anyhow::ensure!(
+                !servers.is_empty(),
+                "Repository '{}' has no configured servers",
+                repo.name
+            );
+            let urls = servers
+                .iter()
+                .take(MAX_MIRRORS_PER_REPO)
+                .map(|server| build_db_url(server, &repo.name))
+                .collect();
+            Ok((repo.name.clone(), urls))
+        })
+        .collect()
 }
 
 #[cfg(test)]
@@ -675,21 +600,6 @@ mod tests {
     }
 
     #[test]
-    fn server_line_parser_requires_literal_server_key() {
-        assert_eq!(
-            parse_server_line("Server = https://m.example.com/$repo/os/$arch"),
-            Some("https://m.example.com/$repo/os/$arch")
-        );
-        assert_eq!(
-            parse_server_line("Server=https://m.example.com"),
-            Some("https://m.example.com")
-        );
-        // Regression: a key merely *containing* "Server" must be rejected.
-        assert_eq!(parse_server_line("Serverless = https://nope"), None);
-        assert_eq!(parse_server_line("# Server = https://commented"), None);
-    }
-
-    #[test]
     fn db_urls_substitute_repo_and_runtime_arch() {
         let arch = std::env::consts::ARCH;
         let url = build_db_url("https://mirror.example.com/$repo/os/$arch", "core");
@@ -700,28 +610,42 @@ mod tests {
     }
 
     #[test]
-    #[serial_test::serial]
-    fn custom_repos_honor_configured_path_and_runtime_arch() {
-        let dir = tempfile::tempdir().expect("temp dir");
-        let conf = dir.path().join("pacman.conf");
-        std::fs::write(
-            &conf,
-            "[options]\n\n[extra]\nInclude = /etc/pacman.d/mirrorlist\n\n\
-             [chaotic-aur]\nServer = https://mirror.example.com/$repo/$arch\n",
+    fn every_repository_uses_its_own_configured_servers() {
+        let config = crate::core::pacman_conf::PacmanConfig::parse_str(
+            "[options]\n\n[core]\nServer = https://internal.example/$repo/os/$arch\n\n\
+             [chaotic-aur]\nServer = https://community.example/$repo/$arch\n",
         )
-        .expect("write conf");
+        .expect("pacman config");
 
-        temp_env::with_var("OMG_PACMAN_CONF", Some(conf.as_os_str()), || {
-            let repos = get_custom_repos().expect("custom repos should resolve");
-            assert_eq!(repos.len(), 1, "mirrorlist-backed 'extra' must be excluded");
-            assert_eq!(repos[0].0, "chaotic-aur");
-            assert_eq!(
-                repos[0].1,
-                vec![format!(
-                    "https://mirror.example.com/chaotic-aur/{}",
-                    std::env::consts::ARCH
-                )]
-            );
-        });
+        let repos =
+            repository_database_urls(&config, "test-arch").expect("repository URLs should resolve");
+        assert_eq!(
+            repos,
+            [
+                (
+                    "core".to_string(),
+                    vec!["https://internal.example/core/os/test-arch/core.db".to_string()]
+                ),
+                (
+                    "chaotic-aur".to_string(),
+                    vec![
+                        "https://community.example/chaotic-aur/test-arch/chaotic-aur.db"
+                            .to_string()
+                    ]
+                )
+            ]
+        );
+    }
+
+    #[test]
+    fn repositories_without_servers_fail_the_complete_sync_set() {
+        let config = crate::core::pacman_conf::PacmanConfig::parse_str(
+            "[options]\n\n[core]\nServer = https://mirror.example/$repo/$arch\n\n[extra]\n",
+        )
+        .expect("pacman config");
+
+        let error = repository_database_urls(&config, "test-arch")
+            .expect_err("missing repo policy must fail closed");
+        assert!(error.to_string().contains("extra"), "{error:#}");
     }
 }

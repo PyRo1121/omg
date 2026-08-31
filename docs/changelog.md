@@ -702,6 +702,17 @@ analyzer inference
 - **Ci**: Cross-platform install script and R2 release sync
 ### 🐛 Bug Fixes
 
+- Coalesce watch events during task runs
+- Validate manifest package managers
+- Report every parallel AUR failure
+- Resolve AUR builder homes from accounts
+- Honor per-repository sync servers
+- Reject ignored system upgrade targets
+- Honor configured pacman database roots
+- Surface libalpm transaction warnings
+- Reject partial ALPM worker initialization
+- Honor pacman signature policies
+- Gate shared removal by selected backends
 - Enforce safe Debian removals
 - Validate pure Debian mutations early
 - Report accurate Debian system status

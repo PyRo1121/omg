@@ -691,10 +691,8 @@ fn detect_js_package_manager(current_dir: &std::path::Path) -> Result<Option<Str
     let pkg: PackageJson = serde_json::from_str(&content)
         .with_context(|| format!("Failed to parse {}", path.display()))?;
 
-    if let Some(package_manager) = pkg.package_manager
-        && let Some(name) = parse_package_manager_name(&package_manager)
-    {
-        return Ok(Some(name));
+    if let Some(package_manager) = pkg.package_manager {
+        return parse_package_manager_name(&package_manager).map(Some);
     }
 
     if current_dir.join("bun.lockb").exists() {
@@ -1014,15 +1012,22 @@ fn resolve_nvm_alias(nvm_dir: &std::path::Path, alias: &str) -> Result<Option<St
     }
 }
 
-fn parse_package_manager_name(value: &str) -> Option<String> {
+fn parse_package_manager_name(value: &str) -> Result<String> {
     let trimmed = value.trim();
-    let (name, _) = trimmed.rsplit_once('@').unwrap_or((trimmed, ""));
-    let name = name.trim();
-    if name.is_empty() {
-        None
-    } else {
-        Some(name.to_lowercase())
+    anyhow::ensure!(!trimmed.is_empty(), "packageManager must not be empty");
+    let (name, version) = trimmed.rsplit_once('@').unwrap_or((trimmed, ""));
+    let name = name.trim().to_ascii_lowercase();
+    anyhow::ensure!(
+        matches!(name.as_str(), "npm" | "pnpm" | "yarn" | "bun"),
+        "Unsupported packageManager {value:?}; expected npm, pnpm, yarn, or bun"
+    );
+    if trimmed.contains('@') {
+        anyhow::ensure!(
+            !version.trim().is_empty(),
+            "packageManager {value:?} has an empty version"
+        );
     }
+    Ok(name)
 }
 
 fn ensure_js_package_manager(command: &str) -> Result<()> {
@@ -1133,40 +1138,33 @@ pub fn run_task_watch(task_name: &str, extra_args: &[String]) -> Result<()> {
 
     println!("  {} Watching for changes...\n", "→".dimmed());
 
-    // Debounce: wait for changes, then re-run
-    let debounce = Duration::from_millis(300);
-    let mut last_run = std::time::Instant::now();
-    // Set when a change arrives inside the debounce window: the change must
-    // still trigger one re-run once the window closes instead of being lost.
-    let mut rerun_pending = false;
+    process_watch_events(&rx, Duration::from_millis(300), || {
+        rerun_task_in_watch(task_name, extra_args);
+    });
+    Ok(())
+}
 
-    loop {
-        match rx.recv_timeout(Duration::from_secs(1)) {
-            Ok(_event) => {
-                // Debounce multiple rapid events
-                if last_run.elapsed() < debounce {
-                    rerun_pending = true;
-                    continue;
-                }
-                rerun_pending = false;
-                last_run = std::time::Instant::now();
-                rerun_task_in_watch(task_name, extra_args);
+fn process_watch_events<T>(
+    receiver: &std::sync::mpsc::Receiver<T>,
+    debounce: std::time::Duration,
+    mut rerun: impl FnMut(),
+) {
+    while receiver.recv().is_ok() {
+        // Wait for a quiet debounce window, resetting it for every new event.
+        // Events queued while the task runs become one subsequent batch rather
+        // than one rerun per stale event.
+        let disconnected = loop {
+            match receiver.recv_timeout(debounce) {
+                Ok(_) => {}
+                Err(std::sync::mpsc::RecvTimeoutError::Timeout) => break false,
+                Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => break true,
             }
-            Err(std::sync::mpsc::RecvTimeoutError::Timeout) => {
-                if rerun_pending && last_run.elapsed() >= debounce {
-                    rerun_pending = false;
-                    last_run = std::time::Instant::now();
-                    rerun_task_in_watch(task_name, extra_args);
-                }
-                // No events otherwise; continue watching
-            }
-            Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => {
-                break;
-            }
+        };
+        rerun();
+        if disconnected {
+            break;
         }
     }
-
-    Ok(())
 }
 
 fn rerun_task_in_watch(task_name: &str, extra_args: &[String]) {
@@ -1284,6 +1282,28 @@ mod tests {
     }
 
     #[test]
+    fn package_manager_metadata_is_restricted_to_known_executables() {
+        assert_eq!(parse_package_manager_name("pnpm@9.15.0").unwrap(), "pnpm");
+        assert_eq!(parse_package_manager_name("bun").unwrap(), "bun");
+        for invalid in ["./repo-script", "unknown@1.0.0", "npm@", ""] {
+            assert!(
+                parse_package_manager_name(invalid).is_err(),
+                "unsafe packageManager unexpectedly accepted: {invalid:?}"
+            );
+        }
+
+        let project = TempDir::new().unwrap();
+        fs::write(
+            project.path().join("package.json"),
+            r#"{"packageManager":"./repo-script","scripts":{}}"#,
+        )
+        .unwrap();
+        let error = detect_js_package_manager(project.path())
+            .expect_err("repo-controlled executable path must fail");
+        assert!(error.to_string().contains("Unsupported packageManager"));
+    }
+
+    #[test]
     fn package_json_without_manager_metadata_defaults_to_npm() {
         let project = TempDir::new().unwrap();
         fs::write(project.path().join("package.json"), r#"{"scripts":{}}"#).unwrap();
@@ -1298,6 +1318,41 @@ mod tests {
             detect_js_runtime(project.path()).unwrap(),
             Some(("node".to_string(), "lts".to_string()))
         );
+    }
+
+    #[test]
+    fn watch_events_coalesce_bursts_arriving_during_a_slow_run() {
+        let (sender, receiver) = std::sync::mpsc::channel();
+        sender.send(()).unwrap();
+        let mut sender_during_run = Some(sender);
+        let mut runs = 0;
+
+        process_watch_events(&receiver, std::time::Duration::from_millis(1), || {
+            runs += 1;
+            if runs == 1 {
+                let sender = sender_during_run.take().unwrap();
+                for _ in 0..8 {
+                    sender.send(()).unwrap();
+                }
+                drop(sender);
+            }
+        });
+
+        assert_eq!(runs, 2, "events during one run require one follow-up run");
+    }
+
+    #[test]
+    fn watch_event_burst_before_a_run_is_debounced_once() {
+        let (sender, receiver) = std::sync::mpsc::channel();
+        for _ in 0..8 {
+            sender.send(()).unwrap();
+        }
+        drop(sender);
+        let mut runs = 0;
+
+        process_watch_events(&receiver, std::time::Duration::from_millis(1), || runs += 1);
+
+        assert_eq!(runs, 1);
     }
 
     #[test]

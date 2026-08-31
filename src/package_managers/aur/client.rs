@@ -1878,7 +1878,7 @@ impl AurClient {
         let spinner = create_spinner("Cloning repository...");
 
         if let Some(user) = original_user() {
-            let home = original_user_home();
+            let home = original_user_home()?;
             let dest_str = dest.to_string_lossy();
 
             let mut cmd = Command::new("sudo");
@@ -1976,7 +1976,7 @@ impl AurClient {
         let spinner = create_spinner("Pulling latest changes...");
 
         if let Some(user) = original_user() {
-            let home = original_user_home();
+            let home = original_user_home()?;
             let pkg_dir_str = pkg_dir.to_string_lossy();
 
             let mut cmd = Command::new("sudo");
@@ -2209,9 +2209,9 @@ impl AurClient {
             let pkgdest_str = pkgdest_canonical.to_string_lossy();
             let srcdest_str = srcdest_canonical.to_string_lossy();
             let builddir_str = builddir_canonical.to_string_lossy();
-            let pacman_db_dir = paths::pacman_db_dir();
+            let pacman_db_dir = paths::pacman_db_dir_result()?;
             let pacman_db_dir_str = pacman_db_dir.to_string_lossy();
-            let pacman_cache_root = paths::pacman_cache_root_dir();
+            let pacman_cache_root = paths::pacman_cache_root_dir_result()?;
             let pacman_cache_root_str = pacman_cache_root.to_string_lossy();
             let home_str = home.to_string_lossy();
 

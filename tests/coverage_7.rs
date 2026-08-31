@@ -7,8 +7,8 @@
 //!
 //! 1. A successful sync downloads each configured repository's `.db` file
 //!    into `OMG_PACMAN_SYNC_DIR` with byte-exact content, requesting exactly
-//!    the `<mirror>/$repo/os/$arch/<repo>.db` URL derived from the
-//!    mirrorlist.
+//!    the `<mirror>/$repo/os/$arch/<repo>.db` URL derived from each repository's
+//!    configured mirrorlist.
 //! 2. When every mirror returns HTTP 404 for a database, the sync fails and
 //!    names the number of failed databases; no partial `.db` files are left
 //!    behind.
@@ -192,15 +192,14 @@ struct SyncFixture {
 fn make_fixture(repos: &[&str]) -> SyncFixture {
     let root = tempfile::TempDir::new().expect("fixture tempdir");
 
+    let mirrorlist_path = root.path().join("mirrorlist");
     let conf_path = root.path().join("pacman.conf");
     let mut conf = String::from("[options]\n\n");
     use std::fmt::Write as _;
     for repo in repos {
-        let _ = write!(conf, "[{repo}]\nInclude = /etc/pacman.d/mirrorlist\n\n");
+        let _ = writeln!(conf, "[{repo}]\nInclude = {}\n", mirrorlist_path.display());
     }
     std::fs::write(&conf_path, conf).expect("write pacman.conf");
-
-    let mirrorlist_path = root.path().join("mirrorlist");
 
     let sync_dir = root.path().join("var/lib/pacman/sync");
     std::fs::create_dir_all(&sync_dir).expect("create sync dir");
@@ -240,10 +239,6 @@ fn run_with_fixture_env<T>(
     temp_env::with_vars(
         [
             ("OMG_PACMAN_CONF", Some(fixture.conf_path.as_os_str())),
-            (
-                "OMG_PACMAN_MIRRORLIST",
-                Some(fixture.mirrorlist_path.as_os_str()),
-            ),
             ("OMG_PACMAN_SYNC_DIR", Some(fixture.sync_dir.as_os_str())),
             (
                 "OMG_CONFIG_DIR",

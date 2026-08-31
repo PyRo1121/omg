@@ -70,10 +70,10 @@ pub(crate) fn load_local_package_metadata(path: &str) -> Result<LocalPackageMeta
 pub fn open_default_alpm() -> anyhow::Result<alpm::Alpm> {
     use anyhow::Context as _;
 
-    let root = crate::core::paths::pacman_root()
+    let root = crate::core::paths::pacman_root_result()?
         .to_string_lossy()
         .into_owned();
-    let db_path = crate::core::paths::pacman_db_dir()
+    let db_path = crate::core::paths::pacman_db_dir_result()?
         .to_string_lossy()
         .into_owned();
     alpm::Alpm::new(root, db_path).context("Failed to initialize ALPM")
@@ -238,7 +238,7 @@ fn package_base_name(filename: &str) -> Option<&str> {
 pub fn clean_cache(keep_versions: usize) -> Result<(usize, u64)> {
     let mut packages: ahash::AHashMap<String, Vec<std::path::PathBuf>> = ahash::AHashMap::new();
 
-    for cache_dir in paths::pacman_cache_dirs() {
+    for cache_dir in paths::pacman_cache_dirs_result()? {
         if !cache_dir.exists() {
             continue;
         }
@@ -406,7 +406,7 @@ pub fn execute_transaction(
         anyhow::bail!("pacman configuration contains no repositories");
     }
 
-    register_transaction_syncdbs(&alpm, &pacman_config.repos)?;
+    register_configured_syncdbs(&alpm, &pacman_config)?;
 
     configure_mirrors(&mut alpm)?;
 
@@ -418,12 +418,14 @@ pub fn execute_transaction(
     Ok(())
 }
 
-fn register_transaction_syncdbs(
+pub(crate) fn register_configured_syncdbs(
     alpm: &alpm::Alpm,
-    repos: &[crate::core::pacman_conf::RepoConfig],
+    pacman_config: &crate::core::pacman_conf::PacmanConfig,
 ) -> Result<()> {
-    for repo in repos {
-        alpm.register_syncdb(repo.name.as_str(), alpm::SigLevel::USE_DEFAULT)
+    let policy = signature_policy(pacman_config)?;
+    for repo in &pacman_config.repos {
+        let siglevel = repository_siglevel(policy.default, repo.sig_level.as_deref())?;
+        alpm.register_syncdb(repo.name.as_str(), siglevel)
             .with_context(|| {
                 format!(
                     "Failed to register configured sync database '{}'; refusing a partial repository set",
@@ -432,6 +434,39 @@ fn register_transaction_syncdbs(
             })?;
     }
     Ok(())
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum ForwardedAlpmLogLevel {
+    Error,
+    Warning,
+    Debug,
+    Trace,
+}
+
+fn classify_alpm_log_level(level: alpm::LogLevel) -> ForwardedAlpmLogLevel {
+    if level.contains(alpm::LogLevel::ERROR) {
+        ForwardedAlpmLogLevel::Error
+    } else if level.contains(alpm::LogLevel::WARNING) {
+        ForwardedAlpmLogLevel::Warning
+    } else if level.contains(alpm::LogLevel::DEBUG) {
+        ForwardedAlpmLogLevel::Debug
+    } else {
+        ForwardedAlpmLogLevel::Trace
+    }
+}
+
+fn forward_alpm_log(level: alpm::LogLevel, message: &str) {
+    let message = crate::cli::style::sanitize_terminal_text(message.trim());
+    if message.is_empty() {
+        return;
+    }
+    match classify_alpm_log_level(level) {
+        ForwardedAlpmLogLevel::Error => tracing::error!(target: "libalpm", "{message}"),
+        ForwardedAlpmLogLevel::Warning => tracing::warn!(target: "libalpm", "{message}"),
+        ForwardedAlpmLogLevel::Debug => tracing::debug!(target: "libalpm", "{message}"),
+        ForwardedAlpmLogLevel::Trace => tracing::trace!(target: "libalpm", "{message}"),
+    }
 }
 
 /// Setup ALPM callbacks for progress bars
@@ -495,9 +530,10 @@ fn setup_alpm_callbacks(
         }
     });
 
-    // Suppress ALPM log messages (we show our own progress)
-    alpm.set_log_cb((), |_level, _msg, ()| {
-        // Intentionally empty - suppress all log output
+    // Progress messages are rendered below, but warnings and errors such as
+    // .pacnew/.pacsave notices remain operationally significant.
+    alpm.set_log_cb((), |level, message, ()| {
+        forward_alpm_log(level, message);
     });
 
     let main_pb_clone = main_pb.clone();
@@ -560,12 +596,193 @@ fn setup_alpm_callbacks(
     main_pb
 }
 
-fn local_package_siglevel(kind: TransactionKind) -> alpm::SigLevel {
-    if kind == TransactionKind::InstallAurArtifact {
-        alpm::SigLevel::PACKAGE | alpm::SigLevel::PACKAGE_OPTIONAL
-    } else {
-        alpm::SigLevel::PACKAGE
+#[derive(Debug, Clone, Copy)]
+pub(crate) struct SignaturePolicy {
+    pub(crate) default: alpm::SigLevel,
+    pub(crate) local_file: alpm::SigLevel,
+    pub(crate) remote_file: alpm::SigLevel,
+}
+
+#[derive(Debug, Clone, Copy)]
+struct ParsedSignatureLevel {
+    level: alpm::SigLevel,
+    mask: alpm::SigLevel,
+}
+
+fn set_signature_flags(parsed: &mut ParsedSignatureLevel, flags: alpm::SigLevel) {
+    parsed.level.insert(flags);
+    parsed.mask.insert(flags);
+}
+
+fn unset_signature_flags(parsed: &mut ParsedSignatureLevel, flags: alpm::SigLevel) {
+    parsed.level.remove(flags);
+    parsed.mask.insert(flags);
+}
+
+fn parse_signature_level(
+    value: Option<&str>,
+    initial: alpm::SigLevel,
+) -> Result<ParsedSignatureLevel> {
+    let mut parsed = ParsedSignatureLevel {
+        level: initial,
+        mask: alpm::SigLevel::NONE,
+    };
+    let Some(value) = value else {
+        return Ok(parsed);
+    };
+
+    for original in value.split_whitespace() {
+        let (package, database, directive) = if let Some(value) = original.strip_prefix("Package") {
+            (true, false, value)
+        } else if let Some(value) = original.strip_prefix("Database") {
+            (false, true, value)
+        } else {
+            (true, true, original)
+        };
+
+        let package_required = alpm::SigLevel::PACKAGE;
+        let package_optional = alpm::SigLevel::PACKAGE_OPTIONAL;
+        let package_trust =
+            alpm::SigLevel::PACKAGE_MARGINAL_OK | alpm::SigLevel::PACKAGE_UNKNOWN_OK;
+        let database_required = alpm::SigLevel::DATABASE;
+        let database_optional = alpm::SigLevel::DATABASE_OPTIONAL;
+        let database_trust =
+            alpm::SigLevel::DATABASE_MARGINAL_OK | alpm::SigLevel::DATABASE_UNKNOWN_OK;
+
+        match directive {
+            "Never" => {
+                if package {
+                    unset_signature_flags(&mut parsed, package_required);
+                }
+                if database {
+                    unset_signature_flags(&mut parsed, database_required);
+                }
+            }
+            "Optional" => {
+                if package {
+                    set_signature_flags(&mut parsed, package_required | package_optional);
+                }
+                if database {
+                    set_signature_flags(&mut parsed, database_required | database_optional);
+                }
+            }
+            "Required" => {
+                if package {
+                    set_signature_flags(&mut parsed, package_required);
+                    unset_signature_flags(&mut parsed, package_optional);
+                }
+                if database {
+                    set_signature_flags(&mut parsed, database_required);
+                    unset_signature_flags(&mut parsed, database_optional);
+                }
+            }
+            "TrustedOnly" => {
+                if package {
+                    unset_signature_flags(&mut parsed, package_trust);
+                }
+                if database {
+                    unset_signature_flags(&mut parsed, database_trust);
+                }
+            }
+            "TrustAll" => {
+                if package {
+                    set_signature_flags(&mut parsed, package_trust);
+                }
+                if database {
+                    set_signature_flags(&mut parsed, database_trust);
+                }
+            }
+            _ => anyhow::bail!("Invalid pacman SigLevel directive '{original}'"),
+        }
+        parsed.level.remove(alpm::SigLevel::USE_DEFAULT);
     }
+    Ok(parsed)
+}
+
+fn merge_signature_level(
+    base: alpm::SigLevel,
+    override_level: ParsedSignatureLevel,
+) -> alpm::SigLevel {
+    if override_level.mask.is_empty() {
+        if override_level.level.contains(alpm::SigLevel::USE_DEFAULT) {
+            base
+        } else {
+            override_level.level
+        }
+    } else {
+        (override_level.level & override_level.mask) | (base & !override_level.mask)
+    }
+}
+
+pub(crate) fn signature_policy(
+    config: &crate::core::pacman_conf::PacmanConfig,
+) -> Result<SignaturePolicy> {
+    let default = parse_signature_level(
+        config.sig_level.as_deref(),
+        alpm::SigLevel::PACKAGE | alpm::SigLevel::DATABASE,
+    )?
+    .level;
+    let local_file = merge_signature_level(
+        default,
+        parse_signature_level(
+            config.local_file_sig_level.as_deref(),
+            alpm::SigLevel::USE_DEFAULT,
+        )?,
+    );
+    let remote_file = merge_signature_level(
+        default,
+        parse_signature_level(
+            config.remote_file_sig_level.as_deref(),
+            alpm::SigLevel::USE_DEFAULT,
+        )?,
+    );
+    Ok(SignaturePolicy {
+        default,
+        local_file,
+        remote_file,
+    })
+}
+
+pub(crate) fn repository_siglevel(
+    default: alpm::SigLevel,
+    configured: Option<&str>,
+) -> Result<alpm::SigLevel> {
+    Ok(merge_signature_level(
+        default,
+        parse_signature_level(configured, alpm::SigLevel::USE_DEFAULT)?,
+    ))
+}
+
+pub(crate) fn configure_signature_policy(
+    alpm: &alpm::Alpm,
+    config: &crate::core::pacman_conf::PacmanConfig,
+) -> Result<SignaturePolicy> {
+    let signatures = signature_policy(config)?;
+    alpm.set_default_siglevel(signatures.default)
+        .context("Failed to configure default package signature policy")?;
+    alpm.set_local_file_siglevel(signatures.local_file)
+        .context("Failed to configure local package signature policy")?;
+    alpm.set_remote_file_siglevel(signatures.remote_file)
+        .context("Failed to configure remote package signature policy")?;
+    Ok(signatures)
+}
+
+fn local_package_siglevel(kind: TransactionKind, configured: alpm::SigLevel) -> alpm::SigLevel {
+    if kind == TransactionKind::InstallAurArtifact {
+        configured & (alpm::SigLevel::PACKAGE_MARGINAL_OK | alpm::SigLevel::PACKAGE_UNKNOWN_OK)
+            | alpm::SigLevel::PACKAGE
+            | alpm::SigLevel::PACKAGE_OPTIONAL
+    } else {
+        configured
+    }
+}
+
+fn validate_transaction_targets(kind: TransactionKind, packages: &[String]) -> Result<()> {
+    anyhow::ensure!(
+        kind != TransactionKind::SystemUpgrade || packages.is_empty(),
+        "System upgrade transactions do not accept explicit package targets"
+    );
+    Ok(())
 }
 
 fn transaction_flags(kind: TransactionKind) -> alpm::TransFlag {
@@ -586,6 +803,7 @@ fn prepare_alpm_transaction<'a>(
     kind: TransactionKind,
     pacman_config: &crate::core::pacman_conf::PacmanConfig,
 ) -> Result<AlpmTransaction<'a>> {
+    validate_transaction_targets(kind, &packages)?;
     alpm.trans_init(transaction_flags(kind))
         .map_err(|e| match e {
             alpm::Error::HandleLock => {
@@ -632,7 +850,10 @@ fn prepare_alpm_transaction<'a>(
                         .pkg_load(
                             canonical_str.to_string(),
                             true,
-                            local_package_siglevel(kind),
+                            local_package_siglevel(
+                                kind,
+                                signature_policy(pacman_config)?.local_file,
+                            ),
                         )
                         .map_err(|e| {
                             anyhow::anyhow!("Failed to load local package {pkg_name}: {e}")
@@ -694,8 +915,8 @@ fn configure_transaction_options(
     // `Alpm::new` leaves transaction-critical pacman options empty. Configure
     // them explicitly so downloads, signature verification, architecture
     // checks, logging, and package hooks behave like a normal Arch transaction.
-    let root = paths::pacman_root();
-    let cache_dirs = paths::pacman_cache_dirs();
+    let root = paths::pacman_root_result()?;
+    let cache_dirs = paths::pacman_cache_dirs_result()?;
     for cache_dir in &cache_dirs {
         std::fs::create_dir_all(cache_dir).with_context(|| {
             format!(
@@ -796,19 +1017,7 @@ fn configure_transaction_options(
     alpm.set_noextracts(pacman_config.no_extract.iter())
         .context("Failed to configure excluded extraction paths")?;
 
-    // Match Arch's secure repository default: package signatures are required
-    // and database signatures are checked when present. OMG is deliberately
-    // stricter for explicit local and remote package files: they must also be
-    // accompanied by a valid detached signature.
-    let package_siglevel = alpm::SigLevel::PACKAGE;
-    alpm.set_default_siglevel(
-        package_siglevel | alpm::SigLevel::DATABASE | alpm::SigLevel::DATABASE_OPTIONAL,
-    )
-    .context("Failed to configure package signature verification")?;
-    alpm.set_local_file_siglevel(package_siglevel)
-        .context("Failed to require signatures for local package files")?;
-    alpm.set_remote_file_siglevel(package_siglevel)
-        .context("Failed to require signatures for remote package files")
+    configure_signature_policy(alpm, pacman_config).map(|_| ())
 }
 
 pub(crate) fn configure_package_filters(
@@ -998,10 +1207,32 @@ fn ensure_mirror_servers(alpm: &alpm::Alpm) -> Result<()> {
 #[cfg(test)]
 mod tests {
     use super::{
-        DOWNLOAD_BAR_TEMPLATE, DOWNLOAD_SPINNER_TEMPLATE, TransactionKind, ensure_mirror_servers,
+        DOWNLOAD_BAR_TEMPLATE, DOWNLOAD_SPINNER_TEMPLATE, ForwardedAlpmLogLevel, TransactionKind,
+        classify_alpm_log_level, configure_signature_policy, ensure_mirror_servers,
         ensure_removals_not_held, format_trans_prepare_error, is_keyring_related_error,
-        local_package_siglevel, package_base_name, register_transaction_syncdbs, transaction_flags,
+        local_package_siglevel, package_base_name, register_configured_syncdbs,
+        repository_siglevel, signature_policy, transaction_flags, validate_transaction_targets,
     };
+
+    #[test]
+    fn alpm_warnings_and_errors_are_not_classified_as_debug_output() {
+        assert_eq!(
+            classify_alpm_log_level(alpm::LogLevel::ERROR | alpm::LogLevel::WARNING),
+            ForwardedAlpmLogLevel::Error
+        );
+        assert_eq!(
+            classify_alpm_log_level(alpm::LogLevel::WARNING),
+            ForwardedAlpmLogLevel::Warning
+        );
+        assert_eq!(
+            classify_alpm_log_level(alpm::LogLevel::DEBUG),
+            ForwardedAlpmLogLevel::Debug
+        );
+        assert_eq!(
+            classify_alpm_log_level(alpm::LogLevel::FUNCTION),
+            ForwardedAlpmLogLevel::Trace
+        );
+    }
 
     #[test]
     fn transaction_registration_rejects_partial_repository_sets() {
@@ -1010,12 +1241,15 @@ mod tests {
         let alpm = alpm::Alpm::new("/", database_path.as_ref()).expect("ALPM handle");
         alpm.register_syncdb("core", alpm::SigLevel::NONE)
             .expect("initial sync database");
-        let repos = vec![crate::core::pacman_conf::RepoConfig {
-            name: "core".to_string(),
+        let config = crate::core::pacman_conf::PacmanConfig {
+            repos: vec![crate::core::pacman_conf::RepoConfig {
+                name: "core".to_string(),
+                ..Default::default()
+            }],
             ..Default::default()
-        }];
+        };
 
-        let error = register_transaction_syncdbs(&alpm, &repos)
+        let error = register_configured_syncdbs(&alpm, &config)
             .expect_err("a failed configured repository must abort registration");
         assert!(
             error
@@ -1043,12 +1277,52 @@ mod tests {
     }
 
     #[test]
-    fn aur_artifacts_allow_missing_signatures_but_verify_present_ones() {
-        let regular = local_package_siglevel(TransactionKind::Install);
-        assert!(regular.contains(alpm::SigLevel::PACKAGE));
-        assert!(!regular.contains(alpm::SigLevel::PACKAGE_OPTIONAL));
+    fn pacman_signature_policy_is_applied_to_handle_and_repositories() {
+        let config = crate::core::pacman_conf::PacmanConfig::parse_str(
+            "[options]\nSigLevel = Required DatabaseOptional\nLocalFileSigLevel = PackageOptional\nRemoteFileSigLevel = PackageNever\n\n[core]\nSigLevel = PackageOptional DatabaseNever\n",
+        )
+        .expect("signature configuration");
+        let policy = signature_policy(&config).expect("parsed signature policy");
 
-        let aur = local_package_siglevel(TransactionKind::InstallAurArtifact);
+        assert!(policy.default.contains(alpm::SigLevel::PACKAGE));
+        assert!(policy.default.contains(alpm::SigLevel::DATABASE));
+        assert!(policy.default.contains(alpm::SigLevel::DATABASE_OPTIONAL));
+        assert!(policy.local_file.contains(alpm::SigLevel::PACKAGE));
+        assert!(policy.local_file.contains(alpm::SigLevel::PACKAGE_OPTIONAL));
+        assert!(!policy.remote_file.contains(alpm::SigLevel::PACKAGE));
+
+        let repository = repository_siglevel(policy.default, config.repos[0].sig_level.as_deref())
+            .expect("repository signature policy");
+        assert!(repository.contains(alpm::SigLevel::PACKAGE));
+        assert!(repository.contains(alpm::SigLevel::PACKAGE_OPTIONAL));
+        assert!(!repository.contains(alpm::SigLevel::DATABASE));
+
+        let database_path = tempfile::tempdir().expect("temporary database path");
+        let database_path = database_path.path().to_string_lossy();
+        let alpm = alpm::Alpm::new("/", database_path.as_ref()).expect("ALPM handle");
+        configure_signature_policy(&alpm, &config).expect("configure ALPM policy");
+        assert_eq!(alpm.default_siglevel(), policy.default);
+        assert_eq!(alpm.local_file_siglevel(), policy.local_file);
+        assert_eq!(alpm.remote_file_siglevel(), policy.remote_file);
+    }
+
+    #[test]
+    fn invalid_pacman_signature_policy_fails_closed() {
+        let config = crate::core::pacman_conf::PacmanConfig::parse_str(
+            "[options]\nSigLevel = PackageSometimes\n",
+        )
+        .expect("syntax parser preserves policy text");
+        let error = signature_policy(&config).expect_err("unknown policy must fail");
+        assert!(error.to_string().contains("PackageSometimes"), "{error:#}");
+    }
+
+    #[test]
+    fn aur_artifacts_allow_missing_signatures_but_verify_present_ones() {
+        let configured = alpm::SigLevel::PACKAGE | alpm::SigLevel::PACKAGE_UNKNOWN_OK;
+        let regular = local_package_siglevel(TransactionKind::Install, configured);
+        assert_eq!(regular, configured);
+
+        let aur = local_package_siglevel(TransactionKind::InstallAurArtifact, configured);
         assert!(aur.contains(alpm::SigLevel::PACKAGE));
         assert!(aur.contains(alpm::SigLevel::PACKAGE_OPTIONAL));
     }
@@ -1071,6 +1345,20 @@ mod tests {
         let error = ensure_removals_not_held(["anything"], &["[".to_string()])
             .expect_err("invalid HoldPkg patterns must not be ignored");
         assert!(error.to_string().contains("Invalid HoldPkg pattern"));
+    }
+
+    #[test]
+    fn system_upgrade_rejects_targets_instead_of_discarding_them() {
+        validate_transaction_targets(TransactionKind::SystemUpgrade, &[])
+            .expect("targetless system upgrade");
+        let error = validate_transaction_targets(
+            TransactionKind::SystemUpgrade,
+            &["explicit-target".to_string()],
+        )
+        .expect_err("explicit target must not be silently discarded");
+        assert!(error.to_string().contains("explicit package targets"));
+        validate_transaction_targets(TransactionKind::Install, &["package".to_string()])
+            .expect("install accepts targets");
     }
 
     #[test]
