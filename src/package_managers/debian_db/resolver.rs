@@ -15,7 +15,7 @@
 
 #![cfg(any(feature = "debian", feature = "debian-pure"))]
 
-use std::collections::{HashMap, HashSet, VecDeque};
+use std::collections::{HashMap, HashSet};
 
 use anyhow::{Context, Result};
 
@@ -205,7 +205,7 @@ impl DependencyResolver {
         self.record_dependency_edges(&to_install)?;
 
         // Topologically sort the install order
-        let sorted = self.topological_sort(&to_install)?;
+        let sorted = self.topological_sort(&to_install);
         self.validate_projected_dependencies(&sorted)?;
 
         // Calculate sizes and determine upgrades
@@ -434,74 +434,72 @@ impl DependencyResolver {
         }
     }
 
-    /// Topologically sort packages (dependencies first)
-    /// Uses Kahn's algorithm with optimized data structures
-    fn topological_sort(&self, packages: &[String]) -> Result<Vec<String>> {
+    /// Order dependencies before dependents without rejecting legal Debian
+    /// dependency cycles. The transaction unpacks every archive before this
+    /// order is used for configuration, so a back edge within a cycle can be
+    /// broken deterministically, as dpkg does.
+    fn topological_sort(&self, packages: &[String]) -> Vec<String> {
         use ahash::{AHashMap, AHashSet};
 
+        const VISITING: u8 = 1;
+        const ORDERED: u8 = 2;
+
         let in_packages: AHashSet<&str> = packages.iter().map(String::as_str).collect();
-        let mut in_degree: AHashMap<&str, usize> = in_packages
-            .iter()
-            .copied()
-            .map(|package| (package, 0))
-            .collect();
-        let mut graph: AHashMap<&str, Vec<&str>> = AHashMap::with_capacity(packages.len());
-
-        // Build reverse graph (package -> packages that depend on it)
-        for package in packages {
-            let package = package.as_str();
-            if let Some(dependencies) = self.dep_graph.get(package) {
-                for dependency in dependencies {
-                    if let Some(dependency) = in_packages.get(dependency.as_str()) {
-                        graph.entry(*dependency).or_default().push(package);
-                        *in_degree.entry(package).or_default() += 1;
-                    }
-                }
-            }
-        }
-
-        // Kahn's algorithm
-        let mut queue: VecDeque<&str> = in_degree
-            .iter()
-            .filter_map(|(&package, &degree)| (degree == 0).then_some(package))
-            .collect();
+        let mut states: AHashMap<&str, u8> = AHashMap::with_capacity(packages.len());
+        let mut roots: Vec<&str> = in_packages.iter().copied().collect();
+        roots.sort_unstable();
         let mut result = Vec::with_capacity(packages.len());
 
-        while let Some(package) = queue.pop_front() {
-            result.push(package);
-
-            if let Some(dependents) = graph.get(package) {
-                for &dependent in dependents {
-                    if let Some(degree) = in_degree.get_mut(dependent) {
-                        *degree -= 1;
-                        if *degree == 0 {
-                            queue.push_back(dependent);
-                        }
+        for root in roots {
+            if states.get(root) == Some(&ORDERED) {
+                continue;
+            }
+            let mut stack = vec![(root, false)];
+            while let Some((package, expanded)) = stack.pop() {
+                if expanded {
+                    if states.get(package) == Some(&VISITING) {
+                        states.insert(package, ORDERED);
+                        result.push(package.to_string());
                     }
+                    continue;
+                }
+
+                match states.get(package) {
+                    Some(&ORDERED) => continue,
+                    Some(&VISITING) => {
+                        tracing::warn!(
+                            package,
+                            "Breaking legal Debian dependency cycle during package ordering"
+                        );
+                        continue;
+                    }
+                    _ => {}
+                }
+
+                states.insert(package, VISITING);
+                stack.push((package, true));
+
+                let mut dependencies: Vec<&str> = self
+                    .dep_graph
+                    .get(package)
+                    .into_iter()
+                    .flatten()
+                    .map(String::as_str)
+                    .filter(|dependency| in_packages.contains(dependency))
+                    .collect();
+                dependencies.sort_unstable();
+                dependencies.dedup();
+                for dependency in dependencies.into_iter().rev() {
+                    stack.push((dependency, false));
                 }
             }
-        }
-
-        if result.len() != packages.len() {
-            let ordered: AHashSet<&str> = result.iter().copied().collect();
-            let missing: Vec<_> = packages
-                .iter()
-                .map(String::as_str)
-                .filter(|package| !ordered.contains(package))
-                .collect();
-
-            tracing::error!("Circular dependency detected among packages: {:?}", missing);
-            anyhow::bail!(
-                "Circular dependency detected. Unable to determine installation order for: {}",
-                missing.join(", ")
-            );
         }
 
         tracing::debug!(
-            "Topological sort complete: {} packages ordered",
+            "Dependency ordering complete: {} packages ordered",
             result.len()
         );
-        Ok(result.into_iter().map(str::to_owned).collect())
+        result
     }
 }
 
@@ -878,6 +876,38 @@ mod tests {
                 resolution.to_install
             );
         }
+    }
+
+    #[test]
+    fn legal_dependency_cycles_are_ordered_without_aborting() {
+        let mut resolver = DependencyResolver {
+            available: HashMap::from([
+                (
+                    "cycle-a".to_string(),
+                    test_package("cycle-a", "1.0", &["cycle-b"]),
+                ),
+                (
+                    "cycle-b".to_string(),
+                    test_package("cycle-b", "1.0", &["cycle-a"]),
+                ),
+                (
+                    "consumer".to_string(),
+                    test_package("consumer", "1.0", &["cycle-a"]),
+                ),
+            ]),
+            installed: HashMap::new(),
+            selected: HashSet::new(),
+            dep_graph: HashMap::new(),
+        };
+        resolver.add_package("consumer").expect("known package");
+
+        let resolution = resolver.resolve().expect("dpkg supports dependency cycles");
+        assert_eq!(
+            resolution.to_install.last().map(String::as_str),
+            Some("consumer")
+        );
+        assert!(resolution.to_install.iter().any(|name| name == "cycle-a"));
+        assert!(resolution.to_install.iter().any(|name| name == "cycle-b"));
     }
 
     #[test]
