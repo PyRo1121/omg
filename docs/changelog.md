@@ -4025,6 +4025,7 @@ the Debian backend), so it was removed from the metadata.
 - Normalize project formatting
 ### 🧪 Testing
 
+- Make Debian integration coverage hermetic
 - Exercise Debian to Ubuntu migration fixtures
 - Exercise AUR replacement budget
 - Enforce telemetry queue and circuit invariants
