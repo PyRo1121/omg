@@ -478,8 +478,8 @@ pub use apt::{
     AptPackageManager, get_sync_pkg_info as apt_get_sync_pkg_info,
     get_system_status as apt_get_system_status,
     list_all_package_names as apt_list_all_package_names,
-    list_installed_fast as apt_list_installed_fast, list_orphans as apt_list_orphans,
-    list_updates as apt_list_updates, remove_orphans as apt_remove_orphans,
+    list_installed_fast as apt_list_installed_fast, list_updates as apt_list_updates,
+    remove_orphans as apt_remove_orphans,
 };
 #[cfg(any(feature = "debian", feature = "debian-pure"))]
 pub use debian_db::{
