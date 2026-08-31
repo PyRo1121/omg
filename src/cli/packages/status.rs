@@ -22,10 +22,6 @@ struct StatusJson {
     query_time_ms: f64,
 }
 
-pub async fn status(fast: bool) -> Result<()> {
-    status_with_json(fast, false).await
-}
-
 pub async fn status_with_json(fast: bool, json: bool) -> Result<()> {
     if json {
         return status_json(fast).await;

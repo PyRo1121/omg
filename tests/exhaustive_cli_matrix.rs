@@ -50,11 +50,9 @@ mod arch_matrix {
     #[test]
     #[serial]
     fn test_info() {
-        // In test mode `info` resolves through the pacman sync-database cache
-        // (src/package_managers/alpm_ops.rs:102 get_sync_pkg_info ->
-        // src/package_managers/pacman_db/db.rs:991 get_sync_package), which only
-        // exists on hosts with a real /var/lib/pacman/sync directory. Skip
-        // observably elsewhere instead of asserting a vacuous disjunction.
+        // Outside test mode `info` reads libalpm sync databases via
+        // get_sync_pkg_info and needs a real /var/lib/pacman/sync directory.
+        // Skip observably elsewhere instead of asserting a vacuous disjunction.
         if !std::path::Path::new("/var/lib/pacman/sync").exists() {
             common::report_skip("test_info requires a pacman sync database");
             return;

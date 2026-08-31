@@ -294,7 +294,7 @@ impl PackageManager for ArchPackageManager {
     }
 }
 
-pub async fn list_orphans() -> AnyhowResult<Vec<String>> {
+async fn list_orphans() -> AnyhowResult<Vec<String>> {
     crate::package_managers::list_orphans_direct()
 }
 
@@ -326,14 +326,4 @@ pub async fn remove_orphans() -> AnyhowResult<()> {
         }
     })
     .await
-}
-
-pub async fn list_explicit() -> AnyhowResult<Vec<String>> {
-    tokio::task::spawn_blocking(crate::package_managers::list_explicit_fast).await?
-}
-
-pub async fn is_installed(package: &str) -> AnyhowResult<bool> {
-    let package = package.to_string();
-    tokio::task::spawn_blocking(move || crate::package_managers::is_installed_fast(&package))
-        .await?
 }

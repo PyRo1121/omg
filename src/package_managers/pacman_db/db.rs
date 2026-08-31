@@ -1076,16 +1076,6 @@ pub fn get_local_package(name: &str) -> Result<Option<LocalDbPackage>> {
     Ok(cache.packages.get(name).cloned())
 }
 
-/// Get a specific sync package by exact name - FAST (<1ms)
-#[inline]
-pub fn get_sync_package(name: &str) -> Result<Option<SyncDbPackage>> {
-    let sync_dir = paths::pacman_sync_dir();
-    ensure_sync_cache_loaded(&sync_dir)?;
-
-    let cache = read_lock(&SYNC_DB_CACHE);
-    Ok(cache.packages.get(name).cloned())
-}
-
 /// List all local packages using cache - FAST (<1ms)
 pub fn list_local_cached() -> Result<Vec<LocalDbPackage>> {
     let local_dir = paths::pacman_local_dir();

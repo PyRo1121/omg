@@ -25,7 +25,7 @@ use tokio_util::codec::{Framed, LengthDelimitedCodec};
 #[cfg(unix)]
 use crate::daemon::protocol::{
     DetailedPackageInfo, MAX_FRAME_SIZE, Request, Response, ResponseResult, SearchResult,
-    SecurityAuditResult, StatusResult, UpdateEntry,
+    SecurityAuditResult, UpdateEntry,
 };
 #[cfg(unix)]
 use std::os::unix::net::UnixStream as SyncUnixStream;
@@ -268,13 +268,6 @@ impl DaemonClient {
         extract_response(&response, id, as_info)
     }
 
-    /// Get system status
-    pub async fn status(&mut self) -> Result<StatusResult> {
-        let id = self.request_id.fetch_add(1, Ordering::SeqCst);
-        let response = self.call(Request::Status { id }).await?;
-        extract_response(&response, id, as_status)
-    }
-
     /// List available package updates via daemon (uses hot ALPM worker)
     pub async fn list_updates(&mut self) -> Result<Vec<UpdateEntry>> {
         let id = self.request_id.fetch_add(1, Ordering::SeqCst);
@@ -383,14 +376,6 @@ fn as_search(response: &ResponseResult) -> Option<SearchResult> {
     }
 }
 
-fn as_status(response: &ResponseResult) -> Option<StatusResult> {
-    if let ResponseResult::Status(value) = response {
-        Some(value.clone())
-    } else {
-        None
-    }
-}
-
 fn as_updates(response: &ResponseResult) -> Option<Vec<UpdateEntry>> {
     if let ResponseResult::ListUpdates(value) = response {
         Some(value.clone())
@@ -472,13 +457,6 @@ impl SyncDaemonClient {
             limit,
         })?;
         extract_response(&response, id, as_search)
-    }
-
-    /// Get system status
-    pub fn status(&mut self) -> Result<StatusResult> {
-        let id = self.request_id.fetch_add(1, Ordering::SeqCst);
-        let response = self.call(&Request::Status { id })?;
-        extract_response(&response, id, as_status)
     }
 }
 

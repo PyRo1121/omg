@@ -416,10 +416,9 @@ fn test_privacy_status_shows_env_override() {
     let result = project.run_with_env(&["privacy", "status"], &[("OMG_TELEMETRY", "0")]);
 
     // ===== ASSERT =====
-    // WRONG-CONTRACT fix: `privacy status` never renders an "Environment"
-    // line — that text lives in cli::telemetry::status, which no command
-    // reaches. The honest observable contract is that status still succeeds
-    // and renders its header with the override set.
+    // `privacy status` does not render an "Environment" line. The honest
+    // observable contract is that status still succeeds and renders its
+    // header with the override set.
     result.assert_success();
     let output = result.combined_output();
     assert!(

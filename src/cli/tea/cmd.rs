@@ -85,12 +85,6 @@ pub struct StyledTextConfig {
 /// Text styling options
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum TextStyle {
-    /// Bold text
-    Bold,
-    /// Success color (green)
-    Success,
-    /// Info color (blue)
-    Info,
     /// Muted color (gray)
     Muted,
 }
@@ -169,15 +163,6 @@ impl<M> Cmd<M> {
     #[must_use]
     pub fn styled_text(config: StyledTextConfig) -> Self {
         Self::StyledText(config)
-    }
-
-    /// Render simple bold text
-    #[must_use]
-    pub fn bold(text: impl Into<String>) -> Self {
-        Self::StyledText(StyledTextConfig {
-            text: text.into(),
-            style: TextStyle::Bold,
-        })
     }
 
     /// Print a blank line (spacer)

@@ -351,8 +351,6 @@ pub struct PackageServiceBuilder {
     policy: Option<SecurityPolicy>,
     vulnerability_source: Arc<dyn VulnerabilitySource>,
     history: HistoryConfiguration,
-    #[cfg(feature = "arch")]
-    aur_client: Option<crate::package_managers::AurClient>,
 }
 
 impl PackageServiceBuilder {
@@ -363,8 +361,6 @@ impl PackageServiceBuilder {
             policy: None,
             vulnerability_source: Arc::new(VulnerabilityScanner::new()),
             history: HistoryConfiguration::Default,
-            #[cfg(feature = "arch")]
-            aur_client: None,
         }
     }
 
@@ -396,24 +392,13 @@ impl PackageServiceBuilder {
         self
     }
 
-    /// Set the AUR client (Arch only)
-    #[cfg(feature = "arch")]
-    #[must_use]
-    pub fn aur_client(mut self, client: crate::package_managers::AurClient) -> Self {
-        self.aur_client = Some(client);
-        self
-    }
-
     /// Build the `PackageService`
     pub fn build(self) -> Result<PackageService> {
         #[cfg(feature = "arch")]
         let aur_client = if self.backend.name() == "pacman" {
-            match self.aur_client {
-                Some(client) => Some(client),
-                None => Some(crate::package_managers::AurClient::new()?),
-            }
+            Some(crate::package_managers::AurClient::new()?)
         } else {
-            self.aur_client
+            None
         };
 
         let history = match self.history {

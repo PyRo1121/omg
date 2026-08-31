@@ -591,9 +591,6 @@ fn resolve_nvm_alias(nvm_dir: &Path, alias: &str) -> Result<Option<String>> {
     Ok((!resolved.is_empty()).then(|| resolved.to_string()))
 }
 
-// Runtime resolution helpers
-// moved to core::runtime_resolver module
-
 /// Get active versions for display
 pub fn get_active_versions() -> Result<HashMap<String, String>> {
     let cwd = std::env::current_dir().context("Failed to get current directory")?;

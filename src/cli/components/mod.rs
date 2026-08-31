@@ -16,28 +16,6 @@ use crate::cli::tea::{Cmd, StyledTextConfig, TextStyle};
 pub struct Components;
 
 impl Components {
-    /// Create a step indicator for multi-step processes
-    ///
-    /// Displays `[1/3] ⟳ Processing` for incomplete steps
-    /// and `[3/3] ✓ Complete` for the final step.
-    #[must_use]
-    pub fn step<M>(step: usize, total: usize, message: impl Into<String>) -> Cmd<M> {
-        let icon = if step == total { "✓" } else { "⟳" };
-        let style = if step == total {
-            TextStyle::Success
-        } else {
-            TextStyle::Info
-        };
-
-        Cmd::batch([
-            Cmd::styled_text(StyledTextConfig {
-                text: format!("[{step}/{total}] {icon}"),
-                style,
-            }),
-            Cmd::println(format!(" {}", message.into())),
-        ])
-    }
-
     /// Create a key-value list, optionally in a card
     ///
     /// With title: renders as a card.
@@ -133,12 +111,6 @@ impl Components {
             Cmd::info(format!("💡 {}", suggestion.into())),
             Cmd::spacer(),
         ])
-    }
-
-    /// Section header for grouping related output
-    #[must_use]
-    pub fn section<M>(title: impl Into<String>) -> Cmd<M> {
-        Cmd::batch([Cmd::spacer(), Cmd::header(title.into(), ""), Cmd::spacer()])
     }
 }
 

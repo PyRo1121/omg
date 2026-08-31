@@ -11,8 +11,6 @@ readme = "README.md"
 keywords = ["package-manager", "arch-linux", "version-manager", "runtime"]
 categories = ["command-line-utilities", "development-tools"]
 
-[package.metadata.cargo-machete]
-
 [lib]
 name = "omg_lib"
 path = "src/lib.rs"
@@ -155,8 +153,6 @@ lzma-rs = "0.3" # Pure Rust XZ/LZMA (replaces xz2)
 regex = "1.12.2"
 ruzstd = "0.9.0" # Pure Rust zstd decoder (replaces zstd)
 
-# Git operations - using command-line git (always available on Arch)
-
 # Memory management
 zerocopy = { version = "0.8", features = ["derive"] }
 dashmap = "6.1.0"
@@ -209,10 +205,6 @@ nix = { version = "0.31", features = ["fs", "user"] }
 
 # Date & Time
 jiff = { version = "0.2.21", features = ["serde"] }
-
-# Random number generation (for jitter)
-
-# Database (PURE RUST embedded DB - replaces LMDB)
 
 # Direct libalpm bindings (for transactions - install/remove/upgrade)
 alpm = { version = "5.0.2", optional = true }

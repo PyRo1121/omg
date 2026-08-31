@@ -139,10 +139,6 @@ fn display_detailed_info(info: &crate::daemon::protocol::DetailedPackageInfo) {
     }
 }
 
-pub async fn info(package: &str) -> Result<()> {
-    info_with_json(package, false).await
-}
-
 pub async fn info_with_json(package: &str, json: bool) -> Result<()> {
     if let Err(error) = crate::core::security::validate_package_name(package) {
         anyhow::bail!("Invalid package name: {error}");

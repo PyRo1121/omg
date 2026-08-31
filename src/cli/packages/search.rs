@@ -60,10 +60,6 @@ impl DisplayPackage {
     }
 }
 
-pub async fn search(query: &str, detailed: bool, no_aur: bool) -> Result<()> {
-    search_internal(query, detailed, false, no_aur, 50).await
-}
-
 pub async fn search_with_json(
     query: &str,
     detailed: bool,
@@ -248,7 +244,7 @@ fn search_aur_packages(
     std::future::ready(Ok(Vec::new()))
 }
 
-pub fn search_sync_cli(query: &str, detailed: bool, no_aur: bool) -> Result<bool> {
+fn search_sync_cli(query: &str, detailed: bool, no_aur: bool) -> Result<bool> {
     search_sync_cli_with_limit(query, detailed, no_aur, 50)
 }
 pub fn search_sync_cli_with_limit(

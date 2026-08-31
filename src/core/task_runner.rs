@@ -766,7 +766,7 @@ fn execute_process(cmd: &str, args: &[String], extra_args: &[String]) -> Result<
     let current_dir = std::env::current_dir()?;
     if let Some(toolchain_file) = find_rust_toolchain_file(&current_dir) {
         // First check if Rust is available via system (rustup) - if so, let rustup handle it
-        let has_system_rust = which::which("rustc").is_ok() || which::which("cargo").is_ok();
+        let has_system_rust = find_in_path("rustc").is_some() || find_in_path("cargo").is_some();
 
         if !has_system_rust {
             // Only use OMG's Rust manager if no system Rust is available
@@ -1055,8 +1055,6 @@ fn ensure_js_package_manager(command: &str) -> Result<()> {
         anyhow::bail!("{command} setup cancelled");
     }
 }
-
-// Runtime resolution functions moved to core::runtime_resolver module
 
 /// Run a task in watch mode - re-run on file changes
 ///

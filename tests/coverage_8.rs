@@ -749,7 +749,7 @@ fn sync_client_detects_id_mismatch_and_daemon_errors() {
     let sock = daemon.socket_path.clone();
     with_client_env(None, None, Some(&sock), || {
         let mut client = SyncDaemonClient::acquire().expect("acquire");
-        let err = client.status().unwrap_err();
+        let err = client.call(&Request::Status { id: 1 }).unwrap_err();
         assert_eq!(
             err.to_string(),
             "Daemon error (-32603): internal",

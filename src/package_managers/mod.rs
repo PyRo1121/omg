@@ -337,7 +337,7 @@ pub use alpm_ops::{
     get_update_list, list_orphans_direct,
 };
 #[cfg(feature = "arch")]
-pub use arch::{ArchPackageManager, is_installed, list_explicit, list_orphans, remove_orphans};
+pub use arch::{ArchPackageManager, remove_orphans};
 #[cfg(feature = "arch")]
 pub use aur::{AurClient, AurPackageDetail, search_detailed};
 #[cfg(feature = "arch")]
@@ -478,14 +478,10 @@ pub use apt::{
     AptPackageManager, get_sync_pkg_info as apt_get_sync_pkg_info,
     get_system_status as apt_get_system_status,
     list_all_package_names as apt_list_all_package_names,
-    list_installed_fast as apt_list_installed_fast, list_updates as apt_list_updates,
-    remove_orphans as apt_remove_orphans,
+    list_installed_fast as apt_list_installed_fast, remove_orphans as apt_remove_orphans,
 };
 #[cfg(any(feature = "debian", feature = "debian-pure"))]
-pub use debian_db::{
-    get_counts_fast as apt_get_counts_fast, get_info_fast as apt_get_info_fast,
-    list_explicit_fast as apt_list_explicit_fast, search_fast as apt_search_fast,
-};
+pub use debian_db::search_fast as apt_search_fast;
 
 #[cfg(all(
     any(feature = "debian", feature = "debian-pure"),

@@ -21,6 +21,11 @@ OMG is the fastest unified package manager for Linux, replacing pacman, yay, nvm
 ### Cleanup
 
 - Remove unused Tea search model
+- Remove unused CLI telemetry helpers and package wrappers
+- Remove unused Tea component, command, and renderer helpers
+- Remove unused daemon client status accessors
+- Remove unused Arch/APT re-exports and mock helper
+- Remove unused pacman sync-package lookup
 - Remove inert runtime and cache paths
 - Remove final dead code and dependencies
 - Centralize runtime EOL matching

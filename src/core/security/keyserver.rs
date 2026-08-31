@@ -106,7 +106,7 @@ pub enum KeyserverError {
 }
 
 /// Fetch a key from the default Ubuntu keyserver.
-pub async fn fetch_key(key_id: &str) -> Result<Cert, KeyserverError> {
+async fn fetch_key(key_id: &str) -> Result<Cert, KeyserverError> {
     fetch_key_from(key_id, DEFAULT_KEYSERVER).await
 }
 

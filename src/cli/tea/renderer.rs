@@ -91,15 +91,6 @@ impl<W: Write> Renderer<W> {
         }
     }
 
-    /// Print an error message
-    pub fn error(&mut self, msg: &str) -> io::Result<()> {
-        if self.no_color {
-            writeln!(self.writer, "  ✗ {msg}")
-        } else {
-            writeln!(self.writer, "  {} {}", "✗".red().bold(), msg)
-        }
-    }
-
     /// Print a styled header
     pub fn header(&mut self, title: &str, body: &str) -> io::Result<()> {
         if self.no_color {
