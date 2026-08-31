@@ -695,6 +695,7 @@ analyzer inference
 - **Ci**: Cross-platform install script and R2 release sync
 ### 🐛 Bug Fixes
 
+- Remove nonfunctional enterprise mirroring
 - Build nested AUR dependencies recursively
 - Acquire privileges before AUR rollbacks
 - Fetch PGP keys for historical AUR builds
