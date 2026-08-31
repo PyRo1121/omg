@@ -702,6 +702,8 @@ analyzer inference
 - **Ci**: Cross-platform install script and R2 release sync
 ### 🐛 Bug Fixes
 
+- Allow unsigned AUR build artifacts
+- Protect recursive removals with HoldPkg
 - Match pacman recursive removal semantics
 - Honor interrupts in setup menus
 - Skip virtualenv activation scripts
