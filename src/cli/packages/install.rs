@@ -73,8 +73,9 @@ pub async fn install(
     dry_run: bool,
     allow_local_file: bool,
 ) -> Result<()> {
+    let packages = deduplicate_packages(packages);
     install_with_replacement_budget(
-        packages,
+        &packages,
         yes,
         dry_run,
         allow_local_file,
@@ -82,6 +83,15 @@ pub async fn install(
         MutationConfirmation::Required,
     )
     .await
+}
+
+fn deduplicate_packages(packages: &[String]) -> Vec<String> {
+    let mut seen = std::collections::HashSet::with_capacity(packages.len());
+    packages
+        .iter()
+        .filter(|package| seen.insert(package.as_str()))
+        .cloned()
+        .collect()
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -162,4 +172,15 @@ fn install_dry_run(packages: &[String]) -> impl std::future::Future<Output = Res
 #[cfg(not(any(feature = "arch", feature = "debian", feature = "debian-pure")))]
 fn install_dry_run(packages: &[String]) -> impl std::future::Future<Output = Result<()>> + use<'_> {
     std::future::ready(generic::install_dry_run(packages))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::deduplicate_packages;
+
+    #[test]
+    fn duplicate_install_targets_are_processed_once_in_request_order() {
+        let packages = vec!["alpha".to_string(), "beta".to_string(), "alpha".to_string()];
+        assert_eq!(deduplicate_packages(&packages), ["alpha", "beta"]);
+    }
 }
