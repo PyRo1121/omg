@@ -97,6 +97,58 @@ fn strip_inline_comment(line: &str) -> &str {
     line
 }
 
+fn is_shell_identifier(value: &str) -> bool {
+    let mut characters = value.chars();
+    characters
+        .next()
+        .is_some_and(|character| character == '_' || character.is_ascii_alphabetic())
+        && characters.all(|character| character == '_' || character.is_ascii_alphanumeric())
+}
+
+fn function_declaration(line: &str) -> bool {
+    let line = strip_inline_comment(line).trim();
+    if let Some(rest) = line.strip_prefix("function ") {
+        let name = rest
+            .split(|character: char| {
+                character.is_whitespace() || character == '(' || character == '{'
+            })
+            .next()
+            .unwrap_or_default();
+        return is_shell_identifier(name);
+    }
+
+    let Some((name, rest)) = line.split_once('(') else {
+        return false;
+    };
+    is_shell_identifier(name.trim()) && rest.trim_start().starts_with(')')
+}
+
+fn unquoted_braces(line: &str) -> (u32, u32) {
+    let mut quote = None;
+    let mut escaped = false;
+    let mut opens = 0;
+    let mut closes = 0;
+
+    for character in strip_inline_comment(line).chars() {
+        if escaped {
+            escaped = false;
+            continue;
+        }
+        if character == '\\' && quote != Some('\'') {
+            escaped = true;
+            continue;
+        }
+        match quote {
+            Some(delimiter) if character == delimiter => quote = None,
+            None if character == '\'' || character == '"' => quote = Some(character),
+            None if character == '{' => opens += 1,
+            None if character == '}' => closes += 1,
+            Some(_) | None => {}
+        }
+    }
+    (opens, closes)
+}
+
 fn array_expression_complete(value: &str) -> Result<bool> {
     let mut quote = None;
     let mut escaped = false;
@@ -145,11 +197,57 @@ impl PkgBuild {
     pub fn parse_content(content: &str) -> Result<Self> {
         let mut vars: HashMap<String, String> = HashMap::new();
 
-        // First pass: Extract all variables including multi-line arrays.
+        // First pass: extract top-level variables including multi-line arrays.
+        // Assignments inside prepare/build/package functions are shell-local
+        // implementation details and must not override package metadata.
         let mut lines = content.lines();
+        let mut function_depth = 0_u32;
+        let mut awaiting_function_body = false;
         while let Some(line) = lines.next() {
             let line = line.trim();
             if line.is_empty() || line.starts_with('#') {
+                continue;
+            }
+
+            if function_depth > 0 {
+                let (opens, closes) = unquoted_braces(line);
+                function_depth = function_depth
+                    .checked_add(opens)
+                    .context("function brace depth overflow")?;
+                anyhow::ensure!(
+                    closes <= function_depth,
+                    "unexpected closing brace in PKGBUILD function"
+                );
+                function_depth -= closes;
+                continue;
+            }
+
+            if awaiting_function_body {
+                let (opens, closes) = unquoted_braces(line);
+                anyhow::ensure!(
+                    opens > 0,
+                    "PKGBUILD function body is missing an opening brace"
+                );
+                anyhow::ensure!(
+                    closes <= opens,
+                    "unexpected closing brace in PKGBUILD function"
+                );
+                function_depth = opens - closes;
+                awaiting_function_body = false;
+                continue;
+            }
+
+            if function_declaration(line) {
+                let (opens, closes) = unquoted_braces(line);
+                anyhow::ensure!(
+                    closes <= opens,
+                    "unexpected closing brace in PKGBUILD function"
+                );
+                if opens == 0 {
+                    awaiting_function_body = true;
+                } else {
+                    function_depth = opens - closes;
+                }
                 continue;
             }
 
@@ -182,6 +280,11 @@ impl PkgBuild {
                 );
             }
         }
+
+        anyhow::ensure!(
+            function_depth == 0 && !awaiting_function_body,
+            "unterminated function body in PKGBUILD"
+        );
 
         // Sort substitution sources once, longest first, so shorter variable
         // names cannot partially replace longer names.
@@ -302,6 +405,52 @@ mod tests {
                 "named source::https://example.test/archive.tar.gz",
                 "local patch.diff"
             ]
+        );
+    }
+
+    #[test]
+    fn function_assignments_do_not_override_top_level_metadata() {
+        let package = PkgBuild::parse_content(
+            r#"
+                pkgname=demo
+                pkgver=1
+                pkgrel=1
+                pkgdesc="top-level description"
+                validpgpkeys=(TOPLEVELKEY)
+
+                prepare() {
+                    pkgdesc="prepare-local description"
+                    validpgpkeys=(PREPAREKEY)
+                }
+
+                package_demo()
+                {
+                    pkgdesc="split package description"
+                    validpgpkeys=(SPLITKEY)
+                }
+            "#,
+        )
+        .expect("valid PKGBUILD functions");
+
+        assert_eq!(package.description, "top-level description");
+        assert_eq!(package.validpgpkeys, ["TOPLEVELKEY"]);
+    }
+
+    #[test]
+    fn unterminated_function_body_is_rejected() {
+        let error = PkgBuild::parse_content(
+            r"
+                pkgname=demo
+                pkgver=1
+                build() {
+                    local mode=release
+            ",
+        )
+        .expect_err("unterminated function must not hide the remainder of the file");
+
+        assert!(
+            error.to_string().contains("unterminated function"),
+            "{error}"
         );
     }
 
