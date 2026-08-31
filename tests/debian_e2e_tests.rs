@@ -12,7 +12,6 @@
 
 pub mod platform_semantics;
 
-use std::fs;
 use std::path::Path;
 
 use platform_semantics::assert_no_arch_terms;
@@ -28,22 +27,6 @@ use omg_lib::package_managers::debian_db::{
     RepoType, Repository, ResolutionResult, Transaction, TransactionState, compare_versions,
     parse_deb822_content, parse_sources_list_content,
 };
-
-/// Mirror of the Packages-URL construction used by `parallel_sync` so the
-/// documented URL format stays pinned even though the helper itself is
-/// private to production code.
-fn expected_packages_url(repo: &Repository, arch: &str) -> String {
-    if repo.components.is_empty() {
-        return format!("{}/Packages", repo.uri.trim_end_matches('/'));
-    }
-    format!(
-        "{}/dists/{}/{}/binary-{}/Packages",
-        repo.uri.trim_end_matches('/'),
-        repo.suite,
-        repo.components[0],
-        arch
-    )
-}
 
 // ============================================================================
 // Sources Parser Tests
@@ -215,7 +198,7 @@ deb [arch=amd64] http://example.com/special testing main
 }
 
 #[test]
-fn test_repository_urls() {
+fn test_repository_release_url() {
     let repo = Repository {
         repo_type: RepoType::Binary,
         uri: "http://deb.debian.org/debian".to_string(),
@@ -228,36 +211,11 @@ fn test_repository_urls() {
         options: std::collections::HashMap::new(),
     };
 
-    let packages_url = expected_packages_url(&repo, "amd64");
-    assert_eq!(
-        packages_url,
-        "http://deb.debian.org/debian/dists/bookworm/main/binary-amd64/Packages"
-    );
-
     let release_url = repo.release_url();
     assert_eq!(
         release_url,
         "http://deb.debian.org/debian/dists/bookworm/InRelease"
     );
-}
-
-#[test]
-fn test_flat_repository_layout() {
-    // Some PPAs use flat repository layout without components
-    let repo = Repository {
-        repo_type: RepoType::Binary,
-        uri: "http://example.com/ppa".to_string(),
-        suite: "noble".to_string(),
-        components: vec![], // No components = flat layout
-        arch: None,
-        signed_by: None,
-        enabled: true,
-        source_file: std::path::PathBuf::new(),
-        options: std::collections::HashMap::new(),
-    };
-
-    let packages_url = expected_packages_url(&repo, "amd64");
-    assert_eq!(packages_url, "http://example.com/ppa/Packages");
 }
 
 // ============================================================================
@@ -564,27 +522,18 @@ fn test_transaction_empty() {
 // ============================================================================
 
 #[test]
-fn test_end_to_end_sources_to_resolver() {
-    // Create a temporary sources.list file
-    let temp_dir = TempDir::new().unwrap();
-    let sources_file = temp_dir.path().join("sources.list");
-
+fn test_sources_parse_repository_metadata() {
     let content = r"
 deb http://deb.debian.org/debian bookworm main
 deb http://security.debian.org/debian-security bookworm-security main
 ";
 
-    fs::write(&sources_file, content).unwrap();
+    let repos = parse_sources_list_content(content, Path::new("/etc/apt/sources.list")).unwrap();
 
-    // Parse sources
-    let repos = parse_sources_list_content(content, &sources_file).unwrap();
     assert_eq!(repos.len(), 2);
-
-    // Verify repository URLs are constructed correctly
-    let packages_url = expected_packages_url(&repos[0], "amd64");
-    assert!(packages_url.contains("bookworm"));
-    assert!(packages_url.contains("main"));
-    assert!(packages_url.contains("binary-amd64"));
+    assert_eq!(repos[0].suite, "bookworm");
+    assert_eq!(repos[0].components, ["main"]);
+    assert_eq!(repos[1].suite, "bookworm-security");
 }
 
 #[test]
