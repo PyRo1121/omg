@@ -4046,6 +4046,7 @@ the Debian backend), so it was removed from the metadata.
 - Normalize project formatting
 ### 🧪 Testing
 
+- Replace weak Arch smoke assertions
 - Strengthen Arch command behavior contracts
 - Replace blanket IPC lint suppression
 - Replace blanket daemon coverage lint suppression
