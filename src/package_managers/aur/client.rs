@@ -12,7 +12,7 @@ use std::time::Duration;
 use alpm_types::Version;
 use anyhow::{Context, Result};
 use dialoguer::Confirm;
-use futures::StreamExt;
+use futures::{FutureExt, StreamExt, future::BoxFuture};
 use indicatif::{ProgressBar, ProgressStyle};
 use owo_colors::OwoColorize;
 use serde::Deserialize;
@@ -1243,11 +1243,14 @@ impl AurClient {
         let env = self.makepkg_env(&pkg_dir)?;
 
         let aur_deps = self.missing_aur_dependencies(&pkg_dir, package).await?;
+        let mut dependency_builds = AHashSet::from_iter([package.to_string()]);
         for dep in aur_deps {
             crate::cli::modern_ui::print_info(&format!(
                 "Installing AUR dependency for {package}: {dep}"
             ));
-            let dep_pkg = self.build_only(&dep).await?;
+            let dep_pkg = self
+                .build_only(&dep, &mut dependency_builds, sudoloop.as_ref())
+                .await?;
             Self::install_built_package(&dep_pkg, sudoloop.as_ref()).await?;
             crate::cli::modern_ui::print_success(&format!("Installed dependency: {dep}"));
         }
@@ -1341,8 +1344,35 @@ impl AurClient {
         Ok(())
     }
 
-    #[instrument(skip(self))]
-    async fn build_only(&self, package: &str) -> Result<PathBuf> {
+    fn build_only<'a>(
+        &'a self,
+        package: &'a str,
+        in_flight: &'a mut AHashSet<String>,
+        sudoloop: Option<&'a crate::core::sudoloop::SudoLoop>,
+    ) -> BoxFuture<'a, Result<PathBuf>> {
+        async move {
+            Self::enter_dependency_build(in_flight, package)?;
+            let result = self.build_only_inner(package, in_flight, sudoloop).await;
+            in_flight.remove(package);
+            result
+        }
+        .boxed()
+    }
+
+    fn enter_dependency_build(in_flight: &mut AHashSet<String>, package: &str) -> Result<()> {
+        if !in_flight.insert(package.to_string()) {
+            anyhow::bail!("Circular AUR dependency detected while resolving '{package}'");
+        }
+        Ok(())
+    }
+
+    #[instrument(skip(self, in_flight, sudoloop))]
+    async fn build_only_inner(
+        &self,
+        package: &str,
+        in_flight: &mut AHashSet<String>,
+        sudoloop: Option<&crate::core::sudoloop::SudoLoop>,
+    ) -> Result<PathBuf> {
         crate::core::security::validate_package_name(package)?;
 
         // A dependency may be a split-package OUTPUT whose AUR repository is
@@ -1403,6 +1433,15 @@ impl AurClient {
             Self::review_pkgbuild(&pkgbuild_path).await?;
         }
         Self::fetch_missing_pgp_keys(&pkgbuild_path).await?;
+
+        for dependency in self.missing_aur_dependencies(&pkg_dir, package).await? {
+            crate::cli::modern_ui::print_info(&format!(
+                "Installing AUR dependency for {package}: {dependency}"
+            ));
+            let archive = self.build_only(&dependency, in_flight, sudoloop).await?;
+            Self::install_built_package(&archive, sudoloop).await?;
+            crate::cli::modern_ui::print_success(&format!("Installed dependency: {dependency}"));
+        }
 
         let env = self.makepkg_env(&pkg_dir)?;
         let cache_key = self.cache_key(&pkg_dir, &env.makeflags)?;
@@ -3341,6 +3380,18 @@ mod tests {
             !client.makepkg_args().contains(&"-s"),
             "dependency installation must happen before the isolated build session"
         );
+    }
+
+    #[test]
+    fn recursive_dependency_builds_reject_cycles() {
+        let mut in_flight = AHashSet::from_iter(["root-package".to_string()]);
+
+        let error = AurClient::enter_dependency_build(&mut in_flight, "root-package")
+            .expect_err("an in-flight package must be rejected");
+
+        assert!(error.to_string().contains("Circular AUR dependency"));
+        AurClient::enter_dependency_build(&mut in_flight, "leaf-package")
+            .expect("a new dependency should enter the build set");
     }
 
     #[test]
