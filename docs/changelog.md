@@ -702,6 +702,7 @@ analyzer inference
 - **Ci**: Cross-platform install script and R2 release sync
 ### 🐛 Bug Fixes
 
+- Order runtime prereleases correctly
 - Retain AUR epochs in rollback versions
 - Preserve PKGBUILD URL fragments
 - Bound PKGBUILD metadata reads
