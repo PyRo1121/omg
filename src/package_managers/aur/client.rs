@@ -443,7 +443,7 @@ impl AurClient {
             })
             .collect();
 
-        // Sort by relevance: exact name match > prefix match > word boundary > substring > alphabetical
+        // Rank exact, prefix, and word-boundary matches before shorter names.
         // Pre-compute lowercased names to avoid O(n log n) allocations during sort
         let query_lower = query.to_ascii_lowercase();
 
@@ -898,8 +898,6 @@ impl AurClient {
     /// touched, and no build-cache key is written (this is not the latest
     /// build).
     pub async fn downgrade_from_history(&self, package: &str, version: &str) -> Result<()> {
-        use std::process::Stdio;
-
         crate::core::security::validate_package_name(package)?;
         crate::core::security::validate_version(version)?;
         require_unprivileged_builder(package, crate::core::is_root())?;
@@ -2957,7 +2955,7 @@ pub async fn search_detailed(query: &str) -> Result<Vec<AurPackageDetail>> {
         })
         .collect::<Vec<_>>();
 
-    // Sort by relevance: exact name match > prefix match > word boundary > substring > popularity
+    // Rank exact, prefix, and word-boundary matches before popularity.
     let query_lower = query.to_ascii_lowercase();
     results.sort_by(|a, b| {
         let a_name_lower = a.name.to_ascii_lowercase();
