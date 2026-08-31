@@ -898,12 +898,12 @@ fn configure_mirrors(alpm: &mut alpm::Alpm) -> Result<()> {
                 ),
             }
         }
-        return Ok(());
+        return ensure_mirror_servers(alpm);
     }
 
     let mirrorlist = paths::pacman_mirrorlist_path();
     if !mirrorlist.exists() {
-        return Ok(());
+        return ensure_mirror_servers(alpm);
     }
 
     let content = std::fs::read_to_string(mirrorlist)?;
@@ -928,15 +928,44 @@ fn configure_mirrors(alpm: &mut alpm::Alpm) -> Result<()> {
             }
         }
     }
+    ensure_mirror_servers(alpm)
+}
+
+fn ensure_mirror_servers(alpm: &alpm::Alpm) -> Result<()> {
+    anyhow::ensure!(
+        alpm.syncdbs()
+            .into_iter()
+            .any(|database| !database.servers().is_empty()),
+        "No usable pacman mirror servers are configured"
+    );
     Ok(())
 }
 
 #[cfg(test)]
 mod tests {
     use super::{
-        DOWNLOAD_BAR_TEMPLATE, DOWNLOAD_SPINNER_TEMPLATE, TransactionKind, format_no_syncdb_error,
-        format_trans_prepare_error, is_keyring_related_error, package_base_name, transaction_flags,
+        DOWNLOAD_BAR_TEMPLATE, DOWNLOAD_SPINNER_TEMPLATE, TransactionKind, ensure_mirror_servers,
+        format_no_syncdb_error, format_trans_prepare_error, is_keyring_related_error,
+        package_base_name, transaction_flags,
     };
+
+    #[test]
+    fn mirror_configuration_requires_at_least_one_usable_server() {
+        let database_path = tempfile::tempdir().expect("temporary database path");
+        let database_path = database_path.path().to_string_lossy();
+        let mut alpm = alpm::Alpm::new("/", database_path.as_ref()).expect("ALPM handle");
+        alpm.register_syncdb_mut("core", alpm::SigLevel::NONE)
+            .expect("register sync database");
+
+        assert!(ensure_mirror_servers(&alpm).is_err());
+        alpm.syncdbs_mut()
+            .into_iter()
+            .next()
+            .expect("registered sync database")
+            .add_server("https://mirror.example/$repo/os/$arch")
+            .expect("add test mirror");
+        assert!(ensure_mirror_servers(&alpm).is_ok());
+    }
 
     #[test]
     fn recursive_removal_flags_are_opt_in() {
