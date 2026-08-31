@@ -79,20 +79,28 @@ pub async fn install(
         dry_run,
         allow_local_file,
         MAX_REPLACEMENT_HOPS,
+        MutationConfirmation::Required,
     )
     .await
+}
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum MutationConfirmation {
+    Required,
+    AlreadyConfirmed,
 }
 
 /// Entry point with an explicit interactive-replacement budget.
 ///
 /// Each user-accepted suggestion re-enters the install flow for one package;
 /// the budget turns a pathological suggestion chain into a clean error.
-pub(crate) async fn install_with_replacement_budget(
+async fn install_with_replacement_budget(
     packages: &[String],
     yes: bool,
     dry_run: bool,
     allow_local_file: bool,
     replacement_hops: u32,
+    confirmation: MutationConfirmation,
 ) -> Result<()> {
     if packages.is_empty() {
         anyhow::bail!("No packages specified");
@@ -117,6 +125,13 @@ pub(crate) async fn install_with_replacement_budget(
 
     if dry_run {
         return install_dry_run(packages).await;
+    }
+
+    if confirmation == MutationConfirmation::Required
+        && !super::common::confirm_package_mutation("installation", packages.len(), yes).await?
+    {
+        crate::cli::modern_ui::print_warning("Installation cancelled");
+        return Ok(());
     }
 
     dispatch_backend! {

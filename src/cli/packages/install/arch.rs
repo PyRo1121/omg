@@ -472,6 +472,7 @@ fn handle_missing_package(
                     false,
                     false,
                     replacement_hops - 1,
+                    super::MutationConfirmation::AlreadyConfirmed,
                 )
                 .await;
             }

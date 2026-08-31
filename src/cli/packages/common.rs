@@ -254,6 +254,37 @@ pub(crate) fn update_official_only_dry_run(updates: &[UpdateInfo]) -> Result<()>
     Ok(())
 }
 
+fn confirmation_policy(yes: bool, attended: bool, action: &str) -> Result<bool> {
+    if yes {
+        return Ok(false);
+    }
+    anyhow::ensure!(attended, "Use --yes for non-interactive package {action}");
+    Ok(true)
+}
+
+/// Confirm a privileged package mutation unless the caller supplied `--yes`.
+pub(crate) async fn confirm_package_mutation(
+    action: &'static str,
+    package_count: usize,
+    yes: bool,
+) -> Result<bool> {
+    if !confirmation_policy(yes, console::user_attended(), action)? {
+        return Ok(true);
+    }
+
+    tokio::task::spawn_blocking(move || {
+        dialoguer::Confirm::with_theme(&crate::cli::ui::prompt_theme())
+            .with_prompt(format!(
+                "Proceed with {action} of {package_count} package(s)?"
+            ))
+            .default(false)
+            .interact()
+    })
+    .await
+    .map_err(|error| anyhow::anyhow!("Package confirmation task failed: {error}"))?
+    .map_err(Into::into)
+}
+
 /// Removal orchestration shared by every compiled backend: usage tracking
 /// and success reporting around `PackageService::remove`.
 pub(crate) async fn remove_via_service(packages: &[String]) -> Result<()> {
@@ -299,6 +330,14 @@ mod tests {
             repo: "core".to_string(),
         }];
         assert!(update_official_only_dry_run(&updates).is_ok());
+    }
+
+    #[test]
+    fn package_mutation_confirmation_is_required_in_non_interactive_sessions() {
+        assert!(!confirmation_policy(true, false, "installation").unwrap());
+        assert!(confirmation_policy(false, true, "installation").unwrap());
+        let error = confirmation_policy(false, false, "installation").unwrap_err();
+        assert!(error.to_string().contains("Use --yes"));
     }
 
     #[test]
