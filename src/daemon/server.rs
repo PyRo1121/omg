@@ -83,6 +83,16 @@ pub async fn run(
     .await
 }
 
+async fn write_fast_status_async(
+    status: crate::core::fast_status::FastStatus,
+    path: PathBuf,
+) -> Result<()> {
+    tokio::task::spawn_blocking(move || status.write_to_file(&path))
+        .await
+        .context("Fast-status writer panicked")??;
+    Ok(())
+}
+
 fn validate_signal_result(result: std::io::Result<()>, signal: &str) -> Result<()> {
     result.with_context(|| format!("Failed to listen for {signal}"))
 }
@@ -163,7 +173,9 @@ async fn run_with_status_path(
             };
             let fast_status =
                 crate::core::fast_status::FastStatus::new(total, explicit, orphans, updates);
-            if let Err(error) = fast_status.write_to_file(fast_status_path) {
+            if let Err(error) =
+                write_fast_status_async(fast_status, fast_status_path.to_path_buf()).await
+            {
                 tracing::warn!("Failed to write fast status file: {error}");
             }
 
@@ -695,6 +707,22 @@ mod tests {
             }
             Response::Success { .. } => panic!("oversized response must become an error"),
         }
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn fast_status_writes_run_through_the_blocking_adapter() {
+        let directory = tempfile::tempdir().expect("tempdir");
+        let path = directory.path().join("status.bin");
+        let status = crate::core::fast_status::FastStatus::new(10, 4, 1, 2);
+
+        write_fast_status_async(status, path.clone())
+            .await
+            .expect("write fast status");
+
+        let persisted =
+            crate::core::fast_status::FastStatus::read_from_file(&path).expect("read fast status");
+        assert_eq!(persisted.total_packages, 10);
+        assert_eq!(persisted.updates_available, 2);
     }
 
     #[test]
