@@ -20,12 +20,9 @@ fn test_cache_basic_ops() {
     assert_eq!(res.len(), 1);
     assert_eq!(res[0].name, "test");
 
-    // Stats (moka entry_count is eventually consistent)
-    // We primarily verify functional correctness via get(), so we'll just log stats
-    // rather than failing if the background counter hasn't updated yet.
-    let stats = cache.stats();
-    println!("Cache stats size: {}", stats.size);
-    // assert_eq!(stats.size, 1); // Flaky on some CI environments due to moka laziness
+    // Flush Moka's pending accounting before asserting the public statistic.
+    cache.sync();
+    assert_eq!(cache.stats().size, 1);
 
     // Clear
     cache.clear();
