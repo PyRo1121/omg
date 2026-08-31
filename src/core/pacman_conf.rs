@@ -85,6 +85,16 @@ fn load_config_with_includes(
     Ok(())
 }
 
+fn validate_repository_name(name: &str) -> Result<()> {
+    let mut components = Path::new(name).components();
+    anyhow::ensure!(
+        matches!(components.next(), Some(std::path::Component::Normal(component)) if component == name)
+            && components.next().is_none(),
+        "Invalid repository name '{name}': expected one filesystem path component"
+    );
+    Ok(())
+}
+
 impl PacmanConfig {
     pub fn parse<P: AsRef<Path>>(path: P) -> Result<Self> {
         let mut content = String::new();
@@ -113,6 +123,7 @@ impl PacmanConfig {
                 current_section = Some(section.to_string());
 
                 if section != "options" {
+                    validate_repository_name(section)?;
                     current_repo = Some(RepoConfig {
                         name: section.to_string(),
                         ..Default::default()
@@ -335,6 +346,20 @@ mod tests {
 
         let error = PacmanConfig::parse(&first).expect_err("include cycles must fail");
         assert!(error.to_string().contains("include cycle"), "{error}");
+    }
+
+    #[test]
+    fn repository_names_must_be_single_path_components() {
+        for invalid in ["../escape", "nested/repo", ".", "..", ""] {
+            let config = format!("[options]\n[{invalid}]\nServer = https://example.invalid\n");
+            let error = PacmanConfig::parse_str(&config)
+                .expect_err("unsafe repository name must be rejected");
+            assert!(error.to_string().contains("Invalid repository name"));
+        }
+        PacmanConfig::parse_str(
+            "[options]\n[custom.repo-name_1]\nServer = https://example.invalid\n",
+        )
+        .expect("safe path component");
     }
 
     #[test]
