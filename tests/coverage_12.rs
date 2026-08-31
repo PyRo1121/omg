@@ -96,8 +96,8 @@ impl FakeRuntime {
     }
 
     /// Run `f` with the fake runtime forced to exit with `code`.
+    #[allow(clippy::unused_self)]
     fn with_exit_code<T>(&self, code: i32, f: impl FnOnce() -> T) -> T {
-        let _ = self;
         let code_str = code.to_string();
         temp_env::with_vars([(FAKE_EXIT_ENV, Some(code_str.as_str()))], f)
     }
@@ -521,7 +521,7 @@ fn dockerfile_for(base_image: &str, runtimes: &[(&str, &str)]) -> String {
 }
 
 #[test]
-fn dockerfile_node_lts_pins_node_20_and_explicit_versions_pass_through() {
+fn dockerfile_node_versions_map_to_nodesource_major_channels() {
     let lts = dockerfile_for("ubuntu:24.04", &[("node", "lts")]);
     assert!(
         lts.contains("# Install Node.js\n"),
@@ -532,12 +532,15 @@ fn dockerfile_node_lts_pins_node_20_and_explicit_versions_pass_through() {
         "'lts' must pin NODE_VERSION=20, got:\n{lts}"
     );
     assert!(
-        lts.contains("setup_${NODE_VERSION}.x | bash"),
-        "nodesource setup line missing"
+        lts.contains(
+            "-o /tmp/nodesource-setup.sh https://deb.nodesource.com/setup_${NODE_VERSION}.x"
+        ) && lts.contains("bash /tmp/nodesource-setup.sh")
+            && !lts.contains("setup_${NODE_VERSION}.x | bash"),
+        "NodeSource setup must be downloaded before execution"
     );
 
     let explicit = dockerfile_for("debian:bookworm-slim", &[("node", "21.7.0")]);
-    assert!(explicit.contains("ENV NODE_VERSION=21.7.0\n"));
+    assert!(explicit.contains("ENV NODE_VERSION=21\n"));
 }
 
 #[test]
@@ -579,8 +582,8 @@ fn dockerfile_ruby_maps_latest_to_ruby_full_else_ruby_prefixed_spec() {
 
     let pinned = dockerfile_for("debian:bookworm-slim", &[("ruby", "3.2.1")]);
     assert!(
-        pinned.contains("apt-get install -y ruby3.2.1 \\\n"),
-        "pinned ruby must become ruby<version>, got:\n{pinned}"
+        pinned.contains("apt-get install -y ruby3.2 \\\n"),
+        "pinned ruby must map to the distro's major.minor package, got:\n{pinned}"
     );
 }
 
@@ -684,22 +687,22 @@ fn dockerfile_unsafe_inputs_never_reach_generated_text() {
     // strips it and falls back to the default. Assert the payload is absent
     // and a clean NODE_VERSION line exists.
     let df = dockerfile_for("ubuntu:24.04", &[("node", "20; rm -rf /")]);
+    // The version must be a clean numeric value or the explicit default, not
+    // the injected payload.
+    let node_version_line = df
+        .lines()
+        .find(|line| line.starts_with("ENV NODE_VERSION="))
+        .expect("Node Dockerfile must declare NODE_VERSION");
+    let node_version = node_version_line
+        .strip_prefix("ENV NODE_VERSION=")
+        .expect("matched NODE_VERSION prefix");
     assert!(
-        !df.contains("rm -rf /") || !df.contains("evil"),
-        "payload must not appear in output:\n{df}"
+        node_version == "latest"
+            || node_version
+                .chars()
+                .all(|character| character.is_ascii_digit() || character == '.'),
+        "NODE_VERSION must be a safe default: {node_version_line}"
     );
-    // The version must be a clean numeric value, not the injected payload.
-    let node_version_line = df.lines().find(|l| l.starts_with("ENV NODE_VERSION="));
-    if let Some(line) = node_version_line {
-        assert!(
-            line.parse::<f64>().is_ok() || line.contains("20") || line.contains("latest"),
-            "NODE_VERSION must be a safe default: {line}"
-        );
-        assert!(
-            !line.contains(';') && !line.contains("rm"),
-            "payload in NODE_VERSION line: {line}"
-        );
-    }
     assert!(
         !df.contains("20;"),
         "unsafe version payload must not survive"
@@ -749,9 +752,13 @@ fn dockerfile_always_ends_with_workdir_copy_cmd_tail() {
 fn dev_container_config_names_mounts_and_enters_project_dir() {
     let project = tempfile::tempdir().expect("project tempdir");
     let dir_name = project.path().file_name().unwrap().to_str().unwrap();
+    let safe_dir_name = dir_name.trim_start_matches('.');
 
     let config = dev_container_config(project.path());
-    assert_eq!(config.name.as_deref(), Some(&*format!("{dir_name}-dev")));
+    assert_eq!(
+        config.name.as_deref(),
+        Some(&*format!("{safe_dir_name}-dev"))
+    );
     assert_eq!(config.image, "ubuntu:24.04");
     assert_eq!(
         config.env,

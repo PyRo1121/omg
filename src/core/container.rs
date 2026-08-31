@@ -480,7 +480,9 @@ impl ContainerManager {
                     let java_pkg = version
                         .split('.')
                         .next()
-                        .filter(|major| major.chars().all(|c| c.is_ascii_digit()))
+                        .filter(|major| {
+                            !major.is_empty() && major.chars().all(|c| c.is_ascii_digit())
+                        })
                         .map_or_else(
                             || "default-jdk".to_string(),
                             |major| format!("openjdk-{major}-jdk"),
