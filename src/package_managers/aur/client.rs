@@ -375,6 +375,29 @@ impl AurClient {
         format!("pkgbase:{package_base}")
     }
 
+    async fn acquire_package_base_file_lock(&self, package_base: &str) -> Result<File> {
+        let lock_dir = self.build_dir.join("_locks");
+        create_dir_as_user(&lock_dir).await?;
+        let lock_path = lock_dir.join(format!("{package_base}.lock"));
+        tokio::task::spawn_blocking(move || -> Result<File> {
+            let file = std::fs::OpenOptions::new()
+                .create(true)
+                .read(true)
+                .write(true)
+                .truncate(false)
+                .open(&lock_path)
+                .with_context(|| {
+                    format!("Failed to open AUR build lock {}", lock_path.display())
+                })?;
+            file.lock().with_context(|| {
+                format!("Failed to acquire AUR build lock {}", lock_path.display())
+            })?;
+            Ok(file)
+        })
+        .await
+        .context("AUR build lock worker failed")?
+    }
+
     #[must_use]
     pub fn build_concurrency(&self) -> usize {
         self.settings.aur.build_concurrency.max(1)
@@ -1219,6 +1242,7 @@ impl AurClient {
         };
 
         create_dir_as_user(&self.build_dir).await?;
+        let package_checkout_file_guard = self.acquire_package_base_file_lock(package).await?;
 
         // SECURITY: Validate package directory is safe (prevents symlink attacks)
         let pkg_dir = validate_build_dir(&self.build_dir, package)?;
@@ -1295,6 +1319,7 @@ impl AurClient {
         let aur_deps = self.missing_aur_dependencies(&pkg_dir, package).await?;
         let mut dependency_builds =
             AHashSet::from_iter([package.to_string(), Self::package_base_marker(package)]);
+        drop(package_checkout_file_guard);
         drop(package_checkout_guard);
         for dep in aur_deps {
             crate::cli::modern_ui::print_info(&format!(
@@ -1308,6 +1333,7 @@ impl AurClient {
         }
 
         let _package_build_guard = package_lock.lock().await;
+        let _package_build_file_guard = self.acquire_package_base_file_lock(package).await?;
 
         // Best-effort pre-download: makepkg still fetches anything we miss.
         match parse_sources(&pkg_dir) {
@@ -1462,6 +1488,7 @@ impl AurClient {
         // `postgresql18.git`). Clone/build the base; cache and artifact
         // lookups stay scoped to the requested output.
         create_dir_as_user(&self.build_dir).await?;
+        let package_checkout_file_guard = self.acquire_package_base_file_lock(package_base).await?;
 
         // SECURITY: Validate package directory is safe (prevents symlink attacks)
         let pkg_dir = validate_build_dir(&self.build_dir, package_base)?;
@@ -1515,6 +1542,7 @@ impl AurClient {
         Self::fetch_missing_pgp_keys(&pkgbuild_path).await?;
 
         let missing_dependencies = self.missing_aur_dependencies(&pkg_dir, package).await?;
+        drop(package_checkout_file_guard);
         drop(package_checkout_guard);
         for dependency in missing_dependencies {
             crate::cli::modern_ui::print_info(&format!(
@@ -1526,6 +1554,7 @@ impl AurClient {
         }
 
         let _package_build_guard = package_lock.lock().await;
+        let _package_build_file_guard = self.acquire_package_base_file_lock(package_base).await?;
         let env = self.makepkg_env(&pkg_dir)?;
         let cache_key = self.cache_key(&pkg_dir, &env.makeflags)?;
         if let Some(cached) = self
@@ -3549,6 +3578,24 @@ mod tests {
             .unwrap();
 
         assert!(archive.is_none());
+    }
+
+    #[tokio::test]
+    async fn package_base_file_locks_live_under_the_build_directory() {
+        let directory = tempfile::tempdir().unwrap();
+        let client = AurClient {
+            build_dir: directory.path().to_path_buf(),
+            settings: Settings::default(),
+            package_base_locks: Arc::new(dashmap::DashMap::new()),
+        };
+
+        let guard = client
+            .acquire_package_base_file_lock("shared-base")
+            .await
+            .expect("package-base file lock");
+
+        assert!(directory.path().join("_locks/shared-base.lock").is_file());
+        drop(guard);
     }
 
     #[test]
