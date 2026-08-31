@@ -124,25 +124,22 @@ fn execute_fast_system_update(suffix: &str) -> Result<()> {
 /// package tokens (`omg <command> ... -- <packages...>`).
 ///
 /// Returns `None` when the invocation must fall through to full clap parsing:
-/// missing sub-command or `--` separator, or any flag-looking token after the
-/// separator. Flags after `--` (e.g. `update -- --check`) select behavior this
-/// minimal transaction path cannot honor, so they are never executed here.
+/// missing sub-command or `--` separator, any token between the command and
+/// separator, or any flag-looking package token. The minimal path accepts only
+/// the internal protocol shape `omg <command> -- <packages...>`.
 #[cfg(feature = "arch")]
 fn split_elevated_invocation(args: &[String]) -> Option<(&str, &[String])> {
     let command = args.get(1)?;
     let separator_pos = args.iter().position(|a| a == "--")?;
-    if separator_pos < 2 {
+    if separator_pos != 2 {
         return None;
     }
-    // The minimal transaction path honors exactly `omg <cmd> -- pkgs...`.
-    // ANY flag-looking token anywhere in the elevated invocation (before or
-    // after the separator) selects behavior this path cannot honor, so the
-    // full CLI re-dispatch must handle it instead. Silently dropping e.g.
+    // Flag-looking package tokens select behavior this path cannot honor, so
+    // the full CLI re-dispatch must handle them instead. Silently dropping
     // `--check` or `--dry-run` would turn a read-only request into a
     // destructive mutation.
-    if args[2..separator_pos]
+    if args[separator_pos + 1..]
         .iter()
-        .chain(&args[separator_pos + 1..])
         .any(|arg| arg.starts_with('-'))
     {
         return None;
@@ -1442,8 +1439,13 @@ mod fast_path_tests {
 
     #[cfg(feature = "arch")]
     #[test]
-    fn elevated_plain_package_lists_still_split() {
-        let argv = args(&["omg", "install", "extra", "--", "ripgrep", "jq"]);
+    fn elevated_package_lists_require_the_exact_internal_shape() {
+        assert!(
+            split_elevated_invocation(&args(&["omg", "install", "extra", "--", "ripgrep", "jq"]))
+                .is_none(),
+            "pre-separator packages must fall through instead of disappearing"
+        );
+        let argv = args(&["omg", "install", "--", "ripgrep", "jq"]);
         let parsed = split_elevated_invocation(&argv)
             .map(|(command, packages)| (command, packages.to_vec()));
         assert_eq!(
