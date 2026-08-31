@@ -100,7 +100,15 @@ fn strip_inline_comment(line: &str) -> &str {
         match quote {
             Some(delimiter) if character == delimiter => quote = None,
             None if character == '\'' || character == '"' => quote = Some(character),
-            None if character == '#' => return &line[..index],
+            None if character == '#'
+                && (index == 0
+                    || line[..index]
+                        .chars()
+                        .next_back()
+                        .is_some_and(char::is_whitespace)) =>
+            {
+                return &line[..index];
+            }
             Some(_) | None => {}
         }
     }
@@ -511,7 +519,7 @@ mod tests {
                 pkgver = "1.2.3" # release version
                 pkgrel = "1" # package release
                 depends = ("openssl" "zlib") # dependency list
-                source = ("https://example.test/archive#fragment") # source URL
+                source = (https://example.test/archive#fragment) # source URL
             "#,
         )
         .expect("valid PKGBUILD metadata");
