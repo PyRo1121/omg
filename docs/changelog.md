@@ -687,6 +687,7 @@ analyzer inference
 - **Ci**: Cross-platform install script and R2 release sync
 ### 🐛 Bug Fixes
 
+- Honor package mutation confirmation flags
 - Order only selected Debian alternatives
 - Keep mock package state consistent
 - Fail closed when telemetry settings are invalid
