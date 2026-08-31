@@ -829,7 +829,9 @@ impl SlsaVerifier {
                 // CA; plain-key entries verify integrity only.
                 return Ok(VerificationResult {
                     verified: true,
-                    slsa_level: SlsaLevel::Level1,
+                    // A hashedrekord proves artifact signature and log
+                    // inclusion, but it contains no build provenance.
+                    slsa_level: SlsaLevel::None,
                     transparency_log_entry: Some(entry.uuid.clone()),
                     builder_id: signer,
                     build_timestamp: None,
