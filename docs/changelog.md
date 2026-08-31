@@ -702,6 +702,7 @@ analyzer inference
 - **Ci**: Cross-platform install script and R2 release sync
 ### 🐛 Bug Fixes
 
+- Sanitize TUI text before rendering
 - Preserve AUR build dependency constraints
 - Install local Debian archives through apt-get
 - Preserve unchanged databases during staged sync
@@ -4050,6 +4051,7 @@ the Debian backend), so it was removed from the metadata.
 - Normalize project formatting
 ### 🧪 Testing
 
+- Replace AUR graph lint suppressions
 - Replace weak Arch smoke assertions
 - Strengthen Arch command behavior contracts
 - Replace blanket IPC lint suppression
