@@ -697,6 +697,7 @@ analyzer inference
 - **Ci**: Cross-platform install script and R2 release sync
 ### 🐛 Bug Fixes
 
+- Do not assign SLSA levels without provenance
 - Reject unsupported Rust complete profiles
 - Isolate Rust component downloads
 - Reject Node version-list HTTP errors
@@ -4035,6 +4036,7 @@ the Debian backend), so it was removed from the metadata.
 - Normalize project formatting
 ### 🧪 Testing
 
+- Remove write-only harness state
 - Separate removed flags from bounded choices
 - Share daemon rate-limit contracts
 - Remove fabricated Debian Packages URL coverage
