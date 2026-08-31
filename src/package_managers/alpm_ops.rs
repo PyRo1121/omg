@@ -19,6 +19,7 @@ const DOWNLOAD_SPINNER_TEMPLATE: &str = "  {spinner:.cyan} {msg:30}";
 pub const MISSING_FROM_REPOS_MARKER: &str = "not found in any configured repository";
 const DOWNLOAD_BAR_TEMPLATE: &str =
     "  {spinner:.cyan} {msg:30} {bar:30.cyan/blue} {bytes}/{total_bytes}";
+const PARALLEL_DOWNLOADS: u32 = 5;
 use crate::package_managers::types::{PackageInfo, UpdateInfo, contains_ignore_case};
 
 /// Get comprehensive system status (counts + updates) in a single pass - FAST
@@ -512,13 +513,12 @@ fn setup_alpm_callbacks(
         main_pb_clone.set_position(u64::try_from(percent).unwrap_or(0));
     });
 
-    const MAX_CONCURRENT_DOWNLOAD_BARS: usize = 4;
     let dl_pb_map = std::sync::Arc::new(dashmap::DashMap::<String, indicatif::ProgressBar>::new());
     let mp_clone = mp.clone();
 
     alpm.set_dl_cb(dl_pb_map, move |filename, event, map| match event.event() {
         alpm::DownloadEvent::Init(_) => {
-            if map.len() < MAX_CONCURRENT_DOWNLOAD_BARS {
+            if map.len() < usize::try_from(PARALLEL_DOWNLOADS).unwrap_or(usize::MAX) {
                 let pb = mp_clone.add(indicatif::ProgressBar::new_spinner());
                 pb.set_style(
                     indicatif::ProgressStyle::default_spinner()
@@ -775,7 +775,6 @@ fn configure_transaction_options(
     // Native libalpm parallel downloads during transaction commit. Mirrors
     // pacman's own `ParallelDownloads = 5` default; pacman.conf plumbing can
     // be added once the shared parser exposes the option.
-    const PARALLEL_DOWNLOADS: u32 = 5;
     alpm.set_parallel_downloads(PARALLEL_DOWNLOADS);
     configure_package_filters(alpm, pacman_config)?;
     alpm.set_noupgrades(pacman_config.no_upgrade.iter())
