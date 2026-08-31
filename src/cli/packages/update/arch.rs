@@ -388,9 +388,22 @@ pub async fn update(check_only: bool, yes: bool, dry_run: bool) -> Result<()> {
 
             let build_summary = builder.build_packages(jobs).await?;
             installed_count += build_summary.succeeded_output_count();
-            failed_count += build_summary.failed_output_count();
-            if let Some(error) = build_summary.first_error() {
-                println!("  {} Failed to build AUR packages: {error:#}", "✗".red());
+            failed_count +=
+                build_summary.failed_output_count() + build_summary.skipped_output_count();
+            for (package_base, error) in build_summary.failures() {
+                let error = style::sanitize_terminal_text(&format!("{error:#}"));
+                println!(
+                    "  {} Failed to build {}: {error}",
+                    "✗".red(),
+                    style::package(package_base)
+                );
+            }
+            if build_summary.skipped_output_count() > 0 {
+                modern_ui::print_warning(&format!(
+                    "Skipped {} AUR output(s) after prerequisite failures: {}",
+                    build_summary.skipped_output_count(),
+                    build_summary.skipped_outputs().join(", ")
+                ));
             }
         }
 
