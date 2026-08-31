@@ -702,6 +702,7 @@ analyzer inference
 - **Ci**: Cross-platform install script and R2 release sync
 ### 🐛 Bug Fixes
 
+- Validate cached AUR package names
 - Expire stale AUR binary indexes
 - Reject partial ALPM repository sets
 - Allow unsigned AUR build artifacts
