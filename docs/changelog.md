@@ -702,6 +702,7 @@ analyzer inference
 - **Ci**: Cross-platform install script and R2 release sync
 ### 🐛 Bug Fixes
 
+- Reject undersized AUR search queries
 - Fail when pacman has no usable mirrors
 - Escape control characters in validation errors
 - Sanitize TUI text before rendering
