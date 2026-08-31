@@ -238,53 +238,58 @@ impl DependencyResolver {
         })
     }
 
-    /// Recursively resolve a package and its dependencies
+    /// Resolve a package closure with an explicit post-order stack so a
+    /// repository-controlled dependency chain cannot overflow the call stack.
     fn resolve_package(
         &self,
         name: &str,
         visited: &mut rustc_hash::FxHashSet<String>,
         to_install: &mut Vec<String>,
     ) -> Result<()> {
-        if visited.contains(name) {
-            return Ok(());
-        }
-        visited.insert(name.to_string());
+        let mut stack = vec![(name.to_string(), false)];
+        while let Some((package_name, expanded)) = stack.pop() {
+            if expanded {
+                to_install.push(package_name);
+                continue;
+            }
+            if !visited.insert(package_name.clone()) {
+                continue;
+            }
 
-        let pkg = self
-            .available
-            .get(name)
-            .with_context(|| format!("Package '{name}' not found in repository"))?;
+            let package = self
+                .available
+                .get(&package_name)
+                .with_context(|| format!("Package '{package_name}' not found in repository"))?;
+            tracing::debug!(
+                package = package_name,
+                version = package.version,
+                "Resolving package"
+            );
+            stack.push((package_name.clone(), true));
 
-        tracing::debug!(
-            "Resolving package (parallel): {} (version: {})",
-            name,
-            pkg.version
-        );
-
-        // Parse and resolve dependencies
-        for dep_str in &pkg.depends {
-            let dep = parse_dependency(dep_str)
-                .with_context(|| format!("Invalid dependency '{dep_str}' for package '{name}'"))?;
-            match self.resolve_dependency(&dep, visited, to_install) {
-                Ok(()) => {}
-                Err(e) => {
-                    tracing::error!(
-                        "Failed to resolve dependency '{}' for package '{}': {}",
-                        dep_str,
-                        name,
-                        e
-                    );
-                    return Err(e).with_context(|| {
-                        format!("Cannot satisfy dependency '{dep_str}' for package '{name}'")
-                    });
+            for raw in package.depends.iter().rev() {
+                let dependency = parse_dependency(raw).with_context(|| {
+                    format!("Invalid dependency '{raw}' for package '{package_name}'")
+                })?;
+                match self.resolve_dependency_target(&dependency) {
+                    Ok(Some(name)) => stack.push((name, false)),
+                    Ok(None) => {}
+                    Err(error) => {
+                        tracing::error!(
+                            dependency = raw,
+                            package = package_name,
+                            %error,
+                            "Failed to resolve dependency"
+                        );
+                        return Err(error).with_context(|| {
+                            format!(
+                                "Cannot satisfy dependency '{raw}' for package '{package_name}'"
+                            )
+                        });
+                    }
                 }
             }
         }
-
-        // `visited` guarantees this package is added exactly once per
-        // resolution walk, so no second linear membership scan is needed.
-        to_install.push(name.to_string());
-
         Ok(())
     }
 
@@ -312,18 +317,12 @@ impl DependencyResolver {
         Ok(())
     }
 
-    /// Resolve a single dependency
-    fn resolve_dependency(
-        &self,
-        dep: &Dependency,
-        visited: &mut rustc_hash::FxHashSet<String>,
-        to_install: &mut Vec<String>,
-    ) -> Result<()> {
+    /// Resolve one dependency to the available package that should be added
+    /// to the work stack. `None` means the installed state already satisfies it.
+    fn resolve_dependency_target(&self, dep: &Dependency) -> Result<Option<String>> {
         match self.dependency_target(dep) {
-            Some(DependencyTarget::Installed) => return Ok(()),
-            Some(DependencyTarget::Available(name)) => {
-                return self.resolve_package(&name, visited, to_install);
-            }
+            Some(DependencyTarget::Installed) => return Ok(None),
+            Some(DependencyTarget::Available(name)) => return Ok(Some(name)),
             None => {}
         }
 
@@ -876,6 +875,37 @@ mod tests {
                 resolution.to_install
             );
         }
+    }
+
+    #[test]
+    fn deep_dependency_chains_use_bounded_call_stack() {
+        const DEPTH: usize = 20_000;
+        let available = (0..DEPTH)
+            .map(|index| {
+                let name = format!("chain-{index:05}");
+                let dependency = (index + 1 < DEPTH).then(|| format!("chain-{:05}", index + 1));
+                let depends: Vec<&str> = dependency.iter().map(String::as_str).collect();
+                (name.clone(), test_package(&name, "1.0", &depends))
+            })
+            .collect();
+        let mut resolver = DependencyResolver {
+            available,
+            installed: HashMap::new(),
+            selected: HashSet::new(),
+            dep_graph: HashMap::new(),
+        };
+        resolver.add_package("chain-00000").expect("known package");
+
+        let resolution = resolver.resolve().expect("deep chain resolves iteratively");
+        assert_eq!(resolution.to_install.len(), DEPTH);
+        assert_eq!(
+            resolution.to_install.first().map(String::as_str),
+            Some("chain-19999")
+        );
+        assert_eq!(
+            resolution.to_install.last().map(String::as_str),
+            Some("chain-00000")
+        );
     }
 
     #[test]
