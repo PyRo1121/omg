@@ -158,6 +158,9 @@ impl HistoryManager {
         changes: Vec<PackageChange>,
         operation_result: Result<()>,
     ) -> Result<()> {
+        if crate::core::privilege::parent_owns_history() {
+            return operation_result;
+        }
         let history_result = self
             .add_transaction(transaction_type, changes, operation_result.is_ok())
             .context("Failed to persist package operation history");
@@ -275,6 +278,37 @@ mod tests {
         let history = manager.load()?;
         assert_eq!(history.len(), 1);
         assert!(!history[0].success);
+        Ok(())
+    }
+
+    #[test]
+    #[serial_test::serial(history_ownership)]
+    fn elevated_child_skips_history_owned_by_its_parent() -> Result<()> {
+        struct OwnershipReset;
+        impl Drop for OwnershipReset {
+            fn drop(&mut self) {
+                crate::core::privilege::set_parent_owns_history(false);
+            }
+        }
+
+        let _reset = OwnershipReset;
+        crate::core::privilege::set_parent_owns_history(true);
+        let directory = tempfile::tempdir()?;
+        let path = directory.path().join("history.json");
+        let manager = HistoryManager::new_in(&path)?;
+
+        manager.finish_operation(
+            TransactionType::Remove,
+            vec![PackageChange {
+                name: "example".to_string(),
+                old_version: Some("1.0".to_string()),
+                new_version: None,
+                source: "official".to_string(),
+            }],
+            Ok(()),
+        )?;
+
+        assert!(!path.exists(), "elevated child must not duplicate history");
         Ok(())
     }
 

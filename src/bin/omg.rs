@@ -616,6 +616,10 @@ fn main() {
     // arguments untouched and gets clap's unknown-command error.
     let (reexec_elevated, parent_records) =
         strip_internal_invocation_markers(&mut args, omg_lib::core::privilege::is_root());
+    // The marker has already been authenticated by root re-exec parsing.
+    // Preserve its history-ownership contract if flags route the child through
+    // the full clap path instead of the minimal transaction path.
+    omg_lib::core::privilege::set_parent_owns_history(parent_records);
 
     // FASTEST PATH: Elevated re-exec - skip ALL initialization
     // This runs when sudo omg re-execs us as root
