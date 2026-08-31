@@ -687,6 +687,7 @@ analyzer inference
 - **Ci**: Cross-platform install script and R2 release sync
 ### 🐛 Bug Fixes
 
+- Keep mock package state consistent
 - Fail closed when telemetry settings are invalid
 - Validate AUR package-base responses
 - Keep direct ALPM installs off async workers
