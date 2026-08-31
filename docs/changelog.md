@@ -702,6 +702,7 @@ analyzer inference
 - **Ci**: Cross-platform install script and R2 release sync
 ### 🐛 Bug Fixes
 
+- Isolate concurrent AUR rollbacks
 - Lock dpkg during pure transactions
 - Durably persist dpkg control files
 - Resolve Debian best package candidates
