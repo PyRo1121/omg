@@ -279,19 +279,10 @@ impl AuditLogger {
     }
 
     /// Log an audit event.
-    pub fn log(
-        &mut self,
-        event: AuditEventType,
-        severity: AuditSeverity,
-        resource: &str,
-        description: &str,
-    ) -> Result<(), AuditError> {
-        self.log_event(event, severity, resource, description)
-    }
-
+    ///
     /// Appends are serialized across processes and the previous hash is read
     /// under the lock, so concurrent writers cannot fork the integrity chain.
-    fn log_event(
+    pub fn log(
         &mut self,
         event: AuditEventType,
         severity: AuditSeverity,
