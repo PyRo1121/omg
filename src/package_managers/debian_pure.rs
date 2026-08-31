@@ -503,6 +503,23 @@ fn populate_package_urls(tx: &mut debian_db::Transaction) -> Result<()> {
     Ok(())
 }
 
+fn apt_lists_suite_key(suite: &str) -> String {
+    suite
+        .chars()
+        .map(|character| {
+            if character.is_ascii_alphanumeric() || matches!(character, '.' | '_' | '-') {
+                character
+            } else {
+                '_'
+            }
+        })
+        .collect()
+}
+
+fn repository_suite_matches(repo_suite: &str, package_suite: &str) -> bool {
+    !package_suite.is_empty() && apt_lists_suite_key(repo_suite) == package_suite
+}
+
 /// Resolve one action's `version`/`size`/`sha256`/`url`.
 ///
 /// Repository selection requires the package's recorded suite, preferring an
@@ -539,11 +556,17 @@ fn populate_action_url(
 
     let repo = repos
         .iter()
-        .find(|r| r.suite == pkg.suite && r.components.iter().any(|c| c == &pkg.component))
+        .find(|repo| {
+            repository_suite_matches(&repo.suite, &pkg.suite)
+                && repo
+                    .components
+                    .iter()
+                    .any(|component| component == &pkg.component)
+        })
         .or_else(|| {
             repos
                 .iter()
-                .find(|r| !pkg.suite.is_empty() && r.suite == pkg.suite)
+                .find(|repo| repository_suite_matches(&repo.suite, &pkg.suite))
         });
     let Some(repo) = repo else {
         anyhow::bail!(
@@ -634,6 +657,54 @@ mod tests {
             .expect_err("a component match from another suite must not select its mirror root");
         assert!(error.to_string().contains("bookworm-security"), "{error}");
         assert!(action.url.is_none());
+    }
+
+    #[test]
+    fn package_url_matches_path_like_suites_encoded_by_apt() {
+        let package = DebianPackage {
+            name: "example".to_string(),
+            version: "1.0".to_string(),
+            description: String::new(),
+            section: "utils".to_string(),
+            priority: "optional".to_string(),
+            installed_size: 1,
+            maintainer: String::new(),
+            architecture: "amd64".to_string(),
+            depends: Vec::new(),
+            filename: "pool/example_1.0_amd64.deb".to_string(),
+            size: 1,
+            sha256: "a".repeat(64),
+            homepage: String::new(),
+            component: "main".to_string(),
+            suite: "stable_updates".to_string(),
+        };
+        let packages = HashMap::from([(package.name.clone(), package)]);
+        let repos = vec![Repository {
+            repo_type: RepoType::Binary,
+            uri: "https://deb.example/debian".to_string(),
+            suite: "stable/updates".to_string(),
+            components: vec!["main".to_string()],
+            arch: None,
+            signed_by: None,
+            enabled: true,
+            source_file: PathBuf::from("sources.list"),
+            options: HashMap::new(),
+        }];
+        let mut action = PackageAction {
+            name: "example".to_string(),
+            version: String::new(),
+            deb_path: None,
+            url: None,
+            size: 0,
+            sha256: None,
+        };
+
+        populate_action_url(&mut action, &packages, &repos)
+            .expect("apt-encoded suite must match its source entry");
+        assert_eq!(
+            action.url.as_deref(),
+            Some("https://deb.example/debian/pool/example_1.0_amd64.deb")
+        );
     }
 
     #[test]
