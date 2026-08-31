@@ -4036,6 +4036,7 @@ the Debian backend), so it was removed from the metadata.
 - Normalize project formatting
 ### 🧪 Testing
 
+- Assert synchronized daemon cache statistics
 - Remove write-only harness state
 - Separate removed flags from bounded choices
 - Share daemon rate-limit contracts
