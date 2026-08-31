@@ -4044,6 +4044,7 @@ the Debian backend), so it was removed from the metadata.
 - Normalize project formatting
 ### 🧪 Testing
 
+- Remove ambient license cleanup and stale helpers
 - Exercise snapshot restore through mock packages
 - Isolate telemetry configuration state
 - Reject destructive ALPM fixture rewrites
