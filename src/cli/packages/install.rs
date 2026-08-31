@@ -116,6 +116,7 @@ async fn install_with_replacement_budget(
     if packages.is_empty() {
         anyhow::bail!("No packages specified");
     }
+    validate_install_targets(packages)?;
 
     let includes_local_file = packages.iter().any(|package| {
         if crate::core::security::is_local_package_file(package) {
@@ -152,6 +153,23 @@ async fn install_with_replacement_budget(
     }
 }
 
+fn validate_install_targets(packages: &[String]) -> Result<()> {
+    dispatch_backend! {
+        debian: {
+            crate::core::security::validate_debian_package_names_or_files(packages)?;
+            Ok(())
+        },
+        arch: {
+            crate::core::security::validate_package_names_or_files(packages)?;
+            Ok(())
+        },
+        generic: {
+            crate::core::security::validate_package_names(packages)?;
+            Ok(())
+        },
+    }
+}
+
 #[cfg(feature = "arch")]
 async fn install_dry_run(packages: &[String]) -> Result<()> {
     dispatch_backend! {
@@ -176,7 +194,14 @@ fn install_dry_run(packages: &[String]) -> impl std::future::Future<Output = Res
 
 #[cfg(test)]
 mod tests {
-    use super::deduplicate_packages;
+    use super::{deduplicate_packages, validate_install_targets};
+
+    #[test]
+    fn install_targets_are_validated_before_backend_dispatch() {
+        let error = validate_install_targets(&["invalid\nname".to_string()])
+            .expect_err("invalid target must fail at the command boundary");
+        assert!(error.to_string().contains("Invalid"));
+    }
 
     #[test]
     fn duplicate_install_targets_are_processed_once_in_request_order() {
