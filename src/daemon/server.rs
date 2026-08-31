@@ -18,7 +18,9 @@ use tokio_util::sync::CancellationToken;
 use super::handlers::{DaemonState, handle_request};
 use super::protocol::{Request, Response, error_codes};
 use crate::core::metrics::GLOBAL_METRICS;
-use crate::core::security::{AuditEventType, AuditSeverity, audit_log_nonblocking};
+use crate::core::security::{
+    AuditEventType, AuditSeverity, audit_log_nonblocking, init_audit_logger,
+};
 
 /// Request handling timeout (30 seconds should be sufficient for most operations)
 const REQUEST_TIMEOUT: Duration = Duration::from_secs(30);
@@ -64,6 +66,7 @@ pub async fn run(
     state: Arc<DaemonState>,
     socket_path: PathBuf,
 ) -> Result<()> {
+    init_audit_logger()?;
     run_with_status_path(
         listener,
         state,

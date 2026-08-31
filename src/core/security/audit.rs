@@ -805,10 +805,7 @@ static AUDIT_QUEUE: std::sync::LazyLock<std::sync::mpsc::SyncSender<QueuedAuditE
         sender
     });
 
-/// Initialize the global audit logger eagerly.
-///
-/// Optional: [`audit_log`] lazily self-initializes the same global on first
-/// use, so callers that never ran this function still persist events.
+/// Open the global audit logger before accepting daemon requests.
 pub fn init_audit_logger() -> Result<(), AuditError> {
     let logger = AuditLogger::new()?;
     *AUDIT_LOGGER
@@ -849,16 +846,6 @@ fn record_global(
     if let Err(error) = logger.log(event, severity, resource, description) {
         tracing::warn!("Failed to persist audit event {event} for {resource}: {error}");
     }
-}
-
-/// Log an audit event using the global logger
-pub fn audit_log(
-    event: AuditEventType,
-    severity: AuditSeverity,
-    resource: &str,
-    description: &str,
-) {
-    record_global(event, severity, resource, description);
 }
 
 /// Queue an audit event without performing filesystem I/O on the caller.
@@ -1182,10 +1169,9 @@ mod tests {
 
     #[test]
     #[serial_test::serial]
-    fn audit_log_lazy_initializes_and_persists_events() {
-        // Regression: production daemons called `audit_log` without ever
-        // running `init_audit_logger`, so every security event degraded to a
-        // tracing warning and the tamper-evident log stayed empty.
+    fn global_writer_lazy_initializes_and_persists_events() {
+        // The writer must initialize lazily so daemon events do not degrade to
+        // tracing warnings when startup has not opened the log yet.
         let temp = tempfile::TempDir::new().unwrap();
         // SAFETY: test-only environment override, serialized via #[serial]
         #[expect(unsafe_code)]
@@ -1193,7 +1179,7 @@ mod tests {
             std::env::set_var("OMG_DATA_DIR", temp.path());
         }
 
-        audit_log(
+        record_global(
             AuditEventType::PolicyViolation,
             AuditSeverity::Warning,
             "daemon_handler",
@@ -1208,7 +1194,7 @@ mod tests {
 
         let log_path = temp.path().join("audit/audit.jsonl");
         let report = AuditLogger::new_in(&log_path)
-            .expect("lazy audit_log must have created the audit log")
+            .expect("global writer must have created the audit log")
             .verify_integrity()
             .unwrap();
         assert_eq!(report.total_entries, 1, "event must be persisted");
