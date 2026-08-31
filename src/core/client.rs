@@ -30,8 +30,8 @@ use crate::daemon::protocol::{
 #[cfg(unix)]
 use std::os::unix::net::UnixStream as SyncUnixStream;
 
-/// Create a new sync connection to the daemon
-fn connect_sync_stream() -> Result<SyncUnixStream> {
+/// Create a new sync connection to the daemon.
+fn connect_sync_stream_with_timeout(timeout: Duration) -> Result<SyncUnixStream> {
     tracing::debug!("Connecting to daemon...");
 
     let socket_path = default_socket_path();
@@ -45,13 +45,17 @@ fn connect_sync_stream() -> Result<SyncUnixStream> {
         .with_context(|| format!("Failed to connect to daemon at {}", socket_path.display()))?;
 
     stream
-        .set_read_timeout(Some(REQUEST_TIMEOUT))
+        .set_read_timeout(Some(timeout))
         .context("Failed to set daemon read timeout")?;
     stream
-        .set_write_timeout(Some(REQUEST_TIMEOUT))
+        .set_write_timeout(Some(timeout))
         .context("Failed to set daemon write timeout")?;
 
     Ok(stream)
+}
+
+fn connect_sync_stream() -> Result<SyncUnixStream> {
+    connect_sync_stream_with_timeout(REQUEST_TIMEOUT)
 }
 
 /// Get the default socket path
@@ -164,12 +168,17 @@ impl DaemonClient {
         }
     }
 
-    /// Connect to the daemon synchronously (sub-millisecond)
+    /// Connect to the daemon synchronously (sub-millisecond).
     pub fn connect_sync() -> Result<Self> {
+        Self::connect_sync_with_timeout(REQUEST_TIMEOUT)
+    }
+
+    /// Connect synchronously with a caller-specific request timeout.
+    pub fn connect_sync_with_timeout(timeout: Duration) -> Result<Self> {
         if Self::daemon_disabled() {
             anyhow::bail!("Daemon disabled by environment");
         }
-        let stream = connect_sync_stream()?;
+        let stream = connect_sync_stream_with_timeout(timeout)?;
 
         Ok(Self {
             framed: None,
