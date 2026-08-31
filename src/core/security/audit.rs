@@ -495,8 +495,12 @@ impl AuditLogger {
         Ok(())
     }
 
-    /// Verify the integrity of the entire audit log
+    /// Verify the integrity of the entire audit log.
     pub fn verify_integrity(&self) -> Result<AuditIntegrityReport, AuditError> {
+        with_audit_read_lock(&self.log_path, || self.verify_integrity_unlocked())
+    }
+
+    fn verify_integrity_unlocked(&self) -> Result<AuditIntegrityReport, AuditError> {
         let path_str = self.log_path.display().to_string();
         let file = open_read_file(&self.log_path)?;
         let reader = BufReader::new(file);
@@ -617,8 +621,41 @@ fn open_append_file(path: &Path) -> Result<File, AuditError> {
     })
 }
 
+fn with_audit_read_lock<T>(
+    path: &Path,
+    operation: impl FnOnce() -> Result<T, AuditError>,
+) -> Result<T, AuditError> {
+    let lock_path = path.with_extension("lock");
+    let lock = open_lock_file(&lock_path)?;
+    lock.lock_shared().map_err(|source| AuditError::Open {
+        path: lock_path.display().to_string(),
+        source,
+    })?;
+    let result = operation();
+    let unlock_result = lock.unlock().map_err(|source| AuditError::Unlock {
+        path: lock_path.display().to_string(),
+        source,
+    });
+    match result {
+        Ok(value) => {
+            unlock_result?;
+            Ok(value)
+        }
+        Err(error) => {
+            if let Err(unlock_error) = unlock_result {
+                tracing::warn!("Failed to unlock audit log after read error: {unlock_error}");
+            }
+            Err(error)
+        }
+    }
+}
+
 /// Read every JSONL entry. Missing files are empty; IO and parse failures are errors.
 fn read_all_entries(path: &Path) -> Result<Vec<AuditEntry>, AuditError> {
+    with_audit_read_lock(path, || read_all_entries_unlocked(path))
+}
+
+fn read_all_entries_unlocked(path: &Path) -> Result<Vec<AuditEntry>, AuditError> {
     if !path.exists() {
         return Ok(Vec::new());
     }
