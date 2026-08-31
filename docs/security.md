@@ -340,12 +340,13 @@ When enabled, enhanced telemetry collects:
 - **Performance Metrics**: Metric name and duration (for example, CLI startup)
 - **Feature Usage**: Feature name and enabled state
 - **Session Data**: Random session ID, command count, duration, and start/end timestamps
+- **Attribution Data**: Stable hashed machine identifier and the activated license key
 
 **Not collected**:
 
 - Positional arguments, package names, search queries, or file paths
 - Raw error messages, command output, package contents, or source code
-- User names, home-directory paths, credentials, or environment variables
+- User names, home-directory paths, unrelated credentials, or environment variables
 - System configuration beyond platform/architecture and compiled backend
 - Network information
 
@@ -354,7 +355,7 @@ When enabled, enhanced telemetry collects:
 #### Storage
 
 - **In-Flight**: Events are queued locally in `~/.local/share/omg/telemetry_queue.json`
-- **Batching**: Events flush on CLI exit, after 60 seconds, or when 500 events accumulate
+- **Batching**: Events are persisted in a bounded queue and flushed on CLI exit
 - **Retry Logic**: Failed batches remain in the bounded local queue for a later invocation; a circuit breaker suppresses repeated requests to an unhealthy endpoint
 - **Privacy Isolation**: Queue and session files are written atomically in the user's data directory
 
@@ -429,7 +430,7 @@ For everyone (install tracking):
 ### FAQs
 
 **Q: Does OMG collect passwords or credentials?**
-A: No. Telemetry never touches credentials, environment variables, or sensitive data.
+A: It does not collect passwords, environment variables, or unrelated credentials. Licensed runtime telemetry transmits the activated OMG license key for attribution, as disclosed above.
 
 **Q: Can I use OMG without telemetry?**
 A: Yes. Set `OMG_TELEMETRY=0` or disable via config. All features work identically.

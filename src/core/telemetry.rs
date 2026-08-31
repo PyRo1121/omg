@@ -1,10 +1,10 @@
 //! Telemetry and install tracking
 //!
 //! Privacy-first telemetry that tracks install counts for GitHub badge display.
-//! - Opt-out via `OMG_TELEMETRY=0` environment variable
-//! - Anonymous data collection (no personal information)
-//! - One-time ping on first install only
-//! - Silent failure if network unavailable
+//! - Runtime telemetry is disabled by default and requires explicit opt-in
+//! - Environment variables can override an opt-in and disable collection
+//! - One-time install tracking is controlled independently by the installer
+//! - Network failures never fail the requested command
 //!
 //! ## Enhanced Telemetry (requires license)
 //!
@@ -13,11 +13,13 @@
 //! - Session tracking (`session_id`, start/end times, command count)
 //! - Performance metrics (metric name and duration)
 //! - Feature usage (feature name and enabled state)
+//! - Stable machine identifier and activated license key for attribution
 //!
 //! Positional arguments, package names, search queries, paths, command output,
 //! and raw error messages are never included.
 //!
-//! Events are batched and sent every 60 seconds or on CLI exit.
+//! Events are persisted in a bounded local queue and sent on CLI exit. Failed
+//! batches remain queued for a later invocation.
 
 use std::collections::VecDeque;
 use std::path::PathBuf;
