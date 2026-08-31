@@ -687,6 +687,7 @@ analyzer inference
 - **Ci**: Cross-platform install script and R2 release sync
 ### 🐛 Bug Fixes
 
+- Isolate malformed pacman sync entries
 - Verify release provenance before client installation
 - Stream bounded pacman database decompression
 - Honor pacman repository priority in direct database reads
