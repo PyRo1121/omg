@@ -18,12 +18,34 @@ use ratatui::{
 use std::borrow::Cow;
 use unicode_width::{UnicodeWidthChar, UnicodeWidthStr};
 
+/// Replace terminal control characters with printable separators before text
+/// enters ratatui's span renderer.
+fn sanitize_control_chars(text: &str) -> Cow<'_, str> {
+    if !text.chars().any(char::is_control) {
+        return Cow::Borrowed(text);
+    }
+
+    Cow::Owned(
+        text.chars()
+            .map(|character| {
+                if character.is_control() {
+                    ' '
+                } else {
+                    character
+                }
+            })
+            .collect(),
+    )
+}
+
 /// Truncate `text` to at most `max_width` display columns (wide glyphs count
 /// as 2), appending an ellipsis when truncation occurs.
 #[must_use]
 fn truncate_width(text: &str, max_width: usize) -> Cow<'_, str> {
-    if text.width() <= max_width {
-        return Cow::Borrowed(text);
+    let sanitized = sanitize_control_chars(text);
+    let sanitized_text: &str = &sanitized;
+    if sanitized_text.width() <= max_width {
+        return sanitized;
     }
     if max_width == 0 {
         // Nothing fits, and the ellipsis alone would already exceed the
@@ -34,7 +56,7 @@ fn truncate_width(text: &str, max_width: usize) -> Cow<'_, str> {
     let budget = max_width - 1;
     let mut out = String::new();
     let mut used = 0usize;
-    for ch in text.chars() {
+    for ch in sanitized_text.chars() {
         let w = ch.width().unwrap_or(0);
         if used + w > budget {
             break;
@@ -1418,6 +1440,22 @@ mod tests {
             .iter()
             .map(ratatui::buffer::Cell::symbol)
             .collect()
+    }
+
+    #[test]
+    fn width_helpers_replace_terminal_controls_before_rendering() {
+        let rendered = truncate_width("safe\x1b[31m\ntext", 40);
+
+        assert_eq!(rendered, "safe [31m text");
+        assert!(!rendered.chars().any(char::is_control));
+    }
+
+    #[test]
+    fn width_helpers_respect_zero_and_wide_character_boundaries() {
+        assert_eq!(truncate_width("anything", 0), "");
+        assert_eq!(truncate_width("幅幅幅", 3), "幅…");
+        assert_eq!(truncate_width("e\u{301}x", 2), "e\u{301}x");
+        assert_eq!(pad_display_width("幅", 3), "幅 ");
     }
 
     #[test]
