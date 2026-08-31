@@ -1063,6 +1063,7 @@ mod tests {
             homepage: String::new(),
             component: "main".to_string(),
             suite: String::new(),
+            source_key: String::new(),
         }
     }
 

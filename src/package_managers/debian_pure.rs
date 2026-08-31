@@ -520,6 +520,27 @@ fn repository_suite_matches(repo_suite: &str, package_suite: &str) -> bool {
     !package_suite.is_empty() && apt_lists_suite_key(repo_suite) == package_suite
 }
 
+fn apt_lists_source_key(uri: &str) -> Option<String> {
+    let parsed = reqwest::Url::parse(uri).ok()?;
+    let host = parsed.host_str()?;
+    let mut source = host.to_string();
+    if let Some(port) = parsed.port() {
+        source.push(':');
+        source.push_str(&port.to_string());
+    }
+    let path = parsed.path().trim_matches('/');
+    if !path.is_empty() {
+        source.push('/');
+        source.push_str(path);
+    }
+    Some(apt_lists_suite_key(&source))
+}
+
+fn repository_source_matches(repo_uri: &str, package_source_key: &str) -> bool {
+    package_source_key.is_empty()
+        || apt_lists_source_key(repo_uri).as_deref() == Some(package_source_key)
+}
+
 /// Resolve one action's `version`/`size`/`sha256`/`url`.
 ///
 /// Repository selection requires the package's recorded suite, preferring an
@@ -557,16 +578,18 @@ fn populate_action_url(
     let repo = repos
         .iter()
         .find(|repo| {
-            repository_suite_matches(&repo.suite, &pkg.suite)
+            repository_source_matches(&repo.uri, &pkg.source_key)
+                && repository_suite_matches(&repo.suite, &pkg.suite)
                 && repo
                     .components
                     .iter()
                     .any(|component| component == &pkg.component)
         })
         .or_else(|| {
-            repos
-                .iter()
-                .find(|repo| repository_suite_matches(&repo.suite, &pkg.suite))
+            repos.iter().find(|repo| {
+                repository_source_matches(&repo.uri, &pkg.source_key)
+                    && repository_suite_matches(&repo.suite, &pkg.suite)
+            })
         });
     let Some(repo) = repo else {
         anyhow::bail!(
@@ -631,6 +654,7 @@ mod tests {
             homepage: String::new(),
             component: "main".to_string(),
             suite: "bookworm-security".to_string(),
+            source_key: "security.example_debian".to_string(),
         };
         let packages = HashMap::from([(package.name.clone(), package)]);
         let repos = vec![Repository {
@@ -660,6 +684,59 @@ mod tests {
     }
 
     #[test]
+    fn package_url_uses_the_repository_that_published_the_index() {
+        let package = DebianPackage {
+            name: "example".to_string(),
+            version: "1.0".to_string(),
+            description: String::new(),
+            section: "utils".to_string(),
+            priority: "optional".to_string(),
+            installed_size: 1,
+            maintainer: String::new(),
+            architecture: "amd64".to_string(),
+            depends: Vec::new(),
+            filename: "pool/example_1.0_amd64.deb".to_string(),
+            size: 1,
+            sha256: "a".repeat(64),
+            homepage: String::new(),
+            component: "main".to_string(),
+            suite: "stable".to_string(),
+            source_key: "trusted.example_debian".to_string(),
+        };
+        let packages = HashMap::from([(package.name.clone(), package)]);
+        let repository = |uri: &str| Repository {
+            repo_type: RepoType::Binary,
+            uri: uri.to_string(),
+            suite: "stable".to_string(),
+            components: vec!["main".to_string()],
+            arch: None,
+            signed_by: None,
+            enabled: true,
+            source_file: PathBuf::from("sources.list"),
+            options: HashMap::new(),
+        };
+        let repos = vec![
+            repository("https://other.example/debian"),
+            repository("https://trusted.example/debian"),
+        ];
+        let mut action = PackageAction {
+            name: "example".to_string(),
+            version: String::new(),
+            deb_path: None,
+            url: None,
+            size: 0,
+            sha256: None,
+        };
+
+        populate_action_url(&mut action, &packages, &repos)
+            .expect("publishing repository must be selected");
+        assert_eq!(
+            action.url.as_deref(),
+            Some("https://trusted.example/debian/pool/example_1.0_amd64.deb")
+        );
+    }
+
+    #[test]
     fn package_url_matches_path_like_suites_encoded_by_apt() {
         let package = DebianPackage {
             name: "example".to_string(),
@@ -677,6 +754,7 @@ mod tests {
             homepage: String::new(),
             component: "main".to_string(),
             suite: "stable_updates".to_string(),
+            source_key: "deb.example_debian".to_string(),
         };
         let packages = HashMap::from([(package.name.clone(), package)]);
         let repos = vec![Repository {
@@ -725,6 +803,7 @@ mod tests {
             homepage: String::new(),
             component: "main".to_string(),
             suite: "stable".to_string(),
+            source_key: "deb.example_debian".to_string(),
         };
         let packages = HashMap::from([(package.name.clone(), package)]);
         let repos = vec![Repository {

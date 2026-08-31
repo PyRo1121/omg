@@ -32,7 +32,7 @@ use crate::core::{Package, PackageSource};
 /// TTL for cache eviction safety net (30 minutes)
 const CACHE_TTL_SECS: u64 = 30 * 60;
 const DEBIAN_INDEX_CACHE_MAGIC: [u8; 4] = *b"ODXI";
-const DEBIAN_INDEX_CACHE_FORMAT_VERSION: u32 = 1;
+const DEBIAN_INDEX_CACHE_FORMAT_VERSION: u32 = 2;
 
 /// Current time as unix seconds (`0` if the clock is before the epoch).
 fn unix_now_secs() -> u64 {
@@ -246,9 +246,9 @@ impl DebianMmapIndex {
 
 /// A Debian package entry optimized for zero-copy access
 ///
-/// `suite` records the distribution the entry was parsed from (derived from
-/// the `*_dists_<suite>_*_Packages` lists filename) so download URLs can be
-/// built against the repository that actually publishes the package.
+/// `suite` and `source_key` record where the entry was parsed from (derived
+/// from the apt lists filename) so download URLs can be built against the
+/// repository that actually published the package.
 #[derive(rkyv::Archive, rkyv::Serialize, rkyv::Deserialize, Debug, Clone)]
 pub struct DebianPackage {
     pub name: String,
@@ -266,6 +266,7 @@ pub struct DebianPackage {
     pub homepage: String,
     pub component: String,
     pub suite: String,
+    pub source_key: String,
 }
 
 use crate::package_managers::types::parse_version_or_zero;
@@ -610,13 +611,13 @@ pub fn ensure_index_loaded() -> Result<()> {
     };
 
     // Load or create index (with LZ4 compression support).
-    // v7 adds per-package `suite` provenance used for download-URL construction;
-    // v6 caches cannot answer it and are ignored (treated as a cold cache).
+    // v8 adds per-package source provenance used for download-URL construction;
+    // older caches cannot answer it and are ignored (treated as cold caches).
     // Cache files carry a magic + format-version header so a mismatched or
     // corrupt artifact is rejected with a resync instead of undefined
     // deserialization behavior.
-    let cache_path = paths::cache_dir().join("debian_index_v7.lz4");
-    let mmap_path = paths::cache_dir().join("debian_index_v7.mmap");
+    let cache_path = paths::cache_dir().join("debian_index_v8.lz4");
+    let mmap_path = paths::cache_dir().join("debian_index_v8.mmap");
 
     // Check if LZ4 cache is fresher than all Packages files.
     // On cold process start, file_mtimes is empty so all files appear "changed".
@@ -780,7 +781,7 @@ pub fn ensure_index_loaded() -> Result<()> {
 
         // Build FST index for O(query_len) prefix searches
         // FST requires sorted input, so we need to sort packages by name
-        let fst_path = paths::cache_dir().join("debian_index_v7.fst");
+        let fst_path = paths::cache_dir().join("debian_index_v8.fst");
         let fst_build_start = std::time::Instant::now();
 
         let mut lower_name_to_idx: HashMap<String, usize> =
@@ -891,7 +892,7 @@ fn disk_cache_is_fresh(cache_path: &Path, lists_dir: &Path) -> bool {
 /// Ensure FST index is loaded (if available on disk)
 /// Returns `Ok(())` whether FST is available or not - FST is optional optimization
 fn ensure_fst_loaded() {
-    let fst_path = paths::cache_dir().join("debian_index_v7.fst");
+    let fst_path = paths::cache_dir().join("debian_index_v8.fst");
     if !disk_cache_is_fresh(&fst_path, Path::new("/var/lib/apt/lists")) {
         *crate::core::sync::write_cache(&DEBIAN_FST_INDEX) = None;
         return;
@@ -928,7 +929,7 @@ fn ensure_fst_loaded() {
 /// Used by the ultra-fast search and update paths to avoid loading the full index.
 #[must_use]
 pub fn ensure_mmap_loaded() -> bool {
-    let mmap_path = paths::cache_dir().join("debian_index_v7.mmap");
+    let mmap_path = paths::cache_dir().join("debian_index_v8.mmap");
     if !disk_cache_is_fresh(&mmap_path, Path::new("/var/lib/apt/lists")) {
         *crate::core::sync::write_cache(&DEBIAN_MMAP_INDEX) = None;
         return false;
@@ -963,6 +964,7 @@ pub fn ensure_mmap_loaded() -> bool {
 fn parse_packages_file_sync(path: &Path) -> Result<Vec<DebianPackage>> {
     let component = extract_component_from_path(path);
     let suite = extract_suite_from_path(path);
+    let source_key = extract_source_key_from_path(path);
     let content = read_packages_file_content(path)?;
 
     // Collect paragraph byte ranges first
@@ -987,14 +989,14 @@ fn parse_packages_file_sync(path: &Path) -> Result<Vec<DebianPackage>> {
         paragraph_ranges
             .par_iter()
             .map(|(start, end)| {
-                parse_packages_paragraph(&content[*start..*end], &component, &suite)
+                parse_packages_paragraph(&content[*start..*end], &component, &suite, &source_key)
             })
             .collect::<Result<Vec<_>>>()?
     } else {
         paragraph_ranges
             .iter()
             .map(|(start, end)| {
-                parse_packages_paragraph(&content[*start..*end], &component, &suite)
+                parse_packages_paragraph(&content[*start..*end], &component, &suite, &source_key)
             })
             .collect::<Result<Vec<_>>>()?
     };
@@ -1006,11 +1008,12 @@ fn parse_packages_paragraph(
     paragraph: &str,
     component: &str,
     suite: &str,
+    source_key: &str,
 ) -> Result<Option<DebianPackage>> {
     if paragraph.trim().is_empty() {
         Ok(None)
     } else {
-        parse_paragraph_str(paragraph, component, suite).map(Some)
+        parse_paragraph_str(paragraph, component, suite, source_key).map(Some)
     }
 }
 
@@ -1137,6 +1140,17 @@ fn extract_suite_from_path(path: &Path) -> String {
         .to_string()
 }
 
+/// Apt prefixes lists files with an encoded repository host and base path.
+/// Preserve that prefix so later URL resolution cannot select another mirror
+/// merely because it publishes the same suite and component.
+fn extract_source_key_from_path(path: &Path) -> String {
+    path.file_name()
+        .and_then(|name| name.to_str())
+        .and_then(|filename| filename.split_once("_dists_").map(|(source, _)| source))
+        .unwrap_or_default()
+        .to_string()
+}
+
 fn find_info_from_apt_lists_fast(name: &str) -> Result<Option<Package>> {
     let lists_dir = Path::new("/var/lib/apt/lists");
     if !lists_dir.exists() {
@@ -1219,7 +1233,12 @@ fn append_dependencies(value: &str, dependencies: &mut Vec<String>) {
 }
 
 #[inline]
-fn parse_paragraph_str(paragraph: &str, component: &str, suite: &str) -> Result<DebianPackage> {
+fn parse_paragraph_str(
+    paragraph: &str,
+    component: &str,
+    suite: &str,
+    source_key: &str,
+) -> Result<DebianPackage> {
     let mut name = String::new();
     let mut version = String::new();
     let mut description = String::with_capacity(128); // Pre-allocate for description
@@ -1305,6 +1324,7 @@ fn parse_paragraph_str(paragraph: &str, component: &str, suite: &str) -> Result<
         homepage,
         component: component.to_string(),
         suite: suite.to_string(),
+        source_key: source_key.to_string(),
     })
 }
 
@@ -1326,6 +1346,7 @@ pub fn get_detailed_packages() -> Result<Vec<DebianPackage>> {
             homepage: "https://debian.org".to_string(),
             component: "main".to_string(),
             suite: "bookworm".to_string(),
+            source_key: "deb.debian.org_debian".to_string(),
         }]);
     }
     ensure_index_loaded()?;
@@ -2402,6 +2423,7 @@ mod tests {
             homepage: String::new(),
             component: "main".to_string(),
             suite: "stable".to_string(),
+            source_key: "deb.example_debian".to_string(),
         });
         let bytes = rkyv::to_bytes::<rkyv::rancor::Error>(&index)?;
         let compressed = lz4_flex::compress_prepend_size(&bytes);
@@ -2434,7 +2456,7 @@ mod tests {
         let directory = tempfile::tempdir()?;
         let lists = directory.path().join("lists");
         std::fs::create_dir(&lists)?;
-        let cache = directory.path().join("debian_index_v7.mmap");
+        let cache = directory.path().join("debian_index_v8.mmap");
         let packages = lists.join("mirror_dists_stable_main_binary-amd64_Packages");
         std::fs::write(&cache, b"cache")?;
         std::fs::write(&packages, b"Package: demo\n")?;
@@ -2461,9 +2483,10 @@ mod tests {
     fn parse_paragraph_reads_required_and_numeric_fields() -> Result<()> {
         let paragraph = "Package: vim\nVersion: 2:9.1.0-1\nDescription: Vi IMproved - enhanced vi editor\nSection: editors\nPriority: optional\nInstalled-Size: 3500\n";
 
-        let package = parse_paragraph_str(paragraph, "main", "bookworm")?;
+        let package = parse_paragraph_str(paragraph, "main", "bookworm", "deb.example_debian")?;
 
         assert_eq!(package.name, "vim");
+        assert_eq!(package.source_key, "deb.example_debian");
         assert_eq!(package.version, "2:9.1.0-1");
         assert_eq!(package.description, "Vi IMproved - enhanced vi editor");
         assert_eq!(package.installed_size, 3500);
@@ -2474,7 +2497,7 @@ mod tests {
     fn parse_paragraph_preserves_description_continuations() -> Result<()> {
         let paragraph = "Package: curl\nVersion: 8.5.0-1\nDescription: command line tool for transferring data\n curl is a tool to transfer data from or to a server\n .\n using one of the supported protocols.\nSection: net\n";
 
-        let package = parse_paragraph_str(paragraph, "main", "bookworm")?;
+        let package = parse_paragraph_str(paragraph, "main", "bookworm", "deb.example_debian")?;
 
         assert_eq!(
             package.description,
@@ -2495,13 +2518,21 @@ mod tests {
 
     #[test]
     fn parse_paragraph_rejects_missing_package_name() {
-        assert!(parse_paragraph_str("Version: 1.0\n", "main", "bookworm").is_err());
+        assert!(
+            parse_paragraph_str("Version: 1.0\n", "main", "bookworm", "deb.example_debian")
+                .is_err()
+        );
     }
 
     #[test]
     fn parse_paragraph_rejects_invalid_numeric_fields() {
-        let error = parse_paragraph_str("Package: curl\nSize: many\n", "main", "bookworm")
-            .expect_err("a nonnumeric package size must be rejected");
+        let error = parse_paragraph_str(
+            "Package: curl\nSize: many\n",
+            "main",
+            "bookworm",
+            "deb.example_debian",
+        )
+        .expect_err("a nonnumeric package size must be rejected");
 
         assert!(error.to_string().contains("Invalid Size value"));
     }
@@ -2510,7 +2541,7 @@ mod tests {
     fn parse_paragraph_reads_multiline_dependencies() -> Result<()> {
         let paragraph = "Package: bash\nDepends: libc6 (>= 2.38),\n libreadline8 (>= 8.1), libtinfo6 | ncurses-term\n";
 
-        let package = parse_paragraph_str(paragraph, "main", "bookworm")?;
+        let package = parse_paragraph_str(paragraph, "main", "bookworm", "deb.example_debian")?;
 
         assert_eq!(
             package.depends,
@@ -2524,6 +2555,7 @@ mod tests {
             "Package: init-system\nPre-Depends: libc6 (>= 2.36)\n",
             "main",
             "bookworm",
+            "deb.example_debian",
         )?;
         assert_eq!(pre_depends.depends, ["libc6 (>= 2.36)"]);
         Ok(())
@@ -2822,6 +2854,7 @@ mod tests {
             homepage: "https://example.org".to_string(),
             component: "main".to_string(),
             suite: "bookworm".to_string(),
+            source_key: "deb.debian.org_debian".to_string(),
         });
 
         idx.add_package(DebianPackage {
@@ -2840,6 +2873,7 @@ mod tests {
             homepage: "https://example.org".to_string(),
             component: "contrib".to_string(),
             suite: "bookworm".to_string(),
+            source_key: "deb.debian.org_debian".to_string(),
         });
 
         idx.add_package(DebianPackage {
@@ -2858,6 +2892,7 @@ mod tests {
             homepage: "https://example.org".to_string(),
             component: "main".to_string(),
             suite: "bookworm".to_string(),
+            source_key: "deb.debian.org_debian".to_string(),
         });
 
         let by_name = idx.get_query("bash").expect("name lookup");
@@ -3114,6 +3149,7 @@ mod tests {
             homepage: "https://example.org".to_string(),
             component: "main".to_string(),
             suite: "bookworm".to_string(),
+            source_key: "deb.debian.org_debian".to_string(),
         });
         let current_files = HashMap::from([(
             PathBuf::from("/var/lib/apt/lists/example_Packages"),
@@ -3161,8 +3197,10 @@ mod tests {
             "/var/lib/apt/lists/deb.debian.org_debian_dists_bookworm-updates_main_binary-amd64_Packages",
         );
         assert_eq!(extract_suite_from_path(p), "bookworm-updates");
+        assert_eq!(extract_source_key_from_path(p), "deb.debian.org_debian");
 
         let flat = Path::new("/var/lib/apt/lists/some-repo_amd64_Packages");
         assert_eq!(extract_suite_from_path(flat), "");
+        assert_eq!(extract_source_key_from_path(flat), "");
     }
 }
