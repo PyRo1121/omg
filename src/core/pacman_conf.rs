@@ -15,7 +15,6 @@ pub struct RepoConfig {
 
 #[derive(Debug, Clone, Default)]
 pub struct PacmanConfig {
-    pub root_dir: Option<String>,
     pub db_path: Option<String>,
     pub cache_dirs: Vec<String>,
     pub log_file: Option<String>,
@@ -27,9 +26,6 @@ pub struct PacmanConfig {
     pub no_upgrade: Vec<String>,
     pub no_extract: Vec<String>,
     pub architecture: Option<String>,
-    pub sig_level: Option<String>,
-    pub local_file_sig_level: Option<String>,
-    pub remote_file_sig_level: Option<String>,
     pub repos: Vec<RepoConfig>,
 }
 
@@ -162,7 +158,6 @@ impl PacmanConfig {
 
     fn parse_option(config: &mut PacmanConfig, key: &str, value: Option<&str>) {
         match key {
-            "RootDir" => config.root_dir = value.map(String::from),
             "DBPath" => config.db_path = value.map(String::from),
             "CacheDir" => {
                 if let Some(value) = value {
@@ -181,9 +176,6 @@ impl PacmanConfig {
                 }
             }
             "Architecture" => config.architecture = value.map(String::from),
-            "SigLevel" => config.sig_level = value.map(String::from),
-            "LocalFileSigLevel" => config.local_file_sig_level = value.map(String::from),
-            "RemoteFileSigLevel" => config.remote_file_sig_level = value.map(String::from),
             "HoldPkg" => {
                 if let Some(v) = value {
                     config
@@ -404,7 +396,6 @@ Include = /etc/pacman.d/mirrorlist
 ";
 
         let config = PacmanConfig::parse_str(content).unwrap();
-        assert_eq!(config.root_dir, Some("/".to_string()));
         assert_eq!(config.db_path, Some("/var/lib/pacman".to_string()));
         assert_eq!(
             config.cache_dirs,
