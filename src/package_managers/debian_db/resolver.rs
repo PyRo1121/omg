@@ -56,6 +56,12 @@ pub enum VersionOp {
     Lt,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum DependencyTarget {
+    Installed,
+    Available(String),
+}
+
 /// Result of dependency resolution
 #[derive(Debug)]
 pub struct ResolutionResult {
@@ -291,10 +297,12 @@ impl DependencyResolver {
                 let dependencies = pkg
                     .depends
                     .iter()
-                    .flat_map(|raw| {
+                    .filter_map(|raw| {
                         let dependency = parse_dependency(raw);
-                        std::iter::once(dependency.name)
-                            .chain(dependency.alternatives.into_iter().map(|alt| alt.name))
+                        match self.dependency_target(&dependency) {
+                            Some(DependencyTarget::Available(name)) => Some(name),
+                            Some(DependencyTarget::Installed) | None => None,
+                        }
                     })
                     .collect();
                 self.dep_graph.insert(name.clone(), dependencies);
@@ -309,31 +317,12 @@ impl DependencyResolver {
         visited: &mut rustc_hash::FxHashSet<String>,
         to_install: &mut Vec<String>,
     ) -> Result<()> {
-        // Check if already installed
-        if let Some(installed_ver) = self.installed.get(&dep.name)
-            && dep
-                .version_constraint
-                .as_ref()
-                .is_none_or(|constraint| Self::version_satisfies(installed_ver, constraint))
-        {
-            return Ok(());
-        }
-
-        // Check if available
-        if let Some(pkg) = self.available.get(&dep.name)
-            && dep
-                .version_constraint
-                .as_ref()
-                .is_none_or(|constraint| Self::version_satisfies(&pkg.version, constraint))
-        {
-            return self.resolve_package(&dep.name, visited, to_install);
-        }
-
-        // Try alternatives
-        for alt in &dep.alternatives {
-            if self.resolve_dependency(alt, visited, to_install).is_ok() {
-                return Ok(());
+        match self.dependency_target(dep) {
+            Some(DependencyTarget::Installed) => return Ok(()),
+            Some(DependencyTarget::Available(name)) => {
+                return self.resolve_package(&name, visited, to_install);
             }
+            None => {}
         }
 
         // Build helpful error message
@@ -363,6 +352,32 @@ impl DependencyResolver {
         );
 
         anyhow::bail!(error_msg)
+    }
+
+    /// Select the first satisfiable dependency using Debian alternative order.
+    fn dependency_target(&self, dep: &Dependency) -> Option<DependencyTarget> {
+        std::iter::once(dep)
+            .chain(dep.alternatives.iter())
+            .find_map(|candidate| {
+                if self.installed.get(&candidate.name).is_some_and(|version| {
+                    candidate
+                        .version_constraint
+                        .as_ref()
+                        .is_none_or(|constraint| Self::version_satisfies(version, constraint))
+                }) {
+                    return Some(DependencyTarget::Installed);
+                }
+
+                self.available.get(&candidate.name).and_then(|package| {
+                    candidate
+                        .version_constraint
+                        .as_ref()
+                        .is_none_or(|constraint| {
+                            Self::version_satisfies(&package.version, constraint)
+                        })
+                        .then(|| DependencyTarget::Available(candidate.name.clone()))
+                })
+            })
     }
 
     /// Check if a version satisfies a constraint
@@ -746,6 +761,41 @@ mod tests {
                 resolution.to_install
             );
         }
+    }
+
+    #[test]
+    fn unchosen_alternative_does_not_create_a_false_dependency_cycle() {
+        let mut resolver = DependencyResolver {
+            available: HashMap::from([
+                (
+                    "pkg-a".to_string(),
+                    test_package("pkg-a", "1.0", &["pkg-b | pkg-c"]),
+                ),
+                ("pkg-b".to_string(), test_package("pkg-b", "1.0", &[])),
+                (
+                    "pkg-c".to_string(),
+                    test_package("pkg-c", "1.0", &["pkg-a"]),
+                ),
+            ]),
+            installed: HashMap::new(),
+            selected: HashSet::new(),
+            dep_graph: HashMap::new(),
+        };
+        resolver.add_package("pkg-a").expect("known package");
+        resolver.add_package("pkg-c").expect("known package");
+
+        let resolution = resolver
+            .resolve()
+            .expect("the unchosen pkg-c alternative must not form a cycle");
+        let position = |name: &str| {
+            resolution
+                .to_install
+                .iter()
+                .position(|candidate| candidate == name)
+                .expect("package in install set")
+        };
+        assert!(position("pkg-b") < position("pkg-a"));
+        assert!(position("pkg-a") < position("pkg-c"));
     }
 
     #[test]
