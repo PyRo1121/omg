@@ -10,8 +10,7 @@
 //! - POSIX/fish quoting end-to-end through the real `omg hook-env` binary.
 //!
 //! Every assertion is falsifiable: mutating the protected product code must
-//! fail these tests (each test below was verified against a targeted
-//! mutation during development; see cov-20.md).
+//! fail these tests.
 
 pub mod common;
 
@@ -44,7 +43,7 @@ fn node_bin(data: &std::path::Path, version: &str) -> PathBuf {
 fn node_pin_resolves_to_exact_installed_bin_dir() {
     let tmp = tempfile::tempdir().unwrap();
     let data = tmp.path();
-    fs_extra_or_std::create_dir_all(&node_bin(data, "20.11.1"));
+    std::fs::create_dir_all(node_bin(data, "20.11.1")).expect("create fixture directory");
     with_test_env(
         &[
             ("OMG_DATA_DIR", data.to_str().unwrap()),
@@ -69,7 +68,7 @@ fn node_pin_resolves_to_exact_installed_bin_dir() {
 fn v_prefixed_node_pin_normalizes_before_lookup() {
     let tmp = tempfile::tempdir().unwrap();
     let data = tmp.path();
-    fs_extra_or_std::create_dir_all(&node_bin(data, "20.11.0"));
+    std::fs::create_dir_all(node_bin(data, "20.11.0")).expect("create fixture directory");
     with_test_env(
         &[
             ("OMG_DATA_DIR", data.to_str().unwrap()),
@@ -95,7 +94,7 @@ fn caret_requirement_resolves_highest_matching_installed_version() {
     let tmp = tempfile::tempdir().unwrap();
     let data = tmp.path();
     for v in ["18.19.0", "20.11.1", "20.12.0"] {
-        fs_extra_or_std::create_dir_all(&node_bin(data, v));
+        std::fs::create_dir_all(node_bin(data, v)).expect("create fixture directory");
     }
     with_test_env(
         &[
@@ -121,7 +120,8 @@ fn unsupported_runtime_pins_never_reach_path() {
     let tmp = tempfile::tempdir().unwrap();
     let data = tmp.path();
     // A decoy directory that a naive implementation might return.
-    fs_extra_or_std::create_dir_all(&data.join("versions/deno/1.40.0/bin"));
+    std::fs::create_dir_all(data.join("versions/deno/1.40.0/bin"))
+        .expect("create fixture directory");
     with_test_env(
         &[
             ("OMG_DATA_DIR", data.to_str().unwrap()),
@@ -163,7 +163,7 @@ fn validated_runtime_pins_resolve_for_all_native_runtimes() {
                     .join(runtime)
                     .join(version)
                     .join("bin");
-                fs_extra_or_std::create_dir_all(&expected);
+                std::fs::create_dir_all(&expected).expect("create fixture directory");
                 let additions =
                     build_path_additions(&pin_map(&[(runtime, version)])).expect("resolution");
                 assert_eq!(
@@ -194,7 +194,7 @@ fn rust_channel_pin_resolves_to_toolchain_bin_dir() {
         .join("versions/rust")
         .join(format!("stable-{host}"))
         .join("bin");
-    fs_extra_or_std::create_dir_all(&expected);
+    std::fs::create_dir_all(&expected).expect("create fixture directory");
     with_test_env(
         &[
             ("OMG_DATA_DIR", data.to_str().unwrap()),
@@ -221,7 +221,7 @@ fn bun_pin_resolves_to_version_root_without_bin_suffix() {
     let tmp = tempfile::tempdir().unwrap();
     let data = tmp.path();
     let expected = data.join("versions/bun/1.1.4");
-    fs_extra_or_std::create_dir_all(&expected);
+    std::fs::create_dir_all(&expected).expect("create fixture directory");
     with_test_env(
         &[
             ("OMG_DATA_DIR", data.to_str().unwrap()),
@@ -256,10 +256,10 @@ fn nvm_alias_pin_falls_back_to_nvm_managed_install() {
     let tmp = tempfile::tempdir().unwrap();
     let data = tmp.path();
     let nvm = tmp.path().join("nvm-home");
-    fs_extra_or_std::create_dir_all(&nvm.join("alias"));
+    std::fs::create_dir_all(nvm.join("alias")).expect("create fixture directory");
     std::fs::write(nvm.join("alias/default"), "v20.10.0\n").unwrap();
     let nvm_bin = nvm.join("versions/node/v20.10.0/bin");
-    fs_extra_or_std::create_dir_all(&nvm_bin);
+    std::fs::create_dir_all(&nvm_bin).expect("create fixture directory");
     with_test_env(
         &[
             ("OMG_DATA_DIR", data.to_str().unwrap()),
@@ -290,9 +290,9 @@ fn nvm_hostile_multicomponent_pin_refused_by_validator() {
     // Make the unguarded traversal fully resolvable: intermediate dir exists
     // and the final target is a real dir inside the nvm tree, so ONLY the
     // validator stands between the pin and PATH.
-    fs_extra_or_std::create_dir_all(&nvm.join("versions/node/v20.11.1"));
+    std::fs::create_dir_all(nvm.join("versions/node/v20.11.1")).expect("create fixture directory");
     let inner_target = nvm.join("versions/node/v20.12.0/bin");
-    fs_extra_or_std::create_dir_all(&inner_target);
+    std::fs::create_dir_all(&inner_target).expect("create fixture directory");
     with_test_env(
         &[
             ("OMG_DATA_DIR", data.to_str().unwrap()),
@@ -319,8 +319,8 @@ fn nvm_symlink_escape_refused_by_containment_check() {
     let data = tmp.path();
     let nvm = tmp.path().join("nvm-home");
     let outside = tmp.path().join("outside-tree");
-    fs_extra_or_std::create_dir_all(&outside.join("bin"));
-    fs_extra_or_std::create_dir_all(&nvm.join("versions/node"));
+    std::fs::create_dir_all(outside.join("bin")).expect("create fixture directory");
+    std::fs::create_dir_all(nvm.join("versions/node")).expect("create fixture directory");
     #[cfg(unix)]
     std::os::unix::fs::symlink(&outside, nvm.join("versions/node/v20.11.1")).unwrap();
     with_test_env(
@@ -385,7 +385,7 @@ fn hook_env_zsh_quotes_apostrophe_data_dir_posix_style() {
     // Plant an apostrophe in the resolved path: only correct quoting survives.
     let data = tmp.path().join("omg's da'ta");
     let bin = data.join("versions/node/20.11.1/bin");
-    fs_extra_or_std::create_dir_all(&bin);
+    std::fs::create_dir_all(&bin).expect("create fixture directory");
     let project = tempfile::tempdir().unwrap();
     std::fs::write(project.path().join(".nvmrc"), "20.11.1").unwrap();
 
@@ -425,7 +425,7 @@ fn hook_env_fish_emits_fish_quoted_add_path() {
     let tmp = tempfile::tempdir().unwrap();
     let data = tmp.path().join("omg's data");
     let bin = data.join("versions/node/20.11.1/bin");
-    fs_extra_or_std::create_dir_all(&bin);
+    std::fs::create_dir_all(&bin).expect("create fixture directory");
     let project = tempfile::tempdir().unwrap();
     std::fs::write(project.path().join(".nvmrc"), "20.11.1").unwrap();
 
@@ -465,29 +465,6 @@ fn hook_env_unresolvable_pin_prints_nothing() {
     assert_eq!(
         result.stdout, "",
         "unresolvable pin must produce no PATH modification"
-    );
-}
-
-/// Contract: tracing diagnostics use stderr, leaving stdout safe for command
-/// substitution and other machine-readable consumers.
-#[test]
-fn tracing_diagnostics_do_not_contaminate_stdout() {
-    let config = tempfile::tempdir().unwrap();
-    std::fs::write(config.path().join("config.toml"), "[general]\n").unwrap();
-
-    let result = run_omg_with_options(
-        &["config", "get", "telemetry.enabled"],
-        None,
-        &[
-            ("OMG_CONFIG_DIR", config.path().to_str().unwrap()),
-            ("RUST_LOG", "warn"),
-        ],
-    );
-    result.assert_success();
-    result.assert_stderr_contains("config section 'general' is deprecated");
-    assert_eq!(
-        result.stdout, "true\n",
-        "diagnostics must never be mixed into machine-readable stdout"
     );
 }
 
@@ -559,12 +536,4 @@ fn hook_scripts_expose_required_integration_markers() {
     fish.assert_success();
     fish.assert_stdout_contains("--on-variable PWD");
     fish.assert_stdout_contains("omg hook-env -s fish | source");
-}
-
-/// Minimal mkdir helper so tests above stay terse (std has no create_dir_all
-/// taking a PathBuf reference conveniently chained).
-mod fs_extra_or_std {
-    pub fn create_dir_all(path: &std::path::Path) {
-        std::fs::create_dir_all(path).expect("failed to create test directory");
-    }
 }

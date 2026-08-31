@@ -10,7 +10,7 @@
 pub mod common;
 
 use common::serial;
-use common::{CommandResult, TestProject, clear_license};
+use common::{CommandResult, TestProject};
 use std::fs;
 use std::path::Path;
 
@@ -89,7 +89,6 @@ fn assert_gate_failure(res: &CommandResult, context: &str) {
 #[test]
 #[serial]
 fn init_rejects_invalid_team_id_and_writes_nothing() {
-    clear_license();
     let project = TestProject::new();
     let res = project.run(&["team", "init", "bad team!"]);
     res.assert_failure();
@@ -107,7 +106,6 @@ fn init_rejects_invalid_team_id_and_writes_nothing() {
 #[test]
 #[serial]
 fn init_rejects_control_char_team_name() {
-    clear_license();
     let project = TestProject::new();
     let name_with_newline = "backend\nrm";
     let res = project.run(&["team", "init", "acme/backend", "--name", name_with_newline]);
@@ -125,7 +123,6 @@ fn init_rejects_control_char_team_name() {
 #[test]
 #[serial]
 fn init_rejects_overlong_team_name() {
-    clear_license();
     let project = TestProject::new();
     let long_name = "x".repeat(129);
     let res = project.run(&["team", "init", "acme/backend", "--name", &long_name]);
@@ -143,7 +140,6 @@ fn init_rejects_overlong_team_name() {
 #[test]
 #[serial]
 fn init_without_license_names_feature_tier_price_and_upgrade_url() {
-    clear_license();
     let project = TestProject::new();
     let res = project.run(&["team", "init", "acme/backend", "--name", "Backend"]);
     res.assert_failure();
@@ -165,7 +161,6 @@ fn init_without_license_names_feature_tier_price_and_upgrade_url() {
 #[test]
 #[serial]
 fn join_rejects_http_url_with_https_remedy() {
-    clear_license();
     let project = TestProject::new();
     let res = project.run(&["team", "join", "http://example.com/acme/backend"]);
     res.assert_failure();
@@ -183,7 +178,6 @@ fn join_rejects_http_url_with_https_remedy() {
 #[test]
 #[serial]
 fn join_rejects_control_char_url() {
-    clear_license();
     let project = TestProject::new();
     let url_with_newline = format!("https://example.com/{}\n/evil", "acme");
     let res = project.run(&["team", "join", &url_with_newline]);
@@ -199,7 +193,6 @@ fn join_rejects_control_char_url() {
 #[test]
 #[serial]
 fn join_rejects_overlong_url() {
-    clear_license();
     let project = TestProject::new();
     let url = format!("https://example.com/{}", "a".repeat(1100));
     let res = project.run(&["team", "join", &url]);
@@ -216,7 +209,6 @@ fn join_rejects_overlong_url() {
 #[test]
 #[serial]
 fn join_rejects_unsupported_https_remote_before_mutation() {
-    clear_license();
     let project = TestProject::new();
     let res = project.run(&["team", "join", "https://github.com/acme/backend"]);
     res.assert_failure();
@@ -249,7 +241,6 @@ fn status_outside_workspace_fails_naming_init_remedy() {
 #[test]
 #[serial]
 fn status_in_workspace_reports_identity_empty_lock_and_member_count() {
-    clear_license();
     let project = TestProject::new();
     craft_workspace(&project);
     let res = project.run(&["team", "status"]);
@@ -270,7 +261,6 @@ fn status_in_workspace_reports_identity_empty_lock_and_member_count() {
 #[test]
 #[serial]
 fn push_writes_valid_lockfile_and_records_lock_hash_in_status() {
-    clear_license();
     let project = TestProject::new();
     craft_workspace(&project);
 
@@ -315,7 +305,6 @@ fn push_writes_valid_lockfile_and_records_lock_hash_in_status() {
 #[test]
 #[serial]
 fn pull_after_push_reports_local_sync_success() {
-    clear_license();
     let project = TestProject::new();
     craft_workspace(&project);
 
@@ -333,7 +322,6 @@ fn pull_after_push_reports_local_sync_success() {
 #[test]
 #[serial]
 fn pull_detects_drift_when_lock_differs_from_environment() {
-    clear_license();
     let project = TestProject::new();
     craft_workspace(&project);
 
@@ -364,7 +352,6 @@ fn pull_detects_drift_when_lock_differs_from_environment() {
 #[test]
 #[serial]
 fn corrupted_lockfile_fails_pull_loudly_instead_of_reporting_state() {
-    clear_license();
     let project = TestProject::new();
     craft_workspace(&project);
 
@@ -389,7 +376,6 @@ fn corrupted_lockfile_fails_pull_loudly_instead_of_reporting_state() {
 #[test]
 #[serial]
 fn pull_rejects_non_gist_remote_url_instead_of_reporting_fake_sync() {
-    clear_license();
     let project = TestProject::new();
     craft_workspace(&project);
     let cfg = project.path().join(".omg/team.toml");
@@ -412,7 +398,6 @@ fn pull_rejects_non_gist_remote_url_instead_of_reporting_fake_sync() {
 #[test]
 #[serial]
 fn golden_path_create_rejects_invalid_template_name_before_license_gate() {
-    clear_license();
     let project = TestProject::new();
     let res = project.run(&["team", "golden-path", "create", "bad name!"]);
     res.assert_failure();
@@ -435,7 +420,6 @@ fn golden_path_create_rejects_invalid_template_name_before_license_gate() {
 #[test]
 #[serial]
 fn golden_path_create_rejects_unsafe_node_version_before_license_gate() {
-    clear_license();
     let project = TestProject::new();
     let res = project.run(&[
         "team",
@@ -462,7 +446,6 @@ fn golden_path_create_rejects_unsafe_node_version_before_license_gate() {
 #[test]
 #[serial]
 fn golden_path_create_rejects_unsafe_package_name_before_license_gate() {
-    clear_license();
     let project = TestProject::new();
     let res = project.run(&[
         "team",
@@ -485,7 +468,6 @@ fn golden_path_create_rejects_unsafe_package_name_before_license_gate() {
 #[test]
 #[serial]
 fn golden_path_create_valid_input_still_gated_by_license() {
-    clear_license();
     let project = TestProject::new();
     let res = project.run(&[
         "team",
@@ -506,7 +488,6 @@ fn golden_path_create_valid_input_still_gated_by_license() {
 #[test]
 #[serial]
 fn golden_path_list_requires_license_gate() {
-    clear_license();
     let project = TestProject::new();
     let res = project.run(&["team", "golden-path", "list"]);
     assert_gate_failure(&res, "golden-path list");
@@ -516,7 +497,6 @@ fn golden_path_list_requires_license_gate() {
 #[test]
 #[serial]
 fn golden_path_delete_requires_license_gate() {
-    clear_license();
     let project = TestProject::new();
     let res = project.run(&["team", "golden-path", "delete", "whatever"]);
     assert_gate_failure(&res, "golden-path delete");
@@ -531,7 +511,6 @@ fn golden_path_delete_requires_license_gate() {
 #[test]
 #[serial]
 fn team_roles_list_requires_license_gate() {
-    clear_license();
     let project = TestProject::new();
     let res = project.run(&["team", "roles", "list"]);
     assert_gate_failure(&res, "roles list");
@@ -540,7 +519,6 @@ fn team_roles_list_requires_license_gate() {
 #[test]
 #[serial]
 fn team_members_requires_license_gate() {
-    clear_license();
     let project = TestProject::new();
     let res = project.run(&["team", "members"]);
     assert_gate_failure(&res, "members");
@@ -549,7 +527,6 @@ fn team_members_requires_license_gate() {
 #[test]
 #[serial]
 fn team_activity_requires_license_gate() {
-    clear_license();
     let project = TestProject::new();
     let res = project.run(&["team", "activity", "--days", "7"]);
     assert_gate_failure(&res, "activity");
@@ -558,7 +535,6 @@ fn team_activity_requires_license_gate() {
 #[test]
 #[serial]
 fn team_dashboard_requires_license_gate() {
-    clear_license();
     let project = TestProject::new();
     let res = project.run(&["team", "dashboard"]);
     assert_gate_failure(&res, "dashboard");
@@ -569,7 +545,6 @@ fn team_dashboard_requires_license_gate() {
 #[test]
 #[serial]
 fn team_compliance_requires_license_gate() {
-    clear_license();
     let project = TestProject::new();
     let res = project.run(&["team", "compliance"]);
     assert_gate_failure(&res, "compliance");
@@ -578,7 +553,6 @@ fn team_compliance_requires_license_gate() {
 #[test]
 #[serial]
 fn team_compliance_export_requires_license_gate() {
-    clear_license();
     let project = TestProject::new();
     let res = project.run(&["team", "compliance", "--export", "/tmp/cov5-export.md"]);
     assert_gate_failure(&res, "compliance export");

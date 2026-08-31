@@ -1,8 +1,7 @@
 //! cov-3: contract tests for src/cli/commands.rs rollback partitioning and
 //! env sync exit codes.
 //!
-//! Pinned contracts (each falsifiable — see report cov-3.md for the mutation
-//! verification log):
+//! Pinned, falsifiable contracts:
 //!
 //! - `rollback_action` Sync arm: a successful Sync transaction rolls back to
 //!   "Nothing to roll back" with exit code 0.

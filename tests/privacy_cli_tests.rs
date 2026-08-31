@@ -116,7 +116,6 @@ fn test_privacy_help() {
 #[test]
 fn test_privacy_export_without_license() {
     init_test_env();
-    clear_license();
     let project = TestProject::new();
     let output_path = project.path().join("local-export.json");
 
@@ -482,7 +481,6 @@ fn test_privacy_invalid_subcommand() {
 fn test_privacy_export_invalid_output_path() {
     // ===== ARRANGE =====
     init_test_env();
-    clear_license();
 
     // ===== ACT =====
     // Use invalid path (directory that doesn't exist)

@@ -112,6 +112,29 @@ impl HermeticEnv {
 // Opt-out gating contract
 // ═══════════════════════════════════════════════════════════════════════
 
+/// Tracing diagnostics use stderr, leaving configuration stdout safe for
+/// command substitution and other machine-readable consumers.
+#[test]
+fn tracing_diagnostics_do_not_contaminate_config_stdout() {
+    let config = TempDir::new().expect("temporary config directory");
+    fs::write(config.path().join("config.toml"), "[general]\n").expect("deprecated config fixture");
+
+    let result = run_omg_with_options(
+        &["config", "get", "telemetry.enabled"],
+        None,
+        &[
+            ("OMG_CONFIG_DIR", config.path().to_str().unwrap()),
+            ("RUST_LOG", "warn"),
+        ],
+    );
+    result.assert_success();
+    result.assert_stderr_contains("config section 'general' is deprecated");
+    assert_eq!(
+        result.stdout, "false\n",
+        "diagnostics must never be mixed into configuration stdout"
+    );
+}
+
 #[test]
 #[serial]
 fn opt_out_env_values_and_settings_file_gate_telemetry() {

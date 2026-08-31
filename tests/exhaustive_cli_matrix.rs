@@ -389,7 +389,6 @@ mod team_matrix {
     #[test]
     #[serial]
     fn test_team_init() {
-        clear_license(); // Ensure no license for consistent test behavior
         let project = TestProject::new();
         // Init a new team - requires license, so we expect failure
         let res = project.run(&["team", "init", "test-team-id"]);

@@ -204,15 +204,6 @@ impl CommandResult {
     }
 }
 
-/// Remove the license file from the isolated test data directory
-pub fn clear_license() {
-    let data_dir = match env::var("OMG_DATA_DIR") {
-        Ok(dir) if !dir.is_empty() => PathBuf::from(dir),
-        _ => return,
-    };
-    let _ = fs::remove_file(data_dir.join("license.json"));
-}
-
 /// Run an OMG command
 pub fn run_omg(args: &[&str]) -> CommandResult {
     run_omg_with_options(args, None, &[])
