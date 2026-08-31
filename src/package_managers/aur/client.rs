@@ -904,7 +904,7 @@ impl AurClient {
         crate::core::security::validate_version(version)?;
         require_unprivileged_builder(package, crate::core::is_root())?;
 
-        let base = self.resolve_package_base(package).await;
+        let base = self.resolve_package_base(package).await?;
 
         // Isolated work tree; stamp prevents collisions between rollbacks.
         let work = self.build_dir.join("_rollback");
@@ -1347,7 +1347,7 @@ impl AurClient {
         // named after its package base (e.g. `postgresql18-libs` lives in
         // `postgresql18.git`). Clone/build the base; cache and artifact
         // lookups stay scoped to the requested output.
-        let package_base = self.resolve_package_base(package).await;
+        let package_base = self.resolve_package_base(package).await?;
 
         create_dir_as_user(&self.build_dir).await?;
 
@@ -1445,21 +1445,30 @@ impl AurClient {
     /// Resolve an AUR name (output or base) to its package base via one RPC
     /// lookup. Falls back to the input on any failure so offline callers keep
     /// their previous behavior instead of hard-failing.
-    async fn resolve_package_base(&self, name: &str) -> String {
+    async fn resolve_package_base(&self, name: &str) -> Result<String> {
         match Self::rpc_info_chunk(std::slice::from_ref(&name.to_string())).await {
-            Ok(response) => response
-                .results
-                .iter()
-                .find(|info| info.name == name)
-                .and_then(|info| info.package_base.clone())
-                .unwrap_or_else(|| name.to_string()),
+            Ok(response) => {
+                let candidate = response
+                    .results
+                    .iter()
+                    .find(|info| info.name == name)
+                    .and_then(|info| info.package_base.as_deref());
+                Self::validated_package_base(name, candidate)
+            }
             Err(error) => {
                 tracing::debug!(
                     "Could not resolve package base for {name}: {error}; using name as base"
                 );
-                name.to_string()
+                Ok(name.to_string())
             }
         }
+    }
+
+    fn validated_package_base(name: &str, candidate: Option<&str>) -> Result<String> {
+        let package_base = candidate.unwrap_or(name);
+        crate::core::security::validate_package_name(package_base)
+            .context("AUR returned an invalid package base")?;
+        Ok(package_base.to_string())
     }
 
     async fn find_built_packages(
@@ -3950,6 +3959,16 @@ mod tests {
             .expect_err("root builds must be rejected");
         assert!(error.to_string().contains("must not be built as root"));
         assert!(error.to_string().contains("omg install example"));
+    }
+
+    #[test]
+    fn resolved_package_base_rejects_untrusted_path_and_option_syntax() {
+        assert_eq!(
+            AurClient::validated_package_base("output", Some("valid-base")).unwrap(),
+            "valid-base"
+        );
+        assert!(AurClient::validated_package_base("output", Some("../escape")).is_err());
+        assert!(AurClient::validated_package_base("output", Some("-option")).is_err());
     }
 
     #[test]
