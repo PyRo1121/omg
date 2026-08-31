@@ -687,6 +687,7 @@ analyzer inference
 - **Ci**: Cross-platform install script and R2 release sync
 ### 🐛 Bug Fixes
 
+- Keep direct ALPM installs off async workers
 - Reject nonexistent AUR build path traversal
 - Validate all AUR search queries consistently
 - Require embedded identity for built AUR artifacts
