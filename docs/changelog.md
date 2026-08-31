@@ -2776,6 +2776,7 @@ which newer clippy versions flag as an error with -D warnings.
 
 ### 👷 CI/CD
 
+- Keep the portable Clippy gate actionable
 - Remove duplicate Docker E2E build
 - Make release publication verifiable and recoverable
 - Harden recurring workflow execution
