@@ -16,9 +16,10 @@ use crate::package_managers::types::{
 };
 
 static CACHE_EPOCH: AtomicU64 = AtomicU64::new(0);
+type CachedAlpmHandle = Option<(Alpm, u64)>;
 
 thread_local! {
-    static ALPM_HANDLE: RefCell<Option<(Alpm, u64)>> = const { RefCell::new(None) };
+    static ALPM_HANDLE: RefCell<CachedAlpmHandle> = const { RefCell::new(None) };
 }
 
 fn create_alpm_handle() -> Result<Alpm> {
@@ -57,6 +58,13 @@ fn create_alpm_handle() -> Result<Alpm> {
     Ok(alpm)
 }
 
+fn refresh_cached_handle(cached: &mut CachedAlpmHandle, current_epoch: u64) -> Result<()> {
+    if !matches!(cached, Some((_, epoch)) if *epoch == current_epoch) {
+        *cached = Some((create_alpm_handle()?, current_epoch));
+    }
+    Ok(())
+}
+
 /// Get a cached ALPM handle or create a new one for this thread.
 pub fn with_handle<F, R>(f: F) -> Result<R>
 where
@@ -64,11 +72,10 @@ where
 {
     ALPM_HANDLE.with(|cell| {
         let current_epoch = CACHE_EPOCH.load(Ordering::Acquire);
-        let mut maybe_handle = cell.borrow_mut();
-
-        if !matches!(&*maybe_handle, Some((_, epoch)) if *epoch == current_epoch) {
-            *maybe_handle = Some((create_alpm_handle()?, current_epoch));
-        }
+        let mut maybe_handle = cell
+            .try_borrow_mut()
+            .context("Nested ALPM handle access is not supported")?;
+        refresh_cached_handle(&mut maybe_handle, current_epoch)?;
 
         let (handle, _) = maybe_handle
             .as_ref()
@@ -84,11 +91,10 @@ where
 {
     ALPM_HANDLE.with(|cell| {
         let current_epoch = CACHE_EPOCH.load(Ordering::Acquire);
-        let mut maybe_handle = cell.borrow_mut();
-
-        if !matches!(&*maybe_handle, Some((_, epoch)) if *epoch == current_epoch) {
-            *maybe_handle = Some((create_alpm_handle()?, current_epoch));
-        }
+        let mut maybe_handle = cell
+            .try_borrow_mut()
+            .context("Nested ALPM handle access is not supported")?;
+        refresh_cached_handle(&mut maybe_handle, current_epoch)?;
 
         let (handle, _) = maybe_handle
             .as_mut()
@@ -389,6 +395,18 @@ mod tests {
     /// environments without an installed pacman local db (CI containers).
     fn real_pacman_db_available() -> bool {
         paths::pacman_local_dir().exists()
+    }
+
+    #[test]
+    fn nested_handle_access_returns_an_error_instead_of_panicking() {
+        if !real_pacman_db_available() {
+            return;
+        }
+
+        let result = with_handle(|_| with_handle(|_| Ok(())));
+
+        let error = result.expect_err("nested ALPM access must fail");
+        assert!(error.to_string().contains("Nested ALPM handle access"));
     }
 
     #[test]
