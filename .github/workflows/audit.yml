@@ -39,10 +39,14 @@ jobs:
           cache-on-failure: true
 
       - name: Install cargo-audit
-        uses: taiki-e/install-action@fc79696c54ba9f873726bafbf4e45601329839fd # cargo-audit
+        uses: taiki-e/install-action@82cd3e7658a6f96c86c0234aeeda1748937cb0a1 # v2
+        with:
+          tool: cargo-audit
 
       - name: Install cargo-deny
-        uses: taiki-e/install-action@be8e48a54f508d12604e2a74fda853e27889c2dc # cargo-deny
+        uses: taiki-e/install-action@82cd3e7658a6f96c86c0234aeeda1748937cb0a1 # v2
+        with:
+          tool: cargo-deny
 
       - name: Run cargo-audit (Vulnerability Scan)
         run: cargo audit
