@@ -2842,6 +2842,7 @@ across history/faq/cli
 - Run Docker E2E tests explicitly
 ### 📚 Documentation
 
+- Add August technical debt review
 - Remove stale test coverage claims
 - Correct AUR search ranking comments
 - Remove stale ALPM implementation comments
