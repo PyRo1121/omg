@@ -687,6 +687,8 @@ analyzer inference
 - **Ci**: Cross-platform install script and R2 release sync
 ### 🐛 Bug Fixes
 
+- Fail closed when telemetry settings are invalid
+- Validate AUR package-base responses
 - Keep direct ALPM installs off async workers
 - Reject nonexistent AUR build path traversal
 - Validate all AUR search queries consistently
