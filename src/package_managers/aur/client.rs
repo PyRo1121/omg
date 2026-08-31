@@ -65,6 +65,7 @@ const AUR_GIT_PULL_ARGS: &[&str] = &[
 static INSTALL_LOCK: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
 static REVIEW_LOCK: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
 const MAX_PKGBUILD_REVIEW_BYTES: usize = 1024 * 1024;
+const MAX_PKGINFO_BYTES: u64 = 128 * 1024;
 /// Pre-computed length of the AUR RPC info base URL (47 bytes)
 const AUR_RPC_INFO_BASE_LEN: usize = 47;
 
@@ -1547,41 +1548,8 @@ impl AurClient {
     }
 
     fn pkg_name_from_archive(path: &Path) -> Result<Option<String>> {
-        let file = File::open(path)?;
-        let reader: Box<dyn Read> = if path.extension().is_some_and(|ext| ext == "zst") {
-            let decoder = ruzstd::decoding::StreamingDecoder::new(file)
-                .map_err(|e| anyhow::anyhow!("zstd: {e}"))?;
-            Box::new(decoder)
-        } else if path.extension().is_some_and(|ext| ext == "xz") {
-            let mut decompressed = Vec::new();
-            lzma_rs::xz_decompress(&mut BufReader::new(file), &mut decompressed)
-                .map_err(|e| anyhow::anyhow!("xz: {e}"))?;
-            Box::new(Cursor::new(decompressed))
-        } else {
-            let decoder = flate2::read::GzDecoder::new(file);
-            Box::new(decoder)
-        };
-
-        let mut archive: tar::Archive<Box<dyn Read>> = tar::Archive::new(reader);
-
-        for entry in archive.entries()? {
-            let mut entry = entry?;
-            let entry_path = entry.path()?;
-            if entry_path.components().count() <= 2
-                && let Some(file_name) = entry_path.file_name().and_then(|n| n.to_str())
-                && matches!(file_name, ".PKGINFO" | "PKGINFO")
-            {
-                let mut content = String::new();
-                entry.read_to_string(&mut content)?;
-                return Ok(Self::parse_pkginfo_name(&content));
-            }
-        }
-
-        Ok(None)
-    }
-
-    fn parse_pkginfo_name(content: &str) -> Option<String> {
-        Self::parse_pkginfo_name_version(content).map(|(name, _)| name)
+        Self::pkg_name_and_version_from_archive_result(path)
+            .map(|identity| identity.map(|(name, _)| name))
     }
 
     /// Extract `(pkgname, full-version)` from `.PKGINFO` content.
@@ -1638,32 +1606,56 @@ impl AurClient {
     }
 
     pub(crate) fn pkg_name_and_version_from_archive(path: &Path) -> Option<(String, String)> {
-        let file = File::open(path).ok()?;
+        Self::pkg_name_and_version_from_archive_result(path)
+            .ok()
+            .flatten()
+    }
+
+    fn pkg_name_and_version_from_archive_result(path: &Path) -> Result<Option<(String, String)>> {
+        let file = File::open(path)?;
         let reader: Box<dyn Read> = if path.extension().is_some_and(|ext| ext == "zst") {
-            let decoder = ruzstd::decoding::StreamingDecoder::new(file).ok()?;
+            let decoder = ruzstd::decoding::StreamingDecoder::new(file)
+                .map_err(|error| anyhow::anyhow!("zstd: {error}"))?;
             Box::new(decoder)
         } else if path.extension().is_some_and(|ext| ext == "xz") {
             let mut decompressed = Vec::new();
-            lzma_rs::xz_decompress(&mut BufReader::new(file), &mut decompressed).ok()?;
+            lzma_rs::xz_decompress(&mut BufReader::new(file), &mut decompressed)
+                .map_err(|error| anyhow::anyhow!("xz: {error}"))?;
             Box::new(Cursor::new(decompressed))
         } else {
             Box::new(flate2::read::GzDecoder::new(file))
         };
 
         let mut archive = tar::Archive::new(reader);
-        for entry in archive.entries().ok()? {
-            let mut entry = entry.ok()?;
-            let entry_path = entry.path().ok()?;
+        for entry in archive.entries()? {
+            let entry = entry?;
+            let entry_path = entry.path()?;
             if entry_path.components().count() <= 2
-                && let Some(file_name) = entry_path.file_name().and_then(|n| n.to_str())
+                && let Some(file_name) = entry_path.file_name().and_then(|name| name.to_str())
                 && matches!(file_name, ".PKGINFO" | "PKGINFO")
             {
-                let mut content = String::new();
-                entry.read_to_string(&mut content).ok()?;
-                return Self::parse_pkginfo_name_version(&content);
+                if entry.size() > MAX_PKGINFO_BYTES {
+                    anyhow::bail!(
+                        "Package metadata in {} exceeds the {} byte limit",
+                        path.display(),
+                        MAX_PKGINFO_BYTES
+                    );
+                }
+                let mut content = String::with_capacity(entry.size() as usize);
+                entry
+                    .take(MAX_PKGINFO_BYTES + 1)
+                    .read_to_string(&mut content)?;
+                if content.len() as u64 > MAX_PKGINFO_BYTES {
+                    anyhow::bail!(
+                        "Package metadata in {} exceeds the {} byte limit",
+                        path.display(),
+                        MAX_PKGINFO_BYTES
+                    );
+                }
+                return Ok(Self::parse_pkginfo_name_version(&content));
             }
         }
-        None
+        Ok(None)
     }
 
     async fn missing_aur_dependencies(&self, pkg_dir: &Path, package: &str) -> Result<Vec<String>> {
@@ -3098,6 +3090,16 @@ mod tests {
             &[("a/b/.PKGINFO", b"pkgname = deep\npkgver = 9.9\n")],
         );
         assert_eq!(AurClient::pkg_name_and_version_from_archive(&deep), None);
+
+        // Metadata is untrusted and must not cause unbounded allocation.
+        let oversized = directory.path().join("oversized.pkg.tar.gz");
+        let mut pkginfo = b"pkgname = oversized\npkgver = 1.0-1\n".to_vec();
+        pkginfo.resize((MAX_PKGINFO_BYTES + 1) as usize, b'x');
+        write_tar_gz(&oversized, &[(".PKGINFO", &pkginfo)]);
+        assert_eq!(
+            AurClient::pkg_name_and_version_from_archive(&oversized),
+            None
+        );
     }
 
     #[test]
