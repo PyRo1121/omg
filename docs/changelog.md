@@ -4045,6 +4045,7 @@ the Debian backend), so it was removed from the metadata.
 - Normalize project formatting
 ### 🧪 Testing
 
+- Make AUR system scenarios explicit
 - Make CLI and benchmark fixtures deterministic
 - Make coverage contracts exercise intended paths
 - Isolate daemon cache and concurrency fixtures
