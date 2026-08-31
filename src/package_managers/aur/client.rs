@@ -3,7 +3,7 @@
 use ahash::AHashSet;
 use std::collections::{BTreeMap, BTreeSet};
 use std::fs::File;
-use std::io::{BufReader, Cursor, Read};
+use std::io::{BufReader, Read, Seek};
 use std::path::{Path, PathBuf};
 use std::process::Stdio;
 use std::sync::Arc;
@@ -42,6 +42,7 @@ use crate::config::{AurBuildMethod, Settings};
 use crate::core::http::shared_client;
 use crate::core::{Package, PackageSource, paths};
 use crate::package_managers::{get_potential_aur_packages, pacman_db};
+use crate::runtimes::common::{BudgetedReader, BudgetedWriter, MAX_DECOMPRESSED_BYTES};
 
 const AUR_RPC_URL: &str = "https://aur.archlinux.org/rpc";
 const AUR_GIT_URL: &str = "https://aur.archlinux.org";
@@ -1611,21 +1612,31 @@ impl AurClient {
             .flatten()
     }
 
-    fn pkg_name_and_version_from_archive_result(path: &Path) -> Result<Option<(String, String)>> {
+    fn package_archive_reader(path: &Path, budget: u64) -> Result<Box<dyn Read>> {
         let file = File::open(path)?;
-        let reader: Box<dyn Read> = if path.extension().is_some_and(|ext| ext == "zst") {
+        if path.extension().is_some_and(|ext| ext == "zst") {
             let decoder = ruzstd::decoding::StreamingDecoder::new(file)
                 .map_err(|error| anyhow::anyhow!("zstd: {error}"))?;
-            Box::new(decoder)
+            Ok(Box::new(BudgetedReader::new(decoder, budget)))
         } else if path.extension().is_some_and(|ext| ext == "xz") {
-            let mut decompressed = Vec::new();
-            lzma_rs::xz_decompress(&mut BufReader::new(file), &mut decompressed)
+            let temporary = tempfile::NamedTempFile::new()
+                .context("Failed to create temporary AUR package metadata spool")?;
+            let mut output = BudgetedWriter::new(temporary, budget);
+            lzma_rs::xz_decompress(&mut BufReader::new(file), &mut output)
                 .map_err(|error| anyhow::anyhow!("xz: {error}"))?;
-            Box::new(Cursor::new(decompressed))
+            let mut output = output.into_inner().into_file();
+            output.rewind()?;
+            Ok(Box::new(output))
         } else {
-            Box::new(flate2::read::GzDecoder::new(file))
-        };
+            Ok(Box::new(BudgetedReader::new(
+                flate2::read::GzDecoder::new(file),
+                budget,
+            )))
+        }
+    }
 
+    fn pkg_name_and_version_from_archive_result(path: &Path) -> Result<Option<(String, String)>> {
+        let reader = Self::package_archive_reader(path, MAX_DECOMPRESSED_BYTES)?;
         let mut archive = tar::Archive::new(reader);
         for entry in archive.entries()? {
             let entry = entry?;
@@ -3099,6 +3110,32 @@ mod tests {
         assert_eq!(
             AurClient::pkg_name_and_version_from_archive(&oversized),
             None
+        );
+    }
+
+    #[test]
+    fn xz_package_metadata_scan_enforces_decompressed_budget() {
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("oversized.pkg.tar.xz");
+        let content = vec![b'x'; 1024];
+        let mut tar = tar::Builder::new(Vec::new());
+        let mut header = tar::Header::new_gnu();
+        header.set_size(content.len() as u64);
+        header.set_mode(0o644);
+        header.set_cksum();
+        tar.append_data(&mut header, "payload", content.as_slice())
+            .unwrap();
+        let raw = tar.into_inner().unwrap();
+        let mut compressed = Vec::new();
+        lzma_rs::xz_compress(&mut raw.as_slice(), &mut compressed).unwrap();
+        std::fs::write(&path, compressed).unwrap();
+
+        let error = AurClient::package_archive_reader(&path, 128)
+            .err()
+            .expect("oversized XZ output must fail before it is retained in memory");
+        assert!(
+            error.to_string().contains("xz"),
+            "unexpected error: {error:#}"
         );
     }
 
