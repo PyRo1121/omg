@@ -256,27 +256,9 @@ fn record_failure() {
     }
 }
 
-/// Check if telemetry should be sent (signed license token present)
-fn should_send_telemetry() -> bool {
-    // Only send telemetry if:
-    // 1. User has a license (opted in)
-    // 2. Telemetry is not explicitly disabled
-    // 3. Not in test mode
-    if crate::core::paths::test_mode() {
-        return false;
-    }
-
-    if crate::core::telemetry::is_telemetry_opt_out() {
-        return false;
-    }
-
-    // Enhanced telemetry requires a signed, unexpired license token.
-    crate::core::license::load_license().is_some_and(|license| license.is_token_valid())
-}
-
 /// Send batched telemetry events with circuit breaker support
 pub async fn send_batch(events: Vec<TelemetryEvent>) -> Result<()> {
-    if !should_send_telemetry() || events.is_empty() {
+    if !crate::core::telemetry::is_enhanced_telemetry_enabled() || events.is_empty() {
         return Ok(());
     }
 
@@ -397,6 +379,7 @@ mod tests {
     }
 
     #[test]
+    #[serial_test::serial]
     fn circuit_breaker_state_transitions_match_threshold() {
         // Reset state
         CIRCUIT_STATE.store(CircuitState::Closed as u32, Ordering::Relaxed);

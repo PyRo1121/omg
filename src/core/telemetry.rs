@@ -840,18 +840,22 @@ mod tests {
             last_persist: AtomicI64::new(now),
             persistence_enabled: true,
         };
-        // Queue capacity is bounded; pushing past it must drop or trim rather
-        // than grow without limit (the old needs_flush path was removed with
-        // the free-fn deletion — capacity is enforced by the queue itself).
-        for i in 0..6000 {
+        // Queue capacity is bounded; pushing past it trims the oldest events.
+        for duration_ms in 0..6000 {
             queue.push(TelemetryEvent::Performance(PerformanceEvent {
                 metric_type: "test".to_string(),
-                duration_ms: i,
+                duration_ms,
             }));
-            let _ = i;
         }
-        assert!(queue.events.len() <= 6000, "queue must not grow unbounded");
-        assert!(!queue.events.is_empty());
+        assert!(
+            queue.events.len() <= MAX_QUEUE_SIZE,
+            "queue must not grow beyond its configured capacity"
+        );
+
+        let queued = queue.snapshot().len();
+        let confirmed = queued / 2;
+        queue.confirm_sent(confirmed);
+        assert_eq!(queue.events.len(), queued - confirmed);
     }
 
     #[test]
