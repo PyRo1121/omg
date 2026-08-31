@@ -41,7 +41,10 @@ fn is_venv_base_tool(name: &std::ffi::OsStr) -> bool {
         || name.starts_with("pip3.")
         || name.starts_with("python")
         || name.starts_with("pydoc")
-        || name.ends_with("activate")
+        || matches!(
+            name,
+            "activate" | "activate.csh" | "activate.fish" | "Activate.ps1"
+        )
 }
 
 /// Pick the best available CPython launcher.
@@ -878,6 +881,14 @@ pub fn registry() -> Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn virtualenv_activation_scripts_are_not_linkable_tools() {
+        for script in ["activate", "activate.csh", "activate.fish", "Activate.ps1"] {
+            assert!(is_venv_base_tool(std::ffi::OsStr::new(script)), "{script}");
+        }
+        assert!(!is_venv_base_tool(std::ffi::OsStr::new("reactivate")));
+    }
 
     #[test]
     fn installed_names_resolve_flat_and_legacy_registry_layouts() {
