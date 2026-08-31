@@ -1,8 +1,6 @@
 //! Parallel source downloading for AUR packages
 //!
-//! This module parses .SRCINFO files to extract HTTP/HTTPS sources and downloads
-//! them concurrently before makepkg runs. This dramatically improves build times
-//! for packages with multiple source files (10-60 second savings).
+//! Parses `.SRCINFO` and downloads HTTP sources concurrently before makepkg runs.
 
 use std::collections::HashMap;
 use std::path::Path;
@@ -10,7 +8,6 @@ use std::path::Path;
 const MAX_AUR_SOURCE_BYTES: u64 = 1024 * 1024 * 1024;
 
 use alpm_srcinfo::SourceInfoV1;
-use alpm_types::SystemArchitecture;
 use anyhow::{Context, Result};
 use futures::stream::{self, StreamExt};
 use indicatif::{MultiProgress, ProgressBar, ProgressStyle};
@@ -27,17 +24,6 @@ pub struct SourceFile {
     pub url: String,
     /// Base filename (may be renamed via :: syntax)
     pub filename: String,
-}
-
-/// Get the current system architecture
-fn current_arch() -> Option<SystemArchitecture> {
-    match std::env::consts::ARCH {
-        "x86_64" => Some(SystemArchitecture::X86_64),
-        "aarch64" => Some(SystemArchitecture::Aarch64),
-        "arm" => Some(SystemArchitecture::Arm),
-        "i686" => Some(SystemArchitecture::I686),
-        _ => None,
-    }
 }
 
 /// Parse .SRCINFO to extract HTTP/HTTPS source URLs
@@ -67,7 +53,7 @@ pub fn parse_sources(pkg_dir: &Path) -> Result<Vec<SourceFile>> {
     }
 
     // Also parse architecture-specific sources
-    if let Some(arch) = current_arch()
+    if let Some(arch) = super::aur::utils::current_arch()
         && let Some(arch_props) = srcinfo.base.architecture_properties.get(&arch)
     {
         for source in &arch_props.sources {

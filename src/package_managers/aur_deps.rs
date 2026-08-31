@@ -4,7 +4,6 @@
 //! to avoid redundant pacman operations.
 
 use alpm_srcinfo::SourceInfoV1;
-use alpm_types::SystemArchitecture;
 use anyhow::{Context, Result};
 use std::path::Path;
 
@@ -15,17 +14,6 @@ pub struct DependencyInfo {
     pub missing: Vec<String>,
     /// Total dependency expressions inspected
     pub total: usize,
-}
-
-/// Get the current system architecture
-fn current_arch() -> Option<SystemArchitecture> {
-    match std::env::consts::ARCH {
-        "x86_64" => Some(SystemArchitecture::X86_64),
-        "aarch64" => Some(SystemArchitecture::Aarch64),
-        "arm" => Some(SystemArchitecture::Arm),
-        "i686" => Some(SystemArchitecture::I686),
-        _ => None,
-    }
 }
 
 /// Parse .SRCINFO and check which dependencies are missing
@@ -65,7 +53,7 @@ pub fn check_dependencies(pkg_dir: &Path) -> Result<DependencyInfo> {
     }
 
     // Also collect architecture-specific dependencies if available
-    if let Some(arch) = current_arch()
+    if let Some(arch) = super::aur::utils::current_arch()
         && let Some(arch_props) = base.architecture_properties.get(&arch)
     {
         for dep in &arch_props.dependencies {

@@ -1,8 +1,19 @@
 use std::os::unix::fs::MetadataExt;
 use std::path::{Path, PathBuf};
 
+use alpm_types::SystemArchitecture;
 use anyhow::{Context, Result, bail};
 use tokio::process::Command;
+
+pub(in crate::package_managers) fn current_arch() -> Option<SystemArchitecture> {
+    match std::env::consts::ARCH {
+        "x86_64" => Some(SystemArchitecture::X86_64),
+        "aarch64" => Some(SystemArchitecture::Aarch64),
+        "arm" => Some(SystemArchitecture::Arm),
+        "i686" => Some(SystemArchitecture::I686),
+        _ => None,
+    }
+}
 
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 // SECURITY: Path Validation (TOCTOU Prevention)

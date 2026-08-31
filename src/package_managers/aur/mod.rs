@@ -6,7 +6,7 @@
 mod client;
 mod error;
 mod parallel_build;
-mod utils;
+pub(super) mod utils;
 
 pub use client::{AurClient, AurPackageDetail, search_detailed};
 pub use parallel_build::{BuildJob, ParallelBuildSummary, ParallelBuilder};
