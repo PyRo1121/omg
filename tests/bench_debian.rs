@@ -81,12 +81,11 @@ fn maybe_write_report(report: &BenchReport) {
     let path = std::path::PathBuf::from(&output_path);
 
     if let Some(parent) = path.parent() {
-        let _ = std::fs::create_dir_all(parent);
+        std::fs::create_dir_all(parent).expect("Failed to create benchmark report directory");
     }
 
-    if let Ok(json) = serde_json::to_string_pretty(report) {
-        let _ = std::fs::write(path, json);
-    }
+    let json = serde_json::to_string_pretty(report).expect("Failed to serialize benchmark report");
+    std::fs::write(path, json).expect("Failed to write benchmark report");
 }
 
 #[cfg(any(feature = "debian", feature = "debian-pure"))]
@@ -96,11 +95,19 @@ fn maybe_check_baseline(report: &BenchReport) {
         _ => return,
     };
 
-    let multiplier = std::env::var("OMG_BENCH_REGRESSION_MULTIPLIER")
-        .ok()
-        .and_then(|v| v.parse::<f64>().ok())
-        .filter(|v| *v >= 1.0)
-        .unwrap_or(2.0);
+    let multiplier = match std::env::var("OMG_BENCH_REGRESSION_MULTIPLIER") {
+        Ok(raw) => {
+            let parsed = raw
+                .parse::<f64>()
+                .expect("OMG_BENCH_REGRESSION_MULTIPLIER must be a number");
+            assert!(
+                parsed.is_finite() && parsed >= 1.0,
+                "OMG_BENCH_REGRESSION_MULTIPLIER must be finite and at least 1.0"
+            );
+            parsed
+        }
+        Err(_) => 2.0,
+    };
 
     let baseline_content =
         std::fs::read_to_string(&baseline_path).expect("Failed to read benchmark baseline file");
@@ -112,13 +119,16 @@ fn maybe_check_baseline(report: &BenchReport) {
             continue;
         }
 
-        let Some(base) = baseline
+        let base = baseline
             .metrics
             .iter()
-            .find(|m| m.operation == current.operation && m.mode == current.mode)
-        else {
-            continue;
-        };
+            .find(|metric| metric.operation == current.operation && metric.mode == current.mode)
+            .unwrap_or_else(|| {
+                panic!(
+                    "Benchmark baseline is missing {}:{}",
+                    current.operation, current.mode
+                )
+            });
 
         let allowed = base.avg_ms * multiplier;
         assert!(

@@ -1,6 +1,4 @@
-//! Comprehensive CLI E2E tests for all OMG commands
-//!
-//! Tests every command with success and error cases to achieve 100% CLI coverage.
+//! Broad CLI smoke and behavior contracts for OMG commands.
 
 #![cfg(feature = "arch")]
 
@@ -27,7 +25,11 @@ mod install_tests {
     // `!success || ...` disjunction also passed when install wrongly succeeded.
     #[test]
     fn test_install_nonexistent() {
-        let result = run_omg(&["install", "package-that-definitely-does-not-exist-12345"]);
+        let result = run_omg(&[
+            "install",
+            "--yes",
+            "package-that-definitely-does-not-exist-12345",
+        ]);
         result.assert_failure();
         let combined = result.combined_output();
         assert!(
@@ -122,8 +124,8 @@ mod runtime_tests {
     fn test_hook_fish() {
         let result = run_omg(&["hook", "fish"]);
         result.assert_success();
-        // Fish uses 'source' instead of 'eval' (src/cli/commands.rs hook text:
-        // `omg hook fish | source`); pin it exactly.
+        // Fish hook generation in src/hooks/mod.rs uses `source` instead of
+        // the `eval` emitted for POSIX shells.
         result.assert_stdout_contains("source");
     }
 

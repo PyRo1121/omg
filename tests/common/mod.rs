@@ -263,6 +263,9 @@ pub fn run_omg_with_options(
     if !has_config_dir {
         cmd.env("OMG_CONFIG_DIR", temp_config.path());
     }
+    if !env_vars.iter().any(|(key, _)| *key == "OMG_TEST_DISTRO") {
+        cmd.env("OMG_TEST_DISTRO", "arch");
+    }
 
     if let Some(d) = dir {
         cmd.current_dir(d);

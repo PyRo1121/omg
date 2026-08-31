@@ -49,7 +49,10 @@ impl MockPackageDb {
 
     fn install(&self, name: &str) -> Result<(), String> {
         if self.packages.lock().unwrap().contains_key(name) {
-            self.installed.lock().unwrap().push(name.to_owned());
+            let mut installed = self.installed.lock().unwrap();
+            if !installed.iter().any(|installed| installed == name) {
+                installed.push(name.to_owned());
+            }
             Ok(())
         } else {
             Err(format!("Package {name} not found"))
