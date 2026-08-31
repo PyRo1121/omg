@@ -1,5 +1,5 @@
 #![expect(clippy::unwrap_used, clippy::expect_used)]
-use omg_lib::daemon::handlers::{DaemonState, handle_request};
+use omg_lib::daemon::handlers::{DaemonState, GLOBAL_RATE_LIMIT_BURST, handle_request};
 use omg_lib::daemon::protocol::{Request, Response, error_codes};
 pub mod common;
 
@@ -50,14 +50,12 @@ async fn test_global_rate_limiting() {
         return;
     };
 
-    // The global rate limit is 100/s with burst 200.
-    // We need to exhaust the burst to trigger the limit.
-
     let req = Request::Ping { id: 1 };
 
-    // Send 250 requests to ensure we hit the limit (burst is 200)
+    // The margin covers a small amount of token refill while requests run.
+    let request_budget = GLOBAL_RATE_LIMIT_BURST.saturating_add(50);
     let mut limit_hit = false;
-    for _i in 0..250 {
+    for _ in 0..request_budget {
         let response = handle_request(Arc::clone(&state), req.clone()).await;
         if let Response::Error { code, .. } = response
             && code == error_codes::RATE_LIMITED

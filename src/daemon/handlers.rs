@@ -25,6 +25,8 @@ use std::sync::atomic::{AtomicU64, Ordering};
 
 const PING_RESPONSE: &str = "pong";
 const CACHE_CLEARED_MSG: &str = "cleared";
+pub const GLOBAL_RATE_LIMIT_HZ: u32 = 100;
+pub const GLOBAL_RATE_LIMIT_BURST: u32 = 200;
 const DAEMON_INFO_BACKEND_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(5);
 #[cfg(feature = "arch")]
 const DAEMON_INFO_AUR_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(8);
@@ -226,8 +228,14 @@ impl DaemonState {
             }
         }
 
-        let quota = Quota::per_second(crate::core::safe_ops::nonzero_u32_or_default(100, 1))
-            .allow_burst(crate::core::safe_ops::nonzero_u32_or_default(200, 1));
+        let quota = Quota::per_second(crate::core::safe_ops::nonzero_u32_or_default(
+            GLOBAL_RATE_LIMIT_HZ,
+            1,
+        ))
+        .allow_burst(crate::core::safe_ops::nonzero_u32_or_default(
+            GLOBAL_RATE_LIMIT_BURST,
+            1,
+        ));
         let rate_limiter = Arc::new(RateLimiter::direct(quota));
 
         tracing::info!("Using package manager: {}", package_manager.name());
