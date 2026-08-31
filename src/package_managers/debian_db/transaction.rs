@@ -805,6 +805,18 @@ impl Transaction {
         }
 
         let package_names: Vec<String> = self.to_remove.iter().map(|a| a.name.clone()).collect();
+        let names_to_validate = package_names.clone();
+        tokio::task::spawn_blocking(move || {
+            for name in names_to_validate {
+                Self::require_package_installed(&name, super::is_installed_fast(&name)?)?;
+            }
+            Ok::<(), anyhow::Error>(())
+        })
+        .await
+        .context("Debian removal validation task failed")??;
+
+        let _process_lock = DPKG_TRANSACTION_LOCK.lock().await;
+        let _dpkg_locks = acquire_dpkg_locks().await?;
         tokio::task::spawn_blocking(move || execute_removal_blocking(&package_names))
             .await
             .context("Package removal task failed")?
@@ -815,6 +827,9 @@ impl Transaction {
 /// stall the async executor.
 fn execute_removal_blocking(packages_to_remove: &[String]) -> Result<()> {
     tracing::info!("Starting removal of {} packages", packages_to_remove.len());
+    let status = fs::read_to_string("/var/lib/dpkg/status")
+        .context("Failed to read dpkg status before package removal")?;
+    let removal_order = plan_debian_removal(&status, packages_to_remove)?;
 
     // Setup progress display
     let multi = MultiProgress::new();
@@ -827,11 +842,165 @@ fn execute_removal_blocking(packages_to_remove: &[String]) -> Result<()> {
     );
     overall.set_prefix("Removing");
 
-    remove_packages_sequentially(packages_to_remove, &multi, &overall)?;
+    remove_packages_sequentially(&removal_order, &multi, &overall)?;
 
     overall.finish_and_clear();
-    tracing::info!("Successfully removed {} packages", packages_to_remove.len());
+    tracing::info!("Successfully removed {} packages", removal_order.len());
     Ok(())
+}
+
+#[derive(Default)]
+struct InstalledRemovalPackage {
+    essential: bool,
+    protected: bool,
+    dependency_groups: Vec<Vec<String>>,
+}
+
+fn append_removal_dependency_groups(value: &str, groups: &mut Vec<Vec<String>>) {
+    for group in value.split(',') {
+        let alternatives: Vec<String> = group
+            .split('|')
+            .filter_map(|alternative| {
+                alternative
+                    .split_whitespace()
+                    .next()
+                    .map(|name| name.split(':').next().unwrap_or(name).to_string())
+            })
+            .filter(|name| !name.is_empty())
+            .collect();
+        if !alternatives.is_empty() {
+            groups.push(alternatives);
+        }
+    }
+}
+
+fn plan_debian_removal(status: &str, requested: &[String]) -> Result<Vec<String>> {
+    use std::collections::{BTreeSet, HashSet};
+
+    let mut installed = HashMap::<String, InstalledRemovalPackage>::new();
+    for paragraph in status.split("\n\n") {
+        if !paragraph
+            .lines()
+            .any(|line| line == "Status: install ok installed")
+        {
+            continue;
+        }
+        let mut name = None;
+        let mut info = InstalledRemovalPackage::default();
+        let mut reading_dependencies = false;
+        for line in paragraph.lines() {
+            if line.starts_with(' ') || line.starts_with('\t') {
+                if reading_dependencies {
+                    append_removal_dependency_groups(line.trim(), &mut info.dependency_groups);
+                }
+                continue;
+            }
+            reading_dependencies = false;
+            if let Some(value) = line.strip_prefix("Package:") {
+                name = Some(value.trim().to_string());
+            } else if let Some(value) = line.strip_prefix("Essential:") {
+                info.essential = value.trim().eq_ignore_ascii_case("yes");
+            } else if let Some(value) = line.strip_prefix("Protected:") {
+                info.protected = value.trim().eq_ignore_ascii_case("yes");
+            } else if let Some(value) = line
+                .strip_prefix("Depends:")
+                .or_else(|| line.strip_prefix("Pre-Depends:"))
+            {
+                reading_dependencies = true;
+                append_removal_dependency_groups(value.trim(), &mut info.dependency_groups);
+            }
+        }
+        if let Some(name) = name {
+            installed.insert(name, info);
+        }
+    }
+
+    let requested: HashSet<String> = requested.iter().cloned().collect();
+    for name in &requested {
+        let info = installed
+            .get(name)
+            .with_context(|| format!("{name} is not installed"))?;
+        anyhow::ensure!(
+            !info.essential && !info.protected,
+            "Refusing to remove protected Debian package '{name}'"
+        );
+    }
+
+    let installed_names: HashSet<&str> = installed.keys().map(String::as_str).collect();
+    let mut blockers = BTreeSet::new();
+    for (dependent, info) in &installed {
+        if requested.contains(dependent) {
+            continue;
+        }
+        for alternatives in &info.dependency_groups {
+            let removes_satisfier = alternatives.iter().any(|name| requested.contains(name));
+            let has_remaining_satisfier = alternatives
+                .iter()
+                .any(|name| installed_names.contains(name.as_str()) && !requested.contains(name));
+            if removes_satisfier && !has_remaining_satisfier {
+                blockers.insert(dependent.clone());
+            }
+        }
+    }
+    anyhow::ensure!(
+        blockers.is_empty(),
+        "Cannot remove requested packages because these installed packages depend on them: {}",
+        blockers.into_iter().collect::<Vec<_>>().join(", ")
+    );
+
+    let mut in_degree: HashMap<&str, usize> =
+        requested.iter().map(|name| (name.as_str(), 0)).collect();
+    let mut dependencies: HashMap<&str, BTreeSet<&str>> = HashMap::new();
+    for dependent in &requested {
+        let Some(info) = installed.get(dependent) else {
+            continue;
+        };
+        for dependency in info
+            .dependency_groups
+            .iter()
+            .flatten()
+            .filter(|name| requested.contains(*name))
+        {
+            if dependencies
+                .entry(dependent)
+                .or_default()
+                .insert(dependency)
+            {
+                *in_degree.entry(dependency).or_default() += 1;
+            }
+        }
+    }
+
+    let mut ready: BTreeSet<&str> = in_degree
+        .iter()
+        .filter_map(|(name, degree)| (*degree == 0).then_some(*name))
+        .collect();
+    let mut ordered = Vec::with_capacity(requested.len());
+    while let Some(name) = ready.pop_first() {
+        ordered.push(name.to_string());
+        if let Some(package_dependencies) = dependencies.get(name) {
+            for dependency in package_dependencies {
+                if let Some(degree) = in_degree.get_mut(dependency) {
+                    *degree -= 1;
+                    if *degree == 0 {
+                        ready.insert(dependency);
+                    }
+                }
+            }
+        }
+    }
+    if ordered.len() != requested.len() {
+        let already_ordered: HashSet<&str> = ordered.iter().map(String::as_str).collect();
+        let mut cycle: Vec<&str> = requested
+            .iter()
+            .map(String::as_str)
+            .filter(|name| !already_ordered.contains(name))
+            .collect();
+        cycle.sort_unstable();
+        tracing::warn!(packages = ?cycle, "Breaking Debian removal dependency cycle");
+        ordered.extend(cycle.into_iter().map(str::to_string));
+    }
+    Ok(ordered)
 }
 
 /// Remove `packages_to_remove` one at a time, driving the per-package and
@@ -2889,6 +3058,43 @@ mod tests {
             error.to_string().contains("Invalid Debian package name"),
             "{error}"
         );
+    }
+
+    #[test]
+    fn removal_plan_rejects_protected_and_required_packages() {
+        let status = "Package: core\nStatus: install ok installed\nEssential: yes\n\nPackage: client\nStatus: install ok installed\nDepends: core\n";
+
+        let protected = plan_debian_removal(status, &["core".to_string()])
+            .expect_err("essential package removal must fail");
+        assert!(protected.to_string().contains("protected"), "{protected:#}");
+
+        let required = plan_debian_removal(status, &["client".to_string(), "core".to_string()])
+            .expect_err("essential packages remain protected even with dependents selected");
+        assert!(required.to_string().contains("protected"), "{required:#}");
+    }
+
+    #[test]
+    fn removal_plan_blocks_live_reverse_dependencies_and_honors_alternatives() {
+        let blocked = "Package: library\nStatus: install ok installed\n\nPackage: client\nStatus: install ok installed\nDepends: library\n";
+        let error = plan_debian_removal(blocked, &["library".to_string()])
+            .expect_err("live reverse dependency must block removal");
+        assert!(error.to_string().contains("client"), "{error:#}");
+
+        let alternative = "Package: library\nStatus: install ok installed\n\nPackage: replacement\nStatus: install ok installed\n\nPackage: client\nStatus: install ok installed\nDepends: library | replacement\n";
+        assert_eq!(
+            plan_debian_removal(alternative, &["library".to_string()]).unwrap(),
+            ["library"]
+        );
+    }
+
+    #[test]
+    fn removal_plan_orders_dependents_before_dependencies() {
+        let status = "Package: library\nStatus: install ok installed\n\nPackage: client\nStatus: install ok installed\nDepends: library\n";
+
+        let order = plan_debian_removal(status, &["library".to_string(), "client".to_string()])
+            .expect("complete dependent set can be removed");
+
+        assert_eq!(order, ["client", "library"]);
     }
 
     #[tokio::test]
