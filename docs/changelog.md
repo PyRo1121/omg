@@ -2752,6 +2752,7 @@ which newer clippy versions flag as an error with -D warnings.
 
 ### 👷 CI/CD
 
+- Remove duplicate Docker E2E build
 - Make release publication verifiable and recoverable
 - Harden recurring workflow execution
 - Require feature intersection checks
@@ -2819,6 +2820,7 @@ across history/faq/cli
 - Run Docker E2E tests explicitly
 ### 📚 Documentation
 
+- Remove stale ALPM implementation comments
 - Disclose telemetry behavior accurately
 - Describe telemetry as opt in
 - Describe observed enterprise report evidence
