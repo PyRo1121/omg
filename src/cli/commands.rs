@@ -987,6 +987,16 @@ fn normalize_transaction_id(id: &str) -> Result<String> {
     Ok(normalized)
 }
 
+fn validate_rollback_consent(attended: bool, yes: bool) -> Result<()> {
+    anyhow::ensure!(
+        attended || yes,
+        "This destructive command requires --yes flag in non-interactive mode.\n\n\
+         For automation/CI, use: omg rollback <id> --yes\n\
+         Or run in interactive mode to select a transaction."
+    );
+    Ok(())
+}
+
 fn rollback_action(transaction: &crate::core::history::Transaction) -> Result<RollbackAction> {
     anyhow::ensure!(
         transaction.success,
@@ -1175,8 +1185,9 @@ pub async fn rollback(id: Option<String>, yes: bool) -> Result<()> {
         style::info(short_id(&target.id))
     );
 
-    // Check if we're in interactive mode
-    if console::user_attended()
+    let attended = console::user_attended();
+    if !yes
+        && attended
         && !Confirm::with_theme(&ui::prompt_theme())
             .with_prompt("Proceed with rollback?")
             .default(false)
@@ -1184,15 +1195,7 @@ pub async fn rollback(id: Option<String>, yes: bool) -> Result<()> {
     {
         return Ok(());
     }
-
-    // Non-interactive mode: require --yes flag for destructive operation
-    if !yes {
-        anyhow::bail!(
-            "This destructive command requires --yes flag in non-interactive mode.\n\n\
-                 For automation/CI, use: omg rollback <id> --yes\n\
-                 Or run in interactive mode to select a transaction."
-        );
-    }
+    validate_rollback_consent(attended, yes)?;
 
     match rollback_action(target)? {
         RollbackAction::NothingToDo => {
@@ -1563,6 +1566,16 @@ mod tests {
                 .contains("not available without an Arch or Debian package backend"),
             "got: {error}"
         );
+    }
+
+    #[test]
+    fn rollback_consent_accepts_interactive_confirmation_or_yes_flag() {
+        assert!(validate_rollback_consent(true, false).is_ok());
+        assert!(validate_rollback_consent(true, true).is_ok());
+        assert!(validate_rollback_consent(false, true).is_ok());
+        let error = validate_rollback_consent(false, false)
+            .expect_err("unattended rollback without --yes must fail");
+        assert!(error.to_string().contains("requires --yes"));
     }
 
     #[test]
