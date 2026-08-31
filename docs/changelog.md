@@ -702,6 +702,7 @@ analyzer inference
 - **Ci**: Cross-platform install script and R2 release sync
 ### 🐛 Bug Fixes
 
+- Compile mixed package backends
 - Deduplicate Debian update candidates
 - Preserve Debian repository provenance
 - Match apt-encoded Debian suites
