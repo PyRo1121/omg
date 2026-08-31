@@ -696,6 +696,8 @@ analyzer inference
 - **Ci**: Cross-platform install script and R2 release sync
 ### 🐛 Bug Fixes
 
+- Reject Node version-list HTTP errors
+- Report accurate CLI status and failures
 - Remove nonfunctional enterprise mirroring
 - Build nested AUR dependencies recursively
 - Acquire privileges before AUR rollbacks
