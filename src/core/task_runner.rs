@@ -243,6 +243,12 @@ impl TaskDetector {
             let Some((targets, after_colon)) = line.split_once(':') else {
                 continue;
             };
+            // Variable values commonly contain colons (URLs, PATH-like
+            // values). If assignment syntax appears before the first colon,
+            // the left fragment is not a target list.
+            if targets.contains('=') {
+                continue;
+            }
             // Colon-style variable assignments (`A := b`, `A ::= b`) have `=`
             // immediately after the colon (modulo the assignment operator's
             // own colons); rule lines never do.
@@ -1642,6 +1648,8 @@ mod wave3_tests {
         let makefile = "\
 CC := gcc
 CFLAGS = -Wall
+URL = https://example.com:8443/repo.git
+PATH_VALUE = cache:bin
 include other.mk
 -include generated.d
 
