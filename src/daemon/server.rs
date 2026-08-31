@@ -440,6 +440,26 @@ async fn await_client_write(
     Ok(())
 }
 
+fn encode_bounded_response(response: &Response, request_id: u64) -> Result<Vec<u8>> {
+    let response_bytes = crate::daemon::protocol::encode_frame(response)?;
+    if response_bytes.len() <= MAX_REQUEST_SIZE {
+        return Ok(response_bytes);
+    }
+
+    tracing::error!(
+        request_id,
+        response_bytes = response_bytes.len(),
+        max_response_bytes = MAX_REQUEST_SIZE,
+        "Daemon response exceeded the transport frame limit"
+    );
+    GLOBAL_METRICS.inc_requests_failed();
+    Ok(crate::daemon::protocol::encode_frame(&Response::Error {
+        id: request_id,
+        code: error_codes::INTERNAL_ERROR,
+        message: format!("Daemon response exceeded the {MAX_REQUEST_SIZE}-byte transport limit"),
+    })?)
+}
+
 async fn send_response_frame(
     framed: &mut tokio_util::codec::Framed<tokio::net::UnixStream, LengthDelimitedCodec>,
     response_bytes: Vec<u8>,
@@ -629,7 +649,7 @@ async fn handle_client_with_idle_timeout(
                 });
 
         // Encode and send response
-        let response_bytes = crate::daemon::protocol::encode_frame(&response)?;
+        let response_bytes = encode_bounded_response(&response, request_id)?;
         send_response_frame(&mut framed, response_bytes).await?;
     }
 
@@ -641,6 +661,27 @@ async fn handle_client_with_idle_timeout(
 mod tests {
     use super::*;
     use anyhow::Context as _;
+
+    #[test]
+    fn oversized_daemon_responses_return_an_error_frame() {
+        let oversized = Response::Success {
+            id: 77,
+            result: super::super::protocol::ResponseResult::Message("x".repeat(MAX_REQUEST_SIZE)),
+        };
+
+        let encoded = encode_bounded_response(&oversized, 77).expect("bounded response");
+        assert!(encoded.len() <= MAX_REQUEST_SIZE);
+        let (_, payload) = crate::daemon::protocol::split_frame(&encoded).expect("frame header");
+        let decoded: Response = bitcode::deserialize(payload).expect("response payload");
+        match decoded {
+            Response::Error { id, code, message } => {
+                assert_eq!(id, 77);
+                assert_eq!(code, error_codes::INTERNAL_ERROR);
+                assert!(message.contains("transport limit"));
+            }
+            Response::Success { .. } => panic!("oversized response must become an error"),
+        }
+    }
 
     #[test]
     fn internal_daemon_failures_produce_unsuccessful_exit_results() {
