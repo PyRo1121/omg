@@ -436,6 +436,39 @@ pub(crate) fn register_configured_syncdbs(
     Ok(())
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum ForwardedAlpmLogLevel {
+    Error,
+    Warning,
+    Debug,
+    Trace,
+}
+
+fn classify_alpm_log_level(level: alpm::LogLevel) -> ForwardedAlpmLogLevel {
+    if level.contains(alpm::LogLevel::ERROR) {
+        ForwardedAlpmLogLevel::Error
+    } else if level.contains(alpm::LogLevel::WARNING) {
+        ForwardedAlpmLogLevel::Warning
+    } else if level.contains(alpm::LogLevel::DEBUG) {
+        ForwardedAlpmLogLevel::Debug
+    } else {
+        ForwardedAlpmLogLevel::Trace
+    }
+}
+
+fn forward_alpm_log(level: alpm::LogLevel, message: &str) {
+    let message = crate::cli::style::sanitize_terminal_text(message.trim());
+    if message.is_empty() {
+        return;
+    }
+    match classify_alpm_log_level(level) {
+        ForwardedAlpmLogLevel::Error => tracing::error!(target: "libalpm", "{message}"),
+        ForwardedAlpmLogLevel::Warning => tracing::warn!(target: "libalpm", "{message}"),
+        ForwardedAlpmLogLevel::Debug => tracing::debug!(target: "libalpm", "{message}"),
+        ForwardedAlpmLogLevel::Trace => tracing::trace!(target: "libalpm", "{message}"),
+    }
+}
+
 /// Setup ALPM callbacks for progress bars
 #[expect(clippy::expect_used)] // ALPM database operations; failure indicates corrupted pacman database
 fn setup_alpm_callbacks(
@@ -497,9 +530,10 @@ fn setup_alpm_callbacks(
         }
     });
 
-    // Suppress ALPM log messages (we show our own progress)
-    alpm.set_log_cb((), |_level, _msg, ()| {
-        // Intentionally empty - suppress all log output
+    // Progress messages are rendered below, but warnings and errors such as
+    // .pacnew/.pacsave notices remain operationally significant.
+    alpm.set_log_cb((), |level, message, ()| {
+        forward_alpm_log(level, message);
     });
 
     let main_pb_clone = main_pb.clone();
@@ -1164,12 +1198,32 @@ fn ensure_mirror_servers(alpm: &alpm::Alpm) -> Result<()> {
 #[cfg(test)]
 mod tests {
     use super::{
-        DOWNLOAD_BAR_TEMPLATE, DOWNLOAD_SPINNER_TEMPLATE, TransactionKind,
-        configure_signature_policy, ensure_mirror_servers, ensure_removals_not_held,
-        format_trans_prepare_error, is_keyring_related_error, local_package_siglevel,
-        package_base_name, register_configured_syncdbs, repository_siglevel, signature_policy,
-        transaction_flags,
+        DOWNLOAD_BAR_TEMPLATE, DOWNLOAD_SPINNER_TEMPLATE, ForwardedAlpmLogLevel, TransactionKind,
+        classify_alpm_log_level, configure_signature_policy, ensure_mirror_servers,
+        ensure_removals_not_held, format_trans_prepare_error, is_keyring_related_error,
+        local_package_siglevel, package_base_name, register_configured_syncdbs,
+        repository_siglevel, signature_policy, transaction_flags,
     };
+
+    #[test]
+    fn alpm_warnings_and_errors_are_not_classified_as_debug_output() {
+        assert_eq!(
+            classify_alpm_log_level(alpm::LogLevel::ERROR | alpm::LogLevel::WARNING),
+            ForwardedAlpmLogLevel::Error
+        );
+        assert_eq!(
+            classify_alpm_log_level(alpm::LogLevel::WARNING),
+            ForwardedAlpmLogLevel::Warning
+        );
+        assert_eq!(
+            classify_alpm_log_level(alpm::LogLevel::DEBUG),
+            ForwardedAlpmLogLevel::Debug
+        );
+        assert_eq!(
+            classify_alpm_log_level(alpm::LogLevel::FUNCTION),
+            ForwardedAlpmLogLevel::Trace
+        );
+    }
 
     #[test]
     fn transaction_registration_rejects_partial_repository_sets() {
