@@ -137,7 +137,11 @@ jobs:
         run: cargo check --manifest-path fuzz/Cargo.toml --all-targets --locked
 
       - name: Install nextest
-        uses: taiki-e/install-action@b6ff580856c41316412a0b9b60540fbc6f8c82cc # nextest
+        uses: taiki-e/install-action@82cd3e7658a6f96c86c0234aeeda1748937cb0a1 # v2
+        with:
+          tool: nextest
+      - name: Verify nextest
+        run: cargo nextest --version
 
       - name: Debian feature isolation check
         run: |
@@ -281,7 +285,11 @@ jobs:
             --locked -- -D warnings
 
       - name: Install nextest
-        uses: taiki-e/install-action@b6ff580856c41316412a0b9b60540fbc6f8c82cc # nextest
+        uses: taiki-e/install-action@82cd3e7658a6f96c86c0234aeeda1748937cb0a1 # v2
+        with:
+          tool: nextest
+      - name: Verify nextest
+        run: cargo nextest --version
 
       - name: Run unit tests
         run: |
@@ -473,7 +481,11 @@ jobs:
         run: cargo build --release --no-default-features --features macos,pgp,license --locked
 
       - name: Install nextest
-        uses: taiki-e/install-action@b6ff580856c41316412a0b9b60540fbc6f8c82cc # nextest
+        uses: taiki-e/install-action@82cd3e7658a6f96c86c0234aeeda1748937cb0a1 # v2
+        with:
+          tool: nextest
+      - name: Verify nextest
+        run: cargo nextest --version
 
       - name: Run unit tests
         run: cargo nextest run --lib --no-default-features --features macos,pgp,license --locked --profile ci
