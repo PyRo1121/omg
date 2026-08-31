@@ -979,7 +979,7 @@ fn remove_cache_file(path: &Path) -> Result<()> {
 
 /// Detailed sync packages for indexing consumers (daemon, resolver).
 pub fn get_detailed_packages() -> Result<Vec<SyncDbPackage>> {
-    let sync_dir = paths::pacman_sync_dir();
+    let sync_dir = paths::pacman_sync_dir_result()?;
     ensure_sync_cache_loaded(&sync_dir)?;
 
     let cache = read_lock(&SYNC_DB_CACHE);
@@ -1002,8 +1002,8 @@ pub fn check_updates_cached() -> Result<Vec<CachedUpdate>> {
         .context("Failed to load update filters from pacman.conf")?;
     let ignored_packages = compile_ignore_patterns(&pacman_config.ignore_pkg, "IgnorePkg")?;
     let ignored_groups = compile_ignore_patterns(&pacman_config.ignore_group, "IgnoreGroup")?;
-    let sync_dir = paths::pacman_sync_dir();
-    let local_dir = paths::pacman_local_dir();
+    let sync_dir = paths::pacman_sync_dir_result()?;
+    let local_dir = paths::pacman_local_dir_result()?;
 
     // Ensure caches are loaded (will be fast if already loaded)
     ensure_sync_cache_loaded(&sync_dir)?;
@@ -1069,7 +1069,7 @@ fn sync_package_is_ignored(
 /// Get a specific local package - FAST (<1ms)
 #[inline]
 pub fn get_local_package(name: &str) -> Result<Option<LocalDbPackage>> {
-    let local_dir = paths::pacman_local_dir();
+    let local_dir = paths::pacman_local_dir_result()?;
     ensure_local_cache_loaded(&local_dir)?;
 
     let cache = read_lock(&LOCAL_DB_CACHE);
@@ -1079,7 +1079,7 @@ pub fn get_local_package(name: &str) -> Result<Option<LocalDbPackage>> {
 /// Get a specific sync package by exact name - FAST (<1ms)
 #[inline]
 pub fn get_sync_package(name: &str) -> Result<Option<SyncDbPackage>> {
-    let sync_dir = paths::pacman_sync_dir();
+    let sync_dir = paths::pacman_sync_dir_result()?;
     ensure_sync_cache_loaded(&sync_dir)?;
 
     let cache = read_lock(&SYNC_DB_CACHE);
@@ -1088,7 +1088,7 @@ pub fn get_sync_package(name: &str) -> Result<Option<SyncDbPackage>> {
 
 /// List all local packages using cache - FAST (<1ms)
 pub fn list_local_cached() -> Result<Vec<LocalDbPackage>> {
-    let local_dir = paths::pacman_local_dir();
+    let local_dir = paths::pacman_local_dir_result()?;
     ensure_local_cache_loaded(&local_dir)?;
 
     let cache = read_lock(&LOCAL_DB_CACHE);
@@ -1100,8 +1100,8 @@ pub fn list_local_cached() -> Result<Vec<LocalDbPackage>> {
 /// Uses pure Rust cache for extreme speed (<1ms).
 /// Excludes packages from ALL sync databases (official + custom repos).
 pub fn get_potential_aur_packages() -> Result<Vec<String>> {
-    let sync_dir = paths::pacman_sync_dir();
-    let local_dir = paths::pacman_local_dir();
+    let sync_dir = paths::pacman_sync_dir_result()?;
+    let local_dir = paths::pacman_local_dir_result()?;
 
     ensure_sync_cache_loaded(&sync_dir)?;
     ensure_local_cache_loaded(&local_dir)?;
@@ -1126,7 +1126,7 @@ pub fn get_potential_aur_packages() -> Result<Vec<String>> {
 /// optionally requires.
 #[inline]
 pub fn get_counts_fast() -> Result<(usize, usize, usize)> {
-    let local_dir = paths::pacman_local_dir();
+    let local_dir = paths::pacman_local_dir_result()?;
     ensure_local_cache_loaded(&local_dir)?;
 
     let cache = read_lock(&LOCAL_DB_CACHE);

@@ -370,7 +370,7 @@ mod tests {
     /// The libalpm-backed queries read the real system database; skip them in
     /// environments without an installed pacman local db (CI containers).
     fn real_pacman_db_available() -> bool {
-        paths::pacman_local_dir().exists()
+        paths::pacman_local_dir_result().is_ok_and(|path| path.exists())
     }
 
     #[test]

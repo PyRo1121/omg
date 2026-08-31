@@ -21,8 +21,10 @@ pub struct AlpmWorker {
 }
 
 fn initialize_alpm_worker() -> Result<alpm::Alpm> {
-    let root = paths::pacman_root().to_string_lossy().into_owned();
-    let db_path = paths::pacman_db_dir().to_string_lossy().into_owned();
+    let root = paths::pacman_root_result()?.to_string_lossy().into_owned();
+    let db_path = paths::pacman_db_dir_result()?
+        .to_string_lossy()
+        .into_owned();
     let mut alpm = alpm::Alpm::new(root, db_path).context("Failed to initialize ALPM worker")?;
     let config = crate::core::pacman_conf::PacmanConfig::parse(paths::pacman_conf_path())
         .context("Failed to load pacman.conf for ALPM worker")?;

@@ -463,7 +463,7 @@ pub async fn sync_databases_parallel() -> Result<()> {
     );
 
     // Sync directory (we should already be root at this point)
-    let sync_dir = paths::pacman_sync_dir();
+    let sync_dir = paths::pacman_sync_dir_result()?;
     if !sync_dir.exists() {
         tokio::fs::create_dir_all(&sync_dir)
             .await

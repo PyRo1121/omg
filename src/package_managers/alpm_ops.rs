@@ -70,10 +70,10 @@ pub(crate) fn load_local_package_metadata(path: &str) -> Result<LocalPackageMeta
 pub fn open_default_alpm() -> anyhow::Result<alpm::Alpm> {
     use anyhow::Context as _;
 
-    let root = crate::core::paths::pacman_root()
+    let root = crate::core::paths::pacman_root_result()?
         .to_string_lossy()
         .into_owned();
-    let db_path = crate::core::paths::pacman_db_dir()
+    let db_path = crate::core::paths::pacman_db_dir_result()?
         .to_string_lossy()
         .into_owned();
     alpm::Alpm::new(root, db_path).context("Failed to initialize ALPM")
@@ -238,7 +238,7 @@ fn package_base_name(filename: &str) -> Option<&str> {
 pub fn clean_cache(keep_versions: usize) -> Result<(usize, u64)> {
     let mut packages: ahash::AHashMap<String, Vec<std::path::PathBuf>> = ahash::AHashMap::new();
 
-    for cache_dir in paths::pacman_cache_dirs() {
+    for cache_dir in paths::pacman_cache_dirs_result()? {
         if !cache_dir.exists() {
             continue;
         }
@@ -906,8 +906,8 @@ fn configure_transaction_options(
     // `Alpm::new` leaves transaction-critical pacman options empty. Configure
     // them explicitly so downloads, signature verification, architecture
     // checks, logging, and package hooks behave like a normal Arch transaction.
-    let root = paths::pacman_root();
-    let cache_dirs = paths::pacman_cache_dirs();
+    let root = paths::pacman_root_result()?;
+    let cache_dirs = paths::pacman_cache_dirs_result()?;
     for cache_dir in &cache_dirs {
         std::fs::create_dir_all(cache_dir).with_context(|| {
             format!(

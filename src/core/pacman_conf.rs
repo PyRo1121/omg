@@ -15,6 +15,7 @@ pub struct RepoConfig {
 
 #[derive(Debug, Clone, Default)]
 pub struct PacmanConfig {
+    pub root_dir: Option<String>,
     pub db_path: Option<String>,
     pub cache_dirs: Vec<String>,
     pub log_file: Option<String>,
@@ -174,6 +175,7 @@ impl PacmanConfig {
 
     fn parse_option(config: &mut PacmanConfig, key: &str, value: Option<&str>) {
         match key {
+            "RootDir" => config.root_dir = value.map(String::from),
             "DBPath" => config.db_path = value.map(String::from),
             "CacheDir" => {
                 if let Some(value) = value {
@@ -444,6 +446,7 @@ Include = /etc/pacman.d/mirrorlist
 ";
 
         let config = PacmanConfig::parse_str(content).unwrap();
+        assert_eq!(config.root_dir, Some("/".to_string()));
         assert_eq!(config.db_path, Some("/var/lib/pacman".to_string()));
         assert_eq!(
             config.cache_dirs,

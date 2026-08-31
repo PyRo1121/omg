@@ -321,7 +321,7 @@ fn get_cache_size() -> Result<i64> {
     use std::fs;
 
     let mut total: i64 = 0;
-    for cache_dir in crate::core::paths::pacman_cache_dirs() {
+    for cache_dir in crate::core::paths::pacman_cache_dirs_result()? {
         if !cache_dir.exists() {
             continue;
         }
