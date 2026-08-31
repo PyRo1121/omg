@@ -702,6 +702,7 @@ analyzer inference
 - **Ci**: Cross-platform install script and R2 release sync
 ### 🐛 Bug Fixes
 
+- Isolate PKGBUILD function assignments
 - Bound daemon response frames
 - Preserve elevated positional arguments
 - Enforce local archive consent in fast path
