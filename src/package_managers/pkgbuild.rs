@@ -12,29 +12,40 @@ use std::path::Path;
 #[cfg(unix)]
 use std::os::unix::fs::OpenOptionsExt;
 
-/// Read a file safely, preventing symlink attacks on Unix.
-///
-/// # Security
-/// Uses `O_NOFOLLOW` to reject symlinks, preventing attacks where a malicious
-/// symlink could redirect file reads to arbitrary locations.
-#[cfg(unix)]
-fn safe_read_file(path: &Path) -> std::io::Result<String> {
-    use std::fs::OpenOptions;
+const MAX_PKGBUILD_BYTES: u64 = 1024 * 1024;
 
-    let mut file = OpenOptions::new()
-        .read(true)
-        .custom_flags(nix::libc::O_NOFOLLOW)
-        .open(path)?;
-
-    let mut content = String::new();
-    file.read_to_string(&mut content)?;
-    Ok(content)
+fn invalid_pkgbuild_data(message: impl Into<String>) -> std::io::Error {
+    std::io::Error::new(std::io::ErrorKind::InvalidData, message.into())
 }
 
-/// Read a file (non-Unix fallback).
-#[cfg(not(unix))]
+/// Read a bounded regular file safely, preventing symlink and special-file
+/// attacks on Unix.
 fn safe_read_file(path: &Path) -> std::io::Result<String> {
-    std::fs::read_to_string(path)
+    let mut options = std::fs::OpenOptions::new();
+    options.read(true);
+    #[cfg(unix)]
+    options.custom_flags(nix::libc::O_NOFOLLOW | nix::libc::O_NONBLOCK);
+    let mut file = options.open(path)?;
+    let metadata = file.metadata()?;
+    if !metadata.is_file() {
+        return Err(invalid_pkgbuild_data("PKGBUILD must be a regular file"));
+    }
+    if metadata.len() > MAX_PKGBUILD_BYTES {
+        return Err(invalid_pkgbuild_data(format!(
+            "PKGBUILD exceeds the {MAX_PKGBUILD_BYTES}-byte limit"
+        )));
+    }
+
+    let mut bytes = Vec::with_capacity(metadata.len().try_into().unwrap_or(0));
+    file.by_ref()
+        .take(MAX_PKGBUILD_BYTES + 1)
+        .read_to_end(&mut bytes)?;
+    if bytes.len() as u64 > MAX_PKGBUILD_BYTES {
+        return Err(invalid_pkgbuild_data(format!(
+            "PKGBUILD exceeds the {MAX_PKGBUILD_BYTES}-byte limit"
+        )));
+    }
+    String::from_utf8(bytes).map_err(|error| invalid_pkgbuild_data(error.to_string()))
 }
 
 #[derive(Debug, Clone)]
@@ -386,6 +397,29 @@ fn parse_array(value: &str) -> Result<Vec<String>> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn oversized_pkgbuild_file_is_rejected_before_parsing() {
+        let directory = tempfile::tempdir().expect("tempdir");
+        let path = directory.path().join("PKGBUILD");
+        std::fs::write(&path, vec![b'x'; MAX_PKGBUILD_BYTES as usize + 1]).expect("write");
+
+        let error = PkgBuild::parse(&path).expect_err("oversized PKGBUILD must fail");
+
+        assert!(format!("{error:#}").contains("exceeds"));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn pkgbuild_fifo_is_rejected_without_blocking_for_a_writer() {
+        let directory = tempfile::tempdir().expect("tempdir");
+        let path = directory.path().join("PKGBUILD");
+        nix::unistd::mkfifo(&path, nix::sys::stat::Mode::S_IRUSR).expect("mkfifo");
+
+        let error = PkgBuild::parse(&path).expect_err("FIFO must not be read as PKGBUILD");
+
+        assert!(format!("{error:#}").contains("regular file"));
+    }
 
     #[test]
     fn arrays_preserve_quoted_items_with_spaces() {
