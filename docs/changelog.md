@@ -702,6 +702,7 @@ analyzer inference
 - **Ci**: Cross-platform install script and R2 release sync
 ### 🐛 Bug Fixes
 
+- Resolve AUR builder homes from accounts
 - Honor per-repository sync servers
 - Reject ignored system upgrade targets
 - Honor configured pacman database roots
