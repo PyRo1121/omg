@@ -144,6 +144,10 @@ pub async fn info(package: &str) -> Result<()> {
 }
 
 pub async fn info_with_json(package: &str, json: bool) -> Result<()> {
+    if let Err(error) = crate::core::security::validate_package_name(package) {
+        anyhow::bail!("Invalid package name: {error}");
+    }
+
     if json {
         return info_json(package).await;
     }
@@ -164,10 +168,6 @@ pub async fn info_with_json(package: &str, json: bool) -> Result<()> {
 }
 
 async fn info_json(package: &str) -> Result<()> {
-    if let Err(e) = crate::core::security::validate_package_name(package) {
-        anyhow::bail!("Invalid package name: {e}");
-    }
-
     #[cfg(unix)]
     if let Ok(Ok(info)) = tokio::time::timeout(DAEMON_INFO_TIMEOUT, async {
         let mut client = crate::core::client::DaemonClient::connect().await?;
@@ -326,5 +326,20 @@ fn display_package_info(info: &crate::package_managers::types::PackageInfo) {
     }
     if !info.depends.is_empty() {
         ui::print_kv("Depends", &info.depends.join(", "));
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::info_with_json;
+
+    #[tokio::test]
+    async fn info_validates_names_before_every_output_path() {
+        for json in [false, true] {
+            let error = info_with_json("../invalid", json)
+                .await
+                .expect_err("invalid package names must fail before lookup");
+            assert!(error.to_string().contains("Invalid package name"));
+        }
     }
 }
