@@ -4022,6 +4022,7 @@ the Debian backend), so it was removed from the metadata.
 - Normalize project formatting
 ### 🧪 Testing
 
+- Exercise Debian to Ubuntu migration fixtures
 - Exercise AUR replacement budget
 - Enforce telemetry queue and circuit invariants
 - Require precise Debian removal failures
