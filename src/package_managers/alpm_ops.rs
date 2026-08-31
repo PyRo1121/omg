@@ -32,9 +32,11 @@ pub fn get_system_status() -> Result<(usize, usize, usize, usize)> {
 /// Open a libalpm handle against the configured pacman root/db with a
 /// canonical error context (audit typ01 C1: seven divergent inline copies).
 #[cfg(feature = "arch")]
+#[derive(Debug)]
 pub(crate) struct LocalPackageMetadata {
     pub(crate) name: String,
     pub(crate) version: crate::package_managers::types::Version,
+    pub(crate) installed_size: u64,
     pub(crate) license: Option<String>,
 }
 
@@ -58,6 +60,7 @@ pub(crate) fn load_local_package_metadata(path: &str) -> Result<LocalPackageMeta
     Ok(LocalPackageMetadata {
         name: package.name().to_string(),
         version: crate::package_managers::parse_version_or_zero(package.version().as_str()),
+        installed_size: u64::try_from(package.isize()).unwrap_or(0),
         license: (!licenses.is_empty()).then(|| licenses.join(" AND ")),
     })
 }

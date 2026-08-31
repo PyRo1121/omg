@@ -232,23 +232,15 @@ fn try_local_package_name(package: &str) -> Result<String> {
     Ok(crate::package_managers::alpm_ops::load_local_package_metadata(package)?.name)
 }
 
-fn local_archive_preview(package: &str) -> Result<Option<(String, u64)>> {
+fn local_archive_preview(
+    package: &str,
+) -> Result<Option<crate::package_managers::alpm_ops::LocalPackageMetadata>> {
     if !is_local_package_file(package) {
         return Ok(None);
     }
 
-    let path = std::path::Path::new(package);
-    let metadata = std::fs::symlink_metadata(path)
-        .with_context(|| format!("Failed to inspect local package archive {package}"))?;
-    anyhow::ensure!(
-        metadata.file_type().is_file(),
-        "Local package archive must be a regular file: {package}"
-    );
-    let name = path
-        .file_name()
-        .and_then(|name| name.to_str())
-        .context("Local package archive name is not valid UTF-8")?;
-    Ok(Some((name.to_string(), metadata.len())))
+    crate::core::security::validate_local_package_file(package)?;
+    crate::package_managers::alpm_ops::load_local_package_metadata(package).map(Some)
 }
 
 pub async fn install_dry_run(packages: &[String]) -> Result<()> {
@@ -268,13 +260,12 @@ pub async fn install_dry_run(packages: &[String]) -> Result<()> {
     let mut daemon_client = SyncDaemonClient::acquire().ok();
 
     for pkg_name in packages {
-        if let Some((name, size)) = local_archive_preview(pkg_name)? {
-            let size_mb = size as f64 / 1024.0 / 1024.0;
-            total_size += size;
+        if let Some(info) = local_archive_preview(pkg_name)? {
+            let size_mb = info.installed_size as f64 / 1024.0 / 1024.0;
             table.add_row(vec![
-                name.bold().to_string(),
-                "local".cyan().to_string(),
-                format!("{size_mb:.2} MB"),
+                info.name.bold().to_string(),
+                info.version.to_string().cyan().to_string(),
+                format!("{size_mb:.2} MB installed"),
                 format!("{} Local archive", "✓".green()),
             ]);
             continue;
@@ -715,15 +706,19 @@ mod tests {
     }
 
     #[test]
-    fn dry_run_recognizes_local_archives_without_repository_lookup() {
+    fn dry_run_rejects_unreadable_local_archive_metadata() {
         let directory = tempfile::tempdir().expect("temporary directory");
         let archive = directory.path().join("fixture.pkg.tar.zst");
-        std::fs::write(&archive, b"archive").expect("write archive fixture");
+        std::fs::write(&archive, b"not a package archive").expect("write archive fixture");
 
-        let preview = local_archive_preview(archive.to_str().expect("UTF-8 path"))
-            .expect("inspect local archive")
-            .expect("classify local archive");
-        assert_eq!(preview, ("fixture.pkg.tar.zst".to_string(), 7));
+        let error = local_archive_preview(archive.to_str().expect("UTF-8 path"))
+            .expect_err("preview must parse the embedded package identity");
+        assert!(
+            error
+                .to_string()
+                .contains("Failed to read local package metadata")
+                || error.to_string().contains("Failed to initialize ALPM")
+        );
     }
 
     fn aur_package(name: &str) -> crate::core::Package {
