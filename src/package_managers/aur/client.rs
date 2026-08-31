@@ -416,16 +416,25 @@ impl AurClient {
                 let entries = index.search(&query_owned, 50)?;
                 Ok(entries
                     .into_iter()
-                    .map(|e| Package {
-                        name: e.name.as_str().to_string(),
-                        version: crate::package_managers::parse_version_or_zero(e.version.as_str()),
-                        description: e
-                            .description
-                            .as_ref()
-                            .map(|s| s.as_str().to_string())
-                            .unwrap_or_default(),
-                        source: PackageSource::Aur,
-                        installed: false,
+                    .filter_map(|entry| {
+                        let name = entry.name.as_str();
+                        if let Err(error) = validate_index_entry_name(name, None) {
+                            warn!("Rejecting AUR index entry '{name}': {error}");
+                            return None;
+                        }
+                        Some(Package {
+                            name: name.to_string(),
+                            version: crate::package_managers::parse_version_or_zero(
+                                entry.version.as_str(),
+                            ),
+                            description: entry
+                                .description
+                                .as_ref()
+                                .map(|description| description.as_str().to_string())
+                                .unwrap_or_default(),
+                            source: PackageSource::Aur,
+                            installed: false,
+                        })
                     })
                     .collect())
             })
@@ -532,6 +541,7 @@ impl AurClient {
             let result = tokio::task::spawn_blocking(move || -> Result<Option<Package>> {
                 let index = AurIndex::open(&index_path)?;
                 if let Some(entry) = index.get(&package_owned)? {
+                    validate_index_entry_name(entry.name.as_str(), Some(&package_owned))?;
                     return Ok(Some(Package {
                         name: entry.name.as_str().to_string(),
                         version: crate::package_managers::parse_version_or_zero(
@@ -550,8 +560,10 @@ impl AurClient {
             })
             .await?;
 
-            if let Ok(Some(pkg)) = result {
-                return Ok(Some(pkg));
+            match result {
+                Ok(Some(package)) => return Ok(Some(package)),
+                Ok(None) => {}
+                Err(error) => warn!("AUR index lookup failed; falling back to RPC: {error}"),
             }
         }
 
@@ -3020,6 +3032,18 @@ fn dependency_name(dep: &str) -> &str {
     dep.find(['>', '<', '=']).map_or(dep, |idx| &dep[..idx])
 }
 
+fn validate_index_entry_name(name: &str, expected: Option<&str>) -> Result<()> {
+    crate::core::security::validate_package_name(name)
+        .context("AUR index contains an invalid package name")?;
+    if let Some(expected) = expected {
+        anyhow::ensure!(
+            name == expected,
+            "AUR index returned unexpected package '{name}' for '{expected}'"
+        );
+    }
+    Ok(())
+}
+
 fn validate_search_query(query: &str) -> Result<()> {
     if query.len() > AUR_SEARCH_MAX_BYTES {
         anyhow::bail!("Search query too long (max {AUR_SEARCH_MAX_BYTES} bytes)");
@@ -4135,6 +4159,15 @@ mod tests {
         );
         assert!(AurClient::validated_package_base("output", Some("../escape")).is_err());
         assert!(AurClient::validated_package_base("output", Some("-option")).is_err());
+    }
+
+    #[test]
+    fn index_entry_names_are_validated_against_expected_packages() {
+        validate_index_entry_name("valid-package", None).expect("valid index package");
+        assert!(validate_index_entry_name("../escape", None).is_err());
+        let error = validate_index_entry_name("different", Some("expected"))
+            .expect_err("an exact lookup must reject a different package");
+        assert!(error.to_string().contains("unexpected package 'different'"));
     }
 
     #[test]
