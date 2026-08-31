@@ -365,7 +365,7 @@ impl PackageManager for PureDebianPackageManager {
 /// (`debian_db::get_counts_fast`) omits both rather than reporting fake zeros;
 /// this is the fallback [`debian_db::resolve_status_counts`] uses when callers
 /// ask for accurate values.
-fn accurate_status_counts() -> Result<(usize, usize, usize, usize)> {
+pub(crate) fn accurate_status_counts() -> Result<(usize, usize, usize, usize)> {
     let installed = debian_db::list_installed_fast()?;
     let total = installed.len();
     let explicit = installed.iter().filter(|p| p.is_explicit).count();

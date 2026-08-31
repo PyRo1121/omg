@@ -276,7 +276,13 @@ pub fn list_orphans_fast() -> anyhow::Result<Vec<String>> {
 
 #[cfg(any(feature = "debian", feature = "debian-pure"))]
 fn counts_from_debian_db() -> anyhow::Result<(usize, usize, usize)> {
-    let (total, explicit, orphans, _updates) = debian_db::get_counts_fast()?;
+    let installed = debian_db::list_installed_fast()?;
+    let total = installed.len();
+    let explicit = installed
+        .iter()
+        .filter(|package| package.is_explicit)
+        .count();
+    let orphans = debian_db::list_orphans_fast()?.len();
     Ok((total, explicit, orphans))
 }
 
@@ -311,19 +317,28 @@ pub fn get_system_status() -> anyhow::Result<(usize, usize, usize, usize)> {
         return futures::executor::block_on(manager.get_status(false));
     }
 
-    #[cfg(any(feature = "debian", feature = "debian-pure"))]
+    #[cfg(feature = "debian")]
     if crate::core::env::distro::is_debian_like() {
-        return debian_db::get_counts_fast();
+        return apt::get_system_status();
+    }
+
+    #[cfg(all(not(feature = "debian"), feature = "debian-pure"))]
+    if crate::core::env::distro::is_debian_like() {
+        return debian_pure::accurate_status_counts();
     }
 
     #[cfg(feature = "arch")]
     return alpm_ops::get_system_status();
 
+    #[cfg(all(not(feature = "arch"), feature = "debian"))]
+    return apt::get_system_status();
+
     #[cfg(all(
         not(feature = "arch"),
-        any(feature = "debian", feature = "debian-pure")
+        not(feature = "debian"),
+        feature = "debian-pure"
     ))]
-    return debian_db::get_counts_fast();
+    return debian_pure::accurate_status_counts();
 
     #[cfg(not(any(feature = "arch", feature = "debian", feature = "debian-pure")))]
     anyhow::bail!("No package manager backend enabled")
