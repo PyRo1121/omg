@@ -406,19 +406,7 @@ pub fn execute_transaction(
         anyhow::bail!("pacman configuration contains no repositories");
     }
 
-    let mut registered_syncdbs = 0usize;
-    for repo in &pacman_config.repos {
-        let db_name = &repo.name;
-        if let Err(e) = alpm.register_syncdb(db_name.as_str(), alpm::SigLevel::USE_DEFAULT) {
-            tracing::warn!("Failed to register sync database '{db_name}': {e}");
-        } else {
-            registered_syncdbs += 1;
-        }
-    }
-
-    if registered_syncdbs == 0 {
-        anyhow::bail!(format_no_syncdb_error());
-    }
+    register_transaction_syncdbs(&alpm, &pacman_config.repos)?;
 
     configure_mirrors(&mut alpm)?;
 
@@ -427,6 +415,22 @@ pub fn execute_transaction(
     let tx_guard = prepare_alpm_transaction(&mut alpm, packages, kind, &pacman_config)?;
     commit_alpm_transaction(tx_guard.0, &main_pb, kind, &pacman_config.hold_pkg)?;
 
+    Ok(())
+}
+
+fn register_transaction_syncdbs(
+    alpm: &alpm::Alpm,
+    repos: &[crate::core::pacman_conf::RepoConfig],
+) -> Result<()> {
+    for repo in repos {
+        alpm.register_syncdb(repo.name.as_str(), alpm::SigLevel::USE_DEFAULT)
+            .with_context(|| {
+                format!(
+                    "Failed to register configured sync database '{}'; refusing a partial repository set",
+                    repo.name
+                )
+            })?;
+    }
     Ok(())
 }
 
@@ -893,14 +897,6 @@ fn is_keyring_related_error(err: &str) -> bool {
         .any(|keyword| contains_ignore_case(err, keyword))
 }
 
-fn format_no_syncdb_error() -> &'static str {
-    "✗ Failed to register any package repositories.\n  \
-     → This is commonly caused by an uninitialized Arch keyring or broken pacman configuration.\n  \
-     → Try: sudo pacman -Sy archlinux-keyring\n  \
-     → Then: sudo pacman-key --init && sudo pacman-key --populate archlinux\n  \
-     → Finally retry: omg sync && omg install <package>"
-}
-
 fn format_trans_prepare_error(err: &str) -> String {
     if is_keyring_related_error(err) {
         return format!(
@@ -1003,9 +999,30 @@ fn ensure_mirror_servers(alpm: &alpm::Alpm) -> Result<()> {
 mod tests {
     use super::{
         DOWNLOAD_BAR_TEMPLATE, DOWNLOAD_SPINNER_TEMPLATE, TransactionKind, ensure_mirror_servers,
-        ensure_removals_not_held, format_no_syncdb_error, format_trans_prepare_error,
-        is_keyring_related_error, local_package_siglevel, package_base_name, transaction_flags,
+        ensure_removals_not_held, format_trans_prepare_error, is_keyring_related_error,
+        local_package_siglevel, package_base_name, register_transaction_syncdbs, transaction_flags,
     };
+
+    #[test]
+    fn transaction_registration_rejects_partial_repository_sets() {
+        let database_path = tempfile::tempdir().expect("temporary database path");
+        let database_path = database_path.path().to_string_lossy();
+        let alpm = alpm::Alpm::new("/", database_path.as_ref()).expect("ALPM handle");
+        alpm.register_syncdb("core", alpm::SigLevel::NONE)
+            .expect("initial sync database");
+        let repos = vec![crate::core::pacman_conf::RepoConfig {
+            name: "core".to_string(),
+            ..Default::default()
+        }];
+
+        let error = register_transaction_syncdbs(&alpm, &repos)
+            .expect_err("a failed configured repository must abort registration");
+        assert!(
+            error
+                .to_string()
+                .contains("refusing a partial repository set")
+        );
+    }
 
     #[test]
     fn mirror_configuration_requires_at_least_one_usable_server() {
@@ -1132,12 +1149,5 @@ mod tests {
         let msg = format_trans_prepare_error("unresolvable package conflicts detected");
         assert!(msg.contains("conflicting packages or missing dependencies"));
         assert!(msg.contains("omg update && omg install <package>"));
-    }
-
-    #[test]
-    fn no_syncdb_error_includes_keyring_recovery_hint() {
-        let msg = format_no_syncdb_error();
-        assert!(msg.contains("Failed to register any package repositories"));
-        assert!(msg.contains("sudo pacman -Sy archlinux-keyring"));
     }
 }
