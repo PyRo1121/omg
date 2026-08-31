@@ -28,10 +28,11 @@ pub mod validation;
 pub use db::{
     DebianMmapIndex, DebianPackage, DebianPackageIndex, DpkgPackageEntry, clean_package_cache,
     cleanup_expired_mmaps, debian_arch, ensure_index_loaded, ensure_mmap_loaded,
-    get_all_packages_with_sizes, get_counts_fast, get_detailed_packages, get_info_fast,
-    get_installed_info_fast, get_package_dependencies, get_package_size, get_package_version,
-    get_updates_from_mmap, is_installed_fast, is_mmap_available, is_package_auto_installed,
-    list_explicit_fast, list_installed_fast, list_orphans_fast, search_fast,
+    get_all_packages_with_sizes, get_counts_fast, get_detailed_best_candidates,
+    get_detailed_packages, get_info_fast, get_installed_info_fast, get_package_dependencies,
+    get_package_size, get_package_version, get_updates_from_mmap, is_installed_fast,
+    is_mmap_available, is_package_auto_installed, list_explicit_fast, list_installed_fast,
+    list_orphans_fast, search_fast,
 };
 
 pub use resolver::{DependencyResolver, ResolutionResult, compare_versions};

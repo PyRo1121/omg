@@ -19,7 +19,7 @@ use std::collections::{HashMap, HashSet, VecDeque};
 
 use anyhow::{Context, Result};
 
-use super::{DebianPackage, get_detailed_packages, list_installed_fast};
+use super::{DebianPackage, get_detailed_best_candidates, list_installed_fast};
 
 /// A dependency specification parsed from the Depends: field
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -92,7 +92,7 @@ pub struct DependencyResolver {
 impl DependencyResolver {
     /// Create a new resolver with current system state
     pub fn new() -> Result<Self> {
-        let packages = get_detailed_packages()?;
+        let packages = get_detailed_best_candidates()?;
         let installed_list = list_installed_fast()?;
 
         let mut available = HashMap::with_capacity(packages.len());

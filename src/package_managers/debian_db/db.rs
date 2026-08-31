@@ -363,6 +363,17 @@ impl DebianPackageIndex {
         self.packages.push(pkg);
     }
 
+    /// One deterministic best candidate per package name, ordered by name.
+    #[must_use]
+    pub fn best_candidates(&self) -> Vec<&DebianPackage> {
+        let mut names: Vec<&String> = self.name_to_idx.keys().collect();
+        names.sort_unstable();
+        names
+            .into_iter()
+            .filter_map(|name| self.name_to_idx.get(name).map(|&idx| &self.packages[idx]))
+            .collect()
+    }
+
     #[must_use]
     pub fn get(&self, name: &str) -> Option<&DebianPackage> {
         self.name_to_idx.get(name).map(|&idx| &self.packages[idx])
@@ -1308,6 +1319,18 @@ pub fn get_detailed_packages() -> Result<Vec<DebianPackage>> {
         "Debian package index not loaded. Run 'omg sync' to refresh the package database",
     )?;
     Ok(index.packages.clone())
+}
+
+pub fn get_detailed_best_candidates() -> Result<Vec<DebianPackage>> {
+    if crate::core::paths::test_mode() {
+        return get_detailed_packages();
+    }
+    ensure_index_loaded()?;
+    let guard = crate::core::sync::read_cache(&DEBIAN_INDEX_CACHE);
+    let index = guard.index.as_ref().context(
+        "Debian package index not loaded. Run 'omg sync' to refresh the package database",
+    )?;
+    Ok(index.best_candidates().into_iter().cloned().collect())
 }
 
 pub fn search_fast(query: &str) -> Result<Vec<Package>> {
@@ -2759,6 +2782,9 @@ mod tests {
         let by_name = idx.get_query("bash").expect("name lookup");
         assert_eq!(by_name.architecture, "amd64");
         assert_eq!(by_name.component, "main");
+        let best = idx.best_candidates();
+        assert_eq!(best.len(), 1);
+        assert!(std::ptr::eq(best[0], by_name));
 
         let by_arch = idx.get_query("bash:i386").expect("arch lookup");
         assert_eq!(by_arch.architecture, "i386");
