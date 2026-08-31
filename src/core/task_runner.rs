@@ -1138,40 +1138,33 @@ pub fn run_task_watch(task_name: &str, extra_args: &[String]) -> Result<()> {
 
     println!("  {} Watching for changes...\n", "→".dimmed());
 
-    // Debounce: wait for changes, then re-run
-    let debounce = Duration::from_millis(300);
-    let mut last_run = std::time::Instant::now();
-    // Set when a change arrives inside the debounce window: the change must
-    // still trigger one re-run once the window closes instead of being lost.
-    let mut rerun_pending = false;
+    process_watch_events(&rx, Duration::from_millis(300), || {
+        rerun_task_in_watch(task_name, extra_args);
+    });
+    Ok(())
+}
 
-    loop {
-        match rx.recv_timeout(Duration::from_secs(1)) {
-            Ok(_event) => {
-                // Debounce multiple rapid events
-                if last_run.elapsed() < debounce {
-                    rerun_pending = true;
-                    continue;
-                }
-                rerun_pending = false;
-                last_run = std::time::Instant::now();
-                rerun_task_in_watch(task_name, extra_args);
+fn process_watch_events<T>(
+    receiver: &std::sync::mpsc::Receiver<T>,
+    debounce: std::time::Duration,
+    mut rerun: impl FnMut(),
+) {
+    while receiver.recv().is_ok() {
+        // Wait for a quiet debounce window, resetting it for every new event.
+        // Events queued while the task runs become one subsequent batch rather
+        // than one rerun per stale event.
+        let disconnected = loop {
+            match receiver.recv_timeout(debounce) {
+                Ok(_) => {}
+                Err(std::sync::mpsc::RecvTimeoutError::Timeout) => break false,
+                Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => break true,
             }
-            Err(std::sync::mpsc::RecvTimeoutError::Timeout) => {
-                if rerun_pending && last_run.elapsed() >= debounce {
-                    rerun_pending = false;
-                    last_run = std::time::Instant::now();
-                    rerun_task_in_watch(task_name, extra_args);
-                }
-                // No events otherwise; continue watching
-            }
-            Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => {
-                break;
-            }
+        };
+        rerun();
+        if disconnected {
+            break;
         }
     }
-
-    Ok(())
 }
 
 fn rerun_task_in_watch(task_name: &str, extra_args: &[String]) {
@@ -1325,6 +1318,41 @@ mod tests {
             detect_js_runtime(project.path()).unwrap(),
             Some(("node".to_string(), "lts".to_string()))
         );
+    }
+
+    #[test]
+    fn watch_events_coalesce_bursts_arriving_during_a_slow_run() {
+        let (sender, receiver) = std::sync::mpsc::channel();
+        sender.send(()).unwrap();
+        let mut sender_during_run = Some(sender);
+        let mut runs = 0;
+
+        process_watch_events(&receiver, std::time::Duration::from_millis(1), || {
+            runs += 1;
+            if runs == 1 {
+                let sender = sender_during_run.take().unwrap();
+                for _ in 0..8 {
+                    sender.send(()).unwrap();
+                }
+                drop(sender);
+            }
+        });
+
+        assert_eq!(runs, 2, "events during one run require one follow-up run");
+    }
+
+    #[test]
+    fn watch_event_burst_before_a_run_is_debounced_once() {
+        let (sender, receiver) = std::sync::mpsc::channel();
+        for _ in 0..8 {
+            sender.send(()).unwrap();
+        }
+        drop(sender);
+        let mut runs = 0;
+
+        process_watch_events(&receiver, std::time::Duration::from_millis(1), || runs += 1);
+
+        assert_eq!(runs, 1);
     }
 
     #[test]
