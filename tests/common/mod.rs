@@ -559,21 +559,13 @@ fn update_mock_state(
 }
 
 // ===========================================================================
-// SKIP ACCOUNTING
+// SKIP REPORTING
 // ===========================================================================
-
-/// Number of tests silently skipped at runtime via the `require_*!` macros in
-/// this process. Each skip is also announced as a
-/// `[omg-skip]` line, so CI can recover the true skip count with
-/// `cargo test 2>&1 | grep -c '\[omg-skip\]'` and fail on unexpected
-/// coverage loss instead of reading a green run as full coverage.
-static SKIPPED_TESTS: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
 
 /// Record and announce a runtime skip with its reason. Prefer
 /// `#[ignore = "reason"]` for statically-known skips; use this only for
 /// conditions discoverable at runtime.
 pub fn report_skip(reason: &str) {
-    SKIPPED_TESTS.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
     eprintln!("[omg-skip] {reason}");
 }
 

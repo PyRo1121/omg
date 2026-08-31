@@ -67,7 +67,6 @@ fn assert_uuid_v4(value: &str) {
 /// Run `f` with a hermetic environment: telemetry env overrides cleared,
 /// config/data isolated into fresh temp directories.
 struct HermeticEnv {
-    _keepalive: Vec<TempDir>,
     vars: Vec<(&'static str, Option<String>)>,
 }
 
@@ -91,10 +90,7 @@ impl HermeticEnv {
             ("ALL_PROXY", Some(proxy)),
             ("NO_PROXY", Some(String::new())),
         ];
-        Self {
-            _keepalive: Vec::new(),
-            vars,
-        }
+        Self { vars }
     }
 
     fn run<R>(&self, f: impl FnOnce() -> R) -> R {
