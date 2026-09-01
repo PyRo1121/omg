@@ -163,13 +163,16 @@ fn collect_local_privacy_data_from(
         "telemetry_queue.json",
         "telemetry_session.json",
         "history.json",
-        "license.json",
         "completion-cache.json",
         ".installed",
     ] {
         if let Some(value) = read_json_file(&data_dir.join(name))? {
             files.insert(name.to_string(), value);
         }
+    }
+
+    if let Some(value) = read_license_export(&data_dir.join("license.json"))? {
+        files.insert("license.json".to_string(), value);
     }
 
     for name in ["machine-id", "license-clock.highwater"] {
@@ -266,6 +269,22 @@ fn read_json_file(path: &Path) -> Result<Option<serde_json::Value>> {
                 .with_context(|| format!("Failed to parse {}", path.display()))
         })
         .transpose()
+}
+
+fn read_license_export(path: &Path) -> Result<Option<serde_json::Value>> {
+    let Some(bytes) = read_bounded_regular_file(path)? else {
+        return Ok(None);
+    };
+    let license: crate::core::license::StoredLicense = serde_json::from_slice(&bytes)
+        .with_context(|| format!("Failed to parse {}", path.display()))?;
+    Ok(Some(serde_json::json!({
+        "tier": license.tier,
+        "features": license.features,
+        "customer": license.customer,
+        "expires_at": license.expires_at,
+        "validated_at": license.validated_at,
+        "machine_id": license.machine_id,
+    })))
 }
 
 fn read_text_file(path: &Path) -> Result<Option<String>> {
@@ -400,13 +419,17 @@ mod tests {
             "telemetry_queue.json",
             "telemetry_session.json",
             "history.json",
-            "license.json",
             "completion-cache.json",
             ".installed",
         ] {
             std::fs::write(data_dir.join(name), br#"{"fixture":true}"#)
                 .expect("write JSON fixture");
         }
+        std::fs::write(
+            data_dir.join("license.json"),
+            br#"{"key":"secret-key","tier":"pro","features":["sbom"],"customer":"customer@example.com","expires_at":null,"validated_at":1700000000,"token":"secret-token","machine_id":"bound-machine"}"#,
+        )
+        .expect("write license fixture");
         std::fs::write(data_dir.join("machine-id"), "machine-fixture")
             .expect("write machine ID fixture");
         std::fs::write(data_dir.join("license-clock.highwater"), "1700000000")
@@ -455,6 +478,10 @@ mod tests {
             assert!(files.contains_key(category), "missing category {category}");
         }
         assert_eq!(files["audit"]["audit.jsonl"], "audit-fixture\n");
+        assert_eq!(files["license.json"]["tier"], "pro");
+        assert_eq!(files["license.json"]["machine_id"], "bound-machine");
+        assert!(files["license.json"].get("key").is_none());
+        assert!(files["license.json"].get("token").is_none());
         let sbom_keys = files["sbom"]
             .as_object()
             .expect("SBOM category object")
