@@ -702,6 +702,7 @@ analyzer inference
 - **Ci**: Cross-platform install script and R2 release sync
 ### 🐛 Bug Fixes
 
+- Allow unnecessary_wraps on portable SystemBackendAccess::production
 - Offload daemon status fsync
 - Preserve daemon signal listeners
 - Honor interactive rollback consent

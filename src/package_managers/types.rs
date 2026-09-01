@@ -3,17 +3,14 @@
 /// Canonical orphan rule for pacman-based systems.
 ///
 /// A package is an orphan when it was **not** installed explicitly and no
-/// other installed package requires or optionally requires it. All orphan
-/// listings and counts (libalpm-backed and pure-Rust cache-backed) MUST
-/// derive from this single predicate so the CLI, daemon, and status counts
-/// cannot diverge.
+/// other installed package requires it — exactly the `pacman -Qdt` filter.
+/// Being merely *optional* for another package (`optdepends`) does NOT keep
+/// a package alive. All orphan listings and counts (libalpm-backed and
+/// pure-Rust cache-backed) MUST derive from this single predicate so the
+/// CLI, daemon, and status counts cannot diverge.
 #[must_use]
-pub fn is_orphan_package(
-    explicit: bool,
-    required_by_empty: bool,
-    optional_for_empty: bool,
-) -> bool {
-    !explicit && required_by_empty && optional_for_empty
+pub fn is_orphan_package(explicit: bool, required_by_empty: bool) -> bool {
+    !explicit && required_by_empty
 }
 
 /// Case-insensitive ASCII substring test without allocation.
@@ -352,12 +349,15 @@ mod tests {
     }
 
     #[test]
-    fn orphan_rule_matches_canonical_definition() {
-        assert!(!is_orphan_package(false, false, false)); // explicit install
-        assert!(!is_orphan_package(false, true, false)); // required by another pkg
-        assert!(!is_orphan_package(false, false, true)); // optional for another pkg
-        assert!(is_orphan_package(false, true, true)); // true orphan
-        assert!(!is_orphan_package(true, true, true));
+    fn orphan_rule_matches_pacman_qdt_definition() {
+        // Explicitly installed packages are never orphans.
+        assert!(!is_orphan_package(true, true));
+        assert!(!is_orphan_package(true, false));
+        // Required by another package: not an orphan.
+        assert!(!is_orphan_package(false, false));
+        // Nothing requires it: an orphan, even if some package lists it in
+        // `%OPTDEPENDS%` (optdepends do not keep a package alive).
+        assert!(is_orphan_package(false, true));
     }
 
     #[test]
@@ -385,6 +385,45 @@ pub fn zero_version() -> Version {
 #[inline]
 pub fn zero_version() -> Version {
     Version::new("0")
+}
+
+/// Compare two Arch package versions without the upstream panic path.
+///
+/// `alpm_types::Version`'s `Ord` impl unwraps `parse::<usize>()` on numeric
+/// segments and panics (`PosOverflow`) on any segment above `usize::MAX`
+/// (alpm-types `version/comparison.rs`). That detonates inside comparators
+/// such as the rayon filter in `pacman_db::check_updates_cached`,
+/// `AurIndex::updates_for`, and `AurClient::{get_update_list,query_aur_updates}`.
+/// All version ordering on update-check paths must go through this helper.
+///
+/// Versions without an overflowing numeric segment keep the exact upstream
+/// ordering (`Ord::cmp`). Versions carrying an overflowing segment fall back
+/// to libalpm's `alpm::vercmp` on the rendered version string: pacman
+/// semantics, deterministic, and it compares numeric runs by length and
+/// text, so it cannot overflow.
+#[cfg(feature = "arch")]
+#[must_use]
+pub fn compare_versions(a: &AlpmVersion, b: &AlpmVersion) -> std::cmp::Ordering {
+    if pkgver_has_overflowing_numeric_segment(a.pkgver.inner())
+        || pkgver_has_overflowing_numeric_segment(b.pkgver.inner())
+    {
+        // `Display` renders the canonical `epoch:pkgver-pkgrel` form.
+        alpm::vercmp(a.to_string(), b.to_string())
+    } else {
+        a.cmp(b)
+    }
+}
+
+/// Detect numeric segments that would panic in `alpm_types`' comparator
+/// (`parse::<usize>().unwrap()` overflow). A segment is any maximal run of
+/// ASCII digits (`pkgver` is ASCII-only per the alpm-pkgver spec). Epoch and
+/// pkgrel parse into `usize` at construction time, so only `pkgver` can
+/// carry overflowing segments.
+#[cfg(feature = "arch")]
+fn pkgver_has_overflowing_numeric_segment(pkgver: &str) -> bool {
+    pkgver
+        .split(|c: char| !c.is_ascii_digit())
+        .any(|segment| !segment.is_empty() && segment.parse::<usize>().is_err())
 }
 
 #[derive(Debug, Clone)]

@@ -259,12 +259,12 @@ pub fn list_orphans_fast() -> Result<Vec<String>> {
             .pkgs()
             .iter()
             // Canonical orphan rule (`types::is_orphan_package`): a dependency
-            // that no other installed package requires or optionally requires.
+            // that no other installed package requires. Optional-for
+            // relationships do not keep a package alive (`pacman -Qdt`).
             .filter(|pkg| {
                 is_orphan_package(
                     pkg.reason() == PackageReason::Explicit,
                     pkg.required_by().is_empty(),
-                    pkg.optional_for().is_empty(),
                 )
             })
             .map(|pkg| pkg.name().to_string())
@@ -344,15 +344,11 @@ pub fn get_counts() -> Result<(usize, usize, usize)> {
         let total = pkgs.len();
 
         // Single-pass counting for cache efficiency; orphans follow the
-        // canonical rule (`types::is_orphan_package`).
+        // canonical rule (`types::is_orphan_package`, `pacman -Qdt`).
         let (explicit, orphans) = pkgs.iter().fold((0, 0), |(mut exp, mut orp), pkg| {
             if pkg.reason() == PackageReason::Explicit {
                 exp += 1;
-            } else if is_orphan_package(
-                false,
-                pkg.required_by().is_empty(),
-                pkg.optional_for().is_empty(),
-            ) {
+            } else if is_orphan_package(false, pkg.required_by().is_empty()) {
                 orp += 1;
             }
             (exp, orp)

@@ -18,8 +18,8 @@ use serde::Deserialize;
 
 use super::common::{
     activate_version, begin_staged_install, complete_staged_install, download_with_progress,
-    extract_tar_gz, normalize_version, parse_sha256_digest, print_already_installed,
-    print_installed, remove_file_best_effort,
+    extract_tar_gz, is_partial_version, normalize_version, parse_sha256_digest,
+    print_already_installed, print_installed, remove_file_best_effort, resolve_partial_version,
 };
 use crate::core::http::download_client;
 
@@ -84,6 +84,7 @@ impl GoManager {
     /// Install Go - PURE RUST, NO SUBPROCESS
     pub async fn install(&self, version: &str) -> Result<()> {
         let version = normalize_version(version);
+        let version = self.resolve_requested_version(&version).await?;
         crate::core::security::validate_runtime_version(&version)?;
         let version_dir = self.versions_dir.join(&version);
 
@@ -121,6 +122,24 @@ impl GoManager {
         self.use_version(&version)
     }
 
+    /// Resolve a partial version request (`1`, `1.21`) to the newest matching
+    /// stable go.dev release before any download URL is built; the filename
+    /// interpolation is exact-string, so an unresolved partial would 404.
+    /// Only stable releases participate: `include=all` also lists RC tags such
+    /// as `go1.22rc1`, and a partial request must never resolve into one.
+    /// Exact and non-numeric requests pass through unchanged, preserving the
+    /// already-installed fast path and the existing not-found UX.
+    async fn resolve_requested_version(&self, version: &str) -> Result<String> {
+        if !is_partial_version(version) {
+            return Ok(version.to_owned());
+        }
+        let available = self.list_available().await?;
+        Ok(
+            resolve_partial_version(&available_version_names(&available), version)
+                .unwrap_or_else(|| version.to_owned()),
+        )
+    }
+
     /// Fetch the release manifest and select the vendor checksum for this archive.
     async fn fetch_checksum(&self, filename: &str) -> Result<String> {
         let releases = self.list_available().await?;
@@ -147,6 +166,15 @@ impl GoManager {
 
 // Generate common runtime manager methods (list_installed, current_version)
 crate::runtimes::common::impl_runtime_common!(GoManager);
+
+/// Flatten a go.dev manifest into unprefixed stable version numbers.
+fn available_version_names(versions: &[GoVersion]) -> Vec<String> {
+    versions
+        .iter()
+        .filter(|release| release.stable())
+        .map(|release| release.version().to_owned())
+        .collect()
+}
 
 fn checksum_for_file(releases: &[GoVersion], filename: &str) -> Result<String> {
     let checksum = releases
@@ -201,6 +229,47 @@ mod tests {
         let manager = GoManager::new();
         assert!(manager.install("..").await.is_err());
         Ok(())
+    }
+
+    #[test]
+    fn partial_request_resolves_to_the_newest_stable_go_fixture() {
+        let releases = vec![
+            GoVersion {
+                version: "go1.22rc1".to_string(),
+                stable: false,
+                files: Vec::new(),
+            },
+            GoVersion {
+                version: "go1.21.5".to_string(),
+                stable: true,
+                files: Vec::new(),
+            },
+            GoVersion {
+                version: "go1.21.0".to_string(),
+                stable: true,
+                files: Vec::new(),
+            },
+            GoVersion {
+                version: "go1.20".to_string(),
+                stable: true,
+                files: Vec::new(),
+            },
+        ];
+        let names = available_version_names(&releases);
+        // RC tags never participate in partial resolution.
+        assert_eq!(
+            resolve_partial_version(&names, "1").as_deref(),
+            Some("1.21.5")
+        );
+        assert_eq!(
+            resolve_partial_version(&names, "1.21").as_deref(),
+            Some("1.21.5")
+        );
+        assert_eq!(
+            resolve_partial_version(&names, "1.20").as_deref(),
+            Some("1.20")
+        );
+        assert_eq!(resolve_partial_version(&names, "1.22"), None);
     }
 
     #[test]

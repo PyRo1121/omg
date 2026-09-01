@@ -744,7 +744,9 @@ impl AurClient {
                         );
                         continue;
                     };
-                    if p_ver > local_pkg.version {
+                    if crate::package_managers::types::compare_versions(&p_ver, &local_pkg.version)
+                        == std::cmp::Ordering::Greater
+                    {
                         updates.push((p.name, local_pkg.version, p_ver));
                     }
                 }
@@ -846,7 +848,9 @@ impl AurClient {
                         );
                         continue;
                     };
-                    if p_ver > local_pkg.version {
+                    if crate::package_managers::types::compare_versions(&p_ver, &local_pkg.version)
+                        == std::cmp::Ordering::Greater
+                    {
                         updates.push((p.name, local_pkg.version, p_ver));
                     }
                 }
