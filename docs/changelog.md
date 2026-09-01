@@ -702,6 +702,15 @@ analyzer inference
 - **Ci**: Cross-platform install script and R2 release sync
 ### 🐛 Bug Fixes
 
+- **Tui**: Allow repeated package searches ([#121](https://github.com/PyRo1121/omg/issues/121))
+- **Ci**: Unblock leftover debian unit tests after [#114](https://github.com/PyRo1121/omg/issues/114) ([#120](https://github.com/PyRo1121/omg/issues/120))
+
+[#114](https://github.com/PyRo1121/omg/issues/114) left two Debian-job failures out of scope. Accept either fail-closed
+
+AUR cleanup message (Debian-like host vs missing Arch backend), and skip
+
+the chmod-000 mtime probe when running as root.
+
 - **Update**: Refresh metadata before planning changes ([#122](https://github.com/PyRo1121/omg/issues/122))
 - **Debian**: Retain locks through cancelled configuration ([#117](https://github.com/PyRo1121/omg/issues/117))
 - **Install**: Require local archive consent first ([#118](https://github.com/PyRo1121/omg/issues/118))
