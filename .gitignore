@@ -126,3 +126,5 @@ tasks/
 TODO-mise-removal.md
 .actrc
 .github/workflows/.local-*
+
+.pi/verification-evidence/
