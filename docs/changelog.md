@@ -702,6 +702,7 @@ analyzer inference
 - **Ci**: Cross-platform install script and R2 release sync
 ### 🐛 Bug Fixes
 
+- **Update**: Refresh metadata before planning changes ([#122](https://github.com/PyRo1121/omg/issues/122))
 - **Debian**: Retain locks through cancelled configuration ([#117](https://github.com/PyRo1121/omg/issues/117))
 - **Install**: Require local archive consent first ([#118](https://github.com/PyRo1121/omg/issues/118))
 - **Ci**: Unblock debian/fedora/macos/coverage/e2e ([#114](https://github.com/PyRo1121/omg/issues/114))
