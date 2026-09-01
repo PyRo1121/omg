@@ -96,13 +96,13 @@ fn load_rejects_malformed_toml_instead_of_panicking() -> anyhow::Result<()> {
 }
 
 #[test]
-fn load_reports_a_missing_lockfile_as_a_read_failure() -> anyhow::Result<()> {
+fn load_reports_a_missing_lockfile_as_an_inspection_failure() -> anyhow::Result<()> {
     let dir = tempfile::TempDir::new()?;
     let path = dir.path().join("does-not-exist.lock");
 
     let error =
         EnvironmentState::load(&path).expect_err("missing lockfile must be an explicit error");
-    assert!(error.to_string().contains("Failed to read lockfile"));
+    assert!(error.to_string().contains("Failed to inspect lockfile"));
     Ok(())
 }
 

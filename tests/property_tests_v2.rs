@@ -23,7 +23,7 @@ use common::*;
 
 proptest! {
     #[test]
-    fn prop_same_version_is_patch(
+    fn prop_same_version_is_not_an_update(
         major in 0u32..50u32,
         minor in 0u32..50u32,
         patch in 0u32..50u32
@@ -33,7 +33,7 @@ proptest! {
         let version = format!("{major}.{minor}.{patch}");
         let update_type = UpdateType::from_versions(&version, &version);
 
-        prop_assert_eq!(update_type, UpdateType::Patch);
+        prop_assert_eq!(update_type, UpdateType::Unknown);
     }
 
     #[test]
