@@ -103,6 +103,40 @@ impl DnfPackageManager {
         )
     }
 
+    fn publish_installed_packages(&self, packages: &[InstalledPackage]) {
+        let mut grouped: HashMap<String, Vec<InstalledPackage>> = HashMap::new();
+        for package in packages {
+            grouped
+                .entry(package.name.clone())
+                .or_default()
+                .push(package.clone());
+        }
+        self.installed_cache.clear();
+        for (name, packages) in grouped {
+            self.installed_cache.insert(name, packages);
+        }
+    }
+
+    fn apply_install_reasons(
+        packages: &mut [InstalledPackage],
+        user_installed: Result<HashSet<String>>,
+    ) {
+        match user_installed {
+            Ok(user_installed) => {
+                for package in packages {
+                    package.reason = if user_installed.contains(&package.name) {
+                        InstallReason::User
+                    } else {
+                        InstallReason::Dependency
+                    };
+                }
+            }
+            Err(error) => {
+                tracing::warn!("Could not load DNF install reasons: {error}");
+            }
+        }
+    }
+
     /// Load installed packages from RPM `SQLite` database
     ///
     /// Reads directly from `/var/lib/rpm/rpmdb.sqlite` and parses RPM header blobs
@@ -117,22 +151,12 @@ impl DnfPackageManager {
         let db_path = self.rpm_db_path.clone();
         let mut packages =
             tokio::task::spawn_blocking(move || Self::read_rpm_database(&db_path)).await??;
-        let user_installed = tokio::task::spawn_blocking(Self::read_user_installed_names).await??;
-        for package in &mut packages {
-            package.reason = if user_installed.contains(&package.name) {
-                InstallReason::User
-            } else {
-                InstallReason::Dependency
-            };
+        match tokio::task::spawn_blocking(Self::read_user_installed_names).await {
+            Ok(user_installed) => Self::apply_install_reasons(&mut packages, user_installed),
+            Err(error) => tracing::warn!("DNF install-reason worker failed: {error}"),
         }
 
-        // Populate cache
-        for pkg in &packages {
-            self.installed_cache
-                .entry(pkg.name.clone())
-                .or_default()
-                .push(pkg.clone());
-        }
+        self.publish_installed_packages(&packages);
 
         Ok(packages)
     }
@@ -830,21 +854,40 @@ mod tests {
     }
 
     #[test]
-    fn installed_cache_preserves_duplicate_multilib_names() {
+    fn install_reason_failure_preserves_the_rpm_inventory() {
+        let mut packages = vec![InstalledPackage {
+            name: "bash".to_string(),
+            version: "5.2".to_string(),
+            release: "1.fc42".to_string(),
+            summary: "GNU shell".to_string(),
+            reason: InstallReason::Dependency,
+        }];
+
+        DnfPackageManager::apply_install_reasons(
+            &mut packages,
+            Err(anyhow::anyhow!("repoquery unavailable")),
+        );
+
+        assert_eq!(packages.len(), 1);
+        assert_eq!(packages[0].reason, InstallReason::Dependency);
+    }
+
+    #[test]
+    fn installed_cache_publication_is_idempotent_and_preserves_multilib_names() {
         let manager = DnfPackageManager::new();
-        for release in ["1.fc42.x86_64", "1.fc42.i686"] {
-            manager
-                .installed_cache
-                .entry("glibc".to_string())
-                .or_default()
-                .push(InstalledPackage {
-                    name: "glibc".to_string(),
-                    version: "2.41".to_string(),
-                    release: release.to_string(),
-                    summary: "C library".to_string(),
-                    reason: InstallReason::Dependency,
-                });
-        }
+        let packages: Vec<_> = ["1.fc42.x86_64", "1.fc42.i686"]
+            .into_iter()
+            .map(|release| InstalledPackage {
+                name: "glibc".to_string(),
+                version: "2.41".to_string(),
+                release: release.to_string(),
+                summary: "C library".to_string(),
+                reason: InstallReason::Dependency,
+            })
+            .collect();
+
+        manager.publish_installed_packages(&packages);
+        manager.publish_installed_packages(&packages);
 
         let cached = manager
             .cached_installed_packages()
