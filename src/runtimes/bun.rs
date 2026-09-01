@@ -14,9 +14,9 @@ use std::path::{Path, PathBuf};
 
 use super::common::{
     GITHUB_USER_AGENT, GithubRelease, activate_version, begin_staged_install,
-    complete_staged_install, download_with_progress, extract_zip, normalize_version,
-    parse_sha256_digest, print_already_installed, print_installed, print_using,
-    remove_file_best_effort, version_cmp,
+    complete_staged_install, download_with_progress, extract_zip, is_partial_version,
+    normalize_version, parse_sha256_digest, print_already_installed, print_installed, print_using,
+    remove_file_best_effort, resolve_partial_version, version_cmp,
 };
 use crate::core::http::download_client;
 
@@ -75,6 +75,7 @@ impl BunManager {
     /// Install Bun - PURE RUST, NO SUBPROCESS
     pub async fn install(&self, version: &str) -> Result<()> {
         let version = self.resolve_alias(version).await?;
+        let version = self.resolve_requested_version(&version).await?;
         crate::core::security::validate_runtime_version(&version)?;
         let version_dir = self.versions_dir.join(&version);
 
@@ -110,6 +111,23 @@ impl BunManager {
         self.use_version(&version)?;
 
         Ok(())
+    }
+
+    /// Resolve a partial version request (`1`, `1.0`) to the newest matching
+    /// stable Bun release before any download URL is built; the release-tag
+    /// lookup is exact-string, so an unresolved partial would 404. Like
+    /// `latest`, partial resolution never picks a prerelease. Exact and
+    /// non-numeric requests pass through unchanged, preserving the
+    /// already-installed fast path and the existing not-found UX.
+    async fn resolve_requested_version(&self, version: &str) -> Result<String> {
+        if !is_partial_version(version) {
+            return Ok(version.to_owned());
+        }
+        let available = self.list_available().await?;
+        Ok(
+            resolve_partial_version(&available_version_names(&available), version)
+                .unwrap_or_else(|| version.to_owned()),
+        )
     }
 
     async fn fetch_checksum(&self, version: &str, filename: &str) -> Result<String> {
@@ -181,6 +199,15 @@ fn pick_latest_stable(versions: Vec<BunVersion>) -> Option<String> {
         .map(|version| version.version)
 }
 
+/// Flatten Bun releases into stable version numbers for partial resolution.
+fn available_version_names(versions: &[BunVersion]) -> Vec<String> {
+    versions
+        .iter()
+        .filter(|version| !version.prerelease)
+        .map(|version| version.version.clone())
+        .collect()
+}
+
 fn bun_platform() -> Result<String> {
     let os = super::common::host_os_tag("Bun", "linux", "darwin")?;
     let arch = super::common::host_arch_tag("Bun", "x64", "aarch64")?;
@@ -195,6 +222,31 @@ mod tests {
     fn test_bun_manager_new() {
         let mgr = BunManager::new();
         assert!(mgr.versions_dir.ends_with("bun"));
+    }
+
+    #[test]
+    fn partial_request_resolves_to_the_newest_stable_bun_fixture() {
+        let fixtures = [
+            ver("1.2.0", true),
+            ver("1.0.18", false),
+            ver("1.0.4", false),
+            ver("0.8.0", false),
+        ];
+        let names = available_version_names(&fixtures);
+        // Prereleases never participate in partial resolution.
+        assert_eq!(
+            resolve_partial_version(&names, "1.0").as_deref(),
+            Some("1.0.18")
+        );
+        assert_eq!(
+            resolve_partial_version(&names, "1").as_deref(),
+            Some("1.0.18")
+        );
+        assert_eq!(
+            resolve_partial_version(&names, "0").as_deref(),
+            Some("0.8.0")
+        );
+        assert_eq!(resolve_partial_version(&names, "2"), None);
     }
 
     #[test]
