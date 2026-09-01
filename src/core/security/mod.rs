@@ -21,9 +21,9 @@ pub use slsa::{SlsaError, SlsaLevel, SlsaVerifier};
 pub use validation::{
     ValidationError, is_local_debian_package_file, is_local_package_file,
     validate_debian_package_name_or_file, validate_debian_package_names_or_files,
-    validate_image_ref, validate_package_name, validate_package_name_or_file,
-    validate_package_names, validate_package_names_or_files, validate_relative_path,
-    validate_runtime_version, validate_version,
+    validate_debian_package_specs, validate_image_ref, validate_package_name,
+    validate_package_name_or_file, validate_package_names, validate_package_names_or_files,
+    validate_relative_path, validate_runtime_version, validate_version,
 };
 #[cfg(unix)]
 pub use validation::{validate_local_debian_package_file, validate_local_package_file};
