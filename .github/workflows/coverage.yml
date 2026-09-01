@@ -90,7 +90,6 @@ jobs:
       - name: Run tests with coverage instrumentation
         run: |
           cargo llvm-cov nextest \
-            --lib \
             --features arch,pgp,license \
             --locked \
             --no-fail-fast \
