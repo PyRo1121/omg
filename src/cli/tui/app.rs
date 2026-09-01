@@ -2,9 +2,7 @@ use crate::core::env::team::TeamStatus;
 use crate::core::history::Transaction;
 #[cfg(unix)]
 use crate::daemon::protocol::StatusResult;
-#[cfg(any(feature = "arch", feature = "debian", feature = "debian-pure"))]
-use anyhow::Context;
-use anyhow::Result;
+use anyhow::{Context, Result};
 use crossterm::event::KeyCode;
 use std::time::Instant;
 
@@ -336,14 +334,11 @@ impl App {
         (0, 0)
     }
 
-    pub async fn search_packages(&mut self, query: &str) -> Result<()> {
+    pub async fn search_packages(query: &str) -> Result<Vec<crate::package_managers::SyncPackage>> {
         if query.is_empty() {
-            self.search_results.clear();
-            self.search_error = None;
-            return Ok(());
+            return Ok(Vec::new());
         }
 
-        // Search packages using the actual package manager
         #[cfg(unix)]
         if let Ok(mut client) = crate::core::client::DaemonClient::connect().await
             && let Ok(crate::daemon::protocol::ResponseResult::Search(res)) = client
@@ -354,80 +349,74 @@ impl App {
                 })
                 .await
         {
-            self.search_results = res
+            return Ok(res
                 .packages
                 .into_iter()
-                .map(|p| crate::package_managers::SyncPackage {
-                    name: p.name,
-                    version: crate::package_managers::parse_version_or_zero(&p.version),
-                    description: p.description,
+                .map(|package| crate::package_managers::SyncPackage {
+                    name: package.name,
+                    version: crate::package_managers::parse_version_or_zero(&package.version),
+                    description: package.description,
                     repo: "official".to_string(),
                     download_size: 0,
                     installed: false,
                 })
-                .collect();
-            self.search_error = None;
-            return Ok(());
+                .collect());
         }
 
-        // Fallback to direct search if daemon is not available
+        let query = query.to_string();
+        tokio::task::spawn_blocking(move || Self::search_packages_direct(&query))
+            .await
+            .context("package search worker failed")?
+    }
+
+    fn search_packages_direct(query: &str) -> Result<Vec<crate::package_managers::SyncPackage>> {
+        #[cfg(not(any(feature = "arch", feature = "debian", feature = "debian-pure")))]
+        let _ = query;
+
         #[cfg(any(feature = "debian", feature = "debian-pure"))]
         if crate::core::env::distro::is_debian_like() {
-            self.search_results = crate::package_managers::debian_db::search_fast(query)
+            return Ok(crate::package_managers::debian_db::search_fast(query)
                 .context("Failed to search official packages")?
                 .into_iter()
-                .map(|pkg| crate::package_managers::SyncPackage {
-                    name: pkg.name,
-                    version: pkg.version,
-                    description: pkg.description,
+                .map(|package| crate::package_managers::SyncPackage {
+                    name: package.name,
+                    version: package.version,
+                    description: package.description,
                     repo: "official".to_string(),
                     download_size: 0,
-                    installed: pkg.installed,
+                    installed: package.installed,
                 })
-                .collect();
-            self.search_error = None;
-            return Ok(());
+                .collect());
         }
 
         #[cfg(feature = "arch")]
-        {
-            self.search_results = crate::package_managers::search_sync(query)
-                .context("Failed to search official packages")?;
-        }
+        return crate::package_managers::search_sync(query)
+            .context("Failed to search official packages");
+
         #[cfg(all(feature = "debian", not(feature = "arch")))]
-        {
-            self.search_results = crate::package_managers::apt_search_sync(query)
-                .context("Failed to search official packages")?;
-        }
+        return crate::package_managers::apt_search_sync(query)
+            .context("Failed to search official packages");
+
         #[cfg(all(
             feature = "debian-pure",
             not(feature = "arch"),
             not(feature = "debian")
         ))]
-        {
-            self.search_results = crate::package_managers::apt_search_fast(query)
-                .context("Failed to search official packages")?
-                .into_iter()
-                .map(|pkg| crate::package_managers::SyncPackage {
-                    name: pkg.name,
-                    version: pkg.version,
-                    description: pkg.description,
-                    repo: "official".to_string(),
-                    download_size: 0,
-                    installed: pkg.installed,
-                })
-                .collect();
-        }
-        #[cfg(not(any(feature = "arch", feature = "debian", feature = "debian-pure")))]
-        {
-            anyhow::bail!("Failed to search official packages: no package manager backend enabled");
-        }
+        return Ok(crate::package_managers::apt_search_fast(query)
+            .context("Failed to search official packages")?
+            .into_iter()
+            .map(|package| crate::package_managers::SyncPackage {
+                name: package.name,
+                version: package.version,
+                description: package.description,
+                repo: "official".to_string(),
+                download_size: 0,
+                installed: package.installed,
+            })
+            .collect());
 
-        #[cfg(any(feature = "arch", feature = "debian", feature = "debian-pure"))]
-        {
-            self.search_error = None;
-            Ok(())
-        }
+        #[cfg(not(any(feature = "arch", feature = "debian", feature = "debian-pure")))]
+        anyhow::bail!("Failed to search official packages: no package manager backend enabled")
     }
 
     // Long-running actions are associated functions (they never read model
