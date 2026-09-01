@@ -702,6 +702,44 @@ analyzer inference
 - **Ci**: Cross-platform install script and R2 release sync
 ### 🐛 Bug Fixes
 
+- Never collapse unparseable versions to zero (ARCH-R14) ([#99](https://github.com/PyRo1121/omg/issues/99))
+
+parse_version_or_zero silently fabricated version 0 for any string the
+
+strict parser rejected (non-ASCII, pkgrel overflow, three-component
+
+pkgrel), suppressing real updates, inventing phantom ones, and skewing
+
+CVE matching.
+
+  - add strict parse_version() -> Option`<Version>`; reduce
+
+parse_version_or_zero to a thin, explicitly documented display/test
+
+fallback over zero_version
+
+  - untrusted boundaries now decide failure policy at the call site:
+
+alpm_direct/alpm_ops and AUR RPC/archive paths skip the entry with a
+
+warning; AUR index updates_for reports the name as missing so the
+
+caller re-checks via RPC; package-file loads and PKGBUILD pkgver
+
+propagate typed errors
+
+  - version_is_affected returns Option<bool> so the ALSA scorer skips
+
+unparseable advisory versions instead of comparing against 0
+
+  - previously-parsing versions behave identically (ordering tests green)
+
+Regression tests: strict parser rejects unparseable input and preserves
+
+valid rendering; unparseable AUR index entries are rechecked not treated
+
+as 0; unparseable ALSA versions are skipped not treated as 0.
+
 - Route version ordering through panic-free comparator ([#94](https://github.com/PyRo1121/omg/issues/94))
 
 * fix: route version ordering through panic-free comparator (ARCH-N1)
