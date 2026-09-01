@@ -373,6 +373,26 @@ impl StoredLicense {
         {
             return None;
         }
+        // Clock-rollback defense: expiry is judged against a persisted
+        // high-water mark of observed wall-clock time, not just the mutable
+        // system clock. A token whose expiry predates the watermark is dead
+        // even if the current (rolled-back) clock says otherwise.
+        let observed_floor = match license_clock_floor() {
+            Ok(observed_floor) => observed_floor,
+            Err(error) => {
+                tracing::warn!(error = %error, "Failed to enforce the license clock watermark");
+                return None;
+            }
+        };
+        if payload.exp <= observed_floor {
+            tracing::warn!(
+                exp = payload.exp,
+                observed_floor,
+                "License token expired as of the observed-time high-water mark \
+                 (system clock rollback suspected)"
+            );
+            return None;
+        }
         Some(payload)
     }
 
@@ -389,6 +409,93 @@ impl StoredLicense {
     pub fn is_token_valid(&self) -> bool {
         self.verified_payload().is_some()
     }
+}
+
+/// Observed-time high-water mark for license verification (anti clock-rollback).
+fn license_clock_watermark_path() -> PathBuf {
+    // Tests redirect this via the same env knob data_dir honors so the
+    // watermark file stays out of the developer's real profile.
+    #[cfg(test)]
+    let override_path = { WATERMARK_PATH_OVERRIDE.with(|cell| cell.borrow().clone()) };
+    #[cfg(test)]
+    if let Some(override_path) = override_path {
+        return override_path;
+    }
+    crate::core::paths::data_dir().join("license-clock.highwater")
+}
+
+#[cfg(test)]
+thread_local! {
+    static WATERMARK_PATH_OVERRIDE: std::cell::RefCell<Option<PathBuf>> =
+        const { std::cell::RefCell::new(None) };
+}
+
+/// Read the persisted high-water mark. Missing state is initialized on first
+/// use; unreadable or malformed state is rejected so clock rollback protection
+/// cannot silently reset.
+fn load_clock_watermark(path: &Path) -> Result<Option<i64>> {
+    match std::fs::read_to_string(path) {
+        Ok(content) => content
+            .trim()
+            .parse::<i64>()
+            .map(Some)
+            .with_context(|| format!("Malformed license clock watermark: {}", path.display())),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(None),
+        Err(error) => Err(error)
+            .with_context(|| format!("Failed to read license clock watermark: {}", path.display())),
+    }
+}
+
+/// Advance and return the observed-time floor: `max(stored, now)`.
+/// A sibling lock serializes the read-modify-write sequence across processes,
+/// so a delayed writer cannot replace a newer watermark with an older value.
+fn license_clock_floor_with(path: &Path, now: i64) -> Result<i64> {
+    let parent = path
+        .parent()
+        .context("License clock watermark path must have a parent directory")?;
+    std::fs::create_dir_all(parent).with_context(|| {
+        format!(
+            "Failed to create license clock watermark directory: {}",
+            parent.display()
+        )
+    })?;
+
+    let lock_path = path.with_extension("lock");
+    let lock = std::fs::OpenOptions::new()
+        .create(true)
+        .read(true)
+        .write(true)
+        .truncate(false)
+        .open(&lock_path)
+        .with_context(|| format!("Failed to open license clock lock: {}", lock_path.display()))?;
+    lock.lock()
+        .with_context(|| format!("Failed to lock license clock: {}", lock_path.display()))?;
+
+    let result: Result<i64> = (|| {
+        let stored = load_clock_watermark(path)?;
+        let floor = stored.unwrap_or(now).max(now);
+        if stored != Some(floor) {
+            crate::core::safe_ops::atomic_write_file_sync(path, floor.to_string().as_bytes())
+                .context("Failed to persist license clock watermark")?;
+        }
+        Ok(floor)
+    })();
+
+    if let Err(error) = lock.unlock() {
+        return match result {
+            Ok(_) => Err(error).context("Failed to unlock license clock"),
+            Err(operation_error) => Err(operation_error.context(format!(
+                "License clock update also failed to unlock its lock: {error}"
+            ))),
+        };
+    }
+    result
+}
+
+pub(crate) fn license_clock_floor() -> Result<i64> {
+    let path = license_clock_watermark_path();
+    let now = jiff::Timestamp::now().as_second();
+    license_clock_floor_with(&path, now)
 }
 
 static MACHINE_ID: OnceLock<String> = OnceLock::new();
@@ -906,6 +1013,82 @@ mod tests {
 
         let wrong_audience = signed_test_token(LICENSE_TOKEN_ISSUER, "another-client");
         assert!(verify_jwt_with_key(&wrong_audience, TEST_PUBLIC_KEY).is_none());
+    }
+
+    /// Wave-16 durability fix: rolling the system clock back cannot revive a
+    /// token whose expiry predates the persisted observed-time high-water
+    /// mark. The token below is signature-valid and not yet expired by the
+    /// current clock, but the watermark proves real time already passed its
+    /// expiry — verification must fail.
+    #[test]
+    fn license_expiry_survives_system_clock_rollback() {
+        let temp = tempfile::TempDir::new().unwrap();
+        WATERMARK_PATH_OVERRIDE.with(|slot| {
+            *slot.borrow_mut() = Some(temp.path().join("license-clock.highwater"));
+        });
+
+        let now = jsonwebtoken::get_current_timestamp().cast_signed();
+        let token = signed_test_token_with_claims(
+            LICENSE_TOKEN_ISSUER,
+            LICENSE_TOKEN_AUDIENCE,
+            Some(get_machine_id()),
+            now + 3600,
+        );
+        let stored = StoredLicense {
+            key: "license-1".to_string(),
+            tier: "pro".to_string(),
+            features: vec!["sbom".to_string()],
+            customer: None,
+            expires_at: None,
+            validated_at: now,
+            token: Some(token),
+            machine_id: Some(get_machine_id()),
+        };
+
+        // Fresh watermark: token is valid, and verification advances the mark
+        // to (at least) the current wall clock.
+        assert!(stored.verified_payload_with_key(TEST_PUBLIC_KEY).is_some());
+        let watermark_path = WATERMARK_PATH_OVERRIDE
+            .with(|slot| slot.borrow().clone())
+            .expect("override set");
+        let advanced = load_clock_watermark(&watermark_path)
+            .expect("read watermark")
+            .expect("watermark initialized");
+        assert!(
+            advanced >= now,
+            "watermark must reach current time: {advanced}"
+        );
+
+        // Simulate a rollback: the machine observed real time past the
+        // token's expiry before the clock was wound back. The expired-as-of-
+        // watermark token must now be rejected.
+        license_clock_floor_with(&watermark_path, now + 7200).expect("advance watermark");
+        assert!(stored.verified_payload_with_key(TEST_PUBLIC_KEY).is_none());
+        assert!(
+            load_clock_watermark(&watermark_path)
+                .expect("read watermark")
+                .expect("watermark initialized")
+                >= now + 7200
+        );
+        assert_eq!(
+            license_clock_floor_with(&watermark_path, now).expect("read monotonic watermark"),
+            now + 7200
+        );
+    }
+
+    #[test]
+    fn malformed_license_clock_watermark_fails_closed() {
+        let temp = tempfile::TempDir::new().expect("temp dir");
+        let watermark_path = temp.path().join("license-clock.highwater");
+        std::fs::write(&watermark_path, "not-a-timestamp").expect("write malformed watermark");
+
+        let error = license_clock_floor_with(&watermark_path, 1)
+            .expect_err("malformed rollback state must not be reset");
+        assert!(
+            error
+                .to_string()
+                .contains("Malformed license clock watermark")
+        );
     }
 
     #[test]
