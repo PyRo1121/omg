@@ -40,6 +40,10 @@ enum SystemBackendAccess {
 }
 
 impl SystemBackendAccess {
+    #[allow(
+        clippy::unnecessary_wraps,
+        reason = "constructor is fallible when the Arch backend initializes its ALPM worker"
+    )]
     fn production() -> anyhow::Result<Self> {
         Ok(Self::Production {
             #[cfg(feature = "arch")]
