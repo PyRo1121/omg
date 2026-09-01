@@ -3,17 +3,14 @@
 /// Canonical orphan rule for pacman-based systems.
 ///
 /// A package is an orphan when it was **not** installed explicitly and no
-/// other installed package requires or optionally requires it. All orphan
-/// listings and counts (libalpm-backed and pure-Rust cache-backed) MUST
-/// derive from this single predicate so the CLI, daemon, and status counts
-/// cannot diverge.
+/// other installed package requires it — exactly the `pacman -Qdt` filter.
+/// Being merely *optional* for another package (`optdepends`) does NOT keep
+/// a package alive. All orphan listings and counts (libalpm-backed and
+/// pure-Rust cache-backed) MUST derive from this single predicate so the
+/// CLI, daemon, and status counts cannot diverge.
 #[must_use]
-pub fn is_orphan_package(
-    explicit: bool,
-    required_by_empty: bool,
-    optional_for_empty: bool,
-) -> bool {
-    !explicit && required_by_empty && optional_for_empty
+pub fn is_orphan_package(explicit: bool, required_by_empty: bool) -> bool {
+    !explicit && required_by_empty
 }
 
 /// Case-insensitive ASCII substring test without allocation.
@@ -318,12 +315,15 @@ mod tests {
     }
 
     #[test]
-    fn orphan_rule_matches_canonical_definition() {
-        assert!(!is_orphan_package(false, false, false)); // explicit install
-        assert!(!is_orphan_package(false, true, false)); // required by another pkg
-        assert!(!is_orphan_package(false, false, true)); // optional for another pkg
-        assert!(is_orphan_package(false, true, true)); // true orphan
-        assert!(!is_orphan_package(true, true, true));
+    fn orphan_rule_matches_pacman_qdt_definition() {
+        // Explicitly installed packages are never orphans.
+        assert!(!is_orphan_package(true, true));
+        assert!(!is_orphan_package(true, false));
+        // Required by another package: not an orphan.
+        assert!(!is_orphan_package(false, false));
+        // Nothing requires it: an orphan, even if some package lists it in
+        // `%OPTDEPENDS%` (optdepends do not keep a package alive).
+        assert!(is_orphan_package(false, true));
     }
 
     #[test]
