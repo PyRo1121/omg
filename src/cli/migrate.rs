@@ -1,5 +1,3 @@
-//! `omg migrate` - Cross-distro migration tools
-
 use anyhow::Result;
 use owo_colors::OwoColorize;
 use serde::{Deserialize, Serialize};
@@ -10,8 +8,6 @@ use crate::cli::style;
 use crate::core::env::distro::detect_distro;
 use crate::core::env::fingerprint::EnvironmentState;
 
-/// The only manifest format this build can import. Forward versions must be
-/// rejected explicitly instead of being silently misread field by field.
 const MANIFEST_FORMAT_VERSION: &str = "1.0";
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -31,7 +27,6 @@ pub struct PackageMapping {
     pub alternatives: Vec<String>,
 }
 
-/// Export current environment to portable manifest
 pub async fn export(output: &str) -> Result<()> {
     println!("{} Exporting environment...\n", style::runtime("OMG"));
 
@@ -85,7 +80,6 @@ pub async fn export(output: &str) -> Result<()> {
     Ok(())
 }
 
-/// Import environment from manifest with package mapping
 pub async fn import(manifest_path: &str, dry_run: bool) -> Result<()> {
     let manifest_path = crate::core::safe_ops::validate_path_syntax(manifest_path)?;
 
@@ -109,16 +103,21 @@ pub async fn import(manifest_path: &str, dry_run: bool) -> Result<()> {
     );
     println!();
 
-    // Map packages
     println!(
         "  {}",
         style::maybe_color("Package mapping:", |t| t.bold().to_string())
     );
 
-    let package_plan =
-        plan_package_migration(&manifest.packages, &manifest.source_distro, &target_distro);
+    let import_plan = ImportPlan {
+        runtimes: &manifest.runtimes,
+        packages: plan_package_migration(
+            &manifest.packages,
+            &manifest.source_distro,
+            &target_distro,
+        ),
+    };
 
-    for (original, target) in &package_plan.mapped {
+    for (original, target) in &import_plan.packages.mapped {
         println!(
             "    {} {} → {}",
             style::maybe_color("✓", |t| t.green().to_string()),
@@ -126,9 +125,9 @@ pub async fn import(manifest_path: &str, dry_run: bool) -> Result<()> {
             style::maybe_color(target, |t| t.cyan().to_string())
         );
     }
-    if !package_plan.unmapped.is_empty() {
+    if !import_plan.packages.unmapped.is_empty() {
         println!("    Unmapped (kept original names):");
-        for package in &package_plan.unmapped {
+        for package in &import_plan.packages.unmapped {
             println!("      - {package}");
         }
     }
@@ -136,19 +135,17 @@ pub async fn import(manifest_path: &str, dry_run: bool) -> Result<()> {
     println!();
     println!(
         "  Mapped: {}/{} packages ({} unmapped)",
-        style::version(&package_plan.mapped.len().to_string()),
+        style::version(&import_plan.packages.mapped.len().to_string()),
         manifest.packages.len(),
-        package_plan.unmapped.len()
+        import_plan.packages.unmapped.len()
     );
-    let to_install = package_plan.to_install;
 
-    // Runtimes
     println!();
     println!(
         "  {}",
         style::maybe_color("Runtimes:", |t| t.bold().to_string())
     );
-    for (runtime, version) in &manifest.runtimes {
+    for (runtime, version) in import_plan.runtimes {
         println!(
             "    {} {} @ {}",
             style::maybe_color("→", |t| t.blue().to_string()),
@@ -156,6 +153,13 @@ pub async fn import(manifest_path: &str, dry_run: bool) -> Result<()> {
             style::maybe_color(version, |t| t.cyan().to_string())
         );
     }
+
+    println!();
+    println!(
+        "  Mutation summary: {} package installation(s), {} runtime installation(s)",
+        import_plan.packages.to_install.len(),
+        import_plan.runtimes.len()
+    );
 
     if dry_run {
         println!();
@@ -170,18 +174,25 @@ pub async fn import(manifest_path: &str, dry_run: bool) -> Result<()> {
         return Ok(());
     }
 
-    // Apply changes
+    if import_plan.has_mutations() && !confirm_import(&import_plan).await? {
+        println!();
+        println!(
+            "  {} Migration import cancelled; no changes made",
+            style::maybe_color("ℹ", |t| t.blue().to_string())
+        );
+        return Ok(());
+    }
+
     println!();
     println!(
         "  {}",
         style::maybe_color("Applying...", |t| t.bold().to_string())
     );
 
-    // Install runtimes
     let mut runtime_failures = 0usize;
-    for (runtime, version) in &manifest.runtimes {
+    for (runtime, version) in import_plan.runtimes {
         println!("    Installing {runtime} {version}...");
-        if let Err(e) = crate::cli::runtimes::use_version(runtime, Some(version)).await {
+        if let Err(e) = install_import_runtime(runtime, version).await {
             println!(
                 "      {} Failed to install {runtime}: {e}",
                 style::maybe_color("✗", |t| t.red().to_string())
@@ -190,12 +201,14 @@ pub async fn import(manifest_path: &str, dry_run: bool) -> Result<()> {
         }
     }
 
-    // Install packages
     let mut package_failed = false;
-    if !to_install.is_empty() {
+    if !import_plan.packages.to_install.is_empty() {
         println!();
-        println!("    Installing {} packages...", to_install.len());
-        if let Err(e) = crate::cli::packages::install(&to_install, true, false, false).await {
+        println!(
+            "    Installing {} packages...",
+            import_plan.packages.to_install.len()
+        );
+        if let Err(e) = install_import_packages(&import_plan.packages.to_install).await {
             println!(
                 "      {} Package installation failed: {e}",
                 style::maybe_color("✗", |t| t.red().to_string())
@@ -234,10 +247,164 @@ fn validate_manifest_version(manifest: &MigrationManifest) -> Result<()> {
     Ok(())
 }
 
+struct ImportPlan<'a> {
+    runtimes: &'a BTreeMap<String, String>,
+    packages: PackageMigrationPlan,
+}
+
+impl ImportPlan<'_> {
+    fn has_mutations(&self) -> bool {
+        !self.runtimes.is_empty() || !self.packages.to_install.is_empty()
+    }
+}
+
 struct PackageMigrationPlan {
     to_install: Vec<String>,
     mapped: Vec<(String, String)>,
     unmapped: Vec<String>,
+}
+
+#[cfg(test)]
+#[derive(Clone, Debug, PartialEq, Eq)]
+enum ImportEvent {
+    Consent,
+    Runtime {
+        name: String,
+        version: String,
+    },
+    Packages {
+        names: Vec<String>,
+        assume_yes: bool,
+    },
+}
+
+#[cfg(test)]
+#[derive(Clone)]
+struct ImportTestState {
+    inner: std::rc::Rc<std::cell::RefCell<ImportTestStateInner>>,
+}
+
+#[cfg(test)]
+struct ImportTestStateInner {
+    attended: bool,
+    confirmed: bool,
+    events: Vec<ImportEvent>,
+}
+
+#[cfg(test)]
+impl ImportTestState {
+    fn new(attended: bool, confirmed: bool) -> Self {
+        Self {
+            inner: std::rc::Rc::new(std::cell::RefCell::new(ImportTestStateInner {
+                attended,
+                confirmed,
+                events: Vec::new(),
+            })),
+        }
+    }
+
+    fn events(&self) -> Vec<ImportEvent> {
+        self.inner.borrow().events.clone()
+    }
+
+    fn confirm(&self) -> Result<bool> {
+        let mut inner = self.inner.borrow_mut();
+        validate_import_consent(inner.attended)?;
+        inner.events.push(ImportEvent::Consent);
+        Ok(inner.confirmed)
+    }
+
+    fn record(&self, event: ImportEvent) {
+        self.inner.borrow_mut().events.push(event);
+    }
+}
+
+#[cfg(test)]
+thread_local! {
+    static IMPORT_TEST_STATE: std::cell::RefCell<Option<ImportTestState>> =
+        const { std::cell::RefCell::new(None) };
+}
+
+#[cfg(test)]
+struct ImportTestStateGuard(Option<ImportTestState>);
+
+#[cfg(test)]
+impl Drop for ImportTestStateGuard {
+    fn drop(&mut self) {
+        IMPORT_TEST_STATE.with(|slot| {
+            slot.replace(self.0.take());
+        });
+    }
+}
+
+#[cfg(test)]
+fn install_import_test_state(state: ImportTestState) -> ImportTestStateGuard {
+    let previous = IMPORT_TEST_STATE.with(|slot| slot.replace(Some(state)));
+    ImportTestStateGuard(previous)
+}
+
+#[cfg(test)]
+fn import_test_state() -> Option<ImportTestState> {
+    IMPORT_TEST_STATE.with(|slot| slot.borrow().clone())
+}
+
+fn validate_import_consent(attended: bool) -> Result<()> {
+    anyhow::ensure!(
+        attended,
+        "Migration import requires an interactive terminal confirmation before making changes. \
+         Review the plan with --dry-run, then run the import from an interactive terminal."
+    );
+    Ok(())
+}
+
+async fn confirm_import(plan: &ImportPlan<'_>) -> Result<bool> {
+    #[cfg(test)]
+    if let Some(state) = import_test_state() {
+        return state.confirm();
+    }
+
+    validate_import_consent(console::user_attended())?;
+
+    let package_count = plan.packages.to_install.len();
+    let runtime_count = plan.runtimes.len();
+    tokio::task::spawn_blocking(move || {
+        dialoguer::Confirm::with_theme(&crate::cli::ui::prompt_theme())
+            .with_prompt(format!(
+                "Apply this migration plan ({package_count} package installation(s), \
+                 {runtime_count} runtime installation(s))?"
+            ))
+            .default(false)
+            .interact()
+    })
+    .await
+    .map_err(|error| anyhow::anyhow!("Migration confirmation prompt task failed: {error}"))?
+    .map_err(Into::into)
+}
+
+async fn install_import_runtime(runtime: &str, version: &str) -> Result<()> {
+    #[cfg(test)]
+    if let Some(state) = import_test_state() {
+        state.record(ImportEvent::Runtime {
+            name: runtime.to_owned(),
+            version: version.to_owned(),
+        });
+        return Ok(());
+    }
+
+    crate::cli::runtimes::use_version(runtime, Some(version)).await
+}
+
+async fn install_import_packages(packages: &[String]) -> Result<()> {
+    #[cfg(test)]
+    if let Some(state) = import_test_state() {
+        state.record(ImportEvent::Packages {
+            names: packages.to_vec(),
+            assume_yes: true,
+        });
+        return Ok(());
+    }
+
+    crate::cli::packages::install(packages, true, false, false).await
 }
 
 fn plan_package_migration(
@@ -297,8 +464,6 @@ fn get_alternatives(name: &str) -> Vec<String> {
 }
 
 fn map_package(name: &str, from: &str, to: &str) -> String {
-    // Direct mappings between distros. The tables are tiny and static, so a
-    // plain match over the (from, to) pair avoids rebuilding maps per package.
     match (from, to) {
         ("arch", "debian" | "ubuntu") => match name {
             "base-devel" => "build-essential",
@@ -327,7 +492,7 @@ mod tests {
     #[test]
     fn test_categorize_package() {
         assert_eq!(categorize_package("libc6"), "library");
-        assert_eq!(categorize_package("libssl-dev"), "library"); // contains lib
+        assert_eq!(categorize_package("libssl-dev"), "library");
         assert_eq!(categorize_package("python3-dev"), "development");
         assert_eq!(categorize_package("gcc-docs"), "documentation");
         assert_eq!(categorize_package("firefox"), "application");
@@ -378,24 +543,109 @@ mod tests {
 
     #[test]
     fn test_map_package() {
-        // Arch to Debian
         assert_eq!(
             map_package("base-devel", "arch", "debian"),
             "build-essential"
         );
         assert_eq!(map_package("python", "arch", "ubuntu"), "python3");
 
-        // Debian to Arch
         assert_eq!(
             map_package("build-essential", "debian", "arch"),
             "base-devel"
         );
         assert_eq!(map_package("python3", "ubuntu", "arch"), "python");
 
-        // No mapping (identity)
         assert_eq!(
             map_package("my-custom-pkg", "arch", "debian"),
             "my-custom-pkg"
+        );
+    }
+
+    fn import_fixture() -> (tempfile::TempDir, std::path::PathBuf) {
+        let dir = tempfile::tempdir().expect("temp dir");
+        let path = dir.path().join("migration.json");
+        std::fs::write(
+            &path,
+            r#"{
+                "version":"1.0",
+                "source_distro":"test",
+                "created_at":0,
+                "runtimes":{"node":"22"},
+                "packages":[{
+                    "original_name":"example-package",
+                    "category":"application",
+                    "description":null,
+                    "alternatives":[]
+                }]
+            }"#,
+        )
+        .expect("write manifest");
+        (dir, path)
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn dry_run_returns_before_consent_or_mutation() {
+        let (_dir, path) = import_fixture();
+        let state = ImportTestState::new(false, false);
+        let _guard = install_import_test_state(state.clone());
+
+        import(path.to_str().expect("UTF-8 path"), true)
+            .await
+            .expect("dry run");
+
+        assert!(state.events().is_empty());
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn cancelled_import_performs_no_mutations() {
+        let (_dir, path) = import_fixture();
+        let state = ImportTestState::new(true, false);
+        let _guard = install_import_test_state(state.clone());
+
+        import(path.to_str().expect("UTF-8 path"), false)
+            .await
+            .expect("cancelled import");
+
+        assert_eq!(state.events(), vec![ImportEvent::Consent]);
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn unattended_import_fails_before_consent_or_mutation() {
+        let (_dir, path) = import_fixture();
+        let state = ImportTestState::new(false, true);
+        let _guard = install_import_test_state(state.clone());
+
+        let error = import(path.to_str().expect("UTF-8 path"), false)
+            .await
+            .expect_err("unattended import must fail");
+
+        assert!(error.to_string().contains("interactive terminal"));
+        assert!(state.events().is_empty());
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn accepted_import_consents_once_before_mutation() {
+        let (_dir, path) = import_fixture();
+        let state = ImportTestState::new(true, true);
+        let _guard = install_import_test_state(state.clone());
+
+        import(path.to_str().expect("UTF-8 path"), false)
+            .await
+            .expect("accepted import");
+
+        assert_eq!(
+            state.events(),
+            vec![
+                ImportEvent::Consent,
+                ImportEvent::Runtime {
+                    name: "node".to_string(),
+                    version: "22".to_string(),
+                },
+                ImportEvent::Packages {
+                    names: vec!["example-package".to_string()],
+                    assume_yes: true,
+                },
+            ]
         );
     }
 
