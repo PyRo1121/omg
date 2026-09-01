@@ -14,7 +14,7 @@ Run every command from the repository root. Never substitute the installed `~/.l
 OMG is a short-lived CLI, so there is no server or shared process to keep alive. Build once, then run each drive through the supplied shell harness:
 
 ```bash
-cd /home/pyro1121/Documents/omg
+cd "$(git rev-parse --show-toplevel)"
 export CARGO_TARGET_DIR="$HOME/.cache/build-targets/omg-verification"
 export OMG_VERIFY_RUN_ID="$(date -u +%Y%m%dT%H%M%SZ)-$$"
 ./.pi/skills/verify-omg/bin/verify-omg build

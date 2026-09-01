@@ -4,7 +4,7 @@ This directory is the maintained source for verifying OMG's user-facing CLI beha
 
 ## Baseline preconditions
 
-- Run from `/home/pyro1121/Documents/omg`.
+- Run from the repository root (`git rev-parse --show-toplevel`).
 - Set a unique `OMG_VERIFY_RUN_ID` and use `.pi/skills/verify-omg/bin/verify-omg` for every build, doctor, drive, and cleanup action.
 - Build the checkout once and require the helper doctor to pass before driving.
 - Keep telemetry and daemon use disabled through the helper-provided environment.
