@@ -60,7 +60,18 @@ pub(crate) fn load_local_package_metadata(path: &str) -> Result<LocalPackageMeta
 
     Ok(LocalPackageMetadata {
         name: package.name().to_string(),
-        version: crate::package_managers::parse_version_or_zero(package.version().as_str()),
+        // Package-file metadata is an untrusted boundary: a version that
+        // fails the strict parser must fail the load with a typed error
+        // instead of comparing as a fabricated 0 (ARCH-R14).
+        version: crate::package_managers::parse_version(package.version().as_str()).with_context(
+            || {
+                format!(
+                    "Package file '{}' has an unparseable version '{}'",
+                    path,
+                    package.version()
+                )
+            },
+        )?,
         installed_size: u64::try_from(package.isize()).unwrap_or(0),
         license: (!licenses.is_empty()).then(|| licenses.join(" AND ")),
     })
@@ -186,9 +197,18 @@ pub fn get_sync_pkg_info(name: &str) -> Result<Option<PackageInfo>> {
 pub fn get_pkg_info_from_db(alpm: &alpm::Alpm, name: &str) -> Result<Option<PackageInfo>> {
     for db in alpm.syncdbs() {
         if let Ok(pkg) = db.pkg(name) {
+            // A version that fails the strict parser must not compare as a
+            // fabricated 0 (ARCH-R14); skip the entry visibly.
+            let Some(version) = crate::package_managers::parse_version(pkg.version()) else {
+                tracing::warn!(
+                    "Ignoring sync package '{name}' with unparseable version '{}'",
+                    pkg.version()
+                );
+                return Ok(None);
+            };
             return Ok(Some(PackageInfo {
                 name: pkg.name().to_string(),
-                version: super::types::parse_version_or_zero(pkg.version()),
+                version,
                 description: pkg.desc().unwrap_or("").to_string(),
                 url: pkg.url().map(std::string::ToString::to_string),
                 // libalpm's size fields are i64; negative values from a

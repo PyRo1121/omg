@@ -13,9 +13,9 @@ use std::path::{Path, PathBuf};
 
 use super::common::{
     GITHUB_USER_AGENT, GithubRelease, activate_version, begin_staged_install,
-    complete_staged_install, download_with_progress, extract_tar_gz, normalize_version,
-    parse_sha256_digest, print_already_installed, print_installed, print_using,
-    remove_file_best_effort, validate_download_filename, version_cmp,
+    complete_staged_install, download_with_progress, extract_tar_gz, is_partial_version,
+    normalize_version, parse_sha256_digest, print_already_installed, print_installed, print_using,
+    remove_file_best_effort, resolve_partial_version, validate_download_filename, version_cmp,
 };
 use crate::core::http::download_client;
 
@@ -76,6 +76,7 @@ impl RubyManager {
     /// Install Ruby - PURE RUST, NO SUBPROCESS
     pub async fn install(&self, version: &str) -> Result<()> {
         let version = normalize_version(version);
+        let version = self.resolve_requested_version(&version).await?;
         crate::core::security::validate_runtime_version(&version)?;
         let version_dir = self.versions_dir.join(&version);
 
@@ -151,6 +152,20 @@ impl RubyManager {
         Ok(())
     }
 
+    /// Resolve a partial version request (`3`, `3.2`) to the newest matching
+    /// ruby-builder release before any download URL is built; the tag lookup
+    /// is exact-string, so an unresolved partial would 404. Exact and
+    /// non-numeric requests pass through unchanged, preserving the
+    /// already-installed fast path and the existing not-found UX.
+    async fn resolve_requested_version(&self, version: &str) -> Result<String> {
+        if !is_partial_version(version) {
+            return Ok(version.to_owned());
+        }
+        let available = self.list_available().await?;
+        let names: Vec<String> = available.into_iter().map(|entry| entry.version).collect();
+        Ok(resolve_partial_version(&names, version).unwrap_or_else(|| version.to_owned()))
+    }
+
     /// Switch to a specific version
     pub fn use_version(&self, version: &str) -> Result<()> {
         let version = normalize_version(version);
@@ -206,6 +221,23 @@ mod tests {
         assert_eq!(parse_ruby_release_version("toolcache"), None);
         assert_eq!(parse_ruby_release_version("jruby-10.0.6.0"), None);
         assert_eq!(parse_ruby_release_version("ruby-3.4"), None);
+    }
+
+    #[test]
+    fn partial_request_resolves_to_the_newest_matching_ruby_fixture() {
+        let names = ["3.4.10", "3.2.2", "3.2.0"]
+            .into_iter()
+            .map(str::to_string)
+            .collect::<Vec<_>>();
+        assert_eq!(
+            resolve_partial_version(&names, "3.2").as_deref(),
+            Some("3.2.2")
+        );
+        assert_eq!(
+            resolve_partial_version(&names, "3").as_deref(),
+            Some("3.4.10")
+        );
+        assert_eq!(resolve_partial_version(&names, "2.7"), None);
     }
 
     #[test]

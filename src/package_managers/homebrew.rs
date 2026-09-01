@@ -150,10 +150,55 @@ struct CaskInfo {
     token: String,
     #[serde(default)]
     full_token: String,
+    /// The live cask API ships an explicit `"desc": null` for roughly 2,600
+    /// casks, so this must tolerate null rather than defaulting on absence.
     #[serde(default)]
-    desc: String,
+    desc: Option<String>,
     homepage: Option<String>,
     version: Option<String>,
+}
+
+/// Which kind of Homebrew package a name refers to.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum BrewKind {
+    Formula,
+    Cask,
+}
+
+impl BrewKind {
+    /// The explicit CLI flag brew needs to disambiguate this kind.
+    fn flag(self) -> &'static str {
+        match self {
+            BrewKind::Formula => "--formula",
+            BrewKind::Cask => "--cask",
+        }
+    }
+}
+
+/// Resolve the package kind for each name from the formula/cask index.
+///
+/// A name present as both a formula and a cask resolves to the formula,
+/// matching brew's own precedence for bare ambiguous names. Names missing
+/// from the index fail explicitly instead of silently guessing a kind.
+fn classify_packages(
+    formula_map: &HashMap<String, usize>,
+    cask_map: &HashMap<String, usize>,
+    packages: &[String],
+) -> Result<Vec<BrewKind>> {
+    packages
+        .iter()
+        .map(|package| {
+            if formula_map.contains_key(package) {
+                Ok(BrewKind::Formula)
+            } else if cask_map.contains_key(package) {
+                Ok(BrewKind::Cask)
+            } else {
+                bail!(
+                    "Cannot determine whether '{package}' is a Homebrew formula or cask: not found in the package index"
+                )
+            }
+        })
+        .collect()
 }
 
 /// Local package metadata
@@ -680,6 +725,17 @@ impl HomebrewPackageManager {
         })
     }
 
+    /// Resolve the Homebrew package kind for a batch of names using the
+    /// formula/cask index. Loads the index first when it is not in memory.
+    async fn resolve_package_kinds(&self, packages: &[String]) -> Result<Vec<BrewKind>> {
+        self.ensure_cache().await?;
+        let cache = crate::core::sync::read_cache(&self.cache);
+        let cache = cache
+            .as_ref()
+            .context("Homebrew package cache not loaded")?;
+        classify_packages(&cache.formula_map, &cache.cask_map, packages)
+    }
+
     /// Search packages using fuzzy matching
     ///
     /// Implements intelligent fuzzy search using nucleo-matcher:
@@ -719,7 +775,7 @@ impl HomebrewPackageManager {
 
             let final_score = score.or_else(|| {
                 buf.clear();
-                let haystack_desc = Utf32Str::new(&cask.desc, &mut buf);
+                let haystack_desc = Utf32Str::new(cask.desc.as_deref().unwrap_or(""), &mut buf);
                 pattern.score(haystack_desc, &mut matcher)
             });
 
@@ -755,7 +811,7 @@ impl HomebrewPackageManager {
                     Package {
                         name: cask.token.clone(),
                         version: parse_version_or_zero(cask.version.as_deref().unwrap_or("0")),
-                        description: cask.desc.clone(),
+                        description: cask.desc.clone().unwrap_or_default(),
                         source: PackageSource::Official,
                         installed: self.is_installed_fast(&cask.token).unwrap_or(false),
                     }
@@ -892,12 +948,25 @@ impl PackageManager for HomebrewPackageManager {
                 return Ok(());
             }
             crate::core::security::validate_package_names(&packages)?;
+            let kinds = self.resolve_package_kinds(&packages).await?;
 
-            let mut args = vec!["install"];
-            let pkg_refs: Vec<&str> = packages.iter().map(String::as_str).collect();
-            args.extend_from_slice(&pkg_refs);
-
-            self.run_brew(&args).await
+            // brew accepts one kind flag per invocation, so batch by the
+            // resolved kind and pass an explicit flag on every invocation.
+            for kind in [BrewKind::Formula, BrewKind::Cask] {
+                let pkg_refs: Vec<&str> = packages
+                    .iter()
+                    .zip(&kinds)
+                    .filter(|(_, resolved)| **resolved == kind)
+                    .map(|(name, _)| name.as_str())
+                    .collect();
+                if pkg_refs.is_empty() {
+                    continue;
+                }
+                let mut args = vec!["install", kind.flag()];
+                args.extend_from_slice(&pkg_refs);
+                self.run_brew(&args).await?;
+            }
+            Ok(())
         })
     }
 
@@ -908,12 +977,25 @@ impl PackageManager for HomebrewPackageManager {
                 return Ok(());
             }
             crate::core::security::validate_package_names(&packages)?;
+            let kinds = self.resolve_package_kinds(&packages).await?;
 
-            let mut args = vec!["uninstall"];
-            let pkg_refs: Vec<&str> = packages.iter().map(String::as_str).collect();
-            args.extend_from_slice(&pkg_refs);
-
-            self.run_brew(&args).await
+            // brew accepts one kind flag per invocation, so batch by the
+            // resolved kind and pass an explicit flag on every invocation.
+            for kind in [BrewKind::Formula, BrewKind::Cask] {
+                let pkg_refs: Vec<&str> = packages
+                    .iter()
+                    .zip(&kinds)
+                    .filter(|(_, resolved)| **resolved == kind)
+                    .map(|(name, _)| name.as_str())
+                    .collect();
+                if pkg_refs.is_empty() {
+                    continue;
+                }
+                let mut args = vec!["uninstall", kind.flag()];
+                args.extend_from_slice(&pkg_refs);
+                self.run_brew(&args).await?;
+            }
+            Ok(())
         })
     }
 
@@ -961,7 +1043,7 @@ impl PackageManager for HomebrewPackageManager {
                 return Ok(Some(Package {
                     name: cask.token.clone(),
                     version: parse_version_or_zero(cask.version.as_deref().unwrap_or("0")),
-                    description: cask.desc.clone(),
+                    description: cask.desc.clone().unwrap_or_default(),
                     source: PackageSource::Official,
                     installed: self.is_installed_fast(&cask.token)?,
                 }));
@@ -1252,5 +1334,105 @@ mod tests {
         let pm = HomebrewPackageManager::new();
         assert!(!pm.is_installed_fast("this-package-definitely-does-not-exist-12345")?);
         Ok(())
+    }
+
+    #[test]
+    fn cask_with_null_desc_parses_like_the_live_api() -> Result<()> {
+        // The live cask API ships an explicit `"desc": null` for ~2,600 casks;
+        // `#[serde(default)]` alone does not accept null.
+        let cask: CaskInfo = serde_json::from_str(
+            r#"{"token":"example","full_token":"example","desc":null,"homepage":"https://example.com","version":"1.0"}"#,
+        )?;
+        assert_eq!(cask.token, "example");
+        assert_eq!(cask.desc, None);
+        Ok(())
+    }
+
+    #[test]
+    fn cask_with_string_desc_parses_like_the_live_api() -> Result<()> {
+        let cask: CaskInfo = serde_json::from_str(
+            r#"{"token":"example","full_token":"example","desc":"Graphical app","homepage":"https://example.com","version":"1.0"}"#,
+        )?;
+        assert_eq!(cask.desc.as_deref(), Some("Graphical app"));
+        Ok(())
+    }
+
+    #[test]
+    fn cask_desc_renders_as_empty_for_null_and_verbatim_for_strings() -> Result<()> {
+        let root = tempfile::tempdir()?;
+        let manager = HomebrewPackageManager {
+            prefix: root.path().to_path_buf(),
+            cellar: root.path().join(CELLAR_DIR),
+            cache: Arc::new(RwLock::new(None)),
+            client: crate::core::http::download_client().clone(),
+        };
+        let cache = HomebrewPackageManager::build_cache(
+            Vec::new(),
+            vec![
+                CaskInfo {
+                    token: "null-desc".to_string(),
+                    full_token: "null-desc".to_string(),
+                    desc: None,
+                    homepage: None,
+                    version: Some("1.0".to_string()),
+                },
+                CaskInfo {
+                    token: "string-desc".to_string(),
+                    full_token: "string-desc".to_string(),
+                    desc: Some("Graphical app".to_string()),
+                    homepage: None,
+                    version: Some("1.0".to_string()),
+                },
+            ],
+        );
+
+        let packages = manager.fuzzy_search(&cache, "desc");
+
+        assert_eq!(packages.len(), 2);
+        let by_name = |name: &str| {
+            packages
+                .iter()
+                .find(|package| package.name == name)
+                .unwrap_or_else(|| panic!("missing package {name}"))
+        };
+        assert_eq!(by_name("string-desc").description, "Graphical app");
+        assert_eq!(by_name("null-desc").description, "");
+        Ok(())
+    }
+
+    #[test]
+    fn classify_packages_resolves_kind_per_name() -> Result<()> {
+        let formula_map = HashMap::from([("wget".to_string(), 0usize)]);
+        let cask_map = HashMap::from([("firefox".to_string(), 0usize)]);
+        let kinds = classify_packages(
+            &formula_map,
+            &cask_map,
+            &["wget".to_string(), "firefox".to_string()],
+        )?;
+        assert_eq!(kinds, vec![BrewKind::Formula, BrewKind::Cask]);
+        Ok(())
+    }
+
+    #[test]
+    fn classify_packages_resolves_ambiguous_names_to_formula_kind() {
+        let formula_map = HashMap::from([("both".to_string(), 0usize)]);
+        let cask_map = HashMap::from([("both".to_string(), 0usize)]);
+        let kinds = classify_packages(&formula_map, &cask_map, &["both".to_string()]).unwrap();
+        assert_eq!(kinds, vec![BrewKind::Formula]);
+    }
+
+    #[test]
+    fn classify_packages_fails_explicitly_for_unknown_names() {
+        let formula_map = HashMap::from([("wget".to_string(), 0usize)]);
+        let cask_map = HashMap::from([("firefox".to_string(), 0usize)]);
+        let error = classify_packages(&formula_map, &cask_map, &["unknown".to_string()])
+            .expect_err("unknown names must not silently default to a kind");
+        assert!(error.to_string().contains("unknown"));
+    }
+
+    #[test]
+    fn brew_kind_flags_match_the_brew_cli() {
+        assert_eq!(BrewKind::Formula.flag(), "--formula");
+        assert_eq!(BrewKind::Cask.flag(), "--cask");
     }
 }
