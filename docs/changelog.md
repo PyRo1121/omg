@@ -702,6 +702,23 @@ analyzer inference
 - **Ci**: Cross-platform install script and R2 release sync
 ### 🐛 Bug Fixes
 
+- **Debian**: Retain locks through cancelled configuration ([#117](https://github.com/PyRo1121/omg/issues/117))
+- **Install**: Require local archive consent first ([#118](https://github.com/PyRo1121/omg/issues/118))
+- **Ci**: Unblock debian/fedora/macos/coverage/e2e ([#114](https://github.com/PyRo1121/omg/issues/114))
+
+Canonicalize git hook paths so macOS /var vs /private/var matches, gate
+
+procfs tests to Linux, match docker status to the current System Status
+
+overview, and read optional .github files at runtime so coverage compiles
+
+when that directory is omitted.
+
+Debian compile, Fedora OSV caching, and llvm-cov report --features were
+
+already fixed on main and are left unchanged.
+
+- **Deps**: Restore audited cryptography pins ([#115](https://github.com/PyRo1121/omg/issues/115))
 - **Dnf**: Preserve inventory on metadata failures ([#111](https://github.com/PyRo1121/omg/issues/111))
 
 * fix(dnf): preserve inventory on metadata failures
@@ -4437,6 +4454,7 @@ the Debian backend), so it was removed from the metadata.
 - Normalize project formatting
 ### 🧪 Testing
 
+- **Security**: Accept pinned Rust toolchain action ([#119](https://github.com/PyRo1121/omg/issues/119))
 - Refresh the isolated fuzz lockfile
 - Replace AUR graph lint suppressions
 - Replace weak Arch smoke assertions
