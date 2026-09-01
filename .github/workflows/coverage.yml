@@ -33,14 +33,17 @@ jobs:
       image: archlinux:latest@sha256:b0deabeb3d283da2c7f7dbf0eea051b7b2cd0554e0b737cc457fd21683bdcdd1
 
     steps:
+      - name: Install system dependencies
+        run: |
+          pacman -Syu --noconfirm
+          pacman -S --noconfirm base-devel git curl pkgconf openssl libarchive clang cmake
+
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
           persist-credentials: false
 
-      - name: Install dependencies
+      - name: Install Rust
         run: |
-          pacman -Syu --noconfirm
-          pacman -S --noconfirm base-devel git curl pkgconf openssl libarchive clang cmake
           curl --proto '=https' --tlsv1.2 -fsSL \
             https://static.rust-lang.org/rustup/archive/1.28.2/x86_64-unknown-linux-gnu/rustup-init \
             -o /tmp/rustup-init
@@ -92,7 +95,6 @@ jobs:
         if: always()
         run: |
           cargo llvm-cov report \
-            --features arch,pgp,license \
             --lcov \
             --output-path lcov.info
 
@@ -110,9 +112,7 @@ jobs:
       - name: Generate HTML report
         if: always()
         run: |
-          cargo llvm-cov report \
-            --features arch,pgp,license \
-            --html
+          cargo llvm-cov report --html
 
       - name: Upload HTML coverage report
         if: always()
@@ -128,6 +128,5 @@ jobs:
           echo "## Coverage Report" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
           cargo llvm-cov report \
-            --features arch,pgp,license \
             --summary-only \
             | tee -a $GITHUB_STEP_SUMMARY
