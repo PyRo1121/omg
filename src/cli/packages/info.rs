@@ -305,7 +305,7 @@ async fn info_fallback(package: &str) -> Result<()> {
 #[cfg(feature = "debian")]
 fn display_package_info(info: &crate::package_managers::types::PackageInfo) {
     ui::print_kv("Package", &style::package(&info.name));
-    ui::print_kv("Version", &style::version(&info.version));
+    ui::print_kv("Version", &style::version(&info.version.to_string()));
     ui::print_kv(
         "Status",
         if info.installed {
