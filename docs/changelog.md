@@ -702,6 +702,7 @@ analyzer inference
 - **Ci**: Cross-platform install script and R2 release sync
 ### 🐛 Bug Fixes
 
+- **Aur**: Honor split-package dependency overrides ([#123](https://github.com/PyRo1121/omg/issues/123))
 - **Tui**: Allow repeated package searches ([#121](https://github.com/PyRo1121/omg/issues/121))
 - **Ci**: Unblock leftover debian unit tests after [#114](https://github.com/PyRo1121/omg/issues/114) ([#120](https://github.com/PyRo1121/omg/issues/120))
 
