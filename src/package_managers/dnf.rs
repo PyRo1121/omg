@@ -19,11 +19,10 @@ use std::future::Future;
 use std::pin::Pin;
 
 use anyhow::{Context, Result};
-use dashmap::DashMap;
 use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 use std::process::Command;
-use std::sync::Arc;
+use std::sync::{Arc, RwLock};
 
 use crate::core::{Package, PackageSource, is_root};
 use crate::package_managers::PackageManager;
@@ -54,8 +53,10 @@ pub struct DnfPackageManager {
     rpm_db_path: PathBuf,
     /// Path to yum repository configuration (used by the `dnf` CLI)
     repos_dir: PathBuf,
-    /// Installed packages cache (name -> every installed architecture/build)
-    installed_cache: Arc<DashMap<String, Vec<InstalledPackage>>>,
+    /// Installed packages cache (name -> every installed architecture/build).
+    /// The whole map is replaced under a write lock so readers never observe
+    /// a partially published snapshot.
+    installed_cache: Arc<RwLock<HashMap<String, Vec<InstalledPackage>>>>,
 }
 
 /// Installed package information from RPM database
@@ -87,20 +88,37 @@ impl DnfPackageManager {
         Self {
             rpm_db_path: PathBuf::from("/var/lib/rpm/rpmdb.sqlite"),
             repos_dir: PathBuf::from("/etc/yum.repos.d"),
-            installed_cache: Arc::new(DashMap::new()),
+            installed_cache: Arc::new(RwLock::new(HashMap::new())),
         }
     }
 
+    /// Recover from a poisoned lock. A panic while holding the cache only
+    /// leaves derived inventory unspecified; later package operations still
+    /// work via `PoisonError::into_inner`.
+    fn cache_read(&self) -> std::sync::RwLockReadGuard<'_, HashMap<String, Vec<InstalledPackage>>> {
+        self.installed_cache
+            .read()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+    }
+
+    fn cache_write(
+        &self,
+    ) -> std::sync::RwLockWriteGuard<'_, HashMap<String, Vec<InstalledPackage>>> {
+        self.installed_cache
+            .write()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+    }
+
+    fn invalidate_installed_cache(&self) {
+        self.cache_write().clear();
+    }
+
     fn cached_installed_packages(&self) -> Option<Vec<InstalledPackage>> {
-        if self.installed_cache.is_empty() {
+        let cache = self.cache_read();
+        if cache.is_empty() {
             return None;
         }
-        Some(
-            self.installed_cache
-                .iter()
-                .flat_map(|entry| entry.value().clone())
-                .collect(),
-        )
+        Some(cache.values().flatten().cloned().collect())
     }
 
     fn publish_installed_packages(&self, packages: &[InstalledPackage]) {
@@ -111,10 +129,7 @@ impl DnfPackageManager {
                 .or_default()
                 .push(package.clone());
         }
-        self.installed_cache.clear();
-        for (name, packages) in grouped {
-            self.installed_cache.insert(name, packages);
-        }
+        *self.cache_write() = grouped;
     }
 
     fn apply_install_reasons(
@@ -454,7 +469,7 @@ impl DnfPackageManager {
         let status = cmd.args(args).status()?;
 
         if status.success() {
-            self.installed_cache.clear();
+            self.invalidate_installed_cache();
             Ok(())
         } else {
             anyhow::bail!("dnf command failed with status {status}")
@@ -521,7 +536,7 @@ impl PackageManager for DnfPackageManager {
                 let mut args = vec!["install", "-y", "--"];
                 args.extend(packages.iter().map(String::as_str));
                 crate::core::privilege::run_privileged_program("dnf", &args).await?;
-                self.installed_cache.clear();
+                self.invalidate_installed_cache();
                 return Ok(());
             }
 
@@ -548,7 +563,7 @@ impl PackageManager for DnfPackageManager {
                 let mut args = vec!["remove", "-y", "--"];
                 args.extend(packages.iter().map(String::as_str));
                 crate::core::privilege::run_privileged_program("dnf", &args).await?;
-                self.installed_cache.clear();
+                self.invalidate_installed_cache();
                 return Ok(());
             }
 
@@ -569,7 +584,7 @@ impl PackageManager for DnfPackageManager {
         Box::pin(async move {
             if !is_root() {
                 crate::core::privilege::run_privileged_program("dnf", &["upgrade", "-y"]).await?;
-                self.installed_cache.clear();
+                self.invalidate_installed_cache();
                 return Ok(());
             }
 
@@ -584,7 +599,7 @@ impl PackageManager for DnfPackageManager {
     fn sync(&self) -> Pin<Box<dyn Future<Output = Result<()>> + Send + '_>> {
         Box::pin(async move {
             // Clear caches and let the dnf CLI refresh its metadata
-            self.installed_cache.clear();
+            self.invalidate_installed_cache();
 
             if !is_root() {
                 crate::core::privilege::run_privileged_program("dnf", &["makecache", "-y"]).await?;
@@ -731,7 +746,7 @@ impl PackageManager for DnfPackageManager {
     ) -> Pin<Box<dyn Future<Output = Result<bool>> + Send + '_>> {
         let package = package.to_string();
         Box::pin(async move {
-            if self.installed_cache.contains_key(&package) {
+            if self.cache_read().contains_key(&package) {
                 return Ok(true);
             }
             let packages = self.load_installed_packages().await?;
@@ -903,6 +918,32 @@ mod tests {
                 .iter()
                 .any(|package| package.release.ends_with("i686"))
         );
+    }
+
+    #[test]
+    fn installed_cache_publication_replaces_the_previous_snapshot() {
+        let manager = DnfPackageManager::new();
+        manager.publish_installed_packages(&[InstalledPackage {
+            name: "glibc".to_string(),
+            version: "2.41".to_string(),
+            release: "1.fc42.x86_64".to_string(),
+            summary: "C library".to_string(),
+            reason: InstallReason::Dependency,
+        }]);
+        manager.publish_installed_packages(&[InstalledPackage {
+            name: "bash".to_string(),
+            version: "5.2".to_string(),
+            release: "1.fc42".to_string(),
+            summary: "GNU shell".to_string(),
+            reason: InstallReason::User,
+        }]);
+
+        let cached = manager
+            .cached_installed_packages()
+            .expect("populated cache");
+        assert_eq!(cached.len(), 1);
+        assert_eq!(cached[0].name, "bash");
+        assert_eq!(cached[0].reason, InstallReason::User);
     }
 
     #[test]
