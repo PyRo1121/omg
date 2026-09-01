@@ -71,6 +71,12 @@ pub(crate) struct RustToolchainStatus {
     pub(crate) missing_targets: Vec<String>,
 }
 
+#[derive(Clone, Copy)]
+enum ToolchainPublication {
+    Create,
+    Replace,
+}
+
 // Wire types for rust-toolchain.toml; internal to `parse_toolchain_file`.
 #[derive(Debug, Deserialize)]
 struct RustToolchainFile {
@@ -87,6 +93,8 @@ struct RustToolchainSection {
 
 #[derive(Debug, Serialize, Deserialize, Default)]
 struct RustToolchainMetadata {
+    #[serde(default)]
+    release: Option<String>,
     components: BTreeSet<String>,
     targets: BTreeSet<String>,
 }
@@ -150,7 +158,14 @@ impl RustManager {
 
         Self::reject_invalid_toolchain_path(&version_dir)?;
         if is_valid_version_dir(&version_dir) {
-            print_already_installed("Rust", &toolchain.name());
+            match self.refresh_rolling_toolchain(&toolchain).await {
+                Ok(true) => {}
+                Ok(false) => print_already_installed("Rust", &toolchain.name()),
+                Err(error) => {
+                    tracing::warn!("Could not refresh Rust {}: {error}", toolchain.name());
+                    print_already_installed("Rust", &toolchain.name());
+                }
+            }
             return self.activate_toolchain(&toolchain);
         }
 
@@ -192,6 +207,11 @@ impl RustManager {
     }
 
     pub async fn ensure_toolchain(&self, request: &RustToolchainRequest) -> Result<()> {
+        let toolchain = RustToolchainSpec::parse(&request.channel)?;
+        if is_valid_version_dir(&self.toolchain_dir(&toolchain)) {
+            self.refresh_rolling_toolchain(&toolchain).await?;
+        }
+
         let status = self.toolchain_status(request)?;
         if !status.needs_install
             && status.missing_components.is_empty()
@@ -200,7 +220,6 @@ impl RustManager {
             return Ok(());
         }
 
-        let toolchain = RustToolchainSpec::parse(&request.channel)?;
         if status.needs_install {
             self.install_with_profile(
                 &toolchain,
@@ -221,6 +240,37 @@ impl RustManager {
 
     fn toolchain_dir(&self, toolchain: &RustToolchainSpec) -> PathBuf {
         self.versions_dir.join(toolchain.name())
+    }
+
+    async fn refresh_rolling_toolchain(&self, toolchain: &RustToolchainSpec) -> Result<bool> {
+        if !is_rolling_channel(toolchain) {
+            return Ok(false);
+        }
+
+        let version_dir = self.toolchain_dir(toolchain);
+        let metadata = Self::read_metadata(&version_dir)?;
+        let manifest = self
+            .fetch_manifest(&toolchain.channel, toolchain.date.as_deref())
+            .await?;
+        if !channel_release_changed(toolchain, metadata.release.as_deref(), &manifest)? {
+            return Ok(false);
+        }
+
+        let components = if metadata.components.is_empty() {
+            profile_components("default")?
+        } else {
+            metadata.components.into_iter().collect()
+        };
+        let targets = metadata.targets.into_iter().collect::<Vec<_>>();
+        self.install_from_manifest(
+            toolchain,
+            &components,
+            &targets,
+            &manifest,
+            ToolchainPublication::Replace,
+        )
+        .await?;
+        Ok(true)
     }
 
     fn reject_invalid_toolchain_path(path: &Path) -> Result<()> {
@@ -362,40 +412,64 @@ impl RustManager {
         components: &[String],
         targets: &[String],
     ) -> Result<()> {
-        let version_dir = self.toolchain_dir(toolchain);
         let mut required_components = profile_components(profile)?;
         required_components.extend_from_slice(components);
         required_components.sort_unstable();
         required_components.dedup();
-
-        // The manifest depends only on channel + date, so it is fetched once
-        // per install and shared by every component and target download.
         let manifest = self
             .fetch_manifest(&toolchain.channel, toolchain.date.as_deref())
             .await?;
+        self.install_from_manifest(
+            toolchain,
+            &required_components,
+            targets,
+            &manifest,
+            ToolchainPublication::Create,
+        )
+        .await
+    }
 
-        // First-time installs extract into a same-filesystem staging directory
-        // and publish only after every component and the metadata file land.
+    async fn install_from_manifest(
+        &self,
+        toolchain: &RustToolchainSpec,
+        required_components: &[String],
+        targets: &[String],
+        manifest: &toml::Value,
+        publication: ToolchainPublication,
+    ) -> Result<()> {
+        let version_dir = self.toolchain_dir(toolchain);
         let staging = begin_staged_install(&self.versions_dir)?;
         let dest_dir = staging.path();
 
-        for component in &required_components {
-            self.install_component(dest_dir, component, &toolchain.host, &manifest)
+        for component in required_components {
+            self.install_component(dest_dir, component, &toolchain.host, manifest)
                 .await?;
         }
 
         for target in targets {
             if is_additional_target(target, &toolchain.host) {
-                self.install_component(dest_dir, "rust-std", target, &manifest)
+                self.install_component(dest_dir, "rust-std", target, manifest)
                     .await?;
             }
         }
 
-        let mut metadata = RustToolchainMetadata::default();
-        metadata.components.extend(required_components);
+        let mut metadata = RustToolchainMetadata {
+            release: Some(manifest_release(manifest)?),
+            ..Default::default()
+        };
+        metadata
+            .components
+            .extend(required_components.iter().cloned());
         metadata.targets.extend(targets.iter().cloned());
         Self::write_metadata(dest_dir, &metadata)?;
-        complete_staged_install(&staging, &version_dir, &toolchain.name())?;
+        match publication {
+            ToolchainPublication::Create => {
+                complete_staged_install(&staging, &version_dir, &toolchain.name())?;
+            }
+            ToolchainPublication::Replace => {
+                replace_staged_install(&staging, &version_dir, &toolchain.name())?;
+            }
+        }
 
         print_installed("Rust", &toolchain.name());
 
@@ -635,6 +709,34 @@ fn manifest_version(manifest: &toml::Value) -> Option<String> {
         .map(|value| value.split_whitespace().next().unwrap_or(value).to_string())
 }
 
+fn manifest_release(manifest: &toml::Value) -> Result<String> {
+    // Keep the full rustc version string, including the parenthetical
+    // commit/date. Nightly (and often beta) keep the same semver token
+    // across many manifests; stripping it would make rolling refreshes a no-op.
+    manifest
+        .get("pkg")
+        .and_then(|pkg| pkg.get("rustc"))
+        .and_then(|rustc| rustc.get("version"))
+        .and_then(|value| value.as_str())
+        .map(str::to_string)
+        .ok_or_else(|| anyhow::anyhow!("Rust channel manifest is missing a rustc version"))
+}
+
+fn is_rolling_channel(toolchain: &RustToolchainSpec) -> bool {
+    toolchain.date.is_none() && matches!(toolchain.channel.as_str(), "stable" | "beta" | "nightly")
+}
+
+fn channel_release_changed(
+    toolchain: &RustToolchainSpec,
+    installed_release: Option<&str>,
+    manifest: &toml::Value,
+) -> Result<bool> {
+    if !is_rolling_channel(toolchain) {
+        return Ok(false);
+    }
+    Ok(installed_release != Some(manifest_release(manifest)?.as_str()))
+}
+
 fn manifest_package_name(component: &str) -> &str {
     match component {
         "rustfmt" => "rustfmt-preview",
@@ -826,10 +928,12 @@ mod tests {
     fn write_metadata_replaces_existing_file_atomically() -> Result<()> {
         let destination = TempDir::new()?;
         let first = RustToolchainMetadata {
+            release: Some("1.78.0".to_string()),
             components: BTreeSet::from(["rustc".to_string()]),
             targets: BTreeSet::new(),
         };
         let second = RustToolchainMetadata {
+            release: Some("1.79.0".to_string()),
             components: BTreeSet::from(["rustc".to_string(), "cargo".to_string()]),
             targets: BTreeSet::from(["x86_64-unknown-linux-gnu".to_string()]),
         };
@@ -838,8 +942,23 @@ mod tests {
         RustManager::write_metadata(destination.path(), &second)?;
 
         let loaded = RustManager::read_metadata(destination.path())?;
+        assert_eq!(loaded.release, second.release);
         assert_eq!(loaded.components, second.components);
         assert_eq!(loaded.targets, second.targets);
+        Ok(())
+    }
+
+    #[test]
+    fn legacy_metadata_without_a_release_remains_readable() -> Result<()> {
+        let destination = TempDir::new()?;
+        fs::write(
+            destination.path().join(RUST_METADATA_FILE),
+            "components = [\"rustc\"]\ntargets = []\n",
+        )?;
+
+        let loaded = RustManager::read_metadata(destination.path())?;
+        assert_eq!(loaded.release, None);
+        assert!(loaded.components.contains("rustc"));
         Ok(())
     }
 
@@ -852,6 +971,7 @@ mod tests {
         RustManager::write_metadata(
             staging.path(),
             &RustToolchainMetadata {
+                release: Some("1.78.0".to_string()),
                 components: BTreeSet::from(["rustc".to_string()]),
                 targets: BTreeSet::new(),
             },
@@ -878,6 +998,7 @@ mod tests {
         RustManager::write_metadata(
             &version_dir,
             &RustToolchainMetadata {
+                release: Some("1.78.0".to_string()),
                 components: BTreeSet::from(["rustc".to_string()]),
                 targets: BTreeSet::new(),
             },
@@ -999,6 +1120,64 @@ xz_hash = "{hash}"
         let checksum =
             manifest_component_checksum(&manifest, "rustc", "x86_64-unknown-linux-gnu", url)?;
         assert_eq!(checksum, hash);
+        Ok(())
+    }
+
+    #[test]
+    fn rolling_channel_detects_a_new_manifest_release() -> Result<()> {
+        let manifest: toml::Value = toml::from_str(
+            r#"
+[pkg.rustc]
+version = "1.79.0 (2024-06-13)"
+"#,
+        )?;
+
+        let stable = RustToolchainSpec::parse("stable")?;
+        assert!(channel_release_changed(&stable, Some("1.78.0"), &manifest)?);
+        assert!(!channel_release_changed(
+            &stable,
+            Some("1.79.0 (2024-06-13)"),
+            &manifest
+        )?);
+        Ok(())
+    }
+
+    #[test]
+    fn rolling_nightly_detects_a_new_commit_with_the_same_semver() -> Result<()> {
+        let manifest: toml::Value = toml::from_str(
+            r#"
+[pkg.rustc]
+version = "1.80.0-nightly (aaaaaaaaa 2024-06-13)"
+"#,
+        )?;
+
+        let nightly = RustToolchainSpec::parse("nightly")?;
+        assert!(channel_release_changed(
+            &nightly,
+            Some("1.80.0-nightly (bbbbbbbbb 2024-06-12)"),
+            &manifest
+        )?);
+        assert!(!channel_release_changed(
+            &nightly,
+            Some("1.80.0-nightly (aaaaaaaaa 2024-06-13)"),
+            &manifest
+        )?);
+        Ok(())
+    }
+
+    #[test]
+    fn pinned_toolchains_ignore_newer_channel_manifests() -> Result<()> {
+        let manifest: toml::Value = toml::from_str(
+            r#"
+[pkg.rustc]
+version = "1.79.0 (2024-06-13)"
+"#,
+        )?;
+
+        let exact = RustToolchainSpec::parse("1.78.0")?;
+        let dated = RustToolchainSpec::parse("nightly-2024-05-02")?;
+        assert!(!channel_release_changed(&exact, Some("1.78.0"), &manifest)?);
+        assert!(!channel_release_changed(&dated, Some("1.78.0"), &manifest)?);
         Ok(())
     }
 }

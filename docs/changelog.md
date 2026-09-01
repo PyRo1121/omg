@@ -702,6 +702,26 @@ analyzer inference
 - **Ci**: Cross-platform install script and R2 release sync
 ### 🐛 Bug Fixes
 
+- **Ci**: Restore baseline checks ([#105](https://github.com/PyRo1121/omg/issues/105))
+
+* fix(ci): restore coverage source inputs
+
+* fix(daemon): preserve fallible backend constructor
+
+* fix(security): enforce private export permissions
+
+* fix(ci): install nextest and scope coverage
+
+* fix(ci): precompute coverage cache key
+
+* fix(ci): repair platform matrix baselines
+
+* fix(ci): restore integration coverage
+
+* fix(ci): satisfy runtime fixture lints
+
+* test(security): scope strict version parsing to Arch
+
 - Reconcile wave-three tests and portable clippy
 - Never collapse unparseable versions to zero (ARCH-R14) ([#99](https://github.com/PyRo1121/omg/issues/99))
 
