@@ -54,31 +54,17 @@ pub fn check_dependencies(pkg_dir: &Path) -> Result<DependencyInfo> {
 }
 
 fn dependency_expressions(srcinfo: &SourceInfoV1) -> Vec<String> {
-    let base = &srcinfo.base;
-    let estimated_deps =
-        base.dependencies.len() + base.make_dependencies.len() + base.check_dependencies.len();
-    let mut dependencies = Vec::with_capacity(estimated_deps + 16);
+    let Some(arch) = super::aur::utils::current_arch() else {
+        return Vec::new();
+    };
+    let mut dependencies = Vec::new();
 
-    dependencies.extend(base.dependencies.iter().map(ToString::to_string));
-    dependencies.extend(base.make_dependencies.iter().map(ToString::to_string));
-    dependencies.extend(base.check_dependencies.iter().map(ToString::to_string));
-
-    if let Some(arch) = super::aur::utils::current_arch()
-        && let Some(arch_props) = base.architecture_properties.get(&arch)
-    {
-        dependencies.extend(arch_props.dependencies.iter().map(ToString::to_string));
-        dependencies.extend(arch_props.make_dependencies.iter().map(ToString::to_string));
-        dependencies.extend(
-            arch_props
-                .check_dependencies
-                .iter()
-                .map(ToString::to_string),
-        );
+    for package in srcinfo.packages_for_architecture(arch) {
+        dependencies.extend(package.dependencies.iter().map(ToString::to_string));
+        dependencies.extend(package.make_dependencies.iter().map(ToString::to_string));
+        dependencies.extend(package.check_dependencies.iter().map(ToString::to_string));
     }
 
-    // Split packages have Override<Vec> dependencies which may replace or
-    // clear base dependencies. makepkg remains the final authority for those
-    // package-specific overrides.
     dependencies.sort();
     dependencies.dedup();
     dependencies
@@ -107,6 +93,30 @@ mod tests {
         assert_eq!(
             dependency_expressions(&srcinfo),
             ["compiler=3.4", "runtime>=1.2", "test-runner<5"]
+        );
+    }
+
+    #[test]
+    fn includes_split_output_dependency_overrides() {
+        let srcinfo = SourceInfoV1::from_string(
+            "pkgbase = example\n\
+             \tpkgdesc = split dependency fixture\n\
+             \tpkgver = 1.0.0\n\
+             \tpkgrel = 1\n\
+             \tarch = any\n\
+             \tdepends = base-runtime\n\
+             \n\
+             pkgname = example-cli\n\
+             \tdepends = helper>=2\n\
+             pkgname = example-lib\n",
+        )
+        .expect("valid split .SRCINFO fixture");
+
+        let dependencies = dependency_expressions(&srcinfo);
+        assert!(
+            dependencies
+                .iter()
+                .any(|dependency| dependency == "helper>=2")
         );
     }
 }
