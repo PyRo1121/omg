@@ -1025,7 +1025,12 @@ pub fn check_updates_cached() -> Result<Vec<CachedUpdate>> {
                 .filter(|sync_pkg| {
                     !sync_package_is_ignored(sync_pkg, &ignored_packages, &ignored_groups)
                 })
-                .filter(|sync_pkg| local_pkg.version < sync_pkg.version)
+                .filter(|sync_pkg| {
+                    crate::package_managers::types::compare_versions(
+                        &local_pkg.version,
+                        &sync_pkg.version,
+                    ) == std::cmp::Ordering::Less
+                })
                 .map(|sync_pkg| (name, local_pkg, sync_pkg))
         })
         .map(|(name, local_pkg, sync_pkg)| {
@@ -1159,6 +1164,39 @@ pub fn get_explicit_count() -> Result<usize> {
 #[expect(clippy::unwrap_used, clippy::expect_used)] // Idiomatic in tests: panics on failure with clear error context
 mod tests {
     use super::*;
+
+    /// Regression for ARCH-N1: `alpm_types::Version`'s `Ord` impl unwraps
+    /// `parse::<usize>()` on numeric segments above `usize::MAX` and panics
+    /// inside comparators reached from `check_updates_cached`. Ordering must
+    /// route through `compare_versions`, stay deterministic, and preserve
+    /// the upstream ordering for valid versions that fit in `usize`.
+    #[test]
+    fn version_comparison_with_overflow_numeric_segment_does_not_panic() {
+        use std::cmp::Ordering;
+
+        let huge = crate::package_managers::parse_version_or_zero("1.18446744073709551616-1");
+        let one = crate::package_managers::parse_version_or_zero("1.0-1");
+        let compare = |a: &alpm_types::Version, b: &alpm_types::Version| {
+            crate::package_managers::types::compare_versions(a, b)
+        };
+
+        // Deterministic and antisymmetric on both sides of the overflow.
+        assert_eq!(compare(&huge, &one), Ordering::Greater);
+        assert_eq!(compare(&one, &huge), Ordering::Less);
+        assert_eq!(compare(&huge, &one), compare(&huge, &one));
+        assert_eq!(compare(&huge, &huge), Ordering::Equal);
+
+        // Versions without overflowing segments must keep the exact
+        // upstream ordering (the helper must be a pure passthrough there).
+        let battery = ["1.0-1", "2.0", "1:2.3.4-5", "10.1-2", "1.10", "1.9"];
+        for a in battery {
+            for b in battery {
+                let va = crate::package_managers::parse_version_or_zero(a);
+                let vb = crate::package_managers::parse_version_or_zero(b);
+                assert_eq!(compare(&va, &vb), va.cmp(&vb), "{a} vs {b}");
+            }
+        }
+    }
 
     /// Regression: the compression-format probe must rewind the stream before
     /// handing it to a decoder. It previously consumed the first 4 bytes, so
