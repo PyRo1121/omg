@@ -245,7 +245,7 @@ impl PackageIndex {
             source: WirePackageSource::Official,
         });
         self.trigrams.insert(&name_lower, idx as u32);
-        self.name_to_idx.insert(name.to_owned(), idx);
+        self.name_to_idx.entry(name.to_owned()).or_insert(idx);
         self.bloom.insert(name);
     }
 
@@ -305,7 +305,7 @@ impl PackageIndex {
         use crate::package_managers::debian_db;
         debian_db::ensure_index_loaded()?;
 
-        let db_packages = debian_db::get_detailed_packages()?;
+        let db_packages = debian_db::get_detailed_best_candidates()?;
         let mut index = Self::with_capacity(db_packages.len());
         for pkg in db_packages {
             index.push(
@@ -605,6 +605,17 @@ mod tests {
         assert_eq!(firefox.version, "146.0");
         assert_eq!(firefox.source, WirePackageSource::Official);
         assert!(index.get("missing").is_none());
+    }
+
+    #[test]
+    fn duplicate_names_do_not_replace_the_first_bare_lookup() {
+        let index = PackageIndex::from_records(&[
+            ("libexample", "2.0-amd64", "native"),
+            ("libexample", "2.0-i386", "foreign"),
+        ]);
+
+        let package = index.get("libexample").expect("bare lookup");
+        assert_eq!(package.version, "2.0-amd64");
     }
 
     #[test]
