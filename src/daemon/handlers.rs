@@ -1480,6 +1480,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg(target_os = "linux")]
     fn health_reports_resident_memory_from_procfs() {
         let rss_mb = process_rss_mb().expect("VmRSS must be readable on Linux");
         assert!(rss_mb > 0, "a running test process has non-zero RSS");

@@ -190,6 +190,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg(target_os = "linux")]
     fn test_detect_ram_gb() {
         let ram = detect_ram_gb().unwrap();
         assert!(ram > 0.0);
@@ -214,6 +215,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg(target_os = "linux")]
     fn test_system_info_detect() {
         let info = SystemInfo::detect().unwrap();
         assert!(info.cpu_cores >= 1);
