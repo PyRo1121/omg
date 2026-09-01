@@ -241,30 +241,46 @@ impl VersionDisplay for String {
     }
 }
 
-/// Parse a version string, returning a zero version on failure.
-/// This is infallible and avoids `expect()/unwrap()` in hot paths.
+/// Strictly parse a version string, returning `None` when the string is not
+/// a valid version for the active backend (for example non-ASCII text, a
+/// numeric overflow, or a malformed pkgrel).
 ///
-/// # Performance
-/// Parsing "0" on failure is O(1) and avoids static synchronization overhead.
-/// Previous `LazyLock` approach had sync overhead + clone allocation anyway.
+/// Comparison and update-check paths must call this and decide the failure
+/// policy at the call site — skip the entry with a warning or propagate a
+/// typed error. Never compare against a fabricated fallback value (ARCH-R14:
+/// a silent `0` suppresses available updates or invents phantom ones).
 #[cfg(feature = "arch")]
 #[must_use]
 #[inline]
-pub fn parse_version_or_zero(s: &str) -> Version {
-    AlpmVersion::from_str(s).unwrap_or_else(|_| {
-        // "0" parsing is trivial (single char) - cheaper than static + clone
-        // SAFETY: "0" is always a valid version string per alpm-types spec
-        #[expect(clippy::expect_used)]
-        AlpmVersion::from_str("0").expect("0 is always valid")
-    })
+pub fn parse_version(s: &str) -> Option<Version> {
+    AlpmVersion::from_str(s).ok()
 }
 
-/// Parse a version string - infallible wrapper retaining the raw text.
+/// Strictly parse a version string - infallible on non-Arch backends.
+///
+/// Non-Arch backends use ordered string comparison (dpkg-style), so every
+/// string is a valid [`DebVersion`] retaining its raw text; parsing cannot
+/// fail there.
 #[cfg(not(feature = "arch"))]
 #[must_use]
 #[inline]
+pub fn parse_version(s: &str) -> Option<Version> {
+    Some(Version::new(s))
+}
+
+/// Explicit display/test-only fallback: parse a version string, falling back
+/// to the zero version when parsing fails.
+///
+/// The `_or_zero` suffix is the contract: a call site using this helper
+/// visibly accepts a fabricated `0` for unparseable input. Production
+/// comparison and update-check paths must use [`parse_version`] instead and
+/// skip the entry with a warning or propagate a typed error on failure
+/// (ARCH-R14). Callers that must never fabricate a version are compile-time
+/// steered to the strict parser through review of this call list.
+#[must_use]
+#[inline]
 pub fn parse_version_or_zero(s: &str) -> Version {
-    Version::new(s)
+    parse_version(s).unwrap_or_else(zero_version)
 }
 
 #[cfg(test)]
@@ -273,9 +289,27 @@ mod tests {
 
     #[test]
     fn version_display_is_borrowed_and_backend_independent() {
-        let version = parse_version_or_zero("1:2.3.4-5");
+        let version = parse_version("1:2.3.4-5").expect("valid version must parse");
         assert_eq!(version.version_string(), "1:2.3.4-5");
-        assert_eq!(version.version_string(), "1:2.3.4-5");
+    }
+
+    /// ARCH-R14 regression: a version string that fails the strict parser
+    /// must be surfaced to the caller as `None` (arch) so the call site can
+    /// skip or error, and must never silently compare as a fabricated `0`.
+    /// Versions that always parsed cleanly keep their exact rendering.
+    #[cfg(feature = "arch")]
+    #[test]
+    fn unparseable_version_is_rejected_and_valid_versions_keep_their_value() {
+        for bad in ["not a version", "版本-1", "1.0-1-1"] {
+            assert!(
+                parse_version(bad).is_none(),
+                "{bad:?} must fail the strict parser"
+            );
+        }
+        for good in ["0", "0.11", "1:2.3.4-5", "6.0.1-1"] {
+            let parsed = parse_version(good).unwrap_or_else(|| panic!("{good:?} must parse"));
+            assert_eq!(parsed.version_string(), good);
+        }
     }
 
     #[test]

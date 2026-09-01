@@ -14,7 +14,7 @@ use rkyv::{Archive, Deserialize as RkyvDeserialize, Serialize as RkyvSerialize};
 use tempfile::NamedTempFile;
 
 use crate::package_managers::aur_metadata::AurJsonPackage;
-use crate::package_managers::parse_version_or_zero;
+use crate::package_managers::parse_version;
 use crate::package_managers::types::compare_versions;
 
 /// Minimal AUR package metadata stored in the index.
@@ -125,9 +125,10 @@ impl AurIndex {
     /// Returns `(updates, missing)`:
     /// - `updates`: remote versions newer than the local ones, for packages
     ///   present in the index;
-    /// - `missing`: queried package names absent from this index, so callers
-    ///   can fall back to the RPC for exactly those names instead of either
-    ///   treating them as up-to-date or re-querying everything.
+    /// - `missing`: queried package names absent from this index, or whose
+    ///   index version fails strict parsing, so callers can fall back to the
+    ///   RPC for exactly those names instead of either treating them as
+    ///   up-to-date or re-querying everything.
     pub fn updates_for(
         &self,
         local_pkgs: &[(String, alpm_types::Version)],
@@ -146,11 +147,26 @@ impl AurIndex {
             {
                 Ok(idx) => {
                     let entry = &archive.entries[idx];
-                    let remote_version = parse_version_or_zero(entry.version.as_str());
-                    if compare_versions(&remote_version, local_version)
-                        == std::cmp::Ordering::Greater
-                    {
-                        updates.push((name.clone(), local_version.clone(), remote_version));
+                    // A remote version that fails the strict parser must not
+                    // compare as a fabricated 0 (ARCH-R14). Report the name as
+                    // missing so the caller re-checks it through the live RPC
+                    // instead of silently treating the package as current.
+                    let remote_version = parse_version(entry.version.as_str());
+                    match remote_version {
+                        Some(remote_version)
+                            if compare_versions(&remote_version, local_version)
+                                == std::cmp::Ordering::Greater =>
+                        {
+                            updates.push((name.clone(), local_version.clone(), remote_version));
+                        }
+                        Some(_) => {}
+                        None => {
+                            tracing::warn!(
+                                "AUR index entry '{name}' has unparseable version '{}'; rechecking via RPC",
+                                entry.version.as_str()
+                            );
+                            missing.push(name.clone());
+                        }
                     }
                 }
                 Err(_) => missing.push(name.clone()),
@@ -214,6 +230,12 @@ pub fn build_index(json_path: &Path, output_path: &Path) -> Result<()> {
 mod tests {
     use super::*;
 
+    /// Strict-parse helper for fixtures: every test version is expected to
+    /// parse; failures must never fall back to a fabricated zero.
+    fn v(s: &str) -> alpm_types::Version {
+        parse_version(s).expect("valid test version")
+    }
+
     fn open_test_index(data: &str) -> Result<(tempfile::TempDir, AurIndex)> {
         let temp_dir = tempfile::tempdir()?;
         let json_path = temp_dir.path().join("metadata.json.gz");
@@ -273,8 +295,8 @@ mod tests {
         // Query for packages NOT in the index — simulates a stale index
         // that doesn't contain the user's installed AUR packages
         let local_pkgs = vec![
-            ("my-custom-pkg".to_string(), parse_version_or_zero("1.0")),
-            ("another-missing".to_string(), parse_version_or_zero("0.5")),
+            ("my-custom-pkg".to_string(), v("1.0")),
+            ("another-missing".to_string(), v("0.5")),
         ];
 
         let (updates, missing) = index.updates_for(&local_pkgs)?;
@@ -301,8 +323,8 @@ mod tests {
         ]"#;
         let (_temp_dir, index) = open_test_index(data)?;
         let local_pkgs = vec![
-            ("pkg-a".to_string(), parse_version_or_zero("1.0")), // in index, newer remote
-            ("stale-only".to_string(), parse_version_or_zero("0.5")), // absent from index
+            ("pkg-a".to_string(), v("1.0")),      // in index, newer remote
+            ("stale-only".to_string(), v("0.5")), // absent from index
         ];
 
         let (updates, missing) = index.updates_for(&local_pkgs)?;
@@ -370,8 +392,8 @@ mod tests {
         let (_temp_dir, index) = open_test_index(data)?;
 
         let local_pkgs = vec![
-            ("pkg-a".to_string(), parse_version_or_zero("1.0")), // remote 2.0 > local 1.0
-            ("pkg-b".to_string(), parse_version_or_zero("1.0")), // remote 1.0 == local 1.0
+            ("pkg-a".to_string(), v("1.0")), // remote 2.0 > local 1.0
+            ("pkg-b".to_string(), v("1.0")), // remote 1.0 == local 1.0
         ];
 
         let (updates, missing) = index.updates_for(&local_pkgs)?;
@@ -392,14 +414,49 @@ mod tests {
         let (_temp_dir, index) = open_test_index(data)?;
 
         // Local version matches remote — no update
-        let local_same = vec![("pkg-a".to_string(), parse_version_or_zero("1.0"))];
+        let local_same = vec![("pkg-a".to_string(), v("1.0"))];
         let (updates_same, _) = index.updates_for(&local_same)?;
         assert!(updates_same.is_empty());
 
         // Local version ahead of remote — no update
-        let local_ahead = vec![("pkg-a".to_string(), parse_version_or_zero("2.0"))];
+        let local_ahead = vec![("pkg-a".to_string(), v("2.0"))];
         let (updates_ahead, _) = index.updates_for(&local_ahead)?;
         assert!(updates_ahead.is_empty());
+
+        Ok(())
+    }
+
+    /// ARCH-R14 regression: an index entry whose version fails the strict
+    /// parser must never compare as a fabricated 0 (which would invent an
+    /// update). The name is reported as `missing` so the caller re-checks it
+    /// through the live RPC, and no update is pushed.
+    #[test]
+    fn test_updates_for_unparseable_remote_version_is_rechecked_not_zero() -> Result<()> {
+        let data = r#"[
+            {"Name": "pkg-bad", "Version": "1.0-1-1", "Maintainer": null, "LastModified": 100, "Description": null, "NumVotes": 1, "Popularity": 0.1},
+            {"Name": "pkg-ok", "Version": "2.0", "Maintainer": null, "LastModified": 100, "Description": null, "NumVotes": 1, "Popularity": 0.1}
+        ]"#;
+        let (_temp_dir, index) = open_test_index(data)?;
+
+        let local_pkgs = vec![
+            ("pkg-bad".to_string(), v("0.5")),
+            ("pkg-ok".to_string(), v("1.0")),
+        ];
+
+        let (updates, missing) = index.updates_for(&local_pkgs)?;
+        assert_eq!(
+            missing,
+            vec!["pkg-bad".to_string()],
+            "the unparseable entry must be rechecked via RPC, not compared as 0"
+        );
+        assert_eq!(
+            updates
+                .iter()
+                .map(|(name, _, _)| name.as_str())
+                .collect::<Vec<_>>(),
+            vec!["pkg-ok"],
+            "the parseable update must survive; no fabricated 0-update for pkg-bad"
+        );
 
         Ok(())
     }
