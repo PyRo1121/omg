@@ -317,7 +317,7 @@ impl EventQueue {
     fn path() -> Result<PathBuf> {
         let data_dir = crate::core::paths::data_dir();
         std::fs::create_dir_all(&data_dir)?;
-        Ok(data_dir.join("telemetry_queue.json"))
+        Ok(telemetry_queue_path())
     }
 
     fn load() -> Self {
@@ -567,6 +567,40 @@ impl TelemetrySession {
 /// Get or create the event queue
 fn get_event_queue() -> &'static Mutex<EventQueue> {
     EVENT_QUEUE.get_or_init(|| Mutex::new(EventQueue::load()))
+}
+
+fn telemetry_queue_path() -> PathBuf {
+    crate::core::paths::data_dir().join("telemetry_queue.json")
+}
+
+fn purge_queue_file(path: &std::path::Path) -> Result<()> {
+    match std::fs::remove_file(path) {
+        Ok(()) => crate::core::safe_ops::sync_parent_directory_sync(path).with_context(|| {
+            format!(
+                "Failed to make telemetry queue deletion durable: {}",
+                path.display()
+            )
+        }),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(()),
+        Err(error) => Err(error)
+            .with_context(|| format!("Failed to delete telemetry queue: {}", path.display())),
+    }
+}
+
+fn purge_queue(queue: Option<&Mutex<EventQueue>>, path: &std::path::Path) -> Result<()> {
+    if let Some(queue) = queue {
+        let mut queue = queue.lock().map_err(|error| {
+            anyhow::anyhow!("Failed to lock telemetry queue for purge: {error}")
+        })?;
+        queue.events.clear();
+        queue.events_since_persist.store(0, Ordering::Relaxed);
+    }
+    purge_queue_file(path)
+}
+
+/// Remove queued telemetry after a user opts out.
+pub fn purge_persisted_queue() -> Result<()> {
+    purge_queue(EVENT_QUEUE.get(), &telemetry_queue_path())
 }
 
 /// Get or create the session state
@@ -1017,6 +1051,48 @@ mod tests {
             "none"
         };
         assert_eq!(get_backend(), expected);
+    }
+
+    #[test]
+    fn telemetry_queue_purge_clears_initialized_memory_and_is_idempotent() {
+        let directory = tempfile::tempdir().expect("temp directory");
+        let queue_path = directory.path().join("telemetry_queue.json");
+        std::fs::write(&queue_path, b"queued telemetry").expect("write queue fixture");
+        let mut queue = EventQueue::default();
+        queue.push(TelemetryEvent::Performance(PerformanceEvent {
+            metric_type: "fixture".to_string(),
+            duration_ms: 1,
+        }));
+        let queue = Mutex::new(queue);
+
+        purge_queue(Some(&queue), &queue_path).expect("purge initialized queue");
+        assert!(!queue_path.exists());
+        {
+            let queue = queue.lock().expect("lock purged queue");
+            assert!(queue.events.is_empty());
+            assert_eq!(queue.events_since_persist.load(Ordering::Relaxed), 0);
+        }
+
+        purge_queue(Some(&queue), &queue_path).expect("repeat queue purge");
+    }
+
+    #[test]
+    fn telemetry_queue_purge_reports_the_path_on_failure() {
+        let directory = tempfile::tempdir().expect("temp directory");
+        let queue_path = directory.path().join("telemetry_queue.json");
+        std::fs::create_dir(&queue_path).expect("create invalid queue fixture");
+
+        let error = purge_queue_file(&queue_path).expect_err("directory must not purge as a file");
+        assert!(
+            error
+                .to_string()
+                .contains("Failed to delete telemetry queue")
+        );
+        assert!(
+            error
+                .to_string()
+                .contains(&queue_path.display().to_string())
+        );
     }
 
     #[test]
