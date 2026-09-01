@@ -325,11 +325,18 @@ impl PkgBuild {
 
         Ok(Self {
             name: scalar("pkgname"),
-            version: vars
-                .get("pkgver")
-                .map_or_else(super::types::zero_version, |v| {
-                    super::types::parse_version_or_zero(&substitute(v))
-                }),
+            // A PKGBUILD is an untrusted boundary: a present pkgver that fails
+            // the strict parser must fail the parse with a typed error instead
+            // of comparing as a fabricated 0 (ARCH-R14). A missing pkgver keeps
+            // the pre-existing explicit zero fallback.
+            version: match vars.get("pkgver") {
+                None => super::types::zero_version(),
+                Some(v) => {
+                    let raw = substitute(v);
+                    super::types::parse_version(&raw)
+                        .with_context(|| format!("PKGBUILD has an unparseable pkgver: '{raw}'"))?
+                }
+            },
             release: scalar("pkgrel"),
             description: scalar("pkgdesc"),
             url: scalar("url"),
