@@ -464,10 +464,12 @@ mod tests {
         let error = clean(false, false, true, false, false)
             .await
             .expect_err("AUR cleanup without the Arch backend must not look like success");
+        // Debian-like hosts hit the earlier host-specific bail
+        // ("…on Debian-like systems"); others hit the backend bail.
+        // Both fail closed and share this prefix.
         assert!(
-            error
-                .to_string()
-                .contains("AUR cleanup is not available without the Arch backend")
+            error.to_string().contains("AUR cleanup is not available"),
+            "AUR cleanup without Arch must fail closed; got: {error}"
         );
     }
 }
