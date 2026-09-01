@@ -358,9 +358,9 @@ pub fn zero_version() -> Version {
 /// `alpm_types::Version`'s `Ord` impl unwraps `parse::<usize>()` on numeric
 /// segments and panics (`PosOverflow`) on any segment above `usize::MAX`
 /// (alpm-types `version/comparison.rs`). That detonates inside comparators
-/// such as the rayon filter in `pacman_db::check_updates_cached` and
-/// `AurIndex::updates_for`. All version ordering on update-check paths must
-/// go through this helper.
+/// such as the rayon filter in `pacman_db::check_updates_cached`,
+/// `AurIndex::updates_for`, and `AurClient::{get_update_list,query_aur_updates}`.
+/// All version ordering on update-check paths must go through this helper.
 ///
 /// Versions without an overflowing numeric segment keep the exact upstream
 /// ordering (`Ord::cmp`). Versions carrying an overflowing segment fall back
