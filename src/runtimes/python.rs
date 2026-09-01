@@ -333,13 +333,10 @@ mod tests {
 
     #[test]
     fn partial_request_resolves_to_the_newest_matching_python_fixture() {
-        let fixtures = ["3.12.0", "3.12.8", "3.11.0"]
-            .iter()
-            .map(|version| PythonVersion {
-                version: (*version).to_string(),
-            })
+        let names = ["3.12.0", "3.12.8", "3.11.0"]
+            .into_iter()
+            .map(str::to_string)
             .collect::<Vec<_>>();
-        let names: Vec<String> = fixtures.into_iter().map(|entry| entry.version).collect();
         assert_eq!(
             resolve_partial_version(&names, "3.12").as_deref(),
             Some("3.12.8")
