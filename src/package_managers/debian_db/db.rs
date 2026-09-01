@@ -3075,6 +3075,13 @@ mod tests {
 
     #[test]
     fn optional_mtime_rejects_unreadable_existing() {
+        // chmod 000 does not make a path unreadable to root (Debian CI).
+        if rustix::process::geteuid().is_root() {
+            eprintln!(
+                "skipping optional_mtime_rejects_unreadable_existing: chmod 000 is ignored for root"
+            );
+            return;
+        }
         let dir = tempfile::TempDir::new().expect("temp dir");
         let nested = dir.path().join("extended_states");
         std::fs::create_dir(&nested).expect("nested dir");
