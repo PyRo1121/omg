@@ -71,6 +71,12 @@ pub(crate) struct RustToolchainStatus {
     pub(crate) missing_targets: Vec<String>,
 }
 
+#[derive(Clone, Copy)]
+enum ToolchainPublication {
+    Create,
+    Replace,
+}
+
 // Wire types for rust-toolchain.toml; internal to `parse_toolchain_file`.
 #[derive(Debug, Deserialize)]
 struct RustToolchainFile {
@@ -152,8 +158,13 @@ impl RustManager {
 
         Self::reject_invalid_toolchain_path(&version_dir)?;
         if is_valid_version_dir(&version_dir) {
-            if !self.refresh_rolling_toolchain(&toolchain).await? {
-                print_already_installed("Rust", &toolchain.name());
+            match self.refresh_rolling_toolchain(&toolchain).await {
+                Ok(true) => {}
+                Ok(false) => print_already_installed("Rust", &toolchain.name()),
+                Err(error) => {
+                    tracing::warn!("Could not refresh Rust {}: {error}", toolchain.name());
+                    print_already_installed("Rust", &toolchain.name());
+                }
             }
             return self.activate_toolchain(&toolchain);
         }
@@ -251,8 +262,14 @@ impl RustManager {
             metadata.components.into_iter().collect()
         };
         let targets = metadata.targets.into_iter().collect::<Vec<_>>();
-        self.install_from_manifest(toolchain, &components, &targets, &manifest)
-            .await?;
+        self.install_from_manifest(
+            toolchain,
+            &components,
+            &targets,
+            &manifest,
+            ToolchainPublication::Replace,
+        )
+        .await?;
         Ok(true)
     }
 
@@ -402,8 +419,14 @@ impl RustManager {
         let manifest = self
             .fetch_manifest(&toolchain.channel, toolchain.date.as_deref())
             .await?;
-        self.install_from_manifest(toolchain, &required_components, targets, &manifest)
-            .await
+        self.install_from_manifest(
+            toolchain,
+            &required_components,
+            targets,
+            &manifest,
+            ToolchainPublication::Create,
+        )
+        .await
     }
 
     async fn install_from_manifest(
@@ -412,6 +435,7 @@ impl RustManager {
         required_components: &[String],
         targets: &[String],
         manifest: &toml::Value,
+        publication: ToolchainPublication,
     ) -> Result<()> {
         let version_dir = self.toolchain_dir(toolchain);
         let staging = begin_staged_install(&self.versions_dir)?;
@@ -424,7 +448,7 @@ impl RustManager {
 
         for target in targets {
             if is_additional_target(target, &toolchain.host) {
-                self.install_component(dest_dir, "rust-std", target, &manifest)
+                self.install_component(dest_dir, "rust-std", target, manifest)
                     .await?;
             }
         }
@@ -438,13 +462,13 @@ impl RustManager {
             .extend(required_components.iter().cloned());
         metadata.targets.extend(targets.iter().cloned());
         Self::write_metadata(dest_dir, &metadata)?;
-        // First installs rename into an absent directory. Rolling refreshes
-        // replace the already-published toolchain; complete_staged_install
-        // refuses a destination that already exists.
-        if is_valid_version_dir(&version_dir) {
-            replace_staged_install(&staging, &version_dir, &toolchain.name())?;
-        } else {
-            complete_staged_install(&staging, &version_dir, &toolchain.name())?;
+        match publication {
+            ToolchainPublication::Create => {
+                complete_staged_install(&staging, &version_dir, &toolchain.name())?;
+            }
+            ToolchainPublication::Replace => {
+                replace_staged_install(&staging, &version_dir, &toolchain.name())?;
+            }
         }
 
         print_installed("Rust", &toolchain.name());
