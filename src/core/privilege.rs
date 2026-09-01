@@ -39,6 +39,21 @@ static ELEVATION_MUTEX: LazyLock<Mutex<()>> = LazyLock::new(|| Mutex::new(()));
 /// Global flag to track if --yes was specified for non-interactive mode
 static YES_FLAG: AtomicBool = AtomicBool::new(false);
 
+// Set only by the validated root re-exec argv protocol. Full clap dispatches
+// use it when flags prevent the minimal elevated path from owning history.
+static PARENT_OWNS_HISTORY: AtomicBool = AtomicBool::new(false);
+
+#[doc(hidden)]
+pub fn set_parent_owns_history(value: bool) {
+    PARENT_OWNS_HISTORY.store(value, Ordering::SeqCst);
+}
+
+#[doc(hidden)]
+#[must_use]
+pub fn parent_owns_history() -> bool {
+    PARENT_OWNS_HISTORY.load(Ordering::SeqCst)
+}
+
 /// Set the yes flag globally (call this at the start of main if --yes is present)
 pub fn set_yes_flag(value: bool) {
     YES_FLAG.store(value, Ordering::SeqCst);

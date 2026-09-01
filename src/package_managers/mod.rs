@@ -48,7 +48,7 @@ mod traits;
 pub mod types;
 
 pub(crate) use types::VersionDisplay;
-pub use types::{parse_version_or_zero, zero_version};
+pub use types::{parse_version, parse_version_or_zero, zero_version};
 
 #[cfg(feature = "arch")]
 pub fn search_sync(query: &str) -> anyhow::Result<Vec<SyncPackage>> {

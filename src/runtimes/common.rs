@@ -1112,17 +1112,23 @@ pub(crate) fn list_installed_versions(versions_dir: &Path) -> Result<Vec<String>
         versions.push(name);
     }
 
-    versions.sort_by(|a, b| version_cmp(b, a));
+    versions.sort_by(|a, b| version_cmp(b, a).then_with(|| b.cmp(a)));
     Ok(versions)
 }
 
-/// Compare version strings by numeric dot-separated parts (ascending).
+/// Compare version strings in ascending order.
 ///
-/// Non-numeric segments are ignored, so pre-release suffixes compare equal to
-/// their release ("1.0.0-beta" == "1.0.0"); callers produce descending order
-/// by swapping arguments (`sort_by(|a, b| version_cmp(b, a))`).
+/// Semantic versions use SemVer precedence, including pre-release ordering.
+/// Other vendor formats fall back to unbounded numeric component comparison.
 #[must_use]
 pub(crate) fn version_cmp(a: &str, b: &str) -> Ordering {
+    if let (Ok(a), Ok(b)) = (
+        semver::Version::parse(a.trim_start_matches(['v', 'V'])),
+        semver::Version::parse(b.trim_start_matches(['v', 'V'])),
+    ) {
+        return a.cmp(&b);
+    }
+
     fn numeric_parts(version: &str) -> Vec<&str> {
         version
             .split(|character: char| !character.is_ascii_digit())
@@ -1163,6 +1169,53 @@ pub(crate) fn normalize_version(version: &str) -> String {
     } else {
         version.to_owned()
     }
+}
+
+/// Return whether a requested version is a partial semver request — one or
+/// two all-numeric dot-separated components such as `20` or `3.12`.
+///
+/// Only partial requests need vendor-list resolution; exact versions and
+/// aliases (`latest`, `lts/iron`, `1.22rc1`) pass through untouched.
+#[must_use]
+pub(crate) fn is_partial_version(requested: &str) -> bool {
+    let requested = normalize_version(requested);
+    let parts: Vec<&str> = requested.split('.').collect();
+    (1..=2).contains(&parts.len())
+        && parts
+            .iter()
+            .all(|part| !part.is_empty() && part.bytes().all(|byte| byte.is_ascii_digit()))
+}
+
+/// Resolve a partial version request against a vendor's available list.
+///
+/// A request is resolvable when it is one to three dot-separated numeric
+/// components. A partial request (`20`, `3.12`) resolves to the newest
+/// available version extending it at a component boundary (`3.12` matches
+/// `3.12.7` but never `3.120.0`). A fully-specified request passes through
+/// only when present in `available`. Anything else — including garbage —
+/// returns `None`, and callers fall back to the requested string so the
+/// existing not-found UX applies unchanged.
+#[must_use]
+pub(crate) fn resolve_partial_version(available: &[String], requested: &str) -> Option<String> {
+    let requested = normalize_version(requested);
+    let parts: Vec<&str> = requested.split('.').collect();
+    if parts.len() > 3
+        || parts
+            .iter()
+            .any(|part| part.is_empty() || !part.bytes().all(|byte| byte.is_ascii_digit()))
+    {
+        return None;
+    }
+    let extends_request = |candidate: &str| -> bool {
+        let candidate = candidate.trim_start_matches(['v', 'V']);
+        let candidate_parts: Vec<&str> = candidate.split('.').collect();
+        candidate_parts.len() >= parts.len() && candidate_parts[..parts.len()] == parts[..]
+    };
+    available
+        .iter()
+        .filter(|candidate| extends_request(candidate))
+        .max_by(|a, b| version_cmp(a, b))
+        .map(|newest| newest.trim_start_matches(['v', 'V']).to_owned())
 }
 
 /// Parse and validate a SHA-256 digest returned by a runtime vendor.
@@ -1295,6 +1348,15 @@ mod tests {
         assert_eq!(version_cmp("1.0.0", "1.0.1"), Ordering::Less);
         assert_eq!(version_cmp("2.0.0", "1.9.9"), Ordering::Greater);
         assert_eq!(version_cmp("22.0.0", "20.10.0"), Ordering::Greater);
+        assert_eq!(version_cmp("1.0.0-beta.2", "1.0.0"), Ordering::Less);
+        assert_eq!(version_cmp("1.0.0-rc.10", "1.0.0-rc.2"), Ordering::Greater);
+    }
+
+    #[test]
+    fn equal_runtime_versions_have_a_deterministic_directory_order() {
+        let mut versions = ["1.0".to_string(), "1.0.0".to_string()];
+        versions.sort_by(|a, b| version_cmp(b, a).then_with(|| b.cmp(a)));
+        assert_eq!(versions, ["1.0.0", "1.0"]);
     }
 
     #[test]
@@ -1381,6 +1443,102 @@ mod tests {
             digest.to_lowercase()
         );
         Ok(())
+    }
+
+    #[test]
+    fn is_partial_version_accepts_only_numeric_prefixes() {
+        assert!(is_partial_version("20"));
+        assert!(is_partial_version("3.12"));
+        assert!(is_partial_version("v20"));
+        assert!(!is_partial_version("20.10.0"));
+        assert!(!is_partial_version("latest"));
+        assert!(!is_partial_version("1.22rc1"));
+        assert!(!is_partial_version("garbage"));
+        assert!(!is_partial_version(""));
+        assert!(!is_partial_version("20."));
+        assert!(!is_partial_version("1.2.3.4"));
+    }
+
+    #[test]
+    fn resolve_partial_version_major_only_picks_the_newest_match() {
+        let available = ["19.0.0", "20.10.0", "20.1.0", "20.0.0"]
+            .iter()
+            .map(ToString::to_string)
+            .collect::<Vec<_>>();
+        assert_eq!(
+            resolve_partial_version(&available, "20").as_deref(),
+            Some("20.10.0")
+        );
+    }
+
+    #[test]
+    fn resolve_partial_version_minor_picks_the_newest_patch() {
+        let available = ["3.12.0", "3.12.7", "3.11.9"]
+            .iter()
+            .map(ToString::to_string)
+            .collect::<Vec<_>>();
+        assert_eq!(
+            resolve_partial_version(&available, "3.12").as_deref(),
+            Some("3.12.7")
+        );
+    }
+
+    #[test]
+    fn resolve_partial_version_passes_exact_versions_through() {
+        let available = ["20.10.0", "20.11.0"]
+            .iter()
+            .map(ToString::to_string)
+            .collect::<Vec<_>>();
+        assert_eq!(
+            resolve_partial_version(&available, "20.10.0").as_deref(),
+            Some("20.10.0")
+        );
+    }
+
+    #[test]
+    fn resolve_partial_version_returns_none_without_a_match() {
+        let available = vec!["19.0.0".to_string()];
+        assert_eq!(resolve_partial_version(&available, "20"), None);
+        // An exact request missing from the vendor list also misses.
+        assert_eq!(resolve_partial_version(&available, "20.0.0"), None);
+    }
+
+    #[test]
+    fn resolve_partial_version_matches_on_component_boundaries() {
+        let available = ["3.120.0", "3.12.1"]
+            .iter()
+            .map(ToString::to_string)
+            .collect::<Vec<_>>();
+        assert_eq!(
+            resolve_partial_version(&available, "3.12").as_deref(),
+            Some("3.12.1")
+        );
+    }
+
+    #[test]
+    fn resolve_partial_version_rejects_garbage_input() {
+        let available = vec!["20.10.0".to_string()];
+        for garbage in ["", "garbage", "20.x", "1.2.3.4", "20-rc"] {
+            assert_eq!(
+                resolve_partial_version(&available, garbage),
+                None,
+                "garbage request {garbage:?} must not resolve"
+            );
+        }
+    }
+
+    #[test]
+    fn resolve_partial_version_is_order_independent() {
+        let ascending = ["20.0.0", "20.10.0"]
+            .iter()
+            .map(ToString::to_string)
+            .collect::<Vec<_>>();
+        let mut descending = ascending.clone();
+        descending.reverse();
+        assert_eq!(
+            resolve_partial_version(&ascending, "20"),
+            resolve_partial_version(&descending, "20")
+        );
     }
 
     #[test]

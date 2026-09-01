@@ -10,7 +10,7 @@ use std::fs;
 use std::path::{Path, PathBuf};
 
 use crate::core::paths;
-use crate::runtimes::rust::RustToolchainSpec;
+use crate::runtimes::rust::{RustManager, RustToolchainSpec};
 use anyhow::{Context, Result};
 use semver::{Version, VersionReq};
 use serde::Deserialize;
@@ -212,14 +212,14 @@ fn parse_rust_toolchain_file(
     let Some(content) = read_pin_file(file_path)? else {
         return Ok(());
     };
-    for line in content.lines() {
-        if line.contains("channel")
-            && let Some(version) = line.split('=').nth(1)
-        {
-            let v = version.trim().trim_matches('"').trim_matches('\'');
-            versions.insert(runtime.to_string(), v.to_string());
-        }
-    }
+    let request = RustManager::parse_toolchain_content(file_path, &content)
+        .with_context(|| format!("Failed to parse {}", file_path.display()))?;
+    anyhow::ensure!(
+        !request.channel.trim().is_empty(),
+        "Rust toolchain channel must not be empty in {}",
+        file_path.display()
+    );
+    versions.insert(runtime.to_string(), request.channel);
     Ok(())
 }
 
@@ -896,6 +896,34 @@ mod tests {
     fn fish_quoting_escapes_embedded_quotes() {
         assert_eq!(fish_single_quoted("/opt/bin"), "'/opt/bin'");
         assert_eq!(fish_single_quoted("a'b"), "'a\\'b'");
+    }
+
+    #[test]
+    fn rust_toolchain_toml_uses_structured_channel_parsing() {
+        let dir = tempdir().unwrap();
+        fs::write(
+            dir.path().join("rust-toolchain.toml"),
+            "# channel = \"nightly\"\n[toolchain]\nchannel = \"stable\" # rolling\ncomponents = [\"rustfmt\"]\n",
+        )
+        .unwrap();
+
+        let versions = detect_versions(dir.path()).unwrap();
+
+        assert_eq!(versions.get("rust").map(String::as_str), Some("stable"));
+    }
+
+    #[test]
+    fn malformed_rust_toolchain_toml_fails_closed() {
+        let dir = tempdir().unwrap();
+        fs::write(
+            dir.path().join("rust-toolchain.toml"),
+            "[toolchain]\nchannel = [\"nightly\"]\n",
+        )
+        .unwrap();
+
+        let error = detect_versions(dir.path())
+            .expect_err("malformed project-local toolchain must not be ignored");
+        assert!(error.to_string().contains("Failed to parse"));
     }
 
     #[test]

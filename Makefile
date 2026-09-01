@@ -42,9 +42,6 @@ help:
 	@echo "  make bench               - Full benchmark suite"
 	@echo "  make bench-fast          - Quick benchmark"
 	@echo "  make bench-hyperfine     - Hyperfine benchmark"
-	@echo "  make bench-ubuntu        - Ubuntu/Debian benchmark (Docker)"
-	@echo "  make bench-ubuntu-local  - Quick local Debian speed test"
-	@echo "  make bench-verify        - Verify benchmark setup"
 	@echo ""
 	@echo "Docker:"
 	@echo "  make docker-test     - Test on Debian+Ubuntu"
@@ -260,59 +257,10 @@ dev-stop:
 dev-check: fmt check test-lib
 	@echo "✓ Development checks passed!"
 
-# ═══════════════════════════════════════════════════════════════════════════════
-# Ubuntu/Debian Benchmarks
-# ═══════════════════════════════════════════════════════════════════════════════
-
-# Verify benchmark setup before running
-bench-verify:
-	@echo "Verifying benchmark setup..."
-	./scripts/verify_benchmark_setup.sh
-
-# Run comprehensive Ubuntu benchmark in Docker (includes install tests)
-bench-ubuntu:
-	@echo "Running comprehensive Ubuntu benchmark..."
-	./run_ubuntu_benchmark.sh
-
-# Quick local Debian speed test (no Docker required)
-bench-ubuntu-local:
-	@echo "Running quick local Debian speed test..."
-	cargo build --release --features debian-pure
-	./test_debian_speed.sh
-
-# Save benchmark results to file with timestamp
-bench-ubuntu-save:
-	@echo "Running benchmark and saving results..."
-	./run_ubuntu_benchmark.sh 2>&1 | tee benchmark_results_$(shell date +%Y%m%d_%H%M%S).txt
-
-# Generate benchmark report template
-bench-report:
-	@echo "Generating benchmark report template..."
-	./scripts/generate_benchmark_report.sh benchmark_report.md
-	@echo "Report template created: benchmark_report.md"
-
-# --- Local CI (act) ---------------------------------------------------------
-# Run the real .github/workflows/ci.yml locally via act, staged so the
-# 6-core machine is never over-subscribed. macOS leg is cloud-only.
-
-ACT ?= act
-
-# Stage 1: host-side fast checks (no containers, ~minutes)
 ci-local-quick:
 	cargo fmt --all -- --check
 	cargo clippy --all-targets --no-default-features --features pgp,license \
 		--locked -- -D warnings -D clippy::pedantic -A clippy::module_name_repetitions
 	cargo check --all-targets --no-default-features --features pgp,license --locked
 
-# Stage 2: quick-gate job inside the same ubuntu image CI uses (incl. nextest lib tests)
-ci-local-gate:
-	$(ACT) -j quick-gate -e .github/workflows/.local-push-event.json push
-
-# Stage 3: full Linux container matrix + feature intersections + gate
-# (heavy: 4 release builds in distro containers; run when you have time)
-ci-local-full:
-	$(ACT) -j linux-matrix -e .github/workflows/.local-push-event.json push
-	$(ACT) -j feature-intersections -e .github/workflows/.local-push-event.json push
-	$(ACT) -j ci-success -e .github/workflows/.local-push-event.json push
-
-.PHONY: ci-local-quick ci-local-gate ci-local-full
+.PHONY: ci-local-quick

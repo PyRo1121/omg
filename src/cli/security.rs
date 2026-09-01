@@ -7,51 +7,8 @@ use anyhow::{Context, Result};
 use owo_colors::OwoColorize;
 
 fn write_private_export(path: &std::path::Path, contents: impl AsRef<[u8]>) -> Result<()> {
-    use std::io::Write;
-
-    let path = crate::core::safe_ops::validate_path_syntax(path)?;
-    let parent = path
-        .parent()
-        .filter(|parent| !parent.as_os_str().is_empty())
-        .unwrap_or_else(|| std::path::Path::new("."));
-    std::fs::create_dir_all(parent)
-        .with_context(|| format!("Failed to create parent directory: {}", parent.display()))?;
-
-    let mut temporary = tempfile::NamedTempFile::new_in(parent).with_context(|| {
-        format!(
-            "Failed to create temporary security export in {}",
-            parent.display()
-        )
-    })?;
-    temporary
-        .as_file_mut()
-        .write_all(contents.as_ref())
-        .with_context(|| format!("Failed to write security export to {}", path.display()))?;
-
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::PermissionsExt as _;
-        temporary
-            .as_file_mut()
-            .set_permissions(std::fs::Permissions::from_mode(0o600))
-            .with_context(|| {
-                format!(
-                    "Failed to restrict security export permissions on {}",
-                    path.display()
-                )
-            })?;
-    }
-
-    temporary
-        .as_file_mut()
-        .sync_all()
-        .with_context(|| format!("Failed to sync security export {}", path.display()))?;
-    temporary
-        .persist(&path)
-        .map_err(|error| error.error)
-        .with_context(|| format!("Failed to write security export to {}", path.display()))?;
-    crate::core::safe_ops::sync_parent_directory_sync(&path)?;
-    Ok(())
+    crate::core::safe_ops::atomic_write_file_sync_private(path, contents)
+        .with_context(|| format!("Failed to write security export to {}", path.display()))
 }
 
 fn read_audit_entries(

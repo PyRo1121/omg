@@ -7,6 +7,7 @@ use owo_colors::OwoColorize;
 use crate::core::{Package, PackageSource, can_write_pacman_db, privilege};
 use crate::package_managers::{
     TransactionKind, get_system_status, invalidate_caches, traits::PackageManager,
+    types::VersionDisplay,
 };
 
 /// Arch Linux package manager (ALPM) implementation
@@ -298,6 +299,18 @@ pub async fn list_orphans() -> AnyhowResult<Vec<String>> {
     crate::package_managers::list_orphans_direct()
 }
 
+fn orphan_history_change(
+    name: String,
+    old_version: Option<String>,
+) -> crate::core::history::PackageChange {
+    crate::core::history::PackageChange {
+        name,
+        old_version,
+        new_version: None,
+        source: "pacman".to_string(),
+    }
+}
+
 pub async fn remove_orphans() -> AnyhowResult<()> {
     let orphans = list_orphans().await?;
     if orphans.is_empty() {
@@ -311,9 +324,24 @@ pub async fn remove_orphans() -> AnyhowResult<()> {
         tracing::info!("  {} {}", "→".dimmed(), pkg);
     }
 
+    let history = crate::core::history::HistoryManager::new()?;
+    let history_packages = orphans.clone();
+    let changes = tokio::task::spawn_blocking(move || {
+        history_packages
+            .into_iter()
+            .map(|name| {
+                let old_version = crate::package_managers::get_package_info(&name)?
+                    .filter(|info| info.installed)
+                    .map(|info| info.version.version_string());
+                Ok(orphan_history_change(name, old_version))
+            })
+            .collect::<AnyhowResult<Vec<_>>>()
+    })
+    .await??;
+
     // Reuse the standard privileged-operation path so non-root users get the
     // same sudo elevation as install/remove instead of a raw ALPM failure.
-    run_privileged_operation("remove", &orphans, &[], || {
+    let operation_result = run_privileged_operation("remove", &orphans, &[], || {
         let pkgs = orphans.clone();
         async move {
             run_alpm_transaction(
@@ -323,7 +351,13 @@ pub async fn remove_orphans() -> AnyhowResult<()> {
             .await
         }
     })
-    .await
+    .await;
+
+    history.finish_operation(
+        crate::core::history::TransactionType::Remove,
+        changes,
+        operation_result,
+    )
 }
 
 pub async fn list_explicit() -> AnyhowResult<Vec<String>> {
@@ -334,4 +368,20 @@ pub async fn is_installed(package: &str) -> AnyhowResult<bool> {
     let package = package.to_string();
     tokio::task::spawn_blocking(move || crate::package_managers::is_installed_fast(&package))
         .await?
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn orphan_removals_have_rollback_history_metadata() {
+        let change =
+            orphan_history_change("unused-library".to_string(), Some("1.2.3-1".to_string()));
+
+        assert_eq!(change.name, "unused-library");
+        assert_eq!(change.old_version.as_deref(), Some("1.2.3-1"));
+        assert!(change.new_version.is_none());
+        assert_eq!(change.source, "pacman");
+    }
 }

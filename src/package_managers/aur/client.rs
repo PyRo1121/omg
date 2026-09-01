@@ -445,11 +445,21 @@ impl AurClient {
                             warn!("Rejecting AUR index entry '{name}': {error}");
                             return None;
                         }
+                        // AUR metadata is an untrusted boundary: a version
+                        // that fails the strict parser must not compare as a
+                        // fabricated 0 (ARCH-R14); reject the entry visibly.
+                        let Some(version) =
+                            crate::package_managers::parse_version(entry.version.as_str())
+                        else {
+                            warn!(
+                                "Rejecting AUR index entry '{name}': unparseable version '{}'",
+                                entry.version.as_str()
+                            );
+                            return None;
+                        };
                         Some(Package {
                             name: name.to_string(),
-                            version: crate::package_managers::parse_version_or_zero(
-                                entry.version.as_str(),
-                            ),
+                            version,
                             description: entry
                                 .description
                                 .as_ref()
@@ -501,12 +511,25 @@ impl AurClient {
                     })
                     .is_ok()
             })
-            .map(|p| Package {
-                name: p.name,
-                version: crate::package_managers::parse_version_or_zero(&p.version),
-                description: p.description.unwrap_or_default(),
-                source: PackageSource::Aur,
-                installed: false,
+            .filter_map(|p| {
+                // AUR RPC metadata is an untrusted boundary: a version that
+                // fails the strict parser must not compare as a fabricated 0
+                // (ARCH-R14); reject the entry visibly.
+                let Some(version) = crate::package_managers::parse_version(&p.version) else {
+                    tracing::warn!(
+                        "Rejecting AUR search result '{}' with unparseable version '{}'",
+                        p.name,
+                        p.version
+                    );
+                    return None;
+                };
+                Some(Package {
+                    name: p.name,
+                    version,
+                    description: p.description.unwrap_or_default(),
+                    source: PackageSource::Aur,
+                    installed: false,
+                })
             })
             .collect();
 
@@ -565,11 +588,20 @@ impl AurClient {
                 let index = AurIndex::open(&index_path)?;
                 if let Some(entry) = index.get(&package_owned)? {
                     validate_index_entry_name(entry.name.as_str(), Some(&package_owned))?;
+                    // A corrupt index version must not compare as a fabricated
+                    // 0 (ARCH-R14); surface a typed error so the caller falls
+                    // back to the live RPC for this package.
+                    let version = crate::package_managers::parse_version(entry.version.as_str())
+                        .ok_or_else(|| {
+                            anyhow::anyhow!(
+                                "AUR index entry '{}' has an unparseable version '{}'",
+                                entry.name.as_str(),
+                                entry.version.as_str()
+                            )
+                        })?;
                     return Ok(Some(Package {
                         name: entry.name.as_str().to_string(),
-                        version: crate::package_managers::parse_version_or_zero(
-                            entry.version.as_str(),
-                        ),
+                        version,
                         description: entry
                             .description
                             .as_ref()
@@ -619,9 +651,19 @@ impl AurClient {
             );
         }
 
+        // AUR RPC metadata is an untrusted boundary: a version that fails the
+        // strict parser must fail the lookup with a typed error instead of
+        // comparing as a fabricated 0 (ARCH-R14).
+        let version = crate::package_managers::parse_version(&p.version).with_context(|| {
+            format!(
+                "AUR returned an unparseable version '{}' for '{}'",
+                p.version, p.name
+            )
+        })?;
+
         Ok(Some(Package {
             name: p.name,
-            version: crate::package_managers::parse_version_or_zero(&p.version),
+            version,
             description: p.description.unwrap_or_default(),
             source: PackageSource::Aur,
             installed: false,
@@ -692,8 +734,19 @@ impl AurClient {
                 }
                 seen_names.insert(p.name.clone());
                 if let Some(local_pkg) = pacman_db::get_local_package(&p.name)? {
-                    let p_ver = crate::package_managers::parse_version_or_zero(&p.version);
-                    if p_ver > local_pkg.version {
+                    // A version that fails the strict parser must not compare
+                    // as a fabricated 0 (ARCH-R14); skip the entry visibly.
+                    let Some(p_ver) = crate::package_managers::parse_version(&p.version) else {
+                        tracing::warn!(
+                            "Skipping AUR package '{}' with unparseable version '{}'",
+                            p.name,
+                            p.version
+                        );
+                        continue;
+                    };
+                    if crate::package_managers::types::compare_versions(&p_ver, &local_pkg.version)
+                        == std::cmp::Ordering::Greater
+                    {
                         updates.push((p.name, local_pkg.version, p_ver));
                     }
                 }
@@ -785,8 +838,19 @@ impl AurClient {
                 }
 
                 if let Some(local_pkg) = pacman_db::get_local_package(&p.name)? {
-                    let p_ver = crate::package_managers::parse_version_or_zero(&p.version);
-                    if p_ver > local_pkg.version {
+                    // A version that fails the strict parser must not compare
+                    // as a fabricated 0 (ARCH-R14); skip the entry visibly.
+                    let Some(p_ver) = crate::package_managers::parse_version(&p.version) else {
+                        tracing::warn!(
+                            "Skipping AUR package '{}' with unparseable version '{}'",
+                            p.name,
+                            p.version
+                        );
+                        continue;
+                    };
+                    if crate::package_managers::types::compare_versions(&p_ver, &local_pkg.version)
+                        == std::cmp::Ordering::Greater
+                    {
                         updates.push((p.name, local_pkg.version, p_ver));
                     }
                 }
@@ -1141,9 +1205,6 @@ impl AurClient {
                 "pkgver" if pkgver.is_none() => pkgver = Some(value.trim()),
                 "pkgrel" if pkgrel.is_none() => pkgrel = Some(value.trim()),
                 _ => {}
-            }
-            if pkgver.is_some() && pkgrel.is_some() {
-                break;
             }
         }
         let prefix = epoch
@@ -3729,8 +3790,9 @@ mod tests {
         let dup = "pkgver = 1.0\npkgrel = 2\npkgname = a\npkgver = 9.9\n";
         assert_eq!(AurClient::srcinfo_version(dup).as_deref(), Some("1.0-2"));
         assert_eq!(AurClient::srcinfo_version("pkgname = x"), None);
+        // makepkg emits epoch after pkgver/pkgrel in the pkgbase section.
         assert_eq!(
-            AurClient::srcinfo_version("epoch = 2\npkgver = 1.0~rc1\npkgrel = 3"),
+            AurClient::srcinfo_version("pkgver = 1.0~rc1\npkgrel = 3\nepoch = 2"),
             Some("2:1.0~rc1-3".to_string())
         );
     }

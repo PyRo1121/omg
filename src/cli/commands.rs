@@ -626,6 +626,13 @@ pub async fn metrics() -> Result<()> {
     Ok(())
 }
 
+#[cfg(unix)]
+fn detach_daemon_process(command: &mut Command) {
+    use std::os::unix::process::CommandExt as _;
+
+    command.stdin(Stdio::null()).process_group(0);
+}
+
 /// Start the daemon
 #[cfg(unix)]
 pub fn daemon(foreground: bool) -> Result<()> {
@@ -668,11 +675,13 @@ pub fn daemon(foreground: bool) -> Result<()> {
             std::path::PathBuf::from("omgd")
         };
 
-        let status = Command::new(omgd_path)
+        let mut command = Command::new(omgd_path);
+        command
             .arg("--")
             .stdout(Stdio::null())
-            .stderr(Stdio::null())
-            .spawn();
+            .stderr(Stdio::null());
+        detach_daemon_process(&mut command);
+        let status = command.spawn();
 
         let spawn = status.map(|_| ()).map_err(|e| e.to_string());
         let mut ready = false;
@@ -723,7 +732,31 @@ fn daemon_start_result(spawn: Result<(), String>, ready: bool, socket_exists: bo
 
 #[cfg(all(test, unix))]
 mod daemon_start_tests {
-    use super::daemon_start_result;
+    use super::{daemon_start_result, detach_daemon_process};
+
+    #[test]
+    fn daemon_child_starts_in_its_own_process_group() {
+        let directory = tempfile::tempdir().expect("tempdir");
+        let output = directory.path().join("process-group");
+        let mut command = std::process::Command::new("sh");
+        command
+            .args([
+                "-c",
+                "printf '%s %s' \"$$\" \"$(ps -o pgid= -p $$ | tr -d ' ')\" > \"$OMG_TEST_OUTPUT\"",
+            ])
+            .env("OMG_TEST_OUTPUT", &output);
+        detach_daemon_process(&mut command);
+
+        let status = command.status().expect("spawn process-group probe");
+        assert!(status.success());
+        let result = std::fs::read_to_string(output).expect("read process-group probe");
+        let fields = result.split_whitespace().collect::<Vec<_>>();
+        assert_eq!(fields.len(), 2, "unexpected probe output: {result:?}");
+        assert_eq!(
+            fields[0], fields[1],
+            "child PID must equal its process group"
+        );
+    }
 
     #[test]
     fn spawn_failure_returns_err() {
@@ -954,6 +987,16 @@ fn normalize_transaction_id(id: &str) -> Result<String> {
     Ok(normalized)
 }
 
+fn validate_rollback_consent(attended: bool, yes: bool) -> Result<()> {
+    anyhow::ensure!(
+        attended || yes,
+        "This destructive command requires --yes flag in non-interactive mode.\n\n\
+         For automation/CI, use: omg rollback <id> --yes\n\
+         Or run in interactive mode to select a transaction."
+    );
+    Ok(())
+}
+
 fn rollback_action(transaction: &crate::core::history::Transaction) -> Result<RollbackAction> {
     anyhow::ensure!(
         transaction.success,
@@ -1142,8 +1185,9 @@ pub async fn rollback(id: Option<String>, yes: bool) -> Result<()> {
         style::info(short_id(&target.id))
     );
 
-    // Check if we're in interactive mode
-    if console::user_attended()
+    let attended = console::user_attended();
+    if !yes
+        && attended
         && !Confirm::with_theme(&ui::prompt_theme())
             .with_prompt("Proceed with rollback?")
             .default(false)
@@ -1151,15 +1195,7 @@ pub async fn rollback(id: Option<String>, yes: bool) -> Result<()> {
     {
         return Ok(());
     }
-
-    // Non-interactive mode: require --yes flag for destructive operation
-    if !yes {
-        anyhow::bail!(
-            "This destructive command requires --yes flag in non-interactive mode.\n\n\
-                 For automation/CI, use: omg rollback <id> --yes\n\
-                 Or run in interactive mode to select a transaction."
-        );
-    }
+    validate_rollback_consent(attended, yes)?;
 
     match rollback_action(target)? {
         RollbackAction::NothingToDo => {
@@ -1530,6 +1566,16 @@ mod tests {
                 .contains("not available without an Arch or Debian package backend"),
             "got: {error}"
         );
+    }
+
+    #[test]
+    fn rollback_consent_accepts_interactive_confirmation_or_yes_flag() {
+        assert!(validate_rollback_consent(true, false).is_ok());
+        assert!(validate_rollback_consent(true, true).is_ok());
+        assert!(validate_rollback_consent(false, true).is_ok());
+        let error = validate_rollback_consent(false, false)
+            .expect_err("unattended rollback without --yes must fail");
+        assert!(error.to_string().contains("requires --yes"));
     }
 
     #[test]

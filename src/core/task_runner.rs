@@ -13,6 +13,14 @@ use crate::hooks;
 use crate::runtimes::rust::RustManager;
 use crate::runtimes::{BunManager, NodeManager};
 
+static TASK_SETUP_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+fn lock_task_setup() -> std::sync::MutexGuard<'static, ()> {
+    TASK_SETUP_LOCK
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub enum Ecosystem {
     Node,
@@ -133,10 +141,12 @@ impl TaskDetector {
         };
 
         let path = self.current_dir.join("package.json");
+        let mut has_install_script = false;
         if let Some(content) = read_optional_file(&path)? {
             let pkg: PackageJson = serde_json::from_str(&content)
                 .with_context(|| format!("Failed to parse {}", path.display()))?;
             if let Some(scripts) = pkg.scripts {
+                has_install_script = scripts.contains_key("install");
                 for (name, _) in scripts {
                     tasks.push(Task {
                         name: name.clone(),
@@ -149,13 +159,15 @@ impl TaskDetector {
             }
         }
 
-        tasks.push(Task {
-            name: "install".to_string(),
-            command: package_manager,
-            args: vec!["install".to_string()],
-            source: "package.json".to_string(),
-            ecosystem: js_ecosystem,
-        });
+        if !has_install_script {
+            tasks.push(Task {
+                name: "install".to_string(),
+                command: package_manager,
+                args: vec!["install".to_string()],
+                source: "package.json".to_string(),
+                ecosystem: js_ecosystem,
+            });
+        }
         Ok(())
     }
 
@@ -231,6 +243,12 @@ impl TaskDetector {
             let Some((targets, after_colon)) = line.split_once(':') else {
                 continue;
             };
+            // Variable values commonly contain colons (URLs, PATH-like
+            // values). If assignment syntax appears before the first colon,
+            // the left fragment is not a target list.
+            if targets.contains('=') {
+                continue;
+            }
             // Colon-style variable assignments (`A := b`, `A ::= b`) have `=`
             // immediately after the colon (modulo the assignment operator's
             // own colons); rule lines never do.
@@ -762,12 +780,14 @@ fn execute_process(cmd: &str, args: &[String], extra_args: &[String]) -> Result<
     // Detect required runtime versions and inject them into PATH
     // This ensures 'npm' uses the correct node version, 'cargo' uses correct rust channel, etc.
     let current_dir = std::env::current_dir()?;
+    // Parallel tasks share one terminal and one managed-runtime store. Keep
+    // prompts and runtime/corepack installation inside a single setup owner,
+    // then release the lock before running the actual task processes.
+    let setup_guard = lock_task_setup();
     if let Some(toolchain_file) = find_rust_toolchain_file(&current_dir) {
-        // First check if Rust is available via system (rustup) - if so, let rustup handle it
-        let has_system_rust = which::which("rustc").is_ok() || which::which("cargo").is_ok();
-
-        if !has_system_rust {
-            // Only use OMG's Rust manager if no system Rust is available
+        // Only rustup proxy executables honor rust-toolchain files. A distro
+        // rustc/cargo on PATH must not silently bypass the project pin.
+        if !rustup_controls_system_rust() {
             let rust_manager = RustManager::new();
             let request = RustManager::parse_toolchain_file(&toolchain_file)?;
             let status = rust_manager.toolchain_status(&request)?;
@@ -784,7 +804,8 @@ fn execute_process(cmd: &str, args: &[String], extra_args: &[String]) -> Result<
                 }
             }
         }
-        // If system Rust exists, rustup will handle toolchain switching automatically
+        // When all system executables are rustup proxies, rustup owns project
+        // toolchain switching and OMG must not install a competing toolchain.
     }
     let mut versions = hooks::detect_versions(&current_dir)?;
     if let Some((runtime, default_version)) = detect_js_runtime(&current_dir)? {
@@ -809,6 +830,7 @@ fn execute_process(cmd: &str, args: &[String], extra_args: &[String]) -> Result<
         }
     }
     let mut path_additions = hooks::build_path_additions(&versions)?;
+    drop(setup_guard);
 
     // Auto-activate python virtual environment if present
     // Check for .venv or venv in current directory
@@ -861,6 +883,36 @@ fn execute_process(cmd: &str, args: &[String], extra_args: &[String]) -> Result<
     }
 
     Ok(())
+}
+
+#[cfg(unix)]
+fn same_executable_file(left: &Path, right: &Path) -> bool {
+    use std::os::unix::fs::MetadataExt as _;
+
+    let Ok(left) = left.metadata() else {
+        return false;
+    };
+    let Ok(right) = right.metadata() else {
+        return false;
+    };
+    left.dev() == right.dev() && left.ino() == right.ino()
+}
+
+#[cfg(not(unix))]
+fn same_executable_file(left: &Path, right: &Path) -> bool {
+    match (left.canonicalize(), right.canonicalize()) {
+        (Ok(left), Ok(right)) => left == right,
+        _ => false,
+    }
+}
+
+fn rustup_controls_system_rust() -> bool {
+    let Ok(rustup) = which::which("rustup") else {
+        return false;
+    };
+    ["rustc", "cargo"].into_iter().all(|command| {
+        which::which(command).is_ok_and(|executable| same_executable_file(&rustup, &executable))
+    })
 }
 
 fn find_rust_toolchain_file(start: &Path) -> Option<PathBuf> {
@@ -1063,6 +1115,25 @@ fn ensure_js_package_manager(command: &str) -> Result<()> {
 
 // Runtime resolution functions moved to core::runtime_resolver module
 
+fn is_ignored_watch_path(path: &Path) -> bool {
+    path.components().any(|component| {
+        matches!(
+            component.as_os_str().to_str(),
+            Some(
+                "target"
+                    | "node_modules"
+                    | ".git"
+                    | "dist"
+                    | "build"
+                    | "out"
+                    | ".next"
+                    | "coverage"
+                    | "__pycache__"
+            )
+        )
+    })
+}
+
 /// Run a task in watch mode - re-run on file changes
 ///
 /// Synchronous and blocking by design: the process lives in the watch loop.
@@ -1090,14 +1161,11 @@ pub fn run_task_watch(task_name: &str, extra_args: &[String]) -> Result<()> {
     let mut watcher = RecommendedWatcher::new(
         move |res: std::result::Result<notify::Event, notify::Error>| {
             if let Ok(event) = res {
-                let ignored = event.paths.iter().any(|path| {
-                    path.components().any(|component| {
-                        matches!(
-                            component.as_os_str().to_str(),
-                            Some("target" | "node_modules" | ".git")
-                        )
-                    })
-                });
+                // Mixed-path events (for example a rename from source into an
+                // output directory) still matter when any path is outside the
+                // ignored trees.
+                let ignored = !event.paths.is_empty()
+                    && event.paths.iter().all(|path| is_ignored_watch_path(path));
                 if !ignored {
                     let _ = tx.send(event);
                 }
@@ -1198,12 +1266,24 @@ fn parse_parallel_task_names(tasks: &str) -> Result<Vec<String>> {
     Ok(task_names)
 }
 
+async fn run_on_blocking_worker<T: Send + 'static>(
+    work: impl FnOnce() -> Result<T> + Send + 'static,
+) -> Result<T> {
+    tokio::task::spawn_blocking(work)
+        .await
+        .context("Task worker panicked")?
+}
+
 /// Run multiple tasks in parallel (comma-separated task names).
 pub async fn run_tasks_parallel(tasks_str: &str, extra_args: &[String]) -> Result<()> {
-    let task_names = parse_parallel_task_names(tasks_str)?;
+    let mut task_names = parse_parallel_task_names(tasks_str)?;
 
     if task_names.len() == 1 {
-        return run_task(&task_names[0], extra_args);
+        let task = task_names
+            .pop()
+            .context("Single parallel task was unexpectedly missing")?;
+        let args = extra_args.to_vec();
+        return run_on_blocking_worker(move || run_task(&task, &args)).await;
     }
 
     println!(
@@ -1268,6 +1348,21 @@ mod tests {
         assert!(validate_executable_command("cmd\n").is_err());
     }
 
+    #[cfg(unix)]
+    #[test]
+    fn rustup_proxy_detection_compares_executable_identity() {
+        let directory = TempDir::new().unwrap();
+        let rustup = directory.path().join("rustup");
+        let proxy = directory.path().join("rustc");
+        let distro_rustc = directory.path().join("distro-rustc");
+        fs::write(&rustup, "rustup").unwrap();
+        fs::write(&distro_rustc, "rustc").unwrap();
+        std::os::unix::fs::symlink(&rustup, &proxy).unwrap();
+
+        assert!(same_executable_file(&rustup, &proxy));
+        assert!(!same_executable_file(&rustup, &distro_rustc));
+    }
+
     #[test]
     fn runtime_pins_require_a_matching_semver_version() {
         assert!(runtime_version_satisfies("20.11.1", "20"));
@@ -1321,6 +1416,59 @@ mod tests {
     }
 
     #[test]
+    fn parallel_task_setup_has_one_process_wide_owner() {
+        use std::sync::atomic::{AtomicUsize, Ordering};
+        use std::sync::{Arc, Barrier};
+
+        let barrier = Arc::new(Barrier::new(4));
+        let active = Arc::new(AtomicUsize::new(0));
+        let violations = Arc::new(AtomicUsize::new(0));
+        let threads = (0..4)
+            .map(|_| {
+                let barrier = Arc::clone(&barrier);
+                let active = Arc::clone(&active);
+                let violations = Arc::clone(&violations);
+                std::thread::spawn(move || {
+                    barrier.wait();
+                    let _guard = lock_task_setup();
+                    if active.fetch_add(1, Ordering::SeqCst) != 0 {
+                        violations.fetch_add(1, Ordering::SeqCst);
+                    }
+                    std::thread::sleep(std::time::Duration::from_millis(2));
+                    active.fetch_sub(1, Ordering::SeqCst);
+                })
+            })
+            .collect::<Vec<_>>();
+
+        for thread in threads {
+            thread.join().unwrap();
+        }
+        assert_eq!(violations.load(Ordering::SeqCst), 0);
+    }
+
+    #[test]
+    fn watch_filter_ignores_common_generated_trees_only() {
+        for generated in [
+            "target/debug/app",
+            "node_modules/pkg/index.js",
+            ".git/index",
+            "dist/app.js",
+            "build/output",
+            "out/index.html",
+            ".next/cache/item",
+            "coverage/report.html",
+            "__pycache__/module.pyc",
+        ] {
+            assert!(
+                is_ignored_watch_path(Path::new(generated)),
+                "generated path was not ignored: {generated}"
+            );
+        }
+        assert!(!is_ignored_watch_path(Path::new("src/build.rs")));
+        assert!(!is_ignored_watch_path(Path::new("tests/output.rs")));
+    }
+
+    #[test]
     fn watch_events_coalesce_bursts_arriving_during_a_slow_run() {
         let (sender, receiver) = std::sync::mpsc::channel();
         sender.send(()).unwrap();
@@ -1353,6 +1501,16 @@ mod tests {
         process_watch_events(&receiver, std::time::Duration::from_millis(1), || runs += 1);
 
         assert_eq!(runs, 1);
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn single_parallel_task_work_uses_a_blocking_worker() {
+        let reactor_thread = std::thread::current().id();
+        let worker_thread = run_on_blocking_worker(|| Ok(std::thread::current().id()))
+            .await
+            .unwrap();
+
+        assert_ne!(worker_thread, reactor_thread);
     }
 
     #[test]
@@ -1393,6 +1551,28 @@ build = "node"
         let detector = TaskDetector::new(temp.path().to_path_buf()).unwrap();
         assert_eq!(detector.config.scripts.get("test").unwrap(), "rust");
         assert_eq!(detector.config.scripts.get("build").unwrap(), "node");
+    }
+
+    #[test]
+    fn package_install_script_does_not_collide_with_synthetic_install_task() {
+        let temp = TempDir::new().unwrap();
+        fs::write(
+            temp.path().join("package.json"),
+            r#"{"scripts":{"install":"node setup.js"}}"#,
+        )
+        .unwrap();
+
+        let detector = TaskDetector::new(temp.path().to_path_buf()).unwrap();
+        let install_tasks = detector
+            .detect()
+            .unwrap()
+            .into_iter()
+            .filter(|task| task.name == "install")
+            .collect::<Vec<_>>();
+
+        assert_eq!(install_tasks.len(), 1);
+        assert_eq!(install_tasks[0].command, "npm");
+        assert_eq!(install_tasks[0].args, ["run", "install"]);
     }
 
     #[tokio::test]
@@ -1572,6 +1752,8 @@ mod wave3_tests {
         let makefile = "\
 CC := gcc
 CFLAGS = -Wall
+URL = https://example.com:8443/repo.git
+PATH_VALUE = cache:bin
 include other.mk
 -include generated.d
 

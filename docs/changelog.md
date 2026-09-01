@@ -702,6 +702,257 @@ analyzer inference
 - **Ci**: Cross-platform install script and R2 release sync
 ### 🐛 Bug Fixes
 
+- **Rust**: Refresh rolling toolchain channels ([#104](https://github.com/PyRo1121/omg/issues/104))
+
+* fix(rust): refresh rolling toolchain channels
+
+* fix(rust): replace published toolchains when rolling channels refresh
+
+complete_staged_install refuses an existing version directory, so a
+
+real channel bump downloaded a new tree and then failed to publish.
+
+Nightly and beta also keep the same rustc semver across many manifests;
+
+compare the full version string so those rolls are detected.
+
+- Remove identifiers from usage sync ([#102](https://github.com/PyRo1121/omg/issues/102))
+- **Privacy**: Export durable state and purge telemetry ([#101](https://github.com/PyRo1121/omg/issues/101))
+
+* fix: complete privacy export and purge telemetry
+
+* fix(privacy): redact license secrets from local export
+
+- Require consent before migration import ([#100](https://github.com/PyRo1121/omg/issues/100))
+- **Ci**: Restore baseline checks ([#105](https://github.com/PyRo1121/omg/issues/105))
+
+* fix(ci): restore coverage source inputs
+
+* fix(daemon): preserve fallible backend constructor
+
+* fix(security): enforce private export permissions
+
+* fix(ci): install nextest and scope coverage
+
+* fix(ci): precompute coverage cache key
+
+* fix(ci): repair platform matrix baselines
+
+* fix(ci): restore integration coverage
+
+* fix(ci): satisfy runtime fixture lints
+
+* test(security): scope strict version parsing to Arch
+
+- Reconcile wave-three tests and portable clippy
+- Never collapse unparseable versions to zero (ARCH-R14) ([#99](https://github.com/PyRo1121/omg/issues/99))
+
+parse_version_or_zero silently fabricated version 0 for any string the
+
+strict parser rejected (non-ASCII, pkgrel overflow, three-component
+
+pkgrel), suppressing real updates, inventing phantom ones, and skewing
+
+CVE matching.
+
+  - add strict parse_version() -> Option`<Version>`; reduce
+
+parse_version_or_zero to a thin, explicitly documented display/test
+
+fallback over zero_version
+
+  - untrusted boundaries now decide failure policy at the call site:
+
+alpm_direct/alpm_ops and AUR RPC/archive paths skip the entry with a
+
+warning; AUR index updates_for reports the name as missing so the
+
+caller re-checks via RPC; package-file loads and PKGBUILD pkgver
+
+propagate typed errors
+
+  - version_is_affected returns Option<bool> so the ALSA scorer skips
+
+unparseable advisory versions instead of comparing against 0
+
+  - previously-parsing versions behave identically (ordering tests green)
+
+Regression tests: strict parser rejects unparseable input and preserves
+
+valid rendering; unparseable AUR index entries are rechecked not treated
+
+as 0; unparseable ALSA versions are skipped not treated as 0.
+
+- Route version ordering through panic-free comparator ([#94](https://github.com/PyRo1121/omg/issues/94))
+
+* fix: route version ordering through panic-free comparator (ARCH-N1)
+
+alpm-types 0.11.1's Ord impl unwraps parse::<usize>() on numeric
+
+segments and panics with PosOverflow when a pkgver segment exceeds
+
+usize::MAX. That panic path was reachable from
+
+pacman_db::check_updates_cached (inside a rayon par-iter holding
+
+RwLock guards) and AurIndex::updates_for.
+
+Add types::compare_versions: versions without an overflowing numeric
+
+segment keep the exact upstream Ord ordering; versions carrying an
+
+overflowing segment fall back to libalpm's alpm::vercmp on the rendered
+
+epoch:pkgver-pkgrel string, which matches pacman semantics and never
+
+overflows. Both call sites now compare through this helper.
+
+* fix: route remaining AUR update Ord comparisons through compare_versions
+
+Archive and RPC fallbacks in AurClient still used Version::Ord, which
+
+panics on overflowing pkgver segments. Route those two sites through
+
+the panic-free helper already used by the index and pacman-db paths.
+
+- Align orphan counting with pacman -Qdt on both paths ([#96](https://github.com/PyRo1121/omg/issues/96))
+
+The fast path (pure-Rust local-db cache) read %REQUIREDBY%/%OPTFOR%
+
+sections that modern pacman never writes, so every non-explicit package
+
+looked like an orphan. Reverse dependencies are now derived from the
+
+cached %DEPENDS%/%PROVIDES% sets (including virtual deps satisfied by
+
+provisions) instead of the dead fields, which are removed from
+
+LocalDbPackage; the on-disk cache is namespaced local_db_rdeps because
+
+the bitcode layout changed.
+
+The libalpm path additionally required optional_for to be empty, which
+
+undercounted relative to pacman -Qdt. The canonical predicate
+
+is_orphan_package(explicit, required_by_empty) now encodes exactly the
+
+pacman -Qdt filter: not explicit AND required by nobody; optdepends do
+
+not keep a package alive.
+
+Both backends are pinned to agreement on a synthetic fixture local db
+
+via a libalpm-backed parity test.
+
+- Enforce SecurityPolicy in the AUR update lane ([#98](https://github.com/PyRo1121/omg/issues/98))
+
+The update flow never consulted the user's security policy, so
+
+banned_packages, allow_aur=false, and minimum_grade were silently
+
+bypassed for AUR upgrades. Load the policy once at the start of the
+
+AUR update flow and screen every candidate with check_source at the
+
+Community grade its source supplies, mirroring the install lane.
+
+A violation skips that candidate only and prints a warning naming the
+
+violated rule; the rest of the update run proceeds. A corrupt policy
+
+file aborts the update, matching install. A missing policy file keeps
+
+today's behavior unchanged.
+
+- Resolve partial runtime versions to newest vendor release ([#97](https://github.com/PyRo1121/omg/issues/97))
+
+Partial version requests such as 'omg use node 20', 'omg use python 3.12',
+
+or 'omg use go 1.21' previously built download URLs by exact-string
+
+interpolation and 404ed on the malformed filename (audit RUN-F01).
+
+Add a shared, pure resolver in runtimes/common.rs:
+
+  - is_partial_version: true only for one/two-component numeric requests
+
+  - resolve_partial_version(available, requested): picks the newest
+
+semver-compatible match at component boundaries ('3.12' never matches
+
+'3.120.0'); exact requests pass through only when present in the
+
+vendor list; garbage returns None
+
+Node, Python, Go, Ruby, and Bun now resolve partial requests against
+
+their existing list_available fixtures before constructing any download
+
+URL. Exact versions never trigger a vendor-list fetch, so the
+
+already-installed fast path and not-found UX are unchanged. Go resolves
+
+only stable releases and Bun only non-prereleases, matching the existing
+
+'latest' semantics. Rust is exempt (rustup parity: partial majors are
+
+invalid there) and is untouched.
+
+- **Brew**: Survive null cask desc and disambiguate formula/cask installs ([#95](https://github.com/PyRo1121/omg/issues/95))
+
+The live Homebrew cask API ships an explicit "desc": null for roughly
+
+2,600 casks, and CaskInfo's `#[serde(default)] desc: String` rejected
+
+null during deserialization, killing the whole metadata parse. Make the
+
+field Option`<String>` and render None as an empty description at the
+
+fuzzy-search and Package build sites.
+
+install/remove never passed --formula/--cask, so ambiguous names could
+
+resolve to the wrong kind. Resolve each name's kind from the formula/cask
+
+index (formula wins for names present as both, matching brew's own
+
+precedence), batch by kind, and pass an explicit flag on every invocation.
+
+Names missing from the index now fail explicitly instead of silently
+
+defaulting to a kind.
+
+Unit tests: live-API-shaped fixtures with null and string desc, render
+
+behavior through fuzzy_search, and kind classification including the
+
+explicit-error path.
+
+- Allow unnecessary_wraps on portable SystemBackendAccess::production
+- Offload daemon status fsync
+- Preserve daemon signal listeners
+- Honor interactive rollback consent
+- Detach manually started daemon
+- Order runtime prereleases correctly
+- Retain AUR epochs in rollback versions
+- Preserve PKGBUILD URL fragments
+- Bound PKGBUILD metadata reads
+- Isolate PKGBUILD function assignments
+- Bound daemon response frames
+- Preserve elevated positional arguments
+- Enforce local archive consent in fast path
+- Distinguish rustup proxies from system Rust
+- Share Rust toolchain parsing
+- Propagate daemon internal failures
+- Bound daemon client writes
+- Record Arch orphan removals
+- Preserve parent history ownership
+- Ignore generated watch outputs
+- Offload single parallel task execution
+- Ignore colon-bearing Make assignments
+- Avoid duplicate package install tasks
+- Serialize parallel task setup
 - Coalesce watch events during task runs
 - Validate manifest package managers
 - Report every parallel AUR failure

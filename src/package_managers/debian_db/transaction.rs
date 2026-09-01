@@ -65,6 +65,7 @@ const INITIAL_BACKOFF_MS: u64 = 200;
 
 const DPKG_FRONTEND_LOCK_PATH: &str = "/var/lib/dpkg/lock-frontend";
 const DPKG_DATABASE_LOCK_PATH: &str = "/var/lib/dpkg/lock";
+const DPKG_UPDATES_PATH: &str = "/var/lib/dpkg/updates";
 const MAINTAINER_SCRIPT_TIMEOUT: Duration = Duration::from_secs(15 * 60);
 static DPKG_TRANSACTION_LOCK: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
 
@@ -88,6 +89,35 @@ impl Drop for DpkgLockGuard {
             }
         }
     }
+}
+
+fn ensure_no_pending_dpkg_updates_at(updates_path: &Path) -> Result<()> {
+    let entries = match fs::read_dir(updates_path) {
+        Ok(entries) => entries,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(()),
+        Err(error) => {
+            return Err(error).with_context(|| {
+                format!(
+                    "Failed to inspect pending dpkg updates in {}",
+                    updates_path.display()
+                )
+            });
+        }
+    };
+
+    let pending = entries.into_iter().next().transpose().with_context(|| {
+        format!(
+            "Failed to inspect pending dpkg updates in {}",
+            updates_path.display()
+        )
+    })?;
+    if let Some(entry) = pending {
+        anyhow::bail!(
+            "Pending dpkg database update {} must be recovered before this transaction; run 'sudo dpkg --configure -a' and retry",
+            entry.path().display()
+        );
+    }
+    Ok(())
 }
 
 fn acquire_dpkg_locks_at(frontend_path: &Path, database_path: &Path) -> Result<DpkgLockGuard> {
@@ -118,10 +148,12 @@ fn acquire_dpkg_locks_at(frontend_path: &Path, database_path: &Path) -> Result<D
 
 async fn acquire_dpkg_locks() -> Result<DpkgLockGuard> {
     tokio::task::spawn_blocking(|| {
-        acquire_dpkg_locks_at(
+        let guard = acquire_dpkg_locks_at(
             Path::new(DPKG_FRONTEND_LOCK_PATH),
             Path::new(DPKG_DATABASE_LOCK_PATH),
-        )
+        )?;
+        ensure_no_pending_dpkg_updates_at(Path::new(DPKG_UPDATES_PATH))?;
+        Ok(guard)
     })
     .await
     .context("dpkg lock worker failed")?
@@ -2505,6 +2537,25 @@ mod tests {
         assert!(frontend.is_file());
         assert!(database.is_file());
         drop(guard);
+    }
+
+    #[test]
+    fn pending_dpkg_update_fragments_block_transactions() {
+        let directory = tempfile::tempdir().expect("temp dir");
+        std::fs::write(directory.path().join("0000"), b"Package: pending\n")
+            .expect("pending update fragment");
+
+        let error = ensure_no_pending_dpkg_updates_at(directory.path())
+            .expect_err("pending dpkg updates must block a transaction");
+        assert!(error.to_string().contains("dpkg --configure -a"));
+    }
+
+    #[test]
+    fn empty_or_missing_dpkg_updates_directories_are_clean() {
+        let directory = tempfile::tempdir().expect("temp dir");
+        ensure_no_pending_dpkg_updates_at(directory.path()).expect("empty updates directory");
+        ensure_no_pending_dpkg_updates_at(&directory.path().join("missing"))
+            .expect("missing updates directory");
     }
 
     #[test]

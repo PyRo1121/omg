@@ -7,7 +7,7 @@ use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::Duration;
 
-use anyhow::Result;
+use anyhow::{Context, Result};
 use futures::sink::SinkExt;
 use futures::stream::StreamExt;
 use governor::{Quota, RateLimiter};
@@ -37,6 +37,10 @@ const SOCKET_HEALTH_CHECK_INTERVAL: Duration = Duration::from_secs(60);
 /// Close clients that hold a connection without sending a complete frame.
 const CLIENT_IDLE_TIMEOUT: Duration = Duration::from_secs(60);
 
+/// Bound response writes so a local client that stops reading cannot retain a
+/// connection permit indefinitely.
+const CLIENT_WRITE_TIMEOUT: Duration = Duration::from_secs(5);
+
 /// Per-connection rate limit (requests per second)
 const CLIENT_RATE_LIMIT_HZ: u32 = 50;
 /// Per-connection burst size
@@ -52,7 +56,10 @@ async fn wait_for_termination_signal() -> Result<()> {
     #[cfg(unix)]
     {
         let mut signal = tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate())?;
-        signal.recv().await;
+        signal
+            .recv()
+            .await
+            .context("SIGTERM listener closed unexpectedly")?;
         Ok(())
     }
 
@@ -76,6 +83,27 @@ pub async fn run(
     .await
 }
 
+async fn write_fast_status_async(
+    status: crate::core::fast_status::FastStatus,
+    path: PathBuf,
+) -> Result<()> {
+    tokio::task::spawn_blocking(move || status.write_to_file(&path))
+        .await
+        .context("Fast-status writer panicked")??;
+    Ok(())
+}
+
+fn validate_signal_result(result: std::io::Result<()>, signal: &str) -> Result<()> {
+    result.with_context(|| format!("Failed to listen for {signal}"))
+}
+
+fn daemon_shutdown_result(internal_failure: Option<String>) -> Result<()> {
+    match internal_failure {
+        Some(failure) => anyhow::bail!(failure),
+        None => Ok(()),
+    }
+}
+
 async fn run_with_status_path(
     listener: UnixListener,
     state: Arc<DaemonState>,
@@ -83,6 +111,8 @@ async fn run_with_status_path(
     fast_status_path: PathBuf,
 ) -> Result<()> {
     let shutdown_token = CancellationToken::new();
+    let (internal_failure_tx, mut internal_failure_rx) =
+        tokio::sync::mpsc::unbounded_channel::<String>();
 
     // Budget for concurrent client connections; permits are released when a
     // connection task ends.
@@ -93,6 +123,7 @@ async fn run_with_status_path(
     let worker_token = shutdown_token.child_token();
     // Clone the parent token so the health check can trigger a full shutdown
     let shutdown_trigger = shutdown_token.clone();
+    let health_failure_tx = internal_failure_tx.clone();
 
     let worker_handle = tokio::spawn(async move {
         tracing::info!("Background status worker started");
@@ -142,7 +173,9 @@ async fn run_with_status_path(
             };
             let fast_status =
                 crate::core::fast_status::FastStatus::new(total, explicit, orphans, updates);
-            if let Err(error) = fast_status.write_to_file(fast_status_path) {
+            if let Err(error) =
+                write_fast_status_async(fast_status, fast_status_path.to_path_buf()).await
+            {
                 tracing::warn!("Failed to write fast status file: {error}");
             }
 
@@ -262,10 +295,12 @@ async fn run_with_status_path(
                 }
                 _ = socket_health.tick() => {
                     if !socket_path.exists() {
-                        tracing::error!(
-                            "Socket file {} has been removed externally! Initiating shutdown.",
+                        let failure = format!(
+                            "Daemon socket {} was removed externally",
                             socket_path.display()
                         );
+                        tracing::error!("{failure}; initiating shutdown");
+                        let _ = health_failure_tx.send(failure);
                         // Cancel the parent shutdown token to stop the accept loop.
                         shutdown_trigger.cancel();
                         break;
@@ -281,12 +316,13 @@ async fn run_with_status_path(
     {
         let state_monitor = Arc::clone(&state);
         let shutdown_monitor = shutdown_token.clone();
+        let worker_failure_tx = internal_failure_tx;
         tokio::spawn(async move {
-            if worker_handle.await.is_err() {
+            if let Err(error) = worker_handle.await {
                 state_monitor.inc_background_worker_failures();
-                tracing::error!(
-                    "Background status worker terminated unexpectedly; initiating shutdown"
-                );
+                let failure = format!("Background status worker terminated unexpectedly: {error}");
+                tracing::error!("{failure}; initiating shutdown");
+                let _ = worker_failure_tx.send(failure);
                 shutdown_monitor.cancel();
             }
         });
@@ -294,20 +330,35 @@ async fn run_with_status_path(
 
     tracing::info!("Daemon ready, binary IPC enabled");
 
+    // Register signal listeners once. Recreating them after every accepted
+    // connection leaves gaps where process signals can be lost.
+    let ctrl_c = tokio::signal::ctrl_c();
+    tokio::pin!(ctrl_c);
+    let termination_signal = wait_for_termination_signal();
+    tokio::pin!(termination_signal);
+
+    let mut internal_failure = None;
     loop {
         tokio::select! {
             // biased: always check shutdown signal first to avoid accepting
             // new connections after shutdown was requested
             biased;
 
-            _ = tokio::signal::ctrl_c() => {
+            Some(failure) = internal_failure_rx.recv() => {
+                internal_failure = Some(failure);
+                shutdown_token.cancel();
+                break;
+            }
+
+            result = &mut ctrl_c => {
+                validate_signal_result(result, "SIGINT")?;
                 tracing::info!("Interrupt signal received, cleaning up...");
                 shutdown_token.cancel();
                 break;
             }
 
-            result = wait_for_termination_signal() => {
-                result?;
+            result = &mut termination_signal => {
+                result.context("Failed to listen for SIGTERM")?;
                 tracing::info!("Termination signal received, cleaning up...");
                 shutdown_token.cancel();
                 break;
@@ -381,7 +432,7 @@ async fn run_with_status_path(
         }
     }
 
-    Ok(())
+    daemon_shutdown_result(internal_failure)
 }
 
 /// Maximum request size to prevent `DoS` attacks. This also bounds the sole
@@ -406,6 +457,51 @@ impl Drop for ConnectionGuard {
     }
 }
 
+async fn await_client_write(
+    write: impl std::future::Future<Output = std::io::Result<()>>,
+    timeout: Duration,
+) -> Result<()> {
+    tokio::time::timeout(timeout, write)
+        .await
+        .map_err(|_| anyhow::anyhow!("Daemon client write timed out after {timeout:?}"))??;
+    Ok(())
+}
+
+fn encode_bounded_response(response: &Response, request_id: u64) -> Result<Vec<u8>> {
+    let response_bytes = crate::daemon::protocol::encode_frame(response)?;
+    if response_bytes.len() <= MAX_REQUEST_SIZE {
+        return Ok(response_bytes);
+    }
+
+    tracing::error!(
+        request_id,
+        response_bytes = response_bytes.len(),
+        max_response_bytes = MAX_REQUEST_SIZE,
+        "Daemon response exceeded the transport frame limit"
+    );
+    GLOBAL_METRICS.inc_requests_failed();
+    Ok(crate::daemon::protocol::encode_frame(&Response::Error {
+        id: request_id,
+        code: error_codes::INTERNAL_ERROR,
+        message: format!("Daemon response exceeded the {MAX_REQUEST_SIZE}-byte transport limit"),
+    })?)
+}
+
+async fn send_response_frame(
+    framed: &mut tokio_util::codec::Framed<tokio::net::UnixStream, LengthDelimitedCodec>,
+    response_bytes: Vec<u8>,
+) -> Result<()> {
+    let response_len = response_bytes.len();
+    if let Err(error) =
+        await_client_write(framed.send(response_bytes.into()), CLIENT_WRITE_TIMEOUT).await
+    {
+        GLOBAL_METRICS.inc_requests_failed();
+        return Err(error);
+    }
+    GLOBAL_METRICS.add_bytes_sent(response_len as u64);
+    Ok(())
+}
+
 /// Handle a single client connection
 /// Encode and send one error frame, accounting bytes sent. The shared tail
 /// of every early-reject path in `handle_client` (audit typ01 C2): without
@@ -417,9 +513,10 @@ async fn send_error_response(
     message: String,
 ) {
     let response = Response::Error { id, code, message };
-    if let Ok(response_bytes) = crate::daemon::protocol::encode_frame(&response) {
-        GLOBAL_METRICS.add_bytes_sent(response_bytes.len() as u64);
-        let _ = framed.send(response_bytes.into()).await;
+    if let Ok(response_bytes) = crate::daemon::protocol::encode_frame(&response)
+        && let Err(error) = send_response_frame(framed, response_bytes).await
+    {
+        tracing::warn!("Failed to send daemon error response: {error}");
     }
 }
 
@@ -579,9 +676,8 @@ async fn handle_client_with_idle_timeout(
                 });
 
         // Encode and send response
-        let response_bytes = crate::daemon::protocol::encode_frame(&response)?;
-        GLOBAL_METRICS.add_bytes_sent(response_bytes.len() as u64);
-        framed.send(response_bytes.into()).await?;
+        let response_bytes = encode_bounded_response(&response, request_id)?;
+        send_response_frame(&mut framed, response_bytes).await?;
     }
 
     tracing::debug!("Client disconnected");
@@ -591,7 +687,78 @@ async fn handle_client_with_idle_timeout(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use anyhow::Context as _;
+
+    #[test]
+    fn oversized_daemon_responses_return_an_error_frame() {
+        let oversized = Response::Success {
+            id: 77,
+            result: super::super::protocol::ResponseResult::Message("x".repeat(MAX_REQUEST_SIZE)),
+        };
+
+        let encoded = encode_bounded_response(&oversized, 77).expect("bounded response");
+        assert!(encoded.len() <= MAX_REQUEST_SIZE);
+        let (_, payload) = crate::daemon::protocol::split_frame(&encoded).expect("frame header");
+        let decoded: Response = bitcode::deserialize(payload).expect("response payload");
+        match decoded {
+            Response::Error { id, code, message } => {
+                assert_eq!(id, 77);
+                assert_eq!(code, error_codes::INTERNAL_ERROR);
+                assert!(message.contains("transport limit"));
+            }
+            Response::Success { .. } => panic!("oversized response must become an error"),
+        }
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn fast_status_writes_run_through_the_blocking_adapter() {
+        let directory = tempfile::tempdir().expect("tempdir");
+        let path = directory.path().join("status.bin");
+        let status = crate::core::fast_status::FastStatus::new(10, 4, 1, 2);
+
+        write_fast_status_async(status, path.clone())
+            .await
+            .expect("write fast status");
+
+        let persisted =
+            crate::core::fast_status::FastStatus::read_from_file(&path).expect("read fast status");
+        assert_eq!(persisted.total_packages, 10);
+        assert_eq!(persisted.updates_available, 2);
+    }
+
+    #[test]
+    fn signal_listener_failures_are_not_treated_as_shutdown_signals() {
+        validate_signal_result(Ok(()), "SIGINT").expect("received signal");
+        let error = validate_signal_result(
+            Err(std::io::Error::new(
+                std::io::ErrorKind::Unsupported,
+                "signals unavailable",
+            )),
+            "SIGINT",
+        )
+        .expect_err("listener registration failure must propagate");
+        assert!(error.to_string().contains("Failed to listen for SIGINT"));
+    }
+
+    #[test]
+    fn internal_daemon_failures_produce_unsuccessful_exit_results() {
+        assert!(daemon_shutdown_result(None).is_ok());
+        let error = daemon_shutdown_result(Some("worker crashed".to_string()))
+            .expect_err("internal failure must make daemon exit unsuccessfully");
+        assert_eq!(error.to_string(), "worker crashed");
+    }
+
+    #[tokio::test]
+    async fn daemon_client_writes_have_a_deadline() {
+        let stalled = std::future::pending::<std::io::Result<()>>();
+        let error = await_client_write(stalled, Duration::from_millis(1))
+            .await
+            .expect_err("stalled client write must time out");
+        assert!(error.to_string().contains("write timed out"));
+
+        await_client_write(std::future::ready(Ok(())), Duration::from_secs(1))
+            .await
+            .expect("completed write must succeed");
+    }
 
     #[test]
     fn fast_status_reader_ttl_matches_daemon_writer_cadence() {

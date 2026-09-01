@@ -184,6 +184,22 @@ enum DailyOperation {
     RuntimeSwitch,
 }
 
+#[derive(Serialize)]
+struct UsageSyncPayload<'a> {
+    os: &'static str,
+    arch: &'static str,
+    omg_version: &'static str,
+    commands_run: u64,
+    packages_installed: u64,
+    packages_searched: u64,
+    runtimes_switched: u64,
+    sbom_generated: u64,
+    vulnerabilities_found: u64,
+    time_saved_ms: u64,
+    current_streak: u32,
+    achievements: &'a [Achievement],
+}
+
 impl UsageStats {
     /// Get the usage stats file path
     fn path() -> Result<PathBuf> {
@@ -393,44 +409,25 @@ impl UsageStats {
             || (self.time_saved_ms >= 60_000 && self.last_sync == 0)
     }
 
-    /// Sync usage stats to API (async)
-    pub async fn sync(&mut self, license_key: &str) -> Result<()> {
-        // Get machine info for richer telemetry
-        let machine_id = crate::core::license::get_machine_id();
+    fn sync_payload(&self) -> UsageSyncPayload<'_> {
+        UsageSyncPayload {
+            os: std::env::consts::OS,
+            arch: std::env::consts::ARCH,
+            omg_version: env!("CARGO_PKG_VERSION"),
+            commands_run: self.queries_today,
+            packages_installed: self.installs_today,
+            packages_searched: self.searches_today,
+            runtimes_switched: self.runtimes_today,
+            sbom_generated: self.sbom_generated,
+            vulnerabilities_found: self.vulnerabilities_found,
+            time_saved_ms: self.time_saved_today_ms,
+            current_streak: self.current_streak,
+            achievements: &self.achievements,
+        }
+    }
 
-        // Hash hostname for privacy (SHA-256) - do not send in plaintext
-        let hostname_hash =
-            if let Ok(hostname_raw) = tokio::fs::read_to_string("/etc/hostname").await {
-                use sha2::{Digest, Sha256};
-                let mut hasher = Sha256::new();
-                hasher.update(hostname_raw.trim().as_bytes());
-                let result = hasher.finalize();
-                Some(hex::encode(&result[..8])) // First 16 chars of hash
-            } else {
-                None
-            };
-
-        // Send TODAY's values only (server replaces, not adds)
-        let payload = serde_json::json!({
-            "license_key": license_key,
-            "machine_id": machine_id,
-            "hostname": hostname_hash, // Hashed, not plaintext
-            "os": std::env::consts::OS,
-            "arch": std::env::consts::ARCH,
-            "omg_version": env!("CARGO_PKG_VERSION"),
-            "commands_run": self.queries_today,
-            "packages_installed": self.installs_today,
-            "packages_searched": self.searches_today,
-            "runtimes_switched": self.runtimes_today,
-            "installed_packages": self.installed_packages,
-            "runtime_usage_counts": self.runtime_usage_counts,
-            "sbom_generated": self.sbom_generated,
-            "vulnerabilities_found": self.vulnerabilities_found,
-            "time_saved_ms": self.time_saved_today_ms,
-            "current_streak": self.current_streak,
-            "achievements": self.achievements,
-        });
-
+    pub async fn sync(&mut self) -> Result<()> {
+        let payload = self.sync_payload();
         let client = crate::core::http::shared_client();
         client
             .post(super::service_api::REPORT_USAGE)
@@ -642,20 +639,17 @@ fn licensed_for_sync() -> Option<crate::core::license::StoredLicense> {
     crate::core::license::load_license().filter(super::license::StoredLicense::is_token_valid)
 }
 
-/// Resolve a background-sync candidate: gated on test mode, a valid license,
-/// and loadable persisted state.
-fn sync_candidate() -> Option<(UsageStats, crate::core::license::StoredLicense)> {
+fn sync_candidate() -> Option<UsageStats> {
     if crate::core::paths::test_mode() {
         return None;
     }
-    let license = licensed_for_sync()?;
-    let stats = load_for_tracking()?;
-    Some((stats, license))
+    licensed_for_sync()?;
+    load_for_tracking()
 }
 
 /// Sync usage in background if needed
 pub fn maybe_sync_background() {
-    let Some((mut stats, license)) = sync_candidate() else {
+    let Some(mut stats) = sync_candidate() else {
         return;
     };
     if stats.needs_sync() || stats.needs_immediate_sync() {
@@ -664,7 +658,7 @@ pub fn maybe_sync_background() {
             return;
         };
         runtime.spawn(async move {
-            if let Err(e) = stats.sync(&license.key).await {
+            if let Err(e) = stats.sync().await {
                 tracing::debug!("Usage sync failed: {e}");
             }
         });
@@ -673,13 +667,13 @@ pub fn maybe_sync_background() {
 
 /// Sync usage now (awaitable, for end of CLI commands)
 pub async fn sync_usage_now() {
-    let Some((mut stats, license)) = sync_candidate() else {
+    let Some(mut stats) = sync_candidate() else {
         return;
     };
     if stats.total_commands == 0 {
         return;
     }
-    if let Err(e) = stats.sync(&license.key).await {
+    if let Err(e) = stats.sync().await {
         tracing::debug!("Usage sync failed: {e}");
     }
 }
@@ -806,6 +800,41 @@ mod tests {
 
         let stats = UsageStats::load_from(&path).expect("final stats must be valid");
         assert_eq!(stats.total_commands, (WRITERS * UPDATES_PER_WRITER) as u64);
+    }
+
+    #[test]
+    fn outbound_usage_contains_only_aggregate_data() {
+        let stats = UsageStats {
+            queries_today: 4,
+            installs_today: 2,
+            searches_today: 1,
+            runtimes_today: 1,
+            installed_packages: HashMap::from([("private-package-name".to_string(), 2)]),
+            runtime_usage_counts: HashMap::from([("node".to_string(), 1)]),
+            ..Default::default()
+        };
+
+        let payload =
+            serde_json::to_value(stats.sync_payload()).expect("usage payload must serialize");
+        let object = payload
+            .as_object()
+            .expect("usage payload must be an object");
+        let serialized = payload.to_string();
+
+        assert_eq!(object.get("commands_run"), Some(&serde_json::json!(4)));
+        assert_eq!(
+            object.get("packages_installed"),
+            Some(&serde_json::json!(2))
+        );
+        assert_eq!(object.get("packages_searched"), Some(&serde_json::json!(1)));
+        assert_eq!(object.get("runtimes_switched"), Some(&serde_json::json!(1)));
+        assert!(!serialized.contains("private-package-name"));
+        assert!(!serialized.contains("private-license-key"));
+        assert!(!object.contains_key("installed_packages"));
+        assert!(!object.contains_key("runtime_usage_counts"));
+        assert!(!object.contains_key("license_key"));
+        assert!(!object.contains_key("machine_id"));
+        assert!(!object.contains_key("hostname"));
     }
 
     #[test]

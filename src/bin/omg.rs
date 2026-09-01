@@ -124,25 +124,22 @@ fn execute_fast_system_update(suffix: &str) -> Result<()> {
 /// package tokens (`omg <command> ... -- <packages...>`).
 ///
 /// Returns `None` when the invocation must fall through to full clap parsing:
-/// missing sub-command or `--` separator, or any flag-looking token after the
-/// separator. Flags after `--` (e.g. `update -- --check`) select behavior this
-/// minimal transaction path cannot honor, so they are never executed here.
+/// missing sub-command or `--` separator, any token between the command and
+/// separator, or any flag-looking package token. The minimal path accepts only
+/// the internal protocol shape `omg <command> -- <packages...>`.
 #[cfg(feature = "arch")]
 fn split_elevated_invocation(args: &[String]) -> Option<(&str, &[String])> {
     let command = args.get(1)?;
     let separator_pos = args.iter().position(|a| a == "--")?;
-    if separator_pos < 2 {
+    if separator_pos != 2 {
         return None;
     }
-    // The minimal transaction path honors exactly `omg <cmd> -- pkgs...`.
-    // ANY flag-looking token anywhere in the elevated invocation (before or
-    // after the separator) selects behavior this path cannot honor, so the
-    // full CLI re-dispatch must handle it instead. Silently dropping e.g.
+    // Flag-looking package tokens select behavior this path cannot honor, so
+    // the full CLI re-dispatch must handle them instead. Silently dropping
     // `--check` or `--dry-run` would turn a read-only request into a
     // destructive mutation.
-    if args[2..separator_pos]
+    if args[separator_pos + 1..]
         .iter()
-        .chain(&args[separator_pos + 1..])
         .any(|arg| arg.starts_with('-'))
     {
         return None;
@@ -153,6 +150,18 @@ fn split_elevated_invocation(args: &[String]) -> Option<(&str, &[String])> {
 
 /// ULTRA-FAST elevated path - when we're re-exec'd with sudo, skip ALL initialization
 /// and go straight to the transaction. This eliminates ~150ms of startup overhead.
+#[cfg(feature = "arch")]
+fn validate_fast_install_consent(packages: &[String], parent_validated: bool) -> Result<()> {
+    let includes_local_file = packages
+        .iter()
+        .any(|package| omg_lib::core::security::is_local_package_file(package));
+    anyhow::ensure!(
+        !includes_local_file || parent_validated,
+        "Local package archives require explicit consent: pass --allow-local-file after reviewing the archive source"
+    );
+    Ok(())
+}
+
 #[cfg(feature = "arch")]
 fn try_fast_elevated(
     args: &[String],
@@ -179,8 +188,14 @@ fn try_fast_elevated(
     // Handle commands that may have packages
     match command {
         "install" if !packages.is_empty() => {
-            // Validate package names or local package files (security)
+            // Validate package names or local package files (security).
             omg_lib::core::security::validate_package_names_or_files(&packages).ok()?;
+            // The parent marker proves this is a delegated flow that already
+            // passed the CLI's --allow-local-file gate. Direct root fast-path
+            // invocations must fall through to clap to establish consent.
+            if let Err(error) = validate_fast_install_consent(&packages, parent_records) {
+                return Some(Err(error));
+            }
             // Direct transaction with minimal success output
             let result = omg_lib::package_managers::execute_transaction(
                 packages.clone(),
@@ -616,6 +631,10 @@ fn main() {
     // arguments untouched and gets clap's unknown-command error.
     let (reexec_elevated, parent_records) =
         strip_internal_invocation_markers(&mut args, omg_lib::core::privilege::is_root());
+    // The marker has already been authenticated by root re-exec parsing.
+    // Preserve its history-ownership contract if flags route the child through
+    // the full clap path instead of the minimal transaction path.
+    omg_lib::core::privilege::set_parent_owns_history(parent_records);
 
     // FASTEST PATH: Elevated re-exec - skip ALL initialization
     // This runs when sudo omg re-execs us as root
@@ -1330,12 +1349,25 @@ mod fast_path_tests {
     };
 
     #[cfg(feature = "arch")]
-    use super::split_elevated_invocation;
-    #[cfg(feature = "arch")]
-    use super::strip_internal_invocation_markers;
+    use super::{
+        split_elevated_invocation, strip_internal_invocation_markers, validate_fast_install_consent,
+    };
 
     fn args(list: &[&str]) -> Vec<String> {
         list.iter().map(std::string::ToString::to_string).collect()
+    }
+
+    #[cfg(feature = "arch")]
+    #[test]
+    fn elevated_local_archive_requires_parent_validated_consent() {
+        let packages = vec!["/var/cache/pkg/example-1.0-1-x86_64.pkg.tar.zst".to_string()];
+        let error = validate_fast_install_consent(&packages, false)
+            .expect_err("direct root fast path must not bypass local-file consent");
+        assert!(error.to_string().contains("--allow-local-file"));
+        validate_fast_install_consent(&packages, true)
+            .expect("validated parent flow may delegate its approved archive");
+        validate_fast_install_consent(&["ripgrep".to_string()], false)
+            .expect("repository package does not require local-file consent");
     }
 
     #[cfg(feature = "arch")]
@@ -1407,8 +1439,13 @@ mod fast_path_tests {
 
     #[cfg(feature = "arch")]
     #[test]
-    fn elevated_plain_package_lists_still_split() {
-        let argv = args(&["omg", "install", "extra", "--", "ripgrep", "jq"]);
+    fn elevated_package_lists_require_the_exact_internal_shape() {
+        assert!(
+            split_elevated_invocation(&args(&["omg", "install", "extra", "--", "ripgrep", "jq"]))
+                .is_none(),
+            "pre-separator packages must fall through instead of disappearing"
+        );
+        let argv = args(&["omg", "install", "--", "ripgrep", "jq"]);
         let parsed = split_elevated_invocation(&argv)
             .map(|(command, packages)| (command, packages.to_vec()));
         assert_eq!(

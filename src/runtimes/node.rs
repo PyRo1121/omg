@@ -16,8 +16,9 @@ use std::path::{Path, PathBuf};
 
 use super::common::{
     activate_version, begin_staged_install, complete_staged_install, download_with_progress,
-    extract_tar_xz, normalize_version, parse_sha256_digest, print_already_installed,
-    print_installed, print_using, remove_file_best_effort,
+    extract_tar_xz, is_partial_version, normalize_version, parse_sha256_digest,
+    print_already_installed, print_installed, print_using, remove_file_best_effort,
+    resolve_partial_version,
 };
 use crate::core::http::download_client;
 
@@ -147,6 +148,7 @@ impl NodeManager {
     /// Install Node.js - PURE RUST, NO SUBPROCESS
     pub async fn install(&self, version: &str) -> Result<()> {
         let version = self.resolve_alias(version).await?;
+        let version = self.resolve_requested_version(&version).await?;
         crate::core::security::validate_runtime_version(&version)?;
         let version_dir = self.versions_dir.join(&version);
 
@@ -184,6 +186,22 @@ impl NodeManager {
         self.use_version(&version)?;
 
         Ok(())
+    }
+
+    /// Resolve a partial version request (`20`, `20.1`) to the newest matching
+    /// nodejs.org release. This must happen before any download URL is built;
+    /// the interpolation is exact-string, so an unresolved partial would 404.
+    /// Exact and non-numeric requests pass through unchanged, preserving the
+    /// already-installed fast path and the existing not-found UX.
+    async fn resolve_requested_version(&self, version: &str) -> Result<String> {
+        if !is_partial_version(version) {
+            return Ok(version.to_owned());
+        }
+        let available = self.list_available().await?;
+        Ok(
+            resolve_partial_version(&available_version_names(&available), version)
+                .unwrap_or_else(|| version.to_owned()),
+        )
     }
 
     /// Fetch SHA256 checksum from nodejs.org
@@ -229,6 +247,14 @@ fn node_platform() -> Result<String> {
         arch => anyhow::bail!("Unsupported architecture for Node.js: {arch}"),
     };
     Ok(format!("{os}-{arch}"))
+}
+
+/// Flatten a nodejs.org index into unprefixed version numbers.
+fn available_version_names(versions: &[NodeVersion]) -> Vec<String> {
+    versions
+        .iter()
+        .map(|version| version.version.trim_start_matches('v').to_owned())
+        .collect()
 }
 
 /// Find the newest release carrying an LTS codename matching `codename`
@@ -318,6 +344,63 @@ mod tests {
 
         // Anything else is rejected at the boundary instead of leaking through.
         assert!(serde_json::from_str::<Wire>(r#"{ "lts": 42 }"#).is_err());
+    }
+
+    fn fixture_versions() -> Vec<NodeVersion> {
+        vec![
+            NodeVersion {
+                version: "v21.0.0".to_string(),
+                lts: LtsStatus::NotLts,
+            },
+            NodeVersion {
+                version: "v20.10.0".to_string(),
+                lts: LtsStatus::Lts("Iron".to_string()),
+            },
+            NodeVersion {
+                version: "v20.1.0".to_string(),
+                lts: LtsStatus::Lts("Iron".to_string()),
+            },
+            NodeVersion {
+                version: "v18.19.0".to_string(),
+                lts: LtsStatus::Lts("Hydrogen".to_string()),
+            },
+        ]
+    }
+
+    #[test]
+    fn partial_major_resolves_to_the_newest_matching_fixture() {
+        let names = available_version_names(&fixture_versions());
+        assert_eq!(
+            resolve_partial_version(&names, "20").as_deref(),
+            Some("20.10.0")
+        );
+    }
+
+    #[test]
+    fn partial_minor_resolves_within_the_fixture_family() {
+        let names = available_version_names(&fixture_versions());
+        assert_eq!(
+            resolve_partial_version(&names, "20.1").as_deref(),
+            Some("20.1.0")
+        );
+    }
+
+    #[test]
+    fn exact_fixture_version_passes_through() {
+        let names = available_version_names(&fixture_versions());
+        assert_eq!(
+            resolve_partial_version(&names, "20.10.0").as_deref(),
+            Some("20.10.0")
+        );
+    }
+
+    #[test]
+    fn unknown_partial_has_no_resolution_and_falls_back_to_the_request() {
+        let names = available_version_names(&fixture_versions());
+        assert_eq!(resolve_partial_version(&names, "22"), None);
+        // Garbage never reaches the vendor list: it is not partial, so the
+        // manager passes it through to the existing not-found UX.
+        assert!(!is_partial_version("garbage"));
     }
 
     #[test]
