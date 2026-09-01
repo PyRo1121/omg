@@ -32,9 +32,22 @@ struct SearchCompletion {
     result: Result<Vec<crate::package_managers::SyncPackage>, String>,
 }
 
-struct ActiveSearch {
-    request_id: SearchRequestId,
-    task: tokio::task::JoinHandle<()>,
+enum SearchRequest {
+    Running {
+        request_id: SearchRequestId,
+        task: tokio::task::JoinHandle<()>,
+    },
+    Completed {
+        request_id: SearchRequestId,
+    },
+}
+
+impl SearchRequest {
+    const fn request_id(&self) -> SearchRequestId {
+        match self {
+            Self::Running { request_id, .. } | Self::Completed { request_id } => *request_id,
+        }
+    }
 }
 
 fn should_quit(key: KeyEvent, search_mode: bool) -> bool {
@@ -134,7 +147,7 @@ async fn run_app(
 ) -> Result<()> {
     let mut last_search = String::new();
     let mut next_search_id = 0;
-    let mut active_search = None;
+    let mut search_request = None;
     let (action_tx, mut action_rx) = tokio::sync::mpsc::unbounded_channel::<ActionResult>();
     let (search_tx, mut search_rx) = tokio::sync::mpsc::unbounded_channel::<SearchCompletion>();
     let (team_tx, mut team_rx) =
@@ -164,11 +177,15 @@ async fn run_app(
             report_action_result(app, result, label);
         }
         while let Ok(completion) = search_rx.try_recv() {
-            let active_request_id = active_search
-                .as_ref()
-                .map(|search: &ActiveSearch| search.request_id);
-            if apply_search_completion(app, active_request_id, completion) {
-                active_search = None;
+            let completed_request_id = completion.request_id;
+            if apply_search_completion(
+                app,
+                search_request.as_ref().map(SearchRequest::request_id),
+                completion,
+            ) {
+                search_request = Some(SearchRequest::Completed {
+                    request_id: completed_request_id,
+                });
             }
         }
         #[cfg(unix)]
@@ -221,12 +238,12 @@ async fn run_app(
 
                 if search_session_started(was_search_mode, app.search_mode) {
                     last_search.clear();
-                    cancel_search(&mut active_search);
+                    cancel_search(&mut search_request);
                 } else if was_search_mode && !app.search_mode && app.search_query.is_empty() {
-                    cancel_search(&mut active_search);
+                    cancel_search(&mut search_request);
                 }
                 if app.search_mode && app.search_query != last_search {
-                    cancel_search(&mut active_search);
+                    cancel_search(&mut search_request);
                 }
 
                 // A query committed with Enter before the debounce elapsed
@@ -238,11 +255,11 @@ async fn run_app(
                     && search_needs_dispatch(
                         &app.search_query,
                         &last_search,
-                        active_search.as_ref().map(|search| search.request_id),
+                        search_request.as_ref().map(SearchRequest::request_id),
                     );
                 if committed {
                     last_search.clone_from(&app.search_query);
-                    active_search = Some(dispatch_search(
+                    search_request = Some(dispatch_search(
                         app,
                         &last_search,
                         &search_tx,
@@ -259,12 +276,12 @@ async fn run_app(
             && search_needs_dispatch(
                 &app.search_query,
                 &last_search,
-                active_search.as_ref().map(|search| search.request_id),
+                search_request.as_ref().map(SearchRequest::request_id),
             )
             && app.last_query_change.elapsed() >= Duration::from_millis(SEARCH_DEBOUNCE_MS)
         {
             last_search.clone_from(&app.search_query);
-            active_search = Some(dispatch_search(
+            search_request = Some(dispatch_search(
                 app,
                 &last_search,
                 &search_tx,
@@ -309,7 +326,7 @@ fn dispatch_search(
     query: &str,
     sender: &tokio::sync::mpsc::UnboundedSender<SearchCompletion>,
     next_search_id: &mut u64,
-) -> ActiveSearch {
+) -> SearchRequest {
     app.search_results.clear();
     app.search_error = None;
     app.selected_index = 0;
@@ -326,12 +343,12 @@ fn dispatch_search(
             .map_err(|error| error.to_string());
         let _ = sender.send(SearchCompletion { request_id, result });
     });
-    ActiveSearch { request_id, task }
+    SearchRequest::Running { request_id, task }
 }
 
-fn cancel_search(active_search: &mut Option<ActiveSearch>) {
-    if let Some(search) = active_search.take() {
-        search.task.abort();
+fn cancel_search(search_request: &mut Option<SearchRequest>) {
+    if let Some(SearchRequest::Running { task, .. }) = search_request.take() {
+        task.abort();
     }
 }
 
@@ -509,6 +526,19 @@ mod tests {
         ));
     }
 
+    #[test]
+    fn completed_search_suppresses_duplicate_dispatch() {
+        let request = SearchRequest::Completed {
+            request_id: SearchRequestId(1),
+        };
+
+        assert!(!search_needs_dispatch(
+            "firefox",
+            "firefox",
+            Some(request.request_id())
+        ));
+    }
+
     #[tokio::test]
     async fn dispatch_clears_results_that_are_no_longer_current() {
         let mut app = app::App::new_detached();
@@ -538,7 +568,7 @@ mod tests {
     async fn cancelling_search_aborts_its_task() {
         let task = tokio::spawn(std::future::pending());
         let abort_handle = task.abort_handle();
-        let mut active_search = Some(ActiveSearch {
+        let mut active_search = Some(SearchRequest::Running {
             request_id: SearchRequestId(1),
             task,
         });

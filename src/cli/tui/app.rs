@@ -6,6 +6,8 @@ use anyhow::{Context, Result};
 use crossterm::event::KeyCode;
 use std::time::Instant;
 
+static DIRECT_SEARCH_GATE: tokio::sync::Semaphore = tokio::sync::Semaphore::const_new(1);
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Tab {
     Dashboard = 0,
@@ -363,10 +365,17 @@ impl App {
                 .collect());
         }
 
-        let query = query.to_string();
-        tokio::task::spawn_blocking(move || Self::search_packages_direct(&query))
+        let permit = DIRECT_SEARCH_GATE
+            .acquire()
             .await
-            .context("package search worker failed")?
+            .context("direct search gate closed")?;
+        let query = query.to_string();
+        tokio::task::spawn_blocking(move || {
+            let _permit = permit;
+            Self::search_packages_direct(&query)
+        })
+        .await
+        .context("package search worker failed")?
     }
 
     fn search_packages_direct(query: &str) -> Result<Vec<crate::package_managers::SyncPackage>> {
@@ -708,6 +717,15 @@ mod tests {
             installed: false,
         }];
         app
+    }
+
+    #[tokio::test]
+    async fn direct_search_gate_serializes_fallback_work() {
+        let first = DIRECT_SEARCH_GATE.acquire().await.expect("gate open");
+
+        assert!(DIRECT_SEARCH_GATE.try_acquire().is_err());
+        drop(first);
+        assert!(DIRECT_SEARCH_GATE.try_acquire().is_ok());
     }
 
     #[tokio::test]
