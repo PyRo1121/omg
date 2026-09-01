@@ -702,6 +702,7 @@ analyzer inference
 - **Ci**: Cross-platform install script and R2 release sync
 ### 🐛 Bug Fixes
 
+- Reconcile wave-three tests and portable clippy
 - Never collapse unparseable versions to zero (ARCH-R14) ([#99](https://github.com/PyRo1121/omg/issues/99))
 
 parse_version_or_zero silently fabricated version 0 for any string the
