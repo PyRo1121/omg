@@ -282,12 +282,16 @@ mod privilege_escalation {
                 !source.contains("sh.rustup.rs"),
                 "{relative} must not execute the mutable rustup shell installer"
             );
+            let uses_verified_rustup = source
+                .contains("rustup/archive/1.28.2/x86_64-unknown-linux-gnu/rustup-init")
+                && source
+                    .contains("20a06e644b0d9bd2fbdbfd52d42540bdde820ea7df86e92e533c073da0cdd43c");
+            let uses_pinned_toolchain_action = source
+                .contains("dtolnay/rust-toolchain@4360b52568e2003a75bf9bc1d59f33a8e3fc893c")
+                && source.contains("toolchain: \"1.93.1\"");
             assert!(
-                source.contains("rustup/archive/1.28.2/x86_64-unknown-linux-gnu/rustup-init")
-                    && source.contains(
-                        "20a06e644b0d9bd2fbdbfd52d42540bdde820ea7df86e92e533c073da0cdd43c",
-                    ),
-                "{relative} must pin and hash-check rustup-init"
+                uses_verified_rustup || uses_pinned_toolchain_action,
+                "{relative} must use either hash-verified rustup-init or the pinned toolchain action"
             );
         }
 
