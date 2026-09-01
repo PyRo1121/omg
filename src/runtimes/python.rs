@@ -14,9 +14,9 @@ use std::path::{Path, PathBuf};
 
 use super::common::{
     GITHUB_USER_AGENT, GithubRelease, activate_version_with_linked_binary, begin_staged_install,
-    complete_staged_install, download_with_progress, extract_tar_gz, normalize_version,
-    parse_sha256_digest, print_already_installed, print_installed, print_using,
-    remove_file_best_effort, validate_download_filename, version_cmp,
+    complete_staged_install, download_with_progress, extract_tar_gz, is_partial_version,
+    normalize_version, parse_sha256_digest, print_already_installed, print_installed, print_using,
+    remove_file_best_effort, resolve_partial_version, validate_download_filename, version_cmp,
 };
 use crate::core::http::download_client;
 
@@ -120,6 +120,7 @@ impl PythonManager {
     /// Install Python - PURE RUST, NO SUBPROCESS
     pub async fn install(&self, version: &str) -> Result<()> {
         let version = normalize_version(version);
+        let version = self.resolve_requested_version(&version).await?;
         crate::core::security::validate_runtime_version(&version)?;
         let version_dir = self.versions_dir.join(&version);
 
@@ -209,6 +210,21 @@ impl PythonManager {
         self.use_version(&version)?;
 
         Ok(())
+    }
+
+    /// Resolve a partial version request (`3`, `3.12`) to the newest matching
+    /// python-build-standalone release before any download URL is built;
+    /// `asset_matches_version` requires exact string equality, so an
+    /// unresolved partial would never match an asset. Exact and non-numeric
+    /// requests pass through unchanged, preserving the already-installed fast
+    /// path and the existing not-found UX.
+    async fn resolve_requested_version(&self, version: &str) -> Result<String> {
+        if !is_partial_version(version) {
+            return Ok(version.to_owned());
+        }
+        let available = self.list_available().await?;
+        let names: Vec<String> = available.into_iter().map(|entry| entry.version).collect();
+        Ok(resolve_partial_version(&names, version).unwrap_or_else(|| version.to_owned()))
     }
 
     /// Switch to a specific version
@@ -312,6 +328,25 @@ mod tests {
         assert_eq!(
             fs::read_link(temp.path().join("current")).expect("current link"),
             version_dir
+        );
+    }
+
+    #[test]
+    fn partial_request_resolves_to_the_newest_matching_python_fixture() {
+        let fixtures = ["3.12.0", "3.12.8", "3.11.0"]
+            .iter()
+            .map(|version| PythonVersion {
+                version: (*version).to_string(),
+            })
+            .collect::<Vec<_>>();
+        let names: Vec<String> = fixtures.into_iter().map(|entry| entry.version).collect();
+        assert_eq!(
+            resolve_partial_version(&names, "3.12").as_deref(),
+            Some("3.12.8")
+        );
+        assert_eq!(
+            resolve_partial_version(&names, "3").as_deref(),
+            Some("3.12.8")
         );
     }
 
