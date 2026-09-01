@@ -12,7 +12,7 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use crate::core::paths;
 use crate::package_managers::pacman_db;
 use crate::package_managers::types::{
-    LocalPackage, PackageInfo, SyncPackage, contains_ignore_case, is_orphan_package,
+    LocalPackage, PackageInfo, SyncPackage, contains_ignore_case, is_orphan_package, parse_version,
 };
 
 static CACHE_EPOCH: AtomicU64 = AtomicU64::new(0);
@@ -100,9 +100,20 @@ pub fn search_sync(query: &str) -> Result<Vec<SyncPackage>> {
                 {
                     let installed = handle.localdb().pkg(pkg.name()).is_ok();
 
+                    // A version that fails the strict parser must not compare
+                    // as a fabricated 0 (ARCH-R14); skip the entry visibly.
+                    let Some(version) = parse_version(pkg.version()) else {
+                        tracing::warn!(
+                            "Skipping sync package '{}' with unparseable version '{}'",
+                            pkg.name(),
+                            pkg.version()
+                        );
+                        continue;
+                    };
+
                     results.push(SyncPackage {
                         name: pkg.name().to_string(),
-                        version: super::types::parse_version_or_zero(pkg.version()),
+                        version,
                         description: pkg.desc().unwrap_or("").to_string(),
                         repo: db.name().to_string(),
                         download_size: pkg.download_size(),
@@ -121,9 +132,16 @@ pub fn get_package_info(name: &str) -> Result<Option<PackageInfo>> {
     with_handle(|handle| {
         // Try local first
         if let Ok(pkg) = handle.localdb().pkg(name) {
+            let Some(version) = parse_version(pkg.version()) else {
+                tracing::warn!(
+                    "Ignoring local package '{name}' with unparseable version '{}'",
+                    pkg.version()
+                );
+                return Ok(None);
+            };
             return Ok(Some(PackageInfo {
                 name: pkg.name().to_string(),
-                version: super::types::parse_version_or_zero(pkg.version()),
+                version,
                 description: pkg.desc().unwrap_or("").to_string(),
                 url: pkg.url().map(std::string::ToString::to_string),
                 size: pkg.isize().try_into().unwrap_or(0),
@@ -143,9 +161,16 @@ pub fn get_package_info(name: &str) -> Result<Option<PackageInfo>> {
         // Try sync databases
         for db in handle.syncdbs() {
             if let Ok(pkg) = db.pkg(name) {
+                let Some(version) = parse_version(pkg.version()) else {
+                    tracing::warn!(
+                        "Ignoring sync package '{name}' with unparseable version '{}'",
+                        pkg.version()
+                    );
+                    return Ok(None);
+                };
                 return Ok(Some(PackageInfo {
                     name: pkg.name().to_string(),
-                    version: super::types::parse_version_or_zero(pkg.version()),
+                    version,
                     description: pkg.desc().unwrap_or("").to_string(),
                     url: pkg.url().map(std::string::ToString::to_string),
                     size: pkg.isize().try_into().unwrap_or(0),
@@ -174,15 +199,27 @@ pub fn list_installed_fast() -> Result<Vec<LocalPackage>> {
         let pkg_count = localdb.pkgs().len();
 
         let mut results = Vec::with_capacity(pkg_count);
-        results.extend(localdb.pkgs().iter().map(|pkg| LocalPackage {
-            name: pkg.name().to_string(),
-            version: super::types::parse_version_or_zero(pkg.version()),
-            description: pkg.desc().unwrap_or("").to_string(),
-            install_size: pkg.isize(),
-            reason: match pkg.reason() {
-                PackageReason::Explicit => "explicit",
-                PackageReason::Depend => "dependency",
-            },
+        results.extend(localdb.pkgs().iter().filter_map(|pkg| {
+            // A version that fails the strict parser must not compare as a
+            // fabricated 0 (ARCH-R14); skip the entry visibly.
+            let Some(version) = parse_version(pkg.version()) else {
+                tracing::warn!(
+                    "Skipping installed package '{}' with unparseable version '{}'",
+                    pkg.name(),
+                    pkg.version()
+                );
+                return None;
+            };
+            Some(LocalPackage {
+                name: pkg.name().to_string(),
+                version,
+                description: pkg.desc().unwrap_or("").to_string(),
+                install_size: pkg.isize(),
+                reason: match pkg.reason() {
+                    PackageReason::Explicit => "explicit",
+                    PackageReason::Depend => "dependency",
+                },
+            })
         }));
 
         Ok(results)
