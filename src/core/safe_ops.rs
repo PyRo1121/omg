@@ -139,8 +139,24 @@ pub async fn atomic_write_file<P: AsRef<Path>, C: AsRef<[u8]>>(path: P, contents
         .context("Atomic file writer task failed")?
 }
 
-/// Safe synchronous file write with atomic operations
+/// Safe synchronous file write with atomic operations.
 pub fn atomic_write_file_sync<P: AsRef<Path>, C: AsRef<[u8]>>(path: P, contents: C) -> Result<()> {
+    atomic_write_file_sync_inner(path, contents, false)
+}
+
+/// Atomic write that restricts the result to the current user.
+pub fn atomic_write_file_sync_private<P: AsRef<Path>, C: AsRef<[u8]>>(
+    path: P,
+    contents: C,
+) -> Result<()> {
+    atomic_write_file_sync_inner(path, contents, true)
+}
+
+fn atomic_write_file_sync_inner<P: AsRef<Path>, C: AsRef<[u8]>>(
+    path: P,
+    contents: C,
+    private: bool,
+) -> Result<()> {
     let path = validate_path_syntax(path)?;
     let parent = path
         .parent()
@@ -149,13 +165,24 @@ pub fn atomic_write_file_sync<P: AsRef<Path>, C: AsRef<[u8]>>(path: P, contents:
     std::fs::create_dir_all(parent)
         .with_context(|| format!("Failed to create parent directory: {}", parent.display()))?;
 
-    let existing_permissions = match std::fs::symlink_metadata(&path) {
-        Ok(metadata) if metadata.file_type().is_file() => Some(metadata.permissions()),
-        Ok(_) => None,
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => None,
-        Err(error) => {
-            return Err(error)
-                .with_context(|| format!("Failed to inspect existing file: {}", path.display()));
+    let existing_permissions = if private {
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            Some(std::fs::Permissions::from_mode(0o600))
+        }
+        #[cfg(not(unix))]
+        None
+    } else {
+        match std::fs::symlink_metadata(&path) {
+            Ok(metadata) if metadata.file_type().is_file() => Some(metadata.permissions()),
+            Ok(_) => None,
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => None,
+            Err(error) => {
+                return Err(error).with_context(|| {
+                    format!("Failed to inspect existing file: {}", path.display())
+                });
+            }
         }
     };
 

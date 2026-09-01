@@ -1,6 +1,6 @@
 //! Clean/orphan functionality for packages
 
-#[cfg(any(feature = "arch", feature = "debian-pure"))]
+#[cfg(any(feature = "arch", feature = "debian", feature = "debian-pure"))]
 use anyhow::Context;
 use anyhow::Result;
 use owo_colors::OwoColorize;
