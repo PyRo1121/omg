@@ -11,13 +11,12 @@ use reqwest::{Client, Url};
 const DEFAULT_TIMEOUT: Duration = Duration::from_secs(15);
 const DEFAULT_CONNECT_TIMEOUT: Duration = Duration::from_secs(5);
 const DEFAULT_READ_TIMEOUT: Duration = Duration::from_secs(30);
-const DOWNLOAD_TIMEOUT: Duration = Duration::from_mins(5);
 const DOWNLOAD_CONNECT_TIMEOUT: Duration = Duration::from_secs(10);
 const DOWNLOAD_READ_TIMEOUT: Duration = Duration::from_secs(60);
 
 static SHARED_CLIENT: LazyLock<Client> = LazyLock::new(|| {
     build_client(
-        DEFAULT_TIMEOUT,
+        Some(DEFAULT_TIMEOUT),
         DEFAULT_CONNECT_TIMEOUT,
         DEFAULT_READ_TIMEOUT,
     )
@@ -27,13 +26,8 @@ static SHARED_CLIENT: LazyLock<Client> = LazyLock::new(|| {
 ///
 /// Uses `.read_timeout()` to detect stalled downloads - this timeout resets after
 /// each successful read, unlike `.timeout()` which covers the entire request.
-static DOWNLOAD_CLIENT: LazyLock<Client> = LazyLock::new(|| {
-    build_client(
-        DOWNLOAD_TIMEOUT,
-        DOWNLOAD_CONNECT_TIMEOUT,
-        DOWNLOAD_READ_TIMEOUT,
-    )
-});
+static DOWNLOAD_CLIENT: LazyLock<Client> =
+    LazyLock::new(|| build_client(None, DOWNLOAD_CONNECT_TIMEOUT, DOWNLOAD_READ_TIMEOUT));
 
 /// Build HTTP client with standard configuration.
 ///
@@ -48,15 +42,22 @@ static DOWNLOAD_CLIENT: LazyLock<Client> = LazyLock::new(|| {
 /// - Missing TLS certificates (system misconfiguration)
 /// - Incompatible TLS backend (build issue)
 #[expect(clippy::expect_used)] // System misconfiguration or build issue; panics documented above
-fn build_client(timeout: Duration, connect_timeout: Duration, read_timeout: Duration) -> Client {
-    Client::builder()
+fn build_client(
+    timeout: Option<Duration>,
+    connect_timeout: Duration,
+    read_timeout: Duration,
+) -> Client {
+    let mut builder = Client::builder()
         .user_agent("omg-package-manager")
-        .timeout(timeout)
         .connect_timeout(connect_timeout)
         .read_timeout(read_timeout)
         .pool_max_idle_per_host(32)
         .pool_idle_timeout(Duration::from_secs(90))
-        .tcp_nodelay(true)
+        .tcp_nodelay(true);
+    if let Some(timeout) = timeout {
+        builder = builder.timeout(timeout);
+    }
+    builder
         .build()
         .expect("Failed to build HTTP client - check TLS configuration")
 }
@@ -115,6 +116,39 @@ pub fn download_client() -> &'static Client {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[tokio::test]
+    async fn download_client_allows_long_transfers_that_keep_progressing() {
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let address = listener.local_addr().unwrap();
+        let server = tokio::spawn(async move {
+            let (mut stream, _) = listener.accept().await.unwrap();
+            let mut request = [0u8; 1024];
+            let _ = stream.read(&mut request).await.unwrap();
+            stream
+                .write_all(b"HTTP/1.1 200 OK\r\nContent-Length: 8\r\n\r\n")
+                .await
+                .unwrap();
+            for byte in b"progress" {
+                stream.write_all(&[*byte]).await.unwrap();
+                tokio::time::sleep(Duration::from_millis(50)).await;
+            }
+        });
+
+        let client = build_client(None, Duration::from_millis(100), Duration::from_millis(100));
+        let body = client
+            .get(format!("http://{address}"))
+            .send()
+            .await
+            .unwrap()
+            .bytes()
+            .await
+            .unwrap();
+        assert_eq!(&body[..], b"progress");
+        server.await.unwrap();
+    }
 
     #[test]
     fn retry_policy_is_bounded_and_rejects_client_errors() {
