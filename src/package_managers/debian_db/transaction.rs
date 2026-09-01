@@ -18,6 +18,7 @@ use std::io::{BufReader, Read, Seek, SeekFrom};
 use std::os::unix::fs::PermissionsExt;
 use std::path::{Component, Path, PathBuf};
 use std::process::Command;
+use std::sync::{Arc, LazyLock};
 use std::time::Duration;
 
 use anyhow::{Context, Result};
@@ -67,7 +68,8 @@ const DPKG_FRONTEND_LOCK_PATH: &str = "/var/lib/dpkg/lock-frontend";
 const DPKG_DATABASE_LOCK_PATH: &str = "/var/lib/dpkg/lock";
 const DPKG_UPDATES_PATH: &str = "/var/lib/dpkg/updates";
 const MAINTAINER_SCRIPT_TIMEOUT: Duration = Duration::from_secs(15 * 60);
-static DPKG_TRANSACTION_LOCK: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
+static DPKG_TRANSACTION_LOCK: LazyLock<Arc<tokio::sync::Mutex<()>>> =
+    LazyLock::new(|| Arc::new(tokio::sync::Mutex::new(())));
 
 struct DpkgLockGuard {
     frontend: File,
@@ -331,8 +333,8 @@ impl Transaction {
         // POSIX record locks interoperate with apt/dpkg but are process-wide,
         // so pair them with a Tokio mutex to serialize transactions inside
         // this process as well. Keep both locks through rollback/completion.
-        let _process_lock = DPKG_TRANSACTION_LOCK.lock().await;
-        let _dpkg_locks = acquire_dpkg_locks().await?;
+        let process_lock = Arc::clone(&DPKG_TRANSACTION_LOCK).lock_owned().await;
+        let dpkg_locks = acquire_dpkg_locks().await?;
         tracing::info!(
             "Starting pipelined transaction with {} packages",
             self.package_count()
@@ -351,9 +353,11 @@ impl Transaction {
 
         // Configure packages (must be sequential after all unpacking)
         self.state = TransactionState::Configuring;
-        if let Err(e) = self.configure_packages_on_blocking_pool().await {
+        if let Err(e) = self
+            .configure_packages_on_blocking_pool(process_lock, dpkg_locks)
+            .await
+        {
             tracing::error!("Configuration failed: {}", e);
-            self.rollback()?;
             return Err(e).context("Failed during package configuration");
         }
 
@@ -616,26 +620,38 @@ impl Transaction {
         Ok(())
     }
 
-    /// Run [`Self::configure_packages`] on Tokio's blocking pool.
-    ///
-    /// The transaction stays in a shared slot so a join failure can still
-    /// restore backups, rollback files, and the temporary directory. Dropping
-    /// this future does not abort `spawn_blocking`; `execute` must stay joined
-    /// until the worker returns (the install and upgrade callers do).
-    async fn configure_packages_on_blocking_pool(&mut self) -> Result<()> {
-        let slot = std::sync::Arc::new(std::sync::Mutex::new(std::mem::take(self)));
-        let worker_slot = std::sync::Arc::clone(&slot);
+    async fn configure_packages_on_blocking_pool(
+        &mut self,
+        process_lock: tokio::sync::OwnedMutexGuard<()>,
+        dpkg_locks: DpkgLockGuard,
+    ) -> Result<()> {
+        let slot = Arc::new(std::sync::Mutex::new(std::mem::take(self)));
+        let worker_slot = Arc::clone(&slot);
         let join_result = tokio::task::spawn_blocking(move || {
+            let _process_lock = process_lock;
+            let _dpkg_locks = dpkg_locks;
             let mut transaction = worker_slot
                 .lock()
                 .unwrap_or_else(std::sync::PoisonError::into_inner);
-            std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
                 transaction.configure_packages()
             }))
-            .unwrap_or_else(|_| Err(anyhow::anyhow!("package configuration worker panicked")))
+            .unwrap_or_else(|_| Err(anyhow::anyhow!("package configuration worker panicked")));
+            if let Err(error) = result {
+                return match std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                    transaction.rollback()
+                })) {
+                    Ok(Ok(())) => Err(error),
+                    Ok(Err(rollback_error)) => {
+                        Err(error.context(format!("rollback also failed: {rollback_error:#}")))
+                    }
+                    Err(_) => Err(error.context("package configuration rollback panicked")),
+                };
+            }
+            Ok(())
         })
         .await;
-        *self = std::sync::Arc::into_inner(slot)
+        *self = Arc::into_inner(slot)
             .context("package configuration worker still holds the transaction")?
             .into_inner()
             .unwrap_or_else(std::sync::PoisonError::into_inner);
@@ -2315,7 +2331,21 @@ pub fn dry_run(result: &ResolutionResult) -> String {
 
 #[cfg(test)]
 mod tests {
+    use std::os::unix::fs::OpenOptionsExt;
+
     use super::*;
+
+    async fn configure_on_test_locks(transaction: &mut Transaction) -> Result<()> {
+        let lock_directory = tempfile::tempdir().expect("lock directory");
+        let process_lock = Arc::clone(&DPKG_TRANSACTION_LOCK).lock_owned().await;
+        let dpkg_locks = acquire_dpkg_locks_at(
+            &lock_directory.path().join("frontend.lock"),
+            &lock_directory.path().join("database.lock"),
+        )?;
+        transaction
+            .configure_packages_on_blocking_pool(process_lock, dpkg_locks)
+            .await
+    }
 
     #[test]
     fn maintainer_scripts_receive_the_dpkg_environment_contract() {
@@ -2405,8 +2435,7 @@ mod tests {
         transaction.state = TransactionState::Configuring;
         transaction.temp_dir = Some(TempDir::new().expect("workspace"));
 
-        transaction
-            .configure_packages_on_blocking_pool()
+        configure_on_test_locks(&mut transaction)
             .await
             .expect("empty configuration");
 
@@ -2436,8 +2465,7 @@ mod tests {
             installed_files_by_package: HashMap::from([("broken".to_string(), Vec::new())]),
         };
 
-        let error = transaction
-            .configure_packages_on_blocking_pool()
+        let error = configure_on_test_locks(&mut transaction)
             .await
             .expect_err("missing control metadata must fail the transaction");
 
@@ -2447,6 +2475,86 @@ mod tests {
         );
         assert_eq!(transaction.to_install[0].name, "broken");
         assert!(transaction.temp_dir.is_some());
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn cancelled_configuration_keeps_locks_until_rollback_finishes() {
+        let workspace = TempDir::new().expect("workspace");
+        let control_dir = workspace.path().join("broken/DEBIAN");
+        fs::create_dir_all(&control_dir).expect("control dir");
+        let control_path = control_dir.join("control");
+        nix::unistd::mkfifo(
+            &control_path,
+            nix::sys::stat::Mode::S_IRUSR | nix::sys::stat::Mode::S_IWUSR,
+        )
+        .expect("control fifo");
+        let installed_file = workspace.path().join("installed-by-transaction");
+        fs::write(&installed_file, b"payload").expect("installed file");
+        let transaction = Transaction {
+            state: TransactionState::Configuring,
+            to_install: vec![PackageAction {
+                name: "broken".to_string(),
+                version: "1.0".to_string(),
+                deb_path: None,
+                url: None,
+                size: 0,
+                sha256: None,
+            }],
+            to_remove: Vec::new(),
+            to_upgrade: Vec::new(),
+            temp_dir: Some(workspace),
+            backups: HashMap::new(),
+            installed_files: vec![installed_file.clone()],
+            installed_files_by_package: HashMap::from([("broken".to_string(), Vec::new())]),
+        };
+        let lock_directory = tempfile::tempdir().expect("lock directory");
+        let process_lock = Arc::clone(&DPKG_TRANSACTION_LOCK).lock_owned().await;
+        let dpkg_locks = acquire_dpkg_locks_at(
+            &lock_directory.path().join("frontend.lock"),
+            &lock_directory.path().join("database.lock"),
+        )
+        .expect("dpkg locks");
+        let task = tokio::spawn(async move {
+            let mut transaction = transaction;
+            transaction
+                .configure_packages_on_blocking_pool(process_lock, dpkg_locks)
+                .await
+        });
+
+        let fifo_writer = tokio::time::timeout(Duration::from_secs(2), async {
+            loop {
+                match fs::OpenOptions::new()
+                    .write(true)
+                    .custom_flags(nix::libc::O_NONBLOCK)
+                    .open(&control_path)
+                {
+                    Ok(writer) => break writer,
+                    Err(error) if error.raw_os_error() == Some(nix::libc::ENXIO) => {
+                        tokio::task::yield_now().await;
+                    }
+                    Err(error) => panic!("opening control fifo failed: {error}"),
+                }
+            }
+        })
+        .await
+        .expect("configuration worker did not read control metadata");
+
+        task.abort();
+        task.await
+            .expect_err("configuration waiter must be cancelled");
+        assert!(DPKG_TRANSACTION_LOCK.try_lock().is_err());
+        drop(fifo_writer);
+
+        tokio::time::timeout(Duration::from_secs(2), async {
+            loop {
+                if !installed_file.exists() && DPKG_TRANSACTION_LOCK.try_lock().is_ok() {
+                    break;
+                }
+                tokio::task::yield_now().await;
+            }
+        })
+        .await
+        .expect("blocking worker did not roll back before releasing locks");
     }
 
     #[test]

@@ -252,7 +252,7 @@ impl PackageService {
     pub async fn update(&self) -> Result<()> {
         let mut changes = Vec::new();
 
-        // Get updates before proceeding to log them
+        self.backend.sync().await?;
         let updates = self.list_updates().await?;
         for up in &updates {
             changes.push(PackageChange {
@@ -527,6 +527,23 @@ mod tests {
             .await
             .expect_err("local package metadata must be checked by policy before installation");
         assert!(error.to_string().contains("banned-local"), "{error:#}");
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn update_refreshes_metadata_before_listing_updates() -> Result<()> {
+        let backend = Arc::new(crate::core::testing::TestPackageManager::new());
+        backend.set_fail_operations(true);
+        let service = PackageService::builder(backend).without_history().build()?;
+
+        let error = service
+            .update()
+            .await
+            .expect_err("metadata refresh failure must stop the update");
+        assert!(
+            error.to_string().contains("Sync operation failed"),
+            "{error:#}"
+        );
         Ok(())
     }
 
