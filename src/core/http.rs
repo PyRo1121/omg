@@ -137,7 +137,9 @@ mod tests {
             }
         });
 
-        let client = build_client(None, Duration::from_millis(100), Duration::from_millis(100));
+        // Read timeout must stay well above the 50ms inter-byte gap so CI
+        // scheduling jitter cannot look like a stalled download.
+        let client = build_client(None, Duration::from_secs(1), Duration::from_secs(5));
         let body = client
             .get(format!("http://{address}"))
             .send()
