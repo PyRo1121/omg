@@ -6,7 +6,7 @@
 use std::future::Future;
 use std::pin::Pin;
 
-use anyhow::{Context, Result};
+use anyhow::{Context, Result, anyhow};
 
 use crate::core::is_root;
 use crate::core::{Package, PackageSource};
@@ -56,8 +56,9 @@ impl crate::package_managers::PackageManager for AptPackageManager {
         Box::pin(async move {
             // Try fast path first (index/mmap loading does disk I/O; keep it
             // off the executor thread)
+            let fast_query = query.clone();
             let fast_results =
-                tokio::task::spawn_blocking(move || super::debian_db::search_fast(&query))
+                tokio::task::spawn_blocking(move || super::debian_db::search_fast(&fast_query))
                     .await
                     .context("Debian search task failed")?;
             if let Ok(results) = fast_results
@@ -158,8 +159,9 @@ impl crate::package_managers::PackageManager for AptPackageManager {
             crate::core::security::validate_package_name(&package)?;
 
             // Try fast path first
+            let fast_package = package.clone();
             if let Ok(Some(pkg)) =
-                tokio::task::spawn_blocking(move || super::debian_db::get_info_fast(&package))
+                tokio::task::spawn_blocking(move || super::debian_db::get_info_fast(&fast_package))
                     .await
                     .context("Debian info task failed")?
             {
