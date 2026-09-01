@@ -43,6 +43,10 @@ fn should_refresh_team(tab: app::Tab, in_flight: bool, elapsed: Duration) -> boo
         && elapsed >= Duration::from_secs(TEAM_REFRESH_INTERVAL_SECS)
 }
 
+fn search_session_started(was_search_mode: bool, search_mode: bool) -> bool {
+    !was_search_mode && search_mode
+}
+
 pub async fn run() -> Result<()> {
     let app = app::App::new()?;
     run_tui_with_app(app).await
@@ -181,6 +185,10 @@ async fn run_app(
                     app.handle_key(key.code);
                 } else {
                     handle_special_key_actions(app, key.code, &action_tx);
+                }
+
+                if search_session_started(was_search_mode, app.search_mode) {
+                    last_search.clear();
                 }
 
                 // A query committed with Enter before the debounce elapsed
@@ -380,6 +388,13 @@ mod tests {
             due.checked_sub(Duration::from_secs(1))
                 .expect("test duration remains positive")
         ));
+    }
+
+    #[test]
+    fn entering_search_mode_invalidates_the_previous_dispatch_key() {
+        assert!(search_session_started(false, true));
+        assert!(!search_session_started(true, true));
+        assert!(!search_session_started(true, false));
     }
 
     #[test]
