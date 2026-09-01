@@ -32,6 +32,11 @@ struct SearchCompletion {
     result: Result<Vec<crate::package_managers::SyncPackage>, String>,
 }
 
+struct ActiveSearch {
+    request_id: SearchRequestId,
+    task: tokio::task::JoinHandle<()>,
+}
+
 fn should_quit(key: KeyEvent, search_mode: bool) -> bool {
     (key.code == KeyCode::Char('c') && key.modifiers.contains(KeyModifiers::CONTROL))
         || (key.code == KeyCode::Char('q') && key.modifiers.is_empty() && !search_mode)
@@ -129,7 +134,7 @@ async fn run_app(
 ) -> Result<()> {
     let mut last_search = String::new();
     let mut next_search_id = 0;
-    let mut active_search_id = None;
+    let mut active_search = None;
     let (action_tx, mut action_rx) = tokio::sync::mpsc::unbounded_channel::<ActionResult>();
     let (search_tx, mut search_rx) = tokio::sync::mpsc::unbounded_channel::<SearchCompletion>();
     let (team_tx, mut team_rx) =
@@ -159,7 +164,12 @@ async fn run_app(
             report_action_result(app, result, label);
         }
         while let Ok(completion) = search_rx.try_recv() {
-            apply_search_completion(app, active_search_id, completion);
+            let active_request_id = active_search
+                .as_ref()
+                .map(|search: &ActiveSearch| search.request_id);
+            if apply_search_completion(app, active_request_id, completion) {
+                active_search = None;
+            }
         }
         #[cfg(unix)]
         while let Ok((connected, status)) = daemon_rx.try_recv() {
@@ -211,12 +221,12 @@ async fn run_app(
 
                 if search_session_started(was_search_mode, app.search_mode) {
                     last_search.clear();
-                    active_search_id = None;
+                    cancel_search(&mut active_search);
                 } else if was_search_mode && !app.search_mode && app.search_query.is_empty() {
-                    active_search_id = None;
+                    cancel_search(&mut active_search);
                 }
                 if app.search_mode && app.search_query != last_search {
-                    active_search_id = None;
+                    cancel_search(&mut active_search);
                 }
 
                 // A query committed with Enter before the debounce elapsed
@@ -225,10 +235,14 @@ async fn run_app(
                 // can never satisfy this condition.)
                 let committed = was_search_mode
                     && !app.search_mode
-                    && search_needs_dispatch(&app.search_query, &last_search, active_search_id);
+                    && search_needs_dispatch(
+                        &app.search_query,
+                        &last_search,
+                        active_search.as_ref().map(|search| search.request_id),
+                    );
                 if committed {
                     last_search.clone_from(&app.search_query);
-                    active_search_id = Some(dispatch_search(
+                    active_search = Some(dispatch_search(
                         app,
                         &last_search,
                         &search_tx,
@@ -242,11 +256,15 @@ async fn run_app(
         // event. This must run on every loop iteration — inside the key-event
         // branch it would never fire after the final keystroke.
         if app.search_mode
-            && search_needs_dispatch(&app.search_query, &last_search, active_search_id)
+            && search_needs_dispatch(
+                &app.search_query,
+                &last_search,
+                active_search.as_ref().map(|search| search.request_id),
+            )
             && app.last_query_change.elapsed() >= Duration::from_millis(SEARCH_DEBOUNCE_MS)
         {
             last_search.clone_from(&app.search_query);
-            active_search_id = Some(dispatch_search(
+            active_search = Some(dispatch_search(
                 app,
                 &last_search,
                 &search_tx,
@@ -291,7 +309,7 @@ fn dispatch_search(
     query: &str,
     sender: &tokio::sync::mpsc::UnboundedSender<SearchCompletion>,
     next_search_id: &mut u64,
-) -> SearchRequestId {
+) -> ActiveSearch {
     app.search_results.clear();
     app.search_error = None;
     app.selected_index = 0;
@@ -302,13 +320,19 @@ fn dispatch_search(
     let request_id = SearchRequestId(*next_search_id);
     let query = query.to_string();
     let sender = sender.clone();
-    tokio::spawn(async move {
+    let task = tokio::spawn(async move {
         let result = app::App::search_packages(&query)
             .await
             .map_err(|error| error.to_string());
         let _ = sender.send(SearchCompletion { request_id, result });
     });
-    request_id
+    ActiveSearch { request_id, task }
+}
+
+fn cancel_search(active_search: &mut Option<ActiveSearch>) {
+    if let Some(search) = active_search.take() {
+        search.task.abort();
+    }
 }
 
 fn apply_search_completion(
@@ -502,11 +526,28 @@ mod tests {
         let (sender, _receiver) = tokio::sync::mpsc::unbounded_channel();
         let mut next_search_id = 0;
 
-        dispatch_search(&mut app, "", &sender, &mut next_search_id);
+        let mut active_search = Some(dispatch_search(&mut app, "", &sender, &mut next_search_id));
+        cancel_search(&mut active_search);
 
         assert!(app.search_results.is_empty());
         assert!(app.search_error.is_none());
         assert_eq!(app.selected_index, 0);
+    }
+
+    #[tokio::test]
+    async fn cancelling_search_aborts_its_task() {
+        let task = tokio::spawn(std::future::pending());
+        let abort_handle = task.abort_handle();
+        let mut active_search = Some(ActiveSearch {
+            request_id: SearchRequestId(1),
+            task,
+        });
+
+        cancel_search(&mut active_search);
+        tokio::task::yield_now().await;
+
+        assert!(active_search.is_none());
+        assert!(abort_handle.is_finished());
     }
 
     #[test]
