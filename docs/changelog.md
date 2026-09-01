@@ -702,6 +702,69 @@ analyzer inference
 - **Ci**: Cross-platform install script and R2 release sync
 ### 🐛 Bug Fixes
 
+- **Dnf**: Preserve inventory on metadata failures ([#111](https://github.com/PyRo1121/omg/issues/111))
+
+* fix(dnf): preserve inventory on metadata failures
+
+* fix(dnf): publish installed cache as one snapshot
+
+Replace the DashMap clear-then-insert sequence with a single RwLock map
+
+assignment so concurrent readers never observe a partial inventory.
+
+- **License**: Record the expiry clock before JWT exp rejects ([#113](https://github.com/PyRo1121/omg/issues/113))
+
+* fix(license): persist a monotonic expiry clock
+
+* fix(license): record the expiry clock before JWT exp rejects
+
+A first verification after token expiry never reached the watermark
+
+update, so a later clock rollback could revive the same token.
+
+Observe wall-clock time first, then keep JWT and watermark checks.
+
+- **Daemon**: Select one Debian package candidate ([#110](https://github.com/PyRo1121/omg/issues/110))
+- **Ci**: Actually install nextest after SHA-pinning install-action ([#93](https://github.com/PyRo1121/omg/issues/93))
+
+* fix(ci): pass tool names to SHA-pinned install-action
+
+Dependabot replaced taiki-e/install-action@nextest (and @cargo-audit,
+
+@cargo-deny, @git-cliff) with commit SHAs, which dropped the tool name
+
+the action reads from the git ref. Install then no-ops and cargo nextest
+
+exits 101 in Quick Gate. Pin v2 and pass tool: explicitly.
+
+* fix(ci): pass tool: nextest to SHA-pinned install-action
+
+* fix(ci): force 0600 on security exports replacing permissive files
+
+* fix(ci): force 0600 on security exports replacing permissive files
+
+* fix(ci): force 0600 on security exports replacing permissive files
+
+* fix(ci): force 0600 on security exports replacing permissive files
+
+* fix(ci): force 0600 on security exports replacing permissive files
+
+* fix(ci): force 0600 on security exports replacing permissive files
+
+* fix(ci): force 0600 on security exports replacing permissive files
+
+- **Debian**: Offload package configuration ([#108](https://github.com/PyRo1121/omg/issues/108))
+
+* fix(debian): offload package configuration
+
+* fix(debian): restore transaction after configure join failure
+
+Keep the transaction in a shared slot so execute can still roll back
+
+if the blocking worker fails to join. spawn_blocking still cannot be
+
+aborted if execute is dropped mid-configure.
+
 - **License**: Persist a monotonic expiry clock ([#112](https://github.com/PyRo1121/omg/issues/112))
 - **Http**: Let active downloads exceed total timeout ([#109](https://github.com/PyRo1121/omg/issues/109))
 
@@ -3542,6 +3605,7 @@ the documented 'omg explicit' contract
 chore(deps): update rust crate git2 to 0.20 [security]
 ### 🔧 Maintenance
 
+- **Deps**: Update rust dependencies ([#91](https://github.com/PyRo1121/omg/issues/91))
 - Add isolated OMG CLI verification skill ([#107](https://github.com/PyRo1121/omg/issues/107))
 
 * chore: add isolated OMG CLI verification skill
