@@ -702,6 +702,28 @@ analyzer inference
 - **Ci**: Cross-platform install script and R2 release sync
 ### 🐛 Bug Fixes
 
+- **Rust**: Refresh rolling toolchain channels ([#104](https://github.com/PyRo1121/omg/issues/104))
+
+* fix(rust): refresh rolling toolchain channels
+
+* fix(rust): replace published toolchains when rolling channels refresh
+
+complete_staged_install refuses an existing version directory, so a
+
+real channel bump downloaded a new tree and then failed to publish.
+
+Nightly and beta also keep the same rustc semver across many manifests;
+
+compare the full version string so those rolls are detected.
+
+- Remove identifiers from usage sync ([#102](https://github.com/PyRo1121/omg/issues/102))
+- **Privacy**: Export durable state and purge telemetry ([#101](https://github.com/PyRo1121/omg/issues/101))
+
+* fix: complete privacy export and purge telemetry
+
+* fix(privacy): redact license secrets from local export
+
+- Require consent before migration import ([#100](https://github.com/PyRo1121/omg/issues/100))
 - **Ci**: Restore baseline checks ([#105](https://github.com/PyRo1121/omg/issues/105))
 
 * fix(ci): restore coverage source inputs
