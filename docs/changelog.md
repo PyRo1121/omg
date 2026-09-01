@@ -702,6 +702,15 @@ analyzer inference
 - **Ci**: Cross-platform install script and R2 release sync
 ### 🐛 Bug Fixes
 
+- **License**: Persist a monotonic expiry clock ([#112](https://github.com/PyRo1121/omg/issues/112))
+- **Http**: Let active downloads exceed total timeout ([#109](https://github.com/PyRo1121/omg/issues/109))
+
+* fix(http): let active downloads exceed total timeout
+
+* test(http): widen download-progress read timeout
+
+Keep the inter-byte gap at 50ms but give the client a 5s read timeout so CI scheduling jitter cannot look like a stalled download.
+
 - **Debian**: Preserve pending dpkg updates ([#106](https://github.com/PyRo1121/omg/issues/106))
 - **Rust**: Refresh rolling toolchain channels ([#104](https://github.com/PyRo1121/omg/issues/104))
 
@@ -3532,6 +3541,20 @@ the documented 'omg explicit' contract
 
 chore(deps): update rust crate git2 to 0.20 [security]
 ### 🔧 Maintenance
+
+- Add isolated OMG CLI verification skill ([#107](https://github.com/PyRo1121/omg/issues/107))
+
+* chore: add isolated OMG CLI verification skill
+
+* fix(verify-omg): align size recipe and refuse mutations before build
+
+The inspect-size drive used `omg size glibc`, which clap rejects because
+
+size takes `--tree`/`--limit`. Launch also hardcoded a machine path, and
+
+drive required a built binary before the read-only allowlist, so mutation
+
+commands were not refused until after `verify-omg build`.
 
 - **Deps**: Update rust dependencies ([#90](https://github.com/PyRo1121/omg/issues/90))
 - **Deps**: Bump the dependencies group across 1 directory with 42 updates
