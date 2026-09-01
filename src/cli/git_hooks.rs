@@ -388,9 +388,11 @@ mod tests {
             ],
         );
 
+        // macOS tempdirs often live under `/var/folders` while `git rev-parse`
+        // reports the canonical `/private/var/folders` path.
         assert_eq!(
-            get_hooks_dir_at(&worktree).unwrap(),
-            main.join(".git/hooks")
+            get_hooks_dir_at(&worktree).unwrap().canonicalize().unwrap(),
+            main.join(".git/hooks").canonicalize().unwrap()
         );
     }
 
