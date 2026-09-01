@@ -693,7 +693,9 @@ impl AurClient {
                 seen_names.insert(p.name.clone());
                 if let Some(local_pkg) = pacman_db::get_local_package(&p.name)? {
                     let p_ver = crate::package_managers::parse_version_or_zero(&p.version);
-                    if p_ver > local_pkg.version {
+                    if crate::package_managers::types::compare_versions(&p_ver, &local_pkg.version)
+                        == std::cmp::Ordering::Greater
+                    {
                         updates.push((p.name, local_pkg.version, p_ver));
                     }
                 }
@@ -786,7 +788,9 @@ impl AurClient {
 
                 if let Some(local_pkg) = pacman_db::get_local_package(&p.name)? {
                     let p_ver = crate::package_managers::parse_version_or_zero(&p.version);
-                    if p_ver > local_pkg.version {
+                    if crate::package_managers::types::compare_versions(&p_ver, &local_pkg.version)
+                        == std::cmp::Ordering::Greater
+                    {
                         updates.push((p.name, local_pkg.version, p_ver));
                     }
                 }
