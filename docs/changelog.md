@@ -702,6 +702,7 @@ analyzer inference
 - **Ci**: Cross-platform install script and R2 release sync
 ### 🐛 Bug Fixes
 
+- **Debian**: Preserve pending dpkg updates ([#106](https://github.com/PyRo1121/omg/issues/106))
 - **Rust**: Refresh rolling toolchain channels ([#104](https://github.com/PyRo1121/omg/issues/104))
 
 * fix(rust): refresh rolling toolchain channels
