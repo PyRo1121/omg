@@ -509,9 +509,12 @@ impl App {
         self.show_popup = false;
     }
 
-    /// Record a search-query mutation for debounce purposes.
+    /// Record a search-query mutation and invalidate results for the old query.
     pub fn note_query_change(&mut self) {
         self.last_query_change = Instant::now();
+        self.search_results.clear();
+        self.search_error = None;
+        self.selected_index = 0;
     }
 
     pub fn tick(&mut self) -> Result<()> {
@@ -766,6 +769,22 @@ mod tests {
         assert_eq!(app.search_query, "rkj5/");
         assert!(app.search_mode);
         assert_eq!(app.current_tab, Tab::Packages);
+    }
+
+    #[test]
+    fn emptying_search_query_clears_previous_results() {
+        let mut app = test_app();
+        app.search_mode = true;
+        app.search_query.push('f');
+        app.search_error = Some("old search failed".to_string());
+        app.selected_index = 1;
+
+        app.handle_key(KeyCode::Backspace);
+
+        assert!(app.search_query.is_empty());
+        assert!(app.search_results.is_empty());
+        assert!(app.search_error.is_none());
+        assert_eq!(app.selected_index, 0);
     }
 
     #[test]
