@@ -2,7 +2,11 @@ use anyhow::{Context, Result};
 
 use crate::cli::packages::common::try_daemon_list_updates;
 use crate::cli::{modern_ui, style, ui};
-use crate::package_managers::{get_package_manager, types::UpdateInfo};
+use crate::core::security::{PolicyError, SecurityPolicy};
+use crate::package_managers::{
+    get_package_manager,
+    types::{UpdateInfo, Version},
+};
 
 /// Default AUR build concurrency when `OMG_AUR_PARALLEL` is unset.
 const DEFAULT_AUR_BUILD_CONCURRENCY: usize = 2;
@@ -47,6 +51,37 @@ fn aur_build_concurrency(raw: Option<&str>) -> usize {
             DEFAULT_AUR_BUILD_CONCURRENCY
         }
     }
+}
+
+/// AUR update candidates split by the user's security policy.
+struct ScreenedAurUpdates {
+    allowed: Vec<(String, Version, Version)>,
+    skipped: Vec<(String, PolicyError)>,
+}
+
+/// Screen AUR update candidates against the user's security policy.
+///
+/// Mirrors the install lane: AUR sources are Community grade, so each
+/// candidate goes through [`SecurityPolicy::check_source`]. A violation
+/// skips that candidate only (fail closed per candidate), never the whole
+/// update run; the caller must surface each skip with the violated rule.
+fn screen_aur_updates_against_policy(
+    policy: &SecurityPolicy,
+    candidates: Vec<(String, Version, Version)>,
+) -> ScreenedAurUpdates {
+    let mut screened = ScreenedAurUpdates {
+        allowed: Vec::with_capacity(candidates.len()),
+        skipped: Vec::new(),
+    };
+    for (name, old_version, new_version) in candidates {
+        if let Err(violation) = policy.check_source(&name, true, None) {
+            tracing::warn!("Security policy blocks AUR update for {name}: {violation}");
+            screened.skipped.push((name, violation));
+            continue;
+        }
+        screened.allowed.push((name, old_version, new_version));
+    }
+    screened
 }
 
 /// Number of repositories configured in pacman.conf, for honest sync
@@ -229,6 +264,11 @@ pub async fn update(check_only: bool, yes: bool, dry_run: bool) -> Result<()> {
         if crate::core::paths::test_mode() || crate::core::env::distro::is_debian_like() {
             Vec::new()
         } else {
+            // The AUR lane must enforce the user's security policy the same
+            // way install does; a corrupt policy file aborts the update
+            // rather than silently upgrading off-policy packages.
+            let policy = crate::core::security::SecurityPolicy::load_default()
+                .map_err(anyhow::Error::from)?;
             let aur_pb = modern_ui::modern_spinner("Checking", "AUR packages");
             let aur_start = std::time::Instant::now();
             let client = crate::package_managers::AurClient::new()?;
@@ -236,13 +276,11 @@ pub async fn update(check_only: bool, yes: bool, dry_run: bool) -> Result<()> {
                 Ok(aur_updates) => {
                     let aur_elapsed = aur_start.elapsed();
                     let count = aur_updates.len();
-                    let packages: Vec<String> = aur_updates
-                        .iter()
-                        .map(|(name, _, _)| name.clone())
-                        .collect();
-                    for (name, old_ver, new_ver) in aur_updates {
+                    let ScreenedAurUpdates { allowed, skipped } =
+                        screen_aur_updates_against_policy(&policy, aur_updates);
+                    for (name, old_ver, new_ver) in &allowed {
                         all_updates.push(UpdateInfo {
-                            name,
+                            name: name.clone(),
                             old_version: old_ver.to_string(),
                             new_version: new_ver.to_string(),
                             repo: "AUR".to_string(),
@@ -261,7 +299,13 @@ pub async fn update(check_only: bool, yes: bool, dry_run: bool) -> Result<()> {
                             ),
                         );
                     }
-                    packages
+                    for (name, violation) in &skipped {
+                        modern_ui::print_warning(&format!(
+                            "Skipping AUR update for {}: {violation}",
+                            style::package(name)
+                        ));
+                    }
+                    allowed.into_iter().map(|(name, _, _)| name).collect()
                 }
                 Err(error) => {
                     modern_ui::finish_clear(&aur_pb);
@@ -570,5 +614,98 @@ mod tests {
         assert_eq!(changes[0].old_version.as_deref(), Some("1.0"));
         assert_eq!(changes[0].new_version.as_deref(), Some("2.0"));
         assert_eq!(changes[0].source, "core");
+    }
+
+    fn aur_update(name: &str) -> (String, Version, Version) {
+        (
+            name.to_string(),
+            crate::package_managers::parse_version_or_zero("1.0-1"),
+            crate::package_managers::parse_version_or_zero("2.0-1"),
+        )
+    }
+
+    #[test]
+    fn banned_package_is_skipped_while_other_candidates_still_update() {
+        let policy = SecurityPolicy {
+            banned_packages: vec!["evil".to_string()],
+            ..SecurityPolicy::default()
+        };
+
+        let ScreenedAurUpdates { allowed, skipped } = screen_aur_updates_against_policy(
+            &policy,
+            vec![aur_update("evil"), aur_update("good")],
+        );
+
+        assert_eq!(
+            allowed
+                .iter()
+                .map(|(name, _, _)| name.as_str())
+                .collect::<Vec<_>>(),
+            ["good"],
+            "only the banned candidate may be skipped"
+        );
+        assert_eq!(
+            skipped
+                .iter()
+                .map(|(name, violation)| (name.as_str(), violation.to_string()))
+                .collect::<Vec<_>>(),
+            [(
+                "evil",
+                "Package 'evil' is banned by security policy".to_string()
+            )],
+            "the skip report must name the violated policy rule"
+        );
+    }
+
+    #[test]
+    fn allow_aur_false_blocks_every_aur_candidate() {
+        let policy = SecurityPolicy {
+            allow_aur: false,
+            ..SecurityPolicy::default()
+        };
+
+        let ScreenedAurUpdates { allowed, skipped } =
+            screen_aur_updates_against_policy(&policy, vec![aur_update("paru"), aur_update("yay")]);
+
+        assert!(allowed.is_empty(), "no AUR candidate may survive");
+        assert_eq!(
+            skipped
+                .iter()
+                .map(|(name, violation)| (name.as_str(), violation.to_string()))
+                .collect::<Vec<_>>(),
+            [
+                (
+                    "paru",
+                    "Package 'paru' is from AUR, which is disabled by security policy".to_string()
+                ),
+                (
+                    "yay",
+                    "Package 'yay' is from AUR, which is disabled by security policy".to_string()
+                ),
+            ]
+        );
+    }
+
+    #[test]
+    fn missing_policy_file_leaves_aur_updates_unscreened() {
+        let temp = tempfile::TempDir::new().expect("temporary directory");
+        // Same fallback path as load_default: an absent policy.toml resolves
+        // to the built-in defaults, so the update lane must behave exactly as
+        // it did before enforcement existed.
+        let policy = SecurityPolicy::load_optional(temp.path().join("policy.toml"))
+            .expect("a missing policy file must fall back to the built-in defaults");
+
+        let ScreenedAurUpdates { allowed, skipped } =
+            screen_aur_updates_against_policy(&policy, vec![aur_update("paru"), aur_update("yay")]);
+
+        assert_eq!(
+            allowed
+                .iter()
+                .map(|(name, _, _)| name.as_str())
+                .collect::<Vec<_>>(),
+            ["paru", "yay"],
+            "no policy file means no enforcement and zero behavior change"
+        );
+        assert!(skipped.is_empty());
     }
 }
