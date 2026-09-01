@@ -616,20 +616,30 @@ impl Transaction {
         Ok(())
     }
 
+    /// Run [`Self::configure_packages`] on Tokio's blocking pool.
+    ///
+    /// The transaction stays in a shared slot so a join failure can still
+    /// restore backups, rollback files, and the temporary directory. Dropping
+    /// this future does not abort `spawn_blocking`; `execute` must stay joined
+    /// until the worker returns (the install and upgrade callers do).
     async fn configure_packages_on_blocking_pool(&mut self) -> Result<()> {
-        let transaction = std::mem::take(self);
-        let (transaction, result) = tokio::task::spawn_blocking(move || {
-            let mut transaction = transaction;
-            let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        let slot = std::sync::Arc::new(std::sync::Mutex::new(std::mem::take(self)));
+        let worker_slot = std::sync::Arc::clone(&slot);
+        let join_result = tokio::task::spawn_blocking(move || {
+            let mut transaction = worker_slot
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner);
+            std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
                 transaction.configure_packages()
             }))
-            .unwrap_or_else(|_| Err(anyhow::anyhow!("package configuration worker panicked")));
-            (transaction, result)
+            .unwrap_or_else(|_| Err(anyhow::anyhow!("package configuration worker panicked")))
         })
-        .await
-        .context("package configuration worker failed")?;
-        *self = transaction;
-        result
+        .await;
+        *self = std::sync::Arc::into_inner(slot)
+            .context("package configuration worker still holds the transaction")?
+            .into_inner()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        join_result.context("package configuration worker failed")?
     }
 
     /// Configure all unpacked packages
