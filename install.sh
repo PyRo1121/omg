@@ -262,6 +262,10 @@ install_from_release() {
   detected_distro=$(detect_distro)
   detected_arch=$(detect_arch)
 
+  if [[ "$detected_os" == "darwin" && "$detected_arch" == "x86_64" ]]; then
+    error "Intel macOS is unsupported. OMG supports macOS releases on Apple Silicon (aarch64)."
+  fi
+
   # Use GitHub releases (always up-to-date)
   local release_json
   if ! release_json=$(fetch_release_json 2>/dev/null); then
