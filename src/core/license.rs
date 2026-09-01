@@ -364,7 +364,18 @@ impl StoredLicense {
     }
 
     fn verified_payload_with_key(&self, verification_key: &[u8]) -> Option<JwtPayload> {
-        let payload = verify_jwt_with_key(self.token.as_deref()?, verification_key)?;
+        let token = self.token.as_deref()?;
+        // Observe wall-clock time before JWT `exp` can reject. A first run
+        // after expiry must still raise the persisted floor; otherwise a
+        // later clock rollback can revive the same token.
+        let observed_floor = match license_clock_floor() {
+            Ok(observed_floor) => observed_floor,
+            Err(error) => {
+                tracing::warn!(error = %error, "Failed to enforce the license clock watermark");
+                return None;
+            }
+        };
+        let payload = verify_jwt_with_key(token, verification_key)?;
         if payload.lic != self.key {
             return None;
         }
@@ -377,13 +388,6 @@ impl StoredLicense {
         // high-water mark of observed wall-clock time, not just the mutable
         // system clock. A token whose expiry predates the watermark is dead
         // even if the current (rolled-back) clock says otherwise.
-        let observed_floor = match license_clock_floor() {
-            Ok(observed_floor) => observed_floor,
-            Err(error) => {
-                tracing::warn!(error = %error, "Failed to enforce the license clock watermark");
-                return None;
-            }
-        };
         if payload.exp <= observed_floor {
             tracing::warn!(
                 exp = payload.exp,
@@ -413,8 +417,6 @@ impl StoredLicense {
 
 /// Observed-time high-water mark for license verification (anti clock-rollback).
 fn license_clock_watermark_path() -> PathBuf {
-    // Tests redirect this via the same env knob data_dir honors so the
-    // watermark file stays out of the developer's real profile.
     #[cfg(test)]
     let override_path = { WATERMARK_PATH_OVERRIDE.with(|cell| cell.borrow().clone()) };
     #[cfg(test)]
@@ -428,6 +430,24 @@ fn license_clock_watermark_path() -> PathBuf {
 thread_local! {
     static WATERMARK_PATH_OVERRIDE: std::cell::RefCell<Option<PathBuf>> =
         const { std::cell::RefCell::new(None) };
+}
+
+#[cfg(test)]
+struct WatermarkPathGuard;
+
+#[cfg(test)]
+impl Drop for WatermarkPathGuard {
+    fn drop(&mut self) {
+        WATERMARK_PATH_OVERRIDE.with(|slot| *slot.borrow_mut() = None);
+    }
+}
+
+#[cfg(test)]
+fn override_watermark_path(path: PathBuf) -> WatermarkPathGuard {
+    WATERMARK_PATH_OVERRIDE.with(|slot| {
+        *slot.borrow_mut() = Some(path);
+    });
+    WatermarkPathGuard
 }
 
 /// Read the persisted high-water mark. Missing state is initialized on first
@@ -1023,9 +1043,8 @@ mod tests {
     #[test]
     fn license_expiry_survives_system_clock_rollback() {
         let temp = tempfile::TempDir::new().unwrap();
-        WATERMARK_PATH_OVERRIDE.with(|slot| {
-            *slot.borrow_mut() = Some(temp.path().join("license-clock.highwater"));
-        });
+        let watermark_path = temp.path().join("license-clock.highwater");
+        let _guard = override_watermark_path(watermark_path.clone());
 
         let now = jsonwebtoken::get_current_timestamp().cast_signed();
         let token = signed_test_token_with_claims(
@@ -1048,9 +1067,6 @@ mod tests {
         // Fresh watermark: token is valid, and verification advances the mark
         // to (at least) the current wall clock.
         assert!(stored.verified_payload_with_key(TEST_PUBLIC_KEY).is_some());
-        let watermark_path = WATERMARK_PATH_OVERRIDE
-            .with(|slot| slot.borrow().clone())
-            .expect("override set");
         let advanced = load_clock_watermark(&watermark_path)
             .expect("read watermark")
             .expect("watermark initialized");
@@ -1073,6 +1089,40 @@ mod tests {
         assert_eq!(
             license_clock_floor_with(&watermark_path, now).expect("read monotonic watermark"),
             now + 7200
+        );
+    }
+
+    #[test]
+    fn license_watermark_advances_when_jwt_expiry_rejects() {
+        let temp = tempfile::TempDir::new().unwrap();
+        let watermark_path = temp.path().join("license-clock.highwater");
+        let _guard = override_watermark_path(watermark_path.clone());
+
+        let now = jsonwebtoken::get_current_timestamp().cast_signed();
+        let token = signed_test_token_with_claims(
+            LICENSE_TOKEN_ISSUER,
+            LICENSE_TOKEN_AUDIENCE,
+            Some(get_machine_id()),
+            now - 60,
+        );
+        let stored = StoredLicense {
+            key: "license-1".to_string(),
+            tier: "pro".to_string(),
+            features: vec!["sbom".to_string()],
+            customer: None,
+            expires_at: None,
+            validated_at: now,
+            token: Some(token),
+            machine_id: Some(get_machine_id()),
+        };
+
+        assert!(stored.verified_payload_with_key(TEST_PUBLIC_KEY).is_none());
+        let floor = load_clock_watermark(&watermark_path)
+            .expect("read watermark")
+            .expect("expired verification must still persist observed time");
+        assert!(
+            floor >= now,
+            "JWT exp rejection must still raise the watermark: {floor} < {now}"
         );
     }
 
