@@ -116,7 +116,6 @@ async fn install_with_replacement_budget(
     if packages.is_empty() {
         anyhow::bail!("No packages specified");
     }
-    validate_install_targets(packages)?;
 
     let includes_local_file = packages.iter().any(|package| {
         if crate::core::security::is_local_package_file(package) {
@@ -134,6 +133,7 @@ async fn install_with_replacement_budget(
         !includes_local_file || allow_local_file,
         "Local package archives require explicit consent: pass --allow-local-file after reviewing the archive source"
     );
+    validate_install_targets(packages)?;
 
     if dry_run {
         return install_dry_run(packages).await;
