@@ -182,10 +182,15 @@ pub struct LocalDbPackage {
     pub install_date: String,
     pub licenses: Vec<String>,
     pub explicit: bool, // Explicitly installed vs dependency
-    /// Packages that hard-require this package (`%REQUIREDBY%`).
-    pub required_by: Vec<String>,
-    /// Packages that optionally depend on this package (`%OPTFOR%`).
-    pub optional_for: Vec<String>,
+    /// Runtime dependencies this package declares (`%DEPENDS%`).
+    ///
+    /// Reverse dependencies are derived from these sets at query time (see
+    /// [`compute_required_names`]): modern pacman never writes
+    /// `%REQUIREDBY%`/`%OPTFOR%` sections into local desc files, so trusting
+    /// such fields made every non-explicit package look like an orphan.
+    pub depends: Vec<String>,
+    /// Virtual packages/capabilities this package satisfies (`%PROVIDES%`).
+    pub provides: Vec<String>,
 }
 
 impl Default for LocalDbPackage {
@@ -197,8 +202,8 @@ impl Default for LocalDbPackage {
             install_date: String::new(),
             licenses: Vec::new(),
             explicit: false,
-            required_by: Vec::new(),
-            optional_for: Vec::new(),
+            depends: Vec::new(),
+            provides: Vec::new(),
         }
     }
 }
@@ -494,66 +499,38 @@ fn require_package_version(raw: &str) -> Result<Version> {
 fn parse_local_desc(path: &Path) -> Result<LocalDbPackage> {
     let content = std::fs::read_to_string(path)?;
 
-    // The typed `alpm-db` schemas do not model `%REQUIREDBY%`/`%OPTFOR%`, so
-    // those sections are always scanned directly; they feed the canonical
-    // orphan rule (`types::is_orphan_package`).
-    let (required_by, optional_for) = extract_local_relations(&content);
-
-    let mut pkg = if let Ok(desc) = alpm_db::desc::DbDescFileV1::from_str(&content) {
-        LocalDbPackage {
+    // Modern pacman never writes `%REQUIREDBY%`/`%OPTFOR%` sections into local
+    // desc files, so reverse dependencies cannot be read from disk. They are
+    // derived from `%DEPENDS%`/`%PROVIDES%` at query time (see
+    // `compute_required_names`) under the canonical orphan rule
+    // (`types::is_orphan_package`, `pacman -Qdt` semantics).
+    if let Ok(desc) = alpm_db::desc::DbDescFileV1::from_str(&content) {
+        Ok(LocalDbPackage {
             name: desc.name.to_string(),
             version: desc.version.into(),
             desc: desc.description.to_string(),
             install_date: desc.installdate.to_string(),
             licenses: desc.license.iter().map(ToString::to_string).collect(),
             explicit: matches!(desc.reason, alpm_types::PackageInstallReason::Explicit),
-            ..LocalDbPackage::default()
-        }
+            depends: desc.depends.iter().map(ToString::to_string).collect(),
+            provides: desc.provides.iter().map(ToString::to_string).collect(),
+        })
     } else if let Ok(desc) = alpm_db::desc::DbDescFileV2::from_str(&content) {
         // V2 (has XDATA support)
-        LocalDbPackage {
+        Ok(LocalDbPackage {
             name: desc.name.to_string(),
             version: desc.version.into(),
             desc: desc.description.to_string(),
             install_date: desc.installdate.to_string(),
             licenses: desc.license.iter().map(ToString::to_string).collect(),
             explicit: matches!(desc.reason, alpm_types::PackageInstallReason::Explicit),
-            ..LocalDbPackage::default()
-        }
+            depends: desc.depends.iter().map(ToString::to_string).collect(),
+            provides: desc.provides.iter().map(ToString::to_string).collect(),
+        })
     } else {
         // Fallback: manual parsing for edge cases
-        parse_local_desc_manual(&content)?
-    };
-
-    pkg.required_by = required_by;
-    pkg.optional_for = optional_for;
-    Ok(pkg)
-}
-
-/// Extract `%REQUIREDBY%` and `%OPTFOR%`/`%OPTIONALFOR%` sections from a
-/// local desc file. Both historical spellings are accepted.
-fn extract_local_relations(content: &str) -> (Vec<String>, Vec<String>) {
-    let mut required_by = Vec::new();
-    let mut optional_for = Vec::new();
-    let mut section = "";
-
-    for line in content.lines() {
-        let line = line.trim();
-        if line.is_empty() {
-            continue;
-        }
-        if line.starts_with('%') && line.ends_with('%') {
-            section = line;
-            continue;
-        }
-        match section {
-            "%REQUIREDBY%" => required_by.push(line.to_string()),
-            "%OPTFOR%" | "%OPTIONALFOR%" => optional_for.push(line.to_string()),
-            _ => {}
-        }
+        parse_local_desc_manual(&content)
     }
-
-    (required_by, optional_for)
 }
 
 /// Manual local desc parser as fallback
@@ -564,6 +541,8 @@ fn parse_local_desc_manual(content: &str) -> Result<LocalDbPackage> {
     let mut install_date = String::new();
     let mut reason = String::new();
     let mut licenses = Vec::new();
+    let mut depends = Vec::new();
+    let mut provides = Vec::new();
     let mut current_field: Option<&str> = None;
 
     for line in content.lines() {
@@ -585,6 +564,8 @@ fn parse_local_desc_manual(content: &str) -> Result<LocalDbPackage> {
             Some("%INSTALLDATE%") => install_date = line.to_string(),
             Some("%REASON%") => reason = line.to_string(),
             Some("%LICENSE%") => licenses.push(line.to_string()),
+            Some("%DEPENDS%") => depends.push(line.to_string()),
+            Some("%PROVIDES%") => provides.push(line.to_string()),
             _ => {}
         }
     }
@@ -608,7 +589,8 @@ fn parse_local_desc_manual(content: &str) -> Result<LocalDbPackage> {
         install_date,
         licenses,
         explicit,
-        ..LocalDbPackage::default()
+        depends,
+        provides,
     })
 }
 
@@ -855,7 +837,10 @@ fn ensure_sync_cache_loaded(sync_dir: &Path) -> Result<()> {
 /// Ensure local cache is loaded (fast if already loaded)
 fn ensure_local_cache_loaded(local_dir: &Path) -> Result<()> {
     let current_mtime = get_local_db_mtime(local_dir)?;
-    ensure_cache_loaded(&LOCAL_DB_CACHE, "local_db", current_mtime, || {
+    // "local_db_rdeps": the local cache stores `%DEPENDS%`/`%PROVIDES%` for
+    // reverse-dependency derivation now; the pre-rdeps `local_db` bitcode
+    // layout is incompatible, so caches are namespaced per format.
+    ensure_cache_loaded(&LOCAL_DB_CACHE, "local_db_rdeps", current_mtime, || {
         parse_local_db(local_dir)
     })
 }
@@ -964,7 +949,8 @@ pub fn invalidate_caches() -> Result<()> {
 
     let cache_dir = paths::cache_dir();
     remove_cache_file(&cache_dir.join("sync_db.bin"))?;
-    remove_cache_file(&cache_dir.join("local_db.bin"))?;
+    remove_cache_file(&cache_dir.join("local_db_rdeps.bin"))?;
+    remove_cache_file(&cache_dir.join("local_db.bin"))?; // legacy pre-rdeps layout
     Ok(())
 }
 
@@ -1025,7 +1011,12 @@ pub fn check_updates_cached() -> Result<Vec<CachedUpdate>> {
                 .filter(|sync_pkg| {
                     !sync_package_is_ignored(sync_pkg, &ignored_packages, &ignored_groups)
                 })
-                .filter(|sync_pkg| local_pkg.version < sync_pkg.version)
+                .filter(|sync_pkg| {
+                    crate::package_managers::types::compare_versions(
+                        &local_pkg.version,
+                        &sync_pkg.version,
+                    ) == std::cmp::Ordering::Less
+                })
                 .map(|sync_pkg| (name, local_pkg, sync_pkg))
         })
         .map(|(name, local_pkg, sync_pkg)| {
@@ -1119,11 +1110,68 @@ pub fn get_potential_aur_packages() -> Result<Vec<String>> {
     Ok(potential)
 }
 
+/// Reduce an alpm relation string to the bare name that participates in
+/// dependency resolution: `"curl>=7.0"` → `"curl"`,
+/// `"libfoo.so=1-64"` → `"libfoo.so"`.
+fn dependency_base_name(relation: &str) -> &str {
+    relation.split(['<', '>', '=']).next().unwrap_or(relation)
+}
+
+/// Names of installed packages that at least one other installed package
+/// requires, derived from the cached `%DEPENDS%`/`%PROVIDES%` sets.
+///
+/// Mirrors libalpm's reverse-dependency resolution (including virtual
+/// dependencies satisfied by provisions) so the pure-Rust fast path matches
+/// `pacman -Qdt` instead of trusting `%REQUIREDBY%` sections, which modern
+/// pacman no longer writes.
+fn compute_required_names(
+    packages: &HashMap<String, LocalDbPackage>,
+) -> std::collections::HashSet<String> {
+    // Virtual dependencies ("app depends on virtual-svc") are satisfied by
+    // the installed packages whose `%PROVIDES%` name that capability.
+    let mut providers: HashMap<&str, Vec<&str>> = HashMap::new();
+    for (name, pkg) in packages {
+        for provide in &pkg.provides {
+            providers
+                .entry(dependency_base_name(provide))
+                .or_default()
+                .push(name);
+        }
+    }
+
+    let mut required: std::collections::HashSet<String> =
+        std::collections::HashSet::with_capacity(packages.len());
+    for pkg in packages.values() {
+        for depend in &pkg.depends {
+            let target = dependency_base_name(depend);
+            if target == pkg.name {
+                continue;
+            }
+            if packages.contains_key(target) {
+                required.insert(target.to_owned());
+            }
+            if let Some(provider_names) = providers.get(target) {
+                required.extend(
+                    provider_names
+                        .iter()
+                        .filter(|provider| **provider != pkg.name)
+                        .map(|provider| (*provider).to_owned()),
+                );
+            }
+        }
+    }
+
+    required
+}
+
 /// Get total package counts - INSTANT (<1ms with cache)
 ///
-/// The third element counts true orphans under the canonical rule
-/// (`types::is_orphan_package`): dependencies that nothing requires or
-/// optionally requires.
+/// The third element counts orphans under the canonical rule
+/// (`types::is_orphan_package`, `pacman -Qdt` semantics): dependencies that
+/// no other installed package requires. Reverse dependencies are derived
+/// from the cached `%DEPENDS%`/`%PROVIDES%` sets via
+/// [`compute_required_names`]; modern pacman never writes `%REQUIREDBY%`
+/// into local desc files.
 #[inline]
 pub fn get_counts_fast() -> Result<(usize, usize, usize)> {
     let local_dir = paths::pacman_local_dir_result()?;
@@ -1131,15 +1179,15 @@ pub fn get_counts_fast() -> Result<(usize, usize, usize)> {
 
     let cache = read_lock(&LOCAL_DB_CACHE);
     let total = cache.packages.len();
+    let required = compute_required_names(&cache.packages);
     let mut explicit = 0;
     let mut orphans = 0;
-    for pkg in cache.packages.values() {
+    for (name, pkg) in &cache.packages {
         if pkg.explicit {
             explicit += 1;
         } else if crate::package_managers::types::is_orphan_package(
             pkg.explicit,
-            pkg.required_by.is_empty(),
-            pkg.optional_for.is_empty(),
+            !required.contains(name),
         ) {
             orphans += 1;
         }
@@ -1159,6 +1207,39 @@ pub fn get_explicit_count() -> Result<usize> {
 #[expect(clippy::unwrap_used, clippy::expect_used)] // Idiomatic in tests: panics on failure with clear error context
 mod tests {
     use super::*;
+
+    /// Regression for ARCH-N1: `alpm_types::Version`'s `Ord` impl unwraps
+    /// `parse::<usize>()` on numeric segments above `usize::MAX` and panics
+    /// inside comparators reached from `check_updates_cached`. Ordering must
+    /// route through `compare_versions`, stay deterministic, and preserve
+    /// the upstream ordering for valid versions that fit in `usize`.
+    #[test]
+    fn version_comparison_with_overflow_numeric_segment_does_not_panic() {
+        use std::cmp::Ordering;
+
+        let huge = crate::package_managers::parse_version_or_zero("1.18446744073709551616-1");
+        let one = crate::package_managers::parse_version_or_zero("1.0-1");
+        let compare = |a: &alpm_types::Version, b: &alpm_types::Version| {
+            crate::package_managers::types::compare_versions(a, b)
+        };
+
+        // Deterministic and antisymmetric on both sides of the overflow.
+        assert_eq!(compare(&huge, &one), Ordering::Greater);
+        assert_eq!(compare(&one, &huge), Ordering::Less);
+        assert_eq!(compare(&huge, &one), compare(&huge, &one));
+        assert_eq!(compare(&huge, &huge), Ordering::Equal);
+
+        // Versions without overflowing segments must keep the exact
+        // upstream ordering (the helper must be a pure passthrough there).
+        let battery = ["1.0-1", "2.0", "1:2.3.4-5", "10.1-2", "1.10", "1.9"];
+        for a in battery {
+            for b in battery {
+                let va = crate::package_managers::parse_version_or_zero(a);
+                let vb = crate::package_managers::parse_version_or_zero(b);
+                assert_eq!(compare(&va, &vb), va.cmp(&vb), "{a} vs {b}");
+            }
+        }
+    }
 
     /// Regression: the compression-format probe must rewind the stream before
     /// handing it to a decoder. It previously consumed the first 4 bytes, so
@@ -1531,14 +1612,148 @@ mod tests {
         }
     }
 
+    /// Fixture helper: writes local desc files shaped like modern pacman's
+    /// output — no `%REQUIREDBY%`/`%OPTFOR%` sections ever — so reverse
+    /// dependencies exist only in other packages' `%DEPENDS%`/`%OPTDEPENDS%`
+    /// sections, exactly like `pacman -Qdt` sees them.
+    fn write_local_desc(temp: &tempfile::TempDir, name: &str, reason: &str, extra: &str) {
+        let dir = temp.path().join(name);
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(
+            dir.join("desc"),
+            format!("%NAME%\n{name}\n\n%VERSION%\n1.0-1\n\n%REASON%\n{reason}\n{extra}"),
+        )
+        .unwrap();
+    }
+
+    /// Parse the fixture db and apply the canonical orphan rule with
+    /// reverse dependencies derived from `%DEPENDS%`/`%PROVIDES%`.
+    fn fixture_orphans(temp: &tempfile::TempDir) -> Vec<String> {
+        let packages = parse_local_db(temp.path()).unwrap();
+        let required = compute_required_names(&packages);
+        let mut orphans: Vec<String> = packages
+            .iter()
+            .filter(|(name, pkg)| {
+                crate::package_managers::types::is_orphan_package(
+                    pkg.explicit,
+                    !required.contains(name.as_str()),
+                )
+            })
+            .map(|(name, _)| name.clone())
+            .collect();
+        orphans.sort();
+        orphans
+    }
+
+    #[test]
+    fn dependency_base_name_strips_version_constraints_and_sonames() {
+        assert_eq!(dependency_base_name("curl"), "curl");
+        assert_eq!(dependency_base_name("curl>=7.0"), "curl");
+        assert_eq!(dependency_base_name("libfoo.so=1-64"), "libfoo.so");
+    }
+
+    /// Regression (audit ARCH-R1): a dependency whose desc lacks the dead
+    /// `%REQUIREDBY%` section — as every modern pacman desc does — but which
+    /// another package's `%DEPENDS%` names is NOT an orphan. The fast path
+    /// previously counted every such package as an orphan.
+    #[test]
+    fn required_dependency_without_requireby_section_is_not_an_orphan() {
+        let temp = tempfile::TempDir::new().unwrap();
+        write_local_desc(&temp, "app-main", "0", "\n%DEPENDS%\nlib-used>=1.0\n");
+        write_local_desc(&temp, "lib-used", "1", "");
+
+        let packages = parse_local_db(temp.path()).unwrap();
+        assert_eq!(packages["app-main"].depends, ["lib-used>=1.0".to_string()]);
+        assert!(packages["lib-used"].depends.is_empty());
+
+        assert!(!fixture_orphans(&temp).contains(&"lib-used".to_string()));
+    }
+
+    /// Regression (audit ARCH-N4): a dependency that only appears in another
+    /// package's `%OPTDEPENDS%` IS an orphan — optdepends do not keep a
+    /// package alive (`pacman -Qdt` parity).
+    #[test]
+    fn optdepend_only_package_is_counted_as_orphan() {
+        let temp = tempfile::TempDir::new().unwrap();
+        write_local_desc(
+            &temp,
+            "app-main",
+            "0",
+            "\n%OPTDEPENDS%\nlib-opt: extra features\n",
+        );
+        write_local_desc(&temp, "lib-opt", "1", "");
+
+        assert_eq!(fixture_orphans(&temp), ["lib-opt"]);
+    }
+
+    /// Explicitly installed packages are never orphans, even when unrequired.
+    #[test]
+    fn explicit_packages_are_never_orphans() {
+        let temp = tempfile::TempDir::new().unwrap();
+        write_local_desc(&temp, "explicit-tool", "0", "");
+        write_local_desc(&temp, "explicit-with-deps", "0", "\n%DEPENDS%\nsome-lib\n");
+        write_local_desc(&temp, "some-lib", "1", "");
+        write_local_desc(&temp, "lonely-dep", "1", "");
+
+        let orphans = fixture_orphans(&temp);
+        assert_eq!(orphans, ["lonely-dep"]);
+        assert!(!orphans.contains(&"explicit-tool".to_string()));
+        assert!(!orphans.contains(&"explicit-with-deps".to_string()));
+    }
+
+    /// A dependency satisfied through `%PROVIDES%` keeps its provider alive,
+    /// matching libalpm's reverse-dependency resolution.
+    #[test]
+    fn provides_satisfies_virtual_dependency_for_orphan_counting() {
+        let temp = tempfile::TempDir::new().unwrap();
+        write_local_desc(&temp, "app-virtual", "0", "\n%DEPENDS%\nvirtual-svc\n");
+        write_local_desc(&temp, "lib-provides", "1", "\n%PROVIDES%\nvirtual-svc\n");
+        write_local_desc(&temp, "lonely-dep", "1", "");
+
+        assert_eq!(fixture_orphans(&temp), ["lonely-dep"]);
+    }
+
     /// Isolated fixture pinning the orphan-accounting rule end to end:
-    /// exactly one of {explicit pkg, required dependency, unrequired
-    /// dependency} is a true orphan under `is_orphan_package`.
+    /// under `pacman -Qdt` semantics exactly the never-required dependency
+    /// is an orphan, while required, virtually-required, and explicit
+    /// packages are not.
     #[test]
     fn orphan_accounting_matches_is_orphan_package_on_synthetic_local_db() {
         let temp = tempfile::TempDir::new().unwrap();
-        let write_desc = |name: &str, reason: &str, extra: &str| {
-            let dir = temp.path().join(name);
+        write_local_desc(&temp, "explicit-tool", "0", "");
+        write_local_desc(
+            &temp,
+            "app-main",
+            "0",
+            "\n%DEPENDS%\nlib-used>=1.0\n\n%OPTDEPENDS%\nlib-opt: extra features\n",
+        );
+        write_local_desc(&temp, "lib-used", "1", "");
+        write_local_desc(&temp, "lib-opt", "1", "");
+        write_local_desc(&temp, "lib-provides", "1", "\n%PROVIDES%\nvirtual-svc\n");
+        write_local_desc(&temp, "app-virtual", "0", "\n%DEPENDS%\nvirtual-svc\n");
+
+        let packages = parse_local_db(temp.path()).unwrap();
+        assert_eq!(packages.len(), 6);
+        let required = compute_required_names(&packages);
+        assert_eq!(required.len(), 2, "lib-used + lib-provides: {required:?}");
+        assert_eq!(fixture_orphans(&temp), ["lib-opt"]);
+    }
+
+    /// The pure-Rust fast path and the libalpm-backed path must agree on the
+    /// same fixture local database (counts including orphan classification).
+    #[test]
+    #[serial_test::serial]
+    fn fast_path_and_libalpm_counts_agree_on_fixture_local_db() {
+        let temp = tempfile::TempDir::new().unwrap();
+        let root = temp.path().join("root");
+        let db_dir = root.join("var/lib/pacman");
+        let local_dir = db_dir.join("local");
+        std::fs::create_dir_all(&local_dir).unwrap();
+        // libalpm refuses a local database without its schema version file.
+        std::fs::write(local_dir.join("ALPM_DB_VERSION"), "9\n").unwrap();
+
+        let write_alpm_desc = |name: &str, reason: &str, extra: &str| {
+            let dir = local_dir.join(format!("{name}-1.0-1"));
             std::fs::create_dir_all(&dir).unwrap();
             std::fs::write(
                 dir.join("desc"),
@@ -1546,28 +1761,48 @@ mod tests {
             )
             .unwrap();
         };
-        write_desc("explicit-pkg", "0", "");
-        write_desc("required-dep", "1", "\n%REQUIREDBY%\nexplicit-pkg\n");
-        write_desc("lonely-dep", "1", "");
-
-        let packages = parse_local_db(temp.path()).unwrap();
-        assert_eq!(packages.len(), 3);
-        let orphans: Vec<&LocalDbPackage> = packages
-            .values()
-            .filter(|pkg| {
-                crate::package_managers::types::is_orphan_package(
-                    pkg.explicit,
-                    pkg.required_by.is_empty(),
-                    pkg.optional_for.is_empty(),
-                )
-            })
-            .collect();
-        assert_eq!(
-            orphans.len(),
-            1,
-            "only lonely-dep is an orphan: {packages:?}"
+        write_alpm_desc("explicit-tool", "0", "");
+        write_alpm_desc(
+            "app-main",
+            "0",
+            "\n%DEPENDS%\nlib-used>=1.0\n\n%OPTDEPENDS%\nlib-opt: extra features\n",
         );
-        assert_eq!(orphans[0].name, "lonely-dep");
+        write_alpm_desc("lib-used", "1", "");
+        write_alpm_desc("lib-opt", "1", "");
+        write_alpm_desc("lib-provides", "1", "\n%PROVIDES%\nvirtual-svc\n");
+        write_alpm_desc("app-virtual", "0", "\n%DEPENDS%\nvirtual-svc\n");
+
+        let conf = temp.path().join("pacman.conf");
+        std::fs::write(&conf, "[options]\n").unwrap();
+        let cache_dir = temp.path().join("cache");
+        std::fs::create_dir_all(&cache_dir).unwrap();
+
+        crate::package_managers::alpm_direct::clear_alpm_cache();
+        crate::core::paths::set_test_overrides(Some(root), Some(db_dir));
+        struct Restore;
+        impl Drop for Restore {
+            fn drop(&mut self) {
+                crate::core::paths::reset_test_overrides();
+                crate::package_managers::alpm_direct::clear_alpm_cache();
+            }
+        }
+        let _restore = Restore;
+
+        let expected = (6, 3, 1);
+        temp_env::with_vars(
+            [
+                ("OMG_PACMAN_CONF", Some(conf.to_str().unwrap())),
+                ("OMG_CACHE_DIR", Some(cache_dir.to_str().unwrap())),
+            ],
+            || {
+                let fast = get_counts_fast().expect("fast-path counts must succeed");
+                let ffi = crate::package_managers::alpm_direct::get_counts()
+                    .expect("libalpm counts must succeed");
+                assert_eq!(fast, expected, "fast path diverged on fixture");
+                assert_eq!(ffi, expected, "libalpm path diverged on fixture");
+                assert_eq!(fast, ffi, "fast path and libalpm path must agree");
+            },
+        );
     }
 
     #[test]

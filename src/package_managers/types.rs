@@ -3,17 +3,14 @@
 /// Canonical orphan rule for pacman-based systems.
 ///
 /// A package is an orphan when it was **not** installed explicitly and no
-/// other installed package requires or optionally requires it. All orphan
-/// listings and counts (libalpm-backed and pure-Rust cache-backed) MUST
-/// derive from this single predicate so the CLI, daemon, and status counts
-/// cannot diverge.
+/// other installed package requires it — exactly the `pacman -Qdt` filter.
+/// Being merely *optional* for another package (`optdepends`) does NOT keep
+/// a package alive. All orphan listings and counts (libalpm-backed and
+/// pure-Rust cache-backed) MUST derive from this single predicate so the
+/// CLI, daemon, and status counts cannot diverge.
 #[must_use]
-pub fn is_orphan_package(
-    explicit: bool,
-    required_by_empty: bool,
-    optional_for_empty: bool,
-) -> bool {
-    !explicit && required_by_empty && optional_for_empty
+pub fn is_orphan_package(explicit: bool, required_by_empty: bool) -> bool {
+    !explicit && required_by_empty
 }
 
 /// Case-insensitive ASCII substring test without allocation.
@@ -244,30 +241,46 @@ impl VersionDisplay for String {
     }
 }
 
-/// Parse a version string, returning a zero version on failure.
-/// This is infallible and avoids `expect()/unwrap()` in hot paths.
+/// Strictly parse a version string, returning `None` when the string is not
+/// a valid version for the active backend (for example non-ASCII text, a
+/// numeric overflow, or a malformed pkgrel).
 ///
-/// # Performance
-/// Parsing "0" on failure is O(1) and avoids static synchronization overhead.
-/// Previous `LazyLock` approach had sync overhead + clone allocation anyway.
+/// Comparison and update-check paths must call this and decide the failure
+/// policy at the call site — skip the entry with a warning or propagate a
+/// typed error. Never compare against a fabricated fallback value (ARCH-R14:
+/// a silent `0` suppresses available updates or invents phantom ones).
 #[cfg(feature = "arch")]
 #[must_use]
 #[inline]
-pub fn parse_version_or_zero(s: &str) -> Version {
-    AlpmVersion::from_str(s).unwrap_or_else(|_| {
-        // "0" parsing is trivial (single char) - cheaper than static + clone
-        // SAFETY: "0" is always a valid version string per alpm-types spec
-        #[expect(clippy::expect_used)]
-        AlpmVersion::from_str("0").expect("0 is always valid")
-    })
+pub fn parse_version(s: &str) -> Option<Version> {
+    AlpmVersion::from_str(s).ok()
 }
 
-/// Parse a version string - infallible wrapper retaining the raw text.
+/// Strictly parse a version string - infallible on non-Arch backends.
+///
+/// Non-Arch backends use ordered string comparison (dpkg-style), so every
+/// string is a valid [`DebVersion`] retaining its raw text; parsing cannot
+/// fail there.
 #[cfg(not(feature = "arch"))]
 #[must_use]
 #[inline]
+pub fn parse_version(s: &str) -> Option<Version> {
+    Some(Version::new(s))
+}
+
+/// Explicit display/test-only fallback: parse a version string, falling back
+/// to the zero version when parsing fails.
+///
+/// The `_or_zero` suffix is the contract: a call site using this helper
+/// visibly accepts a fabricated `0` for unparseable input. Production
+/// comparison and update-check paths must use [`parse_version`] instead and
+/// skip the entry with a warning or propagate a typed error on failure
+/// (ARCH-R14). Callers that must never fabricate a version are compile-time
+/// steered to the strict parser through review of this call list.
+#[must_use]
+#[inline]
 pub fn parse_version_or_zero(s: &str) -> Version {
-    Version::new(s)
+    parse_version(s).unwrap_or_else(zero_version)
 }
 
 #[cfg(test)]
@@ -276,9 +289,27 @@ mod tests {
 
     #[test]
     fn version_display_is_borrowed_and_backend_independent() {
-        let version = parse_version_or_zero("1:2.3.4-5");
+        let version = parse_version("1:2.3.4-5").expect("valid version must parse");
         assert_eq!(version.version_string(), "1:2.3.4-5");
-        assert_eq!(version.version_string(), "1:2.3.4-5");
+    }
+
+    /// ARCH-R14 regression: a version string that fails the strict parser
+    /// must be surfaced to the caller as `None` (arch) so the call site can
+    /// skip or error, and must never silently compare as a fabricated `0`.
+    /// Versions that always parsed cleanly keep their exact rendering.
+    #[cfg(feature = "arch")]
+    #[test]
+    fn unparseable_version_is_rejected_and_valid_versions_keep_their_value() {
+        for bad in ["not a version", "版本-1", "1.0-1-1"] {
+            assert!(
+                parse_version(bad).is_none(),
+                "{bad:?} must fail the strict parser"
+            );
+        }
+        for good in ["0", "0.11", "1:2.3.4-5", "6.0.1-1"] {
+            let parsed = parse_version(good).unwrap_or_else(|| panic!("{good:?} must parse"));
+            assert_eq!(parsed.version_string(), good);
+        }
     }
 
     #[test]
@@ -318,12 +349,15 @@ mod tests {
     }
 
     #[test]
-    fn orphan_rule_matches_canonical_definition() {
-        assert!(!is_orphan_package(false, false, false)); // explicit install
-        assert!(!is_orphan_package(false, true, false)); // required by another pkg
-        assert!(!is_orphan_package(false, false, true)); // optional for another pkg
-        assert!(is_orphan_package(false, true, true)); // true orphan
-        assert!(!is_orphan_package(true, true, true));
+    fn orphan_rule_matches_pacman_qdt_definition() {
+        // Explicitly installed packages are never orphans.
+        assert!(!is_orphan_package(true, true));
+        assert!(!is_orphan_package(true, false));
+        // Required by another package: not an orphan.
+        assert!(!is_orphan_package(false, false));
+        // Nothing requires it: an orphan, even if some package lists it in
+        // `%OPTDEPENDS%` (optdepends do not keep a package alive).
+        assert!(is_orphan_package(false, true));
     }
 
     #[test]
@@ -351,6 +385,45 @@ pub fn zero_version() -> Version {
 #[inline]
 pub fn zero_version() -> Version {
     Version::new("0")
+}
+
+/// Compare two Arch package versions without the upstream panic path.
+///
+/// `alpm_types::Version`'s `Ord` impl unwraps `parse::<usize>()` on numeric
+/// segments and panics (`PosOverflow`) on any segment above `usize::MAX`
+/// (alpm-types `version/comparison.rs`). That detonates inside comparators
+/// such as the rayon filter in `pacman_db::check_updates_cached`,
+/// `AurIndex::updates_for`, and `AurClient::{get_update_list,query_aur_updates}`.
+/// All version ordering on update-check paths must go through this helper.
+///
+/// Versions without an overflowing numeric segment keep the exact upstream
+/// ordering (`Ord::cmp`). Versions carrying an overflowing segment fall back
+/// to libalpm's `alpm::vercmp` on the rendered version string: pacman
+/// semantics, deterministic, and it compares numeric runs by length and
+/// text, so it cannot overflow.
+#[cfg(feature = "arch")]
+#[must_use]
+pub fn compare_versions(a: &AlpmVersion, b: &AlpmVersion) -> std::cmp::Ordering {
+    if pkgver_has_overflowing_numeric_segment(a.pkgver.inner())
+        || pkgver_has_overflowing_numeric_segment(b.pkgver.inner())
+    {
+        // `Display` renders the canonical `epoch:pkgver-pkgrel` form.
+        alpm::vercmp(a.to_string(), b.to_string())
+    } else {
+        a.cmp(b)
+    }
+}
+
+/// Detect numeric segments that would panic in `alpm_types`' comparator
+/// (`parse::<usize>().unwrap()` overflow). A segment is any maximal run of
+/// ASCII digits (`pkgver` is ASCII-only per the alpm-pkgver spec). Epoch and
+/// pkgrel parse into `usize` at construction time, so only `pkgver` can
+/// carry overflowing segments.
+#[cfg(feature = "arch")]
+fn pkgver_has_overflowing_numeric_segment(pkgver: &str) -> bool {
+    pkgver
+        .split(|c: char| !c.is_ascii_digit())
+        .any(|segment| !segment.is_empty() && segment.parse::<usize>().is_err())
 }
 
 #[derive(Debug, Clone)]
