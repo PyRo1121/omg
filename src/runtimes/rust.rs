@@ -438,7 +438,14 @@ impl RustManager {
             .extend(required_components.iter().cloned());
         metadata.targets.extend(targets.iter().cloned());
         Self::write_metadata(dest_dir, &metadata)?;
-        complete_staged_install(&staging, &version_dir, &toolchain.name())?;
+        // First installs rename into an absent directory. Rolling refreshes
+        // replace the already-published toolchain; complete_staged_install
+        // refuses a destination that already exists.
+        if is_valid_version_dir(&version_dir) {
+            replace_staged_install(&staging, &version_dir, &toolchain.name())?;
+        } else {
+            complete_staged_install(&staging, &version_dir, &toolchain.name())?;
+        }
 
         print_installed("Rust", &toolchain.name());
 
@@ -679,7 +686,15 @@ fn manifest_version(manifest: &toml::Value) -> Option<String> {
 }
 
 fn manifest_release(manifest: &toml::Value) -> Result<String> {
-    manifest_version(manifest)
+    // Keep the full rustc version string, including the parenthetical
+    // commit/date. Nightly (and often beta) keep the same semver token
+    // across many manifests; stripping it would make rolling refreshes a no-op.
+    manifest
+        .get("pkg")
+        .and_then(|pkg| pkg.get("rustc"))
+        .and_then(|rustc| rustc.get("version"))
+        .and_then(|value| value.as_str())
+        .map(str::to_string)
         .ok_or_else(|| anyhow::anyhow!("Rust channel manifest is missing a rustc version"))
 }
 
@@ -1097,7 +1112,30 @@ version = "1.79.0 (2024-06-13)"
         assert!(channel_release_changed(&stable, Some("1.78.0"), &manifest)?);
         assert!(!channel_release_changed(
             &stable,
-            Some("1.79.0"),
+            Some("1.79.0 (2024-06-13)"),
+            &manifest
+        )?);
+        Ok(())
+    }
+
+    #[test]
+    fn rolling_nightly_detects_a_new_commit_with_the_same_semver() -> Result<()> {
+        let manifest: toml::Value = toml::from_str(
+            r#"
+[pkg.rustc]
+version = "1.80.0-nightly (aaaaaaaaa 2024-06-13)"
+"#,
+        )?;
+
+        let nightly = RustToolchainSpec::parse("nightly")?;
+        assert!(channel_release_changed(
+            &nightly,
+            Some("1.80.0-nightly (bbbbbbbbb 2024-06-12)"),
+            &manifest
+        )?);
+        assert!(!channel_release_changed(
+            &nightly,
+            Some("1.80.0-nightly (aaaaaaaaa 2024-06-13)"),
             &manifest
         )?);
         Ok(())
