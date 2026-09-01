@@ -1497,10 +1497,7 @@ mod tests {
 
     #[test]
     fn resolve_partial_version_returns_none_without_a_match() {
-        let available = ["19.0.0"]
-            .iter()
-            .map(ToString::to_string)
-            .collect::<Vec<_>>();
+        let available = vec!["19.0.0".to_string()];
         assert_eq!(resolve_partial_version(&available, "20"), None);
         // An exact request missing from the vendor list also misses.
         assert_eq!(resolve_partial_version(&available, "20.0.0"), None);
@@ -1520,10 +1517,7 @@ mod tests {
 
     #[test]
     fn resolve_partial_version_rejects_garbage_input() {
-        let available = ["20.10.0"]
-            .iter()
-            .map(ToString::to_string)
-            .collect::<Vec<_>>();
+        let available = vec!["20.10.0".to_string()];
         for garbage in ["", "garbage", "20.x", "1.2.3.4", "20-rc"] {
             assert_eq!(
                 resolve_partial_version(&available, garbage),

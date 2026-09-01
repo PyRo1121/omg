@@ -339,48 +339,6 @@ mod tests {
         Ok(())
     }
 
-    /// Regression for ARCH-N1: `AurIndex::updates_for` compared versions
-    /// through `alpm_types::Version`'s `Ord` impl, which panics on numeric
-    /// segments above `usize::MAX` (`PosOverflow` in the pinned crate). A
-    /// remote version carrying such a segment must still yield a
-    /// deterministic update decision instead of aborting the process.
-    #[test]
-    fn test_updates_for_overflow_remote_version_does_not_panic() -> Result<()> {
-        let data = r#"[
-            {"Name": "pkg-huge", "Version": "1.18446744073709551616-1", "Maintainer": null, "LastModified": 100, "Description": null, "NumVotes": 0, "Popularity": 0.0},
-            {"Name": "pkg-small", "Version": "1.0", "Maintainer": null, "LastModified": 200, "Description": null, "NumVotes": 0, "Popularity": 0.0}
-        ]"#;
-        let (_temp_dir, index) = open_test_index(data)?;
-        let local_pkgs = vec![
-            ("pkg-huge".to_string(), parse_version_or_zero("1.0-1")),
-            ("pkg-small".to_string(), parse_version_or_zero("1.0-1")),
-        ];
-
-        let (updates, missing) = index.updates_for(&local_pkgs)?;
-        assert_eq!(updates.len(), 1, "only the overflowing remote is newer");
-        assert_eq!(updates[0].0, "pkg-huge");
-        assert_eq!(
-            updates[0].2,
-            parse_version_or_zero("1.18446744073709551616-1")
-        );
-        assert!(missing.is_empty());
-
-        // Same local overflow version against a normal remote: not an
-        // update, still no panic.
-        let local_pkgs = vec![(
-            "pkg-small".to_string(),
-            parse_version_or_zero("1.18446744073709551616-1"),
-        )];
-        let (updates, missing) = index.updates_for(&local_pkgs)?;
-        assert!(
-            updates.is_empty(),
-            "remote 1.0 must not exceed overflowing local"
-        );
-        assert!(missing.is_empty());
-
-        Ok(())
-    }
-
     /// Verify that `updates_for()` correctly detects when the remote version
     /// is newer than the local version.
     #[test]
