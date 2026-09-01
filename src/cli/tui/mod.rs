@@ -24,6 +24,32 @@ const SEARCH_DEBOUNCE_MS: u64 = 250;
 /// Outcome of a background action: `(label, Ok(summary-or-empty))`.
 type ActionResult = (&'static str, anyhow::Result<String>);
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+struct SearchRequestId(u64);
+
+struct SearchCompletion {
+    request_id: SearchRequestId,
+    result: Result<Vec<crate::package_managers::SyncPackage>, String>,
+}
+
+enum SearchRequest {
+    Running {
+        request_id: SearchRequestId,
+        task: tokio::task::JoinHandle<()>,
+    },
+    Completed {
+        request_id: SearchRequestId,
+    },
+}
+
+impl SearchRequest {
+    const fn request_id(&self) -> SearchRequestId {
+        match self {
+            Self::Running { request_id, .. } | Self::Completed { request_id } => *request_id,
+        }
+    }
+}
+
 fn should_quit(key: KeyEvent, search_mode: bool) -> bool {
     (key.code == KeyCode::Char('c') && key.modifiers.contains(KeyModifiers::CONTROL))
         || (key.code == KeyCode::Char('q') && key.modifiers.is_empty() && !search_mode)
@@ -45,6 +71,14 @@ fn should_refresh_team(tab: app::Tab, in_flight: bool, elapsed: Duration) -> boo
 
 fn search_session_started(was_search_mode: bool, search_mode: bool) -> bool {
     !was_search_mode && search_mode
+}
+
+fn search_needs_dispatch(
+    query: &str,
+    last_search: &str,
+    active_request_id: Option<SearchRequestId>,
+) -> bool {
+    !query.is_empty() && (query != last_search || active_request_id.is_none())
 }
 
 pub async fn run() -> Result<()> {
@@ -112,7 +146,10 @@ async fn run_app(
     app: &mut app::App,
 ) -> Result<()> {
     let mut last_search = String::new();
+    let mut next_search_id = 0;
+    let mut search_request = None;
     let (action_tx, mut action_rx) = tokio::sync::mpsc::unbounded_channel::<ActionResult>();
+    let (search_tx, mut search_rx) = tokio::sync::mpsc::unbounded_channel::<SearchCompletion>();
     let (team_tx, mut team_rx) =
         tokio::sync::mpsc::unbounded_channel::<Option<crate::core::env::team::TeamStatus>>();
     #[cfg(unix)]
@@ -138,6 +175,18 @@ async fn run_app(
         while let Ok((label, result)) = action_rx.try_recv() {
             app.action_in_flight = false;
             report_action_result(app, result, label);
+        }
+        while let Ok(completion) = search_rx.try_recv() {
+            let completed_request_id = completion.request_id;
+            if apply_search_completion(
+                app,
+                search_request.as_ref().map(SearchRequest::request_id),
+                completion,
+            ) {
+                search_request = Some(SearchRequest::Completed {
+                    request_id: completed_request_id,
+                });
+            }
         }
         #[cfg(unix)]
         while let Ok((connected, status)) = daemon_rx.try_recv() {
@@ -189,6 +238,12 @@ async fn run_app(
 
                 if search_session_started(was_search_mode, app.search_mode) {
                     last_search.clear();
+                    cancel_search(&mut search_request);
+                } else if was_search_mode && !app.search_mode && app.search_query.is_empty() {
+                    cancel_search(&mut search_request);
+                }
+                if app.search_mode && app.search_query != last_search {
+                    cancel_search(&mut search_request);
                 }
 
                 // A query committed with Enter before the debounce elapsed
@@ -197,11 +252,19 @@ async fn run_app(
                 // can never satisfy this condition.)
                 let committed = was_search_mode
                     && !app.search_mode
-                    && !app.search_query.is_empty()
-                    && app.search_query != last_search;
+                    && search_needs_dispatch(
+                        &app.search_query,
+                        &last_search,
+                        search_request.as_ref().map(SearchRequest::request_id),
+                    );
                 if committed {
                     last_search.clone_from(&app.search_query);
-                    run_search(app, &last_search).await;
+                    search_request = Some(dispatch_search(
+                        app,
+                        &last_search,
+                        &search_tx,
+                        &mut next_search_id,
+                    ));
                 }
             }
         }
@@ -210,11 +273,20 @@ async fn run_app(
         // event. This must run on every loop iteration — inside the key-event
         // branch it would never fire after the final keystroke.
         if app.search_mode
-            && app.search_query != last_search
+            && search_needs_dispatch(
+                &app.search_query,
+                &last_search,
+                search_request.as_ref().map(SearchRequest::request_id),
+            )
             && app.last_query_change.elapsed() >= Duration::from_millis(SEARCH_DEBOUNCE_MS)
         {
             last_search.clone_from(&app.search_query);
-            run_search(app, &last_search).await;
+            search_request = Some(dispatch_search(
+                app,
+                &last_search,
+                &search_tx,
+                &mut next_search_id,
+            ));
         }
 
         // Update app state
@@ -244,15 +316,62 @@ async fn run_app(
                 let _ = sender.send(status);
             });
         }
+
+        tokio::task::yield_now().await;
     }
 }
 
-async fn run_search(app: &mut app::App, query: &str) {
-    if let Err(e) = app.search_packages(query).await {
-        tracing::error!("Search failed: {e}");
-        app.search_results.clear();
-        app.search_error = Some(e.to_string());
+fn dispatch_search(
+    app: &mut app::App,
+    query: &str,
+    sender: &tokio::sync::mpsc::UnboundedSender<SearchCompletion>,
+    next_search_id: &mut u64,
+) -> SearchRequest {
+    app.search_results.clear();
+    app.search_error = None;
+    app.selected_index = 0;
+
+    *next_search_id = next_search_id
+        .checked_add(1)
+        .expect("search request identifier exhausted");
+    let request_id = SearchRequestId(*next_search_id);
+    let query = query.to_string();
+    let sender = sender.clone();
+    let task = tokio::spawn(async move {
+        let result = app::App::search_packages(&query)
+            .await
+            .map_err(|error| error.to_string());
+        let _ = sender.send(SearchCompletion { request_id, result });
+    });
+    SearchRequest::Running { request_id, task }
+}
+
+fn cancel_search(search_request: &mut Option<SearchRequest>) {
+    if let Some(SearchRequest::Running { task, .. }) = search_request.take() {
+        task.abort();
     }
+}
+
+fn apply_search_completion(
+    app: &mut app::App,
+    active_request_id: Option<SearchRequestId>,
+    completion: SearchCompletion,
+) -> bool {
+    if active_request_id != Some(completion.request_id) {
+        return false;
+    }
+    match completion.result {
+        Ok(packages) => {
+            app.search_results = packages;
+            app.search_error = None;
+        }
+        Err(error) => {
+            tracing::error!("Search failed: {error}");
+            app.search_results.clear();
+            app.search_error = Some(error);
+        }
+    }
+    true
 }
 
 /// Spawn a long-running package operation on a background task.
@@ -395,6 +514,103 @@ mod tests {
         assert!(search_session_started(false, true));
         assert!(!search_session_started(true, true));
         assert!(!search_session_started(true, false));
+    }
+
+    #[test]
+    fn inactive_query_is_dispatched_even_when_its_text_matches_the_last_search() {
+        assert!(search_needs_dispatch("firefox", "firefox", None));
+        assert!(!search_needs_dispatch(
+            "firefox",
+            "firefox",
+            Some(SearchRequestId(1))
+        ));
+    }
+
+    #[test]
+    fn completed_search_suppresses_duplicate_dispatch() {
+        let request = SearchRequest::Completed {
+            request_id: SearchRequestId(1),
+        };
+
+        assert!(!search_needs_dispatch(
+            "firefox",
+            "firefox",
+            Some(request.request_id())
+        ));
+    }
+
+    #[tokio::test]
+    async fn dispatch_clears_results_that_are_no_longer_current() {
+        let mut app = app::App::new_detached();
+        app.search_results
+            .push(crate::package_managers::SyncPackage {
+                name: "stale".to_string(),
+                version: crate::package_managers::parse_version_or_zero("1"),
+                description: "stale result".to_string(),
+                repo: "official".to_string(),
+                download_size: 0,
+                installed: false,
+            });
+        app.search_error = Some("stale error".to_string());
+        app.selected_index = 3;
+        let (sender, _receiver) = tokio::sync::mpsc::unbounded_channel();
+        let mut next_search_id = 0;
+
+        let mut active_search = Some(dispatch_search(&mut app, "", &sender, &mut next_search_id));
+        cancel_search(&mut active_search);
+
+        assert!(app.search_results.is_empty());
+        assert!(app.search_error.is_none());
+        assert_eq!(app.selected_index, 0);
+    }
+
+    #[tokio::test]
+    async fn cancelling_search_aborts_its_task() {
+        let task = tokio::spawn(std::future::pending());
+        let abort_handle = task.abort_handle();
+        let mut active_search = Some(SearchRequest::Running {
+            request_id: SearchRequestId(1),
+            task,
+        });
+
+        cancel_search(&mut active_search);
+        tokio::task::yield_now().await;
+
+        assert!(active_search.is_none());
+        assert!(abort_handle.is_finished());
+    }
+
+    #[test]
+    fn stale_search_completion_cannot_replace_current_results() {
+        let mut app = app::App::new_detached();
+        app.search_error = Some("current result".to_string());
+        let completion = SearchCompletion {
+            request_id: SearchRequestId(1),
+            result: Ok(Vec::new()),
+        };
+
+        assert!(!apply_search_completion(
+            &mut app,
+            Some(SearchRequestId(2)),
+            completion
+        ));
+        assert_eq!(app.search_error.as_deref(), Some("current result"));
+    }
+
+    #[test]
+    fn current_search_completion_is_applied() {
+        let mut app = app::App::new_detached();
+        let completion = SearchCompletion {
+            request_id: SearchRequestId(2),
+            result: Err("search unavailable".to_string()),
+        };
+
+        assert!(apply_search_completion(
+            &mut app,
+            Some(SearchRequestId(2)),
+            completion
+        ));
+        assert_eq!(app.search_error.as_deref(), Some("search unavailable"));
     }
 
     #[test]

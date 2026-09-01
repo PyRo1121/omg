@@ -2,11 +2,11 @@ use crate::core::env::team::TeamStatus;
 use crate::core::history::Transaction;
 #[cfg(unix)]
 use crate::daemon::protocol::StatusResult;
-#[cfg(any(feature = "arch", feature = "debian", feature = "debian-pure"))]
-use anyhow::Context;
-use anyhow::Result;
+use anyhow::{Context, Result};
 use crossterm::event::KeyCode;
 use std::time::Instant;
+
+static DIRECT_SEARCH_GATE: tokio::sync::Semaphore = tokio::sync::Semaphore::const_new(1);
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Tab {
@@ -336,14 +336,11 @@ impl App {
         (0, 0)
     }
 
-    pub async fn search_packages(&mut self, query: &str) -> Result<()> {
+    pub async fn search_packages(query: &str) -> Result<Vec<crate::package_managers::SyncPackage>> {
         if query.is_empty() {
-            self.search_results.clear();
-            self.search_error = None;
-            return Ok(());
+            return Ok(Vec::new());
         }
 
-        // Search packages using the actual package manager
         #[cfg(unix)]
         if let Ok(mut client) = crate::core::client::DaemonClient::connect().await
             && let Ok(crate::daemon::protocol::ResponseResult::Search(res)) = client
@@ -354,80 +351,81 @@ impl App {
                 })
                 .await
         {
-            self.search_results = res
+            return Ok(res
                 .packages
                 .into_iter()
-                .map(|p| crate::package_managers::SyncPackage {
-                    name: p.name,
-                    version: crate::package_managers::parse_version_or_zero(&p.version),
-                    description: p.description,
+                .map(|package| crate::package_managers::SyncPackage {
+                    name: package.name,
+                    version: crate::package_managers::parse_version_or_zero(&package.version),
+                    description: package.description,
                     repo: "official".to_string(),
                     download_size: 0,
                     installed: false,
                 })
-                .collect();
-            self.search_error = None;
-            return Ok(());
+                .collect());
         }
 
-        // Fallback to direct search if daemon is not available
+        let permit = DIRECT_SEARCH_GATE
+            .acquire()
+            .await
+            .context("direct search gate closed")?;
+        let query = query.to_string();
+        tokio::task::spawn_blocking(move || {
+            let _permit = permit;
+            Self::search_packages_direct(&query)
+        })
+        .await
+        .context("package search worker failed")?
+    }
+
+    fn search_packages_direct(query: &str) -> Result<Vec<crate::package_managers::SyncPackage>> {
+        #[cfg(not(any(feature = "arch", feature = "debian", feature = "debian-pure")))]
+        let _ = query;
+
         #[cfg(any(feature = "debian", feature = "debian-pure"))]
         if crate::core::env::distro::is_debian_like() {
-            self.search_results = crate::package_managers::debian_db::search_fast(query)
+            return Ok(crate::package_managers::debian_db::search_fast(query)
                 .context("Failed to search official packages")?
                 .into_iter()
-                .map(|pkg| crate::package_managers::SyncPackage {
-                    name: pkg.name,
-                    version: pkg.version,
-                    description: pkg.description,
+                .map(|package| crate::package_managers::SyncPackage {
+                    name: package.name,
+                    version: package.version,
+                    description: package.description,
                     repo: "official".to_string(),
                     download_size: 0,
-                    installed: pkg.installed,
+                    installed: package.installed,
                 })
-                .collect();
-            self.search_error = None;
-            return Ok(());
+                .collect());
         }
 
         #[cfg(feature = "arch")]
-        {
-            self.search_results = crate::package_managers::search_sync(query)
-                .context("Failed to search official packages")?;
-        }
+        return crate::package_managers::search_sync(query)
+            .context("Failed to search official packages");
+
         #[cfg(all(feature = "debian", not(feature = "arch")))]
-        {
-            self.search_results = crate::package_managers::apt_search_sync(query)
-                .context("Failed to search official packages")?;
-        }
+        return crate::package_managers::apt_search_sync(query)
+            .context("Failed to search official packages");
+
         #[cfg(all(
             feature = "debian-pure",
             not(feature = "arch"),
             not(feature = "debian")
         ))]
-        {
-            self.search_results = crate::package_managers::apt_search_fast(query)
-                .context("Failed to search official packages")?
-                .into_iter()
-                .map(|pkg| crate::package_managers::SyncPackage {
-                    name: pkg.name,
-                    version: pkg.version,
-                    description: pkg.description,
-                    repo: "official".to_string(),
-                    download_size: 0,
-                    installed: pkg.installed,
-                })
-                .collect();
-        }
-        #[cfg(not(any(feature = "arch", feature = "debian", feature = "debian-pure")))]
-        {
-            anyhow::bail!("Failed to search official packages: no package manager backend enabled");
-        }
+        return Ok(crate::package_managers::apt_search_fast(query)
+            .context("Failed to search official packages")?
+            .into_iter()
+            .map(|package| crate::package_managers::SyncPackage {
+                name: package.name,
+                version: package.version,
+                description: package.description,
+                repo: "official".to_string(),
+                download_size: 0,
+                installed: package.installed,
+            })
+            .collect());
 
-        #[cfg(any(feature = "arch", feature = "debian", feature = "debian-pure"))]
-        {
-            self.search_error = None;
-            Ok(())
-        }
+        #[cfg(not(any(feature = "arch", feature = "debian", feature = "debian-pure")))]
+        anyhow::bail!("Failed to search official packages: no package manager backend enabled")
     }
 
     // Long-running actions are associated functions (they never read model
@@ -520,9 +518,12 @@ impl App {
         self.show_popup = false;
     }
 
-    /// Record a search-query mutation for debounce purposes.
+    /// Record a search-query mutation and invalidate results for the old query.
     pub fn note_query_change(&mut self) {
         self.last_query_change = Instant::now();
+        self.search_results.clear();
+        self.search_error = None;
+        self.selected_index = 0;
     }
 
     pub fn tick(&mut self) -> Result<()> {
@@ -719,6 +720,15 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn direct_search_gate_serializes_fallback_work() {
+        let first = DIRECT_SEARCH_GATE.acquire().await.expect("gate open");
+
+        assert!(DIRECT_SEARCH_GATE.try_acquire().is_err());
+        drop(first);
+        assert!(DIRECT_SEARCH_GATE.try_acquire().is_ok());
+    }
+
+    #[tokio::test]
     async fn detached_refresh_never_enables_external_state() {
         let mut app = App::new_detached();
         let last_update = app.last_update;
@@ -777,6 +787,22 @@ mod tests {
         assert_eq!(app.search_query, "rkj5/");
         assert!(app.search_mode);
         assert_eq!(app.current_tab, Tab::Packages);
+    }
+
+    #[test]
+    fn emptying_search_query_clears_previous_results() {
+        let mut app = test_app();
+        app.search_mode = true;
+        app.search_query.push('f');
+        app.search_error = Some("old search failed".to_string());
+        app.selected_index = 1;
+
+        app.handle_key(KeyCode::Backspace);
+
+        assert!(app.search_query.is_empty());
+        assert!(app.search_results.is_empty());
+        assert!(app.search_error.is_none());
+        assert_eq!(app.selected_index, 0);
     }
 
     #[test]
