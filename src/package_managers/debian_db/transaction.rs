@@ -351,7 +351,7 @@ impl Transaction {
 
         // Configure packages (must be sequential after all unpacking)
         self.state = TransactionState::Configuring;
-        if let Err(e) = self.configure_packages() {
+        if let Err(e) = self.configure_packages_on_blocking_pool().await {
             tracing::error!("Configuration failed: {}", e);
             self.rollback()?;
             return Err(e).context("Failed during package configuration");
@@ -614,6 +614,32 @@ impl Transaction {
             downloaded_paths.len()
         );
         Ok(())
+    }
+
+    /// Run [`Self::configure_packages`] on Tokio's blocking pool.
+    ///
+    /// The transaction stays in a shared slot so a join failure can still
+    /// restore backups, rollback files, and the temporary directory. Dropping
+    /// this future does not abort `spawn_blocking`; `execute` must stay joined
+    /// until the worker returns (the install and upgrade callers do).
+    async fn configure_packages_on_blocking_pool(&mut self) -> Result<()> {
+        let slot = std::sync::Arc::new(std::sync::Mutex::new(std::mem::take(self)));
+        let worker_slot = std::sync::Arc::clone(&slot);
+        let join_result = tokio::task::spawn_blocking(move || {
+            let mut transaction = worker_slot
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner);
+            std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                transaction.configure_packages()
+            }))
+            .unwrap_or_else(|_| Err(anyhow::anyhow!("package configuration worker panicked")))
+        })
+        .await;
+        *self = std::sync::Arc::into_inner(slot)
+            .context("package configuration worker still holds the transaction")?
+            .into_inner()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        join_result.context("package configuration worker failed")?
     }
 
     /// Configure all unpacked packages
@@ -2373,8 +2399,23 @@ mod tests {
         );
     }
 
-    #[test]
-    fn configure_rejects_packages_without_control_metadata() {
+    #[tokio::test(flavor = "current_thread")]
+    async fn configuration_returns_the_complete_transaction_from_the_blocking_pool() {
+        let mut transaction = Transaction::new();
+        transaction.state = TransactionState::Configuring;
+        transaction.temp_dir = Some(TempDir::new().expect("workspace"));
+
+        transaction
+            .configure_packages_on_blocking_pool()
+            .await
+            .expect("empty configuration");
+
+        assert_eq!(transaction.state, TransactionState::Configuring);
+        assert!(transaction.temp_dir.is_some());
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn configure_rejects_packages_without_control_metadata() {
         let workspace = TempDir::new().expect("workspace");
         fs::create_dir_all(workspace.path().join("broken/DEBIAN")).expect("control dir");
         let mut transaction = Transaction {
@@ -2396,13 +2437,16 @@ mod tests {
         };
 
         let error = transaction
-            .configure_packages()
+            .configure_packages_on_blocking_pool()
+            .await
             .expect_err("missing control metadata must fail the transaction");
 
         assert!(
             error.to_string().contains("preparing dpkg status entry"),
             "{error}"
         );
+        assert_eq!(transaction.to_install[0].name, "broken");
+        assert!(transaction.temp_dir.is_some());
     }
 
     #[test]
