@@ -138,6 +138,8 @@ jobs:
 
       - name: Install nextest
         uses: taiki-e/install-action@b6ff580856c41316412a0b9b60540fbc6f8c82cc # nextest
+        with:
+          tool: nextest
 
       - name: Debian feature isolation check
         run: |
@@ -282,6 +284,8 @@ jobs:
 
       - name: Install nextest
         uses: taiki-e/install-action@b6ff580856c41316412a0b9b60540fbc6f8c82cc # nextest
+        with:
+          tool: nextest
 
       - name: Run unit tests
         run: |
@@ -474,6 +478,8 @@ jobs:
 
       - name: Install nextest
         uses: taiki-e/install-action@b6ff580856c41316412a0b9b60540fbc6f8c82cc # nextest
+        with:
+          tool: nextest
 
       - name: Run unit tests
         run: cargo nextest run --lib --no-default-features --features macos,pgp,license --locked --profile ci
