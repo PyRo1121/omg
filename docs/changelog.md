@@ -703,6 +703,7 @@ analyzer inference
 - **Ci**: Cross-platform install script and R2 release sync
 ### 🐛 Bug Fixes
 
+- Replace yanked spin versions to satisfy deny policy (W3-D-01) ([#138](https://github.com/PyRo1121/omg/issues/138))
 - Verify cached AUR artifacts were built from the reviewed PKGBUILD (SEC-R2-01) ([#137](https://github.com/PyRo1121/omg/issues/137))
 
 * fix: verify cached AUR artifacts were built from the reviewed PKGBUILD (SEC-R2-01)
