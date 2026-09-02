@@ -68,6 +68,7 @@ const AUR_GIT_PULL_ARGS: &[&str] = &[
 static INSTALL_LOCK: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
 static REVIEW_LOCK: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
 const MAX_PKGBUILD_REVIEW_BYTES: usize = 1024 * 1024;
+const SANDBOX_FAKEROOT_ENV: (&str, &str) = ("FAKEROOTDONTTRYCHOWN", "1");
 const MAX_PKGINFO_BYTES: u64 = 128 * 1024;
 /// Pre-computed length of the AUR RPC info base URL (47 bytes)
 const AUR_RPC_INFO_BASE_LEN: usize = 47;
@@ -2352,6 +2353,7 @@ impl AurClient {
                 ("PATH", "/usr/local/sbin:/usr/local/bin:/usr/bin"),
                 ("LANG", "C.UTF-8"),
                 ("LC_ALL", "C.UTF-8"),
+                SANDBOX_FAKEROOT_ENV,
             ] {
                 cmd.args(["--setenv", key, value]);
             }
@@ -3493,6 +3495,54 @@ mod tests {
         assert!(
             !status.success(),
             "Sandbox should prevent writing to arbitrary files"
+        );
+    }
+
+    #[tokio::test]
+    async fn sandbox_fakeroot_skips_unmappable_real_chown() {
+        if which::which("bwrap").is_err() || which::which("fakeroot").is_err() {
+            return;
+        }
+
+        let temp = tempfile::tempdir().unwrap();
+        let source = temp.path().join("source");
+        let destination = temp.path().join("destination");
+        std::fs::create_dir_all(source.join("nested")).unwrap();
+        std::fs::create_dir_all(&destination).unwrap();
+        std::fs::write(source.join("nested/file"), "payload").unwrap();
+
+        let mut command = Command::new("bwrap");
+        command.args([
+            "--clearenv",
+            "--ro-bind",
+            "/",
+            "/",
+            "--tmpfs",
+            "/tmp",
+            "--bind",
+        ]);
+        command.arg(temp.path()).arg(temp.path());
+        command.args(["--chdir"]);
+        command.arg(temp.path());
+        command.args([
+            "--setenv",
+            "PATH",
+            "/usr/bin",
+            "--setenv",
+            SANDBOX_FAKEROOT_ENV.0,
+            SANDBOX_FAKEROOT_ENV.1,
+            "--",
+            "fakeroot",
+            "sh",
+            "-c",
+            "cp -a source/. destination/copied",
+        ]);
+
+        let status = command.status().await.unwrap();
+        assert!(status.success());
+        assert_eq!(
+            std::fs::read_to_string(destination.join("copied/nested/file")).unwrap(),
+            "payload"
         );
     }
 
