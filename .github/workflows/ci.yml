@@ -143,10 +143,10 @@ jobs:
       - name: Verify nextest
         run: cargo nextest --version
 
-      - name: Debian feature isolation check
+      - name: Debian feature isolation clippy
         run: |
-          cargo check --all-targets --no-default-features \
-            --features debian-pure --locked
+          cargo clippy --all-targets --no-default-features \
+            --features debian-pure --locked -- -D warnings
 
       - name: Run portable tests
         run: cargo nextest run --lib --no-default-features --features pgp,license --locked --profile ci
