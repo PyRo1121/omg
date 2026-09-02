@@ -1,475 +1,174 @@
 # OMG
 
-**Stop switching between 7 package managers.**
+**The fastest unified package manager for Arch Linux + universal runtime version manager.**
 
-![Installs](https://img.shields.io/endpoint?url=https://omg-api.latham.cloud/api/badge/installs&style=flat-square&cacheSeconds=60)
-[![Benchmark](https://img.shields.io/badge/search-5--11ms%20(12--24x%20faster)-brightgreen?style=flat-square)](benchmark.sh)
-[![codecov](https://codecov.io/gh/pyro1121/omg/branch/main/graph/badge.svg?style=flat-square)](https://codecov.io/gh/pyro1121/omg)
+[![Benchmark](https://img.shields.io/badge/search-5--11ms%20(12--24x%20faster)-brightgreen?style=flat-square)](benchmarks/latest.md)
 [![License](https://img.shields.io/badge/license-MIT-blue?style=flat-square)](LICENSE)
 [![Rust](https://img.shields.io/badge/rust-1.93%2B-orange?style=flat-square)](https://www.rust-lang.org)
+[![codecov](https://codecov.io/gh/pyro1121/omg/branch/main/graph/badge.svg?style=flat-square)](https://codecov.io/gh/pyro1121/omg)
 
-OMG is the unified dev tool you've been waiting for. **One command** replaces `pacman`, `yay`, `nvm`, `pyenv`, `rustup`, `rbenv`, and `jenv`.
-
-## Repository Scope
-
-Core Rust CLI/daemon development lives in this repository.
-
-Website, docs site, and web workers now live in:
-
-- `https://github.com/PyRo1121/omg-web`
-
-## 📚 Documentation Quick Links
-
-**Getting Started:** [Install](docs/installation.md) • [Quick Start](docs/quickstart.md) • [FAQ](docs/faq.md)  
-**Reference:** [CLI](docs/cli.md) • [Config](docs/configuration.md) • [Runtimes](docs/runtimes.md)  
-**Advanced:** [Security](docs/security.md) • [Team](docs/team.md) • [CI/CD](docs/ci-cd-best-practices-2025.md)  
-**Performance:** [Benchmarks](#-benchmarks) • [Architecture](#️-architecture)
-**Help:** [Troubleshooting](docs/troubleshooting.md) • [Changelog](docs/changelog.md) • [Release Readiness](docs/release-readiness.md)
-
-## The Numbers That Matter
-
-| Metric | Value |
-| -------- | ------- |
-| **12-24x faster** | than pacman/yay (5-11ms vs 133ms searches) |
-| **59-483x faster** | than apt-cache/Nala on Debian/Ubuntu |
-| **Zero context switching** | system packages + 8 language runtimes in one CLI |
-| **Enterprise-secure** | SLSA, PGP, SBOM, audit logs built-in (not bolted on) |
-| **Team-synchronized** | pin your exact environment in `omg.lock`, share it, sync instantly |
-
-### Real-World Impact
-
-A 10-person team saves **39 minutes per engineer per year** just on package queries. For 50 people? **$2,350–$2,650** in reclaimed productivity. And that's before factoring in zero context-switching brain tax.
+OMG replaces `pacman`, `yay`, `nvm`, `pyenv`, `rustup`, `rbenv`, and `jenv` with a single binary. It queries packages in **5-11ms** via a lightweight background daemon that keeps repository indexes in memory.
 
 ---
 
 ## Before & After
 
 ```bash
-# ❌ Before: 7 tools, 7 syntaxes, 7 config files
-pacman -Ss firefox          # system packages
-yay -S spotify              # AUR
-nvm install 20              # Node.js
-nvm use 20
+# Before: 7 tools, 7 syntaxes, 7 configuration files
+pacman -Ss firefox          # Official repositories
+yay -S spotify              # AUR packages
+nvm install 22 && nvm use 22# Node.js
 pyenv install 3.12          # Python
-pyenv global 3.12
 rustup default stable       # Rust
-rbenv install 3.2.0         # Ruby
+rbenv install 3.3.0         # Ruby
 
-# ✅ After: Just OMG
+# After: Just OMG
 omg search firefox
 omg install spotify
-omg use node 20
+omg use node 22
 omg use python 3.12
 omg use rust stable
-omg use ruby 3.2.0
+omg use ruby 3.3.0
 ```
 
 ---
 
-## 📦 Installation
+## ⚡ Quick Install
 
-### Universal Installer (Linux/macOS)
-
-**One-line install** (detects your OS automatically):
+### Universal Installer (Linux & macOS)
 
 ```bash
 curl -fsSL https://pyro1121.com/install.sh | bash
 ```
 
-<details>
-<summary>Installation options</summary>
+### Arch Linux (AUR)
 
 ```bash
-# Disable telemetry
-OMG_NO_TELEMETRY=1 curl -fsSL https://pyro1121.com/install.sh | bash
-
-# Skip shell integration
-OMG_SKIP_SHELL=1 curl -fsSL https://pyro1121.com/install.sh | bash
-
-# Install specific version
-OMG_VERSION=v0.1.215 curl -fsSL https://pyro1121.com/install.sh | bash
-```
-
-</details>
-
-### Platform-Specific Methods
-
-<table>
-<tr>
-<td width="50%">
-
-**🐧 Arch Linux**
-
-```bash
-# AUR (prebuilt binary)
+# Prebuilt binary (fastest)
 yay -S omg-bin
 
-# AUR (build from source)
+# Build from source
 yay -S omg
 ```
 
-</td>
-<td width="50%">
-
-**🍎 macOS**
-
-```bash
-# Homebrew (coming soon)
-brew tap pyro1121/omg
-brew install omg
-
-# Universal installer
-curl -fsSL https://pyro1121.com/install.sh | bash
-```
-
-</td>
-</tr>
-<tr>
-<td width="50%">
-
-**🪟 Windows Subsystem for Linux**
-
-```bash
-# Run inside your WSL distribution
-curl -fsSL https://pyro1121.com/install.sh | bash
-```
-
-Native Windows is not supported.
-
-</td>
-<td width="50%">
-
-**🐧 Debian/Ubuntu**
-
-```bash
-# Universal installer (auto-detects)
-curl -fsSL https://pyro1121.com/install.sh | bash
-```
-
-**Note**: Native APT packages coming soon
-
-</td>
-</tr>
-<tr>
-<td width="50%">
-
-**🎩 Fedora/RHEL**
-
-```bash
-# Universal installer (uses Fedora build)
-curl -fsSL https://pyro1121.com/install.sh | bash
-```
-
-**Note**: Native DNF/RPM packages coming soon
-
-</td>
-<td width="50%">
-
-**🦀 From Source (Any Platform)**
+### From Source
 
 ```bash
 cargo install omg --locked
 ```
 
-Requires: Rust 1.93+, platform build tools
-
-</td>
-</tr>
-</table>
-
----
-
-## ⚡ Quick Start
-
-```bash
-# Search packages (12-24x faster than pacman)
-omg search vim
-
-# Install anything (system packages or AUR)
-omg install visual-studio-code-bin
-
-# Switch runtimes instantly
-omg use node 20
-omg use python 3.12
-
-# Run project tasks (auto-detects package.json, Cargo.toml, Makefile, etc.)
-omg run dev
-
-# Lock your environment for your team
-omg env capture
-omg env share
-```
-
 ### Shell Integration
 
-Add instant version switching to your shell:
+Add instant directory-based runtime switching to your shell configuration:
 
 ```bash
-# Bash/Zsh
-echo 'eval "$(omg hook bash)"' >> ~/.bashrc  # or ~/.zshrc
-
-# Fish
-echo 'omg hook fish | source' >> ~/.config/fish/config.fish
-```
-
----
-
-## 🔒 Privacy & Telemetry
-
-OMG prioritizes your privacy with optional, transparent telemetry:
-
-- **Basic Install Tracking**: Anonymous install counts (no PII collected). The installer asks for consent and defaults to **No**. `OMG_NO_TELEMETRY=1` skips the prompt and disables collection (set it for the installer's bash: `curl -fsSL https://pyro1121.com/install.sh | OMG_NO_TELEMETRY=1 bash`).
-- **Enhanced Telemetry**: Disabled by default. Requires both explicit runtime opt-in and a valid license key; when enabled, it tracks command summaries, performance, and feature usage.
-- **No Collection**: Never collects passwords, credentials, home paths, or sensitive data.
-- **Always Reversible**: Disable anytime via `omg config set telemetry.enabled false`.
-
-**Full details**: [Privacy & Telemetry Guide](docs/security.md#privacy--telemetry)
-
----
-
-## 🌍 Platform Support
-
-OMG supports Linux distributions, macOS, and Windows Subsystem for Linux. Native Windows is not supported.
-
-| Platform | Architecture | Status | Package Manager Integration |
-| ---------- | -------------- | -------- | ---------------------------- |
-| **Arch Linux** | x86_64 | ✅ Fully Supported | Native `libalpm` (pacman/AUR) |
-| **Debian** | x86_64 | ✅ Fully Supported | Native `rust-apt` (APT) |
-| **Ubuntu** | x86_64 | ✅ Fully Supported | Native `rust-apt` (APT) |
-| **Fedora/RHEL** | x86_64 | ✅ Fully Supported | Pure Rust DNF/YUM |
-| **macOS** | ARM64 (Apple Silicon) | ✅ Fully Supported | Homebrew integration |
-| **WSL** | x86_64 | ✅ Supported | Uses the installed Linux distribution backend |
-| **Native Windows** | — | ❌ Not Supported | Use WSL |
-
-**Installation** (run inside the supported OS or WSL distribution):
-
-```bash
-curl -fsSL https://pyro1121.com/install.sh | bash
-```
-
-The installer automatically detects your OS and architecture, then downloads the correct pre-built binary. Unknown Linux distributions fall back to the Fedora build (pure Rust, highly portable).
-
----
-
-## Why OMG?
-
-### 🏎️ Performance
-
-Direct `libalpm`/`rust-apt` integration—no subprocess overhead. Persistent daemon with in-memory index. **50% faster AUR operations** through parallel downloads, smart dependency resolution, and sudoloop authentication. Your fingers move faster than OMG responds.
-
-### 🛠️ Unified Runtimes
-
-Node.js, Bun, Python, Go, Rust, Ruby, Java, and Pi are managed natively. Auto-detects `.nvmrc`, `.python-version`, `rust-toolchain.toml`, and `.tool-versions`.
-
-### 🛡️ Enterprise Security
-
-SLSA provenance, PGP verification, CycloneDX SBOM, secret scanning, and tamper-evident audit logs. Security grading on every install. Policy enforcement via `policy.toml`.
-
-### 👥 Team Sync
-
-`omg.lock` captures your exact environment. `omg env check` detects drift. `omg env share` syncs your team instantly via GitHub Gist.
-
-### 🏃 Task Runner
-
-`omg run build` auto-detects `package.json`, `Cargo.toml`, `Makefile`, `pyproject.toml`, `deno.json`—runs with the correct runtime version pre-loaded.
-
-### 🐳 Container Integration
-
-`omg container shell` for dev shells, `omg container build` for images, `omg container init` to generate Dockerfiles from detected runtimes.
-
-### 🧠 Intelligent Completions
-
-Fuzzy matching via Nucleo. Type `omg i frfx` → `firefox`. 80k+ AUR packages cached for lag-free completion.
-
----
-
-## ⚠️ When NOT to Use OMG
-
-**Stick with traditional tools if:**
-
-- You're on a minimal system (<2GB RAM) - daemon overhead may be noticeable
-- You need POSIX strict compatibility - OMG uses modern Rust patterns
-- Your team is deeply invested in tool-specific workflows - migration takes time
-- You're managing 1000+ servers centrally - use Ansible/Puppet/Chef instead
-
-**OMG works best for:**
-
-- Active development machines (where search speed matters)
-- Teams wanting unified tooling (reduce context switching)
-- CI/CD pipelines (faster, reproducible builds)
-- Modern cloud-native workflows
-
-We believe in honesty. OMG isn't for everyone, and that's okay.
-
----
-
-## 📊 Benchmarks
-
-OMG achieves ~6ms performance on all core operations through a persistent daemon that maintains an in-memory index of packages.
-
-### Arch Linux (pacman/yay)
-
-**Benchmark Environment:**
-
-- **CPU:** Intel i9-14900K (32 cores, 5.8GHz turbo)
-- **RAM:** 31GB
-- **Kernel:** Linux 6.18.3-arch1-1
-- **Iterations:** 10 (with 2 warmup runs)
-
-| Command | OMG (Daemon) | pacman | yay | Speedup |
-| --------- | -------------- | -------- | ----- | ---------: |
-| **search** | **5.4-11.1ms** ✨ | 133ms | 150ms | **12-24x faster** |
-| **info** | **3.4-6.1ms** ✨ | 138ms | 300ms | **21-38x faster** |
-| **status** | **< 10ms** ✨ | N/A | N/A | — |
-| **explicit** | **< 2ms** ✨ | 14ms | 27ms | **7-14x faster** |
-
-> 💡 **Note:** yay benchmarked with `--repo` flag (no AUR network calls) for fair comparison.
-
-![OMG vs pacman/yay Performance](./docs/assets/benchmark-comparison.png)
-*Visual comparison: OMG's persistent daemon architecture delivers 12-22x faster package operations*
-
-### Debian/Ubuntu (apt)
-
-**Benchmark Environment:**
-
-- **OS:** Ubuntu 24.04 (Docker)
-- **Iterations:** 5 (with 2 warmup runs)
-
-| Command | OMG (Daemon) | apt-cache | Nala | vs apt | vs Nala |
-| --------- | -------------- | ----------- | ------ | -------: | --------: |
-| **search** | **11ms** ✨ | 652ms | 1160ms | **59x** | **105x** |
-| **info** | **27ms** ✨ | 462ms | 788ms | **17x** | **29x** |
-| **explicit** | **2ms** ✨ | 601ms | 966ms | **300x** | **483x** |
-
-OMG parses `/var/lib/dpkg/status` and APT's Packages files directly, bypassing slow Python/apt-cache overhead. The daemon maintains an in-memory index for instant cached searches.
-
-![OMG vs APT Tools Performance](./docs/assets/benchmark-comparison-apt.png)
-*Visual comparison: OMG achieves 59-483x speedup over traditional APT tools through direct parsing and in-memory caching*
-
-### Why These Numbers Matter
-
-**Human Perception:**
-
-- < 100ms = feels instant
-- 100-500ms = noticeable delay
-- > 500ms = clearly slow
-
-OMG operates in the imperceptible range. Your fingers literally move faster than OMG responds.
-
-**Annual Time & Cost Savings:**
-
-*Based on 50 package operations/day (typical active development) and $150K avg. software engineer salary ($72/hr):*
-
-| Metric | vs pacman | vs yay | 10-person team |
-|--------|-----------|--------|----------------|
-| **Time saved/engineer/year** | 39 min | 44 min | 6.5–7.3 hours |
-| **Dollar savings/year** | $47 | $53 | **$470–$530** |
-
-> 💰 For a 50-person engineering org, that's **$2,350–$2,650/year** in reclaimed productivity—and that's just package queries. Factor in the cognitive benefit of instant feedback and the ROI compounds.
-
-**Verification**
-Want to reproduce these numbers?
-
-```bash
-curl -fsSL https://raw.githubusercontent.com/PyRo1121/omg/main/benchmark.sh | bash
-```
-
-**📊 Detailed Analysis**
-See the [latest benchmark report](benchmarks/latest.md) for comprehensive methodology and statistical analysis.
-
----
-
-## 🛠️ Architecture
-
-OMG is split into two components:
-
-1. **`omg`**: A thin, high-performance CLI client.
-2. **`omgd`**: A persistent daemon that maintains an in-memory package index and atomically publishes a versioned JSON status snapshot.
-
-Communication happens over a high-speed Unix Domain Socket using a custom binary protocol (Length-Delimited framing + Bitcode) for zero-latency communication.
-
----
-
-## 📚 Documentation
-
-**Full documentation**: [pyro1121.com/docs](https://pyro1121.com/docs) | [docs/](docs/index.md)
-
-| Guide | Description |
-| ------- | ------------- |
-| [Quick Start](docs/quickstart.md) | Install and first commands |
-| [CLI Reference](docs/cli.md) | All commands with examples |
-| [Configuration](docs/configuration.md) | Config files and policy |
-| [Runtimes](docs/runtimes.md) | Node, Python, Go, Rust, Ruby, Java, Bun |
-| [Security](docs/security.md) | SBOM, vulnerability scanning, audit logs |
-| [Shell Integration](docs/shell-integration.md) | Hooks and completions |
-| [Team Sync](docs/team.md) | Environment locks and drift detection |
-| [Changelog](docs/changelog.md) | Release history and version notes |
-| [Troubleshooting](docs/troubleshooting.md) | Common issues |
-
-### Shell Setup
-
-```bash
-# Add to ~/.zshrc (or ~/.bashrc)
+# Zsh (~/.zshrc)
 eval "$(omg hook zsh)"
-```
 
-### Key Commands
+# Bash (~/.bashrc)
+eval "$(omg hook bash)"
 
-```bash
-omg search <query>          # Search packages (12-24x faster)
-omg install <pkg>           # Install with security grading
-omg use node 20             # Switch runtime version
-omg run build               # Run project tasks
-omg env capture             # Lock environment
-omg audit                   # Security scan
-omg dash                    # Interactive TUI
+# Fish (~/.config/fish/config.fish)
+omg hook fish | source
 ```
 
 ---
 
-## 🔮 Roadmap
-
-We are building the last dev tool you'll ever need.
-
-### Current Features ✅
-
-- [x] **`omg run <task>`**: Unified task runner. Detects 10+ project types (`package.json`, `Cargo.toml`, `Makefile`, `pyproject.toml`, etc.) and runs scripts with the correct runtime version pre-loaded.
-- [x] **`omg new <stack>`**: Instant project scaffolding. `omg new react`, `omg new rust`, or `omg new python` sets up a best-practice environment with locked runtime versions.
-- [x] **`omg doctor`**: System health check. Verifies PATHs, mirrors, PGP keys, and runtime integrity to debug environment issues instantly.
-- [x] **`omg tool`**: Cross-ecosystem binary manager. Install dev tools (`ripgrep`, `jq`, `tldr`) from any source (Pacman, NPM, Cargo, Pip) into a single managed path.
-- [x] **`omg dash`**: Interactive TUI dashboard. Real-time visualization of system status, vulnerabilities, and runtime versions.
-
-### Planned Features 🚧
-
-- [x] **Debian/Ubuntu Support**: Full APT integration (59-483x faster than apt-cache/Nala)
-- [x] **Fedora/RPM Support**: Native DNF/YUM package manager integration with pure Rust implementation
-- [x] **macOS Support**: Homebrew integration for macOS ARM64 (Apple Silicon)
-- [x] **WSL Support**: Uses the normal Linux backend for the installed WSL distribution
-- [x] **Container Integration**: Docker/Podman support for containerized environments (`omg container shell/run/build/init`)
-- [ ] **GUI Dashboard**: Desktop application for visual package management
-- [x] **Team Features**: Shared environment locks with collaborative workflows (`omg team init/join/status/push/pull`)
-
-## 🧪 Testing & TDD
-
-OMG adheres to a strict **Test-Driven Development (TDD)** protocol to ensure "absolute everything" is tested.
-
-- **Red-Green-Refactor**: No feature is implemented without a failing test first.
-- **100% Memory Safety**: Zero `unsafe` blocks are allowed in application logic.
-- **Property-Based Testing**: Critical parsers and CLI commands are verified against thousands of random inputs via `proptest`.
-- **Hardware-Limited Performance**: Benchmarks are required for every hot-path change to prevent performance regressions.
-
-### Run the Suite
+## 🚀 60-Second Tour
 
 ```bash
-# Run all tests
-cargo test
+# 1. Search packages across official repos and AUR in ~6ms
+omg search ripgrep
 
-# Run TDD watch mode (requires cargo-watch)
-make tdd
+# 2. Install official packages or AUR packages with auto-elevation
+omg install visual-studio-code-bin
 
-# Generate coverage report (requires cargo-tarpaulin)
-make coverage
+# 3. Switch language versions instantly
+omg use node 22
+omg use python 3.12
+
+# 4. Run project scripts with auto-detected runtime versions
+omg run dev
+
+# 5. Lock your exact package and runtime environment for teammates
+omg env capture
+
+# 6. Launch the interactive terminal dashboard
+omg dash
 ```
+
+---
+
+## 💡 Key Features
+
+### 🏎️ 12-24x Faster Package Operations
+Direct `libalpm` integration and an in-memory repository index eliminate subprocess startup overhead. Search results return in 5-11ms compared to 130-150ms with `pacman` and `yay`.
+
+### 🛠️ Universal Runtime Manager
+Manage Node.js, Bun, Python, Go, Rust, Ruby, Java, and Pi from one CLI. OMG honors existing `.nvmrc`, `.python-version`, `rust-toolchain.toml`, and `.tool-versions` files automatically.
+
+### 📦 Seamless AUR & Dependency Resolution
+Build and install AUR packages safely unprivileged as your regular user. Multi-package builds run in parallel with automatic makedepend cleanup.
+
+### 🏃 Unified Task Runner
+`omg run <task>` inspects your directory, detects `package.json`, `Cargo.toml`, `Makefile`, `pyproject.toml`, or `deno.json`, and executes the task with the required runtime version pre-loaded.
+
+### 🔒 Environment Fingerprinting
+`omg env capture` records installed packages and active runtimes into `omg.lock`. Teammates can run `omg env check` to detect drift and keep environments consistent.
+
+### 📊 Terminal Dashboard
+`omg dash` launches an interactive terminal UI for monitoring package updates, disk space, active runtimes, and system health at a glance.
+
+---
+
+## 📊 Performance Benchmarks
+
+Measured on Arch Linux (Linux 6.18, AMD Ryzen / Intel i9, local pacman sync databases):
+
+| Operation | OMG (Daemon) | pacman | yay | Speedup |
+| :--- | :--- | :--- | :--- | :---: |
+| **`search`** | **5.4-11.1ms** | 133ms | 150ms | **12-24x faster** |
+| **`info`** | **3.4-6.1ms** | 138ms | 300ms | **21-38x faster** |
+| **`explicit`** | **< 2ms** | 14ms | 27ms | **7-14x faster** |
+| **`status`** | **< 10ms** | N/A | N/A | Instant overview |
+
+*Detailed benchmark methodology and reproduction scripts are documented in [benchmarks/latest.md](benchmarks/latest.md).*
+
+---
+
+## 🌐 Supported Language Runtimes
+
+OMG natively handles version switching and installation for major ecosystems:
+
+| Runtime | Version Detection Files | Default Target |
+| :--- | :--- | :--- |
+| **Node.js** | `.nvmrc`, `.node-version`, `package.json` | Official prebuilt binaries |
+| **Python** | `.python-version`, `pyproject.toml` | Standalone optimized builds |
+| **Rust** | `rust-toolchain.toml`, `rust-toolchain` | Official rustup toolchains |
+| **Go** | `.go-version`, `go.mod` | Official archive distributions |
+| **Bun** | `.bun-version`, `package.json` | Official release builds |
+| **Ruby** | `.ruby-version`, `Gemfile` | Ruby-build provider |
+| **Java** | `.java-version` | Adoptium Temurin OpenJDK |
+
+---
+
+## 💻 CLI Command Reference
+
+| Command | Description |
+| :--- | :--- |
+| `omg search <query>` | Search packages in official repositories and AUR |
+| `omg install <pkg...>` | Install system or community packages |
+| `omg remove <pkg...>` | Remove packages (`-r` removes unneeded dependencies) |
+| `omg update` | Upgrade all system and AUR packages |
+| `omg use <runtime> [ver]` | Install and switch to a language version |
+| `omg run <task>` | Execute project scripts with correct runtimes |
+| `omg doctor` | Diagnose environment, PATH, and mirror configuration |
+| `omg clean` | Remove orphaned packages and clean package caches |
+| `omg dash` | Open the interactive terminal dashboard |
+| `omg why <pkg>` | Trace dependency chains explaining why a package is installed |
+| `omg size` | View package disk usage breakdown and dependency trees |
+
+Run `omg --help` or see the [CLI Documentation](docs/cli.md) for full argument details.
 
 ---
 
@@ -477,16 +176,4 @@ make coverage
 
 OMG is free and open-source software licensed under the [MIT License](LICENSE).
 
-Copyright © 2024-2026 OMG Team.
-
-### Third-Party Components
-
-OMG incorporates third-party open source software:
-
-- Various Rust crates (MIT/Apache-2.0 licenses)
-
-See [NOTICE](NOTICE) and [THIRD-PARTY-LICENSES.md](THIRD-PARTY-LICENSES.md) for complete attribution.
-
-### Contact
-
-For questions or commercial support, contact **<olen@latham.cloud>**.
+Copyright (c) 2024-2026 OMG Team.
