@@ -479,8 +479,6 @@ OMG supports exporting audit logs for compliance reporting:
 - **CSV**: Best for spreadsheets and manual review (includes Timestamp, Severity, Event, Description, Resource).
 - **JSON**: Best for automated processing and security dashboards.
 
-The export command requires **Team** or **Enterprise** tier.
-
 ### Event Types
 
 | Event | Description |

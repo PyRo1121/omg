@@ -108,7 +108,7 @@ enable_sccache = false
 
 | Setting | Type | Default | Description |
 | --------- | ------ | --------- | ------------- |
-| `telemetry_enabled` | bool | `false` | Enable licensed runtime telemetry |
+| `telemetry_enabled` | bool | `false` | Enable runtime telemetry |
 
 #### AUR Settings
 
