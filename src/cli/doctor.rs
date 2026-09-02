@@ -256,6 +256,7 @@ fn check_debian_infra() -> usize {
 /// Check the Arch Linux infrastructure the ALPM backend depends on:
 /// the pacman configuration file (`/etc/pacman.conf`) and the ALPM local
 /// package database directory (`/var/lib/pacman/local`).
+#[cfg(feature = "arch")]
 fn check_arch_infra() -> usize {
     if crate::core::paths::test_mode() {
         return 0;
@@ -312,6 +313,11 @@ fn check_arch_infra() -> usize {
 }
 
 /// Check network connectivity to backend-appropriate mirrors
+#[cfg(not(feature = "arch"))]
+const fn check_arch_infra() -> usize {
+    0
+}
+
 async fn check_network(arch_backend: bool) -> usize {
     let client = shared_client();
     let mut issues = 0;
