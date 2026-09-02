@@ -703,6 +703,21 @@ analyzer inference
 - **Ci**: Cross-platform install script and R2 release sync
 ### 🐛 Bug Fixes
 
+- Refuse self-update when provenance cannot be verified (SEC-R1-02) ([#134](https://github.com/PyRo1121/omg/issues/134))
+- SBOM advisory matching respects versions (W5-B-01) ([#132](https://github.com/PyRo1121/omg/issues/132))
+
+* fix: match SBOM advisories against package versions (W5-B-01)
+
+* fix(sbom): match advisories by version string, not LocalPackage
+
+advisory_applies took LocalPackage, which does not compile on debian /
+
+debian-pure where generate_system_sbom iterates DpkgPackageEntry.
+
+Pass name and version strings so both backends type-check, matching
+
+scan_system. Matching semantics are unchanged.
+
 - Stage tool updates before removing the previous install (W4-A-01) ([#131](https://github.com/PyRo1121/omg/issues/131))
 
 install_managed() deleted the existing tool directory before invoking
