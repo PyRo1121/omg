@@ -3527,7 +3527,7 @@ mod tests {
         command.args([
             "--setenv",
             "PATH",
-            "/usr/bin",
+            "/usr/local/sbin:/usr/local/bin:/usr/bin",
             "--setenv",
             SANDBOX_FAKEROOT_ENV.0,
             SANDBOX_FAKEROOT_ENV.1,
