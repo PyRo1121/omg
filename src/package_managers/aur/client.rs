@@ -30,7 +30,7 @@ use super::utils::{
     validate_build_dir,
 };
 
-use super::super::aur_deps::check_dependencies;
+use super::super::aur_deps::{check_dependencies, check_dependencies_for_outputs, dependency_name};
 use super::super::aur_index::AurIndex;
 use super::super::aur_metadata::{
     AurJsonPackage, index_path, metadata_index_is_fresh, metadata_path,
@@ -1406,19 +1406,22 @@ impl AurClient {
 
         let env = self.makepkg_env(&pkg_dir)?;
 
-        let aur_deps = self.missing_aur_dependencies(&pkg_dir, package).await?;
+        let dependency_plan = self
+            .aur_dependency_plan(&pkg_dir, package, requested_outputs)
+            .await?;
+        let requested_outputs = dependency_plan.package_outputs;
         let mut dependency_builds =
             AHashSet::from_iter([package.to_string(), Self::package_base_marker(package)]);
         drop(package_checkout_file_guard);
         drop(package_checkout_guard);
-        for dep in aur_deps {
+        for dep in dependency_plan.missing {
             crate::cli::modern_ui::print_info(&format!(
                 "Installing AUR dependency for {package}: {dep}"
             ));
-            let dep_pkg = self
+            let dep_packages = self
                 .build_only(&dep, &mut dependency_builds, sudoloop.as_ref())
                 .await?;
-            Self::install_built_package(&dep_pkg, sudoloop.as_ref()).await?;
+            Self::install_built_packages(&dep_packages, sudoloop.as_ref()).await?;
             crate::cli::modern_ui::print_success(&format!("Installed dependency: {dep}"));
         }
 
@@ -1448,7 +1451,7 @@ impl AurClient {
         let cache_key = self.cache_key(&pkg_dir, &env.makeflags)?;
 
         let cached = self
-            .cached_artifacts(package, requested_outputs, &env.pkgdest, &cache_key)
+            .cached_artifacts(package, &requested_outputs, &env.pkgdest, &cache_key)
             .await?;
 
         // Cache-poisoning defense (audit SEC02-02): a hit from the
@@ -1464,7 +1467,7 @@ impl AurClient {
                 if archives.len() == requested_outputs.len()
                     && archives
                         .iter()
-                        .zip(requested_outputs)
+                        .zip(&requested_outputs)
                         .all(|(archive, output)| {
                             Self::cached_archive_matches(archive, output)
                                 && Self::cached_artifact_provenance_ok(
@@ -1506,7 +1509,7 @@ impl AurClient {
                 .into());
             }
 
-            pkg_files = Self::find_built_packages(&pkg_dir, &env.pkgdest, requested_outputs)
+            pkg_files = Self::find_built_packages(&pkg_dir, &env.pkgdest, &requested_outputs)
                 .await
                 .map_err(|_| AurError::PackageArchiveNotFound(package.to_string()))?;
             self.write_cache_key(package, &cache_key).await?;
@@ -1527,7 +1530,7 @@ impl AurClient {
         package: &'a str,
         in_flight: &'a mut AHashSet<String>,
         sudoloop: Option<&'a crate::core::sudoloop::SudoLoop>,
-    ) -> BoxFuture<'a, Result<PathBuf>> {
+    ) -> BoxFuture<'a, Result<Vec<PathBuf>>> {
         async move {
             Self::enter_dependency_build(in_flight, package)?;
             let package_base = match self.resolve_package_base(package).await {
@@ -1576,7 +1579,7 @@ impl AurClient {
         package_base: &str,
         in_flight: &mut AHashSet<String>,
         sudoloop: Option<&crate::core::sudoloop::SudoLoop>,
-    ) -> Result<PathBuf> {
+    ) -> Result<Vec<PathBuf>> {
         crate::core::security::validate_package_name(package)?;
         let package_lock = self.package_base_lock(package_base);
         let package_checkout_guard = package_lock.lock().await;
@@ -1643,15 +1646,18 @@ impl AurClient {
         };
         Self::fetch_missing_pgp_keys(&pkgbuild_path).await?;
 
-        let missing_dependencies = self.missing_aur_dependencies(&pkg_dir, package).await?;
+        let dependency_plan = self
+            .aur_dependency_plan(&pkg_dir, package, &[package.to_string()])
+            .await?;
+        let package_outputs = dependency_plan.package_outputs;
         drop(package_checkout_file_guard);
         drop(package_checkout_guard);
-        for dependency in missing_dependencies {
+        for dependency in dependency_plan.missing {
             crate::cli::modern_ui::print_info(&format!(
                 "Installing AUR dependency for {package}: {dependency}"
             ));
-            let archive = self.build_only(&dependency, in_flight, sudoloop).await?;
-            Self::install_built_package(&archive, sudoloop).await?;
+            let archives = self.build_only(&dependency, in_flight, sudoloop).await?;
+            Self::install_built_packages(&archives, sudoloop).await?;
             crate::cli::modern_ui::print_success(&format!("Installed dependency: {dependency}"));
         }
 
@@ -1659,19 +1665,24 @@ impl AurClient {
         let _package_build_file_guard = self.acquire_package_base_file_lock(package_base).await?;
         let env = self.makepkg_env(&pkg_dir)?;
         let cache_key = self.cache_key(&pkg_dir, &env.makeflags)?;
-        if let Some(cached) = self
-            .cached_artifacts(
-                package,
-                std::slice::from_ref(&package.to_string()),
-                &env.pkgdest,
-                &cache_key,
-            )
+        if let Some(archives) = self
+            .cached_artifacts(package_base, &package_outputs, &env.pkgdest, &cache_key)
             .await?
-            .and_then(|archives| {
-                Self::select_cached_artifact(archives, package, &pkg_dir, package_base)
-            })
+            && archives.len() == package_outputs.len()
+            && archives
+                .iter()
+                .zip(&package_outputs)
+                .all(|(archive, output)| {
+                    Self::cached_archive_matches(archive, output)
+                        && Self::cached_artifact_provenance_ok(
+                            archive,
+                            &pkg_dir,
+                            package_base,
+                            output,
+                        )
+                })
         {
-            return Ok(cached);
+            return Ok(archives);
         }
 
         if let Some(digest) = &reviewed_digest {
@@ -1691,15 +1702,11 @@ impl AurClient {
             .into());
         }
 
-        let mut pkg_files =
-            Self::find_built_packages(&pkg_dir, &env.pkgdest, &[package.to_string()])
-                .await
-                .map_err(|_| AurError::PackageArchiveNotFound(package.to_string()))?;
-        let Some(pkg_file) = pkg_files.pop() else {
-            return Err(AurError::PackageArchiveNotFound(package.to_string()).into());
-        };
-        self.write_cache_key(package, &cache_key).await?;
-        Ok(pkg_file)
+        let pkg_files = Self::find_built_packages(&pkg_dir, &env.pkgdest, &package_outputs)
+            .await
+            .map_err(|_| AurError::PackageArchiveNotFound(package.to_string()))?;
+        self.write_cache_key(package_base, &cache_key).await?;
+        Ok(pkg_files)
     }
 
     /// Resolve an AUR name (output or base) to its package base via one RPC
@@ -1847,6 +1854,7 @@ impl AurClient {
     /// the fetched .SRCINFO version/base and embed the exact .INSTALL hook
     /// the reviewed PKGBUILD declares. Any missing proof falls through to a
     /// fresh, reviewed rebuild.
+    #[cfg(test)]
     fn select_cached_artifact(
         archives: Vec<PathBuf>,
         package: &str,
@@ -2175,18 +2183,21 @@ impl AurClient {
         Ok(None)
     }
 
-    async fn missing_aur_dependencies(&self, pkg_dir: &Path, package: &str) -> Result<Vec<String>> {
-        let dep_info = check_dependencies(pkg_dir).unwrap_or_else(|e| {
-            tracing::warn!("Unable to inspect dependencies for {}: {}", package, e);
-            crate::package_managers::aur_deps::DependencyInfo {
-                missing: Vec::new(),
-                total: 0,
-            }
-        });
-
-        if dep_info.missing.is_empty() {
-            return Ok(Vec::new());
-        }
+    async fn aur_dependency_plan(
+        &self,
+        pkg_dir: &Path,
+        package: &str,
+        requested_outputs: &[String],
+    ) -> Result<crate::package_managers::aur_deps::DependencyInfo> {
+        let mut dep_info = check_dependencies_for_outputs(pkg_dir, requested_outputs)
+            .unwrap_or_else(|error| {
+                tracing::warn!("Unable to inspect dependencies for {package}: {error}");
+                crate::package_managers::aur_deps::DependencyInfo {
+                    missing: Vec::new(),
+                    package_outputs: requested_outputs.to_vec(),
+                    total: 0,
+                }
+            });
 
         let mut aur_deps = Vec::new();
         for dep in dep_info.missing {
@@ -2210,7 +2221,8 @@ impl AurClient {
 
         aur_deps.sort();
         aur_deps.dedup();
-        Ok(aur_deps)
+        dep_info.missing = aur_deps;
+        Ok(dep_info)
     }
 
     async fn git_clone(&self, package: &str) -> Result<()> {
@@ -3290,13 +3302,6 @@ impl AurClient {
     /// If a `SudoLoop` is active, refreshes credentials immediately before
     /// the install attempt. Retries once on failure in case credentials
     /// expired during a long build.
-    async fn install_built_package(
-        pkg_path: &Path,
-        sudoloop: Option<&crate::core::sudoloop::SudoLoop>,
-    ) -> Result<()> {
-        Self::install_built_packages(&[pkg_path.to_path_buf()], sudoloop).await
-    }
-
     async fn install_built_packages(
         pkg_paths: &[PathBuf],
         sudoloop: Option<&crate::core::sudoloop::SudoLoop>,
@@ -3416,10 +3421,6 @@ fn create_spinner(msg: &str) -> ProgressBar {
     pb.set_message(msg.to_string());
     pb.enable_steady_tick(std::time::Duration::from_millis(100));
     pb
-}
-
-fn dependency_name(dep: &str) -> &str {
-    dep.find(['>', '<', '=']).map_or(dep, |idx| &dep[..idx])
 }
 
 fn validate_index_entry_name(name: &str, expected: Option<&str>) -> Result<()> {
