@@ -12,7 +12,7 @@ use futures::sink::SinkExt;
 use futures::stream::StreamExt;
 use governor::{Quota, RateLimiter};
 use tokio::net::UnixListener;
-use tokio_util::codec::LengthDelimitedCodec;
+use tokio_util::codec::{FramedWrite, LengthDelimitedCodec};
 use tokio_util::sync::CancellationToken;
 
 use super::handlers::{DaemonState, handle_request};
@@ -454,9 +454,10 @@ const MAX_REQUEST_SIZE: usize = 1024 * 1024;
 ///
 /// The budget sits strictly below the transport ceiling
 /// `protocol::MAX_FRAME_SIZE` (10 MiB) that every client-side reader accepts
-/// (`read_frame` and the `Framed` codec on both ends), so a frame at this
-/// budget is always deliverable with headroom. Responses that overflow it
-/// are degraded gracefully by [`encode_bounded_response`] (semantic
+/// (`read_frame` and the client `Framed` codec). The daemon write codec uses
+/// this same budget so an encoded frame can actually leave the socket;
+/// inbound frames stay capped at [`MAX_REQUEST_SIZE`]. Responses that overflow
+/// it are degraded gracefully by [`encode_bounded_response`] (semantic
 /// truncation of list results), never mapped to `INTERNAL_ERROR`.
 const MAX_RESPONSE_SIZE: usize = 8 * 1024 * 1024;
 
@@ -510,7 +511,13 @@ fn shrink_result(result: &ResponseResult) -> Option<(ResponseResult, usize)> {
             // Keep `total` consistent with the delivered prefix so the client
             // sees a complete (smaller) result set instead of one that hints
             // at more matches it can never receive.
-            Some((ResponseResult::Search(SearchResult { packages, total: keep }), dropped))
+            Some((
+                ResponseResult::Search(SearchResult {
+                    packages,
+                    total: keep,
+                }),
+                dropped,
+            ))
         }
         ResponseResult::DebianSearch(v) if truncatable(v.len()) => {
             let keep = halve(v.len());
@@ -520,7 +527,12 @@ fn shrink_result(result: &ResponseResult) -> Option<(ResponseResult, usize)> {
         ResponseResult::Explicit(r) if truncatable(r.packages.len()) => {
             let keep = halve(r.packages.len());
             let dropped = r.packages.len() - keep;
-            Some((ResponseResult::Explicit(ExplicitResult { packages: r.packages[..keep].to_vec() }), dropped))
+            Some((
+                ResponseResult::Explicit(ExplicitResult {
+                    packages: r.packages[..keep].to_vec(),
+                }),
+                dropped,
+            ))
         }
         ResponseResult::ListUpdates(v) if truncatable(v.len()) => {
             let keep = halve(v.len());
@@ -612,10 +624,13 @@ fn encode_bounded_response(response: &Response, request_id: u64) -> Result<Vec<u
     })?)
 }
 
-async fn send_response_frame(
-    framed: &mut tokio_util::codec::Framed<tokio::net::UnixStream, LengthDelimitedCodec>,
+async fn send_response_frame<W>(
+    framed: &mut FramedWrite<W, LengthDelimitedCodec>,
     response_bytes: Vec<u8>,
-) -> Result<()> {
+) -> Result<()>
+where
+    W: tokio::io::AsyncWrite + Unpin,
+{
     let response_len = response_bytes.len();
     if let Err(error) =
         await_client_write(framed.send(response_bytes.into()), CLIENT_WRITE_TIMEOUT).await
@@ -631,12 +646,14 @@ async fn send_response_frame(
 /// Encode and send one error frame, accounting bytes sent. The shared tail
 /// of every early-reject path in `handle_client` (audit typ01 C2): without
 /// it, drift between copies is how a future edit forgets the metric.
-async fn send_error_response(
-    framed: &mut tokio_util::codec::Framed<tokio::net::UnixStream, LengthDelimitedCodec>,
+async fn send_error_response<W>(
+    framed: &mut FramedWrite<W, LengthDelimitedCodec>,
     id: u64,
     code: i32,
     message: String,
-) {
+) where
+    W: tokio::io::AsyncWrite + Unpin,
+{
     let response = Response::Error { id, code, message };
     if let Ok(response_bytes) = crate::daemon::protocol::encode_frame(&response)
         && let Err(error) = send_response_frame(framed, response_bytes).await
@@ -657,10 +674,16 @@ async fn handle_client_with_idle_timeout(
     // METRICS: Track active connections using RAII guard
     let _guard = ConnectionGuard::new();
 
-    // Use length-delimited framing for binary messages with max frame length
-    let mut framed = LengthDelimitedCodec::builder()
+    // LengthDelimitedCodec applies max_frame_length to encode and decode.
+    // Keep inbound frames at the request DoS cap; give the write half the
+    // response budget so an 8 MiB success frame is not rejected after encode.
+    let (read_half, write_half) = tokio::io::split(stream);
+    let mut framed_read = LengthDelimitedCodec::builder()
         .max_frame_length(MAX_REQUEST_SIZE)
-        .new_framed(stream);
+        .new_read(read_half);
+    let mut framed_write = LengthDelimitedCodec::builder()
+        .max_frame_length(MAX_RESPONSE_SIZE)
+        .new_write(write_half);
 
     // Rate limit per connection to ensure fairness
     // Const-eval guarantee: the literals above are non-zero; a violation is
@@ -673,7 +696,7 @@ async fn handle_client_with_idle_timeout(
     tracing::debug!("New binary client connected");
 
     loop {
-        let request_bytes = match tokio::time::timeout(idle_timeout, framed.next()).await {
+        let request_bytes = match tokio::time::timeout(idle_timeout, framed_read.next()).await {
             Ok(Some(request_bytes)) => request_bytes,
             Ok(None) => break,
             Err(_) => {
@@ -713,7 +736,7 @@ async fn handle_client_with_idle_timeout(
                 // Answer once so the client learns WHY instead of hanging for
                 // its full timeout, then close — the stream is unusable.
                 send_error_response(
-                    &mut framed,
+                    &mut framed_write,
                     0,
                     error_codes::PARSE_ERROR,
                     format!(
@@ -727,7 +750,7 @@ async fn handle_client_with_idle_timeout(
             Err(e) => {
                 tracing::warn!("malformed frame header: {e}");
                 send_error_response(
-                    &mut framed,
+                    &mut framed_write,
                     0,
                     error_codes::PARSE_ERROR,
                     format!("malformed frame header: {e}"),
@@ -750,7 +773,7 @@ async fn handle_client_with_idle_timeout(
                 );
                 GLOBAL_METRICS.inc_validation_failures();
                 GLOBAL_METRICS.inc_requests_failed();
-                send_error_response(&mut framed, 0, error_codes::PARSE_ERROR, msg).await;
+                send_error_response(&mut framed_write, 0, error_codes::PARSE_ERROR, msg).await;
                 break;
             }
         };
@@ -770,7 +793,7 @@ async fn handle_client_with_idle_timeout(
             GLOBAL_METRICS.inc_requests_failed();
 
             send_error_response(
-                &mut framed,
+                &mut framed_write,
                 request_id,
                 error_codes::RATE_LIMITED,
                 "Rate limit exceeded. Please slow down.".to_string(),
@@ -802,7 +825,7 @@ async fn handle_client_with_idle_timeout(
 
         // Encode and send response
         let response_bytes = encode_bounded_response(&response, request_id)?;
-        send_response_frame(&mut framed, response_bytes).await?;
+        send_response_frame(&mut framed_write, response_bytes).await?;
     }
 
     tracing::debug!("Client disconnected");
@@ -834,7 +857,9 @@ mod tests {
                 assert_eq!(code, error_codes::RESPONSE_TOO_LARGE);
                 assert!(message.contains("response budget"));
             }
-            Response::Success { .. } => panic!("untruncatable oversized response must become an error"),
+            Response::Success { .. } => {
+                panic!("untruncatable oversized response must become an error")
+            }
         }
     }
 
@@ -853,14 +878,20 @@ mod tests {
             result: ResponseResult::DebianSearch(vec![entry; count]),
         };
         let raw = crate::daemon::protocol::encode_frame(&oversized).expect("encode oversized");
-        assert!(raw.len() > MAX_RESPONSE_SIZE, "test setup: payload must exceed the budget");
+        assert!(
+            raw.len() > MAX_RESPONSE_SIZE,
+            "test setup: payload must exceed the budget"
+        );
 
         let encoded = encode_bounded_response(&oversized, 42).expect("bounded response");
         assert!(encoded.len() <= MAX_RESPONSE_SIZE);
         let (_, payload) = crate::daemon::protocol::split_frame(&encoded).expect("frame header");
         let decoded: Response = bitcode::deserialize(payload).expect("truncated frame decodes");
         match decoded {
-            Response::Success { id, result: ResponseResult::DebianSearch(list) } => {
+            Response::Success {
+                id,
+                result: ResponseResult::DebianSearch(list),
+            } => {
                 assert_eq!(id, 42);
                 assert!(list.len() < count, "list must have been truncated");
                 assert!(!list.is_empty(), "truncation must keep at least one entry");
@@ -891,7 +922,10 @@ mod tests {
         let (_, payload) = crate::daemon::protocol::split_frame(&encoded).expect("frame header");
         let decoded: Response = bitcode::deserialize(payload).expect("truncated frame decodes");
         match decoded {
-            Response::Success { id, result: ResponseResult::Search(results) } => {
+            Response::Success {
+                id,
+                result: ResponseResult::Search(results),
+            } => {
                 assert_eq!(id, 43);
                 assert!(results.packages.len() < count);
                 assert!(!results.packages.is_empty());
@@ -902,6 +936,44 @@ mod tests {
             }
             other => panic!("oversized search response must stay a success, got {other:?}"),
         }
+    }
+
+    #[tokio::test]
+    async fn response_write_codec_accepts_frames_above_the_request_budget() {
+        let (mut client, server) = tokio::net::UnixStream::pair().expect("socket pair");
+        let payload_len = MAX_REQUEST_SIZE + 1;
+        let writer = tokio::spawn(async move {
+            let mut framed_write = LengthDelimitedCodec::builder()
+                .max_frame_length(MAX_RESPONSE_SIZE)
+                .new_write(server);
+            framed_write.send(vec![0u8; payload_len].into()).await
+        });
+        // Drain so the write cannot stall on a full socket buffer.
+        let mut remaining = 4 + payload_len;
+        let mut buf = vec![0u8; 64 * 1024];
+        while remaining > 0 {
+            let n = tokio::io::AsyncReadExt::read(&mut client, &mut buf)
+                .await
+                .expect("drain response frame");
+            assert!(n > 0, "writer closed before the frame was fully sent");
+            remaining = remaining.saturating_sub(n);
+        }
+        writer
+            .await
+            .expect("write task")
+            .expect("write codec must accept a frame larger than the request budget");
+    }
+
+    #[tokio::test]
+    async fn request_sized_codec_cannot_send_the_response_budget() {
+        let (_client, server) = tokio::net::UnixStream::pair().expect("socket pair");
+        let mut framed_write = LengthDelimitedCodec::builder()
+            .max_frame_length(MAX_REQUEST_SIZE)
+            .new_write(server);
+        framed_write
+            .send(vec![0u8; MAX_REQUEST_SIZE + 1].into())
+            .await
+            .expect_err("a 1 MiB write cap would reject the new response budget");
     }
 
     #[tokio::test(flavor = "current_thread")]
