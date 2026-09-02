@@ -573,13 +573,24 @@ mod security {
         let project = TestProject::new();
         project.with_security_policy(policies::STRICT_POLICY);
 
-        // show_policy always prints the status header and minimum grade.
+        // The helper now writes to the real load path
+        // (`$OMG_CONFIG_DIR/policy.toml`), so `audit policy` must reflect the
+        // injected policy, not the built-in default: strict disables AUR,
+        // requires PGP, and bans telnet/ftp.
         let result = project.run(&["audit", "policy"]);
         result.assert_success();
         assert!(
             result.stdout_contains("Security Policy Status")
-                && result.stdout_contains("Minimum Grade:"),
-            "policy audit must show status and grade, got:\n{}",
+                && result.stdout_contains("Minimum Grade:")
+                && result.stdout_contains("VERIFIED")
+                && result.stdout_contains("AUR Allowed:")
+                && result.stdout_contains("No")
+                && result.stdout_contains("PGP Required:")
+                && result.stdout_contains("Yes")
+                && result.stdout_contains("Banned Packages:")
+                && result.stdout_contains("telnet")
+                && result.stdout_contains("ftp"),
+            "policy audit must reflect the injected STRICT_POLICY, got:\n{}",
             result.stdout
         );
     }

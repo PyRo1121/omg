@@ -263,15 +263,17 @@ mod database_errors {
 mod config_errors {
     use super::*;
     use common::fixtures::error_conditions;
-    use std::fs::{self, File};
+    use std::fs::File;
     use std::io::Write;
 
     #[test]
     fn test_invalid_config_toml_error() {
         // ===== ARRANGE =====
         let project = TestProject::new();
-        let config_dir = project.config_dir.path().join("omg");
-        fs::create_dir_all(&config_dir).unwrap();
+        // `Settings::config_path` reads `$OMG_CONFIG_DIR/config.toml` verbatim
+        // (`paths::config_dir()` already ends in `omg`); a nested `omg/`
+        // subdirectory would be a file the app never reads.
+        let config_dir = project.config_dir.path();
 
         let config_file = config_dir.join("config.toml");
         let mut f = File::create(&config_file).unwrap();

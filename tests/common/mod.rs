@@ -492,7 +492,12 @@ impl TestProject {
     }
 
     pub fn with_security_policy(&self, policy: &str) -> &Self {
-        let path = self.config_dir.path().join("omg/policy.toml");
+        // `SecurityPolicy::load_default` reads `paths::config_dir()` (i.e.
+        // `$OMG_CONFIG_DIR` verbatim, which already ends in `omg`) plus
+        // `policy.toml`. Writing to a nested `omg/` subdirectory would place
+        // the file where the app never looks, so every policy test would
+        // silently run against the built-in default.
+        let path = self.config_dir.path().join("policy.toml");
         if let Some(parent) = path.parent() {
             fs::create_dir_all(parent).unwrap();
         }
