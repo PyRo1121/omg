@@ -30,6 +30,29 @@ pub const GLOBAL_RATE_LIMIT_BURST: u32 = 200;
 const DAEMON_INFO_BACKEND_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(5);
 #[cfg(feature = "arch")]
 const DAEMON_INFO_AUR_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(8);
+const REFRESH_DEBOUNCE: std::time::Duration = std::time::Duration::from_secs(1);
+
+#[derive(Default)]
+struct RefreshDebounce {
+    last_completed: std::sync::Mutex<Option<std::time::Instant>>,
+}
+
+impl RefreshDebounce {
+    fn should_skip(&self, now: std::time::Instant) -> bool {
+        self.last_completed
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .and_then(|completed| now.checked_duration_since(completed))
+            .is_some_and(|elapsed| elapsed < REFRESH_DEBOUNCE)
+    }
+
+    fn record_completion(&self, completed_at: std::time::Instant) {
+        *self
+            .last_completed
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner) = Some(completed_at);
+    }
+}
 
 enum SystemBackendAccess {
     Isolated,
@@ -70,6 +93,7 @@ pub struct DaemonState {
     /// a worker that predates `omg sync` serves a frozen update list forever.
     system_backends: RwLock<SystemBackendAccess>,
     refresh_lock: tokio::sync::Mutex<()>,
+    refresh_debounce: RefreshDebounce,
     index_generation: AtomicU64,
     pub(super) runtime_versions: Arc<RwLock<Vec<(String, String)>>>,
     pub(super) rate_limiter: Arc<RateLimiter<NotKeyed, InMemoryState, DefaultClock>>,
@@ -268,6 +292,7 @@ impl DaemonState {
             index: RwLock::new(Arc::new(index)),
             system_backends: RwLock::new(system_backends),
             refresh_lock: tokio::sync::Mutex::new(()),
+            refresh_debounce: RefreshDebounce::default(),
             index_generation: AtomicU64::new(0),
             runtime_versions: Arc::new(RwLock::new(Vec::new())),
             rate_limiter,
@@ -377,6 +402,17 @@ async fn handle_refresh_index(state: Arc<DaemonState>, id: RequestId) -> Respons
             result: ResponseResult::IndexRefreshed { packages },
         };
     }
+    if state
+        .refresh_debounce
+        .should_skip(std::time::Instant::now())
+    {
+        let packages = state.index_snapshot().len();
+        tracing::debug!(packages, "Debounced recent package index refresh");
+        return Response::Success {
+            id,
+            result: ResponseResult::IndexRefreshed { packages },
+        };
+    }
 
     let rebuilt = tokio::task::spawn_blocking(PackageIndex::new).await;
     let index = match rebuilt {
@@ -394,6 +430,9 @@ async fn handle_refresh_index(state: Arc<DaemonState>, id: RequestId) -> Respons
     // Drop the persisted snapshot too: it predates the index swap and would
     // otherwise be resurrected into the memory cache by the next status call.
     state.persistent.invalidate_status();
+    state
+        .refresh_debounce
+        .record_completion(std::time::Instant::now());
     tracing::info!(packages, "Daemon package index refreshed");
     Response::Success {
         id,
@@ -1280,6 +1319,18 @@ mod tests {
             DaemonState::new_isolated(directory.path(), PackageIndex::empty(), package_manager)
                 .expect("create isolated daemon state");
         (directory, Arc::new(state))
+    }
+
+    #[test]
+    fn refresh_debounce_skips_only_recent_completed_refreshes() {
+        let debounce = RefreshDebounce::default();
+        let completed_at = std::time::Instant::now();
+
+        assert!(!debounce.should_skip(completed_at));
+        debounce.record_completion(completed_at);
+        assert!(debounce.should_skip(completed_at));
+        assert!(debounce.should_skip(completed_at + std::time::Duration::from_millis(999)));
+        assert!(!debounce.should_skip(completed_at + REFRESH_DEBOUNCE));
     }
 
     #[test]
