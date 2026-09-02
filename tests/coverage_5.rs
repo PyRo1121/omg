@@ -223,23 +223,43 @@ fn join_rejects_unsupported_https_remote_before_mutation() {
 // team status
 // ═══════════════════════════════════════════════════════════════════════════
 
-/// Contract: outside a workspace, `status` fails and points at the exact
-/// remedy command.
+/// Contract: `status` is license-gated BEFORE any workspace probe, so a
+/// Free-tier run outside a workspace gets the gate error, not the workspace
+/// error (SEC-G1-01: status previously ran ungated).
 #[test]
 #[serial]
-fn status_outside_workspace_fails_naming_init_remedy() {
+fn status_outside_workspace_still_license_gated() {
     let project = TestProject::new();
     let res = project.run(&["team", "status"]);
-    res.assert_failure();
-    res.assert_stderr_contains("Not a team workspace");
-    res.assert_stdout_contains("Run 'omg team init <team-id>' first");
+    assert_gate_failure(&res, "status outside workspace");
+}
+
+/// Contract (SEC-G1-01 regression): even inside a validly-initialized team
+/// workspace, `status` on the Free tier must stop at the license gate and
+/// report no team state at all.
+#[test]
+#[serial]
+fn team_status_requires_license_gate() {
+    let project = TestProject::new();
+    craft_workspace(&project);
+    let res = project.run(&["team", "status"]);
+    assert_gate_failure(&res, "status");
+    assert!(
+        !res.stdout_contains("[Team Status]"),
+        "status must not report team state before the license gate"
+    );
 }
 
 /// Contract: in a crafted initialized workspace, `status` succeeds and reports
 /// the team identity, the empty-lock sentinel "none", and the 1/1 sync ratio
 /// produced by registering the configured local member.
+///
+/// Ignored since SEC-G1-01: status is now license-gated, and the gate cannot
+/// be satisfied offline (tokens verify against the production Ed25519 key),
+/// so this Team-tier behavioral contract needs a valid-license fixture to run.
 #[test]
 #[serial]
+#[ignore = "requires a valid Team-tier license fixture; gate added by SEC-G1-01"]
 fn status_in_workspace_reports_identity_empty_lock_and_member_count() {
     let project = TestProject::new();
     craft_workspace(&project);
@@ -258,8 +278,12 @@ fn status_in_workspace_reports_identity_empty_lock_and_member_count() {
 /// Contract: `push` writes an integrity-valid `omg.lock`, records its hash as
 /// the team lock hash in the durable status file, and registers the configured
 /// member as in-sync.
+///
+/// Ignored since SEC-G1-01: see status_in_workspace... for the license-fixture
+/// rationale.
 #[test]
 #[serial]
+#[ignore = "requires a valid Team-tier license fixture; gate added by SEC-G1-01"]
 fn push_writes_valid_lockfile_and_records_lock_hash_in_status() {
     let project = TestProject::new();
     craft_workspace(&project);
@@ -302,8 +326,12 @@ fn push_writes_valid_lockfile_and_records_lock_hash_in_status() {
 
 /// Contract: after a successful push, `pull` (no remote configured) compares
 /// purely local state and reports in-sync with a zero exit code.
+///
+/// Ignored since SEC-G1-01: see status_in_workspace... for the license-fixture
+/// rationale.
 #[test]
 #[serial]
+#[ignore = "requires a valid Team-tier license fixture; gate added by SEC-G1-01"]
 fn pull_after_push_reports_local_sync_success() {
     let project = TestProject::new();
     craft_workspace(&project);
@@ -319,8 +347,12 @@ fn pull_after_push_reports_local_sync_success() {
 /// Contract: when the committed lock differs from the live environment (valid
 /// integrity, different content), `pull` exits non-zero, warns about drift on
 /// stdout, and names the `omg env check` diagnostic command.
+///
+/// Ignored since SEC-G1-01: see status_in_workspace... for the license-fixture
+/// rationale.
 #[test]
 #[serial]
+#[ignore = "requires a valid Team-tier license fixture; gate added by SEC-G1-01"]
 fn pull_detects_drift_when_lock_differs_from_environment() {
     let project = TestProject::new();
     craft_workspace(&project);
@@ -351,6 +383,7 @@ fn pull_detects_drift_when_lock_differs_from_environment() {
 /// silently treated as in-sync or as drift.
 #[test]
 #[serial]
+#[ignore = "requires a valid Team-tier license fixture; gate added by SEC-G1-01"]
 fn corrupted_lockfile_fails_pull_loudly_instead_of_reporting_state() {
     let project = TestProject::new();
     craft_workspace(&project);
@@ -375,6 +408,7 @@ fn corrupted_lockfile_fails_pull_loudly_instead_of_reporting_state() {
 /// of reporting local-only state as a successful team sync.
 #[test]
 #[serial]
+#[ignore = "requires a valid Team-tier license fixture; gate added by SEC-G1-01"]
 fn pull_rejects_non_gist_remote_url_instead_of_reporting_fake_sync() {
     let project = TestProject::new();
     craft_workspace(&project);
@@ -387,6 +421,42 @@ fn pull_rejects_non_gist_remote_url_instead_of_reporting_fake_sync() {
     res.assert_failure();
     res.assert_stderr_contains("Unsupported team remote URL 'https://github.com/acme/backend'");
     res.assert_stderr_contains("pull currently supports only gist.github.com remotes");
+}
+
+/// Contract (SEC-G1-01 regression): even inside a validly-initialized team
+/// workspace, `push` on the Free tier must stop at the license gate and never
+/// reach the gist-sync workflow — previously push ran fully ungated.
+#[test]
+#[serial]
+fn team_push_requires_license_gate() {
+    let project = TestProject::new();
+    craft_workspace(&project);
+    let res = project.run(&["team", "push"]);
+    assert_gate_failure(&res, "push");
+    assert!(
+        !res.stdout_contains("Team lock updated!"),
+        "push must not reach the sync workflow before the license gate"
+    );
+    assert!(
+        !project.path().join("omg.lock").exists(),
+        "the license gate must precede any lockfile write"
+    );
+}
+
+/// Contract (SEC-G1-01 regression): even inside a validly-initialized team
+/// workspace, `pull` on the Free tier must stop at the license gate and never
+/// reach the gist-sync workflow — previously pull ran fully ungated.
+#[test]
+#[serial]
+fn team_pull_requires_license_gate() {
+    let project = TestProject::new();
+    craft_workspace(&project);
+    let res = project.run(&["team", "pull"]);
+    assert_gate_failure(&res, "pull");
+    assert!(
+        !res.stdout_contains("Environment is in sync with team!"),
+        "pull must not reach the sync workflow before the license gate"
+    );
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
