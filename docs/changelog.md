@@ -386,6 +386,38 @@ std::io imports); format touched files with rustfmt
 - Reuse atomic download helper for mise installs
 ### ⚡ Performance
 
+- AUR update performance, terminal ownership, and elevated-write file ownership
+
+  - Publish AUR metadata as a coherent generation: stage-validate-then-rename
+
+keeps index_mtime >= archive_mtime, eliminating full JSON reparses after
+
+every sync (6.8s stale-index path measured 0.87s).
+
+  - Update discovery never synchronously syncs or parses global metadata:
+
+fresh coherent index fast path, direct chunked RPC fallback otherwise.
+
+  - Single terminal owner: PKGBUILD review quiesces all registered spinners
+
+and renders through $PAGER; sudo credentials pre-acquired before any
+
+spinner; PKGBUILD sha256 re-verified before every build (TOCTOU seal).
+
+  - Parallel AUR builds attach spinners to one MultiProgress registry;
+
+buffered emit prevents status lines from being drawn over prompts.
+
+  - Elevated runs restore original-user ownership of history.json and AUR
+
+metadata (rename otherwise leaves root:0600 files in user space), and
+
+sync databases publish 0644 like pacman.
+
+  - benchmark-hyperfine.sh --update: isolated ready-index vs missing-index
+
+discovery benchmark with no-index-rebuild regression guard.
+
 - **Aur**: Decode RPC envelopes once
 - Validate Debian mmap indexes once
 - Fail closed on invalid performance baselines
@@ -702,6 +734,19 @@ analyzer inference
 
 - **Ci**: Cross-platform install script and R2 release sync
 ### 🐛 Bug Fixes
+
+- **Deps**: Restore audited SLSA crypto pins
+- Harden elevated file handling, telemetry opt-out, and platform edge cases
+
+Prior audit round (W-series findings) across package managers and core:
+
+  - pacman_db cache handling and debian db/transaction hardening
+
+  - daemon handlers, pacman_conf, paths, http, license, security updates
+
+  - AUR dependency resolution and apt backend fixes
+
+  - ignore local agent workspaces (.pi/, piolium/)
 
 - Handle absolute symlink targets per dpkg semantics (W1-B-01) ([#148](https://github.com/PyRo1121/omg/issues/148))
 - Honor or reject omg daemon --foreground (W10-A2-01) ([#147](https://github.com/PyRo1121/omg/issues/147))
