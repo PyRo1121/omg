@@ -161,7 +161,7 @@ pub fn draw(f: &mut Frame, app: &App) {
     draw_status_bar(f, footer, app);
 
     // Draw popup if active
-    if app.show_popup {
+    if app.pending_confirmation.is_some() {
         draw_popup(f, app);
     }
 }
@@ -1367,41 +1367,34 @@ fn draw_popup(f: &mut Frame, app: &App) {
 
     f.render_widget(Clear, popup_area);
 
-    let (title, content) = if let Some(pkg) = app.search_results.get(app.selected_index) {
-        (
-            "󰏗 Install Package",
-            vec![
-                Line::from(""),
-                Line::from(vec![
-                    Span::styled("Install ", Style::default().fg(colors::FG_PRIMARY)),
-                    Span::styled(
-                        pkg.name.as_str(),
-                        Style::default()
-                            .fg(colors::ACCENT_CYAN)
-                            .add_modifier(Modifier::BOLD),
-                    ),
-                    Span::styled("?", Style::default().fg(colors::FG_PRIMARY)),
-                ]),
-                Line::from(""),
-                Line::from(vec![
-                    Span::styled(
-                        " Enter ",
-                        Style::default()
-                            .bg(colors::ACCENT_GREEN)
-                            .fg(colors::BG_DARK),
-                    ),
-                    Span::styled(" Confirm  ", Style::default().fg(colors::FG_MUTED)),
-                    Span::styled(
-                        " Esc ",
-                        Style::default().bg(colors::ACCENT_RED).fg(colors::BG_DARK),
-                    ),
-                    Span::styled(" Cancel", Style::default().fg(colors::FG_MUTED)),
-                ]),
-            ],
-        )
-    } else {
-        ("󰀨 No Selection", vec![Line::from("No package selected")])
+    let Some(action) = app.pending_confirmation.as_ref() else {
+        return;
     };
+    let title = action.title();
+    let content = vec![
+        Line::from(""),
+        Line::from(Span::styled(
+            action.prompt(),
+            Style::default()
+                .fg(colors::ACCENT_CYAN)
+                .add_modifier(Modifier::BOLD),
+        )),
+        Line::from(""),
+        Line::from(vec![
+            Span::styled(
+                " Enter ",
+                Style::default()
+                    .bg(colors::ACCENT_GREEN)
+                    .fg(colors::BG_DARK),
+            ),
+            Span::styled(" Confirm  ", Style::default().fg(colors::FG_MUTED)),
+            Span::styled(
+                " Esc ",
+                Style::default().bg(colors::ACCENT_RED).fg(colors::BG_DARK),
+            ),
+            Span::styled(" Cancel", Style::default().fg(colors::FG_MUTED)),
+        ]),
+    ];
 
     let popup = Paragraph::new(content).alignment(Alignment::Center).block(
         Block::default()
@@ -1474,6 +1467,29 @@ mod tests {
                 "{tab:?} must render {expected:?}"
             );
         }
+    }
+
+    #[test]
+    fn mutation_confirmation_renders_the_exact_destructive_action() {
+        let mut terminal = Terminal::new(TestBackend::new(120, 40)).expect("test terminal");
+        let mut app = app_on(Tab::Dashboard);
+        app.pending_confirmation = Some(crate::cli::tui::app::ConfirmationAction::RemoveOrphans);
+
+        terminal
+            .draw(|frame| draw(frame, &app))
+            .expect("draw confirmation");
+        let rendered: String = terminal
+            .backend()
+            .buffer()
+            .content()
+            .iter()
+            .map(ratatui::buffer::Cell::symbol)
+            .collect();
+
+        assert!(rendered.contains("Remove Orphans"));
+        assert!(rendered.contains("Remove every orphaned package?"));
+        assert!(rendered.contains("Confirm"));
+        assert!(rendered.contains("Cancel"));
     }
 
     #[test]
