@@ -735,6 +735,12 @@ analyzer inference
 - **Ci**: Cross-platform install script and R2 release sync
 ### 🐛 Bug Fixes
 
+- Require consent for ALPM collateral package mutations ([#153](https://github.com/PyRo1121/omg/issues/153))
+
+* fix: stop silently auto-answering ALPM replace/remove questions (W2-C-03, W5-C-01)
+
+* test: provide ALPM_DB_VERSION marker in isolated replace-question fixture
+
 - Refresh daemon index before update list reuse (W12-A-01) ([#151](https://github.com/PyRo1121/omg/issues/151))
 
 update_official_only synced package databases via pm.sync() but then
