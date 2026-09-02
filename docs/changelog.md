@@ -4469,6 +4469,7 @@ the Debian backend), so it was removed from the metadata.
 - Normalize project formatting
 ### 🧪 Testing
 
+- **Arch**: Trust unsigned fixture databases
 - Align stale coverage contracts
 - **Security**: Accept pinned Rust toolchain action ([#119](https://github.com/PyRo1121/omg/issues/119))
 - Refresh the isolated fuzz lockfile
