@@ -62,12 +62,18 @@ fn modified_within_ttl(modified: SystemTime, ttl: Duration) -> bool {
     modified.elapsed().is_ok_and(|age| age < ttl)
 }
 
+fn metadata_generation_is_coherent(archive_path: &Path, index_path: &Path) -> bool {
+    let archive_modified = std::fs::metadata(archive_path).and_then(|meta| meta.modified());
+    let index_modified = std::fs::metadata(index_path).and_then(|meta| meta.modified());
+    matches!((archive_modified, index_modified), (Ok(archive), Ok(index)) if index >= archive)
+}
+
 pub(crate) fn metadata_index_is_fresh(
     archive_path: &Path,
     index_path: &Path,
     ttl: Duration,
 ) -> bool {
-    index_path.is_file()
+    metadata_generation_is_coherent(archive_path, index_path)
         && std::fs::metadata(archive_path)
             .and_then(|metadata| metadata.modified())
             .is_ok_and(|modified| modified_within_ttl(modified, ttl))
@@ -117,9 +123,8 @@ pub async fn sync_aur_metadata(
         .await?;
 
         if is_fresh {
-            // Ensure index exists even if cache is fresh
-            if !index_path.exists() {
-                info!("AUR cache is fresh but index is missing. Rebuilding index...");
+            if !metadata_generation_is_coherent(&cache_path, &index_path) {
+                info!("AUR cache is fresh but its index is stale. Rebuilding index...");
                 rebuild_index(&cache_path, &index_path).await?;
             }
             return Ok(());
@@ -147,33 +152,24 @@ pub async fn sync_aur_metadata(
             cache_path.is_file(),
             "AUR metadata server returned 304 but the cached archive is missing"
         );
-        // Cache is still valid on server side
-        // Touch the file to update mtime so we don't check again immediately
-        if cache_path.is_file() {
-            let touched = tokio::task::spawn_blocking({
-                let cache_path = cache_path.clone();
-                move || -> std::io::Result<()> {
-                    let file = File::options().write(true).open(&cache_path)?;
-                    file.set_modified(SystemTime::now())
-                }
-            })
-            .await;
-            match touched {
-                Ok(Ok(())) => {}
-                Ok(Err(error)) => {
-                    tracing::debug!("Failed to refresh AUR metadata mtime: {error}");
-                }
-                Err(error) => {
-                    tracing::debug!("AUR metadata touch task failed: {error}");
-                }
-            }
-        }
-
-        // Ensure index exists
-        if !index_path.exists() && cache_path.is_file() {
-            info!("Rebuilding missing AUR index...");
+        if !metadata_generation_is_coherent(&cache_path, &index_path) {
+            info!("Rebuilding stale AUR index...");
             rebuild_index(&cache_path, &index_path).await?;
         }
+        let cache_path_clone = cache_path.clone();
+        let index_path_clone = index_path.clone();
+        tokio::task::spawn_blocking(move || {
+            let modified = SystemTime::now();
+            File::options()
+                .write(true)
+                .open(cache_path_clone)?
+                .set_modified(modified)?;
+            File::options()
+                .write(true)
+                .open(index_path_clone)?
+                .set_modified(modified)
+        })
+        .await??;
 
         return Ok(());
     }
@@ -214,10 +210,13 @@ pub async fn sync_aur_metadata(
     }
     {
         let cache_path = cache_path.clone();
-        tokio::task::spawn_blocking(move || persist_file_atomically(&cache_path, &bytes)).await??;
+        let index_path = index_path.clone();
+        tokio::task::spawn_blocking(move || {
+            validate_and_publish_metadata(&cache_path, &index_path, &bytes)
+        })
+        .await??;
     }
 
-    // Persist ETag / Last-Modified so the next sync can make a conditional request.
     let new_meta = AurMetaCache {
         etag,
         last_modified,
@@ -225,7 +224,8 @@ pub async fn sync_aur_metadata(
     match serde_json::to_vec(&new_meta) {
         Ok(meta_bytes) => {
             let result = tokio::task::spawn_blocking(move || {
-                persist_file_atomically(&meta_path, &meta_bytes)
+                persist_file_atomically(&meta_path, &meta_bytes)?;
+                crate::core::safe_ops::restore_original_user_ownership(&meta_path)
             })
             .await;
             match result {
@@ -240,10 +240,6 @@ pub async fn sync_aur_metadata(
         }
         Err(error) => tracing::warn!("Failed to serialize AUR metadata sidecar: {error}"),
     }
-
-    // Rebuild index
-    info!("Building AUR binary index...");
-    rebuild_index(&cache_path, &index_path).await?;
 
     info!("AUR metadata synced and indexed");
     Ok(())
@@ -270,6 +266,46 @@ pub fn index_path() -> PathBuf {
         .join("aur")
         .join("_meta")
         .join("packages-meta-ext-v1.rkyv")
+}
+
+fn validate_and_publish_metadata(
+    archive_path: &Path,
+    index_path: &Path,
+    bytes: &[u8],
+) -> Result<()> {
+    let parent = archive_path.parent().unwrap_or_else(|| Path::new("."));
+    std::fs::create_dir_all(parent)?;
+
+    let mut staged_archive = tempfile::NamedTempFile::new_in(parent)?;
+    staged_archive.write_all(bytes)?;
+    staged_archive.as_file_mut().sync_all()?;
+
+    let staged_index = tempfile::NamedTempFile::new_in(parent)?.into_temp_path();
+    std::fs::remove_file(&staged_index)?;
+    build_index(staged_archive.path(), &staged_index)?;
+
+    // Reusing the staged file preserves the mtime ordering used for coherence.
+    staged_archive
+        .persist(archive_path)
+        .map_err(|error| error.error)
+        .with_context(|| {
+            format!(
+                "Failed to persist AUR metadata at {}",
+                archive_path.display()
+            )
+        })?;
+    crate::core::safe_ops::sync_parent_directory_sync(archive_path)?;
+    std::fs::rename(&staged_index, index_path)
+        .with_context(|| format!("Failed to publish AUR index at {}", index_path.display()))?;
+    crate::core::safe_ops::sync_parent_directory_sync(index_path)?;
+    // An elevated sync re-owns these files as root via rename, locking the
+    // real user out of the metadata fast path.
+    for published in [archive_path, index_path] {
+        if let Err(error) = crate::core::safe_ops::restore_original_user_ownership(published) {
+            tracing::warn!("Failed to restore AUR metadata ownership: {error:#}");
+        }
+    }
+    Ok(())
 }
 
 async fn rebuild_index(archive_path: &Path, index_path: &Path) -> Result<()> {
@@ -331,6 +367,75 @@ mod tests {
             &index,
             Duration::from_secs(60)
         ));
+    }
+
+    #[test]
+    fn stale_index_is_not_a_fresh_metadata_generation() {
+        use std::fs::FileTimes;
+
+        let directory = tempfile::tempdir().unwrap();
+        let archive = directory.path().join("metadata.json.gz");
+        let index = directory.path().join("metadata.rkyv");
+        std::fs::write(&archive, b"new archive").unwrap();
+        std::fs::write(&index, b"old index").unwrap();
+        File::options()
+            .write(true)
+            .open(&index)
+            .unwrap()
+            .set_times(FileTimes::new().set_modified(SystemTime::UNIX_EPOCH))
+            .unwrap();
+
+        assert!(!metadata_index_is_fresh(
+            &archive,
+            &index,
+            Duration::from_secs(60)
+        ));
+    }
+
+    #[test]
+    fn published_metadata_generation_is_coherent_and_fresh() {
+        let directory = tempfile::tempdir().unwrap();
+        let archive = directory.path().join("metadata.json.gz");
+        let index = directory.path().join("metadata.rkyv");
+
+        let mut json = Vec::new();
+        let mut encoder = flate2::write::GzEncoder::new(&mut json, flate2::Compression::default());
+        serde_json::to_writer(
+            &mut encoder,
+            &serde_json::json!([{"Name": "aur-helper", "Version": "1.2.3-1"}]),
+        )
+        .unwrap();
+        encoder.finish().unwrap();
+
+        validate_and_publish_metadata(&archive, &index, &json).unwrap();
+
+        assert_eq!(
+            read_metadata_archive(&archive).unwrap()[0].name,
+            "aur-helper",
+            "the published archive must be the validated bytes"
+        );
+        assert!(
+            metadata_index_is_fresh(&archive, &index, Duration::from_secs(60)),
+            "a just-published generation must be coherent and fresh"
+        );
+    }
+
+    #[test]
+    fn invalid_metadata_does_not_replace_a_valid_generation() {
+        let directory = tempfile::tempdir().unwrap();
+        let archive = directory.path().join("metadata.json.gz");
+        let index = directory.path().join("metadata.rkyv");
+        let sidecar = directory.path().join("metadata.gz.meta");
+        std::fs::write(&archive, b"old archive").unwrap();
+        std::fs::write(&index, b"old index").unwrap();
+        std::fs::write(&sidecar, b"old validators").unwrap();
+
+        let error = validate_and_publish_metadata(&archive, &index, b"invalid gzip")
+            .expect_err("invalid metadata must fail validation");
+        assert!(!error.to_string().is_empty());
+        assert_eq!(std::fs::read(&archive).unwrap(), b"old archive");
+        assert_eq!(std::fs::read(&index).unwrap(), b"old index");
+        assert_eq!(std::fs::read(&sidecar).unwrap(), b"old validators");
     }
 
     #[test]

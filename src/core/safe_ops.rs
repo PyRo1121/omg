@@ -139,12 +139,25 @@ pub async fn atomic_write_file<P: AsRef<Path>, C: AsRef<[u8]>>(path: P, contents
         .context("Atomic file writer task failed")?
 }
 
-/// Safe synchronous file write with atomic operations.
+/// Safe synchronous file write with atomic operations: tmp + fsync + rename,
+/// preserving the existing file mode when the file already exists.
+///
+/// # Errors
+/// Returns an error when the path cannot be validated, staged, written,
+/// synced, or atomically replaced.
 pub fn atomic_write_file_sync<P: AsRef<Path>, C: AsRef<[u8]>>(path: P, contents: C) -> Result<()> {
     atomic_write_file_sync_inner(path, contents, false)
 }
 
-/// Atomic write that restricts the result to the current user.
+/// Atomic write that forces the result to owner-only (0o600).
+///
+/// Regardless of pre-existing mode: security exports (audit logs, credential
+/// material) must never inherit a previously permissive mode through the
+/// replace.
+///
+/// # Errors
+/// Returns an error when the path cannot be validated, staged, written,
+/// synced, or atomically replaced.
 pub fn atomic_write_file_sync_private<P: AsRef<Path>, C: AsRef<[u8]>>(
     path: P,
     contents: C,
@@ -211,6 +224,39 @@ fn atomic_write_file_sync_inner<P: AsRef<Path>, C: AsRef<[u8]>>(
     // file. https://lwn.net/Articles/457667/
     sync_parent_directory_sync(&path)?;
     Ok(())
+}
+
+/// Hand a written file back to the original (pre-`sudo`) user.
+///
+/// `rename`-based publication leaves the new file owned by the writing
+/// process, so an elevated run re-owns user state (history, AUR metadata)
+/// as root and every later unprivileged read/write fails. Best-effort:
+/// only acts as root for a resolvable original user; a failure is reported
+/// so callers can warn without failing the operation they were recording.
+#[cfg(unix)]
+pub fn restore_original_user_ownership(path: &Path) -> Result<()> {
+    use nix::unistd::{User, chown};
+
+    if !crate::core::is_root() {
+        return Ok(());
+    }
+    let Some(user_name) = std::env::var("SUDO_USER")
+        .ok()
+        .or_else(|| std::env::var("DOAS_USER").ok())
+    else {
+        return Ok(());
+    };
+    let Some(account) = User::from_name(&user_name)
+        .with_context(|| format!("Failed to resolve original user '{user_name}'"))?
+    else {
+        return Ok(());
+    };
+    chown(path, Some(account.uid), Some(account.gid)).with_context(|| {
+        format!(
+            "Failed to restore ownership of {} to '{user_name}'",
+            path.display()
+        )
+    })
 }
 
 #[cfg(test)]

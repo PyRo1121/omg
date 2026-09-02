@@ -126,6 +126,29 @@ impl ParallelBuilder {
         }
         Self::validate_unique_jobs(&jobs)?;
 
+        // PKGBUILD review blocks on interactive input; without a terminal it
+        // would fail only after cloning and dependency resolution work.
+        // Decide that up front, before any network or filesystem side effect.
+        if self.client.requires_interactive_review() && !console::user_attended() {
+            anyhow::bail!(
+                "AUR PKGBUILD review is enabled, but this session has no interactive terminal. Run in an interactive terminal to review each PKGBUILD, or set aur.review_pkgbuild=false if you accept unreviewed AUR code."
+            );
+        }
+
+        // Acquire sudo credentials visibly, before any spinner exists, so the
+        // password prompt is never fighting a progress bar for the terminal.
+        // Every wave-internal build would otherwise pre-acquire lazily, with
+        // bars already drawn.
+        if !crate::core::caps::can_write_pacman_db() {
+            // `jobs` is non-empty here (checked above); the prompt only needs
+            // one package name for its message.
+            let package = jobs
+                .first()
+                .expect("invariant: jobs checked non-empty above");
+            AurClient::preacquire_install_privileges(&package.package, "parallel AUR build")
+                .await?;
+        }
+
         // Start a shared sudoloop for the entire parallel build session.
         // This keeps credentials alive across all waves and prevents
         // individual builds from each trying to prompt for sudo.

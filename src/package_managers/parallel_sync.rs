@@ -7,6 +7,7 @@ use anyhow::{Context, Result};
 use indicatif::{MultiProgress, ProgressBar, ProgressStyle};
 use owo_colors::OwoColorize;
 use reqwest::Client;
+use std::os::unix::fs::PermissionsExt;
 use tokio::fs::File;
 use tokio::io::AsyncWriteExt;
 
@@ -319,6 +320,16 @@ fn commit_staged_databases(
             "Staged database is not a regular file: {}",
             publication.staged.display()
         );
+        // tempfile stages are created 0600; pacman publishes sync databases
+        // 0644, and unprivileged readers (omg update/outdated) must be able
+        // to parse them after an elevated sync.
+        std::fs::set_permissions(&publication.staged, std::fs::Permissions::from_mode(0o644))
+            .with_context(|| {
+                format!(
+                    "Failed to set world-readable mode on staged database {}",
+                    publication.staged.display()
+                )
+            })?;
     }
 
     for index in 0..publications.len() {
@@ -597,6 +608,32 @@ mod tests {
         assert_eq!(std::fs::read(core_live).unwrap(), b"old-core");
         assert_eq!(std::fs::read(core_staged).unwrap(), b"new-core");
         assert_eq!(std::fs::read(extra_staged).unwrap(), b"new-extra");
+    }
+
+    #[test]
+    fn published_database_is_world_readable_like_pacman() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let directory = tempfile::tempdir().expect("database directory");
+        let live = directory.path().join("core.db");
+        let staged = directory.path().join("core.db.staged");
+        std::fs::write(&staged, b"new").expect("seed staged database");
+        // tempfile staging creates 0600; the published database must not
+        // inherit it or unprivileged readers are locked out.
+        std::fs::set_permissions(&staged, std::fs::Permissions::from_mode(0o600))
+            .expect("seed staged mode");
+
+        commit_staged_databases(&[(staged, live.clone())], 0).expect("publish staged database");
+
+        let mode = std::fs::metadata(&live)
+            .expect("live database")
+            .permissions()
+            .mode();
+        assert_eq!(
+            mode & 0o777,
+            0o644,
+            "sync databases must be 0644 like pacman"
+        );
     }
 
     #[test]

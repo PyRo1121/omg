@@ -8,9 +8,6 @@ use crate::package_managers::{
     types::{UpdateInfo, Version},
 };
 
-/// Default AUR build concurrency when `OMG_AUR_PARALLEL` is unset.
-const DEFAULT_AUR_BUILD_CONCURRENCY: usize = 2;
-
 /// Hard bounds for `OMG_AUR_PARALLEL`: builds are process-heavy (makepkg
 /// spawns compilers), so fan-out beyond a handful helps nobody and starves
 /// the machine at the top end.
@@ -19,7 +16,7 @@ const MAX_AUR_BUILD_CONCURRENCY: usize = 8;
 
 /// Parse the `OMG_AUR_PARALLEL` override, clamping to `[1, 8]` and warning on
 /// invalid input instead of silently substituting the default.
-fn aur_build_concurrency(raw: Option<&str>) -> usize {
+fn aur_build_concurrency(raw: Option<&str>, configured_default: usize) -> usize {
     const fn clamp(value: usize) -> usize {
         if value < MIN_AUR_BUILD_CONCURRENCY {
             MIN_AUR_BUILD_CONCURRENCY
@@ -30,8 +27,9 @@ fn aur_build_concurrency(raw: Option<&str>) -> usize {
         }
     }
 
+    let configured_default = configured_default.max(MIN_AUR_BUILD_CONCURRENCY);
     let Some(raw) = raw else {
-        return DEFAULT_AUR_BUILD_CONCURRENCY;
+        return configured_default;
     };
     match raw.parse::<usize>() {
         Ok(parsed) if (MIN_AUR_BUILD_CONCURRENCY..=MAX_AUR_BUILD_CONCURRENCY).contains(&parsed) => {
@@ -46,9 +44,9 @@ fn aur_build_concurrency(raw: Option<&str>) -> usize {
         }
         Err(error) => {
             tracing::warn!(
-                "OMG_AUR_PARALLEL={raw:?} is not a valid number ({error}); using {DEFAULT_AUR_BUILD_CONCURRENCY}"
+                "OMG_AUR_PARALLEL={raw:?} is not a valid number ({error}); using {configured_default}"
             );
-            DEFAULT_AUR_BUILD_CONCURRENCY
+            configured_default
         }
     }
 }
@@ -380,9 +378,11 @@ pub async fn update(check_only: bool, yes: bool, dry_run: bool) -> Result<()> {
     let operation_result: Result<()> = async {
         if official_count > 0 {
             if needs_deferred_sync {
-                let pb = modern_ui::modern_spinner(
-                    "Syncing & upgrading",
-                    &format!("{official_count} official packages"),
+                // The elevated child owns terminal output and may prompt for
+                // sudo, so no parent spinner can remain active.
+                println!(
+                    "  {} Syncing & upgrading {official_count} official packages...",
+                    "→".magenta()
                 );
                 crate::package_managers::arch::run_privileged_operation(
                     "fullupdate",
@@ -391,12 +391,6 @@ pub async fn update(check_only: bool, yes: bool, dry_run: bool) -> Result<()> {
                     || async { Ok(()) },
                 )
                 .await?;
-                modern_ui::finish_success(
-                    &pb,
-                    "Synced & upgraded",
-                    &format!("{official_count} packages"),
-                );
-                installed_count += official_count;
             } else {
                 let pb = modern_ui::modern_spinner(
                     "Upgrading",
@@ -404,8 +398,8 @@ pub async fn update(check_only: bool, yes: bool, dry_run: bool) -> Result<()> {
                 );
                 pm.update().await?;
                 modern_ui::finish_success(&pb, "Upgraded", &format!("{official_count} packages"));
-                installed_count += official_count;
             }
+            installed_count += official_count;
         }
 
         if !aur_packages.is_empty() {
@@ -426,8 +420,10 @@ pub async fn update(check_only: bool, yes: bool, dry_run: bool) -> Result<()> {
             // the package-base graph only after confirmation so check-only and
             // cancelled updates do not pay an extra network request.
             let jobs: Vec<BuildJob> = client.build_jobs_for_updates(&aur_packages).await?;
-            let max_concurrent =
-                aur_build_concurrency(std::env::var("OMG_AUR_PARALLEL").ok().as_deref());
+            let max_concurrent = aur_build_concurrency(
+                std::env::var("OMG_AUR_PARALLEL").ok().as_deref(),
+                client.build_concurrency(),
+            );
             let builder = ParallelBuilder::new(client, max_concurrent);
 
             let build_summary = builder.build_packages(jobs).await?;
@@ -577,27 +573,28 @@ mod tests {
 
     #[test]
     fn aur_parallel_unset_uses_default() {
-        assert_eq!(aur_build_concurrency(None), 2);
+        assert_eq!(aur_build_concurrency(None, 5), 5);
+        assert_eq!(aur_build_concurrency(None, 0), 1);
     }
 
     #[test]
     fn aur_parallel_in_range_is_honored() {
-        assert_eq!(aur_build_concurrency(Some("4")), 4);
-        assert_eq!(aur_build_concurrency(Some("1")), 1);
-        assert_eq!(aur_build_concurrency(Some("8")), 8);
+        assert_eq!(aur_build_concurrency(Some("4"), 6), 4);
+        assert_eq!(aur_build_concurrency(Some("1"), 6), 1);
+        assert_eq!(aur_build_concurrency(Some("8"), 6), 8);
     }
 
     #[test]
     fn aur_parallel_out_of_range_is_clamped() {
-        assert_eq!(aur_build_concurrency(Some("0")), 1);
-        assert_eq!(aur_build_concurrency(Some("1000000")), 8);
+        assert_eq!(aur_build_concurrency(Some("0"), 5), 1);
+        assert_eq!(aur_build_concurrency(Some("1000000"), 5), 8);
     }
 
     #[test]
     fn aur_parallel_invalid_falls_back_to_default() {
-        assert_eq!(aur_build_concurrency(Some("abc")), 2);
-        assert_eq!(aur_build_concurrency(Some("")), 2);
-        assert_eq!(aur_build_concurrency(Some("-2")), 2);
+        assert_eq!(aur_build_concurrency(Some("abc"), 5), 5);
+        assert_eq!(aur_build_concurrency(Some(""), 5), 5);
+        assert_eq!(aur_build_concurrency(Some("-2"), 5), 5);
     }
 
     #[test]

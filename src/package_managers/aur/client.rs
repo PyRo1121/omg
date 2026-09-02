@@ -33,8 +33,7 @@ use super::utils::{
 use super::super::aur_deps::check_dependencies;
 use super::super::aur_index::AurIndex;
 use super::super::aur_metadata::{
-    AurJsonPackage, index_path, metadata_index_is_fresh, metadata_path, read_metadata_archive,
-    sync_aur_metadata,
+    AurJsonPackage, index_path, metadata_index_is_fresh, metadata_path,
 };
 use super::super::aur_sources::{download_sources, parse_sources};
 #[cfg(feature = "pgp")]
@@ -303,6 +302,61 @@ fn pkgbuild_review_text(bytes: &[u8]) -> Result<String> {
         .chars()
         .filter(|character| matches!(character, '\n' | '\t') || !character.is_control())
         .collect())
+}
+
+/// SHA-256 hex digest of raw PKGBUILD bytes.
+fn pkgbuild_digest(bytes: &[u8]) -> String {
+    hex::encode(Sha256::digest(bytes))
+}
+
+/// Re-read `pkgbuild_path` and confirm its bytes still hash to the digest the
+/// user reviewed. A mismatch means the PKGBUILD changed between review and
+/// build and the reviewed script is not the one about to run.
+fn verify_reviewed_pkgbuild(pkgbuild_path: &Path, reviewed_digest: &str) -> Result<()> {
+    let bytes = std::fs::read(pkgbuild_path)
+        .with_context(|| format!("Failed to re-read PKGBUILD: {}", pkgbuild_path.display()))?;
+    anyhow::ensure!(
+        pkgbuild_digest(&bytes) == reviewed_digest,
+        "PKGBUILD changed after review: {} (refusing to build a script the user did not review)",
+        pkgbuild_path.display()
+    );
+    Ok(())
+}
+
+/// Show `review` through the user's pager when both stdin and stdout are a
+/// terminal. Returns `false` when a pager does not apply or could not be
+/// spawned/written, so the caller falls back to the inline print.
+async fn show_review_in_pager(review: &str) -> bool {
+    use std::io::IsTerminal;
+    use std::io::Write;
+
+    if !(std::io::stdout().is_terminal() && std::io::stdin().is_terminal()) {
+        return false;
+    }
+    let pager = std::env::var("PAGER")
+        .ok()
+        .map(|value| value.trim().to_string())
+        .filter(|value| !value.is_empty())
+        .unwrap_or_else(|| "less".to_string());
+    let review = review.to_string();
+
+    // Blocking pager I/O must stay off the async executor threads.
+    tokio::task::spawn_blocking(move || -> std::io::Result<bool> {
+        let mut child = std::process::Command::new(&pager)
+            .stdin(std::process::Stdio::piped())
+            .stdout(std::process::Stdio::inherit())
+            .stderr(std::process::Stdio::inherit())
+            .spawn()?;
+        if let Some(mut stdin) = child.stdin.take() {
+            stdin.write_all(review.as_bytes())?;
+        }
+        child.wait()?;
+        Ok(true)
+    })
+    .await
+    .ok()
+    .and_then(std::result::Result::ok)
+    .unwrap_or(false)
 }
 
 async fn drain_build_output<R>(
@@ -714,21 +768,24 @@ impl AurClient {
             return Ok(Vec::new());
         }
 
-        let mut local_pkgs = Vec::with_capacity(foreign_packages.len());
-        for name in &foreign_packages {
-            if let Some(pkg) = pacman_db::get_local_package(name)? {
-                local_pkgs.push((name.clone(), pkg.version));
-            }
-        }
-
         // 2. Try the binary index only while its source archive is fresh.
+        // Update discovery never synchronously refreshes global metadata: if
+        // the index is stale, absent, unreadable, or errors, fall straight
+        // through to the AUR RPC instead.
         if let Some(index_path) = self.fresh_metadata_index_path().await {
+            let mut local_pkgs = Vec::with_capacity(foreign_packages.len());
+            for name in &foreign_packages {
+                if let Some(pkg) = pacman_db::get_local_package(name)? {
+                    local_pkgs.push((name.clone(), pkg.version));
+                }
+            }
+
             let result = tokio::task::spawn_blocking(
                 move || -> Result<Option<(Vec<(String, Version, Version)>, Vec<String>)>> {
                     let index = match AurIndex::open(&index_path) {
                         Ok(idx) => idx,
                         Err(e) => {
-                            warn!("Failed to open AUR index: {}. Will fallback to JSON.", e);
+                            warn!("Failed to open AUR index: {}. Will fallback to RPC.", e);
                             return Ok(None);
                         }
                     };
@@ -755,52 +812,7 @@ impl AurClient {
             }
         }
 
-        // 3. Fallback to metadata archive (slower JSON)
-        if let Some(archive) = self.load_metadata_archive().await? {
-            let mut updates = Vec::new();
-            let names: AHashSet<&str> = foreign_packages.iter().map(String::as_str).collect();
-            let mut seen_names = AHashSet::new();
-
-            for p in archive.results {
-                if !names.contains(p.name.as_str()) {
-                    continue;
-                }
-                seen_names.insert(p.name.clone());
-                if let Some(local_pkg) = pacman_db::get_local_package(&p.name)? {
-                    // A version that fails the strict parser must not compare
-                    // as a fabricated 0 (ARCH-R14); skip the entry visibly.
-                    let Some(p_ver) = crate::package_managers::parse_version(&p.version) else {
-                        tracing::warn!(
-                            "Skipping AUR package '{}' with unparseable version '{}'",
-                            p.name,
-                            p.version
-                        );
-                        continue;
-                    };
-                    if crate::package_managers::types::compare_versions(&p_ver, &local_pkg.version)
-                        == std::cmp::Ordering::Greater
-                    {
-                        updates.push((p.name, local_pkg.version, p_ver));
-                    }
-                }
-            }
-
-            // Query remaining packages not in archive via RPC
-            let remaining: Vec<String> = foreign_packages
-                .iter()
-                .filter(|name| !seen_names.contains(*name))
-                .cloned()
-                .collect();
-
-            if !remaining.is_empty() {
-                let rpc_updates = self.query_aur_updates(&remaining).await?;
-                updates.extend(rpc_updates);
-            }
-
-            return Ok(updates);
-        }
-
-        // 4. Fallback: Query AUR RPC directly
+        // 3. Fallback: Query AUR RPC directly for all foreign packages.
         self.query_aur_updates(&foreign_packages).await
     }
 
@@ -891,36 +903,6 @@ impl AurClient {
         }
 
         Ok(updates)
-    }
-
-    async fn load_metadata_archive(&self) -> Result<Option<AurResponse>> {
-        if !self.settings.aur.use_metadata_archive {
-            return Ok(None);
-        }
-
-        // Sync metadata (this will be fast if already fresh). A transient
-        // archive failure must not prevent the direct RPC fallback below.
-        let sync_result = sync_aur_metadata(shared_client(), &self.settings, false).await;
-        self.load_metadata_archive_after_sync(sync_result).await
-    }
-
-    async fn load_metadata_archive_after_sync(
-        &self,
-        sync_result: Result<()>,
-    ) -> Result<Option<AurResponse>> {
-        if let Err(error) = sync_result {
-            tracing::warn!("AUR metadata archive unavailable; falling back to RPC: {error}");
-            return Ok(None);
-        }
-
-        let path = metadata_path();
-        if path.exists() {
-            let results =
-                tokio::task::spawn_blocking(move || read_metadata_archive(&path)).await??;
-            Ok(Some(AurResponse { results }))
-        } else {
-            Ok(None)
-        }
     }
 
     #[must_use]
@@ -1191,12 +1173,13 @@ impl AurClient {
         // ALWAYS show the review prompt during rollback rebuilds,
         // independent of the user's day-to-day review preference.
         let pkgbuild_path = pkg_dir.join("PKGBUILD");
-        Self::review_pkgbuild(&pkgbuild_path).await?;
+        let reviewed_digest = Self::review_pkgbuild(&pkgbuild_path).await?;
         Self::fetch_missing_pgp_keys(&pkgbuild_path).await?;
         println!(
             "  {} Building {package} {version} from history...",
             "→".blue()
         );
+        verify_reviewed_pkgbuild(&pkgbuild_path, &reviewed_digest)?;
         let status = self
             .run_build(&pkg_dir, &env, package)
             .await
@@ -1265,7 +1248,7 @@ impl AurClient {
             .await
     }
 
-    async fn preacquire_install_privileges(package: &str, purpose: &str) -> Result<()> {
+    pub(crate) async fn preacquire_install_privileges(package: &str, purpose: &str) -> Result<()> {
         if crate::core::caps::can_write_pacman_db() {
             return Ok(());
         }
@@ -1402,9 +1385,14 @@ impl AurClient {
         // access plus keyring writes), AUR dependency installation (a system
         // mutation driven by unreviewed depends), and parse_sources ->
         // download_sources, which writes attacker-named files into SRCDEST.
-        if self.settings.aur.review_pkgbuild {
-            Self::review_pkgbuild(&pkgbuild_path).await?;
-        }
+        // Seal the reviewed bytes: the digest is re-checked immediately
+        // before makepkg runs, so anything that swapped the PKGBUILD between
+        // the user's review and the build aborts the build.
+        let reviewed_digest = if self.settings.aur.review_pkgbuild {
+            Some(Self::review_pkgbuild(&pkgbuild_path).await?)
+        } else {
+            None
+        };
 
         Self::fetch_missing_pgp_keys(&pkgbuild_path).await?;
 
@@ -1489,6 +1477,9 @@ impl AurClient {
         };
 
         if pkg_files.is_empty() {
+            if let Some(digest) = &reviewed_digest {
+                verify_reviewed_pkgbuild(&pkgbuild_path, digest)?;
+            }
             let log_path = self.build_log_path(package);
 
             let status = self
@@ -1635,9 +1626,13 @@ impl AurClient {
             return Err(AurError::PkgbuildNotFound(package.to_string()).into());
         }
 
-        if self.settings.aur.review_pkgbuild {
-            Self::review_pkgbuild(&pkgbuild_path).await?;
-        }
+        // Same hash seal as install_package_outputs: re-verify the reviewed
+        // PKGBUILD right before this dependency build runs.
+        let reviewed_digest = if self.settings.aur.review_pkgbuild {
+            Some(Self::review_pkgbuild(&pkgbuild_path).await?)
+        } else {
+            None
+        };
         Self::fetch_missing_pgp_keys(&pkgbuild_path).await?;
 
         let missing_dependencies = self.missing_aur_dependencies(&pkg_dir, package).await?;
@@ -1671,6 +1666,9 @@ impl AurClient {
             return Ok(cached);
         }
 
+        if let Some(digest) = &reviewed_digest {
+            verify_reviewed_pkgbuild(&pkgbuild_path, digest)?;
+        }
         let log_path = self.build_log_path(package);
         let status = self
             .run_build(&pkg_dir, &env, package)
@@ -2197,12 +2195,7 @@ impl AurClient {
                 continue;
             }
 
-            let is_aur = self
-                .search(dep_name)
-                .await
-                .map(|results| results.iter().any(|pkg| pkg.name == dep_name))
-                .unwrap_or(false);
-            if is_aur {
+            if self.info(dep_name).await?.is_some() {
                 aur_deps.push(dep_name.to_string());
             }
         }
@@ -2882,7 +2875,16 @@ impl AurClient {
     }
 
     /// Display and confirm a PKGBUILD before any script-driven side effect.
-    async fn review_pkgbuild(pkgbuild_path: &Path) -> Result<()> {
+    ///
+    /// Returns the SHA-256 hex digest of the reviewed PKGBUILD bytes so the
+    /// caller can re-verify the file immediately before building; a mismatch
+    /// means the reviewed script and the executed script diverged.
+    async fn review_pkgbuild(pkgbuild_path: &Path) -> Result<String> {
+        // Quiesce before joining the review queue: a queued review should
+        // hold one continuous quiesce across the wait, the pager, and the
+        // confirm, so concurrent spinners neither flicker nor overwrite
+        // review output.
+        let _quiesce_guard = crate::cli::modern_ui::quiesce_terminal();
         // Parallel build waves may discover several independent packages at
         // once. One review owns the terminal at a time so prompts and source
         // text cannot interleave.
@@ -2897,13 +2899,15 @@ impl AurClient {
             .await
             .with_context(|| format!("Failed to read PKGBUILD: {}", pkgbuild_path.display()))?;
         let review = pkgbuild_review_text(&bytes)?;
-        println!(
-            "{} Review PKGBUILD before building: {}\n\n{}\n{}",
-            "→".blue(),
-            pkgbuild_path.display(),
-            review,
-            "─".repeat(72)
-        );
+        if !show_review_in_pager(&review).await {
+            println!(
+                "{} Review PKGBUILD before building: {}\n\n{}\n{}",
+                "→".blue(),
+                pkgbuild_path.display(),
+                review,
+                "─".repeat(72)
+            );
+        }
 
         let proceed = tokio::task::spawn_blocking(|| {
             Confirm::new()
@@ -2916,7 +2920,14 @@ impl AurClient {
         if !proceed {
             anyhow::bail!("Build aborted by user after PKGBUILD review.");
         }
-        Ok(())
+        Ok(pkgbuild_digest(&bytes))
+    }
+
+    /// Whether AUR builds will demand interactive PKGBUILD review. The
+    /// settings field is private; parallel build orchestration needs this to
+    /// bail before cloning when no terminal is available for the review.
+    pub(crate) fn requires_interactive_review(&self) -> bool {
+        self.settings.aur.review_pkgbuild
     }
 
     #[cfg(feature = "pgp")]
@@ -3388,7 +3399,7 @@ impl AurClient {
 /// Create a spinner
 #[expect(clippy::literal_string_with_formatting_args, clippy::expect_used)] // Static indicatif template is always valid; braces are template syntax not Rust format args
 fn create_spinner(msg: &str) -> ProgressBar {
-    let pb = ProgressBar::new_spinner();
+    let pb = crate::cli::modern_ui::register_spinner(ProgressBar::new_spinner());
     pb.set_style(
         ProgressStyle::default_spinner()
             .template("{spinner:.cyan} {msg}")
@@ -4033,22 +4044,6 @@ mod tests {
         assert!(build_failed.contains('\n'));
         assert!(!build_failed.contains("\\n"));
         assert!(!build_failed.contains("\\\\"));
-    }
-
-    #[tokio::test]
-    async fn metadata_sync_failure_allows_rpc_fallback() {
-        let client = AurClient {
-            build_dir: tempfile::tempdir().unwrap().path().to_path_buf(),
-            settings: Settings::default(),
-            package_base_locks: Arc::new(dashmap::DashMap::new()),
-        };
-
-        let archive = client
-            .load_metadata_archive_after_sync(Err(anyhow::anyhow!("metadata server unavailable")))
-            .await
-            .unwrap();
-
-        assert!(archive.is_none());
     }
 
     #[tokio::test]

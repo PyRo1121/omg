@@ -7,12 +7,12 @@
 //! - Fast, responsive feedback
 //! - Context-aware status messages
 
-use indicatif::{MultiProgress, ProgressBar, ProgressStyle};
+use indicatif::{MultiProgress, ProgressBar, ProgressDrawTarget, ProgressStyle};
 use owo_colors::OwoColorize;
 use std::io::IsTerminal;
 use std::path::Path;
-use std::sync::OnceLock;
 use std::sync::atomic::{AtomicU8, Ordering};
+use std::sync::{Mutex, MutexGuard, OnceLock, PoisonError};
 use std::time::{Duration, Instant};
 
 /// Rendering policy for long-running commands.
@@ -30,7 +30,94 @@ pub enum OutputMode {
 }
 
 static OUTPUT_MODE: AtomicU8 = AtomicU8::new(1);
+/// Process-wide registry for every live progress bar. Attaching bars here
+/// (instead of leaving them standalone) lets [`quiesce_terminal`] hide the
+/// whole family at once when an interactive prompt such as a PKGBUILD review
+/// must own the terminal.
 static AUR_PROGRESS: OnceLock<MultiProgress> = OnceLock::new();
+/// Refcount of active [`TerminalQuiesceGuard`]s; transitions run under the
+/// lock so the draw target flips exactly once per 0->1 and N->0 boundary.
+static QUIESCE_COUNT: Mutex<usize> = Mutex::new(0);
+/// Final lines rendered while quiesced, replayed in FIFO order when the last
+/// guard drops.
+static DEFERRED_LINES: Mutex<Vec<String>> = Mutex::new(Vec::new());
+
+fn lock_quiesce_count() -> MutexGuard<'static, usize> {
+    QUIESCE_COUNT.lock().unwrap_or_else(PoisonError::into_inner)
+}
+
+fn lock_deferred_lines() -> MutexGuard<'static, Vec<String>> {
+    DEFERRED_LINES
+        .lock()
+        .unwrap_or_else(PoisonError::into_inner)
+}
+
+fn quiesce_active() -> bool {
+    *lock_quiesce_count() > 0
+}
+
+/// Suppress live progress drawing while an interactive prompt owns the
+/// terminal.
+///
+/// Final result lines raised during the quiesce are buffered and printed once
+/// the last guard drops, so multi-line output cannot be overwritten by a
+/// redrawn spinner.
+#[must_use]
+pub fn quiesce_terminal() -> TerminalQuiesceGuard {
+    let mut count = lock_quiesce_count();
+    *count += 1;
+    if *count == 1 {
+        progress_registry().set_draw_target(ProgressDrawTarget::hidden());
+    }
+    TerminalQuiesceGuard { _private: () }
+}
+
+/// RAII handle from [`quiesce_terminal`]; restores progress drawing and
+/// flushes deferred lines when the final guard drops.
+pub struct TerminalQuiesceGuard {
+    _private: (),
+}
+
+impl Drop for TerminalQuiesceGuard {
+    fn drop(&mut self) {
+        let mut count = lock_quiesce_count();
+        *count -= 1;
+        if *count == 0 {
+            progress_registry().set_draw_target(ProgressDrawTarget::stderr());
+            let mut deferred = lock_deferred_lines();
+            for line in deferred.drain(..) {
+                println!("{line}");
+            }
+        }
+    }
+}
+
+fn progress_registry() -> &'static MultiProgress {
+    AUR_PROGRESS.get_or_init(MultiProgress::new)
+}
+
+/// Attach a bar to the process-wide progress registry so quiescing can hide
+/// it together with every other live bar.
+pub(crate) fn register_spinner(bar: ProgressBar) -> ProgressBar {
+    if output_mode() == OutputMode::Quiet {
+        return ProgressBar::hidden();
+    }
+    progress_registry().add(bar)
+}
+
+/// Print `line`, or buffer it while a terminal quiesce is active.
+fn emit_or_defer(line: String) {
+    if quiesce_active() {
+        lock_deferred_lines().push(line);
+    } else {
+        println!("{line}");
+    }
+}
+
+/// Buffer `line` for replay when the terminal quiesce ends.
+fn defer_line(line: String) {
+    lock_deferred_lines().push(line);
+}
 
 const fn output_mode_for(verbose: u8, quiet: bool, terminal: bool) -> OutputMode {
     if quiet {
@@ -81,29 +168,30 @@ impl AurBuildProgress {
         }
 
         let elapsed = format_duration(self.started.elapsed());
-        if success {
+        let line = if success {
             if crate::cli::style::colors_enabled() {
-                println!(
+                format!(
                     "  {} {} {} {}",
                     "◆".green().bold(),
                     "forged".dimmed(),
                     self.package.cyan().bold(),
                     format!("in {elapsed}").dimmed()
-                );
+                )
             } else {
-                println!("  OK forged {} in {elapsed}", self.package);
+                format!("  OK forged {} in {elapsed}", self.package)
             }
         } else if crate::cli::style::colors_enabled() {
-            println!(
+            format!(
                 "  {} {} {} {}",
                 "◆".red().bold(),
                 "forge failed".red(),
                 self.package.bold(),
                 format!("after {elapsed}").dimmed()
-            );
+            )
         } else {
-            println!("  X forge failed {} after {elapsed}", self.package);
-        }
+            format!("  X forge failed {} after {elapsed}", self.package)
+        };
+        emit_or_defer(line);
     }
 }
 
@@ -133,9 +221,7 @@ pub fn aur_build_progress(package: &str, log_path: &Path) -> AurBuildProgress {
                 println!("  + AUR forge  log -> {}", log_path.display());
             }
 
-            let progress = AUR_PROGRESS
-                .get_or_init(MultiProgress::new)
-                .add(ProgressBar::new_spinner());
+            let progress = register_spinner(ProgressBar::new_spinner());
             let template = if crate::cli::style::colors_enabled() {
                 "  {spinner:.magenta.bold} {prefix:.cyan.bold}  {msg:.dim}  {elapsed_precise:.blue}"
             } else {
@@ -203,7 +289,7 @@ pub fn modern_spinner(phase: &str, action: &str) -> ProgressBar {
         return ProgressBar::hidden();
     }
 
-    let pb = ProgressBar::new_spinner();
+    let pb = register_spinner(ProgressBar::new_spinner());
 
     // Bun-style dots spinner
     let template = if crate::cli::style::colors_enabled() {
@@ -232,33 +318,40 @@ pub fn modern_spinner(phase: &str, action: &str) -> ProgressBar {
 
 /// Finish spinner with success
 pub fn finish_success(pb: &ProgressBar, phase: &str, result: &str) {
+    let message = if crate::cli::style::colors_enabled() {
+        format!("{} {} {}", "✓".green().bold(), phase.dimmed(), result)
+    } else {
+        format!("✓ {phase} {result}")
+    };
     if output_mode() == OutputMode::Quiet {
         pb.finish_and_clear();
         return;
     }
-    if crate::cli::style::colors_enabled() {
-        pb.finish_with_message(format!(
-            "{} {} {}",
-            "✓".green().bold(),
-            phase.dimmed(),
-            result
-        ));
-    } else {
-        pb.finish_with_message(format!("✓ {phase} {result}"));
+    if quiesce_active() {
+        pb.finish_and_clear();
+        defer_line(message);
+        return;
     }
+    pb.finish_with_message(message);
 }
 
 /// Finish spinner with info message
 pub fn finish_info(pb: &ProgressBar, msg: &str) {
+    let message = if crate::cli::style::colors_enabled() {
+        format!("{} {}", "·".blue(), msg.dimmed())
+    } else {
+        format!("· {msg}")
+    };
     if output_mode() == OutputMode::Quiet {
         pb.finish_and_clear();
         return;
     }
-    if crate::cli::style::colors_enabled() {
-        pb.finish_with_message(format!("{} {}", "·".blue(), msg.dimmed()));
-    } else {
-        pb.finish_with_message(format!("· {msg}"));
+    if quiesce_active() {
+        pb.finish_and_clear();
+        defer_line(message);
+        return;
     }
+    pb.finish_with_message(message);
 }
 
 /// Finish spinner and clear (for phases that don't need final status)
@@ -304,12 +397,17 @@ pub fn print_success(msg: &str) {
     if output_mode() == OutputMode::Quiet {
         return;
     }
-    println!();
-    if crate::cli::style::colors_enabled() {
-        println!("  {} {}", "✓".green().bold(), msg.bold());
+    let line = if crate::cli::style::colors_enabled() {
+        format!("  {} {}", "✓".green().bold(), msg.bold())
     } else {
-        println!("  ✓ {msg}");
+        format!("  ✓ {msg}")
+    };
+    if quiesce_active() {
+        defer_line(line);
+        return;
     }
+    println!();
+    println!("{line}");
     println!();
 }
 
@@ -362,12 +460,17 @@ pub fn print_error(msg: &str) {
 
 /// Warning state - subtle warning indicator
 pub fn print_warning(msg: &str) {
-    println!();
-    if crate::cli::style::colors_enabled() {
-        println!("  {} {}", "!".yellow().bold(), msg);
+    let line = if crate::cli::style::colors_enabled() {
+        format!("  {} {}", "!".yellow().bold(), msg)
     } else {
-        println!("  ! {msg}");
+        format!("  ! {msg}")
+    };
+    if quiesce_active() {
+        defer_line(line);
+        return;
     }
+    println!();
+    println!("{line}");
     println!();
 }
 
@@ -376,11 +479,12 @@ pub fn print_info(msg: &str) {
     if output_mode() == OutputMode::Quiet {
         return;
     }
-    if crate::cli::style::colors_enabled() {
-        println!("  {} {}", "·".blue(), msg.dimmed());
+    let line = if crate::cli::style::colors_enabled() {
+        format!("  {} {}", "·".blue(), msg.dimmed())
     } else {
-        println!("  · {msg}");
-    }
+        format!("  · {msg}")
+    };
+    emit_or_defer(line);
 }
 
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
