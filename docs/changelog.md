@@ -702,6 +702,7 @@ analyzer inference
 - **Ci**: Cross-platform install script and R2 release sync
 ### 🐛 Bug Fixes
 
+- **Aur**: Preserve fakeroot metadata in sandbox
 - **Tui**: Bound background search work
 - **Tui**: Invalidate results on query edits
 - **Tui**: Cancel superseded searches
@@ -4469,6 +4470,8 @@ the Debian backend), so it was removed from the metadata.
 - Normalize project formatting
 ### 🧪 Testing
 
+- **Aur**: Mirror sandbox executable path
+- **Aur**: Assert fakeroot ownership precondition
 - **Arch**: Trust unsigned fixture databases
 - Align stale coverage contracts
 - **Security**: Accept pinned Rust toolchain action ([#119](https://github.com/PyRo1121/omg/issues/119))
