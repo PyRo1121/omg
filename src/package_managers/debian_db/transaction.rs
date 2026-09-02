@@ -1659,10 +1659,11 @@ fn ensure_parent_dirs_recorded(
 ///   normalized through [`data_tar_entry_path`], which rejects parent and
 ///   absolute components;
 /// - directories are created and recorded so rollback can remove them;
-/// - symbolic links are validated (relative targets only, staying inside the
-///   extraction root) and created only after every regular file has been
-///   written, so a file entry can never traverse a link defined by the same
-///   archive;
+/// - symbolic links are validated (absolute targets re-rooted onto the
+///   extraction root per dpkg chroot semantics; relative and rewritten
+///   targets must stay inside the extraction root) and created only after
+///   every regular file has been written, so a file entry can never traverse
+///   a link defined by the same archive;
 /// - hard links are re-created against the already-extracted tree after all
 ///   files exist;
 /// - any other entry type (devices, FIFOs) fails the install explicitly.
@@ -2872,7 +2873,10 @@ mod tests {
 
         let link = temp.path().join("usr/share/foo");
         let link_metadata = fs::symlink_metadata(&link).expect("symlink exists");
-        assert!(link_metadata.file_type().is_symlink(), "recreated as symlink");
+        assert!(
+            link_metadata.file_type().is_symlink(),
+            "recreated as symlink"
+        );
         assert_eq!(
             std::fs::read_link(&link).expect("read link"),
             temp.path().join("etc/bar"),
@@ -2902,6 +2906,32 @@ mod tests {
             "{error}"
         );
         assert!(!temp.path().join("out").exists());
+    }
+
+    #[test]
+    fn absolute_symlink_target_resolving_to_extraction_root_is_rejected() {
+        let temp = tempfile::tempdir().expect("tempdir");
+
+        for target in ["/", "/usr/.."] {
+            let data = build_tar(|builder| {
+                let mut header = tar::Header::new_gnu();
+                header.set_entry_type(tar::EntryType::Symlink);
+                header.set_size(0);
+                header.set_cksum();
+                builder.append_link(&mut header, "./out", target)
+            });
+
+            let error = extract_tar_to_root_at(temp.path(), &data).expect_err(
+                "absolute target that re-roots onto the extraction root must be rejected",
+            );
+            assert!(
+                error
+                    .to_string()
+                    .contains("resolves to the extraction root"),
+                "{error}"
+            );
+            assert!(!temp.path().join("out").exists());
+        }
     }
 
     #[test]
