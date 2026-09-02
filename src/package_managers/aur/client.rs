@@ -351,15 +351,6 @@ struct AurResponse {
     results: Vec<AurJsonPackage>,
 }
 
-#[derive(Deserialize)]
-struct AurRpcEnvelope<T> {
-    #[serde(rename = "type")]
-    response_type: Option<String>,
-    error: Option<String>,
-    #[serde(flatten)]
-    payload: T,
-}
-
 fn ensure_aur_rpc_success(status: reqwest::StatusCode) -> Result<()> {
     anyhow::ensure!(
         status.is_success(),
@@ -369,18 +360,18 @@ fn ensure_aur_rpc_success(status: reqwest::StatusCode) -> Result<()> {
 }
 
 fn decode_aur_rpc_body<T: DeserializeOwned>(body: &[u8]) -> Result<T> {
-    let envelope: AurRpcEnvelope<T> =
+    let value: serde_json::Value =
         serde_json::from_slice(body).context("Failed to parse AUR RPC response")?;
-    if envelope.response_type.as_deref() == Some("error") {
-        let detail = envelope
-            .error
-            .as_deref()
+    if value.get("type").and_then(serde_json::Value::as_str) == Some("error") {
+        let detail = value
+            .get("error")
+            .and_then(serde_json::Value::as_str)
             .filter(|message| !message.trim().is_empty())
             .unwrap_or("unknown AUR RPC error");
         anyhow::bail!("AUR RPC returned an error: {detail}");
     }
 
-    Ok(envelope.payload)
+    serde_json::from_value(value).context("Failed to parse AUR RPC response")
 }
 
 async fn decode_aur_rpc_response<T: DeserializeOwned>(response: reqwest::Response) -> Result<T> {
@@ -3326,7 +3317,7 @@ mod tests {
     #[test]
     fn aur_rpc_error_envelope_is_not_an_empty_success() {
         let error = decode_aur_rpc_body::<AurResponse>(
-            br#"{"type":"error","error":"Incorrect request type specified.","results":[]}"#,
+            br#"{"type":"error","error":"Incorrect request type specified.","results":"malformed"}"#,
         )
         .expect_err("AUR RPC error envelopes must fail");
 
