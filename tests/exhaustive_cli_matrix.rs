@@ -374,14 +374,16 @@ mod team_matrix {
     #[test]
     #[serial]
     fn test_team_status() {
-        // Outside a team workspace (isolated temp cwd), `team status` must
-        // fail with the workspace error (src/cli/team.rs:162-167).
+        // `team status` gates on the Team tier before any workspace probe
+        // (SEC-G1-01: previously status ran the full sync workflow ungated);
+        // the harness's isolated data dir has no license, so it must fail
+        // naming the required tier.
         let project = TestProject::new();
         let res = project.run(&["team", "status"]);
         res.assert_failure();
         assert!(
-            res.contains("Not a team workspace"),
-            "expected 'Not a team workspace' error, got:\n{}",
+            res.contains("requires Team tier"),
+            "expected license gate error, got:\n{}",
             res.combined_output()
         );
     }

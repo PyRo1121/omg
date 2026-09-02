@@ -203,6 +203,33 @@ pub struct SbomVulnAffects {
     pub affects_ref: String,
 }
 
+/// Whether an ALSA advisory applies to one installed package.
+///
+/// Advisories cover `[affected, fixed)`, so matching by name alone reports
+/// historical advisories for fully patched packages (W5-B-01). This routes
+/// through the same `version_is_affected` check `scan_system` uses; `None`
+/// (unparseable version) skips the pair with a visible warning instead of
+/// fabricating a comparison.
+#[cfg(any(feature = "arch", feature = "debian", feature = "debian-pure"))]
+fn advisory_applies(
+    name: &str,
+    installed_version: &str,
+    affected: &str,
+    fixed: Option<&str>,
+) -> bool {
+    if let Some(applies) =
+        super::vulnerability::version_is_affected(installed_version, affected, fixed)
+    {
+        applies
+    } else {
+        tracing::warn!(
+            "Skipping ALSA advisory match for package '{name}': unparseable \
+             version (installed '{installed_version}', affected '{affected}')"
+        );
+        false
+    }
+}
+
 #[cfg(any(feature = "arch", feature = "debian", feature = "debian-pure"))]
 fn package_purl(name: &str, version: &str, debian_like: bool) -> String {
     if debian_like {
@@ -367,7 +394,22 @@ impl SbomGenerator {
                     .map_err(|source| SbomError::FetchVulnerabilities { source })?;
                 for issue in issues {
                     for pkg_name in &issue.packages {
-                        if let Some(pkg) = installed.iter().find(|p| p.name == *pkg_name) {
+                        let Some(pkg) = installed.iter().find(|p| p.name == *pkg_name) else {
+                            continue;
+                        };
+                        // Match the installed version against the advisory range
+                        // exactly like `scan_system` does (W5-B-01): name-only
+                        // matching listed every historical advisory for installed
+                        // package names on fully patched systems.
+                        if !advisory_applies(
+                            &pkg.name,
+                            &pkg.version.version_string(),
+                            &issue.affected,
+                            issue.fixed.as_deref(),
+                        ) {
+                            continue;
+                        }
+                        {
                             let bom_ref =
                                 package_purl(&pkg.name, &pkg.version.version_string(), debian_like);
 
@@ -536,6 +578,49 @@ mod tests {
                 .contains("cannot be used to scan Debian packages"),
             "got: {error}"
         );
+    }
+
+    #[test]
+    #[cfg(any(feature = "arch", feature = "debian", feature = "debian-pure"))]
+    fn sbom_advisory_matching_respects_installed_version() {
+        // Regression test for W5-B-01: SBOM advisory matching used the package
+        // name only, so a fully patched system listed every historical advisory
+        // for installed package names. A patched version must be excluded.
+        // Historical ALSA advisory: affects from 1.1.1-1, fixed in 3.0.0-1.
+        let affected = "1.1.1-1";
+        let fixed = Some("3.0.0-1");
+
+        assert!(
+            advisory_applies("openssl", "1.1.1-1", affected, fixed),
+            "version inside [affected, fixed) must be reported"
+        );
+        assert!(
+            !advisory_applies("openssl", "3.2.1-1", affected, fixed),
+            "patched version outside [affected, fixed) must not be reported"
+        );
+
+        // Missing fixed version means every release from `affected` onward
+        // remains vulnerable, matching the scan_system precedent.
+        assert!(advisory_applies("openssl", "4.0.0-1", affected, None));
+
+        // ARCH-R14: unparseable advisory strings skip the pair instead of
+        // fabricating a match. Non-Arch `parse_version` is infallible, so this
+        // branch exists only on Arch (same gate as scan_system's tests).
+        #[cfg(feature = "arch")]
+        {
+            assert!(!advisory_applies(
+                "openssl",
+                "1.1.1-1",
+                "not a version",
+                fixed
+            ));
+            assert!(!advisory_applies(
+                "openssl",
+                "1.1.1-1",
+                affected,
+                Some("not a version")
+            ));
+        }
     }
 
     #[test]

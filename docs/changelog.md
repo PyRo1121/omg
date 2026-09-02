@@ -703,6 +703,145 @@ analyzer inference
 - **Ci**: Cross-platform install script and R2 release sync
 ### 🐛 Bug Fixes
 
+- Verify cached AUR artifacts were built from the reviewed PKGBUILD (SEC-R2-01) ([#137](https://github.com/PyRo1121/omg/issues/137))
+
+* fix: verify cached AUR artifacts were built from the reviewed PKGBUILD (SEC-R2-01)
+
+The AUR build cache key (sha256 of PKGBUILD + .SRCINFO + makepkg flags,
+
+client.rs cache_key) hashes only public inputs and the key file itself
+
+lives in the attacker-writable ~/.cache/omg tree, so it forges nothing.
+
+The prior cache-poisoning defense (SEC02-02) only compared the embedded
+
+.PKGINFO pkgname string against the requested output, so an attacker with
+
+write access to ~/.cache/omg could pre-place a trojaned .pkg.tar.zst whose
+
+.PKGINFO claims the requested pkgname and whose .INSTALL hook runs
+
+arbitrary commands; omg then skipped the reviewed build and installed the
+
+attacker's artifact via 'sudo pacman -U' (SEC-R2-01, root code execution).
+
+A cached artifact is now installed only when it carries provenance from
+
+the exact reviewed PKGBUILD:
+
+  - embedded .PKGINFO pkgname/pkgbase/pkgver must match the fetched
+
+.SRCINFO in the reviewed checkout (missing pkgbase fails closed);
+
+  - the embedded .INSTALL hook must be byte-identical to the install
+
+script the reviewed PKGBUILD declares via install= (parsed from
+
+.SRCINFO); a .INSTALL embedded when none is declared is rejected;
+
+  - unreadable .SRCINFO or unreadable archive metadata fails closed.
+
+Any mismatch or missing proof makes the cache hit fall through to a
+
+fresh, reviewed rebuild from source; a poisoned cache is never silently
+
+trusted. Regression test proves the old pkgname-only check accepted a
+
+trojaned cache hit (checked out old client.rs, test failed with
+
+Some(archive)).
+
+* style(aur): rustfmt cached-artifact provenance helpers
+
+Quick Gate runs cargo fmt --check. Format-only; provenance behavior unchanged.
+
+- Verify Rekor SignedEntryTimestamp before trusting entries (W1-A-01) ([#136](https://github.com/PyRo1121/omg/issues/136))
+
+* fix: verify Rekor SignedEntryTimestamp before trusting entries (W1-A-01)
+
+Rekor entry contents (integratedTime, body) were trusted straight from the
+
+HTTPS response: the entire Fulcio chain-time trust decision rested on the
+
+TLS channel alone. get_rekor_entry now verifies each entry's
+
+SignedEntryTimestamp (SET) against the Rekor public key pinned in-binary
+
+(ECDSA P-256 over the SHA-256 digest of the RFC 8785-canonicalized
+
+{body, integratedTime, logID, logIndex} object, per the Rekor server's
+
+signEntry and sigstore-go's VerifySET) and refuses entries whose SET is
+
+absent, malformed, or does not verify.
+
+Regression tests cover: canonical-form roundtrip with a self-made ECDSA
+
+signature, tampered body/integratedTime/logID rejection, foreign-key
+
+rejection, missing/malformed SET refusal, and truncated/garbage DER.
+
+Inclusion-proof (Merkle) verification remains a follow-up.
+
+* style: rustfmt Rekor SET verification for Quick Gate
+
+Quick Gate failed cargo fmt --check on slsa.rs. Formatting only; SET fail-closed behavior is unchanged.
+
+- Gate team push/pull/status behind the team-sync license (SEC-G1-01) ([#135](https://github.com/PyRo1121/omg/issues/135))
+
+The Team Sync license gate (license::require_feature("team-sync")) covered
+
+init, join, and members, but push, pull, and status dispatched the full
+
+gist-sync workflow without any license check (SEC-G1-01): a Free-tier user
+
+could run the paid tier's core operations.
+
+Add the identical require_feature("team-sync") gate as the first statement
+
+of status, push, and pull, matching init/join/members exactly (same error:
+
+"Feature 'team-sync' requires Team tier (00/mo). Upgrade at
+
+https://pyro1121.com/pricing").
+
+- Refuse self-update when provenance cannot be verified (SEC-R1-02) ([#134](https://github.com/PyRo1121/omg/issues/134))
+- SBOM advisory matching respects versions (W5-B-01) ([#132](https://github.com/PyRo1121/omg/issues/132))
+
+* fix: match SBOM advisories against package versions (W5-B-01)
+
+* fix(sbom): match advisories by version string, not LocalPackage
+
+advisory_applies took LocalPackage, which does not compile on debian /
+
+debian-pure where generate_system_sbom iterates DpkgPackageEntry.
+
+Pass name and version strings so both backends type-check, matching
+
+scan_system. Matching semantics are unchanged.
+
+- Stage tool updates before removing the previous install (W4-A-01) ([#131](https://github.com/PyRo1121/omg/issues/131))
+
+install_managed() deleted the existing tool directory before invoking
+
+cargo/npm/pip/go, so a single failed download left the previously
+
+working tool gone (and 'omg tool update all' did this to every tool).
+
+Now the new version is installed into a hidden staging sibling, the
+
+previous install is only moved aside after the package manager
+
+succeeds, and the swap restores the old install if promotion fails.
+
+Failed installs clean up their staging directory. Pacman delegation is
+
+unchanged (it never used the isolated tools directory).
+
+Regression test: a failed cargo install leaves the previous tool
+
+intact and runnable.
+
 - **Aur**: Inspect RPC errors before payloads
 - **Aur**: Validate RPC response boundaries
 - **Aur**: Preserve fakeroot metadata in sandbox
