@@ -4,12 +4,12 @@
 //! backends (cold-path updates, service-backed removal, daemon update
 //! probes) so each backend file only carries what genuinely differs.
 
-use anyhow::Result;
-#[cfg(any(feature = "debian", feature = "debian-pure", not(feature = "arch")))]
-use anyhow::Context;
 #[cfg(unix)]
 use crate::core::client::DaemonClient;
 use crate::package_managers::types::UpdateInfo;
+#[cfg(any(feature = "debian", feature = "debian-pure", not(feature = "arch")))]
+use anyhow::Context;
+use anyhow::Result;
 
 /// Get description truncation width based on terminal size.
 ///
@@ -93,7 +93,10 @@ pub(crate) async fn try_daemon_list_updates() -> Option<Vec<UpdateInfo>> {
 /// invariant established in `sync_db.rs`). Daemon absence is normal; a
 /// connected daemon that rejects the refresh is a consistency failure and is
 /// reported.
-#[cfg(all(unix, any(feature = "debian", feature = "debian-pure", not(feature = "arch"))))]
+#[cfg(all(
+    unix,
+    any(feature = "debian", feature = "debian-pure", not(feature = "arch"))
+))]
 async fn refresh_daemon_index_after_sync() -> Result<()> {
     match DaemonClient::connect().await {
         Ok(mut client) => {
@@ -111,7 +114,10 @@ async fn refresh_daemon_index_after_sync() -> Result<()> {
 }
 
 /// Non-Unix stub preserving the asynchronous command interface.
-#[cfg(all(not(unix), any(feature = "debian", feature = "debian-pure", not(feature = "arch"))))]
+#[cfg(all(
+    not(unix),
+    any(feature = "debian", feature = "debian-pure", not(feature = "arch"))
+))]
 #[allow(
     clippy::unused_async,
     reason = "the non-Unix implementation preserves the asynchronous command interface"
@@ -430,12 +436,17 @@ mod tests {
         .expect("post-sync update sequence must succeed");
 
         let direct = pm.list_updates().await.expect("mock list_updates");
-        assert_eq!(updates.len(), direct.len(), "fallback must query the package manager");
+        assert_eq!(
+            updates.len(),
+            direct.len(),
+            "fallback must query the package manager"
+        );
         assert_eq!(
             *order.lock().expect("order lock"),
             vec!["refresh", "probe"],
             "daemon index refresh must complete before the update list is probed"
-        );    }
+        );
+    }
 
     /// A completed refresh must not be abandoned: when the daemon probe yields
     /// updates they are served directly instead of re-querying the package
