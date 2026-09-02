@@ -735,6 +735,49 @@ analyzer inference
 - **Ci**: Cross-platform install script and R2 release sync
 ### 🐛 Bug Fixes
 
+- Refresh daemon index before update list reuse (W12-A-01) ([#151](https://github.com/PyRo1121/omg/issues/151))
+
+update_official_only synced package databases via pm.sync() but then
+
+preferred try_daemon_list_updates() without refreshing the daemon's
+
+frozen backend snapshot. The daemon never auto-refreshes on sync: its
+
+AlpmWorker serves a stale pre-sync update list until an explicit
+
+RefreshIndex IPC (the stale-index invariant documented in sync_db.rs),
+
+so 'omg update' on Debian/generic could report and install against a
+
+stale list.
+
+Extract the post-sync decision into official_updates_after_sync, which
+
+fully refreshes the daemon index (reusing sync_db.rs' RefreshIndex
+
+pattern, daemon absence tolerated) BEFORE probing the daemon update
+
+list, falling back to a direct package-manager query. The check-only /
+
+dry-run path skips the refresh because no sync happened.
+
+Regression tests assert refresh-completes-before-probe ordering and
+
+that a refreshed daemon list is served directly.
+
+- Align test policy helper with the real policy load path (W12-B-03, W12-B-08) ([#150](https://github.com/PyRo1121/omg/issues/150))
+- Handle absolute symlink targets per dpkg semantics (W1-B-01) ([#149](https://github.com/PyRo1121/omg/issues/149))
+
+* fix: handle absolute symlink targets per dpkg semantics (W1-B-01)
+
+* test: cover absolute symlink targets that resolve to the extraction root
+
+The re-rooting path already rejected `/` and `/usr/..`; add tests so that
+
+guard cannot regress, and update the data.tar extraction docs so they no
+
+longer claim symlink targets must be relative-only.
+
 - **Deps**: Restore audited SLSA crypto pins
 - Harden elevated file handling, telemetry opt-out, and platform edge cases
 
