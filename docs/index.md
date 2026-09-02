@@ -243,7 +243,7 @@ For a 50-person org at average engineering salaries, that's **$2,350-$2,650/year
 
 ## License
 
-OMG is licensed under **AGPL-3.0-or-later**. Commercial licenses available for organizations that need them.
+OMG is free and open-source software licensed under the **MIT License**. For commercial inquiries, contact **olen@latham.cloud**.
 
 ---
 

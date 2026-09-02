@@ -5,7 +5,7 @@
 ![Installs](https://img.shields.io/endpoint?url=https://omg-api.latham.cloud/api/badge/installs&style=flat-square&cacheSeconds=60)
 [![Benchmark](https://img.shields.io/badge/search-5--11ms%20(12--24x%20faster)-brightgreen?style=flat-square)](benchmark.sh)
 [![codecov](https://codecov.io/gh/pyro1121/omg/branch/main/graph/badge.svg?style=flat-square)](https://codecov.io/gh/pyro1121/omg)
-[![License](https://img.shields.io/badge/license-AGPL--3.0--or--later-blue?style=flat-square)](LICENSE)
+[![License](https://img.shields.io/badge/license-MIT-blue?style=flat-square)](LICENSE)
 [![Rust](https://img.shields.io/badge/rust-1.93%2B-orange?style=flat-square)](https://www.rust-lang.org)
 
 OMG is the unified dev tool you've been waiting for. **One command** replaces `pacman`, `yay`, `nvm`, `pyenv`, `rustup`, `rbenv`, and `jenv`.
@@ -475,67 +475,9 @@ make coverage
 
 ## 📜 License
 
-**OMG is dual-licensed: AGPL-3.0 (free) + Commercial (paid)**
+OMG is free and open-source software licensed under the [MIT License](LICENSE).
 
-**Copyright © 2024-2026 OMG Team. All rights reserved.**
-
-### Option 1: AGPL-3.0 (FREE) ✅
-
-OMG is free and open source under the **GNU Affero General Public License v3.0**.
-
-**You can use OMG for FREE if you:**
-
-- ✅ Use it for personal projects
-- ✅ Use it internally at your company (even for-profit companies)
-- ✅ Build open source products with OMG
-- ✅ Offer OMG as a service AND share source code with users
-
-**AGPL-3.0 requires:**
-
-- Keep derivative works open source (copyleft)
-- Share source code if you distribute OMG
-- Provide source code to users if you offer OMG as a network service
-
-**Most companies can use OMG for FREE under AGPL-3.0.**
-
----
-
-### Option 2: Commercial License (PAID) 💰
-
-If you want to use OMG **without AGPL copyleft obligations**, purchase a commercial license.
-
-**Commercial licenses allow:**
-
-- Make proprietary modifications (no source sharing)
-- Embed OMG in proprietary products
-- Offer OMG-as-a-Service without sharing source
-
-**Pricing:**
-
-- 💰 **Team License:** $99/month or $999/year (up to 25 developers)
-- 💰 **Business License:** $199/month or $1,999/year (up to 75 developers)
-- 💰 **Enterprise License:** Custom pricing (unlimited developers)
-
----
-
-### Do I Need a Commercial License?
-
-**NO - Use AGPL-3.0 (FREE) if:**
-
-- You're okay with keeping your code open source (AGPL)
-- You're using OMG internally at your company
-- You're building open source products
-
-**YES - Buy Commercial License if:**
-
-- You want to make proprietary modifications
-- You're embedding OMG in closed-source products
-- You want to avoid AGPL copyleft requirements entirely
-
-**Most companies use the free AGPL-3.0 license.**
-
-See **[LICENSE](LICENSE)** for full AGPL-3.0 terms.
-See **[COMMERCIAL-LICENSE](COMMERCIAL-LICENSE.md)** for commercial licensing details.
+Copyright © 2024-2026 OMG Team.
 
 ### Third-Party Components
 
@@ -545,15 +487,6 @@ OMG incorporates third-party open source software:
 
 See [NOTICE](NOTICE) and [THIRD-PARTY-LICENSES.md](THIRD-PARTY-LICENSES.md) for complete attribution.
 
-### Files
+### Contact
 
-- [`LICENSE`](LICENSE) - Full license terms
-- [`COMMERCIAL-LICENSE.md`](COMMERCIAL-LICENSE.md) - Pricing and purchasing
-- [`NOTICE`](NOTICE) - Copyright and third-party notices
-- [`THIRD-PARTY-LICENSES.md`](THIRD-PARTY-LICENSES.md) - Third-party licenses
-
-### Contact for Licensing
-
-📧 Email: **<olen@latham.cloud>**
-
-For questions about commercial licensing, pricing, or purchasing.
+For questions or commercial support, contact **<olen@latham.cloud>**.

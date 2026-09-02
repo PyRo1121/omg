@@ -369,11 +369,11 @@ exec zsh
 
 ### Is OMG free?
 
-Yes, OMG is open source under **AGPL-3.0-or-later**.
+Yes, OMG is free and open source under the **MIT License**.
 
-### Is there a commercial/pro version?
+### Is commercial support available?
 
-Commercial licenses are available for organizations that cannot comply with AGPL. Contact for details.
+For enterprise inquiries or commercial support, contact **olen@latham.cloud**.
 
 ---
 
