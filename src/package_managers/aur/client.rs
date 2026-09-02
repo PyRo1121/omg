@@ -3012,10 +3012,9 @@ impl AurClient {
         let fetched_keys = keyserver::fetch_keys(&missing_keys)
             .await
             .into_iter()
-            .map(|(key_id, result)| {
-                result
-                    .map(|certificate| (key_id.clone(), certificate))
-                    .map_err(|error| anyhow::anyhow!("Failed to fetch PGP key {key_id}: {error}"))
+            .map(|(key_id, result)| match result {
+                Ok(certificate) => Ok((key_id, certificate)),
+                Err(error) => Err(anyhow::anyhow!("Failed to fetch PGP key {key_id}: {error}")),
             })
             .collect::<Result<Vec<_>>>()?;
 
