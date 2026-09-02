@@ -2,7 +2,7 @@
 //!
 //! Pure libalpm queries and transactions without spawning a pacman subprocess.
 
-use std::sync::LazyLock;
+use std::sync::{Arc, LazyLock, Mutex};
 
 use anyhow::{Context, Result};
 use owo_colors::OwoColorize;
@@ -413,9 +413,17 @@ pub fn execute_transaction(
         configure_transaction_options(alpm, &pacman_config)?;
         configure_mirrors(alpm)?;
         let mp = indicatif::MultiProgress::new();
-        let main_pb = setup_alpm_callbacks(alpm, &mp);
-        let tx_guard = prepare_alpm_transaction(alpm, packages, kind, &pacman_config)?;
-        commit_alpm_transaction(tx_guard.0, &main_pb, kind, &pacman_config.hold_pkg)?;
+        let refusals = Arc::new(Mutex::new(AlpmQuestionRefusals::default()));
+        let main_pb = setup_alpm_callbacks(alpm, &mp, &refusals);
+        let tx_guard = prepare_alpm_transaction(alpm, packages, kind, &pacman_config)
+            .map_err(|error| question_refusal_error(&refusals).unwrap_or(error))?;
+        // Declined replacement questions make libalpm skip the replacement
+        // silently, so a successful prepare can still hide a refused mutation.
+        if let Some(error) = question_refusal_error(&refusals) {
+            return Err(error);
+        }
+        commit_alpm_transaction(tx_guard.0, &main_pb, kind, &pacman_config.hold_pkg)
+            .map_err(|error| question_refusal_error(&refusals).unwrap_or(error))?;
         return Ok(());
     }
 
@@ -431,9 +439,15 @@ pub fn execute_transaction(
     configure_mirrors(&mut alpm)?;
 
     let mp = indicatif::MultiProgress::new();
-    let main_pb = setup_alpm_callbacks(&alpm, &mp);
-    let tx_guard = prepare_alpm_transaction(&mut alpm, packages, kind, &pacman_config)?;
-    commit_alpm_transaction(tx_guard.0, &main_pb, kind, &pacman_config.hold_pkg)?;
+    let refusals = Arc::new(Mutex::new(AlpmQuestionRefusals::default()));
+    let main_pb = setup_alpm_callbacks(&alpm, &mp, &refusals);
+    let tx_guard = prepare_alpm_transaction(&mut alpm, packages, kind, &pacman_config)
+        .map_err(|error| question_refusal_error(&refusals).unwrap_or(error))?;
+    if let Some(error) = question_refusal_error(&refusals) {
+        return Err(error);
+    }
+    commit_alpm_transaction(tx_guard.0, &main_pb, kind, &pacman_config.hold_pkg)
+        .map_err(|error| question_refusal_error(&refusals).unwrap_or(error))?;
 
     Ok(())
 }
@@ -489,11 +503,81 @@ fn forward_alpm_log(level: alpm::LogLevel, message: &str) {
     }
 }
 
+/// Package mutations the ALPM question callback refused because they need
+/// explicit consent that the synchronous, ALPM-thread callback cannot collect
+/// (the CLI's `confirm_package_mutation` consent covers the requested targets,
+/// not collateral mutations of other installed packages, and there is no
+/// channel to forward it into libalpm callbacks).
+///
+/// Replace and RemovePkgs questions are answered with pacman's fail-closed
+/// default and recorded here, then the transaction is failed with an explicit
+/// error naming each conflict instead of silently mutating installed packages.
+#[derive(Debug, Default)]
+struct AlpmQuestionRefusals {
+    /// Declined replacements, as "oldpkg with newdb/newpkg" descriptions.
+    replacements: Vec<String>,
+    /// Declined removals: unresolvable packages libalpm offered to drop from
+    /// the transaction.
+    removals: Vec<String>,
+}
+
+impl AlpmQuestionRefusals {
+    fn is_empty(&self) -> bool {
+        self.replacements.is_empty() && self.removals.is_empty()
+    }
+
+    fn record_refused_replacement(&mut self, oldpkg: &str, newdb: &str, newpkg: &str) {
+        self.replacements
+            .push(format!("{oldpkg} with {newdb}/{newpkg}"));
+    }
+
+    fn record_refused_removals(&mut self, packages: &[String]) {
+        self.removals.push(packages.join(", "));
+    }
+}
+
+/// Build the explicit error for declined ALPM questions, naming every
+/// conflict; `None` when no question was answered conservatively.
+fn question_refusal_error(refusals: &Mutex<AlpmQuestionRefusals>) -> Option<anyhow::Error> {
+    let refusals = refusals
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    if refusals.is_empty() {
+        return None;
+    }
+    let mut details = Vec::new();
+    for replacement in &refusals.replacements {
+        details.push(format!("replace {replacement}"));
+    }
+    for removal in &refusals.removals {
+        details.push(format!(
+            "drop unresolvable package(s) from the transaction: {removal}"
+        ));
+    }
+    Some(anyhow::anyhow!(
+        "ALPM transaction aborted: it requires an unconfirmed package mutation ({}) \
+         the question callback cannot prompt interactively, so resolve the conflict explicitly and retry",
+        details.join("; ")
+    ))
+}
+
+/// Pacman's provider prompt ("Enter a number (default=1)") defaults to the
+/// first listed provider; keep that answer, but log exactly which provider
+/// was chosen so the auto-answer is auditable.
+fn provider_selection_message(providers: &[String], depend: &str) -> String {
+    let count = providers.len();
+    let chosen = providers.first().map_or("unknown", String::as_str);
+    format!(
+        "Auto-selected provider {chosen} (1 of {count}) for dependency {depend} (pacman's provider prompt default)"
+    )
+}
+
 /// Setup ALPM callbacks for progress bars
 #[expect(clippy::expect_used)] // ALPM database operations; failure indicates corrupted pacman database
 fn setup_alpm_callbacks(
     alpm: &alpm::Alpm,
     mp: &indicatif::MultiProgress,
+    refusals: &Arc<Mutex<AlpmQuestionRefusals>>,
 ) -> indicatif::ProgressBar {
     let main_pb = mp.add(indicatif::ProgressBar::new(100));
     main_pb.set_style(
@@ -504,49 +588,95 @@ fn setup_alpm_callbacks(
     );
     main_pb.set_prefix("");
 
-    alpm.set_question_cb((), |question, ()| match question.question() {
-        alpm::Question::InstallIgnorepkg(mut q) => {
-            tracing::warn!("Installing explicitly requested package despite IgnorePkg");
-            q.set_install(true);
-        }
-        alpm::Question::Replace(q) => {
-            tracing::warn!(
-                "Replacing {} with {}/{} as part of the confirmed transaction",
-                q.oldpkg().name(),
-                q.newdb().name(),
-                q.newpkg().name()
-            );
-            q.set_replace(true);
-        }
-        alpm::Question::Conflict(mut q) => {
-            let conflict = q.conflict();
-            tracing::error!(
-                "Refusing implicit removal of conflicting package {} while installing {} ({})",
-                conflict.package2().name(),
-                conflict.package1().name(),
-                conflict.reason()
-            );
-            // Match pacman's fail-closed [y/N] default. A high-level explicit
-            // conflict-resolution contract is required before this may remove
-            // a package the user did not request.
-            q.set_remove(false);
-        }
-        alpm::Question::RemovePkgs(mut q) => q.set_skip(false),
-        alpm::Question::SelectProvider(mut q) => q.set_index(0),
-        alpm::Question::ImportKey(mut q) => {
-            let fingerprint = q.fingerprint();
-            let uid = q.uid();
-            tracing::info!("PGP key required: {fingerprint} ({uid})");
+    alpm.set_question_cb(Arc::clone(refusals), |question, refusals| {
+        let mut refusals = refusals
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        match question.question() {
+            alpm::Question::InstallIgnorepkg(mut q) => {
+                // Pacman installs explicitly requested packages despite
+                // IgnorePkg without prompting; keep that answer, logged.
+                tracing::warn!(
+                    "Installing {} despite IgnorePkg (auto-answered: yes)",
+                    q.pkg().name()
+                );
+                q.set_install(true);
+            }
+            alpm::Question::Replace(q) => {
+                // libalpm initializes `replace = 0`; declining keeps the
+                // installed package in place. The CLI consent prompt covers the
+                // requested targets, not collateral replacements, so the refusal
+                // is recorded and the transaction failed explicitly instead of
+                // silently replacing an installed package.
+                q.set_replace(false);
+                let description = q.oldpkg().name();
+                let newdb = q.newdb().name();
+                let newpkg = q.newpkg().name();
+                tracing::error!(
+                    "Refusing to replace {description} with {newdb}/{newpkg}: replacing an \
+                 installed package requires explicit consent (auto-answered: no)"
+                );
+                refusals.record_refused_replacement(description, newdb, newpkg);
+            }
+            alpm::Question::Conflict(mut q) => {
+                let conflict = q.conflict();
+                tracing::error!(
+                    "Refusing implicit removal of conflicting package {} while installing {} ({})",
+                    conflict.package2().name(),
+                    conflict.package1().name(),
+                    conflict.reason()
+                );
+                // Match pacman's fail-closed [y/N] default. A high-level explicit
+                // conflict-resolution contract is required before this may remove
+                // a package the user did not request.
+                q.set_remove(false);
+            }
+            alpm::Question::RemovePkgs(mut q) => {
+                // Pacman prompts "Do you want to skip the above package(s) for
+                // this upgrade? [y/N]"; the interactive default (no) makes libalpm
+                // fail with unsatisfied dependencies instead of silently dropping
+                // packages from the transaction. Keep that fail-closed answer,
+                // logged and surfaced as a clear error.
+                let packages: Vec<String> = q
+                    .packages()
+                    .iter()
+                    .map(|package| package.name().to_string())
+                    .collect();
+                q.set_skip(false);
+                tracing::error!(
+                    "Refusing to drop unresolvable package(s) {} from the transaction \
+                 (auto-answered: no); the transaction will fail with unsatisfied dependencies",
+                    packages.join(", ")
+                );
+                refusals.record_refused_removals(&packages);
+            }
+            alpm::Question::SelectProvider(mut q) => {
+                let providers: Vec<String> = q
+                    .providers()
+                    .iter()
+                    .map(|package| package.name().to_string())
+                    .collect();
+                tracing::info!(
+                    "{}",
+                    provider_selection_message(&providers, &q.depend().to_string())
+                );
+                q.set_index(0);
+            }
+            alpm::Question::ImportKey(mut q) => {
+                let fingerprint = q.fingerprint();
+                let uid = q.uid();
+                tracing::info!("PGP key required: {fingerprint} ({uid})");
 
-            // Never fetch keys from inside an ALPM callback: the user should
-            // import and trust keys deliberately before package operations.
-            tracing::warn!("PGP key not trusted: {fingerprint} ({uid})");
-            tracing::info!("Import key manually: omg key import {fingerprint}");
-            q.set_import(false);
-        }
-        alpm::Question::Corrupted(mut q) => {
-            tracing::error!("Corrupted package detected! This may indicate tampering.");
-            q.set_remove(false);
+                // Never fetch keys from inside an ALPM callback: the user should
+                // import and trust keys deliberately before package operations.
+                tracing::warn!("PGP key not trusted: {fingerprint} ({uid})");
+                tracing::info!("Import key manually: omg key import {fingerprint}");
+                q.set_import(false);
+            }
+            alpm::Question::Corrupted(mut q) => {
+                tracing::error!("Corrupted package detected! This may indicate tampering.");
+                q.set_remove(false);
+            }
         }
     });
 
@@ -1226,13 +1356,147 @@ fn ensure_mirror_servers(alpm: &alpm::Alpm) -> Result<()> {
 
 #[cfg(test)]
 mod tests {
+    use std::sync::Mutex;
+
     use super::{
-        DOWNLOAD_BAR_TEMPLATE, DOWNLOAD_SPINNER_TEMPLATE, ForwardedAlpmLogLevel, TransactionKind,
-        classify_alpm_log_level, configure_signature_policy, ensure_mirror_servers,
-        ensure_removals_not_held, format_trans_prepare_error, is_keyring_related_error,
-        local_package_siglevel, package_base_name, register_configured_syncdbs,
-        repository_siglevel, signature_policy, transaction_flags, validate_transaction_targets,
+        AlpmQuestionRefusals, DOWNLOAD_BAR_TEMPLATE, DOWNLOAD_SPINNER_TEMPLATE,
+        ForwardedAlpmLogLevel, TransactionKind, classify_alpm_log_level,
+        configure_signature_policy, ensure_mirror_servers, ensure_removals_not_held,
+        format_trans_prepare_error, is_keyring_related_error, local_package_siglevel,
+        package_base_name, provider_selection_message, question_refusal_error,
+        register_configured_syncdbs, repository_siglevel, setup_alpm_callbacks, signature_policy,
+        transaction_flags, validate_transaction_targets,
     };
+
+    #[test]
+    fn refused_replacements_fail_the_transaction_naming_the_conflict() {
+        let refusals = Mutex::new(AlpmQuestionRefusals::default());
+        assert!(question_refusal_error(&refusals).is_none());
+
+        refusals
+            .lock()
+            .expect("unpoisoned")
+            .record_refused_replacement("bar", "core", "foo");
+        let error = question_refusal_error(&refusals)
+            .expect("a recorded refusal must fail the transaction");
+        let message = error.to_string();
+        assert!(message.contains("replace bar with core/foo"), "{message}");
+        assert!(
+            message.contains("unconfirmed package mutation"),
+            "{message}"
+        );
+        assert!(
+            message.contains("resolve the conflict explicitly"),
+            "{message}"
+        );
+    }
+
+    #[test]
+    fn refused_removals_fail_the_transaction_listing_the_packages() {
+        let refusals = Mutex::new(AlpmQuestionRefusals::default());
+        refusals
+            .lock()
+            .expect("unpoisoned")
+            .record_refused_removals(&["dep-a".to_string(), "dep-b".to_string()]);
+        let error = question_refusal_error(&refusals)
+            .expect("a recorded removal refusal must fail the transaction");
+        let message = error.to_string();
+        assert!(
+            message.contains("drop unresolvable package(s)"),
+            "{message}"
+        );
+        assert!(message.contains("dep-a, dep-b"), "{message}");
+    }
+
+    #[test]
+    fn replace_question_is_declined_instead_of_auto_accepted() {
+        // Real libalpm sysupgrade against an isolated database: a sync package
+        // that replaces an installed package must NOT be auto-accepted. The
+        // callback declines (libalpm skips the replacement) and records the
+        // refusal so the transaction fails with a named error instead of
+        // silently replacing (or silently skipping) an installed package.
+        let temp = tempfile::tempdir().expect("temporary alpm root");
+        let root = temp.path().join("root");
+        let db_path = temp.path().join("db");
+        std::fs::create_dir_all(&root).expect("root dir");
+        std::fs::create_dir_all(db_path.join("local/bar-1.0-1")).expect("local pkg dir");
+        std::fs::create_dir_all(db_path.join("sync")).expect("sync db dir");
+        std::fs::write(db_path.join("local/ALPM_DB_VERSION"), "9\n")
+            .expect("write ALPM_DB_VERSION");
+
+        std::fs::write(
+            db_path.join("local/bar-1.0-1/desc"),
+            "%NAME%\nbar\n\n%VERSION%\n1.0-1\n\n",
+        )
+        .expect("write local desc");
+
+        let sync_desc = "%NAME%\nfoo\n\n%VERSION%\n2.0-1\n\n%REPLACES%\nbar\n\n%ARCH%\nx86_64\n\n";
+        let sync_content = format!(
+            "%FILENAME%\nfoo-2.0-1-x86_64.pkg.tar.zst\n\n%CSIZE%\n1\n\n%ISIZE%\n1\n\n{sync_desc}"
+        );
+        let db_file = std::fs::File::create(db_path.join("sync/core.db")).expect("core.db");
+        let mut builder = tar::Builder::new(flate2::write::GzEncoder::new(
+            db_file,
+            flate2::Compression::fast(),
+        ));
+        let mut header = tar::Header::new_gnu();
+        header.set_path("foo-2.0-1/desc").expect("header path");
+        header.set_size(sync_content.len() as u64);
+        header.set_entry_type(tar::EntryType::Regular);
+        header.set_mode(0o644);
+        header.set_cksum();
+        builder
+            .append(&header, sync_content.as_bytes())
+            .expect("append sync desc");
+        builder
+            .into_inner()
+            .expect("finish core.db")
+            .finish()
+            .expect("flush gzip");
+
+        let alpm = alpm::Alpm::new(
+            root.to_str().expect("utf-8 root"),
+            db_path.to_str().expect("utf-8 db path"),
+        )
+        .expect("ALPM handle");
+        alpm.register_syncdb("core", alpm::SigLevel::NONE)
+            .expect("register core");
+
+        let refusals = std::sync::Arc::new(Mutex::new(AlpmQuestionRefusals::default()));
+        let mp = indicatif::MultiProgress::new();
+        let _progress = setup_alpm_callbacks(&alpm, &mp, &refusals);
+
+        alpm.trans_init(alpm::TransFlag::NEEDED)
+            .expect("init transaction");
+        alpm.sync_sysupgrade(false).expect("compute sysupgrade");
+
+        assert!(
+            alpm.trans_add().is_empty(),
+            "declined replacement must not add the replacing package"
+        );
+        let error = question_refusal_error(&refusals)
+            .expect("replace question must be recorded as refused");
+        assert!(error.to_string().contains("replace bar with core/foo"));
+    }
+
+    #[test]
+    fn provider_selection_defaults_to_the_first_provider_and_names_it() {
+        let message = provider_selection_message(
+            &["provider-a".to_string(), "provider-b".to_string()],
+            "provider-virtual",
+        );
+        assert!(
+            message.contains("Auto-selected provider provider-a"),
+            "{message}"
+        );
+        assert!(message.contains("1 of 2"), "{message}");
+        assert!(message.contains("dependency provider-virtual"), "{message}");
+
+        // Pacman's provider prompt lists providers sorted and defaults to the
+        // first one; the auto-answer must never pick a different index.
+        let single = provider_selection_message(&["only".to_string()], "dep");
+        assert!(single.contains("provider only (1 of 1)"), "{single}");
+    }
 
     #[test]
     fn alpm_warnings_and_errors_are_not_classified_as_debug_output() {
