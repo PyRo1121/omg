@@ -1,7 +1,7 @@
 OMG - Unified Package Manager
 Copyright (C) 2024-2026 OMG Team
 
-This software is licensed under the GNU Affero General Public License v3.0 (AGPL-3.0).
+This software is licensed under the MIT License.
 See LICENSE file for the full license text.
 
 ================================================================================
@@ -22,7 +22,7 @@ below for informational purposes. We reserve all rights not expressly granted he
 
    OMG bundles and integrates with mise to provide runtime version management for
    100+ programming languages and tools. The mise integration code in OMG is original
-   work licensed under AGPL-3.0, but mise itself remains MIT-licensed.
+   work licensed under the MIT License, and mise itself remains MIT-licensed.
 
    See THIRD-PARTY-LICENSES.md for the full mise MIT license text.
 
@@ -42,8 +42,7 @@ below for informational purposes. We reserve all rights not expressly granted he
    - alpm & alpm-sys (GPL-3.0) - Arch Linux package manager integration
    - sequoia-openpgp (LGPL-2.0-or-later) - OpenPGP implementation
 
-   These components are used under optional feature flags and are compatible
-   with OMG's AGPL-3.0 license per Section 13 of the AGPL.
+   These components are compiled only under optional platform feature flags.
 
 ================================================================================
 

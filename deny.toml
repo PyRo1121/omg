@@ -38,7 +38,7 @@ allow = [
 confidence-threshold = 0.8
 
 # Copyleft dependencies are restricted to the package-management and PGP
-# implementations that require them; OMG itself is AGPL-3.0-or-later.
+# implementations that require them; OMG itself is MIT-licensed.
 exceptions = [
   { allow = [
     "GPL-3.0",

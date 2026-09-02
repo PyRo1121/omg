@@ -56,7 +56,6 @@ OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 ### alpm & alpm-sys
 **License:** GPL-3.0
 **Feature:** `arch` (Arch Linux package manager integration)
-**Note:** GPL-3.0 is compatible with AGPL-3.0 per Section 13 of the AGPL.
 
 Used for direct integration with libalpm (Arch Linux Package Manager).
 
@@ -67,7 +66,6 @@ Used for direct integration with libalpm (Arch Linux Package Manager).
 ### sequoia-openpgp
 **License:** LGPL-2.0-or-later
 **Feature:** `pgp` (PGP signature verification)
-**Note:** LGPL allows library usage in AGPL-3.0 projects.
 
 ### buffered-reader
 **License:** LGPL-2.0-or-later
@@ -87,7 +85,7 @@ The following dependencies use the ISC license (functionally equivalent to MIT):
 - **rustls-webpki** - WebPKI X.509 certificate validation
 - **untrusted** - Safe parsing of untrusted inputs
 
-ISC License is very permissive and compatible with AGPL-3.0.
+ISC License is very permissive and compatible with MIT.
 
 ---
 
@@ -121,12 +119,12 @@ cargo license
 
 ## License Compatibility
 
-OMG is licensed under AGPL-3.0-or-later, which is compatible with:
+OMG is licensed under the MIT License, which is compatible with:
 
 | License | Compatible | Notes |
 |---------|-----------|-------|
-| MIT | ✅ Yes | Permissive, allows AGPL integration |
-| Apache-2.0 | ✅ Yes | Permissive with patent grant, allows AGPL integration |
+| MIT | ✅ Yes | Identical permissive license |
+| Apache-2.0 | ✅ Yes | Permissive with patent grant |
 | BSD-2-Clause | ✅ Yes | Permissive |
 | BSD-3-Clause | ✅ Yes | Permissive with non-endorsement clause |
 | ISC | ✅ Yes | Equivalent to MIT |
@@ -134,17 +132,8 @@ OMG is licensed under AGPL-3.0-or-later, which is compatible with:
 | CC0-1.0 | ✅ Yes | Public domain |
 | MPL-2.0 | ✅ Yes | File-level copyleft |
 | LGPL-2.0+ | ✅ Yes | Library linking allowed |
-| GPL-3.0 | ✅ Yes | Same license family, per AGPL Section 13 |
-
-**Important Notes:**
-
-1. **Apache-2.0 + Commercial Use:** Apache-2.0 has NO restrictions on commercial use. You can monetize AGPL-3.0 software that includes Apache-2.0 dependencies without any issues.
-
-2. **AGPL-3.0 Network Requirement:** The only AGPL-3.0 requirement is that users interacting with modified versions over a network must be able to access the source code (Section 13).
-
-3. **Patent Grant:** Apache-2.0 dependencies provide explicit patent protection, which flows through to this AGPL-3.0 project.
+| GPL-3.0 | ✅ Yes | Permitted in GPL binaries when optional features are compiled |
 
 ---
 
-*Last Updated: January 25, 2026*
-*License Audit Completed: January 25, 2026*
+*Last Updated: September 2026*
