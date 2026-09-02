@@ -769,7 +769,9 @@ impl AurClient {
     #[instrument(skip(self))]
     pub async fn get_update_list(&self) -> Result<Vec<(String, Version, Version)>> {
         // 1. Get all packages not in official repos
-        let foreign_packages = get_potential_aur_packages()?;
+        let foreign_packages = tokio::task::spawn_blocking(get_potential_aur_packages)
+            .await
+            .context("AUR foreign-package scan task failed")??;
 
         if foreign_packages.is_empty() {
             return Ok(Vec::new());
@@ -780,15 +782,15 @@ impl AurClient {
         // the index is stale, absent, unreadable, or errors, fall straight
         // through to the AUR RPC instead.
         if let Some(index_path) = self.fresh_metadata_index_path().await {
-            let mut local_pkgs = Vec::with_capacity(foreign_packages.len());
-            for name in &foreign_packages {
-                if let Some(pkg) = pacman_db::get_local_package(name)? {
-                    local_pkgs.push((name.clone(), pkg.version));
-                }
-            }
-
+            let local_names = foreign_packages.clone();
             let result = tokio::task::spawn_blocking(
                 move || -> Result<Option<(Vec<(String, Version, Version)>, Vec<String>)>> {
+                    let mut local_pkgs = Vec::with_capacity(local_names.len());
+                    for name in local_names {
+                        if let Some(package) = pacman_db::get_local_package(&name)? {
+                            local_pkgs.push((name, package.version));
+                        }
+                    }
                     let index = match AurIndex::open(&index_path) {
                         Ok(idx) => idx,
                         Err(e) => {
@@ -886,35 +888,44 @@ impl AurClient {
                 tracing::warn!("AUR update check failed: {}", e);
                 anyhow::anyhow!("Failed to check AUR updates. Check your internet connection.")
             })?;
-            for p in response.results {
-                // SECURITY: Validate package name from RPC response
-                if let Err(e) = crate::core::security::validate_package_name(&p.name) {
-                    tracing::warn!(
-                        "Rejecting invalid package name from AUR update check: {} ({})",
-                        p.name,
-                        e
-                    );
-                    continue;
-                }
-
-                if let Some(local_pkg) = pacman_db::get_local_package(&p.name)? {
-                    // A version that fails the strict parser must not compare
-                    // as a fabricated 0 (ARCH-R14); skip the entry visibly.
-                    let Some(p_ver) = crate::package_managers::parse_version(&p.version) else {
+            let chunk_updates = tokio::task::spawn_blocking(move || -> Result<Vec<_>> {
+                let mut updates = Vec::new();
+                for package in response.results {
+                    if let Err(error) = crate::core::security::validate_package_name(&package.name)
+                    {
                         tracing::warn!(
-                            "Skipping AUR package '{}' with unparseable version '{}'",
-                            p.name,
-                            p.version
+                            "Rejecting invalid package name from AUR update check: {} ({})",
+                            package.name,
+                            error
                         );
                         continue;
-                    };
-                    if crate::package_managers::types::compare_versions(&p_ver, &local_pkg.version)
-                        == std::cmp::Ordering::Greater
-                    {
-                        updates.push((p.name, local_pkg.version, p_ver));
+                    }
+
+                    if let Some(local_package) = pacman_db::get_local_package(&package.name)? {
+                        let Some(remote_version) =
+                            crate::package_managers::parse_version(&package.version)
+                        else {
+                            tracing::warn!(
+                                "Skipping AUR package '{}' with unparseable version '{}'",
+                                package.name,
+                                package.version
+                            );
+                            continue;
+                        };
+                        if crate::package_managers::types::compare_versions(
+                            &remote_version,
+                            &local_package.version,
+                        ) == std::cmp::Ordering::Greater
+                        {
+                            updates.push((package.name, local_package.version, remote_version));
+                        }
                     }
                 }
-            }
+                Ok(updates)
+            })
+            .await
+            .context("AUR local-version comparison task failed")??;
+            updates.extend(chunk_updates);
         }
 
         Ok(updates)
@@ -1181,7 +1192,7 @@ impl AurClient {
                 .context("rollback work dir name must be valid UTF-8")?,
         )?;
 
-        let env = self.makepkg_env(&pkg_dir)?;
+        let env = self.makepkg_env(&pkg_dir).await?;
         // SECURITY (audit F-03, second wave): a force-pushed history commit
         // is exactly as untrusted as a fresh build, and the version match
         // alone does not prove the PKGBUILD is the one originally installed.
@@ -1411,7 +1422,7 @@ impl AurClient {
 
         Self::fetch_missing_pgp_keys(&pkgbuild_path).await?;
 
-        let env = self.makepkg_env(&pkg_dir)?;
+        let env = self.makepkg_env(&pkg_dir).await?;
 
         let dependency_plan = self
             .aur_dependency_plan(&pkg_dir, package, requested_outputs)
@@ -1674,7 +1685,7 @@ impl AurClient {
 
         let _package_build_guard = package_lock.lock().await;
         let _package_build_file_guard = self.acquire_package_base_file_lock(package_base).await?;
-        let env = self.makepkg_env(&pkg_dir)?;
+        let env = self.makepkg_env(&pkg_dir).await?;
         let cache_key = self.cache_key(&pkg_dir, &env.makeflags)?;
         if let Some(archives) = self
             .cached_artifacts(package_base, &package_outputs, &env.pkgdest, &cache_key)
@@ -2960,53 +2971,64 @@ impl AurClient {
     async fn fetch_missing_pgp_keys(pkgbuild_path: &Path) -> Result<()> {
         use crate::core::security::keyserver;
 
-        let pkgbuild = PkgBuild::parse(pkgbuild_path).with_context(|| {
-            format!(
-                "Failed to parse PKGBUILD at {} for PGP keys",
-                pkgbuild_path.display()
-            )
-        })?;
-
-        if pkgbuild.validpgpkeys.is_empty() {
-            return Ok(());
-        }
-
-        let gnupg_home = std::env::var_os("GNUPGHOME")
-            .map(PathBuf::from)
-            .or_else(|| dirs::home_dir().map(|home| home.join(".gnupg")))
-            .context("Cannot determine home directory for GnuPG keyring")?;
-
-        let mut missing_keys = Vec::with_capacity(pkgbuild.validpgpkeys.len());
-        for key_id in &pkgbuild.validpgpkeys {
-            require_fetchable_pgp_key_id(key_id)?;
-            match keyserver::is_key_in_gnupg(key_id, &gnupg_home) {
-                Ok(true) => {}
-                Ok(false) => missing_keys.push(key_id.clone()),
-                Err(error) => {
-                    anyhow::bail!("Failed to read PGP keyring while checking {key_id}: {error}")
+        let pkgbuild_path = pkgbuild_path.to_path_buf();
+        let keyring_state = tokio::task::spawn_blocking(move || {
+            let pkgbuild = PkgBuild::parse(&pkgbuild_path).with_context(|| {
+                format!(
+                    "Failed to parse PKGBUILD at {} for PGP keys",
+                    pkgbuild_path.display()
+                )
+            })?;
+            if pkgbuild.validpgpkeys.is_empty() {
+                return Ok(None);
+            }
+            let gnupg_home = std::env::var_os("GNUPGHOME")
+                .map(PathBuf::from)
+                .or_else(|| dirs::home_dir().map(|home| home.join(".gnupg")))
+                .context("Cannot determine home directory for GnuPG keyring")?;
+            let mut missing_keys = Vec::with_capacity(pkgbuild.validpgpkeys.len());
+            for key_id in &pkgbuild.validpgpkeys {
+                require_fetchable_pgp_key_id(key_id)?;
+                match keyserver::is_key_in_gnupg(key_id, &gnupg_home) {
+                    Ok(true) => {}
+                    Ok(false) => missing_keys.push(key_id.clone()),
+                    Err(error) => {
+                        anyhow::bail!("Failed to read PGP keyring while checking {key_id}: {error}")
+                    }
                 }
             }
-        }
-
+            Ok::<_, anyhow::Error>(Some((missing_keys, gnupg_home)))
+        })
+        .await
+        .context("AUR PGP keyring inspection task failed")??;
+        let Some((missing_keys, gnupg_home)) = keyring_state else {
+            return Ok(());
+        };
         if missing_keys.is_empty() {
             return Ok(());
         }
 
         tracing::info!("Fetching {} missing PGP key(s)...", missing_keys.len());
+        let fetched_keys = keyserver::fetch_keys(&missing_keys)
+            .await
+            .into_iter()
+            .map(|(key_id, result)| match result {
+                Ok(certificate) => Ok((key_id, certificate)),
+                Err(error) => Err(anyhow::anyhow!("Failed to fetch PGP key {key_id}: {error}")),
+            })
+            .collect::<Result<Vec<_>>>()?;
 
-        let results = keyserver::fetch_keys(&missing_keys).await;
-        for (key_id, result) in results {
-            match result {
-                Ok(cert) => {
-                    let info = keyserver::get_key_info(&cert);
-                    tracing::debug!("Fetched PGP key: {info}");
-                    keyserver::import_key_into_gnupg(&cert, &gnupg_home)
-                        .with_context(|| format!("Failed to import key {key_id} into GnuPG"))?;
-                }
-                Err(error) => anyhow::bail!("Failed to fetch PGP key {key_id}: {error}"),
+        tokio::task::spawn_blocking(move || {
+            for (key_id, certificate) in fetched_keys {
+                let info = keyserver::get_key_info(&certificate);
+                tracing::debug!("Fetched PGP key: {info}");
+                keyserver::import_key_into_gnupg(&certificate, &gnupg_home)
+                    .with_context(|| format!("Failed to import key {key_id} into GnuPG"))?;
             }
-        }
-        Ok(())
+            Ok::<(), anyhow::Error>(())
+        })
+        .await
+        .context("AUR PGP key import task failed")?
     }
 
     #[cfg(not(feature = "pgp"))]
@@ -3045,7 +3067,15 @@ impl AurClient {
         Ok(mounts)
     }
 
-    fn makepkg_env(&self, pkg_dir: &Path) -> Result<MakepkgEnv> {
+    async fn makepkg_env(&self, pkg_dir: &Path) -> Result<MakepkgEnv> {
+        let client = self.clone();
+        let pkg_dir = pkg_dir.to_path_buf();
+        tokio::task::spawn_blocking(move || client.makepkg_env_sync(&pkg_dir))
+            .await
+            .context("AUR build environment task failed")?
+    }
+
+    fn makepkg_env_sync(&self, pkg_dir: &Path) -> Result<MakepkgEnv> {
         let jobs = std::thread::available_parallelism().map_or(1, std::num::NonZero::get);
         let makeflags = self
             .settings
@@ -4182,8 +4212,8 @@ mod tests {
         assert!(AurClient::sandbox_cache_mounts(&cache_base, &[outside]).is_err());
     }
 
-    #[test]
-    fn test_makepkg_env_sanitization() {
+    #[tokio::test]
+    async fn test_makepkg_env_sanitization() {
         let client = AurClient::new().expect("test settings must load");
         let dir = tempfile::tempdir().expect("temp dir");
         let pkg_dir = dir.path().join("mypkg");
@@ -4191,6 +4221,7 @@ mod tests {
 
         let env = client
             .makepkg_env(&pkg_dir)
+            .await
             .expect("makepkg env must be constructed");
         assert!(
             env.builddir.starts_with(paths::cache_dir()),
