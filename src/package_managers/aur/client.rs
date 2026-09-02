@@ -4857,6 +4857,17 @@ mod tests {
             .status
             .success()
         );
+        assert!(
+            git(&[
+                "-C".as_ref(),
+                seed.as_os_str(),
+                "config".as_ref(),
+                "commit.gpgsign".as_ref(),
+                "false".as_ref(),
+            ])
+            .status
+            .success()
+        );
         std::fs::write(seed.join("PKGBUILD"), "pkgver=1\n").unwrap();
         assert!(
             git(&[

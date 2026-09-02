@@ -568,7 +568,9 @@ pub fn status_sync() -> Result<()> {
 #[cfg(unix)]
 pub async fn metrics() -> Result<()> {
     let response = tokio::time::timeout(std::time::Duration::from_secs(2), async {
-        let mut client = crate::core::client::DaemonClient::connect().await?;
+        let mut client = crate::core::client::DaemonClient::connect().await.context(
+            "Daemon not running. Performance metrics require the daemon (start it with: omg daemon)",
+        )?;
         client
             .call(crate::daemon::protocol::Request::Metrics { id: 0 })
             .await
@@ -1177,8 +1179,12 @@ fn find_cached_arch_package(package: &str, version: &str) -> Result<std::path::P
         }
     }
 
+    let initial = package.chars().next().unwrap_or('a');
     anyhow::bail!(
-        "Package {package} {version} is not available in configured pacman caches: {}",
+        "Package {package} {version} is not available in configured pacman caches: {}.\n\
+         Tip: To restore, download the package archive from the Arch Linux Archive:\n\
+         https://archive.archlinux.org/packages/{initial}/{package}/\n\
+         and install it with: omg install <downloaded-archive.pkg.tar.zst> --allow-local-file",
         cache_dirs
             .iter()
             .map(|path| path.display().to_string())

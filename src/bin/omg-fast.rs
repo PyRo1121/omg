@@ -63,30 +63,48 @@ fn main() {
         return;
     }
 
-    // Status file path: shared with the daemon via `omg_lib::core::paths`
-    // (socket dir, honors OMG_SOCKET_PATH/XDG_RUNTIME_DIR). Route through
-    // FastStatus::read_default so magic, layout version, freshness, and
-    // directory-ownership checks cannot drift from the daemon's writer.
-    let Some(status) = FastStatus::read_default() else {
-        eprintln!(
-            "omg-fast: no fresh status file (is the omg daemon running? try 'omg daemon' or 'omg status')"
+    // 1. Try reading the fast binary status file (<1ms)
+    if let Some(status) = FastStatus::read_default() {
+        display_status(
+            cmd,
+            status.total_packages,
+            status.explicit_packages,
+            status.orphan_packages,
+            status.updates_available,
         );
-        std::process::exit(1);
-    };
+        return;
+    }
 
-    let total = status.total_packages;
-    let explicit = status.explicit_packages;
-    let orphans = status.orphan_packages;
-    let updates = status.updates_available;
+    // 2. Try querying the daemon socket via IPC
+    if let Ok((total, explicit, orphans, updates)) = fast_status_from_daemon() {
+        display_status(cmd, total, explicit, orphans, updates);
+        return;
+    }
 
+    // 3. Fall back to direct fast status calculation on Arch Linux
+    #[cfg(feature = "arch")]
+    if let Ok((total, explicit, orphans)) = omg_lib::package_managers::pacman_db::get_counts_fast()
+    {
+        let updates = omg_lib::package_managers::pacman_db::check_updates_cached()
+            .map(|u| u.len() as u32)
+            .unwrap_or(0);
+        display_status(cmd, total as u32, explicit as u32, orphans as u32, updates);
+        return;
+    }
+
+    eprintln!(
+        "omg-fast: could not retrieve package status (try 'omg status' or start daemon with 'omg daemon')"
+    );
+    std::process::exit(1);
+}
+
+fn display_status(cmd: &str, total: u32, explicit: u32, orphans: u32, updates: u32) {
     match cmd {
         "tc" | "total" => println!("{total}"),
         "ec" | "explicit" => println!("{explicit}"),
         "oc" | "orphan" => println!("{orphans}"),
         "uc" | "updates" => println!("{updates}"),
         "status" | "s" => {
-            // `s <query>` was already routed to search above; a bare "s"
-            // intentionally falls through to the status display.
             println!("==> OMG System Status\n");
             if updates > 0 {
                 println!("  ⚠ Updates: {updates} available");
@@ -102,6 +120,28 @@ fn main() {
             eprintln!("Usage: omg-fast [ec|tc|oc|uc|status|s <query>|i <pkg>]");
             std::process::exit(1);
         }
+    }
+}
+
+/// Query daemon status via raw IPC
+#[cfg(unix)]
+fn fast_status_from_daemon() -> Result<(u32, u32, u32, u32)> {
+    use omg_lib::daemon::protocol::{Request, Response, ResponseResult};
+
+    let mut stream = connect_daemon_stream()?;
+    let response = exchange(&mut stream, &Request::Status { id: 0 })?;
+
+    match response {
+        Response::Success {
+            result: ResponseResult::Status(status),
+            ..
+        } => Ok((
+            status.total_packages as u32,
+            status.explicit_packages as u32,
+            status.orphan_packages as u32,
+            status.updates_available as u32,
+        )),
+        _ => anyhow::bail!("Unexpected response from daemon"),
     }
 }
 
