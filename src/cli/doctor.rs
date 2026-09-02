@@ -98,6 +98,7 @@ pub async fn run(network: bool, eol: bool) -> Result<()> {
     if debian_backend {
         issues += check_debian_infra();
     }
+    #[cfg(feature = "arch")]
     if arch_backend {
         issues += check_arch_infra();
     }
@@ -256,6 +257,7 @@ fn check_debian_infra() -> usize {
 /// Check the Arch Linux infrastructure the ALPM backend depends on:
 /// the pacman configuration file (`/etc/pacman.conf`) and the ALPM local
 /// package database directory (`/var/lib/pacman/local`).
+#[cfg(feature = "arch")]
 fn check_arch_infra() -> usize {
     if crate::core::paths::test_mode() {
         return 0;
