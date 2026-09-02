@@ -164,10 +164,10 @@ fn test_remove_dry_run() {
     );
 }
 
-// Falsifiable contract: doctor must run to completion (exit 0; individual
-// check failures do not fail the command, src/cli/doctor.rs:38 `run` always
-// returns Ok) and render its report header "OMG Doctor Checking system
-// health...".
+// Falsifiable contract: doctor must run to completion and render its report
+// header "OMG Doctor Checking system health...". Under test mode the mocked
+// Arch environment is healthy, so the W3-A-03 exit contract yields exit 0
+// (exit 1 is reserved for found issues).
 #[test]
 fn test_doctor_command() {
     // ===== ARRANGE =====

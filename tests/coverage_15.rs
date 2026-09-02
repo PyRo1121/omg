@@ -58,15 +58,46 @@ fn doctor_eol_flag_enters_runtime_status_section() {
     result.assert_stdout_contains("Runtime EOL Status");
 }
 
-/// `--network` must enter the Network Diagnostics section and exit 0 even if
-/// mirror probes fail (run() always returns Ok; issues are advisory).
+/// `--network` must enter the Network Diagnostics section. Mirror probes
+/// require real connectivity, so either verdict is acceptable — but the
+/// W3-A-03 exit contract must hold: the exit code is 0 exactly when no
+/// issue summary was reported.
 #[test]
-fn doctor_network_flag_enters_diagnostics_section_and_still_exits_zero() {
+fn doctor_network_flag_enters_diagnostics_section_and_matches_exit_contract() {
     let project = TestProject::new();
     let result = project.run_with_env(&["doctor", "--network"], &[("NO_COLOR", "1")]);
 
-    assert_eq!(result.exit_code, 0);
+    let reported_issues = result.stdout.contains("issue(s)");
+    let expected_exit = i32::from(reported_issues);
+    assert_eq!(
+        result.exit_code, expected_exit,
+        "doctor exit code must follow the contract (0 healthy / 1 issues)\nstdout: {}",
+        result.stdout
+    );
     result.assert_stdout_contains("Network Diagnostics");
+}
+
+/// W3-A-02: a supported Debian system (mocked via OMG_TEST_DISTRO) must not
+/// be reported as an OS issue — doctor is backend-aware and exits 0 on a
+/// healthy supported Debian environment.
+#[test]
+fn doctor_debian_mock_does_not_report_os_as_issue() {
+    let project = TestProject::for_distro("debian");
+    let result = project.run_with_env(&["doctor"], &[("NO_COLOR", "1")]);
+
+    assert_eq!(
+        result.exit_code, 0,
+        "healthy mocked Debian environment must exit 0\nstdout: {}\nstderr: {}",
+        result.stdout, result.stderr
+    );
+    result.assert_stdout_contains("Debian/Ubuntu detected");
+    assert!(
+        !result.stdout.contains("Non-Arch"),
+        "debian must not be flagged as a non-Arch issue\nstdout: {}",
+        result.stdout
+    );
+    assert!(result.stdout.contains("Found dependency: apt-get"));
+    result.assert_stdout_contains("System is healthy! Ready to rock.");
 }
 
 /// init --defaults with SHELL=zsh installs the exact zsh hook into $HOME/.zshrc,
