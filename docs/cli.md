@@ -1551,6 +1551,20 @@ omg generate-man [--output <dir>]
 
 Optional link between this machine and the OMG dashboard. Linking attributes opted-in usage; every local command works without it.
 
+`omg license`, `omg license check`, and `omg license pricing` were removed in 0.1.215.
+
+```bash
+# Removed
+omg license
+omg license check
+omg license pricing
+
+# Use instead
+omg account status
+omg account link <token>
+omg account unlink
+```
+
 ```bash
 omg account <SUBCOMMAND>
 ```

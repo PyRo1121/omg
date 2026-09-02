@@ -56,7 +56,9 @@ on:
 
 concurrency:
   group: ci-${{ github.ref }}
-  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+  # Latest SHA wins on both PRs and main. Leaving this false queued #175
+  # behind a doomed #172 run that still had the debian Clippy failure.
+  cancel-in-progress: true
 
 permissions:
   contents: read
@@ -160,7 +162,6 @@ jobs:
     needs: quick-gate
     if: needs.quick-gate.outputs.should-build == 'true' || github.event_name == 'workflow_dispatch' || github.event_name == 'merge_group'
     runs-on: ubuntu-latest
-    continue-on-error: ${{ matrix.experimental || false }}
     timeout-minutes: 30
     strategy:
       fail-fast: false
@@ -185,7 +186,6 @@ jobs:
           - platform: debian
             image: debian:bookworm@sha256:813017f3d62be4b5891a7acca6a01bdcd4b8513daa81b1ab99d3a50385b26931
             features: debian,pgp,license
-            experimental: false
             setup: |
               apt-get update
               DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
@@ -204,7 +204,6 @@ jobs:
           - platform: debian-trixie
             image: debian:trixie@sha256:34cd9e9fd437c0a095ec39cb2e73422c9f30821b0d0848ed74fd0d43bae4d958
             features: debian,pgp,license
-            experimental: true
             setup: |
               apt-get update
               DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
@@ -511,19 +510,88 @@ jobs:
           retention-days: 7
 
   #############################################################################
+  # STAGE 2c: Ubuntu (matches the Ubuntu release artifact)
+  #############################################################################
+  ubuntu:
+    name: "Linux (ubuntu)"
+    needs: quick-gate
+    if: needs.quick-gate.outputs.should-build == 'true' || github.event_name == 'workflow_dispatch' || github.event_name == 'merge_group'
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+
+      - name: Install Dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            libapt-pkg-dev \
+            pkg-config \
+            libssl-dev \
+            clang \
+            cmake
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@4360b52568e2003a75bf9bc1d59f33a8e3fc893c # stable
+        with:
+          toolchain: "1.93.1"
+          components: clippy
+
+      - name: Setup cache
+        if: inputs.skip-cache != true
+        uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2
+        with:
+          prefix-key: "v1-ubuntu-debian"
+
+      - name: Build release
+        run: cargo build --release --no-default-features --features debian,pgp,license --locked
+
+      - name: Platform clippy
+        run: |
+          cargo clippy --all-targets --no-default-features --features debian,pgp,license \
+            --locked -- -D warnings
+
+      - name: Install nextest
+        uses: taiki-e/install-action@b6ff580856c41316412a0b9b60540fbc6f8c82cc # nextest
+        with:
+          tool: nextest
+      - name: Verify nextest
+        run: cargo nextest --version
+
+      - name: Run unit tests
+        run: cargo nextest run --lib --no-default-features --features debian,pgp,license --locked --profile ci
+
+      - name: Verify binary
+        run: |
+          ./target/release/omg --version
+          ./target/release/omg --help | head -20
+
+      - name: Upload binary
+        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6
+        with:
+          name: omg-ubuntu
+          path: target/release/omg
+          retention-days: 7
+          if-no-files-found: error
+
   #############################################################################
   # STAGE 4: Final Status Gate
   #############################################################################
   # NOTE: no `integration` job exists in this workflow; it was referenced here
   # but never defined, which made ci-success unresolvable on GitHub and broke
   # the entire pipeline gate. Local act runs also skip the macos leg, so a
-  # skipped macos result is accepted as passing.
+  # skipped macos result is accepted as passing. A skipped platform job must
+  # not mint a release tag.
   ci-success:
     name: "CI Success"
-    needs: [quick-gate, linux-matrix, feature-intersections, macos]
+    needs: [quick-gate, linux-matrix, feature-intersections, macos, ubuntu]
     if: always()
     runs-on: ubuntu-latest
     timeout-minutes: 5
+    permissions:
+      contents: write
     steps:
       - name: Evaluate results
         env:
@@ -531,6 +599,7 @@ jobs:
           LINUX_MATRIX: ${{ needs.linux-matrix.result }}
           FEATURE_INTERSECTIONS: ${{ needs.feature-intersections.result }}
           MACOS: ${{ needs.macos.result }}
+          UBUNTU: ${{ needs.ubuntu.result }}
         run: |
           echo "## CI Results Summary" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
@@ -540,6 +609,7 @@ jobs:
           echo "| Linux Matrix | $LINUX_MATRIX |" >> $GITHUB_STEP_SUMMARY
           echo "| Feature Intersections | $FEATURE_INTERSECTIONS |" >> $GITHUB_STEP_SUMMARY
           echo "| macOS | $MACOS |" >> $GITHUB_STEP_SUMMARY
+          echo "| Ubuntu | $UBUNTU |" >> $GITHUB_STEP_SUMMARY
 
           if [[ "$QUICK_GATE" != "success" ]]; then
             echo "::error::Quick gate failed"
@@ -550,6 +620,7 @@ jobs:
             ["Linux Matrix"]="$LINUX_MATRIX"
             ["Feature Intersections"]="$FEATURE_INTERSECTIONS"
             ["macOS"]="$MACOS"
+            ["Ubuntu"]="$UBUNTU"
           )
           for job in "${!required_results[@]}"; do
             if [[ "${required_results[$job]}" != "success" && "${required_results[$job]}" != "skipped" ]]; then
@@ -560,3 +631,46 @@ jobs:
 
           echo "" >> $GITHUB_STEP_SUMMARY
           echo "All required checks passed!" >> $GITHUB_STEP_SUMMARY
+
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        with:
+          persist-credentials: true
+          fetch-depth: 0
+
+      - name: Tag Cargo.toml version when all platform builds succeeded
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          LINUX_MATRIX: ${{ needs.linux-matrix.result }}
+          FEATURE_INTERSECTIONS: ${{ needs.feature-intersections.result }}
+          MACOS: ${{ needs.macos.result }}
+          UBUNTU: ${{ needs.ubuntu.result }}
+        run: |
+          if [[ "$LINUX_MATRIX" != "success" \
+             || "$FEATURE_INTERSECTIONS" != "success" \
+             || "$MACOS" != "success" \
+             || "$UBUNTU" != "success" ]]; then
+            echo "Platform jobs were skipped or incomplete; not tagging a release"
+            exit 0
+          fi
+
+          VERSION=$(awk -F'"' '/^version =/ {print $2; exit}' Cargo.toml)
+          test -n "$VERSION"
+          TAG="v${VERSION}"
+
+          if git ls-remote --exit-code --tags origin "refs/tags/${TAG}" >/dev/null; then
+            echo "Tag $TAG already exists; bump Cargo.toml to cut a new alpha"
+            exit 0
+          fi
+
+          # Drop the empty release-drafter stub so the real tag can publish.
+          if gh release view "$TAG" --json isDraft,assets \
+            --jq 'select(.isDraft == true and (.assets | length) == 0)' \
+            | grep -q .; then
+            gh release delete "$TAG" --yes
+          fi
+
+          git tag "$TAG" "$GITHUB_SHA"
+          git push origin "refs/tags/${TAG}"
+          echo "Tagged $TAG at $GITHUB_SHA" >> "$GITHUB_STEP_SUMMARY"

@@ -24,6 +24,36 @@ fi
 script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
 cat <<EOF_HEADER
+## Alpha
+
+This is a prerelease. OMG is alpha software: the CLI, flags, and on-disk formats can change without a compatibility guarantee.
+
+## Breaking changes
+
+These CLI and release changes shipped in 0.1.215 and remain in later alphas.
+
+### \`omg license\` removed
+
+Local features are no longer license-gated. Dashboard identity is optional.
+
+\`\`\`bash
+# Removed
+omg license
+omg license check
+omg license pricing
+
+# Use instead
+omg account status
+omg account link <token>
+omg account unlink
+\`\`\`
+
+Team, Enterprise, and Fleet commands no longer require a paid JWT. Scripts that expected those commands to fail without a license will now succeed locally. Remote dashboard sync still needs a valid token from \`omg account link\`.
+
+### GitHub Releases
+
+Releases are prereleases until 1.0 (\`make_latest: false\`). \`/releases/latest\` stays on the last non-prerelease (v0.1.214) and does not move to 0.1.x alphas.
+
 ## Installation
 
 **Quick Install (Linux/macOS):**
