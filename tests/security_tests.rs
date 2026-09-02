@@ -700,7 +700,7 @@ mod env_security {
 mod network_security {
     fn production_source(source: &str) -> &str {
         source
-            .split_once("#[cfg(test)]")
+            .rsplit_once("#[cfg(test)]")
             .map_or(source, |(production, _)| production)
     }
 
