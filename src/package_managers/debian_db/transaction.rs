@@ -1401,44 +1401,103 @@ fn data_tar_entry_path(root: &Path, entry_path: &Path) -> Result<PathBuf> {
     Ok(resolved)
 }
 
-/// Validate that a relative symlink target stays inside the extraction root.
+/// Validate a symlink target and return the target to store, rewriting
+/// absolute targets onto the extraction root per dpkg's chroot semantics.
 ///
 /// The link's parent directory is expressed relative to `root`, then the
 /// target's components are applied with a depth counter: a `..` at depth zero
-/// (or any absolute target) is rejected. This treats the extraction root as
-/// the containment boundary regardless of where it lives on disk — for the
-/// production root of `/` the two coincide, but tests and future non-root
-/// extraction must not be able to pop above their own root.
-fn validate_root_relative_link_target(root: &Path, link_path: &Path, target: &Path) -> Result<()> {
+/// is rejected. dpkg treats an absolute target inside a package as relative
+/// to the target filesystem root, so `/etc/bar` is re-rooted onto the
+/// extraction root instead of rejecting the package; the same depth guard is
+/// applied to the rewritten path so it can never escape. This treats the
+/// extraction root as the containment boundary regardless of where it lives
+/// on disk — for the production root of `/` the two coincide, but tests and
+/// future non-root extraction must not be able to pop above their own root.
+fn validate_root_relative_link_target(
+    root: &Path,
+    link_path: &Path,
+    target: &Path,
+) -> Result<PathBuf> {
     let rel_parent = link_path.strip_prefix(root).unwrap_or(link_path);
     let mut depth = rel_parent
         .components()
         .filter(|c| matches!(c, Component::Normal(_)))
         .count();
 
-    for component in target.components() {
-        match component {
-            Component::Normal(_) => depth += 1,
-            Component::CurDir => {}
-            Component::ParentDir => {
-                anyhow::ensure!(
-                    depth > 0,
-                    "Archive symlink escapes the extraction directory: {} -> {}",
-                    link_path.display(),
-                    target.display()
-                );
-                depth -= 1;
+    let mut components = target.components();
+    match components.next() {
+        Some(Component::RootDir) => {
+            // Absolute paths resolve from the filesystem root, so the depth
+            // guard restarts at zero instead of the link's parent depth.
+            depth = 0;
+            let mut rebased = root.to_path_buf();
+            for component in components {
+                match component {
+                    Component::Normal(part) => {
+                        rebased.push(part);
+                        depth += 1;
+                    }
+                    Component::ParentDir => {
+                        anyhow::ensure!(
+                            depth > 0,
+                            "Archive symlink escapes the extraction directory: {} -> {}",
+                            link_path.display(),
+                            target.display()
+                        );
+                        depth -= 1;
+                        rebased.pop();
+                    }
+                    Component::CurDir => {}
+                    Component::RootDir | Component::Prefix(_) => {
+                        anyhow::bail!(
+                            "Archive symlink target must be relative: {} -> {}",
+                            link_path.display(),
+                            target.display()
+                        )
+                    }
+                }
             }
-            Component::RootDir | Component::Prefix(_) => {
-                anyhow::bail!(
-                    "Archive symlink target must be relative: {} -> {}",
-                    link_path.display(),
-                    target.display()
-                )
+            anyhow::ensure!(
+                rebased != root,
+                "Archive symlink target resolves to the extraction root: {} -> {}",
+                link_path.display(),
+                target.display()
+            );
+            Ok(rebased)
+        }
+        Some(Component::Prefix(_)) => {
+            anyhow::bail!(
+                "Archive symlink target must be relative: {} -> {}",
+                link_path.display(),
+                target.display()
+            )
+        }
+        _ => {
+            for component in target.components() {
+                match component {
+                    Component::Normal(_) => depth += 1,
+                    Component::CurDir => {}
+                    Component::ParentDir => {
+                        anyhow::ensure!(
+                            depth > 0,
+                            "Archive symlink escapes the extraction directory: {} -> {}",
+                            link_path.display(),
+                            target.display()
+                        );
+                        depth -= 1;
+                    }
+                    Component::RootDir | Component::Prefix(_) => {
+                        anyhow::bail!(
+                            "Archive symlink target must be relative: {} -> {}",
+                            link_path.display(),
+                            target.display()
+                        )
+                    }
+                }
             }
+            Ok(target.to_path_buf())
         }
     }
-    Ok(())
 }
 
 /// A link whose creation is deferred until every regular file has been
@@ -1717,7 +1776,7 @@ fn extract_tar_stream_to_root_at(root: &Path, reader: &mut dyn Read) -> Result<V
                     .link_name()?
                     .context("Archive symlink is missing its target")?
                     .into_owned();
-                validate_root_relative_link_target(root, &entry_path, &target)?;
+                let target = validate_root_relative_link_target(root, &entry_path, &target)?;
                 installed_files.push(entry_path.clone());
                 pending_links.push(PendingRootLink::Symbolic {
                     path: entry_path,
@@ -2786,23 +2845,63 @@ mod tests {
     }
 
     #[test]
-    fn absolute_symlink_target_in_data_tar_is_rejected() {
+    fn absolute_symlink_target_is_rerooted_onto_extraction_root() {
+        // dpkg semantics: an absolute target inside a package is relative to
+        // the target filesystem root, so `/usr/share/foo -> /etc/bar` must
+        // install and resolve to <root>/etc/bar (in production root == `/`,
+        // which is exactly dpkg's behavior).
         let temp = tempfile::tempdir().expect("tempdir");
-        let victim = temp.path().join("victim.txt");
+
+        let data = build_tar(|builder| {
+            let mut dir_header = tar::Header::new_gnu();
+            dir_header.set_entry_type(tar::EntryType::Directory);
+            dir_header.set_size(0);
+            dir_header.set_mode(0o755);
+            dir_header.set_cksum();
+            builder.append_data(&mut dir_header, "./usr/share", std::io::empty())?;
+
+            let mut link_header = tar::Header::new_gnu();
+            link_header.set_entry_type(tar::EntryType::Symlink);
+            link_header.set_size(0);
+            link_header.set_cksum();
+            builder.append_link(&mut link_header, "./usr/share/foo", "/etc/bar")
+        });
+
+        extract_tar_to_root_at(temp.path(), &data)
+            .expect("absolute symlink target must be re-rooted, not rejected");
+
+        let link = temp.path().join("usr/share/foo");
+        let link_metadata = fs::symlink_metadata(&link).expect("symlink exists");
+        assert!(link_metadata.file_type().is_symlink(), "recreated as symlink");
+        assert_eq!(
+            std::fs::read_link(&link).expect("read link"),
+            temp.path().join("etc/bar"),
+            "absolute target must be re-rooted onto the extraction root"
+        );
+    }
+
+    #[test]
+    fn absolute_symlink_target_escaping_the_root_is_rejected() {
+        // `/../outside` re-roots onto the extraction root and then pops above
+        // it; the same escape guard that rejects relative `..` must apply.
+        let temp = tempfile::tempdir().expect("tempdir");
 
         let data = build_tar(|builder| {
             let mut header = tar::Header::new_gnu();
             header.set_entry_type(tar::EntryType::Symlink);
             header.set_size(0);
             header.set_cksum();
-            builder.append_link(&mut header, "./lib", &victim)
+            builder.append_link(&mut header, "./out", "/../outside")
         });
 
         let error = extract_tar_to_root_at(temp.path(), &data)
-            .expect_err("absolute symlink target must be rejected");
+            .expect_err("escaping absolute symlink target must be rejected");
 
-        assert!(error.to_string().contains("must be relative"), "{error}");
-        assert!(!victim.exists(), "attack target must not be touched");
+        assert!(
+            error.to_string().contains("escapes the extraction"),
+            "{error}"
+        );
+        assert!(!temp.path().join("out").exists());
     }
 
     #[test]
