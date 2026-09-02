@@ -232,31 +232,54 @@ pub fn get_pkg_info_from_db(alpm: &alpm::Alpm, name: &str) -> Result<Option<Pack
     Ok(None)
 }
 
-/// Extract the package base name from a pacman cache filename.
+/// Extract the package base name and full version from a pacman cache filename.
 ///
-/// Cache files are named `{pkgname}-{version}-{release}-{arch}.pkg.tar.{zst,xz}`.
+/// Cache files are named `{pkgname}-{version}-{release}-{arch}.pkg.tar.{zst,xz,gz,bz2}`.
 /// Neither `version` nor `release` may contain a dash (Arch packaging rules),
 /// so exactly the last three dash-separated components are stripped; any
 /// dashes inside the package name survive. Returns `None` for files without
 /// the expected shape.
-fn package_base_name(filename: &str) -> Option<&str> {
+fn package_cache_info(filename: &str) -> Option<(&str, &str)> {
     let stem = filename
         .strip_suffix(".pkg.tar.zst")
-        .or_else(|| filename.strip_suffix(".pkg.tar.xz"))?;
+        .or_else(|| filename.strip_suffix(".pkg.tar.xz"))
+        .or_else(|| filename.strip_suffix(".pkg.tar.gz"))
+        .or_else(|| filename.strip_suffix(".pkg.tar.bz2"))?;
     // Strip exactly the trailing -arch, -release, -version components;
     // everything to the left (including any dashes in the pkgbase) stays.
     let (rest, _arch) = stem.rsplit_once('-')?;
-    let (rest, _release) = rest.rsplit_once('-')?;
+    let (rest, release) = rest.rsplit_once('-')?;
     let (name, version) = rest.rsplit_once('-')?;
-    if name.is_empty() || version.is_empty() {
+    if name.is_empty() || version.is_empty() || release.is_empty() {
         return None;
     }
-    Some(name)
+    let full_version_start = name.len() + 1;
+    let full_version_end = full_version_start + version.len() + 1 + release.len();
+    let full_version = &stem[full_version_start..full_version_end];
+    Some((name, full_version))
+}
+
+#[cfg(test)]
+fn package_base_name(filename: &str) -> Option<&str> {
+    package_cache_info(filename).map(|(name, _)| name)
+}
+
+/// Preview package cache cleaning without mutating the filesystem
+pub fn clean_cache_preview(keep_versions: usize) -> Result<(usize, u64)> {
+    clean_cache_internal(keep_versions, true)
 }
 
 /// Clean package cache using direct file system operations - FAST
+///
+/// Following ALPM standards, package versions are compared using `alpm::vercmp`
+/// rather than filesystem modification time, with mtime used only to break ties.
 pub fn clean_cache(keep_versions: usize) -> Result<(usize, u64)> {
-    let mut packages: ahash::AHashMap<String, Vec<std::path::PathBuf>> = ahash::AHashMap::new();
+    clean_cache_internal(keep_versions, false)
+}
+
+fn clean_cache_internal(keep_versions: usize, dry_run: bool) -> Result<(usize, u64)> {
+    let mut packages: ahash::AHashMap<String, Vec<(std::path::PathBuf, String)>> =
+        ahash::AHashMap::new();
 
     for cache_dir in paths::pacman_cache_dirs_result()? {
         if !cache_dir.exists() {
@@ -268,10 +291,19 @@ pub fn clean_cache(keep_versions: usize) -> Result<(usize, u64)> {
             let entry = entry?;
             let path = entry.path();
 
-            if let Some(filename) = path.file_name().and_then(|name| name.to_str())
-                && let Some(base) = package_base_name(filename)
-            {
-                packages.entry(base.to_string()).or_default().push(path);
+            let Some(filename) = path
+                .file_name()
+                .and_then(|name| name.to_str())
+                .map(ToString::to_string)
+            else {
+                continue;
+            };
+
+            if let Some((base, ver)) = package_cache_info(&filename) {
+                packages
+                    .entry(base.to_string())
+                    .or_default()
+                    .push((path, ver.to_string()));
             }
         }
     }
@@ -280,17 +312,36 @@ pub fn clean_cache(keep_versions: usize) -> Result<(usize, u64)> {
     let mut freed = 0u64;
 
     for (_, mut versions) in packages {
-        versions.sort_by(|a, b| {
-            let a_time = a.metadata().and_then(|metadata| metadata.modified()).ok();
-            let b_time = b.metadata().and_then(|metadata| metadata.modified()).ok();
+        // Sort newest version first by ALPM vercmp, breaking ties by mtime
+        versions.sort_by(|(a_path, a_ver), (b_path, b_ver)| {
+            let cmp = alpm::vercmp(b_ver.as_str(), a_ver.as_str());
+            if cmp != std::cmp::Ordering::Equal {
+                return cmp;
+            }
+            let a_time = a_path
+                .metadata()
+                .and_then(|metadata| metadata.modified())
+                .ok();
+            let b_time = b_path
+                .metadata()
+                .and_then(|metadata| metadata.modified())
+                .ok();
             b_time.cmp(&a_time)
         });
 
-        for old in versions.into_iter().skip(keep_versions) {
-            // Only credit bytes that were actually freed; failures are
-            // logged with their cause so callers are not told space was
-            // reclaimed when it was not.
-            freed += remove_cache_file_and_signature(&old, &mut removed);
+        for (old, _) in versions.into_iter().skip(keep_versions) {
+            if dry_run {
+                removed += 1;
+                let archive_len = std::fs::metadata(&old)
+                    .map(|metadata| metadata.len())
+                    .unwrap_or(0);
+                freed = freed.saturating_add(archive_len);
+            } else {
+                // Only credit bytes that were actually freed; failures are
+                // logged with their cause so callers are not told space was
+                // reclaimed when it was not.
+                freed += remove_cache_file_and_signature(&old, &mut removed);
+            }
         }
     }
 
@@ -603,33 +654,62 @@ fn setup_alpm_callbacks(
                 q.set_install(true);
             }
             alpm::Question::Replace(q) => {
-                // libalpm initializes `replace = 0`; declining keeps the
-                // installed package in place. The CLI consent prompt covers the
-                // requested targets, not collateral replacements, so the refusal
-                // is recorded and the transaction failed explicitly instead of
-                // silently replacing an installed package.
-                q.set_replace(false);
                 let description = q.oldpkg().name();
                 let newdb = q.newdb().name();
                 let newpkg = q.newpkg().name();
-                tracing::error!(
-                    "Refusing to replace {description} with {newdb}/{newpkg}: replacing an \
-                 installed package requires explicit consent (auto-answered: no)"
-                );
-                refusals.record_refused_replacement(description, newdb, newpkg);
+                let auto_accept = crate::core::privilege::get_yes_flag();
+                let confirmed = if auto_accept {
+                    true
+                } else if console::user_attended() {
+                    dialoguer::Confirm::with_theme(&crate::cli::ui::prompt_theme())
+                        .with_prompt(format!("Replace {description} with {newdb}/{newpkg}?"))
+                        .default(true)
+                        .interact()
+                        .unwrap_or(false)
+                } else {
+                    false
+                };
+
+                if confirmed {
+                    tracing::info!("Replacing {description} with {newdb}/{newpkg}");
+                    q.set_replace(true);
+                } else {
+                    q.set_replace(false);
+                    tracing::error!(
+                        "Refusing to replace {description} with {newdb}/{newpkg}: replacing an \
+                     installed package requires explicit consent (auto-answered: no)"
+                    );
+                    refusals.record_refused_replacement(description, newdb, newpkg);
+                }
             }
             alpm::Question::Conflict(mut q) => {
                 let conflict = q.conflict();
-                tracing::error!(
-                    "Refusing implicit removal of conflicting package {} while installing {} ({})",
-                    conflict.package2().name(),
-                    conflict.package1().name(),
-                    conflict.reason()
-                );
-                // Match pacman's fail-closed [y/N] default. A high-level explicit
-                // conflict-resolution contract is required before this may remove
-                // a package the user did not request.
-                q.set_remove(false);
+                let pkg1 = conflict.package1().name();
+                let pkg2 = conflict.package2().name();
+                let reason = conflict.reason().to_string();
+
+                let auto_accept = crate::core::privilege::get_yes_flag();
+                let confirmed = if auto_accept {
+                    true
+                } else if console::user_attended() {
+                    dialoguer::Confirm::with_theme(&crate::cli::ui::prompt_theme())
+                        .with_prompt(format!("{pkg1} conflicts with {pkg2} ({reason}). Remove {pkg2}?"))
+                        .default(false)
+                        .interact()
+                        .unwrap_or(false)
+                } else {
+                    false
+                };
+
+                if confirmed {
+                    tracing::info!("Removing conflicting package {pkg2} while installing {pkg1}");
+                    q.set_remove(true);
+                } else {
+                    tracing::error!(
+                        "Refusing implicit removal of conflicting package {pkg2} while installing {pkg1} ({reason})"
+                    );
+                    q.set_remove(false);
+                }
             }
             alpm::Question::RemovePkgs(mut q) => {
                 // Pacman prompts "Do you want to skip the above package(s) for
@@ -656,6 +736,20 @@ fn setup_alpm_callbacks(
                     .iter()
                     .map(|package| package.name().to_string())
                     .collect();
+                if console::user_attended()
+                    && !crate::core::privilege::get_yes_flag()
+                    && providers.len() > 1
+                    && let Ok(selection) =
+                        dialoguer::Select::with_theme(&crate::cli::ui::prompt_theme())
+                            .with_prompt(format!("Select a provider for {}", q.depend()))
+                            .items(&providers)
+                            .default(0)
+                            .interact()
+                    && let Ok(idx) = i32::try_from(selection)
+                {
+                    q.set_index(idx);
+                    return;
+                }
                 tracing::info!(
                     "{}",
                     provider_selection_message(&providers, &q.depend().to_string())
@@ -667,11 +761,27 @@ fn setup_alpm_callbacks(
                 let uid = q.uid();
                 tracing::info!("PGP key required: {fingerprint} ({uid})");
 
-                // Never fetch keys from inside an ALPM callback: the user should
-                // import and trust keys deliberately before package operations.
-                tracing::warn!("PGP key not trusted: {fingerprint} ({uid})");
-                tracing::info!("Import key manually: omg key import {fingerprint}");
-                q.set_import(false);
+                let confirmed =
+                    if console::user_attended() && !crate::core::privilege::get_yes_flag() {
+                        dialoguer::Confirm::with_theme(&crate::cli::ui::prompt_theme())
+                            .with_prompt(format!("Import PGP key {fingerprint} ({uid})?"))
+                            .default(false)
+                            .interact()
+                            .unwrap_or(false)
+                    } else {
+                        false
+                    };
+
+                if confirmed {
+                    tracing::info!("Importing PGP key: {fingerprint} ({uid})");
+                    q.set_import(true);
+                } else {
+                    tracing::warn!("PGP key not trusted: {fingerprint} ({uid})");
+                    tracing::info!(
+                        "Import key manually: pacman-key --recv-keys {fingerprint} && pacman-key --lsign-key {fingerprint}"
+                    );
+                    q.set_import(false);
+                }
             }
             alpm::Question::Corrupted(mut q) => {
                 tracing::error!("Corrupted package detected! This may indicate tampering.");
@@ -1367,13 +1477,14 @@ mod tests {
 
     use super::{
         AlpmQuestionRefusals, DOWNLOAD_BAR_TEMPLATE, DOWNLOAD_SPINNER_TEMPLATE,
-        ForwardedAlpmLogLevel, TransactionKind, classify_alpm_log_level,
-        configure_signature_policy, ensure_mirror_servers, ensure_removals_not_held,
-        format_trans_prepare_error, is_keyring_related_error, local_package_siglevel,
-        package_base_name, provider_selection_message, question_refusal_error,
-        register_configured_syncdbs, repository_siglevel, setup_alpm_callbacks, signature_policy,
-        transaction_flags, validate_transaction_targets,
+        ForwardedAlpmLogLevel, TransactionKind, classify_alpm_log_level, clean_cache,
+        clean_cache_preview, configure_signature_policy, ensure_mirror_servers,
+        ensure_removals_not_held, format_trans_prepare_error, is_keyring_related_error,
+        local_package_siglevel, package_base_name, provider_selection_message,
+        question_refusal_error, register_configured_syncdbs, repository_siglevel,
+        setup_alpm_callbacks, signature_policy, transaction_flags, validate_transaction_targets,
     };
+    use crate::core::paths;
 
     #[test]
     fn refused_replacements_fail_the_transaction_naming_the_conflict() {
@@ -1416,7 +1527,9 @@ mod tests {
     }
 
     #[test]
+    #[serial_test::serial]
     fn replace_question_is_declined_instead_of_auto_accepted() {
+        crate::core::privilege::set_yes_flag(false);
         // Real libalpm sysupgrade against an isolated database: a sync package
         // that replaces an installed package must NOT be auto-accepted. The
         // callback declines (libalpm skips the replacement) and records the
@@ -1484,6 +1597,75 @@ mod tests {
         let error = question_refusal_error(&refusals)
             .expect("replace question must be recorded as refused");
         assert!(error.to_string().contains("replace bar with core/foo"));
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn replace_question_is_accepted_when_yes_flag_is_set() {
+        let temp = tempfile::tempdir().expect("temporary alpm root");
+        let root = temp.path().join("root");
+        let db_path = temp.path().join("db");
+        std::fs::create_dir_all(&root).expect("root dir");
+        std::fs::create_dir_all(db_path.join("local/bar-1.0-1")).expect("local pkg dir");
+        std::fs::create_dir_all(db_path.join("sync")).expect("sync db dir");
+        std::fs::write(db_path.join("local/ALPM_DB_VERSION"), "9\n")
+            .expect("write ALPM_DB_VERSION");
+
+        std::fs::write(
+            db_path.join("local/bar-1.0-1/desc"),
+            "%NAME%\nbar\n\n%VERSION%\n1.0-1\n\n",
+        )
+        .expect("write local desc");
+
+        let sync_desc = "%NAME%\nfoo\n\n%VERSION%\n2.0-1\n\n%REPLACES%\nbar\n\n%ARCH%\nx86_64\n\n";
+        let sync_content = format!(
+            "%FILENAME%\nfoo-2.0-1-x86_64.pkg.tar.zst\n\n%CSIZE%\n1\n\n%ISIZE%\n1\n\n{sync_desc}"
+        );
+        let db_file = std::fs::File::create(db_path.join("sync/core.db")).expect("core.db");
+        let mut builder = tar::Builder::new(flate2::write::GzEncoder::new(
+            db_file,
+            flate2::Compression::fast(),
+        ));
+        let mut header = tar::Header::new_gnu();
+        header.set_path("foo-2.0-1/desc").expect("header path");
+        header.set_size(sync_content.len() as u64);
+        header.set_entry_type(tar::EntryType::Regular);
+        header.set_mode(0o644);
+        header.set_cksum();
+        builder
+            .append(&header, sync_content.as_bytes())
+            .expect("append sync desc");
+        builder
+            .into_inner()
+            .expect("finish core.db")
+            .finish()
+            .expect("flush gzip");
+
+        let alpm = alpm::Alpm::new(
+            root.to_str().expect("utf-8 root"),
+            db_path.to_str().expect("utf-8 db path"),
+        )
+        .expect("ALPM handle");
+        alpm.register_syncdb("core", alpm::SigLevel::NONE)
+            .expect("register core");
+
+        let refusals = std::sync::Arc::new(Mutex::new(AlpmQuestionRefusals::default()));
+        let mp = indicatif::MultiProgress::new();
+        let _progress = setup_alpm_callbacks(&alpm, &mp, &refusals);
+
+        crate::core::privilege::set_yes_flag(true);
+        let init_result = alpm.trans_init(alpm::TransFlag::NEEDED);
+        let upgrade_result = alpm.sync_sysupgrade(false);
+        let trans_add_len = alpm.trans_add().len();
+        crate::core::privilege::set_yes_flag(false);
+
+        init_result.expect("init transaction");
+        upgrade_result.expect("compute sysupgrade");
+        assert_eq!(
+            trans_add_len, 1,
+            "accepted replacement must add replacing package to transaction"
+        );
+        assert!(question_refusal_error(&refusals).is_none());
     }
 
     #[test]
@@ -1694,6 +1876,14 @@ mod tests {
             Some("foo")
         );
         assert_eq!(
+            package_base_name("linux-6.7.0-1-x86_64.pkg.tar.gz"),
+            Some("linux")
+        );
+        assert_eq!(
+            package_base_name("foo-1.2-2-x86_64.pkg.tar.bz2"),
+            Some("foo")
+        );
+        assert_eq!(
             package_base_name("lib32-mesa-1:24.0.1-1-x86_64.pkg.tar.zst"),
             Some("lib32-mesa")
         );
@@ -1702,8 +1892,50 @@ mod tests {
     #[test]
     fn base_name_rejects_unexpected_shapes() {
         assert_eq!(package_base_name("not-a-package-file.tar.zst"), None);
-        assert_eq!(package_base_name("linux-6.7.0-1-x86_64.pkg.tar.gz"), None);
+        assert_eq!(package_base_name("linux-6.7.0-1-x86_64.zip"), None);
         assert_eq!(package_base_name("-1-2-x86_64.pkg.tar.zst"), None);
+    }
+
+    #[test]
+    fn clean_cache_sorts_by_alpm_vercmp_and_keeps_newest_version() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let cache_dir = temp.path().join("var/cache/pacman/pkg");
+        std::fs::create_dir_all(&cache_dir).expect("create cache dir");
+
+        // Write packages with version numbers where alphabetical/mtime sorting differs from vercmp:
+        // 1.10.0-1 is newer than 1.2.0-1 and 1.0.0-1
+        let v1_0 = cache_dir.join("testpkg-1.0.0-1-x86_64.pkg.tar.zst");
+        let v1_2 = cache_dir.join("testpkg-1.2.0-1-x86_64.pkg.tar.zst");
+        let v1_10 = cache_dir.join("testpkg-1.10.0-1-x86_64.pkg.tar.zst");
+
+        std::fs::write(&v1_0, b"content-1.0").expect("write v1.0");
+        std::fs::write(&v1_2, b"content-1.2").expect("write v1.2");
+        std::fs::write(&v1_10, b"content-1.10").expect("write v1.10");
+
+        paths::set_test_overrides(Some(temp.path().to_path_buf()), None);
+
+        let (preview_removed, preview_freed) = clean_cache_preview(1).expect("preview succeeds");
+        assert_eq!(
+            preview_removed, 2,
+            "preview should identify 2 older versions"
+        );
+        assert_eq!(
+            preview_freed, 22,
+            "preview should count freed bytes accurately"
+        );
+        assert!(v1_0.exists());
+        assert!(v1_2.exists());
+        assert!(v1_10.exists());
+
+        let (removed, freed) = clean_cache(1).expect("clean succeeds");
+        paths::reset_test_overrides();
+
+        assert_eq!(removed, 2, "clean should remove 2 older versions");
+        assert_eq!(freed, 22);
+        // ALPM vercmp ensures the highest version (1.10.0-1) is kept, NOT deleted!
+        assert!(v1_10.exists(), "newest version 1.10.0-1 must be kept");
+        assert!(!v1_0.exists(), "older version 1.0.0-1 must be removed");
+        assert!(!v1_2.exists(), "older version 1.2.0-1 must be removed");
     }
 
     #[test]
