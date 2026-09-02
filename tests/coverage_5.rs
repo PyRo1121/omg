@@ -420,7 +420,7 @@ fn pull_rejects_non_gist_remote_url_instead_of_reporting_fake_sync() {
     let res = project.run(&["team", "pull"]);
     res.assert_failure();
     res.assert_stderr_contains("Unsupported team remote URL 'https://github.com/acme/backend'");
-    res.assert_stderr_contains("pull currently supports only gist.github.com remotes");
+    res.assert_stderr_contains("pull currently supports only HTTPS gist.github.com remotes");
 }
 
 /// Contract (SEC-G1-01 regression): even inside a validly-initialized team

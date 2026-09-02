@@ -582,8 +582,13 @@ mod tests {
         // Substring checks would accept these; the remote becomes the trust
         // source for team sync.
         assert!(!is_gist_remote("https://evil.com/gist.github.com"));
-        assert!(!is_gist_remote("https://gist.github.com.evil.com/user/abc123"));
+        assert!(!is_gist_remote(
+            "https://gist.github.com.evil.com/user/abc123"
+        ));
         assert!(!is_gist_remote("https://evil.com?q=gist.github.com"));
+        assert!(!is_gist_remote(
+            "https://gist.github.com@evil.com/user/abc123"
+        ));
     }
 
     #[test]
