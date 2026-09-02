@@ -386,6 +386,7 @@ std::io imports); format touched files with rustfmt
 - Reuse atomic download helper for mise installs
 ### ⚡ Performance
 
+- **Aur**: Decode RPC envelopes once
 - Validate Debian mmap indexes once
 - Fail closed on invalid performance baselines
 - Wave-4 scrutiny round — concurrency, boundaries, perf, API surface, errors
@@ -702,6 +703,8 @@ analyzer inference
 - **Ci**: Cross-platform install script and R2 release sync
 ### 🐛 Bug Fixes
 
+- **Aur**: Inspect RPC errors before payloads
+- **Aur**: Validate RPC response boundaries
 - **Aur**: Preserve fakeroot metadata in sandbox
 - **Tui**: Bound background search work
 - **Tui**: Invalidate results on query edits
