@@ -820,7 +820,11 @@ impl AurClient {
     /// Query the AUR RPC `type=info` endpoint for one chunk of package names,
     /// retrying transient failures with exponential backoff.
     async fn rpc_info_chunk(chunk: &[String]) -> Result<AurResponse> {
-        let mut url = format!("{AUR_RPC_URL}?v=5&type=info");
+        Self::rpc_info_chunk_at(AUR_RPC_URL, chunk).await
+    }
+
+    async fn rpc_info_chunk_at(endpoint: &str, chunk: &[String]) -> Result<AurResponse> {
+        let mut url = format!("{endpoint}?v=5&type=info");
         for name in chunk {
             url.push_str("&arg[]=");
             url.push_str(&urlencoding::encode(name));
@@ -837,12 +841,16 @@ impl AurClient {
             }
 
             match shared_client().get(&url).send().await {
-                Ok(resp) => {
-                    if crate::core::http::is_retryable_status(resp.status()) {
-                        last_error = ensure_aur_rpc_success(resp.status()).err();
+                Ok(response) => {
+                    if crate::core::http::is_retryable_status(response.status()) {
+                        last_error = ensure_aur_rpc_success(response.status()).err();
                         continue;
                     }
-                    return decode_aur_rpc_response(resp).await;
+                    ensure_aur_rpc_success(response.status())?;
+                    match response.bytes().await {
+                        Ok(body) => return decode_aur_rpc_body(&body),
+                        Err(error) => last_error = Some(redact_aur_transport_error(error)),
+                    }
                 }
                 Err(error) if crate::core::http::is_retryable_error(&error) => {
                     last_error = Some(redact_aur_transport_error(error));
@@ -3579,6 +3587,42 @@ mod tests {
 
         assert!(!rendered_chain.contains(query), "got: {rendered_chain}");
         assert!(!rendered_chain.contains("arg="), "got: {rendered_chain}");
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn rpc_info_chunk_retries_a_truncated_response_body() -> Result<()> {
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await?;
+        let endpoint = format!("http://{}/rpc", listener.local_addr()?);
+        let server = tokio::spawn(async move {
+            let (mut first, _) = listener.accept().await?;
+            let mut request = [0_u8; 2048];
+            let first_request_len = first.read(&mut request).await?;
+            anyhow::ensure!(first_request_len > 0, "first request was empty");
+            first
+                .write_all(b"HTTP/1.1 200 OK\r\nContent-Length: 64\r\n\r\n{\"results\":")
+                .await?;
+            first.shutdown().await?;
+
+            let (mut second, _) = listener.accept().await?;
+            let second_request_len = second.read(&mut request).await?;
+            anyhow::ensure!(second_request_len > 0, "second request was empty");
+            let body = br#"{"type":"info","resultcount":0,"results":[]}"#;
+            second
+                .write_all(
+                    format!("HTTP/1.1 200 OK\r\nContent-Length: {}\r\n\r\n", body.len()).as_bytes(),
+                )
+                .await?;
+            second.write_all(body).await?;
+            second.shutdown().await?;
+            anyhow::Ok(())
+        });
+
+        let response = AurClient::rpc_info_chunk_at(&endpoint, &["example".to_string()]).await?;
+        assert!(response.results.is_empty());
+        server.await??;
         Ok(())
     }
 

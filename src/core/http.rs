@@ -106,7 +106,7 @@ pub fn is_retryable_status(status: reqwest::StatusCode) -> bool {
 /// Whether a request transport failure is safe to retry.
 #[must_use]
 pub fn is_retryable_error(error: &reqwest::Error) -> bool {
-    error.is_timeout() || error.is_connect()
+    error.is_timeout() || error.is_connect() || error.is_body()
 }
 
 /// Render a remote URL without credentials, query parameters, or fragments.
