@@ -1038,7 +1038,7 @@ fn print_completion(stdout: &mut io::Stdout, state: &WizardState) -> Result<()> 
     execute!(
         stdout,
         SetForegroundColor(Color::DarkGrey),
-        Print("  Full docs: https://pyro1121.com/docs\n"),
+        Print("  Full docs: https://github.com/PyRo1121/omg/tree/main/docs\n"),
         ResetColor
     )?;
 

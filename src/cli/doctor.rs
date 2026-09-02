@@ -68,13 +68,12 @@ pub async fn run(network: bool, eol: bool) -> Result<()> {
     }
 
     // 3. Dependencies (backend-appropriate: the live Debian backend shells
-    //    out to `apt-get` via the privilege module; Arch uses pacman and makepkg)
+    //    out to `apt-get` via the privilege module; Arch uses makepkg for AUR builds)
     let mut deps = vec!["git", "curl", "tar", "sudo"];
     if debian_backend {
         deps.push("apt-get");
     }
     if arch_backend {
-        deps.push("pacman");
         deps.push("makepkg");
     }
     for dep in deps {
@@ -660,8 +659,12 @@ pub fn enable_turbo_mode() -> Result<()> {
             "ℹ".blue()
         );
         println!("     sudo visudo -f /etc/sudoers.d/omg-turbo",);
+        let omg_bin = std::env::current_exe().map_or_else(
+            |_| "/usr/local/bin/omg".to_string(),
+            |p| p.to_string_lossy().into_owned(),
+        );
         println!(
-            "       {user} ALL=(ALL) NOPASSWD: /usr/bin/pacman, /usr/bin/dnf, /usr/bin/apt-get"
+            "       {user} ALL=(ALL) NOPASSWD: {omg_bin}, /usr/bin/dnf, /usr/bin/apt-get"
         );
         println!();
         println!(

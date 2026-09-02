@@ -197,9 +197,17 @@ fn try_fast_elevated(
                 return Some(Err(error));
             }
             // Direct transaction with minimal success output
+            let is_local_artifact = packages
+                .iter()
+                .any(|package| omg_lib::core::security::is_local_package_file(package));
+            let kind = if is_local_artifact {
+                omg_lib::package_managers::TransactionKind::InstallAurArtifact
+            } else {
+                omg_lib::package_managers::TransactionKind::Install
+            };
             let result = omg_lib::package_managers::execute_transaction(
                 packages.clone(),
-                omg_lib::package_managers::TransactionKind::Install,
+                kind,
                 None,
             );
             let result = if parent_records {

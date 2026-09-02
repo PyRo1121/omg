@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Roll back the published "latest" version on releases.pyro1121.com.
+# Roll back the published "latest" version marker in the omg-releases R2 bucket.
 #
 # Usage:
 #   ./scripts/r2-rollback.sh <version> [--dry-run]

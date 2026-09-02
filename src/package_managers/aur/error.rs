@@ -15,7 +15,7 @@ pub enum AurError {
     GitPullFailed(String),
 
     #[error(
-        "Sandbox build failed\n  → bubblewrap is not installed\n  → Install: sudo pacman -S bubblewrap\n  → Or enable unsafe builds: omg config set aur.allow_unsafe_builds true"
+        "Sandbox build failed\n  → bubblewrap is not installed\n  → Install: omg install bubblewrap\n  → Or enable unsafe builds: omg config set aur.allow_unsafe_builds true"
     )]
     SandboxUnavailable,
 

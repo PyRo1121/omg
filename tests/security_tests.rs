@@ -552,7 +552,7 @@ mod sbom_compliance {
         } else {
             let output = result.combined_output();
             assert!(
-                !output.contains("tier") && !output.contains("pyro1121.com/pricing"),
+                !output.contains("tier") && !output.contains("/pricing"),
                 "SBOM must not be paywalled, got: {output}"
             );
         }
@@ -571,7 +571,7 @@ mod sbom_compliance {
         );
         let output = result.combined_output();
         assert!(
-            !output.contains("pyro1121.com/pricing"),
+            !output.contains("/pricing"),
             "SBOM must not be paywalled, got: {output}"
         );
     }

@@ -591,7 +591,7 @@ mod security {
         let result = run_omg(&["audit", "scan"]);
         let output = result.combined_output();
         assert!(
-            !output.contains("requires Pro tier") && !output.contains("pyro1121.com/pricing"),
+            !output.contains("requires Pro tier") && !output.contains("/pricing"),
             "audit scan must not be paywalled, got:\n{output}"
         );
     }

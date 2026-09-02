@@ -282,9 +282,9 @@ impl ParallelBuilder {
     ) -> Result<ParallelBuildSummary> {
         use owo_colors::OwoColorize;
 
-        // Builds within a wave run concurrently; the final `pacman -U` step
+        // Builds within a wave run concurrently; the final ALPM install step
         // inside `AurClient::install` serializes on the process-wide
-        // INSTALL_LOCK so concurrent installs cannot race pacman's database
+        // INSTALL_LOCK so concurrent installs cannot race the ALPM database
         // lock (/var/lib/pacman/db.lck).
         println!();
         println!(

@@ -1378,7 +1378,7 @@ fn format_trans_prepare_error(err: &str) -> String {
         return format!(
             "✗ Transaction preparation failed: {err}\n  \
              → Arch keyring/signature validation appears unhealthy.\n  \
-             → Repair: sudo pacman -Sy archlinux-keyring\n  \
+             → Repair: omg update archlinux-keyring\n  \
              → Reinitialize keys: sudo pacman-key --init && sudo pacman-key --populate archlinux\n  \
              → Retry: omg sync && omg install <package>"
         );

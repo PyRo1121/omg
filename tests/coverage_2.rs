@@ -19,7 +19,7 @@ fn slsa_check_names_a_missing_file() {
         "missing artifact must be named, got:\n{output}"
     );
     assert!(
-        !output.contains("tier") && !output.contains("pyro1121.com/pricing"),
+        !output.contains("tier") && !output.contains("/pricing"),
         "SLSA must not be paywalled, got:\n{output}"
     );
 }
@@ -39,7 +39,7 @@ fn slsa_check_attempts_verification_on_an_existing_file() {
         "existing artifact must reach verification, got:\n{output}"
     );
     assert!(
-        !output.contains("pyro1121.com/pricing"),
+        !output.contains("/pricing"),
         "SLSA must not be paywalled, got:\n{output}"
     );
 }

@@ -181,7 +181,7 @@ Security updates are announced via:
 
 - GitHub Security Advisories
 - Release notes (CHANGELOG.md)
-- Email to <security@pyro1121.com> subscribers
+- Email to <olen@latham.cloud> subscribers
 
 ## Compliance
 

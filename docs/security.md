@@ -317,7 +317,7 @@ This data enables the GitHub badge to show real install counts. No personal info
 **Non-interactive opt-out:** Skip the consent prompt and keep telemetry disabled with `OMG_NO_TELEMETRY=1` (the variable must be set for the installer's bash, not for curl):
 
 ```bash
-curl -fsSL https://pyro1121.com/install.sh | OMG_NO_TELEMETRY=1 bash
+curl -fsSL https://raw.githubusercontent.com/PyRo1121/omg/main/install.sh | OMG_NO_TELEMETRY=1 bash
 ```
 
 Or disable via config:

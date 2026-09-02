@@ -303,7 +303,7 @@ mod runtime_matrix {
         let res = run_omg(&["audit"]);
         let output = res.combined_output();
         assert!(
-            !output.contains("requires Pro tier") && !output.contains("pyro1121.com/pricing"),
+            !output.contains("requires Pro tier") && !output.contains("/pricing"),
             "audit must not be paywalled, got:\n{output}"
         );
     }

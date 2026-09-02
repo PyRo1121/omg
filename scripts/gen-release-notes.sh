@@ -5,7 +5,7 @@
 # Single source of truth for release notes: consumed by release.yml (tag
 # pushes and manual publishes). The verification section MUST stay in sync
 # with how artifacts are actually published and attested:
-#   - archives + .sha256 sidecars → GitHub Releases and R2 (releases.pyro1121.com)
+#   - archives + .sha256 sidecars → GitHub Releases
 #   - SLSA build provenance attestations → GitHub artifacts API
 set -euo pipefail
 
@@ -26,7 +26,7 @@ script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 cat <<EOF_HEADER
 ## Alpha
 
-This is a prerelease. OMG is alpha software: the CLI, flags, and on-disk formats can change without a compatibility guarantee.
+OMG is alpha software: the CLI, flags, and on-disk formats can change without a compatibility guarantee.
 
 ## Breaking changes
 
@@ -50,15 +50,11 @@ omg account unlink
 
 Team, Enterprise, and Fleet commands no longer require a paid JWT. Scripts that expected those commands to fail without a license will now succeed locally. Remote dashboard sync still needs a valid token from \`omg account link\`.
 
-### GitHub Releases
-
-Releases are prereleases until 1.0 (\`make_latest: false\`). \`/releases/latest\` stays on the last non-prerelease (v0.1.214) and does not move to 0.1.x alphas.
-
 ## Installation
 
 **Quick Install (Linux/macOS):**
 \`\`\`bash
-curl -fsSL https://pyro1121.com/install.sh | bash
+curl -fsSL https://raw.githubusercontent.com/PyRo1121/omg/main/install.sh | bash
 \`\`\`
 
 **Windows Subsystem for Linux:** Use the Linux installer inside your WSL distribution.

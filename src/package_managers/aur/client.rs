@@ -59,9 +59,8 @@ const AUR_GIT_PULL_ARGS: &[&str] = &[
     "--ff-only",
 ];
 
-/// Process-wide lock around pacman database mutations (`pacman -U` or a
-/// direct ALPM transaction). Pacman serializes installs on
-/// `/var/lib/pacman/db.lck`, so concurrent installs — e.g. parallel AUR build
+/// Process-wide lock around ALPM database mutations so parallel AUR builds never race.
+/// ALPM serializes installs on `/var/lib/pacman/db.lck`, so concurrent installs — e.g. parallel AUR build
 /// waves finishing together — either fail spuriously on the lock or race the
 /// ALPM database. Builds stay parallel; installs are applied one at a time.
 static INSTALL_LOCK: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
@@ -3327,17 +3326,7 @@ impl AurClient {
         Ok(())
     }
 
-    /// Install the built package via direct ALPM or `sudo pacman -U`
-    ///
-    /// Uses direct `sudo pacman -U` instead of re-executing the omg binary
-    /// via `run_self_sudo`. This is critical because `run_self_sudo` spawns
-    /// a new sudo session that may not share the parent's cached credentials,
-    /// causing a second password prompt. Direct `pacman -U` reuses the same
-    /// sudo timestamp that the sudoloop is maintaining (matching yay/paru behavior).
-    ///
-    /// If a `SudoLoop` is active, refreshes credentials immediately before
-    /// the install attempt. Retries once on failure in case credentials
-    /// expired during a long build.
+    /// Install the built package via direct ALPM or elevated OMG transaction.
     async fn install_built_packages(
         pkg_paths: &[PathBuf],
         sudoloop: Option<&crate::core::sudoloop::SudoLoop>,
@@ -3372,48 +3361,20 @@ impl AurClient {
                 sl.refresh_now().await;
             }
 
-            // Use direct `sudo pacman -U` instead of re-executing omg.
-            // This stays in the same sudo session the sudoloop is refreshing,
-            // avoiding a second authentication prompt.
-            const MAX_INSTALL_RETRIES: u32 = 1;
-
-            for attempt in 0..=MAX_INSTALL_RETRIES {
-                if attempt > 0 {
-                    tracing::warn!(
-                        "Retrying package install (attempt {}/{})",
-                        attempt + 1,
-                        MAX_INSTALL_RETRIES + 1
-                    );
-                    // Refresh credentials before retry
-                    if let Some(sl) = sudoloop {
-                        sl.refresh_now().await;
-                    }
-                }
-
-                let result = tokio::process::Command::new("sudo")
-                    .args(["pacman", "-U", "--noconfirm", "--"])
-                    .args(pkg_paths)
-                    .stdin(std::process::Stdio::inherit())
-                    .stdout(std::process::Stdio::inherit())
-                    .stderr(std::process::Stdio::inherit())
-                    .status()
-                    .await
-                    .context("Failed to run sudo pacman -U")?;
-
-                if result.success() {
-                    return Ok(());
-                }
-
-                // On last attempt, report failure
-                if attempt == MAX_INSTALL_RETRIES {
-                    anyhow::bail!("pacman -U failed with exit code {:?}", result.code());
-                }
-
-                tracing::warn!(
-                    "pacman -U failed with exit code {:?}, will retry",
-                    result.code()
-                );
-            }
+            let package_strs: Vec<String> = pkg_paths
+                .iter()
+                .map(|path| {
+                    path.canonicalize()
+                        .unwrap_or_else(|_| path.clone())
+                        .to_string_lossy()
+                        .into_owned()
+                })
+                .collect();
+            let mut args = vec!["install", "--"];
+            let pkg_refs: Vec<&str> = package_strs.iter().map(String::as_str).collect();
+            args.extend(pkg_refs);
+            args.push(crate::core::privilege::FLOW_PARENT_RECORDS);
+            crate::core::privilege::run_privileged_child(&args).await?;
         }
 
         Ok(())

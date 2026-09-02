@@ -44,7 +44,7 @@ fn print_essential_help(_cli: &Cli) {
 
     println!("💡 Show all commands with: omg --help --all-commands");
     println!("🔍 Explore interactive TUI with: omg dash");
-    println!("📚 Complete documentation: https://pyro1121.com/docs");
+    println!("📚 Complete documentation: https://github.com/PyRo1121/omg/tree/main/docs");
     println!();
 
     print_getting_started();
@@ -86,5 +86,5 @@ fn print_getting_started() {
     println!();
 
     println!("⚡ Performance: 6ms searches, 22x faster than pacman");
-    println!("📚 Documentation: https://pyro1121.com/docs");
+    println!("📚 Documentation: https://github.com/PyRo1121/omg/tree/main/docs");
 }
