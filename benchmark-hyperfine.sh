@@ -137,7 +137,7 @@ DAEMON_LOG="$BENCH_DIR/omgd.log"
 mkdir -p "$OMG_DAEMON_DATA_DIR"
 
 echo "Starting OMG Daemon..."
-$OMGD --foreground > "$DAEMON_LOG" 2>&1 &
+$OMGD > "$DAEMON_LOG" 2>&1 &
 DAEMON_PID=$!
 
 echo -n "Waiting for daemon to be ready..."
