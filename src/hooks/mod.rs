@@ -149,7 +149,7 @@ pub fn hook_env(shell: &str) -> Result<()> {
     let cwd = std::env::current_dir()?;
 
     // Detect version files in current directory and parents
-    let versions = detect_versions(&cwd)?;
+    let versions = detect_versions_for_hook(&cwd);
 
     // Build PATH modifications. An empty result is meaningful to the
     // generated hooks, which reset PATH to the user's base PATH first.
@@ -183,6 +183,32 @@ pub fn hook_env(shell: &str) -> Result<()> {
     }
 
     Ok(())
+}
+
+/// Detect version files for the shell hook, degrading gracefully when the
+/// current directory contains a malformed pin.
+///
+/// Ancestor directories are already isolated inside `detect_versions`, but a
+/// pin in the start directory itself is a hard error there. Running this on
+/// every shell prompt would make one bad `.nvmrc`/`package.json` turn every
+/// prompt into a failing `omg hook-env` while PATH silently resets to the
+/// user's base PATH. Instead: skip the bad pin, warn once per process (same
+/// pattern as the deprecation notice in `config/settings.rs`), and keep the
+/// rest of the environment working.
+fn detect_versions_for_hook(cwd: &Path) -> HashMap<String, String> {
+    match detect_versions(cwd) {
+        Ok(versions) => versions,
+        Err(error) => {
+            use std::sync::atomic::{AtomicBool, Ordering};
+            static WARNED: AtomicBool = AtomicBool::new(false);
+            if !WARNED.swap(true, Ordering::Relaxed) {
+                tracing::warn!(
+                    "Ignoring invalid runtime pin in current directory: {error:#}"
+                );
+            }
+            HashMap::new()
+        }
+    }
 }
 
 fn parse_tool_versions_file(
@@ -793,7 +819,10 @@ function _omg_hook --on-variable PWD --on-event fish_prompt
     set -g _OMG_PATH_BASE $PATH
   end
   set -gx PATH $_OMG_PATH_BASE
-  omg hook-env -s fish | source
+  # `command` bypasses fish functions and aliases, so a user-defined `omg`
+  # function can neither shadow nor recursively invoke the real binary
+  # (mirrors the `\command omg` guard in the zsh and bash hooks).
+  command omg hook-env -s fish | source
 end
 ";
 
@@ -1087,6 +1116,53 @@ mod tests {
         let versions = detect_versions(&child).expect("ancestor parse failure must be isolated");
 
         assert_eq!(versions.get("node"), Some(&"20.10.0".to_string()));
+    }
+
+    #[test]
+    fn fish_hook_uses_command_guard() {
+        // W2-B-01: a user function named `omg` must not shadow or
+        // recursively invoke the hook's call into the real binary.
+        assert!(
+            FISH_HOOK.contains("command omg hook-env -s fish"),
+            "fish hook must invoke the binary via `command omg`, got:\n{FISH_HOOK}"
+        );
+    }
+
+    #[test]
+    fn zsh_and_bash_hooks_keep_command_guard() {
+        assert!(ZSH_HOOK.contains("\\command omg hook-env -s zsh"));
+        assert!(BASH_HOOK.contains("\\command omg hook-env -s bash"));
+    }
+
+    #[test]
+    fn malformed_cwd_pin_degrades_to_empty_versions() {
+        let dir = tempdir().unwrap();
+        fs::write(dir.path().join("package.json"), "not json").unwrap();
+        // detect_versions still fails closed for the start directory...
+        assert!(detect_versions(dir.path()).is_err());
+        // ...but the hook path degrades gracefully.
+        let versions = detect_versions_for_hook(dir.path());
+        assert!(
+            versions.is_empty(),
+            "malformed cwd pin must yield no additions, got {versions:?}"
+        );
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn malformed_cwd_pin_hook_env_succeeds_with_no_path_output() {
+        let dir = tempdir().unwrap();
+        fs::write(dir.path().join("package.json"), "not json").unwrap();
+        let original = std::env::current_dir().unwrap();
+        let _restore = scopeguard::guard(original, |dir| {
+            std::env::set_current_dir(dir).unwrap();
+        });
+        std::env::set_current_dir(dir.path()).unwrap();
+
+        // Exit 0: a malformed cwd pin must not fail every shell prompt.
+        hook_env("fish").expect("malformed cwd pin must not fail hook-env");
+        // No PATH additions are emitted, so the generated hook leaves PATH
+        // at the user's base PATH — the environment keeps working.
     }
 
     #[test]
