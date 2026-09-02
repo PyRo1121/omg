@@ -546,20 +546,24 @@ fn check_path() -> bool {
     if crate::core::paths::test_mode() {
         return true;
     }
-    let Some(exe_dir) = std::env::current_exe()
-        .ok()
-        .and_then(|exe| exe.parent().map(std::path::Path::to_path_buf))
-    else {
-        return false;
-    };
     let Some(path_var) = std::env::var_os("PATH") else {
         return false;
     };
+    let paths: Vec<std::path::PathBuf> = std::env::split_paths(&path_var).collect();
+    let exe_dir = std::env::current_exe()
+        .ok()
+        .and_then(|exe| exe.parent().map(std::path::Path::to_path_buf));
+    let data_bin = crate::core::paths::data_dir().join("bin");
+    let home_bin = dirs::home_dir().map(|h| h.join(".local/bin"));
+
     // Compare PATH entries as whole components via split_paths; a substring
     // check falsely matched lookalike directories (e.g. /usr/local/bin-backup)
     // and vacuously passed when the exe dir was non-UTF-8.
-    // https://doc.rust-lang.org/std/env/fn.split_paths.html
-    std::env::split_paths(&path_var).any(|dir| dir == exe_dir)
+    // Accept if either the running executable directory, OMG's managed data
+    // bin directory (~/.local/share/omg/bin), or user bin (~/.local/bin) is in PATH.
+    paths.iter().any(|dir| {
+        exe_dir.as_ref() == Some(dir) || dir == &data_bin || home_bin.as_ref() == Some(dir)
+    })
 }
 
 fn check_shell_hook() -> bool {

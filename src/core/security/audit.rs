@@ -346,6 +346,10 @@ impl AuditLogger {
         entry.hash = Some(hash);
 
         let mut file = open_append_file(&self.log_path)?;
+        ensure_trailing_newline(&mut file).map_err(|source| AuditError::Write {
+            path: path_str.clone(),
+            source,
+        })?;
 
         let json =
             serde_json::to_string(&entry).map_err(|source| AuditError::Serialize { source })?;
@@ -603,13 +607,54 @@ fn open_lock_file(path: &Path) -> Result<File, AuditError> {
 
 fn open_append_file(path: &Path) -> Result<File, AuditError> {
     let mut options = OpenOptions::new();
-    options.create(true).append(true);
+    options.create(true).read(true).append(true);
     #[cfg(unix)]
     options.mode(0o600).custom_flags(libc::O_NOFOLLOW);
     options.open(path).map_err(|source| AuditError::Open {
         path: path.display().to_string(),
         source,
     })
+}
+
+fn ensure_trailing_newline(file: &mut File) -> io::Result<()> {
+    let len = file.metadata()?.len();
+    if len > 0 {
+        file.seek(SeekFrom::End(-1))?;
+        let mut byte = [0u8; 1];
+        file.read_exact(&mut byte)?;
+        if byte[0] != b'\n' {
+            file.seek(SeekFrom::End(0))?;
+            writeln!(file)?;
+        }
+    }
+    Ok(())
+}
+
+fn quarantine_corrupt_audit_log(path: &Path) -> Result<PathBuf, AuditError> {
+    let parent = path.parent().ok_or_else(|| AuditError::CreateDir {
+        path: path.display().to_string(),
+        source: io::Error::new(io::ErrorKind::InvalidInput, "path has no parent"),
+    })?;
+    let file_name = path.file_name().map_or_else(
+        || "audit.jsonl".to_string(),
+        |f| f.to_string_lossy().into_owned(),
+    );
+    let stamp = jiff::Timestamp::now()
+        .strftime("%Y%m%dT%H%M%S%.6fZ")
+        .to_string();
+
+    let mut quarantined = parent.join(format!("{file_name}.corrupt-{stamp}"));
+    let mut counter = 1u32;
+    while quarantined.exists() {
+        quarantined = parent.join(format!("{file_name}.corrupt-{stamp}-{counter}"));
+        counter += 1;
+    }
+
+    std::fs::rename(path, &quarantined).map_err(|source| AuditError::Write {
+        path: quarantined.display().to_string(),
+        source,
+    })?;
+    Ok(quarantined)
 }
 
 fn with_audit_read_lock<T>(
@@ -806,8 +851,22 @@ static AUDIT_QUEUE: std::sync::LazyLock<std::sync::mpsc::SyncSender<QueuedAuditE
     });
 
 /// Open the global audit logger before accepting daemon requests.
+///
+/// Quarantines corrupt audit logs rather than permanently wedging daemon startup.
 pub fn init_audit_logger() -> Result<(), AuditError> {
-    let logger = AuditLogger::new()?;
+    let logger = match AuditLogger::new() {
+        Ok(l) => l,
+        Err(AuditError::CorruptLine { .. } | AuditError::MissingHash { .. }) => {
+            let log_path = paths::data_dir().join("audit/audit.jsonl");
+            let quarantined = quarantine_corrupt_audit_log(&log_path)?;
+            tracing::warn!(
+                "Audit log was corrupt; quarantined to {} and started fresh log",
+                quarantined.display()
+            );
+            AuditLogger::new()?
+        }
+        Err(e) => return Err(e),
+    };
     *AUDIT_LOGGER
         .lock()
         .map_err(|_| AuditError::LoggerPoisoned)? = Some(logger);
@@ -832,6 +891,18 @@ fn record_global(
     if guard.is_none() {
         match AuditLogger::new() {
             Ok(logger) => *guard = Some(logger),
+            Err(AuditError::CorruptLine { .. } | AuditError::MissingHash { .. }) => {
+                let log_path = paths::data_dir().join("audit/audit.jsonl");
+                if let Ok(quarantined) = quarantine_corrupt_audit_log(&log_path) {
+                    tracing::warn!(
+                        "Audit log was corrupt; quarantined to {} and started fresh log",
+                        quarantined.display()
+                    );
+                    if let Ok(logger) = AuditLogger::new() {
+                        *guard = Some(logger);
+                    }
+                }
+            }
             Err(error) => {
                 tracing::warn!(
                     "Audit logger unavailable, dropping event {event} for {resource}: {error}"
