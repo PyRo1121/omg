@@ -32,12 +32,13 @@ yay -S omg-bin          # Pre-built binary
 yay -S omg              # Build from source
 ```
 
-#### macOS (Homebrew)
+#### macOS
 
 ```bash
-brew tap pyro1121/omg
-brew install omg
+curl -fsSL https://pyro1121.com/install.sh | bash
 ```
+
+Homebrew packaging is not available yet.
 
 #### Debian/Ubuntu (APT)
 

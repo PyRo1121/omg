@@ -5,8 +5,8 @@ pub mod alpm_harness;
 use anyhow::Result;
 use omg_lib::cli::run::RunCommand;
 use omg_lib::cli::{
-    CliContext, ComplianceFramework, EnterpriseCommands, EnterprisePolicyCommands,
-    EnterpriseReportType, EnvCommands, FleetCommands, LocalCommandRunner, ToolCommands,
+    CliContext, EnterpriseCommands, EnterprisePolicyCommands, EnvCommands, FleetCommands,
+    LocalCommandRunner, ToolCommands,
 };
 use serial_test::serial;
 use std::fs;
@@ -204,7 +204,7 @@ async fn test_tool_install_invalid_name_fails() -> Result<()> {
 
 #[tokio::test]
 #[serial]
-async fn test_fleet_status_requires_license() -> Result<()> {
+async fn test_fleet_status_requires_linked_account() -> Result<()> {
     let data = tempdir()?;
     let _isolated = EnvGuard::set(
         "OMG_DATA_DIR",
@@ -216,53 +216,32 @@ async fn test_fleet_status_requires_license() -> Result<()> {
     let result = status_cmd.execute(&ctx).await;
     assert!(result.is_err());
     let err = result.unwrap_err().to_string();
-    // license::require_feature is the first call in fleet status; without a
-    // stored license it bails with exactly this shape
-    // (src/core/license.rs:838-843).
     assert!(
-        err.contains("Feature 'fleet' requires"),
-        "fleet status without a license must name the gated feature, got: {err}"
+        err.contains("No dashboard account linked"),
+        "fleet status without an account must hint at linking, got: {err}"
     );
     Ok(())
 }
 
 #[tokio::test]
 #[serial]
-async fn enterprise_commands_gate_before_remote_or_filesystem_side_effects() -> Result<()> {
+async fn enterprise_policy_requires_linked_account() -> Result<()> {
     let data = tempdir()?;
     let _isolated = EnvGuard::set(
         "OMG_DATA_DIR",
         data.path().to_str().expect("temp paths are valid UTF-8"),
     );
     let ctx = get_ctx();
-    let commands = [
-        EnterpriseCommands::Reports {
-            report_type: EnterpriseReportType::Monthly,
-        },
-        EnterpriseCommands::Policy {
-            command: EnterprisePolicyCommands::Show { scope: None },
-        },
-        EnterpriseCommands::AuditExport {
-            framework: ComplianceFramework::Soc2,
-            period: None,
-            output: "audit-evidence".to_string(),
-        },
-        EnterpriseCommands::LicenseScan { export: None },
-    ];
-
-    for command in commands {
-        let error = command
-            .execute(&ctx)
-            .await
-            .expect_err("enterprise command must require a signed entitlement");
-        assert!(
-            error.to_string().contains("requires Enterprise tier"),
-            "enterprise gate must fail before side effects, got: {error:#}"
-        );
-    }
+    let command = EnterpriseCommands::Policy {
+        command: EnterprisePolicyCommands::Show { scope: None },
+    };
+    let error = command
+        .execute(&ctx)
+        .await
+        .expect_err("policy show talks to the dashboard");
     assert!(
-        !std::path::Path::new("audit-evidence").exists(),
-        "unlicensed audit export must not create its output directory"
+        error.to_string().contains("No dashboard account linked"),
+        "policy show without an account must hint at linking, got: {error:#}"
     );
     Ok(())
 }

@@ -351,11 +351,10 @@ split-debuginfo = "unpacked" # Faster linking on Linux
 #
 # Platform features (arch / debian / debian-pure / fedora / macos) are additive
 # and designed to compose. `pgp` gates signature verification
-# (sequoia-openpgp); `license` gates ONLY the `omg license` CLI subcommand
-# (activation/status/deactivate). The Team/Enterprise/Fleet commands and the
-# core license/JWT machinery (core/license.rs) are NOT gated and compile in
-# every combination — see Wave-3 review F5. Gating them is a pending product
-# decision, not an oversight this comment can paper over.
+# (sequoia-openpgp); `license` gates ONLY the `omg account` CLI subcommand
+# (link/status/unlink). Team/Enterprise/Fleet commands and the core
+# dashboard-identity JWT machinery (core/license.rs) compile in every
+# combination. They are not feature-gated.
 #
 # RELEASE FEATURE POLICY: every platform artifact explicitly enables its
 # backend plus `pgp,license`. PGP uses the pure-Rust Sequoia backend above, so
@@ -390,7 +389,7 @@ fedora = ["rusqlite"]
 macos = []
 
 license = [
-] # Gates the `omg license` CLI subcommand only; Team/Enterprise/Fleet are ungated (see feature policy above)
+] # Gates the `omg account` CLI subcommand only; Team/Enterprise/Fleet are ungated (see feature policy above)
 docker_tests = [] # Enable tests that require running as root (e.g. in Docker)
 
 # ============================================================================

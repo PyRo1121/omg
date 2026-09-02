@@ -1,11 +1,8 @@
 //! Contract tests for `src/cli/team.rs` — team init/join/status/push/pull CLI handlers.
 //!
-//! Every test pins an observable contract (exact output text, exact state change,
-//! or an error naming cause + remedy) so that breaking the handler flips the test.
-//! License-gated commands are exercised against the Free tier (no license in the
-//! isolated data dir): paid tiers cannot verify offline, so the *gate* contract
-//! ("command names the feature, tier, price, and upgrade URL, and performs no
-//! workspace mutation") is what we falsify here.
+//! Team workspace commands are local and do not require a dashboard account.
+//! Roster/activity commands that talk to the dashboard fail with a link hint
+//! when no account is linked.
 
 pub mod common;
 
@@ -16,11 +13,10 @@ use std::path::Path;
 
 use omg_lib::core::env::fingerprint::EnvironmentState;
 
-const GATE_MSG: &str = "Feature 'team-sync' requires Team tier";
-const PRICING_URL: &str = "https://pyro1121.com/pricing";
+const ACCOUNT_LINK_HINT: &str = "No dashboard account linked";
 
 /// Craft a valid initialized team workspace (`.omg/team.toml` + status file)
-/// without going through the license-gated `team init`.
+/// without going through `team init`.
 fn craft_workspace(project: &TestProject) {
     let omg_dir = project.path().join(".omg");
     fs::create_dir_all(&omg_dir).expect("create .omg dir");
@@ -67,15 +63,13 @@ fn workspace_marker_exists(project: &TestProject) -> bool {
     Path::new(&project.path().join(".omg/team.toml")).exists()
 }
 
-fn assert_gate_failure(res: &CommandResult, context: &str) {
+fn assert_account_link_required(res: &CommandResult, context: &str) {
     res.assert_failure();
-    res.assert_stderr_contains(GATE_MSG);
-    res.assert_stderr_contains(PRICING_URL);
-    // The gate must fire before ANY output beyond the error itself.
+    res.assert_stderr_contains(ACCOUNT_LINK_HINT);
     assert!(
-        !res.stdout_contains("Team workspace initialized"),
-        "{context}: gate bypassed, saw success output:\n{}",
-        res.stdout
+        !res.stderr_contains("pyro1121.com/pricing"),
+        "{context}: paywall URL must not appear:\n{}",
+        res.stderr
     );
 }
 
@@ -102,7 +96,7 @@ fn init_rejects_invalid_team_id_and_writes_nothing() {
 }
 
 /// Contract: a team display name containing a control character is rejected
-/// with the exact validation message before any license or filesystem work.
+/// with the exact validation message before any filesystem work.
 #[test]
 #[serial]
 fn init_rejects_control_char_team_name() {
@@ -134,21 +128,17 @@ fn init_rejects_overlong_team_name() {
     );
 }
 
-/// Contract: without a paid license, `init` fails AFTER input validation and
-/// BEFORE creating any workspace state, with an error naming the feature, the
-/// required tier, the price, and the upgrade URL.
+/// Contract: `init` does not require a dashboard account.
 #[test]
 #[serial]
-fn init_without_license_names_feature_tier_price_and_upgrade_url() {
+fn init_succeeds_without_a_dashboard_account() {
     let project = TestProject::new();
     let res = project.run(&["team", "init", "acme/backend", "--name", "Backend"]);
-    res.assert_failure();
-    res.assert_stderr_contains(GATE_MSG);
-    res.assert_stderr_contains("($200/mo)");
-    res.assert_stderr_contains(PRICING_URL);
+    res.assert_success();
+    res.assert_stdout_contains("Team workspace initialized!");
     assert!(
-        !workspace_marker_exists(&project),
-        "the license gate must precede workspace creation"
+        workspace_marker_exists(&project),
+        "init must create .omg/team.toml"
     );
 }
 
@@ -223,43 +213,32 @@ fn join_rejects_unsupported_https_remote_before_mutation() {
 // team status
 // ═══════════════════════════════════════════════════════════════════════════
 
-/// Contract: `status` is license-gated BEFORE any workspace probe, so a
-/// Free-tier run outside a workspace gets the gate error, not the workspace
-/// error (SEC-G1-01: status previously ran ungated).
+/// Contract: `status` outside a workspace names the missing workspace, not a paywall.
 #[test]
 #[serial]
-fn status_outside_workspace_still_license_gated() {
+fn status_outside_workspace_names_the_missing_workspace() {
     let project = TestProject::new();
     let res = project.run(&["team", "status"]);
-    assert_gate_failure(&res, "status outside workspace");
+    res.assert_failure();
+    res.assert_stderr_contains("Not a team workspace");
 }
 
-/// Contract (SEC-G1-01 regression): even inside a validly-initialized team
-/// workspace, `status` on the Free tier must stop at the license gate and
-/// report no team state at all.
+/// Contract: inside a crafted workspace, `status` reports team identity.
 #[test]
 #[serial]
-fn team_status_requires_license_gate() {
+fn team_status_reports_local_workspace_without_an_account() {
     let project = TestProject::new();
     craft_workspace(&project);
     let res = project.run(&["team", "status"]);
-    assert_gate_failure(&res, "status");
-    assert!(
-        !res.stdout_contains("[Team Status]"),
-        "status must not report team state before the license gate"
-    );
+    res.assert_success();
+    res.assert_stdout_contains("[Team Status]");
 }
 
 /// Contract: in a crafted initialized workspace, `status` succeeds and reports
 /// the team identity, the empty-lock sentinel "none", and the 1/1 sync ratio
 /// produced by registering the configured local member.
-///
-/// Ignored since SEC-G1-01: status is now license-gated, and the gate cannot
-/// be satisfied offline (tokens verify against the production Ed25519 key),
-/// so this Team-tier behavioral contract needs a valid-license fixture to run.
 #[test]
 #[serial]
-#[ignore = "requires a valid Team-tier license fixture; gate added by SEC-G1-01"]
 fn status_in_workspace_reports_identity_empty_lock_and_member_count() {
     let project = TestProject::new();
     craft_workspace(&project);
@@ -278,12 +257,8 @@ fn status_in_workspace_reports_identity_empty_lock_and_member_count() {
 /// Contract: `push` writes an integrity-valid `omg.lock`, records its hash as
 /// the team lock hash in the durable status file, and registers the configured
 /// member as in-sync.
-///
-/// Ignored since SEC-G1-01: see status_in_workspace... for the license-fixture
-/// rationale.
 #[test]
 #[serial]
-#[ignore = "requires a valid Team-tier license fixture; gate added by SEC-G1-01"]
 fn push_writes_valid_lockfile_and_records_lock_hash_in_status() {
     let project = TestProject::new();
     craft_workspace(&project);
@@ -326,12 +301,8 @@ fn push_writes_valid_lockfile_and_records_lock_hash_in_status() {
 
 /// Contract: after a successful push, `pull` (no remote configured) compares
 /// purely local state and reports in-sync with a zero exit code.
-///
-/// Ignored since SEC-G1-01: see status_in_workspace... for the license-fixture
-/// rationale.
 #[test]
 #[serial]
-#[ignore = "requires a valid Team-tier license fixture; gate added by SEC-G1-01"]
 fn pull_after_push_reports_local_sync_success() {
     let project = TestProject::new();
     craft_workspace(&project);
@@ -347,12 +318,8 @@ fn pull_after_push_reports_local_sync_success() {
 /// Contract: when the committed lock differs from the live environment (valid
 /// integrity, different content), `pull` exits non-zero, warns about drift on
 /// stdout, and names the `omg env check` diagnostic command.
-///
-/// Ignored since SEC-G1-01: see status_in_workspace... for the license-fixture
-/// rationale.
 #[test]
 #[serial]
-#[ignore = "requires a valid Team-tier license fixture; gate added by SEC-G1-01"]
 fn pull_detects_drift_when_lock_differs_from_environment() {
     let project = TestProject::new();
     craft_workspace(&project);
@@ -383,7 +350,6 @@ fn pull_detects_drift_when_lock_differs_from_environment() {
 /// silently treated as in-sync or as drift.
 #[test]
 #[serial]
-#[ignore = "requires a valid Team-tier license fixture; gate added by SEC-G1-01"]
 fn corrupted_lockfile_fails_pull_loudly_instead_of_reporting_state() {
     let project = TestProject::new();
     craft_workspace(&project);
@@ -408,7 +374,6 @@ fn corrupted_lockfile_fails_pull_loudly_instead_of_reporting_state() {
 /// of reporting local-only state as a successful team sync.
 #[test]
 #[serial]
-#[ignore = "requires a valid Team-tier license fixture; gate added by SEC-G1-01"]
 fn pull_rejects_non_gist_remote_url_instead_of_reporting_fake_sync() {
     let project = TestProject::new();
     craft_workspace(&project);
@@ -423,51 +388,14 @@ fn pull_rejects_non_gist_remote_url_instead_of_reporting_fake_sync() {
     res.assert_stderr_contains("pull currently supports only HTTPS gist.github.com remotes");
 }
 
-/// Contract (SEC-G1-01 regression): even inside a validly-initialized team
-/// workspace, `push` on the Free tier must stop at the license gate and never
-/// reach the gist-sync workflow — previously push ran fully ungated.
-#[test]
-#[serial]
-fn team_push_requires_license_gate() {
-    let project = TestProject::new();
-    craft_workspace(&project);
-    let res = project.run(&["team", "push"]);
-    assert_gate_failure(&res, "push");
-    assert!(
-        !res.stdout_contains("Team lock updated!"),
-        "push must not reach the sync workflow before the license gate"
-    );
-    assert!(
-        !project.path().join("omg.lock").exists(),
-        "the license gate must precede any lockfile write"
-    );
-}
-
-/// Contract (SEC-G1-01 regression): even inside a validly-initialized team
-/// workspace, `pull` on the Free tier must stop at the license gate and never
-/// reach the gist-sync workflow — previously pull ran fully ungated.
-#[test]
-#[serial]
-fn team_pull_requires_license_gate() {
-    let project = TestProject::new();
-    craft_workspace(&project);
-    let res = project.run(&["team", "pull"]);
-    assert_gate_failure(&res, "pull");
-    assert!(
-        !res.stdout_contains("Environment is in sync with team!"),
-        "pull must not reach the sync workflow before the license gate"
-    );
-}
-
 // ═══════════════════════════════════════════════════════════════════════════
 // golden-path templates
 // ═══════════════════════════════════════════════════════════════════════════
 
-/// Contract: template names allow only alphanumerics and hyphens; rejection
-/// happens BEFORE the license gate and before any config file is written.
+/// Contract: template names allow only alphanumerics and hyphens.
 #[test]
 #[serial]
-fn golden_path_create_rejects_invalid_template_name_before_license_gate() {
+fn golden_path_create_rejects_invalid_template_name() {
     let project = TestProject::new();
     let res = project.run(&["team", "golden-path", "create", "bad name!"]);
     res.assert_failure();
@@ -478,18 +406,12 @@ fn golden_path_create_rejects_invalid_template_name_before_license_gate() {
         !project.config_dir.path().join("golden-paths.toml").exists(),
         "rejected create must not write golden-paths.toml"
     );
-    // Validation precedes the license gate: the gate message must NOT appear.
-    assert!(
-        !res.stderr_contains(GATE_MSG),
-        "input validation must fire before the license gate"
-    );
 }
 
-/// Contract: unsafe Node version strings (path-hostile characters) are
-/// rejected before the license gate and before any config write.
+/// Contract: unsafe Node version strings are rejected before any config write.
 #[test]
 #[serial]
-fn golden_path_create_rejects_unsafe_node_version_before_license_gate() {
+fn golden_path_create_rejects_unsafe_node_version() {
     let project = TestProject::new();
     let res = project.run(&[
         "team",
@@ -505,17 +427,12 @@ fn golden_path_create_rejects_unsafe_node_version_before_license_gate() {
         !project.config_dir.path().join("golden-paths.toml").exists(),
         "rejected create must not write golden-paths.toml"
     );
-    assert!(
-        !res.stderr_contains(GATE_MSG),
-        "input validation must fire before the license gate"
-    );
 }
 
-/// Contract: package lists containing unsafe package names are rejected
-/// before the license gate.
+/// Contract: package lists containing unsafe package names are rejected.
 #[test]
 #[serial]
-fn golden_path_create_rejects_unsafe_package_name_before_license_gate() {
+fn golden_path_create_rejects_unsafe_package_name() {
     let project = TestProject::new();
     let res = project.run(&[
         "team",
@@ -533,11 +450,10 @@ fn golden_path_create_rejects_unsafe_package_name_before_license_gate() {
     );
 }
 
-/// Contract: a syntactically valid `golden-path create` still cannot persist
-/// anything without the team license — the gate fires and no config exists.
+/// Contract: a syntactically valid `golden-path create` persists locally.
 #[test]
 #[serial]
-fn golden_path_create_valid_input_still_gated_by_license() {
+fn golden_path_create_valid_input_persists_without_an_account() {
     let project = TestProject::new();
     let res = project.run(&[
         "team",
@@ -547,83 +463,76 @@ fn golden_path_create_valid_input_still_gated_by_license() {
         "--node",
         "20",
     ]);
-    assert_gate_failure(&res, "golden-path create");
+    res.assert_success();
     assert!(
-        !project.config_dir.path().join("golden-paths.toml").exists(),
-        "gate must prevent config persistence"
+        project.config_dir.path().join("golden-paths.toml").exists(),
+        "create must persist golden-paths.toml"
     );
 }
 
-/// Contract: `golden-path list` requires the team license.
+/// Contract: `golden-path list` works without an account.
 #[test]
 #[serial]
-fn golden_path_list_requires_license_gate() {
+fn golden_path_list_works_without_an_account() {
     let project = TestProject::new();
     let res = project.run(&["team", "golden-path", "list"]);
-    assert_gate_failure(&res, "golden-path list");
+    res.assert_success();
 }
 
-/// Contract: `golden-path delete` requires the team license.
+/// Contract: `golden-path delete` of a missing template warns, without a paywall.
 #[test]
 #[serial]
-fn golden_path_delete_requires_license_gate() {
+fn golden_path_delete_missing_template_warns() {
     let project = TestProject::new();
     let res = project.run(&["team", "golden-path", "delete", "whatever"]);
-    assert_gate_failure(&res, "golden-path delete");
+    res.assert_success();
+    res.assert_stdout_contains("Template 'whatever' not found");
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
-// license gates on the remaining team surface
+// remaining team surface
 // ═══════════════════════════════════════════════════════════════════════════
 
-/// Contract: every remaining team subcommand denies Free-tier users with an
-/// error naming the `team-sync` feature and the pricing URL.
 #[test]
 #[serial]
-fn team_roles_list_requires_license_gate() {
+fn team_roles_list_works_without_an_account() {
     let project = TestProject::new();
     let res = project.run(&["team", "roles", "list"]);
-    assert_gate_failure(&res, "roles list");
+    res.assert_success();
+    res.assert_stdout_contains("Team Roles");
 }
 
 #[test]
 #[serial]
-fn team_members_requires_license_gate() {
+fn team_members_requires_a_linked_dashboard_account() {
     let project = TestProject::new();
     let res = project.run(&["team", "members"]);
-    assert_gate_failure(&res, "members");
+    assert_account_link_required(&res, "members");
 }
 
 #[test]
 #[serial]
-fn team_activity_requires_license_gate() {
+fn team_activity_requires_a_linked_dashboard_account() {
     let project = TestProject::new();
     let res = project.run(&["team", "activity", "--days", "7"]);
-    assert_gate_failure(&res, "activity");
+    assert_account_link_required(&res, "activity");
 }
 
+/// Contract: `compliance` is honest about having no local evaluation engine.
 #[test]
 #[serial]
-fn team_dashboard_requires_license_gate() {
-    let project = TestProject::new();
-    let res = project.run(&["team", "dashboard"]);
-    assert_gate_failure(&res, "dashboard");
-}
-
-/// Contract: `compliance` is honest about having no local evaluation engine —
-/// but only after passing the license gate; Free tier gets the gate error.
-#[test]
-#[serial]
-fn team_compliance_requires_license_gate() {
+fn team_compliance_reports_no_local_data() {
     let project = TestProject::new();
     let res = project.run(&["team", "compliance"]);
-    assert_gate_failure(&res, "compliance");
+    res.assert_success();
+    res.assert_stdout_contains("No local data");
 }
 
 #[test]
 #[serial]
-fn team_compliance_export_requires_license_gate() {
+fn team_compliance_export_names_missing_data() {
     let project = TestProject::new();
     let res = project.run(&["team", "compliance", "--export", "/tmp/cov5-export.md"]);
-    assert_gate_failure(&res, "compliance export");
+    res.assert_failure();
+    res.assert_stderr_contains("No compliance data is available to export");
 }

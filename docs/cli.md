@@ -28,7 +28,7 @@ This guide documents every OMG command with detailed explanations, examples, and
 | **CI/CD & Migration** | `ci`, `migrate` |
 | **History & Rollback** | `history`, `rollback` |
 | **Dashboard** | `dash`, `stats`, `metrics`, `daemon-status` |
-| **Configuration** | `config`, `daemon`, `license`, `generate-man` |
+| **Configuration** | `config`, `daemon`, `account`, `generate-man` |
 | **Enterprise** | `fleet`, `enterprise` |
 
 ---
@@ -1545,26 +1545,23 @@ omg generate-man [--output <dir>]
 
 ---
 
-## 🔑 License & Daemon
+## 🔑 Dashboard account & daemon
 
-### omg license
+### omg account
 
-License management for Pro features.
+Optional link between this machine and the OMG dashboard. Linking attributes opted-in usage; every local command works without it.
 
 ```bash
-omg license <SUBCOMMAND>
+omg account <SUBCOMMAND>
 ```
 
 **Subcommands:**
 
 | Subcommand | Description |
 | ------------ | ------------- |
-| `status` | Show license status |
-| `activate <key>` | Activate license |
-| `deactivate` | Deactivate license |
-| `check <feature>` | Check feature availability |
-
----
+| `link <token>` | Link this machine with a dashboard token |
+| `status` | Show whether this machine is linked |
+| `unlink` | Remove the local dashboard identity |
 
 ### omg daemon
 

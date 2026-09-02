@@ -10,10 +10,6 @@ description: Reporting, auditing, and self-hosted infrastructure
 
 OMG Enterprise provides the tools large organizations need to manage software supply chain security, compliance, and infrastructure at scale.
 
-:::info Enterprise Feature
-These features require an Enterprise license.
-:::
-
 ---
 
 ## 📋 Executive Reports

@@ -33,7 +33,7 @@ omg use ruby 3.3.0
 
 ---
 
-## ⚡ Quick Install
+## Quick Install
 
 ### Universal Installer (Linux & macOS)
 
@@ -54,7 +54,7 @@ yay -S omg
 ### From Source
 
 ```bash
-cargo install omg --locked
+cargo install omg --git https://github.com/PyRo1121/omg --locked
 ```
 
 ### Shell Integration
@@ -74,7 +74,7 @@ omg hook fish | source
 
 ---
 
-## 🚀 60-Second Tour
+## 60-Second Tour
 
 ```bash
 # 1. Search packages across official repos and AUR in ~6ms
@@ -99,29 +99,29 @@ omg dash
 
 ---
 
-## 💡 Key Features
+## Key Features
 
-### 🏎️ 12-24x Faster Package Operations
+### Faster Package Operations
 Direct `libalpm` integration and an in-memory repository index eliminate subprocess startup overhead. Search results return in 5-11ms compared to 130-150ms with `pacman` and `yay`.
 
-### 🛠️ Universal Runtime Manager
+### Universal Runtime Manager
 Manage Node.js, Bun, Python, Go, Rust, Ruby, Java, and Pi from one CLI. OMG honors existing `.nvmrc`, `.python-version`, `rust-toolchain.toml`, and `.tool-versions` files automatically.
 
-### 📦 Seamless AUR & Dependency Resolution
+### Seamless AUR & Dependency Resolution
 Build and install AUR packages safely unprivileged as your regular user. Multi-package builds run in parallel with automatic makedepend cleanup.
 
-### 🏃 Unified Task Runner
+### Unified Task Runner
 `omg run <task>` inspects your directory, detects `package.json`, `Cargo.toml`, `Makefile`, `pyproject.toml`, or `deno.json`, and executes the task with the required runtime version pre-loaded.
 
-### 🔒 Environment Fingerprinting
+### Environment Fingerprinting
 `omg env capture` records installed packages and active runtimes into `omg.lock`. Teammates can run `omg env check` to detect drift and keep environments consistent.
 
-### 📊 Terminal Dashboard
+### Terminal Dashboard
 `omg dash` launches an interactive terminal UI for monitoring package updates, disk space, active runtimes, and system health at a glance.
 
 ---
 
-## 📊 Performance Benchmarks
+## Performance Benchmarks
 
 Measured on Arch Linux (Linux 6.18, AMD Ryzen / Intel i9, local pacman sync databases):
 
@@ -132,11 +132,11 @@ Measured on Arch Linux (Linux 6.18, AMD Ryzen / Intel i9, local pacman sync data
 | **`explicit`** | **< 2ms** | 14ms | 27ms | **7-14x faster** |
 | **`status`** | **< 10ms** | N/A | N/A | Instant overview |
 
-*Detailed benchmark methodology and reproduction scripts are documented in [benchmarks/latest.md](benchmarks/latest.md).*
+Reproduce locally: [`./benchmark.sh`](benchmark.sh). Methodology and historical runs: [benchmarks/latest.md](benchmarks/latest.md).
 
 ---
 
-## 🌐 Supported Language Runtimes
+## Supported Language Runtimes
 
 OMG natively handles version switching and installation for major ecosystems:
 
@@ -152,7 +152,7 @@ OMG natively handles version switching and installation for major ecosystems:
 
 ---
 
-## 💻 CLI Command Reference
+## CLI Command Reference
 
 | Command | Description |
 | :--- | :--- |
@@ -168,12 +168,14 @@ OMG natively handles version switching and installation for major ecosystems:
 | `omg why <pkg>` | Trace dependency chains explaining why a package is installed |
 | `omg size` | View package disk usage breakdown and dependency trees |
 
-Run `omg --help` or see the [CLI Documentation](docs/cli.md) for full argument details.
+Run `omg --help` or see the [CLI documentation](docs/cli.md) for full argument details.
+
+**More docs:** [Installation](docs/installation.md) · [Runtimes](docs/runtimes.md) · [Security](docs/security.md) · [Contributing](CONTRIBUTING.md)
 
 ---
 
-## 📜 License
+## License
 
 OMG is free and open-source software licensed under the [MIT License](LICENSE).
 
-Copyright (c) 2024-2026 OMG Team.
+Copyright (c) 2024-2026 Olen Latham.

@@ -45,8 +45,6 @@ impl LocalCommandRunner for EnterpriseCommands {
 pub async fn reports(report_type: &str, _ctx: &CliContext) -> Result<()> {
     use crate::cli::packages::execute_cmd;
 
-    license::require_feature("enterprise-reports")?;
-
     execute_cmd(Components::loading(format!(
         "Generating {report_type} report..."
     )))?;
@@ -99,8 +97,6 @@ pub fn audit_export(
         )))?;
         return Err(error);
     }
-
-    license::require_feature("audit-export")?;
 
     execute_cmd(Components::loading(format!(
         "Exporting {format} audit evidence..."
@@ -156,8 +152,6 @@ pub fn license_scan(export: Option<&str>, _ctx: &CliContext) -> Result<()> {
             anyhow::bail!("Unsupported license export format '{fmt}'. Valid formats: json, csv");
         }
     }
-
-    license::require_feature("license-scan")?;
 
     let scan = perform_license_scan()?;
 
@@ -230,8 +224,6 @@ pub mod policy {
             execute_cmd(Cmd::error("Invalid policy scope"))?;
             anyhow::bail!("Invalid policy scope");
         }
-
-        license::require_feature("policy")?;
 
         let policies = license::fetch_policies().await?;
 

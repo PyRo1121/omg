@@ -1603,17 +1603,13 @@ pub fn stats(json: bool) -> Result<()> {
     println!();
 
     // Sync hint
-    if let Some(license) = crate::core::license::load_license() {
-        println!(
-            "  {} Synced to dashboard ({})",
-            style::success("✓"),
-            style::info(&license.tier)
-        );
+    if crate::core::license::load_license().is_some() {
+        println!("  {} Synced to dashboard", style::success("✓"),);
     } else {
         println!(
             "  {} {}",
             style::dim("Tip:"),
-            style::dim("Register at pyro1121.com to sync stats to your dashboard")
+            style::dim("omg account link <token>  — optional, attributes usage to your dashboard")
         );
     }
 

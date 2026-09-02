@@ -6,14 +6,15 @@
 //! - One-time install tracking is controlled independently by the installer
 //! - Network failures never fail the requested command
 //!
-//! ## Enhanced Telemetry (requires license)
+//! ## Enhanced Telemetry (opt-in)
 //!
-//! When a user has activated a license, additional telemetry is collected:
+//! When the user enables runtime telemetry, additional events are collected:
 //! - Command summaries (canonical command name, duration, success, backend)
 //! - Session tracking (`session_id`, start/end times, command count)
 //! - Performance metrics (metric name and duration)
 //! - Feature usage (feature name and enabled state)
-//! - Stable machine identifier and activated license key for attribution
+//! - Stable machine identifier
+//! - Dashboard account token when this machine is linked (`omg account link`)
 //!
 //! Positional arguments, package names, search queries, paths, command output,
 //! and raw error messages are never included.
@@ -239,7 +240,7 @@ pub async fn ping_install() -> Result<()> {
 }
 
 // =============================================================================
-// Enhanced Telemetry (requires license)
+// Enhanced Telemetry (opt-in)
 // =============================================================================
 
 /// Global event queue for batching
@@ -615,13 +616,10 @@ fn get_session() -> &'static Mutex<TelemetrySession> {
     })
 }
 
-/// Check if enhanced telemetry is enabled (requires license)
+/// Check if enhanced telemetry is enabled (opt-in, not account-gated)
 #[must_use]
 pub fn is_enhanced_telemetry_enabled() -> bool {
-    if is_telemetry_opt_out() {
-        return false;
-    }
-    crate::core::license::load_license().is_some_and(|license| license.is_token_valid())
+    !is_telemetry_opt_out()
 }
 
 /// Record CLI startup time

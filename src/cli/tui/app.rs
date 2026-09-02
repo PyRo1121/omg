@@ -204,11 +204,7 @@ impl App {
 
     pub(crate) async fn fetch_remote_team_status() -> Option<TeamStatus> {
         let license = crate::core::license::load_license()?;
-        let tier = license.tier_enum();
-        if !matches!(
-            tier,
-            crate::core::license::Tier::Team | crate::core::license::Tier::Enterprise
-        ) {
+        if !license.is_token_valid() {
             return None;
         }
         let members = crate::core::license::fetch_team_members().await.ok()?;

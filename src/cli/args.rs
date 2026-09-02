@@ -420,11 +420,11 @@ pub enum Commands {
         command: ContainerCommands,
     },
 
-    /// License management (activate, status, deactivate)
+    /// Optional dashboard account (usage tracking)
     #[cfg(feature = "license")]
-    License {
+    Account {
         #[command(subcommand)]
-        command: LicenseCommands,
+        command: AccountCommands,
     },
 
     /// Fleet management for enterprise (multi-machine)
@@ -773,7 +773,7 @@ pub enum PrivacyCommands {
         #[arg(short, long)]
         output: Option<String>,
     },
-    /// Disable telemetry collection (keeps license functional)
+    /// Disable telemetry collection
     #[command(name = "opt-out")]
     OptOut,
     /// Re-enable telemetry collection
@@ -1006,21 +1006,16 @@ pub enum ContainerCommands {
 
 #[cfg(feature = "license")]
 #[derive(Subcommand, Debug)]
-pub enum LicenseCommands {
-    /// Activate a license key
-    Activate {
-        /// License key to activate
-        key: String,
+pub enum AccountCommands {
+    /// Link this machine to the OMG dashboard
+    Link {
+        /// Dashboard token
+        token: String,
     },
-    /// Show current license status
+    /// Show whether this machine is linked to the dashboard
     Status,
-    /// Deactivate current license
-    Deactivate,
-    /// Check if a feature is available
-    Check {
-        /// Feature name to check
-        feature: String,
-    },
+    /// Unlink this machine from the dashboard
+    Unlink,
 }
 
 #[derive(Subcommand, Debug)]

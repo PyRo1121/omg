@@ -44,7 +44,6 @@ fn read_audit_entries(
 use crate::cli::{AuditCommands, CliContext, LocalCommandRunner, style, ui};
 #[cfg(unix)]
 use crate::core::client::DaemonClient;
-use crate::core::license;
 use crate::core::security::{AuditLogger, AuditSeverity, SbomGenerator, SecurityPolicy};
 use crate::runtimes::eol::{eol_warning_cutoff, version_components};
 
@@ -114,9 +113,6 @@ impl LocalCommandRunner for AuditCommands {
 
 /// Perform security audit (vulnerability scan)
 pub async fn scan(_ctx: &CliContext) -> Result<()> {
-    // Require Pro tier for vulnerability scanning
-    license::require_feature("audit")?;
-
     ui::print_header("Secure", "Vulnerability Scan");
 
     #[cfg(unix)]
@@ -176,9 +172,6 @@ pub async fn generate_sbom(
     include_vulns: bool,
     _ctx: &CliContext,
 ) -> Result<()> {
-    // Require Pro tier for SBOM generation
-    license::require_feature("sbom")?;
-
     println!(
         "{} Generating Software Bill of Materials (CycloneDX 1.5)...\n",
         style::runtime("OMG")
@@ -235,9 +228,6 @@ pub fn view_audit_log(
     export: Option<String>,
     _ctx: &CliContext,
 ) -> Result<()> {
-    // Require Team tier for audit logs
-    license::require_feature("audit-log")?;
-
     let effective_limit = limit.unwrap_or_else(|| if export.is_some() { usize::MAX } else { 20 });
     let logger = AuditLogger::new().context("Failed to open audit log")?;
     let entries = read_audit_entries(&logger, effective_limit, severity_filter)?;
@@ -342,8 +332,6 @@ pub fn view_audit_log(
 
 /// Verify audit log integrity
 pub fn verify_audit_log(_ctx: &CliContext) -> Result<()> {
-    license::require_feature("audit-log")?;
-
     println!(
         "{} Verifying Audit Log Integrity...\n",
         style::runtime("OMG")
@@ -498,9 +486,6 @@ fn enforce_secret_scan_result(result: &crate::core::security::SecretScanResult) 
 
 /// Scan for leaked secrets
 pub fn scan_secrets(path: Option<String>, _ctx: &CliContext) -> Result<()> {
-    // Require Pro tier for secret scanning
-    license::require_feature("secrets")?;
-
     use crate::core::security::SecretScanner;
 
     /// Number of findings printed before the "... and N more" summary.
@@ -621,9 +606,6 @@ pub async fn check_slsa(
     certificate_identity: Option<&str>,
     _ctx: &CliContext,
 ) -> Result<()> {
-    // Require Enterprise tier for SLSA verification
-    license::require_feature("slsa")?;
-
     use crate::core::security::SlsaVerifier;
 
     // SECURITY: Validate path
@@ -821,8 +803,6 @@ pub fn scan_licenses(
     check_policy: bool,
     _ctx: &CliContext,
 ) -> Result<()> {
-    license::require_feature("license-scan")?;
-
     // Validate the requested format up front instead of silently rendering any
     // unknown value with the table renderer.
     if !matches!(format, "table" | "json" | "csv") {
@@ -1059,8 +1039,6 @@ pub async fn fix_vulnerabilities(
     min_severity: &str,
     _ctx: &CliContext,
 ) -> Result<()> {
-    license::require_feature("audit")?;
-
     println!(
         "{} Scanning for fixable vulnerabilities...\n",
         style::runtime("OMG")
@@ -1235,7 +1213,6 @@ pub async fn export_compliance(
     _ctx: &CliContext,
 ) -> Result<()> {
     validate_compliance_export_inputs(framework, period.as_deref(), output)?;
-    license::require_feature("compliance")?;
 
     println!(
         "{} Generating {} compliance evidence...\n",

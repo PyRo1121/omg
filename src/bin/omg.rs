@@ -12,7 +12,7 @@ use anyhow::Result;
 use clap::Parser;
 
 #[cfg(feature = "license")]
-use omg_lib::cli::LicenseCommands;
+use omg_lib::cli::AccountCommands;
 use omg_lib::cli::doctor;
 use omg_lib::cli::new;
 use omg_lib::cli::packages;
@@ -873,7 +873,7 @@ const fn command_name(command: &Commands) -> &'static str {
         Commands::Team { .. } => "team",
         Commands::Container { .. } => "container",
         #[cfg(feature = "license")]
-        Commands::License { .. } => "license",
+        Commands::Account { .. } => "account",
         Commands::Fleet { .. } => "fleet",
         Commands::Enterprise { .. } => "enterprise",
         Commands::History { .. } => "history",
@@ -1007,13 +1007,12 @@ fn handle_container_command(command: &ContainerCommands) -> Result<()> {
 }
 
 #[cfg(feature = "license")]
-async fn handle_license_command(command: &LicenseCommands) -> Result<()> {
+async fn handle_license_command(command: &AccountCommands) -> Result<()> {
     use omg_lib::cli::license;
     match command {
-        LicenseCommands::Activate { key } => license::activate(key).await,
-        LicenseCommands::Status => license::status(),
-        LicenseCommands::Deactivate => license::deactivate(),
-        LicenseCommands::Check { feature } => license::check_feature(feature),
+        AccountCommands::Link { token } => license::activate(token).await,
+        AccountCommands::Status => license::status(),
+        AccountCommands::Unlink => license::deactivate(),
     }
 }
 
@@ -1281,7 +1280,7 @@ async fn dispatch_command(command: &Commands, ctx: &omg_lib::cli::CliContext) ->
         }
         Commands::Container { command } => handle_container_command(command)?,
         #[cfg(feature = "license")]
-        Commands::License { command } => handle_license_command(command).await?,
+        Commands::Account { command } => handle_license_command(command).await?,
         Commands::History {
             limit,
             search,

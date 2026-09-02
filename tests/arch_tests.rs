@@ -529,9 +529,8 @@ mod security {
         require_system_tests!();
         require_arch!();
 
-        // SBOM is a Pro-tier feature. Without a
-        // verified license the command must fail naming the tier; with one,
-        // it must write the requested CycloneDX JSON file.
+        // SBOM is not paywalled. Success writes CycloneDX JSON; failure must
+        // name a real operational cause, not a paid tier.
         let project = TestProject::new();
         let result = project.run(&["audit", "sbom", "--output", "sbom.json"]);
         if result.success {
@@ -545,14 +544,18 @@ mod security {
                 "CycloneDX SBOM must contain components"
             );
         } else {
-            result.assert_stderr_contains("requires");
+            let output = result.combined_output();
+            assert!(
+                !output.contains("requires") || !output.contains("tier"),
+                "SBOM must not be paywalled, got:\n{output}"
+            );
         }
     }
 
     #[test]
     fn test_audit_secrets_scan() {
-        // Secret scanning is Pro-tier; the scanner's password pattern matches
-        // the planted `password=secret123` value.
+        // Secret scanning is not paywalled. The scanner's password pattern
+        // matches the planted `password=secret123` value.
         let project = TestProject::new();
         project.create_file("config.txt", "password=secret123");
 
@@ -564,7 +567,11 @@ mod security {
                 result.stdout
             );
         } else {
-            result.assert_stderr_contains("requires");
+            let output = result.combined_output();
+            assert!(
+                !output.contains("requires") || !output.contains("tier"),
+                "secret scan must not be paywalled, got:\n{output}"
+            );
         }
     }
 

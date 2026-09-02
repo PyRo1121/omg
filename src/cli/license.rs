@@ -1,14 +1,11 @@
-//! License CLI commands
+//! Optional dashboard account CLI (`omg account`)
 
 use anyhow::Result;
 use owo_colors::OwoColorize;
 use std::io::{self, Write};
 
 use crate::cli::style;
-use crate::core::license::{
-    self, ENTERPRISE_FEATURES, FREE_FEATURES, Feature, PRO_FEATURES, StoredLicense, TEAM_FEATURES,
-    Tier,
-};
+use crate::core::license::{self, StoredLicense};
 
 /// Prompt for user input
 fn prompt(message: &str) -> String {
@@ -19,26 +16,23 @@ fn prompt(message: &str) -> String {
     input.trim().to_string()
 }
 
-/// Activate a license key
+/// Link this machine to the OMG dashboard.
 ///
 /// # Errors
 ///
-/// Returns an error when the license key format is invalid or the activation
+/// Returns an error when the token format is invalid or the link
 /// request fails (network, server rejection, or persistence failure).
 pub async fn activate(key: &str) -> Result<()> {
-    // SECURITY: Validate license key format
     if key.len() > 128 || key.chars().any(|c| !c.is_ascii_alphanumeric() && c != '-') {
-        anyhow::bail!("Invalid license key format");
+        anyhow::bail!("Invalid dashboard token format");
     }
 
-    println!("{} Activating license...\n", style::runtime("OMG"));
+    println!("{} Linking dashboard account...\n", style::runtime("OMG"));
 
-    // Prompt for user identification (for team management)
     println!(
-        "  {} For team licenses, please provide your info so your manager",
+        "  {} Optional identity so the dashboard can name this machine. Press Enter to skip.\n",
         style::maybe_color("📋", |t| t.cyan().to_string())
     );
-    println!("     can identify you in the dashboard. Press Enter to skip.\n");
 
     let user_name = prompt("  Your name (optional): ");
     let user_email = prompt("  Your email (optional): ");
@@ -54,79 +48,44 @@ pub async fn activate(key: &str) -> Result<()> {
         Some(user_email.as_str())
     };
 
-    println!("\n  Validating license...");
+    println!("\n  Validating token...");
 
     report_activation(license::activate_with_user(key, user_name_opt, user_email_opt).await)
 }
 
-/// Prints activation outcome. Failed validation must be `Err` so the CLI exits non-zero.
+/// Prints link outcome. Failed validation must be `Err` so the CLI exits non-zero.
 fn report_activation(result: Result<license::StoredLicense>) -> Result<()> {
     match result {
         Ok(stored) => {
-            let tier = stored.tier_enum();
             println!(
-                "\n{} License activated successfully!\n",
+                "\n{} Dashboard account linked.\n",
                 style::maybe_color("✓", |t| t.green().to_string())
             );
-            println!(
-                "  Tier: {} {}",
-                style::runtime(tier.display_name()),
-                style::dim(tier.price())
-            );
             if let Some(customer) = &stored.customer {
-                println!("  Customer: {customer}");
+                println!("  Account: {customer}");
             }
             if let Some(expires) = &stored.expires_at {
                 println!("  Expires: {expires}");
             }
-            println!("\n  Features unlocked:");
-            for feature in license::features_for_tier(tier) {
-                println!(
-                    "    {} {}",
-                    style::maybe_color("✓", |t| t.green().to_string()),
-                    feature.display_name()
-                );
-            }
+            println!(
+                "\n  {}",
+                style::dim(
+                    "Linking is optional. Local commands work without an account.\n  Opted-in usage is attributed to this dashboard when telemetry is enabled."
+                )
+            );
             Ok(())
         }
         Err(e) => {
             println!(
-                "\n{} Activation failed: {}",
+                "\n{} Link failed: {}",
                 style::maybe_color("✗", |t| t.red().to_string()),
                 e
             );
             println!(
-                "\n  Get a license at: {}",
-                style::url("https://pyro1121.com/pricing")
+                "\n  Get a dashboard token from your OMG dashboard, then run `omg account link <token>`."
             );
             Err(e)
         }
-    }
-}
-
-/// Print one tier's feature list. `unlocked` drives both the header mark
-/// (✓ vs price) and the per-feature ✓/✗ icons; within a tier every feature
-/// has the same required tier, so one flag covers the whole group.
-fn print_feature_group(
-    styled_label: &str,
-    unlocked: bool,
-    locked_label: &str,
-    features: &[Feature],
-) {
-    let mark = if unlocked {
-        style::maybe_color("✓", |t| t.green().to_string())
-    } else {
-        style::dim(locked_label)
-    };
-    println!("\n  {styled_label} {mark} features:");
-
-    let icon = if unlocked {
-        style::maybe_color("✓", |t| t.green().to_string())
-    } else {
-        style::maybe_color("✗", |t| t.red().to_string())
-    };
-    for feature in features {
-        println!("    {icon} {}", feature.display_name());
     }
 }
 
@@ -144,21 +103,18 @@ fn stored_license_status(stored: &StoredLicense) -> StoredLicenseStatus {
     }
 }
 
-/// Show current license status
+/// Show whether this machine is linked to the dashboard.
 pub fn status() -> Result<()> {
-    println!("{} License Status\n", style::runtime("OMG"));
+    println!("{} Dashboard account\n", style::runtime("OMG"));
 
-    // Read stored license once; derive both the display record and the
-    // effective (signature-verified) tier from it.
     let stored = license::status();
-    let tier = stored.as_ref().map_or(Tier::Free, StoredLicense::tier_enum);
 
     if let Some(stored) = &stored {
         match stored_license_status(stored) {
             StoredLicenseStatus::Active => {
-                println!("  Status: {} ✓", style::version("Active"));
+                println!("  Status: {} ✓", style::version("Linked"));
                 if let Some(customer) = &stored.customer {
-                    println!("  Customer: {customer}");
+                    println!("  Account: {customer}");
                 }
                 if let Some(expires) = &stored.expires_at {
                     println!("  Expires: {expires}");
@@ -166,105 +122,41 @@ pub fn status() -> Result<()> {
             }
             StoredLicenseStatus::Invalid => {
                 println!(
-                    "  Status: {} (using Free tier)",
-                    style::maybe_color("Invalid or expired", |text| text.yellow().to_string())
+                    "  Status: {}",
+                    style::maybe_color("Stored token is invalid or expired", |text| text
+                        .yellow()
+                        .to_string())
                 );
                 if let Some(expires) = &stored.expires_at {
                     println!("  Stored expiry: {expires}");
                 }
+                println!("  Relink: {}", style::dim("omg account link <token>"));
             }
         }
-        println!(
-            "  Tier: {} {}",
-            style::runtime(tier.display_name()),
-            style::dim(tier.price())
-        );
     } else {
         println!(
-            "  Status: {} (Free tier)",
-            style::maybe_color("No license", |t| t.yellow().to_string())
+            "  Status: {}",
+            style::maybe_color("Not linked", |t| t.yellow().to_string())
         );
-    }
-
-    print_feature_group(
-        &style::maybe_color("Free", |t| t.green().bold().to_string()),
-        true,
-        "",
-        FREE_FEATURES,
-    );
-    print_feature_group(
-        &style::runtime("Pro"),
-        tier >= Tier::Pro,
-        "$9/mo",
-        PRO_FEATURES,
-    );
-    print_feature_group(
-        &style::maybe_color("Team", |t| t.magenta().bold().to_string()),
-        tier >= Tier::Team,
-        "$200/mo",
-        TEAM_FEATURES,
-    );
-    print_feature_group(
-        &style::highlight("Enterprise"),
-        tier >= Tier::Enterprise,
-        "$200/mo",
-        ENTERPRISE_FEATURES,
-    );
-
-    if tier == Tier::Free {
         println!(
-            "\n  Upgrade: {}",
-            style::url("https://pyro1121.com/pricing")
+            "\n  Linking is optional. Run `omg account link <token>` to attribute opted-in usage to your dashboard."
         );
     }
 
     Ok(())
 }
 
-/// Deactivate current license
+/// Unlink this machine from the dashboard.
 pub fn deactivate() -> Result<()> {
-    println!("{} Deactivating license...", style::runtime("OMG"));
+    println!("{} Unlinking dashboard account...", style::runtime("OMG"));
 
     license::remove_license()?;
 
     println!(
-        "\n{} License deactivated.",
+        "\n{} Dashboard account unlinked.",
         style::maybe_color("✓", |t| t.green().to_string())
     );
-    println!("  You are now on the free tier.");
-
-    Ok(())
-}
-
-/// Check if a specific feature is available
-pub fn check_feature(feature_name: &str) -> Result<()> {
-    // No manual charset pre-validation needed: Feature::from_str is the
-    // authoritative allowlist and rejects anything that isn't a known
-    // feature name, including malformed input.
-    let Some(feature) = Feature::from_str(feature_name) else {
-        anyhow::bail!(
-            "Unknown feature '{feature_name}'. Run `omg license status` to see available features."
-        );
-    };
-
-    if license::has_feature(feature_name) {
-        println!(
-            "{} Feature '{}' is available",
-            style::maybe_color("✓", |t| t.green().to_string()),
-            style::maybe_color(feature_name, |t| t.cyan().to_string())
-        );
-    } else {
-        let required = feature.required_tier();
-        println!(
-            "{} Feature '{}' requires {} tier",
-            style::maybe_color("✗", |t| t.red().to_string()),
-            style::maybe_color(feature_name, |t| t.cyan().to_string()),
-            style::maybe_color(required.display_name(), |t| t.bold().to_string())
-        );
-        println!("\n  {} tier: {}", required.display_name(), required.price());
-        println!("  Activate: omg license activate <key>");
-        println!("  Upgrade: {}", style::url("https://pyro1121.com/pricing"));
-    }
+    println!("  Local commands are unchanged.");
 
     Ok(())
 }

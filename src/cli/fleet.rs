@@ -18,8 +18,6 @@ impl LocalCommandRunner for FleetCommands {
 pub async fn status(_ctx: &CliContext) -> Result<()> {
     use crate::cli::packages::execute_cmd;
 
-    license::require_feature("fleet")?;
-
     let members = license::fetch_team_members().await?;
 
     let total_machines = members.len();
@@ -43,8 +41,7 @@ pub async fn status(_ctx: &CliContext) -> Result<()> {
 
     let health_bar = generate_health_bar(online_pct);
 
-    // Report availability and activation as the distinct signals they are;
-    // "inactive" is a license/roster state, not an offline state.
+    // "inactive" is a roster flag, not an offline state.
     let status_items = vec![
         ("Total Machines", total_machines.to_string()),
         (

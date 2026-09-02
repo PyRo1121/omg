@@ -226,14 +226,6 @@ omg run dev                 # Run your project
 
 ---
 
-## The Numbers
-
-A 10-person team doing 50 package operations per day saves **39 minutes per engineer per year** just on package queries. That's **6.5 hours of engineering time** returned to your team annually.
-
-For a 50-person org at average engineering salaries, that's **$2,350-$2,650/year** in reclaimed productivity. And that's before accounting for eliminated environment debugging, faster onboarding, and reduced security incidents.
-
----
-
 ## Support
 
 - **Issues**: [github.com/PyRo1121/omg/issues](https://github.com/PyRo1121/omg/issues)
@@ -243,7 +235,7 @@ For a 50-person org at average engineering salaries, that's **$2,350-$2,650/year
 
 ## License
 
-OMG is free and open-source software licensed under the **MIT License**. For commercial inquiries, contact **olen@latham.cloud**.
+OMG is free and open-source software licensed under the [MIT License](../LICENSE).
 
 ---
 

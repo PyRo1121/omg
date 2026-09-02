@@ -107,7 +107,7 @@ pub struct TelemetryPayload {
     pub version: String,
     /// Platform (e.g., "linux-x86_64")
     pub platform: String,
-    /// License key (if activated)
+    /// License key (if this machine is linked to the dashboard)
     #[serde(skip_serializing_if = "Option::is_none")]
     pub license_key: Option<String>,
 }
