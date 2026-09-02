@@ -179,7 +179,7 @@ fn test_install_missing_packages_fails_without_corrupting_state() {
 
     // The failed transaction must not poison subsequent operations: a dry run
     // of an existing package still succeeds afterwards.
-    let recovery = run_omg(&["install", "--dry-run", "vim"]);
+    let recovery = run_omg(&["install", "--dry-run", "firefox"]);
     assert!(
         recovery.success,
         "state after a failed install must stay usable: {}{}",
@@ -278,7 +278,7 @@ fn test_update_check_succeeds_in_test_mode() {
 #[test]
 fn test_ci_mode_dry_run_succeeds_without_prompts() {
     let result = run_omg_with_env(
-        &["install", "--dry-run", "vim"],
+        &["install", "--dry-run", "firefox"],
         &[("CI", "1"), ("OMG_NON_INTERACTIVE", "1")],
     );
     let combined = result.combined_output();
@@ -295,7 +295,7 @@ fn test_ci_mode_dry_run_succeeds_without_prompts() {
 
 #[test]
 fn test_dry_run_never_prompts_for_password() {
-    let result = run_omg(&["install", "--dry-run", "vim"]);
+    let result = run_omg(&["install", "--dry-run", "firefox"]);
     let combined = result.combined_output();
     assert!(
         !combined.contains("[sudo]") && !combined.contains("Password:"),

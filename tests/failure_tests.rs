@@ -6,6 +6,7 @@
 #![expect(clippy::uninlined_format_args)]
 
 pub mod alpm_harness;
+pub mod common;
 use alpm_harness::{AlpmHarness, HarnessPkg};
 use anyhow::Result;
 use omg_lib::package_managers::alpm_ops::{self, TransactionKind};
@@ -66,6 +67,11 @@ fn test_conflicting_packages_fails_gracefully() -> Result<()> {
 #[test]
 #[serial]
 fn test_unwritable_database_dir_fails_gracefully() -> Result<()> {
+    if omg_lib::core::privilege::is_root() {
+        common::report_skip("root bypasses directory write permissions");
+        return Ok(());
+    }
+
     let harness = AlpmHarness::new()?;
 
     let pkg = HarnessPkg::new("pkg-a", "1.0.0");

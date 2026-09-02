@@ -203,28 +203,16 @@ mod network_errors {
     }
 
     #[test]
-    fn test_privilege_error_suggests_remedies() {
-        // ===== ARRANGE =====
-        // (No special setup needed)
-
-        // ===== ACT =====
+    fn test_sync_uses_hermetic_backend_without_privilege_prompt() {
         let result = run_omg(&["sync"]);
 
-        // ===== ASSERT =====
-        // In hermetic test mode, privileged operations bail deterministically
-        // without touching sudo and must name both the cause and the remedies
-        // (src/core/privilege.rs:66-73). The previous matcher list accepted
-        // any output containing "error", which the top-level handler always
-        // prints — vacuous on this path.
-        result.assert_failure();
+        result.assert_success();
         let combined = result.combined_output().to_lowercase();
         assert!(
-            combined.contains("development mode"),
-            "test-mode sync failure must identify dev/test-mode privilege policy. Got:\n{combined}"
-        );
-        assert!(
-            combined.contains("turbo") && combined.contains("sudo"),
-            "failure message must offer both documented remedies. Got:\n{combined}"
+            !combined.contains("privilege elevation")
+                && !combined.contains("[sudo]")
+                && !combined.contains("password:"),
+            "test-mode sync must not contact host privilege machinery. Got:\n{combined}"
         );
     }
 }

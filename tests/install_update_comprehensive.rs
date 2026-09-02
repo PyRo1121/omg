@@ -201,11 +201,11 @@ mod install_cli_tests {
 
     #[test]
     fn test_install_multiple_packages() {
-        let result = run_omg(&["install", "--dry-run", "firefox", "vim", "git"]);
+        let result = run_omg(&["install", "--dry-run", "firefox", "pacman", "git"]);
         result.assert_success();
         // The preview table must list every requested package.
         result.assert_contains("firefox");
-        result.assert_contains("vim");
+        result.assert_contains("pacman");
         result.assert_contains("git");
     }
 
@@ -270,7 +270,7 @@ mod install_error_tests {
 
     #[test]
     fn test_install_helpful_error_messages() {
-        let result = run_omg(&["install", "nonexistent-pkg-xyz"]);
+        let result = run_omg(&["install", "--yes", "nonexistent-pkg-xyz"]);
         result.assert_failure();
         // Missing packages must be reported with an explicit not-found error
         // plus recovery advice, never silently ignored.
