@@ -4818,6 +4818,7 @@ the Debian backend), so it was removed from the metadata.
 - Normalize project formatting
 ### 🧪 Testing
 
+- **Aur**: Pin reviewed PKGBUILD seal ([#164](https://github.com/PyRo1121/omg/issues/164))
 - **Slsa**: Pin multi-SAN identity selection ([#158](https://github.com/PyRo1121/omg/issues/158))
 - **Cli**: Make CLI fixtures hermetic against host state ([#130](https://github.com/PyRo1121/omg/issues/130))
 
