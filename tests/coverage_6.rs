@@ -49,7 +49,7 @@ fn add_local_pkg(root: &Path, name: &str, version: &str) -> std::io::Result<()> 
 
 /// Build a minimal pacman.conf understood by `PacmanConfig::parse_str`.
 fn pacman_conf(options: &[(&str, &str)], repos: &[&str]) -> String {
-    let mut content = String::from("[options]\n");
+    let mut content = String::from("[options]\nSigLevel = Never\n");
     for (key, value) in options {
         content.push_str(&format!("{key} = {value}\n"));
     }
