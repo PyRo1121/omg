@@ -703,6 +703,64 @@ analyzer inference
 - **Ci**: Cross-platform install script and R2 release sync
 ### 🐛 Bug Fixes
 
+- Give daemon responses their own size budget (W2-A-03) ([#145](https://github.com/PyRo1121/omg/issues/145))
+
+* fix: give daemon responses their own size budget (W2-A-03)
+
+* fix: send daemon responses through a write codec at the response budget
+
+LengthDelimitedCodec applies max_frame_length to encode as well as decode.
+
+Keeping a shared 1 MiB cap would reject every success frame between the
+
+request DoS bound and the new 8 MiB response budget. Split read/write so
+
+inbound stays at MAX_REQUEST_SIZE. rustfmt the new helpers so Quick Gate
+
+can pass.
+
+- Validate team gist remotes by parsed host (W8-B-03) ([#144](https://github.com/PyRo1121/omg/issues/144))
+
+* fix: validate team gist remotes by parsed host (W8-B-03)
+
+* fix: rustfmt gist remote tests and align pull error assertion
+
+Quick Gate failed cargo fmt --check on a long lookalike-host assertion.
+
+Also reject the userinfo embedding bypass in the same regression, and keep
+
+the ignored coverage contract in sync with the HTTPS error text.
+
+- Fail audit --fix loudly on backends that cannot apply it (W3-A-01) ([#142](https://github.com/PyRo1121/omg/issues/142))
+- Make doctor backend-aware and exit nonzero on issues (W3-A-02, W3-A-03) ([#141](https://github.com/PyRo1121/omg/issues/141))
+- Quarantine corrupt history.json instead of wedging (W1-A-05) ([#139](https://github.com/PyRo1121/omg/issues/139))
+
+* fix: quarantine corrupt history.json instead of wedging (W1-A-05)
+
+* fix: lock history load before quarantining corrupt files
+
+load() now mutates the history path on parse failure. Without the
+
+cross-process lock a concurrent reader can rename a valid file another
+
+process just wrote. Share the existing lock with add_transaction and
+
+call load_locked while already holding it so the same process cannot
+
+deadlock.
+
+- Make cargo-deny CI gate fail on violations (W3-B-01) ([#133](https://github.com/PyRo1121/omg/issues/133))
+
+GitHub Actions' default shell for run steps on Linux is `bash -e {0}`,
+
+which has no pipefail. In audit.yml the four `cargo deny check ...`
+
+invocations were piped through `tee -a $GITHUB_STEP_SUMMARY`, so a
+
+nonzero cargo-deny exit was masked by tee's exit 0 and the daily
+
+supply-chain gate passed green on violations. Only `cargo audit` gated.
+
 - Replace yanked spin versions to satisfy deny policy (W3-D-01) ([#138](https://github.com/PyRo1121/omg/issues/138))
 - Verify cached AUR artifacts were built from the reviewed PKGBUILD (SEC-R2-01) ([#137](https://github.com/PyRo1121/omg/issues/137))
 
@@ -3392,6 +3450,18 @@ across history/faq/cli
 - Make security and coverage gates fail closed
 - Run Docker E2E tests explicitly
 ### 📚 Documentation
+
+- Remove omgd --foreground references and fix systemd unit (W2-D-01) ([#140](https://github.com/PyRo1121/omg/issues/140))
+
+* docs: remove omgd --foreground references and fix systemd unit (W2-D-01)
+
+* fix: stop generating systemd ExecStart with --foreground
+
+omgd already rejects --foreground. The docs in this PR dropped the flag,
+
+but omg init still wrote it into the user unit and the bench scripts still
+
+passed it, so those paths could not start the daemon.
 
 - Add August technical debt review
 - Remove stale test coverage claims
