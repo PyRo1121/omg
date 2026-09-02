@@ -423,6 +423,7 @@ jobs:
           test -n "$VERSION"
 
           ./scripts/gen-release-notes.sh "${VERSION}" > release_notes.md
+          echo "version=${VERSION}" >> "$GITHUB_OUTPUT"
 
           echo ""
           echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
@@ -435,11 +436,14 @@ jobs:
         if: github.event_name == 'push' || (github.event_name == 'workflow_dispatch' && github.event.inputs.dry_run == 'false')
         uses: softprops/action-gh-release@3bb12739c298aeb8a4eeaf626c5b8d85266b0e65 # v2
         with:
+          tag_name: v${{ steps.release_notes.outputs.version }}
+          target_commitish: ${{ github.sha }}
           body_path: release_notes.md
           files: release/*
           generate_release_notes: false
           draft: false
-          prerelease: ${{ contains(github.ref, '-rc') || contains(github.ref, '-beta') || contains(github.ref, '-alpha') }}
+          prerelease: true
+          make_latest: false
 
   # ════════════════════════════════════════════════════════════════════════════
   # SYNC TO CLOUDFLARE R2 (releases.pyro1121.com)

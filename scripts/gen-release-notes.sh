@@ -24,6 +24,10 @@ fi
 script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
 cat <<EOF_HEADER
+## Alpha
+
+This is a prerelease. OMG is alpha software: the CLI, flags, and on-disk formats can change without a compatibility guarantee.
+
 ## Installation
 
 **Quick Install (Linux/macOS):**
