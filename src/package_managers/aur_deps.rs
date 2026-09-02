@@ -15,19 +15,12 @@ pub struct DependencyInfo {
     pub missing: Vec<String>,
     /// Requested outputs plus same-base runtime dependencies.
     pub package_outputs: Vec<String>,
-    /// Total external dependency expressions inspected.
-    pub total: usize,
 }
 
 pub(crate) fn dependency_name(dependency: &str) -> &str {
     dependency
         .find(['>', '<', '='])
         .map_or(dependency, |index| &dependency[..index])
-}
-
-/// Parse .SRCINFO and check dependencies for every output in the package base.
-pub fn check_dependencies(pkg_dir: &Path) -> Result<DependencyInfo> {
-    check_dependencies_for_outputs(pkg_dir, &[])
 }
 
 /// Parse .SRCINFO and check dependencies for the requested output closure.
@@ -41,15 +34,12 @@ pub fn check_dependencies_for_outputs(
         return Ok(DependencyInfo {
             missing: Vec::new(),
             package_outputs: requested_outputs.to_vec(),
-            total: 0,
         });
     }
 
     let content = std::fs::read_to_string(&srcinfo_path).context("Failed to read .SRCINFO")?;
     let srcinfo = SourceInfoV1::from_string(&content).context("Failed to parse .SRCINFO")?;
     let (all_deps, package_outputs) = dependency_plan(&srcinfo, requested_outputs)?;
-    let dependency_count = all_deps.len();
-
     // Ask libalpm to evaluate the complete dependency expression. A package
     // with the right name but an older version is not a satisfier, while a
     // compatible virtual provider can be.
@@ -61,11 +51,9 @@ pub fn check_dependencies_for_outputs(
             .collect::<Vec<_>>())
     })?;
 
-    debug_assert!(missing.len() <= dependency_count);
     Ok(DependencyInfo {
         missing,
         package_outputs,
-        total: dependency_count,
     })
 }
 

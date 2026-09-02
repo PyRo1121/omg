@@ -30,7 +30,7 @@ use super::utils::{
     validate_build_dir,
 };
 
-use super::super::aur_deps::{check_dependencies, check_dependencies_for_outputs, dependency_name};
+use super::super::aur_deps::{check_dependencies_for_outputs, dependency_name};
 use super::super::aur_index::AurIndex;
 use super::super::aur_metadata::{
     AurJsonPackage, index_path, metadata_index_is_fresh, metadata_path,
@@ -194,6 +194,13 @@ struct MakepkgEnv {
     builddir: PathBuf,
     compiler_cache_dirs: Vec<PathBuf>,
     extra_env: Vec<(String, String)>,
+}
+
+#[derive(Debug)]
+struct AurDependencyPlan {
+    aur_dependencies: Vec<String>,
+    official_dependencies: Vec<String>,
+    package_outputs: Vec<String>,
 }
 
 /// Identity and .INSTALL payload extracted from one package archive
@@ -1414,7 +1421,8 @@ impl AurClient {
             AHashSet::from_iter([package.to_string(), Self::package_base_marker(package)]);
         drop(package_checkout_file_guard);
         drop(package_checkout_guard);
-        for dep in dependency_plan.missing {
+        Self::install_official_dependencies(&dependency_plan.official_dependencies).await?;
+        for dep in dependency_plan.aur_dependencies {
             crate::cli::modern_ui::print_info(&format!(
                 "Installing AUR dependency for {package}: {dep}"
             ));
@@ -1424,6 +1432,7 @@ impl AurClient {
             Self::install_built_packages(&dep_packages, sudoloop.as_ref()).await?;
             crate::cli::modern_ui::print_success(&format!("Installed dependency: {dep}"));
         }
+        Self::ensure_dependencies_satisfied(&pkg_dir, &requested_outputs).await?;
 
         let _package_build_guard = package_lock.lock().await;
         let _package_build_file_guard = self.acquire_package_base_file_lock(package).await?;
@@ -1652,7 +1661,8 @@ impl AurClient {
         let package_outputs = dependency_plan.package_outputs;
         drop(package_checkout_file_guard);
         drop(package_checkout_guard);
-        for dependency in dependency_plan.missing {
+        Self::install_official_dependencies(&dependency_plan.official_dependencies).await?;
+        for dependency in dependency_plan.aur_dependencies {
             crate::cli::modern_ui::print_info(&format!(
                 "Installing AUR dependency for {package}: {dependency}"
             ));
@@ -1660,6 +1670,7 @@ impl AurClient {
             Self::install_built_packages(&archives, sudoloop).await?;
             crate::cli::modern_ui::print_success(&format!("Installed dependency: {dependency}"));
         }
+        Self::ensure_dependencies_satisfied(&pkg_dir, &package_outputs).await?;
 
         let _package_build_guard = package_lock.lock().await;
         let _package_build_file_guard = self.acquire_package_base_file_lock(package_base).await?;
@@ -2188,41 +2199,109 @@ impl AurClient {
         pkg_dir: &Path,
         package: &str,
         requested_outputs: &[String],
-    ) -> Result<crate::package_managers::aur_deps::DependencyInfo> {
-        let mut dep_info = check_dependencies_for_outputs(pkg_dir, requested_outputs)
-            .unwrap_or_else(|error| {
-                tracing::warn!("Unable to inspect dependencies for {package}: {error}");
-                crate::package_managers::aur_deps::DependencyInfo {
-                    missing: Vec::new(),
-                    package_outputs: requested_outputs.to_vec(),
-                    total: 0,
-                }
-            });
+    ) -> Result<AurDependencyPlan> {
+        anyhow::ensure!(
+            pkg_dir.join(".SRCINFO").is_file(),
+            "AUR package '{package}' has no regular .SRCINFO; refusing to source its PKGBUILD to discover dependencies"
+        );
+        let dependency_dir = pkg_dir.to_path_buf();
+        let requested_outputs = requested_outputs.to_vec();
+        let dep_info = tokio::task::spawn_blocking(move || {
+            check_dependencies_for_outputs(&dependency_dir, &requested_outputs)
+        })
+        .await
+        .context("AUR dependency inspection task failed")?
+        .with_context(|| format!("Failed to inspect dependencies for '{package}'"))?;
 
-        let mut aur_deps = Vec::new();
-        for dep in dep_info.missing {
-            let dep_name = dependency_name(&dep);
-            if dep_name.is_empty() || dep_name == package {
+        let package_outputs = dep_info.package_outputs;
+        let missing_dependencies = dep_info.missing;
+        let classified = tokio::task::spawn_blocking(move || {
+            crate::package_managers::alpm_direct::with_handle(|alpm| {
+                Ok(missing_dependencies
+                    .into_iter()
+                    .map(|dependency| {
+                        let official_package = alpm
+                            .syncdbs()
+                            .find_satisfier(dependency.clone())
+                            .map(|package| package.name().to_string());
+                        (dependency, official_package)
+                    })
+                    .collect::<Vec<_>>())
+            })
+        })
+        .await
+        .context("Official dependency classification task failed")??;
+
+        let mut aur_dependencies = Vec::new();
+        let mut official_dependencies = Vec::new();
+        let mut unresolved = Vec::new();
+        for (dependency, official_package) in classified {
+            let name = dependency_name(&dependency);
+            if name.is_empty() || name == package {
                 continue;
             }
 
-            if crate::package_managers::get_sync_pkg_info(dep_name)
-                .ok()
-                .flatten()
-                .is_some()
-            {
-                continue;
-            }
-
-            if self.info(dep_name).await?.is_some() {
-                aur_deps.push(dep_name.to_string());
+            if let Some(official_package) = official_package {
+                official_dependencies.push(official_package);
+            } else if self.info(name).await?.is_some() {
+                aur_dependencies.push(name.to_string());
+            } else {
+                unresolved.push(dependency);
             }
         }
 
-        aur_deps.sort();
-        aur_deps.dedup();
-        dep_info.missing = aur_deps;
-        Ok(dep_info)
+        anyhow::ensure!(
+            unresolved.is_empty(),
+            "Unresolvable dependencies for '{package}': {}",
+            unresolved.join(", ")
+        );
+        aur_dependencies.sort();
+        aur_dependencies.dedup();
+        official_dependencies.sort();
+        official_dependencies.dedup();
+        Ok(AurDependencyPlan {
+            aur_dependencies,
+            official_dependencies,
+            package_outputs,
+        })
+    }
+
+    async fn install_official_dependencies(packages: &[String]) -> Result<()> {
+        if packages.is_empty() {
+            return Ok(());
+        }
+
+        let _install_guard = INSTALL_LOCK.lock().await;
+        crate::cli::modern_ui::print_info(&format!(
+            "Installing official build dependencies: {}",
+            packages.join(", ")
+        ));
+        use crate::package_managers::traits::PackageManager;
+        crate::package_managers::ArchPackageManager::new()
+            .install(packages)
+            .await
+            .context("Failed to install official AUR build dependencies")
+    }
+
+    async fn ensure_dependencies_satisfied(
+        pkg_dir: &Path,
+        package_outputs: &[String],
+    ) -> Result<()> {
+        let pkg_dir = pkg_dir.to_path_buf();
+        let package_outputs = package_outputs.to_vec();
+        tokio::task::spawn_blocking(move || {
+            let remaining = check_dependencies_for_outputs(&pkg_dir, &package_outputs)
+                .context("Failed to verify AUR build dependencies")?
+                .missing;
+            anyhow::ensure!(
+                remaining.is_empty(),
+                "AUR build dependencies remain unsatisfied after installation: {}",
+                remaining.join(", ")
+            );
+            Ok(())
+        })
+        .await
+        .context("AUR dependency verification task failed")?
     }
 
     async fn git_clone(&self, package: &str) -> Result<()> {
@@ -2407,10 +2486,7 @@ impl AurClient {
         package: &str,
     ) -> Result<std::process::ExitStatus> {
         match self.settings.aur.build_method {
-            AurBuildMethod::Bubblewrap => {
-                self.install_build_dependencies(pkg_dir).await?;
-                self.run_sandboxed_makepkg(pkg_dir, env, package).await
-            }
+            AurBuildMethod::Bubblewrap => self.run_sandboxed_makepkg(pkg_dir, env, package).await,
             AurBuildMethod::Chroot => self.run_chroot_build(pkg_dir, env, package).await,
             AurBuildMethod::Native => {
                 if !self.settings.aur.allow_unsafe_builds {
@@ -2418,65 +2494,9 @@ impl AurClient {
                         "Native AUR builds are disabled. Enable 'aur.allow_unsafe_builds' or use bubblewrap/chroot."
                     );
                 }
-                self.install_build_dependencies(pkg_dir).await?;
                 self.run_native_makepkg(pkg_dir, env, package).await
             }
         }
-    }
-
-    /// Install repository dependencies before entering the unprivileged build
-    /// session. Native and bubblewrap builds intentionally have no controlling
-    /// TTY, so allowing their `makepkg` process to invoke sudo would fail (and
-    /// would weaken the isolation that prevents PKGBUILDs from reusing omg's
-    /// sudo ticket).
-    async fn install_build_dependencies(&self, pkg_dir: &Path) -> Result<()> {
-        let needs_sync = match check_dependencies(pkg_dir) {
-            Ok(info) if info.total > 0 && info.missing.is_empty() => return Ok(()),
-            Ok(info) => !info.missing.is_empty() || info.total == 0,
-            Err(error) => {
-                tracing::warn!(
-                    "Could not preflight dependencies for {}: {error}; deferring to makepkg",
-                    pkg_dir.display()
-                );
-                true
-            }
-        };
-        if !needs_sync {
-            return Ok(());
-        }
-
-        // Parallel AUR workers may reach this step together. makepkg delegates
-        // to pacman, whose database admits only one writer at a time.
-        let _install_guard = INSTALL_LOCK.lock().await;
-        let package_name = pkg_dir
-            .file_name()
-            .and_then(|name| name.to_str())
-            .unwrap_or("package");
-        println!(
-            "{} Installing build dependencies for {}...",
-            "→".cyan().bold(),
-            package_name
-        );
-
-        let (build_user, build_home) = build_identity();
-        let mut command = Command::new("makepkg");
-        configure_build_environment(&mut command, &build_home, &build_user);
-        command
-            .args(Self::makepkg_dependency_args())
-            .current_dir(pkg_dir)
-            .stdin(Stdio::inherit())
-            .stdout(Stdio::inherit())
-            .stderr(Stdio::inherit())
-            .kill_on_drop(true);
-        let status = command.status().await.with_context(|| {
-            format!("Failed to install build dependencies for '{package_name}'")
-        })?;
-        if !status.success() {
-            anyhow::bail!(
-                "Failed to install build dependencies for '{package_name}' (makepkg exited with {status})"
-            );
-        }
-        Ok(())
     }
 
     /// Run makepkg with bubblewrap sandboxing if available
@@ -2861,20 +2881,6 @@ impl AurClient {
         progress.finish(status.success() && capture_result.is_ok());
         capture_result?;
         Ok(status)
-    }
-
-    const fn makepkg_dependency_args() -> [&'static str; 5] {
-        [
-            "--syncdeps",
-            "--noconfirm",
-            "--nobuild",
-            "--needed",
-            // Arch makepkg otherwise hard-codes `sudo -k`, invalidating the
-            // credential omg acquired immediately before the parallel build.
-            // Its documented trailing environment assignments accept this
-            // scalar as a one-element PACMAN_AUTH command array.
-            "PACMAN_AUTH=/usr/bin/sudo",
-        ]
     }
 
     fn makepkg_args(&self) -> Vec<&'static str> {
@@ -4028,12 +4034,29 @@ mod tests {
     }
 
     #[test]
-    fn native_build_never_runs_makepkg_syncdeps_without_a_tty() {
+    fn no_makepkg_invocation_can_install_dependencies() {
         let client = AurClient::new().expect("test settings must load");
-        assert!(
-            !client.makepkg_args().contains(&"-s"),
-            "dependency installation must happen before the isolated build session"
-        );
+        for args in [client.makepkg_args(), client.makepkg_args_sandbox()] {
+            assert!(
+                !args.iter().any(|arg| matches!(*arg, "-s" | "--syncdeps")),
+                "sourcing a PKGBUILD must never run with dependency-install privileges"
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn dependency_plan_refuses_missing_srcinfo() {
+        let directory = tempfile::tempdir().expect("temporary build directory");
+        let client = AurClient {
+            build_dir: directory.path().to_path_buf(),
+            settings: Settings::default(),
+            package_base_locks: Arc::new(dashmap::DashMap::new()),
+        };
+        let error = client
+            .aur_dependency_plan(directory.path(), "example", &["example".to_string()])
+            .await
+            .expect_err("missing .SRCINFO must fail before PKGBUILD execution");
+        assert!(error.to_string().contains("has no regular .SRCINFO"));
     }
 
     #[test]
@@ -4055,15 +4078,6 @@ mod tests {
             error
                 .to_string()
                 .contains("Circular AUR package-base dependency")
-        );
-    }
-
-    #[test]
-    fn dependency_install_reuses_the_preacquired_sudo_credential() {
-        assert_eq!(
-            AurClient::makepkg_dependency_args().last(),
-            Some(&"PACMAN_AUTH=/usr/bin/sudo"),
-            "makepkg's default sudo -k would invalidate omg's live credential"
         );
     }
 
