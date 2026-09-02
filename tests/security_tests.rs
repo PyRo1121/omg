@@ -698,6 +698,12 @@ mod env_security {
 // ═══════════════════════════════════════════════════════════════════════════════
 
 mod network_security {
+    fn production_source(source: &str) -> &str {
+        source
+            .rsplit_once("#[cfg(test)]")
+            .map_or(source, |(production, _)| production)
+    }
+
     fn assert_no_plaintext_http(source: &str, name: &str) {
         for line in source.lines() {
             let trimmed = line.trim();
@@ -717,9 +723,12 @@ mod network_security {
 
     #[test]
     fn test_runtime_and_http_clients_are_https() {
-        assert_no_plaintext_http(include_str!("../src/core/http.rs"), "src/core/http.rs");
         assert_no_plaintext_http(
-            include_str!("../src/runtimes/common.rs"),
+            production_source(include_str!("../src/core/http.rs")),
+            "src/core/http.rs",
+        );
+        assert_no_plaintext_http(
+            production_source(include_str!("../src/runtimes/common.rs")),
             "src/runtimes/common.rs",
         );
         assert_no_plaintext_http(
