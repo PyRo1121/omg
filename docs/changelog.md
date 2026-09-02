@@ -735,6 +735,7 @@ analyzer inference
 - **Ci**: Cross-platform install script and R2 release sync
 ### 🐛 Bug Fixes
 
+- **Http**: Retry truncated AUR response bodies ([#155](https://github.com/PyRo1121/omg/issues/155))
 - **Http**: Reject redirect downgrades and retry transient statuses ([#154](https://github.com/PyRo1121/omg/issues/154))
 - Require consent for ALPM collateral package mutations ([#153](https://github.com/PyRo1121/omg/issues/153))
 
