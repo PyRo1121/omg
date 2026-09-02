@@ -1421,6 +1421,8 @@ mod tests {
         std::fs::create_dir_all(&root).expect("root dir");
         std::fs::create_dir_all(db_path.join("local/bar-1.0-1")).expect("local pkg dir");
         std::fs::create_dir_all(db_path.join("sync")).expect("sync db dir");
+        std::fs::write(db_path.join("local/ALPM_DB_VERSION"), "9\n")
+            .expect("write ALPM_DB_VERSION");
 
         std::fs::write(
             db_path.join("local/bar-1.0-1/desc"),
