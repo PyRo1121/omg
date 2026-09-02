@@ -735,6 +735,16 @@ analyzer inference
 - **Ci**: Cross-platform install script and R2 release sync
 ### 🐛 Bug Fixes
 
+- **Daemon**: Make audit log self-healing and expand fast query resilience ([#170](https://github.com/PyRo1121/omg/issues/170))
+
+Quarantine corrupt audit.jsonl entries during daemon initialization and ensure trailing
+
+newlines on append to prevent daemon startup wedges. Add fallback fast status calculation
+
+in omg-fast, improve doctor PATH detection for ~/.local/bin and data_dir/bin, and add
+
+Arch Linux Archive recovery guidance to package rollback cache failures.
+
 - **Arch**: Align CLI package operations with upstream ALPM standards ([#167](https://github.com/PyRo1121/omg/issues/167))
 
 Align cache pruning with ALPM vercmp ordering and multi-extension package archives,
