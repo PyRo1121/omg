@@ -5,34 +5,49 @@
 
 use alpm_srcinfo::SourceInfoV1;
 use anyhow::{Context, Result};
+use std::collections::{BTreeMap, BTreeSet};
 use std::path::Path;
 
 /// Parsed dependency information from .SRCINFO
 #[derive(Debug, Clone)]
 pub struct DependencyInfo {
-    /// Dependencies that need to be installed
+    /// External dependencies that need to be installed.
     pub missing: Vec<String>,
-    /// Total dependency expressions inspected
+    /// Requested outputs plus same-base runtime dependencies.
+    pub package_outputs: Vec<String>,
+    /// Total external dependency expressions inspected.
     pub total: usize,
 }
 
-/// Parse .SRCINFO and check which dependencies are missing
+pub(crate) fn dependency_name(dependency: &str) -> &str {
+    dependency
+        .find(['>', '<', '='])
+        .map_or(dependency, |index| &dependency[..index])
+}
+
+/// Parse .SRCINFO and check dependencies for every output in the package base.
 pub fn check_dependencies(pkg_dir: &Path) -> Result<DependencyInfo> {
+    check_dependencies_for_outputs(pkg_dir, &[])
+}
+
+/// Parse .SRCINFO and check dependencies for the requested output closure.
+pub fn check_dependencies_for_outputs(
+    pkg_dir: &Path,
+    requested_outputs: &[String],
+) -> Result<DependencyInfo> {
     let srcinfo_path = pkg_dir.join(".SRCINFO");
 
     if !srcinfo_path.exists() {
-        // No .SRCINFO means we can't pre-check, fallback to makepkg
         return Ok(DependencyInfo {
             missing: Vec::new(),
+            package_outputs: requested_outputs.to_vec(),
             total: 0,
         });
     }
 
     let content = std::fs::read_to_string(&srcinfo_path).context("Failed to read .SRCINFO")?;
-
     let srcinfo = SourceInfoV1::from_string(&content).context("Failed to parse .SRCINFO")?;
-
-    let all_deps = dependency_expressions(&srcinfo);
+    let (all_deps, package_outputs) = dependency_plan(&srcinfo, requested_outputs)?;
     let dependency_count = all_deps.len();
 
     // Ask libalpm to evaluate the complete dependency expression. A package
@@ -49,30 +64,65 @@ pub fn check_dependencies(pkg_dir: &Path) -> Result<DependencyInfo> {
     debug_assert!(missing.len() <= dependency_count);
     Ok(DependencyInfo {
         missing,
+        package_outputs,
         total: dependency_count,
     })
 }
 
-fn dependency_expressions(srcinfo: &SourceInfoV1) -> Vec<String> {
+fn dependency_plan(
+    srcinfo: &SourceInfoV1,
+    requested_outputs: &[String],
+) -> Result<(Vec<String>, Vec<String>)> {
     let Some(arch) = super::aur::utils::current_arch() else {
-        return Vec::new();
+        return Ok((Vec::new(), requested_outputs.to_vec()));
     };
-    let mut dependencies = Vec::new();
+    let packages = srcinfo
+        .packages_for_architecture(arch)
+        .map(|package| (package.name.to_string(), package))
+        .collect::<BTreeMap<_, _>>();
+    let all_outputs = packages.keys().cloned().collect::<BTreeSet<_>>();
+    let mut selected_outputs = if requested_outputs.is_empty() {
+        all_outputs.clone()
+    } else {
+        requested_outputs.iter().cloned().collect::<BTreeSet<_>>()
+    };
 
-    for package in srcinfo.packages_for_architecture(arch) {
+    for output in &selected_outputs {
+        anyhow::ensure!(
+            all_outputs.contains(output),
+            "Requested output '{output}' is absent from .SRCINFO"
+        );
+    }
+
+    let mut pending_outputs = selected_outputs.iter().cloned().collect::<Vec<_>>();
+    while let Some(output) = pending_outputs.pop() {
+        let package = &packages[&output];
+        for dependency in &package.dependencies {
+            let dependency = dependency.to_string();
+            let name = dependency_name(&dependency);
+            if all_outputs.contains(name) && selected_outputs.insert(name.to_string()) {
+                pending_outputs.push(name.to_string());
+            }
+        }
+    }
+
+    let mut dependencies = Vec::new();
+    for output in &selected_outputs {
+        let package = &packages[output];
         dependencies.extend(package.dependencies.iter().map(ToString::to_string));
         dependencies.extend(package.make_dependencies.iter().map(ToString::to_string));
         dependencies.extend(package.check_dependencies.iter().map(ToString::to_string));
     }
-
+    dependencies.retain(|dependency| !all_outputs.contains(dependency_name(dependency)));
     dependencies.sort();
     dependencies.dedup();
-    dependencies
+
+    Ok((dependencies, selected_outputs.into_iter().collect()))
 }
 
 #[cfg(test)]
 mod tests {
-    use super::{SourceInfoV1, dependency_expressions};
+    use super::{SourceInfoV1, dependency_plan};
 
     #[test]
     fn preserves_version_constraints_for_all_dependency_kinds() {
@@ -90,14 +140,17 @@ mod tests {
         )
         .expect("valid .SRCINFO fixture");
 
+        let (dependencies, outputs) =
+            dependency_plan(&srcinfo, &["example".to_string()]).expect("dependency plan");
         assert_eq!(
-            dependency_expressions(&srcinfo),
+            dependencies,
             ["compiler=3.4", "runtime>=1.2", "test-runner<5"]
         );
+        assert_eq!(outputs, ["example"]);
     }
 
     #[test]
-    fn includes_split_output_dependency_overrides() {
+    fn includes_split_output_dependency_overrides_but_not_sibling_outputs() {
         let srcinfo = SourceInfoV1::from_string(
             "pkgbase = example\n\
              \tpkgdesc = split dependency fixture\n\
@@ -108,15 +161,19 @@ mod tests {
              \n\
              pkgname = example-cli\n\
              \tdepends = helper>=2\n\
-             pkgname = example-lib\n",
+             \tdepends = example-lib=1.0.0\n\
+             pkgname = example-lib\n\
+             \tdepends = example-core\n\
+             \tdepends = lib-runtime\n\
+             pkgname = example-core\n\
+             pkgname = example-docs\n\
+             \tdepends = docs-tool\n",
         )
         .expect("valid split .SRCINFO fixture");
 
-        let dependencies = dependency_expressions(&srcinfo);
-        assert!(
-            dependencies
-                .iter()
-                .any(|dependency| dependency == "helper>=2")
-        );
+        let (dependencies, outputs) =
+            dependency_plan(&srcinfo, &["example-cli".to_string()]).expect("dependency plan");
+        assert_eq!(dependencies, ["base-runtime", "helper>=2", "lib-runtime"]);
+        assert_eq!(outputs, ["example-cli", "example-core", "example-lib"]);
     }
 }
