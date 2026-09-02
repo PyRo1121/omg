@@ -703,6 +703,24 @@ analyzer inference
 - **Ci**: Cross-platform install script and R2 release sync
 ### 🐛 Bug Fixes
 
+- Gate team push/pull/status behind the team-sync license (SEC-G1-01) ([#135](https://github.com/PyRo1121/omg/issues/135))
+
+The Team Sync license gate (license::require_feature("team-sync")) covered
+
+init, join, and members, but push, pull, and status dispatched the full
+
+gist-sync workflow without any license check (SEC-G1-01): a Free-tier user
+
+could run the paid tier's core operations.
+
+Add the identical require_feature("team-sync") gate as the first statement
+
+of status, push, and pull, matching init/join/members exactly (same error:
+
+"Feature 'team-sync' requires Team tier (00/mo). Upgrade at
+
+https://pyro1121.com/pricing").
+
 - Refuse self-update when provenance cannot be verified (SEC-R1-02) ([#134](https://github.com/PyRo1121/omg/issues/134))
 - SBOM advisory matching respects versions (W5-B-01) ([#132](https://github.com/PyRo1121/omg/issues/132))
 
