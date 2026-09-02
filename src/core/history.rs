@@ -136,7 +136,15 @@ impl HistoryManager {
     /// a malformed file is quarantined (renamed, never deleted) and replaced
     /// with a fresh empty history so one corrupt file cannot wedge every
     /// future package operation behind a persistent persistence failure.
+    ///
+    /// Quarantine mutates the history path, so this takes the same
+    /// cross-process lock as [`Self::add_transaction`]. Without that lock a
+    /// concurrent `load` can rename a valid file another process just wrote.
     pub fn load(&self) -> Result<Vec<Transaction>> {
+        self.with_history_lock(|| self.load_locked())
+    }
+
+    fn load_locked(&self) -> Result<Vec<Transaction>> {
         if !self.log_path.exists() {
             return Ok(Vec::new());
         }
@@ -169,9 +177,7 @@ impl HistoryManager {
             .context("Package history path must have a file name")?
             .to_string_lossy()
             .into_owned();
-        let stamp = Timestamp::now()
-            .strftime("%Y%m%dT%H%M%S%.6fZ")
-            .to_string();
+        let stamp = Timestamp::now().strftime("%Y%m%dT%H%M%S%.6fZ").to_string();
 
         let mut quarantined = parent.join(format!("{file_name}.corrupt-{stamp}"));
         let mut counter = 1u32;
@@ -232,27 +238,7 @@ impl HistoryManager {
         changes: Vec<PackageChange>,
         success: bool,
     ) -> Result<()> {
-        let lock_path = self.log_path.with_extension("lock");
-        let lock = fs::OpenOptions::new()
-            .create(true)
-            .read(true)
-            .write(true)
-            .truncate(false)
-            .open(&lock_path)
-            .with_context(|| format!("Failed to open history lock: {}", lock_path.display()))?;
-        lock.lock()
-            .with_context(|| format!("Failed to lock package history: {}", lock_path.display()))?;
-
-        let result = self.add_transaction_locked(transaction_type, changes, success);
-        if let Err(error) = lock.unlock() {
-            return match result {
-                Ok(()) => Err(error).context("Failed to unlock package history"),
-                Err(operation_error) => Err(operation_error.context(format!(
-                    "Package history update also failed to unlock its lock: {error}"
-                ))),
-            };
-        }
-        result
+        self.with_history_lock(|| self.add_transaction_locked(transaction_type, changes, success))
     }
 
     fn add_transaction_locked(
@@ -261,7 +247,7 @@ impl HistoryManager {
         changes: Vec<PackageChange>,
         success: bool,
     ) -> Result<()> {
-        let mut history = self.load()?;
+        let mut history = self.load_locked()?;
         history.push(Transaction {
             id: uuid::Uuid::new_v4().to_string(),
             timestamp: Timestamp::now(),
@@ -275,6 +261,30 @@ impl HistoryManager {
             history.drain(0..excess);
         }
         self.save(&history)
+    }
+
+    fn with_history_lock<T>(&self, op: impl FnOnce() -> Result<T>) -> Result<T> {
+        let lock_path = self.log_path.with_extension("lock");
+        let lock = fs::OpenOptions::new()
+            .create(true)
+            .read(true)
+            .write(true)
+            .truncate(false)
+            .open(&lock_path)
+            .with_context(|| format!("Failed to open history lock: {}", lock_path.display()))?;
+        lock.lock()
+            .with_context(|| format!("Failed to lock package history: {}", lock_path.display()))?;
+
+        let result = op();
+        if let Err(error) = lock.unlock() {
+            return match result {
+                Ok(_) => Err(error).context("Failed to unlock package history"),
+                Err(operation_error) => Err(operation_error.context(format!(
+                    "Package history operation also failed to unlock its lock: {error}"
+                ))),
+            };
+        }
+        result
     }
 }
 
@@ -304,7 +314,7 @@ mod tests {
     use super::*;
 
     /// Resets the process-wide corrupt-history warning gate so warning
-    /// assertions are deterministic (paired with `#[serial(corrupt_history)]`).
+    /// assertions are deterministic (paired with `#[serial(history_ownership)]`).
     fn reset_corrupt_history_warning_for_tests() {
         CORRUPT_HISTORY_WARNED.store(false, Ordering::Relaxed);
     }
@@ -389,7 +399,7 @@ mod tests {
     }
 
     #[test]
-    #[serial_test::serial(corrupt_history)]
+    #[serial_test::serial(history_ownership)]
     fn malformed_history_is_quarantined_and_history_starts_fresh() -> Result<()> {
         let directory = tempfile::tempdir()?;
         let path = directory.path().join("history.json");
@@ -416,8 +426,7 @@ mod tests {
         // The once-flag is process-wide, so serialise against other tests
         // that corrupt-load history and reset it for deterministic asserts.
         reset_corrupt_history_warning_for_tests();
-        let error =
-            serde_json::from_str::<Vec<Transaction>>("not valid JSON").unwrap_err();
+        let error = serde_json::from_str::<Vec<Transaction>>("not valid JSON").unwrap_err();
         assert!(
             warn_corrupt_history_once(&path, Path::new(&corrupt_names[0]), &error),
             "first call warns"
@@ -461,7 +470,57 @@ mod tests {
                     .to_string_lossy()
                     .starts_with("history.json.corrupt-")
             });
-        assert!(corrupt_exists, "the malformed file is preserved, not deleted");
+        assert!(
+            corrupt_exists,
+            "the malformed file is preserved, not deleted"
+        );
+        Ok(())
+    }
+
+    #[test]
+    #[serial_test::serial(history_ownership)]
+    fn concurrent_corrupt_loads_do_not_rename_a_fresh_history() -> Result<()> {
+        use std::sync::{Arc, Barrier};
+
+        const WORKERS: usize = 8;
+        let directory = tempfile::tempdir()?;
+        let path = directory.path().join("history.json");
+        fs::write(&path, "not valid JSON")?;
+        let barrier = Arc::new(Barrier::new(WORKERS));
+        let mut workers = Vec::new();
+        for index in 0..WORKERS {
+            let path = path.clone();
+            let barrier = Arc::clone(&barrier);
+            workers.push(std::thread::spawn(move || -> Result<()> {
+                let manager = HistoryManager::new_in(&path)?;
+                barrier.wait();
+                if index == 0 {
+                    manager.add_transaction(
+                        TransactionType::Install,
+                        vec![PackageChange {
+                            name: "example".to_string(),
+                            old_version: None,
+                            new_version: Some("1.0".to_string()),
+                            source: "official".to_string(),
+                        }],
+                        true,
+                    )
+                } else {
+                    manager.load().map(|_| ())
+                }
+            }));
+        }
+        for worker in workers {
+            worker.join().expect("history worker panicked")?;
+        }
+
+        let history = HistoryManager::new_in(&path)?.load()?;
+        assert_eq!(
+            history.len(),
+            1,
+            "a concurrent load must not quarantine a freshly written history"
+        );
+        assert_eq!(history[0].changes[0].name, "example");
         Ok(())
     }
 
