@@ -3535,7 +3535,12 @@ mod tests {
             "fakeroot",
             "sh",
             "-c",
-            "cp -a source/. destination/copied",
+            concat!(
+                "chown -R 0:0 source && ",
+                "test \"$(stat -c '%u:%g' source/nested/file)\" = 0:0 && ",
+                "cp -a source/. destination/copied && ",
+                "test \"$(stat -c '%u:%g' destination/copied/nested/file)\" = 0:0",
+            ),
         ]);
 
         let status = command.status().await.unwrap();
