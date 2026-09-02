@@ -8,7 +8,7 @@
 //! - Team status loading and updates
 //! - Integration with `TeamWorkspace`
 
-use omg_lib::cli::tui::app::{App, Tab};
+use omg_lib::cli::tui::app::{App, ConfirmationAction, Tab};
 use omg_lib::core::env::team::{
     NotificationSettings, TeamConfig, TeamMember, TeamStatus, TeamWorkspace,
 };
@@ -277,7 +277,7 @@ mod app_state_tests {
         let app = App::new_detached();
         assert_eq!(app.current_tab, Tab::Dashboard);
         assert_eq!(app.selected_index, 0);
-        assert!(!app.show_popup);
+        assert!(app.pending_confirmation.is_none());
         assert!(!app.search_mode);
         assert!(app.search_query.is_empty());
     }
@@ -295,7 +295,7 @@ mod app_state_tests {
         let app = App::new_detached();
 
         assert_eq!(app.selected_index, 0);
-        assert!(!app.show_popup);
+        assert!(app.pending_confirmation.is_none());
         assert!(app.search_query.is_empty());
         assert!(!app.search_mode);
         assert!(app.search_results.is_empty());
@@ -667,13 +667,16 @@ mod popup_tests {
     async fn test_popup_show_hide() {
         let mut app = App::new_detached();
 
-        assert!(!app.show_popup);
+        assert!(app.pending_confirmation.is_none());
 
-        app.show_popup = true;
-        assert!(app.show_popup);
+        app.pending_confirmation = Some(ConfirmationAction::CleanCache);
+        assert_eq!(
+            app.pending_confirmation,
+            Some(ConfirmationAction::CleanCache)
+        );
 
         app.handle_key(KeyCode::Esc);
-        assert!(!app.show_popup);
+        assert!(app.pending_confirmation.is_none());
     }
 
     #[tokio::test]
@@ -692,7 +695,10 @@ mod popup_tests {
         }];
 
         app.handle_key(KeyCode::Enter);
-        assert!(app.show_popup);
+        assert_eq!(
+            app.pending_confirmation,
+            Some(ConfirmationAction::InstallPackage("test-pkg".to_string()))
+        );
     }
 
     #[tokio::test]
@@ -705,7 +711,7 @@ mod popup_tests {
 
         app.handle_key(KeyCode::Enter);
         // Popup should not be shown when there are no results
-        assert!(!app.show_popup);
+        assert!(app.pending_confirmation.is_none());
     }
 }
 

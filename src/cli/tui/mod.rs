@@ -141,6 +141,21 @@ fn cleanup_terminal(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>) -> Re
     Ok(())
 }
 
+fn suspend_terminal(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>) -> Result<()> {
+    disable_raw_mode()?;
+    execute!(terminal.backend_mut(), LeaveAlternateScreen)?;
+    terminal.show_cursor()?;
+    Ok(())
+}
+
+fn resume_terminal(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>) -> Result<()> {
+    enable_raw_mode()?;
+    execute!(terminal.backend_mut(), EnterAlternateScreen)?;
+    terminal.hide_cursor()?;
+    terminal.clear()?;
+    Ok(())
+}
+
 async fn run_app(
     terminal: &mut Terminal<CrosstermBackend<io::Stdout>>,
     app: &mut app::App,
@@ -230,11 +245,12 @@ async fn run_app(
                 // handle_special_key_actions is where normal keys are routed
                 // to handle_key via its catch-all, so skipping it during a
                 // query would freeze all input (audit sec2 F-09).
-                if app.search_mode {
+                let terminal_action = if app.search_mode {
                     app.handle_key(key.code);
+                    None
                 } else {
-                    handle_special_key_actions(app, key.code, &action_tx);
-                }
+                    handle_special_key_actions(app, key.code, &action_tx)
+                };
 
                 if search_session_started(was_search_mode, app.search_mode) {
                     last_search.clear();
@@ -265,6 +281,9 @@ async fn run_app(
                         &search_tx,
                         &mut next_search_id,
                     ));
+                }
+                if let Some(action) = terminal_action {
+                    run_terminal_action(terminal, app, action).await?;
                 }
             }
         }
@@ -398,28 +417,29 @@ fn spawn_action(
     });
 }
 
-/// Handle special key actions that trigger async operations.
-/// Long-running work is spawned off the UI task so the loop keeps drawing.
 fn handle_special_key_actions(
     app: &mut app::App,
     key_code: KeyCode,
     action_tx: &tokio::sync::mpsc::UnboundedSender<ActionResult>,
-) {
+) -> Option<app::ConfirmationAction> {
+    if app.pending_confirmation.is_some() {
+        match key_code {
+            KeyCode::Enter => return app.take_confirmation(),
+            KeyCode::Esc => app.handle_key(KeyCode::Esc),
+            _ => {}
+        }
+        return None;
+    }
+
     match key_code {
         KeyCode::Char('u') if app.current_tab == app::Tab::Dashboard => {
-            spawn_action(app, "update system", action_tx, async {
-                app::App::update_system().await.map(|()| String::new())
-            });
+            app.request_confirmation(app::ConfirmationAction::UpdateSystem);
         }
         KeyCode::Char('c') if app.current_tab == app::Tab::Dashboard => {
-            spawn_action(app, "clean cache", action_tx, async {
-                app::App::clean_cache().await.map(|()| String::new())
-            });
+            app.request_confirmation(app::ConfirmationAction::CleanCache);
         }
         KeyCode::Char('o') if app.current_tab == app::Tab::Dashboard => {
-            spawn_action(app, "remove orphans", action_tx, async {
-                app::App::remove_orphans().await.map(|()| String::new())
-            });
+            app.request_confirmation(app::ConfirmationAction::RemoveOrphans);
         }
         KeyCode::Char('a') if app.current_tab == app::Tab::Security => {
             spawn_action(app, "security audit", action_tx, async {
@@ -431,29 +451,48 @@ fn handle_special_key_actions(
                 Ok(String::new())
             });
         }
-        KeyCode::Enter
-            if app.current_tab == app::Tab::Packages
-                && app.show_popup
-                && !app.search_results.is_empty() =>
-        {
-            // Confirmation popup accepted by a second Enter; clear it before
-            // spawning so a slow install cannot stack popups.
-            app.show_popup = false;
-            if let Some(pkg) = app.search_results.get(app.selected_index) {
-                let pkg_name = pkg.name.clone();
-                spawn_action(app, "install", action_tx, async move {
-                    app::App::install_package(&pkg_name)
-                        .await
-                        .map(|()| format!("installed {pkg_name}"))
-                });
-                force_refresh(app);
-            }
-        }
-        _ => {
-            // Normal key handling
-            app.handle_key(key_code);
-        }
+        _ => app.handle_key(key_code),
     }
+    None
+}
+
+async fn run_terminal_action(
+    terminal: &mut Terminal<CrosstermBackend<io::Stdout>>,
+    app: &mut app::App,
+    action: app::ConfirmationAction,
+) -> Result<()> {
+    app.action_in_flight = true;
+    if let Err(error) = suspend_terminal(terminal) {
+        app.action_in_flight = false;
+        return Err(error);
+    }
+
+    let (label, result) = match action {
+        app::ConfirmationAction::InstallPackage(package_name) => {
+            let result = app::App::install_package(&package_name)
+                .await
+                .map(|()| format!("installed {package_name}"));
+            ("install", result)
+        }
+        app::ConfirmationAction::UpdateSystem => (
+            "update system",
+            app::App::update_system().await.map(|()| String::new()),
+        ),
+        app::ConfirmationAction::CleanCache => (
+            "clean cache",
+            app::App::clean_cache().await.map(|()| String::new()),
+        ),
+        app::ConfirmationAction::RemoveOrphans => (
+            "remove orphans",
+            app::App::remove_orphans().await.map(|()| String::new()),
+        ),
+    };
+
+    let resume_result = resume_terminal(terminal);
+    app.action_in_flight = false;
+    report_action_result(app, result, label);
+    force_refresh(app);
+    resume_result
 }
 
 fn report_action_result(app: &mut app::App, result: anyhow::Result<String>, action: &str) {
@@ -611,6 +650,26 @@ mod tests {
             completion
         ));
         assert_eq!(app.search_error.as_deref(), Some("search unavailable"));
+    }
+
+    #[test]
+    fn mutation_shortcuts_require_confirmation_before_dispatch() {
+        let (sender, _receiver) = tokio::sync::mpsc::unbounded_channel();
+
+        for (key, expected) in [
+            (KeyCode::Char('u'), app::ConfirmationAction::UpdateSystem),
+            (KeyCode::Char('c'), app::ConfirmationAction::CleanCache),
+            (KeyCode::Char('o'), app::ConfirmationAction::RemoveOrphans),
+        ] {
+            let mut app = app::App::new_detached();
+            assert_eq!(handle_special_key_actions(&mut app, key, &sender), None);
+            assert_eq!(app.pending_confirmation, Some(expected.clone()));
+            assert_eq!(
+                handle_special_key_actions(&mut app, KeyCode::Enter, &sender),
+                Some(expected)
+            );
+            assert!(app.pending_confirmation.is_none());
+        }
     }
 
     #[test]

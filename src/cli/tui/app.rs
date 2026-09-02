@@ -18,6 +18,34 @@ pub enum Tab {
     Team,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ConfirmationAction {
+    InstallPackage(String),
+    UpdateSystem,
+    CleanCache,
+    RemoveOrphans,
+}
+
+impl ConfirmationAction {
+    pub fn title(&self) -> &'static str {
+        match self {
+            Self::InstallPackage(_) => "󰏗 Install Package",
+            Self::UpdateSystem => "󰚰 Update System",
+            Self::CleanCache => "󰃢 Clean Package Caches",
+            Self::RemoveOrphans => "󰆴 Remove Orphans",
+        }
+    }
+
+    pub fn prompt(&self) -> String {
+        match self {
+            Self::InstallPackage(package_name) => format!("Install {package_name}?"),
+            Self::UpdateSystem => "Install all available package updates?".to_string(),
+            Self::CleanCache => "Remove package caches and orphaned packages?".to_string(),
+            Self::RemoveOrphans => "Remove every orphaned package?".to_string(),
+        }
+    }
+}
+
 pub struct App {
     #[cfg(unix)]
     pub status: Option<StatusResult>,
@@ -29,7 +57,7 @@ pub struct App {
     pub last_tick: Instant,
     pub current_tab: Tab,
     pub selected_index: usize,
-    pub show_popup: bool,
+    pub pending_confirmation: Option<ConfirmationAction>,
     pub search_query: String,
     pub search_mode: bool,
     pub daemon_connected: bool,
@@ -85,7 +113,7 @@ impl App {
             last_tick: Instant::now(),
             current_tab: Tab::Dashboard,
             selected_index: 0,
-            show_popup: false,
+            pending_confirmation: None,
             search_query: String::new(),
             search_mode: false,
             daemon_connected: false,
@@ -432,11 +460,11 @@ impl App {
     // state) so the event loop can spawn them without borrowing the model.
     pub async fn install_package(package_name: &str) -> Result<()> {
         let packages = vec![package_name.to_string()];
-        crate::cli::packages::install(&packages, false, false, false).await
+        crate::cli::packages::install(&packages, true, false, false).await
     }
 
     pub async fn update_system() -> Result<()> {
-        crate::cli::packages::update(false, false, false).await
+        crate::cli::packages::update(false, true, false).await
     }
 
     pub async fn clean_cache() -> Result<()> {
@@ -506,7 +534,19 @@ impl App {
         !self.search_mode
             && self.current_tab == Tab::Packages
             && !self.search_results.is_empty()
-            && !self.show_popup
+            && self.pending_confirmation.is_none()
+    }
+
+    pub fn request_confirmation(&mut self, action: ConfirmationAction) {
+        if self.action_in_flight {
+            self.action_error = Some("another action is already running".to_string());
+            return;
+        }
+        self.pending_confirmation = Some(action);
+    }
+
+    pub fn take_confirmation(&mut self) -> Option<ConfirmationAction> {
+        self.pending_confirmation.take()
     }
 
     /// Switch tabs, resetting transient list/search state so a stale
@@ -515,7 +555,7 @@ impl App {
         self.current_tab = tab;
         self.selected_index = 0;
         self.search_mode = false;
-        self.show_popup = false;
+        self.pending_confirmation = None;
     }
 
     /// Record a search-query mutation and invalidate results for the old query.
@@ -622,13 +662,14 @@ impl App {
                 }
             }
             KeyCode::Esc => {
-                self.show_popup = false;
+                self.pending_confirmation = None;
             }
             KeyCode::Enter => {
-                if self.enter_requests_confirmation() {
-                    // Ask for confirmation first; the install runs only after
-                    // a second Enter confirms the popup (handled by the loop).
-                    self.show_popup = true;
+                if self.enter_requests_confirmation()
+                    && let Some(package) = self.search_results.get(self.selected_index)
+                {
+                    self.pending_confirmation =
+                        Some(ConfirmationAction::InstallPackage(package.name.clone()));
                 }
             }
 
@@ -745,7 +786,10 @@ mod tests {
     fn enter_with_results_opens_confirmation_popup() {
         let mut app = test_app();
         app.handle_key(KeyCode::Enter);
-        assert!(app.show_popup, "first Enter must open the confirm popup");
+        assert_eq!(
+            app.pending_confirmation,
+            Some(ConfirmationAction::InstallPackage("firefox".to_string()))
+        );
         assert!(
             !app.enter_requests_confirmation(),
             "popup must suppress a second confirmation request"
@@ -755,9 +799,23 @@ mod tests {
     #[test]
     fn esc_cancels_popup_without_installing() {
         let mut app = test_app();
-        app.show_popup = true;
+        app.pending_confirmation = Some(ConfirmationAction::CleanCache);
         app.handle_key(KeyCode::Esc);
-        assert!(!app.show_popup);
+        assert!(app.pending_confirmation.is_none());
+    }
+
+    #[test]
+    fn running_action_rejects_a_second_confirmation() {
+        let mut app = test_app();
+        app.action_in_flight = true;
+
+        app.request_confirmation(ConfirmationAction::UpdateSystem);
+
+        assert!(app.pending_confirmation.is_none());
+        assert_eq!(
+            app.action_error.as_deref(),
+            Some("another action is already running")
+        );
     }
 
     #[test]
@@ -768,7 +826,7 @@ mod tests {
         app.handle_key(KeyCode::Enter);
         assert!(!app.search_mode);
         assert!(
-            !app.show_popup,
+            app.pending_confirmation.is_none(),
             "committing a query must never install the stale selection"
         );
     }
