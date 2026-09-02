@@ -4814,6 +4814,7 @@ the Debian backend), so it was removed from the metadata.
 - Normalize project formatting
 ### 🧪 Testing
 
+- **Slsa**: Pin multi-SAN identity selection ([#158](https://github.com/PyRo1121/omg/issues/158))
 - **Cli**: Make CLI fixtures hermetic against host state ([#130](https://github.com/PyRo1121/omg/issues/130))
 
 The trunk-wide coverage run failed 20 tests that depended on host
