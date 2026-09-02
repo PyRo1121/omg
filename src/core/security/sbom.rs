@@ -212,21 +212,19 @@ pub struct SbomVulnAffects {
 /// fabricating a comparison.
 #[cfg(any(feature = "arch", feature = "debian", feature = "debian-pure"))]
 fn advisory_applies(
-    pkg: &crate::package_managers::LocalPackage,
+    name: &str,
+    installed_version: &str,
     affected: &str,
     fixed: Option<&str>,
 ) -> bool {
     if let Some(applies) =
-        super::vulnerability::version_is_affected(&pkg.version.version_string(), affected, fixed)
+        super::vulnerability::version_is_affected(installed_version, affected, fixed)
     {
         applies
     } else {
         tracing::warn!(
-            "Skipping ALSA advisory match for package '{}': unparseable \
-             version (installed '{}', affected '{}')",
-            pkg.name,
-            pkg.version.version_string(),
-            affected
+            "Skipping ALSA advisory match for package '{name}': unparseable \
+             version (installed '{installed_version}', affected '{affected}')"
         );
         false
     }
@@ -403,7 +401,12 @@ impl SbomGenerator {
                         // exactly like `scan_system` does (W5-B-01): name-only
                         // matching listed every historical advisory for installed
                         // package names on fully patched systems.
-                        if !advisory_applies(pkg, &issue.affected, issue.fixed.as_deref()) {
+                        if !advisory_applies(
+                            &pkg.name,
+                            &pkg.version.version_string(),
+                            &issue.affected,
+                            issue.fixed.as_deref(),
+                        ) {
                             continue;
                         }
                         {
@@ -583,37 +586,41 @@ mod tests {
         // Regression test for W5-B-01: SBOM advisory matching used the package
         // name only, so a fully patched system listed every historical advisory
         // for installed package names. A patched version must be excluded.
-        fn local_package(name: &str, version: &str) -> crate::package_managers::LocalPackage {
-            crate::package_managers::LocalPackage {
-                name: name.to_string(),
-                version: crate::package_managers::parse_version(version)
-                    .expect("test version parses"),
-                description: String::new(),
-                install_size: 0,
-                reason: "explicit",
-            }
-        }
-
         // Historical ALSA advisory: affects from 1.1.1-1, fixed in 3.0.0-1.
         let affected = "1.1.1-1";
         let fixed = Some("3.0.0-1");
 
-        let patched = local_package("openssl", "3.2.1-1");
-        let vulnerable = local_package("openssl", "1.1.1-1");
-
         assert!(
-            advisory_applies(&vulnerable, affected, fixed),
+            advisory_applies("openssl", "1.1.1-1", affected, fixed),
             "version inside [affected, fixed) must be reported"
         );
         assert!(
-            !advisory_applies(&patched, affected, fixed),
+            !advisory_applies("openssl", "3.2.1-1", affected, fixed),
             "patched version outside [affected, fixed) must not be reported"
         );
 
         // Missing fixed version means every release from `affected` onward
         // remains vulnerable, matching the scan_system precedent.
-        let newer = local_package("openssl", "4.0.0-1");
-        assert!(advisory_applies(&newer, affected, None));
+        assert!(advisory_applies("openssl", "4.0.0-1", affected, None));
+
+        // ARCH-R14: unparseable advisory strings skip the pair instead of
+        // fabricating a match. Non-Arch `parse_version` is infallible, so this
+        // branch exists only on Arch (same gate as scan_system's tests).
+        #[cfg(feature = "arch")]
+        {
+            assert!(!advisory_applies(
+                "openssl",
+                "1.1.1-1",
+                "not a version",
+                fixed
+            ));
+            assert!(!advisory_applies(
+                "openssl",
+                "1.1.1-1",
+                affected,
+                Some("not a version")
+            ));
+        }
     }
 
     #[test]
