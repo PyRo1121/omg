@@ -99,6 +99,8 @@ jobs:
       - name: Run Benchmarks (Hyperfine)
         id: bench
         run: |
+          set -o pipefail
+
           chmod +x benchmark-hyperfine.sh
 
           # Use hyperfine for statistical rigor and JSON export

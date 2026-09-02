@@ -129,6 +129,8 @@ jobs:
       - name: Coverage summary
         if: always()
         run: |
+          set -o pipefail
+
           echo "## Coverage Report" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
           cargo llvm-cov report \
