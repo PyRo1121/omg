@@ -4,7 +4,7 @@
 //! debug builds: the override machinery is compiled out of release binaries so
 //! production path resolution cannot be redirected at runtime.
 
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 #[cfg(any(test, debug_assertions))]
 use std::sync::OnceLock;
 #[cfg(any(test, debug_assertions))]
@@ -50,7 +50,9 @@ pub fn reset_test_overrides() {
 
 #[inline]
 fn env_path(var: &str) -> Option<PathBuf> {
-    std::env::var_os(var).map(PathBuf::from)
+    std::env::var_os(var)
+        .filter(|value| !value.is_empty())
+        .map(PathBuf::from)
 }
 
 #[inline]
@@ -75,21 +77,46 @@ fn elevated_user_home() -> Option<PathBuf> {
 
 fn elevated_home_from(
     sudo_user: Option<&str>,
-    sudo_home: Option<&str>,
+    _sudo_home: Option<&str>,
     doas_user: Option<&str>,
 ) -> Option<PathBuf> {
-    if let Some(user) = sudo_user.filter(|user| is_valid_username(user)) {
-        if let Some(home) = sudo_home.filter(|home| {
-            let path = std::path::Path::new(home);
-            path.is_absolute() && !home.contains('\0') && !home.contains("..")
-        }) {
-            return Some(PathBuf::from(home));
-        }
-        return Some(PathBuf::from(format!("/home/{user}")));
-    }
-    doas_user
+    elevated_home_from_lookup(sudo_user, doas_user, |user| {
+        nix::unistd::User::from_name(user)
+            .ok()
+            .flatten()
+            .map(|entry| entry.dir)
+    })
+}
+
+fn elevated_home_from_lookup(
+    sudo_user: Option<&str>,
+    doas_user: Option<&str>,
+    lookup: impl FnOnce(&str) -> Option<PathBuf>,
+) -> Option<PathBuf> {
+    let user = sudo_user
         .filter(|user| is_valid_username(user))
-        .map(|user| PathBuf::from(format!("/home/{user}")))
+        .or_else(|| doas_user.filter(|user| is_valid_username(user)))?;
+    lookup(user)
+}
+
+#[cfg(target_os = "macos")]
+fn default_data_dir_for_home(home: &Path) -> PathBuf {
+    home.join("Library/Application Support/omg")
+}
+
+#[cfg(not(target_os = "macos"))]
+fn default_data_dir_for_home(home: &Path) -> PathBuf {
+    home.join(".local/share/omg")
+}
+
+#[cfg(target_os = "macos")]
+fn default_cache_dir_for_home(home: &Path) -> PathBuf {
+    home.join("Library/Caches/omg")
+}
+
+#[cfg(not(target_os = "macos"))]
+fn default_cache_dir_for_home(home: &Path) -> PathBuf {
+    home.join(".cache/omg")
 }
 
 /// Data directory (default: XDG data dir/omg or ~/.omg).
@@ -99,7 +126,7 @@ pub fn data_dir() -> PathBuf {
     env_path("OMG_DATA_DIR").unwrap_or_else(|| {
         elevated_user_home().map_or_else(
             || dirs::data_dir().map_or_else(|| fallback_home_dir().join(".omg"), |d| d.join("omg")),
-            |home| home.join(".local/share/omg"),
+            |home| default_data_dir_for_home(&home),
         )
     })
 }
@@ -143,7 +170,7 @@ pub fn cache_dir() -> PathBuf {
                 dirs::cache_dir()
                     .map_or_else(|| fallback_home_dir().join(".cache/omg"), |d| d.join("omg"))
             },
-            |home| home.join(".cache/omg"),
+            |home| default_cache_dir_for_home(&home),
         )
     })
 }
@@ -580,20 +607,38 @@ mod tests {
     }
 
     #[test]
-    fn elevated_home_selection_is_stable_and_rejects_unsafe_overrides() {
+    fn elevated_home_uses_the_account_database() {
+        let lookup = |user: &str| Some(PathBuf::from(format!("/var/home/{user}")));
         assert_eq!(
-            elevated_home_from(Some("alice"), Some("/var/home/alice"), None),
+            elevated_home_from_lookup(Some("alice"), None, lookup),
             Some(PathBuf::from("/var/home/alice"))
         );
         assert_eq!(
-            elevated_home_from(Some("alice"), Some("../../root"), None),
-            Some(PathBuf::from("/home/alice"))
+            elevated_home_from_lookup(None, Some("bob"), lookup),
+            Some(PathBuf::from("/var/home/bob"))
         );
         assert_eq!(
-            elevated_home_from(None, None, Some("bob")),
-            Some(PathBuf::from("/home/bob"))
+            elevated_home_from_lookup(Some("../root"), None, lookup),
+            None
         );
-        assert_eq!(elevated_home_from(Some("../root"), None, None), None);
+        assert_eq!(
+            elevated_home_from_lookup(Some("missing"), None, |_| None),
+            None
+        );
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn empty_path_override_is_treated_as_unset() {
+        temp_env::with_var("OMG_DATA_DIR", Some(""), || {
+            assert!(!data_dir().as_os_str().is_empty());
+        });
+        temp_env::with_var("OMG_CACHE_DIR", Some(""), || {
+            assert!(!cache_dir().as_os_str().is_empty());
+        });
+        temp_env::with_var("OMG_SOCKET_PATH", Some(""), || {
+            assert!(socket_path().ends_with("omg.sock"));
+        });
     }
 
     #[test]

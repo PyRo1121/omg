@@ -118,7 +118,7 @@ dependencies = [
 [[package]]
 name = "alpm-common"
 version = "0.2.1"
-source = "git+https://gitlab.archlinux.org/archlinux/alpm/alpm.git?rev=b5463fcd4b677e55792dfb0c708da9659db0368a#b5463fcd4b677e55792dfb0c708da9659db0368a"
+source = "git+https://gitlab.archlinux.org/archlinux/alpm/alpm.git?rev=d8967aa5101aaacb6e92b3d3f8e706987246a2ab#bd241fb0b869212d0ee24e7b1f6fd7ed2e4c9d6f"
 dependencies = [
  "alpm-types",
  "fluent-i18n",
@@ -127,8 +127,8 @@ dependencies = [
 
 [[package]]
 name = "alpm-db"
-version = "0.2.1"
-source = "git+https://gitlab.archlinux.org/archlinux/alpm/alpm.git?rev=b5463fcd4b677e55792dfb0c708da9659db0368a#b5463fcd4b677e55792dfb0c708da9659db0368a"
+version = "0.2.2"
+source = "git+https://gitlab.archlinux.org/archlinux/alpm/alpm.git?rev=d8967aa5101aaacb6e92b3d3f8e706987246a2ab#bd241fb0b869212d0ee24e7b1f6fd7ed2e4c9d6f"
 dependencies = [
  "alpm-common",
  "alpm-parsers",
@@ -136,7 +136,7 @@ dependencies = [
  "fluent-i18n",
  "serde",
  "serde_with",
- "strum 0.27.2",
+ "strum",
  "thiserror 2.0.20",
  "winnow 0.7.14",
 ]
@@ -144,7 +144,7 @@ dependencies = [
 [[package]]
 name = "alpm-parsers"
 version = "0.4.1"
-source = "git+https://gitlab.archlinux.org/archlinux/alpm/alpm.git?rev=b5463fcd4b677e55792dfb0c708da9659db0368a#b5463fcd4b677e55792dfb0c708da9659db0368a"
+source = "git+https://gitlab.archlinux.org/archlinux/alpm/alpm.git?rev=d8967aa5101aaacb6e92b3d3f8e706987246a2ab#bd241fb0b869212d0ee24e7b1f6fd7ed2e4c9d6f"
 dependencies = [
  "serde",
  "testresult",
@@ -153,15 +153,15 @@ dependencies = [
 
 [[package]]
 name = "alpm-pkgbuild"
-version = "0.2.3"
-source = "git+https://gitlab.archlinux.org/archlinux/alpm/alpm.git?rev=b5463fcd4b677e55792dfb0c708da9659db0368a#b5463fcd4b677e55792dfb0c708da9659db0368a"
+version = "0.2.4"
+source = "git+https://gitlab.archlinux.org/archlinux/alpm/alpm.git?rev=d8967aa5101aaacb6e92b3d3f8e706987246a2ab#bd241fb0b869212d0ee24e7b1f6fd7ed2e4c9d6f"
 dependencies = [
  "alpm-parsers",
  "alpm-types",
  "fluent-i18n",
  "log",
  "serde_json",
- "strum 0.27.2",
+ "strum",
  "thiserror 2.0.20",
  "which",
  "winnow 0.7.14",
@@ -169,23 +169,23 @@ dependencies = [
 
 [[package]]
 name = "alpm-repo-db"
-version = "0.1.1"
-source = "git+https://gitlab.archlinux.org/archlinux/alpm/alpm.git?rev=b5463fcd4b677e55792dfb0c708da9659db0368a#b5463fcd4b677e55792dfb0c708da9659db0368a"
+version = "0.1.2"
+source = "git+https://gitlab.archlinux.org/archlinux/alpm/alpm.git?rev=d8967aa5101aaacb6e92b3d3f8e706987246a2ab#bd241fb0b869212d0ee24e7b1f6fd7ed2e4c9d6f"
 dependencies = [
  "alpm-common",
  "alpm-parsers",
  "alpm-types",
  "fluent-i18n",
  "serde",
- "strum 0.27.2",
+ "strum",
  "thiserror 2.0.20",
  "winnow 0.7.14",
 ]
 
 [[package]]
 name = "alpm-srcinfo"
-version = "0.6.2"
-source = "git+https://gitlab.archlinux.org/archlinux/alpm/alpm.git?rev=b5463fcd4b677e55792dfb0c708da9659db0368a#b5463fcd4b677e55792dfb0c708da9659db0368a"
+version = "0.6.3"
+source = "git+https://gitlab.archlinux.org/archlinux/alpm/alpm.git?rev=d8967aa5101aaacb6e92b3d3f8e706987246a2ab#bd241fb0b869212d0ee24e7b1f6fd7ed2e4c9d6f"
 dependencies = [
  "alpm-common",
  "alpm-parsers",
@@ -193,7 +193,7 @@ dependencies = [
  "alpm-types",
  "fluent-i18n",
  "serde",
- "strum 0.27.2",
+ "strum",
  "thiserror 2.0.20",
  "winnow 0.7.14",
 ]
@@ -209,8 +209,8 @@ dependencies = [
 
 [[package]]
 name = "alpm-types"
-version = "0.11.1"
-source = "git+https://gitlab.archlinux.org/archlinux/alpm/alpm.git?rev=b5463fcd4b677e55792dfb0c708da9659db0368a#b5463fcd4b677e55792dfb0c708da9659db0368a"
+version = "0.11.2"
+source = "git+https://gitlab.archlinux.org/archlinux/alpm/alpm.git?rev=d8967aa5101aaacb6e92b3d3f8e706987246a2ab#bd241fb0b869212d0ee24e7b1f6fd7ed2e4c9d6f"
 dependencies = [
  "alpm-parsers",
  "base64 0.22.1",
@@ -228,7 +228,7 @@ dependencies = [
  "sha1",
  "sha2",
  "spdx",
- "strum 0.27.2",
+ "strum",
  "thiserror 2.0.20",
  "time",
  "url",
@@ -4444,7 +4444,7 @@ dependencies = [
  "lru",
  "palette",
  "serde",
- "strum 0.28.0",
+ "strum",
  "thiserror 2.0.20",
  "unicode-segmentation",
  "unicode-truncate",
@@ -4477,7 +4477,7 @@ dependencies = [
  "line-clipping",
  "ratatui-core",
  "serde",
- "strum 0.28.0",
+ "strum",
  "time",
  "unicode-segmentation",
  "unicode-width",
@@ -5628,32 +5628,11 @@ checksum = "7da8b5736845d9f2fcb837ea5d9e2628564b3b043a70948a3f0b778838c5fb4f"
 
 [[package]]
 name = "strum"
-version = "0.27.2"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "af23d6f6c1a224baef9d3f61e287d2761385a5b88fdab4eb4c6f11aeb54c4bcf"
-dependencies = [
- "strum_macros 0.27.2",
-]
-
-[[package]]
-name = "strum"
 version = "0.28.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "9628de9b8791db39ceda2b119bbe13134770b56c138ec1d3af810d045c04f9bd"
 dependencies = [
- "strum_macros 0.28.0",
-]
-
-[[package]]
-name = "strum_macros"
-version = "0.27.2"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "7695ce3845ea4b33927c055a39dc438a45b059f7c1b3d91d38d10355fb8cbca7"
-dependencies = [
- "heck",
- "proc-macro2",
- "quote",
- "syn 2.0.114",
+ "strum_macros",
 ]
 
 [[package]]

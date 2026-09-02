@@ -519,7 +519,10 @@ fn install_blocking(packages: &[String]) -> Result<()> {
             })?;
             candidate.set_candidate();
         }
-        pkg.mark_install(true, true);
+        anyhow::ensure!(
+            pkg.mark_install(true, true),
+            "APT could not mark package for installation: {pkg_name}"
+        );
         pkg.protect();
     }
 
@@ -565,7 +568,11 @@ fn remove_blocking(packages: &[String]) -> Result<()> {
         let pkg = cache
             .get(pkg_name)
             .with_context(|| format!("Package not found: {pkg_name}"))?;
-        pkg.mark_delete(false);
+        anyhow::ensure!(
+            pkg.mark_delete(false),
+            "APT could not mark package for removal: {pkg_name}"
+        );
+        pkg.protect();
     }
 
     cache
@@ -582,10 +589,9 @@ fn remove_blocking(packages: &[String]) -> Result<()> {
 }
 
 fn update_blocking() -> Result<()> {
-    sync_databases_blocking()?;
     let cache = open_cache(&[])?;
     cache
-        .upgrade(Upgrade::FullUpgrade)
+        .upgrade(Upgrade::SafeUpgrade)
         .map_err(|e| anyhow!("APT upgrade error: {e:?}"))?;
     cache
         .resolve(true)

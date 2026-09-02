@@ -106,6 +106,7 @@ impl PacmanConfig {
         let mut config = PacmanConfig::default();
         let mut current_section: Option<String> = None;
         let mut current_repo: Option<RepoConfig> = None;
+        let mut repository_names = HashSet::new();
 
         for line in content.lines() {
             let line = strip_inline_comment(line.trim()).trim();
@@ -124,6 +125,10 @@ impl PacmanConfig {
 
                 if section != "options" {
                     validate_repository_name(section)?;
+                    anyhow::ensure!(
+                        repository_names.insert(section.to_string()),
+                        "Duplicate pacman repository section: {section}"
+                    );
                     current_repo = Some(RepoConfig {
                         name: section.to_string(),
                         ..Default::default()
@@ -492,6 +497,19 @@ Server = https://us-tx-mirror.chaotic.cx/$repo/$arch
         assert_eq!(config.repos.len(), 3);
         assert_eq!(config.repos[2].name, "chaotic-aur");
         assert_eq!(config.repos[2].servers.len(), 2);
+    }
+
+    #[test]
+    fn duplicate_repository_sections_are_rejected() {
+        let error = PacmanConfig::parse_str(
+            "[core]\nServer = https://one.invalid\n[extra]\nServer = https://extra.invalid\n[core]\nServer = https://two.invalid\n",
+        )
+        .expect_err("duplicate repositories must fail before libalpm registration");
+        assert!(
+            error
+                .to_string()
+                .contains("Duplicate pacman repository section: core")
+        );
     }
 
     #[test]

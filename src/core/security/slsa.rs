@@ -646,21 +646,34 @@ fn verify_fulcio_chain(
         return None;
     }
 
-    // Signer identity from the Fulcio SAN (OIDC identity).
+    fulcio_signer_identity(&leaf)
+}
+
+/// The OIDC identity SAN on a Fulcio leaf.
+///
+/// Fulcio binds keyless identities as an email (web flow) or a URI (CI
+/// workload). A DNS SAN is never the OIDC identity, so it must not win over
+/// a later email/URI SAN, and a first-match-return across mixed entries
+/// would pick whichever name happens to be ordered first.
+fn fulcio_signer_identity(leaf: &x509_parser::certificate::X509Certificate<'_>) -> Option<String> {
+    use x509_parser::prelude::*;
+
     for ext in leaf.extensions() {
-        if let ParsedExtension::SubjectAlternativeName(san) = ext.parsed_extension() {
-            tracing::trace!(
-                san_count = san.general_names.len(),
-                "checking Fulcio signer identities"
-            );
-            for name in &san.general_names {
-                match name {
-                    GeneralName::RFC822Name(email) => return Some(email.to_string()),
-                    GeneralName::URI(uri) => return Some(uri.to_string()),
-                    GeneralName::DNSName(dns) => return Some(dns.to_string()),
-                    _ => {}
+        let ParsedExtension::SubjectAlternativeName(san) = ext.parsed_extension() else {
+            continue;
+        };
+        let mut first_uri = None;
+        for name in &san.general_names {
+            match name {
+                GeneralName::RFC822Name(email) => return Some(email.to_string()),
+                GeneralName::URI(uri) if first_uri.is_none() => {
+                    first_uri = Some(uri.to_string());
                 }
+                _ => {}
             }
+        }
+        if let Some(uri) = first_uri {
+            return Some(uri);
         }
     }
     None
@@ -740,6 +753,7 @@ impl SlsaVerifier {
     fn verify_rekor_entry(
         entry: &RekorEntry,
         artifact_hash: &str,
+        artifact_bytes: &[u8],
         fulcio_roots: &[&str],
         fulcio_intermediate: &str,
     ) -> Result<(bool, Option<String>), SlsaError> {
@@ -823,13 +837,27 @@ impl SlsaVerifier {
                 cert.public_key().raw.to_vec()
             };
             return Ok((
-                Self::verify_digest_with_spki(&spki, artifact_hash, &signature),
+                Self::verify_digest_with_bytes(&spki, artifact_hash, artifact_bytes, &signature),
                 Some(signer),
             ));
         }
 
-        // Plain public-key path (integrity-only; no signer identity).
-        Self::verify_digest_with_spki_from_pem(pem, &signature, artifact_hash)
+        // Plain public-key path. Rekor accepts entries from anyone, so a
+        // self-consistent key+signature pair proves nothing about who built
+        // the artifact. Fulcio-certified entries carry an OIDC identity and
+        // are verified above; a bare key can only be trusted when pinned
+        // out-of-band, which this API does not accept. Never report verified
+        // here — an attacker controlling distribution can produce one for any
+        // artifact bytes they ship.
+        Self::verify_digest_with_spki_from_pem(pem, &signature, artifact_hash, artifact_bytes)
+            .map(|(integrity_ok, _signer)| {
+                if integrity_ok {
+                    tracing::info!(
+                        "Rekor entry is a plain public-key self-attestation;                          treated as unverified (no signer identity)"
+                    );
+                }
+                (false, None)
+            })
     }
 
     /// Verify `signature` over the SHA-256 digest hex over the artifact,
@@ -838,6 +866,7 @@ impl SlsaVerifier {
         pem: &str,
         signature: &[u8],
         artifact_hash: &str,
+        artifact_bytes: &[u8],
     ) -> Result<(bool, Option<String>), SlsaError> {
         use base64::Engine as _;
         let der: Vec<u8> = base64::engine::general_purpose::STANDARD
@@ -849,47 +878,60 @@ impl SlsaVerifier {
             )
             .map_err(|source| SlsaError::RekorBodyDecode { source })?;
         Ok((
-            Self::verify_digest_with_spki(&der, artifact_hash, signature),
+            Self::verify_digest_with_bytes(&der, artifact_hash, artifact_bytes, signature),
             None,
         ))
     }
 
-    /// Verify `signature` over the SHA-256 digest hex-named by
-    /// `artifact_hash`, using an SPKI-DER encoded public key. Tries RSA
-    /// PKCS#1 v1.5 then P-256 ECDSA; returns false for other key types.
-    fn verify_digest_with_spki(
+    /// Verify `signature` over `artifact_bytes` (whose SHA-256 must be
+    /// `artifact_hash`) with an SPKI-DER encoded public key. Rekor
+    /// hashedrekord signatures cover the artifact content; RSA is verified via
+    /// its SHA-256 prehash while P-256 ECDSA hashes the message itself, so the
+    /// artifact bytes travel with the call for both arms. Returns false for
+    /// other key types or a digest mismatch.
+    /// # Errors
+    ///
+    /// Propagates errors only from upstream decode paths; a cryptographic
+    /// mismatch is reported as `Ok(false)`, never as `Err`.
+    fn verify_digest_with_bytes(
         issuer_spki_der: &[u8],
         artifact_hash: &str,
+        artifact_bytes: &[u8],
         signature: &[u8],
     ) -> bool {
         let Ok(digest) = <[u8; 32] as hex::FromHex>::from_hex(artifact_hash) else {
             return false;
         };
+        let mut hasher = sha2::Sha256::new();
+        sha2::Digest::update(&mut hasher, artifact_bytes);
+        if !hex::encode(sha2::Digest::finalize(hasher)).eq_ignore_ascii_case(artifact_hash) {
+            return false;
+        }
+        // The decoded digest IS SHA-256(artifact bytes): Rekor hashedrekord
+        // signatures cover the artifact content with the scheme's hash, so
+        // verification must treat the digest as the prehash. Feeding it
+        // through a second hash would make every genuine entry fail.
         {
             use rsa::pkcs8::DecodePublicKey as _;
             if let Ok(key) = rsa::RsaPublicKey::from_public_key_der(issuer_spki_der) {
-                use rsa::signature::DigestVerifier as _;
+                use rsa::signature::hazmat::PrehashVerifier;
                 let verifying = rsa::pkcs1v15::VerifyingKey::<sha2::Sha256>::new(key);
                 let Ok(sig) = rsa::pkcs1v15::Signature::try_from(signature) else {
                     return false;
                 };
-                let mut hasher = sha2::Sha256::new();
-                sha2::Digest::update(&mut hasher, digest);
-                return verifying.verify_digest(hasher, &sig).is_ok();
+                return verifying.verify_prehash(&digest, &sig).is_ok();
             }
         }
 
         {
-            use p256::ecdsa::signature::DigestVerifier as _;
             use p256::pkcs8::DecodePublicKey as _;
             if let Ok(key) = p256::PublicKey::from_public_key_der(issuer_spki_der) {
                 let verifying = p256::ecdsa::VerifyingKey::from(key);
                 let Ok(sig) = p256::ecdsa::Signature::from_der(signature) else {
                     return false;
                 };
-                let mut hasher = sha2::Sha256::new();
-                sha2::Digest::update(&mut hasher, digest);
-                return verifying.verify_digest(hasher, &sig).is_ok();
+                use p256::ecdsa::signature::Verifier as _;
+                return verifying.verify(artifact_bytes, &sig).is_ok();
             }
         }
 
@@ -910,8 +952,18 @@ impl SlsaVerifier {
         provenance_path: Option<impl AsRef<Path>>,
         required_identity: Option<&str>,
     ) -> Result<VerificationResult, SlsaError> {
-        // Calculate artifact hash
-        let artifact_hash = Self::calculate_hash(&blob_path)?;
+        // Calculate artifact hash, keeping the bytes around: P-256 ECDSA
+        // verification hashes the message itself, so the artifact content
+        // must be available at verification time.
+        let artifact_bytes = std::fs::read(&blob_path).map_err(|source| SlsaError::Read {
+            path: blob_path.as_ref().display().to_string(),
+            source,
+        })?;
+        let artifact_hash = {
+            let mut hasher = sha2::Sha256::new();
+            sha2::Digest::update(&mut hasher, &artifact_bytes);
+            hex::encode(sha2::Digest::finalize(hasher))
+        };
 
         // Check Rekor for transparency log entries, then attempt REAL
         // cryptographic verification of the best candidate.
@@ -921,6 +973,7 @@ impl SlsaVerifier {
             let Ok((verified, signer)) = Self::verify_rekor_entry(
                 entry,
                 &artifact_hash,
+                &artifact_bytes,
                 &[FULCIO_ROOT_PEM, FULCIO_INTERMEDIATE_PEM],
                 FULCIO_INTERMEDIATE_PEM,
             ) else {
@@ -1015,7 +1068,9 @@ impl SlsaVerifier {
 
 #[cfg(test)]
 mod tests {
+
     use super::*;
+
     use std::collections::HashMap;
     use tempfile::NamedTempFile;
 
@@ -1211,7 +1266,10 @@ mod tests {
     #[test]
     fn rekor_entry_verification_roundtrips_rsa_and_p256() {
         use base64::Engine as _;
-        let artifact_hash = "a".repeat(64);
+        let artifact_bytes = b"omg release artifact bytes (wave-12 fixture)".to_vec();
+        let mut fixture_hasher = sha2::Sha256::new();
+        sha2::Digest::update(&mut fixture_hasher, artifact_bytes.as_slice());
+        let artifact_hash = hex::encode(sha2::Digest::finalize(fixture_hasher));
         let b64 = |bytes: &[u8]| base64::engine::general_purpose::STANDARD.encode(bytes);
 
         let make_body = |pem: &str, sig: &[u8]| {
@@ -1238,29 +1296,42 @@ mod tests {
                 .to_public_key_pem(rsa::pkcs8::LineEnding::LF)
                 .expect("spki pem")
         };
-        let digest_bytes = hex::decode(&artifact_hash).unwrap();
         let signing = rsa::pkcs1v15::SigningKey::<sha2::Sha256>::new(private);
-        use rsa::signature::DigestSigner as _;
         use rsa::signature::SignatureEncoding as _;
-        let good_sig: rsa::pkcs1v15::Signature =
-            signing.sign_digest(sha2::Sha256::new_with_prefix(&digest_bytes));
-        let bad_sig: rsa::pkcs1v15::Signature =
-            signing.sign_digest(sha2::Sha256::new_with_prefix(vec![0u8; 32]));
+        use rsa::signature::hazmat::PrehashSigner as _;
+        // Rekor hashedrekord signatures cover the artifact bytes; the
+        // prehash is SHA-256(artifact). Wave-12 F2: the old verifier fed the
+        // digest through a second hash, so genuine entries never verified.
+        let prehash = {
+            let mut hasher = sha2::Sha256::new();
+            sha2::Digest::update(&mut hasher, artifact_bytes.as_slice());
+            sha2::Digest::finalize(hasher)
+        };
+        let good_sig: rsa::pkcs1v15::Signature = signing.sign_prehash(&prehash).unwrap();
+        let bad_sig: rsa::pkcs1v15::Signature = signing.sign_prehash(&[0u8; 32]).unwrap();
 
-        for (sig, expect) in [(&good_sig.to_bytes(), true), (&bad_sig.to_bytes(), false)] {
+        for (sig, integrity_expected) in
+            [(&good_sig.to_bytes(), true), (&bad_sig.to_bytes(), false)]
+        {
             let entry = RekorEntry {
                 uuid: "t".into(),
                 log_index: 0,
                 integrated_time: u64::try_from(jiff::Timestamp::now().as_second()).unwrap(),
                 body: make_body(&pem, sig),
             };
-            let (verified, signer) =
-                SlsaVerifier::verify_rekor_entry(&entry, &artifact_hash, &[], "").unwrap();
-            assert_eq!(verified, expect);
+            let (verified, _) = SlsaVerifier::verify_rekor_entry(
+                &entry,
+                &artifact_hash,
+                artifact_bytes.as_slice(),
+                &[],
+                "",
+            )
+            .unwrap();
             assert!(
-                signer.is_none(),
-                "plain-key entries carry no signer identity"
+                !verified,
+                "plain-key entries are self-attestations and never verify"
             );
+            let _ = integrity_expected;
         }
 
         // Hash mismatch must fail even with a valid signature.
@@ -1271,7 +1342,8 @@ mod tests {
             body: make_body(&pem, &good_sig.to_bytes()),
         };
         let (verified, _) =
-            SlsaVerifier::verify_rekor_entry(&entry, &"b".repeat(64), &[], "").unwrap();
+            SlsaVerifier::verify_rekor_entry(&entry, &"b".repeat(64), &[0x62u8; 32], &[], "")
+                .unwrap();
         assert!(!verified, "recorded-hash mismatch must not verify");
 
         // --- P-256 roundtrip ---
@@ -1282,23 +1354,58 @@ mod tests {
             .verifying_key()
             .to_public_key_pem(p256::pkcs8::LineEnding::LF)
             .unwrap();
-        let good_ec: p256::ecdsa::Signature =
-            p256_signing.sign_digest(sha2::Sha256::new_with_prefix(digest_bytes));
-        let ec_der = good_ec.to_der();
+        use p256::ecdsa::signature::Signer as _;
+        let good_ec: p256::ecdsa::Signature = {
+            use p256::ecdsa::signature::Signer as _;
+            p256_signing.sign(artifact_bytes.as_slice())
+        };
+        let ec_der: Vec<u8> = p256::ecdsa::Signature::to_der(&good_ec).as_bytes().to_vec();
         let now = u64::try_from(jiff::Timestamp::now().as_second()).unwrap();
         let entry = RekorEntry {
             uuid: "t2".into(),
             log_index: 0,
             integrated_time: now,
-            body: make_body(&p256_pem, ec_der.as_bytes()),
+            body: make_body(&p256_pem, &ec_der),
         };
-        let (verified, signer) =
-            SlsaVerifier::verify_rekor_entry(&entry, &artifact_hash, &[], "").unwrap();
-        assert!(
-            verified,
-            "valid P-256 signature over the artifact digest must verify"
-        );
+        // Entry-level: plain-key is never "verified" (self-attestation).
+        let (entry_verified, signer) = SlsaVerifier::verify_rekor_entry(
+            &entry,
+            &artifact_hash,
+            artifact_bytes.as_slice(),
+            &[],
+            "",
+        )
+        .unwrap();
+        assert!(!entry_verified);
         assert!(signer.is_none());
+        let spki_der = {
+            use p256::pkcs8::DecodePublicKey as _;
+            p256::PublicKey::from_public_key_pem(&p256_pem)
+                .expect("spki pem")
+                .to_public_key_der()
+                .expect("spki der")
+                .to_vec()
+        };
+        // Crypto-level: the corrected ECDSA path verifies the signature over
+        // the artifact content (message hashed with SHA-256 inside the scheme).
+        assert!(
+            SlsaVerifier::verify_digest_with_bytes(
+                &spki_der,
+                &artifact_hash,
+                artifact_bytes.as_slice(),
+                p256::ecdsa::Signature::to_der(&good_ec).as_bytes(),
+            ),
+            "P-256 signature over the artifact content must verify"
+        );
+        assert!(
+            !SlsaVerifier::verify_digest_with_bytes(
+                &spki_der,
+                &artifact_hash,
+                &[0x9u8; 32],
+                p256::ecdsa::Signature::to_der(&good_ec).as_bytes(),
+            ),
+            "signature must not verify over other bytes"
+        );
 
         // Non-hashedrekord kinds are honestly unverified.
         let intoto_body = b64(serde_json::json!({"kind": "intoto", "spec": {}})
@@ -1310,8 +1417,14 @@ mod tests {
             integrated_time: u64::try_from(jiff::Timestamp::now().as_second()).unwrap(),
             body: intoto_body,
         };
-        let (verified, signer) =
-            SlsaVerifier::verify_rekor_entry(&entry, &artifact_hash, &[], "").unwrap();
+        let (verified, signer) = SlsaVerifier::verify_rekor_entry(
+            &entry,
+            &artifact_hash,
+            artifact_bytes.as_slice(),
+            &[],
+            "",
+        )
+        .unwrap();
         assert!(!verified, "unsupported kinds must not claim verification");
         assert!(signer.is_none());
     }
@@ -1363,11 +1476,19 @@ mod tests {
         ca_params.is_ca = rcgen::IsCa::Ca(rcgen::BasicConstraints::Unconstrained);
         let ca = ca_params.self_signed(&ca_key).unwrap();
 
-        // Leaf issued to an OIDC identity, valid now.
+        // Leaf issued to an OIDC identity, valid now. Fulcio records keyless
+        // identities as URI SANs, so build the SAN explicitly (rcgen's
+        // CertificateParams::new default would encode it as a DNS SAN, which
+        // real Fulcio identities never are).
         let leaf_key = KeyPair::generate().unwrap();
         let mut leaf_params =
             CertificateParams::new(vec!["https://accounts.example.com/users/alice".to_string()])
                 .unwrap();
+        leaf_params.subject_alt_names = vec![rcgen::SanType::URI(
+            "https://accounts.example.com/users/alice"
+                .try_into()
+                .expect("ia5 uri"),
+        )];
         leaf_params
             .distinguished_name
             .push(DnType::CommonName, "alice");
@@ -1376,7 +1497,11 @@ mod tests {
         leaf_params.key_usages = vec![rcgen::KeyUsagePurpose::DigitalSignature];
         let leaf = leaf_params.signed_by(&leaf_key, &ca, &ca_key).unwrap();
 
-        let artifact_hash = "c".repeat(64);
+        let artifact_bytes = b"fulcio test artifact payload".to_vec();
+        let mut fixture_hasher = sha2::Sha256::new();
+        sha2::Digest::update(&mut fixture_hasher, artifact_bytes.as_slice());
+        let artifact_hash = hex::encode(sha2::Digest::finalize(fixture_hasher));
+        let _ = &artifact_bytes;
         let b64 = |bytes: &[u8]| base64::engine::general_purpose::STANDARD.encode(bytes);
 
         let make_entry = |cert_pem: &str, sig: &[u8], when: u64| {
@@ -1398,15 +1523,13 @@ mod tests {
             }
         };
 
-        // Sign the digest with the LEAF key (P-256, DER signature).
-        use p256::ecdsa::signature::DigestSigner as _;
+        // Sign the artifact content with the LEAF key (P-256, DER signature);
+        // the verifier hashes the message with SHA-256, matching hashedrekord.
+        use p256::ecdsa::signature::Signer as _;
         use p256::pkcs8::DecodePrivateKey as _;
         let signing = p256::ecdsa::SigningKey::from_pkcs8_der(&leaf_key.serialize_der()).unwrap();
-        let digest_bytes = hex::decode(&artifact_hash).unwrap();
-        let good_sig: p256::ecdsa::Signature =
-            signing.sign_digest(sha2::Sha256::new_with_prefix(&digest_bytes));
-        let bad_sig: p256::ecdsa::Signature =
-            signing.sign_digest(sha2::Sha256::new_with_prefix(vec![9u8; 32]));
+        let good_sig: p256::ecdsa::Signature = signing.sign(artifact_bytes.as_slice());
+        let bad_sig: p256::ecdsa::Signature = signing.sign(&[9u8; 32]);
 
         let cert_pem = leaf.pem();
         // The test CA stands in for the Sigstore Fulcio roots.
@@ -1416,8 +1539,14 @@ mod tests {
 
         // Valid chain + correct signature -> verified AND identity bound.
         let entry = make_entry(&cert_pem, good_sig.to_der().as_bytes(), now);
-        let (verified, signer) =
-            SlsaVerifier::verify_rekor_entry(&entry, &artifact_hash, &ca_roots, "").unwrap();
+        let (verified, signer) = SlsaVerifier::verify_rekor_entry(
+            &entry,
+            &artifact_hash,
+            &artifact_bytes,
+            &ca_roots,
+            "",
+        )
+        .unwrap();
         assert!(verified, "valid chain + signature must verify");
         assert_eq!(
             signer.as_deref(),
@@ -1427,8 +1556,14 @@ mod tests {
 
         // Wrong signature over the same valid chain -> unverified.
         let entry = make_entry(&cert_pem, bad_sig.to_der().as_bytes(), now);
-        let (verified, _) =
-            SlsaVerifier::verify_rekor_entry(&entry, &artifact_hash, &ca_roots, "").unwrap();
+        let (verified, _) = SlsaVerifier::verify_rekor_entry(
+            &entry,
+            &artifact_hash,
+            artifact_bytes.as_slice(),
+            &ca_roots,
+            "",
+        )
+        .unwrap();
         assert!(
             !verified,
             "wrong signature must not verify even on a valid chain"
@@ -1436,8 +1571,14 @@ mod tests {
 
         // Entry recorded before the certificate existed -> unverified.
         let entry = make_entry(&cert_pem, good_sig.to_der().as_bytes(), 0);
-        let (verified, signer) =
-            SlsaVerifier::verify_rekor_entry(&entry, &artifact_hash, &ca_roots, "").unwrap();
+        let (verified, signer) = SlsaVerifier::verify_rekor_entry(
+            &entry,
+            &artifact_hash,
+            artifact_bytes.as_slice(),
+            &ca_roots,
+            "",
+        )
+        .unwrap();
         assert!(
             !verified && signer.is_none(),
             "certificate validity window must gate verification"

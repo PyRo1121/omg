@@ -548,6 +548,7 @@ mod tests {
     }
 
     #[tokio::test]
+    #[serial_test::serial(history_ownership)]
     async fn operation_reports_history_persistence_failure() -> Result<()> {
         let directory = tempfile::tempdir()?;
         let history_path = directory.path().join("history.json");

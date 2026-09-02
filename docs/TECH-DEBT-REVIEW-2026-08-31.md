@@ -105,4 +105,36 @@ alpm semantics, against vendored libalpm 5 sources and `alpm-sys-ll` docs.
 Raw reports: `~/omg-waves/`. Upstream research: `.tmp/alpm-upstream-research.md`
 (in-repo copy at time of run).*
 
-**Last updated:** 2026-08-31
+
+---
+
+## Fix status (applied 2026-08-31, this working tree)
+
+| Finding | Status |
+|---|---|
+| P0: root-path local `.deb` silent no-op | **Already fixed at HEAD** (`dcdd67fb` — routes local archives through apt-get; wave 7 reviewed the pre-fix tree) |
+| P0: `debian` feature does not compile (String → Version) | **Already fixed at HEAD** (`0c655dad`); all typed assignments route through `parse_version_or_zero` |
+| AUR depth-1 transitive deps | **Already fixed at HEAD** — `build_only` recurses with `in_flight` cycle guard + test |
+| AUR makedepends constraints dropped | **Already fixed at HEAD** (`aur_deps.rs` preserves full relation expressions + test) |
+| AUR pkgbase build locks / stale index TTL / epoch rollback | **Already fixed at HEAD** (`3a430e84`, `bf9fed88`, `f9fbab73`) |
+| UNNEEDED flag on recursive remove | **Already fixed at HEAD** (tests assert RECURSE-only) |
+| HoldPkg cascade bypass | **Already fixed at HEAD** (`ensure_removals_not_held` + tests) |
+| libalpm warnings suppressed | **Already fixed at HEAD** (`forward_alpm_log`) |
+| pacman.conf SigLevel ignored | **Already fixed at HEAD** (`repository_siglevel`/local/remote consumed from config) |
+| Zero-server mirror guard | **Already fixed at HEAD** (`ensure_mirror_servers`) |
+| dpkg lockfile | **Already fixed at HEAD** (flock on `/var/lib/dpkg/lock-frontend` + db lock) |
+| TUI control-char passthrough | **Already fixed at HEAD** (`sanitize_control_chars`) |
+| **P1: local pacman db hard-fails on one corrupt entry; no catch_unwind shield** | **FIXED NOW** — `parse_local_db` warns-and-skips per entry (parity with the sync path); `parse_local_desc` wraps alpm-db V1/V2 parses in catch_unwind with the manual parser as final fallback; regression tests added (old tests asserting hard-fail updated to the new policy) |
+| **P1: non-UTF-8 desc in a sync .db aborts the whole repository read** | **FIXED NOW** — desc entries are lossy-decoded from bytes (matches pacman tolerant reader); malformed entries skipped with a warning |
+| **P1 (new, found while verifying): security export files inherit the permissive mode of the file they replace** | **FIXED NOW** — new `atomic_write_file_sync_private` forces 0o600; `write_private_export` uses it (generic `atomic_write_file_sync` semantics unchanged, guarded by its own test) |
+| Flaky test found during verification: security_exports_replace_permissive_files | Not environmental — it exposed the real bug above; passes after the fix |
+
+**FIXED NOW (batch 2)**: dpkg on-disk transaction journal (`/var/lib/dpkg/omg-transaction-journal.json`; written under the dpkg locks before any mutation, RAII-cleared on normal/error exit, survives SIGKILL, next transaction refuses with a `dpkg --configure -a` remediation message until cleared; corrupt marker also blocks, fail-safe; 2 unit tests) · license clock high-water mark (persisted `max(stored, now)` watermark in data dir; expiry judged against `max(system, watermark)`; verified by a rollback-simulation test using a thread-local path override to avoid the parallel-test leak the first version had) · three-way debian candidate-selection consolidation confirmed already done at HEAD (single `get_detailed_best_candidates`/`is_better_name_candidate` rule; updates dedupe via `best_update_versions` + `compare_deb_versions`) · alpm alpha stack bumped to a single monorepo snapshot `d8967aa` carrying types 0.11.2 / db 0.2.2 / repo-db 0.1.2 / srcinfo 0.6.3 (single alpm_types version in the graph — per-crate tag revs caused two-version type mismatches; `From<FullVersion>` compile error disappeared once unified) — full test suites green under arch, debian-pure, and portable feature sets.
+
+**FIXED NOW (batch 3)**: cache `.lz4/.mmap/.fst` coherence — each artifact carries a generation and every load site validates the trio before trusting the fst→idx mapping (fst gets a `.gen` sidecar written before the fst rename, mmap carries `updated_at` in-band; a torn crash window now self-heals by dropping the stale artifact instead of serving a wrong-generation mapping; regression test added) · root-workspace TMPDIR invariant (privileged transactions anchor beneath `/var/lib/dpkg/omg-tmp` at 0700 — a caller-controlled `TMPDIR` preserved through sudo no longer holds root-owned predictable filenames; non-root keeps honored-TMPDIR behavior) · SLSA verification trio from w12_4: genuine Rekor hashedrekord signatures verify again (the verifier double-hashed; verification now treats the decoded artifact digest as the prehash, RSA via PrehashVerifier, P-256 via message verification over the artifact bytes), plain public-key entries can never yield a verified verdict (Rekor is open-write; integrity-only self-attestation is demoted with an explanation), Fulcio identity extraction prefers RFC822 then URI and never returns a DNS SAN (and the test fixture now builds a faithful URI SAN instead of rcgen's DNS-encoded default).
+
+**FIXED NOW (also found during the pass)**: `verify_fulcio_chain`'s direct-root branch had an empty body (chain verified, function still returned None) restored-by-verification — the whole verification path is exercised by the rebuilt Rekor roundtrip tests; `cli::security` flaky assertion traced to a real privilege bug (batch 1's `atomic_write_file_sync_private`); pre-existing parallelism flake in `core::history` tests documented as a w-addendum (shared history file, reruns pass — separate fix queued).
+
+Still open (batch 4): daemon `RefreshIndex` debounce (w14_5), empty-env-var path hardening + elevated dir derivation (w16_5 F1-F3), telemetry/HTTP SSRF details (w13), alpm alpha crate upstream watch.
+
+**Last updated:** 2026-08-31 (post-fix status appended)

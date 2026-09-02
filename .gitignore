@@ -121,10 +121,13 @@ workers/
 tasks/
 .opencode/
 .tmp/
+.pi/verification-evidence/
 
 # ---- Local planning notes (intentionally untracked) ----
 TODO-mise-removal.md
 .actrc
 .github/workflows/.local-*
 
-.pi/verification-evidence/
+# ---- Local agent workspaces (never ship review state) ----
+.pi/
+piolium/

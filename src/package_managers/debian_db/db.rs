@@ -150,13 +150,28 @@ static DEBIAN_FST_INDEX: LazyLock<RwLock<Option<FstIndex>>> = LazyLock::new(|| R
 /// FST-based search index with TTL-based eviction
 struct FstIndex {
     map: Map<Mmap>,
+    /// Index generation this FST snapshot targets (see `.gen` sidecar).
+    generation: i64,
     /// Last access time for TTL-based eviction
     last_accessed: AtomicU64,
 }
 
 impl FstIndex {
+    /// The `.gen` sidecar records which index generation this FST file was
+    /// built from. The three search artifacts (.lz4, .mmap, .fst) are renamed
+    /// as a group, so a crash between renames can serve an old FST beside a
+    /// new mmap; readers validate the pair before trusting name->idx mapping.
+    fn generation_sidecar(path: &Path) -> PathBuf {
+        PathBuf::from(format!("{}.gen", path.display()))
+    }
+
     /// Open an existing FST index
     fn open(path: &Path) -> Result<Self> {
+        let generation = fs::read_to_string(Self::generation_sidecar(path))
+            .ok()
+            .and_then(|content| content.trim().parse::<i64>().ok())
+            .context("FST generation sidecar missing or unreadable")?;
+
         let file = File::open(path)
             .with_context(|| format!("Failed to open FST index at {}", path.display()))?;
 
@@ -171,6 +186,7 @@ impl FstIndex {
 
         Ok(Self {
             map,
+            generation,
             last_accessed: AtomicU64::new(unix_now_secs()),
         })
     }
@@ -232,6 +248,11 @@ impl DebianMmapIndex {
     /// Access all archived packages without deserializing the index.
     pub fn packages(&self) -> Result<&rkyv::vec::ArchivedVec<rkyv::Archived<DebianPackage>>> {
         Ok(&self.archive().packages)
+    }
+
+    /// The index generation this mmap was built from (`updated_at`).
+    pub fn generation(&self) -> i64 {
+        i64::from(self.archive().updated_at)
     }
 
     #[must_use]
@@ -454,7 +475,8 @@ fn is_better_name_candidate(new_pkg: &DebianPackage, existing_pkg: &DebianPackag
         return new_score > existing_score;
     }
 
-    parse_version_or_zero(&new_pkg.version) > parse_version_or_zero(&existing_pkg.version)
+    crate::package_managers::types::compare_deb_versions(&new_pkg.version, &existing_pkg.version)
+        == std::cmp::Ordering::Greater
 }
 
 fn is_better_arch_candidate(new_pkg: &DebianPackage, existing_pkg: &DebianPackage) -> bool {
@@ -465,7 +487,8 @@ fn is_better_arch_candidate(new_pkg: &DebianPackage, existing_pkg: &DebianPackag
         return false;
     }
 
-    parse_version_or_zero(&new_pkg.version) > parse_version_or_zero(&existing_pkg.version)
+    crate::package_managers::types::compare_deb_versions(&new_pkg.version, &existing_pkg.version)
+        == std::cmp::Ordering::Greater
 }
 
 fn apt_lists_from_read_dir(result: std::io::Result<fs::ReadDir>) -> Result<fs::ReadDir> {
@@ -664,6 +687,12 @@ pub fn ensure_index_loaded() -> Result<()> {
 
         if mmap_guard.is_none()
             && let Ok(mmap_index) = DebianMmapIndex::open(&mmap_path)
+            // A torn rename group can leave an mmap from an older index
+            // generation beside a newer lz4 cache; drop the stale mmap (the
+            // rebuild below re-persists all three).
+            && index.as_ref().is_none_or(|fresh| {
+                fresh.updated_at == mmap_index.generation()
+            })
         {
             *mmap_guard = Some(mmap_index);
         }
@@ -813,7 +842,14 @@ pub fn ensure_index_loaded() -> Result<()> {
             .into_inner()
             .context("Failed to build FST index")?;
 
-        // Atomic write for FST index
+        // Atomic write for FST index. The .gen sidecar is written first so a
+        // crash in between leaves a mismatched pair that load-time validation
+        // rejects (never an fst trusted against the wrong generation).
+        crate::core::safe_ops::atomic_write_file_sync(
+            FstIndex::generation_sidecar(&fst_path),
+            index.updated_at.to_string().as_bytes(),
+        )
+        .context("Failed to write FST generation sidecar")?;
         let mut temp_fst =
             NamedTempFile::new_in(parent).context("Failed to create temporary FST file")?;
         temp_fst
@@ -915,8 +951,14 @@ fn ensure_fst_loaded() {
         }
     }
 
-    // Try to load from disk
-    if let Ok(fst_index) = FstIndex::open(&fst_path) {
+    // Try to load from disk. The FST only targets the same generation as the
+    // mmap when their recorded generations agree; any mismatch is treated as
+    // absent and triggers a rebuild in the regular search path.
+    let mmap_guard = crate::core::sync::read_cache(&DEBIAN_MMAP_INDEX);
+    if let Ok(fst_index) = FstIndex::open(&fst_path)
+        && let Some(ref mmap) = *mmap_guard
+        && fst_index.generation == mmap.generation()
+    {
         let mut guard = crate::core::sync::write_cache(&DEBIAN_FST_INDEX);
         *guard = Some(fst_index);
         tracing::debug!("Loaded FST index from disk");
@@ -1385,7 +1427,11 @@ pub fn search_fast(query: &str) -> Result<Vec<Package>> {
     if !query.is_empty() && !query.contains(':') {
         ensure_fst_loaded();
         let fst_guard = crate::core::sync::read_cache(&DEBIAN_FST_INDEX);
-        if fst_guard.is_some() && ensure_mmap_loaded() {
+        if let Some(ref fst_index) = *fst_guard
+            && ensure_mmap_loaded()
+            && let Some(ref mmap) = *crate::core::sync::read_cache(&DEBIAN_MMAP_INDEX)
+            && fst_index.generation == mmap.generation()
+        {
             let fst_index = fst_guard.as_ref().expect("checked is_some() above");
             fst_index.touch();
             let query_lower = query.to_lowercase();
@@ -1440,7 +1486,9 @@ pub fn search_fast(query: &str) -> Result<Vec<Package>> {
 
     // FST search with in-memory index
     let fst_guard = crate::core::sync::read_cache(&DEBIAN_FST_INDEX);
-    if let Some(ref fst_index) = *fst_guard {
+    if let Some(ref fst_index) = *fst_guard
+        && fst_index.generation == index.updated_at
+    {
         fst_index.touch();
         return Ok(fst_search(
             &fst_index.map,
@@ -2419,6 +2467,31 @@ fn remove_deb_files(dir: &Path) -> Result<(usize, u64)> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Wave-8 coherence fix: the FST's recorded generation must match the
+    /// mmap/index generation or the fst->idx mapping is stale.
+    #[test]
+    fn fst_index_requires_generation_sidecar() {
+        let temp = tempfile::TempDir::new().unwrap();
+        let fst_path = temp.path().join("debian_index_v8.fst");
+
+        let mut builder = fst::MapBuilder::memory();
+        builder.insert("bash".as_bytes(), 0u64).unwrap();
+        let fst_bytes = builder.into_inner().unwrap();
+
+        // No sidecar: open refuses (unknown generation).
+        std::fs::write(&fst_path, &fst_bytes).unwrap();
+        assert!(
+            FstIndex::open(&fst_path).is_err(),
+            "missing sidecar rejected"
+        );
+
+        // Sidecar present: open stores the generation it records.
+        let sidecar = FstIndex::generation_sidecar(&fst_path);
+        crate::core::safe_ops::atomic_write_file_sync(&sidecar, b"42").unwrap();
+        let index = FstIndex::open(&fst_path).expect("valid sidecar");
+        assert_eq!(index.generation, 42);
+    }
 
     /// Serializes every test that mutates process-global `OMG_TEST_MODE`;
     /// env vars are shared by all parallel test threads.

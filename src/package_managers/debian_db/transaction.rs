@@ -67,6 +67,12 @@ const INITIAL_BACKOFF_MS: u64 = 200;
 const DPKG_FRONTEND_LOCK_PATH: &str = "/var/lib/dpkg/lock-frontend";
 const DPKG_DATABASE_LOCK_PATH: &str = "/var/lib/dpkg/lock";
 const DPKG_UPDATES_PATH: &str = "/var/lib/dpkg/updates";
+/// Journal of an in-flight omg dpkg transaction. If this file exists at
+/// transaction start, an earlier run was killed mid-mutation (flock is
+/// released on kill but unpacked files and dpkg state may be torn), so the
+/// next transaction refuses to proceed until the operator completes dpkg
+/// recovery and removes the file.
+const DPKG_TRANSACTION_JOURNAL_PATH: &str = "/var/lib/dpkg/omg-transaction-journal.json";
 const MAINTAINER_SCRIPT_TIMEOUT: Duration = Duration::from_secs(15 * 60);
 static DPKG_TRANSACTION_LOCK: LazyLock<Arc<tokio::sync::Mutex<()>>> =
     LazyLock::new(|| Arc::new(tokio::sync::Mutex::new(())));
@@ -122,6 +128,31 @@ fn ensure_no_pending_dpkg_updates_at(updates_path: &Path) -> Result<()> {
     Ok(())
 }
 
+/// Transaction workspace for privileged runs. Anchored beneath dpkg's own
+/// root-owned state directory because `$TMPDIR` is caller-controlled: an
+/// attacker-writable parent (preserved through sudo) lets its owner unlink
+/// or swap the workspace between steps, and the workspace holds predictable
+/// package and rollback filenames while running as root. Non-root callers
+/// keep the default honored-TMPDIR behavior (no privilege to abuse).
+fn create_transaction_workspace() -> Result<TempDir> {
+    if !crate::core::privilege::is_root() {
+        return TempDir::new().context("Failed to create transaction temp directory");
+    }
+    let anchored = Path::new("/var/lib/dpkg/omg-tmp");
+    fs::create_dir_all(anchored).with_context(|| {
+        format!(
+            "Failed to create privileged transaction temp directory {}",
+            anchored.display()
+        )
+    })?;
+    fs::set_permissions(anchored, fs::Permissions::from_mode(0o700))
+        .with_context(|| format!("Failed to restrict permissions on {}", anchored.display()))?;
+    tempfile::Builder::new()
+        .prefix("omg-txn-")
+        .tempdir_in(anchored)
+        .context("Failed to create anchored transaction temp directory")
+}
+
 fn acquire_dpkg_locks_at(frontend_path: &Path, database_path: &Path) -> Result<DpkgLockGuard> {
     fn acquire(path: &Path) -> Result<File> {
         let file = fs::OpenOptions::new()
@@ -159,6 +190,108 @@ async fn acquire_dpkg_locks() -> Result<DpkgLockGuard> {
     })
     .await
     .context("dpkg lock worker failed")?
+}
+
+#[derive(Debug, serde::Serialize, serde::Deserialize)]
+struct TransactionJournal {
+    started_at_unix: u64,
+    pid: u32,
+    action: String,
+    packages: Vec<String>,
+}
+
+fn transaction_journal_path() -> PathBuf {
+    Path::new(DPKG_TRANSACTION_JOURNAL_PATH).to_path_buf()
+}
+
+/// Write the in-flight marker; returns a guard that removes it on drop.
+/// The marker survives a SIGKILL (drop does not run), which is exactly the
+/// detection signal the next transaction start needs.
+fn write_transaction_journal_at(path: &Path, action: &str, packages: &[String]) -> Result<()> {
+    let journal = TransactionJournal {
+        started_at_unix: std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map_or(0, |since| since.as_secs()),
+        pid: std::process::id(),
+        action: action.to_string(),
+        packages: packages.to_vec(),
+    };
+    crate::core::safe_ops::atomic_write_file_sync(
+        path,
+        serde_json::to_vec(&journal).context("Failed to serialize dpkg transaction journal")?,
+    )?;
+    Ok(())
+}
+
+/// `Some(remediation_message)` when a previous transaction marker exists
+/// (including a corrupt one — never proceed on unknown state).
+fn stale_transaction_journal(path: &Path) -> Option<String> {
+    let content = fs::read_to_string(path).ok()?;
+    let parsed: Option<TransactionJournal> = serde_json::from_str(&content)
+        .map_err(|error| {
+            tracing::warn!(
+                error = %error,
+                "Corrupt dpkg transaction journal; treating as interrupted"
+            )
+        })
+        .ok();
+    let summary = match parsed {
+        Some(journal) => format!(
+            "{} of {} package(s), started pid {} at unix epoch {}",
+            journal.action,
+            journal.packages.len(),
+            journal.pid,
+            journal.started_at_unix
+        ),
+        None => "unreadable transaction marker".to_string(),
+    };
+    Some(format!(
+        "An earlier omg dpkg transaction was interrupted mid-run ({summary}). \n\
+         Package state may be inconsistent. Complete dpkg recovery first, e.g.:\n\
+             sudo dpkg --configure -a\n\
+         then remove {} to allow new omg transactions.",
+        path.display()
+    ))
+}
+
+/// RAII journal marker: written at acquire, removed on drop (normal or
+/// error path). Survives process kill by design — that residue is the point.
+#[derive(Debug)]
+struct DpkgTransactionJournalGuard {
+    path: PathBuf,
+}
+
+impl DpkgTransactionJournalGuard {
+    fn acquire_at(path: &Path, action: &str, packages: &[String]) -> Result<Self> {
+        if let Some(remediation) = stale_transaction_journal(path) {
+            anyhow::bail!("{remediation}");
+        }
+        write_transaction_journal_at(path, action, packages)?;
+        Ok(Self {
+            path: path.to_path_buf(),
+        })
+    }
+
+    async fn acquire(action: &str, packages: &[String]) -> Result<Self> {
+        let journal_path = transaction_journal_path();
+        let packages = packages.to_vec();
+        let action = action.to_string();
+        tokio::task::spawn_blocking(move || Self::acquire_at(&journal_path, &action, &packages))
+            .await
+            .context("Transaction journal worker failed")?
+    }
+}
+
+impl Drop for DpkgTransactionJournalGuard {
+    fn drop(&mut self) {
+        if let Err(error) = fs::remove_file(&self.path) {
+            tracing::warn!(
+                error = %error,
+                journal = %self.path.display(),
+                "Failed to clear dpkg transaction journal"
+            );
+        }
+    }
 }
 
 /// A package transaction
@@ -335,13 +468,25 @@ impl Transaction {
         // this process as well. Keep both locks through rollback/completion.
         let process_lock = Arc::clone(&DPKG_TRANSACTION_LOCK).lock_owned().await;
         let dpkg_locks = acquire_dpkg_locks().await?;
+        let _process_lock = DPKG_TRANSACTION_LOCK.lock().await;
+        let _dpkg_locks = acquire_dpkg_locks().await?;
+        // Journal before any mutation; a SIGKILL leaves it behind as the
+        // recovery signal for the next transaction (see journal const doc).
+        let package_names: Vec<String> = self
+            .to_install
+            .iter()
+            .chain(self.to_upgrade.iter())
+            .map(|action| action.name.clone())
+            .collect();
+        let _journal =
+            DpkgTransactionJournalGuard::acquire("install-upgrade", &package_names).await?;
         tracing::info!(
             "Starting pipelined transaction with {} packages",
             self.package_count()
         );
 
         // Create temp directory
-        self.temp_dir = Some(TempDir::new().context("Failed to create temp directory")?);
+        self.temp_dir = Some(create_transaction_workspace()?);
 
         // Use pipelined execution for better performance
         self.state = TransactionState::Downloading;
@@ -891,6 +1036,7 @@ impl Transaction {
 
         let _process_lock = DPKG_TRANSACTION_LOCK.lock().await;
         let _dpkg_locks = acquire_dpkg_locks().await?;
+        let _journal = DpkgTransactionJournalGuard::acquire("remove", &package_names).await?;
         tokio::task::spawn_blocking(move || execute_removal_blocking(&package_names))
             .await
             .context("Package removal task failed")?
@@ -2406,6 +2552,53 @@ mod tests {
             .await
     }
 
+    /// Wave-8 durability fix: an interrupted transaction leaves a recovery
+    /// marker; the next transaction must refuse until the operator resolves.
+    #[test]
+    fn journal_acquire_blocks_until_cleared_and_round_trips() {
+        let temp = tempfile::TempDir::new().unwrap();
+        let path = temp.path().join("omg-transaction-journal.json");
+
+        // Fresh directory: acquire writes the marker.
+        let guard = DpkgTransactionJournalGuard::acquire_at(
+            &path,
+            "install-upgrade",
+            &["vim".to_string(), "curl".to_string()],
+        )
+        .expect("acquire on clean state");
+        assert!(path.exists());
+
+        // While the marker exists, a second transaction is refused with a
+        // remediation hint.
+        let refusal = DpkgTransactionJournalGuard::acquire_at(
+            &path,
+            "install-upgrade",
+            &["other".to_string()],
+        );
+        let message = refusal.expect_err("stale journal must block").to_string();
+        assert!(message.contains("interrupted"), "got: {message}");
+        assert!(message.contains("dpkg --configure -a"), "got: {message}");
+
+        // Dropping the guard clears the marker and unblocks the next run.
+        drop(guard);
+        assert!(!path.exists());
+        assert!(
+            DpkgTransactionJournalGuard::acquire_at(&path, "remove", &["vim".to_string()]).is_ok()
+        );
+    }
+
+    /// A corrupt journal means unknown state: the next transaction must still
+    /// refuse (fail-safe), with a message pointing at the file.
+    #[test]
+    fn journal_corrupt_marker_blocks_with_remediation() {
+        let temp = tempfile::TempDir::new().unwrap();
+        let path = temp.path().join("omg-transaction-journal.json");
+        std::fs::write(&path, b"{ not valid json").unwrap();
+        let refusal =
+            DpkgTransactionJournalGuard::acquire_at(&path, "install-upgrade", &["vim".to_string()]);
+        assert!(refusal.is_err(), "corrupt marker must block");
+    }
+
     #[test]
     fn maintainer_scripts_receive_the_dpkg_environment_contract() {
         let directory = tempfile::tempdir().expect("tempdir");
@@ -2872,7 +3065,10 @@ mod tests {
 
         let link = temp.path().join("usr/share/foo");
         let link_metadata = fs::symlink_metadata(&link).expect("symlink exists");
-        assert!(link_metadata.file_type().is_symlink(), "recreated as symlink");
+        assert!(
+            link_metadata.file_type().is_symlink(),
+            "recreated as symlink"
+        );
         assert_eq!(
             std::fs::read_link(&link).expect("read link"),
             temp.path().join("etc/bar"),

@@ -13,7 +13,7 @@ use rayon::prelude::*;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::fs::{self, File};
-use std::io::{Read, Seek, Write};
+use std::io::{BufReader, Cursor, Read, Seek, Write};
 use std::path::{Path, PathBuf};
 use std::str::FromStr;
 use std::sync::RwLock;
@@ -22,7 +22,7 @@ use std::time::SystemTime;
 use tracing::instrument;
 
 use crate::core::paths;
-use crate::runtimes::common::{BudgetedReader, BudgetedSink};
+use crate::runtimes::common::{BudgetedReader, BudgetedSink, BudgetedWriter};
 
 /// TTL for cache eviction safety net (30 minutes)
 const CACHE_TTL_SECS: u64 = 30 * 60;
@@ -214,27 +214,37 @@ pub fn parse_sync_db(path: &Path, repo_name: &str) -> Result<HashMap<String, Syn
     let mut file =
         File::open(path).with_context(|| format!("Failed to open {}", path.display()))?;
 
-    // Detect compression type from the first magic bytes rather than the
-    // filename (mirrors pacman's own content sniffing), then hand the
-    // already-opened file to the matching decoder (single open per DB).
     let reader: Box<dyn Read> = {
-        let mut magic = [0u8; 4];
-        file.read_exact(&mut magic)?;
-        // The magic probe advanced the stream; decoders must see byte 0.
+        let mut probe = [0u8; 263];
+        let probe_len = file.read(&mut probe)?;
         file.rewind()?;
 
-        if magic[0..2] == [0x1f, 0x8b] {
+        if probe.starts_with(&[0x1f, 0x8b]) {
             Box::new(BudgetedReader::new(
                 GzDecoder::new(file),
                 BudgetedSink::max_budget(),
             ))
-        } else if magic[0..4] == [0x28, 0xb5, 0x2f, 0xfd] {
+        } else if probe.starts_with(&[0x28, 0xb5, 0x2f, 0xfd]) {
             let decoder = ruzstd::decoding::StreamingDecoder::new(file)
                 .map_err(|e| anyhow::anyhow!("zstd init: {e}"))?;
             Box::new(BudgetedReader::new(decoder, BudgetedSink::max_budget()))
+        } else if probe.starts_with(&[0xfd, b'7', b'z', b'X', b'Z', 0x00]) {
+            let mut output = BudgetedWriter::new(Vec::new(), BudgetedSink::max_budget());
+            lzma_rs::xz_decompress(&mut BufReader::new(file), &mut output)
+                .context("Failed to decompress xz pacman database")?;
+            Box::new(Cursor::new(output.into_inner()))
+        } else if probe.starts_with(&[0x04, 0x22, 0x4d, 0x18]) {
+            Box::new(BudgetedReader::new(
+                lz4_flex::frame::FrameDecoder::new(file),
+                BudgetedSink::max_budget(),
+            ))
+        } else if probe_len >= 262 && &probe[257..262] == b"ustar" {
+            Box::new(BudgetedReader::new(file, BudgetedSink::max_budget()))
         } else {
-            // Unknown magic: fall back to gzip, matching pacman defaults.
-            Box::new(GzDecoder::new(file))
+            anyhow::bail!(
+                "Unsupported pacman database compression: {}",
+                path.display()
+            );
         }
     };
 
@@ -253,13 +263,17 @@ pub fn parse_sync_db(path: &Path, repo_name: &str) -> Result<HashMap<String, Syn
         let path_str = entry_path.to_string_lossy();
 
         if path_str.ends_with("/desc") {
-            let mut content = String::new();
-            entry.read_to_string(&mut content).with_context(|| {
+            // The db is a tar stream; a desc can legitimately be arbitrary
+            // bytes on a damaged mirror. Lossy-decode instead of failing the
+            // whole repository read (matches pacman's tolerant reader).
+            let mut raw = Vec::new();
+            entry.read_to_end(&mut raw).with_context(|| {
                 format!(
                     "Failed to read desc {} from repo {repo_name}",
                     entry_path.display()
                 )
             })?;
+            let content = String::from_utf8_lossy(&raw).into_owned();
 
             match parse_desc_content(&content, repo_name) {
                 Ok(pkg) if !pkg.name.is_empty() => {
@@ -459,33 +473,61 @@ pub fn parse_local_db(path: &Path) -> Result<HashMap<String, LocalDbPackage>> {
     for entry in std::fs::read_dir(path)
         .with_context(|| format!("Failed to read pacman local directory {}", path.display()))?
     {
-        let entry = entry.with_context(|| {
-            format!(
-                "Failed to read pacman local directory entry in {}",
-                path.display()
-            )
-        })?;
+        // Match the sync-db policy: one corrupt entry must never take down
+        // the whole local database (it breaks every pacman feature).
+        let entry = match entry {
+            Ok(entry) => entry,
+            Err(error) => {
+                tracing::warn!(
+                    error = %error,
+                    "Ignoring unreadable pacman local directory entry"
+                );
+                continue;
+            }
+        };
         let pkg_path = entry.path();
-        let meta = entry.metadata().with_context(|| {
-            format!(
-                "Failed to read pacman local package metadata {}",
-                pkg_path.display()
-            )
-        })?;
+        let meta = match entry.metadata() {
+            Ok(meta) => meta,
+            Err(error) => {
+                tracing::warn!(
+                    pkg_dir = %pkg_path.display(),
+                    error = %error,
+                    "Ignoring pacman local package with unreadable metadata"
+                );
+                continue;
+            }
+        };
         if !meta.is_dir() {
             continue;
         }
 
         let desc_path = pkg_path.join("desc");
         if !desc_path.exists() {
-            anyhow::bail!(
-                "Local package directory {} is missing desc",
-                pkg_path.display()
+            tracing::warn!(
+                pkg_dir = %pkg_path.display(),
+                "Ignoring local package directory missing its desc file (corrupt pacman local db entry)"
             );
+            continue;
         }
 
-        let pkg = parse_local_desc(&desc_path)?;
-        packages.insert(pkg.name.clone(), pkg);
+        match parse_local_desc(&desc_path) {
+            Ok(pkg) if !pkg.name.is_empty() => {
+                packages.insert(pkg.name.clone(), pkg);
+            }
+            Ok(_) => {
+                tracing::warn!(
+                    pkg_dir = %pkg_path.display(),
+                    "Ignoring local package entry without a package name"
+                );
+            }
+            Err(error) => {
+                tracing::warn!(
+                    pkg_dir = %pkg_path.display(),
+                    error = %error,
+                    "Ignoring malformed local pacman database package entry"
+                );
+            }
+        }
     }
 
     Ok(packages)
@@ -497,7 +539,8 @@ fn require_package_version(raw: &str) -> Result<Version> {
 }
 
 fn parse_local_desc(path: &Path) -> Result<LocalDbPackage> {
-    let content = std::fs::read_to_string(path)?;
+    let content = std::fs::read_to_string(path)
+        .with_context(|| format!("Failed to read local package desc {}", path.display()))?;
 
     // Modern pacman never writes `%REQUIREDBY%`/`%OPTFOR%` sections into local
     // desc files, so reverse dependencies cannot be read from disk. They are
@@ -1290,13 +1333,32 @@ mod tests {
         );
 
         let zstd_bytes = zstd::stream::encode_all(&raw[..], 3).unwrap();
-        let zstd_path = temp.path().join("custom.db");
-        std::fs::write(&zstd_path, &zstd_bytes).unwrap();
-        let parsed = parse_sync_db(&zstd_path, "custom").expect("zstd db must parse after probe");
+        let mut xz_bytes = Vec::new();
+        lzma_rs::xz_compress(&mut Cursor::new(&raw), &mut xz_bytes).unwrap();
+        let mut lz4_encoder = lz4_flex::frame::FrameEncoder::new(Vec::new());
+        lz4_encoder.write_all(&raw).unwrap();
+        let lz4_bytes = lz4_encoder.finish().unwrap();
+
+        for (name, bytes) in [
+            ("zstd", zstd_bytes),
+            ("xz", xz_bytes),
+            ("lz4", lz4_bytes),
+            ("raw tar", raw),
+        ] {
+            let path = temp.path().join(format!("{name}.db"));
+            std::fs::write(&path, bytes).unwrap();
+            let parsed = parse_sync_db(&path, "custom")
+                .unwrap_or_else(|error| panic!("{name} db must parse: {error:#}"));
+            assert!(parsed.contains_key("bash"), "{name} db omitted bash");
+        }
+
+        let unknown = temp.path().join("unknown.db");
+        std::fs::write(&unknown, b"not an archive").unwrap();
+        let error = parse_sync_db(&unknown, "unknown").unwrap_err();
         assert!(
-            parsed.contains_key("bash"),
-            "bash must be found, got keys {:?}",
-            parsed.keys()
+            error
+                .to_string()
+                .contains("Unsupported pacman database compression")
         );
     }
 
@@ -1488,15 +1550,15 @@ mod tests {
         assert!(packages.is_empty());
     }
 
+    /// Wave-2 policy fix: a package directory without its desc file is a
+    /// corrupt-entry condition - it must be skipped with a warning, not abort
+    /// the whole local database read.
     #[test]
-    fn test_parse_local_db_missing_desc_errors() {
+    fn test_parse_local_db_missing_desc_is_skipped() {
         let temp_dir = tempfile::TempDir::new().unwrap();
         std::fs::create_dir(temp_dir.path().join("vim-9.1.0-1")).unwrap();
-        let error = parse_local_db(temp_dir.path()).unwrap_err();
-        assert!(
-            error.to_string().contains("missing desc"),
-            "unexpected error: {error:#}"
-        );
+        let packages = parse_local_db(temp_dir.path()).unwrap();
+        assert!(packages.is_empty(), "desc-less entry must be skipped");
     }
 
     #[test]
@@ -1509,11 +1571,10 @@ mod tests {
             "%NAME%\nvim\n\n%VERSION%\nnot a version!!!\n\n%DESC%\nVi Improved\n",
         )
         .unwrap();
-        let error = parse_local_db(temp_dir.path()).unwrap_err();
-        assert!(
-            error.to_string().contains("Invalid package version"),
-            "unexpected error: {error:#}"
-        );
+        // A malformed version means the entry itself is dropped (per the
+        // sync-db's per-entry degrade policy); the read as a whole succeeds.
+        let packages = parse_local_db(temp_dir.path()).unwrap();
+        assert!(packages.is_empty(), "invalid entry must be skipped");
     }
 
     #[test]
