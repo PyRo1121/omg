@@ -57,9 +57,14 @@ fn build_db_url(mirror_template: &str, repo: &str) -> String {
         + ".db"
 }
 
+fn build_signature_url(database_url: &str) -> String {
+    format!("{database_url}.sig")
+}
+
 const MAX_RETRIES: u32 = 3;
 const INITIAL_BACKOFF_MS: u64 = 100;
 const MAX_SYNC_DB_BYTES: u64 = 512 * 1024 * 1024;
+const MAX_SYNC_SIGNATURE_BYTES: u64 = 1024 * 1024;
 const MIRROR_RACE_TIMEOUT_MS: u64 = 2000;
 const MAX_MIRRORS_PER_REPO: usize = 5;
 async fn race_mirrors(client: &Client, urls: &[String]) -> Option<usize> {
@@ -109,11 +114,16 @@ async fn race_mirrors(client: &Client, urls: &[String]) -> Option<usize> {
     Some(0)
 }
 
-async fn download_response_to_dest(mut response: reqwest::Response, dest: &Path) -> Result<()> {
+async fn download_response_to_dest(
+    mut response: reqwest::Response,
+    dest: &Path,
+    byte_limit: u64,
+    artifact: &str,
+) -> Result<()> {
     if let Some(length) = response.content_length() {
         anyhow::ensure!(
-            length <= MAX_SYNC_DB_BYTES,
-            "Package database declares {length} bytes, exceeding the {MAX_SYNC_DB_BYTES}-byte limit"
+            length <= byte_limit,
+            "{artifact} declares {length} bytes, exceeding the {byte_limit}-byte limit"
         );
     }
 
@@ -123,10 +133,10 @@ async fn download_response_to_dest(mut response: reqwest::Response, dest: &Path)
     while let Some(chunk) = response.chunk().await? {
         downloaded = downloaded
             .checked_add(u64::try_from(chunk.len()).context("Download chunk is too large")?)
-            .context("Package database byte count overflowed")?;
+            .with_context(|| format!("{artifact} byte count overflowed"))?;
         anyhow::ensure!(
-            downloaded <= MAX_SYNC_DB_BYTES,
-            "Package database exceeded the {MAX_SYNC_DB_BYTES}-byte limit"
+            downloaded <= byte_limit,
+            "{artifact} exceeded the {byte_limit}-byte limit"
         );
         file.write_all(&chunk)
             .await
@@ -135,12 +145,55 @@ async fn download_response_to_dest(mut response: reqwest::Response, dest: &Path)
     persist_same_dir_temp(file, temporary_path, dest).await
 }
 
+async fn download_database_signature(
+    client: &Client,
+    database_url: &str,
+    staged_signature: &Path,
+    siglevel: alpm::SigLevel,
+) -> Result<()> {
+    match tokio::fs::remove_file(staged_signature).await {
+        Ok(()) => {}
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+        Err(error) => return Err(error).context("Failed to clear a staged database signature"),
+    }
+    if !siglevel.contains(alpm::SigLevel::DATABASE) {
+        return Ok(());
+    }
+
+    let signature_url = build_signature_url(database_url);
+    let safe_url = crate::core::http::redact_url(&signature_url);
+    let response = client
+        .get(&signature_url)
+        .send()
+        .await
+        .with_context(|| format!("Failed to download database signature from {safe_url}"))?;
+    if response.status() == reqwest::StatusCode::NOT_FOUND
+        && siglevel.contains(alpm::SigLevel::DATABASE_OPTIONAL)
+    {
+        return Ok(());
+    }
+    anyhow::ensure!(
+        response.status().is_success(),
+        "HTTP {} while downloading database signature from {safe_url}",
+        response.status()
+    );
+    download_response_to_dest(
+        response,
+        staged_signature,
+        MAX_SYNC_SIGNATURE_BYTES,
+        "Package database signature",
+    )
+    .await
+}
+
 #[expect(clippy::literal_string_with_formatting_args, clippy::expect_used)] // Static indicatif templates are always valid; braces are template syntax
 async fn download_db(
     client: &Client,
     urls: Vec<String>,
     staged_dest: &Path,
+    staged_signature: &Path,
     live_dest: &Path,
+    siglevel: alpm::SigLevel,
     pb: &ProgressBar,
 ) -> Result<()> {
     let repo_name = live_dest.file_stem().map_or_else(
@@ -222,8 +275,16 @@ async fn download_db(
                     .with_context(|| {
                         format!("Failed to stage unchanged database {}", live_dest.display())
                     })?;
-                pb.finish_with_message(format!("{repo_name} ✓"));
-                return Ok(());
+                match download_database_signature(client, url, staged_signature, siglevel).await {
+                    Ok(()) => {
+                        pb.finish_with_message(format!("{repo_name} ✓"));
+                        return Ok(());
+                    }
+                    Err(error) => {
+                        last_error = Some(error);
+                        continue;
+                    }
+                }
             }
 
             if crate::core::http::is_retryable_status(response.status()) {
@@ -249,8 +310,21 @@ async fn download_db(
                 );
             }
 
-            if let Err(e) = download_response_to_dest(response, staged_dest).await {
-                last_error = Some(e);
+            if let Err(error) = download_response_to_dest(
+                response,
+                staged_dest,
+                MAX_SYNC_DB_BYTES,
+                "Package database",
+            )
+            .await
+            {
+                last_error = Some(error);
+                continue;
+            }
+            if let Err(error) =
+                download_database_signature(client, url, staged_signature, siglevel).await
+            {
+                last_error = Some(error);
                 continue;
             }
 
@@ -263,9 +337,16 @@ async fn download_db(
     Err(last_error.unwrap_or_else(|| anyhow::anyhow!("No mirrors available")))
 }
 
+struct StagedFile {
+    staged: PathBuf,
+    destination: PathBuf,
+    publish: bool,
+}
+
 struct DatabasePublication {
     staged: PathBuf,
     destination: PathBuf,
+    publish: bool,
     backup: Option<PathBuf>,
     published: bool,
 }
@@ -274,6 +355,7 @@ fn rollback_database_publication(publications: &mut [DatabasePublication]) -> Ve
     let mut errors = Vec::new();
     for publication in publications.iter_mut().rev() {
         if publication.published
+            && publication.publish
             && let Err(error) = std::fs::rename(&publication.destination, &publication.staged)
         {
             errors.push(format!(
@@ -293,26 +375,43 @@ fn rollback_database_publication(publications: &mut [DatabasePublication]) -> Ve
     errors
 }
 
+#[cfg(test)]
 fn commit_staged_databases(
     databases: &[(PathBuf, PathBuf)],
     failed_downloads: usize,
 ) -> Result<()> {
+    let files = databases
+        .iter()
+        .map(|(staged, destination)| StagedFile {
+            staged: staged.clone(),
+            destination: destination.clone(),
+            publish: true,
+        })
+        .collect::<Vec<_>>();
+    commit_staged_files(&files, failed_downloads)
+}
+
+fn commit_staged_files(files: &[StagedFile], failed_downloads: usize) -> Result<()> {
     anyhow::ensure!(
         failed_downloads == 0,
         "Failed to sync {failed_downloads} database(s); live databases were left unchanged"
     );
 
-    let mut publications = databases
+    let mut publications = files
         .iter()
-        .map(|(staged, destination)| DatabasePublication {
-            staged: staged.clone(),
-            destination: destination.clone(),
+        .map(|file| DatabasePublication {
+            staged: file.staged.clone(),
+            destination: file.destination.clone(),
+            publish: file.publish,
             backup: None,
             published: false,
         })
         .collect::<Vec<_>>();
 
     for publication in &publications {
+        if !publication.publish {
+            continue;
+        }
         let metadata = std::fs::symlink_metadata(&publication.staged)
             .with_context(|| format!("Missing staged database {}", publication.staged.display()))?;
         anyhow::ensure!(
@@ -360,10 +459,12 @@ fn commit_staged_databases(
     }
 
     for index in 0..publications.len() {
-        if let Err(error) = std::fs::rename(
-            &publications[index].staged,
-            &publications[index].destination,
-        ) {
+        if publications[index].publish
+            && let Err(error) = std::fs::rename(
+                &publications[index].staged,
+                &publications[index].destination,
+            )
+        {
             let failed_destination = publications[index].destination.display().to_string();
             let rollback_errors = rollback_database_publication(&mut publications);
             anyhow::bail!(
@@ -416,6 +517,39 @@ fn commit_staged_databases(
     Ok(())
 }
 
+fn verify_staged_databases(
+    staged_database_root: &Path,
+    config: &crate::core::pacman_conf::PacmanConfig,
+) -> Result<()> {
+    let root = paths::pacman_root_result()?.to_string_lossy().into_owned();
+    let database_root = staged_database_root.to_string_lossy().into_owned();
+    let mut alpm = alpm::Alpm::new(root, database_root)
+        .context("Failed to initialize staged database verifier")?;
+    crate::package_managers::alpm_ops::configure_signature_verification(&mut alpm, config)?;
+    let policy = crate::package_managers::alpm_ops::signature_policy(config)?;
+
+    for repo in &config.repos {
+        let siglevel = crate::package_managers::alpm_ops::repository_siglevel(
+            policy.default,
+            repo.sig_level.as_deref(),
+        )?;
+        let database = alpm
+            .register_syncdb(repo.name.as_str(), siglevel)
+            .with_context(|| format!("Failed to register staged database '{}'", repo.name))?;
+        database
+            .is_valid()
+            .with_context(|| format!("Signature verification failed for '{}'", repo.name))?;
+    }
+    Ok(())
+}
+
+struct StagedRepository {
+    database: PathBuf,
+    database_destination: PathBuf,
+    signature: PathBuf,
+    signature_destination: PathBuf,
+}
+
 /// Synchronize configured package databases concurrently.
 #[expect(clippy::literal_string_with_formatting_args, clippy::expect_used)] // Static indicatif templates are always valid; braces are template syntax
 pub async fn sync_databases_parallel() -> Result<()> {
@@ -444,6 +578,11 @@ pub async fn sync_databases_parallel() -> Result<()> {
         .prefix(".omg-sync-")
         .tempdir_in(&sync_dir)
         .with_context(|| format!("Failed to stage databases in {}", sync_dir.display()))?;
+    let staged_database_root = staging.path().join("database-root");
+    let staged_sync_dir = staged_database_root.join("sync");
+    tokio::fs::create_dir_all(&staged_sync_dir)
+        .await
+        .context("Failed to create staged pacman sync directory")?;
 
     // Set up progress bars
     let mp = MultiProgress::new();
@@ -468,18 +607,28 @@ pub async fn sync_databases_parallel() -> Result<()> {
 
     // Repository names do not imply a mirror source: an enterprise [core]
     // override must never be replaced with the host's global mirrorlist.
-    let repos_to_sync: Vec<(String, Vec<String>, PathBuf)> = repository_urls
+    let signature_policy = crate::package_managers::alpm_ops::signature_policy(&config)?;
+    let repos_to_sync: Vec<(String, Vec<String>, PathBuf, alpm::SigLevel)> = repository_urls
         .into_iter()
         .map(|(name, urls)| {
+            let repo = config
+                .repos
+                .iter()
+                .find(|repo| repo.name == name)
+                .with_context(|| format!("Missing pacman policy for repository '{name}'"))?;
+            let siglevel = crate::package_managers::alpm_ops::repository_siglevel(
+                signature_policy.default,
+                repo.sig_level.as_deref(),
+            )?;
             let destination = sync_dir.join(format!("{name}.db"));
-            (name, urls, destination)
+            Ok((name, urls, destination, siglevel))
         })
-        .collect();
+        .collect::<Result<_>>()?;
 
     // Create progress bars
     let progress_bars: Vec<ProgressBar> = repos_to_sync
         .iter()
-        .map(|(name, _, _)| {
+        .map(|(name, _, _, _)| {
             let pb = mp.add(ProgressBar::new_spinner());
             pb.set_style(
                 ProgressStyle::default_spinner()
@@ -496,16 +645,34 @@ pub async fn sync_databases_parallel() -> Result<()> {
     let repos_count = repos_to_sync.len();
     let mut tasks = tokio::task::JoinSet::new();
 
-    let mut staged_databases = Vec::with_capacity(repos_count);
-    for (i, (_, urls, destination)) in repos_to_sync.into_iter().enumerate() {
+    let mut staged_repositories = Vec::with_capacity(repos_count);
+    for (i, (name, urls, destination, siglevel)) in repos_to_sync.into_iter().enumerate() {
         let client = client.clone();
         let Some(pb) = progress_bars.get(i).cloned() else {
             continue;
         };
-        let staged = staging.path().join(format!("{i}.db"));
-        staged_databases.push((staged.clone(), destination.clone()));
+        let staged = staged_sync_dir.join(format!("{name}.db"));
+        let staged_signature = staged_sync_dir.join(format!("{name}.db.sig"));
+        let signature_destination = sync_dir.join(format!("{name}.db.sig"));
+        staged_repositories.push(StagedRepository {
+            database: staged.clone(),
+            database_destination: destination.clone(),
+            signature: staged_signature.clone(),
+            signature_destination,
+        });
 
-        tasks.spawn(async move { download_db(&client, urls, &staged, &destination, &pb).await });
+        tasks.spawn(async move {
+            download_db(
+                &client,
+                urls,
+                &staged,
+                &staged_signature,
+                &destination,
+                siglevel,
+                &pb,
+            )
+            .await
+        });
     }
 
     // Wait for all downloads
@@ -525,10 +692,41 @@ pub async fn sync_databases_parallel() -> Result<()> {
 
     println!();
 
+    if errors.is_empty() {
+        let staged_database_root = staged_database_root.clone();
+        let verification_config = config.clone();
+        if let Err(error) = tokio::task::spawn_blocking(move || {
+            verify_staged_databases(&staged_database_root, &verification_config)
+        })
+        .await
+        .context("Staged database verification task failed")?
+        {
+            errors.push(error);
+        }
+    }
+
     for error in &errors {
         tracing::error!("Sync error: {error}");
     }
-    commit_staged_databases(&staged_databases, errors.len())?;
+    let staged_files = staged_repositories
+        .into_iter()
+        .flat_map(|repo| {
+            let signature_present = repo.signature.is_file();
+            [
+                StagedFile {
+                    staged: repo.database,
+                    destination: repo.database_destination,
+                    publish: true,
+                },
+                StagedFile {
+                    staged: repo.signature,
+                    destination: repo.signature_destination,
+                    publish: signature_present,
+                },
+            ]
+        })
+        .collect::<Vec<_>>();
+    commit_staged_files(&staged_files, errors.len())?;
 
     crate::package_managers::alpm_direct::clear_alpm_cache();
     println!("{} Databases synchronized successfully!\n", "✓".green());
@@ -585,6 +783,38 @@ mod tests {
     }
 
     #[test]
+    fn missing_optional_signature_removes_stale_live_signature() {
+        let directory = tempfile::tempdir().expect("database directory");
+        let live_database = directory.path().join("core.db");
+        let live_signature = directory.path().join("core.db.sig");
+        let staged_database = directory.path().join("core.staged");
+        let absent_signature = directory.path().join("core.sig.absent");
+        std::fs::write(&live_database, b"old").expect("seed live database");
+        std::fs::write(&live_signature, b"old-signature").expect("seed stale signature");
+        std::fs::write(&staged_database, b"new").expect("stage database");
+
+        commit_staged_files(
+            &[
+                StagedFile {
+                    staged: staged_database,
+                    destination: live_database.clone(),
+                    publish: true,
+                },
+                StagedFile {
+                    staged: absent_signature,
+                    destination: live_signature.clone(),
+                    publish: false,
+                },
+            ],
+            0,
+        )
+        .expect("publish unsigned optional database");
+
+        assert_eq!(std::fs::read(live_database).unwrap(), b"new");
+        assert!(!live_signature.exists());
+    }
+
+    #[test]
     fn publication_failure_restores_every_live_database() {
         let directory = tempfile::tempdir().expect("database directory");
         let core_live = directory.path().join("core.db");
@@ -633,6 +863,55 @@ mod tests {
             mode & 0o777,
             0o644,
             "sync databases must be 0644 like pacman"
+        );
+    }
+
+    #[test]
+    fn staged_database_verification_accepts_missing_optional_signature() {
+        let directory = tempfile::tempdir().expect("staging root");
+        let database_root = directory.path().join("database-root");
+        let sync_dir = database_root.join("sync");
+        let keyring = directory.path().join("gnupg");
+        std::fs::create_dir_all(&sync_dir).expect("staged sync directory");
+        std::fs::create_dir_all(&keyring).expect("test keyring directory");
+        std::fs::write(sync_dir.join("core.db"), b"database").expect("staged database");
+        let config = crate::core::pacman_conf::PacmanConfig::parse_str(&format!(
+            "[options]\nGPGDir = {}\nSigLevel = Required DatabaseOptional\n\n[core]\nServer = https://mirror.example/$repo/$arch\n",
+            keyring.display()
+        ))
+        .expect("pacman config");
+
+        verify_staged_databases(&database_root, &config)
+            .expect("DatabaseOptional must permit an absent detached signature");
+    }
+
+    #[test]
+    fn staged_database_verification_rejects_invalid_signature() {
+        let directory = tempfile::tempdir().expect("staging root");
+        let database_root = directory.path().join("database-root");
+        let sync_dir = database_root.join("sync");
+        let keyring = directory.path().join("gnupg");
+        std::fs::create_dir_all(&sync_dir).expect("staged sync directory");
+        std::fs::create_dir_all(&keyring).expect("test keyring directory");
+        std::fs::write(sync_dir.join("core.db"), b"database").expect("staged database");
+        std::fs::write(sync_dir.join("core.db.sig"), b"not-an-openpgp-signature")
+            .expect("invalid detached signature");
+        let config = crate::core::pacman_conf::PacmanConfig::parse_str(&format!(
+            "[options]\nGPGDir = {}\nSigLevel = Required DatabaseRequired\n\n[core]\nServer = https://mirror.example/$repo/$arch\n",
+            keyring.display()
+        ))
+        .expect("pacman config");
+
+        let error = verify_staged_databases(&database_root, &config)
+            .expect_err("an invalid detached database signature must fail closed");
+        assert!(error.to_string().contains("Signature verification failed"));
+    }
+
+    #[test]
+    fn database_signature_url_tracks_database_url() {
+        assert_eq!(
+            build_signature_url("https://mirror.example/core/os/x86_64/core.db"),
+            "https://mirror.example/core/os/x86_64/core.db.sig"
         );
     }
 
