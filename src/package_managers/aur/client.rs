@@ -352,10 +352,12 @@ struct AurResponse {
 }
 
 #[derive(Deserialize)]
-struct AurRpcEnvelope {
+struct AurRpcEnvelope<T> {
     #[serde(rename = "type")]
     response_type: Option<String>,
     error: Option<String>,
+    #[serde(flatten)]
+    payload: T,
 }
 
 fn ensure_aur_rpc_success(status: reqwest::StatusCode) -> Result<()> {
@@ -367,8 +369,8 @@ fn ensure_aur_rpc_success(status: reqwest::StatusCode) -> Result<()> {
 }
 
 fn decode_aur_rpc_body<T: DeserializeOwned>(body: &[u8]) -> Result<T> {
-    let envelope: AurRpcEnvelope =
-        serde_json::from_slice(body).context("Failed to parse AUR RPC response envelope")?;
+    let envelope: AurRpcEnvelope<T> =
+        serde_json::from_slice(body).context("Failed to parse AUR RPC response")?;
     if envelope.response_type.as_deref() == Some("error") {
         let detail = envelope
             .error
@@ -378,7 +380,7 @@ fn decode_aur_rpc_body<T: DeserializeOwned>(body: &[u8]) -> Result<T> {
         anyhow::bail!("AUR RPC returned an error: {detail}");
     }
 
-    serde_json::from_slice(body).context("Failed to parse AUR RPC response")
+    Ok(envelope.payload)
 }
 
 async fn decode_aur_rpc_response<T: DeserializeOwned>(response: reqwest::Response) -> Result<T> {
