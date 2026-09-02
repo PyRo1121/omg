@@ -202,9 +202,7 @@ fn detect_versions_for_hook(cwd: &Path) -> HashMap<String, String> {
             use std::sync::atomic::{AtomicBool, Ordering};
             static WARNED: AtomicBool = AtomicBool::new(false);
             if !WARNED.swap(true, Ordering::Relaxed) {
-                tracing::warn!(
-                    "Ignoring invalid runtime pin in current directory: {error:#}"
-                );
+                tracing::warn!("Ignoring invalid runtime pin in current directory: {error:#}");
             }
             HashMap::new()
         }
