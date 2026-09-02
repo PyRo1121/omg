@@ -1023,6 +1023,13 @@ fn license_scan_requires_arch() -> Result<Vec<(String, String, String)>> {
     )
 }
 
+#[cfg(any(not(feature = "arch"), test))]
+fn fix_requires_arch() -> Result<()> {
+    anyhow::bail!(
+        "Vulnerability auto-fix is not available without the Arch backend; upgrade the affected packages manually"
+    )
+}
+
 fn package_has_available_update(package: &str) -> Result<bool> {
     #[cfg(feature = "arch")]
     {
@@ -1166,13 +1173,16 @@ pub async fn fix_vulnerabilities(
             }
         }
 
-        // Perform upgrades
-        #[cfg(feature = "arch")]
+        // Perform upgrades. On backends that cannot apply the fix, fail
+        // loudly instead of printing success (fail-closed backend dispatch).
+        #[cfg(all(feature = "arch", not(test)))]
         {
             let pacman = crate::package_managers::ArchPackageManager::new();
             use crate::package_managers::PackageManager;
             pacman.install(&to_upgrade).await?;
         }
+        #[cfg(any(not(feature = "arch"), test))]
+        fix_requires_arch()?;
 
         println!(
             "\n{} Fixed {} packages.",
@@ -1650,6 +1660,16 @@ mod tests {
             error
                 .to_string()
                 .contains("not available without the Arch backend"),
+            "got: {error}"
+        );
+    }
+
+    #[test]
+    fn auto_fix_upgrade_without_arch_fails() {
+        let error = fix_requires_arch()
+            .expect_err("auto-fix must not report success when it cannot upgrade");
+        assert!(
+            error.to_string().contains("without the Arch backend"),
             "got: {error}"
         );
     }
