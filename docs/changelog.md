@@ -735,6 +735,7 @@ analyzer inference
 - **Ci**: Cross-platform install script and R2 release sync
 ### 🐛 Bug Fixes
 
+- **Daemon**: Index Fedora and Homebrew backends ([#160](https://github.com/PyRo1121/omg/issues/160))
 - **Tui**: Serialize prompts through terminal ownership ([#157](https://github.com/PyRo1121/omg/issues/157))
 - **Daemon**: Debounce sequential index refreshes ([#156](https://github.com/PyRo1121/omg/issues/156))
 - **Http**: Retry truncated AUR response bodies ([#155](https://github.com/PyRo1121/omg/issues/155))
