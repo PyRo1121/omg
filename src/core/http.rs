@@ -6,8 +6,9 @@
 use std::sync::LazyLock;
 use std::time::Duration;
 
-use reqwest::{Client, Url};
+use reqwest::{Client, Url, redirect};
 
+const MAX_REDIRECTS: usize = 10;
 const DEFAULT_TIMEOUT: Duration = Duration::from_secs(15);
 const DEFAULT_CONNECT_TIMEOUT: Duration = Duration::from_secs(5);
 const DEFAULT_READ_TIMEOUT: Duration = Duration::from_secs(30);
@@ -29,6 +30,28 @@ static SHARED_CLIENT: LazyLock<Client> = LazyLock::new(|| {
 static DOWNLOAD_CLIENT: LazyLock<Client> =
     LazyLock::new(|| build_client(None, DOWNLOAD_CONNECT_TIMEOUT, DOWNLOAD_READ_TIMEOUT));
 
+fn validate_redirect(previous: &[Url], next: &Url) -> Result<(), &'static str> {
+    if previous.len() > MAX_REDIRECTS {
+        return Err("too many redirects");
+    }
+    if previous
+        .last()
+        .is_some_and(|url| url.scheme() == "https" && next.scheme() != "https")
+    {
+        return Err("refusing HTTPS-to-HTTP redirect");
+    }
+    Ok(())
+}
+
+fn redirect_policy() -> redirect::Policy {
+    redirect::Policy::custom(
+        |attempt| match validate_redirect(attempt.previous(), attempt.url()) {
+            Ok(()) => attempt.follow(),
+            Err(reason) => attempt.error(reason),
+        },
+    )
+}
+
 /// Build HTTP client with standard configuration.
 ///
 /// This function uses `.expect()` because:
@@ -49,6 +72,7 @@ fn build_client(
 ) -> Client {
     let mut builder = Client::builder()
         .user_agent("omg-package-manager")
+        .redirect(redirect_policy())
         .connect_timeout(connect_timeout)
         .read_timeout(read_timeout)
         .pool_max_idle_per_host(32)
@@ -75,6 +99,8 @@ pub fn retry_backoff(initial: Duration, retry_number: u32) -> Duration {
 #[must_use]
 pub fn is_retryable_status(status: reqwest::StatusCode) -> bool {
     status.is_server_error()
+        || status == reqwest::StatusCode::REQUEST_TIMEOUT
+        || status == reqwest::StatusCode::TOO_MANY_REQUESTS
 }
 
 /// Whether a request transport failure is safe to retry.
@@ -168,7 +194,36 @@ mod tests {
             "backoff arithmetic must saturate"
         );
         assert!(is_retryable_status(reqwest::StatusCode::BAD_GATEWAY));
+        assert!(is_retryable_status(reqwest::StatusCode::REQUEST_TIMEOUT));
+        assert!(is_retryable_status(reqwest::StatusCode::TOO_MANY_REQUESTS));
         assert!(!is_retryable_status(reqwest::StatusCode::NOT_FOUND));
+    }
+
+    #[test]
+    fn redirect_validation_rejects_downgrades_and_excessive_hops() {
+        let https = Url::parse("https://example.com/start").unwrap();
+        let next_http = Url::parse("http://example.com/plaintext").unwrap();
+        let next_https = Url::parse("https://example.net/secure").unwrap();
+        let initial_http = Url::parse("http://mirror.example/start").unwrap();
+
+        assert_eq!(
+            validate_redirect(std::slice::from_ref(&https), &next_http),
+            Err("refusing HTTPS-to-HTTP redirect")
+        );
+        assert_eq!(validate_redirect(&[https], &next_https), Ok(()));
+        assert_eq!(validate_redirect(&[initial_http], &next_http), Ok(()));
+
+        let ten_previous = (0..10)
+            .map(|index| Url::parse(&format!("https://example.com/{index}")).unwrap())
+            .collect::<Vec<_>>();
+        assert_eq!(validate_redirect(&ten_previous, &next_https), Ok(()));
+
+        let mut eleven_previous = ten_previous;
+        eleven_previous.push(next_https.clone());
+        assert_eq!(
+            validate_redirect(&eleven_previous, &next_https),
+            Err("too many redirects")
+        );
     }
 
     #[test]
