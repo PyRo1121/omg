@@ -12,6 +12,20 @@ use std::path::{Path, PathBuf};
 
 use super::fingerprint::EnvironmentState;
 
+/// Check whether a team remote URL is an HTTPS gist.github.com URL.
+///
+/// Matches the strict validation in `src/cli/team.rs::validate_team_remote`:
+/// the URL must parse cleanly and its host must be exactly
+/// `gist.github.com` (https scheme). Substring checks would accept
+/// attacker-controlled URLs like `https://evil.com/gist.github.com`, and
+/// this remote becomes the trust source for team sync.
+fn is_gist_remote(remote_url: &str) -> bool {
+    let Ok(url) = reqwest::Url::parse(remote_url) else {
+        return false;
+    };
+    url.scheme() == "https" && url.host_str() == Some("gist.github.com")
+}
+
 /// Team configuration stored in `.omg/team.toml`
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct TeamConfig {
@@ -422,11 +436,11 @@ impl TeamWorkspace {
         // local state as team sync would mislead operators into trusting a
         // comparison that never saw the team's lock.
         if let Some(remote_url) = &config.remote_url {
-            if remote_url.contains("gist.github.com") {
+            if is_gist_remote(remote_url) {
                 crate::cli::env::sync_at(remote_url, &self.root).await?;
             } else {
                 anyhow::bail!(
-                    "Unsupported team remote URL '{}': pull currently supports only gist.github.com remotes",
+                    "Unsupported team remote URL '{}': pull currently supports only HTTPS gist.github.com remotes",
                     crate::core::http::redact_url(remote_url)
                 );
             }
@@ -556,6 +570,40 @@ fi
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn gist_remote_accepts_https_gist_host() {
+        assert!(is_gist_remote("https://gist.github.com/user/abc123"));
+        assert!(is_gist_remote("https://gist.github.com/"));
+    }
+
+    #[test]
+    fn gist_remote_rejects_attacker_urls_embedding_the_host() {
+        // Substring checks would accept these; the remote becomes the trust
+        // source for team sync.
+        assert!(!is_gist_remote("https://evil.com/gist.github.com"));
+        assert!(!is_gist_remote(
+            "https://gist.github.com.evil.com/user/abc123"
+        ));
+        assert!(!is_gist_remote("https://evil.com?q=gist.github.com"));
+        assert!(!is_gist_remote(
+            "https://gist.github.com@evil.com/user/abc123"
+        ));
+    }
+
+    #[test]
+    fn gist_remote_rejects_non_https_schemes() {
+        assert!(!is_gist_remote("http://gist.github.com/user/abc123"));
+        assert!(!is_gist_remote("ftp://gist.github.com/user/abc123"));
+    }
+
+    #[test]
+    fn gist_remote_rejects_lookalike_and_repo_hosts() {
+        // Only the exact gist host is accepted; repo remotes are not supported.
+        assert!(!is_gist_remote("https://gist2.github.com/user/abc123"));
+        assert!(!is_gist_remote("https://github.com/example/repo.git"));
+        assert!(!is_gist_remote("not a url"));
+    }
 
     #[test]
     fn missing_team_config_is_an_uninitialized_workspace() {
