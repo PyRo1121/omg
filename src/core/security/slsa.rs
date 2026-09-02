@@ -27,6 +27,14 @@ pub enum RekorError {
     EntryNotFound { uuid: String },
     #[error("Invalid Rekor response: empty entry map")]
     EmptyEntryMap,
+    #[error("Rekor entry {uuid} has a malformed SignedEntryTimestamp")]
+    EntrySetMalformed { uuid: String },
+    #[error(
+        "Rekor entry {uuid} SignedEntryTimestamp does not verify against the pinned Rekor public key"
+    )]
+    EntrySetVerificationFailed { uuid: String },
+    #[error("Pinned Rekor public key is malformed (build-time misconfiguration)")]
+    RekorPublicKeyMalformed,
 }
 
 /// Failures hashing artifacts or talking to Rekor.
@@ -264,6 +272,11 @@ fn required_u64(value: &Value, uuid: &str, field: &'static str) -> Result<u64, R
     }
 }
 
+/// Verify an entry's SignedEntryTimestamp (SET) against the pinned Rekor
+/// public key before its contents (body, integratedTime) may be trusted.
+/// The Fulcio chain-time check in `verify_rekor_entry` relies on
+/// `integrated_time`, so an unauthenticated timestamp would let a TLS-level
+/// attacker forge certificate validity windows.
 fn parse_rekor_entry(
     requested_uuid: &str,
     mut entry_map: HashMap<String, Value>,
@@ -286,12 +299,93 @@ fn parse_rekor_entry(
             field: "body",
         })?
         .to_string();
+    let log_id = value
+        .get("logID")
+        .and_then(Value::as_str)
+        .ok_or_else(|| RekorError::EntryMissingField {
+            uuid: requested_uuid.to_string(),
+            field: "logID",
+        })?
+        .to_string();
+    let set_b64 = value
+        .pointer("/verification/signedEntryTimestamp")
+        .and_then(Value::as_str)
+        .ok_or_else(|| RekorError::EntryMissingField {
+            uuid: requested_uuid.to_string(),
+            field: "verification.signedEntryTimestamp",
+        })?;
+
+    // Refuse entries whose SET cannot be verified: the entry's integrated
+    // time feeds the Fulcio certificate-validity decision, so it must be
+    // authenticated by the log itself, not by the TLS channel alone.
+    let set_bytes = {
+        use base64::Engine as _;
+        base64::engine::general_purpose::STANDARD
+            .decode(set_b64.trim())
+            .map_err(|_| RekorError::EntrySetMalformed {
+                uuid: requested_uuid.to_string(),
+            })?
+    };
+    let canonical = canonical_set_payload(&log_id, log_index, integrated_time, &body);
+    let key = rekor_verifying_key()?;
+    if !verify_set_signature(canonical.as_bytes(), &set_bytes, &key) {
+        return Err(RekorError::EntrySetVerificationFailed {
+            uuid: requested_uuid.to_string(),
+        });
+    }
+
     Ok(RekorEntry {
         uuid: requested_uuid.to_string(),
         log_index,
         integrated_time,
         body,
     })
+}
+
+/// Canonical bytes covered by the SignedEntryTimestamp.
+///
+/// Rekor's server signs (`pkg/api/entries.go`, `signEntry`) the RFC 8785
+/// canonicalization of the JSON object `{body, integratedTime, logID,
+/// logIndex}`; clients such as sigstore-go (`pkg/tlog/entry.go`,
+/// `VerifySET`) reconstruct exactly these four fields, hash them with
+/// SHA-256, and verify an ECDSA P-256 signature. For this fixed field set
+/// (base64 body, hex log ID, decimal integers) the RFC 8785 form is the
+/// key-sorted, whitespace-free JSON built here; all values are ASCII so no
+/// string escaping can occur.
+fn canonical_set_payload(log_id: &str, log_index: u64, integrated_time: u64, body: &str) -> String {
+    debug_assert!(
+        log_id.bytes().all(|b| b.is_ascii_hexdigit()),
+        "logID must be hex"
+    );
+    debug_assert!(
+        body.bytes()
+            .all(|b| b.is_ascii_alphanumeric() || b == b'+' || b == b'/' || b == b'='),
+        "body must be standard base64"
+    );
+    format!(
+        "{{\"body\":\"{body}\",\"integratedTime\":{integrated_time},\"logID\":\"{log_id}\",\"logIndex\":{log_index}}}"
+    )
+}
+
+/// Verify the ECDSA P-256 (ASN.1 DER) SET signature over the SHA-256 digest
+/// of the canonical entry bytes.
+fn verify_set_signature(
+    canonical: &[u8],
+    set_signature_der: &[u8],
+    key: &p256::ecdsa::VerifyingKey,
+) -> bool {
+    use p256::ecdsa::signature::Verifier as _;
+    match p256::ecdsa::Signature::from_der(set_signature_der) {
+        Ok(signature) => key.verify(canonical, &signature).is_ok(),
+        Err(_) => false,
+    }
+}
+
+/// Parse the pinned Rekor log public key (ECDSA P-256, SPKI PEM).
+fn rekor_verifying_key() -> Result<p256::ecdsa::VerifyingKey, RekorError> {
+    use p256::pkcs8::DecodePublicKey as _;
+    p256::ecdsa::VerifyingKey::from_public_key_pem(REKOR_PUBLIC_KEY_PEM)
+        .map_err(|_| RekorError::RekorPublicKeyMalformed)
 }
 
 // ---------------------------------------------------------------------------
@@ -306,6 +400,20 @@ fn parse_rekor_entry(
 //                issued by the root, valid 2022-04-13 .. 2031-10-05
 // Rotate deliberately when Sigstore publishes new roots via TUF.
 // ---------------------------------------------------------------------------
+
+/// Rekor transparency log public key (ECDSA P-256, SPKI PEM).
+///
+/// Pinned in-binary from the Sigstore TUF root-signing repository target
+/// https://raw.githubusercontent.com/sigstore/root-signing/main/targets/rekor.pub
+/// (see https://github.com/sigstore/root-signing; the same key is served live
+/// by Rekor at https://rekor.sigstore.dev/api/v1/log/publicKey). Used to
+/// verify each entry's SignedEntryTimestamp (SET) so Rekor entry contents
+/// never rest on the TLS channel alone. Note: entries integrated under an
+/// older, rotated log key will fail SET verification and be refused.
+const REKOR_PUBLIC_KEY_PEM: &str = "-----BEGIN PUBLIC KEY-----
+MFkwEwYHKoZIzj0CAQYIKoZIzj0DAQcDQgAE2G2Y+2tabdTV5BcGiBIx0a9fAFwr
+kBbmLSGtks4L3qX6yYY0zufBnhC8Ur/iy55GhWP/9A/bY2LhC30M9+RYtw==
+-----END PUBLIC KEY-----";
 
 const FULCIO_ROOT_PEM: &str = "-----BEGIN CERTIFICATE-----
 MIIB9zCCAXygAwIBAgIUALZNAPFdxHPwjeDloDwyYChAO/4wCgYIKoZIzj0EAwMw
@@ -596,7 +704,11 @@ impl SlsaVerifier {
         Ok(entries)
     }
 
-    /// Get a specific Rekor entry by UUID
+    /// Get a specific Rekor entry by UUID.
+    ///
+    /// The entry's SignedEntryTimestamp is verified against the pinned Rekor
+    /// public key (see [`parse_rekor_entry`]) before the entry's contents are
+    /// returned; entries without a verifiable SET are refused.
     async fn get_rekor_entry(&self, uuid: &str) -> Result<RekorEntry, SlsaError> {
         let url = format!("{}/api/v1/log/entries/{}", self.rekor_url, uuid);
 
@@ -1329,6 +1441,240 @@ mod tests {
         assert!(
             !verified && signer.is_none(),
             "certificate validity window must gate verification"
+        );
+    }
+
+    #[test]
+    fn rekor_set_signature_over_canonical_form_roundtrips() {
+        use p256::ecdsa::signature::Signer as _;
+
+        let log_id = "c0d23d6ad406973f9559f3ba2d1ca01f";
+        let body = "aGVsbG8="; // base64
+        let canonical = canonical_set_payload(log_id, 12, 1_700_000_000, body);
+        // RFC 8785 form: keys sorted, no whitespace.
+        assert_eq!(
+            canonical,
+            "{\"body\":\"aGVsbG8=\",\"integratedTime\":1700000000,\"logID\":\"c0d23d6ad406973f9559f3ba2d1ca01f\",\"logIndex\":12}"
+        );
+
+        let signing = p256::ecdsa::SigningKey::from_slice(&[9u8; 32]).unwrap();
+        let key = signing.verifying_key();
+        let signature: p256::ecdsa::Signature = signing.sign(canonical.as_bytes());
+        let sig_der = signature.to_der();
+
+        assert!(
+            verify_set_signature(canonical.as_bytes(), sig_der.as_bytes(), key),
+            "a valid ECDSA P-256 DER signature over the canonical form must verify"
+        );
+        // Tampered canonical bytes (one body character) must not verify.
+        let tampered_body = canonical_set_payload(log_id, 12, 1_700_000_000, "aGVsbG9f");
+        assert!(
+            !verify_set_signature(tampered_body.as_bytes(), sig_der.as_bytes(), key),
+            "a tampered body must fail SET verification"
+        );
+        // Tampered integratedTime must not verify.
+        let tampered_time = canonical_set_payload(log_id, 12, 1_700_000_001, body);
+        assert!(
+            !verify_set_signature(tampered_time.as_bytes(), sig_der.as_bytes(), key),
+            "a tampered integratedTime must fail SET verification"
+        );
+        // Tampered logID must not verify.
+        let tampered_log = canonical_set_payload("deadbeef", 12, 1_700_000_000, body);
+        assert!(
+            !verify_set_signature(tampered_log.as_bytes(), sig_der.as_bytes(), key),
+            "a tampered logID must fail SET verification"
+        );
+        // Wrong key must not verify.
+        let other = p256::ecdsa::SigningKey::from_slice(&[11u8; 32]).unwrap();
+        assert!(
+            !verify_set_signature(
+                canonical.as_bytes(),
+                sig_der.as_bytes(),
+                other.verifying_key()
+            ),
+            "a signature from a different key must fail SET verification"
+        );
+        // Truncated DER signature must not verify.
+        let der = sig_der.as_bytes();
+        assert!(!verify_set_signature(
+            canonical.as_bytes(),
+            &der[..der.len() - 1],
+            key
+        ));
+        // Non-DER garbage must not verify.
+        assert!(!verify_set_signature(canonical.as_bytes(), &[0u8; 64], key));
+    }
+
+    /// Build a single-entry Rekor response map with a SET signed by the
+    /// given P-256 signing key over the canonical form of the entry.
+    fn rekor_response_with_set(
+        uuid: &str,
+        log_id: &str,
+        log_index: u64,
+        integrated_time: u64,
+        body: &str,
+        signing: &p256::ecdsa::SigningKey,
+    ) -> HashMap<String, serde_json::Value> {
+        use base64::Engine as _;
+        use p256::ecdsa::signature::Signer as _;
+        let canonical = canonical_set_payload(log_id, log_index, integrated_time, body);
+        let set: p256::ecdsa::Signature = signing.sign(canonical.as_bytes());
+        HashMap::from([(
+            uuid.to_string(),
+            serde_json::json!({
+                "body": body,
+                "integratedTime": integrated_time,
+                "logID": log_id,
+                "logIndex": log_index,
+                "verification": {
+                    "signedEntryTimestamp":
+                        base64::engine::general_purpose::STANDARD.encode(set.to_der().as_bytes())
+                }
+            }),
+        )])
+    }
+
+    #[test]
+    fn rekor_entry_without_signed_entry_timestamp_is_refused() {
+        let mut no_verification = HashMap::new();
+        no_verification.insert(
+            "abc".to_string(),
+            serde_json::json!({
+                "logIndex": 1,
+                "integratedTime": 2,
+                "logID": "c0d23d6ad406973f9559f3ba2d1ca01f",
+                "body": "aGVsbG8="
+            }),
+        );
+        let err =
+            parse_rekor_entry("abc", no_verification).expect_err("missing SET must be refused");
+        assert!(
+            matches!(
+                err,
+                RekorError::EntryMissingField {
+                    field: "verification.signedEntryTimestamp",
+                    ..
+                }
+            ),
+            "got: {err}"
+        );
+
+        let mut no_set = HashMap::new();
+        no_set.insert(
+            "abc".to_string(),
+            serde_json::json!({
+                "logIndex": 1,
+                "integratedTime": 2,
+                "logID": "c0d23d6ad406973f9559f3ba2d1ca01f",
+                "body": "aGVsbG8=",
+                "verification": {}
+            }),
+        );
+        let err = parse_rekor_entry("abc", no_set).expect_err("missing SET must be refused");
+        assert!(
+            matches!(
+                err,
+                RekorError::EntryMissingField {
+                    field: "verification.signedEntryTimestamp",
+                    ..
+                }
+            ),
+            "got: {err}"
+        );
+    }
+
+    #[test]
+    fn rekor_entry_with_invalid_set_signature_is_rejected() {
+        // A self-made key is NOT the pinned Rekor key, so even a well-formed,
+        // self-consistent SET must be rejected by the pinned-key path.
+        let signing = p256::ecdsa::SigningKey::from_slice(&[9u8; 32]).unwrap();
+        let response = rekor_response_with_set(
+            "abc",
+            "c0d23d6ad406973f9559f3ba2d1ca01f",
+            12,
+            1_700_000_000,
+            "aGVsbG8=",
+            &signing,
+        );
+        let err = parse_rekor_entry("abc", response).expect_err("foreign-key SET must be rejected");
+        assert!(
+            matches!(err, RekorError::EntrySetVerificationFailed { .. }),
+            "got: {err}"
+        );
+    }
+
+    #[test]
+    fn rekor_entry_with_tampered_body_is_rejected() {
+        // Sign a valid SET, then tamper with the body: even if the signature
+        // came from the pinned key, the tampered canonical bytes must fail.
+        let signing = p256::ecdsa::SigningKey::from_slice(&[9u8; 32]).unwrap();
+        let mut response = rekor_response_with_set(
+            "abc",
+            "c0d23d6ad406973f9559f3ba2d1ca01f",
+            12,
+            1_700_000_000,
+            "aGVsbG8=",
+            &signing,
+        );
+        response
+            .get_mut("abc")
+            .unwrap()
+            .as_object_mut()
+            .unwrap()
+            .insert("body".to_string(), serde_json::json!("YWx0ZXJlZA=="));
+        // The pinned key rejects first (foreign signature); a foreign-key
+        // tampered body can never slip through either way.
+        let err = parse_rekor_entry("abc", response)
+            .expect_err("tampered body with foreign SET must be rejected");
+        assert!(
+            matches!(err, RekorError::EntrySetVerificationFailed { .. }),
+            "got: {err}"
+        );
+
+        // Prove tampering alone is fatal: verify the ORIGINAL canonical bytes
+        // against a signature made over TAMPERED canonical bytes.
+        let key = signing.verifying_key();
+        let original = canonical_set_payload(
+            "c0d23d6ad406973f9559f3ba2d1ca01f",
+            12,
+            1_700_000_000,
+            "aGVsbG8=",
+        );
+        let tampered = canonical_set_payload(
+            "c0d23d6ad406973f9559f3ba2d1ca01f",
+            12,
+            1_700_000_000,
+            "YWx0ZXJlZA==",
+        );
+        use p256::ecdsa::signature::Signer as _;
+        let sig_over_tampered: p256::ecdsa::Signature = signing.sign(tampered.as_bytes());
+        assert!(
+            !verify_set_signature(
+                original.as_bytes(),
+                sig_over_tampered.to_der().as_bytes(),
+                key
+            ),
+            "signature over tampered bytes must not verify over the original"
+        );
+    }
+
+    #[test]
+    fn rekor_entry_with_malformed_set_base64_is_refused() {
+        let mut bad = HashMap::new();
+        bad.insert(
+            "abc".to_string(),
+            serde_json::json!({
+                "logIndex": 1,
+                "integratedTime": 2,
+                "logID": "c0d23d6ad406973f9559f3ba2d1ca01f",
+                "body": "aGVsbG8=",
+                "verification": {"signedEntryTimestamp": "!!!not-base64!!!"}
+            }),
+        );
+        let err = parse_rekor_entry("abc", bad).expect_err("malformed SET base64 must be refused");
+        assert!(
+            matches!(err, RekorError::EntrySetMalformed { .. }),
+            "got: {err}"
         );
     }
 }
