@@ -98,7 +98,6 @@ pub async fn run(network: bool, eol: bool) -> Result<()> {
     if debian_backend {
         issues += check_debian_infra();
     }
-    #[cfg(feature = "arch")]
     if arch_backend {
         issues += check_arch_infra();
     }
