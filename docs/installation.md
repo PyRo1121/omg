@@ -367,7 +367,7 @@ chmod +x ~/.local/bin/omg
 omg daemon-status
 
 # Run the daemon in the foreground to see errors
-omgd --foreground
+omgd
 ```
 
 If you created the optional systemd user service from

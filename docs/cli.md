@@ -1577,7 +1577,7 @@ omg daemon
 For direct daemon control:
 
 ```bash
-omgd --foreground  # Run in foreground
+omgd  # Run the daemon (it blocks in the foreground; use systemd or `omg daemon` to manage it)
 omgd --socket /path/to/socket  # Custom socket path
 ```
 

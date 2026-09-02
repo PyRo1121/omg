@@ -330,7 +330,7 @@ After=network.target
 
 [Service]
 Type=simple
-ExecStart=%h/.local/bin/omgd --foreground
+ExecStart=%h/.local/bin/omgd
 Restart=on-failure
 RestartSec=5
 

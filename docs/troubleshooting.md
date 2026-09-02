@@ -52,7 +52,7 @@ ls -la $XDG_RUNTIME_DIR/omg.sock
 rm $XDG_RUNTIME_DIR/omg.sock
 
 # 4. Start daemon in foreground to see errors
-omgd --foreground
+omgd
 
 # 5. Check if port/socket is in use
 lsof -U | grep omg
@@ -71,7 +71,7 @@ lsof -U | grep omg
 
 ```bash
 # 1. Run in foreground to see errors
-omgd --foreground
+omgd
 
 # 2. Check for corrupted cache
 rm ~/.local/share/omg/cache.redb
@@ -224,7 +224,7 @@ sleep 2
 omg search linux
 
 # 3. Check daemon cache
-omgd --foreground
+omgd
 # Watch for index building messages
 
 # 4. Try direct search (bypasses cache)
@@ -702,7 +702,7 @@ omg --version
 omg doctor
 
 # 4. Get daemon logs
-omgd --foreground 2>&1 | tee omg-debug.log
+omgd 2>&1 | tee omg-debug.log
 
 # 5. Get command output
 omg <failing-command> 2>&1 | tee command-output.log
