@@ -4034,6 +4034,21 @@ mod tests {
     }
 
     #[test]
+    fn reviewed_pkgbuild_digest_rejects_changed_bytes() {
+        let directory = tempfile::tempdir().expect("temporary build directory");
+        let path = directory.path().join("PKGBUILD");
+        let reviewed = b"pkgname=example\npkgver=1\n";
+        std::fs::write(&path, reviewed).expect("write reviewed PKGBUILD");
+        let digest = pkgbuild_digest(reviewed);
+
+        verify_reviewed_pkgbuild(&path, &digest).expect("unchanged PKGBUILD must match");
+        std::fs::write(&path, b"pkgname=other\npkgver=1\n").expect("replace PKGBUILD");
+        let error = verify_reviewed_pkgbuild(&path, &digest)
+            .expect_err("changed PKGBUILD must fail its review seal");
+        assert!(error.to_string().contains("changed after review"));
+    }
+
+    #[test]
     fn no_makepkg_invocation_can_install_dependencies() {
         let client = AurClient::new().expect("test settings must load");
         for args in [client.makepkg_args(), client.makepkg_args_sandbox()] {
