@@ -16,7 +16,10 @@ use tokio_util::codec::LengthDelimitedCodec;
 use tokio_util::sync::CancellationToken;
 
 use super::handlers::{DaemonState, handle_request};
-use super::protocol::{Request, Response, error_codes};
+use super::protocol::{
+    ExplicitResult, Request, Response, ResponseResult, SearchResult, SecurityAuditResult,
+    error_codes,
+};
 use crate::core::metrics::GLOBAL_METRICS;
 use crate::core::security::{
     AuditEventType, AuditSeverity, audit_log_nonblocking, init_audit_logger,
@@ -441,6 +444,26 @@ async fn run_with_status_path(
 /// <https://github.com/SoftbearStudios/bitcode/blob/f41da053c08178189aaee8c62f4c6e738add6eda/src/str.rs>
 const MAX_REQUEST_SIZE: usize = 1024 * 1024;
 
+/// Maximum encoded response size (8 MiB). Deliberately distinct from
+/// [`MAX_REQUEST_SIZE`] (1 MiB): the two directions carry very different
+/// payloads. Requests are small queries, so 1 MiB is a generous cap that
+/// also bounds the DoS surface of request parsing; responses may carry up
+/// to the daemon's 1000-entry search/audit limits with full descriptions
+/// (broad `DebianSearch` or `SecurityAudit` results), which realistically
+/// exceeds 1 MiB on large installs.
+///
+/// The budget sits strictly below the transport ceiling
+/// `protocol::MAX_FRAME_SIZE` (10 MiB) that every client-side reader accepts
+/// (`read_frame` and the `Framed` codec on both ends), so a frame at this
+/// budget is always deliverable with headroom. Responses that overflow it
+/// are degraded gracefully by [`encode_bounded_response`] (semantic
+/// truncation of list results), never mapped to `INTERNAL_ERROR`.
+const MAX_RESPONSE_SIZE: usize = 8 * 1024 * 1024;
+
+// Guard against a future edit raising the response budget past what the
+// transport framing and every client-side reader will accept.
+const _: () = assert!(MAX_RESPONSE_SIZE < crate::daemon::protocol::MAX_FRAME_SIZE);
+
 /// RAII guard for tracking active connections
 struct ConnectionGuard;
 
@@ -467,23 +490,125 @@ async fn await_client_write(
     Ok(())
 }
 
+/// Halve a list-bearing response result so an oversized response can be
+/// degraded gracefully instead of failing.
+///
+/// Bitcode frames cannot be byte-truncated (the client's decode would fail),
+/// so truncation happens at the semantic level: list payloads are cut to a
+/// prefix and re-encoded into a still-valid [`Response`] the client decodes
+/// normally. Count fields are kept consistent with the delivered entries.
+/// Returns `None` when nothing can shrink further (single-entry lists, or
+/// results with no list at all).
+fn shrink_result(result: &ResponseResult) -> Option<(ResponseResult, usize)> {
+    let halve = |len: usize| len / 2;
+    let truncatable = |len: usize| len > 1;
+    match result {
+        ResponseResult::Search(r) if truncatable(r.packages.len()) => {
+            let keep = halve(r.packages.len());
+            let packages = r.packages[..keep].to_vec();
+            let dropped = r.packages.len() - keep;
+            // Keep `total` consistent with the delivered prefix so the client
+            // sees a complete (smaller) result set instead of one that hints
+            // at more matches it can never receive.
+            Some((ResponseResult::Search(SearchResult { packages, total: keep }), dropped))
+        }
+        ResponseResult::DebianSearch(v) if truncatable(v.len()) => {
+            let keep = halve(v.len());
+            let dropped = v.len() - keep;
+            Some((ResponseResult::DebianSearch(v[..keep].to_vec()), dropped))
+        }
+        ResponseResult::Explicit(r) if truncatable(r.packages.len()) => {
+            let keep = halve(r.packages.len());
+            let dropped = r.packages.len() - keep;
+            Some((ResponseResult::Explicit(ExplicitResult { packages: r.packages[..keep].to_vec() }), dropped))
+        }
+        ResponseResult::ListUpdates(v) if truncatable(v.len()) => {
+            let keep = halve(v.len());
+            let dropped = v.len() - keep;
+            Some((ResponseResult::ListUpdates(v[..keep].to_vec()), dropped))
+        }
+        ResponseResult::Suggest(v) if truncatable(v.len()) => {
+            let keep = halve(v.len());
+            let dropped = v.len() - keep;
+            Some((ResponseResult::Suggest(v[..keep].to_vec()), dropped))
+        }
+        ResponseResult::SecurityAudit(r) if truncatable(r.vulnerabilities.len()) => {
+            let keep = halve(r.vulnerabilities.len());
+            let dropped = r.vulnerabilities.len() - keep;
+            let kept = &r.vulnerabilities[..keep];
+            let total_vulnerabilities: usize = kept.iter().map(|(_, v)| v.len()).sum();
+            let high_severity = kept
+                .iter()
+                .flat_map(|(_, vulns)| vulns)
+                .filter(|v| {
+                    v.score
+                        .as_deref()
+                        .and_then(super::handlers::vulnerability_score)
+                        .is_some_and(|score| score >= 7.0)
+                })
+                .count();
+            Some((
+                ResponseResult::SecurityAudit(SecurityAuditResult {
+                    total_vulnerabilities,
+                    high_severity,
+                    vulnerabilities: kept.to_vec(),
+                }),
+                dropped,
+            ))
+        }
+        _ => None,
+    }
+}
+
 fn encode_bounded_response(response: &Response, request_id: u64) -> Result<Vec<u8>> {
     let response_bytes = crate::daemon::protocol::encode_frame(response)?;
-    if response_bytes.len() <= MAX_REQUEST_SIZE {
+    if response_bytes.len() <= MAX_RESPONSE_SIZE {
         return Ok(response_bytes);
     }
 
+    // Graceful degradation: shrink list-bearing results until the encoded
+    // frame fits the budget. Halving keeps the loop logarithmic; the frame
+    // stays valid `Response` wire data the client decodes normally.
+    if let Response::Success { result, .. } = response {
+        let mut result = result.clone();
+        let mut dropped = 0usize;
+        while let Some((shrunk, step)) = shrink_result(&result) {
+            result = shrunk;
+            dropped += step;
+            let response_bytes = crate::daemon::protocol::encode_frame(&Response::Success {
+                id: request_id,
+                result: result.clone(),
+            })?;
+            if response_bytes.len() <= MAX_RESPONSE_SIZE {
+                tracing::warn!(
+                    request_id,
+                    dropped,
+                    max_response_bytes = MAX_RESPONSE_SIZE,
+                    "Daemon response exceeded the response budget; delivered truncated results"
+                );
+                return Ok(response_bytes);
+            }
+        }
+    }
+
+    // Nothing left to truncate (or an untruncatable result type): a single
+    // entry alone exceeds the budget. Degrade to a dedicated limit error —
+    // still valid `Response` semantics the client understands — never
+    // INTERNAL_ERROR, which would misreport a size limit as a daemon bug.
     tracing::error!(
         request_id,
         response_bytes = response_bytes.len(),
-        max_response_bytes = MAX_REQUEST_SIZE,
-        "Daemon response exceeded the transport frame limit"
+        max_response_bytes = MAX_RESPONSE_SIZE,
+        "Daemon response exceeded the response budget and could not be truncated"
     );
     GLOBAL_METRICS.inc_requests_failed();
     Ok(crate::daemon::protocol::encode_frame(&Response::Error {
         id: request_id,
-        code: error_codes::INTERNAL_ERROR,
-        message: format!("Daemon response exceeded the {MAX_REQUEST_SIZE}-byte transport limit"),
+        code: error_codes::RESPONSE_TOO_LARGE,
+        message: format!(
+            "Daemon response of {} bytes exceeds the {MAX_RESPONSE_SIZE}-byte response budget",
+            response_bytes.len()
+        ),
     })?)
 }
 
@@ -686,26 +811,96 @@ async fn handle_client_with_idle_timeout(
 
 #[cfg(test)]
 mod tests {
+    use super::super::protocol::{PackageInfo, WirePackageSource};
     use super::*;
 
     #[test]
-    fn oversized_daemon_responses_return_an_error_frame() {
+    fn untruncatable_oversized_responses_use_a_dedicated_limit_error() {
+        // Message results carry no truncatable list: a single payload alone
+        // exceeds the budget, so the response degrades to the dedicated
+        // limit error — never INTERNAL_ERROR.
         let oversized = Response::Success {
             id: 77,
-            result: super::super::protocol::ResponseResult::Message("x".repeat(MAX_REQUEST_SIZE)),
+            result: ResponseResult::Message("x".repeat(MAX_RESPONSE_SIZE + 1024)),
         };
 
         let encoded = encode_bounded_response(&oversized, 77).expect("bounded response");
-        assert!(encoded.len() <= MAX_REQUEST_SIZE);
+        assert!(encoded.len() <= MAX_RESPONSE_SIZE);
         let (_, payload) = crate::daemon::protocol::split_frame(&encoded).expect("frame header");
         let decoded: Response = bitcode::deserialize(payload).expect("response payload");
         match decoded {
             Response::Error { id, code, message } => {
                 assert_eq!(id, 77);
-                assert_eq!(code, error_codes::INTERNAL_ERROR);
-                assert!(message.contains("transport limit"));
+                assert_eq!(code, error_codes::RESPONSE_TOO_LARGE);
+                assert!(message.contains("response budget"));
             }
-            Response::Success { .. } => panic!("oversized response must become an error"),
+            Response::Success { .. } => panic!("untruncatable oversized response must become an error"),
+        }
+    }
+
+    #[test]
+    fn oversized_debian_search_results_are_truncated_not_errored() {
+        let entry = PackageInfo {
+            name: "pkg".to_string(),
+            version: "1.0".to_string(),
+            description: "d".repeat(16_000),
+            source: WirePackageSource::Official,
+        };
+        // ~600 entries x ~16 KiB ≈ 9.6 MB encoded: over the 8 MiB budget.
+        let count = 600;
+        let oversized = Response::Success {
+            id: 42,
+            result: ResponseResult::DebianSearch(vec![entry; count]),
+        };
+        let raw = crate::daemon::protocol::encode_frame(&oversized).expect("encode oversized");
+        assert!(raw.len() > MAX_RESPONSE_SIZE, "test setup: payload must exceed the budget");
+
+        let encoded = encode_bounded_response(&oversized, 42).expect("bounded response");
+        assert!(encoded.len() <= MAX_RESPONSE_SIZE);
+        let (_, payload) = crate::daemon::protocol::split_frame(&encoded).expect("frame header");
+        let decoded: Response = bitcode::deserialize(payload).expect("truncated frame decodes");
+        match decoded {
+            Response::Success { id, result: ResponseResult::DebianSearch(list) } => {
+                assert_eq!(id, 42);
+                assert!(list.len() < count, "list must have been truncated");
+                assert!(!list.is_empty(), "truncation must keep at least one entry");
+            }
+            other => panic!("oversized list response must stay a success, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn oversized_search_results_are_truncated_with_consistent_total() {
+        let entry = PackageInfo {
+            name: "pkg".to_string(),
+            version: "1.0".to_string(),
+            description: "d".repeat(16_000),
+            source: WirePackageSource::Official,
+        };
+        let count = 600;
+        let oversized = Response::Success {
+            id: 43,
+            result: ResponseResult::Search(SearchResult {
+                packages: vec![entry; count],
+                total: count,
+            }),
+        };
+
+        let encoded = encode_bounded_response(&oversized, 43).expect("bounded response");
+        assert!(encoded.len() <= MAX_RESPONSE_SIZE);
+        let (_, payload) = crate::daemon::protocol::split_frame(&encoded).expect("frame header");
+        let decoded: Response = bitcode::deserialize(payload).expect("truncated frame decodes");
+        match decoded {
+            Response::Success { id, result: ResponseResult::Search(results) } => {
+                assert_eq!(id, 43);
+                assert!(results.packages.len() < count);
+                assert!(!results.packages.is_empty());
+                // The client must see a complete, internally consistent
+                // result set, not one hinting at more matches it can never
+                // receive.
+                assert_eq!(results.total, results.packages.len());
+            }
+            other => panic!("oversized search response must stay a success, got {other:?}"),
         }
     }
 
