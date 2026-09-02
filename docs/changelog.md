@@ -10,6 +10,27 @@ OMG is the fastest unified package manager for Linux, replacing pacman, yay, nvm
 
 ---
 
+## [0.1.215] - 2026-09-02
+
+### ⚠️  Breaking Changes
+
+- Replace `omg license` with `omg account link|status|unlink` ([#174](https://github.com/PyRo1121/omg/issues/174))
+
+  `omg license`, `omg license check`, and `omg license pricing` are gone. Local Team, Enterprise, and Fleet commands no longer require a paid JWT. Remote dashboard sync still needs `omg account link`.
+
+- Publish GitHub releases as prereleases until 1.0
+
+  `/releases/latest` stays on v0.1.214. Consumers of "Latest" will not pick up 0.1.x alphas.
+
+### ✨ New Features
+
+- Treat dashboard account linking as optional identity ([#174](https://github.com/PyRo1121/omg/issues/174))
+- Tag a fully green main CI run and publish attested platform archives as alpha prereleases
+
+### 🐛 Bug Fixes
+
+- Fix Debian Clippy and the macOS self-update artifact-name test ([#175](https://github.com/PyRo1121/omg/issues/175))
+
 ## [Unreleased]
 ### Bench
 
