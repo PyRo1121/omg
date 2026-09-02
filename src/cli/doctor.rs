@@ -4,15 +4,25 @@ use tokio::time::Duration;
 use crate::cli::style;
 #[cfg(unix)]
 use crate::core::client::DaemonClient;
+use crate::core::env::distro::{Distro, detect_distro};
 use crate::core::http::shared_client;
 
-/// Mirror endpoints to test connectivity
-const MIRROR_ENDPOINTS: &[(&str, &str)] = &[
+/// Mirror endpoints to test connectivity.
+/// `ARCH_MIRROR_ENDPOINTS` only applies to the Arch backend (W3-A-02).
+const ARCH_MIRROR_ENDPOINTS: &[(&str, &str)] = &[
     ("Arch Linux", "https://archlinux.org"),
     ("Kernel.org", "https://kernel.org"),
     ("GitHub", "https://github.com"),
     ("AUR", "https://aur.archlinux.org"),
 ];
+
+const GENERIC_MIRROR_ENDPOINTS: &[(&str, &str)] = &[
+    ("Kernel.org", "https://kernel.org"),
+    ("GitHub", "https://github.com"),
+];
+
+const ARCH_DNS_HOSTS: &[&str] = &["archlinux.org", "aur.archlinux.org", "github.com"];
+const GENERIC_DNS_HOSTS: &[&str] = &["kernel.org", "github.com"];
 
 fn mirror_status_is_issue(status: reqwest::StatusCode) -> bool {
     !status.is_success() && !status.is_redirection()
@@ -21,6 +31,10 @@ fn mirror_status_is_issue(status: reqwest::StatusCode) -> bool {
 // EOL data lives in `runtimes::eol` (shared with security.rs).
 
 /// Run all health checks
+///
+/// Exit contract (W3-A-03): `Ok(())` when the system is healthy (0 issues),
+/// `Err` when any issue was found, so automation can detect failure — the
+/// process exits 0 healthy / 1 on found issues.
 pub async fn run(network: bool, eol: bool) -> Result<()> {
     println!(
         "{} Checking system health...\n",
@@ -28,28 +42,37 @@ pub async fn run(network: bool, eol: bool) -> Result<()> {
     );
 
     let mut issues = 0;
+    let distro = detected_distro();
+    let arch_backend = matches!(distro, Distro::Arch);
+    let debian_backend = matches!(distro, Distro::Debian | Distro::Ubuntu);
 
-    // 1. OS Check
-    if check_os() {
-        println!("  {}", style::success("Arch Linux detected"));
+    // 1. OS Check — every supported backend distro is healthy; only an
+    //    unsupported system is an issue (W3-A-02: a supported Debian system
+    //    must not be reported as permanently unhealthy).
+    if let Some(label) = supported_distro_label(distro) {
+        println!("  {}", style::success(label));
     } else {
         println!(
             "  {}",
-            style::warning("Non-Arch system detected (some features may fail)")
+            style::warning("Unsupported system detected (no package-manager backend)")
         );
         issues += 1;
     }
 
     // 2. Internet Connectivity (basic check)
-    if check_internet().await {
+    if check_internet(distro).await {
         println!("  {}", style::success("Internet connectivity"));
     } else {
         println!("  {}", style::error("No internet connection"));
         issues += 1;
     }
 
-    // 3. Dependencies
-    let deps = vec!["git", "curl", "tar", "sudo"];
+    // 3. Dependencies (backend-appropriate: the live Debian backend shells
+    //    out to `apt-get` via the privilege module)
+    let mut deps = vec!["git", "curl", "tar", "sudo"];
+    if debian_backend {
+        deps.push("apt-get");
+    }
     for dep in deps {
         if check_command(dep) {
             println!("  {}", style::success(&format!("Found dependency: {dep}")));
@@ -57,6 +80,12 @@ pub async fn run(network: bool, eol: bool) -> Result<()> {
             println!("  {}", style::error(&format!("Missing dependency: {dep}")));
             issues += 1;
         }
+    }
+
+    // 3b. Backend-specific infrastructure (what the compiled backend itself
+    //     reads — no invented checks).
+    if debian_backend {
+        issues += check_debian_infra();
     }
 
     // 4. Daemon Status
@@ -92,7 +121,7 @@ pub async fn run(network: bool, eol: bool) -> Result<()> {
     if network {
         println!();
         println!("{}", style::header("Network Diagnostics"));
-        issues += check_network().await;
+        issues += check_network(arch_backend).await;
     }
 
     // 8. EOL runtime checks (if requested)
@@ -102,26 +131,127 @@ pub async fn run(network: bool, eol: bool) -> Result<()> {
         issues += check_eol_runtimes()?;
     }
 
+    finish_doctor(issues)
+}
+
+/// Print the verdict and select the exit outcome (W3-A-03): healthy runs
+/// return `Ok(())` (exit 0); found issues return `Err` so the process exits
+/// nonzero (1) and automation can detect failure.
+fn finish_doctor(issues: usize) -> Result<()> {
     println!();
     if issues == 0 {
         println!("{}", style::success("System is healthy! Ready to rock."));
+        Ok(())
     } else {
         println!(
             "{} Found {} issue(s). Please review.",
             style::warning("→"),
             issues
         );
+        Err(anyhow::anyhow!("doctor found {issues} health issue(s)"))
     }
-
-    Ok(())
 }
 
-/// Check network connectivity to multiple mirrors
-async fn check_network() -> usize {
+/// Distro detected for this doctor run.
+///
+/// Test mode mirrors the mock-backend default (`arch`) when
+/// `OMG_TEST_DISTRO` is unset, so doctor output is hermetic regardless of
+/// the host OS.
+fn detected_distro() -> Distro {
+    if crate::core::paths::test_mode() {
+        return std::env::var("OMG_TEST_DISTRO")
+            .ok()
+            .as_deref()
+            .map_or(Distro::Arch, parse_test_distro);
+    }
+    detect_distro()
+}
+
+/// Parse an `OMG_TEST_DISTRO` value (same vocabulary as distro detection).
+fn parse_test_distro(value: &str) -> Distro {
+    match value.to_lowercase().as_str() {
+        "arch" => Distro::Arch,
+        "debian" => Distro::Debian,
+        "ubuntu" => Distro::Ubuntu,
+        "fedora" | "rhel" | "centos" | "rocky" | "alma" => Distro::Fedora,
+        "macos" | "darwin" => Distro::MacOS,
+        _ => Distro::Unknown,
+    }
+}
+
+/// Success label for a supported distro (`None` = unsupported system).
+fn supported_distro_label(distro: Distro) -> Option<&'static str> {
+    match distro {
+        Distro::Arch => Some("Arch Linux detected"),
+        Distro::Debian | Distro::Ubuntu => Some("Debian/Ubuntu detected (apt backend)"),
+        Distro::Fedora => Some("Fedora/RHEL detected (dnf backend)"),
+        Distro::MacOS => Some("macOS detected (Homebrew backend)"),
+        Distro::Unknown => None,
+    }
+}
+
+/// Check the Debian/Ubuntu infrastructure the apt backend actually depends
+/// on (W3-A-02): the dpkg status database and the APT package indexes that
+/// `package_managers::debian_db` parses directly. No other infrastructure is
+/// invented; repo reachability for apt is exactly these on-disk indexes.
+fn check_debian_infra() -> usize {
+    if crate::core::paths::test_mode() {
+        // Hermetic like the other checks: report healthy under test mode.
+        return 0;
+    }
+
+    let mut issues = 0;
+
+    let status = std::path::Path::new("/var/lib/dpkg/status");
+    if status.exists() {
+        println!(
+            "  {}",
+            style::success("dpkg package database (/var/lib/dpkg/status)")
+        );
+    } else {
+        println!(
+            "  {}",
+            style::error("dpkg package database missing (/var/lib/dpkg/status)")
+        );
+        issues += 1;
+    }
+
+    let lists = std::path::Path::new("/var/lib/apt/lists");
+    let has_indexes = lists.is_dir()
+        && std::fs::read_dir(lists).is_ok_and(|entries| {
+            entries
+                .filter_map(Result::ok)
+                .any(|e| e.file_name().to_string_lossy().ends_with("_Packages"))
+        });
+    if has_indexes {
+        println!(
+            "  {}",
+            style::success("APT package indexes (/var/lib/apt/lists)")
+        );
+    } else {
+        println!(
+            "  {} APT package indexes missing or empty (/var/lib/apt/lists) — run 'sudo apt-get update'",
+            style::error("✗")
+        );
+        issues += 1;
+    }
+
+    issues
+}
+
+/// Check network connectivity to backend-appropriate mirrors
+async fn check_network(arch_backend: bool) -> usize {
     let client = shared_client();
     let mut issues = 0;
 
-    for (name, url) in MIRROR_ENDPOINTS {
+    // Arch-only mirrors (archlinux.org, AUR) do not apply to other backends.
+    let endpoints: &[(&str, &str)] = if arch_backend {
+        ARCH_MIRROR_ENDPOINTS
+    } else {
+        GENERIC_MIRROR_ENDPOINTS
+    };
+
+    for (name, url) in endpoints {
         let start = std::time::Instant::now();
         let result = tokio::time::timeout(Duration::from_secs(5), client.get(*url).send()).await;
 
@@ -155,7 +285,12 @@ async fn check_network() -> usize {
     // DNS resolution test
     println!();
     println!("  {}", style::dim("DNS Resolution:"));
-    for host in &["archlinux.org", "aur.archlinux.org", "github.com"] {
+    let dns_hosts: &[&str] = if arch_backend {
+        ARCH_DNS_HOSTS
+    } else {
+        GENERIC_DNS_HOSTS
+    };
+    for host in dns_hosts {
         match std::net::ToSocketAddrs::to_socket_addrs(&format!("{host}:443")) {
             Ok(addrs) => {
                 let count = addrs.count();
@@ -243,19 +378,21 @@ fn check_eol_runtimes() -> Result<usize> {
     Ok(issues)
 }
 
-fn check_os() -> bool {
+async fn check_internet(distro: Distro) -> bool {
     if crate::core::paths::test_mode() {
         return true;
     }
-    std::path::Path::new("/etc/arch-release").exists()
-}
-
-async fn check_internet() -> bool {
-    if crate::core::paths::test_mode() {
-        return true;
-    }
+    // Backend-appropriate probe target: only the Arch backend has a fixed
+    // upstream host (archlinux.org) in this codebase; other backends get
+    // their repos from system configuration, so probe GitHub — already a
+    // doctor mirror endpoint — as the neutral connectivity target.
+    let url = if matches!(distro, Distro::Arch) {
+        "https://archlinux.org"
+    } else {
+        "https://github.com"
+    };
     let client = shared_client();
-    let request = client.get("https://archlinux.org").send();
+    let request = client.get(url).send();
     tokio::time::timeout(Duration::from_secs(2), request)
         .await
         .ok()
@@ -479,5 +616,39 @@ mod tests {
         assert!(!mirror_status_is_issue(
             reqwest::StatusCode::TEMPORARY_REDIRECT
         ));
+    }
+
+    // W3-A-02: every supported backend distro must get a healthy OS verdict;
+    // only an unsupported system is an issue.
+    #[test]
+    fn supported_distros_are_healthy_and_unknown_is_an_issue() {
+        assert_eq!(
+            supported_distro_label(Distro::Arch),
+            Some("Arch Linux detected")
+        );
+        assert!(supported_distro_label(Distro::Debian).is_some());
+        assert!(supported_distro_label(Distro::Ubuntu).is_some());
+        assert!(supported_distro_label(Distro::Fedora).is_some());
+        assert!(supported_distro_label(Distro::MacOS).is_some());
+        assert_eq!(supported_distro_label(Distro::Unknown), None);
+    }
+
+    #[test]
+    fn test_distro_vocabulary_matches_mock_backend() {
+        assert_eq!(parse_test_distro("arch"), Distro::Arch);
+        assert_eq!(parse_test_distro("debian"), Distro::Debian);
+        assert_eq!(parse_test_distro("ubuntu"), Distro::Ubuntu);
+        assert_eq!(parse_test_distro("rhel"), Distro::Fedora);
+        assert_eq!(parse_test_distro("darwin"), Distro::MacOS);
+        assert_eq!(parse_test_distro("nonsense"), Distro::Unknown);
+    }
+
+    // W3-A-03: exit contract — 0 issues is Ok (exit 0); any issue count is
+    // Err (exit 1) so automation can detect failure.
+    #[test]
+    fn zero_issues_is_ok_and_found_issues_are_err() {
+        assert!(finish_doctor(0).is_ok());
+        let err = finish_doctor(3).expect_err("issues must produce Err");
+        assert!(err.to_string().contains('3'), "err: {err}");
     }
 }

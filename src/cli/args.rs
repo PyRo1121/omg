@@ -333,7 +333,7 @@ pub enum Commands {
         fast: bool,
     },
 
-    /// Check system health and environment configuration
+    /// Check system health and environment configuration (exit 0: healthy, exit 1: issues found)
     Doctor {
         /// Test network connectivity to package mirrors
         #[arg(long)]
