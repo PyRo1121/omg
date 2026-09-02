@@ -205,11 +205,8 @@ fn try_fast_elevated(
             } else {
                 omg_lib::package_managers::TransactionKind::Install
             };
-            let result = omg_lib::package_managers::execute_transaction(
-                packages.clone(),
-                kind,
-                None,
-            );
+            let result =
+                omg_lib::package_managers::execute_transaction(packages.clone(), kind, None);
             let result = if parent_records {
                 result
             } else {

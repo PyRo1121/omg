@@ -663,9 +663,7 @@ pub fn enable_turbo_mode() -> Result<()> {
             |_| "/usr/local/bin/omg".to_string(),
             |p| p.to_string_lossy().into_owned(),
         );
-        println!(
-            "       {user} ALL=(ALL) NOPASSWD: {omg_bin}, /usr/bin/dnf, /usr/bin/apt-get"
-        );
+        println!("       {user} ALL=(ALL) NOPASSWD: {omg_bin}, /usr/bin/dnf, /usr/bin/apt-get");
         println!();
         println!(
             "  {} File capabilities are NEVER recommended: they grant privileges to\n\

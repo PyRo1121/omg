@@ -15,8 +15,7 @@ use crate::core::env::distro::{Distro, detect_distro};
 const GITHUB_OWNER: &str = "PyRo1121";
 const GITHUB_REPO: &str = "omg";
 const GITHUB_RELEASES_PAGE: &str = "https://github.com/PyRo1121/omg/releases";
-const GITHUB_API_LATEST_RELEASE: &str =
-    "https://api.github.com/repos/PyRo1121/omg/releases/latest";
+const GITHUB_API_LATEST_RELEASE: &str = "https://api.github.com/repos/PyRo1121/omg/releases/latest";
 
 /// Repository used to verify Sigstore build-provenance attestations.
 const ATTESTATION_REPO: &str = "PyRo1121/omg";
@@ -274,10 +273,9 @@ async fn fetch_latest_version() -> Result<Version> {
         .text()
         .await
         .context("Failed to read GitHub latest-release response body")?;
-    let release: GithubLatestRelease = serde_json::from_str(&body)
-        .context("GitHub latest-release metadata was not valid JSON")?;
-    parse_version(&release.tag_name)
-        .context("GitHub latest-release tag was not valid semver")
+    let release: GithubLatestRelease =
+        serde_json::from_str(&body).context("GitHub latest-release metadata was not valid JSON")?;
+    parse_version(&release.tag_name).context("GitHub latest-release tag was not valid semver")
 }
 
 /// The `(arch, target)` fragment of the artifacts built by
