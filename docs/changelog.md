@@ -4012,6 +4012,14 @@ the documented 'omg explicit' contract
 chore(deps): update rust crate git2 to 0.20 [security]
 ### 🔧 Maintenance
 
+- **License**: Relicense OMG to MIT and remove commercial pricing sheet ([#171](https://github.com/PyRo1121/omg/issues/171))
+
+Adopt the permissive MIT License for the OMG codebase, delete COMMERCIAL-LICENSE.md,
+
+remove commercial pricing tiers from the README and documentation, and align metadata
+
+across Cargo.toml, NOTICE, THIRD-PARTY-LICENSES.md, and documentation files.
+
 - **Deps**: Update rust dependencies ([#129](https://github.com/PyRo1121/omg/issues/129))
 - **Deps**: Update rust dependencies ([#91](https://github.com/PyRo1121/omg/issues/91))
 - Add isolated OMG CLI verification skill ([#107](https://github.com/PyRo1121/omg/issues/107))
@@ -4844,6 +4852,20 @@ the Debian backend), so it was removed from the metadata.
 - **Deps**: Update rust dependencies
 - Normalize project formatting
 ### 🧪 Testing
+
+- **Ci**: Align sync fixtures and fuzz lock ([#169](https://github.com/PyRo1121/omg/issues/169))
+
+* test(ci): align sync fixtures and fuzz lock
+
+* test(ci): align sync fixtures and fuzz lock
+
+* fix(cli): gate Arch doctor infra behind the arch feature
+
+[#167](https://github.com/PyRo1121/omg/issues/167) added check_arch_infra, which parses PacmanConfig. That module is
+
+gated behind feature = "arch", so the merge with main failed portable
+
+Quick Gate clippy. Compile the check only with arch.
 
 - **Aur**: Pin reviewed PKGBUILD seal ([#164](https://github.com/PyRo1121/omg/issues/164))
 - **Slsa**: Pin multi-SAN identity selection ([#158](https://github.com/PyRo1121/omg/issues/158))
