@@ -1465,6 +1465,31 @@ mod tests {
     }
 
     #[test]
+    fn fulcio_identity_ignores_dns_and_prefers_email_over_uri() {
+        use rcgen::{CertificateParams, KeyPair, SanType};
+        use x509_parser::prelude::{FromDer, X509Certificate};
+
+        let key = KeyPair::generate().unwrap();
+        let mut params = CertificateParams::new(vec!["ignored.example".to_string()]).unwrap();
+        params.subject_alt_names = vec![
+            SanType::URI(
+                "https://accounts.example.com/users/alice"
+                    .try_into()
+                    .unwrap(),
+            ),
+            SanType::DnsName("ignored.example".try_into().unwrap()),
+            SanType::Rfc822Name("alice@example.com".try_into().unwrap()),
+        ];
+        let certificate = params.self_signed(&key).unwrap();
+        let (_, parsed) = X509Certificate::from_der(certificate.der()).unwrap();
+
+        assert_eq!(
+            fulcio_signer_identity(&parsed).as_deref(),
+            Some("alice@example.com")
+        );
+    }
+
+    #[test]
     fn fulcio_certificate_chain_binds_signer_identity() {
         use base64::Engine as _;
         use rcgen::{CertificateParams, DnType, ExtendedKeyUsagePurpose, KeyPair};
