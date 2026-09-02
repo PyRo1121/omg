@@ -386,6 +386,16 @@ std::io imports); format touched files with rustfmt
 - Reuse atomic download helper for mise installs
 ### ⚡ Performance
 
+- Streamline README to focus on core product value ([#173](https://github.com/PyRo1121/omg/issues/173))
+
+Remove corporate sales calculations, redundant installation tables,
+
+and repetitive descriptions. Highlight the unified package manager and
+
+runtime switching features with a clean quickstart, concise feature
+
+breakdown, and real performance benchmarks.
+
 - AUR update performance, terminal ownership, and elevated-write file ownership
 
   - Publish AUR metadata as a coherent generation: stage-validate-then-rename
