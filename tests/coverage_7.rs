@@ -194,7 +194,7 @@ fn make_fixture(repos: &[&str]) -> SyncFixture {
 
     let mirrorlist_path = root.path().join("mirrorlist");
     let conf_path = root.path().join("pacman.conf");
-    let mut conf = String::from("[options]\n\n");
+    let mut conf = String::from("[options]\nSigLevel = Never\n\n");
     use std::fmt::Write as _;
     for repo in repos {
         let _ = writeln!(conf, "[{repo}]\nInclude = {}\n", mirrorlist_path.display());
