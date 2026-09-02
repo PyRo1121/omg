@@ -352,12 +352,7 @@ fn parse_rekor_entry(
 /// (base64 body, hex log ID, decimal integers) the RFC 8785 form is the
 /// key-sorted, whitespace-free JSON built here; all values are ASCII so no
 /// string escaping can occur.
-fn canonical_set_payload(
-    log_id: &str,
-    log_index: u64,
-    integrated_time: u64,
-    body: &str,
-) -> String {
+fn canonical_set_payload(log_id: &str, log_index: u64, integrated_time: u64, body: &str) -> String {
     debug_assert!(
         log_id.bytes().all(|b| b.is_ascii_hexdigit()),
         "logID must be hex"
@@ -367,7 +362,9 @@ fn canonical_set_payload(
             .all(|b| b.is_ascii_alphanumeric() || b == b'+' || b == b'/' || b == b'='),
         "body must be standard base64"
     );
-    format!("{{\"body\":\"{body}\",\"integratedTime\":{integrated_time},\"logID\":\"{log_id}\",\"logIndex\":{log_index}}}")
+    format!(
+        "{{\"body\":\"{body}\",\"integratedTime\":{integrated_time},\"logID\":\"{log_id}\",\"logIndex\":{log_index}}}"
+    )
 }
 
 /// Verify the ECDSA P-256 (ASN.1 DER) SET signature over the SHA-256 digest
@@ -1490,7 +1487,11 @@ mod tests {
         // Wrong key must not verify.
         let other = p256::ecdsa::SigningKey::from_slice(&[11u8; 32]).unwrap();
         assert!(
-            !verify_set_signature(canonical.as_bytes(), sig_der.as_bytes(), other.verifying_key()),
+            !verify_set_signature(
+                canonical.as_bytes(),
+                sig_der.as_bytes(),
+                other.verifying_key()
+            ),
             "a signature from a different key must fail SET verification"
         );
         // Truncated DER signature must not verify.
@@ -1595,8 +1596,7 @@ mod tests {
             "aGVsbG8=",
             &signing,
         );
-        let err =
-            parse_rekor_entry("abc", response).expect_err("foreign-key SET must be rejected");
+        let err = parse_rekor_entry("abc", response).expect_err("foreign-key SET must be rejected");
         assert!(
             matches!(err, RekorError::EntrySetVerificationFailed { .. }),
             "got: {err}"
@@ -1649,7 +1649,11 @@ mod tests {
         use p256::ecdsa::signature::Signer as _;
         let sig_over_tampered: p256::ecdsa::Signature = signing.sign(tampered.as_bytes());
         assert!(
-            !verify_set_signature(original.as_bytes(), sig_over_tampered.to_der().as_bytes(), key),
+            !verify_set_signature(
+                original.as_bytes(),
+                sig_over_tampered.to_der().as_bytes(),
+                key
+            ),
             "signature over tampered bytes must not verify over the original"
         );
     }
@@ -1667,8 +1671,7 @@ mod tests {
                 "verification": {"signedEntryTimestamp": "!!!not-base64!!!"}
             }),
         );
-        let err = parse_rekor_entry("abc", bad)
-            .expect_err("malformed SET base64 must be refused");
+        let err = parse_rekor_entry("abc", bad).expect_err("malformed SET base64 must be refused");
         assert!(
             matches!(err, RekorError::EntrySetMalformed { .. }),
             "got: {err}"
