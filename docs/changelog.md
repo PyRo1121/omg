@@ -735,6 +735,7 @@ analyzer inference
 - **Ci**: Cross-platform install script and R2 release sync
 ### 🐛 Bug Fixes
 
+- **Aur**: Install required sibling outputs together ([#162](https://github.com/PyRo1121/omg/issues/162))
 - **Homebrew**: Read current native API cache ([#161](https://github.com/PyRo1121/omg/issues/161))
 - **Daemon**: Index Fedora and Homebrew backends ([#160](https://github.com/PyRo1121/omg/issues/160))
 - **Tui**: Serialize prompts through terminal ownership ([#157](https://github.com/PyRo1121/omg/issues/157))
