@@ -735,6 +735,12 @@ analyzer inference
 - **Ci**: Cross-platform install script and R2 release sync
 ### 🐛 Bug Fixes
 
+- **Aur**: Offload blocking async work ([#166](https://github.com/PyRo1121/omg/issues/166))
+
+* fix(aur): offload blocking async work
+
+* perf(pgp): avoid cloning fetched key ids
+
 - **Arch**: Verify synchronized database signatures ([#165](https://github.com/PyRo1121/omg/issues/165))
 - **Aur**: Install build dependencies without makepkg ([#163](https://github.com/PyRo1121/omg/issues/163))
 - **Aur**: Install required sibling outputs together ([#162](https://github.com/PyRo1121/omg/issues/162))
