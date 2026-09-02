@@ -4863,6 +4863,12 @@ the Debian backend), so it was removed from the metadata.
 - Normalize project formatting
 ### 🧪 Testing
 
+- **Audit**: Pin corrupt-log recovery ([#172](https://github.com/PyRo1121/omg/issues/172))
+
+* test(audit): pin corrupt-log recovery
+
+* test(audit): exercise automatic recovery wiring
+
 - **Ci**: Align sync fixtures and fuzz lock ([#169](https://github.com/PyRo1121/omg/issues/169))
 
 * test(ci): align sync fixtures and fuzz lock
