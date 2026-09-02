@@ -289,10 +289,10 @@ mod runtime_matrix {
         listing.assert_success();
         listing.assert_stdout_contains("Configuration");
 
-        // Get a valid config value: default telemetry.enabled is true
+        // The harness disables telemetry explicitly for every child process.
         let get = run_omg(&["config", "get", "telemetry.enabled"]);
         get.assert_success();
-        get.assert_stdout_contains("true");
+        get.assert_stdout_contains("false");
     }
 
     #[test]
@@ -434,12 +434,11 @@ mod container_matrix {
     #[test]
     #[serial]
     fn test_container_status() {
-        // Every branch of `container status` renders the "Container Status"
-        // header (src/cli/container.rs:87-114): runtime found, no containers,
-        // docker list error, or no runtime at all.
-        let res = run_omg(&["container", "status"]);
-        res.assert_success();
-        res.assert_stdout_contains("Container Status");
+        let empty_path = TempDir::new().unwrap();
+        let path = empty_path.path().to_str().unwrap();
+        let res = run_omg_with_env(&["container", "status"], &[("PATH", path)]);
+        res.assert_failure();
+        res.assert_stderr_contains("No container runtime detected");
     }
 
     #[test]

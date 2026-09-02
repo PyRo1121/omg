@@ -703,6 +703,38 @@ analyzer inference
 - **Ci**: Cross-platform install script and R2 release sync
 ### 🐛 Bug Fixes
 
+- Handle absolute symlink targets per dpkg semantics (W1-B-01) ([#148](https://github.com/PyRo1121/omg/issues/148))
+- Honor or reject omg daemon --foreground (W10-A2-01) ([#147](https://github.com/PyRo1121/omg/issues/147))
+- Honor telemetry opt-out in usage sync (W8-B-02) ([#146](https://github.com/PyRo1121/omg/issues/146))
+
+Usage sync (REPORT_USAGE posts) gated only on license validity, so users
+
+with telemetry_enabled = false still got network usage reports, contradicting
+
+the documented privacy contract (README 'Always Reversible', docs/security.md:
+
+'Either missing condition means no enhanced collection').
+
+Usage reporting ships as part of the licensed enhanced-telemetry offering,
+
+so the sync decision now requires BOTH conditions, reusing the exact
+
+telemetry access path from src/core/telemetry.rs (is_telemetry_opt_out:
+
+env overrides OMG_TELEMETRY/OMG_DISABLE_TELEMETRY, fail-closed on settings
+
+load errors) plus the existing valid-license check.
+
+Regression tests: sync_decision refuses when telemetry is disabled
+
+regardless of license state, and requires both conditions to post.
+
+- Guard fish hook invocations and survive malformed pins (W2-B-01, W2-B-02) ([#143](https://github.com/PyRo1121/omg/issues/143))
+
+* fix: guard fish hook invocations and survive malformed pins (W2-B-01, W2-B-02)
+
+* style: cargo fmt (PR 143 quick gate)
+
 - Give daemon responses their own size budget (W2-A-03) ([#145](https://github.com/PyRo1121/omg/issues/145))
 
 * fix: give daemon responses their own size budget (W2-A-03)
@@ -3851,6 +3883,7 @@ the documented 'omg explicit' contract
 chore(deps): update rust crate git2 to 0.20 [security]
 ### 🔧 Maintenance
 
+- **Deps**: Update rust dependencies ([#129](https://github.com/PyRo1121/omg/issues/129))
 - **Deps**: Update rust dependencies ([#91](https://github.com/PyRo1121/omg/issues/91))
 - Add isolated OMG CLI verification skill ([#107](https://github.com/PyRo1121/omg/issues/107))
 
@@ -4682,6 +4715,32 @@ the Debian backend), so it was removed from the metadata.
 - **Deps**: Update rust dependencies
 - Normalize project formatting
 ### 🧪 Testing
+
+- **Cli**: Make CLI fixtures hermetic against host state ([#130](https://github.com/PyRo1121/omg/issues/130))
+
+The trunk-wide coverage run failed 20 tests that depended on host
+
+package state, host container runtimes, or root-only path semantics:
+
+  - Replace bash/vim/curl expectations with mock-DB packages (pacman,
+
+firefox, git) or seed explicit TestProject mock state.
+
+  - Route test-mode removals through the mock backend so removal flows
+
+never touch the host package manager.
+
+  - Skip sudo re-exec for privileged commands in test mode; the mock
+
+backend is the hermetic adapter and sync/clean must not re-exec.
+
+  - Make the container-status assertion deterministic via an empty PATH
+
+probe and assert the malformed-env contract on all hosts.
+
+  - Skip the unwritable-database-dir check under root and use a local
+
+blocker file for the privacy-export path failure.
 
 - **Aur**: Mirror sandbox executable path
 - **Aur**: Assert fakeroot ownership precondition

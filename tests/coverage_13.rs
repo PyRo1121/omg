@@ -294,21 +294,9 @@ fn run_rejects_invalid_container_name_before_runtime_contact() {
 /// Contract: malformed `KEY=VALUE` entries passed to `run` are rejected with
 /// the exact "expected KEY=VALUE" guidance instead of being silently dropped.
 ///
-/// Dual-path contract: `parse_env_vars` runs after `ContainerManager::new()`,
-/// so on hosts without a runtime the same invocation fails earlier with the
-/// runtime error — both sides assert concretely.
 #[test]
 fn run_reports_malformed_env_entry_with_exact_guidance() {
     let project = TestProject::new();
-
-    let runtime_available = ["docker", "podman"].iter().any(|bin| {
-        std::process::Command::new(bin)
-            .arg("--version")
-            .stdout(std::process::Stdio::null())
-            .stderr(std::process::Stdio::null())
-            .status()
-            .is_ok_and(|s| s.success())
-    });
 
     let result = project.run(&[
         "container",
@@ -322,10 +310,6 @@ fn run_reports_malformed_env_entry_with_exact_guidance() {
     ]);
 
     result.assert_failure();
-    if runtime_available {
-        result.assert_stderr_contains("Invalid environment variable 'MALFORMED_NO_SEPARATOR'");
-        result.assert_stderr_contains("expected KEY=VALUE");
-    } else {
-        result.assert_stderr_contains("No container runtime found");
-    }
+    result.assert_stderr_contains("Invalid environment variable 'MALFORMED_NO_SEPARATOR'");
+    result.assert_stderr_contains("expected KEY=VALUE");
 }

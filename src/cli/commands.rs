@@ -636,23 +636,28 @@ fn detach_daemon_process(command: &mut Command) {
 /// Start the daemon
 #[cfg(unix)]
 pub fn daemon(foreground: bool) -> Result<()> {
+    // Check if daemon is already running
+    let socket_path = crate::core::client::default_socket_path();
+
+    if let Ok(mut client) = crate::core::client::DaemonClient::connect_sync()
+        && client.ping_sync().is_ok()
+    {
+        println!(
+            "{} Daemon is already running at {}",
+            style::success("✓"),
+            socket_path.display()
+        );
+        return Ok(());
+    }
+
     if foreground {
-        println!("{} Run 'omgd' directly for daemon mode", style::info("→"));
-    } else {
-        // Check if daemon is already running
-        let socket_path = crate::core::client::default_socket_path();
+        // Honor --foreground: run omgd with inherited stdio and wait for it,
+        // mirroring running `omgd` directly in the terminal.
+        let mut command = Command::new(resolve_omgd_path());
+        return run_daemon_foreground(&mut command);
+    }
 
-        if let Ok(mut client) = crate::core::client::DaemonClient::connect_sync()
-            && client.ping_sync().is_ok()
-        {
-            println!(
-                "{} Daemon is already running at {}",
-                style::success("✓"),
-                socket_path.display()
-            );
-            return Ok(());
-        }
-
+    {
         // SECURITY: never unlink the socket from the launcher. A live but
         // momentarily unresponsive daemon would lose its listening pathname,
         // and the replacement omgd would then fail its singleton lock —
@@ -661,19 +666,9 @@ pub fn daemon(foreground: bool) -> Result<()> {
         // removal.
 
         // Start daemon in background
-        // 1. Try to find omgd in the same directory as the current executable (ensures version match)
-        let omgd_path = if let Ok(exe) = std::env::current_exe()
-            && let Some(dir) = exe.parent()
-        {
-            let local_omgd = dir.join("omgd");
-            if local_omgd.exists() {
-                local_omgd
-            } else {
-                std::path::PathBuf::from("omgd")
-            }
-        } else {
-            std::path::PathBuf::from("omgd")
-        };
+        // Prefer the omgd binary next to the current executable
+        // (ensures version match), falling back to PATH.
+        let omgd_path = resolve_omgd_path();
 
         let mut command = Command::new(omgd_path);
         command
@@ -704,9 +699,43 @@ pub fn daemon(foreground: bool) -> Result<()> {
             }
         }
 
-        return daemon_start_result(spawn, ready, socket_path.exists());
+        daemon_start_result(spawn, ready, socket_path.exists())
     }
-    Ok(())
+}
+
+/// Resolve the omgd binary to launch: prefer the sibling of the current
+/// executable so the daemon matches the CLI version, falling back to PATH.
+#[cfg(unix)]
+fn resolve_omgd_path() -> std::path::PathBuf {
+    if let Ok(exe) = std::env::current_exe()
+        && let Some(dir) = exe.parent()
+    {
+        let local_omgd = dir.join("omgd");
+        if local_omgd.exists() {
+            return local_omgd;
+        }
+    }
+    std::path::PathBuf::from("omgd")
+}
+
+/// Run omgd in the foreground with inherited stdio, blocking until it exits.
+#[cfg(unix)]
+fn run_daemon_foreground(command: &mut Command) -> Result<()> {
+    let status = command
+        .status()
+        .map_err(|e| anyhow::anyhow!("Failed to start daemon: {e}"))?;
+    foreground_exit_result(status)
+}
+
+/// Map the foreground daemon's exit status to a CLI result: a nonzero exit
+/// must surface as an error (nonzero CLI exit), never a silent success.
+#[cfg(unix)]
+fn foreground_exit_result(status: std::process::ExitStatus) -> Result<()> {
+    if status.success() {
+        Ok(())
+    } else {
+        anyhow::bail!("daemon exited with {status}")
+    }
 }
 
 #[cfg(unix)]
@@ -732,7 +761,10 @@ fn daemon_start_result(spawn: Result<(), String>, ready: bool, socket_exists: bo
 
 #[cfg(all(test, unix))]
 mod daemon_start_tests {
-    use super::{daemon_start_result, detach_daemon_process};
+    use super::{
+        daemon_start_result, detach_daemon_process, foreground_exit_result, run_daemon_foreground,
+    };
+    use std::process::Command;
 
     #[test]
     fn daemon_child_starts_in_its_own_process_group() {
@@ -755,6 +787,45 @@ mod daemon_start_tests {
         assert_eq!(
             fields[0], fields[1],
             "child PID must equal its process group"
+        );
+    }
+
+    #[test]
+    fn foreground_success_is_ok() {
+        use std::os::unix::process::ExitStatusExt as _;
+
+        let status = std::process::ExitStatus::from_raw(0);
+        assert!(foreground_exit_result(status).is_ok());
+    }
+
+    #[test]
+    fn foreground_child_failure_is_an_error_not_silent_success() {
+        use std::os::unix::process::ExitStatusExt as _;
+
+        let status = std::process::ExitStatus::from_raw(1);
+        let result = foreground_exit_result(status);
+        assert!(
+            result.is_err(),
+            "a foreground daemon that exits nonzero must fail the CLI"
+        );
+        let error = result.unwrap_err().to_string();
+        assert!(
+            error.contains("daemon exited"),
+            "error must name the daemon exit: {error}"
+        );
+    }
+
+    #[test]
+    fn foreground_spawn_failure_is_an_error() {
+        let mut command = Command::new("/nonexistent/omgd-should-not-exist");
+        let result = run_daemon_foreground(&mut command);
+        assert!(result.is_err());
+        assert!(
+            result
+                .unwrap_err()
+                .to_string()
+                .contains("Failed to start daemon"),
+            "spawn failure must surface the clear daemon-start error"
         );
     }
 

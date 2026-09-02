@@ -1,7 +1,10 @@
 //! Usage tracking for OMG
 //!
 //! Tracks command usage, time saved, and syncs with the API for dashboard display.
-//! Works for all tiers (free included) when a license is activated.
+//! Works for all tiers (free included) when a license is activated AND the user
+//! has not opted out of telemetry: usage reporting is delivered as part of the
+//! licensed enhanced-telemetry offering, so both conditions must hold regardless
+//! of license state (W8-B-02).
 //!
 //! Local usage statistics and remote telemetry are separate concerns. This
 //! module records local operation counts/time-saved estimates and only emits
@@ -639,11 +642,28 @@ fn licensed_for_sync() -> Option<crate::core::license::StoredLicense> {
     crate::core::license::load_license().filter(super::license::StoredLicense::is_token_valid)
 }
 
+/// Pure usage-sync decision, split out from [`sync_candidate`] so the
+/// telemetry opt-out contract is unit-testable without touching disk or the
+/// environment. Usage reporting is part of the licensed enhanced-telemetry
+/// feature (the same REPORT_USAGE network path), so a sync may be posted only
+/// when BOTH hold: the effective telemetry setting is enabled AND the license
+/// token is valid (W8-B-02). The telemetry half consults the setting through
+/// the exact same access path as [`crate::core::telemetry::is_enhanced_telemetry_enabled`]
+/// (env-aware, fail-closed on settings load errors).
+fn sync_decision(effective_telemetry_enabled: bool, license_valid: bool) -> bool {
+    effective_telemetry_enabled && license_valid
+}
+
 fn sync_candidate() -> Option<UsageStats> {
     if crate::core::paths::test_mode() {
         return None;
     }
-    licensed_for_sync()?;
+    if !sync_decision(
+        !crate::core::telemetry::is_telemetry_opt_out(),
+        licensed_for_sync().is_some(),
+    ) {
+        return None;
+    }
     load_for_tracking()
 }
 
@@ -681,6 +701,20 @@ pub async fn sync_usage_now() {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn usage_sync_refuses_to_post_when_telemetry_is_disabled() {
+        // W8-B-02 regression: a valid license must not bypass the telemetry
+        // opt-out; usage sync posts only when BOTH conditions hold.
+        assert!(!sync_decision(false, true));
+        assert!(!sync_decision(false, false));
+    }
+
+    #[test]
+    fn usage_sync_requires_both_telemetry_and_license() {
+        assert!(!sync_decision(true, false));
+        assert!(sync_decision(true, true));
+    }
 
     #[test]
     fn empty_usage_never_requests_a_sync() {
