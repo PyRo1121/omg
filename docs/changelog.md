@@ -703,6 +703,28 @@ analyzer inference
 - **Ci**: Cross-platform install script and R2 release sync
 ### 🐛 Bug Fixes
 
+- Stage tool updates before removing the previous install (W4-A-01) ([#131](https://github.com/PyRo1121/omg/issues/131))
+
+install_managed() deleted the existing tool directory before invoking
+
+cargo/npm/pip/go, so a single failed download left the previously
+
+working tool gone (and 'omg tool update all' did this to every tool).
+
+Now the new version is installed into a hidden staging sibling, the
+
+previous install is only moved aside after the package manager
+
+succeeds, and the swap restores the old install if promotion fails.
+
+Failed installs clean up their staging directory. Pacman delegation is
+
+unchanged (it never used the isolated tools directory).
+
+Regression test: a failed cargo install leaves the previous tool
+
+intact and runnable.
+
 - **Aur**: Inspect RPC errors before payloads
 - **Aur**: Validate RPC response boundaries
 - **Aur**: Preserve fakeroot metadata in sandbox
