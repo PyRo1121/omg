@@ -1019,6 +1019,65 @@ mod tests {
     }
 
     #[test]
+    fn corrupt_log_can_be_quarantined_before_fresh_append() {
+        let temp = tempfile::TempDir::new().unwrap();
+        let log_path = temp.path().join("audit.jsonl");
+        std::fs::write(&log_path, "{\"id\":\"interrupted").unwrap();
+
+        assert!(matches!(
+            AuditLogger::new_in(&log_path),
+            Err(AuditError::CorruptLine { line: 1, .. })
+        ));
+        let quarantined = quarantine_corrupt_audit_log(&log_path).unwrap();
+        assert_eq!(
+            std::fs::read_to_string(quarantined).unwrap(),
+            "{\"id\":\"interrupted"
+        );
+
+        let mut logger = AuditLogger::new_in(&log_path).unwrap();
+        logger
+            .log(
+                AuditEventType::PackageInstall,
+                AuditSeverity::Info,
+                "firefox",
+                "Installed firefox",
+            )
+            .unwrap();
+        assert!(logger.verify_integrity().unwrap().is_valid());
+    }
+
+    #[test]
+    fn append_restores_missing_record_separator() {
+        let temp = tempfile::TempDir::new().unwrap();
+        let log_path = temp.path().join("audit.jsonl");
+        let mut logger = AuditLogger::new_in(&log_path).unwrap();
+        logger
+            .log(
+                AuditEventType::PackageInstall,
+                AuditSeverity::Info,
+                "firefox",
+                "Installed firefox",
+            )
+            .unwrap();
+
+        let mut first_entry = std::fs::read(&log_path).unwrap();
+        assert_eq!(first_entry.pop(), Some(b'\n'));
+        std::fs::write(&log_path, first_entry).unwrap();
+
+        logger
+            .log(
+                AuditEventType::PackageRemove,
+                AuditSeverity::Info,
+                "firefox",
+                "Removed firefox",
+            )
+            .unwrap();
+        let contents = std::fs::read_to_string(&log_path).unwrap();
+        assert_eq!(contents.lines().count(), 2);
+        assert!(logger.verify_integrity().unwrap().is_valid());
+    }
+
+    #[test]
     fn missing_hash_is_not_used_as_chain_head() {
         let temp = tempfile::TempDir::new().unwrap();
         let log_path = temp.path().join("audit.jsonl");
