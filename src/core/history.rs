@@ -10,6 +10,10 @@ use jiff::Timestamp;
 use serde::{Deserialize, Serialize};
 use std::fs;
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicBool, Ordering};
+
+/// Once-per-process gate shared by `warn_corrupt_history_once` and its tests.
+static CORRUPT_HISTORY_WARNED: AtomicBool = AtomicBool::new(false);
 
 /// Maximum number of transactions to retain in history
 const MAX_HISTORY_TRANSACTIONS: usize = 1000;
@@ -129,8 +133,18 @@ impl HistoryManager {
     }
 
     /// Loads every recorded transaction. A missing file is an empty history;
-    /// malformed contents are rejected rather than truncated.
+    /// a malformed file is quarantined (renamed, never deleted) and replaced
+    /// with a fresh empty history so one corrupt file cannot wedge every
+    /// future package operation behind a persistent persistence failure.
+    ///
+    /// Quarantine mutates the history path, so this takes the same
+    /// cross-process lock as [`Self::add_transaction`]. Without that lock a
+    /// concurrent `load` can rename a valid file another process just wrote.
     pub fn load(&self) -> Result<Vec<Transaction>> {
+        self.with_history_lock(|| self.load_locked())
+    }
+
+    fn load_locked(&self) -> Result<Vec<Transaction>> {
         if !self.log_path.exists() {
             return Ok(Vec::new());
         }
@@ -138,8 +152,48 @@ impl HistoryManager {
         let content = fs::read_to_string(&self.log_path)
             .with_context(|| format!("Failed to read history file: {}", self.log_path.display()))?;
 
-        serde_json::from_str(&content)
-            .with_context(|| format!("Malformed history file: {}", self.log_path.display()))
+        match serde_json::from_str(&content) {
+            Ok(history) => Ok(history),
+            Err(error) => {
+                let quarantined = self.quarantine_corrupt_file(&error)?;
+                warn_corrupt_history_once(&self.log_path, &quarantined, &error);
+                Ok(Vec::new())
+            }
+        }
+    }
+
+    /// Renames a malformed history file to `<name>.corrupt-<timestamp>` so it
+    /// is preserved for manual recovery, then leaves the original path free
+    /// for a fresh history. Never deletes the file: if the rename fails the
+    /// error propagates instead of losing the user's transaction log.
+    fn quarantine_corrupt_file(&self, parse_error: &serde_json::Error) -> Result<PathBuf> {
+        let parent = self
+            .log_path
+            .parent()
+            .context("Package history path must have a parent directory")?;
+        let file_name = self
+            .log_path
+            .file_name()
+            .context("Package history path must have a file name")?
+            .to_string_lossy()
+            .into_owned();
+        let stamp = Timestamp::now().strftime("%Y%m%dT%H%M%S%.6fZ").to_string();
+
+        let mut quarantined = parent.join(format!("{file_name}.corrupt-{stamp}"));
+        let mut counter = 1u32;
+        while quarantined.exists() {
+            quarantined = parent.join(format!("{file_name}.corrupt-{stamp}-{counter}"));
+            counter += 1;
+        }
+
+        fs::rename(&self.log_path, &quarantined).with_context(|| {
+            format!(
+                "Malformed history file {} ({parse_error}); quarantining it to {} also failed",
+                self.log_path.display(),
+                quarantined.display()
+            )
+        })?;
+        Ok(quarantined)
     }
 
     /// Atomically replaces the whole history with `history`.
@@ -184,27 +238,7 @@ impl HistoryManager {
         changes: Vec<PackageChange>,
         success: bool,
     ) -> Result<()> {
-        let lock_path = self.log_path.with_extension("lock");
-        let lock = fs::OpenOptions::new()
-            .create(true)
-            .read(true)
-            .write(true)
-            .truncate(false)
-            .open(&lock_path)
-            .with_context(|| format!("Failed to open history lock: {}", lock_path.display()))?;
-        lock.lock()
-            .with_context(|| format!("Failed to lock package history: {}", lock_path.display()))?;
-
-        let result = self.add_transaction_locked(transaction_type, changes, success);
-        if let Err(error) = lock.unlock() {
-            return match result {
-                Ok(()) => Err(error).context("Failed to unlock package history"),
-                Err(operation_error) => Err(operation_error.context(format!(
-                    "Package history update also failed to unlock its lock: {error}"
-                ))),
-            };
-        }
-        result
+        self.with_history_lock(|| self.add_transaction_locked(transaction_type, changes, success))
     }
 
     fn add_transaction_locked(
@@ -213,7 +247,7 @@ impl HistoryManager {
         changes: Vec<PackageChange>,
         success: bool,
     ) -> Result<()> {
-        let mut history = self.load()?;
+        let mut history = self.load_locked()?;
         history.push(Transaction {
             id: uuid::Uuid::new_v4().to_string(),
             timestamp: Timestamp::now(),
@@ -228,11 +262,62 @@ impl HistoryManager {
         }
         self.save(&history)
     }
+
+    fn with_history_lock<T>(&self, op: impl FnOnce() -> Result<T>) -> Result<T> {
+        let lock_path = self.log_path.with_extension("lock");
+        let lock = fs::OpenOptions::new()
+            .create(true)
+            .read(true)
+            .write(true)
+            .truncate(false)
+            .open(&lock_path)
+            .with_context(|| format!("Failed to open history lock: {}", lock_path.display()))?;
+        lock.lock()
+            .with_context(|| format!("Failed to lock package history: {}", lock_path.display()))?;
+
+        let result = op();
+        if let Err(error) = lock.unlock() {
+            return match result {
+                Ok(_) => Err(error).context("Failed to unlock package history"),
+                Err(operation_error) => Err(operation_error.context(format!(
+                    "Package history operation also failed to unlock its lock: {error}"
+                ))),
+            };
+        }
+        result
+    }
+}
+
+/// Warns the user exactly once per process that their history file was
+/// malformed and where the quarantined copy now lives. Mirrors the
+/// once-per-process warning gate in `config::settings`. Returns whether the
+/// warning was emitted (i.e. this was the first corrupt load this process).
+fn warn_corrupt_history_once(
+    original: &Path,
+    quarantined: &Path,
+    parse_error: &serde_json::Error,
+) -> bool {
+    if CORRUPT_HISTORY_WARNED.swap(true, Ordering::Relaxed) {
+        return false;
+    }
+    tracing::warn!(
+        original = %original.display(),
+        quarantined = %quarantined.display(),
+        "Package history file was malformed (parse error: {parse_error}); it has been quarantined to {} and a fresh history has been started",
+        quarantined.display()
+    );
+    true
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Resets the process-wide corrupt-history warning gate so warning
+    /// assertions are deterministic (paired with `#[serial(history_ownership)]`).
+    fn reset_corrupt_history_warning_for_tests() {
+        CORRUPT_HISTORY_WARNED.store(false, Ordering::Relaxed);
+    }
 
     #[test]
     fn official_repository_names_are_restorable() {
@@ -257,6 +342,7 @@ mod tests {
     }
 
     #[test]
+    #[serial_test::serial(history_ownership)]
     fn finish_operation_persists_failed_mutations_and_returns_the_operation_error() -> Result<()> {
         let directory = tempfile::tempdir()?;
         let manager = HistoryManager::new_in(directory.path().join("history.json"))?;
@@ -313,18 +399,128 @@ mod tests {
     }
 
     #[test]
-    fn malformed_history_is_rejected_without_data_loss() -> Result<()> {
+    #[serial_test::serial(history_ownership)]
+    fn malformed_history_is_quarantined_and_history_starts_fresh() -> Result<()> {
         let directory = tempfile::tempdir()?;
         let path = directory.path().join("history.json");
         fs::write(&path, "not valid JSON")?;
         let manager = HistoryManager::new_in(&path)?;
 
-        let error = manager
-            .load()
-            .expect_err("malformed persisted history must be rejected");
+        let history = manager.load()?;
 
-        assert!(error.to_string().contains("Malformed history file"));
-        assert_eq!(fs::read_to_string(path)?, "not valid JSON");
+        assert!(history.is_empty(), "a quarantined history starts fresh");
+        let corrupt_names: Vec<String> = fs::read_dir(directory.path())?
+            .filter_map(std::result::Result::ok)
+            .map(|entry| entry.file_name().to_string_lossy().into_owned())
+            .filter(|name| name.starts_with("history.json.corrupt-"))
+            .collect();
+        assert_eq!(corrupt_names.len(), 1, "exactly one quarantined copy");
+        assert_eq!(
+            fs::read_to_string(directory.path().join(&corrupt_names[0]))?,
+            "not valid JSON",
+            "quarantine must preserve the original bytes"
+        );
+        assert!(!path.exists(), "original path is free for a fresh history");
+
+        // The warning fires once per process and names the quarantined file.
+        // The once-flag is process-wide, so serialise against other tests
+        // that corrupt-load history and reset it for deterministic asserts.
+        reset_corrupt_history_warning_for_tests();
+        let error = serde_json::from_str::<Vec<Transaction>>("not valid JSON").unwrap_err();
+        assert!(
+            warn_corrupt_history_once(&path, Path::new(&corrupt_names[0]), &error),
+            "first call warns"
+        );
+        assert!(
+            !warn_corrupt_history_once(&path, Path::new(&corrupt_names[0]), &error),
+            "second call is deduplicated"
+        );
+        Ok(())
+    }
+
+    #[test]
+    #[serial_test::serial(history_ownership)]
+    fn corrupt_history_no_longer_wedges_finish_operation() -> Result<()> {
+        let directory = tempfile::tempdir()?;
+        let path = directory.path().join("history.json");
+        fs::write(&path, "[not valid JSON")?;
+        let manager = HistoryManager::new_in(&path)?;
+
+        manager
+            .finish_operation(
+                TransactionType::Install,
+                vec![PackageChange {
+                    name: "example".to_string(),
+                    old_version: None,
+                    new_version: Some("1.0".to_string()),
+                    source: "official".to_string(),
+                }],
+                Ok(()),
+            )
+            .expect("a corrupt history file must not fail a successful operation");
+
+        let history = manager.load()?;
+        assert_eq!(history.len(), 1);
+        assert!(history[0].success);
+        let corrupt_exists = fs::read_dir(directory.path())?
+            .filter_map(std::result::Result::ok)
+            .any(|entry| {
+                entry
+                    .file_name()
+                    .to_string_lossy()
+                    .starts_with("history.json.corrupt-")
+            });
+        assert!(
+            corrupt_exists,
+            "the malformed file is preserved, not deleted"
+        );
+        Ok(())
+    }
+
+    #[test]
+    #[serial_test::serial(history_ownership)]
+    fn concurrent_corrupt_loads_do_not_rename_a_fresh_history() -> Result<()> {
+        use std::sync::{Arc, Barrier};
+
+        const WORKERS: usize = 8;
+        let directory = tempfile::tempdir()?;
+        let path = directory.path().join("history.json");
+        fs::write(&path, "not valid JSON")?;
+        let barrier = Arc::new(Barrier::new(WORKERS));
+        let mut workers = Vec::new();
+        for index in 0..WORKERS {
+            let path = path.clone();
+            let barrier = Arc::clone(&barrier);
+            workers.push(std::thread::spawn(move || -> Result<()> {
+                let manager = HistoryManager::new_in(&path)?;
+                barrier.wait();
+                if index == 0 {
+                    manager.add_transaction(
+                        TransactionType::Install,
+                        vec![PackageChange {
+                            name: "example".to_string(),
+                            old_version: None,
+                            new_version: Some("1.0".to_string()),
+                            source: "official".to_string(),
+                        }],
+                        true,
+                    )
+                } else {
+                    manager.load().map(|_| ())
+                }
+            }));
+        }
+        for worker in workers {
+            worker.join().expect("history worker panicked")?;
+        }
+
+        let history = HistoryManager::new_in(&path)?.load()?;
+        assert_eq!(
+            history.len(),
+            1,
+            "a concurrent load must not quarantine a freshly written history"
+        );
+        assert_eq!(history[0].changes[0].name, "example");
         Ok(())
     }
 
