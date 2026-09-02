@@ -5,7 +5,8 @@
 //! probes) so each backend file only carries what genuinely differs.
 
 use anyhow::Result;
-
+#[cfg(any(feature = "debian", feature = "debian-pure", not(feature = "arch")))]
+use anyhow::Context;
 #[cfg(unix)]
 use crate::core::client::DaemonClient;
 use crate::package_managers::types::UpdateInfo;
@@ -84,6 +85,66 @@ pub(crate) async fn try_daemon_list_updates() -> Option<Vec<UpdateInfo>> {
     None
 }
 
+/// Refresh the daemon's package index after a database sync.
+///
+/// The daemon owns an immutable snapshot of the package databases: a worker
+/// created before the sync serves its frozen in-memory update list until an
+/// explicit `RefreshIndex` IPC swaps in fresh backends (the stale-index
+/// invariant established in `sync_db.rs`). Daemon absence is normal; a
+/// connected daemon that rejects the refresh is a consistency failure and is
+/// reported.
+#[cfg(all(unix, any(feature = "debian", feature = "debian-pure", not(feature = "arch"))))]
+async fn refresh_daemon_index_after_sync() -> Result<()> {
+    match DaemonClient::connect().await {
+        Ok(mut client) => {
+            let packages = client
+                .refresh_index()
+                .await
+                .context("Package databases synced, but daemon index refresh failed")?;
+            tracing::debug!(packages, "Daemon package index refreshed after sync");
+        }
+        Err(error) => {
+            tracing::debug!("Daemon unavailable after package database sync: {error}");
+        }
+    }
+    Ok(())
+}
+
+/// Non-Unix stub preserving the asynchronous command interface.
+#[cfg(all(not(unix), any(feature = "debian", feature = "debian-pure", not(feature = "arch"))))]
+#[allow(
+    clippy::unused_async,
+    reason = "the non-Unix implementation preserves the asynchronous command interface"
+)]
+async fn refresh_daemon_index_after_sync() -> Result<()> {
+    Ok(())
+}
+
+/// Sequence the post-sync update decision: refresh the daemon index BEFORE
+/// probing its update list, falling back to a direct package-manager query
+/// when the daemon is unavailable.
+///
+/// The daemon serves update lists from the backend snapshot it held at
+/// startup (or its last `RefreshIndex`), so probing before the refresh would
+/// present the user a stale pre-sync list. The injected futures exist so the
+/// ordering contract is testable; production passes the real IPC calls.
+#[cfg(any(feature = "debian", feature = "debian-pure", not(feature = "arch")))]
+async fn official_updates_after_sync<R, P>(
+    pm: &dyn crate::package_managers::PackageManager,
+    refresh_index: R,
+    probe_daemon_updates: P,
+) -> Result<Vec<UpdateInfo>>
+where
+    R: Future<Output = Result<()>>,
+    P: Future<Output = Option<Vec<UpdateInfo>>>,
+{
+    refresh_index.await?;
+    match probe_daemon_updates.await {
+        Some(updates) => Ok(updates),
+        None => pm.list_updates().await,
+    }
+}
+
 /// Shared cold-path update flow for the Debian and generic backends:
 /// optionally sync, list official updates, confirm, and upgrade.
 ///
@@ -98,7 +159,7 @@ pub(crate) async fn update_official_only(check_only: bool, yes: bool, dry_run: b
 
     let pm = crate::package_managers::get_package_manager()?;
 
-    if check_only || dry_run {
+    let official_updates = if check_only || dry_run {
         crate::cli::modern_ui::print_phase_header(
             "🔄",
             "Update",
@@ -108,6 +169,12 @@ pub(crate) async fn update_official_only(check_only: bool, yes: bool, dry_run: b
                 "Dry run - checking for updates"
             },
         );
+        // No sync happened, so the daemon snapshot cannot be stale relative
+        // to this command; probe the daemon (with direct fallback) directly.
+        match try_daemon_list_updates().await {
+            Some(updates) => updates,
+            None => pm.list_updates().await?,
+        }
     } else {
         crate::cli::modern_ui::print_phase_header("🔄", "Update", "Checking for updates");
         let pb = crate::cli::modern_ui::modern_spinner("Syncing", "package databases");
@@ -118,14 +185,19 @@ pub(crate) async fn update_official_only(check_only: bool, yes: bool, dry_run: b
             "Synced",
             &format!("in {:.2}s", sync_start.elapsed().as_secs_f64()),
         );
-    }
+        // After a sync the daemon must refresh its frozen snapshot BEFORE its
+        // update list is probed; the pre-sync list must never be served
+        // (stale-index invariant, see `official_updates_after_sync`).
+        official_updates_after_sync(
+            pm.as_ref(),
+            refresh_daemon_index_after_sync(),
+            try_daemon_list_updates(),
+        )
+        .await?
+    };
 
     let pb = crate::cli::modern_ui::modern_spinner("Checking", "official repositories");
     let check_start = std::time::Instant::now();
-    let official_updates = match try_daemon_list_updates().await {
-        Some(updates) => updates,
-        None => pm.list_updates().await?,
-    };
     if official_updates.is_empty() {
         crate::cli::modern_ui::finish_info(&pb, "No updates in official repositories");
     } else {
@@ -326,6 +398,82 @@ pub(crate) async fn remove_with_manager(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Regression test for the stale-index invariant (W12-A-01): after a sync,
+    /// the update path must fully refresh the daemon index BEFORE probing its
+    /// update list. If the probe ever runs first, a frozen pre-sync daemon
+    /// list would be served and the user would act on wrong update data.
+    #[tokio::test]
+    #[cfg(any(feature = "debian", feature = "debian-pure", not(feature = "arch")))]
+    async fn update_path_refreshes_daemon_index_before_probing_its_update_list() {
+        use crate::package_managers::PackageManager;
+        use std::sync::{Arc, Mutex};
+
+        let pm = crate::package_managers::mock::MockPackageManager::new("arch");
+        let order: Arc<Mutex<Vec<&'static str>>> = Arc::new(Mutex::new(Vec::new()));
+
+        let refresh_order = Arc::clone(&order);
+        let probe_order = Arc::clone(&order);
+        let updates = official_updates_after_sync(
+            &pm,
+            async move {
+                refresh_order.lock().expect("order lock").push("refresh");
+                Ok(())
+            },
+            async move {
+                probe_order.lock().expect("order lock").push("probe");
+                // Daemon reports nothing; the direct fallback must be used.
+                None
+            },
+        )
+        .await
+        .expect("post-sync update sequence must succeed");
+
+        let direct = pm.list_updates().await.expect("mock list_updates");
+        assert_eq!(updates.len(), direct.len(), "fallback must query the package manager");
+        assert_eq!(
+            *order.lock().expect("order lock"),
+            vec!["refresh", "probe"],
+            "daemon index refresh must complete before the update list is probed"
+        );    }
+
+    /// A completed refresh must not be abandoned: when the daemon probe yields
+    /// updates they are served directly instead of re-querying the package
+    /// manager (freshness achieved, speed path kept).
+    #[tokio::test]
+    #[cfg(any(feature = "debian", feature = "debian-pure", not(feature = "arch")))]
+    async fn post_sync_sequence_serves_daemon_updates_after_refresh() {
+        let pm = crate::package_managers::mock::MockPackageManager::new("arch");
+        let refreshed = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let flag = std::sync::Arc::clone(&refreshed);
+
+        let daemon_updates = vec![UpdateInfo {
+            name: "curl".to_string(),
+            old_version: "1.0".to_string(),
+            new_version: "2.0".to_string(),
+            repo: "core".to_string(),
+        }];
+        let expected = daemon_updates.clone();
+
+        let updates = official_updates_after_sync(
+            &pm,
+            async move {
+                flag.store(true, std::sync::atomic::Ordering::Release);
+                Ok(())
+            },
+            async move { Some(expected) },
+        )
+        .await
+        .expect("post-sync update sequence must succeed");
+
+        assert!(refreshed.load(std::sync::atomic::Ordering::Acquire));
+        assert_eq!(updates.len(), 1, "daemon update must be served");
+        let served = &updates[0];
+        assert_eq!(served.name, "curl");
+        assert_eq!(served.old_version, "1.0");
+        assert_eq!(served.new_version, "2.0");
+        assert_eq!(served.repo, "core");
+    }
 
     #[test]
     #[cfg(any(feature = "debian", feature = "debian-pure", not(feature = "arch")))]
