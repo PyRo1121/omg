@@ -10,6 +10,7 @@ use ahash::AHashMap;
 use anyhow::Result;
 
 use crate::daemon::protocol::{DetailedPackageInfo, PackageInfo, WirePackageSource};
+use crate::package_managers::PackageManager;
 
 struct PackageBloomFilter {
     bits: Vec<u64>,
@@ -37,7 +38,6 @@ impl PackageBloomFilter {
         [h1 % self.num_bits, h2 % self.num_bits, h3 % self.num_bits]
     }
 
-    #[cfg(any(test, feature = "arch", feature = "debian", feature = "debian-pure"))]
     fn insert(&mut self, name: &str) {
         for pos in self.hash_positions(name) {
             let word_idx = pos / 64;
@@ -66,12 +66,10 @@ impl PackageBloomFilter {
 #[derive(Default)]
 struct StringPool {
     strings: Vec<Arc<str>>,
-    #[cfg(any(test, feature = "arch", feature = "debian", feature = "debian-pure"))]
     dedup: AHashMap<Arc<str>, u32>,
 }
 
 impl StringPool {
-    #[cfg(any(test, feature = "arch", feature = "debian", feature = "debian-pure"))]
     fn intern(&mut self, s: &str) -> u32 {
         if let Some(&handle) = self.dedup.get(s) {
             return handle;
@@ -105,7 +103,6 @@ impl TrigramIndex {
         }
     }
 
-    #[cfg(any(test, feature = "arch", feature = "debian", feature = "debian-pure"))]
     fn insert(&mut self, name_lower: &str, idx: u32) {
         let bytes = name_lower.as_bytes();
         if bytes.len() < 3 {
@@ -215,7 +212,6 @@ impl PackageIndex {
         }
     }
 
-    #[cfg(any(test, feature = "arch", feature = "debian", feature = "debian-pure"))]
     fn push(
         &mut self,
         name: &str,
@@ -268,6 +264,53 @@ impl PackageIndex {
             index.push(name, version, description, "", 0, 0, "extra", &[], &[]);
         }
         index
+    }
+
+    fn from_packages(packages: Vec<crate::core::Package>) -> Self {
+        let mut index = Self::with_capacity(packages.len());
+        for package in packages {
+            index.push(
+                &package.name,
+                &package.version.to_string(),
+                &package.description,
+                "",
+                0,
+                0,
+                "official",
+                &[],
+                &[],
+            );
+        }
+        index
+    }
+
+    fn uses_manager_inventory(package_manager: &dyn PackageManager) -> bool {
+        matches!(package_manager.name(), "dnf" | "brew" | "homebrew")
+    }
+
+    pub fn for_package_manager_blocking(package_manager: Arc<dyn PackageManager>) -> Result<Self> {
+        if !Self::uses_manager_inventory(package_manager.as_ref()) {
+            return Self::new();
+        }
+
+        std::thread::Builder::new()
+            .name("omg-index-init".to_string())
+            .spawn(move || {
+                let runtime = tokio::runtime::Builder::new_current_thread()
+                    .enable_all()
+                    .build()?;
+                runtime.block_on(Self::for_package_manager(package_manager))
+            })?
+            .join()
+            .map_err(|_| anyhow::anyhow!("package index initialization worker panicked"))?
+    }
+
+    pub async fn for_package_manager(package_manager: Arc<dyn PackageManager>) -> Result<Self> {
+        if Self::uses_manager_inventory(package_manager.as_ref()) {
+            return Ok(Self::from_packages(package_manager.package_index().await?));
+        }
+
+        tokio::task::spawn_blocking(Self::new).await?
     }
 
     pub fn new() -> Result<Self> {
@@ -530,6 +573,42 @@ impl PackageIndex {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn portable_manager_cases() -> [(
+        crate::package_managers::mock::MockPackageManager,
+        &'static str,
+    ); 2] {
+        [
+            (
+                crate::package_managers::mock::MockPackageManager::fedora(),
+                "vim-enhanced",
+            ),
+            (
+                crate::package_managers::mock::MockPackageManager::macos(),
+                "python@3.12",
+            ),
+        ]
+    }
+
+    #[test]
+    fn portable_managers_supply_the_initial_daemon_index() {
+        for (manager, expected) in portable_manager_cases() {
+            let index = PackageIndex::for_package_manager_blocking(Arc::new(manager)).unwrap();
+            assert!(index.get(expected).is_some(), "missing {expected}");
+            assert!(index.len() >= 5);
+        }
+    }
+
+    #[tokio::test]
+    async fn portable_managers_supply_the_refreshed_daemon_index() {
+        for (manager, expected) in portable_manager_cases() {
+            let index = PackageIndex::for_package_manager(Arc::new(manager))
+                .await
+                .unwrap();
+            assert!(index.get(expected).is_some(), "missing {expected}");
+            assert!(index.len() >= 5);
+        }
+    }
 
     #[test]
     fn empty_index_has_no_observable_packages() {

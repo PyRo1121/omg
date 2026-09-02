@@ -194,11 +194,12 @@ impl DaemonState {
     pub fn new() -> anyhow::Result<Self> {
         let data_dir = crate::core::paths::daemon_data_dir();
         let persistent = Self::open_persistent_cache(&data_dir)?;
-        let index = PackageIndex::new().with_context(|| {
-            "Failed to build package index. Ensure package databases are synced (run 'omg sync')."
-        })?;
-
         let package_manager = get_package_manager()?;
+        let index = PackageIndex::for_package_manager_blocking(Arc::clone(&package_manager))
+            .with_context(|| {
+                "Failed to build package index. Ensure package databases are synced (run 'omg sync')."
+            })?;
+
         Ok(Self::from_index(
             persistent,
             index,
@@ -414,13 +415,11 @@ async fn handle_refresh_index(state: Arc<DaemonState>, id: RequestId) -> Respons
         };
     }
 
-    let rebuilt = tokio::task::spawn_blocking(PackageIndex::new).await;
-    let index = match rebuilt {
-        Ok(Ok(index)) => index,
-        Ok(Err(error)) => {
+    let index = match PackageIndex::for_package_manager(Arc::clone(&state.package_manager)).await {
+        Ok(index) => index,
+        Err(error) => {
             return internal_error(id, format!("Failed to rebuild package index: {error:#}"));
         }
-        Err(error) => return internal_error(id, format!("Index rebuild task failed: {error}")),
     };
 
     if let Err(error) = state.refresh_system_backends() {

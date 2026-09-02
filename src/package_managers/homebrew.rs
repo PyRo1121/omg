@@ -736,6 +736,25 @@ impl HomebrewPackageManager {
         classify_packages(&cache.formula_map, &cache.cask_map, packages)
     }
 
+    fn packages_for_index(cache: &FormulaCache) -> Vec<Package> {
+        let mut packages = Vec::with_capacity(cache.formulas.len() + cache.casks.len());
+        packages.extend(cache.formulas.iter().map(|formula| Package {
+            name: formula.name.clone(),
+            version: parse_version_or_zero(formula.versions.stable.as_deref().unwrap_or("0")),
+            description: formula.desc.clone(),
+            source: PackageSource::Official,
+            installed: false,
+        }));
+        packages.extend(cache.casks.iter().map(|cask| Package {
+            name: cask.token.clone(),
+            version: parse_version_or_zero(cask.version.as_deref().unwrap_or("0")),
+            description: cask.desc.clone().unwrap_or_default(),
+            source: PackageSource::Official,
+            installed: false,
+        }));
+        packages
+    }
+
     /// Search packages using fuzzy matching
     ///
     /// Implements intelligent fuzzy search using nucleo-matcher:
@@ -935,6 +954,15 @@ impl PackageManager for HomebrewPackageManager {
             let cache = cache.as_ref().context("Cache not loaded")?;
 
             Ok(self.fuzzy_search(cache, &query))
+        })
+    }
+
+    fn package_index(&self) -> Pin<Box<dyn Future<Output = Result<Vec<Package>>> + Send + '_>> {
+        Box::pin(async move {
+            self.ensure_cache().await?;
+            let cache = crate::core::sync::read_cache(&self.cache);
+            let cache = cache.as_ref().context("Cache not loaded")?;
+            Ok(Self::packages_for_index(cache))
         })
     }
 
@@ -1213,6 +1241,38 @@ mod tests {
         assert!(results.is_ok());
         let results = results.unwrap();
         assert!(!results.is_empty());
+    }
+
+    #[test]
+    fn package_index_includes_every_formula_and_cask() {
+        let cache = HomebrewPackageManager::build_cache(
+            vec![FormulaInfo {
+                name: "wget".to_string(),
+                full_name: "wget".to_string(),
+                desc: "Internet file retriever".to_string(),
+                homepage: None,
+                versions: FormulaVersions {
+                    stable: Some("1.0".to_string()),
+                    head: None,
+                    bottle: None,
+                },
+                installed: Vec::new(),
+            }],
+            vec![CaskInfo {
+                token: "firefox".to_string(),
+                full_token: "homebrew/cask/firefox".to_string(),
+                desc: None,
+                homepage: None,
+                version: Some("146.0".to_string()),
+            }],
+        );
+
+        let packages = HomebrewPackageManager::packages_for_index(&cache);
+
+        assert_eq!(packages.len(), 2);
+        assert_eq!(packages[0].name, "wget");
+        assert_eq!(packages[1].name, "firefox");
+        assert_eq!(packages[1].description, "");
     }
 
     #[test]
