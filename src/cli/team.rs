@@ -201,6 +201,9 @@ pub async fn join(remote_url: &str, _ctx: &CliContext) -> Result<()> {
 
 /// Show team status
 pub async fn status(_ctx: &CliContext) -> Result<()> {
+    // Require Team tier for team features
+    license::require_feature("team-sync")?;
+
     let workspace = open_team_workspace()?;
 
     let team_status = workspace.update_status().await?;
@@ -258,6 +261,9 @@ pub async fn status(_ctx: &CliContext) -> Result<()> {
 
 /// Push local environment to team lock
 pub async fn push(_ctx: &CliContext) -> Result<()> {
+    // Require Team tier for team features
+    license::require_feature("team-sync")?;
+
     let workspace = open_team_workspace()?;
 
     execute_cmd(Components::loading("Pushing environment to team lock..."))?;
@@ -274,6 +280,9 @@ pub async fn push(_ctx: &CliContext) -> Result<()> {
 
 /// Pull team lock and check for drift
 pub async fn pull(_ctx: &CliContext) -> Result<()> {
+    // Require Team tier for team features
+    license::require_feature("team-sync")?;
+
     let workspace = open_team_workspace()?;
 
     execute_cmd(Components::loading("Pulling team lock..."))?;
