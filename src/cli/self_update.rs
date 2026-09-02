@@ -17,6 +17,16 @@ const UPDATE_URL: &str = "https://releases.pyro1121.com";
 /// Repository used to verify Sigstore build-provenance attestations.
 const ATTESTATION_REPO: &str = "PyRo1121/omg";
 
+/// Explicit opt-in that downgrades the provenance gate from fail-closed to
+/// warning-only.
+///
+/// By default `omg self-update` refuses to install when Sigstore provenance
+/// cannot be verified (typically because the GitHub CLI is not installed).
+/// Setting this variable to `1`, `true`, or `yes` accepts an unverified
+/// update deliberately; any other value (including unset) keeps the gate
+/// closed.
+const ALLOW_UNVERIFIED_PROVENANCE_ENV: &str = "OMG_SELF_UPDATE_ALLOW_UNVERIFIED_PROVENANCE";
+
 /// Upper bound for the update archive download.
 ///
 /// Release tarballs are a few MiB. The cap bounds both `Vec` preallocation
@@ -31,18 +41,19 @@ const MAX_PREALLOC_BYTES: usize = 16 * 1024 * 1024;
 ///
 /// Fails closed: the pinned SHA-256 sidecar published next to each release
 /// archive must be fetched and the archive digest verified before extraction;
-/// any missing or malformed checksum aborts the update. When the GitHub CLI
-/// is installed, the archive's Sigstore build-provenance attestation must also
-/// verify. If the CLI is absent, provenance verification is skipped with a
-/// warning while the checksum gate remains mandatory.
+/// any missing or malformed checksum aborts the update. The archive's
+/// Sigstore build-provenance attestation must also verify. When the GitHub
+/// CLI is absent, provenance cannot be checked, so the update is refused
+/// unless the user explicitly opts in via the
+/// `OMG_SELF_UPDATE_ALLOW_UNVERIFIED_PROVENANCE=1` escape hatch.
 ///
 /// # Errors
 ///
 /// Returns an error when the update check fails, the target version is not
 /// newer (without `--force`), the artifact checksum sidecar is missing or
 /// malformed, the download exceeds the size cap or its digest mismatches,
-/// the attestation fails to verify when `gh` is installed, or extraction /
-/// binary replacement fails.
+/// the attestation fails to verify, provenance cannot be verified (no `gh`)
+/// without the explicit opt-in, or extraction / binary replacement fails.
 pub async fn run(force: bool, version: Option<String>) -> Result<()> {
     let current_version = parse_version(env!("CARGO_PKG_VERSION"))
         .context("built-in CARGO_PKG_VERSION is not valid semver")?;
@@ -103,10 +114,7 @@ pub async fn run(force: bool, version: Option<String>) -> Result<()> {
         fs::write(attestation_file.path(), &bytes)
             .context("Failed to write archive for attestation verification")?;
         if !verify_attestation(attestation_file.path())? {
-            println!(
-                "  {} provenance check unavailable (install the GitHub CLI to enable)",
-                style::maybe_color("ℹ", |t| t.cyan().to_string())
-            );
+            refuse_unverified_provenance()?;
         }
 
         let cursor = std::io::Cursor::new(bytes);
@@ -387,7 +395,7 @@ async fn download_verified(url: &str, expected_digest: &str) -> Result<Vec<u8>> 
 /// checksum sidecars together.
 ///
 /// Returns `Ok(true)` when the attestation verified, `Ok(false)` when no
-/// attestation-capable tool (`gh`) is installed locally, and an error when a
+/// attestation-capable tool (`gh`) is installed locally, and an error when an
 /// attestation tool IS present but rejects the archive (fail closed).
 ///
 /// # Errors
@@ -423,6 +431,54 @@ fn verify_attestation(archive_path: &std::path::Path) -> Result<bool> {
             archive_path.display(),
         ))
     }
+}
+
+/// Decide what to do when Sigstore provenance could not be verified.
+///
+/// Fails closed by default: the update is refused with instructions for
+/// verifying the artifact manually. The only way past the gate is the
+/// explicit `OMG_SELF_UPDATE_ALLOW_UNVERIFIED_PROVENANCE` opt-in, which
+/// downgrades the refusal to a loud warning.
+///
+/// # Errors
+///
+/// Returns an error (refusal) unless `allow_unverified` is set.
+fn decide_unverified_provenance(allow_unverified: bool) -> Result<()> {
+    if allow_unverified {
+        println!(
+            "  {} PROVENANCE NOT VERIFIED: continuing because \
+             {ALLOW_UNVERIFIED_PROVENANCE_ENV} is set",
+            style::maybe_color("⚠", |t| t.yellow().to_string())
+        );
+        return Ok(());
+    }
+    anyhow::bail!(
+        "Refusing to install: Sigstore build provenance could not be verified \
+         because no attestation tool (the GitHub CLI, `gh`) is installed. \
+         The checksum gate alone cannot detect a compromised release origin \
+         that rewrites binaries and sidecars together.\n\
+         \nVerify the artifact manually, then retry:\n\
+         \x20 1. Install the GitHub CLI (https://cli.github.com)\n\
+         \x20 2. Re-run `omg self-update`, or verify by hand:\n\
+         \x20    gh attestation verify <archive.tar.gz> -R {ATTESTATION_REPO}\n\
+         \nTo accept an unverified update deliberately, re-run with:\n\
+         \x20 {ALLOW_UNVERIFIED_PROVENANCE_ENV}=1 omg self-update"
+    )
+}
+
+/// Evaluate the opt-in escape hatch from the environment.
+fn refuse_unverified_provenance() -> Result<()> {
+    let raw = env::var(ALLOW_UNVERIFIED_PROVENANCE_ENV).ok();
+    decide_unverified_provenance(parse_allow_unverified(raw.as_deref()))
+}
+
+/// Parse the escape-hatch environment variable.
+///
+/// Only `1`, `true`, and `yes` (case-sensitive, matching common CI idiom)
+/// count as explicit opt-in; unset, empty, misspelled, or falsy values all
+/// keep the gate closed.
+fn parse_allow_unverified(value: Option<&str>) -> bool {
+    matches!(value, Some("1" | "true" | "yes"))
 }
 
 #[cfg(test)]
@@ -606,5 +662,57 @@ mod tests {
             locate_binary(tmp.path(), "omg-v1.2.3-x86_64-linux-arch.tar.gz"),
             None
         );
+    }
+
+    #[test]
+    fn unverified_provenance_refuses_by_default() {
+        // SEC-R1-02: without `gh` and without the opt-in, self-update must
+        // refuse rather than downgrade to a warning.
+        let err = decide_unverified_provenance(false)
+            .expect_err("unverified provenance must refuse by default");
+        let message = format!("{err:#}");
+        assert!(
+            message.contains("Refusing to install"),
+            "refusal must state it is refusing, got: {message}"
+        );
+        assert!(
+            message.contains("gh attestation verify"),
+            "refusal must explain manual verification, got: {message}"
+        );
+        assert!(
+            message.contains(ALLOW_UNVERIFIED_PROVENANCE_ENV),
+            "refusal must name the explicit opt-in, got: {message}"
+        );
+    }
+
+    #[test]
+    fn unverified_provenance_proceeds_only_with_explicit_opt_in() {
+        decide_unverified_provenance(true)
+            .expect("explicit opt-in must be the only path past the gate");
+    }
+
+    #[test]
+    fn allow_unverified_opt_in_requires_explicit_truthy_value() {
+        for value in [
+            None,
+            Some(""),
+            Some("0"),
+            Some("false"),
+            Some("no"),
+            Some("yes "),
+            Some("TRUE"),
+            Some("on"),
+        ] {
+            assert!(
+                !parse_allow_unverified(value),
+                "value {value:?} must not open the escape hatch"
+            );
+        }
+        for value in [Some("1"), Some("true"), Some("yes")] {
+            assert!(
+                parse_allow_unverified(value),
+                "value {value:?} must be an explicit opt-in"
+            );
+        }
     }
 }
