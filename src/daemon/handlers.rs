@@ -918,7 +918,8 @@ async fn handle_status(state: Arc<DaemonState>, id: RequestId) -> Response {
 }
 
 /// Handle security audit request
-fn vulnerability_score(score: &str) -> Option<f64> {
+/// Parse a vulnerability score string into its numeric CVSS score.
+pub(crate) fn vulnerability_score(score: &str) -> Option<f64> {
     score.parse::<f64>().ok().or_else(|| {
         score
             .parse::<cvss::Cvss>()

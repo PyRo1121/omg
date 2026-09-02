@@ -209,6 +209,14 @@ pub mod error_codes {
     pub const INTERNAL_ERROR: i32 = -32603;
     pub const PACKAGE_NOT_FOUND: i32 = -1001;
     pub const RATE_LIMITED: i32 = -1002;
+    /// Encoded response exceeded the daemon's response budget and could
+    /// not be truncated to fit.
+    ///
+    /// The budget is `daemon::server::MAX_RESPONSE_SIZE`. This stays a valid
+    /// [`Response`] the client decodes normally — used instead of
+    /// [`INTERNAL_ERROR`] so a size limit is never misreported as a daemon
+    /// bug.
+    pub const RESPONSE_TOO_LARGE: i32 = -1003;
 }
 
 /// Search result
@@ -375,9 +383,10 @@ pub struct UpdateEntry {
 
 /// Maximum frame size accepted by [`read_frame`] (10 MiB).
 ///
-/// Bounds client-side allocation from a hostile or corrupt peer. The daemon
-/// imposes no matching response-size budget; this constant protects readers
-/// only.
+/// Bounds client-side allocation from a hostile or corrupt peer. This is
+/// also the transport ceiling for daemon responses: the daemon's response
+/// budget (`daemon::server::MAX_RESPONSE_SIZE`) sits strictly below it, so
+/// a frame at the response budget is always deliverable to every reader.
 pub const MAX_FRAME_SIZE: usize = 10 * 1024 * 1024;
 
 /// Write a length-delimited frame: big-endian `u32` length prefix + payload.
