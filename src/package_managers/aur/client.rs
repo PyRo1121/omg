@@ -15,7 +15,7 @@ use dialoguer::Confirm;
 use futures::{FutureExt, StreamExt, future::BoxFuture};
 use indicatif::{ProgressBar, ProgressStyle};
 use owo_colors::OwoColorize;
-use serde::Deserialize;
+use serde::{Deserialize, de::DeserializeOwned};
 use sha2::{Digest, Sha256};
 use tokio::io::{AsyncRead, AsyncReadExt, AsyncWriteExt};
 use tokio::process::Command;
@@ -351,6 +351,39 @@ struct AurResponse {
     results: Vec<AurJsonPackage>,
 }
 
+fn ensure_aur_rpc_success(status: reqwest::StatusCode) -> Result<()> {
+    anyhow::ensure!(
+        status.is_success(),
+        "AUR RPC request to {AUR_RPC_URL} returned HTTP {status}"
+    );
+    Ok(())
+}
+
+fn decode_aur_rpc_body<T: DeserializeOwned>(body: &[u8]) -> Result<T> {
+    let value: serde_json::Value =
+        serde_json::from_slice(body).context("Failed to parse AUR RPC response")?;
+    if value.get("type").and_then(serde_json::Value::as_str) == Some("error") {
+        let detail = value
+            .get("error")
+            .and_then(serde_json::Value::as_str)
+            .filter(|message| !message.trim().is_empty())
+            .unwrap_or("unknown AUR RPC error");
+        anyhow::bail!("AUR RPC returned an error: {detail}");
+    }
+
+    serde_json::from_value(value).context("Failed to parse AUR RPC response")
+}
+
+async fn decode_aur_rpc_response<T: DeserializeOwned>(response: reqwest::Response) -> Result<T> {
+    ensure_aur_rpc_success(response.status())?;
+    let body = response.bytes().await.map_err(redact_aur_transport_error)?;
+    decode_aur_rpc_body(&body)
+}
+
+fn redact_aur_transport_error(_: reqwest::Error) -> anyhow::Error {
+    anyhow::anyhow!("AUR RPC transport failed. Check your internet connection.")
+}
+
 impl AurClient {
     pub fn new() -> Result<Self> {
         let settings = Settings::load().context("Failed to load OMG settings for AUR")?;
@@ -486,17 +519,12 @@ impl AurClient {
             urlencoding::encode(query)
         );
 
-        let response: AurResponse = shared_client()
-            .get(&url)
-            .send()
-            .await
-            .map_err(|e| {
-                tracing::warn!("AUR search network error: {}", e);
-                anyhow::anyhow!("Failed to connect to AUR. Check your internet connection.")
-            })?
-            .json()
-            .await
-            .context("Failed to parse AUR response")?;
+        let response = shared_client().get(&url).send().await.map_err(|error| {
+            let error = redact_aur_transport_error(error);
+            tracing::warn!("AUR search network error: {error}");
+            error
+        })?;
+        let response: AurResponse = decode_aur_rpc_response(response).await?;
 
         let mut packages: Vec<Package> = response
             .results
@@ -628,17 +656,12 @@ impl AurClient {
             urlencoding::encode(package)
         );
 
-        let response: AurResponse = shared_client()
-            .get(&url)
-            .send()
-            .await
-            .map_err(|e| {
-                tracing::warn!("AUR info network error: {}", e);
-                anyhow::anyhow!("Failed to connect to AUR. Check your internet connection.")
-            })?
-            .json()
-            .await
-            .context("Failed to parse AUR response")?;
+        let response = shared_client().get(&url).send().await.map_err(|error| {
+            let error = redact_aur_transport_error(error);
+            tracing::warn!("AUR info network error: {error}");
+            error
+        })?;
+        let response: AurResponse = decode_aur_rpc_response(response).await?;
 
         let Some(p) = response.results.into_iter().next() else {
             return Ok(None);
@@ -795,15 +818,15 @@ impl AurClient {
             match shared_client().get(&url).send().await {
                 Ok(resp) => {
                     if crate::core::http::is_retryable_status(resp.status()) {
-                        last_error = Some(anyhow::anyhow!("AUR server error: {}", resp.status()));
+                        last_error = ensure_aur_rpc_success(resp.status()).err();
                         continue;
                     }
-                    return resp.json::<AurResponse>().await.map_err(Into::into);
+                    return decode_aur_rpc_response(resp).await;
                 }
-                Err(e) if crate::core::http::is_retryable_error(&e) => {
-                    last_error = Some(anyhow::anyhow!("Network error: {e}"));
+                Err(error) if crate::core::http::is_retryable_error(&error) => {
+                    last_error = Some(redact_aur_transport_error(error));
                 }
-                Err(e) => return Err(e.into()),
+                Err(error) => return Err(redact_aur_transport_error(error)),
             }
         }
         Err(last_error.unwrap_or_else(|| anyhow::anyhow!("AUR request failed after retries")))
@@ -3157,14 +3180,12 @@ pub async fn search_detailed(query: &str) -> Result<Vec<AurPackageDetail>> {
         urlencoding::encode(query)
     );
 
-    let response: AurDetailedResponse = shared_client()
+    let response = shared_client()
         .get(&url)
         .send()
         .await
-        .context("Failed to connect to AUR RPC. Check your internet connection.")?
-        .json()
-        .await
-        .context("Failed to parse AUR RPC response")?;
+        .map_err(redact_aur_transport_error)?;
+    let response: AurDetailedResponse = decode_aur_rpc_response(response).await?;
 
     // SECURITY: Validate all names in response
     let mut results = response
@@ -3257,6 +3278,76 @@ pub struct AurPackageDetail {
 #[expect(clippy::unwrap_used)] // Idiomatic in tests: panics on failure with clear error context
 mod tests {
     use super::*;
+
+    #[tokio::test]
+    async fn aur_rpc_transport_error_redacts_query_from_display_and_sources() -> Result<()> {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await?;
+        let query = "private-aur-query";
+        let url = format!(
+            "http://{}/rpc?v=5&type=search&arg={query}",
+            listener.local_addr()?
+        );
+        let server = tokio::spawn(async move {
+            let (stream, _) = listener.accept().await?;
+            drop(stream);
+            anyhow::Ok(())
+        });
+
+        let transport_error = reqwest::Client::new()
+            .get(url)
+            .send()
+            .await
+            .expect_err("closed connection must produce a transport error");
+        server.await??;
+        assert!(transport_error.to_string().contains(query));
+
+        let error = redact_aur_transport_error(transport_error);
+        let mut rendered_chain = error.to_string();
+        let mut source = error.source();
+        while let Some(cause) = source {
+            rendered_chain.push_str(&cause.to_string());
+            source = cause.source();
+        }
+
+        assert!(!rendered_chain.contains(query), "got: {rendered_chain}");
+        assert!(!rendered_chain.contains("arg="), "got: {rendered_chain}");
+        Ok(())
+    }
+
+    #[test]
+    fn aur_rpc_error_envelope_is_not_an_empty_success() {
+        let error = decode_aur_rpc_body::<AurResponse>(
+            br#"{"type":"error","error":"Incorrect request type specified.","results":"malformed"}"#,
+        )
+        .expect_err("AUR RPC error envelopes must fail");
+
+        assert!(
+            error
+                .to_string()
+                .contains("Incorrect request type specified.")
+        );
+    }
+
+    #[test]
+    fn aur_rpc_success_envelope_still_decodes() {
+        let response = decode_aur_rpc_body::<AurResponse>(
+            br#"{"type":"search","resultcount":0,"results":[]}"#,
+        )
+        .expect("valid AUR RPC response");
+
+        assert!(response.results.is_empty());
+    }
+
+    #[test]
+    fn aur_rpc_http_error_uses_redacted_endpoint() {
+        let error = ensure_aur_rpc_success(reqwest::StatusCode::SERVICE_UNAVAILABLE)
+            .expect_err("non-success statuses must fail");
+        let message = error.to_string();
+
+        assert!(message.contains("503 Service Unavailable"));
+        assert!(message.contains(AUR_RPC_URL));
+        assert!(!message.contains("arg="));
+    }
 
     fn write_tar_gz(path: &std::path::Path, entries: &[(&str, &[u8])]) {
         let encoder = flate2::write::GzEncoder::new(
