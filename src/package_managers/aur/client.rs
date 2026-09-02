@@ -1466,15 +1466,15 @@ impl AurClient {
         let mut pkg_files: Vec<PathBuf> = match cached {
             Some(archives)
                 if archives.len() == requested_outputs.len()
-                    && archives.iter().zip(requested_outputs).all(|(archive, output)| {
-                        Self::cached_archive_matches(archive, output)
-                            && Self::cached_artifact_provenance_ok(
-                                archive,
-                                &pkg_dir,
-                                package,
-                                output,
-                            )
-                    }) =>
+                    && archives
+                        .iter()
+                        .zip(requested_outputs)
+                        .all(|(archive, output)| {
+                            Self::cached_archive_matches(archive, output)
+                                && Self::cached_artifact_provenance_ok(
+                                    archive, &pkg_dir, package, output,
+                                )
+                        }) =>
             {
                 crate::cli::modern_ui::print_info(&format!("Using cached build for {package}"));
                 archives
@@ -2003,33 +2003,29 @@ impl AurClient {
         let Some(pkginfo) = pkginfo else {
             return Ok(None);
         };
-        Ok(Self::parse_pkginfo_identity(&pkginfo).map(|(name, version, base)| {
-            CachedArchiveIdentity {
-                name,
-                version,
-                base,
-                install_script,
-            }
-        }))
+        Ok(
+            Self::parse_pkginfo_identity(&pkginfo).map(|(name, version, base)| {
+                CachedArchiveIdentity {
+                    name,
+                    version,
+                    base,
+                    install_script,
+                }
+            }),
+        )
     }
 
     /// Read one archive member with the same size cap as `.PKGINFO` reads.
-    fn read_bounded_archive_member<R: std::io::Read>(
-        entry: tar::Entry<R>,
-    ) -> Result<String> {
+    fn read_bounded_archive_member<R: std::io::Read>(entry: tar::Entry<R>) -> Result<String> {
         if entry.size() > MAX_PKGINFO_BYTES {
-            anyhow::bail!(
-                "Package metadata member exceeds the {MAX_PKGINFO_BYTES} byte limit"
-            );
+            anyhow::bail!("Package metadata member exceeds the {MAX_PKGINFO_BYTES} byte limit");
         }
         let mut content = String::with_capacity(entry.size() as usize);
         entry
             .take(MAX_PKGINFO_BYTES + 1)
             .read_to_string(&mut content)?;
         if content.len() as u64 > MAX_PKGINFO_BYTES {
-            anyhow::bail!(
-                "Package metadata member exceeds the {MAX_PKGINFO_BYTES} byte limit"
-            );
+            anyhow::bail!("Package metadata member exceeds the {MAX_PKGINFO_BYTES} byte limit");
         }
         Ok(content)
     }
