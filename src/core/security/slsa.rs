@@ -1354,7 +1354,6 @@ mod tests {
             .verifying_key()
             .to_public_key_pem(p256::pkcs8::LineEnding::LF)
             .unwrap();
-        use p256::ecdsa::signature::Signer as _;
         let good_ec: p256::ecdsa::Signature = {
             use p256::ecdsa::signature::Signer as _;
             p256_signing.sign(artifact_bytes.as_slice())
