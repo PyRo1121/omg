@@ -480,15 +480,16 @@ fn test_privacy_invalid_subcommand() {
 #[test]
 fn test_privacy_export_invalid_output_path() {
     // ===== ARRANGE =====
-    init_test_env();
+    let project = TestProject::new();
+    let blocker = project.create_file("not-a-directory", "blocker");
+    let output_path = blocker.join("export.json");
 
     // ===== ACT =====
-    // Use invalid path (directory that doesn't exist)
-    let result = run_omg(&[
+    let result = project.run(&[
         "privacy",
         "export",
         "--output",
-        "/nonexistent/path/export.json",
+        output_path.to_str().unwrap(),
     ]);
 
     // ===== ASSERT =====

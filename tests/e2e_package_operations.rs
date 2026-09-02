@@ -187,7 +187,7 @@ fn test_info_nonexistent_package() {
 fn test_info_shows_package_details() {
     init_test_env();
 
-    let result = run_omg(&["info", "bash"]);
+    let result = run_omg(&["info", "pacman"]);
 
     result.assert_success();
     let output = result.combined_output();
@@ -209,7 +209,7 @@ fn test_info_shows_package_details() {
 fn test_install_dry_run() {
     init_test_env();
 
-    let result = run_omg(&["install", "--dry-run", "vim"]);
+    let result = run_omg(&["install", "--dry-run", "firefox"]);
 
     result.assert_success();
     let output = result.combined_output();
@@ -218,7 +218,7 @@ fn test_install_dry_run() {
         "dry-run must print the install preview. Got:\n{output}"
     );
     assert!(
-        output.contains("vim"),
+        output.contains("firefox"),
         "preview must list the requested package. Got:\n{output}"
     );
     assert!(
@@ -252,7 +252,7 @@ fn test_install_already_installed() {
 fn test_install_multiple_packages_dry_run() {
     init_test_env();
 
-    let result = run_omg(&["install", "--dry-run", "vim", "git", "curl"]);
+    let result = run_omg(&["install", "--dry-run", "pacman", "firefox", "git"]);
 
     result.assert_success();
     let output = result.combined_output();
@@ -260,7 +260,7 @@ fn test_install_multiple_packages_dry_run() {
         output.contains("Install Preview"),
         "multi-package dry-run must print the preview. Got:\n{output}"
     );
-    for pkg in ["vim", "git", "curl"] {
+    for pkg in ["pacman", "firefox", "git"] {
         assert!(
             output.contains(pkg),
             "preview must list every requested package ({pkg}). Got:\n{output}"
@@ -290,12 +290,12 @@ fn test_install_nonexistent_package() {
 fn test_install_with_yes_flag() {
     init_test_env();
 
-    let result = run_omg(&["install", "--yes", "--dry-run", "bash"]);
+    let result = run_omg(&["install", "--yes", "--dry-run", "git"]);
 
     result.assert_success();
     let output = result.combined_output();
     assert!(
-        output.contains("Install Preview") && output.contains("bash"),
+        output.contains("Install Preview") && output.contains("git"),
         "--yes --dry-run must still render the preview. Got:\n{output}"
     );
     assert!(
@@ -471,7 +471,7 @@ fn test_remove_recursive_flag() {
     recursive.assert_success();
     let output = recursive.combined_output();
     assert!(
-        output.contains("Orphaned dependencies would also be removed"),
+        output.contains("Additional unneeded dependencies would also be removed"),
         "--recursive must add orphan cleanup to the plan. Got:\n{output}"
     );
     assert!(
@@ -480,14 +480,14 @@ fn test_remove_recursive_flag() {
     );
 }
 
-/// Multiple packages appear together in one removal preview. Both packages
-/// exist on every target Arch host (pacman is the package manager itself,
-/// bash is a hard dependency of the base system).
+/// Multiple seeded packages appear together in one removal preview.
 #[test]
 fn test_remove_multiple_packages() {
-    init_test_env();
+    let project = TestProject::new();
+    project.mock_install("pacman", "6.0.2").unwrap();
+    project.mock_install("firefox", "122.0").unwrap();
 
-    let result = run_omg(&["remove", "--dry-run", "pacman", "bash"]);
+    let result = project.run(&["remove", "--dry-run", "pacman", "firefox"]);
 
     result.assert_success();
     let output = result.combined_output();
@@ -495,7 +495,7 @@ fn test_remove_multiple_packages() {
         output.contains("Remove Preview"),
         "must print the removal preview. Got:\n{output}"
     );
-    for pkg in ["pacman", "bash"] {
+    for pkg in ["pacman", "firefox"] {
         assert!(
             output.contains(pkg),
             "preview must list every requested package ({pkg}). Got:\n{output}"
@@ -579,7 +579,7 @@ fn test_workflow_search_then_info() {
 fn test_workflow_info_then_install_dry_run() {
     init_test_env();
 
-    let info_result = run_omg(&["info", "bash"]);
+    let info_result = run_omg(&["info", "git"]);
     info_result.assert_success();
     assert!(
         info_result.combined_output().contains("Description:"),
@@ -587,12 +587,12 @@ fn test_workflow_info_then_install_dry_run() {
         info_result.combined_output()
     );
 
-    let install_result = run_omg(&["install", "--dry-run", "bash"]);
+    let install_result = run_omg(&["install", "--dry-run", "git"]);
     install_result.assert_success();
     let output = install_result.combined_output();
     assert!(
         output.contains("Install Preview")
-            && output.contains("bash")
+            && output.contains("git")
             && output.contains("No changes will be made (dry run)"),
         "install step must render a non-mutating preview. Got:\n{output}"
     );
@@ -682,14 +682,14 @@ fn test_quiet_flag_preserves_results() {
 fn test_verbose_flag_accepted_globally() {
     init_test_env();
 
-    let verbose_result = run_omg(&["info", "-vv", "bash"]);
+    let verbose_result = run_omg(&["info", "-vv", "git"]);
     verbose_result.assert_success();
     let output = verbose_result.combined_output();
     assert!(
-        output.contains("Description:") && output.contains("bash"),
+        output.contains("Description:") && output.contains("git"),
         "-vv must leave the command result intact. Got:\n{output}"
     );
 
-    let normal_result = run_omg(&["info", "bash"]);
+    let normal_result = run_omg(&["info", "git"]);
     normal_result.assert_success();
 }

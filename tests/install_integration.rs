@@ -95,7 +95,7 @@ fn test_mocked_install_missing_package_fails_explicitly() {
     let project = TestProject::new();
     let fake_pkg = "this-package-does-not-exist-12345";
 
-    let result = project.run(&["install", fake_pkg]);
+    let result = project.run(&["install", "--dry-run", fake_pkg]);
     result.assert_failure();
 
     let output = result.combined_output();

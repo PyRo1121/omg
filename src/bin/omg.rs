@@ -724,7 +724,7 @@ async fn async_main(args: Vec<String>) -> Result<()> {
         omg_lib::core::maybe_show_turbo_hint();
     }
 
-    if command_requires_root(&cli.command) && !is_root() {
+    if !omg_lib::core::paths::test_mode() && command_requires_root(&cli.command) && !is_root() {
         // Use run_self_sudo directly — elevate_if_needed creates a nested tokio
         // runtime which panics with "Cannot start a runtime from within a runtime"
         let args_refs: Vec<&str> = args.iter().skip(1).map(String::as_str).collect();

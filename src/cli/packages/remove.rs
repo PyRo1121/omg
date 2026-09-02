@@ -64,6 +64,11 @@ fn validate_removal_mode(recursive: bool) -> Result<()> {
 }
 
 async fn remove_packages(packages: &[String], recursive: bool) -> Result<()> {
+    if crate::core::paths::test_mode() {
+        let manager = crate::package_managers::get_package_manager()?;
+        return super::common::remove_with_manager(packages, manager).await;
+    }
+
     dispatch_backend! {
         debian: {
             let _ = recursive;
