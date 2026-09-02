@@ -279,7 +279,7 @@ mod tests {
     #[test]
     #[serial]
     fn test_omg_colors_always_enables() {
-        temp_env::with_var("OMG_COLORS", Some("always"), || {
+        temp_env::with_vars([("NO_COLOR", None), ("OMG_COLORS", Some("always"))], || {
             assert!(colors_enabled());
         });
     }

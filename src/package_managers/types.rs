@@ -1,16 +1,15 @@
 //! Shared package manager types
 
-/// Canonical orphan rule for pacman-based systems.
+/// Canonical orphan rule for pacman-based systems (`pacman -Qdt` semantics).
 ///
 /// A package is an orphan when it was **not** installed explicitly and no
-/// other installed package requires it — exactly the `pacman -Qdt` filter.
-/// Being merely *optional* for another package (`optdepends`) does NOT keep
-/// a package alive. All orphan listings and counts (libalpm-backed and
-/// pure-Rust cache-backed) MUST derive from this single predicate so the
-/// CLI, daemon, and status counts cannot diverge.
+/// other installed package requires it (neither directly nor optionally).
+/// All orphan listings and counts (libalpm-backed and pure-Rust cache-backed)
+/// MUST derive from this single predicate so the CLI, daemon, and status counts
+/// cannot diverge.
 #[must_use]
-pub fn is_orphan_package(explicit: bool, required_by_empty: bool) -> bool {
-    !explicit && required_by_empty
+pub fn is_orphan_package(explicit: bool, unrequired: bool) -> bool {
+    !explicit && unrequired
 }
 
 /// Case-insensitive ASCII substring test without allocation.
