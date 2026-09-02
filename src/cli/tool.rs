@@ -299,7 +299,13 @@ fn installed_tool_names_in(tools_dir: &Path) -> Result<Vec<String>> {
                 )
             })?;
             let path = entry.path();
-            if legacy_registry_paths.contains(&path) || !looks_like_tool_install(&path) {
+            // Hidden siblings (.name.staging-*, .name.backup-*) are transient
+            // install-swap directories, never installed tools.
+            let hidden = entry
+                .file_name()
+                .to_str()
+                .is_some_and(|name| name.starts_with('.'));
+            if hidden || legacy_registry_paths.contains(&path) || !looks_like_tool_install(&path) {
                 continue;
             }
             if let Some(name) = entry.file_name().to_str() {
@@ -318,6 +324,15 @@ fn looks_like_tool_install(path: &Path) -> bool {
         && (path.join("bin").is_dir()
             || path.join("node_modules/.bin").is_dir()
             || path.join("pyvenv.cfg").is_file())
+}
+
+/// Unique suffix for transient staging/backup install directories.
+fn unique_install_suffix() -> String {
+    let nanos = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|duration| duration.as_nanos())
+        .unwrap_or_default();
+    format!("{}-{nanos}", std::process::id())
 }
 
 /// Base directories
@@ -398,22 +413,15 @@ async fn install_managed(
     // Keep storage flat and keyed by the user-facing registry name. Package
     // identifiers such as Go module paths are installer inputs, not paths.
     let install_dir = tools_dir.join(manager).join(install_name);
-    match fs::symlink_metadata(&install_dir) {
-        Ok(metadata) if metadata.is_dir() => {
-            fs::remove_dir_all(&install_dir).with_context(|| {
-                format!(
-                    "Failed to replace existing tool directory {}",
-                    install_dir.display()
-                )
-            })?;
-        }
+    let has_previous_install = match fs::symlink_metadata(&install_dir) {
+        Ok(metadata) if metadata.is_dir() => true,
         Ok(_) => {
             anyhow::bail!(
                 "Refusing to replace non-directory tool path: {}",
                 install_dir.display()
             );
         }
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => false,
         Err(error) => {
             return Err(error).with_context(|| {
                 format!(
@@ -422,102 +430,146 @@ async fn install_managed(
                 )
             });
         }
+    };
+
+    if manager == "pacman" {
+        // Pacman installs globally, breaks isolation pattern but is preferred for OS tools
+        // We just delegate and return
+        return crate::cli::packages::install(&[pkg.to_string()], false, false, false).await;
     }
-    fs::create_dir_all(&install_dir)?;
+
+    // Stage the new version in a hidden sibling directory so a failed install
+    // never destroys the previously working tool (W4-A-01): the old install is
+    // only replaced after the package manager has succeeded.
+    let staging_dir = tools_dir.join(manager).join(format!(
+        ".{install_name}.staging-{}",
+        unique_install_suffix()
+    ));
+    fs::create_dir_all(&staging_dir)?;
 
     let pb = style::spinner(&format!("Installing {pkg} via {manager}..."));
 
-    match manager {
-        "pacman" => {
-            // Pacman installs globally, breaks isolation pattern but is preferred for OS tools
-            // We just delegate and return
+    // The closure keeps `?`/`bail!` exits inside `outcome` so the staging
+    // directory is always cleaned up on failure.
+    let run_install = || -> Result<()> {
+        match manager {
+            "npm" => {
+                // npm install --prefix <dir> <pkg>
+                let install_path = staging_dir
+                    .to_str()
+                    .context("Install directory path contains invalid UTF-8")?;
+                let status = Command::new("npm")
+                    .args(["install", "--prefix", install_path, "--", pkg])
+                    .stdout(std::process::Stdio::null())
+                    .stderr(std::process::Stdio::inherit())
+                    .status()?;
+
+                if !status.success() {
+                    anyhow::bail!("NPM install of '{pkg}' failed. Try: npm install -g {pkg}");
+                }
+                Ok(())
+            }
+            "cargo" => {
+                // cargo install --root <dir> <pkg>
+                let install_path = staging_dir
+                    .to_str()
+                    .context("Install directory path contains invalid UTF-8")?;
+                let status = Command::new("cargo")
+                    .args(["install", "--root", install_path, "--", pkg])
+                    .stdout(std::process::Stdio::null()) // Cargo is noisy
+                    .status()?;
+
+                if !status.success() {
+                    anyhow::bail!("Cargo install of '{pkg}' failed. Try: cargo install {pkg}");
+                }
+                Ok(())
+            }
+            "pip" => {
+                // 1. Create venv (PEP 394-aware launcher resolution, see python_binary)
+                let install_path = staging_dir
+                    .to_str()
+                    .context("Install directory path contains invalid UTF-8")?;
+                let status_venv = Command::new(python_binary())
+                    .args(["-m", "venv", "--", install_path])
+                    .status()?;
+
+                if !status_venv.success() {
+                    anyhow::bail!("Failed to create python venv at '{install_path}'");
+                }
+
+                // 2. Install into venv
+                let pip_path = staging_dir.join("bin").join("pip");
+                let status_install = Command::new(pip_path)
+                    .args(["install", "--", pkg])
+                    .stdout(std::process::Stdio::null())
+                    .status()?;
+
+                if !status_install.success() {
+                    anyhow::bail!("Pip install of '{pkg}' failed. Try: pip install {pkg}");
+                }
+                Ok(())
+            }
+            "go" => {
+                // GOBIN=<dir>/bin go install <pkg>@latest
+                let target = if pkg.contains('@') {
+                    pkg.to_string()
+                } else {
+                    format!("{pkg}@latest")
+                };
+
+                // Go installs to $GOBIN
+                let go_bin = staging_dir.join("bin");
+                fs::create_dir_all(&go_bin)?;
+
+                let status = Command::new("go")
+                    .arg("install")
+                    .args(["--", &target])
+                    .env("GOBIN", &go_bin)
+                    .stdout(std::process::Stdio::null())
+                    .status()?;
+
+                if !status.success() {
+                    anyhow::bail!("Go install of '{pkg}' failed. Try: go install {target}");
+                }
+                Ok(())
+            }
+            _ => anyhow::bail!(
+                "Unknown package manager '{manager}'. Supported: npm, cargo, pip, go, pacman"
+            ),
+        }
+    };
+    let outcome: Result<()> = run_install();
+
+    if let Err(error) = outcome {
+        pb.finish_and_clear();
+        let _ = fs::remove_dir_all(&staging_dir);
+        return Err(error);
+    }
+
+    // Swap the staged install into place: move the previous install aside,
+    // promote the staging directory, then drop the backup. If promotion fails,
+    // the previous install is restored.
+    if has_previous_install {
+        let backup_dir = tools_dir.join(manager).join(format!(
+            ".{install_name}.backup-{}",
+            unique_install_suffix()
+        ));
+        fs::rename(&install_dir, &backup_dir).with_context(|| {
+            format!("Failed to move previous install of '{install_name}' aside")
+        })?;
+        if let Err(error) = fs::rename(&staging_dir, &install_dir) {
+            let _ = fs::rename(&backup_dir, &install_dir);
+            let _ = fs::remove_dir_all(&staging_dir);
             pb.finish_and_clear();
-            return crate::cli::packages::install(&[pkg.to_string()], false, false, false).await;
+            return Err(error)
+                .with_context(|| format!("Failed to promote staged install of '{install_name}'"));
         }
-        "npm" => {
-            // npm install --prefix <dir> <pkg>
-            let install_path = install_dir
-                .to_str()
-                .context("Install directory path contains invalid UTF-8")?;
-            let status = Command::new("npm")
-                .args(["install", "--prefix", install_path, "--", pkg])
-                .stdout(std::process::Stdio::null())
-                .stderr(std::process::Stdio::inherit())
-                .status()?;
-
-            if !status.success() {
-                pb.finish_and_clear();
-                anyhow::bail!("NPM install of '{pkg}' failed. Try: npm install -g {pkg}");
-            }
-        }
-        "cargo" => {
-            // cargo install --root <dir> <pkg>
-            let install_path = install_dir
-                .to_str()
-                .context("Install directory path contains invalid UTF-8")?;
-            let status = Command::new("cargo")
-                .args(["install", "--root", install_path, "--", pkg])
-                .stdout(std::process::Stdio::null()) // Cargo is noisy
-                .status()?;
-
-            if !status.success() {
-                pb.finish_and_clear();
-                anyhow::bail!("Cargo install of '{pkg}' failed. Try: cargo install {pkg}");
-            }
-        }
-        "pip" => {
-            // 1. Create venv (PEP 394-aware launcher resolution, see python_binary)
-            let install_path = install_dir
-                .to_str()
-                .context("Install directory path contains invalid UTF-8")?;
-            let status_venv = Command::new(python_binary())
-                .args(["-m", "venv", "--", install_path])
-                .status()?;
-
-            if !status_venv.success() {
-                pb.finish_and_clear();
-                anyhow::bail!("Failed to create python venv at '{install_path}'");
-            }
-
-            // 2. Install into venv
-            let pip_path = install_dir.join("bin").join("pip");
-            let status_install = Command::new(pip_path)
-                .args(["install", "--", pkg])
-                .stdout(std::process::Stdio::null())
-                .status()?;
-
-            if !status_install.success() {
-                pb.finish_and_clear();
-                anyhow::bail!("Pip install of '{pkg}' failed. Try: pip install {pkg}");
-            }
-        }
-        "go" => {
-            // GOBIN=<dir>/bin go install <pkg>@latest
-            let target = if pkg.contains('@') {
-                pkg.to_string()
-            } else {
-                format!("{pkg}@latest")
-            };
-
-            // Go installs to $GOBIN
-            let go_bin = install_dir.join("bin");
-            fs::create_dir_all(&go_bin)?;
-
-            let status = Command::new("go")
-                .arg("install")
-                .args(["--", &target])
-                .env("GOBIN", &go_bin)
-                .stdout(std::process::Stdio::null())
-                .status()?;
-
-            if !status.success() {
-                pb.finish_and_clear();
-                anyhow::bail!("Go install of '{pkg}' failed. Try: go install {target}");
-            }
-        }
-        _ => anyhow::bail!(
-            "Unknown package manager '{manager}'. Supported: npm, cargo, pip, go, pacman"
-        ),
+        let _ = fs::remove_dir_all(&backup_dir);
+    } else if let Err(error) = fs::rename(&staging_dir, &install_dir) {
+        let _ = fs::remove_dir_all(&staging_dir);
+        pb.finish_and_clear();
+        return Err(error)
+            .with_context(|| format!("Failed to promote staged install of '{install_name}'"));
     }
 
     pb.finish_and_clear();
@@ -911,5 +963,75 @@ mod tests {
         assert!(names.contains(&"custom-tool".to_string()));
         assert!(!names.contains(&"github.com".to_string()));
         assert!(!names.contains(&"diesel_cli".to_string()));
+    }
+
+    /// W4-A-01 regression: a failed install must leave the previously working
+    /// tool in place and runnable instead of deleting it before reinstalling.
+    #[tokio::test]
+    async fn failed_install_keeps_previous_tool_intact_and_runnable() {
+        let temp = tempfile::tempdir().expect("temp directory");
+        let tools_dir = temp.path().join("tools");
+        let bin_dir = temp.path().join("bin");
+        let install_dir = tools_dir.join("cargo").join("fake-tool");
+        fs::create_dir_all(install_dir.join("bin")).expect("tool fixture");
+        let tool_binary = install_dir.join("bin").join("fake-tool");
+        fs::write(&tool_binary, "#!/bin/sh\necho previous-tool-ok\n").expect("tool fixture");
+
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            fs::set_permissions(&tool_binary, fs::Permissions::from_mode(0o755))
+                .expect("tool fixture");
+        }
+
+        let error = install_managed(
+            "cargo",
+            "omg-definitely-not-a-real-crate-000",
+            "fake-tool",
+            &tools_dir,
+            &bin_dir,
+        )
+        .await
+        .expect_err("installing a nonexistent crate must fail");
+        assert!(
+            error.to_string().contains("Cargo install"),
+            "error: {error}"
+        );
+
+        // The previous install survived the failed update...
+        assert!(
+            install_dir.is_dir(),
+            "previous install must survive a failed update"
+        );
+        assert!(
+            tool_binary.is_file(),
+            "previous tool binary must survive a failed update"
+        );
+        // ...no staging/backup leftovers remain...
+        let leftovers: Vec<std::path::PathBuf> = fs::read_dir(tools_dir.join("cargo"))
+            .expect("manager dir")
+            .filter_map(std::result::Result::ok)
+            .map(|entry| entry.path())
+            .filter(|path| {
+                path.file_name()
+                    .and_then(|name| name.to_str())
+                    .is_some_and(|name| name.starts_with(".fake-tool."))
+            })
+            .collect();
+        assert!(leftovers.is_empty(), "staging leftovers: {leftovers:?}");
+        // ...and the tool is still runnable.
+        #[cfg(unix)]
+        {
+            let output = Command::new(&tool_binary)
+                .stdin(std::process::Stdio::null())
+                .output()
+                .expect("run previous tool");
+            assert!(output.status.success(), "previous tool must still run");
+            assert!(
+                String::from_utf8_lossy(&output.stdout).contains("previous-tool-ok"),
+                "unexpected output: {:?}",
+                output.stdout
+            );
+        }
     }
 }
