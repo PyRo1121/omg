@@ -912,6 +912,15 @@ fn systemd_quote_exec_path(path: &Path) -> String {
     quoted
 }
 
+/// `omgd` already runs in the foreground (`Type=simple`); the removed
+/// `--foreground` flag is rejected by the binary.
+fn systemd_exec_start_line(omgd_path: Option<&Path>) -> String {
+    omgd_path.map_or_else(
+        || "ExecStart=%h/.local/bin/omgd".to_owned(),
+        |path| format!("ExecStart={}", systemd_quote_exec_path(path)),
+    )
+}
+
 fn create_systemd_service() -> Result<()> {
     let home = std::env::var("HOME")?;
     let service_dir = format!("{home}/.config/systemd/user");
@@ -919,10 +928,7 @@ fn create_systemd_service() -> Result<()> {
 
     // Pin ExecStart to the omgd shipped next to this omg; fall back to the
     // historical %h/.local/bin location when it cannot be resolved.
-    let exec_start = omgd_sibling_path().map_or_else(
-        || "ExecStart=%h/.local/bin/omgd --foreground".to_owned(),
-        |path| format!("ExecStart={} --foreground", systemd_quote_exec_path(&path)),
-    );
+    let exec_start = systemd_exec_start_line(omgd_sibling_path().as_deref());
 
     let service_content = format!(
         r"[Unit]
@@ -1067,6 +1073,19 @@ mod tests {
             systemd_quote_exec_path(path),
             r#""/opt/OMG $$Build%%/omg\\\"daemon""#
         );
+    }
+
+    #[test]
+    fn systemd_exec_start_omits_removed_foreground_flag() {
+        assert_eq!(
+            systemd_exec_start_line(None),
+            "ExecStart=%h/.local/bin/omgd"
+        );
+        let path = Path::new("/opt/omg/omgd");
+        let line = systemd_exec_start_line(Some(path));
+        assert_eq!(line, format!("ExecStart={}", systemd_quote_exec_path(path)));
+        assert!(!systemd_exec_start_line(None).contains("--foreground"));
+        assert!(!line.contains("--foreground"));
     }
 
     #[test]

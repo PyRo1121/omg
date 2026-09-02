@@ -128,7 +128,7 @@ echo ""
 
 # Start Daemon for max speed
 echo "Starting OMG Daemon..."
-$OMGD --foreground > "$DAEMON_LOG" 2>&1 &
+$OMGD > "$DAEMON_LOG" 2>&1 &
 DAEMON_PID=$!
 
 # Optimized daemon ready check (faster than sleep 2)

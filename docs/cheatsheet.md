@@ -315,8 +315,7 @@ banned_packages = []
 ## 🛠️ Daemon
 
 ```bash
-omgd                            # Start daemon (daemonizes by default)
-omgd --foreground               # Run in foreground
+omgd                            # Start the daemon (blocks in the foreground)
 omgd --socket /path/to/sock     # Custom socket path
 omg daemon-status               # Show detailed daemon status
 omg daemon                      # Start the daemon from the CLI
@@ -508,7 +507,7 @@ exec $SHELL
 
 ```bash
 omg daemon-status          # Is it up?
-omgd --foreground          # Run it in the foreground to see errors
+omgd                       # Run it in the foreground to see errors
 ```
 
 **PATH issues:**
