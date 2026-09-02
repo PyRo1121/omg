@@ -1019,31 +1019,48 @@ mod tests {
     }
 
     #[test]
-    fn corrupt_log_can_be_quarantined_before_fresh_append() {
+    #[serial_test::serial]
+    fn init_quarantines_corrupt_log_before_fresh_append() {
         let temp = tempfile::TempDir::new().unwrap();
-        let log_path = temp.path().join("audit.jsonl");
+        let audit_dir = temp.path().join("audit");
+        let log_path = audit_dir.join("audit.jsonl");
+        std::fs::create_dir_all(&audit_dir).unwrap();
         std::fs::write(&log_path, "{\"id\":\"interrupted").unwrap();
 
-        assert!(matches!(
-            AuditLogger::new_in(&log_path),
-            Err(AuditError::CorruptLine { line: 1, .. })
-        ));
-        let quarantined = quarantine_corrupt_audit_log(&log_path).unwrap();
+        temp_env::with_var("OMG_DATA_DIR", Some(temp.path()), || {
+            *AUDIT_LOGGER.lock().unwrap() = None;
+            init_audit_logger().expect("production initialization must recover the corrupt log");
+            record_global(
+                AuditEventType::PackageInstall,
+                AuditSeverity::Info,
+                "firefox",
+                "Installed firefox",
+            );
+            *AUDIT_LOGGER.lock().unwrap() = None;
+        });
+
+        let quarantined = std::fs::read_dir(&audit_dir)
+            .unwrap()
+            .map(|entry| entry.unwrap().path())
+            .find(|path| {
+                path.file_name()
+                    .and_then(|name| name.to_str())
+                    .is_some_and(|name| name.starts_with("audit.jsonl.corrupt-"))
+            })
+            .expect("corrupt log must be quarantined");
         assert_eq!(
             std::fs::read_to_string(quarantined).unwrap(),
             "{\"id\":\"interrupted"
         );
 
-        let mut logger = AuditLogger::new_in(&log_path).unwrap();
-        logger
-            .log(
-                AuditEventType::PackageInstall,
-                AuditSeverity::Info,
-                "firefox",
-                "Installed firefox",
-            )
-            .unwrap();
-        assert!(logger.verify_integrity().unwrap().is_valid());
+        let logger = AuditLogger::new_in(&log_path).unwrap();
+        let report = logger.verify_integrity().unwrap();
+        assert_eq!(report.total_entries, 1);
+        assert!(report.is_valid());
+        assert_eq!(
+            logger.get_recent(1).unwrap()[0].description,
+            "Installed firefox"
+        );
     }
 
     #[test]
