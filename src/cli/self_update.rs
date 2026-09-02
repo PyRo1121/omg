@@ -62,6 +62,24 @@ pub async fn run(force: bool, version: Option<String>) -> Result<()> {
         style::runtime("OMG"),
     );
 
+    #[cfg(feature = "arch")]
+    if !force
+        && detect_distro() == Distro::Arch
+        && let Ok(exe) = env::current_exe()
+        && exe.starts_with("/usr/bin")
+    {
+        println!(
+            "  {} Note: OMG is installed in system path ({})",
+            style::maybe_color("ℹ", |t| t.blue().to_string()),
+            exe.display()
+        );
+        println!(
+            "     Updating via self-update may conflict with pacman-tracked files.\n\
+             Recommended: update via your package manager: {}\n",
+            style::command("omg update omg  (or: sudo pacman -Syu omg)")
+        );
+    }
+
     let target_version = match version {
         Some(raw) => parse_version(&raw)
             .with_context(|| format!("`--version {raw}` is not valid semver (e.g. 1.2.3)"))?,
@@ -114,7 +132,7 @@ pub async fn run(force: bool, version: Option<String>) -> Result<()> {
         fs::write(attestation_file.path(), &bytes)
             .context("Failed to write archive for attestation verification")?;
         if !verify_attestation(attestation_file.path())? {
-            refuse_unverified_provenance()?;
+            refuse_unverified_provenance(force)?;
         }
 
         let cursor = std::io::Cursor::new(bytes);
@@ -250,11 +268,16 @@ async fn fetch_latest_version() -> Result<Version> {
 ///
 /// Returns `None` when no matching artifact exists.
 fn release_target(distro: Distro) -> Option<(&'static str, &'static str)> {
+    let arch = match std::env::consts::ARCH {
+        "x86_64" => "x86_64",
+        "aarch64" => "aarch64",
+        _ => return None,
+    };
     match distro {
-        Distro::Arch => Some(("x86_64", "linux-arch")),
-        Distro::Debian => Some(("x86_64", "linux-debian")),
-        Distro::Ubuntu => Some(("x86_64", "linux-ubuntu")),
-        Distro::Fedora => Some(("x86_64", "linux-fedora")),
+        Distro::Arch => Some((arch, "linux-arch")),
+        Distro::Debian => Some((arch, "linux-debian")),
+        Distro::Ubuntu => Some((arch, "linux-ubuntu")),
+        Distro::Fedora => Some((arch, "linux-fedora")),
         Distro::MacOS => Some(("aarch64", "darwin")),
         Distro::Unknown => None,
     }
@@ -466,10 +489,10 @@ fn decide_unverified_provenance(allow_unverified: bool) -> Result<()> {
     )
 }
 
-/// Evaluate the opt-in escape hatch from the environment.
-fn refuse_unverified_provenance() -> Result<()> {
+/// Evaluate the opt-in escape hatch from the environment or --force flag.
+fn refuse_unverified_provenance(force: bool) -> Result<()> {
     let raw = env::var(ALLOW_UNVERIFIED_PROVENANCE_ENV).ok();
-    decide_unverified_provenance(parse_allow_unverified(raw.as_deref()))
+    decide_unverified_provenance(force || parse_allow_unverified(raw.as_deref()))
 }
 
 /// Parse the escape-hatch environment variable.

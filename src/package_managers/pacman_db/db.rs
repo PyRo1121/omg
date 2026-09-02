@@ -189,6 +189,9 @@ pub struct LocalDbPackage {
     /// `%REQUIREDBY%`/`%OPTFOR%` sections into local desc files, so trusting
     /// such fields made every non-explicit package look like an orphan.
     pub depends: Vec<String>,
+    /// Optional dependencies this package declares (`%OPTDEPENDS%`).
+    #[serde(default)]
+    pub optdepends: Vec<String>,
     /// Virtual packages/capabilities this package satisfies (`%PROVIDES%`).
     pub provides: Vec<String>,
 }
@@ -203,6 +206,7 @@ impl Default for LocalDbPackage {
             licenses: Vec::new(),
             explicit: false,
             depends: Vec::new(),
+            optdepends: Vec::new(),
             provides: Vec::new(),
         }
     }
@@ -556,6 +560,7 @@ fn parse_local_desc(path: &Path) -> Result<LocalDbPackage> {
             licenses: desc.license.iter().map(ToString::to_string).collect(),
             explicit: matches!(desc.reason, alpm_types::PackageInstallReason::Explicit),
             depends: desc.depends.iter().map(ToString::to_string).collect(),
+            optdepends: desc.optdepends.iter().map(ToString::to_string).collect(),
             provides: desc.provides.iter().map(ToString::to_string).collect(),
         })
     } else if let Ok(desc) = alpm_db::desc::DbDescFileV2::from_str(&content) {
@@ -568,6 +573,7 @@ fn parse_local_desc(path: &Path) -> Result<LocalDbPackage> {
             licenses: desc.license.iter().map(ToString::to_string).collect(),
             explicit: matches!(desc.reason, alpm_types::PackageInstallReason::Explicit),
             depends: desc.depends.iter().map(ToString::to_string).collect(),
+            optdepends: desc.optdepends.iter().map(ToString::to_string).collect(),
             provides: desc.provides.iter().map(ToString::to_string).collect(),
         })
     } else {
@@ -585,6 +591,7 @@ fn parse_local_desc_manual(content: &str) -> Result<LocalDbPackage> {
     let mut reason = String::new();
     let mut licenses = Vec::new();
     let mut depends = Vec::new();
+    let mut optdepends = Vec::new();
     let mut provides = Vec::new();
     let mut current_field: Option<&str> = None;
 
@@ -608,6 +615,7 @@ fn parse_local_desc_manual(content: &str) -> Result<LocalDbPackage> {
             Some("%REASON%") => reason = line.to_string(),
             Some("%LICENSE%") => licenses.push(line.to_string()),
             Some("%DEPENDS%") => depends.push(line.to_string()),
+            Some("%OPTDEPENDS%") => optdepends.push(line.to_string()),
             Some("%PROVIDES%") => provides.push(line.to_string()),
             _ => {}
         }
@@ -633,6 +641,7 @@ fn parse_local_desc_manual(content: &str) -> Result<LocalDbPackage> {
         licenses,
         explicit,
         depends,
+        optdepends,
         provides,
     })
 }
@@ -1153,20 +1162,25 @@ pub fn get_potential_aur_packages() -> Result<Vec<String>> {
     Ok(potential)
 }
 
-/// Reduce an alpm relation string to the bare name that participates in
+/// Reduce an alpm relation or optdepend string to the bare name that participates in
 /// dependency resolution: `"curl>=7.0"` → `"curl"`,
-/// `"libfoo.so=1-64"` → `"libfoo.so"`.
+/// `"libfoo.so=1-64"` → `"libfoo.so"`,
+/// `"python-pillow: for image support"` → `"python-pillow"`.
 fn dependency_base_name(relation: &str) -> &str {
-    relation.split(['<', '>', '=']).next().unwrap_or(relation)
+    relation
+        .split(['<', '>', '=', ':'])
+        .next()
+        .unwrap_or(relation)
+        .trim()
 }
 
 /// Names of installed packages that at least one other installed package
-/// requires, derived from the cached `%DEPENDS%`/`%PROVIDES%` sets.
+/// requires or optionally requires, derived from the cached `%DEPENDS%`/`%OPTDEPENDS%`/`%PROVIDES%` sets.
 ///
 /// Mirrors libalpm's reverse-dependency resolution (including virtual
 /// dependencies satisfied by provisions) so the pure-Rust fast path matches
-/// `pacman -Qdt` instead of trusting `%REQUIREDBY%` sections, which modern
-/// pacman no longer writes.
+/// `pacman -Qdt` ("only packages neither required nor optionally required")
+/// instead of trusting `%REQUIREDBY%` sections, which modern pacman no longer writes.
 fn compute_required_names(
     packages: &HashMap<String, LocalDbPackage>,
 ) -> std::collections::HashSet<String> {
@@ -1187,6 +1201,23 @@ fn compute_required_names(
     for pkg in packages.values() {
         for depend in &pkg.depends {
             let target = dependency_base_name(depend);
+            if target == pkg.name {
+                continue;
+            }
+            if packages.contains_key(target) {
+                required.insert(target.to_owned());
+            }
+            if let Some(provider_names) = providers.get(target) {
+                required.extend(
+                    provider_names
+                        .iter()
+                        .filter(|provider| **provider != pkg.name)
+                        .map(|provider| (*provider).to_owned()),
+                );
+            }
+        }
+        for optdepend in &pkg.optdepends {
+            let target = dependency_base_name(optdepend);
             if target == pkg.name {
                 continue;
             }
@@ -1730,11 +1761,11 @@ mod tests {
         assert!(!fixture_orphans(&temp).contains(&"lib-used".to_string()));
     }
 
-    /// Regression (audit ARCH-N4): a dependency that only appears in another
-    /// package's `%OPTDEPENDS%` IS an orphan — optdepends do not keep a
-    /// package alive (`pacman -Qdt` parity).
+    /// Under `pacman -Qdt` rules ("print only packages neither required nor
+    /// optionally required by any currently installed package"), a dependency
+    /// that appears in another package's `%OPTDEPENDS%` is NOT an orphan.
     #[test]
-    fn optdepend_only_package_is_counted_as_orphan() {
+    fn optdepend_package_is_not_orphan_under_pacman_qdt_rules() {
         let temp = tempfile::TempDir::new().unwrap();
         write_local_desc(
             &temp,
@@ -1744,7 +1775,17 @@ mod tests {
         );
         write_local_desc(&temp, "lib-opt", "1", "");
 
-        assert_eq!(fixture_orphans(&temp), ["lib-opt"]);
+        assert!(fixture_orphans(&temp).is_empty());
+    }
+
+    /// A dependency with neither direct dependents nor optional dependents IS an orphan.
+    #[test]
+    fn unrequired_dependency_is_counted_as_orphan() {
+        let temp = tempfile::TempDir::new().unwrap();
+        write_local_desc(&temp, "app-main", "0", "");
+        write_local_desc(&temp, "lonely-dep", "1", "");
+
+        assert_eq!(fixture_orphans(&temp), ["lonely-dep"]);
     }
 
     /// Explicitly installed packages are never orphans, even when unrequired.
@@ -1792,12 +1833,17 @@ mod tests {
         write_local_desc(&temp, "lib-opt", "1", "");
         write_local_desc(&temp, "lib-provides", "1", "\n%PROVIDES%\nvirtual-svc\n");
         write_local_desc(&temp, "app-virtual", "0", "\n%DEPENDS%\nvirtual-svc\n");
+        write_local_desc(&temp, "lonely-orphan", "1", "");
 
         let packages = parse_local_db(temp.path()).unwrap();
-        assert_eq!(packages.len(), 6);
+        assert_eq!(packages.len(), 7);
         let required = compute_required_names(&packages);
-        assert_eq!(required.len(), 2, "lib-used + lib-provides: {required:?}");
-        assert_eq!(fixture_orphans(&temp), ["lib-opt"]);
+        assert_eq!(
+            required.len(),
+            3,
+            "lib-used + lib-opt + lib-provides: {required:?}"
+        );
+        assert_eq!(fixture_orphans(&temp), ["lonely-orphan"]);
     }
 
     /// The pure-Rust fast path and the libalpm-backed path must agree on the
@@ -1832,6 +1878,7 @@ mod tests {
         write_alpm_desc("lib-opt", "1", "");
         write_alpm_desc("lib-provides", "1", "\n%PROVIDES%\nvirtual-svc\n");
         write_alpm_desc("app-virtual", "0", "\n%DEPENDS%\nvirtual-svc\n");
+        write_alpm_desc("lonely-orphan", "1", "");
 
         let conf = temp.path().join("pacman.conf");
         std::fs::write(&conf, "[options]\n").unwrap();
@@ -1849,7 +1896,7 @@ mod tests {
         }
         let _restore = Restore;
 
-        let expected = (6, 3, 1);
+        let expected = (7, 3, 1);
         temp_env::with_vars(
             [
                 ("OMG_PACMAN_CONF", Some(conf.to_str().unwrap())),

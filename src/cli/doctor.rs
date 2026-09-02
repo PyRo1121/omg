@@ -68,16 +68,27 @@ pub async fn run(network: bool, eol: bool) -> Result<()> {
     }
 
     // 3. Dependencies (backend-appropriate: the live Debian backend shells
-    //    out to `apt-get` via the privilege module)
+    //    out to `apt-get` via the privilege module; Arch uses pacman and makepkg)
     let mut deps = vec!["git", "curl", "tar", "sudo"];
     if debian_backend {
         deps.push("apt-get");
+    }
+    if arch_backend {
+        deps.push("pacman");
+        deps.push("makepkg");
     }
     for dep in deps {
         if check_command(dep) {
             println!("  {}", style::success(&format!("Found dependency: {dep}")));
         } else {
-            println!("  {}", style::error(&format!("Missing dependency: {dep}")));
+            if dep == "makepkg" {
+                println!(
+                    "  {} Missing dependency: makepkg (install 'base-devel' package for AUR builds)",
+                    style::error("✗")
+                );
+            } else {
+                println!("  {}", style::error(&format!("Missing dependency: {dep}")));
+            }
             issues += 1;
         }
     }
@@ -86,6 +97,9 @@ pub async fn run(network: bool, eol: bool) -> Result<()> {
     //     reads — no invented checks).
     if debian_backend {
         issues += check_debian_infra();
+    }
+    if arch_backend {
+        issues += check_arch_infra();
     }
 
     // 4. Daemon Status
@@ -232,6 +246,64 @@ fn check_debian_infra() -> usize {
         println!(
             "  {} APT package indexes missing or empty (/var/lib/apt/lists) — run 'sudo apt-get update'",
             style::error("✗")
+        );
+        issues += 1;
+    }
+
+    issues
+}
+
+/// Check the Arch Linux infrastructure the ALPM backend depends on:
+/// the pacman configuration file (`/etc/pacman.conf`) and the ALPM local
+/// package database directory (`/var/lib/pacman/local`).
+fn check_arch_infra() -> usize {
+    if crate::core::paths::test_mode() {
+        return 0;
+    }
+
+    let mut issues = 0;
+
+    let conf_path = crate::core::paths::pacman_conf_path();
+    if conf_path.exists() {
+        match crate::core::pacman_conf::PacmanConfig::parse(&conf_path) {
+            Ok(config) => {
+                println!(
+                    "  {} pacman configuration ({}, {} repos configured)",
+                    style::success("✓"),
+                    conf_path.display(),
+                    config.repos.len()
+                );
+            }
+            Err(e) => {
+                println!(
+                    "  {} invalid pacman configuration ({}): {e}",
+                    style::error("✗"),
+                    conf_path.display()
+                );
+                issues += 1;
+            }
+        }
+    } else {
+        println!(
+            "  {} pacman configuration missing ({})",
+            style::error("✗"),
+            conf_path.display()
+        );
+        issues += 1;
+    }
+
+    let local_dir = crate::core::paths::pacman_local_dir();
+    if local_dir.is_dir() {
+        println!(
+            "  {} ALPM local package database ({})",
+            style::success("✓"),
+            local_dir.display()
+        );
+    } else {
+        println!(
+            "  {} ALPM local package database missing ({})",
+            style::error("✗"),
+            local_dir.display()
         );
         issues += 1;
     }

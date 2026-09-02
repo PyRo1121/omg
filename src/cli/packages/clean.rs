@@ -9,7 +9,9 @@ use owo_colors::OwoColorize;
 use crate::core::env::distro::is_debian_like;
 
 #[cfg(feature = "arch")]
-use crate::package_managers::{AurClient, clean_cache, list_orphans_direct, remove_orphans};
+use crate::package_managers::{
+    AurClient, clean_cache, clean_cache_preview, list_orphans_direct, remove_orphans,
+};
 
 #[cfg(feature = "debian")]
 use crate::package_managers::apt_remove_orphans;
@@ -204,10 +206,23 @@ pub async fn clean(orphans: bool, cache: bool, aur: bool, all: bool, dry_run: bo
             #[cfg(feature = "arch")]
             {
                 if dry_run {
-                    println!(
-                        "  {} Would clear package cache (keep 1 recent version)",
-                        "→".cyan()
-                    );
+                    match clean_cache_preview(1) {
+                        Ok((removed, freed)) => {
+                            let freed_mb = freed as f64 / 1024.0 / 1024.0;
+                            println!(
+                                "  {} Would clear package cache: {} archive(s) ({:.2} MB, keep 1 recent version)",
+                                "→".cyan(),
+                                removed,
+                                freed_mb
+                            );
+                        }
+                        Err(e) => {
+                            println!(
+                                "  {} Would clear package cache (keep 1 recent version): {e}",
+                                "→".cyan()
+                            );
+                        }
+                    }
                 } else {
                     crate::cli::modern_ui::print_info("Clearing package cache...");
                     // Warn (do not block): cleaning can delete exactly the
