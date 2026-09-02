@@ -80,7 +80,7 @@ fn build_fixture() -> Fixture {
     fs::write(
         &conf,
         format!(
-            "[options]\nHoldPkg = pacman glibc\nArchitecture = x86_64\n\n[{REPO}]\nServer = file:///nonexistent-cov16\n"
+            "[options]\nHoldPkg = pacman glibc\nArchitecture = x86_64\nSigLevel = Never\n\n[{REPO}]\nServer = file:///nonexistent-cov16\n"
         ),
     )
     .expect("failed to write fixture pacman.conf");
