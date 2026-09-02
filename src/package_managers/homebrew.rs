@@ -49,6 +49,9 @@ const INSTALL_RECEIPT: &str = "INSTALL_RECEIPT.json";
 const FORMULA_API: &str = "https://formulae.brew.sh/api/formula.json";
 /// Homebrew cask API endpoint
 const CASK_API: &str = "https://formulae.brew.sh/api/cask.json";
+const FORMULA_CACHE_FILE: &str = "formula.jws.json";
+const CASK_CACHE_FILE: &str = "cask.jws.json";
+const HOMEBREW_CACHE_TTL_SECS: u64 = 604_800;
 /// Cache TTL for installed packages (30 seconds)
 const INSTALLED_CACHE_TTL_SECS: u64 = 30;
 
@@ -156,6 +159,11 @@ struct CaskInfo {
     desc: Option<String>,
     homepage: Option<String>,
     version: Option<String>,
+}
+
+#[derive(Deserialize)]
+struct HomebrewApiEnvelope {
+    payload: String,
 }
 
 /// Which kind of Homebrew package a name refers to.
@@ -294,38 +302,45 @@ impl HomebrewPackageManager {
         Ok(Self::cache_dir()?.join("formula.rkyv"))
     }
 
-    /// Find Homebrew's native API cache directory
-    ///
-    /// Homebrew caches API responses in these locations:
-    /// - macOS: `~/Library/Caches/Homebrew/api/`
-    /// - Linux: `~/.cache/Homebrew/api/`
-    /// - Homebrew prefix: `$HOMEBREW_PREFIX/Library/Caches/Homebrew/api/`
-    ///
-    /// Returns the first existing cache directory found.
-    fn homebrew_cache_dir(&self) -> Option<PathBuf> {
-        // Try user cache first (respects $XDG_CACHE_HOME on Linux)
-        if let Some(cache) = dirs::cache_dir() {
-            let path = cache.join("Homebrew/api");
-            if path.exists() {
+    /// Find Homebrew's native API cache directory.
+    fn homebrew_cache_dir() -> Option<PathBuf> {
+        if let Some(cache) = std::env::var_os("HOMEBREW_CACHE").filter(|value| !value.is_empty()) {
+            let path = PathBuf::from(cache).join("api");
+            if path.is_dir() {
                 return Some(path);
             }
         }
 
-        // Try macOS-specific location
-        if let Some(home) = dirs::home_dir() {
-            let path = home.join("Library/Caches/Homebrew/api");
-            if path.exists() {
-                return Some(path);
-            }
-        }
+        let path = dirs::cache_dir()?.join("Homebrew/api");
+        path.is_dir().then_some(path)
+    }
 
-        // Try Homebrew's own cache location
-        let homebrew_cache = self.prefix.join("Library/Caches/Homebrew/api");
-        if homebrew_cache.exists() {
-            return Some(homebrew_cache);
-        }
+    fn parse_homebrew_api_payload<T: serde::de::DeserializeOwned>(
+        content: &str,
+        path: &Path,
+    ) -> Result<T> {
+        let envelope: HomebrewApiEnvelope = serde_json::from_str(content)
+            .with_context(|| format!("Failed to parse {} envelope", path.display()))?;
+        serde_json::from_str(&envelope.payload)
+            .with_context(|| format!("Failed to parse {} payload", path.display()))
+    }
 
-        None
+    async fn read_homebrew_api_payload<T: serde::de::DeserializeOwned>(path: &Path) -> Result<T> {
+        let content = fs::read_to_string(path)
+            .await
+            .with_context(|| format!("Failed to read {}", path.display()))?;
+        Self::parse_homebrew_api_payload(&content, path)
+    }
+
+    async fn homebrew_cache_file_is_fresh(path: &Path) -> bool {
+        let Ok(metadata) = fs::metadata(path).await else {
+            return false;
+        };
+        metadata
+            .modified()
+            .ok()
+            .and_then(|modified| modified.elapsed().ok())
+            .is_some_and(|elapsed| elapsed.as_secs() <= HOMEBREW_CACHE_TTL_SECS)
     }
 
     /// Build `FormulaCache` from raw formula and cask lists
@@ -350,54 +365,31 @@ impl HomebrewPackageManager {
         }
     }
 
-    /// Load from Homebrew's native API cache (formula.json, cask.json)
+    /// Load from Homebrew's native JWS-envelope API cache.
     ///
     /// Homebrew caches API responses locally with a 7-day TTL. Reading these
     /// files is ~20-30x faster than fetching from the network (2-3s → <100ms).
     async fn load_from_homebrew_cache(&self) -> Result<Option<FormulaCache>> {
-        let Some(cache_dir) = self.homebrew_cache_dir() else {
+        let Some(cache_dir) = Self::homebrew_cache_dir() else {
             tracing::debug!("Homebrew cache directory not found");
             return Ok(None);
         };
 
-        let formula_path = cache_dir.join("formula.json");
-
-        let Ok(meta) = fs::metadata(&formula_path).await else {
-            tracing::debug!("Homebrew formula.json not found");
-            return Ok(None);
-        };
-
-        let Ok(modified) = meta.modified() else {
-            return Ok(None);
-        };
-
-        let Ok(elapsed) = modified.elapsed() else {
-            return Ok(None);
-        };
-
-        // Homebrew uses 7-day TTL for API cache
-        const HOMEBREW_CACHE_TTL_SECS: u64 = 604_800;
-        if elapsed.as_secs() > HOMEBREW_CACHE_TTL_SECS {
-            tracing::debug!("Homebrew cache is stale (>7 days)");
+        let formula_path = cache_dir.join(FORMULA_CACHE_FILE);
+        let cask_path = cache_dir.join(CASK_CACHE_FILE);
+        if !Self::homebrew_cache_file_is_fresh(&formula_path).await
+            || !Self::homebrew_cache_file_is_fresh(&cask_path).await
+        {
+            tracing::debug!("Homebrew API cache is missing or stale");
             return Ok(None);
         }
 
         tracing::info!("Loading from Homebrew's local cache: {:?}", cache_dir);
 
-        let content = fs::read_to_string(&formula_path).await?;
-        let formulas: Vec<FormulaInfo> =
-            serde_json::from_str(&content).context("Failed to parse Homebrew formula.json")?;
-
-        let cask_path = cache_dir.join("cask.json");
-        let casks: Vec<CaskInfo> = if cask_path.exists() {
-            let cask_content = fs::read_to_string(&cask_path)
-                .await
-                .with_context(|| format!("Failed to read {}", cask_path.display()))?;
-            serde_json::from_str(&cask_content)
-                .with_context(|| format!("Failed to parse {}", cask_path.display()))?
-        } else {
-            Vec::new()
-        };
+        let (formulas, casks) = tokio::try_join!(
+            Self::read_homebrew_api_payload::<Vec<FormulaInfo>>(&formula_path),
+            Self::read_homebrew_api_payload::<Vec<CaskInfo>>(&cask_path)
+        )?;
 
         tracing::debug!(
             "Loaded {} formulas and {} casks from Homebrew cache",
@@ -1241,6 +1233,55 @@ mod tests {
         assert!(results.is_ok());
         let results = results.unwrap();
         assert!(!results.is_empty());
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn current_homebrew_jws_cache_is_loaded() -> Result<()> {
+        let cache_root = tempfile::tempdir()?;
+        let api_dir = cache_root.path().join("api");
+        std::fs::create_dir_all(&api_dir)?;
+        let formula_payload = serde_json::json!([{
+            "name": "wget",
+            "desc": "Internet file retriever",
+            "homepage": "https://www.gnu.org/software/wget/",
+            "versions": {"stable": "1.0"}
+        }]);
+        let cask_payload = serde_json::json!([{
+            "token": "firefox",
+            "desc": null,
+            "homepage": "https://www.mozilla.org/firefox/",
+            "version": "146.0"
+        }]);
+        for (name, payload) in [
+            (FORMULA_CACHE_FILE, formula_payload),
+            (CASK_CACHE_FILE, cask_payload),
+        ] {
+            std::fs::write(
+                api_dir.join(name),
+                serde_json::json!({
+                    "payload": payload.to_string(),
+                    "signatures": [{"header": {"kid": "homebrew-1"}}]
+                })
+                .to_string(),
+            )?;
+        }
+
+        temp_env::with_var("HOMEBREW_CACHE", Some(cache_root.path()), || {
+            let manager = HomebrewPackageManager::new();
+            let runtime = tokio::runtime::Builder::new_current_thread()
+                .enable_all()
+                .build()?;
+            let cache = runtime
+                .block_on(manager.load_from_homebrew_cache())?
+                .context("expected current Homebrew API cache")?;
+
+            assert_eq!(cache.formulas.len(), 1);
+            assert_eq!(cache.casks.len(), 1);
+            assert!(cache.formula_map.contains_key("wget"));
+            assert!(cache.cask_map.contains_key("firefox"));
+            Ok(())
+        })
     }
 
     #[test]
