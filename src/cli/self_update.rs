@@ -600,18 +600,22 @@ mod tests {
 
     #[test]
     fn release_target_matches_ci_artifact_names() {
-        assert_eq!(release_target(Distro::Arch), Some(("x86_64", "linux-arch")));
+        let linux_arch = std::env::consts::ARCH;
+        assert_eq!(
+            release_target(Distro::Arch),
+            Some((linux_arch, "linux-arch"))
+        );
         assert_eq!(
             release_target(Distro::Debian),
-            Some(("x86_64", "linux-debian"))
+            Some((linux_arch, "linux-debian"))
         );
         assert_eq!(
             release_target(Distro::Ubuntu),
-            Some(("x86_64", "linux-ubuntu"))
+            Some((linux_arch, "linux-ubuntu"))
         );
         assert_eq!(
             release_target(Distro::Fedora),
-            Some(("x86_64", "linux-fedora"))
+            Some((linux_arch, "linux-fedora"))
         );
         assert_eq!(release_target(Distro::MacOS), Some(("aarch64", "darwin")));
         assert_eq!(release_target(Distro::Unknown), None);

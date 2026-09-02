@@ -232,7 +232,7 @@ fn stale_transaction_journal(path: &Path) -> Option<String> {
             tracing::warn!(
                 error = %error,
                 "Corrupt dpkg transaction journal; treating as interrupted"
-            )
+            );
         })
         .ok();
     let summary = match parsed {

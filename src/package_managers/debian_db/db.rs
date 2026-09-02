@@ -2476,7 +2476,7 @@ mod tests {
         let fst_path = temp.path().join("debian_index_v8.fst");
 
         let mut builder = fst::MapBuilder::memory();
-        builder.insert("bash".as_bytes(), 0u64).unwrap();
+        builder.insert(b"bash", 0u64).unwrap();
         let fst_bytes = builder.into_inner().unwrap();
 
         // No sidecar: open refuses (unknown generation).
