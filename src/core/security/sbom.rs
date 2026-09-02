@@ -203,6 +203,35 @@ pub struct SbomVulnAffects {
     pub affects_ref: String,
 }
 
+/// Whether an ALSA advisory applies to one installed package.
+///
+/// Advisories cover `[affected, fixed)`, so matching by name alone reports
+/// historical advisories for fully patched packages (W5-B-01). This routes
+/// through the same `version_is_affected` check `scan_system` uses; `None`
+/// (unparseable version) skips the pair with a visible warning instead of
+/// fabricating a comparison.
+#[cfg(any(feature = "arch", feature = "debian", feature = "debian-pure"))]
+fn advisory_applies(
+    pkg: &crate::package_managers::LocalPackage,
+    affected: &str,
+    fixed: Option<&str>,
+) -> bool {
+    if let Some(applies) =
+        super::vulnerability::version_is_affected(&pkg.version.version_string(), affected, fixed)
+    {
+        applies
+    } else {
+        tracing::warn!(
+            "Skipping ALSA advisory match for package '{}': unparseable \
+             version (installed '{}', affected '{}')",
+            pkg.name,
+            pkg.version.version_string(),
+            affected
+        );
+        false
+    }
+}
+
 #[cfg(any(feature = "arch", feature = "debian", feature = "debian-pure"))]
 fn package_purl(name: &str, version: &str, debian_like: bool) -> String {
     if debian_like {
@@ -367,7 +396,17 @@ impl SbomGenerator {
                     .map_err(|source| SbomError::FetchVulnerabilities { source })?;
                 for issue in issues {
                     for pkg_name in &issue.packages {
-                        if let Some(pkg) = installed.iter().find(|p| p.name == *pkg_name) {
+                        let Some(pkg) = installed.iter().find(|p| p.name == *pkg_name) else {
+                            continue;
+                        };
+                        // Match the installed version against the advisory range
+                        // exactly like `scan_system` does (W5-B-01): name-only
+                        // matching listed every historical advisory for installed
+                        // package names on fully patched systems.
+                        if !advisory_applies(pkg, &issue.affected, issue.fixed.as_deref()) {
+                            continue;
+                        }
+                        {
                             let bom_ref =
                                 package_purl(&pkg.name, &pkg.version.version_string(), debian_like);
 
@@ -536,6 +575,45 @@ mod tests {
                 .contains("cannot be used to scan Debian packages"),
             "got: {error}"
         );
+    }
+
+    #[test]
+    #[cfg(any(feature = "arch", feature = "debian", feature = "debian-pure"))]
+    fn sbom_advisory_matching_respects_installed_version() {
+        // Regression test for W5-B-01: SBOM advisory matching used the package
+        // name only, so a fully patched system listed every historical advisory
+        // for installed package names. A patched version must be excluded.
+        fn local_package(name: &str, version: &str) -> crate::package_managers::LocalPackage {
+            crate::package_managers::LocalPackage {
+                name: name.to_string(),
+                version: crate::package_managers::parse_version(version)
+                    .expect("test version parses"),
+                description: String::new(),
+                install_size: 0,
+                reason: "explicit",
+            }
+        }
+
+        // Historical ALSA advisory: affects from 1.1.1-1, fixed in 3.0.0-1.
+        let affected = "1.1.1-1";
+        let fixed = Some("3.0.0-1");
+
+        let patched = local_package("openssl", "3.2.1-1");
+        let vulnerable = local_package("openssl", "1.1.1-1");
+
+        assert!(
+            advisory_applies(&vulnerable, affected, fixed),
+            "version inside [affected, fixed) must be reported"
+        );
+        assert!(
+            !advisory_applies(&patched, affected, fixed),
+            "patched version outside [affected, fixed) must not be reported"
+        );
+
+        // Missing fixed version means every release from `affected` onward
+        // remains vulnerable, matching the scan_system precedent.
+        let newer = local_package("openssl", "4.0.0-1");
+        assert!(advisory_applies(&newer, affected, None));
     }
 
     #[test]
