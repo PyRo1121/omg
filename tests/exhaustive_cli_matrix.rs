@@ -298,13 +298,14 @@ mod runtime_matrix {
     #[test]
     #[serial]
     fn test_audit_command() {
-        // The harness isolates OMG_DATA_DIR (no license file), so `audit`
-        // must be rejected by the Pro-tier feature gate before any scan runs
-        // (src/cli/security.rs:96 require_feature ->
-        // src/core/license.rs:828-843 tier error message).
+        // Audit is not paywalled. Isolated runs typically fail because the
+        // daemon is not running; they must never mention a paid tier.
         let res = run_omg(&["audit"]);
-        res.assert_failure();
-        res.assert_stderr_contains("requires Pro tier");
+        let output = res.combined_output();
+        assert!(
+            !output.contains("requires Pro tier") && !output.contains("pyro1121.com/pricing"),
+            "audit must not be paywalled, got:\n{output}"
+        );
     }
 
     #[test]
@@ -374,16 +375,13 @@ mod team_matrix {
     #[test]
     #[serial]
     fn test_team_status() {
-        // `team status` gates on the Team tier before any workspace probe
-        // (SEC-G1-01: previously status ran the full sync workflow ungated);
-        // the harness's isolated data dir has no license, so it must fail
-        // naming the required tier.
+        // Local team status does not require a dashboard account.
         let project = TestProject::new();
         let res = project.run(&["team", "status"]);
         res.assert_failure();
         assert!(
-            res.contains("requires Team tier"),
-            "expected license gate error, got:\n{}",
+            res.contains("Not a team workspace"),
+            "expected workspace error, got:\n{}",
             res.combined_output()
         );
     }
@@ -392,15 +390,9 @@ mod team_matrix {
     #[serial]
     fn test_team_init() {
         let project = TestProject::new();
-        // Init a new team - requires license, so we expect failure
         let res = project.run(&["team", "init", "test-team-id"]);
-        // Should fail with tier/license error
-        res.assert_failure();
-        assert!(
-            res.stderr.contains("tier") || res.stderr.contains("license"),
-            "Expected tier/license error, got: {}",
-            res.stderr
-        );
+        res.assert_success();
+        res.assert_stdout_contains("Team workspace initialized!");
     }
 }
 
@@ -414,13 +406,11 @@ mod fleet_matrix {
     #[test]
     #[serial]
     fn test_fleet_status() {
-        // `fleet status` gates on the Team tier before any network call
-        // (src/cli/fleet.rs:21-24); the harness's isolated data dir has no
-        // license, so it must fail naming the required tier
-        // (src/core/license.rs:828-843).
+        // Fleet roster is a dashboard API; without a linked account it fails
+        // with a link hint, not a paid-tier gate.
         let res = run_omg(&["fleet", "status"]);
         res.assert_failure();
-        res.assert_stderr_contains("requires Team tier");
+        res.assert_stderr_contains("No dashboard account linked");
     }
 }
 

@@ -330,9 +330,9 @@ telemetry_enabled = false
 At runtime, `OMG_TELEMETRY=0` or `OMG_DISABLE_TELEMETRY=1` in your environment also
 disable collection.
 
-#### 2. Enhanced Telemetry (License Only)
+#### 2. Enhanced Telemetry (Opt-In)
 
-Enhanced telemetry is disabled by default and activates only when the user explicitly enables runtime telemetry and has a valid license key. Either missing condition means no enhanced collection.
+Enhanced telemetry is disabled by default and activates only when the user explicitly enables runtime telemetry. When disabled, no enhanced collection occurs.
 
 When enabled, enhanced telemetry collects:
 
@@ -340,7 +340,7 @@ When enabled, enhanced telemetry collects:
 - **Performance Metrics**: Metric name and duration (for example, CLI startup)
 - **Feature Usage**: Feature name and enabled state
 - **Session Data**: Random session ID, command count, duration, and start/end timestamps
-- **Attribution Data**: Stable hashed machine identifier and the activated license key
+- **Attribution Data**: Stable hashed machine identifier
 
 **Not collected**:
 
@@ -415,7 +415,7 @@ You can:
 
 ### Why Telemetry?
 
-For licensed users, telemetry helps us:
+When enabled, telemetry helps us:
 
 - **Usage Analytics**: Understand which features are most valuable
 - **Performance Optimization**: Identify performance bottlenecks
@@ -430,7 +430,7 @@ For everyone (install tracking):
 ### FAQs
 
 **Q: Does OMG collect passwords or credentials?**
-A: It does not collect passwords, environment variables, or unrelated credentials. Licensed runtime telemetry transmits the activated OMG license key for attribution, as disclosed above.
+A: It does not collect passwords, environment variables, or unrelated credentials.
 
 **Q: Can I use OMG without telemetry?**
 A: Yes. Set `OMG_TELEMETRY=0` or disable via config. All features work identically.

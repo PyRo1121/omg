@@ -585,12 +585,15 @@ mod security {
     use super::*;
 
     #[test]
-    fn test_audit_scan_requires_an_entitlement() {
+    fn test_audit_scan_is_not_paywalled() {
         require_system_tests!();
 
         let result = run_omg(&["audit", "scan"]);
-        result.assert_failure();
-        result.assert_stderr_contains("Feature 'audit' requires Pro tier");
+        let output = result.combined_output();
+        assert!(
+            !output.contains("requires Pro tier") && !output.contains("pyro1121.com/pricing"),
+            "audit scan must not be paywalled, got:\n{output}"
+        );
     }
 
     #[test]

@@ -540,53 +540,73 @@ mod policy_enforcement {
 mod sbom_compliance {
     use super::*;
 
-    fn assert_requires_paid_tier(result: &CommandResult) {
-        result.assert_failure();
-        let output = result.combined_output();
-        assert!(
-            output.contains("requires") && output.contains("tier"),
-            "expected a license gate, got: {output}"
-        );
-    }
-
     #[test]
-    fn test_sbom_generation_is_license_gated() {
+    fn test_sbom_generation_writes_cyclonedx() {
         let project = TestProject::new();
         let result = project.run(&["audit", "sbom", "--output", "sbom.json"]);
-        assert_requires_paid_tier(&result);
-        assert!(
-            !project.path().join("sbom.json").exists(),
-            "an unlicensed SBOM command must not write output"
-        );
+        if result.success {
+            assert!(
+                project.path().join("sbom.json").exists(),
+                "SBOM command must write output on success"
+            );
+        } else {
+            let output = result.combined_output();
+            assert!(
+                !output.contains("tier") && !output.contains("pyro1121.com/pricing"),
+                "SBOM must not be paywalled, got: {output}"
+            );
+        }
     }
 
     #[test]
-    fn test_unlicensed_sbom_does_not_invent_spdx() {
+    fn test_sbom_does_not_invent_spdx() {
         let project = TestProject::new();
         let result = project.run(&["audit", "sbom", "--output", "sbom.spdx"]);
-        assert_requires_paid_tier(&result);
         assert!(
-            !project.path().join("sbom.spdx").exists(),
-            "an unlicensed SBOM command must not write a fake SPDX document"
+            !project.path().join("sbom.spdx").exists()
+                || project.read_file("sbom.spdx").is_some_and(|content| {
+                    content.contains("bomFormat") || content.contains("components")
+                }),
+            "SBOM must not write a fake SPDX document"
+        );
+        let output = result.combined_output();
+        assert!(
+            !output.contains("pyro1121.com/pricing"),
+            "SBOM must not be paywalled, got: {output}"
         );
     }
 
     #[test]
-    fn test_audit_log_is_license_gated() {
+    fn test_audit_log_is_not_paywalled() {
         let project = TestProject::new();
-        assert_requires_paid_tier(&project.run(&["audit", "log"]));
+        let result = project.run(&["audit", "log"]);
+        let output = result.combined_output();
+        assert!(
+            !output.contains("requires") || !output.contains("tier"),
+            "audit log must not be paywalled, got: {output}"
+        );
     }
 
     #[test]
-    fn test_audit_log_verify_is_license_gated() {
+    fn test_audit_log_verify_is_not_paywalled() {
         let project = TestProject::new();
-        assert_requires_paid_tier(&project.run(&["audit", "verify"]));
+        let result = project.run(&["audit", "verify"]);
+        let output = result.combined_output();
+        assert!(
+            !output.contains("requires") || !output.contains("tier"),
+            "audit verify must not be paywalled, got: {output}"
+        );
     }
 
     #[test]
-    fn test_slsa_check_is_license_gated() {
+    fn test_slsa_check_is_not_paywalled() {
         let project = TestProject::new();
-        assert_requires_paid_tier(&project.run(&["audit", "slsa", "pacman"]));
+        let result = project.run(&["audit", "slsa", "pacman"]);
+        let output = result.combined_output();
+        assert!(
+            !output.contains("requires") || !output.contains("tier"),
+            "SLSA must not be paywalled, got: {output}"
+        );
     }
 }
 

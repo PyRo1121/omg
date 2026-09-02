@@ -365,15 +365,9 @@ exec zsh
 
 ---
 
-## 💰 Licensing
+## License
 
-### Is OMG free?
-
-Yes, OMG is free and open source under the **MIT License**.
-
-### Is commercial support available?
-
-For enterprise inquiries or commercial support, contact **olen@latham.cloud**.
+OMG is free and open source under the [MIT License](../LICENSE).
 
 ---
 

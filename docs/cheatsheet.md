@@ -386,7 +386,7 @@ omg ci cache                    # Recommended cache paths
 omg workspace init my-monorepo  # Workspace management (see omg workspace --help)
 omg hooks install               # Git hooks for env sync (see omg hooks --help)
 omg privacy status              # Privacy settings & data (GDPR/CCPA)
-omg license status              # License management (license-enabled builds)
+omg account status              # Optional dashboard account (usage tracking)
 omg fleet status                # Enterprise fleet status
 omg stats                       # Usage statistics
 omg metrics                     # Prometheus-style metrics (Unix)

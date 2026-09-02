@@ -1,14 +1,7 @@
 //! Contract tests for `src/core/license.rs` (cov-11).
 //!
-//! Pins observable contracts for tier gating, feature checks, and offline
-//! validation against a cached (stored) license token. Every assertion is
-//! falsifiable: mutating the protected product code must fail these tests.
-//!
-//! Untestable offline (documented, not skipped silently): the *positive*
-//! path of `StoredLicense::verified_payload` requires an Ed25519 signature
-//! made by the production licensing key. Its private signing key is not a
-//! test fixture, so tests pin the fail-closed behavior instead — which is the
-//! security-relevant contract.
+//! Pins dashboard-identity storage, JWT fail-closed verification, and the
+//! feature catalog. CLI features are not gated on an account.
 
 pub mod common;
 
@@ -44,27 +37,11 @@ fn tier_names_round_trip_and_unknown_input_is_rejected() {
         );
     }
 
-    // Unknown input: None via parse(), Err(UnknownTier) via FromStr, whose
-    // Display names the cause ("unknown license tier").
+    // Display names the cause ("unknown account plan label").
     assert_eq!(Tier::parse("premium"), None);
     assert_eq!(Tier::parse(""), None);
     let err = "premium".parse::<Tier>().expect_err("unknown tier");
-    assert_eq!(err.to_string(), "unknown license tier");
-}
-
-/// Contract: tier pricing and display names are the advertised strings.
-/// These appear in upgrade prompts; changing them silently changes user copy.
-#[test]
-fn tier_display_and_price_strings_are_exact() {
-    assert_eq!(Tier::Free.display_name(), "Free");
-    assert_eq!(Tier::Pro.display_name(), "Pro");
-    assert_eq!(Tier::Team.display_name(), "Team");
-    assert_eq!(Tier::Enterprise.display_name(), "Enterprise");
-
-    assert_eq!(Tier::Free.price(), "Free");
-    assert_eq!(Tier::Pro.price(), "$9/mo");
-    assert_eq!(Tier::Team.price(), "$200/mo");
-    assert_eq!(Tier::Enterprise.price(), "Contact us");
+    assert_eq!(err.to_string(), "unknown account plan label");
 }
 
 // ══════════════════════════════════════════════════════════════════════════
@@ -340,35 +317,22 @@ fn corrupt_license_file_degrades_to_no_license() {
     });
 }
 
-/// Contract: with no license at all, the effective tier is Free — free
-/// features pass, paid features are denied with the exact upgrade hint
-/// naming the tier, its price, and the pricing URL.
+/// Contract: with no account linked, every known feature is available.
+/// Unknown names are still rejected.
 #[test]
 #[serial]
-fn no_license_yields_free_tier_and_exact_upgrade_hint_on_denial() {
+fn no_account_still_exposes_every_known_feature() {
     let dir = tempfile::TempDir::new().expect("data dir");
     let data_dir = dir.path().to_string_lossy().into_owned();
 
     with_test_env(&[("OMG_DATA_DIR", &data_dir)], || {
-        assert_eq!(current_tier(), Tier::Free, "no license means Free tier");
+        assert_eq!(current_tier(), Tier::Free, "no account means Free identity");
 
-        // Free features pass without any license.
-        assert!(has_feature("packages"), "packages must be free");
-        assert!(
-            require_feature("packages").is_ok(),
-            "free feature must not error"
-        );
+        assert!(has_feature("packages"));
+        assert!(require_feature("packages").is_ok());
+        assert!(has_feature("sbom"), "sbom is not paywalled");
+        assert!(require_feature("sbom").is_ok());
 
-        // Paid features denied, with the exact advertised message.
-        assert!(!has_feature("sbom"), "sbom needs a Pro license");
-        let err = require_feature("sbom").expect_err("denied feature must error");
-        assert_eq!(
-            err.to_string(),
-            "Feature 'sbom' requires Pro tier ($9/mo). \
-             Upgrade at https://pyro1121.com/pricing"
-        );
-
-        // Unknown features are denied with a distinct cause.
         assert!(!has_feature("teleport"));
         let err = require_feature("teleport").expect_err("unknown feature must error");
         assert!(
@@ -378,14 +342,13 @@ fn no_license_yields_free_tier_and_exact_upgrade_hint_on_denial() {
     });
 }
 
-/// Contract (offline validation, fail-closed): a stored license whose cached
-/// JWT was not produced by the production signing key gates as Free through
-/// the FULL gating path (`current_tier`, `has_feature`, `require_feature`),
-/// even though the plaintext `tier` field claims enterprise. The tamper
-/// evidence must also surface on the loaded struct itself.
+/// Contract: a stored account whose JWT was not produced by the production
+/// signing key is not a valid dashboard identity (`is_token_valid` is false,
+/// `current_tier` stays Free). Features stay available; the token cannot
+/// attribute usage to the dashboard.
 #[test]
 #[serial]
-fn stored_enterprise_claim_without_verifiable_token_gates_as_free() {
+fn stored_enterprise_claim_without_verifiable_token_is_not_a_dashboard_identity() {
     let dir = tempfile::TempDir::new().expect("data dir");
     let license_json = serde_json::json!({
         "key": "OMG-ENT-CLAIMED",
@@ -417,19 +380,13 @@ fn stored_enterprise_claim_without_verifiable_token_gates_as_free() {
         assert_eq!(
             current_tier(),
             Tier::Free,
-            "gating must follow the verified token, not the plaintext tier"
+            "identity follows the verified token, not the plaintext tier"
         );
         assert!(
-            !has_feature("policy"),
-            "forged enterprise must not unlock policy"
+            has_feature("policy"),
+            "a forged token must not paywall local features"
         );
-        assert!(has_feature("packages"), "free features remain available");
-
-        let err = require_feature("sso").expect_err("forged enterprise must not unlock sso");
-        assert_eq!(
-            err.to_string(),
-            "Feature 'sso' requires Enterprise tier (Contact us). \
-             Upgrade at https://pyro1121.com/pricing"
-        );
+        assert!(has_feature("packages"));
+        assert!(require_feature("sso").is_ok());
     });
 }

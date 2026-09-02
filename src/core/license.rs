@@ -1,18 +1,13 @@
-//! License management for OMG tiered features
+//! Optional dashboard account identity
 //!
-//! Handles license key validation, JWT tokens, and feature gating.
+//! A linked account attributes opted-in usage to the OMG dashboard. It is not
+//! a feature gate: every CLI command works without one.
 //!
-//! ## Tiers
-//! - **Free**: Basic package management, runtimes, containers
-//! - **Pro** ($9/mo): SBOM, vulnerability scanning, secrets detection
-//! - **Team** ($200/mo): Team sync, shared configs, audit logs
-//! - **Enterprise** (Contact us): SSO, policy enforcement, SLSA, priority support
-//!
-//! ## JWT-based Licensing
-//! - License activation returns a signed JWT token
-//! - Token contains tier, features, expiry, and machine binding
-//! - CLI validates token signature offline (no network needed)
-//! - Token refreshes every 7 days on validation
+//! ## JWT identity
+//! - `omg account link` stores a signed JWT from the dashboard API
+//! - The token carries expiry and optional machine binding
+//! - Signature is verified offline; a bad or expired token cannot attribute
+//!   usage, but it never locks local commands
 
 use anyhow::{Context, Result};
 use jsonwebtoken::{DecodingKey, Validation, decode};
@@ -33,7 +28,8 @@ MCowBQYDK2VwAyEA0TzkAlaX2+uVvrUh0VE4LO9HjBtDx7dt469do025EKg=
 -----END PUBLIC KEY-----
 ";
 
-/// License tiers (ordered by level)
+/// Historical dashboard-plan labels carried on the JWT `tier` claim.
+/// They are identity metadata only and never gate CLI features.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum Tier {
@@ -49,7 +45,7 @@ pub struct UnknownTier;
 
 impl std::fmt::Display for UnknownTier {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.write_str("unknown license tier")
+        f.write_str("unknown account plan label")
     }
 }
 
@@ -84,17 +80,6 @@ impl Tier {
             Self::Enterprise => "Enterprise",
         }
     }
-
-    /// Returns the pricing string for this tier
-    #[must_use]
-    pub const fn price(&self) -> &'static str {
-        match self {
-            Self::Free => "Free",
-            Self::Pro => "$9/mo",
-            Self::Team => "$200/mo",
-            Self::Enterprise => "Contact us",
-        }
-    }
 }
 
 impl FromStr for Tier {
@@ -111,7 +96,7 @@ impl FromStr for Tier {
     }
 }
 
-/// Feature definitions with required tier
+/// Named CLI capabilities. Every known feature is available without an account.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Feature {
     // Free features
@@ -142,7 +127,7 @@ pub enum Feature {
 }
 
 impl Feature {
-    /// Returns the minimum tier required for this feature
+    /// Historical plan label associated with this feature. Unused for gating.
     #[must_use]
     pub const fn required_tier(&self) -> Tier {
         match self {
@@ -771,7 +756,7 @@ pub async fn validate_license_with_user(
         .timeout(std::time::Duration::from_secs(10))
         .send()
         .await
-        .context("Failed to connect to license server")?;
+        .context("Failed to connect to dashboard")?;
 
     let status = response.status();
     let response_text = response
@@ -796,10 +781,12 @@ pub async fn validate_license_with_user(
     Ok(resp)
 }
 
-/// Load the stored license or fail with the standard activation hint.
+/// Load the stored account or fail with the link hint.
 fn require_license() -> Result<StoredLicense> {
     load_license().ok_or_else(|| {
-        anyhow::anyhow!("No license found. Activate with 'omg license activate <key>'")
+        anyhow::anyhow!(
+            "No dashboard account linked. Run `omg account link <token>` to sync usage to the dashboard."
+        )
     })
 }
 
@@ -818,7 +805,7 @@ async fn licensed_get<T: serde::de::DeserializeOwned>(
         .timeout(std::time::Duration::from_secs(10))
         .send()
         .await
-        .context("Failed to connect to license server")?;
+        .context("Failed to connect to dashboard")?;
 
     if !response.status().is_success() {
         if response.status() == reqwest::StatusCode::FORBIDDEN {
@@ -837,7 +824,7 @@ async fn licensed_get<T: serde::de::DeserializeOwned>(
 pub async fn fetch_team_members() -> Result<Vec<TeamMember>> {
     licensed_get(
         super::service_api::TEAM_MEMBERS,
-        "Team features require Team or Enterprise tier",
+        "Dashboard rejected this roster request. Relink with `omg account link <token>`.",
         "team members",
     )
     .await
@@ -847,7 +834,7 @@ pub async fn fetch_team_members() -> Result<Vec<TeamMember>> {
 pub async fn fetch_policies() -> Result<Vec<PolicyRule>> {
     licensed_get(
         super::service_api::TEAM_POLICIES,
-        "Policy features require Enterprise tier",
+        "Dashboard rejected this policy request. Relink with `omg account link <token>`.",
         "policies",
     )
     .await
@@ -857,7 +844,7 @@ pub async fn fetch_policies() -> Result<Vec<PolicyRule>> {
 pub async fn fetch_audit_logs() -> Result<Vec<AuditLogEntry>> {
     licensed_get(
         super::service_api::TEAM_AUDIT_LOG,
-        "Audit logs require Team or Enterprise tier",
+        "Dashboard rejected this activity request. Relink with `omg account link <token>`.",
         "audit logs",
     )
     .await
@@ -904,44 +891,30 @@ pub async fn activate_with_user(
 fn validate_activated_license(stored: &StoredLicense) -> Result<()> {
     anyhow::ensure!(
         stored.is_token_valid(),
-        "License server returned a token that failed local signature, expiry, or machine-binding verification"
+        "Dashboard returned a token that failed local signature, expiry, or machine-binding verification"
     );
     Ok(())
 }
 
-/// Get current user tier
+/// JWT-verified plan label for the linked account, or `Free` when unlinked.
+/// This is identity metadata, not a permission check.
 #[must_use]
 pub fn current_tier() -> Tier {
     load_license().map_or(Tier::Free, |l| l.tier_enum())
 }
 
-/// Check if a feature is available based on current tier.
-/// Unknown feature names are denied.
+/// Whether `feature_name` is a known CLI capability. Accounts never gate this.
+#[must_use]
 pub fn has_feature(feature_name: &str) -> bool {
-    let Some(feature) = Feature::from_str(feature_name) else {
-        return false;
-    };
-
-    current_tier() >= feature.required_tier()
+    Feature::from_str(feature_name).is_some()
 }
 
-/// Require a feature, returning an error if not available
+/// Accept a known feature name. Unknown names are input errors, not paywalls.
 pub fn require_feature(feature_name: &str) -> Result<()> {
-    let Some(feature) = Feature::from_str(feature_name) else {
-        anyhow::bail!("Unknown feature '{feature_name}'");
-    };
-
-    if current_tier() >= feature.required_tier() {
+    if Feature::from_str(feature_name).is_some() {
         return Ok(());
     }
-
-    let required_tier = feature.required_tier();
-    anyhow::bail!(
-        "Feature '{}' requires {} tier ({}). Upgrade at https://pyro1121.com/pricing",
-        feature_name,
-        required_tier.display_name(),
-        required_tier.price()
-    )
+    anyhow::bail!("Unknown feature '{feature_name}'")
 }
 
 /// Get current license status
@@ -1221,7 +1194,7 @@ mod tests {
     }
 
     #[test]
-    fn unsigned_stored_tier_does_not_authorize_paid_features() {
+    fn unsigned_stored_tier_is_not_a_dashboard_identity() {
         let stored = StoredLicense {
             key: "editable-key".to_string(),
             tier: "enterprise".to_string(),
@@ -1261,8 +1234,8 @@ mod tests {
     #[test]
     fn garbage_signed_token_fails_closed_to_free_tier() {
         // Regression for the STUB verification key: a token that was never
-        // signed by the real licensing server must never authorize paid
-        // tiers, even when the stored file claims "enterprise".
+        // signed by the real dashboard; it must never count as a linked
+        // account, even when the stored file claims "enterprise".
         let stored = StoredLicense {
             key: "real-key".to_string(),
             tier: "enterprise".to_string(),
@@ -1301,11 +1274,15 @@ mod tests {
     }
 
     #[test]
-    fn free_features_available_without_license() {
-        // Free features should always be available (no license)
+    fn known_features_are_available_without_an_account() {
         assert!(has_feature("packages"));
         assert!(has_feature("runtimes"));
         assert!(has_feature("container"));
+        assert!(has_feature("sbom"));
+        assert!(has_feature("team-sync"));
+        assert!(has_feature("policy"));
+        assert!(require_feature("sbom").is_ok());
+        assert!(require_feature("sso").is_ok());
     }
 
     #[test]

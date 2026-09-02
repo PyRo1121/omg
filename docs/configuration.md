@@ -156,7 +156,8 @@ allow_aur = true
 # When true, unsigned packages will be rejected
 require_pgp = false
 
-# Allowed software licenses (SPDX identifiers)
+# Allowed software licenses for *installed packages* (SPDX identifiers).
+# This policy applies to third-party packages, not OMG's own MIT license.
 # Leave empty to allow all licenses
 # When populated, only packages with these licenses can be installed
 allowed_licenses = [

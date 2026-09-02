@@ -121,8 +121,6 @@ pub fn init(team_id: &str, name: Option<&str>, _ctx: &CliContext) -> Result<()> 
         anyhow::bail!("Invalid team name");
     }
 
-    // Require Team tier for team sync features
-    license::require_feature("team-sync")?;
     let cwd = std::env::current_dir()?;
     let mut workspace = TeamWorkspace::new(&cwd)?;
 
@@ -164,8 +162,6 @@ pub async fn join(remote_url: &str, _ctx: &CliContext) -> Result<()> {
     }
     validate_team_remote(remote_url)?;
 
-    // Require Team tier for team sync features
-    license::require_feature("team-sync")?;
     let cwd = std::env::current_dir()?;
     let mut workspace = TeamWorkspace::new(&cwd)?;
 
@@ -201,9 +197,6 @@ pub async fn join(remote_url: &str, _ctx: &CliContext) -> Result<()> {
 
 /// Show team status
 pub async fn status(_ctx: &CliContext) -> Result<()> {
-    // Require Team tier for team features
-    license::require_feature("team-sync")?;
-
     let workspace = open_team_workspace()?;
 
     let team_status = workspace.update_status().await?;
@@ -261,9 +254,6 @@ pub async fn status(_ctx: &CliContext) -> Result<()> {
 
 /// Push local environment to team lock
 pub async fn push(_ctx: &CliContext) -> Result<()> {
-    // Require Team tier for team features
-    license::require_feature("team-sync")?;
-
     let workspace = open_team_workspace()?;
 
     execute_cmd(Components::loading("Pushing environment to team lock..."))?;
@@ -280,9 +270,6 @@ pub async fn push(_ctx: &CliContext) -> Result<()> {
 
 /// Pull team lock and check for drift
 pub async fn pull(_ctx: &CliContext) -> Result<()> {
-    // Require Team tier for team features
-    license::require_feature("team-sync")?;
-
     let workspace = open_team_workspace()?;
 
     execute_cmd(Components::loading("Pulling team lock..."))?;
@@ -303,16 +290,15 @@ pub async fn pull(_ctx: &CliContext) -> Result<()> {
 
 /// List team members
 pub async fn members(_ctx: &CliContext) -> Result<()> {
-    // Require Team tier for team features
-    license::require_feature("team-sync")?;
-
     let members = license::fetch_team_members().await?;
 
     if members.is_empty() {
         execute_cmd(Cmd::batch([
             Cmd::header("Team Members", "No members found"),
             Cmd::spacer(),
-            Cmd::info("Team members will appear here once they activate with your license key"),
+            Cmd::info(
+                "Team members appear here after machines link with `omg account link <token>`",
+            ),
         ]))?;
         return Ok(());
     }
@@ -384,19 +370,16 @@ fn extract_team_id(url: &str) -> String {
 
 /// Interactive team dashboard (TUI)
 pub async fn dashboard(_ctx: &CliContext) -> Result<()> {
-    license::require_feature("team-sync")?;
     crate::cli::tui::run_with_tab(crate::cli::tui::app::Tab::Team).await
 }
 
 /// Manage team roles
 pub mod roles {
-    use super::{CliContext, Result, license};
+    use super::{CliContext, Result};
     use crate::cli::packages::execute_cmd;
     use crate::cli::tea::Cmd;
 
     pub fn list(_ctx: &CliContext) -> Result<()> {
-        license::require_feature("team-sync")?;
-
         let role_list = vec![
             "admin - Full access (push, policy, members)".to_string(),
             "lead - Can push to team lock, manage policies".to_string(),
@@ -416,7 +399,7 @@ pub mod roles {
 
 /// Manage golden path templates
 pub mod golden_path {
-    use super::{CliContext, Result, license};
+    use super::{CliContext, Result};
     use crate::cli::components::Components;
     use crate::cli::packages::execute_cmd;
     use crate::cli::tea::Cmd;
@@ -495,8 +478,6 @@ pub mod golden_path {
             }
         }
 
-        license::require_feature("team-sync")?;
-
         let mut config = GoldenPathConfig::load()?;
 
         let mut runtimes = HashMap::new();
@@ -547,8 +528,6 @@ pub mod golden_path {
     }
 
     pub fn list(_ctx: &CliContext) -> Result<()> {
-        license::require_feature("team-sync")?;
-
         let config = GoldenPathConfig::load()?;
 
         if config.templates.is_empty() {
@@ -592,8 +571,6 @@ pub mod golden_path {
     }
 
     pub fn delete(name: &str, _ctx: &CliContext) -> Result<()> {
-        license::require_feature("team-sync")?;
-
         let mut config = GoldenPathConfig::load()?;
         let original_len = config.templates.len();
         config.templates.retain(|t| t.name != name);
@@ -614,8 +591,6 @@ pub mod golden_path {
 /// Honest surface: this CLI has no local compliance-evaluation engine, so the
 /// command reports exactly that instead of displaying fabricated scores.
 pub fn compliance(export: Option<&str>, enforce: bool, _ctx: &CliContext) -> Result<()> {
-    license::require_feature("team-sync")?;
-
     if enforce {
         execute_cmd(Cmd::warning(
             "Enforcement mode requested, but no compliance evaluation engine \
@@ -644,8 +619,6 @@ pub fn compliance(export: Option<&str>, enforce: bool, _ctx: &CliContext) -> Res
 
 /// Show team activity stream
 pub async fn activity(days: u32, _ctx: &CliContext) -> Result<()> {
-    license::require_feature("team-sync")?;
-
     let logs = license::fetch_audit_logs().await?;
 
     // Apply the requested window honestly: events older than `days` are

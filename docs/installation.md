@@ -104,14 +104,7 @@ curl -fsSL https://pyro1121.com/install.sh | bash
 
 ### 🍎 macOS
 
-**Homebrew (Coming Soon):**
-
-```bash
-brew tap pyro1121/omg
-brew install omg
-```
-
-**Universal Installer:**
+Homebrew packaging is not available yet. Use the universal installer:
 
 ```bash
 curl -fsSL https://pyro1121.com/install.sh | bash
@@ -152,10 +145,10 @@ OMG detects and uses the package backend for the installed Linux distribution. N
   - Debian/Ubuntu builds (`--features debian`): `libapt-pkg-dev`, `clang`, `cmake`
   - macOS: Xcode Command Line Tools
 
-**Install via Cargo:**
+**Install via Cargo** (requires the `omg` crate on [crates.io](https://crates.io/crates/omg); if unavailable, build from git):
 
 ```bash
-cargo install omg --locked
+cargo install omg --git https://github.com/PyRo1121/omg --locked
 ```
 
 **Build manually:**
@@ -298,16 +291,12 @@ omg self-update
 yay -Syu omg-bin
 ```
 
-**Homebrew (macOS):**
-
-```bash
-brew upgrade omg
-```
+**Homebrew (macOS):** not packaged yet — use `omg self-update` or reinstall from [releases](https://github.com/PyRo1121/omg/releases).
 
 **Cargo:**
 
 ```bash
-cargo install omg --locked --force
+cargo install omg --git https://github.com/PyRo1121/omg --locked --force
 ```
 
 ---
@@ -330,11 +319,7 @@ rm -rf ~/.config/omg
 yay -R omg-bin
 ```
 
-**Homebrew:**
-
-```bash
-brew uninstall omg
-```
+**Homebrew:** not packaged yet — remove the binary manually (see Linux/macOS above).
 
 ---
 

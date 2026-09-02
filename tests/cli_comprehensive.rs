@@ -272,10 +272,10 @@ mod security_tests {
     }
 
     #[test]
-    fn test_license_help() {
-        let result = run_omg(&["license", "--help"]);
+    fn test_account_help() {
+        let result = run_omg(&["account", "--help"]);
         result.assert_success();
-        result.assert_stdout_contains("license");
+        result.assert_stdout_contains("link");
     }
 }
 

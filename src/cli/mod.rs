@@ -45,7 +45,7 @@ pub mod why;
 pub mod workspace;
 
 #[cfg(feature = "license")]
-pub use args::LicenseCommands;
+pub use args::AccountCommands;
 pub use args::{
     AuditCommands, CiCommands, Cli, Commands, ComplianceFramework, ConfigCommands,
     ContainerCommands, EnterpriseCommands, EnterprisePolicyCommands, EnterpriseReportType,

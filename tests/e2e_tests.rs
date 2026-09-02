@@ -842,20 +842,17 @@ mod integration_tests {
         assert_eq!(stored.key, "OMG-PRO-TEST-1234");
         assert_eq!(stored.tier, "pro");
 
-        // ...but gating fails closed because this fixture has no signed JWT.
+        // Unverifiable tokens are not a dashboard identity, but they do not
+        // paywall local features.
         let tier = with_test_env(&[("OMG_DATA_DIR", &data_dir)], current_tier);
         assert_eq!(
             tier,
             Tier::Free,
-            "an unverifiable paid license must degrade to Free gating"
+            "an unverifiable token is not a linked dashboard identity"
         );
-        let sbom_err = with_test_env(&[("OMG_DATA_DIR", &data_dir)], || require_feature("sbom"))
-            .expect_err("'sbom' must stay gated without a verified token");
-        let message = format!("{sbom_err:#}");
-        assert!(
-            message.contains("sbom") && message.contains("Pro tier"),
-            "denial must name feature and required tier, got: {message}"
-        );
+        with_test_env(&[("OMG_DATA_DIR", &data_dir)], || {
+            require_feature("sbom").expect("sbom must work without a verified token")
+        });
 
         Ok(())
     }

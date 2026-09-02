@@ -562,7 +562,7 @@ See [LICENSE](LICENSE) for details.
 
 ## 🙏 Thank You
 
-Every contribution makes OMG better. Whether it's code, documentation, bug reports, or feature ideas—we appreciate your help in building the last dev tool developers will ever need.
+Every contribution makes OMG better. Whether it's code, documentation, bug reports, or feature ideas—we appreciate your help.
 
 **Happy coding!** 🚀
 
@@ -600,7 +600,8 @@ Release binaries are built with these feature sets (`.github/workflows/release.y
 | Debian/Ubuntu | `debian` only — **no `pgp`, no `license`** |
 
 The Debian omission is currently deliberate: keeping the `.deb`-distributed
-binary free of the GPL-encumbered `rust-apt`/PGP stack and subscription code,
-and it must stay in sync with the `debian` (no `license`) CI matrix leg.
-Changing shipped Debian features requires updating both `release.yml` and the
-CI matrix together, and should be an explicit maintainer decision.
+binary free of the GPL-encumbered `rust-apt`/PGP stack. The `license` Cargo
+feature only compiles the optional `omg account` dashboard-link command; it
+is not a paywall. Changing shipped Debian features requires updating both
+`release.yml` and the CI matrix together, and should be an explicit
+maintainer decision.
