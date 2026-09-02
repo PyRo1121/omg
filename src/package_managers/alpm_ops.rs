@@ -1058,6 +1058,29 @@ fn pacman_option_path(
     }
 }
 
+pub(crate) fn configure_signature_verification(
+    alpm: &mut alpm::Alpm,
+    pacman_config: &crate::core::pacman_conf::PacmanConfig,
+) -> Result<()> {
+    configure_signature_policy(alpm, pacman_config)?;
+    let root = paths::pacman_root_result()?;
+    let gpg_dir = pacman_option_path(
+        &root,
+        pacman_config.gpg_dir.as_deref(),
+        "etc/pacman.d/gnupg",
+    );
+    anyhow::ensure!(
+        gpg_dir.is_dir(),
+        "Pacman keyring is unavailable at {}. Initialize it before installing packages.",
+        gpg_dir.display()
+    );
+    let gpg_dir = gpg_dir
+        .to_str()
+        .context("Pacman keyring path contains invalid UTF-8")?;
+    alpm.set_gpgdir(gpg_dir)
+        .context("Failed to configure pacman keyring")
+}
+
 fn configure_transaction_options(
     alpm: &mut alpm::Alpm,
     pacman_config: &crate::core::pacman_conf::PacmanConfig,
@@ -1066,6 +1089,7 @@ fn configure_transaction_options(
     // them explicitly so downloads, signature verification, architecture
     // checks, logging, and package hooks behave like a normal Arch transaction.
     let root = paths::pacman_root_result()?;
+    configure_signature_verification(alpm, pacman_config)?;
     let cache_dirs = paths::pacman_cache_dirs_result()?;
     for cache_dir in &cache_dirs {
         std::fs::create_dir_all(cache_dir).with_context(|| {
@@ -1085,23 +1109,6 @@ fn configure_transaction_options(
         .collect::<Result<Vec<_>>>()?;
     alpm.set_cachedirs(cache_dirs.into_iter())
         .context("Failed to configure pacman package caches")?;
-
-    let gpg_dir = pacman_option_path(
-        &root,
-        pacman_config.gpg_dir.as_deref(),
-        "etc/pacman.d/gnupg",
-    );
-    if !gpg_dir.is_dir() {
-        anyhow::bail!(
-            "Pacman keyring is unavailable at {}. Initialize it before installing packages.",
-            gpg_dir.display()
-        );
-    }
-    let gpg_dir = gpg_dir
-        .to_str()
-        .context("Pacman keyring path contains invalid UTF-8")?;
-    alpm.set_gpgdir(gpg_dir)
-        .context("Failed to configure pacman keyring")?;
 
     let log_path = pacman_option_path(
         &root,
@@ -1167,7 +1174,7 @@ fn configure_transaction_options(
     alpm.set_noextracts(pacman_config.no_extract.iter())
         .context("Failed to configure excluded extraction paths")?;
 
-    configure_signature_policy(alpm, pacman_config).map(|_| ())
+    Ok(())
 }
 
 pub(crate) fn configure_package_filters(
