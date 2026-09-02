@@ -21,6 +21,14 @@ pub trait PackageManager: Send + Sync {
         query: &str,
     ) -> Pin<Box<dyn Future<Output = Result<Vec<Package>>> + Send + '_>>;
 
+    /// List every package available to a persistent search index.
+    ///
+    /// Backends whose normal empty-query search is complete can use this
+    /// default. Backends that cap interactive search results must override it.
+    fn package_index(&self) -> Pin<Box<dyn Future<Output = Result<Vec<Package>>> + Send + '_>> {
+        self.search("")
+    }
+
     /// Install packages
     fn install(&self, packages: &[String])
     -> Pin<Box<dyn Future<Output = Result<()>> + Send + '_>>;
