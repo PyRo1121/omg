@@ -4,7 +4,7 @@ use anyhow::{Context, Result};
 use serde::Serialize;
 
 use crate::cli::packages::common::validate_search_query;
-use crate::cli::style;
+use crate::cli::{style, ui};
 use crate::core::{Package, PackageSource};
 use crate::package_managers::{VersionDisplay, get_package_manager};
 use nucleo_matcher::{
@@ -122,6 +122,22 @@ fn group_langpacks(packages: Vec<DisplayPackage>) -> Vec<DisplayPackage> {
     grouped
 }
 
+/// Rank every path the same way. Collapse language-pack floods only for
+/// human output — `--json` keeps real installable names and full rows.
+fn present_search_results(
+    query: &str,
+    mut packages: Vec<DisplayPackage>,
+    json: bool,
+    limit: usize,
+) -> Vec<DisplayPackage> {
+    rank_display_packages(query, &mut packages);
+    if !json {
+        packages = group_langpacks(packages);
+    }
+    truncate_search_results(&mut packages, limit);
+    packages
+}
+
 #[cfg(unix)]
 use crate::core::client::{DaemonClient, SyncDaemonClient};
 
@@ -236,9 +252,7 @@ async fn search_internal(
     let total_matches = official_total.saturating_add(aur_count);
 
     crate::core::usage::track_search_result(true);
-    rank_display_packages(query, &mut display_packages);
-    display_packages = group_langpacks(display_packages);
-    truncate_search_results(&mut display_packages, limit);
+    display_packages = present_search_results(query, display_packages, json, limit);
 
     if json {
         let json_str = serde_json::to_string_pretty(&display_packages)
@@ -275,8 +289,53 @@ async fn search_internal(
 
     writeln!(stdout)?;
     stdout.flush()?;
+    drop(stdout);
+
+    if should_offer_picker(json) {
+        // The picker performs blocking TTY reads; keep it off the async
+        // executor the same way the install suggestion picker does.
+        let entries: Vec<(String, String)> = display_packages
+            .iter()
+            .take(limit)
+            .map(|pkg| (pkg.name.clone(), picker_label(pkg)))
+            .collect();
+        let picked = tokio::task::spawn_blocking(move || pick_package(&entries))
+            .await
+            .unwrap_or(None);
+        if let Some(name) = picked {
+            super::info_with_json(&name, false).await?;
+        }
+    }
 
     Ok(())
+}
+
+/// Interactive detail picker: TTY sessions with human-readable output get
+/// one keystroke from list to detail. Piped, JSON, and empty output stay
+/// exactly as before.
+fn should_offer_picker(json: bool) -> bool {
+    !json && console::user_attended()
+}
+
+fn picker_label(pkg: &DisplayPackage) -> String {
+    format!("{} {} ({})", pkg.name, pkg.version, pkg.source)
+}
+
+/// Blocking TTY selection over preformatted `(name, label)` entries.
+/// Returns the chosen package name, or `None` on Esc, error, or empty input.
+fn pick_package(entries: &[(String, String)]) -> Option<String> {
+    if entries.is_empty() {
+        return None;
+    }
+    let labels: Vec<&str> = entries.iter().map(|(_, label)| label.as_str()).collect();
+    dialoguer::Select::with_theme(&ui::prompt_theme())
+        .with_prompt("Select a package for details")
+        .default(0)
+        .items(&labels)
+        .interact_opt()
+        .ok()
+        .flatten()
+        .and_then(|index| entries.get(index).map(|(name, _)| name.clone()))
 }
 
 fn truncate_search_results(packages: &mut Vec<DisplayPackage>, limit: usize) {
@@ -444,8 +503,7 @@ fn search_sync_official_only(query: &str, limit: usize) -> Result<bool> {
                 out_of_date: None,
             })
             .collect();
-        rank_display_packages(query, &mut packages);
-        packages = group_langpacks(packages);
+        packages = present_search_results(query, packages, false, limit);
 
         let mut stdout = std::io::BufWriter::new(std::io::stdout());
         writeln!(stdout, "{}", style::header("Search Results"))?;
@@ -468,6 +526,20 @@ fn search_sync_official_only(query: &str, limit: usize) -> Result<bool> {
 
         writeln!(stdout)?;
         stdout.flush()?;
+        drop(stdout);
+
+        // Pre-clap fast path: no async runtime exists here, so the blocking
+        // picker runs inline and detail goes through the sync info entry.
+        if should_offer_picker(false) {
+            let entries: Vec<(String, String)> = packages
+                .iter()
+                .take(limit)
+                .map(|pkg| (pkg.name.clone(), picker_label(pkg)))
+                .collect();
+            if let Some(name) = pick_package(&entries) {
+                let _ = super::info_sync(&name);
+            }
+        }
         Ok(true)
     }
 }
@@ -600,6 +672,26 @@ mod tests {
     }
 
     #[test]
+    fn picker_is_json_and_pipe_safe() {
+        assert!(!should_offer_picker(true));
+        assert!(!should_offer_picker(!console::user_attended()));
+    }
+
+    #[test]
+    fn picker_labels_carry_name_version_source() {
+        assert_eq!(picker_label(&display("firefox")), "firefox 1 (Official)");
+    }
+
+    #[test]
+    fn picker_returns_none_without_a_terminal() {
+        let entries = vec![("firefox".to_string(), "firefox 1 (Official)".to_string())];
+        assert_eq!(pick_package(&[]), None);
+        if !console::user_attended() {
+            assert_eq!(pick_package(&entries), None);
+        }
+    }
+
+    #[test]
     fn langpacks_collapse_into_one_group_row() {
         let packages = vec![
             display("firefox"),
@@ -611,6 +703,39 @@ mod tests {
         assert_eq!(grouped.len(), 2);
         assert_eq!(
             grouped[1].name,
+            "firefox-developer-edition-i18n-af (+2 language packs)"
+        );
+    }
+
+    #[test]
+    fn json_presentation_keeps_real_package_names() {
+        let packages = vec![
+            display("firefox"),
+            display("firefox-developer-edition-i18n-af"),
+            display("firefox-developer-edition-i18n-an"),
+            display("firefox-developer-edition-i18n-ar"),
+        ];
+        let json = present_search_results("firefox", packages, true, 50);
+        let names: Vec<&str> = json.iter().map(|pkg| pkg.name.as_str()).collect();
+        assert_eq!(names[0], "firefox");
+        assert!(names.contains(&"firefox-developer-edition-i18n-af"));
+        assert!(names.contains(&"firefox-developer-edition-i18n-an"));
+        assert!(names.iter().all(|name| !name.contains("language packs")));
+
+        let human = present_search_results(
+            "firefox",
+            vec![
+                display("firefox"),
+                display("firefox-developer-edition-i18n-af"),
+                display("firefox-developer-edition-i18n-an"),
+                display("firefox-developer-edition-i18n-ar"),
+            ],
+            false,
+            50,
+        );
+        assert_eq!(human.len(), 2);
+        assert_eq!(
+            human[1].name,
             "firefox-developer-edition-i18n-af (+2 language packs)"
         );
     }
