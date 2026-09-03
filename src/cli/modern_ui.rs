@@ -606,6 +606,11 @@ pub fn print_aur_package_info(name: &str, version: &str, description: &str) {
     if output_mode() == OutputMode::Quiet {
         return;
     }
+    // AUR strings are attacker-controlled: a malicious description can carry
+    // terminal escape sequences, so every field is sanitized before display.
+    let name = crate::cli::style::sanitize_terminal_text(name);
+    let version = crate::cli::style::sanitize_terminal_text(version);
+    let description = crate::cli::style::sanitize_terminal_text(description);
     println!();
 
     if crate::cli::style::colors_enabled() {

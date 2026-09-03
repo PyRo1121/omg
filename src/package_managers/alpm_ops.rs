@@ -391,15 +391,18 @@ pub use crate::package_managers::alpm_direct::list_orphans_fast as list_orphans_
 
 /// Display package info beautifully
 pub fn display_pkg_info(info: &PackageInfo) {
+    // Package metadata can carry terminal escape sequences, so every
+    // displayed field is sanitized the same way search results are.
+    let name = crate::cli::style::sanitize_terminal_text(&info.name);
+    let version = crate::cli::style::sanitize_terminal_text(&info.version.to_string());
+    let description = crate::cli::style::sanitize_terminal_text(&info.description);
+    let repo = crate::cli::style::sanitize_terminal_text(&info.repo);
+    let url = crate::cli::style::sanitize_terminal_text(info.url.as_deref().unwrap_or("-"));
     // Use println! instead of tracing to avoid logs bleeding into output
-    println!("{} {}", info.name.white().bold(), info.version.green());
-    println!("  {} {}", "Description:".dimmed(), info.description);
-    println!("  {} {}", "Repository:".dimmed(), info.repo.cyan());
-    println!(
-        "  {} {}",
-        "URL:".dimmed(),
-        info.url.as_deref().unwrap_or("-")
-    );
+    println!("{} {}", name.white().bold(), version.green());
+    println!("  {} {}", "Description:".dimmed(), description);
+    println!("  {} {}", "Repository:".dimmed(), repo.cyan());
+    println!("  {} {}", "URL:".dimmed(), url);
     println!(
         "  {} {:.2} MB",
         "Size:".dimmed(),
