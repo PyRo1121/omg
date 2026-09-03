@@ -8,11 +8,11 @@ use std::io::{BufReader, Read, Seek, SeekFrom, Write};
 use std::path::{Path, PathBuf};
 
 use anyhow::{Context, Result};
-use indicatif::{ProgressBar, ProgressStyle};
 use owo_colors::OwoColorize;
 use serde::Deserialize;
 use sha2::{Digest, Sha256};
 
+use crate::cli::progress::{Accent, Outcome, ProgressTask, TaskKind, TaskSpec};
 use crate::core::archive::stripped_archive_path;
 
 pub(crate) const GITHUB_USER_AGENT: &str = "omg-package-manager/0.1";
@@ -328,25 +328,6 @@ impl Write for BudgetedSink {
     }
 }
 
-/// Progress bar style for downloads
-#[expect(clippy::expect_used)] // Path operations on known-valid HOME directory; failure is unrecoverable
-fn download_progress_style() -> ProgressStyle {
-    ProgressStyle::default_bar()
-        .template(
-            "{spinner:.green} [{bar:40.cyan/blue}] {bytes}/{total_bytes} ({bytes_per_sec}, {eta})",
-        )
-        .expect("valid template")
-        .progress_chars("█▓▒░")
-}
-
-/// Progress bar style for extraction
-#[expect(clippy::expect_used)] // Path operations on known-valid HOME directory; failure is unrecoverable
-fn extract_progress_style() -> ProgressStyle {
-    ProgressStyle::default_spinner()
-        .template("{spinner:.green} {msg}")
-        .expect("valid template")
-}
-
 /// Validate that an upstream-supplied archive name is exactly one ordinary
 /// filename component before it is joined beneath a local download directory.
 pub(crate) fn validate_download_filename(filename: &str) -> Result<&str> {
@@ -393,8 +374,19 @@ pub async fn download_with_progress(
         total_size <= MAX_RUNTIME_DOWNLOAD_BYTES,
         "Runtime download declares {total_size} bytes, exceeding the {MAX_RUNTIME_DOWNLOAD_BYTES}-byte limit"
     );
-    let pb = ProgressBar::new(total_size);
-    pb.set_style(download_progress_style());
+    let label = dest
+        .file_name()
+        .map_or_else(
+            || "download".to_string(),
+            |name| name.to_string_lossy().into_owned(),
+        );
+    let task = ProgressTask::start(&TaskSpec {
+        label,
+        kind: TaskKind::Bytes {
+            total: (total_size > 0).then_some(total_size),
+        },
+        accent: Accent::Network,
+    });
 
     let parent = dest.parent().unwrap_or_else(|| Path::new("."));
     tokio::fs::create_dir_all(parent)
@@ -423,7 +415,7 @@ pub async fn download_with_progress(
         hasher.update(&chunk);
 
         downloaded = bounded_download_size(downloaded, chunk.len())?;
-        pb.set_position(downloaded);
+        task.set_position(downloaded);
     }
 
     file.flush()
@@ -442,13 +434,12 @@ pub async fn download_with_progress(
             "Checksum mismatch!\n  Expected: {expected}\n  Got: {actual}\n\nThis could indicate a corrupted download or security issue."
         );
     }
-    pb.println(format!("  {} Checksum verified", "✓".green()));
 
     temporary_path
         .persist(dest)
         .map_err(|error| error.error)
         .with_context(|| format!("Failed to finalize download: {}", dest.display()))?;
-    pb.finish_and_clear();
+    task.finish(Outcome::Done);
     Ok(())
 }
 
@@ -547,9 +538,9 @@ fn extract_tar_entries<R: std::io::Read>(
     archive: &mut tar::Archive<R>,
     dest_dir: &Path,
     select: TarEntrySelector<'_>,
-    pb: &ProgressBar,
+    task: &ProgressTask,
 ) -> Result<()> {
-    pb.set_message("Extracting...");
+    task.set_message("Extracting...");
     let mut pending_links = Vec::new();
 
     for entry in archive.entries()? {
@@ -560,7 +551,7 @@ fn extract_tar_entries<R: std::io::Read>(
         };
 
         let dest_path = dest_dir.join(&stripped);
-        pb.set_message(format!("Extracting: {}", stripped.display()));
+        task.set_message(&format!("Extracting: {}", stripped.display()));
 
         if let Some(parent) = dest_path.parent() {
             fs::create_dir_all(parent)?;
@@ -619,13 +610,12 @@ pub(crate) fn extract_component_tar_gz(
     let bounded = BudgetedReader::new(decoder, budget);
     let mut archive = tar::Archive::new(bounded);
 
-    let pb = ProgressBar::new_spinner();
-    pb.set_style(extract_progress_style());
+    let task = extract_task(archive_path);
 
     fs::create_dir_all(dest_dir)?;
-    extract_tar_entries(&mut archive, dest_dir, select, &pb)?;
+    extract_tar_entries(&mut archive, dest_dir, select, &task)?;
 
-    pb.finish_and_clear();
+    task.finish(Outcome::Done);
     Ok(())
 }
 
@@ -642,7 +632,10 @@ pub(crate) async fn extract_tar_gz(
         let select = |path: &Path| -> Result<Option<PathBuf>> {
             stripped_archive_path(path, strip_components)
         };
-        extract_component_tar_gz(&archive_path, &dest_dir, MAX_DECOMPRESSED_BYTES, &select)
+        let task = extract_task(&archive_path);
+        let result = extract_component_tar_gz(&archive_path, &dest_dir, MAX_DECOMPRESSED_BYTES, &select);
+        task.finish(Outcome::Done);
+        result
     })
     .await?
 }
@@ -665,9 +658,8 @@ pub(crate) fn extract_component_tar_xz(
     let file = File::open(archive_path)
         .with_context(|| format!("Failed to open archive: {}", archive_path.display()))?;
 
-    let pb = ProgressBar::new_spinner();
-    pb.set_style(extract_progress_style());
-    pb.set_message("Decompressing XZ...");
+    let task = extract_task(archive_path);
+    task.set_message("Decompressing XZ...");
 
     fs::create_dir_all(dest_dir)?;
     let output = tempfile::tempfile_in(dest_dir).with_context(|| {
@@ -683,9 +675,9 @@ pub(crate) fn extract_component_tar_xz(
     output.seek(SeekFrom::Start(0))?;
 
     let mut archive = tar::Archive::new(output);
-    extract_tar_entries(&mut archive, dest_dir, select, &pb)?;
+    extract_tar_entries(&mut archive, dest_dir, select, &task)?;
 
-    pb.finish_and_clear();
+    task.finish(Outcome::Done);
     Ok(())
 }
 
@@ -702,7 +694,11 @@ pub(crate) async fn extract_tar_xz(
         let select = |path: &Path| -> Result<Option<PathBuf>> {
             stripped_archive_path(path, strip_components)
         };
-        extract_component_tar_xz(&archive_path, &dest_dir, MAX_DECOMPRESSED_BYTES, &select)
+        let task = extract_task(&archive_path);
+        task.set_message("Decompressing XZ...");
+        let result = extract_component_tar_xz(&archive_path, &dest_dir, MAX_DECOMPRESSED_BYTES, &select);
+        task.finish(Outcome::Done);
+        result
     })
     .await?
 }
@@ -722,9 +718,8 @@ pub(crate) async fn extract_zip(
 
         let mut archive = zip::ZipArchive::new(file).context("Failed to read ZIP archive")?;
 
-        let pb = ProgressBar::new_spinner();
-        pb.set_style(extract_progress_style());
-        pb.set_message("Extracting...");
+        let task = extract_task(&archive_path);
+        task.set_message("Extracting...");
 
         fs::create_dir_all(&dest_dir)?;
         let mut remaining_budget = MAX_DECOMPRESSED_BYTES;
@@ -745,7 +740,7 @@ pub(crate) async fn extract_zip(
             }
 
             let dest_path = dest_dir.join(&stripped);
-            pb.set_message(format!("Extracting: {}", stripped.display()));
+            task.set_message(&format!("Extracting: {}", stripped.display()));
 
             if file.is_dir() {
                 fs::create_dir_all(&dest_path)?;
@@ -774,10 +769,24 @@ pub(crate) async fn extract_zip(
             }
         }
 
-        pb.finish_and_clear();
+        task.finish(Outcome::Done);
         Ok(())
     })
     .await?
+}
+
+/// One shared spinner lane for archive extraction work.
+fn extract_task(archive_path: &Path) -> ProgressTask {
+    ProgressTask::start(&TaskSpec {
+        label: archive_path
+            .file_name()
+            .map_or_else(
+                || "archive".to_string(),
+                |name| name.to_string_lossy().into_owned(),
+            ),
+        kind: TaskKind::Spinner,
+        accent: Accent::System,
+    })
 }
 
 const INSTALL_MARKER: &str = ".omg-install-complete";
