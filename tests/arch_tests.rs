@@ -546,7 +546,7 @@ mod security {
         } else {
             let output = result.combined_output();
             assert!(
-                !output.contains("requires") || !output.contains("tier"),
+                !output.contains("tier") && !output.contains("/pricing"),
                 "SBOM must not be paywalled, got:\n{output}"
             );
         }
@@ -569,7 +569,7 @@ mod security {
         } else {
             let output = result.combined_output();
             assert!(
-                !output.contains("requires") || !output.contains("tier"),
+                !output.contains("tier") && !output.contains("/pricing"),
                 "secret scan must not be paywalled, got:\n{output}"
             );
         }

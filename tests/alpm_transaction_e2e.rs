@@ -349,6 +349,7 @@ fn test_alpm_empty_transaction_prepare() {
 
     alpm.trans_init(alpm::TransFlag::empty())
         .expect("Init should work");
-    drop(alpm.trans_prepare());
+    alpm.trans_prepare()
+        .expect("Prepare of an empty transaction should succeed");
     alpm.trans_release().expect("Release should work");
 }

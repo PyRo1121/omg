@@ -582,7 +582,7 @@ mod sbom_compliance {
         let result = project.run(&["audit", "log"]);
         let output = result.combined_output();
         assert!(
-            !output.contains("requires") || !output.contains("tier"),
+            !output.contains("tier") && !output.contains("/pricing"),
             "audit log must not be paywalled, got: {output}"
         );
     }
@@ -593,7 +593,7 @@ mod sbom_compliance {
         let result = project.run(&["audit", "verify"]);
         let output = result.combined_output();
         assert!(
-            !output.contains("requires") || !output.contains("tier"),
+            !output.contains("tier") && !output.contains("/pricing"),
             "audit verify must not be paywalled, got: {output}"
         );
     }
@@ -604,7 +604,7 @@ mod sbom_compliance {
         let result = project.run(&["audit", "slsa", "pacman"]);
         let output = result.combined_output();
         assert!(
-            !output.contains("requires") || !output.contains("tier"),
+            !output.contains("tier") && !output.contains("/pricing"),
             "SLSA must not be paywalled, got: {output}"
         );
     }

@@ -618,11 +618,17 @@ URIs: http://example.com/repo
 
 #[test]
 fn test_version_comparison_handles_invalid_input() {
-    // These should not panic
-    let _ = compare_versions("invalid", "1.0");
-    let _ = compare_versions("1.0", "also-invalid");
-    let _ = compare_versions("", "");
-    let _ = compare_versions("1.2.3.4.5.6.7.8.9.10", "1:2.0");
+    // Lenient by design: malformed input degrades instead of panicking.
+    // Pin determinism (same inputs, same ordering, twice) plus reflexivity.
+    for (a, b) in [
+        ("invalid", "1.0"),
+        ("1.0", "also-invalid"),
+        ("", ""),
+        ("1.2.3.4.5.6.7.8.9.10", "1:2.0"),
+    ] {
+        assert_eq!(compare_versions(a, b), compare_versions(a, b));
+        assert_eq!(compare_versions(a, a), std::cmp::Ordering::Equal);
+    }
 }
 
 // ============================================================================
