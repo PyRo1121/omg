@@ -117,22 +117,7 @@ async fn install_with_replacement_budget(
         anyhow::bail!("No packages specified");
     }
 
-    let includes_local_file = packages.iter().any(|package| {
-        if crate::core::security::is_local_package_file(package) {
-            return true;
-        }
-        #[cfg(any(feature = "debian", feature = "debian-pure"))]
-        if crate::core::env::distro::is_debian_like()
-            && crate::core::security::is_local_debian_package_file(package)
-        {
-            return true;
-        }
-        false
-    });
-    anyhow::ensure!(
-        !includes_local_file || allow_local_file,
-        "Local package archives require explicit consent: pass --allow-local-file after reviewing the archive source"
-    );
+    crate::core::security::ensure_local_archive_consent(packages, allow_local_file)?;
     validate_install_targets(packages)?;
 
     if dry_run {

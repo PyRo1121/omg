@@ -5,20 +5,17 @@
 use std::sync::{Arc, LazyLock, Mutex};
 
 use anyhow::{Context, Result};
-use owo_colors::OwoColorize;
 use regex::Regex;
 
+use crate::cli::progress::{Accent, Outcome, ProgressTask, TaskKind, TaskSpec};
 use crate::core::paths;
 
 /// Regex for parsing mirror server lines from /etc/pacman.d/mirrorlist
 /// Compiled once at first use, then reused for all subsequent calls.
 static MIRRORLIST_REGEX: LazyLock<Regex> =
     LazyLock::new(|| Regex::new(r"^Server\s*=\s*([^#]+)").expect("valid regex pattern"));
-const DOWNLOAD_SPINNER_TEMPLATE: &str = "  {spinner:.cyan} {msg:30}";
 /// Stable cross-layer marker for a requested package absent from every sync repository.
 pub const MISSING_FROM_REPOS_MARKER: &str = "not found in any configured repository";
-const DOWNLOAD_BAR_TEMPLATE: &str =
-    "  {spinner:.cyan} {msg:30} {bar:30.cyan/blue} {bytes}/{total_bytes}";
 const PARALLEL_DOWNLOADS: u32 = 5;
 use crate::package_managers::types::{PackageInfo, UpdateInfo, contains_ignore_case};
 
@@ -389,35 +386,61 @@ fn remove_cache_file_and_signature(archive: &std::path::Path, removed: &mut usiz
 /// List orphaned packages - INSTANT
 pub use crate::package_managers::alpm_direct::list_orphans_fast as list_orphans_direct;
 
-/// Display package info beautifully
+/// Display package info through the shared key-value renderer.
+///
+/// The sync-DB path matches the daemon path field for field. Package
+/// metadata can carry terminal escape sequences, so every displayed field
+/// is sanitized the same way search results are.
 pub fn display_pkg_info(info: &PackageInfo) {
-    // Package metadata can carry terminal escape sequences, so every
-    // displayed field is sanitized the same way search results are.
-    let name = crate::cli::style::sanitize_terminal_text(&info.name);
-    let version = crate::cli::style::sanitize_terminal_text(&info.version.to_string());
-    let description = crate::cli::style::sanitize_terminal_text(&info.description);
-    let repo = crate::cli::style::sanitize_terminal_text(&info.repo);
-    let url = crate::cli::style::sanitize_terminal_text(info.url.as_deref().unwrap_or("-"));
-    // Use println! instead of tracing to avoid logs bleeding into output
-    println!("{} {}", name.white().bold(), version.green());
-    println!("  {} {}", "Description:".dimmed(), description);
-    println!("  {} {}", "Repository:".dimmed(), repo.cyan());
-    println!("  {} {}", "URL:".dimmed(), url);
-    println!(
-        "  {} {:.2} MB",
-        "Size:".dimmed(),
-        info.size as f64 / 1024.0 / 1024.0
+    use crate::cli::{style, ui};
+    ui::print_kv(
+        "Name",
+        &style::package(&style::sanitize_terminal_text(&info.name)),
     );
-    println!(
-        "  {} {:.2} MB",
-        "Download:".dimmed(),
-        info.download_size.unwrap_or(0) as f64 / 1024.0 / 1024.0
+    ui::print_kv(
+        "Version",
+        &style::version(&style::sanitize_terminal_text(&info.version.to_string())),
     );
+    ui::print_kv(
+        "Description",
+        &style::sanitize_terminal_text(&info.description),
+    );
+    ui::print_kv(
+        "Source",
+        &format!(
+            "Official repository ({})",
+            style::info(&style::sanitize_terminal_text(&info.repo))
+        ),
+    );
+    ui::print_kv(
+        "URL",
+        &style::url(&style::sanitize_terminal_text(
+            info.url.as_deref().unwrap_or("-"),
+        )),
+    );
+    ui::print_kv("Size", &style::size(info.size));
+    ui::print_kv("Download", &style::size(info.download_size.unwrap_or(0)));
     if !info.licenses.is_empty() {
-        println!("  {} {}", "License:".dimmed(), info.licenses.join(", "));
+        ui::print_kv(
+            "License",
+            &info
+                .licenses
+                .iter()
+                .map(|license| style::sanitize_terminal_text(license))
+                .collect::<Vec<_>>()
+                .join(", "),
+        );
     }
     if !info.depends.is_empty() {
-        println!("  {} {}", "Depends:".dimmed(), info.depends.join(", "));
+        ui::print_kv(
+            "Depends",
+            &info
+                .depends
+                .iter()
+                .map(|depend| style::sanitize_terminal_text(depend))
+                .collect::<Vec<_>>()
+                .join(", "),
+        );
     }
 }
 
@@ -466,9 +489,8 @@ pub fn execute_transaction(
     if let Some(alpm) = handle {
         configure_transaction_options(alpm, &pacman_config)?;
         configure_mirrors(alpm)?;
-        let mp = indicatif::MultiProgress::new();
         let refusals = Arc::new(Mutex::new(AlpmQuestionRefusals::default()));
-        let main_pb = setup_alpm_callbacks(alpm, &mp, &refusals);
+        let main_task = setup_alpm_callbacks(alpm, &refusals);
         let tx_guard = prepare_alpm_transaction(alpm, packages, kind, &pacman_config)
             .map_err(|error| question_refusal_error(&refusals).unwrap_or(error))?;
         // Declined replacement questions make libalpm skip the replacement
@@ -476,7 +498,7 @@ pub fn execute_transaction(
         if let Some(error) = question_refusal_error(&refusals) {
             return Err(error);
         }
-        commit_alpm_transaction(tx_guard.0, &main_pb, kind, &pacman_config.hold_pkg)
+        commit_alpm_transaction(tx_guard.0, &main_task, kind, &pacman_config.hold_pkg)
             .map_err(|error| question_refusal_error(&refusals).unwrap_or(error))?;
         return Ok(());
     }
@@ -492,15 +514,14 @@ pub fn execute_transaction(
 
     configure_mirrors(&mut alpm)?;
 
-    let mp = indicatif::MultiProgress::new();
     let refusals = Arc::new(Mutex::new(AlpmQuestionRefusals::default()));
-    let main_pb = setup_alpm_callbacks(&alpm, &mp, &refusals);
+    let main_task = setup_alpm_callbacks(&alpm, &refusals);
     let tx_guard = prepare_alpm_transaction(&mut alpm, packages, kind, &pacman_config)
         .map_err(|error| question_refusal_error(&refusals).unwrap_or(error))?;
     if let Some(error) = question_refusal_error(&refusals) {
         return Err(error);
     }
-    commit_alpm_transaction(tx_guard.0, &main_pb, kind, &pacman_config.hold_pkg)
+    commit_alpm_transaction(tx_guard.0, &main_task, kind, &pacman_config.hold_pkg)
         .map_err(|error| question_refusal_error(&refusals).unwrap_or(error))?;
 
     Ok(())
@@ -626,21 +647,16 @@ fn provider_selection_message(providers: &[String], depend: &str) -> String {
     )
 }
 
-/// Setup ALPM callbacks for progress bars
-#[expect(clippy::expect_used)] // ALPM database operations; failure indicates corrupted pacman database
+/// Setup ALPM callbacks for progress lanes
 fn setup_alpm_callbacks(
     alpm: &alpm::Alpm,
-    mp: &indicatif::MultiProgress,
     refusals: &Arc<Mutex<AlpmQuestionRefusals>>,
-) -> indicatif::ProgressBar {
-    let main_pb = mp.add(indicatif::ProgressBar::new(100));
-    main_pb.set_style(
-        indicatif::ProgressStyle::default_bar()
-            .template("  {spinner:.cyan} {msg} {wide_bar:.cyan/blue} {percent}%")
-            .expect("valid template")
-            .progress_chars("█▓▒░ "),
-    );
-    main_pb.set_prefix("");
+) -> ProgressTask {
+    let main_task = ProgressTask::start(&TaskSpec {
+        label: "Transaction".to_string(),
+        kind: TaskKind::Items { total: 100 },
+        accent: Accent::System,
+    });
 
     alpm.set_question_cb(Arc::clone(refusals), |question, refusals| {
         let mut refusals = refusals
@@ -664,6 +680,7 @@ fn setup_alpm_callbacks(
                 let confirmed = if auto_accept {
                     true
                 } else if console::user_attended() {
+                    let _quiesce = crate::cli::modern_ui::quiesce_terminal();
                     dialoguer::Confirm::with_theme(&crate::cli::ui::prompt_theme())
                         .with_prompt(format!("Replace {description} with {newdb}/{newpkg}?"))
                         .default(true)
@@ -695,6 +712,7 @@ fn setup_alpm_callbacks(
                 let confirmed = if auto_accept {
                     true
                 } else if console::user_attended() {
+                    let _quiesce = crate::cli::modern_ui::quiesce_terminal();
                     dialoguer::Confirm::with_theme(&crate::cli::ui::prompt_theme())
                         .with_prompt(format!("{pkg1} conflicts with {pkg2} ({reason}). Remove {pkg2}?"))
                         .default(false)
@@ -742,16 +760,19 @@ fn setup_alpm_callbacks(
                 if console::user_attended()
                     && !crate::core::privilege::get_yes_flag()
                     && providers.len() > 1
-                    && let Ok(selection) =
+                {
+                    let _quiesce = crate::cli::modern_ui::quiesce_terminal();
+                    if let Ok(selection) =
                         dialoguer::Select::with_theme(&crate::cli::ui::prompt_theme())
                             .with_prompt(format!("Select a provider for {}", q.depend()))
                             .items(&providers)
                             .default(0)
                             .interact()
-                    && let Ok(idx) = i32::try_from(selection)
-                {
-                    q.set_index(idx);
-                    return;
+                        && let Ok(idx) = i32::try_from(selection)
+                    {
+                        q.set_index(idx);
+                        return;
+                    }
                 }
                 tracing::info!(
                     "{}",
@@ -766,6 +787,7 @@ fn setup_alpm_callbacks(
 
                 let confirmed =
                     if console::user_attended() && !crate::core::privilege::get_yes_flag() {
+                        let _quiesce = crate::cli::modern_ui::quiesce_terminal();
                         dialoguer::Confirm::with_theme(&crate::cli::ui::prompt_theme())
                             .with_prompt(format!("Import PGP key {fingerprint} ({uid})?"))
                             .default(false)
@@ -799,7 +821,7 @@ fn setup_alpm_callbacks(
         forward_alpm_log(level, message);
     });
 
-    let main_pb_clone = main_pb.clone();
+    let main_task_clone = main_task.clone();
     alpm.set_progress_cb((), move |op, name, percent, _n, _max, ()| {
         let msg = match op {
             alpm::Progress::AddStart => "Installing",
@@ -813,50 +835,40 @@ fn setup_alpm_callbacks(
             alpm::Progress::LoadStart => "Loading",
             alpm::Progress::KeyringStart => "Checking keyring",
         };
-        main_pb_clone.set_message(format!("{msg}: {name}"));
-        main_pb_clone.set_position(u64::try_from(percent).unwrap_or(0));
+        main_task_clone.set_message(&format!("{msg}: {name}"));
+        main_task_clone.set_position(u64::try_from(percent).unwrap_or(0));
     });
 
-    let dl_pb_map = std::sync::Arc::new(dashmap::DashMap::<String, indicatif::ProgressBar>::new());
-    let mp_clone = mp.clone();
+    let dl_lanes = std::sync::Arc::new(dashmap::DashMap::<String, ProgressTask>::new());
 
-    alpm.set_dl_cb(dl_pb_map, move |filename, event, map| match event.event() {
+    alpm.set_dl_cb(dl_lanes, move |filename, event, map| match event.event() {
         alpm::DownloadEvent::Init(_) => {
             if map.len() < usize::try_from(PARALLEL_DOWNLOADS).unwrap_or(usize::MAX) {
-                let pb = mp_clone.add(indicatif::ProgressBar::new_spinner());
-                pb.set_style(
-                    indicatif::ProgressStyle::default_spinner()
-                        .template(DOWNLOAD_SPINNER_TEMPLATE)
-                        .expect("valid template"),
-                );
-                pb.set_message(format!("⬇ {filename}"));
-                map.insert(filename.to_string(), pb);
+                let task = ProgressTask::start(&TaskSpec {
+                    label: filename.to_string(),
+                    kind: TaskKind::Bytes { total: None },
+                    accent: Accent::Network,
+                });
+                map.insert(filename.to_string(), task);
             }
         }
         alpm::DownloadEvent::Progress(prog) => {
-            if let Some(pb) = map.get(filename) {
-                if pb.length().is_none() && prog.total > 0 {
-                    pb.set_length(u64::try_from(prog.total).unwrap_or(0));
-                    pb.set_style(
-                        indicatif::ProgressStyle::default_bar()
-                            .template(DOWNLOAD_BAR_TEMPLATE)
-                            .expect("valid template")
-                            .progress_chars("█▓▒░ "),
-                    );
-                    pb.set_message(format!("⬇ {filename}"));
+            if let Some(task) = map.get(filename) {
+                if prog.total > 0 {
+                    task.set_total(Some(u64::try_from(prog.total).unwrap_or(0)));
                 }
-                pb.set_position(u64::try_from(prog.downloaded).unwrap_or(0));
+                task.set_position(u64::try_from(prog.downloaded).unwrap_or(0));
             }
         }
         alpm::DownloadEvent::Retry(_) => {}
         alpm::DownloadEvent::Completed(_) => {
-            if let Some((_, pb)) = map.remove(filename) {
-                pb.finish_and_clear();
+            if let Some((_, task)) = map.remove(filename) {
+                task.finish(Outcome::Done);
             }
         }
     });
 
-    main_pb
+    main_task
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -1328,11 +1340,11 @@ fn ensure_removals_not_held<'a>(
 
 fn commit_alpm_transaction(
     alpm: &mut alpm::Alpm,
-    main_pb: &indicatif::ProgressBar,
+    main_task: &ProgressTask,
     kind: TransactionKind,
     hold_pkg: &[String],
 ) -> Result<()> {
-    main_pb.set_message("Preparing transaction...");
+    main_task.set_message("Preparing transaction...");
 
     alpm.trans_prepare()
         .map_err(|e| anyhow::anyhow!(format_trans_prepare_error(&e.to_string())))?;
@@ -1350,7 +1362,7 @@ fn commit_alpm_transaction(
     }
 
     if alpm.trans_add().is_empty() && alpm.trans_remove().is_empty() {
-        main_pb.finish_and_clear();
+        main_task.clear();
         use owo_colors::OwoColorize;
         println!();
         // Deliberately neutral wording: this also fires when every requested
@@ -1361,11 +1373,11 @@ fn commit_alpm_transaction(
         return Ok(());
     }
 
-    main_pb.set_message("Finalizing...");
+    main_task.set_message("Finalizing...");
     alpm.trans_commit()
         .context("Transaction failed to commit. Run 'omg cleanup' if issue persists.")?;
 
-    main_pb.finish_and_clear();
+    main_task.finish(Outcome::Done);
 
     Ok(())
 }
@@ -1479,9 +1491,8 @@ mod tests {
     use std::sync::Mutex;
 
     use super::{
-        AlpmQuestionRefusals, DOWNLOAD_BAR_TEMPLATE, DOWNLOAD_SPINNER_TEMPLATE,
-        ForwardedAlpmLogLevel, TransactionKind, classify_alpm_log_level, clean_cache,
-        clean_cache_preview, configure_signature_policy, ensure_mirror_servers,
+        AlpmQuestionRefusals, ForwardedAlpmLogLevel, TransactionKind, classify_alpm_log_level,
+        clean_cache, clean_cache_preview, configure_signature_policy, ensure_mirror_servers,
         ensure_removals_not_held, format_trans_prepare_error, is_keyring_related_error,
         local_package_siglevel, package_base_name, provider_selection_message,
         question_refusal_error, register_configured_syncdbs, repository_siglevel,
@@ -1586,8 +1597,7 @@ mod tests {
             .expect("register core");
 
         let refusals = std::sync::Arc::new(Mutex::new(AlpmQuestionRefusals::default()));
-        let mp = indicatif::MultiProgress::new();
-        let _progress = setup_alpm_callbacks(&alpm, &mp, &refusals);
+        let _progress = setup_alpm_callbacks(&alpm, &refusals);
 
         alpm.trans_init(alpm::TransFlag::NEEDED)
             .expect("init transaction");
@@ -1653,8 +1663,7 @@ mod tests {
             .expect("register core");
 
         let refusals = std::sync::Arc::new(Mutex::new(AlpmQuestionRefusals::default()));
-        let mp = indicatif::MultiProgress::new();
-        let _progress = setup_alpm_callbacks(&alpm, &mp, &refusals);
+        let _progress = setup_alpm_callbacks(&alpm, &refusals);
 
         crate::core::privilege::set_yes_flag(true);
         let init_result = alpm.trans_init(alpm::TransFlag::NEEDED);
@@ -1846,17 +1855,6 @@ mod tests {
         let recursive = transaction_flags(TransactionKind::Remove { recursive: true });
         assert!(recursive.contains(alpm::TransFlag::RECURSE));
         assert!(!recursive.contains(alpm::TransFlag::UNNEEDED));
-    }
-
-    #[test]
-    fn download_templates_use_live_indicatif_placeholders() {
-        for template in [DOWNLOAD_SPINNER_TEMPLATE, DOWNLOAD_BAR_TEMPLATE] {
-            assert!(
-                !template.contains("{{"),
-                "escaped placeholders render literally"
-            );
-            indicatif::ProgressStyle::with_template(template).expect("valid progress template");
-        }
     }
 
     #[test]

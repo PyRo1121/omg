@@ -3,8 +3,8 @@ use owo_colors::OwoColorize;
 
 use crate::cli::ui;
 use crate::runtimes::{
-    BunManager, GoManager, JavaManager, NodeManager, PiManager, PythonManager, RubyManager,
-    RustManager, SUPPORTED_RUNTIMES,
+    BunManager, DenoManager, GoManager, JavaManager, NodeManager, PiManager, PythonManager,
+    RubyManager, RustManager, SUPPORTED_RUNTIMES,
 };
 
 pub fn resolve_active_version(runtime: &str) -> Result<Option<String>> {
@@ -71,7 +71,8 @@ impl_runtime_install_use!(
     RubyManager,
     JavaManager,
     BunManager,
-    PiManager
+    PiManager,
+    DenoManager
 );
 
 /// Use an already-installed version, or install it first if missing.
@@ -143,6 +144,9 @@ pub async fn use_version(runtime: &str, version: Option<&str>) -> Result<()> {
         "pi" => {
             install_or_use(&PiManager::new(), strip_version_prefix(&version)).await?;
         }
+        "deno" => {
+            install_or_use(&DenoManager::new(), strip_version_prefix(&version)).await?;
+        }
         _ => anyhow::bail!(
             "Unsupported runtime '{runtime}'. Supported runtimes: {}",
             SUPPORTED_RUNTIMES.join(", ")
@@ -150,6 +154,35 @@ pub async fn use_version(runtime: &str, version: Option<&str>) -> Result<()> {
     }
 
     crate::core::usage::track_runtime_switch(&runtime);
+    Ok(())
+}
+
+/// Remove an installed runtime version. The version is required and must
+/// not be the active one; removal deletes only that version's directory.
+pub fn uninstall_version(runtime: &str, version: &str) -> Result<()> {
+    crate::core::security::validate_package_name(runtime)?;
+    let runtime = canonical_runtime_name(runtime);
+    crate::core::security::validate_runtime_version(version)?;
+
+    ui::print_header("OMG", &format!("Removing {runtime} version {version}"));
+    ui::print_spacer();
+
+    match runtime.as_str() {
+        "node" => NodeManager::new().uninstall(strip_version_prefix(version))?,
+        "python" => PythonManager::new().uninstall(strip_version_prefix(version))?,
+        "rust" => RustManager::new().uninstall(version)?,
+        "go" => GoManager::new().uninstall(strip_version_prefix(version))?,
+        "ruby" => RubyManager::new().uninstall(strip_version_prefix(version))?,
+        "java" => JavaManager::new().uninstall(version)?,
+        "bun" => BunManager::new().uninstall(strip_version_prefix(version))?,
+        "pi" => PiManager::new().uninstall(strip_version_prefix(version))?,
+        _ => anyhow::bail!(
+            "Unsupported runtime '{runtime}'. Supported runtimes: {}",
+            SUPPORTED_RUNTIMES.join(", ")
+        ),
+    }
+
+    println!("{} Removed {runtime} {version}", "✓".green());
     Ok(())
 }
 
@@ -172,6 +205,7 @@ fn native_version_info(runtime: &str) -> Option<(Result<Vec<String>>, Option<Str
         "java" => probe!(JavaManager::new()),
         "bun" => probe!(BunManager::new()),
         "pi" => probe!(PiManager::new()),
+        "deno" => probe!(DenoManager::new()),
         _ => None,
     }
 }
@@ -237,7 +271,9 @@ fn list_installed_json(runtime: Option<&str>) -> Result<()> {
     }
 
     let mut entries = Vec::new();
-    for rt in ["node", "python", "rust", "go", "ruby", "java", "bun", "pi"] {
+    for rt in [
+        "node", "python", "rust", "go", "ruby", "java", "bun", "pi", "deno",
+    ] {
         if let Some(entry) = installed_json_entry(rt)? {
             entries.push(entry);
         }
@@ -274,6 +310,7 @@ pub fn list_versions_sync(runtime: Option<&str>, json: bool) -> Result<()> {
             ("Java", JavaManager::new().current_version()),
             ("Bun", BunManager::new().current_version()),
             ("Pi", PiManager::new().current_version()),
+            ("Deno", DenoManager::new().current_version()),
         ] {
             if let Some(v) = mgr_version {
                 ui::print_list_item(name, Some(&v));
@@ -299,7 +336,7 @@ pub async fn list_versions(runtime: Option<&str>, available: bool, json: bool) -
         ui::print_header("OMG", "Installed runtime versions");
         ui::print_spacer();
 
-        let (node_res, py_res, rust_res, go_res, ruby_res, java_res, bun_res, pi_res) = tokio::join!(
+        let (node_res, py_res, rust_res, go_res, ruby_res, java_res, bun_res, pi_res, deno_res) = tokio::join!(
             tokio::task::spawn_blocking(|| NodeManager::new().current_version()),
             tokio::task::spawn_blocking(|| PythonManager::new().current_version()),
             tokio::task::spawn_blocking(|| RustManager::new().current_version()),
@@ -308,6 +345,7 @@ pub async fn list_versions(runtime: Option<&str>, available: bool, json: bool) -
             tokio::task::spawn_blocking(|| JavaManager::new().current_version()),
             tokio::task::spawn_blocking(|| BunManager::new().current_version()),
             tokio::task::spawn_blocking(|| PiManager::new().current_version()),
+            tokio::task::spawn_blocking(|| DenoManager::new().current_version()),
         );
 
         for (name, res) in [
@@ -319,6 +357,7 @@ pub async fn list_versions(runtime: Option<&str>, available: bool, json: bool) -
             ("Java", java_res),
             ("Bun", bun_res),
             ("Pi", pi_res),
+            ("Deno", deno_res),
         ] {
             let version = res.with_context(|| format!("Failed to inspect {name} versions"))?;
             if let Some(v) = version {
@@ -352,7 +391,8 @@ pub async fn list_versions(runtime: Option<&str>, available: bool, json: bool) -
                 "→".blue()
             );
             for v in mgr.list_available().await?.iter().take(20) {
-                ui::print_list_item(&v.version, None);
+                let pre = if v.prerelease { " (pre-release)" } else { "" };
+                ui::print_list_item(&v.version, Some(pre));
             }
         }
         "rust" => {
@@ -397,6 +437,14 @@ pub async fn list_versions(runtime: Option<&str>, available: bool, json: bool) -
             anyhow::bail!(
                 "Remote Pi version listing is not yet supported; specify an exact npm version"
             );
+        }
+        "deno" => {
+            let mgr = DenoManager::new();
+            println!("{} Available remote versions (denoland/deno):", "→".blue());
+            for v in mgr.list_available().await?.iter().take(20) {
+                let pre = if v.prerelease { " (pre-release)" } else { "" };
+                ui::print_list_item(&v.version, Some(pre));
+            }
         }
         _ => anyhow::bail!("Unsupported runtime '{rt}'"),
     }

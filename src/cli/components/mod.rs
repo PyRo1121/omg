@@ -145,12 +145,13 @@ impl Components {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::cli::tea::View;
 
     #[test]
     fn kv_list_with_title_is_a_card() {
         let cmd: Cmd<()> = Components::kv_list(Some("Info"), vec![("k", "v")]);
         match cmd {
-            Cmd::Card(title, content) => {
+            Cmd::View(View::Card(title, content)) => {
                 assert_eq!(title, "Info");
                 assert_eq!(content, vec!["k: v".to_string()]);
             }

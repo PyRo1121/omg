@@ -7,7 +7,7 @@
 # Re-points the single mutable `latest-version` marker at an already-published
 # release version WITHOUT touching any archives or checksums. Clients running
 # `omg self-update` resolve this marker, so a rollback takes effect on their
-# next update check — installed binaries are not modified.
+# next update check - installed binaries are not modified.
 #
 # Requirements:
 #   - env CLOUDFLARE_API_TOKEN + CLOUDFLARE_ACCOUNT_ID with object write
@@ -73,7 +73,7 @@ for arch in x86_64-linux-arch x86_64-linux-debian x86_64-linux-ubuntu x86_64-lin
     artifact="${prefix}-${arch}.${suffix}"
     object="omg-releases/${artifact}"
     "$WRANGLER" r2 object get "$object" --remote --file=/dev/null >/dev/null 2>&1 || {
-      echo "error: missing R2 object: $object — cannot roll back to $version" >&2
+      echo "error: missing R2 object: $object - cannot roll back to $version" >&2
       exit 66
     }
     echo "  ✓ ${artifact}"

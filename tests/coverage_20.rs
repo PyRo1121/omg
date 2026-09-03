@@ -112,15 +112,17 @@ fn caret_requirement_resolves_highest_matching_installed_version() {
     );
 }
 
-/// Contract: runtimes without a native branch (`deno`, …) never contribute a
-/// PATH entry, even when a matching-looking directory exists on disk.
+/// Contract: runtimes without a native branch (`zig`, …) never contribute a
+/// PATH entry even when a matching-looking directory exists on disk, while a
+/// deno pin resolves through the same generic resolver as python/go/ruby.
 #[test]
 #[serial]
 fn unsupported_runtime_pins_never_reach_path() {
     let tmp = tempfile::tempdir().unwrap();
     let data = tmp.path();
-    // A decoy directory that a naive implementation might return.
     std::fs::create_dir_all(data.join("versions/deno/1.40.0/bin"))
+        .expect("create fixture directory");
+    std::fs::create_dir_all(data.join("versions/zig/0.11.0/bin"))
         .expect("create fixture directory");
     with_test_env(
         &[
@@ -131,9 +133,10 @@ fn unsupported_runtime_pins_never_reach_path() {
             let additions =
                 build_path_additions(&pin_map(&[("deno", "1.40.0"), ("zig", "0.11.0")]))
                     .expect("resolution");
-            assert!(
-                additions.is_empty(),
-                "unsupported runtimes must not reach PATH, got {additions:?}"
+            assert_eq!(
+                additions,
+                vec![data.join("versions/deno/1.40.0/bin").display().to_string()],
+                "deno must resolve through the generic resolver; zig must never reach PATH"
             );
         },
     );
@@ -152,16 +155,16 @@ fn validated_runtime_pins_resolve_for_all_native_runtimes() {
             ("NVM_DIR", "/nonexistent-nvm-for-tests"),
         ],
         || {
-            for (runtime, version) in [
-                ("python", "3.12.1"),
-                ("go", "1.22.0"),
-                ("ruby", "3.3.1"),
-                ("java", "21.0.2"),
+            for (runtime, version, directory) in [
+                ("python", "3.12.1", "3.12.1"),
+                ("go", "1.22.0", "1.22.0"),
+                ("ruby", "3.3.1", "3.3.1"),
+                ("java", "21.0", "21"),
             ] {
                 let expected = data
                     .join("versions")
                     .join(runtime)
-                    .join(version)
+                    .join(directory)
                     .join("bin");
                 std::fs::create_dir_all(&expected).expect("create fixture directory");
                 let additions =

@@ -81,7 +81,7 @@ pub(crate) use dispatch_backend;
 /// [`Cmd::Error`] is returned without printing so the process-level reporter
 /// remains the single owner of user-facing failures.
 pub(crate) fn execute_cmd(cmd: crate::cli::tea::Cmd<()>) -> anyhow::Result<()> {
-    use crate::cli::tea::Cmd;
+    use crate::cli::tea::{Cmd, View};
     use std::io::Write;
 
     fn execute_inner(cmd: Cmd<()>) -> anyhow::Result<()> {
@@ -102,30 +102,30 @@ pub(crate) fn execute_cmd(cmd: crate::cli::tea::Cmd<()>) -> anyhow::Result<()> {
                     return Err(error);
                 }
             }
-            Cmd::PrintLn(output) => {
+            Cmd::View(View::PrintLn(output)) => {
                 println!("{output}");
             }
-            Cmd::Info(msg) => {
+            Cmd::View(View::Info(msg)) => {
                 println!("  ℹ {msg}");
             }
-            Cmd::Success(msg) => {
+            Cmd::View(View::Success(msg)) => {
                 println!("  ✓ {msg}");
             }
-            Cmd::Warning(msg) => {
+            Cmd::View(View::Warning(msg)) => {
                 println!("  ⚠ {msg}");
             }
-            Cmd::Error(msg) => anyhow::bail!("{msg}"),
-            Cmd::Header(title, body) => {
+            Cmd::View(View::Error(msg)) => anyhow::bail!("{msg}"),
+            Cmd::View(View::Header(title, body)) => {
                 println!("\n[{title}] {body}");
             }
-            Cmd::Card(title, content) => {
+            Cmd::View(View::Card(title, content)) => {
                 crate::cli::ui::print_card(&title, content);
             }
-            Cmd::StyledText(config) => {
+            Cmd::View(View::StyledText(config)) => {
                 // In fallback mode, just print the text without styling
                 println!("{}", config.text);
             }
-            Cmd::Spacer => {
+            Cmd::View(View::Spacer) => {
                 println!();
             }
         }

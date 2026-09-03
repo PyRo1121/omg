@@ -8,6 +8,7 @@ static DATA_DIR: std::sync::LazyLock<PathBuf> = std::sync::LazyLock::new(paths::
 
 pub(crate) mod bun;
 pub(crate) mod common;
+pub(crate) mod deno;
 pub(crate) mod go;
 pub(crate) mod java;
 pub(crate) mod node;
@@ -17,6 +18,7 @@ pub(crate) mod ruby;
 pub(crate) mod rust;
 
 pub(crate) use bun::BunManager;
+pub(crate) use deno::DenoManager;
 pub(crate) use go::GoManager;
 pub(crate) use java::JavaManager;
 pub(crate) use node::NodeManager;
@@ -26,8 +28,9 @@ pub(crate) use ruby::RubyManager;
 pub(crate) use rust::RustManager;
 
 /// Runtimes managed natively by OMG.
-pub(crate) const SUPPORTED_RUNTIMES: &[&str] =
-    &["node", "python", "go", "rust", "ruby", "java", "bun", "pi"];
+pub(crate) const SUPPORTED_RUNTIMES: &[&str] = &[
+    "node", "python", "go", "rust", "ruby", "java", "bun", "pi", "deno",
+];
 
 /// Resolve a partial version request (`20`, `20.1`) against known release
 /// names. Exact and non-numeric requests pass through unchanged. One shared

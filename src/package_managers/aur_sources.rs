@@ -10,11 +10,11 @@ const MAX_AUR_SOURCE_BYTES: u64 = 1024 * 1024 * 1024;
 use alpm_srcinfo::SourceInfoV1;
 use anyhow::{Context, Result};
 use futures::stream::{self, StreamExt};
-use indicatif::{MultiProgress, ProgressBar, ProgressStyle};
 use tokio::fs::File;
 use tokio::io::AsyncWriteExt;
 use tracing::{debug, warn};
 
+use crate::cli::progress::{Accent, Outcome, ProgressTask, TaskKind, TaskSpec};
 use crate::core::http::shared_client;
 
 /// Represents a source file that can be downloaded
@@ -80,8 +80,9 @@ fn extract_http_source(source_url: &str) -> Option<SourceFile> {
         None => (None, source_url),
     };
 
-    // Skip non-HTTP sources
-    if !url.starts_with("http://") && !url.starts_with("https://") {
+    // Plain HTTP sources are rejected: checksums are verified at build
+    // time, but transport must still be authenticated (defense in depth).
+    if !url.starts_with("https://") {
         return None;
     }
 
@@ -151,20 +152,15 @@ pub async fn download_sources(sources: Vec<SourceFile>, srcdest: &Path) -> Sourc
         };
     }
 
-    let multi = MultiProgress::new();
-    let style = ProgressStyle::with_template(
-        "{spinner:.green} [{bar:40.cyan/blue}] {bytes}/{total_bytes} {msg}",
-    )
-    .expect("valid progress template")
-    .progress_chars("#>-");
-
     let download_futures = sources.into_iter().map(|source| {
         // Filename captured for the security check inside the async block.
         let filename = source.filename.clone();
         let dest_path = srcdest.join(&source.filename);
-        let pb = multi.add(ProgressBar::new(0));
-        pb.set_style(style.clone());
-        pb.set_message(source.filename.clone());
+        let task = ProgressTask::start(&TaskSpec {
+            label: source.filename.clone(),
+            kind: TaskKind::Bytes { total: None },
+            accent: Accent::Network,
+        });
 
         async move {
             // SECURITY (audit ADV-23-01): the filename may come from a
@@ -182,7 +178,8 @@ pub async fn download_sources(sources: Vec<SourceFile>, srcdest: &Path) -> Sourc
             }
             match tokio::fs::symlink_metadata(&dest_path).await {
                 Ok(metadata) if metadata.is_file() => {
-                    pb.finish_with_message(format!("{} (cached)", source.filename));
+                    task.set_message("cached");
+                    task.finish(Outcome::Done);
                     return Ok(());
                 }
                 Ok(_) => {
@@ -199,7 +196,7 @@ pub async fn download_sources(sources: Vec<SourceFile>, srcdest: &Path) -> Sourc
                 }
             }
 
-            download_file(&source.url, &dest_path, pb).await
+            download_file(&source.url, &dest_path, task).await
         }
     });
 
@@ -224,7 +221,7 @@ pub async fn download_sources(sources: Vec<SourceFile>, srcdest: &Path) -> Sourc
 }
 
 /// Download a single file with progress tracking
-async fn download_file(url: &str, dest_path: &Path, pb: ProgressBar) -> Result<()> {
+async fn download_file(url: &str, dest_path: &Path, task: ProgressTask) -> Result<()> {
     let client = shared_client();
     let safe_url = crate::core::http::redact_url(url);
     let response = client
@@ -234,7 +231,8 @@ async fn download_file(url: &str, dest_path: &Path, pb: ProgressBar) -> Result<(
         .with_context(|| format!("Failed to fetch {safe_url}"))?;
 
     if !response.status().is_success() {
-        pb.finish_with_message(format!("Failed: HTTP {}", response.status()));
+        task.set_message(&format!("HTTP {}", response.status()));
+        task.finish(Outcome::Failed);
         return Err(anyhow::anyhow!("HTTP error: {}", response.status()));
     }
 
@@ -246,7 +244,7 @@ async fn download_file(url: &str, dest_path: &Path, pb: ProgressBar) -> Result<(
             total <= MAX_AUR_SOURCE_BYTES,
             "AUR source declares {total} bytes, exceeding the {MAX_AUR_SOURCE_BYTES}-byte limit"
         );
-        pb.set_length(total);
+        task.set_total(Some(total));
     }
 
     let parent = dest_path.parent().unwrap_or_else(|| Path::new("."));
@@ -265,7 +263,7 @@ async fn download_file(url: &str, dest_path: &Path, pb: ProgressBar) -> Result<(
         std_file,
         temporary_path,
         dest_path,
-        &pb,
+        &task,
         expected_length,
         response,
     )
@@ -277,7 +275,7 @@ async fn download_to_file(
     std_file: std::fs::File,
     temporary_path: tempfile::TempPath,
     dest_path: &Path,
-    pb: &ProgressBar,
+    task: &ProgressTask,
     expected_length: Option<u64>,
     response: reqwest::Response,
 ) -> Result<()> {
@@ -301,7 +299,7 @@ async fn download_to_file(
             downloaded <= MAX_AUR_SOURCE_BYTES,
             "AUR source exceeded the {MAX_AUR_SOURCE_BYTES}-byte limit"
         );
-        pb.set_position(downloaded);
+        task.set_position(downloaded);
     }
 
     file.flush().await.context("Failed to flush file")?;
@@ -314,6 +312,7 @@ async fn download_to_file(
     if let Some(expected) = expected_length
         && downloaded != expected
     {
+        task.finish(Outcome::Failed);
         return Err(anyhow::anyhow!(
             "Download incomplete: got {downloaded} bytes, expected {expected}"
         ));
@@ -324,13 +323,7 @@ async fn download_to_file(
         .map_err(|error| error.error)
         .with_context(|| format!("Failed to persist AUR source at {}", dest_path.display()))?;
 
-    pb.finish_with_message(format!(
-        "{} (done)",
-        dest_path.file_name().map_or_else(
-            || dest_path.display().to_string(),
-            |f| f.to_string_lossy().into_owned()
-        )
-    ));
+    task.finish(Outcome::Done);
     Ok(())
 }
 

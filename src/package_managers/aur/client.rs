@@ -306,7 +306,14 @@ fn pkgbuild_review_text(bytes: &[u8]) -> Result<String> {
     let text = String::from_utf8_lossy(bytes);
     Ok(text
         .chars()
-        .filter(|character| matches!(character, '\n' | '\t') || !character.is_control())
+        .filter(|character| {
+            matches!(character, '\n' | '\t')
+                || (!character.is_control()
+                    && !matches!(
+                        character,
+                        '\u{202a}'..='\u{202e}' | '\u{2066}'..='\u{2069}'
+                    ))
+        })
         .collect())
 }
 
@@ -1229,6 +1236,16 @@ impl AurClient {
         };
 
         Self::install_built_packages(&[archive], sudoloop.as_ref()).await?;
+        // The historical checkout is reproducible from AUR history on demand;
+        // leaving every UUID-named worktree behind would grow the build dir
+        // without bound. Removal is best-effort: a leftover checkout never
+        // affects correctness, only disk use.
+        if let Err(error) = tokio::fs::remove_dir_all(&repo_dir).await {
+            tracing::warn!(
+                "Rollback of '{package}' succeeded but its worktree {} could not be removed: {error:#}",
+                repo_dir.display()
+            );
+        }
         Ok(())
     }
 
@@ -2381,9 +2398,14 @@ impl AurClient {
 
     async fn git_pull(&self, pkg_dir: &Path) -> Result<()> {
         if !crate::core::is_root() && is_root_owned(pkg_dir) {
-            let current_user = std::env::var("USER")
-                .or_else(|_| whoami::username())
-                .unwrap_or_else(|_| "nobody".to_string());
+            // Prefer a pwd lookup over the `USER` env var, which the
+            // invoking environment can set to anything.
+            let current_user = whoami::username().unwrap_or_default();
+            let current_user = if current_user.is_empty() {
+                std::env::var("USER").unwrap_or_else(|_| "nobody".to_string())
+            } else {
+                current_user
+            };
             let fix_spinner = create_spinner("Fixing directory ownership...");
             let fix_result = Command::new("sudo")
                 .args(["chown", "-R", &format!("{current_user}:{current_user}")])
@@ -3964,6 +3986,10 @@ mod tests {
         let rendered = pkgbuild_review_text(b"pkgname=safe\n\x1b]52;c;secret\x07\n")
             .expect("small PKGBUILD must render");
         assert_eq!(rendered, "pkgname=safe\n]52;c;secret\n");
+
+        let bidi = pkgbuild_review_text(b"pkgname=safe\n\xe2\x80\xaao\xe2\x81\xa7i\n")
+            .expect("PKGBUILD with bidi characters must render");
+        assert_eq!(bidi, "pkgname=safe\noi\n");
 
         let oversized = vec![b'x'; MAX_PKGBUILD_REVIEW_BYTES + 1];
         let error = pkgbuild_review_text(&oversized)

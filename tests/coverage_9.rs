@@ -216,7 +216,7 @@ fn list_json_native_runtime_emits_exact_structured_entry() {
 }
 
 #[test]
-fn list_json_all_runtimes_emits_eight_entries_with_required_fields() {
+fn list_json_all_runtimes_emits_nine_entries_with_required_fields() {
     let project = TestProject::new();
 
     let result = project.run_with_env(&["list", "--json"], NO_MISE_ENV);
@@ -224,11 +224,13 @@ fn list_json_all_runtimes_emits_eight_entries_with_required_fields() {
 
     // Contract: one entry per natively supported runtime, each carrying
     // runtime/current/installed keys.
-    let names = ["node", "python", "rust", "go", "ruby", "java", "bun", "pi"];
+    let names = [
+        "node", "python", "rust", "go", "ruby", "java", "bun", "pi", "deno",
+    ];
     let count = result.stdout.matches("\"runtime\":").count();
     assert_eq!(
-        count, 8,
-        "exactly eight native runtime entries expected, stdout:\n{}",
+        count, 9,
+        "exactly nine native runtime entries expected, stdout:\n{}",
         result.stdout
     );
     for name in names {
@@ -240,8 +242,8 @@ fn list_json_all_runtimes_emits_eight_entries_with_required_fields() {
         );
     }
     // Every entry must carry both remaining fields.
-    assert_eq!(result.stdout.matches("\"current\":").count(), 8);
-    assert_eq!(result.stdout.matches("\"installed\":").count(), 8);
+    assert_eq!(result.stdout.matches("\"current\":").count(), 9);
+    assert_eq!(result.stdout.matches("\"installed\":").count(), 9);
 }
 
 #[test]
@@ -301,7 +303,9 @@ fn complete_lists_all_supported_native_runtimes() {
     let suggestions: Vec<&str> = result.stdout.lines().map(str::trim).collect();
     assert_eq!(
         suggestions,
-        vec!["bun", "go", "java", "node", "pi", "python", "ruby", "rust"],
+        vec![
+            "bun", "deno", "go", "java", "node", "pi", "python", "ruby", "rust"
+        ],
         "completion after `use` must offer exactly the sorted supported runtimes:\n{}",
         result.stdout
     );

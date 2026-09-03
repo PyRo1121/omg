@@ -13,6 +13,10 @@ OMG is the fastest unified package manager for Linux, replacing pacman, yay, nvm
 ## [Unreleased]
 ### Style
 
+- **Search**: Drop per-row separators, tighten list rhythm
+- **Update**: Inline source badge in update list rows
+- **Policy**: Warn about missing policy file once per process
+- **Info**: Render sync-DB info through the shared kv renderer
 - **Test**: Rustfmt the R2 --remote rollback assertion ([#185](https://github.com/PyRo1121/omg/issues/185))
 
 [#181](https://github.com/PyRo1121/omg/issues/181) squash-merged with a cargo fmt --check failure on the new
@@ -22,8 +26,93 @@ rollback CLI guard. Reapply rustfmt on current main.
 ### ⚠️  Breaking Changes
 
 - Sanitize remote strings at render boundaries; revert breaking sha2/p256/p384 bump
+### ⚡ Performance
+
+- **Runtimes**: Skip vendor fetch for exact version requests
+
+resolve_requested_version returns early when the request is not partial, so exact versions and aliases avoid list_available network work.
+
+### ✨ New Features
+
+- **Runtimes**: Uninstall versions via omg use RUNTIME VERSION --uninstall
+- **Hook**: Add --uninstall removing shell integration with backup
+- **Install**: Add --uninstall removing binaries and shell integration
+- **Runtimes**: Add native Deno management
+
+Install verified Deno release archives, resolve stable aliases and project pins, expose the vendor bin directory without shims, and register Deno across CLI discovery and health checks.
+
+- **Hooks**: Resolve project runtime ranges
+
+Read Python and Deno project pins, map compatible requests to installed versions, normalize Java feature pins, and keep each vendor bin directory intact on PATH.
+
 ### 🐛 Bug Fixes
 
+- Sanitize TUI team names
+- Sanitize TUI package versions
+- **Ci**: Merge main and resolve progress.rs clippy conflict
+
+Take main's later mechanical clippy form (allow reason, take()
+
+clear/drop) and keep this branch's portable dead_code/guard bindings.
+
+- **Ci**: Gate fast-path block instead of stubbing for backend-less builds
+- **Ci**: Repair debian-pure transaction lane call and drop dead import
+- **Ci**: Satisfy portable clippy gate without touching behavior
+- **Ci**: Gate elevated fast-path helpers for backend-less feature combos
+- **Ci**: Un-gate ensure_local_archive_consent for backend-less feature combos
+- **Ci**: Format tree with pinned rustfmt to unblock Quick Gate
+- Sanitize plain update summary rows
+- Strip bidi controls from PKGBUILD review
+- **Tea**: Sanitize package versions ([#193](https://github.com/PyRo1121/omg/issues/193))
+
+fix(tea): sanitize package versions
+
+- Sanitize repo field and invisible chars in terminal text
+
+  - Render the tea info Source field through sanitize_terminal_text; repo
+
+from daemon IPC is untrusted like name/version/description/url.
+
+  - Extend sanitize_terminal_text to strip zero-width and invisible
+
+formatting characters (U+200B-200F, U+2060-2064, U+2028/2029, U+FEFF)
+
+in addition to control bytes and bidi overrides/isolates.
+
+  - Add unit tests for the sanitizer (control/OSC, bidi, invisible,
+
+separators, visible multibyte preservation) and harden the tea info
+
+view test with zero-width and repo payloads.
+
+COM-183
+
+- Sanitize tea package versions
+- Sanitize AUR build package names
+- Sanitize update summary fields
+- **Clippy**: Clear gate after progress-lane migration (mechanical only)
+- **Test**: Create GnuPG home with 0700 in round-trip test
+- **Secrets**: Detect Google OAuth and OpenAI key formats
+- **Rollback**: Remove historical worktree after successful rebuild
+- **Keyserver**: Safe getuid and extracted home validation
+- **Sbom**: Populate component licenses from package databases
+- **Team**: Back up local omg.lock before a pull overwrites it
+- **History**: Archive retired transactions instead of dropping them
+- **Rust**: Stream component archives through disk
+
+Share tar entry safety across runtime and component extraction, and replace Rust's in-memory XZ buffer with a bounded same-filesystem temporary file.
+
+- **Python**: Select exact standalone assets
+
+Page through bounded GitHub release results, reject incompatible build variants, preserve Python prerelease identity, and stop an install search after the matching page.
+
+- **Java**: Normalize Adoptium feature requests
+
+Accept Java feature pins such as 21 and 21.0, reject unsupported update requests before network access, and keep the extracted JDK bin directory intact.
+
+- **Osv**: Scope cache key by ecosystem and validate severity scores
+- **Update**: Refresh Arch daemon snapshot after sync before probing
+- **Clippy**: Clear main gate blocked by recent landings
 - **Config**: Preserve comments and unknown keys on save
 - **Doctor**: Bound DNS resolution and detect stale db.lck
 - **Release**: Publish R2 objects to the remote bucket ([#184](https://github.com/PyRo1121/omg/issues/184))
@@ -75,7 +164,15 @@ v0.1.215 never became GitHub Latest after CI tagged it.
 
 ### 🔧 Maintenance
 
+- Sync Cargo.lock with toml_edit
 - **Deps**: Update rust dependencies ([#183](https://github.com/PyRo1121/omg/issues/183))
+### 🧪 Testing
+
+- Expose raw team names in TUI
+- Expose raw package versions in TUI
+- **Ci**: Refresh the isolated fuzz lockfile
+- Expose bidi controls in PKGBUILD review
+- Expose raw version text in tea info
 ## [0.1.215] - 2026-09-03
 ### Bench
 

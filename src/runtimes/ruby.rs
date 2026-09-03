@@ -13,8 +13,8 @@ use std::path::{Path, PathBuf};
 
 use super::common::{
     GITHUB_USER_AGENT, GithubRelease, activate_version, begin_staged_install,
-    complete_staged_install, download_with_progress, extract_tar_gz,
-    normalize_version, parse_sha256_digest, print_already_installed, print_installed, print_using,
+    complete_staged_install, download_with_progress, extract_tar_gz, normalize_version,
+    parse_sha256_digest, print_already_installed, print_installed, print_using,
     remove_file_best_effort, validate_download_filename, version_cmp,
 };
 use crate::core::http::download_client;
@@ -158,6 +158,9 @@ impl RubyManager {
     /// non-numeric requests pass through unchanged, preserving the
     /// already-installed fast path and the existing not-found UX.
     async fn resolve_requested_version(&self, version: &str) -> Result<String> {
+        if !crate::runtimes::common::is_partial_version(version) {
+            return Ok(version.to_owned());
+        }
         let available = self.list_available().await?;
         let names: Vec<String> = available.into_iter().map(|entry| entry.version).collect();
         Ok(crate::runtimes::resolve_version_request(&names, version))
@@ -169,6 +172,12 @@ impl RubyManager {
         activate_version(&self.versions_dir, &version, Path::new("bin/ruby"))?;
         print_using("Ruby", &version, &self.versions_dir.join("current/bin"));
         Ok(())
+    }
+
+    /// Remove an installed version. Refuses the active version.
+    pub fn uninstall(&self, version: &str) -> Result<()> {
+        let version = normalize_version(version);
+        super::common::uninstall_version(&self.versions_dir, &version)
     }
 }
 
@@ -234,7 +243,10 @@ mod tests {
             crate::runtimes::common::resolve_partial_version(&names, "3").as_deref(),
             Some("3.4.10")
         );
-        assert_eq!(crate::runtimes::common::resolve_partial_version(&names, "2.7"), None);
+        assert_eq!(
+            crate::runtimes::common::resolve_partial_version(&names, "2.7"),
+            None
+        );
     }
 
     #[test]

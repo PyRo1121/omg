@@ -47,13 +47,9 @@ fn main() {
     }
     if matches!(cmd, "i" | "info") && args.len() >= 3 {
         let package = &args[2];
-        // SECURITY: Basic validation for minimal binary
-        if package.len() > 100
-            || package.chars().any(|c| {
-                !c.is_ascii_alphanumeric() && !matches!(c, '-' | '_' | '.' | '+' | '@' | '/')
-            })
-        {
-            eprintln!("Invalid package name");
+        // Canonical package-name grammar, matching the daemon's own gate.
+        if let Err(error) = omg_lib::core::security::validate_package_name(package) {
+            eprintln!("Invalid package name: {error}");
             std::process::exit(1);
         }
         if let Err(error) = fast_info(package) {
@@ -172,7 +168,16 @@ fn exchange(
     let resp_bytes = read_frame(stream)?;
 
     let (_, payload) = protocol::split_frame(&resp_bytes)?;
-    Ok(bitcode::deserialize(payload)?)
+    let response: protocol::Response = bitcode::deserialize(payload)?;
+    // Single request per process, but still correlate the response ID so a
+    // stale or mismatched frame cannot be mistaken for the answer.
+    let response_id = match &response {
+        protocol::Response::Success { id, .. } | protocol::Response::Error { id, .. } => *id,
+    };
+    if response_id != request.id() {
+        anyhow::bail!("Daemon response ID mismatch");
+    }
+    Ok(response)
 }
 
 /// Fast search via raw IPC (no serde, minimal parsing)

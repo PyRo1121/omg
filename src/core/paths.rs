@@ -131,9 +131,11 @@ pub fn data_dir() -> PathBuf {
     })
 }
 
-/// Resolve a binary shipped next to the running executable. Returns `None`
-/// when no sibling file exists, so callers fall back to PATH lookup. One
-/// helper so every launcher agrees on existence semantics (`is_file`).
+/// Resolve a binary shipped next to the running executable.
+///
+/// Returns `None` when no sibling file exists, so callers fall back to
+/// PATH lookup. One helper so every launcher agrees on existence
+/// semantics (`is_file`).
 #[must_use]
 pub fn sibling_binary(name: &str) -> Option<PathBuf> {
     std::env::current_exe()
@@ -197,6 +199,9 @@ fn overridden_pacman_root() -> Option<PathBuf> {
 /// Whether the pacman root was redirected via a test override or an explicit,
 /// non-empty `OMG_PACMAN_ROOT`. When set, pacman.conf `CacheDir` resolution is
 /// skipped so harness runs stay self-contained.
+///
+/// Arch-only: the sole caller (`pacman_cache_dirs_result`) is arch-gated.
+#[cfg(feature = "arch")]
 fn pacman_root_overridden() -> bool {
     #[cfg(any(test, debug_assertions))]
     if overridden_pacman_root().is_some() {
@@ -357,11 +362,6 @@ pub fn pacman_local_dir_result() -> anyhow::Result<PathBuf> {
         return require_absolute_pacman_path(local, "OMG_PACMAN_LOCAL_DIR");
     }
     Ok(pacman_db_dir_result()?.join("local"))
-}
-
-#[cfg(not(feature = "arch"))]
-fn configured_pacman_cache_dirs() -> Option<Vec<PathBuf>> {
-    None
 }
 
 #[cfg(feature = "arch")]

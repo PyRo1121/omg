@@ -8,7 +8,7 @@ use owo_colors::OwoColorize;
 
 fn write_private_export(path: &std::path::Path, contents: impl AsRef<[u8]>) -> Result<()> {
     // Security exports must never inherit a previously permissive mode from
-    // the file they replace — force owner-only (0o600) through the replace.
+    // the file they replace - force owner-only (0o600) through the replace.
     crate::core::safe_ops::atomic_write_file_sync_private(path, contents)
         .with_context(|| format!("Failed to write security export to {}", path.display()))
 }
@@ -628,7 +628,7 @@ pub async fn check_slsa(
         .await?;
 
     // Trust-policy honesty (audit sec2 F-05): without an identity predicate,
-    // ANY Sigstore signer's valid signature "verifies" — cryptographically
+    // ANY Sigstore signer's valid signature "verifies" - cryptographically
     // true but meaningless as a trust statement. Say so loudly instead of
     // implying the artifact came from a trusted builder.
     if result.verified && certificate_identity.is_none() {
@@ -1350,7 +1350,9 @@ pub fn check_eol(_ctx: &CliContext) -> Result<()> {
     // Loop-invariant warning window: a runtime within six calendar months of
     // its EOL date counts as "Ending Soon".
     let warning_ts = eol_warning_cutoff(now).context("Failed to compute EOL warning window")?;
-    let runtimes = ["node", "python", "rust", "go", "ruby", "java", "bun"];
+    let runtimes = [
+        "node", "python", "rust", "go", "ruby", "java", "bun", "deno",
+    ];
     let mut issues = 0;
 
     for runtime in &runtimes {

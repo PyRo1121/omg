@@ -338,11 +338,14 @@ impl TeamWorkspace {
         // advisory file-lock API (stable since Rust 1.89):
         // https://doc.rust-lang.org/std/fs/struct.File.html#method.lock
         let lock_path = self.status_path().with_extension("lock");
-        let lock = std::fs::OpenOptions::new()
-            .create(true)
-            .read(true)
-            .write(true)
-            .truncate(false)
+        let mut options = std::fs::OpenOptions::new();
+        options.create(true).read(true).write(true).truncate(false);
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::OpenOptionsExt as _;
+            options.mode(0o600).custom_flags(nix::libc::O_NOFOLLOW);
+        }
+        let lock = options
             .open(&lock_path)
             .with_context(|| format!("Failed to open team status lock {}", lock_path.display()))?;
         lock.lock().context("Failed to acquire team status lock")?;
@@ -445,8 +448,7 @@ impl TeamWorkspace {
         // from PATH would let an earlier entry shadow the binary on every
         // pull or checkout.
         let omg = std::env::current_exe()
-            .map(|exe| exe.display().to_string())
-            .unwrap_or_else(|_| "omg".to_string());
+            .map_or_else(|_| "omg".to_string(), |exe| exe.display().to_string());
 
         let hooks_dir = self.root.join(".git/hooks");
         std::fs::create_dir_all(&hooks_dir)

@@ -212,6 +212,9 @@ pub enum Commands {
         runtime: String,
         /// Version to use (e.g., 20.10.0, latest, lts). If omitted, detects from version file.
         version: Option<String>,
+        /// Remove the version instead of switching to it
+        #[arg(long)]
+        uninstall: bool,
     },
 
     /// List installed versions (or available if --available/-A)
@@ -235,6 +238,9 @@ pub enum Commands {
         /// Shell type
         #[arg(value_enum)]
         shell: ShellKind,
+        /// Remove OMG shell integration from the rc file instead of printing it
+        #[arg(long)]
+        uninstall: bool,
     },
 
     /// Manage Git hooks for environment synchronization
@@ -1009,8 +1015,10 @@ pub enum ContainerCommands {
 pub enum AccountCommands {
     /// Link this machine to the OMG dashboard
     Link {
-        /// Dashboard token
-        token: String,
+        /// Dashboard token. Prefer the `OMG_DASHBOARD_TOKEN` environment
+        /// variable or a prompt-safe paste: argv is visible in shell
+        /// history and the process list.
+        token: Option<String>,
     },
     /// Show whether this machine is linked to the dashboard
     Status,

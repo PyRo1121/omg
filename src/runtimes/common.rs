@@ -8,11 +8,11 @@ use std::io::{BufReader, Read, Seek, SeekFrom, Write};
 use std::path::{Path, PathBuf};
 
 use anyhow::{Context, Result};
-use indicatif::{ProgressBar, ProgressStyle};
 use owo_colors::OwoColorize;
 use serde::Deserialize;
 use sha2::{Digest, Sha256};
 
+use crate::cli::progress::{Accent, Outcome, ProgressTask, TaskKind, TaskSpec};
 use crate::core::archive::stripped_archive_path;
 
 pub(crate) const GITHUB_USER_AGENT: &str = "omg-package-manager/0.1";
@@ -32,6 +32,75 @@ pub(crate) struct GithubAsset {
     pub(crate) name: String,
     pub(crate) browser_download_url: Option<String>,
     pub(crate) digest: Option<String>,
+}
+
+/// Diagnostic message when a GitHub response indicates the API rate limit is
+/// exhausted, so callers surface specific remediation instead of a bare 403.
+fn github_rate_limit_diagnostic(
+    status: reqwest::StatusCode,
+    headers: &reqwest::header::HeaderMap,
+) -> Option<String> {
+    if !matches!(status.as_u16(), 403 | 429) {
+        return None;
+    }
+    let remaining = headers.get("x-ratelimit-remaining")?;
+    if remaining.to_str().ok()? != "0" {
+        return None;
+    }
+    let reset = headers
+        .get("x-ratelimit-reset")
+        .and_then(|value| value.to_str().ok())
+        .unwrap_or("unknown");
+    Some(format!(
+        "GitHub API rate limit exhausted (HTTP {status}, X-RateLimit-Remaining: 0, \
+         X-RateLimit-Reset: {reset}); wait for the limit window to reset"
+    ))
+}
+
+/// Fetch GitHub releases with explicit pagination bounds.
+///
+/// Pages are requested in order until a page is short, `stop_when` matches a
+/// release, or `max_pages` is reached. HTTP and parse failures identify the
+/// source URL.
+pub(crate) async fn fetch_github_releases<F>(
+    client: &reqwest::Client,
+    releases_url: &str,
+    per_page: u32,
+    max_pages: u32,
+    stop_when: F,
+) -> Result<Vec<GithubRelease>>
+where
+    F: Fn(&GithubRelease) -> bool,
+{
+    let mut releases = Vec::new();
+    for page in 1..=max_pages {
+        let response = client
+            .get(format!("{releases_url}?per_page={per_page}&page={page}"))
+            .header("User-Agent", GITHUB_USER_AGENT)
+            .send()
+            .await
+            .with_context(|| format!("Failed to fetch GitHub releases from {releases_url}"))?;
+
+        if let Some(diagnostic) =
+            github_rate_limit_diagnostic(response.status(), response.headers())
+        {
+            anyhow::bail!("{diagnostic}");
+        }
+
+        let page_releases: Vec<GithubRelease> = response
+            .error_for_status()
+            .with_context(|| format!("GitHub releases request failed: {releases_url}"))?
+            .json()
+            .await
+            .with_context(|| format!("Failed to parse GitHub releases payload: {releases_url}"))?;
+        let short = page_releases.len() < per_page as usize;
+        let stop = page_releases.iter().any(&stop_when);
+        releases.extend(page_releases);
+        if short || stop {
+            break;
+        }
+    }
+    Ok(releases)
 }
 
 pub(crate) fn host_os_tag(
@@ -163,19 +232,16 @@ impl<W: Write> Write for BudgetedWriter<W> {
     }
 }
 
+#[cfg_attr(
+    not(any(feature = "arch", feature = "debian", feature = "debian-pure")),
+    allow(dead_code, reason = "used by platform package database readers")
+)]
 pub(crate) struct BudgetedSink {
     buf: Vec<u8>,
     remaining: u64,
 }
 
 impl BudgetedSink {
-    pub(crate) fn with_default_budget() -> Self {
-        Self {
-            buf: Vec::new(),
-            remaining: MAX_DECOMPRESSED_BYTES,
-        }
-    }
-
     /// The configured maximum budget, for callers that delegate the choice.
     /// Only Debian-side extraction delegates today.
     #[cfg(any(feature = "arch", feature = "debian", feature = "debian-pure"))]
@@ -194,6 +260,8 @@ impl BudgetedSink {
         }
     }
 
+    /// Test-only: exposes the accumulated buffer for size assertions.
+    #[cfg(test)]
     pub(crate) fn into_inner(self) -> Vec<u8> {
         self.buf
     }
@@ -264,25 +332,6 @@ impl Write for BudgetedSink {
     }
 }
 
-/// Progress bar style for downloads
-#[expect(clippy::expect_used)] // Path operations on known-valid HOME directory; failure is unrecoverable
-fn download_progress_style() -> ProgressStyle {
-    ProgressStyle::default_bar()
-        .template(
-            "{spinner:.green} [{bar:40.cyan/blue}] {bytes}/{total_bytes} ({bytes_per_sec}, {eta})",
-        )
-        .expect("valid template")
-        .progress_chars("█▓▒░")
-}
-
-/// Progress bar style for extraction
-#[expect(clippy::expect_used)] // Path operations on known-valid HOME directory; failure is unrecoverable
-fn extract_progress_style() -> ProgressStyle {
-    ProgressStyle::default_spinner()
-        .template("{spinner:.green} {msg}")
-        .expect("valid template")
-}
-
 /// Validate that an upstream-supplied archive name is exactly one ordinary
 /// filename component before it is joined beneath a local download directory.
 pub(crate) fn validate_download_filename(filename: &str) -> Result<&str> {
@@ -329,8 +378,17 @@ pub async fn download_with_progress(
         total_size <= MAX_RUNTIME_DOWNLOAD_BYTES,
         "Runtime download declares {total_size} bytes, exceeding the {MAX_RUNTIME_DOWNLOAD_BYTES}-byte limit"
     );
-    let pb = ProgressBar::new(total_size);
-    pb.set_style(download_progress_style());
+    let label = dest.file_name().map_or_else(
+        || "download".to_string(),
+        |name| name.to_string_lossy().into_owned(),
+    );
+    let task = ProgressTask::start(&TaskSpec {
+        label,
+        kind: TaskKind::Bytes {
+            total: (total_size > 0).then_some(total_size),
+        },
+        accent: Accent::Network,
+    });
 
     let parent = dest.parent().unwrap_or_else(|| Path::new("."));
     tokio::fs::create_dir_all(parent)
@@ -359,7 +417,7 @@ pub async fn download_with_progress(
         hasher.update(&chunk);
 
         downloaded = bounded_download_size(downloaded, chunk.len())?;
-        pb.set_position(downloaded);
+        task.set_position(downloaded);
     }
 
     file.flush()
@@ -378,13 +436,12 @@ pub async fn download_with_progress(
             "Checksum mismatch!\n  Expected: {expected}\n  Got: {actual}\n\nThis could indicate a corrupted download or security issue."
         );
     }
-    pb.println(format!("  {} Checksum verified", "✓".green()));
 
     temporary_path
         .persist(dest)
         .map_err(|error| error.error)
         .with_context(|| format!("Failed to finalize download: {}", dest.display()))?;
-    pb.finish_and_clear();
+    task.finish(Outcome::Done);
     Ok(())
 }
 
@@ -464,29 +521,39 @@ fn create_archive_links(links: Vec<PendingArchiveLink>) -> Result<()> {
     Ok(())
 }
 
-/// Process every tar entry into `dest_dir`, deferring symlink/hard-link
-/// creation until all regular content exists.
+/// Selector that maps one untrusted archive entry path to its
+/// destination-relative path.
 ///
-/// Shared by [`extract_tar_gz`] and [`extract_tar_xz`]; the decompression
-/// strategy differs, the entry handling must not.
+/// `None` skips the entry; `Some(relative)` extracts it below the
+/// destination directory. Selectors must reject unsafe path components
+/// (absolute roots, `..`) with an error instead of mapping them.
+pub(crate) type TarEntrySelector<'a> = &'a (dyn Fn(&Path) -> Result<Option<PathBuf>> + 'a);
+
+/// Process every tar entry selected by `select` into `dest_dir`, deferring
+/// symlink/hard-link creation until all regular content exists.
+///
+/// `select` decides which entries are extracted and where they land below
+/// `dest_dir`; entries mapping to `None` are skipped. Shared by the
+/// whole-runtime extractors and the component extractors so the path, link,
+/// and entry-type safety rules cannot drift between them.
 fn extract_tar_entries<R: std::io::Read>(
     archive: &mut tar::Archive<R>,
     dest_dir: &Path,
-    strip_components: usize,
-    pb: &ProgressBar,
+    select: TarEntrySelector<'_>,
+    task: &ProgressTask,
 ) -> Result<()> {
-    pb.set_message("Extracting...");
+    task.set_message("Extracting...");
     let mut pending_links = Vec::new();
 
     for entry in archive.entries()? {
         let mut entry = entry?;
         let path = entry.path()?;
-        let Some(stripped) = stripped_archive_path(&path, strip_components)? else {
+        let Some(stripped) = select(&path)? else {
             continue;
         };
 
         let dest_path = dest_dir.join(&stripped);
-        pb.set_message(format!("Extracting: {}", stripped.display()));
+        task.set_message(&format!("Extracting: {}", stripped.display()));
 
         if let Some(parent) = dest_path.parent() {
             fs::create_dir_all(parent)?;
@@ -511,11 +578,11 @@ fn extract_tar_entries<R: std::io::Read>(
             let target = entry
                 .link_name()?
                 .context("Archive hard link is missing its target")?;
-            let target = stripped_archive_path(&target, strip_components)?
-                .context("Archive hard link target was stripped away")?;
+            let target_relative = select(&target)?
+                .context("Archive hard link target was excluded by the entry selector")?;
             pending_links.push(PendingArchiveLink::Hard {
                 path: dest_path,
-                target: dest_dir.join(target),
+                target: dest_dir.join(target_relative),
             });
         } else {
             anyhow::bail!(
@@ -525,6 +592,33 @@ fn extract_tar_entries<R: std::io::Read>(
         }
     }
     create_archive_links(pending_links)
+}
+
+/// Synchronously extract selected entries from a .tar.gz component archive
+/// with a bounded decompression budget.
+///
+/// Also backs whole-runtime extraction: [`extract_tar_gz`] calls this with the
+/// default strip selector and [`MAX_DECOMPRESSED_BYTES`].
+pub(crate) fn extract_component_tar_gz(
+    archive_path: &Path,
+    dest_dir: &Path,
+    budget: u64,
+    select: TarEntrySelector<'_>,
+) -> Result<()> {
+    let file = File::open(archive_path)
+        .with_context(|| format!("Failed to open archive: {}", archive_path.display()))?;
+
+    let decoder = flate2::read::GzDecoder::new(BufReader::new(file));
+    let bounded = BudgetedReader::new(decoder, budget);
+    let mut archive = tar::Archive::new(bounded);
+
+    let task = extract_task(archive_path);
+
+    fs::create_dir_all(dest_dir)?;
+    extract_tar_entries(&mut archive, dest_dir, select, &task)?;
+
+    task.finish(Outcome::Done);
+    Ok(())
 }
 
 /// Extract a .tar.gz archive with progress
@@ -537,23 +631,57 @@ pub(crate) async fn extract_tar_gz(
     let dest_dir = dest_dir.to_path_buf();
 
     tokio::task::spawn_blocking(move || {
-        let file = File::open(&archive_path)
-            .with_context(|| format!("Failed to open archive: {}", archive_path.display()))?;
-
-        let decoder = flate2::read::GzDecoder::new(BufReader::new(file));
-        let bounded = BudgetedReader::new(decoder, MAX_DECOMPRESSED_BYTES);
-        let mut archive = tar::Archive::new(bounded);
-
-        let pb = ProgressBar::new_spinner();
-        pb.set_style(extract_progress_style());
-
-        fs::create_dir_all(&dest_dir)?;
-        extract_tar_entries(&mut archive, &dest_dir, strip_components, &pb)?;
-
-        pb.finish_and_clear();
-        Ok(())
+        let select = |path: &Path| -> Result<Option<PathBuf>> {
+            stripped_archive_path(path, strip_components)
+        };
+        let task = extract_task(&archive_path);
+        let result =
+            extract_component_tar_gz(&archive_path, &dest_dir, MAX_DECOMPRESSED_BYTES, &select);
+        task.finish(Outcome::Done);
+        result
     })
     .await?
+}
+
+/// Synchronously extract selected entries from a .tar.xz component archive
+/// with a bounded decompression budget.
+///
+/// lzma-rs exposes a `Read -> Write` API rather than a streaming decoder, so
+/// the bounded output is kept in a same-filesystem temporary file: a valid
+/// archive never needs its whole decompressed tar payload on the heap, and an
+/// over-budget archive aborts before any output is published. Also backs
+/// whole-runtime extraction: [`extract_tar_xz`] calls this with the default
+/// strip selector and [`MAX_DECOMPRESSED_BYTES`].
+pub(crate) fn extract_component_tar_xz(
+    archive_path: &Path,
+    dest_dir: &Path,
+    budget: u64,
+    select: TarEntrySelector<'_>,
+) -> Result<()> {
+    let file = File::open(archive_path)
+        .with_context(|| format!("Failed to open archive: {}", archive_path.display()))?;
+
+    let task = extract_task(archive_path);
+    task.set_message("Decompressing XZ...");
+
+    fs::create_dir_all(dest_dir)?;
+    let output = tempfile::tempfile_in(dest_dir).with_context(|| {
+        format!(
+            "Failed to create temporary XZ output in {}",
+            dest_dir.display()
+        )
+    })?;
+    let mut output = BudgetedWriter::new(output, budget);
+    lzma_rs::xz_decompress(&mut BufReader::new(file), &mut output)
+        .context("Failed to decompress XZ archive")?;
+    let mut output = output.into_inner();
+    output.seek(SeekFrom::Start(0))?;
+
+    let mut archive = tar::Archive::new(output);
+    extract_tar_entries(&mut archive, dest_dir, select, &task)?;
+
+    task.finish(Outcome::Done);
+    Ok(())
 }
 
 /// Extract a .tar.xz archive with progress (pure Rust)
@@ -566,34 +694,15 @@ pub(crate) async fn extract_tar_xz(
     let dest_dir = dest_dir.to_path_buf();
 
     tokio::task::spawn_blocking(move || {
-        let file = File::open(&archive_path)
-            .with_context(|| format!("Failed to open archive: {}", archive_path.display()))?;
-
-        let pb = ProgressBar::new_spinner();
-        pb.set_style(extract_progress_style());
-        pb.set_message("Decompressing XZ...");
-
-        // lzma-rs exposes Read -> Write rather than a streaming decoder.
-        // Keep the bounded output on disk so a valid large archive does not
-        // require its entire decompressed tar payload on the heap.
-        fs::create_dir_all(&dest_dir)?;
-        let output = tempfile::tempfile_in(&dest_dir).with_context(|| {
-            format!(
-                "Failed to create temporary XZ output in {}",
-                dest_dir.display()
-            )
-        })?;
-        let mut output = BudgetedWriter::new(output, MAX_DECOMPRESSED_BYTES);
-        lzma_rs::xz_decompress(&mut BufReader::new(file), &mut output)
-            .context("Failed to decompress XZ archive")?;
-        let mut output = output.into_inner();
-        output.seek(SeekFrom::Start(0))?;
-
-        let mut archive = tar::Archive::new(output);
-        extract_tar_entries(&mut archive, &dest_dir, strip_components, &pb)?;
-
-        pb.finish_and_clear();
-        Ok(())
+        let select = |path: &Path| -> Result<Option<PathBuf>> {
+            stripped_archive_path(path, strip_components)
+        };
+        let task = extract_task(&archive_path);
+        task.set_message("Decompressing XZ...");
+        let result =
+            extract_component_tar_xz(&archive_path, &dest_dir, MAX_DECOMPRESSED_BYTES, &select);
+        task.finish(Outcome::Done);
+        result
     })
     .await?
 }
@@ -613,9 +722,8 @@ pub(crate) async fn extract_zip(
 
         let mut archive = zip::ZipArchive::new(file).context("Failed to read ZIP archive")?;
 
-        let pb = ProgressBar::new_spinner();
-        pb.set_style(extract_progress_style());
-        pb.set_message("Extracting...");
+        let task = extract_task(&archive_path);
+        task.set_message("Extracting...");
 
         fs::create_dir_all(&dest_dir)?;
         let mut remaining_budget = MAX_DECOMPRESSED_BYTES;
@@ -636,7 +744,7 @@ pub(crate) async fn extract_zip(
             }
 
             let dest_path = dest_dir.join(&stripped);
-            pb.set_message(format!("Extracting: {}", stripped.display()));
+            task.set_message(&format!("Extracting: {}", stripped.display()));
 
             if file.is_dir() {
                 fs::create_dir_all(&dest_path)?;
@@ -665,10 +773,22 @@ pub(crate) async fn extract_zip(
             }
         }
 
-        pb.finish_and_clear();
+        task.finish(Outcome::Done);
         Ok(())
     })
     .await?
+}
+
+/// One shared spinner lane for archive extraction work.
+fn extract_task(archive_path: &Path) -> ProgressTask {
+    ProgressTask::start(&TaskSpec {
+        label: archive_path.file_name().map_or_else(
+            || "archive".to_string(),
+            |name| name.to_string_lossy().into_owned(),
+        ),
+        kind: TaskKind::Spinner,
+        accent: Accent::System,
+    })
 }
 
 const INSTALL_MARKER: &str = ".omg-install-complete";
@@ -1003,6 +1123,36 @@ pub(crate) fn activate_version_with_linked_binary(
     set_current_version(versions_dir, version)
 }
 
+/// Remove an installed runtime version directory.
+///
+/// Refuses when the version is active (switch first), when the version is
+/// not installed, and when the version path is not a real directory:
+/// following a symlink here could delete outside the versions tree.
+/// Mirrors the validation `set_current_version` applies on the way in.
+pub(crate) fn uninstall_version(versions_dir: &Path, version: &str) -> Result<()> {
+    crate::core::security::validate_runtime_version(version)?;
+
+    // is_valid_version_dir rejects symlinks, so the removal below cannot
+    // escape the versions tree through a linked version path.
+    let version_dir = versions_dir.join(version);
+    if !is_valid_version_dir(&version_dir) {
+        anyhow::bail!("Version {version} is not installed; nothing to remove");
+    }
+    if fs::read_link(versions_dir.join("current"))
+        .ok()
+        .is_some_and(|target| target.ends_with(version))
+    {
+        anyhow::bail!("Version {version} is active; switch to another version before removing it");
+    }
+    fs::remove_dir_all(&version_dir).with_context(|| {
+        format!(
+            "Failed to remove runtime version directory: {}",
+            version_dir.display()
+        )
+    })?;
+    Ok(())
+}
+
 /// Create or update the "current" symlink
 pub(crate) fn set_current_version(versions_dir: &Path, version: &str) -> Result<()> {
     crate::core::security::validate_runtime_version(version)?;
@@ -1298,6 +1448,40 @@ mod tests {
     use super::*;
     use tempfile::TempDir;
 
+    /// Uninstall removes the version directory, refuses the active
+    /// version and missing versions, and never follows a symlinked
+    /// version path outside the versions tree.
+    #[cfg(unix)]
+    #[test]
+    fn uninstall_removes_only_inactive_real_version_dirs() -> anyhow::Result<()> {
+        use std::os::unix::fs::symlink;
+        let temp = TempDir::new()?;
+        let versions = temp.path();
+        for version in ["20.10.0", "22.0.0"] {
+            let dir = versions.join(version);
+            fs::create_dir_all(dir.join("bin"))?;
+            fs::write(dir.join("bin").join("node"), b"fake")?;
+        }
+        symlink(versions.join("20.10.0"), versions.join("current"))?;
+
+        assert!(uninstall_version(versions, "22.0.0").is_ok());
+        assert!(!versions.join("22.0.0").exists());
+        assert!(versions.join("20.10.0").exists());
+
+        let active = uninstall_version(versions, "20.10.0").expect_err("active refusal");
+        assert!(active.to_string().contains("active"), "{active:#}");
+        assert!(versions.join("20.10.0").exists());
+
+        let missing = uninstall_version(versions, "99.99.99").expect_err("missing refusal");
+        assert!(missing.to_string().contains("not installed"), "{missing:#}");
+
+        symlink(versions.join("20.10.0"), versions.join("9.9.9"))?;
+        let linked = uninstall_version(versions, "9.9.9").expect_err("symlink refusal");
+        assert!(linked.to_string().contains("not installed"), "{linked:#}");
+        assert!(versions.join("20.10.0").exists());
+        Ok(())
+    }
+
     fn tar_archive(entry_type: tar::EntryType) -> Vec<u8> {
         let mut bytes = Vec::new();
         let mut builder = tar::Builder::new(&mut bytes);
@@ -1331,6 +1515,36 @@ mod tests {
         assert_eq!(
             downloadable.assets[0].browser_download_url.as_deref(),
             Some("https://example.invalid/runtime.tgz")
+        );
+    }
+
+    #[test]
+    fn github_rate_limit_diagnostic_fires_only_on_exhaustion() {
+        let mut headers = reqwest::header::HeaderMap::new();
+        headers.insert(
+            "x-ratelimit-remaining",
+            reqwest::header::HeaderValue::from_static("0"),
+        );
+        headers.insert(
+            "x-ratelimit-reset",
+            reqwest::header::HeaderValue::from_static("1893456000"),
+        );
+        let message =
+            github_rate_limit_diagnostic(reqwest::StatusCode::FORBIDDEN, &headers).unwrap();
+        assert!(message.contains("rate limit exhausted"));
+        assert!(message.contains("1893456000"));
+
+        *headers.get_mut("x-ratelimit-remaining").unwrap() =
+            reqwest::header::HeaderValue::from_static("4999");
+        assert!(
+            github_rate_limit_diagnostic(reqwest::StatusCode::FORBIDDEN, &headers).is_none(),
+            "remaining quota must not read as exhaustion"
+        );
+        *headers.get_mut("x-ratelimit-remaining").unwrap() =
+            reqwest::header::HeaderValue::from_static("0");
+        assert!(
+            github_rate_limit_diagnostic(reqwest::StatusCode::OK, &headers).is_none(),
+            "a successful final request must remain usable"
         );
     }
 

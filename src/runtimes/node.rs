@@ -16,8 +16,8 @@ use std::path::{Path, PathBuf};
 
 use super::common::{
     activate_version, begin_staged_install, complete_staged_install, download_with_progress,
-    extract_tar_xz, normalize_version, parse_sha256_digest,
-    print_already_installed, print_installed, print_using, remove_file_best_effort,
+    extract_tar_xz, normalize_version, parse_sha256_digest, print_already_installed,
+    print_installed, print_using, remove_file_best_effort,
 };
 use crate::core::http::download_client;
 
@@ -193,6 +193,9 @@ impl NodeManager {
     /// Exact and non-numeric requests pass through unchanged, preserving the
     /// already-installed fast path and the existing not-found UX.
     async fn resolve_requested_version(&self, version: &str) -> Result<String> {
+        if !crate::runtimes::common::is_partial_version(version) {
+            return Ok(version.to_owned());
+        }
         let available = self.list_available().await?;
         Ok(crate::runtimes::resolve_version_request(
             &available_version_names(&available),
@@ -225,6 +228,12 @@ impl NodeManager {
         activate_version(&self.versions_dir, &version, Path::new("bin/node"))?;
         print_using("Node.js", &version, &self.versions_dir.join("current/bin"));
         Ok(())
+    }
+
+    /// Remove an installed version. Refuses the active version.
+    pub fn uninstall(&self, version: &str) -> Result<()> {
+        let version = normalize_version(version);
+        super::common::uninstall_version(&self.versions_dir, &version)
     }
 }
 
@@ -393,7 +402,10 @@ mod tests {
     #[test]
     fn unknown_partial_has_no_resolution_and_falls_back_to_the_request() {
         let names = available_version_names(&fixture_versions());
-        assert_eq!(crate::runtimes::common::resolve_partial_version(&names, "22"), None);
+        assert_eq!(
+            crate::runtimes::common::resolve_partial_version(&names, "22"),
+            None
+        );
         // Garbage never reaches the vendor list: it is not partial, so the
         // manager passes it through to the existing not-found UX.
         assert!(!crate::runtimes::common::is_partial_version("garbage"));

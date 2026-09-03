@@ -30,11 +30,11 @@ pub enum OutputMode {
 }
 
 static OUTPUT_MODE: AtomicU8 = AtomicU8::new(1);
-/// Process-wide registry for every live progress bar. Attaching bars here
+/// Process-wide registry for every live progress lane. Attaching lanes here
 /// (instead of leaving them standalone) lets [`quiesce_terminal`] hide the
 /// whole family at once when an interactive prompt such as a PKGBUILD review
-/// must own the terminal.
-static AUR_PROGRESS: OnceLock<MultiProgress> = OnceLock::new();
+/// or an ALPM dialog must own the terminal.
+static PROGRESS_REGISTRY: OnceLock<MultiProgress> = OnceLock::new();
 /// Refcount of active [`TerminalQuiesceGuard`]s; transitions run under the
 /// lock so the draw target flips exactly once per 0->1 and N->0 boundary.
 static QUIESCE_COUNT: Mutex<usize> = Mutex::new(0);
@@ -93,20 +93,24 @@ impl Drop for TerminalQuiesceGuard {
 }
 
 fn progress_registry() -> &'static MultiProgress {
-    AUR_PROGRESS.get_or_init(MultiProgress::new)
+    PROGRESS_REGISTRY.get_or_init(MultiProgress::new)
 }
 
-/// Attach a bar to the process-wide progress registry so quiescing can hide
-/// it together with every other live bar.
+/// Attach a lane to the process-wide progress registry so quiescing can hide
+/// it together with every other live lane.
+///
+/// Lanes are visible only in [`OutputMode::Interactive`]; every other mode
+/// receives an invisible bar so callers drive one code path regardless of
+/// policy while redirected or quiet output stays free of animation and ANSI.
 pub(crate) fn register_spinner(bar: ProgressBar) -> ProgressBar {
-    if output_mode() == OutputMode::Quiet {
+    if output_mode() != OutputMode::Interactive {
         return ProgressBar::hidden();
     }
     progress_registry().add(bar)
 }
 
 /// Print `line`, or buffer it while a terminal quiesce is active.
-fn emit_or_defer(line: String) {
+pub(crate) fn emit_or_defer(line: String) {
     if quiesce_active() {
         lock_deferred_lines().push(line);
     } else {
@@ -207,6 +211,9 @@ impl Drop for AurBuildProgress {
 #[must_use]
 #[expect(clippy::expect_used)]
 pub fn aur_build_progress(package: &str, log_path: &Path) -> AurBuildProgress {
+    // Package names reach lane prefixes rendered raw onto the terminal.
+    let package = crate::cli::style::sanitize_terminal_text(package);
+    let package = package.as_str();
     let mode = output_mode();
     let progress = match mode {
         OutputMode::Interactive => {
@@ -264,7 +271,7 @@ pub fn aur_build_progress(package: &str, log_path: &Path) -> AurBuildProgress {
     }
 }
 
-fn format_duration(duration: Duration) -> String {
+pub(crate) fn format_duration(duration: Duration) -> String {
     let seconds = duration.as_secs();
     if seconds < 60 {
         format!("{seconds}s")
@@ -368,11 +375,12 @@ pub fn print_phase_header(icon: &str, phase: &str, context: &str) {
     if output_mode() == OutputMode::Quiet {
         return;
     }
-    if crate::cli::style::colors_enabled() {
-        println!("\n{} {} {}", icon, phase.bold(), context.dimmed());
+    let line = if crate::cli::style::colors_enabled() {
+        format!("\n{} {} {}", icon, phase.bold(), context.dimmed())
     } else {
-        println!("\n{icon} {phase} {context}");
-    }
+        format!("\n{icon} {phase} {context}")
+    };
+    emit_or_defer(line);
 }
 
 /// Print a minimal section divider
@@ -449,13 +457,12 @@ pub fn print_success_with_packages(msg: &str, packages: &[String]) {
 
 /// Error state - clean X with message
 pub fn print_error(msg: &str) {
-    println!();
-    if crate::cli::style::colors_enabled() {
-        println!("  {} {}", "✗".red().bold(), msg);
+    let line = if crate::cli::style::colors_enabled() {
+        format!("\n  {} {}\n", "✗".red().bold(), msg)
     } else {
-        println!("  ✗ {msg}");
-    }
-    println!();
+        format!("\n  ✗ {msg}\n")
+    };
+    emit_or_defer(line);
 }
 
 /// Warning state - subtle warning indicator
@@ -544,29 +551,32 @@ pub fn print_update_summary(updates: &[crate::package_managers::types::UpdateInf
 
     println!();
 
-    // Show sample of updates (up to 15)
+    // Show sample of updates (up to 15), one line each with the source
+    // badge inline so long update lists stay scannable.
     let display_limit = 15;
     for update in updates.iter().take(display_limit) {
+        let name = crate::cli::style::sanitize_terminal_text(&update.name);
+        let old_version = crate::cli::style::sanitize_terminal_text(&update.old_version);
+        let new_version = crate::cli::style::sanitize_terminal_text(&update.new_version);
+        let repo = crate::cli::style::sanitize_terminal_text(&update.repo);
+
         if crate::cli::style::colors_enabled() {
             let repo_badge = if update.repo == "AUR" {
                 "aur".magenta().to_string()
             } else {
-                update.repo.as_str().dimmed().to_string()
+                repo.as_str().dimmed().to_string()
             };
 
             println!(
-                "    {} {} {} {}",
-                update.name.cyan(),
-                update.old_version.dimmed(),
+                "    {} {} {} {} {}",
+                name.cyan(),
+                old_version.dimmed(),
                 "→".dimmed(),
-                update.new_version.green()
+                new_version.green(),
+                repo_badge
             );
-            println!("      {repo_badge}");
         } else {
-            println!(
-                "    {} {} → {} ({})",
-                update.name, update.old_version, update.new_version, update.repo
-            );
+            println!("    {name} {old_version} → {new_version} ({repo})");
         }
     }
 
@@ -652,6 +662,7 @@ pub fn print_aur_build_phase(phase: &str, package: &str) {
     if output_mode() == OutputMode::Quiet {
         return;
     }
+    let package = crate::cli::style::sanitize_terminal_text(package);
     if crate::cli::style::colors_enabled() {
         println!("  {} {} {}", "·".magenta(), phase.dimmed(), package.cyan());
     } else {

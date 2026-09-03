@@ -18,8 +18,8 @@ use serde::Deserialize;
 
 use super::common::{
     activate_version, begin_staged_install, complete_staged_install, download_with_progress,
-    extract_tar_gz, normalize_version, parse_sha256_digest,
-    print_already_installed, print_installed, remove_file_best_effort,
+    extract_tar_gz, normalize_version, parse_sha256_digest, print_already_installed,
+    print_installed, remove_file_best_effort,
 };
 use crate::core::http::download_client;
 
@@ -131,6 +131,9 @@ impl GoManager {
     /// Exact and non-numeric requests pass through unchanged, preserving the
     /// already-installed fast path and the existing not-found UX.
     async fn resolve_requested_version(&self, version: &str) -> Result<String> {
+        if !crate::runtimes::common::is_partial_version(version) {
+            return Ok(version.to_owned());
+        }
         let available = self.list_available().await?;
         Ok(crate::runtimes::resolve_version_request(
             &available_version_names(&available),
@@ -147,6 +150,12 @@ impl GoManager {
         let bin_dir = self.versions_dir.join("current/bin");
         Self::print_version_info(&version, &version_dir, &bin_dir);
         Ok(())
+    }
+
+    /// Remove an installed version. Refuses the active version.
+    pub fn uninstall(&self, version: &str) -> Result<()> {
+        let version = normalize_version(version);
+        super::common::uninstall_version(&self.versions_dir, &version)
     }
 
     fn print_version_info(version: &str, goroot: &Path, bin_dir: &Path) {
@@ -261,7 +270,10 @@ mod tests {
             crate::runtimes::common::resolve_partial_version(&names, "1.20").as_deref(),
             Some("1.20")
         );
-        assert_eq!(crate::runtimes::common::resolve_partial_version(&names, "1.22"), None);
+        assert_eq!(
+            crate::runtimes::common::resolve_partial_version(&names, "1.22"),
+            None
+        );
     }
 
     #[test]

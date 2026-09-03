@@ -395,16 +395,6 @@ mod update_check_tests {
         result.assert_success();
         result.assert_reports_update_status();
     }
-
-    #[test]
-    fn test_check_mode_reports_status() {
-        if !system_tests_enabled() {
-            return;
-        }
-        let result = run_omg(&["update", "--check"]);
-        result.assert_success();
-        result.assert_reports_update_status();
-    }
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════

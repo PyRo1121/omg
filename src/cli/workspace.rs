@@ -454,7 +454,10 @@ fn run_project_command(
         // Repo-defined shell: ask before running it in an attended
         // terminal. Automation without a terminal keeps working, and the
         // command is always echoed so logs show what ran.
-        println!("  {} Running repo-defined command: {custom_cmd}", style::arrow("→"));
+        println!(
+            "  {} Running repo-defined command: {custom_cmd}",
+            style::arrow("→")
+        );
         if console::user_attended()
             && !dialoguer::Confirm::new()
                 .with_prompt(format!(
@@ -510,9 +513,7 @@ fn run_project_command(
 /// Resolve the `omg` binary next to the running executable, falling back to
 /// PATH lookup. A PATH-shadowed `omg` must not run with workspace privileges.
 fn sibling_omg() -> std::ffi::OsString {
-    crate::core::paths::sibling_binary("omg")
-        .map(|path| path.into_os_string())
-        .unwrap_or_else(|| "omg".into())
+    crate::core::paths::sibling_binary("omg").map_or_else(|| "omg".into(), PathBuf::into_os_string)
 }
 
 /// Show environment diff across workspace

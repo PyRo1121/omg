@@ -20,3 +20,5 @@ ts	phase	decision	why	evidence	result
 2026-09-03T00:00:00Z	land	rebased onto remote, pushed, restored other lanes stash	remote moved mid run, stash kept their work safe	main eec570bd	pushed, tree intact
 2026-09-03T00:00:00Z	land	remote fixed dep break identically, took theirs, rebased 30, pushed	conflict resolved by accepting upstream Cargo.toml	main bf3cc1ec	pushed, stash restored
 2026-09-03T00:00:00Z	fixwave	25 fix commits landed: sanitize, guards, deletions, unifications, tests	product decisions and dirty file items left	TODO open count below	main	current
+2026-09-03T00:00:00Z	fixwave2	resolvers unified, macro adopted, search helper shared, validation pinned, dup claims dismissed	114 runtime tests plus daemon suites green	main	current
+2026-09-03T00:00:00Z	final	TODO at zero open, 99 closed. Full lib suite 1012 green plus targeted integration suites	zero defect run	main	current

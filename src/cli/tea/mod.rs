@@ -81,7 +81,7 @@ mod status_model;
 mod update_model;
 mod wrappers;
 
-pub use cmd::Cmd;
+pub use cmd::{Cmd, StyledTextConfig, TextStyle, View};
 pub use renderer::Renderer;
 
 /// Upper bound on command steps (`update` transitions, batch entries) a
@@ -91,7 +91,6 @@ pub use renderer::Renderer;
 const MAX_CMD_STEPS: usize = 100_000;
 
 // Re-export configuration types for convenience
-pub use cmd::{StyledTextConfig, TextStyle};
 
 // Re-export models
 pub use info_model::{InfoModel, InfoMsg, InfoSource};
@@ -199,7 +198,7 @@ impl<M: Model> Program<M> {
                     self.render()?;
                     queue.push(next);
                 }
-                other => execute_output_cmd(&mut self.renderer, other)?,
+                other @ Cmd::View(_) => execute_output_cmd(&mut self.renderer, other)?,
             }
         }
         Ok(())
@@ -224,31 +223,41 @@ impl<M: Model> Program<M> {
 fn execute_output_cmd<M>(renderer: &mut Renderer, cmd: Cmd<M>) -> io::Result<()> {
     match cmd {
         Cmd::None | Cmd::Msg(_) | Cmd::Batch(_) | Cmd::Exec(_) => {}
-        Cmd::PrintLn(output) => {
+        Cmd::View(view) => execute_view(renderer, view)?,
+    }
+    Ok(())
+}
+
+/// Render one [`View`] against a renderer. The single home for
+/// presentation dispatch; both the Elm runtime and the fallback executor
+/// route through here in spirit, each with its own error type.
+fn execute_view(renderer: &mut Renderer, view: View) -> io::Result<()> {
+    match view {
+        View::PrintLn(output) => {
             renderer.println(&output)?;
         }
-        Cmd::Info(msg) => {
+        View::Info(msg) => {
             renderer.info(&msg)?;
         }
-        Cmd::Success(msg) => {
+        View::Success(msg) => {
             renderer.success(&msg)?;
         }
-        Cmd::Warning(msg) => {
+        View::Warning(msg) => {
             renderer.warning(&msg)?;
         }
-        Cmd::Error(msg) => return Err(io::Error::other(msg)),
-        Cmd::Header(title, body) => {
+        View::Error(msg) => return Err(io::Error::other(msg)),
+        View::Header(title, body) => {
             renderer.header(&title, &body)?;
         }
-        Cmd::Card(title, content) => {
+        View::Card(title, content) => {
             renderer.card(&title, &content)?;
         }
-        Cmd::StyledText(config) => {
+        View::StyledText(config) => {
             // No style renderer in this path; print the text so it is not
             // silently dropped (matches the fallback renderer behavior).
             renderer.println(&config.text)?;
         }
-        Cmd::Spacer => {
+        View::Spacer => {
             renderer.println("")?;
         }
     }
@@ -347,7 +356,7 @@ mod tests {
         let cmd = model.update(CounterMsg::Increment);
         assert_eq!(model.count, 5);
         // Should emit info command at milestone
-        assert!(matches!(cmd, Cmd::Info(_)));
+        assert!(matches!(cmd, Cmd::View(cmd::View::Info(_))));
     }
 
     #[test]

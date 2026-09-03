@@ -93,8 +93,11 @@ impl JavaManager {
     }
 
     /// Install Java - PURE RUST, NO SUBPROCESS
+    ///
+    /// Only Adoptium feature-number requests are accepted; anything else
+    /// fails before any network request.
     pub async fn install(&self, version: &str) -> Result<()> {
-        let version = normalize_version(version);
+        let version = java_feature_number(version)?;
         crate::core::security::validate_runtime_version(&version)?;
         let version_dir = self.versions_dir.join(&version);
 
@@ -154,7 +157,7 @@ impl JavaManager {
 
     /// Switch to a specific version
     pub fn use_version(&self, version: &str) -> Result<()> {
-        let version = normalize_version(version);
+        let version = java_feature_number(version)?;
         let version_dir = self.versions_dir.join(&version);
         activate_version(&self.versions_dir, &version, Path::new("bin/java"))?;
 
@@ -171,6 +174,35 @@ impl JavaManager {
         );
 
         Ok(())
+    }
+
+    /// Remove an installed version. Refuses the active version.
+    pub fn uninstall(&self, version: &str) -> Result<()> {
+        let version = normalize_version(version);
+        super::common::uninstall_version(&self.versions_dir, &version)
+    }
+}
+
+/// Resolve a Java request to the Adoptium feature number it names.
+///
+/// Adoptium publishes JDKs by feature: `21` and `21.0` are the same release,
+/// while a full update (`21.0.5`), a non-zero minor (`21.1`), a prerelease,
+/// or a malformed request names nothing this manager can install.
+///
+/// Pure and crate-visible so the hook PATH closure can normalize Java pins
+/// with the same rule instead of duplicating it.
+pub(crate) fn java_feature_number(requested: &str) -> Result<String> {
+    let version = normalize_version(requested);
+    let is_feature = |component: &str| {
+        !component.is_empty() && component.bytes().all(|byte| byte.is_ascii_digit())
+    };
+    let components: Vec<&str> = version.split('.').collect();
+    match components.as_slice() {
+        [feature] if is_feature(feature) => Ok(version),
+        [feature, "0"] if is_feature(feature) => Ok((*feature).to_owned()),
+        _ => Err(anyhow::anyhow!(
+            "Invalid Java version {requested:?}: Java installs by feature number (for example 21), not updates such as 21.0.5. Run: omg list java --available"
+        )),
     }
 }
 
@@ -211,6 +243,68 @@ mod tests {
         assert_eq!(
             fs::read_link(temp.path().join("current")).expect("current link"),
             version_dir
+        );
+    }
+
+    #[test]
+    fn java_requests_resolve_to_their_adoptium_feature_number() {
+        assert_eq!(java_feature_number("21").unwrap(), "21");
+        assert_eq!(java_feature_number("v21").unwrap(), "21");
+        assert_eq!(java_feature_number("V21").unwrap(), "21");
+        assert_eq!(java_feature_number("21.0").unwrap(), "21");
+        assert_eq!(java_feature_number("v21.0").unwrap(), "21");
+        assert_eq!(java_feature_number("17").unwrap(), "17");
+    }
+
+    #[test]
+    fn non_feature_java_requests_fail_and_point_to_the_available_list() {
+        for request in [
+            "21.0.5", "21.0.0", "21.1", "21-ea", "21.0-ea", "", "latest", "21.x", "21.", ".21",
+            "2.1.2.1",
+        ] {
+            let error = java_feature_number(request)
+                .err()
+                .unwrap_or_else(|| panic!("request {request:?} must fail"));
+            let message = error.to_string();
+            assert!(
+                message.contains("omg list java --available"),
+                "error for {request:?} must point to the available list: {message}"
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn install_rejects_non_feature_requests_before_network_access() -> Result<()> {
+        let manager = JavaManager::new();
+        let error = manager.install("21.0.5").await.unwrap_err();
+        assert!(error.to_string().contains("omg list java --available"));
+        Ok(())
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn activation_keeps_sibling_executables_in_the_runtime_bin_directory() {
+        let temp = tempfile::tempdir().expect("temp dir");
+        let version_dir = temp.path().join("21");
+        fs::create_dir_all(version_dir.join("bin")).expect("bin dir");
+        fs::write(version_dir.join("bin/java"), b"java").expect("java binary");
+        fs::write(version_dir.join("bin/javac"), b"javac").expect("javac binary");
+        let manager = JavaManager {
+            versions_dir: temp.path().to_path_buf(),
+            client: download_client(),
+        };
+
+        manager
+            .use_version("21")
+            .expect("feature request must activate");
+
+        assert_eq!(
+            fs::read_link(temp.path().join("current")).expect("current link"),
+            version_dir
+        );
+        assert_eq!(
+            fs::read(temp.path().join("current/bin/javac")).expect("sibling stays reachable"),
+            b"javac".to_vec()
         );
     }
 

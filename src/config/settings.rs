@@ -83,6 +83,20 @@ fn validate_config_path(path: &Path, field_name: &str) -> Result<()> {
                 temp.display()
             );
         }
+
+        // Shared-writable build dirs let another local user plant files the
+        // build later trusts. Sticky dirs (like /tmp) still allow planting,
+        // so say so loudly instead of failing closed on common setups.
+        #[cfg(unix)]
+        if let Ok(meta) = std::fs::metadata(path) {
+            use std::os::unix::fs::MetadataExt as _;
+            if meta.mode() & 0o022 != 0 {
+                eprintln!(
+                    "Warning: {field_name} '{}' is group/world-writable; another local user could plant build inputs there.",
+                    path.display()
+                );
+            }
+        }
     }
 
     Ok(())
@@ -284,16 +298,10 @@ impl Settings {
             let metadata = std::fs::symlink_metadata(&config_path)
                 .with_context(|| format!("Failed to stat config: {}", config_path.display()))?;
             if metadata.file_type().is_symlink() {
-                anyhow::bail!(
-                    "Config must not be a symlink: {}",
-                    config_path.display()
-                );
+                anyhow::bail!("Config must not be a symlink: {}", config_path.display());
             }
             if !metadata.file_type().is_file() {
-                anyhow::bail!(
-                    "Config must be a regular file: {}",
-                    config_path.display()
-                );
+                anyhow::bail!("Config must be a regular file: {}", config_path.display());
             }
             // Security: Check file size before reading to prevent DoS
             if metadata.len() > MAX_CONFIG_SIZE {

@@ -43,7 +43,11 @@ pub fn validate_socket_with_context(socket_path: &std::path::Path) -> Result<()>
 
 /// Poll until the daemon answers a ping or attempts run out. The daemon
 /// needs time to build its in-memory index and bind the socket.
-pub fn wait_for_daemon_ready(socket_path: &std::path::Path, attempts: u32, interval: Duration) -> bool {
+pub fn wait_for_daemon_ready(
+    socket_path: &std::path::Path,
+    attempts: u32,
+    interval: Duration,
+) -> bool {
     for _ in 0..attempts {
         std::thread::sleep(interval);
         if socket_path.exists()

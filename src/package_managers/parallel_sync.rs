@@ -4,13 +4,13 @@ use std::path::{Path, PathBuf};
 use std::time::Duration;
 
 use anyhow::{Context, Result};
-use indicatif::{MultiProgress, ProgressBar, ProgressStyle};
 use owo_colors::OwoColorize;
 use reqwest::Client;
 use std::os::unix::fs::PermissionsExt;
 use tokio::fs::File;
 use tokio::io::AsyncWriteExt;
 
+use crate::cli::progress::{Accent, Outcome, ProgressTask, TaskKind, TaskSpec};
 use crate::config::Settings;
 use crate::core::{http::download_client, paths};
 use crate::package_managers::aur_metadata::sync_aur_metadata;
@@ -186,7 +186,6 @@ async fn download_database_signature(
     .await
 }
 
-#[expect(clippy::literal_string_with_formatting_args, clippy::expect_used)] // Static indicatif templates are always valid; braces are template syntax
 async fn download_db(
     client: &Client,
     urls: Vec<String>,
@@ -194,13 +193,9 @@ async fn download_db(
     staged_signature: &Path,
     live_dest: &Path,
     siglevel: alpm::SigLevel,
-    pb: &ProgressBar,
+    task: &ProgressTask,
 ) -> Result<()> {
-    let repo_name = live_dest.file_stem().map_or_else(
-        || "unknown".to_string(),
-        |s| s.to_string_lossy().to_string(),
-    );
-    pb.set_message(format!("{repo_name} (racing mirrors...)"));
+    task.set_message("racing mirrors...");
 
     let urls = if urls.len() > 1 {
         if let Some(fastest_idx) = race_mirrors(client, &urls).await {
@@ -218,8 +213,6 @@ async fn download_db(
     } else {
         urls
     };
-
-    pb.set_message(repo_name.clone());
 
     let existing_mtime = if live_dest.exists() {
         tokio::fs::metadata(live_dest)
@@ -240,7 +233,7 @@ async fn download_db(
     for (mirror_idx, url) in urls.iter().enumerate() {
         let safe_url = crate::core::http::redact_url(url);
         if mirror_idx > 0 {
-            pb.set_message(format!("{} (mirror {})", repo_name, mirror_idx + 1));
+            task.set_message(&format!("mirror {}", mirror_idx + 1));
         }
 
         for retry in 0..MAX_RETRIES {
@@ -249,7 +242,7 @@ async fn download_db(
                     Duration::from_millis(INITIAL_BACKOFF_MS),
                     retry - 1,
                 );
-                pb.set_message(format!("{repo_name} (retry {retry})"));
+                task.set_message(&format!("retry {retry}"));
                 tokio::time::sleep(backoff).await;
             }
 
@@ -277,7 +270,7 @@ async fn download_db(
                     })?;
                 match download_database_signature(client, url, staged_signature, siglevel).await {
                     Ok(()) => {
-                        pb.finish_with_message(format!("{repo_name} ✓"));
+                        task.finish(Outcome::Done);
                         return Ok(());
                     }
                     Err(error) => {
@@ -299,15 +292,7 @@ async fn download_db(
 
             let total_size = response.content_length().unwrap_or(0);
             if total_size > 0 {
-                pb.set_length(total_size);
-                pb.set_style(
-                    ProgressStyle::default_bar()
-                        .template(
-                            "  {spinner:.green} {msg:12} [{bar:30.cyan/blue}] {bytes}/{total_bytes}",
-                        )
-                        .expect("valid template")
-                        .progress_chars("█▓▒░"),
-                );
+                task.set_total(Some(total_size));
             }
 
             if let Err(error) = download_response_to_dest(
@@ -328,12 +313,12 @@ async fn download_db(
                 continue;
             }
 
-            pb.finish_with_message(format!("{repo_name} ✓"));
+            task.finish(Outcome::Done);
             return Ok(());
         }
     }
 
-    pb.finish_with_message(format!("{repo_name} failed"));
+    task.finish(Outcome::Failed);
     Err(last_error.unwrap_or_else(|| anyhow::anyhow!("No mirrors available")))
 }
 
@@ -551,7 +536,6 @@ struct StagedRepository {
 }
 
 /// Synchronize configured package databases concurrently.
-#[expect(clippy::literal_string_with_formatting_args, clippy::expect_used)] // Static indicatif templates are always valid; braces are template syntax
 pub async fn sync_databases_parallel() -> Result<()> {
     println!(
         "{} Synchronizing package databases...\n",
@@ -584,8 +568,7 @@ pub async fn sync_databases_parallel() -> Result<()> {
         .await
         .context("Failed to create staged pacman sync directory")?;
 
-    // Set up progress bars
-    let mp = MultiProgress::new();
+    // Set up progress lanes
     let client = download_client().clone();
 
     // Start AUR metadata sync in background
@@ -625,19 +608,17 @@ pub async fn sync_databases_parallel() -> Result<()> {
         })
         .collect::<Result<_>>()?;
 
-    // Create progress bars
-    let progress_bars: Vec<ProgressBar> = repos_to_sync
+    // Create progress lanes
+    let progress_lanes: Vec<ProgressTask> = repos_to_sync
         .iter()
         .map(|(name, _, _, _)| {
-            let pb = mp.add(ProgressBar::new_spinner());
-            pb.set_style(
-                ProgressStyle::default_spinner()
-                    .template("  {spinner:.green} {msg:12} [connecting...]")
-                    .expect("valid template"),
-            );
-            pb.set_message(name.clone());
-            pb.enable_steady_tick(Duration::from_millis(100));
-            pb
+            let task = ProgressTask::start(&TaskSpec {
+                label: name.clone(),
+                kind: TaskKind::Bytes { total: None },
+                accent: Accent::Database,
+            });
+            task.set_message("connecting");
+            task
         })
         .collect();
 
@@ -648,7 +629,7 @@ pub async fn sync_databases_parallel() -> Result<()> {
     let mut staged_repositories = Vec::with_capacity(repos_count);
     for (i, (name, urls, destination, siglevel)) in repos_to_sync.into_iter().enumerate() {
         let client = client.clone();
-        let Some(pb) = progress_bars.get(i).cloned() else {
+        let Some(task) = progress_lanes.get(i).cloned() else {
             continue;
         };
         let staged = staged_sync_dir.join(format!("{name}.db"));
@@ -669,7 +650,7 @@ pub async fn sync_databases_parallel() -> Result<()> {
                 &staged_signature,
                 &destination,
                 siglevel,
-                &pb,
+                &task,
             )
             .await
         });

@@ -242,6 +242,10 @@ pub async fn update(check_only: bool, yes: bool, dry_run: bool) -> Result<()> {
                 format!("in {:.2}s", sync_elapsed.as_secs_f64())
             };
             modern_ui::finish_success(&pb, "Synced", &detail);
+            // The daemon serves its frozen pre-sync snapshot until told
+            // otherwise; refresh it before probing so the update list
+            // below reflects the sync that just finished.
+            crate::cli::packages::common::refresh_daemon_index_after_sync().await?;
         }
     }
 
