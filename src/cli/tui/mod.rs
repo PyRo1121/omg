@@ -383,8 +383,7 @@ fn apply_search_completion(
         Ok(mut packages) => {
             for pkg in &mut packages {
                 pkg.name = crate::cli::style::sanitize_terminal_text(&pkg.name);
-                pkg.description =
-                    crate::cli::style::sanitize_terminal_text(&pkg.description);
+                pkg.description = crate::cli::style::sanitize_terminal_text(&pkg.description);
             }
             app.search_results = packages;
             app.search_error = None;

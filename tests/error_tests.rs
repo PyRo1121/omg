@@ -290,7 +290,10 @@ mod config_errors {
         // success plus no panic. If the fallback ever goes away, both
         // assertions fail loudly.
         let combined = result.combined_output();
-        assert!(result.success, "hook-env must survive bad config. Got:\n{combined}");
+        assert!(
+            result.success,
+            "hook-env must survive bad config. Got:\n{combined}"
+        );
         assert!(
             !combined.contains("panicked at"),
             "Should not panic on invalid config. Got:\n{combined}"

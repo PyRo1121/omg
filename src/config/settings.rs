@@ -298,16 +298,10 @@ impl Settings {
             let metadata = std::fs::symlink_metadata(&config_path)
                 .with_context(|| format!("Failed to stat config: {}", config_path.display()))?;
             if metadata.file_type().is_symlink() {
-                anyhow::bail!(
-                    "Config must not be a symlink: {}",
-                    config_path.display()
-                );
+                anyhow::bail!("Config must not be a symlink: {}", config_path.display());
             }
             if !metadata.file_type().is_file() {
-                anyhow::bail!(
-                    "Config must be a regular file: {}",
-                    config_path.display()
-                );
+                anyhow::bail!("Config must be a regular file: {}", config_path.display());
             }
             // Security: Check file size before reading to prevent DoS
             if metadata.len() > MAX_CONFIG_SIZE {

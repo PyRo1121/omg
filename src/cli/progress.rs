@@ -108,6 +108,7 @@ fn meter_template(accent: Accent, figures: &str, colored: bool) -> String {
     }
 }
 
+#[allow(dead_code)]
 fn spinner_style(accent: Accent) -> ProgressStyle {
     spinner_base(&spinner_template(accent, style::colors_enabled()))
 }
@@ -221,7 +222,8 @@ impl ProgressTask {
     /// Replace the lane's dynamic detail text.
     pub(crate) fn set_message(&self, message: &str) {
         let message = sanitize_label(message);
-        if let Some(bar) = lock_bar(&self.inner).as_ref() {
+        let bar_guard = lock_bar(&self.inner);
+        if let Some(bar) = bar_guard.as_ref() {
             bar.set_message(message);
         }
     }
@@ -241,13 +243,15 @@ impl ProgressTask {
     }
 
     pub(crate) fn set_position(&self, position: u64) {
-        if let Some(bar) = lock_bar(&self.inner).as_ref() {
+        let bar_guard = lock_bar(&self.inner);
+        if let Some(bar) = bar_guard.as_ref() {
             bar.set_position(position);
         }
     }
 
     pub(crate) fn inc(&self, delta: u64) {
-        if let Some(bar) = lock_bar(&self.inner).as_ref() {
+        let bar_guard = lock_bar(&self.inner);
+        if let Some(bar) = bar_guard.as_ref() {
             bar.inc(delta);
         }
     }
@@ -265,7 +269,8 @@ impl ProgressTask {
     /// stdout (deferred while the terminal is quiesced, suppressed when
     /// quiet). Later calls on any clone are no-ops.
     pub(crate) fn finish(&self, outcome: Outcome) {
-        let Some(bar) = lock_bar(&self.inner).take() else {
+        let mut bar_guard = lock_bar(&self.inner);
+        let Some(bar) = bar_guard.take() else {
             return;
         };
         bar.finish_and_clear();

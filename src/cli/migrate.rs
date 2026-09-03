@@ -122,10 +122,9 @@ pub async fn import(manifest_path: &str, dry_run: bool) -> Result<()> {
             "    {} {} → {}",
             style::maybe_color("✓", |t| t.green().to_string()),
             style::dim(&style::sanitize_terminal_text(original)),
-            style::maybe_color(
-                &style::sanitize_terminal_text(target),
-                |t| t.cyan().to_string()
-            )
+            style::maybe_color(&style::sanitize_terminal_text(target), |t| t
+                .cyan()
+                .to_string())
         );
     }
     if !import_plan.packages.unmapped.is_empty() {

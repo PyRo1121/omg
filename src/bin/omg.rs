@@ -166,6 +166,7 @@ fn configure_fast_path_output(args: &[String]) {
     omg_lib::cli::modern_ui::configure_output(verbose, quiet);
 }
 
+#[cfg(feature = "arch")]
 fn try_fast_elevated(
     args: &[String],
     reexec_elevated: bool,
@@ -289,15 +290,6 @@ fn try_fast_elevated(
         }
         _ => None,
     }
-}
-
-#[cfg(not(feature = "arch"))]
-const fn try_fast_elevated(
-    _args: &[String],
-    _reexec_elevated: bool,
-    _parent_records: bool,
-) -> Option<Result<()>> {
-    None
 }
 
 #[cfg(feature = "arch")]
@@ -637,6 +629,9 @@ fn main() {
     // ELEVATED_MARKER in core::privilege). The marker is honored ONLY for a
     // root process: anyone else invoking the reserved token keeps their
     // arguments untouched and gets clap's unknown-command error.
+    // `reexec_elevated` is consumed only by the arch-gated fast path below;
+    // backend-less builds legitimately ignore elevation markers entirely.
+    #[cfg_attr(not(feature = "arch"), allow(unused_variables))]
     let (reexec_elevated, parent_records) =
         strip_internal_invocation_markers(&mut args, omg_lib::core::privilege::is_root());
     // The marker has already been authenticated by root re-exec parsing.
@@ -645,10 +640,15 @@ fn main() {
     omg_lib::core::privilege::set_parent_owns_history(parent_records);
 
     // FASTEST PATH: Elevated re-exec - skip ALL initialization
-    // This runs when sudo omg re-execs us as root
-    configure_fast_path_output(&args);
-    if let Some(result) = try_fast_elevated(&args, reexec_elevated, parent_records) {
-        finish(result);
+    // This runs when sudo omg re-execs us as root. Arch-only: the elevated
+    // transaction path does not exist in backend-less builds, so the whole
+    // block is gated out there instead of stubbed — no no-op stand-ins.
+    #[cfg(feature = "arch")]
+    {
+        configure_fast_path_output(&args);
+        if let Some(result) = try_fast_elevated(&args, reexec_elevated, parent_records) {
+            finish(result);
+        }
     }
 
     match try_fast_paths(&args) {
@@ -741,9 +741,7 @@ async fn async_main(args: Vec<String>) -> Result<()> {
         std::process::exit(0);
     }
 
-    let ctx = omg_lib::cli::CliContext {
-        json: cli.json,
-    };
+    let ctx = omg_lib::cli::CliContext { json: cli.json };
 
     let result = dispatch_command(&cli.command, &ctx).await;
     finish_command_telemetry(cmd_start, command_name(&cli.command), result.is_ok()).await;
@@ -1021,9 +1019,7 @@ async fn handle_license_command(command: &AccountCommands) -> Result<()> {
                 .clone()
                 .or_else(|| std::env::var("OMG_DASHBOARD_TOKEN").ok())
                 .ok_or_else(|| {
-                    anyhow::anyhow!(
-                        "No dashboard token: pass <token> or set OMG_DASHBOARD_TOKEN"
-                    )
+                    anyhow::anyhow!("No dashboard token: pass <token> or set OMG_DASHBOARD_TOKEN")
                 })?;
             license::activate(&token).await
         }

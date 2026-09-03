@@ -9,9 +9,7 @@
 //! - Integration with `TeamWorkspace`
 
 use omg_lib::cli::tui::app::{App, ConfirmationAction, Tab};
-use omg_lib::core::env::team::{
-    TeamConfig, TeamMember, TeamStatus, TeamWorkspace,
-};
+use omg_lib::core::env::team::{TeamConfig, TeamMember, TeamStatus, TeamWorkspace};
 use omg_lib::package_managers::{SyncPackage, parse_version_or_zero};
 use serial_test::serial;
 use tempfile::TempDir;

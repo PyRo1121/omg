@@ -26,9 +26,18 @@ pub mod man;
 pub mod migrate;
 pub mod modern_ui;
 pub mod new;
-pub(crate) mod progress;
 pub mod outdated;
 pub mod packages;
+/// Progress-lane UI toolkit. Its API only has callers under package-backend
+/// features, so backend-less combos would flag every lane constructor as
+/// dead code; silence exactly that case instead of sprinkling per-item
+/// gates (or per-item allows) across the module. Backend combos lint this
+/// module normally.
+#[cfg_attr(
+    not(any(feature = "arch", feature = "debian", feature = "debian-pure")),
+    allow(dead_code)
+)]
+pub(crate) mod progress;
 pub mod run;
 pub mod runtimes;
 pub mod security;

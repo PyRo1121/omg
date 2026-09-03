@@ -6,9 +6,9 @@ use serde::{Deserialize, Serialize};
 use std::fs;
 use std::path::PathBuf;
 
+use crate::cli::style;
 use crate::core::env::fingerprint::EnvironmentState;
 use crate::core::paths;
-use crate::cli::style;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Snapshot {
@@ -58,7 +58,10 @@ fn read_snapshot_file(path: &PathBuf) -> Result<String> {
         .map(|meta| meta.file_type().is_symlink())
         .unwrap_or(false);
     if is_symlink {
-        anyhow::bail!("Refusing to read snapshot file that is a symlink: {}", path.display());
+        anyhow::bail!(
+            "Refusing to read snapshot file that is a symlink: {}",
+            path.display()
+        );
     }
     Ok(fs::read_to_string(path)?)
 }
@@ -116,7 +119,8 @@ pub async fn create(message: Option<String>) -> Result<()> {
             .with_context(|| format!("Failed to stage snapshot in {}", dir.display()))?;
         temp.write_all(serde_json::to_string_pretty(&snapshot)?.as_bytes())
             .with_context(|| format!("Failed to write snapshot: {}", snapshot_path.display()))?;
-        temp.as_file().sync_all()
+        temp.as_file()
+            .sync_all()
             .with_context(|| format!("Failed to sync snapshot: {}", snapshot_path.display()))?;
         match std::fs::hard_link(temp.path(), &snapshot_path) {
             Ok(()) => {}

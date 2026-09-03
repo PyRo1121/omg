@@ -345,7 +345,8 @@ impl TeamWorkspace {
             use std::os::unix::fs::OpenOptionsExt as _;
             options.mode(0o600).custom_flags(nix::libc::O_NOFOLLOW);
         }
-        let lock = options.open(&lock_path)
+        let lock = options
+            .open(&lock_path)
             .with_context(|| format!("Failed to open team status lock {}", lock_path.display()))?;
         lock.lock().context("Failed to acquire team status lock")?;
 

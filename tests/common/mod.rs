@@ -675,8 +675,7 @@ impl DaemonTestFixture {
         &self,
         request: omg_lib::daemon::protocol::Request,
     ) -> omg_lib::daemon::protocol::Response {
-        omg_lib::daemon::handlers::handle_request(std::sync::Arc::clone(&self.state), request)
-            .await
+        omg_lib::daemon::handlers::handle_request(std::sync::Arc::clone(&self.state), request).await
     }
 }
 
