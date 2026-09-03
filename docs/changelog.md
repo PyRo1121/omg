@@ -10,25 +10,6 @@ OMG is the fastest unified package manager for Linux, replacing pacman, yay, nvm
 
 ---
 
-## [0.1.215] - 2026-09-02
-
-### ⚠️  Breaking Changes
-
-- Replace `omg license` with `omg account link|status|unlink` ([#174](https://github.com/PyRo1121/omg/issues/174))
-
-  `omg license`, `omg license check`, and `omg license pricing` are gone. Local Team, Enterprise, and Fleet commands no longer require a paid JWT. Remote dashboard sync still needs `omg account link`.
-
-### ✨ New Features
-
-- Treat dashboard account linking as optional identity ([#174](https://github.com/PyRo1121/omg/issues/174))
-- Tag a fully green main CI run and publish attested platform archives
-
-### 🐛 Bug Fixes
-
-- Fix Debian Clippy and the macOS self-update artifact-name test ([#175](https://github.com/PyRo1121/omg/issues/175))
-- Remove `sudo pacman -U` shell-out in AUR installs and route through native ALPM
-- Scrub obsolete third-party domains in favor of GitHub Releases and standard infrastructure
-
 ## [Unreleased]
 ### Bench
 
@@ -764,6 +745,18 @@ analyzer inference
 - **Ci**: Cross-platform install script and R2 release sync
 ### 🐛 Bug Fixes
 
+- Remove sudo pacman -U, scrub stale domain, and publish alpha releases as latest ([#177](https://github.com/PyRo1121/omg/issues/177))
+
+* fix: remove sudo pacman -U leftover, scrub obsolete domain, and publish alpha releases as latest
+
+  - Route non-root AUR artifact installs through OMG's own elevated ALPM transaction rather than shelling out to sudo pacman -U.
+
+  - Update doctor, error messages, and tests to remove any dependency on an external pacman binary.
+
+  - Remove stale pyro1121.com references in favor of GitHub Releases, raw GitHub usercontent, and standard infrastructure.
+
+  - Configure release.yml with make_latest: true and prerelease: false so new alpha releases are visible and installable from GitHub Releases.
+
 - **Ci**: Require every platform build and ship alpha prereleases ([#176](https://github.com/PyRo1121/omg/issues/176))
 
 * Publish alpha prereleases after every green platform matrix.
@@ -1060,7 +1053,9 @@ Add the identical require_feature("team-sync") gate as the first statement
 
 of status, push, and pull, matching init/join/members exactly (same error:
 
-"Feature 'team-sync' requires Team tier (00/mo). Upgrade at the commercial pricing page").
+"Feature 'team-sync' requires Team tier (00/mo). Upgrade at
+
+https://pyro1121.com/pricing").
 
 - Refuse self-update when provenance cannot be verified (SEC-R1-02) ([#134](https://github.com/PyRo1121/omg/issues/134))
 - SBOM advisory matching respects versions (W5-B-01) ([#132](https://github.com/PyRo1121/omg/issues/132))
@@ -7335,7 +7330,7 @@ NEW FEATURES:
 
   - Windows PowerShell installer (install.ps1)
 
-• One-line install: curl -fsSL https://raw.githubusercontent.com/PyRo1121/omg/main/install.sh | iex
+• One-line install: irm pyro1121.com/install.ps1 | iex
 
 • Auto-downloads, verifies SHA256, adds to PATH
 
@@ -12551,7 +12546,7 @@ The word 'panic' can appear in error messages without being an actual panic.
   - Add permissions block to audit.yml for issue creation
 
 - Correct Cloudflare Pages project name
-- Sync install.sh to GitHub on release, remove stale third-party install URL fallback
+- Sync install.sh to website on release, remove stale pyro1121.com fallback
 ### 👷 CI/CD
 
 - Enforce strict linting (clippy) across all jobs
