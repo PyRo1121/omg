@@ -13,6 +13,7 @@ OMG is the fastest unified package manager for Linux, replacing pacman, yay, nvm
 ## [Unreleased]
 ### 🐛 Bug Fixes
 
+- **Search**: Never group an explicitly queried language pack
 - **Security**: Sanitize AUR-controlled strings at info render sites
 - **Deps**: Restore audited crypto pins broken by renovate [#183](https://github.com/PyRo1121/omg/issues/183)
 - **Release**: Publish R2 objects to the remote bucket ([#181](https://github.com/PyRo1121/omg/issues/181))
