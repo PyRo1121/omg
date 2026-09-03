@@ -13,6 +13,36 @@ OMG is the fastest unified package manager for Linux, replacing pacman, yay, nvm
 ## [Unreleased]
 ### 🐛 Bug Fixes
 
+- **Release**: Publish R2 objects to the remote bucket ([#184](https://github.com/PyRo1121/omg/issues/184))
+
+* fix(release): publish R2 objects to the remote bucket
+
+Wrangler 4 defaults `r2 object` commands to local Miniflare storage, so
+
+sync-r2 could succeed without writing omg-releases. Pass --remote and
+
+stop using stdin as --file=-.
+
+- **Update**: Do not leave an AUR spinner live on skipped hosts ([#189](https://github.com/PyRo1121/omg/issues/189))
+
+The joined check started a "Checking AUR packages" bar before the lane
+
+could skip. Debian and test_mode never finished it, so the ticker stayed
+
+on screen. Only start that bar when the lane actually runs, and clear it
+
+on official or policy errors. The search picker test now asserts the
+
+real JSON/TTY gate instead of an inverted attended check.
+
+- **Bench**: Archive documented update-only hyperfine runs ([#188](https://github.com/PyRo1121/omg/issues/188))
+
+[#179](https://github.com/PyRo1121/omg/issues/179) rejected every export without search.json, including
+
+./benchmark-hyperfine.sh --update which only writes update.json.
+
+Keep fail-closed for any other scenario set.
+
 - **Search**: Never group an explicitly queried language pack
 - **Security**: Sanitize AUR-controlled strings at info render sites
 - **Deps**: Restore audited crypto pins broken by renovate [#183](https://github.com/PyRo1121/omg/issues/183)
