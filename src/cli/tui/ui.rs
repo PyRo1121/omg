@@ -825,7 +825,7 @@ fn draw_packages(f: &mut Frame, area: Rect, app: &App) {
                         }),
                 )),
                 Cell::from(Span::styled(
-                    pkg.version.version_string(),
+                    sanitize_control_chars(&pkg.version.version_string()).into_owned(),
                     base_style.fg(colors::ACCENT_GREEN),
                 )),
                 Cell::from(Span::styled(pkg.repo.as_str(), base_style.fg(source_color))),
