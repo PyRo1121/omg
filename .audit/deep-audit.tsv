@@ -1,0 +1,18 @@
+ts	phase	decision	why	evidence	result
+2026-09-03T00:00:00Z	frame	repurposed 19 identical loops into 4 rounds with distinct lenses	identical loops repeat the same findings and burn context, lenses add new signal	TODO.md	Round A done, B through D open
+2026-09-03T00:00:00Z	round-a	fanned out 5 agents over daemon, config, container, debian-arch, interactive CLI	those slices got light coverage in loop 1, genuine seams so no overlap	5 verdicts, all ISSUES	5/5 returned
+2026-09-03T00:00:00Z	round-a	re verified new claims by grep before writing to TODO.md	agent summaries are not proof, the artifact is	src/cli/tui/ui.rs:23, src/core/client.rs:379, tests/ dup x5	confirmed, listed
+2026-09-03T00:00:00Z	round-a	appended Round A section to TODO.md, left phases 0 through 4 untouched	append only keeps the reviewed list stable	TODO.md Round A additions	done
+2026-09-03T00:00:00Z	review	cross model review flagged missing lines, one duplicate, thin trail evidence	fresh eyes catch what the run normalizes	review flags in thread	2 TODO fixes applied, duplicate noted
+2026-09-03T00:00:00Z	review	added tea info_model lines and marked omg-fast socket item as duplicate	rows stay append only, fixes land as new rows	TODO.md Round A additions	open, Round B next on go
+2026-09-03T00:00:00Z	round-b	fanned out 5 adversarial lenses: injection, TOCTOU, supply chain, secrets, privilege	b Round A covered terrain, Round B attacks boundaries	5 verdicts: 4 ISSUES 1 PASS-advisories	5/5 returned
+2026-09-03T00:00:00Z	round-b	re verified 4 claims by grep before listing	artifact over summary	telemetry_client.rs:112, ci.rs x7, new.rs latest, env.rs:172	confirmed, listed
+2026-09-03T00:00:00Z	round-b	appended Round B section, marked dups instead of relisting	duplicate rows hide the real count	TODO.md Round B additions	done, C D open
+2026-09-03T00:00:00Z	review	Round B review flagged missing ci lines and weak cross refs	reviewer checked, not trusted	ci.rs:196,233,329,391,439,468,510	lines added, PATH items grouped
+2026-09-03T00:00:00Z	round-c	fanned out 5 lenses: cli dead code, core dead code, weak tests, slop, duplication	Round C owns proof shaped findings	5 verdicts, all ISSUES	5/5 returned
+2026-09-03T00:00:00Z	round-c	re verified 6 claims by grep before listing	artifact over summary	telemetry dead trio, highlight, ctx fields, license tier fns, makedepend absent, deb zero asserts	confirmed, listed
+2026-09-03T00:00:00Z	round-c	appended Round C section with 24 rows	duplication targets name shared homes	TODO.md Round C additions	done, D open
+2026-09-03T00:00:00Z	review	Round C review flagged missing target lines, unmarked dup consolidations, lib surface deletes	reviewer grepped, not trusted	10 TODO fixes: lines, dup marks, gate not delete	open, Round D next on go
+2026-09-03T00:00:00Z	round-d	fanned out 4 verification lenses: build truth, death audit, line drift, fix readiness	claims need re examination before fixes	4 verdicts	4/4 returned
+2026-09-03T00:00:00Z	round-d	build truth: lib compiles 0 errors, blocker resolved, sequoia drift confirmed, debian check blocked by missing headers	real build not trusted summaries	cargo check --lib, Cargo.lock:5162	P0 blocker closed, 2 TODO rows fixed
+2026-09-03T00:00:00Z	round-d	corrected TODO: closed blocker and env keys, narrowed new.rs, repinned 2 stale refs	main thread edits on my file only	TODO.md	Round D applied
