@@ -4,6 +4,7 @@ on:
   push:
     branches: [main]
     paths:
+      - ".github/workflows/benchmark.yml"
       - "src/**"
       - "Cargo.toml"
       - "benchmark.sh"
