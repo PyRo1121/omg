@@ -164,6 +164,9 @@ pub fn validate_image_ref(image: &str) -> Result<(), ValidationError> {
     {
         return Err(ValidationError::ImageRefMustStartAlphanumeric);
     }
+    if image.contains("..") {
+        return Err(ValidationError::ImageRefInvalidChar { character: '.' });
+    }
     Ok(())
 }
 
