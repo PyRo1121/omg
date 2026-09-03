@@ -16,13 +16,12 @@ def extract_search_time_from_hyperfine(json_path):
         with open(json_path, 'r') as f:
             data = json.load(f)
         
-        # Find the OMG search result (benchmark-hyperfine.sh exports it with
-        # --command-name "OMG (Daemon)")
+        # Exact name from benchmark-hyperfine.sh --command-name "OMG (Daemon)".
+        # Do not match "OMG (omg-fast)" — that is a different binary.
         for result in data.get('results', []):
-            if 'omg' in result.get('command', '').lower():
-                # Convert seconds to milliseconds
+            if result.get('command') == 'OMG (Daemon)':
                 return result['mean'] * 1000
-        
+
         return None
     except Exception as e:
         print(f"Note: Could not parse hyperfine JSON: {e}")
@@ -52,7 +51,15 @@ def check_regression():
     ]
     markdown_report_path = 'benchmark_report.md'
     
+    require_baseline = os.environ.get("OMG_PERF_REQUIRE_BASELINE", "").strip() in {
+        "1",
+        "true",
+        "yes",
+    }
     if not os.path.exists(latest_path):
+        if require_baseline:
+            print(f"Failing closed: required baseline missing at {latest_path}")
+            return 1
         print("No baseline found. Skipping regression check.")
         return 0
 

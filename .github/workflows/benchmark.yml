@@ -171,28 +171,11 @@ jobs:
           path: benchmark-artifact
 
       - name: Prepare benchmark history
-        env:
-          BENCH_SPEEDUP: ${{ needs.benchmark.outputs.speedup }}
-          BENCH_SEARCH_TIME: ${{ needs.benchmark.outputs.search_time }}
         run: |
-          [[ "$BENCH_SEARCH_TIME" =~ ^[0-9]+([.][0-9]+)?$ ]]
-          [[ "$BENCH_SPEEDUP" =~ ^[0-9]+([.][0-9]+)?x$ ]]
-          test -f benchmark-artifact/benchmark_results/search.md
-          test -f benchmark-artifact/benchmark-badge.json
-          mkdir -p benchmarks
-
-          TIMESTAMP=$(date -u +%Y%m%d_%H%M%S)
-          cp benchmark-artifact/benchmark_results/search.md "benchmarks/report_${TIMESTAMP}.md"
-          cp benchmark-artifact/benchmark_results/search.md benchmarks/latest.md
-          cp benchmark-artifact/benchmark-badge.json benchmarks/badge.json
-
-          jq -n \
-            --arg timestamp "$(date -u -Iseconds)" \
-            --argjson search_ms "$BENCH_SEARCH_TIME" \
-            --arg speedup "$BENCH_SPEEDUP" \
-            --arg commit "$GITHUB_SHA" \
-            '{timestamp: $timestamp, search_ms: $search_ms, speedup: $speedup, commit: $commit}' \
-            > benchmarks/summary.json
+          test -f benchmark-artifact/benchmark_results/search.json
+          python3 scripts/record-benchmark-run.py \
+            --source benchmark-artifact/benchmark_results \
+            --update-gate
 
       - name: Commit benchmark history
         run: |
