@@ -284,13 +284,6 @@ impl DaemonClient {
         extract_response(response, id, as_info)
     }
 
-    /// Get system status
-    pub async fn status(&mut self) -> Result<StatusResult> {
-        let id = self.request_id.fetch_add(1, Ordering::SeqCst);
-        let response = self.call(Request::Status { id }).await?;
-        extract_response(response, id, as_status)
-    }
-
     /// List available package updates via daemon (uses hot ALPM worker)
     pub async fn list_updates(&mut self) -> Result<Vec<UpdateEntry>> {
         let id = self.request_id.fetch_add(1, Ordering::SeqCst);
