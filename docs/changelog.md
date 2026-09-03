@@ -24,6 +24,8 @@ rollback CLI guard. Reapply rustfmt on current main.
 - Sanitize remote strings at render boundaries; revert breaking sha2/p256/p384 bump
 ### 🐛 Bug Fixes
 
+- **Update**: Refresh Arch daemon snapshot after sync before probing
+- **Clippy**: Clear main gate blocked by recent landings
 - **Config**: Preserve comments and unknown keys on save
 - **Doctor**: Bound DNS resolution and detect stale db.lck
 - **Release**: Publish R2 objects to the remote bucket ([#184](https://github.com/PyRo1121/omg/issues/184))
