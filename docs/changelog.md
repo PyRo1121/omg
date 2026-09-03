@@ -13,6 +13,7 @@ OMG is the fastest unified package manager for Linux, replacing pacman, yay, nvm
 ## [Unreleased]
 ### Style
 
+- **Info**: Render sync-DB info through the shared kv renderer
 - **Test**: Rustfmt the R2 --remote rollback assertion ([#185](https://github.com/PyRo1121/omg/issues/185))
 
 [#181](https://github.com/PyRo1121/omg/issues/181) squash-merged with a cargo fmt --check failure on the new
