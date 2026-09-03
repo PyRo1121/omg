@@ -32,7 +32,7 @@ The script takes no arguments. It reads the baseline from
 `benchmark_results/search.json` (hyperfine export), falling back to
 `benchmark_results.json` or `benchmark_report.md`.
 
-**How it works:** Reads hyperfine JSON output, compares against a 2x baseline threshold, and exits non-zero on regression - or when the baseline is missing fields, unreadable, or corrupt (fail closed).
+**How it works:** Reads hyperfine JSON output and compares both the absolute search mean and the search-to-pacman speedup with the recorded baseline. A run fails when both signals regress beyond the default 35% tolerance. This preserves fail-closed absolute checks when the in-run pacman control is unavailable while avoiding false failures when a shared runner slows both commands together. Missing, unreadable, or corrupt baseline timing still fails closed.
 
 **Used in:** `.github/workflows/benchmark.yml`
 

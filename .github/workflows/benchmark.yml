@@ -11,6 +11,7 @@ on:
       - "benches/**"
       - "benchmarks/**"
       - "scripts/check-perf-regression.py"
+      - "scripts/test_check_perf_regression.py"
   schedule:
     - cron: "0 0 * * 0"
   workflow_dispatch:
@@ -56,6 +57,9 @@ jobs:
 
       - name: Git safe directory
         run: git config --global --add safe.directory "$GITHUB_WORKSPACE"
+
+      - name: Test performance regression gate
+        run: python3 -m unittest scripts/test_check_perf_regression.py
 
       - name: Setup sccache
         uses: mozilla-actions/sccache-action@7d986dd989559c6ecdb630a3fd2557667be217ad # v0.0.9
