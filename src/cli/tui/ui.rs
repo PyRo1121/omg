@@ -1490,20 +1490,20 @@ mod tests {
         app.team_status = Some(crate::core::env::team::TeamStatus {
             format_version: crate::core::env::team::TeamStatus::STATUS_FORMAT_VERSION,
             config: crate::core::env::team::TeamConfig {
-                team_id: "fleet".to_string(),
+                team_id: "fleet\u{202e}id".to_string(),
                 name: "Core\u{1b}[31m\u{202e}Team".to_string(),
                 member_id: "me".to_string(),
-                remote_url: None,
+                remote_url: Some("https://gist\u{202e}example.com/team.git".to_string()),
                 auto_push: false,
             },
             lock_hash: String::new(),
             members: vec![crate::core::env::team::TeamMember {
-                id: "m1".to_string(),
+                id: "m\u{202e}1".to_string(),
                 name: "\u{202e}nhoj\u{1b}[0m".to_string(),
                 env_hash: String::new(),
                 last_sync: 0,
-                in_sync: true,
-                drift_summary: None,
+                in_sync: false,
+                drift_summary: Some("\u{202e}3 files drift".to_string()),
             }],
             updated_at: 0,
         });
@@ -1532,6 +1532,22 @@ mod tests {
         assert!(
             rendered.contains("nhoj[0m"),
             "sanitized member name must stay visible"
+        );
+        assert!(
+            rendered.contains("fleetid"),
+            "sanitized team id must stay visible"
+        );
+        assert!(
+            rendered.contains("https://gistexample.com/team.git"),
+            "sanitized remote url must stay visible"
+        );
+        assert!(
+            rendered.contains("m1"),
+            "sanitized member id must stay visible"
+        );
+        assert!(
+            rendered.contains("3 files drift"),
+            "sanitized drift summary must stay visible"
         );
     }
 
