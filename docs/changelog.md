@@ -11,9 +11,6 @@ OMG is the fastest unified package manager for Linux, replacing pacman, yay, nvm
 ---
 
 ## [Unreleased]
-
-## [0.1.216] - 2026-09-03
-
 ### Style
 
 - **Search**: Drop per-row separators, tighten list rhythm
@@ -50,6 +47,7 @@ Read Python and Deno project pins, map compatible requests to installed versions
 
 ### 🐛 Bug Fixes
 
+- **Ci**: Refresh fuzz lockfile for v0.1.216
 - **Ci**: Align tests with current CLI contracts
 - **Tui**: Sanitize remaining team fields
 - **Doctor**: Report healthy runs with warnings
