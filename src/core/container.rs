@@ -240,6 +240,14 @@ impl ContainerManager {
                 anyhow::bail!("Invalid build argument {arg:?}: control characters are not allowed");
             }
         }
+        // The dockerfile must be a relative path inside the build context and
+        // the context itself must not escape through `..`.
+        let dockerfile_str = dockerfile.to_string_lossy();
+        crate::core::security::validate_relative_path(&dockerfile_str)?;
+        let context_str = context.to_string_lossy();
+        if context_str.contains("..") {
+            anyhow::bail!("Invalid build context {context_str:?}: '..' is not allowed");
+        }
 
         let mut cmd = Command::new(self.runtime.command());
         cmd.arg("build");
@@ -316,6 +324,11 @@ impl ContainerManager {
     pub fn pull(&self, image: &str) -> Result<()> {
         // SECURITY: Validate image reference
         crate::core::security::validate_image_ref(image)?;
+        if !image.contains('@') {
+            eprintln!(
+                "Warning: pulling '{image}' by mutable tag. Pin a digest (`name@sha256:...`) for reproducible builds."
+            );
+        }
 
         let status = Command::new(self.runtime.command())
             .args(["pull", "--", image])

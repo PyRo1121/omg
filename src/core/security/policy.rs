@@ -119,9 +119,13 @@ impl SecurityPolicy {
 
     /// Load a policy file, using the built-in default only when the file is absent.
     pub fn load_optional(path: impl AsRef<Path>) -> Result<Self, PolicyError> {
-        match Self::load(path) {
+        match Self::load(&path) {
             Ok(policy) => Ok(policy),
             Err(PolicyError::Read { source, .. }) if source.kind() == io::ErrorKind::NotFound => {
+                eprintln!(
+                    "No policy file at {}; using permissive built-in default (AUR allowed).",
+                    path.as_ref().display()
+                );
                 Ok(Self::default())
             }
             Err(error) => Err(error),

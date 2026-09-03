@@ -350,8 +350,46 @@ pub fn import_key_into_gnupg(cert: &Cert, gnupg_home: &Path) -> Result<(), Keyse
                 source,
             },
         )?;
+    } else {
+        // A pre-existing home is re-validated: it must be a real directory
+        // owned by this user with no group/world access and no symlink.
+        let meta = std::fs::symlink_metadata(gnupg_home).map_err(|source| {
+            KeyserverError::GnuPgLaunch {
+                operation: "inspecting the GnuPG home",
+                source,
+            }
+        })?;
+        if meta.file_type().is_symlink() || !meta.is_dir() {
+            return Err(KeyserverError::GnuPgLaunch {
+                operation: "refusing symlinked or non-directory GnuPG home",
+                source: std::io::Error::new(
+                    std::io::ErrorKind::InvalidInput,
+                    gnupg_home.display().to_string(),
+                ),
+            });
+        }
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::MetadataExt as _;
+            if meta.uid() != unsafe { nix::libc::getuid() } || meta.mode() & 0o077 != 0 {
+                return Err(KeyserverError::GnuPgLaunch {
+                    operation: "refusing weakly-permissioned GnuPG home",
+                    source: std::io::Error::new(
+                        std::io::ErrorKind::PermissionDenied,
+                        gnupg_home.display().to_string(),
+                    ),
+                });
+            }
+        }
     }
 
+    // Trust-on-first-use: this key has no fingerprint pinning. Say so on
+    // stderr so a silent import never surprises the operator.
+    eprintln!(
+        "Trust-on-first-use: importing PGP key {} into {}",
+        cert.fingerprint(),
+        gnupg_home.display()
+    );
     let mut certificate =
         tempfile::NamedTempFile::new().map_err(|source| KeyserverError::GnuPgLaunch {
             operation: "staging a certificate",

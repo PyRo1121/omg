@@ -33,7 +33,6 @@ pub(crate) enum TaskKind {
 pub(crate) enum Accent {
     Network,
     Database,
-    Aur,
     System,
 }
 
@@ -57,7 +56,6 @@ const TICKS_ASCII: &str = "-\\|/";
 const BAR_CHARS_UNICODE: &str = "█▓▒░ ";
 const BAR_CHARS_ASCII: &str = "=>- ";
 const BYTES_FIGURES: &str = "{bytes}/{total_bytes} {eta}";
-const PENDING_BYTES_FIGURES: &str = "{bytes}";
 const ITEMS_FIGURES: &str = "{pos}/{len}";
 const STEADY_TICK: Duration = Duration::from_millis(80);
 
@@ -65,7 +63,6 @@ fn accent_color(accent: Accent) -> &'static str {
     match accent {
         Accent::Network => "cyan",
         Accent::Database => "blue",
-        Accent::Aur => "magenta",
         Accent::System => "green",
     }
 }
@@ -176,10 +173,6 @@ fn lock_bar(inner: &Inner) -> MutexGuard<'_, Option<ProgressBar>> {
     inner.bar.lock().unwrap_or_else(PoisonError::into_inner)
 }
 
-fn lock_label(inner: &Inner) -> MutexGuard<'_, String> {
-    inner.label.lock().unwrap_or_else(PoisonError::into_inner)
-}
-
 fn sanitize_label(label: &str) -> String {
     style::sanitize_terminal_text(label)
 }
@@ -230,15 +223,6 @@ impl ProgressTask {
                 mode,
                 started: Instant::now(),
             }),
-        }
-    }
-
-    /// Replace the lane label (and the durable result line's subject).
-    pub(crate) fn set_label(&self, label: &str) {
-        let label = sanitize_label(label);
-        *self.lock_label() = label.clone();
-        if let Some(bar) = lock_bar(&self.inner).as_ref() {
-            bar.set_prefix(label);
         }
     }
 
@@ -439,7 +423,7 @@ mod tests {
 
     #[test]
     fn all_lane_templates_are_valid_indicatif_templates() {
-        let accents = [Accent::Network, Accent::Database, Accent::Aur, Accent::System];
+        let accents = [Accent::Network, Accent::Database, Accent::System];
         for accent in accents {
             for colored in [true, false] {
                 ProgressStyle::with_template(&spinner_template(accent, colored))

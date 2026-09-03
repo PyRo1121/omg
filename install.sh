@@ -339,7 +339,10 @@ install_from_release() {
   fi
 
   # Verify against the release's .sha256 sidecar without trusting the
-  # sidecar's filename field as a filesystem path.
+  # sidecar's filename field as a filesystem path. Note the trust limit:
+  # sidecar and artifact share one origin, so this proves integrity
+  # against a corrupted download, not against a compromised release.
+  # Sigstore attestation is checked by `omg self-update`, not here.
   start_spinner "Verifying checksum"
   if curl -fsSL "${asset_url}.sha256" -o "${download_file}.sha256" >/dev/null 2>&1; then
     local expected_checksum

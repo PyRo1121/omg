@@ -149,6 +149,10 @@ impl EnvironmentState {
             }
         }
         let mut state: Self = toml::from_str(content).context("Failed to parse lockfile")?;
+        // Corruption check, not authentication: the hash is recomputed from
+        // the same content, so anyone who can write the file can forge it.
+        // Trust comes from the transport (gist ownership, file ownership),
+        // never from this comparison.
         let stored_hash = state.hash.clone();
         state.normalize();
         let calculated_hash = state.calculate_hash();

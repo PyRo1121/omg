@@ -2381,9 +2381,14 @@ impl AurClient {
 
     async fn git_pull(&self, pkg_dir: &Path) -> Result<()> {
         if !crate::core::is_root() && is_root_owned(pkg_dir) {
-            let current_user = std::env::var("USER")
-                .or_else(|_| whoami::username())
-                .unwrap_or_else(|_| "nobody".to_string());
+            // Prefer a pwd lookup over the `USER` env var, which the
+            // invoking environment can set to anything.
+            let current_user = whoami::username().unwrap_or_default();
+            let current_user = if current_user.is_empty() {
+                std::env::var("USER").unwrap_or_else(|_| "nobody".to_string())
+            } else {
+                current_user
+            };
             let fix_spinner = create_spinner("Fixing directory ownership...");
             let fix_result = Command::new("sudo")
                 .args(["chown", "-R", &format!("{current_user}:{current_user}")])
