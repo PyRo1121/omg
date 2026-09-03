@@ -100,6 +100,11 @@ impl PiManager {
         print_using("Pi", version, &self.versions_dir.join("current/bin"));
         Ok(())
     }
+
+    /// Remove an installed version. Refuses the active version.
+    pub fn uninstall(&self, version: &str) -> Result<()> {
+        super::common::uninstall_version(&self.versions_dir, version)
+    }
 }
 
 crate::runtimes::common::impl_runtime_common!(PiManager);

@@ -34,6 +34,8 @@ pub enum SecretType {
     DockerHubToken,
     HerokuApiKey,
     DigitalOceanToken,
+    GoogleOAuth,
+    OpenAiKey,
 }
 
 impl std::fmt::Display for SecretType {
@@ -58,6 +60,8 @@ impl std::fmt::Display for SecretType {
             Self::DockerHubToken => write!(f, "Docker Hub Token"),
             Self::HerokuApiKey => write!(f, "Heroku API Key"),
             Self::DigitalOceanToken => write!(f, "DigitalOcean Token"),
+            Self::GoogleOAuth => write!(f, "Google OAuth Credential"),
+            Self::OpenAiKey => write!(f, "OpenAI API Key"),
         }
     }
 }
@@ -150,6 +154,10 @@ static RE_JWT: LazyLock<Regex> =
     LazyLock::new(|| compile_pattern(r"eyJ[a-zA-Z0-9_-]*\.eyJ[a-zA-Z0-9_-]*\.[a-zA-Z0-9_-]*"));
 static RE_GOOGLE_API_KEY: LazyLock<Regex> =
     LazyLock::new(|| compile_pattern(r"AIza[0-9A-Za-z\-_]{35}"));
+static RE_GOOGLE_OAUTH: LazyLock<Regex> =
+    LazyLock::new(|| compile_pattern(r"(ya29\.[a-zA-Z0-9_\-]{25,}|GOCSPX-[a-zA-Z0-9_\-]{16,})"));
+static RE_OPENAI_KEY: LazyLock<Regex> =
+    LazyLock::new(|| compile_pattern(r"sk-(proj-[a-zA-Z0-9_\-]{20,}|[a-zA-Z0-9]{48})"));
 static RE_STRIPE_KEY: LazyLock<Regex> =
     LazyLock::new(|| compile_pattern(r"(sk_live_[0-9a-zA-Z]{24}|rk_live_[0-9a-zA-Z]{24})"));
 static RE_TWILIO_KEY: LazyLock<Regex> = LazyLock::new(|| compile_pattern(r"SK[0-9a-fA-F]{32}"));
@@ -175,7 +183,7 @@ static RE_GENERIC_PASSWORD: LazyLock<Regex> = LazyLock::new(|| {
 });
 
 /// Static list of all secret patterns.
-static PATTERNS: [SecretPattern; 19] = [
+static PATTERNS: [SecretPattern; 21] = [
     secret_pattern!(AwsAccessKey, RE_AWS_ACCESS_KEY, Critical),
     secret_pattern!(AwsSecretKey, RE_AWS_SECRET_KEY, Critical),
     secret_pattern!(GithubToken, RE_GITHUB_TOKEN, Critical),
@@ -185,6 +193,8 @@ static PATTERNS: [SecretPattern; 19] = [
     secret_pattern!(PrivateKey, RE_PRIVATE_KEY, Critical),
     secret_pattern!(JwtToken, RE_JWT, Medium),
     secret_pattern!(GoogleApiKey, RE_GOOGLE_API_KEY, High),
+    secret_pattern!(GoogleOAuth, RE_GOOGLE_OAUTH, Critical),
+    secret_pattern!(OpenAiKey, RE_OPENAI_KEY, Critical),
     secret_pattern!(StripeKey, RE_STRIPE_KEY, Critical),
     secret_pattern!(TwilioKey, RE_TWILIO_KEY, High),
     secret_pattern!(SendgridKey, RE_SENDGRID_KEY, High),
@@ -606,6 +616,36 @@ mod tests {
             findings
                 .iter()
                 .any(|f| matches!(f.secret_type, SecretType::PrivateKey))
+        );
+    }
+
+    #[test]
+    fn test_google_oauth_and_openai_detection() {
+        let scanner = SecretScanner::new();
+        let oauth =
+            "token = \"ya29.a0AfH6SMBx_prefix_and_64_chars_of_token_body_0123456789abcdef\"";
+        assert!(
+            scanner
+                .scan_content(oauth, "token.json")
+                .iter()
+                .any(|f| matches!(f.secret_type, SecretType::GoogleOAuth)),
+            "Should detect Google OAuth access token"
+        );
+        let client_secret = "secret = \"GOCSPX-abcdefghijklmnop1234567890AB\"";
+        assert!(
+            scanner
+                .scan_content(client_secret, "client.json")
+                .iter()
+                .any(|f| matches!(f.secret_type, SecretType::GoogleOAuth)),
+            "Should detect Google OAuth client secret"
+        );
+        let openai = "key = \"sk-abcdefghijklmnopqrstuvwxyz0123456789ABCDEFGHIJKL\"";
+        assert!(
+            scanner
+                .scan_content(openai, ".env")
+                .iter()
+                .any(|f| matches!(f.secret_type, SecretType::OpenAiKey)),
+            "Should detect OpenAI API key"
         );
     }
 

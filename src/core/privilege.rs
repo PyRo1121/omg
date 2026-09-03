@@ -92,7 +92,6 @@ pub fn set_yes_flag(value: bool) {
     YES_FLAG.store(value, Ordering::SeqCst);
 }
 
-/// Check if the yes flag is set
 /// Run an EXTERNAL program under sudo as one step inside a larger flow.
 ///
 /// Unlike [`run_privileged_child`] this never re-executes omg: the native
@@ -146,7 +145,7 @@ pub async fn run_privileged_program(program: &str, args: &[&str]) -> anyhow::Res
     if !authenticated {
         if get_yes_flag() || !console::user_attended() {
             anyhow::bail!(
-                "Privilege elevation requires a password but no interactive \\\n                 terminal is available.\n\
+                "Privilege elevation requires a password but no interactive terminal is available.\n\
                  \n\
                  Run 'omg doctor --turbo' interactively to prime sudo credentials,\n\
                  or configure narrowly scoped NOPASSWD rules for automation."
@@ -191,6 +190,7 @@ pub async fn run_privileged_program(program: &str, args: &[&str]) -> anyhow::Res
     }
 }
 
+/// Check if the yes flag is set
 pub fn get_yes_flag() -> bool {
     YES_FLAG.load(Ordering::SeqCst)
 }

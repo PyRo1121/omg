@@ -332,6 +332,39 @@ pub fn is_key_in_gnupg(key_id: &str, gnupg_home: &Path) -> Result<bool, Keyserve
     }
 }
 
+/// Re-validate a pre-existing GnuPG home: it must be a real directory
+/// owned by this user with no group/world access and no symlink.
+fn validate_gnupg_home(gnupg_home: &Path) -> Result<(), KeyserverError> {
+    let meta =
+        std::fs::symlink_metadata(gnupg_home).map_err(|source| KeyserverError::GnuPgLaunch {
+            operation: "inspecting the GnuPG home",
+            source,
+        })?;
+    if meta.file_type().is_symlink() || !meta.is_dir() {
+        return Err(KeyserverError::GnuPgLaunch {
+            operation: "refusing symlinked or non-directory GnuPG home",
+            source: std::io::Error::new(
+                std::io::ErrorKind::InvalidInput,
+                gnupg_home.display().to_string(),
+            ),
+        });
+    }
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::MetadataExt as _;
+        if meta.uid() != nix::unistd::getuid().as_raw() || meta.mode() & 0o077 != 0 {
+            return Err(KeyserverError::GnuPgLaunch {
+                operation: "refusing weakly-permissioned GnuPG home",
+                source: std::io::Error::new(
+                    std::io::ErrorKind::PermissionDenied,
+                    gnupg_home.display().to_string(),
+                ),
+            });
+        }
+    }
+    Ok(())
+}
+
 /// Import a verified certificate through GnuPG so it updates `pubring.kbx`
 /// using the keybox format GnuPG owns.
 pub fn import_key_into_gnupg(cert: &Cert, gnupg_home: &Path) -> Result<(), KeyserverError> {
@@ -339,7 +372,9 @@ pub fn import_key_into_gnupg(cert: &Cert, gnupg_home: &Path) -> Result<(), Keyse
     use std::io::Write as _;
     use std::os::unix::fs::PermissionsExt as _;
 
-    if !gnupg_home.exists() {
+    if gnupg_home.exists() {
+        validate_gnupg_home(gnupg_home)?;
+    } else {
         std::fs::create_dir(gnupg_home).map_err(|source| KeyserverError::GnuPgLaunch {
             operation: "creating the GnuPG home",
             source,
@@ -352,6 +387,13 @@ pub fn import_key_into_gnupg(cert: &Cert, gnupg_home: &Path) -> Result<(), Keyse
         )?;
     }
 
+    // Trust-on-first-use: this key has no fingerprint pinning. Say so on
+    // stderr so a silent import never surprises the operator.
+    eprintln!(
+        "Trust-on-first-use: importing PGP key {} into {}",
+        cert.fingerprint(),
+        gnupg_home.display()
+    );
     let mut certificate =
         tempfile::NamedTempFile::new().map_err(|source| KeyserverError::GnuPgLaunch {
             operation: "staging a certificate",
@@ -505,6 +547,14 @@ mod tests {
             return;
         }
         let home = tempfile::tempdir().expect("GnuPG home");
+        // tempfile dirs inherit umask permissions; a GnuPG home must be
+        // 0700 or validation correctly refuses it.
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt as _;
+            std::fs::set_permissions(home.path(), std::fs::Permissions::from_mode(0o700))
+                .expect("secure GnuPG home");
+        }
         let (certificate, _) = sequoia_openpgp::cert::prelude::CertBuilder::new()
             .add_userid("keybox-test@example.invalid")
             .generate()

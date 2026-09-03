@@ -83,6 +83,20 @@ fn validate_config_path(path: &Path, field_name: &str) -> Result<()> {
                 temp.display()
             );
         }
+
+        // Shared-writable build dirs let another local user plant files the
+        // build later trusts. Sticky dirs (like /tmp) still allow planting,
+        // so say so loudly instead of failing closed on common setups.
+        #[cfg(unix)]
+        if let Ok(meta) = std::fs::metadata(path) {
+            use std::os::unix::fs::MetadataExt as _;
+            if meta.mode() & 0o022 != 0 {
+                eprintln!(
+                    "Warning: {field_name} '{}' is group/world-writable; another local user could plant build inputs there.",
+                    path.display()
+                );
+            }
+        }
     }
 
     Ok(())

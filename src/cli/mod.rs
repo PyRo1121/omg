@@ -26,6 +26,7 @@ pub mod man;
 pub mod migrate;
 pub mod modern_ui;
 pub mod new;
+pub(crate) mod progress;
 pub mod outdated;
 pub mod packages;
 pub mod run;
@@ -111,10 +112,7 @@ pub(crate) fn local_reverse_deps(handle: &alpm::Alpm, package: &str) -> Vec<Stri
 
 /// Global context for CLI command execution
 pub struct CliContext {
-    pub verbose: u8,
     pub json: bool,
-    pub quiet: bool,
-    pub no_color: bool,
 }
 
 /// Execute a CLI command using process-local terminal state.

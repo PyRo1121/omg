@@ -285,8 +285,12 @@ mod config_errors {
         let result = project.run(&["hook-env", "-s", "bash"]);
 
         // ===== ASSERT =====
-        // Invalid config may be ignored or cause failure - just ensure no panic
+        // hook-env must always emit valid shell, so an unreadable config
+        // falls back to defaults instead of failing. Pin that contract:
+        // success plus no panic. If the fallback ever goes away, both
+        // assertions fail loudly.
         let combined = result.combined_output();
+        assert!(result.success, "hook-env must survive bad config. Got:\n{combined}");
         assert!(
             !combined.contains("panicked at"),
             "Should not panic on invalid config. Got:\n{combined}"

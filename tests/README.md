@@ -395,6 +395,15 @@ A green run with a large skip count is **not** full coverage — wire this into
 CI so silent coverage loss is visible. Prefer `#[ignore = "reason"]` for
 statically-known skips so they appear in `cargo test -- --ignored` listings.
 
+### Live-service lanes (manual)
+
+`tests/integration/security_real_world.rs` exercises real keyservers and
+package backends. It stays `#[ignore]`d and runs by hand with
+`cargo test -- --ignored`, never in CI: live services cannot gate merges.
+Keyserver behavior is otherwise pinned by the inline unit tests in
+`src/core/security/keyserver.rs`, which run offline fixtures and are the
+coverage boundary for that module.
+
 ### "Skipping system test"
 
 If tests skip with this message:

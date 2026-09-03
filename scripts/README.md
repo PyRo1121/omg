@@ -31,7 +31,7 @@ The script takes no arguments. It reads the baseline from
 `benchmark_results/search.json` (hyperfine export), falling back to
 `benchmark_results.json` or `benchmark_report.md`.
 
-**How it works:** Reads hyperfine JSON output, compares against a 2x baseline threshold, and exits non-zero on regression — or when the baseline is missing fields, unreadable, or corrupt (fail closed).
+**How it works:** Reads hyperfine JSON output, compares against a 2x baseline threshold, and exits non-zero on regression - or when the baseline is missing fields, unreadable, or corrupt (fail closed).
 
 **Used in:** `.github/workflows/benchmark.yml`
 
@@ -95,7 +95,7 @@ assets; `install.sh` consumes them via the GitHub releases API.
   checksum-invalid release files before GitHub publication or R2 upload.
 - Any new release pipeline (local or CI) must emit exactly these names plus
   checksum sidecars; do not invent alternate schemes such as Rust target-triple
-  names (`x86_64-unknown-linux-gnu`) — the installer will not select them.
+  names (`x86_64-unknown-linux-gnu`) - the installer will not select them.
 
 ---
 
@@ -117,6 +117,6 @@ assets; `install.sh` consumes them via the GitHub releases API.
 
 ## Related Documentation
 
-- **[Makefile](../Makefile)** — Common development commands
-- **[CONTRIBUTING.md](../CONTRIBUTING.md)** — Contribution guidelines
-- **[.github/workflows/](../.github/workflows/)** — CI/CD pipelines
+- **[Makefile](../Makefile)** - Common development commands
+- **[CONTRIBUTING.md](../CONTRIBUTING.md)** - Contribution guidelines
+- **[.github/workflows/](../.github/workflows/)** - CI/CD pipelines

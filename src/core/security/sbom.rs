@@ -364,7 +364,17 @@ impl SbomGenerator {
                     version,
                     description: Some(pkg.description.clone()),
                     purl: Some(bom_ref.clone()),
-                    licenses: vec![],
+                    licenses: pkg
+                        .licenses
+                        .iter()
+                        .map(|license| SbomLicense {
+                            license: Some(SbomLicenseInfo {
+                                id: Some(license.clone()),
+                                name: None,
+                            }),
+                            expression: None,
+                        })
+                        .collect(),
                     hashes: vec![],
                     external_references: vec![SbomExternalRef {
                         ref_type: "website".to_string(),

@@ -91,11 +91,8 @@ pub fn info_sync(package: &str) -> Result<bool> {
             if let Some(info) = crate::package_managers::get_sync_pkg_info(package)
                 .with_context(|| format!("Failed to look up {package} in official repositories"))?
             {
+                // display_pkg_info already renders the Source row.
                 crate::package_managers::display_pkg_info(&info);
-                ui::print_kv(
-                    "Source",
-                    &format!("Official repository ({})", style::info(&info.repo)),
-                );
 
                 // Track usage
                 crate::core::usage::track_info();

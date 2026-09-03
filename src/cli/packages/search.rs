@@ -280,11 +280,7 @@ async fn search_internal(
     let mut stdout = std::io::BufWriter::new(std::io::stdout());
     writeln!(stdout, "{}", style::header("Search Results"))?;
 
-    let rich = style::colors_enabled();
-    for (index, pkg) in display_packages.iter().take(limit).enumerate() {
-        if rich && index > 0 {
-            writeln!(stdout, "  {}", style::dim("\u{2500}\u{2500}\u{2500}"))?;
-        }
+    for pkg in display_packages.iter().take(limit) {
         write_package_line(&mut stdout, pkg)?;
     }
 
@@ -517,11 +513,7 @@ fn search_sync_official_only(query: &str, limit: usize) -> Result<bool> {
         let mut stdout = std::io::BufWriter::new(std::io::stdout());
         writeln!(stdout, "{}", style::header("Search Results"))?;
 
-        let rich = style::colors_enabled();
-        for (index, pkg) in packages.iter().take(limit).enumerate() {
-            if rich && index > 0 {
-                writeln!(stdout, "  {}", style::dim("\u{2500}\u{2500}\u{2500}"))?;
-            }
+        for pkg in packages.iter().take(limit) {
             write_package_line(&mut stdout, pkg)?;
         }
 

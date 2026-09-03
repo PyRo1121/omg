@@ -169,6 +169,12 @@ impl RustManager {
         Ok(())
     }
 
+    /// Remove an installed toolchain. Refuses the active toolchain.
+    pub fn uninstall(&self, version: &str) -> Result<()> {
+        let toolchain = RustToolchainSpec::parse(version)?;
+        super::common::uninstall_version(&self.versions_dir, &toolchain.name())
+    }
+
     pub fn toolchain_status(&self, request: &RustToolchainRequest) -> Result<RustToolchainStatus> {
         let toolchain = RustToolchainSpec::parse(&request.channel)?;
         let version_dir = self.toolchain_dir(&toolchain);

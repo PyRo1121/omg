@@ -25,6 +25,20 @@ fn canonical_stack(stack: &str) -> Option<&'static str> {
 pub fn run(stack: &str, name: &str) -> Result<()> {
     // SECURITY: Validate project name (reuse package name rules as they are safe for directories)
     crate::core::security::validate_package_name(name)?;
+    // Scaffold writes outside the current directory are never intended:
+    // reject absolute paths and parent escapes, while still allowing
+    // nested relative paths like `examples/demo`.
+    {
+        use std::path::Component;
+        let path = std::path::Path::new(name);
+        if path.is_absolute()
+            || path
+                .components()
+                .any(|component| component == Component::ParentDir)
+        {
+            anyhow::bail!("Invalid project name '{name}': absolute paths and '..' are not allowed");
+        }
+    }
 
     let target_dir = std::env::current_dir()?.join(name);
     if target_dir.exists() {

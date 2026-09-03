@@ -117,7 +117,9 @@ pub fn audit_export(
     let mut file_list = vec![];
     for (filename, content) in &files {
         let path = Path::new(output).join(filename);
-        crate::core::safe_ops::atomic_write_file_sync(&path, content)?;
+        // Inventory-bearing exports use the same owner-only writer as
+        // `omg audit export`: contents must never inherit a permissive mode.
+        crate::core::safe_ops::atomic_write_file_sync_private(&path, content)?;
         file_list.push(path.display().to_string());
     }
 

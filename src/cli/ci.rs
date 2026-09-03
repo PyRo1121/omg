@@ -120,6 +120,16 @@ pub fn cache() -> Result<()> {
 
 /// Write a generated config file, previewing instead of overwriting.
 fn write_config_file(path: &str, config: &str) -> Result<()> {
+    // Pin the installer bootstrap to this release tag. A mutable `main`
+    // reference would let a future commit change what new pipelines execute.
+    let config = config.replace(
+        "raw.githubusercontent.com/PyRo1121/omg/main/install.sh",
+        &format!(
+            "raw.githubusercontent.com/PyRo1121/omg/v{}/install.sh",
+            env!("CARGO_PKG_VERSION")
+        ),
+    );
+    let config = config.as_str();
     if let Some(parent) = std::path::Path::new(path).parent() {
         fs::create_dir_all(parent)?;
     }

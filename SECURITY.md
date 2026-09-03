@@ -79,6 +79,10 @@ OMG relies on several third-party crates. We regularly audit dependencies for se
 
 No known dependency vulnerabilities are accepted. Release gates run `cargo audit`; yanked transitive packages are tracked separately from security advisories.
 
+### Key Trust on First Use
+
+AUR package keys listed in `validpgpkeys` are fetched over HKPS and imported into the user's GnuPG home on first sight, with no fingerprint confirmation prompt. The import prints the key fingerprint to stderr so it is never silent, and the GnuPG home is created `0700` (pre-existing homes are re-validated for ownership and mode before import). Silent TOFU is the accepted model here, matching what `makepkg` itself does with an unfamiliar key.
+
 Native Windows is not supported. Windows users should run OMG inside WSL, where the installed Linux distribution determines the package backend.
 
 ### Privilege Escalation

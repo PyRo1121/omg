@@ -175,6 +175,12 @@ impl JavaManager {
 
         Ok(())
     }
+
+    /// Remove an installed version. Refuses the active version.
+    pub fn uninstall(&self, version: &str) -> Result<()> {
+        let version = normalize_version(version);
+        super::common::uninstall_version(&self.versions_dir, &version)
+    }
 }
 
 /// Resolve a Java request to the Adoptium feature number it names.

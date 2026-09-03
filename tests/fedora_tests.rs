@@ -142,11 +142,6 @@ mod dnf_operations {
     #[tokio::test]
     #[ignore = "requires root privileges and modifies system"]
     async fn test_install_and_remove_package() -> Result<()> {
-        if !omg_lib::core::is_root() {
-            eprintln!("Skipping: requires root");
-            return Ok(());
-        }
-
         let pm = DnfPackageManager::new();
 
         let test_package = "nano";
@@ -174,11 +169,6 @@ mod dnf_operations {
     #[tokio::test]
     #[ignore = "requires root privileges and modifies system"]
     async fn test_update_all_packages() -> Result<()> {
-        if !omg_lib::core::is_root() {
-            eprintln!("Skipping: requires root");
-            return Ok(());
-        }
-
         let pm = DnfPackageManager::new();
 
         pm.update().await?;
@@ -189,11 +179,6 @@ mod dnf_operations {
     #[tokio::test]
     #[ignore = "requires root privileges and modifies system"]
     async fn test_sync_repository_metadata() -> Result<()> {
-        if !omg_lib::core::is_root() {
-            eprintln!("Skipping: requires root");
-            return Ok(());
-        }
-
         let pm = DnfPackageManager::new();
 
         pm.sync().await?;

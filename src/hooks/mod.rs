@@ -154,6 +154,61 @@ pub fn print_hook(shell: &str) -> Result<()> {
     Ok(())
 }
 
+/// Lines the shell integration owns inside rc files. `remove_hook` deletes
+/// exactly these (plus the `# OMG Package Manager` marker) and nothing else.
+fn hook_lines(shell: &str) -> Vec<String> {
+    match shell.to_lowercase().as_str() {
+        "fish" => vec!["omg hook fish | source".to_string()],
+        other => vec![format!("eval \"$(omg hook {other})\"")],
+    }
+}
+
+fn rc_file_for_shell(shell: &str) -> Result<PathBuf> {
+    let home = dirs::home_dir().context("No home directory for shell hook removal")?;
+    let relative = match shell.to_lowercase().as_str() {
+        "bash" => ".bashrc",
+        "zsh" => ".zshrc",
+        "fish" => ".config/fish/config.fish",
+        _ => anyhow::bail!("Unsupported shell: {shell}. Supported: zsh, bash, fish"),
+    };
+    Ok(home.join(relative))
+}
+
+/// Remove OMG shell integration lines from the shell's rc file, keeping a
+/// `.omg-backup` copy. Returns whether anything was removed.
+pub fn remove_hook(shell: &str) -> Result<bool> {
+    let rc = rc_file_for_shell(shell)?;
+    let Ok(content) = fs::read_to_string(&rc) else {
+        return Ok(false);
+    };
+    let owned = hook_lines(shell);
+    let kept: Vec<&str> = content
+        .lines()
+        .filter(|line| {
+            let trimmed = line.trim();
+            trimmed != "# OMG Package Manager" && !owned.iter().any(|own| own == trimmed)
+        })
+        .collect();
+    if kept.len() == content.lines().count() {
+        return Ok(false);
+    }
+    let backup = rc.with_file_name(format!(
+        "{}.omg-backup",
+        rc.file_name()
+            .map(|name| name.to_string_lossy().into_owned())
+            .unwrap_or_default()
+    ));
+    fs::copy(&rc, &backup)
+        .with_context(|| format!("Failed to back up {} to {}", rc.display(), backup.display()))?;
+    let mut rewritten = kept.join("\n");
+    if content.ends_with('\n') {
+        rewritten.push('\n');
+    }
+    crate::core::safe_ops::atomic_write_file_sync(&rc, rewritten)
+        .with_context(|| format!("Failed to rewrite {}", rc.display()))?;
+    Ok(true)
+}
+
 /// Called by shell hook on directory change to update PATH
 ///
 /// This is the fast path - only outputs changes when version changes.
@@ -920,6 +975,32 @@ mod tests {
     use std::fs;
     use tempfile::tempdir;
 
+    /// Shell integration removal deletes exactly the lines OMG owns,
+    /// backs the rc file up first, and is a no-op the second time.
+    /// Serial: HOME is process-global environment.
+    #[serial_test::serial]
+    #[test]
+    fn hook_uninstall_removes_only_owned_lines() {
+        let home = tempdir().unwrap();
+        let home_str = home.path().to_string_lossy().into_owned();
+        let vars: Vec<(&str, Option<&str>)> = vec![("HOME", Some(home_str.as_str()))];
+        temp_env::with_vars(&vars, || {
+            let rc = home.path().join(".bashrc");
+            fs::write(
+                &rc,
+                "alias ll=\"ls -l\"\n# OMG Package Manager\neval \"$(omg hook bash)\"\n",
+            )
+            .unwrap();
+            assert!(remove_hook("bash").unwrap());
+            let kept = fs::read_to_string(&rc).unwrap();
+            assert!(kept.contains("alias ll"), "{kept}");
+            assert!(!kept.contains("omg hook"), "{kept}");
+            assert!(!kept.contains("OMG Package Manager"), "{kept}");
+            assert!(home.path().join(".bashrc.omg-backup").exists());
+            assert!(!remove_hook("bash").unwrap());
+        });
+    }
+
     #[test]
     fn hostile_python_pin_never_reaches_path() {
         let data = tempdir().unwrap();
@@ -1190,12 +1271,18 @@ mod tests {
             ("bun", "1.2.0", "", "bun", "bunx"),
             ("deno", "2.9.6", "bin", "deno", "deno-lsp"),
         ] {
-            let selected = data
-                .path()
-                .join("versions")
-                .join(runtime)
-                .join(version)
-                .join(relative_bin);
+            let selected = if relative_bin.is_empty() {
+                data.path()
+                    .join("versions")
+                    .join(runtime)
+                    .join(version)
+            } else {
+                data.path()
+                    .join("versions")
+                    .join(runtime)
+                    .join(version)
+                    .join(relative_bin)
+            };
             fs::create_dir_all(&selected).unwrap();
             fs::write(selected.join(primary), b"#!/bin/sh").unwrap();
             fs::write(selected.join(companion), b"#!/bin/sh").unwrap();

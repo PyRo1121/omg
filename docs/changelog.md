@@ -13,6 +13,10 @@ OMG is the fastest unified package manager for Linux, replacing pacman, yay, nvm
 ## [Unreleased]
 ### Style
 
+- **Search**: Drop per-row separators, tighten list rhythm
+- **Update**: Inline source badge in update list rows
+- **Policy**: Warn about missing policy file once per process
+- **Info**: Render sync-DB info through the shared kv renderer
 - **Test**: Rustfmt the R2 --remote rollback assertion ([#185](https://github.com/PyRo1121/omg/issues/185))
 
 [#181](https://github.com/PyRo1121/omg/issues/181) squash-merged with a cargo fmt --check failure on the new
@@ -22,8 +26,23 @@ rollback CLI guard. Reapply rustfmt on current main.
 ### ⚠️  Breaking Changes
 
 - Sanitize remote strings at render boundaries; revert breaking sha2/p256/p384 bump
+### ✨ New Features
+
+- **Runtimes**: Uninstall versions via omg use RUNTIME VERSION --uninstall
+- **Hook**: Add --uninstall removing shell integration with backup
+- **Install**: Add --uninstall removing binaries and shell integration
 ### 🐛 Bug Fixes
 
+- Sanitize AUR build package names
+- Sanitize update summary fields
+- **Clippy**: Clear gate after progress-lane migration (mechanical only)
+- **Test**: Create GnuPG home with 0700 in round-trip test
+- **Secrets**: Detect Google OAuth and OpenAI key formats
+- **Rollback**: Remove historical worktree after successful rebuild
+- **Keyserver**: Safe getuid and extracted home validation
+- **Sbom**: Populate component licenses from package databases
+- **Team**: Back up local omg.lock before a pull overwrites it
+- **History**: Archive retired transactions instead of dropping them
 - **Osv**: Scope cache key by ecosystem and validate severity scores
 - **Update**: Refresh Arch daemon snapshot after sync before probing
 - **Clippy**: Clear main gate blocked by recent landings

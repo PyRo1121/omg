@@ -1112,6 +1112,36 @@ pub(crate) fn activate_version_with_linked_binary(
     set_current_version(versions_dir, version)
 }
 
+/// Remove an installed runtime version directory.
+///
+/// Refuses when the version is active (switch first), when the version is
+/// not installed, and when the version path is not a real directory:
+/// following a symlink here could delete outside the versions tree.
+/// Mirrors the validation `set_current_version` applies on the way in.
+pub(crate) fn uninstall_version(versions_dir: &Path, version: &str) -> Result<()> {
+    crate::core::security::validate_runtime_version(version)?;
+
+    // is_valid_version_dir rejects symlinks, so the removal below cannot
+    // escape the versions tree through a linked version path.
+    let version_dir = versions_dir.join(version);
+    if !is_valid_version_dir(&version_dir) {
+        anyhow::bail!("Version {version} is not installed; nothing to remove");
+    }
+    if fs::read_link(versions_dir.join("current"))
+        .ok()
+        .is_some_and(|target| target.ends_with(version))
+    {
+        anyhow::bail!("Version {version} is active; switch to another version before removing it");
+    }
+    fs::remove_dir_all(&version_dir).with_context(|| {
+        format!(
+            "Failed to remove runtime version directory: {}",
+            version_dir.display()
+        )
+    })?;
+    Ok(())
+}
+
 /// Create or update the "current" symlink
 pub(crate) fn set_current_version(versions_dir: &Path, version: &str) -> Result<()> {
     crate::core::security::validate_runtime_version(version)?;
@@ -1406,6 +1436,40 @@ pub(crate) use impl_runtime_common;
 mod tests {
     use super::*;
     use tempfile::TempDir;
+
+    /// Uninstall removes the version directory, refuses the active
+    /// version and missing versions, and never follows a symlinked
+    /// version path outside the versions tree.
+    #[cfg(unix)]
+    #[test]
+    fn uninstall_removes_only_inactive_real_version_dirs() -> anyhow::Result<()> {
+        use std::os::unix::fs::symlink;
+        let temp = TempDir::new()?;
+        let versions = temp.path();
+        for version in ["20.10.0", "22.0.0"] {
+            let dir = versions.join(version);
+            fs::create_dir_all(dir.join("bin"))?;
+            fs::write(dir.join("bin").join("node"), b"fake")?;
+        }
+        symlink(versions.join("20.10.0"), versions.join("current"))?;
+
+        assert!(uninstall_version(versions, "22.0.0").is_ok());
+        assert!(!versions.join("22.0.0").exists());
+        assert!(versions.join("20.10.0").exists());
+
+        let active = uninstall_version(versions, "20.10.0").expect_err("active refusal");
+        assert!(active.to_string().contains("active"), "{active:#}");
+        assert!(versions.join("20.10.0").exists());
+
+        let missing = uninstall_version(versions, "99.99.99").expect_err("missing refusal");
+        assert!(missing.to_string().contains("not installed"), "{missing:#}");
+
+        symlink(versions.join("20.10.0"), versions.join("9.9.9"))?;
+        let linked = uninstall_version(versions, "9.9.9").expect_err("symlink refusal");
+        assert!(linked.to_string().contains("not installed"), "{linked:#}");
+        assert!(versions.join("20.10.0").exists());
+        Ok(())
+    }
 
     fn tar_archive(entry_type: tar::EntryType) -> Vec<u8> {
         let mut bytes = Vec::new();
