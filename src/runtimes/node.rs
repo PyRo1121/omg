@@ -16,9 +16,8 @@ use std::path::{Path, PathBuf};
 
 use super::common::{
     activate_version, begin_staged_install, complete_staged_install, download_with_progress,
-    extract_tar_xz, is_partial_version, normalize_version, parse_sha256_digest,
+    extract_tar_xz, normalize_version, parse_sha256_digest,
     print_already_installed, print_installed, print_using, remove_file_best_effort,
-    resolve_partial_version,
 };
 use crate::core::http::download_client;
 
@@ -194,14 +193,11 @@ impl NodeManager {
     /// Exact and non-numeric requests pass through unchanged, preserving the
     /// already-installed fast path and the existing not-found UX.
     async fn resolve_requested_version(&self, version: &str) -> Result<String> {
-        if !is_partial_version(version) {
-            return Ok(version.to_owned());
-        }
         let available = self.list_available().await?;
-        Ok(
-            resolve_partial_version(&available_version_names(&available), version)
-                .unwrap_or_else(|| version.to_owned()),
-        )
+        Ok(crate::runtimes::resolve_version_request(
+            &available_version_names(&available),
+            version,
+        ))
     }
 
     /// Fetch SHA256 checksum from nodejs.org
@@ -371,7 +367,7 @@ mod tests {
     fn partial_major_resolves_to_the_newest_matching_fixture() {
         let names = available_version_names(&fixture_versions());
         assert_eq!(
-            resolve_partial_version(&names, "20").as_deref(),
+            crate::runtimes::common::resolve_partial_version(&names, "20").as_deref(),
             Some("20.10.0")
         );
     }
@@ -380,7 +376,7 @@ mod tests {
     fn partial_minor_resolves_within_the_fixture_family() {
         let names = available_version_names(&fixture_versions());
         assert_eq!(
-            resolve_partial_version(&names, "20.1").as_deref(),
+            crate::runtimes::common::resolve_partial_version(&names, "20.1").as_deref(),
             Some("20.1.0")
         );
     }
@@ -389,7 +385,7 @@ mod tests {
     fn exact_fixture_version_passes_through() {
         let names = available_version_names(&fixture_versions());
         assert_eq!(
-            resolve_partial_version(&names, "20.10.0").as_deref(),
+            crate::runtimes::common::resolve_partial_version(&names, "20.10.0").as_deref(),
             Some("20.10.0")
         );
     }
@@ -397,10 +393,10 @@ mod tests {
     #[test]
     fn unknown_partial_has_no_resolution_and_falls_back_to_the_request() {
         let names = available_version_names(&fixture_versions());
-        assert_eq!(resolve_partial_version(&names, "22"), None);
+        assert_eq!(crate::runtimes::common::resolve_partial_version(&names, "22"), None);
         // Garbage never reaches the vendor list: it is not partial, so the
         // manager passes it through to the existing not-found UX.
-        assert!(!is_partial_version("garbage"));
+        assert!(!crate::runtimes::common::is_partial_version("garbage"));
     }
 
     #[test]

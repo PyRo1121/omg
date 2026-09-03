@@ -14,9 +14,9 @@ use std::path::{Path, PathBuf};
 
 use super::common::{
     GITHUB_USER_AGENT, GithubRelease, activate_version, begin_staged_install,
-    complete_staged_install, download_with_progress, extract_zip, is_partial_version,
+    complete_staged_install, download_with_progress, extract_zip,
     normalize_version, parse_sha256_digest, print_already_installed, print_installed, print_using,
-    remove_file_best_effort, resolve_partial_version, version_cmp,
+    remove_file_best_effort, version_cmp,
 };
 use crate::core::http::download_client;
 
@@ -120,14 +120,11 @@ impl BunManager {
     /// non-numeric requests pass through unchanged, preserving the
     /// already-installed fast path and the existing not-found UX.
     async fn resolve_requested_version(&self, version: &str) -> Result<String> {
-        if !is_partial_version(version) {
-            return Ok(version.to_owned());
-        }
         let available = self.list_available().await?;
-        Ok(
-            resolve_partial_version(&available_version_names(&available), version)
-                .unwrap_or_else(|| version.to_owned()),
-        )
+        Ok(crate::runtimes::resolve_version_request(
+            &available_version_names(&available),
+            version,
+        ))
     }
 
     async fn fetch_checksum(&self, version: &str, filename: &str) -> Result<String> {
@@ -235,18 +232,18 @@ mod tests {
         let names = available_version_names(&fixtures);
         // Prereleases never participate in partial resolution.
         assert_eq!(
-            resolve_partial_version(&names, "1.0").as_deref(),
+            crate::runtimes::common::resolve_partial_version(&names, "1.0").as_deref(),
             Some("1.0.18")
         );
         assert_eq!(
-            resolve_partial_version(&names, "1").as_deref(),
+            crate::runtimes::common::resolve_partial_version(&names, "1").as_deref(),
             Some("1.0.18")
         );
         assert_eq!(
-            resolve_partial_version(&names, "0").as_deref(),
+            crate::runtimes::common::resolve_partial_version(&names, "0").as_deref(),
             Some("0.8.0")
         );
-        assert_eq!(resolve_partial_version(&names, "2"), None);
+        assert_eq!(crate::runtimes::common::resolve_partial_version(&names, "2"), None);
     }
 
     #[test]
