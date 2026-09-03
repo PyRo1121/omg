@@ -24,9 +24,8 @@ If the cache misses, OMG queries its optimized in-memory index of all official r
 - **Performance**: High-speed substring matching allows the engine to scan 15,000+ packages in less than 1ms.
 - **Ranking**: Instant results are returned as soon as matches are found, prioritizing binary name matches.
 
-### 3. Conditional AUR Fallback
-To save bandwidth and time, OMG only hits the network for AUR results if the official repositories don't provide a strong match.
-- **Trigger**: Activated only if official results are sparse (e.g., fewer than 5 matches).
+### 3. Concurrent AUR Search
+OMG queries official repositories and AUR concurrently. Use `--no-aur` to skip the network call.
 - **Latency**: 50–200ms (depending on network conditions).
 - **Architecture**: Communicates via the official AUR RPC interface with built-in rate limiting.
 
@@ -55,6 +54,6 @@ When performing an audit (`omg audit`), the engine divides your installed packag
 
 ### Intelligent Error Recovery
 The search engine is designed for resilience:
-- **Network Outage**: If the AUR is unreachable, the system continues to serve official results seamlessly.
+- **Network Outage**: If the AUR is unreachable, the system continues to serve official results and logs the error.
 - **Index Corruption**: The engine can automatically rebuild its local index from system databases if corruption is detected.
 - **Rate Limiting**: Gracefully handles upstream API limits to prevent IP blocking.

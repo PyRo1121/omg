@@ -92,7 +92,7 @@ When you run a full system audit (`omg audit`), OMG employs a massively parallel
 OMG performs all cryptographic operations natively using a thread-safe implementation. Unlike standard managers that call an external binary (which is slow and difficult to parallelize), OMG leverages native logic to verify signatures for dozens of packages in parallel across all available CPU cores without process-spawning overhead.
 
 - **Direct System Integration**: No dependency on external security binaries.
-- **Keyring Awareness**: Automatically leverages official system keyrings for seamless verification.
+- **Keyring Awareness**: Automatically leverages official system keyrings for verification.
 - **Modern Standards**: Built to support advanced and future-proof cryptographic algorithms.
 
 ### Verification Lifecycle

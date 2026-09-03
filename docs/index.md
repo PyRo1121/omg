@@ -52,9 +52,9 @@ Same syntax. Same tool. Same config. **And it's 12-24x faster than pacman.**
 | Package info | 3-6ms | 138ms | **21-38x** |
 | List installed | <2ms | 14ms | **7-14x** |
 
-**Zero C Dependencies:** OMG uses a pure Rust stack for maximum performance and portability, including `redb` for metadata storage and `zlib-rs`/`ruzstd` for lightning-fast decompression.
+**Zero C Dependencies:** OMG uses a pure Rust stack for maximum performance and portability, including `redb` for metadata storage and `zlib-rs`/`ruzstd` for fast decompression.
 
-On Debian/Ubuntu, it's even more dramatic: **59-483x faster** than apt-cache.
+On Debian/Ubuntu, the gap is larger: **59-483x faster** than apt-cache.
 
 This isn't a benchmark gimmick. OMG uses a persistent daemon with an in-memory package index. Your searches return before your finger leaves the Enter key.
 
@@ -94,10 +94,10 @@ omg run build --all # Run build script in EVERY detected ecosystem
 
 One command works across all your projects, now with a smart priority hierarchy and interactive ambiguity resolution.
 
-### Stay Up to Date Effortlessly
+### Stay Up to Date
 
 ```bash
-omg self-update  # Updates OMG with a beautiful progress bar
+omg self-update  # Updates OMG with a progress bar
 ```
 
 Never miss an improvement with the atomic self-updater.

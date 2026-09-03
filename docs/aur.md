@@ -1,6 +1,6 @@
 # AUR Support
 
-OMG provides world-class support for the Arch User Repository (AUR), combining the functionality of `yay` and `paru` with significantly better performance.
+OMG supports the Arch User Repository (AUR), combining the functionality of `yay` and `paru` with measured better performance (see benchmarks below).
 
 ## Overview
 

@@ -110,7 +110,7 @@ Direct `libalpm` integration and an in-memory repository index eliminate subproc
 Manage Node.js, Bun, Python, Go, Rust, Ruby, Java, and Pi from one CLI. OMG honors existing `.nvmrc`, `.python-version`, `rust-toolchain.toml`, and `.tool-versions` files automatically.
 
 ### Seamless AUR & Dependency Resolution
-Build and install AUR packages safely unprivileged as your regular user. Multi-package builds run in parallel with automatic makedepend cleanup.
+Build and install AUR packages safely unprivileged as your regular user. Multi-package builds run in parallel with build artifact cleanup.
 
 ### Unified Task Runner
 `omg run <task>` inspects your directory, detects `package.json`, `Cargo.toml`, `Makefile`, `pyproject.toml`, or `deno.json`, and executes the task with the required runtime version pre-loaded.

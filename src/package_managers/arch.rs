@@ -227,7 +227,7 @@ impl PackageManager for ArchPackageManager {
         &self,
     ) -> Pin<Box<dyn Future<Output = AnyhowResult<Vec<Package>>> + Send + '_>> {
         Box::pin(async move {
-            // LIGHTNING FAST: Direct ALPM list
+            // Direct ALPM list
             // Offload to blocking thread
             tokio::task::spawn_blocking(move || {
                 let pkgs = crate::package_managers::list_installed_fast()?;

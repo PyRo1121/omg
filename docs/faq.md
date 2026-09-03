@@ -20,11 +20,11 @@ OMG (Oh My God!) is a unified package manager that combines:
 - **AUR support** (Arch Linux)
 - **Security auditing** (vulnerability scanning, SBOM)
 
-All in a single, blazing-fast Rust binary.
+All in a single Rust binary.
 
 ### Why is it called OMG?
 
-Because of the reaction we want you to have when you see how fast it is. 12-24x faster than pacman for searches. Your jaw will drop.
+Because of the reaction we want you to have when you see how fast it is. 12-24x faster than pacman for searches.
 
 ### What platforms are supported?
 

@@ -1,4 +1,4 @@
-//! World-class TUI for OMG Package Manager
+//! TUI for OMG Package Manager
 //!
 //! Inspired by bottom, lazygit, and k9s - modern, beautiful, and functional.
 

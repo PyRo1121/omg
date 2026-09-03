@@ -8,7 +8,7 @@ description: Docker and Podman integration
 
 **Docker and Podman Integration**
 
-OMG provides seamless container integration for development workflows, preferring Podman for rootless security while supporting Docker.
+OMG provides container integration for development workflows, preferring Podman for rootless security while supporting Docker.
 
 ---
 

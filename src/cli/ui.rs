@@ -163,13 +163,13 @@ pub fn print_header(context: &str, title: &str) {
     );
 }
 
-/// A standard success message with a world-class icon.
+/// A standard success message with an icon.
 pub fn print_success(msg: impl Display) {
     let icon_style = Style::new().foreground(Color::Green).bold(true);
     println!("  {} {}", icon_style.render("✓"), msg);
 }
 
-/// A standard warning message with a world-class icon.
+/// A standard warning message with an icon.
 pub fn print_warning(msg: impl Display) {
     let icon_style = Style::new().foreground(Color::Yellow).bold(true);
     println!("  {} {}", icon_style.render("⚠"), msg);

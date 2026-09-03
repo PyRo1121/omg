@@ -61,7 +61,7 @@ The daemon is designed for 100% uptime with graceful degradation:
 
 - **Graceful Shutdown**: Upon receiving a termination signal (SIGINT/SIGTERM), the daemon signals all background tasks to complete their current work, saves its persistent state, and cleanly removes the socket file.
 - **Self-Healing Index**: If the package index becomes corrupted or outdated, the daemon automatically rebuilds it from the underlying system databases.
-- **Network Resilience**: If the internet connection is lost, the daemon seamlessly falls back to local-only mode, serving results from its cache and system databases while queuing non-critical network tasks.
+- **Network Resilience**: If the internet connection is lost, the daemon falls back to local-only mode, serving results from its cache and system databases.
 
 ### Performance Profile
 

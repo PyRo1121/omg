@@ -1,7 +1,7 @@
 //! Bubble Tea-inspired Elm Architecture for CLI commands
 //!
 //! This module implements the Elm Architecture pattern (Model → Update → View)
-//! for building world-class CLI experiences in Rust.
+//! for building CLI experiences in Rust.
 //!
 //! ## The Architecture
 //!

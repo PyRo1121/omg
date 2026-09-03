@@ -1137,7 +1137,7 @@ pub enum CiCommands {
         /// CI provider (github, gitlab, circleci)
         #[arg(value_enum)]
         provider: CiProvider,
-        /// Generate advanced "world-class" configuration with matrices and security audits
+        /// Generate advanced configuration with matrices and security audits
         #[arg(long)]
         advanced: bool,
     },

@@ -1,7 +1,7 @@
 //! Privilege elevation utilities
 //!
 //! Automatically elevates to root when needed for system operations,
-//! similar to how paru/yay handle this seamlessly.
+//! similar to how paru/yay handle this.
 
 use std::sync::atomic::{AtomicBool, Ordering};
 

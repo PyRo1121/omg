@@ -6,7 +6,7 @@ description: Integrating OMG with other tools and workflows
 
 # Integrations
 
-OMG enhances your existing development workflow by integrating seamlessly with popular tools, shells, IDEs, and CI/CD platforms.
+OMG enhances your existing development workflow by integrating with popular tools, shells, IDEs, and CI/CD platforms.
 
 ---
 
@@ -535,7 +535,7 @@ yay -S firefox
 
 **Why combine?**
 
-- OMG: Lightning-fast search (6ms vs 133ms)
+- OMG: fast search (see benchmarks in docs/index.md)
 - yay: Feature-complete installer (VCS packages, etc.)
 
 ---
@@ -648,7 +648,7 @@ jobs:
 ### Best Practices
 
 - **Commit omg.lock** - Share exact environment with team
-- **Use version files** - Auto-detection for seamless switching
+- **Use version files** - Auto-detection for switching
 - **Test in CI** - Use `omg env check` to verify lock files
 - **Document integrations** - Add to your project README
 
