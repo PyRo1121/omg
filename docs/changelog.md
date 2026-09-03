@@ -22,6 +22,9 @@ rollback CLI guard. Reapply rustfmt on current main.
 ### ⚠️  Breaking Changes
 
 - Sanitize remote strings at render boundaries; revert breaking sha2/p256/p384 bump
+### ✨ New Features
+
+- **Install**: Add --uninstall removing binaries and shell integration
 ### 🐛 Bug Fixes
 
 - **Team**: Back up local omg.lock before a pull overwrites it
