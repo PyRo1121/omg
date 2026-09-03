@@ -239,7 +239,9 @@ impl ProgressTask {
     pub(crate) fn set_total(&self, total: Option<u64>) {
         let Some(total) = total else { return };
         let bar_guard = lock_bar(&self.inner);
-        let Some(bar) = bar_guard.as_ref() else { return };
+        let Some(bar) = bar_guard.as_ref() else {
+            return;
+        };
         if bar.length().is_none() {
             bar.set_style(meter_style(self.inner.accent, BYTES_FIGURES));
         }
@@ -283,7 +285,10 @@ impl ProgressTask {
     }
 
     fn lock_label(&self) -> MutexGuard<'_, String> {
-        self.inner.label.lock().unwrap_or_else(PoisonError::into_inner)
+        self.inner
+            .label
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
     }
 }
 
@@ -304,10 +309,20 @@ fn result_line(outcome: Outcome, label: &str, elapsed: &str) -> String {
     if style::colors_enabled() {
         match outcome {
             Outcome::Done => {
-                format!("  {} {} {}", "✓".green().bold(), label, format!("· {elapsed}").dimmed())
+                format!(
+                    "  {} {} {}",
+                    "✓".green().bold(),
+                    label,
+                    format!("· {elapsed}").dimmed()
+                )
             }
             Outcome::Failed => {
-                format!("  {} {} {}", "✗".red().bold(), label, format!("· {elapsed}").dimmed())
+                format!(
+                    "  {} {} {}",
+                    "✗".red().bold(),
+                    label,
+                    format!("· {elapsed}").dimmed()
+                )
             }
         }
     } else {
@@ -358,7 +373,10 @@ mod tests {
             TaskKind::Bytes { total: None },
         ));
         let label = task.lock_label().clone();
-        assert_eq!(label, style::sanitize_terminal_text("core\x1b]0;pwn\u{202e}db"));
+        assert_eq!(
+            label,
+            style::sanitize_terminal_text("core\x1b]0;pwn\u{202e}db")
+        );
         assert!(!label.contains('\u{1b}'));
 
         task.set_message("retry \u{2066}2\u{2069}");

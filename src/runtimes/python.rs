@@ -14,8 +14,8 @@ use std::path::{Path, PathBuf};
 
 use super::common::{
     GITHUB_USER_AGENT, GithubRelease, activate_version_with_linked_binary, begin_staged_install,
-    complete_staged_install, download_with_progress, extract_tar_gz,
-    normalize_version, parse_sha256_digest, print_already_installed, print_installed, print_using,
+    complete_staged_install, download_with_progress, extract_tar_gz, normalize_version,
+    parse_sha256_digest, print_already_installed, print_installed, print_using,
     remove_file_best_effort, validate_download_filename, version_cmp,
 };
 use crate::core::http::download_client;

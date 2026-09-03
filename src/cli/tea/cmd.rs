@@ -77,10 +77,16 @@ impl<M> fmt::Debug for Cmd<M> {
             Self::Msg(_) => write!(f, "Cmd::Msg(...)"),
             Self::Batch(batch) => f.debug_tuple("Batch").field(&batch.len()).finish(),
             Self::Exec(_) => write!(f, "Cmd::Exec(...)"),
-            Self::View(View::PrintLn(s)) => f.debug_tuple("PrintLn").field(&truncate(s, 20)).finish(),
+            Self::View(View::PrintLn(s)) => {
+                f.debug_tuple("PrintLn").field(&truncate(s, 20)).finish()
+            }
             Self::View(View::Info(s)) => f.debug_tuple("Info").field(&truncate(s, 20)).finish(),
-            Self::View(View::Success(s)) => f.debug_tuple("Success").field(&truncate(s, 20)).finish(),
-            Self::View(View::Warning(s)) => f.debug_tuple("Warning").field(&truncate(s, 20)).finish(),
+            Self::View(View::Success(s)) => {
+                f.debug_tuple("Success").field(&truncate(s, 20)).finish()
+            }
+            Self::View(View::Warning(s)) => {
+                f.debug_tuple("Warning").field(&truncate(s, 20)).finish()
+            }
             Self::View(View::Error(s)) => f.debug_tuple("Error").field(&truncate(s, 20)).finish(),
             Self::View(View::Header(t, _)) => f.debug_tuple("Header").field(t).finish(),
             Self::View(View::Card(t, _)) => f.debug_tuple("Card").field(t).finish(),

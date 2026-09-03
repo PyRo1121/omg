@@ -16,8 +16,8 @@ use std::path::{Path, PathBuf};
 
 use super::common::{
     activate_version, begin_staged_install, complete_staged_install, download_with_progress,
-    extract_tar_xz, normalize_version, parse_sha256_digest,
-    print_already_installed, print_installed, print_using, remove_file_best_effort,
+    extract_tar_xz, normalize_version, parse_sha256_digest, print_already_installed,
+    print_installed, print_using, remove_file_best_effort,
 };
 use crate::core::http::download_client;
 
@@ -393,7 +393,10 @@ mod tests {
     #[test]
     fn unknown_partial_has_no_resolution_and_falls_back_to_the_request() {
         let names = available_version_names(&fixture_versions());
-        assert_eq!(crate::runtimes::common::resolve_partial_version(&names, "22"), None);
+        assert_eq!(
+            crate::runtimes::common::resolve_partial_version(&names, "22"),
+            None
+        );
         // Garbage never reaches the vendor list: it is not partial, so the
         // manager passes it through to the existing not-found UX.
         assert!(!crate::runtimes::common::is_partial_version("garbage"));

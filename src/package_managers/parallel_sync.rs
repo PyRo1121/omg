@@ -10,8 +10,8 @@ use std::os::unix::fs::PermissionsExt;
 use tokio::fs::File;
 use tokio::io::AsyncWriteExt;
 
-use crate::config::Settings;
 use crate::cli::progress::{Accent, Outcome, ProgressTask, TaskKind, TaskSpec};
+use crate::config::Settings;
 use crate::core::{http::download_client, paths};
 use crate::package_managers::aur_metadata::sync_aur_metadata;
 

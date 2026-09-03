@@ -38,9 +38,7 @@ pub fn ensure_local_archive_consent(packages: &[String], allowed: bool) -> anyho
             return true;
         }
         #[cfg(any(feature = "debian", feature = "debian-pure"))]
-        if crate::core::env::distro::is_debian_like()
-            && is_local_debian_package_file(package)
-        {
+        if crate::core::env::distro::is_debian_like() && is_local_debian_package_file(package) {
             return true;
         }
         false

@@ -473,7 +473,8 @@ fn license_clock_floor_with(path: &Path, now: i64) -> Result<i64> {
         use std::os::unix::fs::OpenOptionsExt as _;
         options.mode(0o600).custom_flags(nix::libc::O_NOFOLLOW);
     }
-    let lock = options.open(&lock_path)
+    let lock = options
+        .open(&lock_path)
         .with_context(|| format!("Failed to open license clock lock: {}", lock_path.display()))?;
     lock.lock()
         .with_context(|| format!("Failed to lock license clock: {}", lock_path.display()))?;

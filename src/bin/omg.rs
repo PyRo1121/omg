@@ -741,9 +741,7 @@ async fn async_main(args: Vec<String>) -> Result<()> {
         std::process::exit(0);
     }
 
-    let ctx = omg_lib::cli::CliContext {
-        json: cli.json,
-    };
+    let ctx = omg_lib::cli::CliContext { json: cli.json };
 
     let result = dispatch_command(&cli.command, &ctx).await;
     finish_command_telemetry(cmd_start, command_name(&cli.command), result.is_ok()).await;
@@ -1021,9 +1019,7 @@ async fn handle_license_command(command: &AccountCommands) -> Result<()> {
                 .clone()
                 .or_else(|| std::env::var("OMG_DASHBOARD_TOKEN").ok())
                 .ok_or_else(|| {
-                    anyhow::anyhow!(
-                        "No dashboard token: pass <token> or set OMG_DASHBOARD_TOKEN"
-                    )
+                    anyhow::anyhow!("No dashboard token: pass <token> or set OMG_DASHBOARD_TOKEN")
                 })?;
             license::activate(&token).await
         }

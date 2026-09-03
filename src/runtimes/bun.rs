@@ -14,8 +14,8 @@ use std::path::{Path, PathBuf};
 
 use super::common::{
     GITHUB_USER_AGENT, GithubRelease, activate_version, begin_staged_install,
-    complete_staged_install, download_with_progress, extract_zip,
-    normalize_version, parse_sha256_digest, print_already_installed, print_installed, print_using,
+    complete_staged_install, download_with_progress, extract_zip, normalize_version,
+    parse_sha256_digest, print_already_installed, print_installed, print_using,
     remove_file_best_effort, version_cmp,
 };
 use crate::core::http::download_client;
@@ -243,7 +243,10 @@ mod tests {
             crate::runtimes::common::resolve_partial_version(&names, "0").as_deref(),
             Some("0.8.0")
         );
-        assert_eq!(crate::runtimes::common::resolve_partial_version(&names, "2"), None);
+        assert_eq!(
+            crate::runtimes::common::resolve_partial_version(&names, "2"),
+            None
+        );
     }
 
     #[test]

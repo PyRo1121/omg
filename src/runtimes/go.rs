@@ -18,8 +18,8 @@ use serde::Deserialize;
 
 use super::common::{
     activate_version, begin_staged_install, complete_staged_install, download_with_progress,
-    extract_tar_gz, normalize_version, parse_sha256_digest,
-    print_already_installed, print_installed, remove_file_best_effort,
+    extract_tar_gz, normalize_version, parse_sha256_digest, print_already_installed,
+    print_installed, remove_file_best_effort,
 };
 use crate::core::http::download_client;
 
@@ -261,7 +261,10 @@ mod tests {
             crate::runtimes::common::resolve_partial_version(&names, "1.20").as_deref(),
             Some("1.20")
         );
-        assert_eq!(crate::runtimes::common::resolve_partial_version(&names, "1.22"), None);
+        assert_eq!(
+            crate::runtimes::common::resolve_partial_version(&names, "1.22"),
+            None
+        );
     }
 
     #[test]

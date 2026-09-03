@@ -1468,8 +1468,7 @@ mod tests {
 
     use super::{
         AlpmQuestionRefusals, ForwardedAlpmLogLevel, TransactionKind, classify_alpm_log_level,
-        clean_cache,
-        clean_cache_preview, configure_signature_policy, ensure_mirror_servers,
+        clean_cache, clean_cache_preview, configure_signature_policy, ensure_mirror_servers,
         ensure_removals_not_held, format_trans_prepare_error, is_keyring_related_error,
         local_package_siglevel, package_base_name, provider_selection_message,
         question_refusal_error, register_configured_syncdbs, repository_siglevel,

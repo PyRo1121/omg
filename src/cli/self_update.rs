@@ -372,7 +372,11 @@ fn parse_checksum(body: &str) -> Result<String> {
 ///
 /// Fails closed: any mismatch aborts the update instead of installing
 /// unverified bytes.
-async fn download_verified(url: &str, archive_name: String, expected_digest: &str) -> Result<Vec<u8>> {
+async fn download_verified(
+    url: &str,
+    archive_name: String,
+    expected_digest: &str,
+) -> Result<Vec<u8>> {
     let safe_url = crate::core::http::redact_url(url);
     let response = crate::core::http::download_client()
         .get(url)

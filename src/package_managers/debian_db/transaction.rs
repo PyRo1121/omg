@@ -27,8 +27,8 @@ use owo_colors::OwoColorize;
 use tempfile::TempDir;
 
 use super::resolver::ResolutionResult;
-use crate::cli::progress::{Accent, Outcome, ProgressTask, TaskKind, TaskSpec};
 use super::validation::require_verified_deb;
+use crate::cli::progress::{Accent, Outcome, ProgressTask, TaskKind, TaskSpec};
 use crate::runtimes::common::{BudgetedReader, BudgetedSink, BudgetedWriter};
 
 /// Transaction state

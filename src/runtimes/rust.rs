@@ -21,9 +21,9 @@ use tar::Archive;
 
 use super::common::{
     BudgetedReader, BudgetedSink, MAX_DECOMPRESSED_BYTES, activate_version, begin_staged_install,
-    complete_staged_install, copy_regular_tree, download_with_progress,
-    is_valid_version_dir, parse_sha256_digest, print_already_installed,
-    print_installed, print_using, replace_staged_install, validate_download_filename,
+    complete_staged_install, copy_regular_tree, download_with_progress, is_valid_version_dir,
+    parse_sha256_digest, print_already_installed, print_installed, print_using,
+    replace_staged_install, validate_download_filename,
 };
 use crate::core::archive::stripped_archive_path;
 use crate::core::http::download_client;
