@@ -28,6 +28,7 @@ rollback CLI guard. Reapply rustfmt on current main.
 - **Install**: Add --uninstall removing binaries and shell integration
 ### 🐛 Bug Fixes
 
+- **Sbom**: Populate component licenses from package databases
 - **Team**: Back up local omg.lock before a pull overwrites it
 - **History**: Archive retired transactions instead of dropping them
 - **Osv**: Scope cache key by ecosystem and validate severity scores
