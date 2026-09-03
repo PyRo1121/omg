@@ -164,6 +164,15 @@ Tag pushes made with GITHUB_TOKEN do not start other workflows, which is why
 
 v0.1.215 never became GitHub Latest after CI tagged it.
 
+### 📚 Documentation
+
+- Separate enterprise dashboard policy from local policy.toml
+
+omg enterprise policy show reads dashboard TEAM_POLICIES.
+
+The local host file is omg audit policy, not that command.
+
+- Correct stale CLI and runtime guidance
 ### 🔧 Maintenance
 
 - Sync Cargo.lock with toml_edit
