@@ -11,7 +11,7 @@ use governor::{Quota, RateLimiter};
 use super::cache::PackageCache;
 use super::index::PackageIndex;
 use super::protocol::{
-    DetailedPackageInfo, ExplicitResult, HealthStatus, Request, RequestId, Response,
+    DetailedPackageInfo, ExplicitResult, HealthStatus, PackageInfo, Request, RequestId, Response,
     ResponseResult, SearchResult, SecurityAuditResult, UpdateEntry, Vulnerability,
     WirePackageSource, error_codes,
 };
@@ -439,6 +439,18 @@ async fn handle_refresh_index(state: Arc<DaemonState>, id: RequestId) -> Respons
     }
 }
 
+/// Run an index search on the blocking pool. Both search handlers share
+/// this so heavy scans never stall the async executor.
+async fn search_index_blocking(
+    index: Arc<PackageIndex>,
+    query: String,
+) -> Result<Vec<PackageInfo>, String> {
+    let task_index = Arc::clone(&index);
+    tokio::task::spawn_blocking(move || task_index.search(&query, MAX_SEARCH_LIMIT))
+        .await
+        .map_err(|error| format!("Search task failed: {error}"))
+}
+
 /// Handle Debian search request
 #[tracing::instrument(skip(state), fields(query_len = query.len()))]
 async fn handle_debian_search(
@@ -476,16 +488,8 @@ async fn handle_debian_search(
     // The daemon index is the authoritative, already-loaded package catalog.
     // Searching the package database again here duplicated I/O and made request
     // behavior depend on process-global environment state.
-    // Like `handle_search`, run the (potentially large) index scan on the
-    // blocking pool instead of the executor thread.
     let index = state.index_snapshot();
-    let task_index = Arc::clone(&index);
-    let query_for_task = query.clone();
-    let searched =
-        tokio::task::spawn_blocking(move || task_index.search(&query_for_task, MAX_SEARCH_LIMIT))
-            .await;
-
-    let mut results = match searched {
+    let mut results = match search_index_blocking(Arc::clone(&index), query.clone()).await {
         Ok(results) => results,
         Err(error) => return internal_error(id, format!("Debian search task failed: {error}")),
     };
@@ -625,18 +629,10 @@ async fn handle_search(
     GLOBAL_METRICS.inc_cache_misses();
 
     // 1. Instant Official Search (Sub-millisecond)
-    // Run in blocking task to avoid stalling the async runtime during heavy search
     // Cache the full result set (up to MAX_SEARCH_LIMIT) so subsequent requests
     // with different limits are served correctly from cache.
     let index = state.index_snapshot();
-    let task_index = Arc::clone(&index);
-    let query_for_task = query.clone();
-
-    let official =
-        tokio::task::spawn_blocking(move || task_index.search(&query_for_task, MAX_SEARCH_LIMIT))
-            .await;
-
-    let official = match official {
+    let official = match search_index_blocking(index.clone(), query.clone()).await {
         Ok(res) => res,
         Err(e) => return internal_error(id, format!("Search task failed: {e}")),
     };
