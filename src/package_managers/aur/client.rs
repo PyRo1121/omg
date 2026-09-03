@@ -1229,6 +1229,16 @@ impl AurClient {
         };
 
         Self::install_built_packages(&[archive], sudoloop.as_ref()).await?;
+        // The historical checkout is reproducible from AUR history on demand;
+        // leaving every UUID-named worktree behind would grow the build dir
+        // without bound. Removal is best-effort: a leftover checkout never
+        // affects correctness, only disk use.
+        if let Err(error) = tokio::fs::remove_dir_all(&repo_dir).await {
+            tracing::warn!(
+                "Rollback of '{package}' succeeded but its worktree {} could not be removed: {error:#}",
+                repo_dir.display()
+            );
+        }
         Ok(())
     }
 
