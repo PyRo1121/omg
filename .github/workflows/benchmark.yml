@@ -191,4 +191,14 @@ jobs:
             exit 0
           fi
           git commit -m "Update benchmark results [skip ci]"
-          git push
+          for attempt in 1 2 3; do
+            if git fetch origin main \
+              && git rebase origin/main \
+              && git push origin HEAD:main; then
+              exit 0
+            fi
+            git rebase --abort 2>/dev/null || true
+            sleep $((attempt * 2))
+          done
+          echo "::error::Could not publish benchmark history after 3 attempts"
+          exit 1
