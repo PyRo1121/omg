@@ -306,7 +306,14 @@ fn pkgbuild_review_text(bytes: &[u8]) -> Result<String> {
     let text = String::from_utf8_lossy(bytes);
     Ok(text
         .chars()
-        .filter(|character| matches!(character, '\n' | '\t') || !character.is_control())
+        .filter(|character| {
+            matches!(character, '\n' | '\t')
+                || (!character.is_control()
+                    && !matches!(
+                        character,
+                        '\u{202a}'..='\u{202e}' | '\u{2066}'..='\u{2069}'
+                    ))
+        })
         .collect())
 }
 
