@@ -166,6 +166,7 @@ fn configure_fast_path_output(args: &[String]) {
     omg_lib::cli::modern_ui::configure_output(verbose, quiet);
 }
 
+#[cfg(feature = "arch")]
 fn try_fast_elevated(
     args: &[String],
     reexec_elevated: bool,
@@ -299,6 +300,12 @@ const fn try_fast_elevated(
 ) -> Option<Result<()>> {
     None
 }
+
+/// No-op outside `arch`: the elevated fast path it configures does not exist
+/// there (see the `try_fast_elevated` stub above), so there is nothing to
+/// configure. Mirrors the stub so `main` keeps one unconditional call path.
+#[cfg(not(feature = "arch"))]
+const fn configure_fast_path_output(_args: &[String]) {}
 
 #[cfg(feature = "arch")]
 /// Record an elevated fast-path transaction in package history.
