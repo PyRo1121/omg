@@ -42,13 +42,25 @@ fn index_path() -> PathBuf {
 fn load_index() -> Result<SnapshotIndex> {
     let path = index_path();
     if path.exists() {
-        let content = fs::read_to_string(&path)
+        let content = read_snapshot_file(&path)
             .with_context(|| format!("Failed to read snapshot index: {}", path.display()))?;
         Ok(serde_json::from_str(&content)
             .with_context(|| format!("Failed to parse snapshot index: {}", path.display()))?)
     } else {
         Ok(SnapshotIndex::default())
     }
+}
+
+/// Read a snapshot-sidecar file, refusing symlinks so a planted link
+/// cannot redirect the read outside the snapshots directory.
+fn read_snapshot_file(path: &PathBuf) -> Result<String> {
+    let is_symlink = std::fs::symlink_metadata(path)
+        .map(|meta| meta.file_type().is_symlink())
+        .unwrap_or(false);
+    if is_symlink {
+        anyhow::bail!("Refusing to read snapshot file that is a symlink: {}", path.display());
+    }
+    Ok(fs::read_to_string(path)?)
 }
 
 fn save_index(index: &SnapshotIndex) -> Result<()> {
@@ -211,7 +223,7 @@ pub async fn restore(id: &str, dry_run: bool, yes: bool) -> Result<()> {
         anyhow::bail!("Snapshot '{id}' not found");
     }
 
-    let content = fs::read_to_string(&snapshot_path)
+    let content = read_snapshot_file(&snapshot_path)
         .with_context(|| format!("Failed to read snapshot file: {}", snapshot_path.display()))?;
     let snapshot: Snapshot = serde_json::from_str(&content)
         .with_context(|| format!("Failed to parse snapshot: {}", snapshot_path.display()))?;
