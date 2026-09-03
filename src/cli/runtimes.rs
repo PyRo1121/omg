@@ -352,7 +352,8 @@ pub async fn list_versions(runtime: Option<&str>, available: bool, json: bool) -
                 "→".blue()
             );
             for v in mgr.list_available().await?.iter().take(20) {
-                ui::print_list_item(&v.version, None);
+                let pre = if v.prerelease { " (pre-release)" } else { "" };
+                ui::print_list_item(&v.version, Some(pre));
             }
         }
         "rust" => {

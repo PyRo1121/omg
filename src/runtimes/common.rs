@@ -34,6 +34,75 @@ pub(crate) struct GithubAsset {
     pub(crate) digest: Option<String>,
 }
 
+/// Diagnostic message when a GitHub response indicates the API rate limit is
+/// exhausted, so callers surface specific remediation instead of a bare 403.
+fn github_rate_limit_diagnostic(
+    status: reqwest::StatusCode,
+    headers: &reqwest::header::HeaderMap,
+) -> Option<String> {
+    if !matches!(status.as_u16(), 403 | 429) {
+        return None;
+    }
+    let remaining = headers.get("x-ratelimit-remaining")?;
+    if remaining.to_str().ok()? != "0" {
+        return None;
+    }
+    let reset = headers
+        .get("x-ratelimit-reset")
+        .and_then(|value| value.to_str().ok())
+        .unwrap_or("unknown");
+    Some(format!(
+        "GitHub API rate limit exhausted (HTTP {status}, X-RateLimit-Remaining: 0, \
+         X-RateLimit-Reset: {reset}); wait for the limit window to reset"
+    ))
+}
+
+/// Fetch GitHub releases with explicit pagination bounds.
+///
+/// Pages are requested in order until a page is short, `stop_when` matches a
+/// release, or `max_pages` is reached. HTTP and parse failures identify the
+/// source URL.
+pub(crate) async fn fetch_github_releases<F>(
+    client: &reqwest::Client,
+    releases_url: &str,
+    per_page: u32,
+    max_pages: u32,
+    stop_when: F,
+) -> Result<Vec<GithubRelease>>
+where
+    F: Fn(&GithubRelease) -> bool,
+{
+    let mut releases = Vec::new();
+    for page in 1..=max_pages {
+        let response = client
+            .get(format!("{releases_url}?per_page={per_page}&page={page}"))
+            .header("User-Agent", GITHUB_USER_AGENT)
+            .send()
+            .await
+            .with_context(|| format!("Failed to fetch GitHub releases from {releases_url}"))?;
+
+        if let Some(diagnostic) =
+            github_rate_limit_diagnostic(response.status(), response.headers())
+        {
+            anyhow::bail!("{diagnostic}");
+        }
+
+        let page_releases: Vec<GithubRelease> = response
+            .error_for_status()
+            .with_context(|| format!("GitHub releases request failed: {releases_url}"))?
+            .json()
+            .await
+            .with_context(|| format!("Failed to parse GitHub releases payload: {releases_url}"))?;
+        let short = page_releases.len() < per_page as usize;
+        let stop = page_releases.iter().any(&stop_when);
+        releases.extend(page_releases);
+        if short || stop {
+            break;
+        }
+    }
+    Ok(releases)
+}
+
 pub(crate) fn host_os_tag(
     runtime: &str,
     linux: &'static str,
@@ -1331,6 +1400,36 @@ mod tests {
         assert_eq!(
             downloadable.assets[0].browser_download_url.as_deref(),
             Some("https://example.invalid/runtime.tgz")
+        );
+    }
+
+    #[test]
+    fn github_rate_limit_diagnostic_fires_only_on_exhaustion() {
+        let mut headers = reqwest::header::HeaderMap::new();
+        headers.insert(
+            "x-ratelimit-remaining",
+            reqwest::header::HeaderValue::from_static("0"),
+        );
+        headers.insert(
+            "x-ratelimit-reset",
+            reqwest::header::HeaderValue::from_static("1893456000"),
+        );
+        let message =
+            github_rate_limit_diagnostic(reqwest::StatusCode::FORBIDDEN, &headers).unwrap();
+        assert!(message.contains("rate limit exhausted"));
+        assert!(message.contains("1893456000"));
+
+        *headers.get_mut("x-ratelimit-remaining").unwrap() =
+            reqwest::header::HeaderValue::from_static("4999");
+        assert!(
+            github_rate_limit_diagnostic(reqwest::StatusCode::FORBIDDEN, &headers).is_none(),
+            "remaining quota must not read as exhaustion"
+        );
+        *headers.get_mut("x-ratelimit-remaining").unwrap() =
+            reqwest::header::HeaderValue::from_static("0");
+        assert!(
+            github_rate_limit_diagnostic(reqwest::StatusCode::OK, &headers).is_none(),
+            "a successful final request must remain usable"
         );
     }
 

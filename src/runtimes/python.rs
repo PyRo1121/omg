@@ -13,8 +13,8 @@ use std::fs;
 use std::path::{Path, PathBuf};
 
 use super::common::{
-    GITHUB_USER_AGENT, GithubRelease, activate_version_with_linked_binary, begin_staged_install,
-    complete_staged_install, download_with_progress, extract_tar_gz,
+    GithubRelease, activate_version_with_linked_binary, begin_staged_install,
+    complete_staged_install, download_with_progress, extract_tar_gz, fetch_github_releases,
     normalize_version, parse_sha256_digest, print_already_installed, print_installed, print_using,
     remove_file_best_effort, validate_download_filename, version_cmp,
 };
@@ -22,11 +22,16 @@ use crate::core::http::download_client;
 
 const PBS_RELEASES_URL: &str =
     "https://api.github.com/repos/indygreg/python-build-standalone/releases";
+const PBS_LIST_PER_PAGE: u32 = 10;
+const PBS_LIST_MAX_PAGES: u32 = 1;
+const PBS_INSTALL_PER_PAGE: u32 = 100;
+const PBS_INSTALL_MAX_PAGES: u32 = 2;
 
 /// Python version info for available versions
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct PythonVersion {
     pub version: String,
+    pub prerelease: bool,
 }
 
 pub(crate) struct PythonManager {
@@ -48,73 +53,149 @@ impl PythonManager {
             return Ok(vec![
                 PythonVersion {
                     version: "3.12.0".to_string(),
+                    prerelease: false,
                 },
                 PythonVersion {
                     version: "3.11.0".to_string(),
+                    prerelease: false,
                 },
             ]);
         }
-        let releases: Vec<GithubRelease> = self
-            .client
-            .get(format!("{PBS_RELEASES_URL}?per_page=10"))
-            .header("User-Agent", GITHUB_USER_AGENT)
-            .send()
-            .await
-            .context("Failed to fetch Python releases from GitHub")?
-            .error_for_status()
-            .context("Python releases request failed")?
-            .json()
-            .await
-            .context("Failed to parse Python release data")?;
-
         let target = python_target()?;
+        let releases = fetch_github_releases(
+            self.client,
+            PBS_RELEASES_URL,
+            PBS_LIST_PER_PAGE,
+            PBS_LIST_MAX_PAGES,
+            |_| false,
+        )
+        .await
+        .context("Failed to fetch Python releases from GitHub")?;
 
-        let mut versions = std::collections::HashSet::new();
+        Ok(Self::parse_python_versions(&releases, &target))
+    }
 
-        for release in &releases {
+    /// Build the newest-first version list from standard gzip assets for the
+    /// host target. Duplicate versions across release pages collapse to one
+    /// entry.
+    fn parse_python_versions(releases: &[GithubRelease], target: &str) -> Vec<PythonVersion> {
+        let suffix = format!("{target}-install_only.tar.gz");
+        let mut seen = std::collections::HashSet::new();
+        for release in releases {
             for asset in &release.assets {
-                if asset.name.contains(&target)
-                    && asset.name.contains("install_only")
-                    && asset.name.ends_with(".tar.gz")
-                    && let Some(version) = Self::extract_cpython_version(&asset.name)
-                {
-                    versions.insert(version);
+                let Some(version) = Self::parse_cpython_version(&asset.name) else {
+                    continue;
+                };
+                if asset.name.ends_with(&suffix) {
+                    seen.insert(version);
                 }
             }
         }
 
-        let mut result: Vec<PythonVersion> = versions
+        let mut result: Vec<PythonVersion> = seen
             .into_iter()
-            .map(|version| PythonVersion { version })
+            .map(|version| PythonVersion {
+                prerelease: Self::parse_python_version(&version)
+                    .is_some_and(|(_, prerelease)| prerelease.is_some()),
+                version,
+            })
             .collect();
-
-        result.sort_unstable_by(|a, b| version_cmp(&b.version, &a.version));
-        Ok(result)
+        result.sort_by(|a, b| Self::python_version_cmp(&b.version, &a.version));
+        result
     }
 
-    fn extract_cpython_version(name: &str) -> Option<String> {
-        let (_, tail) = name.split_once("cpython-")?;
-        let version = tail
-            .split(|character: char| !character.is_ascii_digit() && character != '.')
-            .next()?;
-        Self::is_semver_like(version).then(|| version.to_owned())
+    /// Parse a PBS asset version only from the text after `cpython-` and
+    /// before the required build-stamp `+`, e.g. `3.14.7` or `3.15.0rc2`.
+    fn parse_cpython_version(asset_name: &str) -> Option<String> {
+        let (_, tail) = asset_name.split_once("cpython-")?;
+        let (raw, _) = tail.split_once('+')?;
+        Self::is_python_version(raw).then(|| raw.to_owned())
     }
 
-    fn is_semver_like(value: &str) -> bool {
-        let mut parts = value.split('.');
+    fn is_python_version(raw: &str) -> bool {
+        Self::parse_python_version(raw).is_some()
+    }
+
+    /// Split a raw CPython version into its numeric base and prerelease suffix.
+    /// The prerelease rank is `a`=0, `b`=1, `rc`=2. Freethreaded `t` tags and
+    /// malformed suffixes are rejected.
+    fn parse_python_version(raw: &str) -> Option<(&str, Option<(u8, u32)>)> {
+        let (base, suffix) = raw.split_at(
+            raw.find(|c: char| c.is_ascii_alphabetic())
+                .unwrap_or(raw.len()),
+        );
+        let prerelease = if suffix.is_empty() {
+            None
+        } else {
+            let (rank, number) = if let Some(rest) = suffix.strip_prefix("rc") {
+                (2u8, rest)
+            } else if let Some(rest) = suffix.strip_prefix('b') {
+                (1u8, rest)
+            } else if let Some(rest) = suffix.strip_prefix('a') {
+                (0u8, rest)
+            } else {
+                return None;
+            };
+            Some((rank, number.parse::<u32>().ok()?))
+        };
+        let mut parts = base.split('.');
         match (parts.next(), parts.next(), parts.next(), parts.next()) {
-            (Some(major), Some(minor), Some(patch), None) => [major, minor, patch]
-                .iter()
-                .all(|p| !p.is_empty() && p.chars().all(|c| c.is_ascii_digit())),
-            _ => false,
+            (Some(major), Some(minor), Some(patch), None)
+                if [major, minor, patch]
+                    .iter()
+                    .all(|part| !part.is_empty() && part.chars().all(|c| c.is_ascii_digit())) => {}
+            _ => return None,
+        }
+        Some((base, prerelease))
+    }
+
+    /// Order CPython versions by numeric precedence with `a` < `b` < `rc`
+    /// and every prerelease below its own stable version (`3.15.0rc2` <
+    /// `3.15.0`). Unparsable inputs fall back to the shared version order.
+    fn python_version_cmp(a: &str, b: &str) -> std::cmp::Ordering {
+        use std::cmp::Ordering;
+        match (Self::parse_python_version(a), Self::parse_python_version(b)) {
+            (Some((base_a, pre_a)), Some((base_b, pre_b))) => {
+                let base = Self::numeric_component_cmp(base_a, base_b);
+                if base != Ordering::Equal {
+                    return base;
+                }
+                match (pre_a, pre_b) {
+                    (None, None) => Ordering::Equal,
+                    (None, Some(_)) => Ordering::Greater,
+                    (Some(_), None) => Ordering::Less,
+                    (Some((rank_a, serial_a)), Some((rank_b, serial_b))) => {
+                        rank_a.cmp(&rank_b).then(serial_a.cmp(&serial_b))
+                    }
+                }
+            }
+            _ => version_cmp(a, b),
         }
     }
 
+    fn numeric_component_cmp(a: &str, b: &str) -> std::cmp::Ordering {
+        use std::cmp::Ordering;
+        let mut left = a.split('.');
+        let mut right = b.split('.');
+        loop {
+            match (left.next(), right.next()) {
+                (None, None) => return Ordering::Equal,
+                (l, r) => {
+                    let l = l.unwrap_or("0").parse::<u64>().unwrap_or(0);
+                    let r = r.unwrap_or("0").parse::<u64>().unwrap_or(0);
+                    if l != r {
+                        return l.cmp(&r);
+                    }
+                }
+            }
+        }
+    }
+
+    /// Match only the exact standard gzip suffix `{target}-install_only.tar.gz`
+    /// so freethreaded, stripped, and alternate-compression variants never win.
     fn asset_matches_version(name: &str, version: &str, target: &str) -> bool {
-        Self::extract_cpython_version(name).as_deref() == Some(version)
-            && name.contains(target)
-            && name.contains("install_only")
-            && name.ends_with(".tar.gz")
+        Self::parse_cpython_version(name).as_deref() == Some(version)
+            && name.ends_with(&format!("{target}-install_only.tar.gz"))
     }
 
     /// Install Python - PURE RUST, NO SUBPROCESS
@@ -161,18 +242,20 @@ impl PythonManager {
 
         println!("{} Finding Python {} release...", "→".blue(), version);
 
-        let releases: Vec<GithubRelease> = self
-            .client
-            .get(PBS_RELEASES_URL)
-            .header("User-Agent", GITHUB_USER_AGENT)
-            .send()
-            .await
-            .context("Failed to fetch Python releases")?
-            .error_for_status()
-            .context("Python releases request failed")?
-            .json()
-            .await
-            .context("Failed to parse Python release data")?;
+        let releases = fetch_github_releases(
+            self.client,
+            PBS_RELEASES_URL,
+            PBS_INSTALL_PER_PAGE,
+            PBS_INSTALL_MAX_PAGES,
+            |release| {
+                release
+                    .assets
+                    .iter()
+                    .any(|asset| Self::asset_matches_version(&asset.name, &version, &target))
+            },
+        )
+        .await
+        .context("Failed to fetch Python releases")?;
 
         let asset = releases
             .iter()
@@ -213,17 +296,21 @@ impl PythonManager {
     }
 
     /// Resolve a partial version request (`3`, `3.12`) to the newest matching
-    /// python-build-standalone release before any download URL is built;
-    /// `asset_matches_version` requires exact string equality, so an
-    /// unresolved partial would never match an asset. Exact and non-numeric
-    /// requests pass through unchanged, preserving the already-installed fast
-    /// path and the existing not-found UX.
+    /// stable python-build-standalone version before any download URL is
+    /// built; `asset_matches_version` requires exact string equality, so an
+    /// unresolved partial would never match an asset. Prerelease entries are
+    /// ignored, exact and non-numeric requests pass through unchanged, and
+    /// exact prerelease requests may install.
     async fn resolve_requested_version(&self, version: &str) -> Result<String> {
         if !crate::runtimes::common::is_partial_version(version) {
             return Ok(version.to_owned());
         }
         let available = self.list_available().await?;
-        let names: Vec<String> = available.into_iter().map(|entry| entry.version).collect();
+        let names: Vec<String> = available
+            .into_iter()
+            .filter(|entry| !entry.prerelease)
+            .map(|entry| entry.version)
+            .collect();
         Ok(crate::runtimes::resolve_version_request(&names, version))
     }
 
@@ -268,23 +355,258 @@ mod tests {
     #[test]
     fn test_extract_cpython_version() {
         assert_eq!(
-            PythonManager::extract_cpython_version(
+            PythonManager::parse_cpython_version(
                 "cpython-3.12.0+20231002-x86_64-unknown-linux-gnu-install_only.tar.gz"
             ),
             Some("3.12.0".to_string())
         );
         assert_eq!(
-            PythonManager::extract_cpython_version("cpython-3.11.5-x86_64.tar.gz"),
-            Some("3.11.5".to_string())
+            PythonManager::parse_cpython_version(
+                "cpython-3.15.0rc2+20250708-x86_64-unknown-linux-gnu-install_only.tar.gz"
+            ),
+            Some("3.15.0rc2".to_string())
+        );
+        // A `+` build stamp is required.
+        assert_eq!(
+            PythonManager::parse_cpython_version("cpython-3.11.5-x86_64.tar.gz"),
+            None
         );
     }
 
     #[test]
-    fn test_is_semver_like() {
-        assert!(PythonManager::is_semver_like("3.12.0"));
-        assert!(PythonManager::is_semver_like("3.11.5"));
-        assert!(!PythonManager::is_semver_like("3.12"));
-        assert!(!PythonManager::is_semver_like("3"));
+    fn rc_and_stable_prerelease_forms_parse() {
+        assert!(PythonManager::is_python_version("3.14.7"));
+        assert!(PythonManager::is_python_version("3.15.0rc2"));
+        assert!(PythonManager::is_python_version("3.15.0rc10"));
+        assert!(PythonManager::is_python_version("3.15.0b1"));
+        assert!(PythonManager::is_python_version("3.15.0a4"));
+        assert!(PythonManager::is_python_version("3.14.0rc1"));
+    }
+
+    #[test]
+    fn malformed_and_variant_version_forms_are_rejected() {
+        for malformed in [
+            "3.14",
+            "3",
+            "",
+            "3..7",
+            ".3.14.7",
+            "3.14.7.",
+            "3.14.7+extra",
+            "3.14.7rc",
+            "3.14.7rcx",
+            "3.14.7c1",
+            "3.14.7r1",
+            "3.13.0t",
+            "3.14.7a-1",
+            "3.14.7-x86_64",
+        ] {
+            assert!(
+                !PythonManager::is_python_version(malformed),
+                "malformed version {malformed:?} must be rejected"
+            );
+        }
+    }
+
+    #[test]
+    fn asset_variants_other_than_the_standard_gzip_suffix_are_rejected() {
+        let target = "x86_64-unknown-linux-gnu";
+        let matching = "cpython-3.14.7+20260825-x86_64-unknown-linux-gnu-install_only.tar.gz";
+        assert!(PythonManager::asset_matches_version(
+            matching, "3.14.7", target
+        ));
+
+        for (name, requested) in [
+            (
+                "cpython-3.14.7t+20260825-x86_64-unknown-linux-gnu-freethreaded-install_only.tar.gz",
+                "3.14.7",
+            ),
+            (
+                "cpython-3.14.7+20260825-x86_64-unknown-linux-gnu-install_only_stripped.tar.gz",
+                "3.14.7",
+            ),
+            (
+                "cpython-3.14.7+20260825-x86_64-unknown-linux-gnu-install_only.tar.zst",
+                "3.14.7",
+            ),
+            (
+                "cpython-3.14.7+20260825-x86_64-unknown-linux-gnu.tar.gz",
+                "3.14.7",
+            ),
+        ] {
+            assert!(
+                !PythonManager::asset_matches_version(name, requested, target),
+                "variant asset {name:?} must not match"
+            );
+        }
+    }
+
+    fn single_asset_release(tag: &str, prerelease: bool, asset: &str) -> GithubRelease {
+        GithubRelease {
+            tag_name: tag.to_string(),
+            prerelease,
+            assets: vec![super::super::common::GithubAsset {
+                name: asset.to_string(),
+                browser_download_url: None,
+                digest: None,
+            }],
+        }
+    }
+
+    fn stable_release(tag: &str, asset: &str) -> GithubRelease {
+        single_asset_release(tag, false, asset)
+    }
+
+    fn prerelease_release(tag: &str, asset: &str) -> GithubRelease {
+        single_asset_release(tag, true, asset)
+    }
+
+    #[test]
+    fn versions_dedupe_and_sort_newest_first_with_prerelease_precedence() {
+        let versions = PythonManager::parse_python_versions(
+            &[
+                stable_release(
+                    "20260825",
+                    "cpython-3.14.7+20260825-x86_64-unknown-linux-gnu-install_only.tar.gz",
+                ),
+                prerelease_release(
+                    "20260710",
+                    "cpython-3.15.0rc2+20260710-x86_64-unknown-linux-gnu-install_only.tar.gz",
+                ),
+                stable_release(
+                    "20260701",
+                    "cpython-3.14.7+20260701-x86_64-unknown-linux-gnu-install_only.tar.gz",
+                ),
+                stable_release(
+                    "20260620",
+                    "cpython-3.15.0+20260620-x86_64-unknown-linux-gnu-install_only.tar.gz",
+                ),
+                prerelease_release(
+                    "20260601",
+                    "cpython-3.15.0rc1+20260601-x86_64-unknown-linux-gnu-install_only.tar.gz",
+                ),
+                stable_release(
+                    "20260501",
+                    "cpython-3.13.9+20260501-x86_64-unknown-linux-gnu-install_only.tar.gz",
+                ),
+            ],
+            "x86_64-unknown-linux-gnu",
+        );
+
+        assert_eq!(
+            versions,
+            vec![
+                PythonVersion {
+                    version: "3.15.0".to_string(),
+                    prerelease: false
+                },
+                PythonVersion {
+                    version: "3.15.0rc2".to_string(),
+                    prerelease: true
+                },
+                PythonVersion {
+                    version: "3.15.0rc1".to_string(),
+                    prerelease: true
+                },
+                PythonVersion {
+                    version: "3.14.7".to_string(),
+                    prerelease: false
+                },
+                PythonVersion {
+                    version: "3.13.9".to_string(),
+                    prerelease: false
+                },
+            ]
+        );
+    }
+
+    #[test]
+    fn duplicate_assets_dedupe_independent_of_the_github_release_flag() {
+        for releases in [
+            vec![
+                prerelease_release(
+                    "a",
+                    "cpython-3.14.0+20260101-x86_64-unknown-linux-gnu-install_only.tar.gz",
+                ),
+                stable_release(
+                    "b",
+                    "cpython-3.14.0+20260201-x86_64-unknown-linux-gnu-install_only.tar.gz",
+                ),
+            ],
+            vec![
+                stable_release(
+                    "b",
+                    "cpython-3.14.0+20260201-x86_64-unknown-linux-gnu-install_only.tar.gz",
+                ),
+                prerelease_release(
+                    "a",
+                    "cpython-3.14.0+20260101-x86_64-unknown-linux-gnu-install_only.tar.gz",
+                ),
+            ],
+        ] {
+            let versions =
+                PythonManager::parse_python_versions(&releases, "x86_64-unknown-linux-gnu");
+            assert_eq!(
+                versions,
+                vec![PythonVersion {
+                    version: "3.14.0".to_string(),
+                    prerelease: false
+                }]
+            );
+        }
+    }
+
+    #[test]
+    fn python_version_cmp_orders_prerelease_serials_numerically() {
+        use std::cmp::Ordering;
+        assert_eq!(
+            PythonManager::python_version_cmp("3.15.0rc2", "3.15.0rc10"),
+            Ordering::Less
+        );
+        assert_eq!(
+            PythonManager::python_version_cmp("3.15.0", "3.15.0rc2"),
+            Ordering::Greater
+        );
+        assert_eq!(
+            PythonManager::python_version_cmp("3.15.0a1", "3.15.0b1"),
+            Ordering::Less
+        );
+        assert_eq!(
+            PythonManager::python_version_cmp("3.14.7", "3.15.0rc2"),
+            Ordering::Less
+        );
+    }
+
+    #[test]
+    fn stable_only_versions_exclude_prereleases_for_partial_resolution() {
+        let available = [
+            PythonVersion {
+                version: "3.15.0rc2".to_string(),
+                prerelease: true,
+            },
+            PythonVersion {
+                version: "3.14.7".to_string(),
+                prerelease: false,
+            },
+            PythonVersion {
+                version: "3.14.0".to_string(),
+                prerelease: false,
+            },
+        ];
+        let stable: Vec<String> = available
+            .iter()
+            .filter(|entry| !entry.prerelease)
+            .map(|entry| entry.version.clone())
+            .collect();
+        assert_eq!(
+            crate::runtimes::common::resolve_partial_version(&stable, "3.14").as_deref(),
+            Some("3.14.7")
+        );
+        assert_eq!(
+            crate::runtimes::common::resolve_partial_version(&stable, "3.15").as_deref(),
+            None,
+            "a prerelease-only line must not satisfy a partial request"
+        );
     }
 
     #[test]
