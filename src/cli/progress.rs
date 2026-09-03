@@ -20,11 +20,10 @@ use crate::cli::style;
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) enum TaskKind {
     /// Indeterminate work with no figures beyond the label and message.
-    ///
-    /// No constructor yet — the migration is landing lane types ahead of
-    /// their first callers. Allowed (not deleted) so the indeterminate lane
-    /// and its style/template stay available and template-tested.
-    #[allow(dead_code)]
+    #[allow(
+        dead_code,
+        reason = "progress-lane API; constructed by follow-up lanes"
+    )]
     Spinner,
     /// Byte-oriented work. The total may arrive after the lane starts, so a
     /// pending lane renders as a spinner until the total is known.
@@ -76,9 +75,6 @@ fn visible(mode: OutputMode) -> bool {
     mode == OutputMode::Interactive
 }
 
-/// Spinner style/template have no non-test caller yet (see `TaskKind::Spinner`);
-/// allowed for the same reason.
-#[allow(dead_code)]
 fn spinner_template(accent: Accent, colored: bool) -> String {
     if colored {
         format!(
@@ -263,8 +259,8 @@ impl ProgressTask {
     /// Clear the lane without printing a durable result line, for callers that
     /// report the outcome through their own summary lines.
     pub(crate) fn clear(&self) {
-        let mut bar_guard = lock_bar(&self.inner);
-        if let Some(bar) = bar_guard.take() {
+        let taken = lock_bar(&self.inner).take();
+        if let Some(bar) = taken {
             bar.finish_and_clear();
         }
     }
@@ -301,8 +297,8 @@ impl Drop for ProgressTask {
         if Arc::strong_count(&self.inner) != 1 {
             return;
         }
-        let mut bar_guard = lock_bar(&self.inner);
-        if let Some(bar) = bar_guard.take() {
+        let taken = lock_bar(&self.inner).take();
+        if let Some(bar) = taken {
             bar.finish_and_clear();
         }
     }

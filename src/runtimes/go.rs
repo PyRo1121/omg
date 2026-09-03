@@ -149,6 +149,12 @@ impl GoManager {
         Ok(())
     }
 
+    /// Remove an installed version. Refuses the active version.
+    pub fn uninstall(&self, version: &str) -> Result<()> {
+        let version = normalize_version(version);
+        super::common::uninstall_version(&self.versions_dir, &version)
+    }
+
     fn print_version_info(version: &str, goroot: &Path, bin_dir: &Path) {
         println!("{} Now using Go {version}", "✓".green());
         println!("  {} {}", "GOROOT:".dimmed(), goroot.display().dimmed());

@@ -153,6 +153,35 @@ pub async fn use_version(runtime: &str, version: Option<&str>) -> Result<()> {
     Ok(())
 }
 
+/// Remove an installed runtime version. The version is required and must
+/// not be the active one; removal deletes only that version's directory.
+pub fn uninstall_version(runtime: &str, version: &str) -> Result<()> {
+    crate::core::security::validate_package_name(runtime)?;
+    let runtime = canonical_runtime_name(runtime);
+    crate::core::security::validate_runtime_version(version)?;
+
+    ui::print_header("OMG", &format!("Removing {runtime} version {version}"));
+    ui::print_spacer();
+
+    match runtime.as_str() {
+        "node" => NodeManager::new().uninstall(strip_version_prefix(version))?,
+        "python" => PythonManager::new().uninstall(strip_version_prefix(version))?,
+        "rust" => RustManager::new().uninstall(version)?,
+        "go" => GoManager::new().uninstall(strip_version_prefix(version))?,
+        "ruby" => RubyManager::new().uninstall(strip_version_prefix(version))?,
+        "java" => JavaManager::new().uninstall(version)?,
+        "bun" => BunManager::new().uninstall(strip_version_prefix(version))?,
+        "pi" => PiManager::new().uninstall(strip_version_prefix(version))?,
+        _ => anyhow::bail!(
+            "Unsupported runtime '{runtime}'. Supported runtimes: {}",
+            SUPPORTED_RUNTIMES.join(", ")
+        ),
+    }
+
+    println!("{} Removed {runtime} {version}", "✓".green());
+    Ok(())
+}
+
 /// Probe one natively supported runtime's installed and active versions.
 /// Aliases (`nodejs`, `golang`, `jdk`, ...) are normalized via
 /// `canonical_runtime_name` before dispatch.

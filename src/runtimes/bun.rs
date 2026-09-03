@@ -159,6 +159,12 @@ impl BunManager {
         print_using("Bun", &version, &self.versions_dir.join("current"));
         Ok(())
     }
+
+    /// Remove an installed version. Refuses the active version.
+    pub fn uninstall(&self, version: &str) -> Result<()> {
+        let version = normalize_version(version);
+        super::common::uninstall_version(&self.versions_dir, &version)
+    }
 }
 
 // Generate common runtime manager methods (list_installed, current_version)

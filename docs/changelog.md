@@ -24,10 +24,12 @@ rollback CLI guard. Reapply rustfmt on current main.
 - Sanitize remote strings at render boundaries; revert breaking sha2/p256/p384 bump
 ### ✨ New Features
 
+- **Runtimes**: Uninstall versions via omg use RUNTIME VERSION --uninstall
 - **Hook**: Add --uninstall removing shell integration with backup
 - **Install**: Add --uninstall removing binaries and shell integration
 ### 🐛 Bug Fixes
 
+- **Clippy**: Clear gate after progress-lane migration (mechanical only)
 - **Test**: Create GnuPG home with 0700 in round-trip test
 - **Secrets**: Detect Google OAuth and OpenAI key formats
 - **Rollback**: Remove historical worktree after successful rebuild
