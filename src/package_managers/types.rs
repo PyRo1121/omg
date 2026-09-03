@@ -432,6 +432,9 @@ pub struct LocalPackage {
     pub description: String,
     pub install_size: i64,
     pub reason: &'static str,
+    /// SPDX-style license identifiers from the package database.
+    /// Backends without license metadata leave this empty.
+    pub licenses: Vec<String>,
 }
 
 #[derive(Debug, Clone)]

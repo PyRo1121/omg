@@ -124,6 +124,7 @@ fn local_packages_from_debian_db() -> anyhow::Result<Vec<LocalPackage>> {
             } else {
                 "dependency"
             },
+            licenses: Vec::new(),
         })
         .collect())
 }
@@ -140,6 +141,7 @@ pub fn list_installed_fast() -> anyhow::Result<Vec<LocalPackage>> {
                     description: package.description,
                     install_size: 0,
                     reason: "explicit",
+                    licenses: Vec::new(),
                 })
                 .collect()
         });

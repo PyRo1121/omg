@@ -638,6 +638,7 @@ fn map_local_package(pkg: &rust_apt::Package<'_>) -> LocalPackage {
             i64::try_from(version.installed_size()).unwrap_or(i64::MAX)
         }),
         reason,
+        licenses: Vec::new(),
     }
 }
 

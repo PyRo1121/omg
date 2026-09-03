@@ -219,6 +219,7 @@ pub fn list_installed_fast() -> Result<Vec<LocalPackage>> {
                     PackageReason::Explicit => "explicit",
                     PackageReason::Depend => "dependency",
                 },
+                licenses: pkg.licenses().into_iter().map(str::to_string).collect(),
             })
         }));
 
