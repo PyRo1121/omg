@@ -47,6 +47,8 @@ Read Python and Deno project pins, map compatible requests to installed versions
 
 ### 🐛 Bug Fixes
 
+- Sanitize plain update summary rows
+- Strip bidi controls from PKGBUILD review
 - **Tea**: Sanitize package versions ([#193](https://github.com/PyRo1121/omg/issues/193))
 
 fix(tea): sanitize package versions
@@ -152,6 +154,7 @@ v0.1.215 never became GitHub Latest after CI tagged it.
 - **Deps**: Update rust dependencies ([#183](https://github.com/PyRo1121/omg/issues/183))
 ### 🧪 Testing
 
+- Expose bidi controls in PKGBUILD review
 - Expose raw version text in tea info
 ## [0.1.215] - 2026-09-03
 ### Bench
