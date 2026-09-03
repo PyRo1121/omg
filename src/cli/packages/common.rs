@@ -7,7 +7,7 @@
 #[cfg(unix)]
 use crate::core::client::DaemonClient;
 use crate::package_managers::types::UpdateInfo;
-#[cfg(any(feature = "debian", feature = "debian-pure", not(feature = "arch")))]
+#[cfg(unix)]
 use anyhow::Context;
 use anyhow::Result;
 
@@ -78,11 +78,10 @@ pub(crate) async fn try_daemon_list_updates() -> Option<Vec<UpdateInfo>> {
 /// invariant established in `sync_db.rs`). Daemon absence is normal; a
 /// connected daemon that rejects the refresh is a consistency failure and is
 /// reported.
-#[cfg(all(
-    unix,
-    any(feature = "debian", feature = "debian-pure", not(feature = "arch"))
-))]
-async fn refresh_daemon_index_after_sync() -> Result<()> {
+// Visible to the Arch update lane: after `pm.sync()` the daemon still
+// serves its frozen pre-sync snapshot until this refresh swaps it.
+#[cfg(unix)]
+pub(crate) async fn refresh_daemon_index_after_sync() -> Result<()> {
     match DaemonClient::connect().await {
         Ok(mut client) => {
             let packages = client
@@ -99,10 +98,7 @@ async fn refresh_daemon_index_after_sync() -> Result<()> {
 }
 
 /// Non-Unix stub preserving the asynchronous command interface.
-#[cfg(all(
-    not(unix),
-    any(feature = "debian", feature = "debian-pure", not(feature = "arch"))
-))]
+#[cfg(not(unix))]
 #[allow(
     clippy::unused_async,
     reason = "the non-Unix implementation preserves the asynchronous command interface"
@@ -389,6 +385,19 @@ pub(crate) async fn remove_with_manager(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// The Arch update lane calls this after every sync: with no daemon it
+    /// must be a quiet no-op, never a failure that aborts the update.
+    /// Serial: the daemon-disable switch is process-global environment.
+    #[cfg(unix)]
+    #[serial_test::serial]
+    #[test]
+    fn daemon_refresh_without_a_daemon_is_a_quiet_noop() {
+        let result = temp_env::with_var("OMG_DISABLE_DAEMON", Some("1"), || {
+            futures::executor::block_on(refresh_daemon_index_after_sync())
+        });
+        assert!(result.is_ok());
+    }
 
     /// Regression test for the stale-index invariant (W12-A-01): after a sync,
     /// the update path must fully refresh the daemon index BEFORE probing its
