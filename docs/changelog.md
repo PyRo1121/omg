@@ -13,6 +13,7 @@ OMG is the fastest unified package manager for Linux, replacing pacman, yay, nvm
 ## [Unreleased]
 ### Style
 
+- **Search**: Drop per-row separators, tighten list rhythm
 - **Update**: Inline source badge in update list rows
 - **Policy**: Warn about missing policy file once per process
 - **Info**: Render sync-DB info through the shared kv renderer
@@ -32,6 +33,8 @@ rollback CLI guard. Reapply rustfmt on current main.
 - **Install**: Add --uninstall removing binaries and shell integration
 ### 🐛 Bug Fixes
 
+- Sanitize AUR build package names
+- Sanitize update summary fields
 - **Clippy**: Clear gate after progress-lane migration (mechanical only)
 - **Test**: Create GnuPG home with 0700 in round-trip test
 - **Secrets**: Detect Google OAuth and OpenAI key formats
