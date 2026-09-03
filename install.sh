@@ -12,6 +12,10 @@
 #   OMG_SKIP_SHELL=1    - Skip shell integration
 #   OMG_VERSION=v0.1.0  - Install specific version
 #
+# Uninstall:
+#   curl -fsSL https://... | bash -s -- --uninstall
+# (removes binaries and shell integration; rc files are backed up first)
+#
 # Example with no telemetry:
 #   curl -fsSL https://... | OMG_NO_TELEMETRY=1 bash
 #
@@ -822,6 +826,43 @@ setup_shell() {
   "$INSTALL_DIR/omg" completions "$shell_type" >/dev/null 2>&1 || true
 }
 
+uninstall_omg() {
+  header "Uninstall OMG"
+
+  for bin in omg omgd; do
+    if [[ -f "$INSTALL_DIR/$bin" ]]; then
+      rm -f "$INSTALL_DIR/$bin"
+      success "Removed $INSTALL_DIR/$bin"
+    else
+      info "$bin not present in $INSTALL_DIR"
+    fi
+  done
+
+  # Remove the exact lines setup_shell appends. Each rc file is backed up
+  # first; only OMG's own marker, hook, and PATH lines are deleted.
+  for rc_file in "$HOME/.bashrc" "$HOME/.zshrc" "$HOME/.config/fish/config.fish"; do
+    [[ -f "$rc_file" ]] || continue
+    if grep -qE "# OMG Package Manager|omg hook" "$rc_file"; then
+      cp "$rc_file" "$rc_file.omg-backup"
+      sed -i \
+        -e "/# OMG Package Manager/d" \
+        -e '/^eval "$(omg hook \(bash\|zsh\))"$/d' \
+        -e '/^omg hook fish | source$/d' \
+        -e "\|^export PATH=\"$INSTALL_DIR:|d" \
+        -e "\|^fish_add_path $INSTALL_DIR$|d" \
+        "$rc_file"
+      success "Removed OMG integration from $rc_file (backup at $rc_file.omg-backup)"
+    fi
+  done
+
+  printf "\n"
+  printf "${GREEN}${BOLD}Uninstall Complete!${RESET}\n"
+  printf "\n"
+  printf "  Config and caches were left in place.\n"
+  printf "  Remove them manually if desired.\n"
+  printf "\n"
+}
+
 finish() {
   printf "\n"
   printf "${GREEN}${BOLD}Installation Complete! 🚀${RESET}\n"
@@ -834,6 +875,11 @@ finish() {
 }
 
 # Run
+if [[ "${1:-}" == "--uninstall" || "${OMG_UNINSTALL:-0}" == "1" ]]; then
+  uninstall_omg
+  exit 0
+fi
+
 main() {
   print_banner
   if ! install_from_release; then
