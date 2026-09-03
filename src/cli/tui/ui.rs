@@ -1484,6 +1484,58 @@ mod tests {
     }
 
     #[test]
+    fn team_tab_renders_sanitized_team_and_member_names() {
+        let mut terminal = Terminal::new(TestBackend::new(120, 40)).expect("test terminal");
+        let mut app = app_on(Tab::Team);
+        app.team_status = Some(crate::core::env::team::TeamStatus {
+            format_version: crate::core::env::team::TeamStatus::STATUS_FORMAT_VERSION,
+            config: crate::core::env::team::TeamConfig {
+                team_id: "fleet".to_string(),
+                name: "Core\u{1b}[31m\u{202e}Team".to_string(),
+                member_id: "me".to_string(),
+                remote_url: None,
+                auto_push: false,
+            },
+            lock_hash: String::new(),
+            members: vec![crate::core::env::team::TeamMember {
+                id: "m1".to_string(),
+                name: "\u{202e}nhoj\u{1b}[0m".to_string(),
+                env_hash: String::new(),
+                last_sync: 0,
+                in_sync: true,
+                drift_summary: None,
+            }],
+            updated_at: 0,
+        });
+
+        terminal.draw(|frame| draw(frame, &app)).expect("draw team");
+        let rendered: String = terminal
+            .backend()
+            .buffer()
+            .content()
+            .iter()
+            .map(ratatui::buffer::Cell::symbol)
+            .collect();
+
+        assert!(
+            !rendered.chars().any(char::is_control),
+            "team name controls must not reach the TUI buffer"
+        );
+        assert!(
+            !rendered.contains('\u{202e}'),
+            "team name bidi overrides must not reach the TUI buffer"
+        );
+        assert!(
+            rendered.contains("Core[31mTeam"),
+            "sanitized team name must stay visible"
+        );
+        assert!(
+            rendered.contains("nhoj[0m"),
+            "sanitized member name must stay visible"
+        );
+    }
+
+    #[test]
     fn width_helpers_replace_terminal_controls_before_rendering() {
         let rendered = truncate_width("safe\x1b[31m\ntext", 40);
 
