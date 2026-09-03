@@ -66,8 +66,8 @@ fn forged_self_asserted_account_does_not_paywall_slsa() {
     let result = project.run(&["audit", "slsa", "artifact.bin"]);
     let out = result.combined_output();
     assert!(
-        !out.contains("requires") || !out.contains("tier"),
-        "a forged token must not paywall SLSA, got:\n{out}"
+        out.contains("SLSA verification failed"),
+        "a forged token must fail verification, got:\n{out}"
     );
 }
 
@@ -96,7 +96,7 @@ fn audit_fix_is_not_paywalled() {
     let result = project.run(&["audit", "fix"]);
     let out = result.combined_output();
     assert!(
-        !out.contains("requires") || !out.contains("tier"),
-        "audit fix must not be paywalled, got:\n{out}"
+        out.contains("Daemon not running"),
+        "audit fix must reach the daemon gate, got:\n{out}"
     );
 }

@@ -44,9 +44,12 @@ fn test_package_name_validation_rigorous() {
 async fn test_daemon_protocol_boundaries() {
     use omg_lib::daemon::protocol::Request;
 
-    // Test large request ID
+    // Largest request ID must survive a frame round trip intact.
     let req = Request::Ping { id: u64::MAX };
-    assert_eq!(req.id(), u64::MAX);
+    let frame = omg_lib::daemon::protocol::encode_frame(&req).expect("encode Ping");
+    let (_, payload) = omg_lib::daemon::protocol::split_frame(&frame).expect("split Ping");
+    let back: Request = bitcode::deserialize(payload).expect("decode Ping");
+    assert_eq!(back.id(), u64::MAX);
 
     // Request::Batch was removed: zero production senders and its nested
     // decode was a stack-overflow class. Ping still pins id() extraction.
