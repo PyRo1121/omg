@@ -51,17 +51,20 @@ fn parse_volumes(volumes: &[String]) -> Result<Vec<(String, String)>> {
         .collect()
 }
 
-/// Validate a container image reference or user-provided container name.
+/// Validate a container image reference or user-provided container name
+/// through the shared security allowlists. One allowlist everywhere: image
+/// refs use the image grammar, container names use the package-name grammar.
 fn validate_container_ref(kind: &str, value: &str) -> Result<()> {
     use crate::cli::packages::execute_cmd;
 
-    if value
-        .chars()
-        .any(|c| c.is_control() || matches!(c, ';' | '|' | '&'))
-    {
+    let valid = match kind {
+        "image" => crate::core::security::validate_image_ref(value).is_ok(),
+        _ => crate::core::security::validate_package_name(value).is_ok(),
+    };
+    if !valid {
         execute_cmd(crate::cli::components::Components::error_with_suggestion(
             format!("Invalid {kind} name"),
-            "Names must not contain control characters or shell operators",
+            "Names must match the expected character allowlist",
         ))?;
         anyhow::bail!("Invalid {kind} name");
     }

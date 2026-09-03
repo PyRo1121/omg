@@ -17,14 +17,8 @@ pub fn is_elevated() -> bool {
 ///
 /// Direct mutation is root-only. Non-root callers must use the explicit sudo
 /// delegation path rather than inheritable executable capabilities.
-const fn direct_package_access_allowed(is_root: bool) -> bool {
-    is_root
-}
-
-#[inline]
-#[must_use]
 pub fn can_write_pacman_db() -> bool {
-    direct_package_access_allowed(crate::core::privilege::is_root())
+    crate::core::privilege::is_root()
 }
 
 /// Show a one-time hint about prompt-light sudo credential caching.
@@ -42,10 +36,6 @@ pub fn maybe_show_turbo_hint() -> bool {
         Ok(true) => {}
         Ok(false) | Err(_) => return false,
     }
-    #[cfg(not(unix))]
-    if hint_file.exists() {
-        return false;
-    }
 
     use owo_colors::OwoColorize;
     eprintln!();
@@ -60,9 +50,6 @@ pub fn maybe_show_turbo_hint() -> bool {
         "(uses sudo credential caching; grants no permanent privileges)".dimmed()
     );
     eprintln!();
-
-    #[cfg(not(unix))]
-    let _ = std::fs::write(&hint_file, b"1");
 
     true
 }
@@ -96,8 +83,6 @@ mod tests {
 
     #[test]
     fn direct_package_database_access_is_root_only() {
-        assert!(direct_package_access_allowed(true));
-        assert!(!direct_package_access_allowed(false));
         assert_eq!(can_write_pacman_db(), crate::core::privilege::is_root());
     }
 }
