@@ -31,7 +31,10 @@ pub use validation::{validate_local_debian_package_file, validate_local_package_
 /// Require explicit consent when any target is a local archive file.
 /// One gate so the ultra-fast root path and the normal install path cannot
 /// diverge on which archives count as local.
-#[cfg(any(feature = "arch", feature = "debian", feature = "debian-pure"))]
+///
+/// Deliberately ungated: the install-path caller is unconditional, and the
+/// body is portable (the Debian branch is inner-gated). Gating this would
+/// silently drop a consent check under some feature sets.
 pub fn ensure_local_archive_consent(packages: &[String], allowed: bool) -> anyhow::Result<()> {
     let includes_local_file = packages.iter().any(|package| {
         if is_local_package_file(package) {
