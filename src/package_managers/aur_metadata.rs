@@ -4,11 +4,14 @@
 //! (packages-meta-ext-v1.json.gz).
 
 use std::fs::File;
-use std::io::{BufReader, Write};
+#[cfg(test)]
+use std::io::BufReader;
+use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::time::{Duration, SystemTime};
 
 use anyhow::{Context, Result};
+#[cfg(test)]
 use flate2::read::GzDecoder;
 use futures::StreamExt;
 use reqwest::header::{ETAG, IF_MODIFIED_SINCE, IF_NONE_MATCH, LAST_MODIFIED};
@@ -247,6 +250,7 @@ pub async fn sync_aur_metadata(
 
 /// Read and parse the metadata archive (if you need the raw JSON)
 /// Note: prefer using `AurIndex` for lookups
+#[cfg(test)]
 pub fn read_metadata_archive(path: &Path) -> Result<Vec<AurJsonPackage>> {
     let file = File::open(path)?;
     let reader = BufReader::new(file);

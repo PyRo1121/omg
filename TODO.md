@@ -6,7 +6,7 @@ Counts at this commit. Run `find src -name '*.rs' | wc -l` to regenerate. Run `f
 
 ## Phase 0. Restore the baseline
 
-- [x] Test target compile error in `src/cli/progress.rs`. Resolved in tree. Round D ran `cargo check --lib`, zero errors. Only 4 dead code warnings remain, covered by the next item.
+- [ ] Test target compile error in untracked `src/cli/progress.rs:383`. `bar.message().as_deref()` on a `String`. Lib target is clean, verified by `cargo check --lib` with zero errors. The test target fails only on this line. File is untracked and owned by another lane. Do not fix here, flag the owner.
 - [ ] Delete the dead progress cluster in `src/cli/progress.rs`. `Accent::Aur` is never constructed. `PENDING_BYTES_FIGURES` is never used. `set_label` is never used. `lock_label` goes with it. Refresh or drop the three stale `#[expect]` attributes on the literal formatting lints. Verify with `cargo clippy --workspace --all-targets`.
 
 ## Phase 1. Security hardening

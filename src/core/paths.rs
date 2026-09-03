@@ -318,6 +318,7 @@ pub fn pacman_db_dir_result() -> anyhow::Result<PathBuf> {
 }
 
 /// Pacman sync database directory (default: /var/lib/pacman/sync).
+#[cfg(test)]
 #[must_use]
 pub fn pacman_sync_dir() -> PathBuf {
     pacman_env_dir("OMG_PACMAN_SYNC_DIR", crate::core::privilege::is_root())
@@ -345,46 +346,6 @@ pub fn pacman_local_dir_result() -> anyhow::Result<PathBuf> {
         return require_absolute_pacman_path(local, "OMG_PACMAN_LOCAL_DIR");
     }
     Ok(pacman_db_dir_result()?.join("local"))
-}
-
-/// Pacman package cache directories in configured priority order.
-#[must_use]
-pub fn pacman_cache_dirs() -> Vec<PathBuf> {
-    if let Some(cache_dir) = pacman_env_dir("OMG_PACMAN_CACHE_DIR", true) {
-        return vec![cache_dir];
-    }
-
-    if !pacman_root_overridden()
-        && let Some(cache_dirs) = configured_pacman_cache_dirs()
-    {
-        return cache_dirs;
-    }
-
-    vec![pacman_root().join("var/cache/pacman/pkg")]
-}
-
-#[cfg(feature = "arch")]
-fn configured_pacman_cache_dirs() -> Option<Vec<PathBuf>> {
-    let config = crate::core::pacman_conf::PacmanConfig::parse(pacman_conf_path()).ok()?;
-    if config.cache_dirs.is_empty() {
-        return None;
-    }
-
-    let root = pacman_root();
-    Some(
-        config
-            .cache_dirs
-            .into_iter()
-            .map(|configured| {
-                let path = PathBuf::from(configured);
-                if path.is_absolute() {
-                    path
-                } else {
-                    root.join(path)
-                }
-            })
-            .collect(),
-    )
 }
 
 #[cfg(not(feature = "arch"))]

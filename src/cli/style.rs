@@ -208,12 +208,6 @@ pub fn path(p: &str) -> String {
     maybe_color(p, |path| path.yellow().to_string())
 }
 
-/// Highlight important text (bold yellow)
-#[must_use]
-pub fn highlight(msg: &str) -> String {
-    maybe_color(msg, |m| m.yellow().bold().to_string())
-}
-
 /// Size formatting (e.g., "1.5 MB")
 #[must_use]
 pub fn size(bytes: u64) -> String {

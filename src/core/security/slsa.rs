@@ -74,11 +74,6 @@ pub enum SlsaError {
     },
     #[error("Rekor entry body missing field '{field}'")]
     RekorBodyMissingField { field: &'static str },
-    #[error("Artifact hash is not valid hex")]
-    RekorBodyHashHex {
-        #[source]
-        source: hex::FromHexError,
-    },
     #[error("Signature bytes are malformed for the given key type")]
     SignatureMalformed,
     #[error("Failed to read '{path}'")]
