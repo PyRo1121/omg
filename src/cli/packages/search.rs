@@ -88,7 +88,10 @@ fn rank_display_packages(query: &str, packages: &mut Vec<DisplayPackage>) {
 
 /// Collapse language-pack floods into one row per base package. The row
 /// keeps the first hit's version and source and reports the pack count.
-fn group_langpacks(packages: Vec<DisplayPackage>) -> Vec<DisplayPackage> {
+/// An explicit langpack query is never grouped: asking for a pack by name
+/// must show that pack, not its base row.
+fn group_langpacks(query: &str, packages: Vec<DisplayPackage>) -> Vec<DisplayPackage> {
+    let query_lower = query.to_lowercase();
     let mut grouped: Vec<DisplayPackage> = Vec::with_capacity(packages.len());
     let mut pending: Option<(String, DisplayPackage, usize)> = None;
     let flush = |grouped: &mut Vec<DisplayPackage>,
@@ -101,6 +104,12 @@ fn group_langpacks(packages: Vec<DisplayPackage>) -> Vec<DisplayPackage> {
         }
     };
     for pkg in packages {
+        // The user named this exact pack: leave its row alone.
+        if pkg.name.to_lowercase() == query_lower {
+            flush(&mut grouped, &mut pending);
+            grouped.push(pkg);
+            continue;
+        }
         let base = group_base(&pkg.name).map(str::to_string);
         let matches = match (&pending, &base) {
             (Some((pending_base, _, _)), Some(base)) => pending_base == base,
@@ -132,7 +141,7 @@ fn present_search_results(
 ) -> Vec<DisplayPackage> {
     rank_display_packages(query, &mut packages);
     if !json {
-        packages = group_langpacks(packages);
+        packages = group_langpacks(query, packages);
     }
     truncate_search_results(&mut packages, limit);
     packages
@@ -699,12 +708,25 @@ mod tests {
             display("firefox-developer-edition-i18n-an"),
             display("firefox-developer-edition-i18n-ar"),
         ];
-        let grouped = group_langpacks(packages);
+        let grouped = group_langpacks("firefox", packages);
         assert_eq!(grouped.len(), 2);
         assert_eq!(
             grouped[1].name,
             "firefox-developer-edition-i18n-af (+2 language packs)"
         );
+    }
+
+    #[test]
+    fn explicit_langpack_query_keeps_its_row() {
+        let packages = vec![
+            display("firefox"),
+            display("firefox-i18n-af"),
+            display("firefox-i18n-an"),
+        ];
+        let grouped = group_langpacks("firefox-i18n-af", packages);
+        let names: Vec<&str> = grouped.iter().map(|pkg| pkg.name.as_str()).collect();
+        assert!(names.contains(&"firefox-i18n-af"));
+        assert!(names.iter().all(|name| !name.contains("language packs")));
     }
 
     #[test]
