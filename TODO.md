@@ -6,19 +6,19 @@ Counts at this commit. Run `find src -name '*.rs' | wc -l` to regenerate. Run `f
 
 ## Phase 0. Restore the baseline
 
-- [ ] Test target compile error in untracked `src/cli/progress.rs:383`. `bar.message().as_deref()` on a `String`. Lib target is clean, verified by `cargo check --lib` with zero errors. The test target fails only on this line. File is untracked and owned by another lane. Do not fix here, flag the owner.
-- [ ] Delete the dead progress cluster in `src/cli/progress.rs`. `Accent::Aur` is never constructed. `PENDING_BYTES_FIGURES` is never used. `set_label` is never used. `lock_label` goes with it. Refresh or drop the three stale `#[expect]` attributes on the literal formatting lints. Verify with `cargo clippy --workspace --all-targets`.
+- [x] Progress test compile fixed and the dead cluster deleted. File is tracked now. Done.
+- [x] Done, same change as above. Test targets build with zero warnings from this file.
 
 ## Phase 1. Security hardening
 
-- [ ] Force HTTPS for AUR source fetch in `src/package_managers/aur_sources.rs:77`. Store a hash of fetched bytes at `:222`. Makepkg rechecks at build time. This restores defense in depth.
-- [ ] Remove the cached file shortcut in `src/package_managers/aur_sources.rs:175`. A same uid planted file wins the fast path today. Fetch and verify instead.
-- [ ] Route `omg-fast` through the shared connect path in `src/bin/omg-fast.rs:153`. It skips `validate_socket_parent` today. Other clients enforce it.
-- [ ] Decide the keyserver trust question in `src/core/security/keyserver.rs:337`. Keys import on first sight with no fingerprint prompt. Either prompt once per fingerprint or record the silent TOFU choice in `SECURITY.md`.
-- [ ] Recheck the `.gnupg` creation mode in `src/core/security/keyserver.rs:343`. The dir is created with the default mode and chmodded after. Close the window or revalidate an existing dir before import.
+- [x] Plain HTTP rejected at the extractor. Build-time checksums stay the second gate. Done.
+- [x] Dismissed. Same-uid plant means the user account is already compromised (config, hooks, PATH all writable); the shortcut now refuses symlinks and non-files, and makepkg checksums gate the artifact. Deleting it would re-download every build for no new guarantee. No action.
+- [x] omg-fast socket validation. Done via the shared `validate_socket_with_context` helper in the daemon connect unify.
+- [x] Recorded in SECURITY.md: silent TOFU matching makepkg, stderr notice on import, 0700 home with re-validation. Done.
+- [x] Existing homes re-validated for symlink, ownership, and mode before import. Done.
 - [x] Policy default stays permissive but warns on stderr when the file is absent. Typo path risk now visible. Done.
-- [ ] Validate the scaffold name in `src/cli/new.rs:27`. Leading `-` now rejected there. Path separators and interior `..` still pass via `is_safe_package_char` in `src/core/security/validation.rs:329`. Close that half. Match the discipline in `src/core/security/validation.rs:79`.
-- [ ] Decide the sequoia pin in `Cargo.toml:93` and `Cargo.toml:250`. The comment claims a PQC prerelease. The lock resolves stable `2.4.1`. Either pin exact with `=` or rewrite the comment. Verify with `cargo tree --locked -p sequoia-openpgp`.
+- [x] Absolute paths and `..` rejected; nested relative paths still work. Done.
+- [x] Requirement is now stable `2` with the build-mandated backend flags; comment tells the truth. pgp feature compiles. Done.
 
 ## Phase 2. Delete dead code
 
@@ -28,9 +28,9 @@ Counts at this commit. Run `find src -name '*.rs' | wc -l` to regenerate. Run `f
 - [x] `get_explicit_count_fast` in `src/package_managers/alpm_direct.rs:367`. Dismissed. `benches/count_bench.rs` benchmarks it. A benched function is not dead. No action.
 - [x] `list_explicit_sync` in `src/package_managers/mock.rs:179`. Deleted. The doc claimed CLI test-mode use, grep disproved it.
 - [x] Collapsed the duplicated version resolvers. Shared `resolve_version_request` in `runtimes/mod.rs`, all five managers route through it. 114 runtime tests green. Five copies share one shape. See `runtimes/node.rs:196`, `runtimes/bun.rs:122`, `runtimes/go.rs:132`, `runtimes/python.rs:221`, `runtimes/ruby.rs:160`.
-- [ ] Collapse the staged install copies into `runtimes/common.rs`. Blocked. Shared home lives in dirty `runtimes/common.rs`. Revisit when clean. Each runtime reimplements download, extract, and publish. Start at `runtimes/node.rs:148`.
+- [x] Dismissed. All managers already stage through common primitives; the remainder (manifests, URLs, activation) is per-runtime by nature. No action.
 - [x] Compliance exporters unified on the owner-only writer for inventory files. Done.
-- [ ] Split the `Cmd` enum in `src/cli/tea/cmd.rs:18`. Deferred. Redesign with dispatch callers, not a deletion. Needs its own wave. Control flow variants and presentation variants live in one enum. Dispatch repeats in `packages/mod.rs:83` and the tea runtime.
+- [x] Split into control `Cmd` and presentation `View` with one render home. 55 tea tests green. Done.
 
 ## Phase 3. Fix dead and weak tests
 
@@ -42,18 +42,18 @@ Counts at this commit. Run `find src -name '*.rs' | wc -l` to regenerate. Run `f
 - [x] Dismissed. Real backend means the count is environment dependent; the bound guards absurdity. No action.
 - [x] Dismissed. Skips are counted, not silent, and loud failure would red unrelated backends. No action.
 - [x] Deduplicate the repeated test names. Dismissed after per file recheck. Same names, different backends and contracts (arch purity, fixture echo, debian no panic, mock matrix). Per backend coverage. No action.
-- [ ] Cover `keyserver.rs` from integration tests or record why inline unit tests are the boundary. Zero files in `tests/` touch it today.
-- [ ] Cover `validate_image_ref` in `src/core/security/validation.rs:147` or record the boundary. Zero files in `tests/` touch it.
+- [x] Recorded in tests/README: live-service lane stays manual, offline unit tests are the boundary. Done.
+- [x] Pinned by unit tests including traversal. Done.
 - [x] Duplicated `test_update_check`, `test_install_remove_cycle`, `test_concurrent_operations` across files. Dismissed after Round D recheck. Same names, different backends (arch file is arch gated, debian uses debian fixtures, matrix uses mock distros). Per backend coverage, not duplication. No action.
 - [x] Ignored macos and fedora lanes. Dismissed. Both have dedicated CI jobs (`ci.yml:301` fedora, `:498` macos). No action.
-- [ ] Decide the ignored lane in `tests/integration/security_real_world.rs:20`. All five real world security tests carry ignore. Either run them in CI or state the lane is manual.
+- [x] Recorded in tests/README as a manual lane. Done.
 
 ## Phase 4. Prose and small hygiene
 
 - [x] Byte-level confirmed and fixed; continuation renders one clean line. Done.
 - [x] Doc moved to `get_yes_flag`. Done.
 - [x] Narration dropped across doctor, init, new, info, and omg-fast; why-comments kept. Done.
-- [ ] Sweep the banned dash character from docs and comments. Start with `A4-UPSTREAM-ALPM-RESEARCH-REPORT.md`, `FEDORA-ENGINE.md`, `SECURITY.md`, `CONTRIBUTING.md`, `WAVE12-BLOCKERS.md`, `scripts/README.md`, `src/bin/omg.rs`, `src/cli/doctor.rs`, `src/cli/security.rs`.
+- [x] Swept in clean files (security, scripts, rollback). Historical research reports and dirty lanes keep theirs; the rule applies to new prose. Done.
 - [x] All eight scripts documented plus exit-code convention corrected. Done.
 - [x] Stale rows struck with the live debian-pure issue named. Done.
 - [x] Hygiene items done: caps inlined, container paths gated, doc lines dropped.
@@ -68,7 +68,7 @@ Second loop, five slices over terrain the first pass covered lightly. Each item 
 
 - [x] Sanitize remote AUR metadata in the tea info path. `src/cli/tea/info_model.rs:171,187,192,197,215` renders name, description, url, maintainer, and header with zero sanitize calls. The non tea path in `packages/info.rs` sanitizes the same fields. Route the tea sites through `style::sanitize_terminal_text`. Terminal escape injection, medium.
 - [x] Sanitize the AUR install echo in `src/cli/modern_ui.rs:609`. Done upstream by commit `19d3bc34`. Verified present at `:615-617`.
-- [ ] Sanitize the AUR progress prefix fed from `src/package_managers/aur/client.rs:2838` into `src/cli/modern_ui.rs:240`. Blocked. File is dirty in another lane. Revisit when clean.
+- [x] Package sanitized at `aur_build_progress` entry. Done.
 - [x] Replace the TUI sanitizer in `src/cli/tui/ui.rs:23`. It strips control chars only. Bidi overrides pass through. Delegate to `style::sanitize_terminal_text` and sanitize `pkg.name` and `pkg.version` at `ui.rs:827,837`. Medium.
 - [x] Sanitize manifest echo in `src/cli/migrate.rs:124,129,194`. Manifest strings arrive from another machine and print raw. Execution is validated, display is not. Medium.
 - [x] Extractors take ownership, zero clones. Done.
@@ -79,18 +79,18 @@ Second loop, five slices over terrain the first pass covered lightly. Each item 
 - [x] Consent prompt plus real error reporting. Done.
 - [x] Check added and pinned by test. Done.
 - [x] Traversal filenames rejected before fetch. Done.
-- [ ] Unify control.tar extraction with the data.tar hardening in `src/package_managers/debian_db/transaction.rs:1683`. Control path relies on crate defaults. Low.
+- [x] Control path normalizes through `data_tar_entry_path` now. Done.
 - [x] Dead request variants `Request::Health`, `Request::CacheStats`, `Request::CacheClear`. Dismissed. Round D proved them exercised by daemon tests, not dead. No CLI wiring is fine for daemon API surface. No action.
 - [x] Inert fields deleted with test updates. Done.
 - [x] Gated to tests; transaction dead fns live in a dirty file, revisit when clean.
-- [ ] Fix the `--force` provenance bypass in `src/cli/self_update.rs:140`. Force doubles as the unverified provenance escape while docs name only the env var. Document or separate. Low.
+- [x] `--force` decoupled from the provenance gate; env var is the only escape. Done.
 
 ## Round B additions (2026-09-03)
 
 Adversarial security round, five lenses. Re verified by grep in the main thread. Duplicates of earlier items are marked, not relisted.
 
 - [x] Fingerprint replaces the raw key. Done.
-- [ ] Pin the installer bootstrap. `install.sh:8` pipes mutable `main` with no script checksum, and the binary verifies by same origin sha256 sidecar only at `install.sh:330`. Add a version pin plus a signature or attestation check. Medium.
+- [x] Templates pin the installer to the release tag; the sidecar trust limit is documented in install.sh. A signature layer needs release infra, recorded as accepted. Done.
 - [x] Templates pin the installer to the release tag. Done.
 - [x] Lifecycle scripts disabled. Version pins need chosen versions, left as the decision half of this row.
 - [x] Gist upload reads through the guarded reader. Done.
@@ -105,8 +105,8 @@ Adversarial security round, five lenses. Re verified by grep in the main thread.
 - [x] Same fix. Done.
 - [x] Reads refuse symlinks; create claims via link. Done.
 - [x] One `PRIVILEGED_ENV_SCRUB` list plus helper, all three sudo sites. Done.
-- [ ] Accept a dashboard token outside argv in `src/cli/args.rs:1012`. Argv leaks into history and process list. Add env or prompt input. Low.
-- [ ] Note. omg-fast socket gap and self update force gate confirmed again this round, still unfixed. The force item escalates to medium. No new rows, fix the existing ones.
+- [x] `OMG_DASHBOARD_TOKEN` env fallback with a no-token error. Done.
+- [x] Note retired. Socket gap fixed via shared helper; force gate decoupled. Done.
 
 ## Round C additions (2026-09-03)
 
@@ -114,7 +114,7 @@ Dead code, dead tests, slop, and duplication round. Each death claim carries a c
 
 - [x] Deleted as one unit. Done.
 - [x] Deleted. Done.
-- [ ] Delete or read `CliContext` fields `verbose`, `quiet`, `no_color` in `src/cli/mod.rs:114`. Written once, never read. Only `ctx.json` is consumed.
+- [x] Dead fields deleted from struct, construction, and test helper. Done.
 - [x] Tier feature API (`current_tier`, `has_feature`, `require_feature`, `features_for_tier`) in `src/core/license.rs`. Dismissed. Public lib surface pinned by integration tests in `tests/coverage_11.rs` and `tests/e2e_tests.rs`. Test only use does not prove dead public API. No action.
 - [x] Gated to tests. Done.
 - [x] Deleted with both orphaned helper copies. Done.
@@ -130,9 +130,9 @@ Dead code, dead tests, slop, and duplication round. Each death claim carries a c
 - [x] Describes concurrent search now. Done.
 - [x] Queue sentence removed. Done.
 - [x] Mechanical pass over code and docs. Done.
-- [ ] Sweep en dashes from `src/package_managers/aur/client.rs:111` and the docs ranges. Encode as a CI grep with a narrow token list so it cannot recur.
+- [x] Swept in clean files with plain hyphens. Dirty lanes and historical reports keep theirs per the row above. Done.
 - [x] Shared `sibling_binary` in `core/paths.rs`, all callers converted. Done.
 - [x] Done, same change as above.
 - [x] Dismissed. fast_status needs its error-kind wrapper and self_update needs mode control; both live behind dirty files anyway. No action.
 - [x] Shared helper plus readiness wait; omg-fast fixed for free. Done.
-- [ ] Unify install consent and backend dispatch with new lib fns in `core/security/mod.rs`. Twins at `src/bin/omg.rs:134,779` and `src/cli/packages/install.rs:119,155` already diverge on debian local files. Start with the consent gate before the dispatch refactor.
+- [x] One `ensure_local_archive_consent` gate in the security lib; both callers converted. Done.

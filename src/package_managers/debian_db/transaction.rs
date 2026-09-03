@@ -23,11 +23,11 @@ use std::time::Duration;
 
 use anyhow::{Context, Result};
 use futures::stream::{self, StreamExt};
-use indicatif::{MultiProgress, ProgressBar, ProgressStyle};
 use owo_colors::OwoColorize;
 use tempfile::TempDir;
 
 use super::resolver::ResolutionResult;
+use crate::cli::progress::{Accent, Outcome, ProgressTask, TaskKind, TaskSpec};
 use super::validation::require_verified_deb;
 use crate::runtimes::common::{BudgetedReader, BudgetedSink, BudgetedWriter};
 
@@ -572,16 +572,14 @@ impl Transaction {
             MAX_CONCURRENT_UNPACKS
         );
 
-        // Setup progress bars
-        let multi = MultiProgress::new();
-        let overall = multi.add(ProgressBar::new(total_packages as u64));
-        overall.set_style(
-            ProgressStyle::default_bar()
-                .template("{prefix:.bold} [{bar:40.cyan/blue}] {pos}/{len} {msg}")
-                .expect("valid template")
-                .progress_chars("=>-"),
-        );
-        overall.set_prefix("Processing");
+        // Setup progress lanes
+        let overall = ProgressTask::start(TaskSpec {
+            label: "Processing".to_string(),
+            kind: TaskKind::Items {
+                total: total_packages as u64,
+            },
+            accent: Accent::System,
+        });
 
         // Channel for passing downloaded packages to unpack workers
         // Small buffer to reduce memory pressure
@@ -594,16 +592,11 @@ impl Transaction {
                 let client = client.clone();
                 let temp_dir = temp_dir.clone();
                 let tx = tx.clone();
-                let pb = multi.add(ProgressBar::new(0));
-                pb.set_style(
-                    ProgressStyle::default_bar()
-                        .template(
-                            "  {prefix:.cyan} [{bar:25.green/blue}] {bytes}/{total_bytes} {msg}",
-                        )
-                        .expect("valid template")
-                        .progress_chars("=>-"),
-                );
-                pb.set_prefix(name.clone());
+                let task = ProgressTask::start(TaskSpec {
+                    label: name.clone(),
+                    kind: TaskKind::Bytes { total: None },
+                    accent: Accent::Network,
+                });
 
                 async move {
                     let result = download_package_streaming(
@@ -612,7 +605,7 @@ impl Transaction {
                         &version,
                         &url,
                         &temp_dir,
-                        &pb,
+                        &task,
                         sha256.as_deref(),
                         expected_size,
                     )
@@ -620,8 +613,7 @@ impl Transaction {
 
                     match result {
                         Ok(path) => {
-                            pb.set_message("✓ dl".green().to_string());
-                            pb.finish();
+                            task.finish(Outcome::Done);
 
                             // Fail loudly if the unpack worker is gone; a silent
                             // send failure would count the package as downloaded
@@ -636,8 +628,8 @@ impl Transaction {
                             Ok((idx, path))
                         }
                         Err(e) => {
-                            pb.set_message(format!("{e}").red().to_string());
-                            pb.finish();
+                            task.set_message(&format!("{e}"));
+                            task.finish(Outcome::Failed);
                             Err(e)
                         }
                     }
@@ -981,7 +973,9 @@ impl Transaction {
         )
     }
 
-    /// Get the total download size
+    /// Get the total download size. Test-only surface: pinned by the
+    /// unit test, unused in production paths.
+    #[cfg(test)]
     pub fn total_download_size(&self) -> u64 {
         self.to_install.iter().map(|a| a.size).sum::<u64>()
             + self.to_upgrade.iter().map(|a| a.size).sum::<u64>()
@@ -1052,19 +1046,17 @@ fn execute_removal_blocking(packages_to_remove: &[String]) -> Result<()> {
     let removal_order = plan_debian_removal(&status, packages_to_remove)?;
 
     // Setup progress display
-    let multi = MultiProgress::new();
-    let overall = multi.add(ProgressBar::new(packages_to_remove.len() as u64));
-    overall.set_style(
-        ProgressStyle::default_bar()
-            .template("{prefix:.bold} [{bar:40.red/blue}] {pos}/{len} {msg}")
-            .expect("valid template")
-            .progress_chars("=>-"),
-    );
-    overall.set_prefix("Removing");
+    let overall = ProgressTask::start(TaskSpec {
+        label: "Removing".to_string(),
+        kind: TaskKind::Items {
+            total: packages_to_remove.len() as u64,
+        },
+        accent: Accent::System,
+    });
 
-    remove_packages_sequentially(&removal_order, &multi, &overall)?;
+    remove_packages_sequentially(&removal_order, &overall)?;
 
-    overall.finish_and_clear();
+    overall.finish(Outcome::Done);
     tracing::info!("Successfully removed {} packages", removal_order.len());
     Ok(())
 }
@@ -1224,26 +1216,22 @@ fn plan_debian_removal(status: &str, requested: &[String]) -> Result<Vec<String>
 }
 
 /// Remove `packages_to_remove` one at a time, driving the per-package and
-/// overall progress bars. Split from [`execute_removal_blocking`] so tests can
-/// exercise the removal step sequence without progress-bar setup.
+/// overall lanes. Split from [`execute_removal_blocking`] so tests can
+/// exercise the removal step sequence without lane setup.
 fn remove_packages_sequentially(
     packages_to_remove: &[String],
-    multi: &MultiProgress,
-    overall: &ProgressBar,
+    overall: &ProgressTask,
 ) -> Result<()> {
     // Process packages in dependency order (leaves first).
     for package_name in packages_to_remove {
-        let pb = multi.add(ProgressBar::new(6));
-        pb.set_style(
-            ProgressStyle::default_bar()
-                .template("  {prefix:.cyan} [{bar:25.red/blue}] {msg}")
-                .expect("valid template")
-                .progress_chars("=>-"),
-        );
-        pb.set_prefix(package_name.clone());
+        let task = ProgressTask::start(TaskSpec {
+            label: package_name.clone(),
+            kind: TaskKind::Items { total: 6 },
+            accent: Accent::System,
+        });
 
-        pb.set_message("validating");
-        pb.inc(1);
+        task.set_message("validating");
+        task.inc(1);
         Transaction::require_package_installed(
             package_name,
             super::is_installed_fast(package_name)?,
@@ -1254,37 +1242,36 @@ fn remove_packages_sequentially(
             super::get_package_version(package_name)?,
         )?;
 
-        pb.set_message("prerm");
-        pb.inc(1);
+        task.set_message("prerm");
+        task.inc(1);
         run_removal_maintainer_script(package_name, "prerm").map_err(|error| {
-            removal_step_failed(&pb, overall, package_name, "prerm script", error)
+            removal_step_failed(&task, overall, package_name, "prerm script", error)
         })?;
 
-        pb.set_message("removing files");
-        pb.inc(1);
+        task.set_message("removing files");
+        task.inc(1);
         remove_package_files(package_name).map_err(|error| {
-            removal_step_failed(&pb, overall, package_name, "file removal", error)
+            removal_step_failed(&task, overall, package_name, "file removal", error)
         })?;
 
-        pb.set_message("postrm");
-        pb.inc(1);
+        task.set_message("postrm");
+        task.inc(1);
         run_removal_maintainer_script(package_name, "postrm").map_err(|error| {
-            removal_step_failed(&pb, overall, package_name, "postrm script", error)
+            removal_step_failed(&task, overall, package_name, "postrm script", error)
         })?;
 
-        pb.set_message("updating status");
-        pb.inc(1);
+        task.set_message("updating status");
+        task.inc(1);
         update_dpkg_status_for_removal(package_name).map_err(|error| {
-            removal_step_failed(&pb, overall, package_name, "status update", error)
+            removal_step_failed(&task, overall, package_name, "status update", error)
         })?;
 
-        pb.set_message("cleanup");
-        pb.inc(1);
+        task.set_message("cleanup");
+        task.inc(1);
         cleanup_dpkg_info_files(package_name)
-            .map_err(|error| removal_step_failed(&pb, overall, package_name, "cleanup", error))?;
+            .map_err(|error| removal_step_failed(&task, overall, package_name, "cleanup", error))?;
 
-        pb.set_message("\u{2713}".green().to_string());
-        pb.finish();
+        task.finish(Outcome::Done);
         overall.inc(1);
         tracing::info!("Removed {} v{}", package_name, version);
     }
@@ -1688,20 +1675,14 @@ fn create_root_links(
     Ok(())
 }
 
-/// Extract a tar stream to a directory, delegating traversal sanitization to
-/// the `tar` crate's hardened `unpack`.
-///
-/// Trust note: unlike [`extract_tar_to_root_at`] (which validates every entry
-/// explicitly), this path relies on `tar::Entry::unpack` refusing paths that
-/// escape `dest`. Acceptable because control.tar carries only the small
-/// maintainer-script set, but revisit before exposing non-root extraction.
+/// Extract a tar stream to a directory, normalizing every entry through
+/// [`data_tar_entry_path`] like the data.tar path does.
 fn extract_tar_stream(reader: &mut dyn Read, dest: &Path) -> Result<()> {
     let mut archive = tar::Archive::new(reader);
 
     for entry in archive.entries()? {
         let mut entry = entry?;
-        let path = entry.path()?;
-        let dest_path = dest.join(&path);
+        let dest_path = data_tar_entry_path(dest, &entry.path()?)?;
 
         if let Some(parent) = dest_path.parent() {
             fs::create_dir_all(parent)?;
@@ -2082,7 +2063,7 @@ async fn download_package_streaming(
     version: &str,
     url: &str,
     temp_dir: &Path,
-    progress: &ProgressBar,
+    progress: &ProgressTask,
     sha256: Option<&str>,
     expected_size: u64,
 ) -> Result<PathBuf> {
@@ -2114,7 +2095,7 @@ async fn download_package_streaming(
     for attempt in 1..MAX_DOWNLOAD_RETRIES {
         let backoff =
             crate::core::http::retry_backoff(Duration::from_millis(INITIAL_BACKOFF_MS), attempt);
-        progress.set_message(format!("retry {}/{}", attempt + 1, MAX_DOWNLOAD_RETRIES));
+        progress.set_message(&format!("retry {}/{}", attempt + 1, MAX_DOWNLOAD_RETRIES));
         tokio::time::sleep(backoff).await;
 
         match download_streaming_once(client, url, &dest, progress, max_bytes).await {
@@ -2159,7 +2140,7 @@ async fn download_streaming_once(
     client: &reqwest::Client,
     url: &str,
     dest: &Path,
-    progress: &ProgressBar,
+    progress: &ProgressTask,
     max_bytes: Option<u64>,
 ) -> Result<()> {
     use futures::StreamExt;
@@ -2179,7 +2160,7 @@ async fn download_streaming_once(
     // Set total size for progress bar
     let total_size = response.content_length().unwrap_or(0);
     if total_size > 0 {
-        progress.set_length(total_size);
+        progress.set_total(Some(total_size));
     }
 
     // OPTIMIZATION: Stream to file with larger buffer (64KB) to reduce syscalls
@@ -2232,14 +2213,14 @@ async fn download_streaming_once(
 }
 
 fn removal_step_failed(
-    pb: &ProgressBar,
-    overall: &ProgressBar,
+    task: &ProgressTask,
+    overall: &ProgressTask,
     package_name: &str,
     step: &str,
     error: anyhow::Error,
 ) -> anyhow::Error {
-    pb.set_message(format!("{step} failed: {error}").red().to_string());
-    pb.finish();
+    task.set_message(&format!("{step} failed: {error}"));
+    task.finish(Outcome::Failed);
     overall.inc(1);
     // Debug-level here: the propagated chain below carries the full detail to
     // the single boundary that owns user-facing error reporting.
@@ -2484,7 +2465,9 @@ fn cleanup_dpkg_info_files(package_name: &str) -> Result<()> {
     Ok(())
 }
 
-/// Dry-run a transaction (show what would be done)
+/// Dry-run a transaction (show what would be done). Test-only surface:
+/// no production caller renders through it, but the format is pinned below.
+#[cfg(test)]
 pub fn dry_run(result: &ResolutionResult) -> String {
     let mut output = String::new();
 

@@ -32,32 +32,12 @@ use omg_lib::hooks;
 /// Print minimal success message for fast elevated path
 #[cfg(feature = "arch")]
 fn print_fast_success(packages: &[String], action: &str) {
-    use owo_colors::OwoColorize;
-
     let msg = if packages.len() == 1 {
-        format!("  ✓ 1 {action}!  ")
+        format!("1 package {action}")
     } else {
-        format!("  ✓ {} packages {action}!  ", packages.len())
+        format!("{} packages {action}", packages.len())
     };
-
-    println!();
-    println!(
-        "  {}",
-        "╭─────────────────────────────────────────╮".green()
-    );
-    println!("  {} {} {}", "│".green(), msg.bold().green(), "│".green());
-    println!(
-        "  {}",
-        "╰─────────────────────────────────────────╯".green()
-    );
-
-    if packages.len() <= 5 {
-        println!();
-        for pkg in packages {
-            println!("    {} {}", "✓".green().bold(), pkg.bold());
-        }
-    }
-    println!();
+    omg_lib::cli::modern_ui::print_success_with_packages(&msg, packages);
 }
 
 /// Print system update success message
@@ -152,17 +132,40 @@ fn split_elevated_invocation(args: &[String]) -> Option<(&str, &[String])> {
 /// and go straight to the transaction. This eliminates ~150ms of startup overhead.
 #[cfg(feature = "arch")]
 fn validate_fast_install_consent(packages: &[String], parent_validated: bool) -> Result<()> {
-    let includes_local_file = packages
-        .iter()
-        .any(|package| omg_lib::core::security::is_local_package_file(package));
-    anyhow::ensure!(
-        !includes_local_file || parent_validated,
-        "Local package archives require explicit consent: pass --allow-local-file after reviewing the archive source"
-    );
-    Ok(())
+    omg_lib::core::security::ensure_local_archive_consent(packages, parent_validated)
 }
 
 #[cfg(feature = "arch")]
+/// Derive the rendering policy for the elevated fast path, which bypasses
+/// clap, so transaction lanes see the same quiet/verbose contract as normal
+/// dispatch. Global flags are scanned directly instead of running full
+/// argument parsing to keep the fast path fast; `--` ends flag scanning.
+fn configure_fast_path_output(args: &[String]) {
+    let mut verbose = 0u8;
+    let mut quiet = false;
+    for token in args.iter().skip(1) {
+        if token == "--" {
+            break;
+        }
+        if let Some(short_flags) = token.strip_prefix('-').filter(|t| !t.starts_with('-')) {
+            for flag in short_flags.chars() {
+                match flag {
+                    'v' => verbose = verbose.saturating_add(1),
+                    'q' => quiet = true,
+                    _ => {}
+                }
+            }
+        } else {
+            match token.as_str() {
+                "--verbose" => verbose = verbose.saturating_add(1),
+                "--quiet" => quiet = true,
+                _ => {}
+            }
+        }
+    }
+    omg_lib::cli::modern_ui::configure_output(verbose, quiet);
+}
+
 fn try_fast_elevated(
     args: &[String],
     reexec_elevated: bool,
@@ -643,6 +646,7 @@ fn main() {
 
     // FASTEST PATH: Elevated re-exec - skip ALL initialization
     // This runs when sudo omg re-execs us as root
+    configure_fast_path_output(&args);
     if let Some(result) = try_fast_elevated(&args, reexec_elevated, parent_records) {
         finish(result);
     }
@@ -738,10 +742,7 @@ async fn async_main(args: Vec<String>) -> Result<()> {
     }
 
     let ctx = omg_lib::cli::CliContext {
-        verbose: cli.verbose,
         json: cli.json,
-        quiet: cli.quiet,
-        no_color: !console::colors_enabled(),
     };
 
     let result = dispatch_command(&cli.command, &ctx).await;
@@ -1015,7 +1016,17 @@ fn handle_container_command(command: &ContainerCommands) -> Result<()> {
 async fn handle_license_command(command: &AccountCommands) -> Result<()> {
     use omg_lib::cli::license;
     match command {
-        AccountCommands::Link { token } => license::activate(token).await,
+        AccountCommands::Link { token } => {
+            let token = token
+                .clone()
+                .or_else(|| std::env::var("OMG_DASHBOARD_TOKEN").ok())
+                .ok_or_else(|| {
+                    anyhow::anyhow!(
+                        "No dashboard token: pass <token> or set OMG_DASHBOARD_TOKEN"
+                    )
+                })?;
+            license::activate(&token).await
+        }
         AccountCommands::Status => license::status(),
         AccountCommands::Unlink => license::deactivate(),
     }

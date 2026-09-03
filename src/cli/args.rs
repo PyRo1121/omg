@@ -1012,8 +1012,10 @@ pub enum ContainerCommands {
 pub enum AccountCommands {
     /// Link this machine to the OMG dashboard
     Link {
-        /// Dashboard token
-        token: String,
+        /// Dashboard token. Prefer the `OMG_DASHBOARD_TOKEN` environment
+        /// variable or a prompt-safe paste: argv is visible in shell
+        /// history and the process list.
+        token: Option<String>,
     },
     /// Show whether this machine is linked to the dashboard
     Status,
