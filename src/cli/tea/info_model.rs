@@ -498,7 +498,7 @@ mod tests {
         let mut model = InfoModel::new("test".to_string());
         let _ = model.update(InfoMsg::InfoReceived(PackageInfo {
             name: "test-pkg".to_string(),
-            version: "1.0.0".to_string(),
+            version: format!("1.0.0\u{1b}[31m\u{202e}spoofed"),
             description: "Test".to_string(),
             source: InfoSource::Official,
             repo: "extra".to_string(),
@@ -512,6 +512,14 @@ mod tests {
         let view = model.view();
         assert!(view.contains("test-pkg"));
         assert!(view.contains("Official Repository"));
+        assert!(
+            !view.contains("\u{1b}[31m"),
+            "view must exclude the raw ANSI control sequence, got: {view}"
+        );
+        assert!(
+            !view.contains('\u{202e}'),
+            "view must exclude the bidi override, got: {view}"
+        );
     }
 
     #[test]
