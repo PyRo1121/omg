@@ -13,6 +13,14 @@ OMG is the fastest unified package manager for Linux, replacing pacman, yay, nvm
 ## [Unreleased]
 ### 🐛 Bug Fixes
 
+- **Release**: Publish R2 objects to the remote bucket ([#181](https://github.com/PyRo1121/omg/issues/181))
+
+Wrangler 4 defaults `r2 object` commands to local Miniflare storage, so
+
+sync-r2 could succeed without writing omg-releases. Pass --remote and
+
+stop using stdin as --file=-.
+
 - **Ci**: Dispatch Release after tagging so GITHUB_TOKEN actually publishes ([#180](https://github.com/PyRo1121/omg/issues/180))
 
 Tag pushes made with GITHUB_TOKEN do not start other workflows, which is why
