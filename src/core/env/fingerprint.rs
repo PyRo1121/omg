@@ -219,7 +219,7 @@ fn fingerprint_requires_backend() -> Result<Vec<String>> {
     )
 }
 
-fn read_lockfile(path: &Path) -> Result<String> {
+pub(crate) fn read_lockfile(path: &Path) -> Result<String> {
     use std::io::Read as _;
 
     const MAX_LOCKFILE_BYTES: u64 = 16 * 1024 * 1024;

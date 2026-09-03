@@ -168,8 +168,8 @@ pub async fn share(description: String, public: bool) -> Result<()> {
 
     let token =
         std::env::var("GITHUB_TOKEN").context("GITHUB_TOKEN environment variable not set")?;
-    let content =
-        std::fs::read_to_string("omg.lock").context("Failed to read omg.lock for sharing")?;
+    let content = crate::core::env::fingerprint::read_lockfile(Path::new("omg.lock"))
+        .context("Failed to read omg.lock for sharing")?;
 
     let mut files = HashMap::new();
     files.insert("omg.lock".to_string(), GistFile { content });
