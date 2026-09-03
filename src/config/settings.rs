@@ -12,6 +12,48 @@ const MAX_CONFIG_SIZE: u64 = 1024 * 1024;
 /// Maximum metadata cache TTL (7 days in seconds)
 const MAX_CACHE_TTL_SECS: u64 = 7 * 24 * 60 * 60;
 
+/// Convert a serialized TOML value into its editable counterpart for
+/// comment-preserving config merges.
+fn edit_item(value: toml::Value) -> toml_edit::Item {
+    match value {
+        toml::Value::Table(table) => {
+            let mut edit = toml_edit::Table::new();
+            for (key, value) in table {
+                edit.insert(&key, toml_edit::Item::Value(edit_value(value)));
+            }
+            toml_edit::Item::Table(edit)
+        }
+        value => toml_edit::Item::Value(edit_value(value)),
+    }
+}
+
+fn edit_value(value: toml::Value) -> toml_edit::Value {
+    match value {
+        toml::Value::String(text) => toml_edit::Value::from(text),
+        toml::Value::Integer(number) => toml_edit::Value::from(number),
+        toml::Value::Float(number) => toml_edit::Value::from(number),
+        toml::Value::Boolean(flag) => toml_edit::Value::from(flag),
+        toml::Value::Datetime(stamp) => stamp
+            .to_string()
+            .parse::<toml_edit::Datetime>()
+            .map_or_else(
+                |_| toml_edit::Value::from(stamp.to_string()),
+                toml_edit::Value::from,
+            ),
+        toml::Value::Array(items) => items
+            .into_iter()
+            .map(edit_value)
+            .collect::<toml_edit::Value>(),
+        toml::Value::Table(table) => {
+            let mut inline = toml_edit::InlineTable::new();
+            for (key, value) in table {
+                inline.insert(&key, edit_value(value));
+            }
+            toml_edit::Value::InlineTable(inline)
+        }
+    }
+}
+
 /// Validate a path doesn't contain path traversal sequences
 fn validate_config_path(path: &Path, field_name: &str) -> Result<()> {
     let path_str = path.to_string_lossy();
@@ -317,9 +359,105 @@ impl Settings {
                 .with_context(|| format!("Failed to create config dir: {}", parent.display()))?;
         }
 
-        let content = toml::to_string_pretty(self).context("Failed to serialize config")?;
+        // Merge into the existing document instead of reserializing: a full
+        // rewrite destroys user comments and unknown keys. Only managed
+        // tables are touched; everything else keeps its text verbatim.
+        let content = match std::fs::read_to_string(&config_path) {
+            Ok(existing) => match existing.parse::<toml_edit::DocumentMut>() {
+                Ok(mut document) => {
+                    self.merge_settings(&mut document)?;
+                    document.to_string()
+                }
+                Err(_) => self.serialize_full()?,
+            },
+            Err(_) => self.serialize_full()?,
+        };
         crate::core::safe_ops::atomic_write_file_sync(&config_path, content)
             .with_context(|| format!("Failed to write config: {}", config_path.display()))
+    }
+
+    fn serialize_full(&self) -> Result<String> {
+        toml::to_string_pretty(self).context("Failed to serialize config")
+    }
+
+    /// Known keys per managed table. A key present here but absent from the
+    /// serialized update is a cleared `Option` and is removed; any other
+    /// absent key is the user's own and is preserved.
+    const TOP_LEVEL_KEYS: &[&str] = &["telemetry_enabled", "aur"];
+    const AUR_KEYS: &[&str] = &[
+        "build_method",
+        "build_concurrency",
+        "review_pkgbuild",
+        "secure_makepkg",
+        "allow_unsafe_builds",
+        "use_metadata_archive",
+        "metadata_cache_ttl_secs",
+        "makeflags",
+        "pkgdest",
+        "srcdest",
+        "cache_builds",
+        "enable_ccache",
+        "ccache_dir",
+        "enable_sccache",
+        "sccache_dir",
+    ];
+
+    fn merge_settings(&self, document: &mut toml_edit::DocumentMut) -> Result<()> {
+        let table = toml::Value::try_from(self).context("Failed to serialize config")?;
+        let toml::Value::Table(map) = table else {
+            anyhow::bail!("Settings did not serialize to a TOML table");
+        };
+        Self::merge_table(document.as_table_mut(), map, Self::TOP_LEVEL_KEYS);
+        Ok(())
+    }
+
+    /// Assign a merged value while keeping the key's existing decor
+    /// (comments, whitespace). `Table::insert` replaces decor; occupied
+    /// assignment keeps it.
+    fn set_preserving_decor(document: &mut toml_edit::Table, key: &str, item: toml_edit::Item) {
+        match document.entry(key) {
+            toml_edit::Entry::Occupied(mut entry) => {
+                *entry.get_mut() = item;
+            }
+            toml_edit::Entry::Vacant(entry) => {
+                entry.insert(item);
+            }
+        }
+    }
+
+    fn merge_table(
+        document: &mut toml_edit::Table,
+        update: toml::map::Map<String, toml::Value>,
+        known: &[&str],
+    ) {
+        let mut seen = std::collections::HashSet::with_capacity(update.len());
+        for (key, value) in update {
+            seen.insert(key.clone());
+            let nested = match key.as_str() {
+                "aur" => Some(Self::AUR_KEYS),
+                _ => None,
+            };
+            match (nested, value) {
+                (Some(nested_known), toml::Value::Table(nested_update)) => {
+                    let entry = document
+                        .entry(&key)
+                        .or_insert(toml_edit::Item::Table(toml_edit::Table::new()));
+                    if let Some(table) = entry.as_table_mut() {
+                        Self::merge_table(table, nested_update, nested_known);
+                    } else {
+                        *entry = edit_item(toml::Value::Table(nested_update));
+                    }
+                }
+                (_, value) => {
+                    Self::set_preserving_decor(document, &key, edit_item(value));
+                }
+            }
+        }
+        for key in known {
+            if !seen.contains(*key) {
+                document.remove(key);
+            }
+        }
     }
 
     /// Get the config file path
@@ -357,6 +495,101 @@ mod tests {
     #[test]
     fn telemetry_requires_explicit_opt_in() {
         assert!(!Settings::default().telemetry_enabled);
+    }
+
+    /// Saving must preserve user comments and unknown keys, applying only
+    /// the managed fields. Serial: save() resolves the process-global
+    /// config path.
+    #[serial_test::serial]
+    #[test]
+    fn save_preserves_comments_and_unknown_keys() {
+        let dir = tempfile::TempDir::new().expect("isolated config dir");
+        let dir_str = dir.path().to_string_lossy().into_owned();
+        let vars: Vec<(&str, Option<&str>)> = vec![("OMG_CONFIG_DIR", Some(dir_str.as_str()))];
+        temp_env::with_vars(&vars, || {
+            // A newer OMG may have written keys this build does not know:
+            // saving must keep them. load() rejects unknown keys, so the
+            // settings under test are built programmatically instead.
+            std::fs::write(
+                Settings::config_path().expect("config path"),
+                "# my comment\ntelemetry_enabled = false\nmy_custom_key = 42\n\n[aur]\n# aur comment\nbuild_concurrency = 4\n",
+            )
+            .expect("seed config");
+            let settings = Settings {
+                telemetry_enabled: true,
+                aur: AurBuildSettings {
+                    build_concurrency: 4,
+                    ..Default::default()
+                },
+                ..Default::default()
+            };
+            settings.save().expect("save");
+            let content = std::fs::read_to_string(Settings::config_path().expect("config path"))
+                .expect("read back");
+            assert!(content.contains("# my comment"), "{content}");
+            assert!(content.contains("my_custom_key = 42"), "{content}");
+            assert!(content.contains("# aur comment"), "{content}");
+            assert!(content.contains("telemetry_enabled = true"), "{content}");
+            assert!(content.contains("build_concurrency = 4"), "{content}");
+        });
+    }
+
+    /// Clearing an `Option` removes its key instead of leaving the old
+    /// value behind. Serial: save() resolves the process-global config path.
+    #[serial_test::serial]
+    #[test]
+    fn save_removes_cleared_option_keys() {
+        let dir = tempfile::TempDir::new().expect("isolated config dir");
+        let dir_str = dir.path().to_string_lossy().into_owned();
+        let vars: Vec<(&str, Option<&str>)> = vec![("OMG_CONFIG_DIR", Some(dir_str.as_str()))];
+        temp_env::with_vars(&vars, || {
+            std::fs::write(
+                Settings::config_path().expect("config path"),
+                "[aur]\nmakeflags = \"-j8\"\n",
+            )
+            .expect("seed config");
+            let mut settings = Settings::load().expect("load seeded config");
+            assert_eq!(settings.aur.makeflags.as_deref(), Some("-j8"));
+            settings.aur.makeflags = None;
+            settings.save().expect("save");
+            let content = std::fs::read_to_string(Settings::config_path().expect("config path"))
+                .expect("read back");
+            assert!(!content.contains("makeflags"), "{content}");
+        });
+    }
+
+    /// The merge key lists must mirror the serialized struct: every managed
+    /// key is updatable, and no unknown key is ever removed.
+    #[test]
+    fn merge_key_lists_match_the_serialized_schema() {
+        let table = toml::Value::try_from(Settings::default()).expect("serialize");
+        let toml::Value::Table(top) = table else {
+            panic!("settings must serialize to a table");
+        };
+        let mut top_keys: Vec<&str> = top.keys().map(String::as_str).collect();
+        top_keys.sort_unstable();
+        let mut expected = Settings::TOP_LEVEL_KEYS.to_vec();
+        expected.sort_unstable();
+        assert_eq!(top_keys, expected);
+
+        let mut everything = Settings::default();
+        everything.aur.makeflags = Some("-j1".to_string());
+        everything.aur.pkgdest = Some(PathBuf::from("/tmp/pkg"));
+        everything.aur.srcdest = Some(PathBuf::from("/tmp/src"));
+        everything.aur.ccache_dir = Some(PathBuf::from("/tmp/ccache"));
+        everything.aur.sccache_dir = Some(PathBuf::from("/tmp/sccache"));
+        let table = toml::Value::try_from(&everything).expect("serialize");
+        let toml::Value::Table(top) = table else {
+            panic!("settings must serialize to a table");
+        };
+        let toml::Value::Table(aur) = &top["aur"] else {
+            panic!("aur must serialize to a table");
+        };
+        let mut aur_keys: Vec<&str> = aur.keys().map(String::as_str).collect();
+        aur_keys.sort_unstable();
+        let mut expected = Settings::AUR_KEYS.to_vec();
+        expected.sort_unstable();
+        assert_eq!(aur_keys, expected);
     }
 
     #[test]
