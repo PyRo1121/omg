@@ -743,5 +743,6 @@ mod tests {
         assert!(validate_image_ref("img$(whoami)").is_err());
         assert!(validate_image_ref("a b").is_err());
         assert!(validate_image_ref("../etc/passwd").is_err());
+        assert!(validate_image_ref("img/../../etc").is_err());
     }
 }
