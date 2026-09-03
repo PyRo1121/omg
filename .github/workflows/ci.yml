@@ -592,6 +592,7 @@ jobs:
     timeout-minutes: 5
     permissions:
       contents: write
+      actions: write
     steps:
       - name: Evaluate results
         env:
@@ -679,3 +680,8 @@ jobs:
           fi
           echo "Tagged $TAG at $GITHUB_SHA" >> "$GITHUB_STEP_SUMMARY"
           echo "Tagged $TAG at $GITHUB_SHA"
+
+          # GITHUB_TOKEN tag pushes do not start other workflows. Dispatch
+          # Release explicitly so GitHub Latest is not left on a 7-month-old tag.
+          gh workflow run release.yml --ref "$TAG" -f dry_run=false
+          echo "Dispatched Release for $TAG"
