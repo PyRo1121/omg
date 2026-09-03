@@ -665,6 +665,7 @@ pub fn print_aur_build_phase(phase: &str, package: &str) {
     if output_mode() == OutputMode::Quiet {
         return;
     }
+    let package = crate::cli::style::sanitize_terminal_text(package);
     if crate::cli::style::colors_enabled() {
         println!("  {} {} {}", "·".magenta(), phase.dimmed(), package.cyan());
     } else {
