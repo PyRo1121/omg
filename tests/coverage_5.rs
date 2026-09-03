@@ -27,13 +27,7 @@ fn craft_workspace(project: &TestProject) {
         r#"team_id = "acme/backend"
 name = "Acme Backend"
 member_id = "probe-user"
-auto_sync = true
 auto_push = false
-
-[notifications]
-on_lock_update = true
-on_drift = true
-on_member_join = false
 "#,
     )
     .expect("write team.toml");
@@ -46,9 +40,7 @@ on_member_join = false
     "name": "Acme Backend",
     "member_id": "probe-user",
     "remote_url": null,
-    "auto_sync": true,
     "auto_push": false,
-    "notifications": {"on_lock_update": true, "on_drift": true, "on_member_join": false}
   },
   "lock_hash": "",
   "members": [],

@@ -24,9 +24,6 @@ pub struct Workspace {
     /// Projects in the workspace
     #[serde(default)]
     pub projects: HashMap<String, WorkspaceProject>,
-    /// Shared runtime versions (overrides project-level)
-    #[serde(default)]
-    pub runtimes: HashMap<String, String>,
     /// Created timestamp
     pub created_at: String,
 }
@@ -49,7 +46,6 @@ impl Default for Workspace {
         Self {
             name: "workspace".to_string(),
             projects: HashMap::new(),
-            runtimes: HashMap::new(),
             created_at: jiff::Timestamp::now().to_string(),
         }
     }
@@ -251,19 +247,6 @@ pub fn list() -> Result<()> {
                     .collect();
                 println!("     {} {}", style::dim("commands:"), cmds.join(", "));
             }
-        }
-    }
-
-    // Show shared runtimes
-    if !workspace.runtimes.is_empty() {
-        println!();
-        println!("  {}", style::dim("Shared Runtimes:"));
-        for (runtime, version) in &workspace.runtimes {
-            println!(
-                "    {} @ {}",
-                style::runtime(runtime),
-                style::version(version)
-            );
         }
     }
 

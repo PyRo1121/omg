@@ -10,7 +10,7 @@
 
 use omg_lib::cli::tui::app::{App, ConfirmationAction, Tab};
 use omg_lib::core::env::team::{
-    NotificationSettings, TeamConfig, TeamMember, TeamStatus, TeamWorkspace,
+    TeamConfig, TeamMember, TeamStatus, TeamWorkspace,
 };
 use omg_lib::package_managers::{SyncPackage, parse_version_or_zero};
 use serial_test::serial;
@@ -30,9 +30,7 @@ fn create_test_team_status() -> TeamStatus {
         name: "Test Team".to_string(),
         member_id: "alice".to_string(),
         remote_url: Some("https://github.com/test/repo".to_string()),
-        auto_sync: true,
         auto_push: false,
-        notifications: NotificationSettings::default(),
     };
 
     let members = vec![
@@ -875,7 +873,6 @@ mod edge_cases_tests {
         assert!(config.name.is_empty());
         assert!(!config.member_id.is_empty()); // Should be populated from whoami
         assert!(config.remote_url.is_none());
-        assert!(config.auto_sync);
         assert!(!config.auto_push);
     }
 }

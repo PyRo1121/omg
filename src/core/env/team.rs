@@ -37,12 +37,8 @@ pub struct TeamConfig {
     pub member_id: String,
     /// Remote sync URL (GitHub Gist; full repos are not supported)
     pub remote_url: Option<String>,
-    /// Whether to auto-sync on git pull
-    pub auto_sync: bool,
     /// Whether to auto-push on env capture
     pub auto_push: bool,
-    /// Notification settings
-    pub notifications: NotificationSettings,
 }
 
 impl Default for TeamConfig {
@@ -52,22 +48,9 @@ impl Default for TeamConfig {
             name: String::new(),
             member_id: current_member_id(),
             remote_url: None,
-            auto_sync: true,
             auto_push: false,
-            notifications: NotificationSettings::default(),
         }
     }
-}
-
-/// Notification preferences
-#[derive(Debug, Clone, Serialize, Deserialize, Default)]
-pub struct NotificationSettings {
-    /// Notify when teammates update the lock file
-    pub on_lock_update: bool,
-    /// Notify when drift is detected
-    pub on_drift: bool,
-    /// Notify when a teammate joins
-    pub on_member_join: bool,
 }
 
 /// Team member status
@@ -263,13 +246,7 @@ impl TeamWorkspace {
             name: name.to_string(),
             member_id: current_member_id(),
             remote_url: None,
-            auto_sync: true,
             auto_push: false,
-            notifications: NotificationSettings {
-                on_lock_update: true,
-                on_drift: true,
-                on_member_join: false,
-            },
         };
 
         // Create initial status
@@ -690,7 +667,7 @@ mod tests {
         std::fs::create_dir(&config_dir).expect("create config dir");
         std::fs::write(
             config_dir.join("team.toml"),
-            "team_id = 't'\nname = 'Team'\nmember_id = 'm'\nremote_url = 'https://github.com/example/repo.git'\nauto_sync = true\nauto_push = false\n\n[notifications]\non_lock_update = true\non_drift = true\non_member_join = false\n",
+            "team_id = 't'\nname = 'Team'\nmember_id = 'm'\nremote_url = 'https://github.com/example/repo.git'\nauto_push = false\n",
         )
         .expect("write team config");
         let workspace = TeamWorkspace::new(directory.path()).expect("create workspace");
