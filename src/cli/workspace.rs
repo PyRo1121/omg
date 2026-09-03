@@ -468,6 +468,20 @@ fn run_project_command(
 ) -> Result<()> {
     // Check for custom command first
     if let Some(custom_cmd) = project.commands.get(command) {
+        // Repo-defined shell: ask before running it in an attended
+        // terminal. Automation without a terminal keeps working, and the
+        // command is always echoed so logs show what ran.
+        println!("  {} Running repo-defined command: {custom_cmd}", style::arrow("→"));
+        if console::user_attended()
+            && !dialoguer::Confirm::new()
+                .with_prompt(format!(
+                    "Run '{command}' from the workspace file in '{path}'?"
+                ))
+                .default(false)
+                .interact()?
+        {
+            anyhow::bail!("Cancelled '{command}' in '{path}'");
+        }
         // POSIX sh: operands after the -c command string become positional
         // parameters ($1, "$@", ...) inside the script, so extra args reach the
         // command without ad-hoc shell quoting of interpolated values.
@@ -491,7 +505,7 @@ fn run_project_command(
     }
 
     // Try to detect and run via omg run
-    let mut cmd = std::process::Command::new("omg");
+    let mut cmd = std::process::Command::new(sibling_omg());
     cmd.arg("run").arg(command);
     cmd.args(args);
     cmd.current_dir(path);
@@ -508,6 +522,20 @@ fn run_project_command(
     }
 
     Ok(())
+}
+
+/// Resolve the `omg` binary next to the running executable, falling back to
+/// PATH lookup. A PATH-shadowed `omg` must not run with workspace privileges.
+fn sibling_omg() -> std::ffi::OsString {
+    if let Ok(exe) = std::env::current_exe() {
+        if let Some(dir) = exe.parent() {
+            let sibling = dir.join("omg");
+            if sibling.is_file() {
+                return sibling.into_os_string();
+            }
+        }
+    }
+    "omg".into()
 }
 
 /// Show environment diff across workspace
