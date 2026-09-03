@@ -29,6 +29,7 @@ rollback CLI guard. Reapply rustfmt on current main.
 - **Install**: Add --uninstall removing binaries and shell integration
 ### 🐛 Bug Fixes
 
+- **Clippy**: Clear gate after progress-lane migration (mechanical only)
 - **Test**: Create GnuPG home with 0700 in round-trip test
 - **Secrets**: Detect Google OAuth and OpenAI key formats
 - **Rollback**: Remove historical worktree after successful rebuild
