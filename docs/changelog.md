@@ -28,6 +28,7 @@ rollback CLI guard. Reapply rustfmt on current main.
 - **Install**: Add --uninstall removing binaries and shell integration
 ### 🐛 Bug Fixes
 
+- **Secrets**: Detect Google OAuth and OpenAI key formats
 - **Rollback**: Remove historical worktree after successful rebuild
 - **Keyserver**: Safe getuid and extracted home validation
 - **Sbom**: Populate component licenses from package databases
