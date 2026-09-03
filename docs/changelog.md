@@ -27,6 +27,9 @@ Tag pushes made with GITHUB_TOKEN do not start other workflows, which is why
 
 v0.1.215 never became GitHub Latest after CI tagged it.
 
+### 🔧 Maintenance
+
+- **Deps**: Update rust dependencies ([#183](https://github.com/PyRo1121/omg/issues/183))
 ## [0.1.215] - 2026-09-03
 ### Bench
 
