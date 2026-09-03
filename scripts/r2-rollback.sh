@@ -72,7 +72,7 @@ for arch in x86_64-linux-arch x86_64-linux-debian x86_64-linux-ubuntu x86_64-lin
   for suffix in tar.gz tar.gz.sha256; do
     artifact="${prefix}-${arch}.${suffix}"
     object="omg-releases/${artifact}"
-    "$WRANGLER" r2 object get "$object" --file=/dev/null >/dev/null 2>&1 || {
+    "$WRANGLER" r2 object get "$object" --remote --file=/dev/null >/dev/null 2>&1 || {
       echo "error: missing R2 object: $object — cannot roll back to $version" >&2
       exit 66
     }
@@ -85,12 +85,15 @@ if [[ "$dry_run" == "true" ]]; then
   exit 0
 fi
 
-printf '%s' "$version" | "$WRANGLER" r2 object put "omg-releases/latest-version" \
-  --file=- \
+marker="$(mktemp)"
+printf '%s' "$version" > "$marker"
+trap 'rm -f "$marker"' EXIT
+"$WRANGLER" r2 object put "omg-releases/latest-version" --remote \
+  --file="$marker" \
   --content-type="text/plain"
 
 # Verify what was published.
-body="$("$WRANGLER" r2 object get "omg-releases/latest-version" --pipe 2>/dev/null || true)"
+body="$("$WRANGLER" r2 object get "omg-releases/latest-version" --remote --pipe 2>/dev/null || true)"
 if [[ "$body" != "$version" ]]; then
   echo "error: latest-version marker does not match after publish (got: '$body')" >&2
   exit 1

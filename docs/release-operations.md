@@ -32,6 +32,9 @@ Hard guarantees enforced in `.github/workflows/release.yml`:
   sidecars, and the CycloneDX SBOM.
 - **Fail-closed publish.** If any uploaded R2 object cannot be re-downloaded
   byte-identical, the job aborts *before* the `latest-version` marker moves.
+- **Remote R2 only.** Wrangler 4's `r2 object` commands default to local
+  Miniflare storage. `release.yml` and `scripts/r2-rollback.sh` pass `--remote`
+  so publishes hit the production `omg-releases` bucket.
 - **Pinned release tooling.** All actions are SHA-pinned (Renovate with a
   7-day dwell time), containers are digest-pinned, and `wrangler` is installed
   with `npm ci` from a committed lockfile (`.github/deps/release-tools`), so

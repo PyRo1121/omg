@@ -260,6 +260,31 @@ mod privilege_escalation {
             round_trip < latest_marker,
             "clients must not discover an R2 release before its objects are verified"
         );
+        let r2_cli: Vec<&str> = r2_job
+            .lines()
+            .filter(|line| line.contains("r2 object put") || line.contains("r2 object get"))
+            .collect();
+        assert!(
+            !r2_cli.is_empty(),
+            "R2 job must invoke wrangler object put/get"
+        );
+        assert!(
+            r2_cli.iter().all(|line| line.contains("--remote")),
+            "wrangler 4 R2 CLI defaults to local storage; production publishes must pass --remote"
+        );
+
+        let Some(rollback) = read_checkout_file("scripts/r2-rollback.sh") else {
+            panic!("R2 rollback script must exist");
+        };
+        let rollback_cli: Vec<&str> = rollback
+            .lines()
+            .filter(|line| line.contains("r2 object put") || line.contains("r2 object get"))
+            .collect();
+        assert!(
+            !rollback_cli.is_empty()
+                && rollback_cli.iter().all(|line| line.contains("--remote")),
+            "R2 rollback must target the remote bucket, not wrangler's local fake"
+        );
     }
 
     #[test]
