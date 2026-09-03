@@ -20,6 +20,11 @@ use crate::cli::style;
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) enum TaskKind {
     /// Indeterminate work with no figures beyond the label and message.
+    ///
+    /// No constructor yet — the migration is landing lane types ahead of
+    /// their first callers. Allowed (not deleted) so the indeterminate lane
+    /// and its style/template stay available and template-tested.
+    #[allow(dead_code)]
     Spinner,
     /// Byte-oriented work. The total may arrive after the lane starts, so a
     /// pending lane renders as a spinner until the total is known.
@@ -71,10 +76,9 @@ fn visible(mode: OutputMode) -> bool {
     mode == OutputMode::Interactive
 }
 
-#[expect(
-    clippy::literal_string_with_formatting_args,
-    reason = "braces are static indicatif template placeholders, not Rust format args"
-)]
+/// Spinner style/template have no non-test caller yet (see `TaskKind::Spinner`);
+/// allowed for the same reason.
+#[allow(dead_code)]
 fn spinner_template(accent: Accent, colored: bool) -> String {
     if colored {
         format!(
@@ -86,10 +90,6 @@ fn spinner_template(accent: Accent, colored: bool) -> String {
     }
 }
 
-#[expect(
-    clippy::literal_string_with_formatting_args,
-    reason = "braces are static indicatif template placeholders, not Rust format args"
-)]
 fn pending_bytes_template(accent: Accent, colored: bool) -> String {
     if colored {
         format!(
@@ -101,10 +101,6 @@ fn pending_bytes_template(accent: Accent, colored: bool) -> String {
     }
 }
 
-#[expect(
-    clippy::literal_string_with_formatting_args,
-    reason = "braces are static indicatif template placeholders, not Rust format args"
-)]
 fn meter_template(accent: Accent, figures: &str, colored: bool) -> String {
     if colored {
         format!(
@@ -116,12 +112,13 @@ fn meter_template(accent: Accent, figures: &str, colored: bool) -> String {
     }
 }
 
+#[allow(dead_code)]
 fn spinner_style(accent: Accent) -> ProgressStyle {
-    spinner_base(spinner_template(accent, style::colors_enabled()))
+    spinner_base(&spinner_template(accent, style::colors_enabled()))
 }
 
 fn pending_bytes_style(accent: Accent) -> ProgressStyle {
-    spinner_base(pending_bytes_template(accent, style::colors_enabled()))
+    spinner_base(&pending_bytes_template(accent, style::colors_enabled()))
 }
 
 fn meter_style(accent: Accent, figures: &str) -> ProgressStyle {
@@ -138,9 +135,9 @@ fn meter_style(accent: Accent, figures: &str) -> ProgressStyle {
 }
 
 #[expect(clippy::expect_used, reason = "static lane templates are constants")]
-fn spinner_base(template: String) -> ProgressStyle {
+fn spinner_base(template: &str) -> ProgressStyle {
     ProgressStyle::default_spinner()
-        .template(&template)
+        .template(template)
         .expect("static lane template")
         .tick_chars(if style::use_unicode() {
             TICKS_UNICODE
@@ -183,7 +180,7 @@ impl ProgressTask {
     /// Only [`OutputMode::Interactive`] attaches a visible lane; every other
     /// mode drives an invisible bar so callers keep one code path.
     #[must_use]
-    pub(crate) fn start(spec: TaskSpec) -> Self {
+    pub(crate) fn start(spec: &TaskSpec) -> Self {
         let mode = modern_ui::output_mode();
         let label = sanitize_label(&spec.label);
         let bar = match &spec.kind {
@@ -229,7 +226,8 @@ impl ProgressTask {
     /// Replace the lane's dynamic detail text.
     pub(crate) fn set_message(&self, message: &str) {
         let message = sanitize_label(message);
-        if let Some(bar) = lock_bar(&self.inner).as_ref() {
+        let bar_guard = lock_bar(&self.inner);
+        if let Some(bar) = bar_guard.as_ref() {
             bar.set_message(message);
         }
     }
@@ -249,13 +247,15 @@ impl ProgressTask {
     }
 
     pub(crate) fn set_position(&self, position: u64) {
-        if let Some(bar) = lock_bar(&self.inner).as_ref() {
+        let bar_guard = lock_bar(&self.inner);
+        if let Some(bar) = bar_guard.as_ref() {
             bar.set_position(position);
         }
     }
 
     pub(crate) fn inc(&self, delta: u64) {
-        if let Some(bar) = lock_bar(&self.inner).as_ref() {
+        let bar_guard = lock_bar(&self.inner);
+        if let Some(bar) = bar_guard.as_ref() {
             bar.inc(delta);
         }
     }
@@ -263,7 +263,8 @@ impl ProgressTask {
     /// Clear the lane without printing a durable result line, for callers that
     /// report the outcome through their own summary lines.
     pub(crate) fn clear(&self) {
-        if let Some(bar) = lock_bar(&self.inner).take() {
+        let mut bar_guard = lock_bar(&self.inner);
+        if let Some(bar) = bar_guard.take() {
             bar.finish_and_clear();
         }
     }
@@ -272,7 +273,8 @@ impl ProgressTask {
     /// stdout (deferred while the terminal is quiesced, suppressed when
     /// quiet). Later calls on any clone are no-ops.
     pub(crate) fn finish(&self, outcome: Outcome) {
-        let Some(bar) = lock_bar(&self.inner).take() else {
+        let mut bar_guard = lock_bar(&self.inner);
+        let Some(bar) = bar_guard.take() else {
             return;
         };
         bar.finish_and_clear();
@@ -299,7 +301,8 @@ impl Drop for ProgressTask {
         if Arc::strong_count(&self.inner) != 1 {
             return;
         }
-        if let Some(bar) = lock_bar(&self.inner).take() {
+        let mut bar_guard = lock_bar(&self.inner);
+        if let Some(bar) = bar_guard.take() {
             bar.finish_and_clear();
         }
     }
@@ -358,7 +361,7 @@ mod tests {
     #[serial]
     fn quiet_lanes_are_invisible() {
         modern_ui::configure_output(0, true);
-        let task = ProgressTask::start(spec("db", TaskKind::Bytes { total: Some(10) }));
+        let task = ProgressTask::start(&spec("db", TaskKind::Bytes { total: Some(10) }));
         let bar = lock_bar(&task.inner).clone().expect("lane exists");
         assert!(bar.is_hidden());
         modern_ui::configure_output(0, false);
@@ -368,7 +371,7 @@ mod tests {
     #[serial]
     fn labels_are_sanitized_inside_the_handle() {
         modern_ui::configure_output(0, false);
-        let task = ProgressTask::start(spec(
+        let task = ProgressTask::start(&spec(
             "core\x1b]0;pwn\u{202e}db",
             TaskKind::Bytes { total: None },
         ));
@@ -392,7 +395,7 @@ mod tests {
     #[serial]
     fn late_total_promotes_a_pending_bytes_lane() {
         modern_ui::configure_output(0, false);
-        let task = ProgressTask::start(spec("dl", TaskKind::Bytes { total: None }));
+        let task = ProgressTask::start(&spec("dl", TaskKind::Bytes { total: None }));
         let bar = lock_bar(&task.inner).clone().expect("lane exists");
         assert!(bar.length().is_none());
 
@@ -409,7 +412,7 @@ mod tests {
     #[serial]
     fn finish_is_once_across_clones() {
         modern_ui::configure_output(0, false);
-        let task = ProgressTask::start(spec("db", TaskKind::Items { total: 3 }));
+        let task = ProgressTask::start(&spec("db", TaskKind::Items { total: 3 }));
         let clone = task.clone();
         let bar = lock_bar(&task.inner).clone().expect("lane exists");
 
@@ -427,7 +430,7 @@ mod tests {
     #[serial]
     fn dropping_the_last_unfinished_clone_clears_the_lane() {
         modern_ui::configure_output(0, false);
-        let task = ProgressTask::start(spec("db", TaskKind::Items { total: 3 }));
+        let task = ProgressTask::start(&spec("db", TaskKind::Items { total: 3 }));
         let clone = task.clone();
         let bar = lock_bar(&task.inner).clone().expect("lane exists");
 

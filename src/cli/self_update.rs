@@ -395,7 +395,7 @@ async fn download_verified(
         .and_then(|len| usize::try_from(len).ok())
         .map_or(0, |len| len.min(MAX_PREALLOC_BYTES));
 
-    let task = ProgressTask::start(TaskSpec {
+    let task = ProgressTask::start(&TaskSpec {
         label: archive_name,
         kind: TaskKind::Bytes {
             total: response.content_length().filter(|len| *len > 0),

@@ -186,7 +186,6 @@ async fn download_database_signature(
     .await
 }
 
-#[expect(clippy::literal_string_with_formatting_args, clippy::expect_used)] // Static indicatif templates are always valid; braces are template syntax
 async fn download_db(
     client: &Client,
     urls: Vec<String>,
@@ -537,7 +536,6 @@ struct StagedRepository {
 }
 
 /// Synchronize configured package databases concurrently.
-#[expect(clippy::literal_string_with_formatting_args, clippy::expect_used)] // Static indicatif templates are always valid; braces are template syntax
 pub async fn sync_databases_parallel() -> Result<()> {
     println!(
         "{} Synchronizing package databases...\n",
@@ -614,7 +612,7 @@ pub async fn sync_databases_parallel() -> Result<()> {
     let progress_lanes: Vec<ProgressTask> = repos_to_sync
         .iter()
         .map(|(name, _, _, _)| {
-            let task = ProgressTask::start(TaskSpec {
+            let task = ProgressTask::start(&TaskSpec {
                 label: name.clone(),
                 kind: TaskKind::Bytes { total: None },
                 accent: Accent::Database,
