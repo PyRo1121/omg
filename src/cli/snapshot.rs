@@ -92,13 +92,32 @@ pub async fn create(message: Option<String>) -> Result<()> {
         state,
     };
 
-    // Save snapshot file (atomic replace, like the index below).
+    // Save snapshot file. Claim the path with a hard link instead of
+    // `persist` rename: link fails with AlreadyExists when another `create`
+    // wins the race, so the non-overwrite guarantee holds atomically.
+    // The temp file is fully synced before linking, so no torn file lands.
     fs::create_dir_all(snapshots_dir()).context("Failed to create snapshots directory")?;
-    crate::core::safe_ops::atomic_write_file_sync(
-        &snapshot_path,
-        serde_json::to_string_pretty(&snapshot)?,
-    )
-    .with_context(|| format!("Failed to write snapshot: {}", snapshot_path.display()))?;
+    {
+        use std::io::Write as _;
+        let dir = snapshots_dir();
+        let mut temp = tempfile::NamedTempFile::new_in(&dir)
+            .with_context(|| format!("Failed to stage snapshot in {}", dir.display()))?;
+        temp.write_all(serde_json::to_string_pretty(&snapshot)?.as_bytes())
+            .with_context(|| format!("Failed to write snapshot: {}", snapshot_path.display()))?;
+        temp.as_file().sync_all()
+            .with_context(|| format!("Failed to sync snapshot: {}", snapshot_path.display()))?;
+        match std::fs::hard_link(temp.path(), &snapshot_path) {
+            Ok(()) => {}
+            Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => {
+                anyhow::bail!("Snapshot '{id}' already exists; refusing to overwrite it")
+            }
+            Err(error) => {
+                return Err(error).with_context(|| {
+                    format!("Failed to write snapshot: {}", snapshot_path.display())
+                });
+            }
+        }
+    }
 
     // Update index
     let mut index = load_index()?;
