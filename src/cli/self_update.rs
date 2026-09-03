@@ -372,7 +372,11 @@ fn parse_checksum(body: &str) -> Result<String> {
 ///
 /// Fails closed: any mismatch aborts the update instead of installing
 /// unverified bytes.
-async fn download_verified(url: &str, archive_name: String, expected_digest: &str) -> Result<Vec<u8>> {
+async fn download_verified(
+    url: &str,
+    archive_name: String,
+    expected_digest: &str,
+) -> Result<Vec<u8>> {
     let safe_url = crate::core::http::redact_url(url);
     let response = crate::core::http::download_client()
         .get(url)
@@ -391,7 +395,7 @@ async fn download_verified(url: &str, archive_name: String, expected_digest: &st
         .and_then(|len| usize::try_from(len).ok())
         .map_or(0, |len| len.min(MAX_PREALLOC_BYTES));
 
-    let task = ProgressTask::start(TaskSpec {
+    let task = ProgressTask::start(&TaskSpec {
         label: archive_name,
         kind: TaskKind::Bytes {
             total: response.content_length().filter(|len| *len > 0),

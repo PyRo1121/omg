@@ -623,12 +623,11 @@ fn provider_selection_message(providers: &[String], depend: &str) -> String {
 }
 
 /// Setup ALPM callbacks for progress lanes
-#[expect(clippy::expect_used)] // ALPM database operations; failure indicates corrupted pacman database
 fn setup_alpm_callbacks(
     alpm: &alpm::Alpm,
     refusals: &Arc<Mutex<AlpmQuestionRefusals>>,
 ) -> ProgressTask {
-    let main_task = ProgressTask::start(TaskSpec {
+    let main_task = ProgressTask::start(&TaskSpec {
         label: "Transaction".to_string(),
         kind: TaskKind::Items { total: 100 },
         accent: Accent::System,
@@ -820,7 +819,7 @@ fn setup_alpm_callbacks(
     alpm.set_dl_cb(dl_lanes, move |filename, event, map| match event.event() {
         alpm::DownloadEvent::Init(_) => {
             if map.len() < usize::try_from(PARALLEL_DOWNLOADS).unwrap_or(usize::MAX) {
-                let task = ProgressTask::start(TaskSpec {
+                let task = ProgressTask::start(&TaskSpec {
                     label: filename.to_string(),
                     kind: TaskKind::Bytes { total: None },
                     accent: Accent::Network,
@@ -1468,8 +1467,7 @@ mod tests {
 
     use super::{
         AlpmQuestionRefusals, ForwardedAlpmLogLevel, TransactionKind, classify_alpm_log_level,
-        clean_cache,
-        clean_cache_preview, configure_signature_policy, ensure_mirror_servers,
+        clean_cache, clean_cache_preview, configure_signature_policy, ensure_mirror_servers,
         ensure_removals_not_held, format_trans_prepare_error, is_keyring_related_error,
         local_package_siglevel, package_base_name, provider_selection_message,
         question_refusal_error, register_configured_syncdbs, repository_siglevel,

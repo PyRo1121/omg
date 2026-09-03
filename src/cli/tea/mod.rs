@@ -198,7 +198,7 @@ impl<M: Model> Program<M> {
                     self.render()?;
                     queue.push(next);
                 }
-                other => execute_output_cmd(&mut self.renderer, other)?,
+                other @ Cmd::View(_) => execute_output_cmd(&mut self.renderer, other)?,
             }
         }
         Ok(())

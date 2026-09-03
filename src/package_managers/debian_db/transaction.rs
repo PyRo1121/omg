@@ -27,8 +27,8 @@ use owo_colors::OwoColorize;
 use tempfile::TempDir;
 
 use super::resolver::ResolutionResult;
-use crate::cli::progress::{Accent, Outcome, ProgressTask, TaskKind, TaskSpec};
 use super::validation::require_verified_deb;
+use crate::cli::progress::{Accent, Outcome, ProgressTask, TaskKind, TaskSpec};
 use crate::runtimes::common::{BudgetedReader, BudgetedSink, BudgetedWriter};
 
 /// Transaction state
@@ -573,7 +573,7 @@ impl Transaction {
         );
 
         // Setup progress lanes
-        let overall = ProgressTask::start(TaskSpec {
+        let overall = ProgressTask::start(&TaskSpec {
             label: "Processing".to_string(),
             kind: TaskKind::Items {
                 total: total_packages as u64,
@@ -592,7 +592,7 @@ impl Transaction {
                 let client = client.clone();
                 let temp_dir = temp_dir.clone();
                 let tx = tx.clone();
-                let task = ProgressTask::start(TaskSpec {
+                let task = ProgressTask::start(&TaskSpec {
                     label: name.clone(),
                     kind: TaskKind::Bytes { total: None },
                     accent: Accent::Network,
@@ -1046,7 +1046,7 @@ fn execute_removal_blocking(packages_to_remove: &[String]) -> Result<()> {
     let removal_order = plan_debian_removal(&status, packages_to_remove)?;
 
     // Setup progress display
-    let overall = ProgressTask::start(TaskSpec {
+    let overall = ProgressTask::start(&TaskSpec {
         label: "Removing".to_string(),
         kind: TaskKind::Items {
             total: packages_to_remove.len() as u64,
@@ -1224,7 +1224,7 @@ fn remove_packages_sequentially(
 ) -> Result<()> {
     // Process packages in dependency order (leaves first).
     for package_name in packages_to_remove {
-        let task = ProgressTask::start(TaskSpec {
+        let task = ProgressTask::start(&TaskSpec {
             label: package_name.clone(),
             kind: TaskKind::Items { total: 6 },
             accent: Accent::System,

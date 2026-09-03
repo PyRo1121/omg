@@ -156,7 +156,7 @@ pub async fn download_sources(sources: Vec<SourceFile>, srcdest: &Path) -> Sourc
         // Filename captured for the security check inside the async block.
         let filename = source.filename.clone();
         let dest_path = srcdest.join(&source.filename);
-        let task = ProgressTask::start(TaskSpec {
+        let task = ProgressTask::start(&TaskSpec {
             label: source.filename.clone(),
             kind: TaskKind::Bytes { total: None },
             accent: Accent::Network,
