@@ -692,28 +692,45 @@ pub fn enable_turbo_mode() -> Result<()> {
     crate::cli::modern_ui::print_phase_header("⚡", "TURBO MODE", "Fast package operations");
 
     // Step 1: strip any capabilities an older omg version may have granted.
+    // This runs a privileged command, so ask first in an attended terminal.
     println!(
         "  {} Removing legacy file capabilities from {}...",
         "→".cyan(),
         exe_path
     );
-    let remove = std::process::Command::new("sudo")
-        .arg("setcap")
-        .arg("-r")
-        .arg(&exe)
-        .status();
-    match remove {
+    let mut cleanup_done = true;
+    if console::user_attended()
+        && !dialoguer::Confirm::new()
+            .with_prompt("Run `sudo setcap -r` on the omg binary?")
+            .default(true)
+            .interact()?
+    {
+        println!("  {} Skipped capability cleanup", "ℹ".blue());
+        cleanup_done = false;
+    }
+    if cleanup_done {
+        let remove = std::process::Command::new("sudo")
+            .arg("setcap")
+            .arg("-r")
+            .arg(&exe)
+            .status();
+        match remove {
         Ok(status) if status.success() => {
             println!(
                 "  {} No file capabilities remain (or none were set)",
                 "✓".green()
             );
         }
-        _ => {
+        Ok(status) => {
             println!(
-                "  {} Could not run `setcap -r` (no caps were set, or sudo unavailable)",
-                "ℹ".blue()
+                "  {} `setcap -r` exited with code {}",
+                "⚠".yellow(),
+                status.code().unwrap_or(-1)
             );
+        }
+        Err(error) => {
+            println!("  {} Could not run `setcap -r`: {error}", "⚠".yellow());
+        }
         }
     }
     println!();
