@@ -40,7 +40,7 @@ auto_push = false
     "name": "Acme Backend",
     "member_id": "probe-user",
     "remote_url": null,
-    "auto_push": false,
+    "auto_push": false
   },
   "lock_hash": "",
   "members": [],

@@ -50,24 +50,13 @@ mod arch_matrix {
     #[test]
     #[serial]
     fn test_info() {
-        // In test mode `info` resolves through the pacman sync-database cache
-        // (src/package_managers/alpm_ops.rs:102 get_sync_pkg_info ->
-        // src/package_managers/pacman_db/db.rs:991 get_sync_package), which only
-        // exists on hosts with a real /var/lib/pacman/sync directory. Skip
-        // observably elsewhere instead of asserting a vacuous disjunction.
-        if !std::path::Path::new("/var/lib/pacman/sync").exists() {
-            common::report_skip("test_info requires a pacman sync database");
-            return;
-        }
-
-        // Success must show the resolved package metadata
-        // (src/package_managers/alpm_ops.rs:246 display_pkg_info and the
-        // "Official repository" Source line in src/cli/packages/info.rs).
+        // Test mode resolves through the hermetic Arch mock and renders the
+        // same key-value fields as the real sync-database path.
         let res = run_arch(&["info", "pacman"]);
         res.assert_success();
         res.assert_stdout_contains("pacman");
         res.assert_stdout_contains("Description:");
-        res.assert_stdout_contains("Repository:");
+        res.assert_stdout_contains("Source:");
         res.assert_stdout_contains("Official repository");
     }
 

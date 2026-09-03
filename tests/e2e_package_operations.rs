@@ -29,9 +29,8 @@ use common::*;
 // ═══════════════════════════════════════════════════════════════════════════════
 
 /// The test-mode Arch mock database ships exactly `pacman`, `firefox`, `git`
-/// (src/package_managers/mock.rs:60). Searching `git` must return its row in
-/// the documented line format (`write_package_line`,
-/// src/cli/packages/search.rs), proving the search pipeline end to end.
+/// (src/package_managers/mock.rs:60). Searching `git` must return its compact
+/// row (`name version (source)`), proving the search pipeline end to end.
 #[test]
 fn test_search_official_package() {
     init_test_env();
@@ -50,10 +49,6 @@ fn test_search_official_package() {
     assert!(
         stdout.contains("git 2.43.0"),
         "search must list git at the mock version. Got:\n{stdout}"
-    );
-    assert!(
-        stdout.contains("Version control"),
-        "search must include the package description. Got:\n{stdout}"
     );
     assert!(
         stdout.contains("(Official)"),
@@ -139,8 +134,8 @@ fn test_search_json_output() {
 // INFO COMMAND E2E TESTS
 // ═══════════════════════════════════════════════════════════════════════════════
 
-/// `info` renders labeled metadata fields (Description/Repository/Source) for
-/// a real package.
+/// `info` renders labeled metadata fields and source provenance for a real
+/// package.
 #[test]
 fn test_info_common_package() {
     init_test_env();
@@ -149,8 +144,7 @@ fn test_info_common_package() {
 
     result.assert_success();
     let output = result.combined_output();
-    // "Source" is styled (ANSI-wrapped) before its colon, so match the value.
-    for field in ["Description:", "Repository:", "Official repository"] {
+    for field in ["Description:", "Source:", "Official repository"] {
         assert!(
             output.contains(field),
             "info must show the {field} field. Got:\n{output}"

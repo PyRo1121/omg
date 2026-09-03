@@ -132,15 +132,14 @@ fn test_docker_omg_info() {
     assert!(success, "Info should succeed");
     let plain = strip_ansi(&stdout);
     assert!(plain.contains("bash"), "Should show bash package info");
-    // display_pkg_info prints "<name> <version>" plus labeled fields; the description and
-    // repository lines must be present.
+    // The shared info renderer must include package metadata and provenance.
     assert!(
         plain.contains("Description:"),
         "info output must include a Description line, got: {plain}"
     );
     assert!(
-        plain.contains("Repository:"),
-        "official-repo info output must include a Repository line, got: {plain}"
+        plain.contains("Source:") && plain.contains("Official repository (core)"),
+        "official-repo info output must include the source repository, got: {plain}"
     );
 }
 

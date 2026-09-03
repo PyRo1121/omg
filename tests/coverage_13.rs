@@ -232,7 +232,7 @@ fn pull_rejects_shell_operators_before_runtime_contact() {
     );
     bad.assert_failure();
     bad.assert_stderr_contains("Invalid image name");
-    bad.assert_stdout_contains("Names must not contain control characters or shell operators");
+    bad.assert_stdout_contains("Names must match the expected character allowlist");
 
     let good = project.run_with_env(
         &["container", "pull", "ubuntu:24.04"],

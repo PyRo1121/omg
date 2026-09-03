@@ -360,7 +360,7 @@ fn build_with_options_passes_every_flag_and_reports_failure_exit_code() {
     let fake = FakeRuntime::new();
     fake.with_shadowed_path(|fake| {
         let manager = ContainerManager::with_runtime(ContainerRuntime::Podman);
-        let dockerfile = Path::new("/tmp/omg/Dockerfile");
+        let dockerfile = Path::new("Dockerfile");
         let context = Path::new("/home/me/proj");
 
         manager
@@ -379,7 +379,7 @@ fn build_with_options_passes_every_flag_and_reports_failure_exit_code() {
             vec![
                 "build",
                 "-f",
-                "/tmp/omg/Dockerfile",
+                "Dockerfile",
                 "-t",
                 "proj:dev",
                 "--no-cache",
@@ -402,11 +402,11 @@ fn build_with_options_passes_every_flag_and_reports_failure_exit_code() {
             &[
                 "build",
                 "-f",
-                "/tmp/omg/Dockerfile",
+                "Dockerfile",
                 "-t",
                 "proj:slim",
                 "--",
-                "/home/me/proj"
+                "/home/me/proj",
             ]
         );
 
