@@ -477,7 +477,9 @@ fn check_eol_runtimes() -> Result<usize> {
         .context("Failed to compute EOL warning window")?;
 
     // Get installed runtime versions
-    let runtimes = ["node", "python", "rust", "go", "ruby", "java", "bun"];
+    let runtimes = [
+        "node", "python", "rust", "go", "ruby", "java", "bun", "deno",
+    ];
 
     for runtime in &runtimes {
         if let Some(version) = crate::runtimes::probe_version(runtime) {

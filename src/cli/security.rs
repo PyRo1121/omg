@@ -1350,7 +1350,9 @@ pub fn check_eol(_ctx: &CliContext) -> Result<()> {
     // Loop-invariant warning window: a runtime within six calendar months of
     // its EOL date counts as "Ending Soon".
     let warning_ts = eol_warning_cutoff(now).context("Failed to compute EOL warning window")?;
-    let runtimes = ["node", "python", "rust", "go", "ruby", "java", "bun"];
+    let runtimes = [
+        "node", "python", "rust", "go", "ruby", "java", "bun", "deno",
+    ];
     let mut issues = 0;
 
     for runtime in &runtimes {

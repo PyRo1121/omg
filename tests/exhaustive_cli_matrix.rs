@@ -228,7 +228,9 @@ mod runtime_matrix {
     #[test]
     #[serial]
     fn test_which_all_runtimes() {
-        let runtimes = ["node", "python", "go", "rust", "ruby", "java", "bun"];
+        let runtimes = [
+            "node", "python", "go", "rust", "ruby", "java", "bun", "deno",
+        ];
         for rt in runtimes {
             let res = run_omg(&["which", rt]);
             res.assert_success();

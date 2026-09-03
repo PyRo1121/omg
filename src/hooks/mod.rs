@@ -1182,26 +1182,45 @@ mod tests {
     }
 
     #[test]
-    fn exact_vendor_pin_passes_through_and_keeps_sibling_commands_reachable() {
+    fn vendor_companion_commands_share_the_selected_path() {
         let data = tempdir().unwrap();
-        let bin = data.path().join("versions/python/3.12.0/bin");
-        fs::create_dir_all(&bin).unwrap();
-        fs::write(bin.join("python3"), b"#!/bin/sh").unwrap();
-        fs::write(bin.join("pip"), b"#!/bin/sh").unwrap();
-        // A newer patch exists, but a full three-component pin passes through
-        // to the exact directory instead of upgrading.
+        for (runtime, version, relative_bin, primary, companion) in [
+            ("node", "20.10.0", "bin", "node", "npm"),
+            ("python", "3.12.0", "bin", "python3", "pip"),
+            ("bun", "1.2.0", "", "bun", "bunx"),
+            ("deno", "2.9.6", "bin", "deno", "deno-lsp"),
+        ] {
+            let selected = data
+                .path()
+                .join("versions")
+                .join(runtime)
+                .join(version)
+                .join(relative_bin);
+            fs::create_dir_all(&selected).unwrap();
+            fs::write(selected.join(primary), b"#!/bin/sh").unwrap();
+            fs::write(selected.join(companion), b"#!/bin/sh").unwrap();
+
+            temp_env::with_var("OMG_DATA_DIR", Some(data.path()), || {
+                let versions = HashMap::from([(runtime.to_string(), version.to_string())]);
+                let additions = build_path_additions(&versions).unwrap();
+                assert_eq!(additions, vec![selected.display().to_string()]);
+                assert!(selected.join(primary).is_file());
+                assert!(selected.join(companion).is_file());
+            });
+        }
+    }
+
+    #[test]
+    fn full_version_pin_does_not_select_a_newer_patch() {
+        let data = tempdir().unwrap();
+        let exact = data.path().join("versions/python/3.12.0/bin");
+        fs::create_dir_all(&exact).unwrap();
         fs::create_dir_all(data.path().join("versions/python/3.12.9/bin")).unwrap();
         temp_env::with_var("OMG_DATA_DIR", Some(data.path()), || {
             let versions = HashMap::from([("python".to_string(), "3.12.0".to_string())]);
-            let additions = build_path_additions(&versions).unwrap();
             assert_eq!(
-                additions,
-                vec![bin.display().to_string()],
-                "exact vendor request must pass through untouched"
-            );
-            assert!(
-                bin.join("python3").exists() && bin.join("pip").exists(),
-                "the pinned bin directory keeps sibling commands reachable"
+                build_path_additions(&versions).unwrap(),
+                vec![exact.display().to_string()]
             );
         });
     }

@@ -392,7 +392,9 @@ mod package_management {
 mod runtime_management {
     use super::*;
 
-    const RUNTIMES: &[&str] = &["node", "python", "go", "rust", "ruby", "java", "bun"];
+    const RUNTIMES: &[&str] = &[
+        "node", "python", "go", "rust", "ruby", "java", "bun", "deno",
+    ];
 
     #[test]
     fn test_list_all_runtimes() {
@@ -466,6 +468,13 @@ mod runtime_management {
     fn test_list_available_bun() {
         let result = run_omg(&["list", "bun", "--available"]);
         assert!(result.success, "List available bun should succeed");
+    }
+
+    #[test]
+    #[ignore = "requires network access to runtime metadata"]
+    fn test_list_available_deno() {
+        let result = run_omg(&["list", "deno", "--available"]);
+        assert!(result.success, "List available deno should succeed");
     }
 
     // Falsifiable contract pinned at src/cli/runtimes.rs:322 (via the fast

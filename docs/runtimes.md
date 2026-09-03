@@ -1,7 +1,7 @@
 ---
 title: Runtime Management
 sidebar_position: 11
-description: Managing Node.js, Python, Go, Rust, Ruby, Java, Bun, and Pi
+description: Managing Node.js, Python, Go, Rust, Ruby, Java, Bun, Deno, and Pi
 ---
 
 # Runtime Management
@@ -16,16 +16,19 @@ OMG features native, pure Rust implementations for the most popular language eco
 
 | Runtime | Auto-detect File | Install Command | Switch Command | Binaries |
 | --------- | ------------------ | ----------------- | ---------------- | ---------- |
-| **Node.js** | `.nvmrc`, `.node-version`, `package.json#engines` | `omg use node 20` | `omg use node 18` | `node`, `npm`, `npx` |
-| **Python** | `.python-version`, `pyproject.toml`, `runtime.txt` | `omg use python 3.12` | `omg use python 3.11` | `python3`, `pip` |
-| **Go** | `.go-version`, `go.mod` | `omg use go 1.21` | `omg use go 1.20` | `go` |
-| **Rust** | `rust-toolchain.toml`, `rust-toolchain`, `.rust-version` | `omg use rust stable` | `omg use rust nightly` | `rustc`, `cargo` |
-| **Ruby** | `.ruby-version`, `Gemfile` | `omg use ruby 3.2` | `omg use ruby 3.1` | `ruby`, `gem` |
-| **Java** | `.java-version`, `pom.xml` | `omg use java 21` | `omg use java 17` | `java`, `javac` |
-| **Bun** | `.bun-version` | `omg use bun latest` | `omg use bun 1.0` | `bun`, `bunx` |
+| **Node.js** | `.node-version`, `.nvmrc`, `package.json`, `.tool-versions` | `omg use node 20` | `omg use node 18` | `node`, `npm`, `npx` |
+| **Python** | `.python-version`, `pyproject.toml`, `.tool-versions` | `omg use python 3.12` | `omg use python 3.11` | `python3`, `pip` |
+| **Go** | `.go-version`, `go.mod`, `.tool-versions` | `omg use go 1.21` | `omg use go 1.20` | `go`, `gofmt` |
+| **Rust** | `rust-toolchain.toml`, `rust-toolchain`, `.tool-versions` | `omg use rust stable` | `omg use rust nightly` | `rustc`, `cargo` |
+| **Ruby** | `.ruby-version`, `.tool-versions` | `omg use ruby 3.2` | `omg use ruby 3.1` | `ruby`, `gem` |
+| **Java** | `.java-version`, `.tool-versions` | `omg use java 21` | `omg use java 17` | `java`, `javac` |
+| **Bun** | `.bun-version`, `package.json`, `.tool-versions` | `omg use bun latest` | `omg use bun 1.0` | `bun` |
+| **Deno** | `.deno-version`, `.dvmrc`, `.tool-versions` | `omg use deno latest` | `omg use deno 2.9` | `deno` |
 | **Pi** | `.tool-versions` | `omg use pi 0.83.0` | `omg use pi 0.84.3` | `pi` |
 
 Unknown runtime names fail explicitly. OMG does not download or invoke a fallback runtime manager.
+
+OMG exposes each selected runtime's vendor directory on `PATH`. It does not reimplement package managers or proxy their commands. Tools shipped with a runtime, such as `npm`, `npx`, `pip`, `cargo`, `gofmt`, and `javac`, run directly from that selected installation.
 
 ---
 
@@ -105,6 +108,20 @@ omg use rust 1.75.0
 omg use rust stable --components clippy,rustfmt
 ```
 
+### Deno
+
+```bash
+# Install the newest stable Deno release
+omg use deno latest
+
+# Select the newest installed 2.9 patch for this project
+echo "2.9" > .deno-version
+cd .
+
+# List available releases
+omg list deno --available
+```
+
 ### Multiple Runtimes (Typical Project)
 
 ```bash
@@ -137,21 +154,22 @@ OMG scans for version files in priority order:
 
 **Node.js Priority:**
 
-1. `.nvmrc`
-2. `package.json#engines.node`
-3. `.node-version`
+1. `.node-version`
+2. `.nvmrc`
+3. `package.json#engines.node` or `package.json#volta.node`
+4. `.tool-versions`
 
 **Python Priority:**
 
 1. `.python-version`
-2. `pyproject.toml`
-3. `runtime.txt`
+2. `pyproject.toml#project.requires-python`
+3. `.tool-versions`
 
 **Rust Priority:**
 
-1. `rust-toolchain.toml`
-2. `rust-toolchain`
-3. `.rust-version`
+1. `rust-toolchain`
+2. `rust-toolchain.toml`
+3. `.tool-versions`
 
 ### 3. Updates PATH Instantly
 
@@ -180,15 +198,16 @@ When multiple version files exist in the same directory:
 
 ### Node.js
 
-1. `.nvmrc` (highest priority)
-2. `package.json#engines.node`
-3. `.node-version`
+1. `.node-version` (highest priority)
+2. `.nvmrc`
+3. `package.json#engines.node` or `package.json#volta.node`
+4. `.tool-versions`
 
 ### Python
 
 1. `.python-version` (highest priority)
-2. `pyproject.toml`
-3. `runtime.txt`
+2. `pyproject.toml#project.requires-python`
+3. `.tool-versions`
 
 ### Override Auto-Detection
 
@@ -269,16 +288,16 @@ Safety is a first-class citizen in OMG's runtime management:
 **Every download is verified:**
 
 - **Node.js**: SHA256 checksums from `SHASUMS256.txt`
-- **Python**: GPG signatures from python.org
+- **Python**: SHA256 digests from python-build-standalone release metadata
 - **Rust**: SHA256 from rust-lang.org manifests
 - **Go**: Official binary checksums
 - **Java**: Adoptium checksums
+- **Bun**: SHA256 digests from GitHub release metadata
+- **Deno**: SHA256 digests or official checksum sidecars from Deno releases
 
 ### Secure Transport
 
-- All downloads over **HTTPS** with certificate validation
-- TLS 1.3 preferred
-- Certificate pinning for critical sources
+- All runtime downloads use HTTPS with certificate validation
 
 ### Sandboxed Installations
 
@@ -303,13 +322,9 @@ All runtimes installed in user-local directory:
 - **Isolation** - Versions cannot interfere with each other
 - **Easy Cleanup** - `rm -rf ~/.local/share/omg/versions/node/20.10.0`
 
-### Isolated Build Paths
+### Staged installations
 
-For runtimes requiring compilation (Python, Ruby):
-
-- Builds happen in temporary directories
-- No environment pollution
-- Clean failure recovery
+OMG extracts each runtime into a temporary directory on the same filesystem. It publishes the version directory only after extraction and validation succeed.
 
 ---
 
