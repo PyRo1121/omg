@@ -107,7 +107,9 @@ pub struct TelemetryPayload {
     pub version: String,
     /// Platform (e.g., "linux-x86_64")
     pub platform: String,
-    /// License key (if this machine is linked to the dashboard)
+    /// License key fingerprint (if this machine is linked to the dashboard).
+    /// A truncated SHA-256, never the raw key: the raw key is a bearer
+    /// credential and must not land in ingestion logs or queues.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub license_key: Option<String>,
 }
@@ -137,7 +139,10 @@ impl TelemetryPayload {
             machine_id: get_machine_id(),
             version: env!("CARGO_PKG_VERSION").to_string(),
             platform: format!("{}-{}", std::env::consts::OS, std::env::consts::ARCH),
-            license_key: license.map(|l| l.key),
+            license_key: license.map(|l| {
+                use sha2::Digest as _;
+                hex::encode(sha2::Sha256::digest(l.key.as_bytes()))[..16].to_string()
+            }),
         }
     }
 }
