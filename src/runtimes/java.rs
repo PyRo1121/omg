@@ -182,7 +182,10 @@ impl JavaManager {
 /// Adoptium publishes JDKs by feature: `21` and `21.0` are the same release,
 /// while a full update (`21.0.5`), a non-zero minor (`21.1`), a prerelease,
 /// or a malformed request names nothing this manager can install.
-fn java_feature_number(requested: &str) -> Result<String> {
+///
+/// Pure and crate-visible so the hook PATH closure can normalize Java pins
+/// with the same rule instead of duplicating it.
+pub(crate) fn java_feature_number(requested: &str) -> Result<String> {
     let version = normalize_version(requested);
     let is_feature = |component: &str| {
         !component.is_empty() && component.bytes().all(|byte| byte.is_ascii_digit())

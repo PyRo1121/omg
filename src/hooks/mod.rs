@@ -21,7 +21,11 @@ const VERSION_FILES: &[(&str, &str)] = &[
     (".node-version", "node"),
     (".nvmrc", "node"),
     // Python
+    // Same-directory priority: `.python-version` is listed before
+    // `pyproject.toml`, so `detect_versions` sees it first and the explicit
+    // pin file wins over the weaker `[project] requires-python` specifier.
     (".python-version", "python"),
+    ("pyproject.toml", "python"),
     // Ruby
     (".ruby-version", "ruby"),
     // Go
@@ -31,6 +35,9 @@ const VERSION_FILES: &[(&str, &str)] = &[
     (".java-version", "java"),
     // Bun
     (".bun-version", "bun"),
+    // Deno
+    (".deno-version", "deno"),
+    (".dvmrc", "deno"),
     // Rust
     ("rust-toolchain", "rust"),
     ("rust-toolchain.toml", "rust"),
@@ -67,6 +74,17 @@ struct PackageEngines {
 struct VoltaToolchain {
     node: Option<String>,
     bun: Option<String>,
+}
+
+#[derive(Deserialize)]
+struct PyProjectToml {
+    project: Option<PyProjectSection>,
+}
+
+#[derive(Deserialize)]
+struct PyProjectSection {
+    #[serde(rename = "requires-python")]
+    requires_python: Option<String>,
 }
 
 fn read_pin_file(path: &Path) -> Result<Option<String>> {
@@ -267,6 +285,28 @@ fn parse_go_mod_file(
     Ok(())
 }
 
+fn parse_pyproject_requires_python(
+    file_path: &Path,
+    versions: &mut HashMap<String, String>,
+) -> Result<()> {
+    let Some(content) = read_pin_file(file_path)? else {
+        return Ok(());
+    };
+    let pyproject: PyProjectToml = toml::from_str(&content)
+        .with_context(|| format!("Failed to parse {}", file_path.display()))?;
+    // Keep the specifier raw (`>=3.12`, `~=3.12.1`, …): it is a version
+    // request, not an exact pin, and the PATH resolver maps it against the
+    // installed version tree.
+    if let Some(requires_python) = pyproject
+        .project
+        .and_then(|project| project.requires_python)
+        && !requires_python.trim().is_empty()
+    {
+        versions.insert("python".to_string(), requires_python);
+    }
+    Ok(())
+}
+
 fn parse_simple_version_file(
     file_path: &Path,
     runtime: &str,
@@ -302,6 +342,7 @@ fn try_parse_version_file(
             }
         }
         "go.mod" => parse_go_mod_file(file_path, runtime, versions)?,
+        "pyproject.toml" => parse_pyproject_requires_python(file_path, versions)?,
         _ => parse_simple_version_file(file_path, runtime, versions)?,
     }
     Ok(())
@@ -365,8 +406,8 @@ pub fn build_path_additions<S: std::hash::BuildHasher>(
             // Validate before using as a path component so a hostile pin like
             // `../../evil/bin` can never traverse out of the versions tree and
             // place an attacker-created directory on the shell's PATH.
-            "python" | "go" | "ruby" | "java" | "pi" => {
-                let Some(path) = validated_runtime_bin_dir(&data_dir, runtime, version) else {
+            "python" | "go" | "ruby" | "java" | "pi" | "deno" => {
+                let Some(path) = resolve_runtime_bin_dir(&data_dir, runtime, version)? else {
                     continue;
                 };
                 path
@@ -433,6 +474,45 @@ fn node_version_bin_path(versions_dir: &Path, version: &str) -> Option<PathBuf> 
     crate::core::security::validate_runtime_version(version).ok()?;
     let path = versions_dir.join(version).join("bin");
     crate::runtimes::common::is_trusted_runtime_bin_dir(&path).then_some(path)
+}
+
+/// Resolve a canonical runtime's raw request to an installed version `bin`
+/// directory.
+///
+/// One generic resolver for the runtimes whose pins come straight from
+/// repo-supplied files: the request is mapped onto
+/// `<data_dir>/versions/<runtime>/<version>/bin`, first by a safe exact
+/// lookup and then by the newest installed semver match. Nothing that fails
+/// validation or does not exist is ever returned.
+fn resolve_runtime_bin_dir(
+    data_dir: &Path,
+    runtime: &str,
+    raw_request: &str,
+) -> Result<Option<PathBuf>> {
+    // Java installs by feature number: a request like `21.0` names the same
+    // JDK `21` directory, while non-feature requests (for example `21.0.5`)
+    // name nothing this runtime tree can contain. Fail soft in PATH
+    // building: such a pin skips the runtime instead of failing the hook.
+    let request = if runtime == "java" {
+        match crate::runtimes::java::java_feature_number(raw_request) {
+            Ok(feature) => feature,
+            Err(_) => return Ok(None),
+        }
+    } else {
+        raw_request.to_string()
+    };
+
+    // Safe exact lookup: the request itself must be a validated, existing
+    // version directory before it may reach PATH.
+    if let Some(path) = validated_runtime_bin_dir(data_dir, runtime, &request) {
+        return Ok(Some(path));
+    }
+
+    let versions_dir = data_dir.join("versions").join(runtime);
+    let Some(resolved) = resolve_installed_version_req(&versions_dir, &request)? else {
+        return Ok(None);
+    };
+    Ok(validated_runtime_bin_dir(data_dir, runtime, &resolved))
 }
 
 /// Resolve `<data_dir>/versions/<runtime>/<version>/bin` for the runtimes whose
@@ -522,7 +602,15 @@ fn normalize_version_req(value: &str) -> Option<VersionReq> {
 
     if trimmed.chars().all(|c| c.is_ascii_digit() || c == '.') {
         let normalized = normalize_version_number(trimmed);
-        return VersionReq::parse(&format!("={normalized}")).ok();
+        // A bare two-component request (`3.12`) is a compatible patch-range
+        // pin (`~3.12.0`), not the exact patch-level `=3.12.0`; a full
+        // three-component request stays exact.
+        let op = if trimmed.split('.').filter(|part| !part.is_empty()).count() == 2 {
+            '~'
+        } else {
+            '='
+        };
+        return VersionReq::parse(&format!("{op}{normalized}")).ok();
     }
 
     VersionReq::parse(&trimmed.replace(' ', ",")).ok()
@@ -877,6 +965,244 @@ mod tests {
                 "valid pin should resolve: {additions:?}"
             );
             assert!(additions[0].ends_with("bin"));
+        });
+    }
+
+    #[test]
+    fn python_version_file_wins_over_same_directory_pyproject() {
+        let dir = tempdir().unwrap();
+        fs::write(dir.path().join(".python-version"), "3.11.9").unwrap();
+        fs::write(
+            dir.path().join("pyproject.toml"),
+            "[project]\nname = \"x\"\nrequires-python = \">=3.12\"\n",
+        )
+        .unwrap();
+
+        let versions = detect_versions(dir.path()).unwrap();
+
+        assert_eq!(
+            versions.get("python"),
+            Some(&"3.11.9".to_string()),
+            "same-directory .python-version must win over pyproject.toml"
+        );
+    }
+
+    #[test]
+    fn pyproject_requires_python_is_detected_with_raw_specifier() {
+        let dir = tempdir().unwrap();
+        fs::write(
+            dir.path().join("pyproject.toml"),
+            "[project]\nname = \"x\"\nrequires-python = \">=3.12\"\n\n[tool.poetry]\nname = \"y\"\n",
+        )
+        .unwrap();
+
+        let versions = detect_versions(dir.path()).unwrap();
+
+        assert_eq!(
+            versions.get("python"),
+            Some(&">=3.12".to_string()),
+            "requires-python specifier must be preserved raw"
+        );
+    }
+
+    #[test]
+    fn pyproject_requires_python_resolves_to_newest_installed_match() {
+        let dir = tempdir().unwrap();
+        fs::write(
+            dir.path().join("pyproject.toml"),
+            "[project]\nrequires-python = \">=3.12\"\n",
+        )
+        .unwrap();
+        let versions = detect_versions(dir.path()).unwrap();
+        assert_eq!(versions.get("python"), Some(&">=3.12".to_string()));
+
+        let data = tempdir().unwrap();
+        for version in ["3.12.4", "3.13.1"] {
+            fs::create_dir_all(
+                data.path()
+                    .join("versions/python")
+                    .join(version)
+                    .join("bin"),
+            )
+            .unwrap();
+        }
+        temp_env::with_var("OMG_DATA_DIR", Some(data.path()), || {
+            let additions = build_path_additions(&versions).unwrap();
+            assert_eq!(
+                additions.len(),
+                1,
+                "raw specifier must resolve through the generic resolver: {additions:?}"
+            );
+            assert!(
+                additions[0].ends_with("versions/python/3.13.1/bin"),
+                "newest installed match must win: {additions:?}"
+            );
+        });
+    }
+
+    #[test]
+    fn pyproject_without_project_section_pins_nothing() {
+        let dir = tempdir().unwrap();
+        fs::write(
+            dir.path().join("pyproject.toml"),
+            "[tool.poetry]\nname = \"x\"\n",
+        )
+        .unwrap();
+
+        let versions = detect_versions(dir.path()).unwrap();
+
+        assert!(
+            versions.get("python").is_none(),
+            "poetry-only pyproject must not pin python, got {versions:?}"
+        );
+    }
+
+    #[test]
+    fn malformed_pyproject_fails_closed() {
+        let dir = tempdir().unwrap();
+        fs::write(dir.path().join("pyproject.toml"), "project = [").unwrap();
+
+        let error =
+            detect_versions(dir.path()).expect_err("malformed pyproject.toml must not be ignored");
+        assert!(
+            error.to_string().contains("Failed to parse"),
+            "unexpected error: {error:#}"
+        );
+    }
+
+    #[test]
+    fn deno_pin_files_are_detected() {
+        for (filename, version) in [(".deno-version", "2.1.4"), (".dvmrc", "2.0.0")] {
+            let dir = tempdir().unwrap();
+            fs::write(dir.path().join(filename), version).unwrap();
+
+            let versions = detect_versions(dir.path()).unwrap();
+
+            assert_eq!(
+                versions.get("deno"),
+                Some(&version.to_string()),
+                "{filename} must pin deno"
+            );
+        }
+    }
+
+    #[test]
+    fn deno_version_file_wins_over_dvmrc() {
+        let dir = tempdir().unwrap();
+        fs::write(dir.path().join(".deno-version"), "2.1.4").unwrap();
+        fs::write(dir.path().join(".dvmrc"), "2.0.0").unwrap();
+
+        let versions = detect_versions(dir.path()).unwrap();
+
+        assert_eq!(
+            versions.get("deno"),
+            Some(&"2.1.4".to_string()),
+            ".deno-version must win over .dvmrc"
+        );
+    }
+
+    #[test]
+    fn deno_two_component_request_selects_newest_installed_patch() {
+        let data = tempdir().unwrap();
+        for version in ["1.40.1", "1.40.9", "1.41.0"] {
+            fs::create_dir_all(data.path().join("versions/deno").join(version).join("bin"))
+                .unwrap();
+        }
+        temp_env::with_var("OMG_DATA_DIR", Some(data.path()), || {
+            let versions = HashMap::from([("deno".to_string(), "1.40".to_string())]);
+            let additions = build_path_additions(&versions).unwrap();
+            assert_eq!(
+                additions,
+                vec![
+                    data.path()
+                        .join("versions/deno/1.40.9/bin")
+                        .display()
+                        .to_string()
+                ],
+                "a two-component request is compatible (~1.40.0) and must pick the newest 1.40.x"
+            );
+        });
+    }
+
+    #[test]
+    fn version_request_semantics_match_compat_rules() {
+        let render = |request: &str| normalize_version_req(request).map(|req| req.to_string());
+        assert_eq!(
+            render("3.12").as_deref(),
+            Some("~3.12.0"),
+            "bare two-component request must become compatible"
+        );
+        assert_eq!(
+            render("3.12.0").as_deref(),
+            Some("=3.12.0"),
+            "full three-component request must stay exact"
+        );
+        assert_eq!(
+            render("3").as_deref(),
+            Some("^3.0.0"),
+            "major request must keep compatible-major semantics"
+        );
+    }
+
+    #[test]
+    fn java_two_component_request_maps_to_feature_directory() {
+        let data = tempdir().unwrap();
+        fs::create_dir_all(data.path().join("versions/java/21/bin")).unwrap();
+        temp_env::with_var("OMG_DATA_DIR", Some(data.path()), || {
+            let versions = HashMap::from([("java".to_string(), "21.0".to_string())]);
+            let additions = build_path_additions(&versions).unwrap();
+            assert_eq!(
+                additions,
+                vec![
+                    data.path()
+                        .join("versions/java/21/bin")
+                        .display()
+                        .to_string()
+                ],
+                "java 21.0 must map to the feature-number directory 21"
+            );
+        });
+    }
+
+    #[test]
+    fn non_feature_java_request_fails_soft_in_hook_path_building() {
+        let data = tempdir().unwrap();
+        fs::create_dir_all(data.path().join("versions/java/21/bin")).unwrap();
+        temp_env::with_var("OMG_DATA_DIR", Some(data.path()), || {
+            for request in ["21.0.5", "latest", "21-ea"] {
+                let versions = HashMap::from([("java".to_string(), request.to_string())]);
+                let additions = build_path_additions(&versions)
+                    .expect("non-feature java request must not fail the hook");
+                assert!(
+                    additions.is_empty(),
+                    "non-feature request {request:?} must skip java, got {additions:?}"
+                );
+            }
+        });
+    }
+
+    #[test]
+    fn exact_vendor_pin_passes_through_and_keeps_sibling_commands_reachable() {
+        let data = tempdir().unwrap();
+        let bin = data.path().join("versions/python/3.12.0/bin");
+        fs::create_dir_all(&bin).unwrap();
+        fs::write(bin.join("python3"), b"#!/bin/sh").unwrap();
+        fs::write(bin.join("pip"), b"#!/bin/sh").unwrap();
+        // A newer patch exists, but a full three-component pin passes through
+        // to the exact directory instead of upgrading.
+        fs::create_dir_all(data.path().join("versions/python/3.12.9/bin")).unwrap();
+        temp_env::with_var("OMG_DATA_DIR", Some(data.path()), || {
+            let versions = HashMap::from([("python".to_string(), "3.12.0".to_string())]);
+            let additions = build_path_additions(&versions).unwrap();
+            assert_eq!(
+                additions,
+                vec![bin.display().to_string()],
+                "exact vendor request must pass through untouched"
+            );
+            assert!(
+                bin.join("python3").exists() && bin.join("pip").exists(),
+                "the pinned bin directory keeps sibling commands reachable"
+            );
         });
     }
 
