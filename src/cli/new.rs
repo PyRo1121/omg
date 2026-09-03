@@ -111,7 +111,7 @@ fn scaffold_react(name: &str) -> Result<()> {
     // Auto install
     println!("  {} Installing dependencies...", style::dim("→"));
     let status = Command::new("npm")
-        .arg("install")
+        .args(["install", "--ignore-scripts"])
         .current_dir(name)
         .status()
         .context("Failed to launch npm install")?;
@@ -176,7 +176,7 @@ fn scaffold_node(name: &str) -> Result<()> {
 
     println!("  {} Installing dependencies...", style::dim("→"));
     let status = Command::new("npm")
-        .arg("install")
+        .args(["install", "--ignore-scripts"])
         .current_dir(root)
         .status()
         .context("Failed to launch npm install")?;
