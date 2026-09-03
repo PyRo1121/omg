@@ -66,7 +66,7 @@ omg enterprise license-scan --export csv
 
 ## 📜 Policy Management
 
-Define and enforce rules across the entire organization. Policies live in `~/.config/omg/policy.toml` and are enforced locally on each machine.
+Define and enforce rules across the entire organization. Enterprise policies are configured in the dashboard. The local host file `~/.config/omg/policy.toml` is a different surface (`omg audit policy`).
 
 ### Viewing policy
 

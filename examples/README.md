@@ -273,9 +273,9 @@ omg env check
 **Symptom:** `omg install` fails with policy error
 
 **Solutions:**
-1. Check policy: `omg enterprise policy show`
+1. Check enterprise policy: `omg enterprise policy show`
 2. Preview the install: `omg install --dry-run <package>`
-3. Adjust policy: Edit `~/.config/omg/policy.toml`
+3. Adjust enterprise policy in the dashboard, or the local host file with `omg audit policy`
 
 ### Runtime Versions Not Switching
 
