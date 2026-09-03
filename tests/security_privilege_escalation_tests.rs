@@ -281,8 +281,7 @@ mod privilege_escalation {
             .filter(|line| line.contains("r2 object put") || line.contains("r2 object get"))
             .collect();
         assert!(
-            !rollback_cli.is_empty()
-                && rollback_cli.iter().all(|line| line.contains("--remote")),
+            !rollback_cli.is_empty() && rollback_cli.iter().all(|line| line.contains("--remote")),
             "R2 rollback must target the remote bucket, not wrangler's local fake"
         );
     }
