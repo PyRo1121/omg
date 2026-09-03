@@ -551,7 +551,8 @@ pub fn print_update_summary(updates: &[crate::package_managers::types::UpdateInf
 
     println!();
 
-    // Show sample of updates (up to 15)
+    // Show sample of updates (up to 15), one line each with the source
+    // badge inline so long update lists stay scannable.
     let display_limit = 15;
     for update in updates.iter().take(display_limit) {
         if crate::cli::style::colors_enabled() {
@@ -562,13 +563,13 @@ pub fn print_update_summary(updates: &[crate::package_managers::types::UpdateInf
             };
 
             println!(
-                "    {} {} {} {}",
+                "    {} {} {} {} {}",
                 update.name.cyan(),
                 update.old_version.dimmed(),
                 "→".dimmed(),
-                update.new_version.green()
+                update.new_version.green(),
+                repo_badge
             );
-            println!("      {repo_badge}");
         } else {
             println!(
                 "    {} {} → {} ({})",
