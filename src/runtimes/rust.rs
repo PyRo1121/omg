@@ -10,20 +10,18 @@
 //! - rust-toolchain.toml support
 
 use anyhow::{Context, Result};
-use flate2::read::GzDecoder;
 use owo_colors::OwoColorize;
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeSet;
-use std::fs::{self, File};
+use std::fs;
 use std::io::Write;
 use std::path::{Path, PathBuf};
-use tar::Archive;
 
 use super::common::{
-    BudgetedReader, BudgetedSink, MAX_DECOMPRESSED_BYTES, activate_version, begin_staged_install,
-    complete_staged_install, copy_regular_tree, download_with_progress,
-    is_valid_version_dir, parse_sha256_digest, print_already_installed,
-    print_installed, print_using, replace_staged_install, validate_download_filename,
+    MAX_DECOMPRESSED_BYTES, activate_version, begin_staged_install, complete_staged_install,
+    copy_regular_tree, download_with_progress, extract_component_tar_gz, extract_component_tar_xz,
+    is_valid_version_dir, parse_sha256_digest, print_already_installed, print_installed,
+    print_using, replace_staged_install, validate_download_filename,
 };
 use crate::core::archive::stripped_archive_path;
 use crate::core::http::download_client;
@@ -282,78 +280,42 @@ impl RustManager {
         let is_xz = archive_path
             .extension()
             .and_then(|ext| ext.to_str())
-            .is_some_and(|ext| ext == "xz");
+            .is_some_and(|ext| ext.eq_ignore_ascii_case("xz"));
 
         if is_xz {
-            let file = File::open(archive_path)?;
-            // lzma-rs only exposes a Read->Write API, so bound the output
-            // sink: it stops accepting bytes at the budget instead of letting
-            // the buffer grow for the whole archive.
-            let mut sink = BudgetedSink::with_default_budget();
-            lzma_rs::xz_decompress(&mut std::io::BufReader::new(file), &mut sink)
-                .context("Failed to decompress XZ archive")?;
-            let decompressed = sink.into_inner();
-            let mut archive = Archive::new(decompressed.as_slice());
-            Self::extract_component_entries(&mut archive, dest_dir)
+            extract_component_tar_xz(
+                archive_path,
+                dest_dir,
+                MAX_DECOMPRESSED_BYTES,
+                &Self::component_entry_selector,
+            )
         } else {
-            Self::extract_gzip_component_with_budget(archive_path, dest_dir, MAX_DECOMPRESSED_BYTES)
+            extract_component_tar_gz(
+                archive_path,
+                dest_dir,
+                MAX_DECOMPRESSED_BYTES,
+                &Self::component_entry_selector,
+            )
         }
     }
 
-    fn extract_gzip_component_with_budget(
-        archive_path: &Path,
-        dest_dir: &Path,
-        budget: u64,
-    ) -> Result<()> {
-        let file = File::open(archive_path)?;
-        let decoder = GzDecoder::new(file);
-        let bounded = BudgetedReader::new(decoder, budget);
-        let mut archive = Archive::new(bounded);
-        Self::extract_component_entries(&mut archive, dest_dir)
-    }
-
-    fn extract_component_entries<R: std::io::Read>(
-        archive: &mut Archive<R>,
-        dest_dir: &Path,
-    ) -> Result<()> {
-        for entry in archive.entries()? {
-            let mut entry = entry?;
-            let path = entry.path()?.into_owned();
-            let path_str = path.to_string_lossy();
-
-            // Skip manifest and installer files, only extract from the component subdirectory
-            if !path_str.contains("/lib/")
-                && !path_str.contains("/bin/")
-                && !path_str.contains("/share/")
-            {
-                continue;
-            }
-
-            // Skip "component-version-target/component/".
-            let Some(stripped) = stripped_archive_path(&path, 2)? else {
-                continue;
-            };
-
-            let dest_path = dest_dir.join(&stripped);
-
-            if let Some(parent) = dest_path.parent() {
-                fs::create_dir_all(parent)?;
-            }
-
-            let entry_type = entry.header().entry_type();
-            if entry_type.is_dir() {
-                fs::create_dir_all(&dest_path)?;
-            } else if entry_type.is_file() {
-                entry.unpack(&dest_path)?;
-            } else {
-                anyhow::bail!(
-                    "Unsupported link or special entry in Rust component archive: {}",
-                    path.display()
-                );
-            }
+    /// Map one untrusted component-archive path to its toolchain-relative
+    /// destination path.
+    ///
+    /// Only `lib`, `bin`, and `share` payloads are retained; manifest and
+    /// installer files at the component root are skipped. The
+    /// `component-version-target/component` prefix is stripped so payloads
+    /// land directly below the toolchain directory, and unsafe path
+    /// components are rejected by the shared archive-path validator.
+    fn component_entry_selector(path: &Path) -> Result<Option<PathBuf>> {
+        let path_str = path.to_string_lossy();
+        if !path_str.contains("/lib/")
+            && !path_str.contains("/bin/")
+            && !path_str.contains("/share/")
+        {
+            return Ok(None);
         }
-
-        Ok(())
+        stripped_archive_path(path, 2)
     }
 
     fn activate_toolchain(&self, toolchain: &RustToolchainSpec) -> Result<()> {
@@ -818,6 +780,35 @@ mod tests {
         Ok(bytes)
     }
 
+    fn component_symlink_archive(path: &str, target: &str) -> Result<Vec<u8>> {
+        let mut bytes = Vec::new();
+        {
+            let mut builder = Builder::new(&mut bytes);
+            let mut header = Header::new_gnu();
+            header.set_entry_type(EntryType::Symlink);
+            header.set_mode(0o755);
+            header.set_size(0);
+            header.set_link_name(target)?;
+            header.set_cksum();
+            builder.append_data(&mut header, path, std::io::empty())?;
+            builder.finish()?;
+        }
+        Ok(bytes)
+    }
+
+    fn gzip_tar(tar: &[u8]) -> Result<Vec<u8>> {
+        use flate2::{Compression, write::GzEncoder};
+        let mut encoder = GzEncoder::new(Vec::new(), Compression::fast());
+        encoder.write_all(tar)?;
+        Ok(encoder.finish()?)
+    }
+
+    fn xz_tar(tar: Vec<u8>) -> Result<Vec<u8>> {
+        let mut compressed = Vec::new();
+        lzma_rs::xz_compress(&mut Cursor::new(tar), &mut compressed)?;
+        Ok(compressed)
+    }
+
     #[test]
     fn test_rust_manager_new() {
         let mgr = RustManager::new();
@@ -862,9 +853,37 @@ mod tests {
     }
 
     #[test]
-    fn gzip_component_extraction_enforces_decompressed_budget() -> Result<()> {
-        use flate2::{Compression, write::GzEncoder};
+    fn component_selector_keeps_only_lib_bin_and_share_payloads() -> Result<()> {
+        let select = RustManager::component_entry_selector;
+        assert_eq!(
+            select(Path::new("rustc-1.0.0-target/rustc/bin/rustc"))?,
+            Some(PathBuf::from("bin/rustc"))
+        );
+        assert_eq!(
+            select(Path::new(
+                "rustc-1.0.0-target/rustc/lib/rustlib/x86_64-unknown-linux-gnu/lib.rlib",
+            ))?,
+            Some(PathBuf::from(
+                "lib/rustlib/x86_64-unknown-linux-gnu/lib.rlib"
+            ))
+        );
+        assert_eq!(
+            select(Path::new("rustc-1.0.0-target/rustc/share/man/man1/rustc.1"))?,
+            Some(PathBuf::from("share/man/man1/rustc.1"))
+        );
+        assert_eq!(
+            select(Path::new("rustc-1.0.0-target/rustc/components"))?,
+            None
+        );
+        assert_eq!(select(Path::new("rustc-1.0.0-target/rustc/version"))?, None);
+        assert_eq!(select(Path::new("rustc-1.0.0-target/rustc/rustc"))?, None);
+        // Payload-looking unsafe paths are still rejected, not skipped.
+        assert!(select(Path::new("rustc-1.0.0-target/rustc/../../../evil/bin/tool",)).is_err());
+        Ok(())
+    }
 
+    #[test]
+    fn gzip_component_extraction_enforces_decompressed_budget() -> Result<()> {
         let tar = component_archive(
             "rustc-1.0.0-target/rustc/bin/rustc",
             EntryType::Regular,
@@ -872,14 +891,16 @@ mod tests {
         )?;
         let directory = TempDir::new()?;
         let archive_path = directory.path().join("rustc.tar.gz");
-        let mut encoder = GzEncoder::new(Vec::new(), Compression::fast());
-        encoder.write_all(&tar)?;
-        fs::write(&archive_path, encoder.finish()?)?;
+        fs::write(&archive_path, gzip_tar(&tar)?)?;
 
         let destination = TempDir::new()?;
-        let error =
-            RustManager::extract_gzip_component_with_budget(&archive_path, destination.path(), 128)
-                .expect_err("oversized decompressed archive must fail");
+        let error = extract_component_tar_gz(
+            &archive_path,
+            destination.path(),
+            128,
+            &RustManager::component_entry_selector,
+        )
+        .expect_err("oversized decompressed archive must fail");
 
         assert!(error.to_string().contains("decompressed data exceeds"));
         Ok(())
@@ -887,34 +908,158 @@ mod tests {
 
     #[test]
     fn component_extraction_writes_regular_files_inside_the_destination() -> Result<()> {
-        let bytes = component_archive(
+        let tar = component_archive(
             "rustc-1.0.0-target/rustc/bin/rustc",
             EntryType::Regular,
             b"runtime",
         )?;
-        let mut archive = Archive::new(Cursor::new(bytes));
+        let directory = TempDir::new()?;
+        let archive_path = directory.path().join("rustc.tar.gz");
+        fs::write(&archive_path, gzip_tar(&tar)?)?;
         let destination = TempDir::new()?;
 
-        RustManager::extract_component_entries(&mut archive, destination.path())?;
+        extract_component_tar_gz(
+            &archive_path,
+            destination.path(),
+            MAX_DECOMPRESSED_BYTES,
+            &RustManager::component_entry_selector,
+        )?;
 
         assert_eq!(fs::read(destination.path().join("bin/rustc"))?, b"runtime");
         Ok(())
     }
 
     #[test]
-    fn component_extraction_rejects_links() -> Result<()> {
-        let bytes = component_archive(
-            "rustc-1.0.0-target/rustc/bin/rustc",
-            EntryType::Symlink,
-            b"",
-        )?;
-        let mut archive = Archive::new(Cursor::new(bytes));
+    fn component_extraction_rejects_escaping_links() -> Result<()> {
+        let tar = component_symlink_archive("rustc-1.0.0-target/rustc/bin/rustc", "../../outside")?;
+        let directory = TempDir::new()?;
+        let archive_path = directory.path().join("rustc.tar.gz");
+        fs::write(&archive_path, gzip_tar(&tar)?)?;
         let destination = TempDir::new()?;
 
-        let result = RustManager::extract_component_entries(&mut archive, destination.path());
+        let error = extract_component_tar_gz(
+            &archive_path,
+            destination.path(),
+            MAX_DECOMPRESSED_BYTES,
+            &RustManager::component_entry_selector,
+        )
+        .expect_err("escaping link entries must be rejected");
 
-        assert!(result.is_err());
+        assert!(
+            error
+                .to_string()
+                .contains("escapes the extraction directory")
+        );
         assert!(!destination.path().join("bin/rustc").exists());
+        Ok(())
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn component_extraction_accepts_internal_symlinks() -> Result<()> {
+        // Component archives are validated by the shared walker: internal,
+        // non-escaping links are allowed exactly like whole-runtime extraction.
+        let mut bytes = Vec::new();
+        {
+            let mut builder = Builder::new(&mut bytes);
+            let mut file_header = Header::new_gnu();
+            file_header.set_entry_type(EntryType::Regular);
+            file_header.set_mode(0o755);
+            file_header.set_size(4);
+            file_header.set_cksum();
+            builder.append_data(
+                &mut file_header,
+                "rustc-1.0.0-target/rustc/lib/tool",
+                &b"tool"[..],
+            )?;
+            let mut link_header = Header::new_gnu();
+            link_header.set_entry_type(EntryType::Symlink);
+            link_header.set_mode(0o755);
+            link_header.set_size(0);
+            link_header.set_link_name("../lib/tool")?;
+            link_header.set_cksum();
+            builder.append_data(
+                &mut link_header,
+                "rustc-1.0.0-target/rustc/bin/rustc",
+                std::io::empty(),
+            )?;
+            builder.finish()?;
+        }
+        let directory = TempDir::new()?;
+        let archive_path = directory.path().join("rustc.tar.gz");
+        fs::write(&archive_path, gzip_tar(&bytes)?)?;
+        let destination = TempDir::new()?;
+
+        extract_component_tar_gz(
+            &archive_path,
+            destination.path(),
+            MAX_DECOMPRESSED_BYTES,
+            &RustManager::component_entry_selector,
+        )?;
+
+        assert_eq!(fs::read(destination.path().join("lib/tool"))?, b"tool");
+        assert!(
+            fs::symlink_metadata(destination.path().join("bin/rustc"))?
+                .file_type()
+                .is_symlink()
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn xz_component_extraction_succeeds_with_a_small_budget() -> Result<()> {
+        let tar = component_archive(
+            "rustc-1.0.0-target/rustc/bin/rustc",
+            EntryType::Regular,
+            b"runtime",
+        )?;
+        let directory = TempDir::new()?;
+        let archive_path = directory.path().join("rustc.tar.xz");
+        fs::write(&archive_path, xz_tar(tar.clone())?)?;
+        let destination = TempDir::new()?;
+
+        // The budget covers exactly the decompressed tar payload: extraction
+        // must succeed without any slack beyond the real payload size.
+        let budget = u64::try_from(tar.len()).context("test archive is too large")?;
+        extract_component_tar_xz(
+            &archive_path,
+            destination.path(),
+            budget,
+            &RustManager::component_entry_selector,
+        )?;
+
+        assert_eq!(fs::read(destination.path().join("bin/rustc"))?, b"runtime");
+        Ok(())
+    }
+
+    #[test]
+    fn xz_component_extraction_over_budget_fails_without_publishing_output() -> Result<()> {
+        let tar = component_archive(
+            "rustc-1.0.0-target/rustc/bin/rustc",
+            EntryType::Regular,
+            b"runtime",
+        )?;
+        let directory = TempDir::new()?;
+        let archive_path = directory.path().join("rustc.tar.xz");
+        fs::write(&archive_path, xz_tar(tar.clone())?)?;
+        let destination = TempDir::new()?;
+
+        let budget = u64::try_from(tar.len()).context("test archive is too large")? - 1;
+        let error = extract_component_tar_xz(
+            &archive_path,
+            destination.path(),
+            budget,
+            &RustManager::component_entry_selector,
+        )
+        .expect_err("over-budget decompression must fail");
+
+        assert!(format!("{error:#}").contains("exceeds the"));
+        let published: Vec<_> =
+            fs::read_dir(destination.path())?.collect::<std::io::Result<Vec<_>>>()?;
+        assert!(
+            published.is_empty(),
+            "over-budget extraction must not publish output"
+        );
         Ok(())
     }
 

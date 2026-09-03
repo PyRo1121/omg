@@ -238,13 +238,6 @@ pub(crate) struct BudgetedSink {
 }
 
 impl BudgetedSink {
-    pub(crate) fn with_default_budget() -> Self {
-        Self {
-            buf: Vec::new(),
-            remaining: MAX_DECOMPRESSED_BYTES,
-        }
-    }
-
     /// The configured maximum budget, for callers that delegate the choice.
     /// Only Debian-side extraction delegates today.
     #[cfg(any(feature = "arch", feature = "debian", feature = "debian-pure"))]
@@ -263,6 +256,8 @@ impl BudgetedSink {
         }
     }
 
+    /// Test-only: exposes the accumulated buffer for size assertions.
+    #[cfg(test)]
     pub(crate) fn into_inner(self) -> Vec<u8> {
         self.buf
     }
@@ -533,15 +528,25 @@ fn create_archive_links(links: Vec<PendingArchiveLink>) -> Result<()> {
     Ok(())
 }
 
-/// Process every tar entry into `dest_dir`, deferring symlink/hard-link
-/// creation until all regular content exists.
+/// Selector that maps one untrusted archive entry path to its
+/// destination-relative path.
 ///
-/// Shared by [`extract_tar_gz`] and [`extract_tar_xz`]; the decompression
-/// strategy differs, the entry handling must not.
+/// `None` skips the entry; `Some(relative)` extracts it below the
+/// destination directory. Selectors must reject unsafe path components
+/// (absolute roots, `..`) with an error instead of mapping them.
+pub(crate) type TarEntrySelector<'a> = &'a (dyn Fn(&Path) -> Result<Option<PathBuf>> + 'a);
+
+/// Process every tar entry selected by `select` into `dest_dir`, deferring
+/// symlink/hard-link creation until all regular content exists.
+///
+/// `select` decides which entries are extracted and where they land below
+/// `dest_dir`; entries mapping to `None` are skipped. Shared by the
+/// whole-runtime extractors and the component extractors so the path, link,
+/// and entry-type safety rules cannot drift between them.
 fn extract_tar_entries<R: std::io::Read>(
     archive: &mut tar::Archive<R>,
     dest_dir: &Path,
-    strip_components: usize,
+    select: TarEntrySelector<'_>,
     pb: &ProgressBar,
 ) -> Result<()> {
     pb.set_message("Extracting...");
@@ -550,7 +555,7 @@ fn extract_tar_entries<R: std::io::Read>(
     for entry in archive.entries()? {
         let mut entry = entry?;
         let path = entry.path()?;
-        let Some(stripped) = stripped_archive_path(&path, strip_components)? else {
+        let Some(stripped) = select(&path)? else {
             continue;
         };
 
@@ -580,11 +585,11 @@ fn extract_tar_entries<R: std::io::Read>(
             let target = entry
                 .link_name()?
                 .context("Archive hard link is missing its target")?;
-            let target = stripped_archive_path(&target, strip_components)?
-                .context("Archive hard link target was stripped away")?;
+            let target_relative = select(&target)?
+                .context("Archive hard link target was excluded by the entry selector")?;
             pending_links.push(PendingArchiveLink::Hard {
                 path: dest_path,
-                target: dest_dir.join(target),
+                target: dest_dir.join(target_relative),
             });
         } else {
             anyhow::bail!(
@@ -594,6 +599,34 @@ fn extract_tar_entries<R: std::io::Read>(
         }
     }
     create_archive_links(pending_links)
+}
+
+/// Synchronously extract selected entries from a .tar.gz component archive
+/// with a bounded decompression budget.
+///
+/// Also backs whole-runtime extraction: [`extract_tar_gz`] calls this with the
+/// default strip selector and [`MAX_DECOMPRESSED_BYTES`].
+pub(crate) fn extract_component_tar_gz(
+    archive_path: &Path,
+    dest_dir: &Path,
+    budget: u64,
+    select: TarEntrySelector<'_>,
+) -> Result<()> {
+    let file = File::open(archive_path)
+        .with_context(|| format!("Failed to open archive: {}", archive_path.display()))?;
+
+    let decoder = flate2::read::GzDecoder::new(BufReader::new(file));
+    let bounded = BudgetedReader::new(decoder, budget);
+    let mut archive = tar::Archive::new(bounded);
+
+    let pb = ProgressBar::new_spinner();
+    pb.set_style(extract_progress_style());
+
+    fs::create_dir_all(dest_dir)?;
+    extract_tar_entries(&mut archive, dest_dir, select, &pb)?;
+
+    pb.finish_and_clear();
+    Ok(())
 }
 
 /// Extract a .tar.gz archive with progress
@@ -606,23 +639,54 @@ pub(crate) async fn extract_tar_gz(
     let dest_dir = dest_dir.to_path_buf();
 
     tokio::task::spawn_blocking(move || {
-        let file = File::open(&archive_path)
-            .with_context(|| format!("Failed to open archive: {}", archive_path.display()))?;
-
-        let decoder = flate2::read::GzDecoder::new(BufReader::new(file));
-        let bounded = BudgetedReader::new(decoder, MAX_DECOMPRESSED_BYTES);
-        let mut archive = tar::Archive::new(bounded);
-
-        let pb = ProgressBar::new_spinner();
-        pb.set_style(extract_progress_style());
-
-        fs::create_dir_all(&dest_dir)?;
-        extract_tar_entries(&mut archive, &dest_dir, strip_components, &pb)?;
-
-        pb.finish_and_clear();
-        Ok(())
+        let select = |path: &Path| -> Result<Option<PathBuf>> {
+            stripped_archive_path(path, strip_components)
+        };
+        extract_component_tar_gz(&archive_path, &dest_dir, MAX_DECOMPRESSED_BYTES, &select)
     })
     .await?
+}
+
+/// Synchronously extract selected entries from a .tar.xz component archive
+/// with a bounded decompression budget.
+///
+/// lzma-rs exposes a `Read -> Write` API rather than a streaming decoder, so
+/// the bounded output is kept in a same-filesystem temporary file: a valid
+/// archive never needs its whole decompressed tar payload on the heap, and an
+/// over-budget archive aborts before any output is published. Also backs
+/// whole-runtime extraction: [`extract_tar_xz`] calls this with the default
+/// strip selector and [`MAX_DECOMPRESSED_BYTES`].
+pub(crate) fn extract_component_tar_xz(
+    archive_path: &Path,
+    dest_dir: &Path,
+    budget: u64,
+    select: TarEntrySelector<'_>,
+) -> Result<()> {
+    let file = File::open(archive_path)
+        .with_context(|| format!("Failed to open archive: {}", archive_path.display()))?;
+
+    let pb = ProgressBar::new_spinner();
+    pb.set_style(extract_progress_style());
+    pb.set_message("Decompressing XZ...");
+
+    fs::create_dir_all(dest_dir)?;
+    let output = tempfile::tempfile_in(dest_dir).with_context(|| {
+        format!(
+            "Failed to create temporary XZ output in {}",
+            dest_dir.display()
+        )
+    })?;
+    let mut output = BudgetedWriter::new(output, budget);
+    lzma_rs::xz_decompress(&mut BufReader::new(file), &mut output)
+        .context("Failed to decompress XZ archive")?;
+    let mut output = output.into_inner();
+    output.seek(SeekFrom::Start(0))?;
+
+    let mut archive = tar::Archive::new(output);
+    extract_tar_entries(&mut archive, dest_dir, select, &pb)?;
+
+    pb.finish_and_clear();
+    Ok(())
 }
 
 /// Extract a .tar.xz archive with progress (pure Rust)
@@ -635,34 +699,10 @@ pub(crate) async fn extract_tar_xz(
     let dest_dir = dest_dir.to_path_buf();
 
     tokio::task::spawn_blocking(move || {
-        let file = File::open(&archive_path)
-            .with_context(|| format!("Failed to open archive: {}", archive_path.display()))?;
-
-        let pb = ProgressBar::new_spinner();
-        pb.set_style(extract_progress_style());
-        pb.set_message("Decompressing XZ...");
-
-        // lzma-rs exposes Read -> Write rather than a streaming decoder.
-        // Keep the bounded output on disk so a valid large archive does not
-        // require its entire decompressed tar payload on the heap.
-        fs::create_dir_all(&dest_dir)?;
-        let output = tempfile::tempfile_in(&dest_dir).with_context(|| {
-            format!(
-                "Failed to create temporary XZ output in {}",
-                dest_dir.display()
-            )
-        })?;
-        let mut output = BudgetedWriter::new(output, MAX_DECOMPRESSED_BYTES);
-        lzma_rs::xz_decompress(&mut BufReader::new(file), &mut output)
-            .context("Failed to decompress XZ archive")?;
-        let mut output = output.into_inner();
-        output.seek(SeekFrom::Start(0))?;
-
-        let mut archive = tar::Archive::new(output);
-        extract_tar_entries(&mut archive, &dest_dir, strip_components, &pb)?;
-
-        pb.finish_and_clear();
-        Ok(())
+        let select = |path: &Path| -> Result<Option<PathBuf>> {
+            stripped_archive_path(path, strip_components)
+        };
+        extract_component_tar_xz(&archive_path, &dest_dir, MAX_DECOMPRESSED_BYTES, &select)
     })
     .await?
 }
