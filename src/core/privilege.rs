@@ -38,11 +38,13 @@ fn scrub_privileged_env(command: &mut tokio::process::Command) {
     }
 }
 ///
-/// Elevation must travel through argv because sudo's default `env_reset`
-/// strips `OMG_ELEVATED` from the child environment. The child (see
-/// `src/bin/omg.rs` main) strips this marker and sets `OMG_ELEVATED`
-/// itself before any dispatch. A non-root user invoking the marker gains
-/// nothing: elevation checks still require effective root.
+/// Elevation marker traveling through argv.
+///
+/// sudo's default `env_reset` strips `OMG_ELEVATED` from the child
+/// environment. The child (see `src/bin/omg.rs` main) strips this marker
+/// and sets `OMG_ELEVATED` itself before any dispatch. A non-root user
+/// invoking the marker gains nothing: elevation checks still require
+/// effective root.
 pub const ELEVATED_MARKER: &str = "__omg_elevated";
 
 /// Reserved argv token: mid-flow delegation whose PARENT owns the history record.

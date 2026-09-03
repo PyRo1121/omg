@@ -681,20 +681,21 @@ pub fn daemon(foreground: bool) -> Result<()> {
         let status = command.spawn();
 
         let spawn = status.map(|_| ()).map_err(|e| e.to_string());
-        let mut ready = false;
-        if spawn.is_ok() {
-            // Poll for daemon readiness: 30 attempts × 100ms = 3 seconds max.
-            // The daemon needs time to build its in-memory index and bind the socket,
-            // which can take >500ms on large package databases.
-            // NOTE: this is an intentional short synchronous block on the CLI's own
-            // current-thread runtime; the command does nothing else while waiting and
-            // the process exits right after, so no other task is starved.
-            ready = crate::core::client::wait_for_daemon_ready(
+        // Poll for daemon readiness: 30 attempts × 100ms = 3 seconds max.
+        // The daemon needs time to build its in-memory index and bind the socket,
+        // which can take >500ms on large package databases.
+        // NOTE: this is an intentional short synchronous block on the CLI's own
+        // current-thread runtime; the command does nothing else while waiting and
+        // the process exits right after, so no other task is starved.
+        let ready = if spawn.is_ok() {
+            crate::core::client::wait_for_daemon_ready(
                 &socket_path,
                 30,
                 std::time::Duration::from_millis(100),
-            );
-        }
+            )
+        } else {
+            false
+        };
 
         daemon_start_result(spawn, ready, socket_path.exists())
     }

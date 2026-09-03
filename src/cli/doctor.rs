@@ -698,16 +698,17 @@ pub fn enable_turbo_mode() -> Result<()> {
         "→".cyan(),
         exe_path
     );
-    let mut cleanup_done = true;
-    if console::user_attended()
+    let cleanup_done = if console::user_attended()
         && !dialoguer::Confirm::new()
             .with_prompt("Run `sudo setcap -r` on the omg binary?")
             .default(true)
             .interact()?
     {
         println!("  {} Skipped capability cleanup", "ℹ".blue());
-        cleanup_done = false;
-    }
+        false
+    } else {
+        true
+    };
     if cleanup_done {
         let remove = std::process::Command::new("sudo")
             .arg("setcap")
@@ -715,22 +716,22 @@ pub fn enable_turbo_mode() -> Result<()> {
             .arg(&exe)
             .status();
         match remove {
-        Ok(status) if status.success() => {
-            println!(
-                "  {} No file capabilities remain (or none were set)",
-                "✓".green()
-            );
-        }
-        Ok(status) => {
-            println!(
-                "  {} `setcap -r` exited with code {}",
-                "⚠".yellow(),
-                status.code().unwrap_or(-1)
-            );
-        }
-        Err(error) => {
-            println!("  {} Could not run `setcap -r`: {error}", "⚠".yellow());
-        }
+            Ok(status) if status.success() => {
+                println!(
+                    "  {} No file capabilities remain (or none were set)",
+                    "✓".green()
+                );
+            }
+            Ok(status) => {
+                println!(
+                    "  {} `setcap -r` exited with code {}",
+                    "⚠".yellow(),
+                    status.code().unwrap_or(-1)
+                );
+            }
+            Err(error) => {
+                println!("  {} Could not run `setcap -r`: {error}", "⚠".yellow());
+            }
         }
     }
     println!();

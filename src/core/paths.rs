@@ -131,9 +131,11 @@ pub fn data_dir() -> PathBuf {
     })
 }
 
-/// Resolve a binary shipped next to the running executable. Returns `None`
-/// when no sibling file exists, so callers fall back to PATH lookup. One
-/// helper so every launcher agrees on existence semantics (`is_file`).
+/// Resolve a binary shipped next to the running executable.
+///
+/// Returns `None` when no sibling file exists, so callers fall back to
+/// PATH lookup. One helper so every launcher agrees on existence
+/// semantics (`is_file`).
 #[must_use]
 pub fn sibling_binary(name: &str) -> Option<PathBuf> {
     std::env::current_exe()

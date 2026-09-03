@@ -445,8 +445,7 @@ impl TeamWorkspace {
         // from PATH would let an earlier entry shadow the binary on every
         // pull or checkout.
         let omg = std::env::current_exe()
-            .map(|exe| exe.display().to_string())
-            .unwrap_or_else(|_| "omg".to_string());
+            .map_or_else(|_| "omg".to_string(), |exe| exe.display().to_string());
 
         let hooks_dir = self.root.join(".git/hooks");
         std::fs::create_dir_all(&hooks_dir)
