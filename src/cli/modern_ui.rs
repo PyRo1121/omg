@@ -576,13 +576,7 @@ pub fn print_update_summary(updates: &[crate::package_managers::types::UpdateInf
                 repo_badge
             );
         } else {
-            println!(
-                "    {name} {old} → {new} ({repo})",
-                name = update.name,
-                old = update.old_version,
-                new = update.new_version,
-                repo = update.repo
-            );
+            println!("    {name} {old_version} → {new_version} ({repo})");
         }
     }
 
