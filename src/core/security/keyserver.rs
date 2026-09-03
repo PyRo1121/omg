@@ -332,6 +332,39 @@ pub fn is_key_in_gnupg(key_id: &str, gnupg_home: &Path) -> Result<bool, Keyserve
     }
 }
 
+/// Re-validate a pre-existing GnuPG home: it must be a real directory
+/// owned by this user with no group/world access and no symlink.
+fn validate_gnupg_home(gnupg_home: &Path) -> Result<(), KeyserverError> {
+    let meta =
+        std::fs::symlink_metadata(gnupg_home).map_err(|source| KeyserverError::GnuPgLaunch {
+            operation: "inspecting the GnuPG home",
+            source,
+        })?;
+    if meta.file_type().is_symlink() || !meta.is_dir() {
+        return Err(KeyserverError::GnuPgLaunch {
+            operation: "refusing symlinked or non-directory GnuPG home",
+            source: std::io::Error::new(
+                std::io::ErrorKind::InvalidInput,
+                gnupg_home.display().to_string(),
+            ),
+        });
+    }
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::MetadataExt as _;
+        if meta.uid() != nix::unistd::getuid().as_raw() || meta.mode() & 0o077 != 0 {
+            return Err(KeyserverError::GnuPgLaunch {
+                operation: "refusing weakly-permissioned GnuPG home",
+                source: std::io::Error::new(
+                    std::io::ErrorKind::PermissionDenied,
+                    gnupg_home.display().to_string(),
+                ),
+            });
+        }
+    }
+    Ok(())
+}
+
 /// Import a verified certificate through GnuPG so it updates `pubring.kbx`
 /// using the keybox format GnuPG owns.
 pub fn import_key_into_gnupg(cert: &Cert, gnupg_home: &Path) -> Result<(), KeyserverError> {
@@ -339,7 +372,9 @@ pub fn import_key_into_gnupg(cert: &Cert, gnupg_home: &Path) -> Result<(), Keyse
     use std::io::Write as _;
     use std::os::unix::fs::PermissionsExt as _;
 
-    if !gnupg_home.exists() {
+    if gnupg_home.exists() {
+        validate_gnupg_home(gnupg_home)?;
+    } else {
         std::fs::create_dir(gnupg_home).map_err(|source| KeyserverError::GnuPgLaunch {
             operation: "creating the GnuPG home",
             source,
@@ -350,37 +385,6 @@ pub fn import_key_into_gnupg(cert: &Cert, gnupg_home: &Path) -> Result<(), Keyse
                 source,
             },
         )?;
-    } else {
-        // A pre-existing home is re-validated: it must be a real directory
-        // owned by this user with no group/world access and no symlink.
-        let meta = std::fs::symlink_metadata(gnupg_home).map_err(|source| {
-            KeyserverError::GnuPgLaunch {
-                operation: "inspecting the GnuPG home",
-                source,
-            }
-        })?;
-        if meta.file_type().is_symlink() || !meta.is_dir() {
-            return Err(KeyserverError::GnuPgLaunch {
-                operation: "refusing symlinked or non-directory GnuPG home",
-                source: std::io::Error::new(
-                    std::io::ErrorKind::InvalidInput,
-                    gnupg_home.display().to_string(),
-                ),
-            });
-        }
-        #[cfg(unix)]
-        {
-            use std::os::unix::fs::MetadataExt as _;
-            if meta.uid() != unsafe { nix::libc::getuid() } || meta.mode() & 0o077 != 0 {
-                return Err(KeyserverError::GnuPgLaunch {
-                    operation: "refusing weakly-permissioned GnuPG home",
-                    source: std::io::Error::new(
-                        std::io::ErrorKind::PermissionDenied,
-                        gnupg_home.display().to_string(),
-                    ),
-                });
-            }
-        }
     }
 
     // Trust-on-first-use: this key has no fingerprint pinning. Say so on
