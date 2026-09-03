@@ -555,25 +555,30 @@ pub fn print_update_summary(updates: &[crate::package_managers::types::UpdateInf
     // badge inline so long update lists stay scannable.
     let display_limit = 15;
     for update in updates.iter().take(display_limit) {
+        let name = crate::cli::style::sanitize_terminal_text(&update.name);
+        let old_version = crate::cli::style::sanitize_terminal_text(&update.old_version);
+        let new_version = crate::cli::style::sanitize_terminal_text(&update.new_version);
+        let repo = crate::cli::style::sanitize_terminal_text(&update.repo);
+
         if crate::cli::style::colors_enabled() {
             let repo_badge = if update.repo == "AUR" {
                 "aur".magenta().to_string()
             } else {
-                update.repo.as_str().dimmed().to_string()
+                repo.as_str().dimmed().to_string()
             };
 
             println!(
                 "    {} {} {} {} {}",
-                update.name.cyan(),
-                update.old_version.dimmed(),
+                name.cyan(),
+                old_version.dimmed(),
                 "→".dimmed(),
-                update.new_version.green(),
+                new_version.green(),
                 repo_badge
             );
         } else {
             println!(
                 "    {} {} → {} ({})",
-                update.name, update.old_version, update.new_version, update.repo
+                name, old_version, new_version, repo
             );
         }
     }
