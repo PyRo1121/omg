@@ -8,7 +8,7 @@ use owo_colors::OwoColorize;
 
 fn write_private_export(path: &std::path::Path, contents: impl AsRef<[u8]>) -> Result<()> {
     // Security exports must never inherit a previously permissive mode from
-    // the file they replace — force owner-only (0o600) through the replace.
+    // the file they replace - force owner-only (0o600) through the replace.
     crate::core::safe_ops::atomic_write_file_sync_private(path, contents)
         .with_context(|| format!("Failed to write security export to {}", path.display()))
 }
@@ -628,7 +628,7 @@ pub async fn check_slsa(
         .await?;
 
     // Trust-policy honesty (audit sec2 F-05): without an identity predicate,
-    // ANY Sigstore signer's valid signature "verifies" — cryptographically
+    // ANY Sigstore signer's valid signature "verifies" - cryptographically
     // true but meaningless as a trust statement. Say so loudly instead of
     // implying the artifact came from a trusted builder.
     if result.verified && certificate_identity.is_none() {
