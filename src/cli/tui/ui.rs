@@ -1135,7 +1135,7 @@ fn draw_team(f: &mut Frame, area: Rect, app: &App) {
             Line::from(vec![
                 Span::styled("  ID: ", Style::default().fg(colors::FG_MUTED)),
                 Span::styled(
-                    &status.config.team_id,
+                    sanitize_control_chars(&status.config.team_id),
                     Style::default().fg(colors::FG_PRIMARY),
                 ),
             ]),
@@ -1143,7 +1143,7 @@ fn draw_team(f: &mut Frame, area: Rect, app: &App) {
             Line::from(vec![
                 Span::styled("  Remote: ", Style::default().fg(colors::FG_MUTED)),
                 Span::styled(
-                    status.config.remote_url.as_deref().unwrap_or("None"),
+                    sanitize_control_chars(status.config.remote_url.as_deref().unwrap_or("None")),
                     Style::default().fg(colors::ACCENT_BLUE),
                 ),
             ]),
@@ -1197,6 +1197,7 @@ fn draw_team(f: &mut Frame, area: Rect, app: &App) {
                 } else {
                     member.drift_summary.as_deref().unwrap_or_default()
                 };
+                let member_status = sanitize_control_chars(member_status);
 
                 Row::new(vec![
                     Cell::from(Span::styled(
@@ -1210,7 +1211,7 @@ fn draw_team(f: &mut Frame, area: Rect, app: &App) {
                             .add_modifier(Modifier::BOLD),
                     )),
                     Cell::from(Span::styled(
-                        &member.id,
+                        sanitize_control_chars(&member.id),
                         Style::default().fg(colors::FG_MUTED),
                     )),
                     Cell::from(Span::styled(
@@ -1485,7 +1486,7 @@ mod tests {
 
     #[test]
     fn team_tab_renders_sanitized_team_and_member_names() {
-        let mut terminal = Terminal::new(TestBackend::new(120, 40)).expect("test terminal");
+        let mut terminal = Terminal::new(TestBackend::new(200, 40)).expect("test terminal");
         let mut app = app_on(Tab::Team);
         app.team_status = Some(crate::core::env::team::TeamStatus {
             format_version: crate::core::env::team::TeamStatus::STATUS_FORMAT_VERSION,
