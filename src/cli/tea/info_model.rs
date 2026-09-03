@@ -501,7 +501,7 @@ mod tests {
         let mut model = InfoModel::new("test".to_string());
         let _ = model.update(InfoMsg::InfoReceived(PackageInfo {
             name: "test-pkg".to_string(),
-            version: format!("1.0.0\u{200b}\u{1b}[31m\u{202e}spoofed"),
+            version: "1.0.0\u{200b}\u{1b}[31m\u{202e}spoofed".to_string(),
             description: "Test".to_string(),
             source: InfoSource::Official,
             repo: "extra\u{1b}[31m\u{202e}repo".to_string(),

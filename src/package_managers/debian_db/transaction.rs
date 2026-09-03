@@ -975,9 +975,9 @@ impl Transaction {
         )
     }
 
-    /// Get the total download size. Test-only surface: pinned by the
-    /// unit test, unused in production paths.
-    #[cfg(test)]
+    /// Get the total download size.
+    ///
+    /// Exposed for transaction reporting and integration verification.
     pub fn total_download_size(&self) -> u64 {
         self.to_install.iter().map(|a| a.size).sum::<u64>()
             + self.to_upgrade.iter().map(|a| a.size).sum::<u64>()
@@ -2467,9 +2467,9 @@ fn cleanup_dpkg_info_files(package_name: &str) -> Result<()> {
     Ok(())
 }
 
-/// Dry-run a transaction (show what would be done). Test-only surface:
-/// no production caller renders through it, but the format is pinned below.
-#[cfg(test)]
+/// Render a transaction plan without applying it.
+///
+/// This is also the public integration and benchmark seam.
 pub fn dry_run(result: &ResolutionResult) -> String {
     let mut output = String::new();
 

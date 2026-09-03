@@ -356,6 +356,24 @@ impl SbomGenerator {
                 let version = pkg.version.version_string();
                 let bom_ref = package_purl(&pkg.name, &version, debian_like);
 
+                #[cfg(feature = "arch")]
+                let licenses = pkg
+                    .licenses
+                    .iter()
+                    .map(|license| SbomLicense {
+                        license: Some(SbomLicenseInfo {
+                            id: Some(license.clone()),
+                            name: None,
+                        }),
+                        expression: None,
+                    })
+                    .collect();
+                #[cfg(all(
+                    any(feature = "debian", feature = "debian-pure"),
+                    not(feature = "arch")
+                ))]
+                let licenses = Vec::new();
+
                 let component = SbomComponent {
                     component_type: "library".to_string(),
                     mime_type: None,
@@ -364,17 +382,7 @@ impl SbomGenerator {
                     version,
                     description: Some(pkg.description.clone()),
                     purl: Some(bom_ref.clone()),
-                    licenses: pkg
-                        .licenses
-                        .iter()
-                        .map(|license| SbomLicense {
-                            license: Some(SbomLicenseInfo {
-                                id: Some(license.clone()),
-                                name: None,
-                            }),
-                            expression: None,
-                        })
-                        .collect(),
+                    licenses,
                     hashes: vec![],
                     external_references: vec![SbomExternalRef {
                         ref_type: "website".to_string(),

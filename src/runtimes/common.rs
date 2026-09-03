@@ -232,6 +232,10 @@ impl<W: Write> Write for BudgetedWriter<W> {
     }
 }
 
+#[cfg_attr(
+    not(any(feature = "arch", feature = "debian", feature = "debian-pure")),
+    allow(dead_code, reason = "used by platform package database readers")
+)]
 pub(crate) struct BudgetedSink {
     buf: Vec<u8>,
     remaining: u64,
@@ -374,12 +378,10 @@ pub async fn download_with_progress(
         total_size <= MAX_RUNTIME_DOWNLOAD_BYTES,
         "Runtime download declares {total_size} bytes, exceeding the {MAX_RUNTIME_DOWNLOAD_BYTES}-byte limit"
     );
-    let label = dest
-        .file_name()
-        .map_or_else(
-            || "download".to_string(),
-            |name| name.to_string_lossy().into_owned(),
-        );
+    let label = dest.file_name().map_or_else(
+        || "download".to_string(),
+        |name| name.to_string_lossy().into_owned(),
+    );
     let task = ProgressTask::start(&TaskSpec {
         label,
         kind: TaskKind::Bytes {
@@ -633,7 +635,8 @@ pub(crate) async fn extract_tar_gz(
             stripped_archive_path(path, strip_components)
         };
         let task = extract_task(&archive_path);
-        let result = extract_component_tar_gz(&archive_path, &dest_dir, MAX_DECOMPRESSED_BYTES, &select);
+        let result =
+            extract_component_tar_gz(&archive_path, &dest_dir, MAX_DECOMPRESSED_BYTES, &select);
         task.finish(Outcome::Done);
         result
     })
@@ -696,7 +699,8 @@ pub(crate) async fn extract_tar_xz(
         };
         let task = extract_task(&archive_path);
         task.set_message("Decompressing XZ...");
-        let result = extract_component_tar_xz(&archive_path, &dest_dir, MAX_DECOMPRESSED_BYTES, &select);
+        let result =
+            extract_component_tar_xz(&archive_path, &dest_dir, MAX_DECOMPRESSED_BYTES, &select);
         task.finish(Outcome::Done);
         result
     })
@@ -778,12 +782,10 @@ pub(crate) async fn extract_zip(
 /// One shared spinner lane for archive extraction work.
 fn extract_task(archive_path: &Path) -> ProgressTask {
     ProgressTask::start(&TaskSpec {
-        label: archive_path
-            .file_name()
-            .map_or_else(
-                || "archive".to_string(),
-                |name| name.to_string_lossy().into_owned(),
-            ),
+        label: archive_path.file_name().map_or_else(
+            || "archive".to_string(),
+            |name| name.to_string_lossy().into_owned(),
+        ),
         kind: TaskKind::Spinner,
         accent: Accent::System,
     })

@@ -1133,7 +1133,7 @@ mod tests {
         let versions = detect_versions(dir.path()).unwrap();
 
         assert!(
-            versions.get("python").is_none(),
+            !versions.contains_key("python"),
             "poetry-only pyproject must not pin python, got {versions:?}"
         );
     }
@@ -1272,10 +1272,7 @@ mod tests {
             ("deno", "2.9.6", "bin", "deno", "deno-lsp"),
         ] {
             let selected = if relative_bin.is_empty() {
-                data.path()
-                    .join("versions")
-                    .join(runtime)
-                    .join(version)
+                data.path().join("versions").join(runtime).join(version)
             } else {
                 data.path()
                     .join("versions")

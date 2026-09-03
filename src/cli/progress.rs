@@ -36,6 +36,10 @@ pub(crate) enum TaskKind {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum Accent {
     Network,
+    #[cfg_attr(
+        not(feature = "arch"),
+        allow(dead_code, reason = "constructed by the Arch database-sync lane")
+    )]
     Database,
     System,
 }
