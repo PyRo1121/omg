@@ -27,8 +27,8 @@ Counts at this commit. Run `find src -name '*.rs' | wc -l` to regenerate. Run `f
 - [x] `PackageService::builder`. Dismissed. Round D follow up proved tests use it heavily (`tests/update_integration_tests.rs`, service unit tests). Test use of a builder is legitimate API use. No action.
 - [x] `get_explicit_count_fast` in `src/package_managers/alpm_direct.rs:367`. Dismissed. `benches/count_bench.rs` benchmarks it. A benched function is not dead. No action.
 - [x] `list_explicit_sync` in `src/package_managers/mock.rs:179`. Deleted. The doc claimed CLI test-mode use, grep disproved it.
-- [ ] Collapse the duplicated version resolvers into `runtimes/common.rs`. Five copies share one shape. See `runtimes/node.rs:196`, `runtimes/bun.rs:122`, `runtimes/go.rs:132`, `runtimes/python.rs:221`, `runtimes/ruby.rs:160`.
-- [ ] Collapse the staged install copies into `runtimes/common.rs`. Each runtime reimplements download, extract, and publish. Start at `runtimes/node.rs:148`.
+- [x] Collapsed the duplicated version resolvers. Shared `resolve_version_request` in `runtimes/mod.rs`, all five managers route through it. 114 runtime tests green. Five copies share one shape. See `runtimes/node.rs:196`, `runtimes/bun.rs:122`, `runtimes/go.rs:132`, `runtimes/python.rs:221`, `runtimes/ruby.rs:160`.
+- [ ] Collapse the staged install copies into `runtimes/common.rs`. Blocked. Shared home lives in dirty `runtimes/common.rs`. Revisit when clean. Each runtime reimplements download, extract, and publish. Start at `runtimes/node.rs:148`.
 - [ ] Unify the two compliance exporters. `src/cli/enterprise.rs:84` and `src/cli/security.rs:1209` share one arg shape and diverge on file sets and permissions. Use `write_private_export` for inventory bearing files.
 - [ ] Split the `Cmd` enum in `src/cli/tea/cmd.rs:18`. Control flow variants and presentation variants live in one enum. Dispatch repeats in `packages/mod.rs:83` and the tea runtime.
 
@@ -41,7 +41,7 @@ Counts at this commit. Run `find src -name '*.rs' | wc -l` to regenerate. Run `f
 - [ ] Tighten the health bounds in `tests/daemon_security_tests.rs:141`. Three accepted statuses and wide numeric bounds let a broken daemon pass.
 - [ ] Replace the arbitrary count bound in `tests/daemon_security_tests.rs:242`. Assert the exact fresh state value.
 - [ ] Make setup failure loud in `tests/daemon_security_tests.rs:35`. The skip counter mitigates the silent return. Security tests deserve a hard fail option.
-- [ ] Deduplicate the repeated test names. `test_info_nonexistent_package` exists in five files. `test_update_check`, `test_install_remove_cycle`, `test_invalid_command`, and `test_concurrent_operations` repeat. Move them behind one helper in `tests/common/`.
+- [x] Deduplicate the repeated test names. Dismissed after per file recheck. Same names, different backends and contracts (arch purity, fixture echo, debian no panic, mock matrix). Per backend coverage. No action.
 - [ ] Cover `keyserver.rs` from integration tests or record why inline unit tests are the boundary. Zero files in `tests/` touch it today.
 - [ ] Cover `validate_image_ref` in `src/core/security/validation.rs:147` or record the boundary. Zero files in `tests/` touch it.
 - [x] Duplicated `test_update_check`, `test_install_remove_cycle`, `test_concurrent_operations` across files. Dismissed after Round D recheck. Same names, different backends (arch file is arch gated, debian uses debian fixtures, matrix uses mock distros). Per backend coverage, not duplication. No action.
@@ -56,7 +56,7 @@ Counts at this commit. Run `find src -name '*.rs' | wc -l` to regenerate. Run `f
 - [ ] Sweep the banned dash character from docs and comments. Start with `A4-UPSTREAM-ALPM-RESEARCH-REPORT.md`, `FEDORA-ENGINE.md`, `SECURITY.md`, `CONTRIBUTING.md`, `WAVE12-BLOCKERS.md`, `scripts/README.md`, `src/bin/omg.rs`, `src/cli/doctor.rs`, `src/cli/security.rs`.
 - [ ] Document the missing scripts in `scripts/README.md:9`. It lists three of eight. Add `collect-release-artifacts.sh`, `debian-smoke-test.sh`, `gen-release-notes.sh`, and `r2-rollback.sh`.
 - [ ] Delete the stale tech debt claim in `docs/TECH-DEBT-REVIEW-2026-08-31.md:18` after confirming with `cargo check --features debian`. The cited apt code looks fixed already.
-- [ ] Fix the low hygiene items. The identity wrapper in `src/core/caps.rs:20`. The unvalidated dockerfile and context paths in `src/core/container.rs:221`. The orphaned doc lines in `src/daemon/handlers.rs:591` and `src/daemon/server.rs:645`.
+- [ ] Fix the low hygiene items. The identity wrapper in `src/core/caps.rs:20` (done, inlined). The unvalidated dockerfile and context paths in `src/core/container.rs:221`. The orphaned doc lines in `src/daemon/handlers.rs:591` and `src/daemon/server.rs:645` (done).
 
 ## Loop rule
 
