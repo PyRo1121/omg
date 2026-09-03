@@ -1238,8 +1238,21 @@ async fn dispatch_command(command: &Commands, ctx: &omg_lib::cli::CliContext) ->
         Commands::Sync => {
             packages::sync().await?;
         }
-        Commands::Use { runtime, version } => {
-            runtimes::use_version(runtime, version.as_deref()).await?;
+        Commands::Use {
+            runtime,
+            version,
+            uninstall,
+        } => {
+            if *uninstall {
+                let Some(version) = version.as_deref() else {
+                    anyhow::bail!(
+                        "--uninstall requires a version: omg use <runtime> <version> --uninstall"
+                    );
+                };
+                runtimes::uninstall_version(runtime, version)?;
+            } else {
+                runtimes::use_version(runtime, version.as_deref()).await?;
+            }
         }
         Commands::List { runtime, available } => {
             runtimes::list_versions(runtime.as_deref(), *available, ctx.json).await?;

@@ -212,6 +212,9 @@ pub enum Commands {
         runtime: String,
         /// Version to use (e.g., 20.10.0, latest, lts). If omitted, detects from version file.
         version: Option<String>,
+        /// Remove the version instead of switching to it
+        #[arg(long)]
+        uninstall: bool,
     },
 
     /// List installed versions (or available if --available/-A)

@@ -18,8 +18,8 @@ use serde::Deserialize;
 
 use super::common::{
     activate_version, begin_staged_install, complete_staged_install, download_with_progress,
-    extract_tar_gz, normalize_version, parse_sha256_digest,
-    print_already_installed, print_installed, remove_file_best_effort,
+    extract_tar_gz, normalize_version, parse_sha256_digest, print_already_installed,
+    print_installed, remove_file_best_effort,
 };
 use crate::core::http::download_client;
 
@@ -149,6 +149,12 @@ impl GoManager {
         Ok(())
     }
 
+    /// Remove an installed version. Refuses the active version.
+    pub fn uninstall(&self, version: &str) -> Result<()> {
+        let version = normalize_version(version);
+        super::common::uninstall_version(&self.versions_dir, &version)
+    }
+
     fn print_version_info(version: &str, goroot: &Path, bin_dir: &Path) {
         println!("{} Now using Go {version}", "✓".green());
         println!("  {} {}", "GOROOT:".dimmed(), goroot.display().dimmed());
@@ -261,7 +267,10 @@ mod tests {
             crate::runtimes::common::resolve_partial_version(&names, "1.20").as_deref(),
             Some("1.20")
         );
-        assert_eq!(crate::runtimes::common::resolve_partial_version(&names, "1.22"), None);
+        assert_eq!(
+            crate::runtimes::common::resolve_partial_version(&names, "1.22"),
+            None
+        );
     }
 
     #[test]
