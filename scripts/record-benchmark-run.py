@@ -124,43 +124,49 @@ def validate_results(source: Path) -> list[str]:
         return errors
 
     search = load_json(source / "search.json")
-    if search is None:
+    # `--update` archives only update.json. Require search.json for every
+    # other recorded set so incomplete search runs still fail closed.
+    update_only = present == ["update"]
+    if search is None and not update_only:
         errors.append(f"search.json missing in {source}")
         return errors
 
-    daemon = find_result(search["results"], "OMG (Daemon)")
-    if daemon is None:
-        errors.append('search.json has no command named "OMG (Daemon)"')
-        return errors
-    if any(code != 0 for code in daemon.get("exit_codes") or [1]):
-        errors.append("OMG (Daemon) search had a non-zero exit")
-    daemon_mean = ms(daemon)
-    if daemon_mean < 1.0:
-        errors.append(
-            f"OMG (Daemon) search mean {daemon_mean:.2f} ms is too fast "
-            "(command likely did no work)"
-        )
-    if daemon_mean > 500.0:
-        errors.append(f"OMG (Daemon) search mean {daemon_mean:.1f} ms is implausibly slow")
+    if search is not None:
+        daemon = find_result(search["results"], "OMG (Daemon)")
+        if daemon is None:
+            errors.append('search.json has no command named "OMG (Daemon)"')
+            return errors
+        if any(code != 0 for code in daemon.get("exit_codes") or [1]):
+            errors.append("OMG (Daemon) search had a non-zero exit")
+        daemon_mean = ms(daemon)
+        if daemon_mean < 1.0:
+            errors.append(
+                f"OMG (Daemon) search mean {daemon_mean:.2f} ms is too fast "
+                "(command likely did no work)"
+            )
+        if daemon_mean > 500.0:
+            errors.append(
+                f"OMG (Daemon) search mean {daemon_mean:.1f} ms is implausibly slow"
+            )
 
-    pacman = find_result(search["results"], "pacman")
-    if pacman is not None:
-        pacman_mean = ms(pacman)
-        if pacman_mean < 30.0:
-            errors.append(
-                f"pacman search mean {pacman_mean:.1f} ms is too fast "
-                "(likely not searching the sync databases)"
-            )
-        if daemon_mean >= pacman_mean:
-            errors.append(
-                f"OMG search ({daemon_mean:.1f} ms) was not faster than pacman "
-                f"({pacman_mean:.1f} ms)"
-            )
-        if ms(pacman, "user") < 0.02:
-            errors.append(
-                f"pacman search user-time {ms(pacman, 'user'):.1f} ms is too low "
-                "(CPU work missing)"
-            )
+        pacman = find_result(search["results"], "pacman")
+        if pacman is not None:
+            pacman_mean = ms(pacman)
+            if pacman_mean < 30.0:
+                errors.append(
+                    f"pacman search mean {pacman_mean:.1f} ms is too fast "
+                    "(likely not searching the sync databases)"
+                )
+            if daemon_mean >= pacman_mean:
+                errors.append(
+                    f"OMG search ({daemon_mean:.1f} ms) was not faster than pacman "
+                    f"({pacman_mean:.1f} ms)"
+                )
+            if ms(pacman, "user") < 0.02:
+                errors.append(
+                    f"pacman search user-time {ms(pacman, 'user'):.1f} ms is too low "
+                    "(CPU work missing)"
+                )
 
     for name in SCENARIOS:
         payload = load_json(source / f"{name}.json")
