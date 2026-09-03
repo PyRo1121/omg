@@ -18,8 +18,8 @@ use serde::Deserialize;
 
 use super::common::{
     activate_version, begin_staged_install, complete_staged_install, download_with_progress,
-    extract_tar_gz, is_partial_version, normalize_version, parse_sha256_digest,
-    print_already_installed, print_installed, remove_file_best_effort, resolve_partial_version,
+    extract_tar_gz, normalize_version, parse_sha256_digest,
+    print_already_installed, print_installed, remove_file_best_effort,
 };
 use crate::core::http::download_client;
 
@@ -131,14 +131,11 @@ impl GoManager {
     /// Exact and non-numeric requests pass through unchanged, preserving the
     /// already-installed fast path and the existing not-found UX.
     async fn resolve_requested_version(&self, version: &str) -> Result<String> {
-        if !is_partial_version(version) {
-            return Ok(version.to_owned());
-        }
         let available = self.list_available().await?;
-        Ok(
-            resolve_partial_version(&available_version_names(&available), version)
-                .unwrap_or_else(|| version.to_owned()),
-        )
+        Ok(crate::runtimes::resolve_version_request(
+            &available_version_names(&available),
+            version,
+        ))
     }
 
     /// Switch to a specific version
@@ -253,18 +250,18 @@ mod tests {
         let names = available_version_names(&releases);
         // RC tags never participate in partial resolution.
         assert_eq!(
-            resolve_partial_version(&names, "1").as_deref(),
+            crate::runtimes::common::resolve_partial_version(&names, "1").as_deref(),
             Some("1.21.5")
         );
         assert_eq!(
-            resolve_partial_version(&names, "1.21").as_deref(),
+            crate::runtimes::common::resolve_partial_version(&names, "1.21").as_deref(),
             Some("1.21.5")
         );
         assert_eq!(
-            resolve_partial_version(&names, "1.20").as_deref(),
+            crate::runtimes::common::resolve_partial_version(&names, "1.20").as_deref(),
             Some("1.20")
         );
-        assert_eq!(resolve_partial_version(&names, "1.22"), None);
+        assert_eq!(crate::runtimes::common::resolve_partial_version(&names, "1.22"), None);
     }
 
     #[test]

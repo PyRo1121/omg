@@ -14,9 +14,9 @@ use std::path::{Path, PathBuf};
 
 use super::common::{
     GITHUB_USER_AGENT, GithubRelease, activate_version_with_linked_binary, begin_staged_install,
-    complete_staged_install, download_with_progress, extract_tar_gz, is_partial_version,
+    complete_staged_install, download_with_progress, extract_tar_gz,
     normalize_version, parse_sha256_digest, print_already_installed, print_installed, print_using,
-    remove_file_best_effort, resolve_partial_version, validate_download_filename, version_cmp,
+    remove_file_best_effort, validate_download_filename, version_cmp,
 };
 use crate::core::http::download_client;
 
@@ -219,12 +219,9 @@ impl PythonManager {
     /// requests pass through unchanged, preserving the already-installed fast
     /// path and the existing not-found UX.
     async fn resolve_requested_version(&self, version: &str) -> Result<String> {
-        if !is_partial_version(version) {
-            return Ok(version.to_owned());
-        }
         let available = self.list_available().await?;
         let names: Vec<String> = available.into_iter().map(|entry| entry.version).collect();
-        Ok(resolve_partial_version(&names, version).unwrap_or_else(|| version.to_owned()))
+        Ok(crate::runtimes::resolve_version_request(&names, version))
     }
 
     /// Switch to a specific version
@@ -338,11 +335,11 @@ mod tests {
             .map(str::to_string)
             .collect::<Vec<_>>();
         assert_eq!(
-            resolve_partial_version(&names, "3.12").as_deref(),
+            crate::runtimes::common::resolve_partial_version(&names, "3.12").as_deref(),
             Some("3.12.8")
         );
         assert_eq!(
-            resolve_partial_version(&names, "3").as_deref(),
+            crate::runtimes::common::resolve_partial_version(&names, "3").as_deref(),
             Some("3.12.8")
         );
     }

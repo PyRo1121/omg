@@ -29,6 +29,17 @@ pub(crate) use rust::RustManager;
 pub(crate) const SUPPORTED_RUNTIMES: &[&str] =
     &["node", "python", "go", "rust", "ruby", "java", "bun", "pi"];
 
+/// Resolve a partial version request (`20`, `20.1`) against known release
+/// names. Exact and non-numeric requests pass through unchanged. One shared
+/// shape so the five managers cannot drift apart.
+#[must_use]
+pub(crate) fn resolve_version_request(names: &[String], requested: &str) -> String {
+    if !common::is_partial_version(requested) {
+        return requested.to_owned();
+    }
+    common::resolve_partial_version(names, requested).unwrap_or_else(|| requested.to_owned())
+}
+
 /// Fast probing for active runtime versions. The current symlink must
 /// resolve to a real version directory inside the runtime versions tree;
 /// missing or external targets are not reported as active.
