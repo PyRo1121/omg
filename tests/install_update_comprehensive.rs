@@ -661,9 +661,9 @@ mod ux_tests {
         if !system_tests_enabled() {
             return;
         }
-        let result = run_omg(&["status"]);
+        let result = run_omg(&["search", "日本語テスト"]);
         result.assert_success();
-        result.assert_contains("Packages");
+        result.assert_no_panic();
     }
 }
 

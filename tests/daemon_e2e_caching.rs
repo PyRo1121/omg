@@ -4,51 +4,22 @@
 
 use anyhow::Result;
 use omg_lib::daemon::cache::PackageCache;
-use omg_lib::daemon::handlers::{DaemonState, handle_request};
-use omg_lib::daemon::index::PackageIndex;
 use omg_lib::daemon::protocol::{
     PackageInfo, Request, Response, ResponseResult, WirePackageSource,
 };
 use serial_test::serial;
 use std::sync::Arc;
-use tempfile::TempDir;
 
-/// Test fixture for caching tests
-struct CacheTestFixture {
-    _temp_dir: TempDir,
-    state: Arc<DaemonState>,
-}
+pub mod common;
 
-impl CacheTestFixture {
-    fn new() -> Result<Self> {
-        let temp_dir = TempDir::new()?;
-        let data_dir = temp_dir.path().join("data");
-        let package_manager = Arc::new(
-            omg_lib::package_managers::mock::MockPackageManager::new_in("arch", &data_dir),
-        );
-        let state = Arc::new(DaemonState::new_isolated(
-            &data_dir,
-            PackageIndex::empty(),
-            package_manager,
-        )?);
+use common::DaemonTestFixture as CacheTestFixture;
 
-        Ok(Self {
-            _temp_dir: temp_dir,
-            state,
-        })
-    }
-
-    async fn send_request(&self, request: Request) -> Response {
-        handle_request(Arc::clone(&self.state), request).await
-    }
-
-    async fn clear_cache(&self) {
-        let response = self.send_request(Request::CacheClear { id: 0 }).await;
-        assert!(
-            matches!(response, Response::Success { .. }),
-            "CacheClear request failed: {response:?}"
-        );
-    }
+async fn clear_cache(fixture: &CacheTestFixture) {
+    let response = fixture.send_request(Request::CacheClear { id: 0 }).await;
+    assert!(
+        matches!(response, Response::Success { .. }),
+        "CacheClear request failed: {response:?}"
+    );
 }
 
 // ============================================================================
@@ -59,7 +30,7 @@ impl CacheTestFixture {
 #[serial]
 async fn test_cache_hit_rate_tracking() -> Result<()> {
     let fixture = CacheTestFixture::new()?;
-    fixture.clear_cache().await;
+    clear_cache(&fixture).await;
 
     // Get initial metrics
     let metrics1 = fixture.send_request(Request::Metrics { id: 100 }).await;

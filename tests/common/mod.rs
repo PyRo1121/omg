@@ -643,6 +643,43 @@ macro_rules! require_ubuntu {
     };
 }
 
+/// Isolated daemon state for handler-level tests: temp dirs, mock Arch
+/// backend, empty index. Shared so cache, concurrency, and IPC fixtures
+/// cannot drift apart.
+#[cfg(feature = "arch")]
+pub struct DaemonTestFixture {
+    _temp_dir: TempDir,
+    pub state: std::sync::Arc<omg_lib::daemon::handlers::DaemonState>,
+}
+
+#[cfg(feature = "arch")]
+impl DaemonTestFixture {
+    pub fn new() -> Result<Self> {
+        let temp_dir = TempDir::new()?;
+        let data_dir = temp_dir.path().join("data");
+        let package_manager = std::sync::Arc::new(
+            omg_lib::package_managers::mock::MockPackageManager::new_in("arch", &data_dir),
+        );
+        let state = std::sync::Arc::new(omg_lib::daemon::handlers::DaemonState::new_isolated(
+            &data_dir,
+            omg_lib::daemon::index::PackageIndex::empty(),
+            package_manager,
+        )?);
+        Ok(Self {
+            _temp_dir: temp_dir,
+            state,
+        })
+    }
+
+    pub async fn send_request(
+        &self,
+        request: omg_lib::daemon::protocol::Request,
+    ) -> omg_lib::daemon::protocol::Response {
+        omg_lib::daemon::handlers::handle_request(std::sync::Arc::clone(&self.state), request)
+            .await
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::command_timeout;

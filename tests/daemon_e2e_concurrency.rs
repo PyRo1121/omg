@@ -3,13 +3,11 @@
 //! Daemon concurrent clients, request queuing, races, and thread safety.
 
 use anyhow::Result;
-use omg_lib::daemon::handlers::{DaemonState, handle_request};
-use omg_lib::daemon::index::PackageIndex;
+use omg_lib::daemon::handlers::handle_request;
 use omg_lib::daemon::protocol::{Request, Response, ResponseResult};
 use serial_test::serial;
 use std::sync::Arc;
 use std::time::Duration;
-use tempfile::TempDir;
 use tokio::time::sleep;
 
 /// Helper to extract response ID
@@ -19,31 +17,9 @@ const fn response_id(response: &Response) -> u64 {
     }
 }
 
-/// Test fixture for concurrency tests
-struct ConcurrencyTestFixture {
-    _temp_dir: TempDir,
-    state: Arc<DaemonState>,
-}
+pub mod common;
 
-impl ConcurrencyTestFixture {
-    fn new() -> Result<Self> {
-        let temp_dir = TempDir::new()?;
-        let data_dir = temp_dir.path().join("data");
-        let package_manager = Arc::new(
-            omg_lib::package_managers::mock::MockPackageManager::new_in("arch", &data_dir),
-        );
-        let state = Arc::new(DaemonState::new_isolated(
-            &data_dir,
-            PackageIndex::empty(),
-            package_manager,
-        )?);
-
-        Ok(Self {
-            _temp_dir: temp_dir,
-            state,
-        })
-    }
-}
+use common::DaemonTestFixture as ConcurrencyTestFixture;
 
 // ============================================================================
 // Concurrent Read Operations

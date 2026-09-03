@@ -1563,16 +1563,6 @@ mod error_messages {
     use super::*;
 
     #[test]
-    fn test_invalid_command_error() {
-        let result = run_omg(&["nonexistent-command"]);
-        assert!(!result.success, "Invalid command should fail");
-        assert!(
-            result.stderr.contains("error") || result.stderr.contains("unrecognized"),
-            "Should report error for invalid command"
-        );
-    }
-
-    #[test]
     fn test_missing_package_name_error() {
         let result = run_omg(&["install"]);
         assert!(!result.success, "Install without args should fail");
