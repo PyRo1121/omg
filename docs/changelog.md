@@ -47,6 +47,18 @@ Read Python and Deno project pins, map compatible requests to installed versions
 
 ### 🐛 Bug Fixes
 
+- **Ci**: Merge main and resolve progress.rs clippy conflict
+
+Take main's later mechanical clippy form (allow reason, take()
+
+clear/drop) and keep this branch's portable dead_code/guard bindings.
+
+- **Ci**: Gate fast-path block instead of stubbing for backend-less builds
+- **Ci**: Repair debian-pure transaction lane call and drop dead import
+- **Ci**: Satisfy portable clippy gate without touching behavior
+- **Ci**: Gate elevated fast-path helpers for backend-less feature combos
+- **Ci**: Un-gate ensure_local_archive_consent for backend-less feature combos
+- **Ci**: Format tree with pinned rustfmt to unblock Quick Gate
 - Sanitize plain update summary rows
 - Strip bidi controls from PKGBUILD review
 - **Tea**: Sanitize package versions ([#193](https://github.com/PyRo1121/omg/issues/193))
@@ -154,6 +166,7 @@ v0.1.215 never became GitHub Latest after CI tagged it.
 - **Deps**: Update rust dependencies ([#183](https://github.com/PyRo1121/omg/issues/183))
 ### 🧪 Testing
 
+- **Ci**: Refresh the isolated fuzz lockfile
 - Expose bidi controls in PKGBUILD review
 - Expose raw version text in tea info
 ## [0.1.215] - 2026-09-03
