@@ -47,6 +47,7 @@ Read Python and Deno project pins, map compatible requests to installed versions
 
 ### 🐛 Bug Fixes
 
+- **Doctor**: Report healthy runs with warnings
 - Sanitize TUI team names
 - Sanitize TUI package versions
 - **Ci**: Merge main and resolve progress.rs clippy conflict
