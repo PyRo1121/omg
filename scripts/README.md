@@ -13,6 +13,7 @@ Utility scripts for development, testing, and CI of the OMG project.
 | `debian-smoke-test.sh` | Debian smoke test in a container | `./scripts/debian-smoke-test.sh` |
 | `gen-release-notes.sh` | Generate release notes for a version | `./scripts/gen-release-notes.sh <version>` |
 | `r2-rollback.sh` | Roll back R2 release artifacts | `./scripts/r2-rollback.sh` |
+| `record-benchmark-run.py` | Archive a hyperfine run into `benchmarks/records/` | `python3 scripts/record-benchmark-run.py` |
 
 ---
 

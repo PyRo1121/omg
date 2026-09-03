@@ -199,12 +199,11 @@ jobs:
   test:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v3
+      - uses: actions/checkout@v4
 
       - name: Install Rust
-        uses: actions-rs/toolchain@v1
+        uses: dtolnay/rust-toolchain@stable
         with:
-          toolchain: stable
           components: rustfmt, clippy
 
       - name: Install Arch Linux packages (for ALPM)
@@ -213,10 +212,7 @@ jobs:
           sudo apt-get install -y libalpm-dev
 
       - name: Cache cargo registry
-        uses: actions/cache@v3
-        with:
-          path: ~/.cargo/registry
-          key: ${{ runner.os }}-cargo-registry
+        uses: Swatinem/rust-cache@v2
 
       - name: Run tests
         env:

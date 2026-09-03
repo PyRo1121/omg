@@ -97,7 +97,7 @@ Rotation procedure:
 ## Known platform gaps (documented, not hidden)
 
 - **Windows native:** there is no `windows` cargo feature or backend. Windows
-  users are supported through WSL only (see `WINDOWS_TESTING.md`). A native
+  users are supported through WSL only. A native
   port requires a new package-manager feature and should add a
   `build-windows` CI leg at the same time the feature lands.
 - **Linux aarch64:** no release artifact exists; `self_update` fails with an

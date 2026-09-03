@@ -84,7 +84,7 @@ omg new-command
 
 **Documentation:**
 - [ ] README updated (if needed)
-- [ ] CHANGELOG.md updated
+- [ ] docs/changelog.md updated
 - [ ] Inline documentation updated
 - [ ] Example code added/updated (if applicable)
 
