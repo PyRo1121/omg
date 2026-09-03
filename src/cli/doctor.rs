@@ -42,6 +42,7 @@ pub async fn run(network: bool, eol: bool) -> Result<()> {
     );
 
     let mut issues = 0;
+    let mut warnings = 0;
     let distro = detected_distro();
     let arch_backend = matches!(distro, Distro::Arch);
     let debian_backend = matches!(distro, Distro::Debian | Distro::Ubuntu);
@@ -101,15 +102,22 @@ pub async fn run(network: bool, eol: bool) -> Result<()> {
         issues += check_arch_infra();
     }
 
-    // 4. Daemon Status
-    if check_daemon().await {
-        println!("  {}", style::success("Daemon is running"));
-    } else {
-        println!(
-            "  {}",
-            style::warning("Daemon is not running (run 'omg daemon')")
-        );
-        // Not a critical issue
+    // 4. Daemon Status. A down daemon only limits speed, never
+    // correctness, so it warns without failing the run.
+    match check_daemon().await {
+        DaemonStatus::Running => {
+            println!("  {}", style::success("Daemon is running"));
+        }
+        DaemonStatus::Down => {
+            println!(
+                "  {}",
+                style::warning("Daemon is not running (run 'omg daemon')")
+            );
+            warnings += 1;
+        }
+        DaemonStatus::SocketStale => {
+            warnings += 1;
+        }
     }
 
     // 5. PATH Configuration
@@ -120,7 +128,8 @@ pub async fn run(network: bool, eol: bool) -> Result<()> {
         issues += 1;
     }
 
-    // 6. Shell Hook
+    // 6. Shell Hook. A missing hook only costs shell integration,
+    // so it warns without failing the run.
     if check_shell_hook() {
         println!("  {}", style::success("Shell hook active"));
     } else {
@@ -128,6 +137,7 @@ pub async fn run(network: bool, eol: bool) -> Result<()> {
             "  {}",
             style::warning("Shell hook not found in your login shell's rc file (run 'omg init')")
         );
+        warnings += 1;
     }
 
     // 7. Network diagnostics (if requested)
@@ -144,16 +154,26 @@ pub async fn run(network: bool, eol: bool) -> Result<()> {
         issues += check_eol_runtimes()?;
     }
 
-    finish_doctor(issues)
+    finish_doctor(issues, warnings)
 }
 
 /// Print the verdict and select the exit outcome (W3-A-03): healthy runs
 /// return `Ok(())` (exit 0); found issues return `Err` so the process exits
-/// nonzero (1) and automation can detect failure.
-fn finish_doctor(issues: usize) -> Result<()> {
+/// nonzero (1) and automation can detect failure. Warnings never fail the
+/// run, but the verdict names them so a warning never hides behind
+/// "healthy".
+fn finish_doctor(issues: usize, warnings: usize) -> Result<()> {
     println!();
     if issues == 0 {
-        println!("{}", style::success("System is healthy! Ready to rock."));
+        if warnings == 0 {
+            println!("{}", style::success("System is healthy! Ready to rock."));
+        } else {
+            println!(
+                "{} System is healthy with {} warning(s).",
+                style::success("✓"),
+                warnings
+            );
+        }
         Ok(())
     } else {
         println!(
@@ -571,20 +591,30 @@ fn check_command(cmd: &str) -> bool {
     which::which(cmd).is_ok()
 }
 
-async fn check_daemon() -> bool {
+/// Daemon reachability. `Down` means no socket at all; `SocketStale`
+/// means a socket file exists but no daemon answers behind it. Both warn
+/// without failing the run: the daemon only accelerates reads.
+#[derive(Debug, PartialEq, Eq)]
+enum DaemonStatus {
+    Running,
+    Down,
+    SocketStale,
+}
+
+async fn check_daemon() -> DaemonStatus {
     if crate::core::paths::test_mode() {
-        return true;
+        return DaemonStatus::Running;
     }
 
     #[cfg(not(unix))]
     {
         // Daemon not supported on Windows
-        return false;
+        return DaemonStatus::Down;
     }
 
     #[cfg(unix)]
     match DaemonClient::connect().await {
-        Ok(_) => true,
+        Ok(_) => DaemonStatus::Running,
         Err(e) => {
             // Provide diagnostic feedback
             let socket_path = crate::core::paths::socket_path();
@@ -606,7 +636,7 @@ async fn check_daemon() -> bool {
                         println!(
                             "      Hint: The daemon was likely started by a different user. Try restarting it."
                         );
-                        return false;
+                        return DaemonStatus::SocketStale;
                     }
                 }
 
@@ -616,6 +646,7 @@ async fn check_daemon() -> bool {
                     socket_path.display(),
                     e
                 );
+                DaemonStatus::SocketStale
             } else {
                 // Check if we can find it in common locations despite environment
                 let uid = rustix::process::getuid().as_raw();
@@ -627,9 +658,11 @@ async fn check_daemon() -> bool {
                         common_path.display()
                     );
                     println!("      Hint: Check if the daemon process is actually alive.");
+                    DaemonStatus::SocketStale
+                } else {
+                    DaemonStatus::Down
                 }
             }
-            false
         }
     }
 }
@@ -850,11 +883,12 @@ mod tests {
     }
 
     // W3-A-03: exit contract — 0 issues is Ok (exit 0); any issue count is
-    // Err (exit 1) so automation can detect failure.
+    // Err (exit 1) so automation can detect failure. Warnings never fail.
     #[test]
     fn zero_issues_is_ok_and_found_issues_are_err() {
-        assert!(finish_doctor(0).is_ok());
-        let err = finish_doctor(3).expect_err("issues must produce Err");
+        assert!(finish_doctor(0, 0).is_ok());
+        assert!(finish_doctor(0, 2).is_ok());
+        let err = finish_doctor(3, 0).expect_err("issues must produce Err");
         assert!(err.to_string().contains('3'), "err: {err}");
     }
 }
