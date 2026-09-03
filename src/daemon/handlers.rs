@@ -587,7 +587,6 @@ async fn handle_suggest(
     }
 }
 
-/// Handle batch requests - process multiple requests in parallel
 /// Handle search request
 #[tracing::instrument(skip(state), fields(query_len = query.len()))]
 async fn handle_search(

@@ -644,8 +644,7 @@ where
 
 /// Handle a single client connection
 /// Encode and send one error frame, accounting bytes sent. The shared tail
-/// of every early-reject path in `handle_client` (audit typ01 C2): without
-/// it, drift between copies is how a future edit forgets the metric.
+/// copies is how a future edit forgets the metric.
 async fn send_error_response<W>(
     framed: &mut FramedWrite<W, LengthDelimitedCodec>,
     id: u64,

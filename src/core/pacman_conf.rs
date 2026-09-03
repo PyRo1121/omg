@@ -291,6 +291,10 @@ impl PacmanConfig {
     }
 }
 
+/// Repository names from the system pacman.conf. Test-only surface today:
+/// no production caller exists, but the missing-config behavior is pinned
+/// by the test below, so the function stays for the test to exercise.
+#[cfg(test)]
 pub fn get_configured_repos() -> Result<Vec<String>> {
     let conf_path = crate::core::paths::pacman_conf_path();
     if !conf_path.exists() {
