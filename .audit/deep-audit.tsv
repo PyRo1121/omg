@@ -19,3 +19,4 @@ ts	phase	decision	why	evidence	result
 2026-09-03T00:00:00Z	fix	deleted dead trio, highlight, cache dirs, SLSA variant, gated 2 test fns in untouched files only	zero caller greps plus lib check	minus 129 lines	eec570bd
 2026-09-03T00:00:00Z	land	rebased onto remote, pushed, restored other lanes stash	remote moved mid run, stash kept their work safe	main eec570bd	pushed, tree intact
 2026-09-03T00:00:00Z	land	remote fixed dep break identically, took theirs, rebased 30, pushed	conflict resolved by accepting upstream Cargo.toml	main bf3cc1ec	pushed, stash restored
+2026-09-03T00:00:00Z	fixwave	25 fix commits landed: sanitize, guards, deletions, unifications, tests	product decisions and dirty file items left	TODO open count below	main	current

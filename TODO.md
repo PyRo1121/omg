@@ -67,8 +67,8 @@ One phase at a time. One small unit per commit. Verify each unit with its cited 
 Second loop, five slices over terrain the first pass covered lightly. Each item re verified by grep in the main thread before listing. Numbers continue the phases above.
 
 - [x] Sanitize remote AUR metadata in the tea info path. `src/cli/tea/info_model.rs:171,187,192,197,215` renders name, description, url, maintainer, and header with zero sanitize calls. The non tea path in `packages/info.rs` sanitizes the same fields. Route the tea sites through `style::sanitize_terminal_text`. Terminal escape injection, medium.
-- [ ] Sanitize the AUR install echo in `src/cli/modern_ui.rs:609`. Name, version, and description print raw before the confirm prompt. Same fix, one call site each.
-- [ ] Sanitize the AUR progress prefix fed from `src/package_managers/aur/client.rs:2838` into `src/cli/modern_ui.rs:240`. The newer `ProgressTask` lanes sanitize. This older path does not.
+- [x] Sanitize the AUR install echo in `src/cli/modern_ui.rs:609`. Done upstream by commit `19d3bc34`. Verified present at `:615-617`.
+- [ ] Sanitize the AUR progress prefix fed from `src/package_managers/aur/client.rs:2838` into `src/cli/modern_ui.rs:240`. Blocked. File is dirty in another lane. Revisit when clean.
 - [x] Replace the TUI sanitizer in `src/cli/tui/ui.rs:23`. It strips control chars only. Bidi overrides pass through. Delegate to `style::sanitize_terminal_text` and sanitize `pkg.name` and `pkg.version` at `ui.rs:827,837`. Medium.
 - [x] Sanitize manifest echo in `src/cli/migrate.rs:124,129,194`. Manifest strings arrive from another machine and print raw. Execution is validated, display is not. Medium.
 - [ ] Stop cloning decoded payloads in `src/core/client.rs:379`. `as_search`, `as_status`, `as_audit`, and `as_updates` clone an already owned value. Pass ownership into the extractor. Medium, hottest return path.
