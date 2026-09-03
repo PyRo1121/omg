@@ -131,6 +131,17 @@ pub fn data_dir() -> PathBuf {
     })
 }
 
+/// Resolve a binary shipped next to the running executable. Returns `None`
+/// when no sibling file exists, so callers fall back to PATH lookup. One
+/// helper so every launcher agrees on existence semantics (`is_file`).
+#[must_use]
+pub fn sibling_binary(name: &str) -> Option<PathBuf> {
+    std::env::current_exe()
+        .ok()
+        .and_then(|exe| exe.parent().map(|dir| dir.join(name)))
+        .filter(|path| path.is_file())
+}
+
 /// Daemon data directory (default: XDG data dir/omg, falling back to
 /// `/var/lib/omg` when no XDG data directory can be resolved).
 #[must_use]

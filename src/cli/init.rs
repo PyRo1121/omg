@@ -890,10 +890,7 @@ fn start_on_demand_daemon() -> Result<()> {
 /// (same strategy as `commands::daemon`). Returns `None` when no sibling
 /// binary exists.
 fn omgd_sibling_path() -> Option<PathBuf> {
-    std::env::current_exe()
-        .ok()
-        .and_then(|exe| exe.parent().map(|dir| dir.join("omgd")))
-        .filter(|path| path.is_file())
+    crate::core::paths::sibling_binary("omgd")
 }
 
 fn systemd_quote_exec_path(path: &Path) -> String {

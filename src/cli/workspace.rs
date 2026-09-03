@@ -527,15 +527,9 @@ fn run_project_command(
 /// Resolve the `omg` binary next to the running executable, falling back to
 /// PATH lookup. A PATH-shadowed `omg` must not run with workspace privileges.
 fn sibling_omg() -> std::ffi::OsString {
-    if let Ok(exe) = std::env::current_exe() {
-        if let Some(dir) = exe.parent() {
-            let sibling = dir.join("omg");
-            if sibling.is_file() {
-                return sibling.into_os_string();
-            }
-        }
-    }
-    "omg".into()
+    crate::core::paths::sibling_binary("omg")
+        .map(|path| path.into_os_string())
+        .unwrap_or_else(|| "omg".into())
 }
 
 /// Show environment diff across workspace

@@ -709,15 +709,7 @@ pub fn daemon(foreground: bool) -> Result<()> {
 /// executable so the daemon matches the CLI version, falling back to PATH.
 #[cfg(unix)]
 fn resolve_omgd_path() -> std::path::PathBuf {
-    if let Ok(exe) = std::env::current_exe()
-        && let Some(dir) = exe.parent()
-    {
-        let local_omgd = dir.join("omgd");
-        if local_omgd.exists() {
-            return local_omgd;
-        }
-    }
-    std::path::PathBuf::from("omgd")
+    crate::core::paths::sibling_binary("omgd").unwrap_or_else(|| std::path::PathBuf::from("omgd"))
 }
 
 /// Run omgd in the foreground with inherited stdio, blocking until it exits.
