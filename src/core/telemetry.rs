@@ -82,6 +82,60 @@ pub fn is_telemetry_opt_out() -> bool {
         return true;
     }
 
+    settings_file_opts_out()
+}
+
+/// Identity of the config file a cached opt-out verdict was read from.
+/// Same shape as the pacman_db cache contract: the verdict is reused while
+/// the file at the path keeps its size and mtime, and any save, rewrite,
+/// or replacement misses and re-parses. A missed identity re-reads on the
+/// next call, so a torn read can never stick.
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct OptOutCacheKey {
+    path: PathBuf,
+    len: Option<u64>,
+    mtime: Option<std::time::SystemTime>,
+}
+
+static OPT_OUT_CACHE: Mutex<Option<(OptOutCacheKey, bool)>> = Mutex::new(None);
+
+/// File half of the opt-out verdict. Environment overrides stay live above
+/// this: they are process state a test or wrapper can change at any time,
+/// while the file half is stable until the file itself changes.
+fn settings_file_opts_out() -> bool {
+    let Ok(path) = crate::config::Settings::config_path() else {
+        return load_opt_out_uncached();
+    };
+    let key = match std::fs::metadata(&path) {
+        Ok(metadata) => OptOutCacheKey {
+            path,
+            len: Some(metadata.len()),
+            mtime: metadata.modified().ok(),
+        },
+        Err(_) => OptOutCacheKey {
+            path,
+            len: None,
+            mtime: None,
+        },
+    };
+    {
+        let cached = OPT_OUT_CACHE
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        if let Some((cached_key, verdict)) = cached.as_ref()
+            && *cached_key == key
+        {
+            return *verdict;
+        }
+    }
+    let verdict = load_opt_out_uncached();
+    *OPT_OUT_CACHE
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner) = Some((key, verdict));
+    verdict
+}
+
+fn load_opt_out_uncached() -> bool {
     // Configuration errors fail closed. A malformed settings file must not
     // silently reverse a user's privacy choice and re-enable telemetry.
     match crate::config::Settings::load() {
@@ -842,6 +896,49 @@ impl Timer {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// The file half of the opt-out verdict follows the file, not the first
+    /// read: enable, disable, re-read, and env override each resolve live.
+    /// Serial because the verdict cache and `OMG_*` variables are process
+    /// state shared with every other test in this binary.
+    #[serial_test::serial]
+    #[test]
+    fn opt_out_verdict_tracks_config_file_and_env() {
+        let dir = tempfile::TempDir::new().expect("isolated config dir");
+        let config = dir.path().join("config.toml");
+        let dir_str = dir.path().to_string_lossy().into_owned();
+        let clean = [
+            ("OMG_TEST_MODE", None),
+            ("OMG_TELEMETRY", None),
+            ("OMG_DISABLE_TELEMETRY", None),
+            ("OMG_CONFIG_DIR", Some(dir_str.as_str())),
+        ];
+        let check = || {
+            let borrowed: Vec<(&str, Option<&str>)> =
+                clean.iter().map(|(key, value)| (*key, *value)).collect();
+            temp_env::with_vars(&borrowed, is_telemetry_opt_out)
+        };
+
+        std::fs::write(&config, "telemetry_enabled = true\n").expect("enable config");
+        assert!(!check());
+        // An env opt-out shadows the cached enabled verdict.
+        temp_env::with_vars(
+            [
+                ("OMG_TEST_MODE", None),
+                ("OMG_CONFIG_DIR", Some(dir_str.as_str())),
+                ("OMG_TELEMETRY", Some("0")),
+            ],
+            || assert!(is_telemetry_opt_out()),
+        );
+        assert!(!check());
+
+        std::fs::write(&config, "telemetry_enabled = false\n").expect("disable config");
+        assert!(check());
+        assert!(check());
+
+        std::fs::write(&config, "telemetry_enabled = true\n").expect("re-enable config");
+        assert!(!check());
+    }
 
     #[test]
     fn session_creation_initializes_counters() {
