@@ -47,6 +47,7 @@ Read Python and Deno project pins, map compatible requests to installed versions
 
 ### 🐛 Bug Fixes
 
+- **Tui**: Sanitize remaining team fields
 - **Doctor**: Report healthy runs with warnings
 - Sanitize TUI team names
 - Sanitize TUI package versions
@@ -169,6 +170,7 @@ v0.1.215 never became GitHub Latest after CI tagged it.
 - **Deps**: Update rust dependencies ([#183](https://github.com/PyRo1121/omg/issues/183))
 ### 🧪 Testing
 
+- Expose remaining raw team fields
 - Expose raw team names in TUI
 - Expose raw package versions in TUI
 - **Ci**: Refresh the isolated fuzz lockfile
