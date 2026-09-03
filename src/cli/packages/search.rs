@@ -4,7 +4,7 @@ use anyhow::{Context, Result};
 use serde::Serialize;
 
 use crate::cli::packages::common::validate_search_query;
-use crate::cli::style;
+use crate::cli::{style, ui};
 use crate::core::{Package, PackageSource};
 use crate::package_managers::{VersionDisplay, get_package_manager};
 use nucleo_matcher::{
@@ -275,8 +275,53 @@ async fn search_internal(
 
     writeln!(stdout)?;
     stdout.flush()?;
+    drop(stdout);
+
+    if should_offer_picker(json) {
+        // The picker performs blocking TTY reads; keep it off the async
+        // executor the same way the install suggestion picker does.
+        let entries: Vec<(String, String)> = display_packages
+            .iter()
+            .take(limit)
+            .map(|pkg| (pkg.name.clone(), picker_label(pkg)))
+            .collect();
+        let picked = tokio::task::spawn_blocking(move || pick_package(&entries))
+            .await
+            .unwrap_or(None);
+        if let Some(name) = picked {
+            super::info_with_json(&name, false).await?;
+        }
+    }
 
     Ok(())
+}
+
+/// Interactive detail picker: TTY sessions with human-readable output get
+/// one keystroke from list to detail. Piped, JSON, and empty output stay
+/// exactly as before.
+fn should_offer_picker(json: bool) -> bool {
+    !json && console::user_attended()
+}
+
+fn picker_label(pkg: &DisplayPackage) -> String {
+    format!("{} {} ({})", pkg.name, pkg.version, pkg.source)
+}
+
+/// Blocking TTY selection over preformatted `(name, label)` entries.
+/// Returns the chosen package name, or `None` on Esc, error, or empty input.
+fn pick_package(entries: &[(String, String)]) -> Option<String> {
+    if entries.is_empty() {
+        return None;
+    }
+    let labels: Vec<&str> = entries.iter().map(|(_, label)| label.as_str()).collect();
+    dialoguer::Select::with_theme(&ui::prompt_theme())
+        .with_prompt("Select a package for details")
+        .default(0)
+        .items(&labels)
+        .interact_opt()
+        .ok()
+        .flatten()
+        .and_then(|index| entries.get(index).map(|(name, _)| name.clone()))
 }
 
 fn truncate_search_results(packages: &mut Vec<DisplayPackage>, limit: usize) {
@@ -468,6 +513,20 @@ fn search_sync_official_only(query: &str, limit: usize) -> Result<bool> {
 
         writeln!(stdout)?;
         stdout.flush()?;
+        drop(stdout);
+
+        // Pre-clap fast path: no async runtime exists here, so the blocking
+        // picker runs inline and detail goes through the sync info entry.
+        if should_offer_picker(false) {
+            let entries: Vec<(String, String)> = packages
+                .iter()
+                .take(limit)
+                .map(|pkg| (pkg.name.clone(), picker_label(pkg)))
+                .collect();
+            if let Some(name) = pick_package(&entries) {
+                let _ = super::info_sync(&name);
+            }
+        }
         Ok(true)
     }
 }
@@ -597,6 +656,26 @@ mod tests {
         ];
         rank_display_packages("firefox", &mut packages);
         assert_eq!(packages[0].name, "firefox-developer-edition");
+    }
+
+    #[test]
+    fn picker_is_json_and_pipe_safe() {
+        assert!(!should_offer_picker(true));
+        assert!(!should_offer_picker(!console::user_attended()));
+    }
+
+    #[test]
+    fn picker_labels_carry_name_version_source() {
+        assert_eq!(picker_label(&display("firefox")), "firefox 1 (Official)");
+    }
+
+    #[test]
+    fn picker_returns_none_without_a_terminal() {
+        let entries = vec![("firefox".to_string(), "firefox 1 (Official)".to_string())];
+        assert_eq!(pick_package(&[]), None);
+        if !console::user_attended() {
+            assert_eq!(pick_package(&entries), None);
+        }
     }
 
     #[test]
