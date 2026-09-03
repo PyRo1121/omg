@@ -18,24 +18,15 @@ use ratatui::{
 use std::borrow::Cow;
 use unicode_width::{UnicodeWidthChar, UnicodeWidthStr};
 
-/// Replace terminal control characters with printable separators before text
+/// Strip terminal control characters and bidirectional overrides before text
 /// enters ratatui's span renderer.
 fn sanitize_control_chars(text: &str) -> Cow<'_, str> {
-    if !text.chars().any(char::is_control) {
-        return Cow::Borrowed(text);
+    let clean = crate::cli::style::sanitize_terminal_text(text);
+    if clean == text {
+        Cow::Borrowed(text)
+    } else {
+        Cow::Owned(clean)
     }
-
-    Cow::Owned(
-        text.chars()
-            .map(|character| {
-                if character.is_control() {
-                    ' '
-                } else {
-                    character
-                }
-            })
-            .collect(),
-    )
 }
 
 /// Truncate `text` to at most `max_width` display columns (wide glyphs count
@@ -1439,7 +1430,7 @@ mod tests {
     fn width_helpers_replace_terminal_controls_before_rendering() {
         let rendered = truncate_width("safe\x1b[31m\ntext", 40);
 
-        assert_eq!(rendered, "safe [31m text");
+        assert_eq!(rendered, "safe[31mtext");
         assert!(!rendered.chars().any(char::is_control));
     }
 

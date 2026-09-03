@@ -8,6 +8,7 @@ use std::path::PathBuf;
 
 use crate::core::env::fingerprint::EnvironmentState;
 use crate::core::paths;
+use crate::cli::style;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Snapshot {
@@ -218,9 +219,9 @@ pub async fn restore(id: &str, dry_run: bool, yes: bool) -> Result<()> {
             let from_str = from.as_deref().unwrap_or("(none)");
             println!(
                 "    {} {} → {}",
-                runtime.yellow(),
-                from_str.dimmed(),
-                to.green()
+                style::sanitize_terminal_text(runtime).yellow(),
+                style::sanitize_terminal_text(from_str).dimmed(),
+                style::sanitize_terminal_text(to).green()
             );
         }
         println!();
@@ -242,7 +243,7 @@ pub async fn restore(id: &str, dry_run: bool, yes: bool) -> Result<()> {
     if !to_install.is_empty() {
         println!("  Packages to install ({}):", to_install.len());
         for pkg in to_install.iter().take(10) {
-            println!("    {} {}", "+".green(), pkg);
+            println!("    {} {}", "+".green(), style::sanitize_terminal_text(pkg));
         }
         if to_install.len() > 10 {
             println!("    ... and {} more", to_install.len() - 10);
@@ -253,7 +254,7 @@ pub async fn restore(id: &str, dry_run: bool, yes: bool) -> Result<()> {
     if !to_remove.is_empty() {
         println!("  Packages to remove ({}):", to_remove.len());
         for pkg in to_remove.iter().take(10) {
-            println!("    {} {}", "-".red(), pkg);
+            println!("    {} {}", "-".red(), style::sanitize_terminal_text(pkg));
         }
         if to_remove.len() > 10 {
             println!("    ... and {} more", to_remove.len() - 10);

@@ -194,8 +194,6 @@ home = "0.5.12"
 
 # Cryptography
 # Pinned: SLSA/Fulcio verifier was audited against these exact APIs.
-# Do not bump sha2 past 0.10: rsa 0.9 implements its Digest bounds against
-# digest 0.10, and sha2 0.11 (digest 0.11) breaks slsa.rs compilation.
 sha2 = "=0.10.9"
 hex = "0.4.3"
 base64 = "0.23"

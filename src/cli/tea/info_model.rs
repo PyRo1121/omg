@@ -168,7 +168,10 @@ impl Model for InfoModel {
 
                     // Header. The rule length follows the subtitle's display
                     // width so multibyte package names keep the box aligned.
-                    let subtitle = format!("Package Information: {}", info.name);
+                    let subtitle = format!(
+                        "Package Information: {}",
+                        style::sanitize_terminal_text(&info.name)
+                    );
                     let _ = writeln!(
                         output,
                         "\n{} {}\n{} {}\n{}{}\n",
@@ -184,7 +187,10 @@ impl Model for InfoModel {
                     let _ = writeln!(
                         output,
                         "{}",
-                        Self::render_kv("Name", &style::package(&info.name))
+                        Self::render_kv(
+                            "Name",
+                            &style::package(&style::sanitize_terminal_text(&info.name))
+                        )
                     );
                     let _ = writeln!(
                         output,
@@ -194,7 +200,10 @@ impl Model for InfoModel {
                     let _ = writeln!(
                         output,
                         "{}",
-                        Self::render_kv("Description", &info.description)
+                        Self::render_kv(
+                            "Description",
+                            &style::sanitize_terminal_text(&info.description)
+                        )
                     );
 
                     let source_val = if info.repo == "aur" {
@@ -209,7 +218,14 @@ impl Model for InfoModel {
                     let _ = writeln!(output, "{}", Self::render_kv("Source", &source_val));
 
                     if let Some(url) = &info.url {
-                        let _ = writeln!(output, "{}", Self::render_kv("URL", &style::url(url)));
+                        let _ = writeln!(
+                            output,
+                            "{}",
+                            Self::render_kv(
+                                "URL",
+                                &style::url(&style::sanitize_terminal_text(url))
+                            )
+                        );
                     }
 
                     if let Some(size) = info.size {
@@ -220,12 +236,22 @@ impl Model for InfoModel {
                         let _ = writeln!(
                             output,
                             "{}",
-                            Self::render_kv("License", &info.licenses.join(", "))
+                            Self::render_kv(
+                                "License",
+                                &style::sanitize_terminal_text(&info.licenses.join(", "))
+                            )
                         );
                     }
 
                     if let Some(maintainer) = &info.maintainer {
-                        let _ = writeln!(output, "{}", Self::render_kv("Maintainer", maintainer));
+                        let _ = writeln!(
+                            output,
+                            "{}",
+                            Self::render_kv(
+                                "Maintainer",
+                                &style::sanitize_terminal_text(maintainer)
+                            )
+                        );
                     }
 
                     if let Some(pop) = info.popularity {

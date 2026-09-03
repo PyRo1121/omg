@@ -121,14 +121,17 @@ pub async fn import(manifest_path: &str, dry_run: bool) -> Result<()> {
         println!(
             "    {} {} → {}",
             style::maybe_color("✓", |t| t.green().to_string()),
-            style::dim(original),
-            style::maybe_color(target, |t| t.cyan().to_string())
+            style::dim(&style::sanitize_terminal_text(original)),
+            style::maybe_color(
+                &style::sanitize_terminal_text(target),
+                |t| t.cyan().to_string()
+            )
         );
     }
     if !import_plan.packages.unmapped.is_empty() {
         println!("    Unmapped (kept original names):");
         for package in &import_plan.packages.unmapped {
-            println!("      - {package}");
+            println!("      - {}", style::sanitize_terminal_text(package));
         }
     }
 
@@ -191,7 +194,11 @@ pub async fn import(manifest_path: &str, dry_run: bool) -> Result<()> {
 
     let mut runtime_failures = 0usize;
     for (runtime, version) in import_plan.runtimes {
-        println!("    Installing {runtime} {version}...");
+        println!(
+            "    Installing {} {}...",
+            style::sanitize_terminal_text(runtime),
+            style::sanitize_terminal_text(version)
+        );
         if let Err(e) = install_import_runtime(runtime, version).await {
             println!(
                 "      {} Failed to install {runtime}: {e}",
