@@ -16,3 +16,5 @@ ts	phase	decision	why	evidence	result
 2026-09-03T00:00:00Z	round-d	fanned out 4 verification lenses: build truth, death audit, line drift, fix readiness	claims need re examination before fixes	4 verdicts	4/4 returned
 2026-09-03T00:00:00Z	round-d	build truth: lib compiles 0 errors, blocker resolved, sequoia drift confirmed, debian check blocked by missing headers	real build not trusted summaries	cargo check --lib, Cargo.lock:5162	P0 blocker closed, 2 TODO rows fixed
 2026-09-03T00:00:00Z	round-d	corrected TODO: closed blocker and env keys, narrowed new.rs, repinned 2 stale refs	main thread edits on my file only	TODO.md	Round D applied
+2026-09-03T00:00:00Z	fix	deleted dead trio, highlight, cache dirs, SLSA variant, gated 2 test fns in untouched files only	zero caller greps plus lib check	minus 129 lines	eec570bd
+2026-09-03T00:00:00Z	land	rebased onto remote, pushed, restored other lanes stash	remote moved mid run, stash kept their work safe	main eec570bd	pushed, tree intact
