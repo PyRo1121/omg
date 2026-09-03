@@ -11,8 +11,17 @@ OMG is the fastest unified package manager for Linux, replacing pacman, yay, nvm
 ---
 
 ## [Unreleased]
+### Style
+
+- **Test**: Rustfmt the R2 --remote rollback assertion ([#185](https://github.com/PyRo1121/omg/issues/185))
+
+[#181](https://github.com/PyRo1121/omg/issues/181) squash-merged with a cargo fmt --check failure on the new
+
+rollback CLI guard. Reapply rustfmt on current main.
+
 ### 🐛 Bug Fixes
 
+- **Doctor**: Bound DNS resolution and detect stale db.lck
 - **Release**: Publish R2 objects to the remote bucket ([#184](https://github.com/PyRo1121/omg/issues/184))
 
 * fix(release): publish R2 objects to the remote bucket
