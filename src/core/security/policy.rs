@@ -122,14 +122,15 @@ impl SecurityPolicy {
         match Self::load(&path) {
             Ok(policy) => Ok(policy),
             Err(PolicyError::Read { source, .. }) if source.kind() == io::ErrorKind::NotFound => {
-                // load_default runs on every package operation; the notice
-                // must not flood the output once per call site.
-                static MISSING_POLICY_WARNED: std::sync::atomic::AtomicBool =
+                // Missing optional configuration is normal. Keep the fallback
+                // visible once to verbose diagnostics without polluting routine
+                // commands or machine-readable output.
+                static MISSING_POLICY_LOGGED: std::sync::atomic::AtomicBool =
                     std::sync::atomic::AtomicBool::new(false);
-                if !MISSING_POLICY_WARNED.swap(true, std::sync::atomic::Ordering::Relaxed) {
-                    eprintln!(
-                        "No policy file at {}; using permissive built-in default (AUR allowed).",
-                        path.as_ref().display()
+                if !MISSING_POLICY_LOGGED.swap(true, std::sync::atomic::Ordering::Relaxed) {
+                    tracing::debug!(
+                        path = %path.as_ref().display(),
+                        "No policy file; using permissive built-in default (AUR allowed)"
                     );
                 }
                 Ok(Self::default())

@@ -336,40 +336,32 @@ fn verify_reviewed_pkgbuild(pkgbuild_path: &Path, reviewed_digest: &str) -> Resu
     Ok(())
 }
 
-/// Show `review` through the user's pager when both stdin and stdout are a
-/// terminal. Returns `false` when a pager does not apply or could not be
-/// spawned/written, so the caller falls back to the inline print.
-async fn show_review_in_pager(review: &str) -> bool {
-    use std::io::IsTerminal;
-    use std::io::Write;
+fn pkgbuild_review_panel(package: &str, digest: &str, review: &str) -> String {
+    let package = crate::cli::style::sanitize_terminal_text(package);
+    let divider = "─".repeat(72);
 
-    if !(std::io::stdout().is_terminal() && std::io::stdin().is_terminal()) {
-        return false;
+    if crate::cli::style::colors_enabled() {
+        format!(
+            "\n  {} {}\n\n    {} {}\n\n  {}\n{}\n  {}",
+            " AUR ".black().on_magenta().bold(),
+            format!("Review {package}").bold(),
+            "SHA-256".dimmed(),
+            digest.dimmed(),
+            divider.dimmed(),
+            review.trim_end(),
+            divider.dimmed()
+        )
+    } else {
+        format!(
+            "\n  AUR  Review {package}\n\n    SHA-256 {digest}\n\n  {divider}\n{}\n  {divider}",
+            review.trim_end()
+        )
     }
-    let pager = std::env::var("PAGER")
-        .ok()
-        .map(|value| value.trim().to_string())
-        .filter(|value| !value.is_empty())
-        .unwrap_or_else(|| "less".to_string());
-    let review = review.to_string();
+}
 
-    // Blocking pager I/O must stay off the async executor threads.
-    tokio::task::spawn_blocking(move || -> std::io::Result<bool> {
-        let mut child = std::process::Command::new(&pager)
-            .stdin(std::process::Stdio::piped())
-            .stdout(std::process::Stdio::inherit())
-            .stderr(std::process::Stdio::inherit())
-            .spawn()?;
-        if let Some(mut stdin) = child.stdin.take() {
-            stdin.write_all(review.as_bytes())?;
-        }
-        child.wait()?;
-        Ok(true)
-    })
-    .await
-    .ok()
-    .and_then(std::result::Result::ok)
-    .unwrap_or(false)
+fn pkgbuild_review_prompt(package: &str) -> String {
+    let package = crate::cli::style::sanitize_terminal_text(package);
+    format!("Build {package} from this PKGBUILD?")
 }
 
 async fn drain_build_output<R>(
@@ -1205,7 +1197,7 @@ impl AurClient {
         // ALWAYS show the review prompt during rollback rebuilds,
         // independent of the user's day-to-day review preference.
         let pkgbuild_path = pkg_dir.join("PKGBUILD");
-        let reviewed_digest = Self::review_pkgbuild(&pkgbuild_path).await?;
+        let reviewed_digest = Self::review_pkgbuild(package, &pkgbuild_path).await?;
         Self::fetch_missing_pgp_keys(&pkgbuild_path).await?;
         println!(
             "  {} Building {package} {version} from history...",
@@ -1397,7 +1389,11 @@ impl AurClient {
                 })?;
                 crate::cli::modern_ui::finish_success(&recover_pb, "Recovered", "source checkout");
             } else {
-                crate::cli::modern_ui::finish_success(&pull_pb, "Updated", "source from AUR");
+                crate::cli::modern_ui::finish_success(
+                    &pull_pb,
+                    "Updated",
+                    &format!("{package} source"),
+                );
             }
         } else {
             let clone_pb =
@@ -1431,7 +1427,7 @@ impl AurClient {
         // before makepkg runs, so anything that swapped the PKGBUILD between
         // the user's review and the build aborts the build.
         let reviewed_digest = if self.settings.aur.review_pkgbuild {
-            Some(Self::review_pkgbuild(&pkgbuild_path).await?)
+            Some(Self::review_pkgbuild(package, &pkgbuild_path).await?)
         } else {
             None
         };
@@ -1676,7 +1672,7 @@ impl AurClient {
         // Same hash seal as install_package_outputs: re-verify the reviewed
         // PKGBUILD right before this dependency build runs.
         let reviewed_digest = if self.settings.aur.review_pkgbuild {
-            Some(Self::review_pkgbuild(&pkgbuild_path).await?)
+            Some(Self::review_pkgbuild(package_base, &pkgbuild_path).await?)
         } else {
             None
         };
@@ -2937,11 +2933,10 @@ impl AurClient {
     /// Returns the SHA-256 hex digest of the reviewed PKGBUILD bytes so the
     /// caller can re-verify the file immediately before building; a mismatch
     /// means the reviewed script and the executed script diverged.
-    async fn review_pkgbuild(pkgbuild_path: &Path) -> Result<String> {
+    async fn review_pkgbuild(package: &str, pkgbuild_path: &Path) -> Result<String> {
         // Quiesce before joining the review queue: a queued review should
-        // hold one continuous quiesce across the wait, the pager, and the
-        // confirm, so concurrent spinners neither flicker nor overwrite
-        // review output.
+        // hold one continuous quiesce across the wait and confirm, so
+        // concurrent spinners neither flicker nor overwrite review output.
         let _quiesce_guard = crate::cli::modern_ui::quiesce_terminal();
         // Parallel build waves may discover several independent packages at
         // once. One review owns the terminal at a time so prompts and source
@@ -2957,19 +2952,13 @@ impl AurClient {
             .await
             .with_context(|| format!("Failed to read PKGBUILD: {}", pkgbuild_path.display()))?;
         let review = pkgbuild_review_text(&bytes)?;
-        if !show_review_in_pager(&review).await {
-            println!(
-                "{} Review PKGBUILD before building: {}\n\n{}\n{}",
-                "→".blue(),
-                pkgbuild_path.display(),
-                review,
-                "─".repeat(72)
-            );
-        }
+        let digest = pkgbuild_digest(&bytes);
+        println!("{}", pkgbuild_review_panel(package, &digest, &review));
 
-        let proceed = tokio::task::spawn_blocking(|| {
-            Confirm::new()
-                .with_prompt("Proceed with this PKGBUILD?")
+        let prompt = pkgbuild_review_prompt(package);
+        let proceed = tokio::task::spawn_blocking(move || {
+            Confirm::with_theme(&crate::cli::ui::prompt_theme())
+                .with_prompt(prompt)
                 .default(false)
                 .interact()
         })
@@ -2978,7 +2967,7 @@ impl AurClient {
         if !proceed {
             anyhow::bail!("Build aborted by user after PKGBUILD review.");
         }
-        Ok(pkgbuild_digest(&bytes))
+        Ok(digest)
     }
 
     /// Whether AUR builds will demand interactive PKGBUILD review. The
@@ -3995,6 +3984,42 @@ mod tests {
         let error = pkgbuild_review_text(&oversized)
             .expect_err("oversized PKGBUILD must fail before terminal rendering");
         assert!(error.to_string().contains("review limit"));
+    }
+
+    #[test]
+    fn pkgbuild_review_panel_is_inline_and_package_specific() {
+        let review = "pkgname=google-chrome\npkgver=140.0\n";
+        let digest = pkgbuild_digest(review.as_bytes());
+        let panel = pkgbuild_review_panel("google-chrome", &digest, review);
+
+        assert!(panel.contains("AUR"));
+        assert!(panel.contains("Review google-chrome"));
+        assert!(panel.contains(&format!("SHA-256 {digest}")));
+        assert!(panel.contains("pkgname=google-chrome"));
+        assert_eq!(
+            pkgbuild_review_prompt("google-chrome"),
+            "Build google-chrome from this PKGBUILD?"
+        );
+    }
+
+    #[tokio::test]
+    async fn parallel_pkgbuild_reviews_share_a_single_gate() {
+        let first_review = REVIEW_LOCK.lock().await;
+        let mut queued_review = tokio::spawn(async { REVIEW_LOCK.lock().await });
+        tokio::task::yield_now().await;
+
+        assert!(
+            tokio::time::timeout(Duration::from_millis(50), &mut queued_review)
+                .await
+                .is_err(),
+            "a second PKGBUILD review entered while the first still owned the terminal"
+        );
+
+        drop(first_review);
+        let _queued_guard = tokio::time::timeout(Duration::from_secs(1), queued_review)
+            .await
+            .expect("queued review should enter after the first completes")
+            .expect("queued review task should complete");
     }
 
     #[tokio::test]

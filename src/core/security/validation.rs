@@ -332,11 +332,7 @@ fn is_safe_package_char(c: char) -> bool {
     c.is_ascii_alphanumeric() || matches!(c, '-' | '_' | '+' | '.' | '@' | '/')
 }
 
-/// Validates a version string
-///
-/// Version strings should follow semver or similar format.
-/// This prevents injection via version fields.
-pub fn validate_version(version: &str) -> Result<(), ValidationError> {
+fn validate_version_shape(version: &str) -> Result<(), ValidationError> {
     if version.is_empty() {
         return Err(ValidationError::VersionEmpty);
     }
@@ -350,6 +346,16 @@ pub fn validate_version(version: &str) -> Result<(), ValidationError> {
     if matches!(version, "." | "..") {
         return Err(ValidationError::VersionPathComponent);
     }
+
+    Ok(())
+}
+
+/// Validates a version string
+///
+/// Version strings should follow semver or similar format.
+/// This prevents injection via version fields.
+pub fn validate_version(version: &str) -> Result<(), ValidationError> {
+    validate_version_shape(version)?;
 
     // Allow: digits, dots, hyphens, plus, colons (for epochs), and letters
     for character in version.chars() {
@@ -365,9 +371,10 @@ pub fn validate_version(version: &str) -> Result<(), ValidationError> {
 ///
 /// Runtime versions are stricter than package versions: package-manager epoch
 /// and tilde syntax are not valid runtime directory names, and `current` is
-/// reserved for the active-version symlink.
+/// reserved for the active-version symlink. Underscores remain valid because
+/// Rust target triples use architecture names such as `x86_64`.
 pub fn validate_runtime_version(version: &str) -> Result<(), ValidationError> {
-    validate_version(version)?;
+    validate_version_shape(version)?;
 
     if version.eq_ignore_ascii_case("current") {
         return Err(ValidationError::RuntimeVersionReserved);
@@ -375,6 +382,12 @@ pub fn validate_runtime_version(version: &str) -> Result<(), ValidationError> {
 
     if version.contains(':') || version.contains('~') {
         return Err(ValidationError::RuntimeVersionUnsafePath);
+    }
+
+    for character in version.chars() {
+        if !character.is_ascii_alphanumeric() && !matches!(character, '.' | '-' | '+' | '_') {
+            return Err(ValidationError::VersionInvalidChar { character });
+        }
     }
 
     Ok(())
@@ -556,7 +569,13 @@ mod tests {
 
     #[test]
     fn runtime_versions_are_safe_path_components() {
-        for version in ["1.0.0", "v22.1.0", "1.82.0-beta.5", "nightly-2026-08-15"] {
+        for version in [
+            "1.0.0",
+            "v22.1.0",
+            "1.82.0-beta.5",
+            "nightly-2026-08-15",
+            "stable-x86_64-unknown-linux-gnu",
+        ] {
             assert!(validate_runtime_version(version).is_ok(), "{version}");
         }
 

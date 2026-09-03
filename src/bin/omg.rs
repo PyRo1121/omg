@@ -350,6 +350,9 @@ fn try_fast_explicit_count(args: &[String]) -> bool {
     }
 
     if args.len() == 3 && args[1] == "explicit" && matches!(args[2].as_str(), "--count" | "-c") {
+        if omg_lib::core::paths::test_mode() {
+            return packages::explicit_sync(true).is_ok();
+        }
         if let Some(count) = omg_lib::core::fast_status::FastStatus::read_explicit_count() {
             println!("{count}");
             return true;

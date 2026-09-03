@@ -174,22 +174,30 @@ detect_os() {
 }
 
 detect_distro() {
+  local os_release_file="${1:-/etc/os-release}"
   local distro="unknown"
+  local id_like=""
+  local ID=""
+  local ID_LIKE=""
 
-  if [[ -f /etc/os-release ]]; then
-    # Source the file and extract ID
-    # shellcheck disable=SC1091
-    . /etc/os-release
+  if [[ -f "$os_release_file" ]]; then
+    # shellcheck disable=SC1090
+    . "$os_release_file"
     distro="${ID:-unknown}"
+    id_like=" ${ID_LIKE:-} "
 
-    # Normalize common distro names
     case "$distro" in
-    ubuntu) distro="ubuntu" ;;
-    debian) distro="debian" ;;
-    arch) distro="arch" ;;
-    fedora) distro="fedora" ;;
-    rhel | centos) distro="fedora" ;; # Use Fedora binary for RHEL/CentOS
-    *) distro="unknown" ;;
+    ubuntu | debian | arch | fedora) ;;
+    rhel | centos) distro="fedora" ;;
+    *)
+      case "$id_like" in
+      *" arch "*) distro="arch" ;;
+      *" ubuntu "*) distro="ubuntu" ;;
+      *" debian "*) distro="debian" ;;
+      *" fedora "* | *" rhel "* | *" centos "*) distro="fedora" ;;
+      *) distro="unknown" ;;
+      esac
+      ;;
     esac
   fi
 
@@ -427,11 +435,11 @@ success() {
 }
 
 warn() {
-  printf "${YELLOW}${BOLD}warn${RESET} %s\n" "$1"
+  printf "${YELLOW}${BOLD}warn${RESET} %s\n" "$1" >&2
 }
 
 error() {
-  printf "${RED}${BOLD}error${RESET} %s\n" "$1"
+  printf "${RED}${BOLD}error${RESET} %s\n" "$1" >&2
   exit 1
 }
 

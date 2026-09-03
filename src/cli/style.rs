@@ -117,28 +117,66 @@ pub fn header(msg: &str) -> String {
     maybe_color(msg, |m| format!("{} {}", "==>".magenta().bold(), m.bold()))
 }
 
+fn strip_status_prefix<'a>(message: &'a str, unicode: &str) -> &'a str {
+    message
+        .strip_prefix(unicode)
+        .map_or(message, str::trim_start)
+}
+
 /// Success message with checkmark
 #[must_use]
 pub fn success(msg: &str) -> String {
-    maybe_color(msg, |m| format!("{} {}", icon("✓", "OK").green().bold(), m))
+    maybe_color(msg, |message| {
+        let message = strip_status_prefix(message, "✓");
+        let icon = icon("✓", "OK").green().bold().to_string();
+        if message.is_empty() {
+            icon
+        } else {
+            format!("{icon} {message}")
+        }
+    })
 }
 
 /// Error message with X
 #[must_use]
 pub fn error(msg: &str) -> String {
-    maybe_color(msg, |m| format!("{} {}", icon("✗", "X").red().bold(), m))
+    maybe_color(msg, |message| {
+        let message = strip_status_prefix(message, "✗");
+        let icon = icon("✗", "X").red().bold().to_string();
+        if message.is_empty() {
+            icon
+        } else {
+            format!("{icon} {message}")
+        }
+    })
 }
 
 /// Info message with i
 #[must_use]
 pub fn info(msg: &str) -> String {
-    maybe_color(msg, |m| format!("{} {}", icon("ℹ", "i").blue().bold(), m))
+    maybe_color(msg, |message| {
+        let message = strip_status_prefix(message, "ℹ");
+        let icon = icon("ℹ", "i").blue().bold().to_string();
+        if message.is_empty() {
+            icon
+        } else {
+            format!("{icon} {message}")
+        }
+    })
 }
 
 /// Warning message with triangle
 #[must_use]
 pub fn warning(msg: &str) -> String {
-    maybe_color(msg, |m| format!("{} {}", icon("⚠", "!").yellow().bold(), m))
+    maybe_color(msg, |message| {
+        let message = strip_status_prefix(message, "⚠");
+        let icon = icon("⚠", "!").yellow().bold().to_string();
+        if message.is_empty() {
+            icon
+        } else {
+            format!("{icon} {message}")
+        }
+    })
 }
 
 /// Arrow prefix for sub-items
@@ -292,6 +330,34 @@ mod tests {
         temp_env::with_var("OMG_COLORS", Some("never"), || {
             assert!(!colors_enabled());
         });
+    }
+
+    #[test]
+    #[serial]
+    fn status_helpers_do_not_duplicate_existing_icons() {
+        temp_env::with_vars([("NO_COLOR", None), ("OMG_COLORS", Some("always"))], || {
+            for (rendered, icon) in [
+                (success("✓"), '✓'),
+                (success("✓ completed"), '✓'),
+                (error("✗"), '✗'),
+                (warning("⚠"), '⚠'),
+                (info("ℹ"), 'ℹ'),
+            ] {
+                assert_eq!(rendered.matches(icon).count(), 1, "{rendered:?}");
+            }
+        });
+        temp_env::with_vars(
+            [
+                ("NO_COLOR", None),
+                ("OMG_COLORS", Some("always")),
+                ("OMG_UNICODE", Some("0")),
+            ],
+            || {
+                let rendered = success("✓ completed");
+                assert!(!rendered.contains('✓'), "{rendered:?}");
+                assert_eq!(rendered.matches("OK").count(), 1, "{rendered:?}");
+            },
+        );
     }
 
     #[test]

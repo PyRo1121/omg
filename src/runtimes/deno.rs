@@ -197,6 +197,11 @@ impl DenoManager {
         print_using("Deno", &version, &self.versions_dir.join("current/bin"));
         Ok(())
     }
+
+    pub fn uninstall(&self, version: &str) -> Result<()> {
+        let version = normalize_version(version);
+        super::common::uninstall_version(&self.versions_dir, &version)
+    }
 }
 
 // Generate common runtime manager methods (list_installed, current_version)

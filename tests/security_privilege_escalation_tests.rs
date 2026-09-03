@@ -27,7 +27,61 @@ use tempfile::{NamedTempFile, TempDir};
 // ═══════════════════════════════════════════════════════════════════════════
 
 mod privilege_escalation {
+    use std::io::Write as _;
+    use std::process::{Command, Output, Stdio};
+
     // Note: MockPrivilegeChecker is only available in unit tests (cfg(test))
+
+    fn run_installer_functions(command: &str, env: &[(&str, &std::ffi::OsStr)]) -> Output {
+        let installer = include_str!("../install.sh");
+        let (definitions, _) = installer
+            .rsplit_once("\nmain\n")
+            .expect("installer must end with its main invocation");
+        let script = format!("{definitions}\ntrap - EXIT\n{command}\n");
+        let mut process = Command::new("bash");
+        process
+            .args(["--noprofile", "--norc"])
+            .envs(env.iter().copied())
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped());
+        let mut child = process.spawn().expect("bash must be available");
+        child
+            .stdin
+            .take()
+            .expect("piped stdin")
+            .write_all(script.as_bytes())
+            .expect("write installer test script");
+        child.wait_with_output().expect("run installer test script")
+    }
+
+    #[test]
+    fn installer_maps_arch_derivatives_to_arch_artifacts() {
+        let temp = tempfile::tempdir().expect("os-release fixture directory");
+        let os_release = temp.path().join("os-release");
+        std::fs::write(&os_release, "ID=omarchy\nID_LIKE=arch\n")
+            .expect("write os-release fixture");
+
+        let output = run_installer_functions(
+            "detect_distro \"$OS_RELEASE_FIXTURE\"",
+            &[("OS_RELEASE_FIXTURE", os_release.as_os_str())],
+        );
+
+        assert!(output.status.success(), "{:?}", output.status);
+        assert_eq!(String::from_utf8_lossy(&output.stdout).trim(), "arch");
+    }
+
+    #[test]
+    fn installer_artifact_selection_keeps_warnings_out_of_stdout() {
+        let output = run_installer_functions("select_artifact v1.2.3 linux unknown x86_64", &[]);
+
+        assert!(output.status.success(), "{:?}", output.status);
+        assert_eq!(
+            String::from_utf8_lossy(&output.stdout).trim(),
+            "omg-v1.2.3-x86_64-linux-fedora.tar.gz"
+        );
+        assert!(String::from_utf8_lossy(&output.stderr).contains("Unknown Linux distro"));
+    }
 
     #[test]
     fn installer_never_grants_file_capabilities() {

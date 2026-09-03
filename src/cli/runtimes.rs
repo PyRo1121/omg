@@ -176,6 +176,7 @@ pub fn uninstall_version(runtime: &str, version: &str) -> Result<()> {
         "java" => JavaManager::new().uninstall(version)?,
         "bun" => BunManager::new().uninstall(strip_version_prefix(version))?,
         "pi" => PiManager::new().uninstall(strip_version_prefix(version))?,
+        "deno" => DenoManager::new().uninstall(strip_version_prefix(version))?,
         _ => anyhow::bail!(
             "Unsupported runtime '{runtime}'. Supported runtimes: {}",
             SUPPORTED_RUNTIMES.join(", ")

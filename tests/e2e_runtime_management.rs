@@ -66,6 +66,27 @@ fn test_use_shows_help_when_no_args() {
 }
 
 #[test]
+fn every_supported_runtime_has_uninstall_dispatch() {
+    init_test_env();
+
+    let project = TestProject::new();
+    for runtime in omg_lib::cli::runtimes::known_runtimes().unwrap() {
+        let version = match runtime.as_str() {
+            "rust" => "stable",
+            "java" => "999",
+            _ => "999.999.999",
+        };
+        let result = project.run(&["use", &runtime, version, "--uninstall"]);
+        result.assert_failure();
+        let output = result.combined_output();
+        assert!(
+            output.contains("not installed") && !output.contains("Unsupported runtime"),
+            "{runtime} must reach its uninstall implementation, got:\n{output}"
+        );
+    }
+}
+
+#[test]
 fn test_use_invalid_runtime() {
     init_test_env();
 

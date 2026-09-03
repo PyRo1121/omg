@@ -330,16 +330,13 @@ pub fn finish_success(pb: &ProgressBar, phase: &str, result: &str) {
     } else {
         format!("✓ {phase} {result}")
     };
-    if output_mode() == OutputMode::Quiet {
-        pb.finish_and_clear();
-        return;
+    // Animation is transient terminal state. Clear it before writing the
+    // completed status as a durable line; a visible finished bar is redrawn
+    // whenever a prompt or subprocess suspends the shared MultiProgress.
+    pb.finish_and_clear();
+    if output_mode() != OutputMode::Quiet {
+        emit_or_defer(message);
     }
-    if quiesce_active() {
-        pb.finish_and_clear();
-        defer_line(message);
-        return;
-    }
-    pb.finish_with_message(message);
 }
 
 /// Finish spinner with info message
@@ -349,16 +346,10 @@ pub fn finish_info(pb: &ProgressBar, msg: &str) {
     } else {
         format!("· {msg}")
     };
-    if output_mode() == OutputMode::Quiet {
-        pb.finish_and_clear();
-        return;
+    pb.finish_and_clear();
+    if output_mode() != OutputMode::Quiet {
+        emit_or_defer(message);
     }
-    if quiesce_active() {
-        pb.finish_and_clear();
-        defer_line(message);
-        return;
-    }
-    pb.finish_with_message(message);
 }
 
 /// Finish spinner and clear (for phases that don't need final status)
@@ -677,8 +668,123 @@ pub fn print_aur_build_phase(phase: &str, package: &str) {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use indicatif::{ProgressDrawTarget, ProgressStyle, TermLike};
+    use std::io;
+    use std::sync::{Arc, Mutex};
+
+    #[derive(Clone, Debug, Default)]
+    struct RecordingTerm {
+        events: Arc<Mutex<Vec<String>>>,
+    }
+
+    impl RecordingTerm {
+        fn record(&self, event: impl Into<String>) {
+            self.events
+                .lock()
+                .expect("recording terminal lock")
+                .push(event.into());
+        }
+
+        fn events(&self) -> Vec<String> {
+            self.events.lock().expect("recording terminal lock").clone()
+        }
+    }
+
+    impl TermLike for RecordingTerm {
+        fn width(&self) -> u16 {
+            120
+        }
+
+        fn move_cursor_up(&self, lines: usize) -> io::Result<()> {
+            self.record(format!("up:{lines}"));
+            Ok(())
+        }
+
+        fn move_cursor_down(&self, lines: usize) -> io::Result<()> {
+            self.record(format!("down:{lines}"));
+            Ok(())
+        }
+
+        fn move_cursor_right(&self, columns: usize) -> io::Result<()> {
+            self.record(format!("right:{columns}"));
+            Ok(())
+        }
+
+        fn move_cursor_left(&self, columns: usize) -> io::Result<()> {
+            self.record(format!("left:{columns}"));
+            Ok(())
+        }
+
+        fn write_line(&self, text: &str) -> io::Result<()> {
+            self.record(format!("line:{text}"));
+            Ok(())
+        }
+
+        fn write_str(&self, text: &str) -> io::Result<()> {
+            self.record(format!("write:{text}"));
+            Ok(())
+        }
+
+        fn clear_line(&self) -> io::Result<()> {
+            self.record("clear");
+            Ok(())
+        }
+
+        fn flush(&self) -> io::Result<()> {
+            self.record("flush");
+            Ok(())
+        }
+    }
+
+    fn recording_spinner(message: &str) -> (ProgressBar, RecordingTerm) {
+        configure_output(0, false);
+        let terminal = RecordingTerm::default();
+        let progress = ProgressBar::with_draw_target(
+            None,
+            ProgressDrawTarget::term_like(Box::new(terminal.clone())),
+        );
+        progress.set_style(
+            ProgressStyle::default_spinner()
+                .template("{spinner} {msg}")
+                .expect("static progress template"),
+        );
+        progress.set_message(message.to_string());
+        progress.tick();
+        (progress, terminal)
+    }
 
     #[test]
+    #[serial_test::serial]
+    fn finished_spinner_clears_its_animated_lane() {
+        let (progress, terminal) = recording_spinner("Checking package sources");
+
+        finish_success(&progress, "Checked", "package sources");
+
+        let events = terminal.events();
+        assert!(
+            !events
+                .iter()
+                .any(|event| event.contains("Checked package sources")),
+            "completed status must be durable output, not a retained animation lane: {events:?}"
+        );
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn finished_info_spinner_clears_its_animated_lane() {
+        let (progress, terminal) = recording_spinner("Checking official repositories");
+
+        finish_info(&progress, "No updates in official repositories");
+
+        let events = terminal.events();
+        assert!(
+            !events.iter().any(|event| event.contains("No updates")),
+            "completed status must be durable output, not a retained animation lane: {events:?}"
+        );
+    }
+
+    #[test]
+    #[serial_test::serial]
     fn quiet_spinners_are_hidden() {
         configure_output(0, true);
         let progress = modern_spinner("phase", "action");

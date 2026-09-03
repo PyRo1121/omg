@@ -4,7 +4,47 @@
 
 pub mod common;
 
+use clap::CommandFactory;
 use common::*;
+use omg_lib::cli::Cli;
+
+fn command_paths() -> Vec<Vec<String>> {
+    fn collect(command: &clap::Command, prefix: &mut Vec<String>, paths: &mut Vec<Vec<String>>) {
+        for subcommand in command.get_subcommands() {
+            prefix.push(subcommand.get_name().to_string());
+            paths.push(prefix.clone());
+            collect(subcommand, prefix, paths);
+            prefix.pop();
+        }
+    }
+
+    let command = Cli::command();
+    let mut paths = Vec::new();
+    collect(&command, &mut Vec::new(), &mut paths);
+    paths
+}
+
+#[test]
+fn every_declared_command_renders_binary_help() {
+    let paths = command_paths();
+    assert!(
+        paths.len() >= 75,
+        "unexpectedly small command tree: {paths:?}"
+    );
+
+    for path in paths {
+        let mut args: Vec<&str> = path.iter().map(String::as_str).collect();
+        args.push("--help");
+        let result = run_omg(&args);
+        assert!(
+            result.success && result.stdout.contains("Usage:"),
+            "`omg {}` did not render help\nstdout: {}\nstderr: {}",
+            args.join(" "),
+            result.stdout,
+            result.stderr
+        );
+    }
+}
 
 // =======================
 // CORE PACKAGE MANAGEMENT

@@ -101,11 +101,16 @@ fn privacy_export_works_without_a_license() -> Result<()> {
 #[test]
 fn advertised_json_outputs_are_valid_json() -> Result<()> {
     let root = TempDir::new()?;
-    for command in ["history", "stats"] {
+    for command in ["history", "stats", "outdated"] {
         let output = run(root.path(), &["--json", command]);
         assert!(output.success, "{}", output_text(&output));
         serde_json::from_str::<serde_json::Value>(&output.stdout)
             .with_context(|| format!("{command} emitted invalid JSON"))?;
+        assert!(
+            output.stderr.is_empty(),
+            "{command} emitted non-error diagnostics in JSON mode: {}",
+            output.stderr
+        );
     }
     Ok(())
 }
