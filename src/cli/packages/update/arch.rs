@@ -51,6 +51,19 @@ fn aur_build_concurrency(raw: Option<&str>, configured_default: usize) -> usize 
     }
 }
 
+/// Outcome of the AUR check lane, run concurrently with the official
+/// check. Policy and client construction failures stay hard errors (the
+/// future resolves them through `?`); only a failed update listing degrades
+/// to the warn-and-continue path when official updates exist.
+enum AurCheck {
+    Skipped,
+    Ready {
+        policy: SecurityPolicy,
+        raw: Vec<(String, Version, Version)>,
+    },
+    Failed(anyhow::Error),
+}
+
 /// AUR update candidates split by the user's security policy.
 struct ScreenedAurUpdates {
     allowed: Vec<(String, Version, Version)>,
@@ -233,19 +246,45 @@ pub async fn update(check_only: bool, yes: bool, dry_run: bool) -> Result<()> {
     }
 
     let mut all_updates: Vec<UpdateInfo> = Vec::with_capacity(32);
-    let pb = modern_ui::modern_spinner("Checking", "official repositories");
+    let official_pb = modern_ui::modern_spinner("Checking", "official repositories");
+    let aur_pb = modern_ui::modern_spinner("Checking", "AUR packages");
     let check_start = std::time::Instant::now();
-    let official_updates = match try_daemon_list_updates().await {
-        Some(updates) => updates,
-        None => pm.list_updates().await?,
+
+    // The official and AUR checks touch independent state (sync databases
+    // vs the AUR index or RPC): overlap them instead of paying the sum.
+    // Rendering below stays ordered, so output matches the serial run.
+    let official_fut = async {
+        match try_daemon_list_updates().await {
+            Some(updates) => Ok(updates),
+            None => pm.list_updates().await,
+        }
     };
+    let aur_fut = async {
+        if crate::core::paths::test_mode() || crate::core::env::distro::is_debian_like() {
+            return Ok(AurCheck::Skipped);
+        }
+        // The AUR lane must enforce the user's security policy the same
+        // way install does; a corrupt policy file aborts the update
+        // rather than silently upgrading off-policy packages.
+        let policy =
+            crate::core::security::SecurityPolicy::load_default().map_err(anyhow::Error::from)?;
+        let client = crate::package_managers::AurClient::new()?;
+        match client.get_update_list().await {
+            Ok(raw) => Ok(AurCheck::Ready { policy, raw }),
+            Err(error) => Ok(AurCheck::Failed(error)),
+        }
+    };
+    let (official_result, aur_result): (Result<Vec<UpdateInfo>>, Result<AurCheck>) =
+        tokio::join!(official_fut, aur_fut);
+
+    let official_updates = official_result?;
     let check_elapsed = check_start.elapsed();
 
     if official_updates.is_empty() {
-        modern_ui::finish_info(&pb, "No updates in official repositories");
+        modern_ui::finish_info(&official_pb, "No updates in official repositories");
     } else {
         modern_ui::finish_success(
-            &pb,
+            &official_pb,
             "Found",
             &format!(
                 "{} update(s) in {:.2}s",
@@ -258,64 +297,47 @@ pub async fn update(check_only: bool, yes: bool, dry_run: bool) -> Result<()> {
     let official_count = official_updates.len();
     all_updates.extend(official_updates);
 
-    let aur_packages = {
-        if crate::core::paths::test_mode() || crate::core::env::distro::is_debian_like() {
-            Vec::new()
-        } else {
-            // The AUR lane must enforce the user's security policy the same
-            // way install does; a corrupt policy file aborts the update
-            // rather than silently upgrading off-policy packages.
-            let policy = crate::core::security::SecurityPolicy::load_default()
-                .map_err(anyhow::Error::from)?;
-            let aur_pb = modern_ui::modern_spinner("Checking", "AUR packages");
-            let aur_start = std::time::Instant::now();
-            let client = crate::package_managers::AurClient::new()?;
-            match client.get_update_list().await {
-                Ok(aur_updates) => {
-                    let aur_elapsed = aur_start.elapsed();
-                    let count = aur_updates.len();
-                    let ScreenedAurUpdates { allowed, skipped } =
-                        screen_aur_updates_against_policy(&policy, aur_updates);
-                    for (name, old_ver, new_ver) in &allowed {
-                        all_updates.push(UpdateInfo {
-                            name: name.clone(),
-                            old_version: old_ver.to_string(),
-                            new_version: new_ver.to_string(),
-                            repo: "AUR".to_string(),
-                        });
-                    }
-                    if count == 0 {
-                        modern_ui::finish_info(&aur_pb, "No updates in AUR");
-                    } else {
-                        modern_ui::finish_success(
-                            &aur_pb,
-                            "Found",
-                            &format!(
-                                "{} AUR update(s) in {:.2}s",
-                                count,
-                                aur_elapsed.as_secs_f64()
-                            ),
-                        );
-                    }
-                    for (name, violation) in &skipped {
-                        modern_ui::print_warning(&format!(
-                            "Skipping AUR update for {}: {violation}",
-                            style::package(name)
-                        ));
-                    }
-                    allowed.into_iter().map(|(name, _, _)| name).collect()
-                }
-                Err(error) => {
-                    modern_ui::finish_clear(&aur_pb);
-                    if official_count == 0 {
-                        return Err(error).context("Failed to check AUR updates");
-                    }
-                    modern_ui::print_warning(&format!(
-                        "AUR update check failed; continuing with official updates: {error:#}"
-                    ));
-                    Vec::new()
-                }
+    let aur_packages = match aur_result? {
+        AurCheck::Skipped => Vec::new(),
+        AurCheck::Failed(error) => {
+            modern_ui::finish_clear(&aur_pb);
+            if official_count == 0 {
+                return Err(error).context("Failed to check AUR updates");
             }
+            modern_ui::print_warning(&format!(
+                "AUR update check failed; continuing with official updates: {error:#}"
+            ));
+            Vec::new()
+        }
+        AurCheck::Ready { policy, raw } => {
+            let aur_elapsed = check_start.elapsed();
+            let count = raw.len();
+            let ScreenedAurUpdates { allowed, skipped } =
+                screen_aur_updates_against_policy(&policy, raw);
+            for (name, old_ver, new_ver) in &allowed {
+                all_updates.push(UpdateInfo {
+                    name: name.clone(),
+                    old_version: old_ver.to_string(),
+                    new_version: new_ver.to_string(),
+                    repo: "AUR".to_string(),
+                });
+            }
+            if count == 0 {
+                modern_ui::finish_info(&aur_pb, "No updates in AUR");
+            } else {
+                modern_ui::finish_success(
+                    &aur_pb,
+                    "Found",
+                    &format!("{count} AUR update(s) in {:.2}s", aur_elapsed.as_secs_f64()),
+                );
+            }
+            for (name, violation) in &skipped {
+                modern_ui::print_warning(&format!(
+                    "Skipping AUR update for {}: {violation}",
+                    style::package(name)
+                ));
+            }
+            allowed.into_iter().map(|(name, _, _)| name).collect()
         }
     };
 
