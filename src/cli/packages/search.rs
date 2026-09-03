@@ -122,6 +122,22 @@ fn group_langpacks(packages: Vec<DisplayPackage>) -> Vec<DisplayPackage> {
     grouped
 }
 
+/// Rank every path the same way. Collapse language-pack floods only for
+/// human output — `--json` keeps real installable names and full rows.
+fn present_search_results(
+    query: &str,
+    mut packages: Vec<DisplayPackage>,
+    json: bool,
+    limit: usize,
+) -> Vec<DisplayPackage> {
+    rank_display_packages(query, &mut packages);
+    if !json {
+        packages = group_langpacks(packages);
+    }
+    truncate_search_results(&mut packages, limit);
+    packages
+}
+
 #[cfg(unix)]
 use crate::core::client::{DaemonClient, SyncDaemonClient};
 
@@ -236,9 +252,7 @@ async fn search_internal(
     let total_matches = official_total.saturating_add(aur_count);
 
     crate::core::usage::track_search_result(true);
-    rank_display_packages(query, &mut display_packages);
-    display_packages = group_langpacks(display_packages);
-    truncate_search_results(&mut display_packages, limit);
+    display_packages = present_search_results(query, display_packages, json, limit);
 
     if json {
         let json_str = serde_json::to_string_pretty(&display_packages)
@@ -489,8 +503,7 @@ fn search_sync_official_only(query: &str, limit: usize) -> Result<bool> {
                 out_of_date: None,
             })
             .collect();
-        rank_display_packages(query, &mut packages);
-        packages = group_langpacks(packages);
+        packages = present_search_results(query, packages, false, limit);
 
         let mut stdout = std::io::BufWriter::new(std::io::stdout());
         writeln!(stdout, "{}", style::header("Search Results"))?;
@@ -690,6 +703,39 @@ mod tests {
         assert_eq!(grouped.len(), 2);
         assert_eq!(
             grouped[1].name,
+            "firefox-developer-edition-i18n-af (+2 language packs)"
+        );
+    }
+
+    #[test]
+    fn json_presentation_keeps_real_package_names() {
+        let packages = vec![
+            display("firefox"),
+            display("firefox-developer-edition-i18n-af"),
+            display("firefox-developer-edition-i18n-an"),
+            display("firefox-developer-edition-i18n-ar"),
+        ];
+        let json = present_search_results("firefox", packages, true, 50);
+        let names: Vec<&str> = json.iter().map(|pkg| pkg.name.as_str()).collect();
+        assert_eq!(names[0], "firefox");
+        assert!(names.contains(&"firefox-developer-edition-i18n-af"));
+        assert!(names.contains(&"firefox-developer-edition-i18n-an"));
+        assert!(names.iter().all(|name| !name.contains("language packs")));
+
+        let human = present_search_results(
+            "firefox",
+            vec![
+                display("firefox"),
+                display("firefox-developer-edition-i18n-af"),
+                display("firefox-developer-edition-i18n-an"),
+                display("firefox-developer-edition-i18n-ar"),
+            ],
+            false,
+            50,
+        );
+        assert_eq!(human.len(), 2);
+        assert_eq!(
+            human[1].name,
             "firefox-developer-edition-i18n-af (+2 language packs)"
         );
     }

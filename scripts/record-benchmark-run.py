@@ -125,6 +125,7 @@ def validate_results(source: Path) -> list[str]:
 
     search = load_json(source / "search.json")
     if search is None:
+        errors.append(f"search.json missing in {source}")
         return errors
 
     daemon = find_result(search["results"], "OMG (Daemon)")
