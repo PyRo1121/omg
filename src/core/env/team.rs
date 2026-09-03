@@ -464,6 +464,13 @@ impl TeamWorkspace {
             return Ok(());
         }
 
+        // Pin the hook to this executable's absolute path. A bare `omg`
+        // from PATH would let an earlier entry shadow the binary on every
+        // pull or checkout.
+        let omg = std::env::current_exe()
+            .map(|exe| exe.display().to_string())
+            .unwrap_or_else(|_| "omg".to_string());
+
         let hooks_dir = self.root.join(".git/hooks");
         std::fs::create_dir_all(&hooks_dir)
             .with_context(|| format!("Failed to create hooks dir {}", hooks_dir.display()))?;
@@ -471,27 +478,31 @@ impl TeamWorkspace {
         // Never overwrite an existing hook: it may belong to another tool.
         Self::write_hook_if_absent(
             &hooks_dir.join("post-merge"),
-            r#"#!/bin/sh
+            &format!(
+                r#"#!/bin/sh
 # OMG Team Sync Hook
 # Auto-check for environment drift after git pull
 
 if [ -f "omg.lock" ]; then
     echo "🔄 OMG: Checking for environment drift..."
-    omg env check 2>/dev/null || echo "⚠️  OMG: Environment drift detected! Run 'omg env check' for details."
+    "{omg}" env check 2>/dev/null || echo "⚠️  OMG: Environment drift detected! Run 'omg env check' for details."
 fi
 "#,
+            ),
         )?;
 
         Self::write_hook_if_absent(
             &hooks_dir.join("post-checkout"),
-            r#"#!/bin/sh
+            &format!(
+                r#"#!/bin/sh
 # OMG Team Sync Hook
 # Auto-check for environment drift after git checkout
 
 if [ -f "omg.lock" ]; then
-    omg env check 2>/dev/null || true
+    "{omg}" env check 2>/dev/null || true
 fi
 "#,
+            ),
         )?;
 
         Ok(())
