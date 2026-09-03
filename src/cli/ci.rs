@@ -193,7 +193,7 @@ jobs:
 
       - name: Install OMG
         run: |
-          curl -fsSL https://pyro1121.com/install.sh | sh
+          curl -fsSL https://raw.githubusercontent.com/PyRo1121/omg/main/install.sh | sh
           echo "$HOME/.local/bin" >> $GITHUB_PATH
 
       - name: Lint
@@ -230,7 +230,7 @@ jobs:
 
       - name: Install OMG
         run: |
-          curl -fsSL https://pyro1121.com/install.sh | sh
+          curl -fsSL https://raw.githubusercontent.com/PyRo1121/omg/main/install.sh | sh
           echo "$HOME/.local/bin" >> $GITHUB_PATH
 
       - name: Generate SBOM
@@ -326,7 +326,7 @@ variables:
 .omg_template: &omg_definition
   image: rust:latest
   before_script:
-    - curl -fsSL https://pyro1121.com/install.sh | sh
+    - curl -fsSL https://raw.githubusercontent.com/PyRo1121/omg/main/install.sh | sh
     - export PATH="$HOME/.local/bin:$PATH"
     - omg env check || omg env sync omg.lock
   cache:
@@ -388,7 +388,7 @@ cache:
     - .cargo/
 
 before_script:
-  - curl -fsSL https://pyro1121.com/install.sh | sh
+  - curl -fsSL https://raw.githubusercontent.com/PyRo1121/omg/main/install.sh | sh
   - export PATH="$HOME/.local/bin:$PATH"
   - omg env check || omg env sync omg.lock
 
@@ -436,7 +436,7 @@ jobs:
       - run:
           name: Install OMG
           command: |
-            curl -fsSL https://pyro1121.com/install.sh | sh
+            curl -fsSL https://raw.githubusercontent.com/PyRo1121/omg/main/install.sh | sh
             echo 'export PATH="$HOME/.local/bin:$PATH"' >> $BASH_ENV
       - run:
           name: Sync environment
@@ -465,7 +465,7 @@ jobs:
       - run:
           name: Generate SBOM
           command: |
-            curl -fsSL https://pyro1121.com/install.sh | sh
+            curl -fsSL https://raw.githubusercontent.com/PyRo1121/omg/main/install.sh | sh
             export PATH="$HOME/.local/bin:$PATH"
             omg audit sbom --output sbom.json
       - store_artifacts:
@@ -507,7 +507,7 @@ jobs:
       - run:
           name: Install OMG
           command: |
-            curl -fsSL https://pyro1121.com/install.sh | sh
+            curl -fsSL https://raw.githubusercontent.com/PyRo1121/omg/main/install.sh | sh
             echo 'export PATH="$HOME/.local/bin:$PATH"' >> $BASH_ENV
       - run:
           name: Sync environment

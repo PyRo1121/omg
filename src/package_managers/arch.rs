@@ -129,7 +129,15 @@ impl PackageManager for ArchPackageManager {
 
             run_privileged_operation("install", &packages, &[], || {
                 let pkgs = packages.clone();
-                async move { run_alpm_transaction(pkgs, TransactionKind::Install).await }
+                let is_local_artifact = pkgs
+                    .iter()
+                    .any(|package| crate::core::security::is_local_package_file(package));
+                let kind = if is_local_artifact {
+                    TransactionKind::InstallAurArtifact
+                } else {
+                    TransactionKind::Install
+                };
+                async move { run_alpm_transaction(pkgs, kind).await }
             })
             .await
         })

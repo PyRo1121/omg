@@ -442,11 +442,11 @@ jobs:
           files: release/*
           generate_release_notes: false
           draft: false
-          prerelease: true
-          make_latest: false
+          prerelease: false
+          make_latest: true
 
   # ════════════════════════════════════════════════════════════════════════════
-  # SYNC TO CLOUDFLARE R2 (releases.pyro1121.com)
+  # SYNC TO CLOUDFLARE R2 (omg-releases bucket)
   # ════════════════════════════════════════════════════════════════════════════
 
   sync-r2:

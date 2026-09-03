@@ -81,7 +81,7 @@ pub async fn status(_ctx: &CliContext) -> Result<()> {
             Cmd::batch([Cmd::spacer(), Cmd::card("Active Machines", machine_list)])
         },
         Cmd::spacer(),
-        Cmd::println("Manage your fleet at: https://pyro1121.com/dashboard"),
+        Cmd::println("Manage your fleet at: https://omg.latham.cloud"),
     ]))?;
 
     Ok(())

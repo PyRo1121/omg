@@ -562,7 +562,7 @@ allow_aur = false
 ```yaml
 # .github/workflows/ci.yml
 - name: Install OMG
-  run: curl -fsSL https://pyro1121.com/install.sh | bash
+  run: curl -fsSL https://raw.githubusercontent.com/PyRo1121/omg/main/install.sh | bash
 
 - name: Lock environment
   run: omg env check  # Verify omg.lock matches

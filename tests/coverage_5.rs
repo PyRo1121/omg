@@ -67,7 +67,7 @@ fn assert_account_link_required(res: &CommandResult, context: &str) {
     res.assert_failure();
     res.assert_stderr_contains(ACCOUNT_LINK_HINT);
     assert!(
-        !res.stderr_contains("pyro1121.com/pricing"),
+        !res.stderr_contains("/pricing"),
         "{context}: paywall URL must not appear:\n{}",
         res.stderr
     );

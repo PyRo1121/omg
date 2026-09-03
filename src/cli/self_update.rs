@@ -12,7 +12,10 @@ use std::fs;
 use crate::cli::style;
 use crate::core::env::distro::{Distro, detect_distro};
 
-const UPDATE_URL: &str = "https://releases.pyro1121.com";
+const GITHUB_OWNER: &str = "PyRo1121";
+const GITHUB_REPO: &str = "omg";
+const GITHUB_RELEASES_PAGE: &str = "https://github.com/PyRo1121/omg/releases";
+const GITHUB_API_LATEST_RELEASE: &str = "https://api.github.com/repos/PyRo1121/omg/releases/latest";
 
 /// Repository used to verify Sigstore build-provenance attestations.
 const ATTESTATION_REPO: &str = "PyRo1121/omg";
@@ -74,9 +77,9 @@ pub async fn run(force: bool, version: Option<String>) -> Result<()> {
             exe.display()
         );
         println!(
-            "     Updating via self-update may conflict with pacman-tracked files.\n\
+            "     Updating via self-update may conflict with system package-managed files.\n\
              Recommended: update via your package manager: {}\n",
-            style::command("omg update omg  (or: sudo pacman -Syu omg)")
+            style::command("omg update omg")
         );
     }
 
@@ -218,15 +221,20 @@ fn locate_binary(extract_dir: &std::path::Path, archive_name: &str) -> Option<st
 /// A platform-specific release archive published by CI.
 #[derive(Debug)]
 struct ReleaseArtifact {
+    /// Git tag for the release, e.g. `v1.2.3`.
+    tag: String,
     /// Archive file name on the release server, e.g.
     /// `omg-v1.2.3-x86_64-linux-debian.tar.gz`.
     file_name: String,
 }
 
 impl ReleaseArtifact {
-    /// Archive URL on the release server.
+    /// Archive URL on GitHub Releases.
     fn download_url(&self) -> String {
-        format!("{UPDATE_URL}/download/{}", self.file_name)
+        format!(
+            "https://github.com/{GITHUB_OWNER}/{GITHUB_REPO}/releases/download/{}/{}",
+            self.tag, self.file_name
+        )
     }
 
     /// URL of the SHA-256 sidecar published next to the archive.
@@ -246,10 +254,15 @@ fn parse_version(raw: &str) -> Result<Version> {
     Version::parse(trimmed).with_context(|| format!("invalid semantic version: {raw:?}"))
 }
 
-/// Fetch the latest published version from the release server and validate it.
+/// Fetch the latest published version from GitHub Releases and validate it.
 async fn fetch_latest_version() -> Result<Version> {
+    #[derive(serde::Deserialize)]
+    struct GithubLatestRelease {
+        tag_name: String,
+    }
+
     let response = crate::core::http::shared_client()
-        .get(format!("{UPDATE_URL}/latest-version"))
+        .get(GITHUB_API_LATEST_RELEASE)
         .send()
         .await
         .context("Failed to check for updates")?;
@@ -259,8 +272,10 @@ async fn fetch_latest_version() -> Result<Version> {
     let body = response
         .text()
         .await
-        .context("Failed to read latest-version response body")?;
-    parse_version(&body).context("Release server returned an invalid latest-version payload")
+        .context("Failed to read GitHub latest-release response body")?;
+    let release: GithubLatestRelease =
+        serde_json::from_str(&body).context("GitHub latest-release metadata was not valid JSON")?;
+    parse_version(&release.tag_name).context("GitHub latest-release tag was not valid semver")
 }
 
 /// The `(arch, target)` fragment of the artifacts built by
@@ -288,17 +303,18 @@ fn release_artifact(version: &Version) -> Result<ReleaseArtifact> {
     let Some((release_arch, target)) = release_target(detect_distro()) else {
         anyhow::bail!(
             "self-update has no release artifact for this platform; \
-             download the archive manually from {UPDATE_URL}"
+             download the archive manually from {GITHUB_RELEASES_PAGE}"
         );
     };
     let host_arch = std::env::consts::ARCH;
     if host_arch != release_arch {
         anyhow::bail!(
             "self-update publishes no {target} artifact for {host_arch}; \
-             download the archive manually from {UPDATE_URL}"
+             download the archive manually from {GITHUB_RELEASES_PAGE}"
         );
     }
     Ok(ReleaseArtifact {
+        tag: format!("v{version}"),
         file_name: format!("omg-v{version}-{release_arch}-{target}.tar.gz"),
     })
 }

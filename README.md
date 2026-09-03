@@ -2,7 +2,7 @@
 
 **The fastest unified package manager for Arch Linux + universal runtime version manager.**
 
-> **Alpha.** OMG is alpha software. The CLI, flags, and on-disk formats can change without a compatibility guarantee. GitHub releases are published as prereleases until 1.0. Use it on machines you can recover, and file issues when something breaks.
+> **Alpha.** OMG is alpha software. The CLI, flags, and on-disk formats can change without a compatibility guarantee. Use it on machines you can recover, and file issues when something breaks.
 
 [![Benchmark](https://img.shields.io/badge/search-5--11ms%20(12--24x%20faster)-brightgreen?style=flat-square)](benchmarks/latest.md)
 [![License](https://img.shields.io/badge/license-MIT-blue?style=flat-square)](LICENSE)
@@ -40,7 +40,7 @@ omg use ruby 3.3.0
 ### Universal Installer (Linux & macOS)
 
 ```bash
-curl -fsSL https://pyro1121.com/install.sh | bash
+curl -fsSL https://raw.githubusercontent.com/PyRo1121/omg/main/install.sh | bash
 ```
 
 ### Arch Linux (AUR)

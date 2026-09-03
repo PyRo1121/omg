@@ -985,7 +985,7 @@ omg self-update [aliases: up]
 
 **Features:**
 
-- **Atomic Binary Replacement**: Replaces the current binary with the latest version from `releases.pyro1121.com`.
+- **Atomic Binary Replacement**: Replaces the current binary with the latest version from [GitHub Releases](https://github.com/PyRo1121/omg/releases).
 - **Progress Tracking**: Real-time progress bar showing download speed and estimated time remaining.
 - **Verification**: Automatically verifies the signature of the downloaded binary before installation.
 

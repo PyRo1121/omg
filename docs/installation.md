@@ -7,7 +7,7 @@ Complete installation instructions for OMG across all supported platforms.
 ### Linux & macOS
 
 ```bash
-curl -fsSL https://pyro1121.com/install.sh | bash
+curl -fsSL https://raw.githubusercontent.com/PyRo1121/omg/main/install.sh | bash
 ```
 
 ### Windows Subsystem for Linux
@@ -15,7 +15,7 @@ curl -fsSL https://pyro1121.com/install.sh | bash
 Run the Linux installer inside your WSL distribution:
 
 ```bash
-curl -fsSL https://pyro1121.com/install.sh | bash
+curl -fsSL https://raw.githubusercontent.com/PyRo1121/omg/main/install.sh | bash
 ```
 
 Native Windows is not supported.
@@ -54,7 +54,7 @@ yay -S omg
 **Universal Installer (Recommended):**
 
 ```bash
-curl -fsSL https://pyro1121.com/install.sh | bash
+curl -fsSL https://raw.githubusercontent.com/PyRo1121/omg/main/install.sh | bash
 ```
 
 **Manual Installation:**
@@ -90,7 +90,7 @@ omg --version
 **Universal Installer (Recommended):**
 
 ```bash
-curl -fsSL https://pyro1121.com/install.sh | bash
+curl -fsSL https://raw.githubusercontent.com/PyRo1121/omg/main/install.sh | bash
 ```
 
 **Features:**
@@ -107,7 +107,7 @@ curl -fsSL https://pyro1121.com/install.sh | bash
 Homebrew packaging is not available yet. Use the universal installer:
 
 ```bash
-curl -fsSL https://pyro1121.com/install.sh | bash
+curl -fsSL https://raw.githubusercontent.com/PyRo1121/omg/main/install.sh | bash
 ```
 
 **Supported Architectures:**
@@ -128,7 +128,7 @@ curl -fsSL https://pyro1121.com/install.sh | bash
 Run the universal Linux installer from inside the WSL distribution:
 
 ```bash
-curl -fsSL https://pyro1121.com/install.sh | bash
+curl -fsSL https://raw.githubusercontent.com/PyRo1121/omg/main/install.sh | bash
 ```
 
 OMG detects and uses the package backend for the installed Linux distribution. Native Windows, PowerShell, Scoop, and Winget are not supported.
@@ -257,20 +257,20 @@ The universal installer (`install.sh`) supports several environment variables:
 
 ```bash
 # Disable telemetry (variable must reach the installer's bash, not curl)
-curl -fsSL https://pyro1121.com/install.sh | OMG_NO_TELEMETRY=1 bash
+curl -fsSL https://raw.githubusercontent.com/PyRo1121/omg/main/install.sh | OMG_NO_TELEMETRY=1 bash
 
 # Skip shell integration
-OMG_SKIP_SHELL=1 curl -fsSL https://pyro1121.com/install.sh | bash
+OMG_SKIP_SHELL=1 curl -fsSL https://raw.githubusercontent.com/PyRo1121/omg/main/install.sh | bash
 
 # Install specific version
-OMG_VERSION=v0.1.215 curl -fsSL https://pyro1121.com/install.sh | bash
+OMG_VERSION=v0.1.215 curl -fsSL https://raw.githubusercontent.com/PyRo1121/omg/main/install.sh | bash
 
 # Custom install directory
-INSTALL_DIR=~/.omg/bin curl -fsSL https://pyro1121.com/install.sh | bash
+INSTALL_DIR=~/.omg/bin curl -fsSL https://raw.githubusercontent.com/PyRo1121/omg/main/install.sh | bash
 
 # Combine options
 OMG_VERSION=v0.1.215 \
-  curl -fsSL https://pyro1121.com/install.sh | OMG_NO_TELEMETRY=1 OMG_SKIP_SHELL=1 bash
+  curl -fsSL https://raw.githubusercontent.com/PyRo1121/omg/main/install.sh | OMG_NO_TELEMETRY=1 OMG_SKIP_SHELL=1 bash
 ```
 
 ---
@@ -372,7 +372,7 @@ Use OMG in CI/CD pipelines:
 
 ```yaml
 - name: Install OMG
-  run: curl -fsSL https://pyro1121.com/install.sh | bash
+  run: curl -fsSL https://raw.githubusercontent.com/PyRo1121/omg/main/install.sh | bash
   
 - name: Use specific Node version
   run: |
@@ -384,14 +384,14 @@ Use OMG in CI/CD pipelines:
 
 ```yaml
 before_script:
-  - curl -fsSL https://pyro1121.com/install.sh | bash
+  - curl -fsSL https://raw.githubusercontent.com/PyRo1121/omg/main/install.sh | bash
   - omg use node 20
 ```
 
 **Jenkins:**
 
 ```groovy
-sh 'curl -fsSL https://pyro1121.com/install.sh | bash'
+sh 'curl -fsSL https://raw.githubusercontent.com/PyRo1121/omg/main/install.sh | bash'
 sh 'omg use python 3.12'
 ```
 
@@ -405,13 +405,13 @@ After installation:
 2. **Search packages**: `omg search <query>`
 3. **Install a package**: `omg install <package>`
 4. **Use runtimes**: `omg use node 20`
-5. **Explore features**: Visit [pyro1121.com/docs](https://pyro1121.com/docs)
+5. **Explore features**: Visit [GitHub docs](https://github.com/PyRo1121/omg/tree/main/docs)
 
 ---
 
 ## Support
 
-- 📚 **Documentation**: <https://pyro1121.com/docs>
+- 📚 **Documentation**: <https://github.com/PyRo1121/omg/tree/main/docs>
 - 💬 **Discussions**: <https://github.com/PyRo1121/omg/discussions>
 - 🐛 **Issues**: <https://github.com/PyRo1121/omg/issues>
 - 📧 **Email**: <olen@latham.cloud>
