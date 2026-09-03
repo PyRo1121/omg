@@ -24,6 +24,7 @@ rollback CLI guard. Reapply rustfmt on current main.
 - Sanitize remote strings at render boundaries; revert breaking sha2/p256/p384 bump
 ### 🐛 Bug Fixes
 
+- **Osv**: Scope cache key by ecosystem and validate severity scores
 - **Update**: Refresh Arch daemon snapshot after sync before probing
 - **Clippy**: Clear main gate blocked by recent landings
 - **Config**: Preserve comments and unknown keys on save
