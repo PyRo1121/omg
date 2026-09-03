@@ -11,6 +11,15 @@ OMG is the fastest unified package manager for Linux, replacing pacman, yay, nvm
 ---
 
 ## [Unreleased]
+### 🐛 Bug Fixes
+
+- **Ci**: Dispatch Release after tagging so GITHUB_TOKEN actually publishes ([#180](https://github.com/PyRo1121/omg/issues/180))
+
+Tag pushes made with GITHUB_TOKEN do not start other workflows, which is why
+
+v0.1.215 never became GitHub Latest after CI tagged it.
+
+## [0.1.215] - 2026-09-03
 ### Bench
 
 - Fail loudly on workload errors
