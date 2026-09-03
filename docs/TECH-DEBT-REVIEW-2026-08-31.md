@@ -15,7 +15,7 @@ verbatim quote, failure scenario, fix, confidence).
 | # | Location | Finding |
 |---|----------|---------|
 | 1 | `src/package_managers/apt.rs:500–536` | **Root-path install of a local `.deb` is a silent no-op that reports success** (archive copied into the apt cache but never installed via the FFI transaction; `mark_install` results discarded). Users on the root/FFI path believe a package installed when it did not. Independently re-found by wave 9. |
-| 2 | `src/package_managers/apt.rs:344, 593–608` | **`debian` feature no longer compiles**: `String` assigned to `Version`-typed fields (regression from a recent refactor; anything building `--features debian` — i.e. the whole Debian matrix — is red). |
+| 2 | `src/package_managers/apt.rs:344, 593–608` | ~~**`debian` feature no longer compiles**: `String` assigned to `Version`-typed fields (regression from a recent refactor; anything building `--features debian` — i.e. the whole Debian matrix — is red).~~ **Stale as of 2026-09-03:** the cited regions now hold `parse_version_or_zero` usage and `update_blocking`; the String-to-Version shape is gone. Separate live issue: `--features debian-pure` fails on `transaction.rs:693` (`finish_and_clear` missing on `ProgressTask`). |
 
 ## P1 highlights — by subsystem (50 total; the ones that break real user flows)
 

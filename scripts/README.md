@@ -9,6 +9,10 @@ Utility scripts for development, testing, and CI of the OMG project.
 | `check-perf-regression.py` | Verify no performance regressions | `python3 scripts/check-perf-regression.py` |
 | `generate-benchmark-chart.py` | Create benchmark visualizations | `python3 scripts/generate-benchmark-chart.py` |
 | `extract-release-notes.sh` | Extract release notes for GitHub releases | `./scripts/extract-release-notes.sh` |
+| `collect-release-artifacts.sh` | Stage release artifacts for publishing | `./scripts/collect-release-artifacts.sh <version> <artifact-dir> <release-dir>` |
+| `debian-smoke-test.sh` | Debian smoke test in a container | `./scripts/debian-smoke-test.sh` |
+| `gen-release-notes.sh` | Generate release notes for a version | `./scripts/gen-release-notes.sh <version>` |
+| `r2-rollback.sh` | Roll back R2 release artifacts | `./scripts/r2-rollback.sh` |
 
 ---
 
@@ -99,7 +103,7 @@ assets; `install.sh` consumes them via the GitHub releases API.
 
 - **Shell scripts:** shebang `#!/usr/bin/env bash`, `set -euo pipefail`, marked `+x`
 - **Python scripts:** shebang `#!/usr/bin/env python3`, Python 3.8+
-- **Exit codes:** `0` success, `1` general failure, `2` invalid usage, `3` missing dependencies, `4` configuration error
+- **Exit codes:** `0` success, `1` general failure, `2` invalid usage, `3` missing dependencies, `4` configuration error. Two scripts predate the convention and keep their codes: `r2-rollback.sh` exits `65` (invalid semver) and `66` (missing R2 object); `debian-smoke-test.sh` exits `127` (no container engine).
 
 ---
 
