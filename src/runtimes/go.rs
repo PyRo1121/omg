@@ -105,7 +105,8 @@ impl GoManager {
         fs::create_dir_all(&self.versions_dir)?;
 
         // A vendor checksum is required before installing a downloaded runtime.
-        let checksum = self.fetch_checksum(&filename).await?;
+        let releases = self.list_available().await?;
+        let checksum = checksum_for_file(&releases, &filename)?;
 
         println!("{} Downloading {filename}...", "→".blue());
         let download_path = self.versions_dir.join(&filename);
@@ -138,12 +139,6 @@ impl GoManager {
             resolve_partial_version(&available_version_names(&available), version)
                 .unwrap_or_else(|| version.to_owned()),
         )
-    }
-
-    /// Fetch the release manifest and select the vendor checksum for this archive.
-    async fn fetch_checksum(&self, filename: &str) -> Result<String> {
-        let releases = self.list_available().await?;
-        checksum_for_file(&releases, filename)
     }
 
     /// Switch to a specific version
