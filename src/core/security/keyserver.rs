@@ -547,6 +547,14 @@ mod tests {
             return;
         }
         let home = tempfile::tempdir().expect("GnuPG home");
+        // tempfile dirs inherit umask permissions; a GnuPG home must be
+        // 0700 or validation correctly refuses it.
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt as _;
+            std::fs::set_permissions(home.path(), std::fs::Permissions::from_mode(0o700))
+                .expect("secure GnuPG home");
+        }
         let (certificate, _) = sequoia_openpgp::cert::prelude::CertBuilder::new()
             .add_userid("keybox-test@example.invalid")
             .generate()
