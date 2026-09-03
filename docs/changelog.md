@@ -47,6 +47,31 @@ Read Python and Deno project pins, map compatible requests to installed versions
 
 ### 🐛 Bug Fixes
 
+- **Tea**: Sanitize package versions ([#193](https://github.com/PyRo1121/omg/issues/193))
+
+fix(tea): sanitize package versions
+
+- Sanitize repo field and invisible chars in terminal text
+
+  - Render the tea info Source field through sanitize_terminal_text; repo
+
+from daemon IPC is untrusted like name/version/description/url.
+
+  - Extend sanitize_terminal_text to strip zero-width and invisible
+
+formatting characters (U+200B-200F, U+2060-2064, U+2028/2029, U+FEFF)
+
+in addition to control bytes and bidi overrides/isolates.
+
+  - Add unit tests for the sanitizer (control/OSC, bidi, invisible,
+
+separators, visible multibyte preservation) and harden the tea info
+
+view test with zero-width and repo payloads.
+
+COM-183
+
+- Sanitize tea package versions
 - Sanitize AUR build package names
 - Sanitize update summary fields
 - **Clippy**: Clear gate after progress-lane migration (mechanical only)
@@ -125,6 +150,9 @@ v0.1.215 never became GitHub Latest after CI tagged it.
 
 - Sync Cargo.lock with toml_edit
 - **Deps**: Update rust dependencies ([#183](https://github.com/PyRo1121/omg/issues/183))
+### 🧪 Testing
+
+- Expose raw version text in tea info
 ## [0.1.215] - 2026-09-03
 ### Bench
 
