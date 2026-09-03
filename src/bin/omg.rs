@@ -292,21 +292,6 @@ fn try_fast_elevated(
     }
 }
 
-#[cfg(not(feature = "arch"))]
-const fn try_fast_elevated(
-    _args: &[String],
-    _reexec_elevated: bool,
-    _parent_records: bool,
-) -> Option<Result<()>> {
-    None
-}
-
-/// No-op outside `arch`: the elevated fast path it configures does not exist
-/// there (see the `try_fast_elevated` stub above), so there is nothing to
-/// configure. Mirrors the stub so `main` keeps one unconditional call path.
-#[cfg(not(feature = "arch"))]
-const fn configure_fast_path_output(_args: &[String]) {}
-
 #[cfg(feature = "arch")]
 /// Record an elevated fast-path transaction in package history.
 ///
@@ -644,6 +629,9 @@ fn main() {
     // ELEVATED_MARKER in core::privilege). The marker is honored ONLY for a
     // root process: anyone else invoking the reserved token keeps their
     // arguments untouched and gets clap's unknown-command error.
+    // `reexec_elevated` is consumed only by the arch-gated fast path below;
+    // backend-less builds legitimately ignore elevation markers entirely.
+    #[cfg_attr(not(feature = "arch"), allow(unused_variables))]
     let (reexec_elevated, parent_records) =
         strip_internal_invocation_markers(&mut args, omg_lib::core::privilege::is_root());
     // The marker has already been authenticated by root re-exec parsing.
@@ -652,10 +640,15 @@ fn main() {
     omg_lib::core::privilege::set_parent_owns_history(parent_records);
 
     // FASTEST PATH: Elevated re-exec - skip ALL initialization
-    // This runs when sudo omg re-execs us as root
-    configure_fast_path_output(&args);
-    if let Some(result) = try_fast_elevated(&args, reexec_elevated, parent_records) {
-        finish(result);
+    // This runs when sudo omg re-execs us as root. Arch-only: the elevated
+    // transaction path does not exist in backend-less builds, so the whole
+    // block is gated out there instead of stubbed — no no-op stand-ins.
+    #[cfg(feature = "arch")]
+    {
+        configure_fast_path_output(&args);
+        if let Some(result) = try_fast_elevated(&args, reexec_elevated, parent_records) {
+            finish(result);
+        }
     }
 
     match try_fast_paths(&args) {
