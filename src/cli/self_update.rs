@@ -2,13 +2,13 @@
 
 use anyhow::{Context, Result};
 use futures::StreamExt;
-use indicatif::{ProgressBar, ProgressStyle};
 use owo_colors::OwoColorize;
 use semver::Version;
 use sha2::{Digest, Sha256};
 use std::env;
 use std::fs;
 
+use crate::cli::progress::{Accent, Outcome, ProgressTask, TaskKind, TaskSpec};
 use crate::cli::style;
 use crate::core::env::distro::{Distro, detect_distro};
 
@@ -120,7 +120,12 @@ pub async fn run(force: bool, version: Option<String>) -> Result<()> {
     // Integrity gate: fetch the pinned digest before downloading the archive.
     let expected_digest = fetch_checksum(&artifact.checksum_url()).await?;
 
-    let bytes = download_verified(&artifact.download_url(), &expected_digest).await?;
+    let bytes = download_verified(
+        &artifact.download_url(),
+        artifact.file_name.clone(),
+        &expected_digest,
+    )
+    .await?;
 
     let archive_name = artifact.file_name.clone();
 
@@ -135,7 +140,7 @@ pub async fn run(force: bool, version: Option<String>) -> Result<()> {
         fs::write(attestation_file.path(), &bytes)
             .context("Failed to write archive for attestation verification")?;
         if !verify_attestation(attestation_file.path())? {
-            refuse_unverified_provenance(force)?;
+            refuse_unverified_provenance()?;
         }
 
         let cursor = std::io::Cursor::new(bytes);
@@ -367,7 +372,7 @@ fn parse_checksum(body: &str) -> Result<String> {
 ///
 /// Fails closed: any mismatch aborts the update instead of installing
 /// unverified bytes.
-async fn download_verified(url: &str, expected_digest: &str) -> Result<Vec<u8>> {
+async fn download_verified(url: &str, archive_name: String, expected_digest: &str) -> Result<Vec<u8>> {
     let safe_url = crate::core::http::redact_url(url);
     let response = crate::core::http::download_client()
         .get(url)
@@ -386,15 +391,13 @@ async fn download_verified(url: &str, expected_digest: &str) -> Result<Vec<u8>> 
         .and_then(|len| usize::try_from(len).ok())
         .map_or(0, |len| len.min(MAX_PREALLOC_BYTES));
 
-    let progress = ProgressBar::new(response.content_length().unwrap_or(0));
-    progress.set_style(
-        ProgressStyle::default_bar()
-            .template(
-                "{spinner:.green} [{elapsed_precise}] [{bar:40.cyan/blue}] \
-                 {bytes}/{total_bytes} ({eta})",
-            )?
-            .progress_chars("#>-"),
-    );
+    let task = ProgressTask::start(TaskSpec {
+        label: archive_name,
+        kind: TaskKind::Bytes {
+            total: response.content_length().filter(|len| *len > 0),
+        },
+        accent: Accent::Network,
+    });
 
     let mut bytes = Vec::with_capacity(prealloc);
     let mut hasher = Sha256::new();
@@ -410,9 +413,9 @@ async fn download_verified(url: &str, expected_digest: &str) -> Result<Vec<u8>> 
         }
         hasher.update(&chunk);
         bytes.extend_from_slice(&chunk);
-        progress.inc(chunk.len() as u64);
+        task.inc(chunk.len() as u64);
     }
-    progress.finish_with_message("Download complete");
+    task.finish(Outcome::Done);
 
     let actual_digest = hex::encode(hasher.finalize());
     if actual_digest != expected_digest {
@@ -505,10 +508,12 @@ fn decide_unverified_provenance(allow_unverified: bool) -> Result<()> {
     )
 }
 
-/// Evaluate the opt-in escape hatch from the environment or --force flag.
-fn refuse_unverified_provenance(force: bool) -> Result<()> {
+/// Evaluate the opt-in escape hatch from the environment only. `--force`
+/// no longer bypasses provenance: it governs version and downgrade policy,
+/// never trust.
+fn refuse_unverified_provenance() -> Result<()> {
     let raw = env::var(ALLOW_UNVERIFIED_PROVENANCE_ENV).ok();
-    decide_unverified_provenance(force || parse_allow_unverified(raw.as_deref()))
+    decide_unverified_provenance(parse_allow_unverified(raw.as_deref()))
 }
 
 /// Parse the escape-hatch environment variable.
