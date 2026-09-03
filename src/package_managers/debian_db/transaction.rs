@@ -23,7 +23,6 @@ use std::time::Duration;
 
 use anyhow::{Context, Result};
 use futures::stream::{self, StreamExt};
-use owo_colors::OwoColorize;
 use tempfile::TempDir;
 
 use super::resolver::ResolutionResult;
@@ -690,7 +689,10 @@ impl Transaction {
             .collect()
             .await;
 
-        overall.finish_and_clear();
+        // The lane reports through the unpack summary below, so clear it
+        // without printing a durable line (there is no `finish_and_clear`
+        // on the lane handle by design).
+        overall.clear();
 
         // Wait for unpacking to complete
         let (installed_files, installed_files_by_package, unpack_errors) = unpack_handle.await?;
