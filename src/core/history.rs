@@ -145,8 +145,18 @@ impl HistoryManager {
     }
 
     fn load_locked(&self) -> Result<Vec<Transaction>> {
+        // Refuse symlinks before reading, mirroring the audit log discipline.
+        let is_symlink = std::fs::symlink_metadata(&self.log_path)
+            .map(|meta| meta.file_type().is_symlink())
+            .unwrap_or(false);
         if !self.log_path.exists() {
             return Ok(Vec::new());
+        }
+        if is_symlink {
+            anyhow::bail!(
+                "Refusing to read history that is a symlink: {}",
+                self.log_path.display()
+            );
         }
 
         let content = fs::read_to_string(&self.log_path)
@@ -271,12 +281,14 @@ impl HistoryManager {
 
     fn with_history_lock<T>(&self, op: impl FnOnce() -> Result<T>) -> Result<T> {
         let lock_path = self.log_path.with_extension("lock");
-        let lock = fs::OpenOptions::new()
-            .create(true)
-            .read(true)
-            .write(true)
-            .truncate(false)
-            .open(&lock_path)
+        let mut options = fs::OpenOptions::new();
+        options.create(true).read(true).write(true).truncate(false);
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::OpenOptionsExt as _;
+            options.mode(0o600).custom_flags(nix::libc::O_NOFOLLOW);
+        }
+        let lock = options.open(&lock_path)
             .with_context(|| format!("Failed to open history lock: {}", lock_path.display()))?;
         lock.lock()
             .with_context(|| format!("Failed to lock package history: {}", lock_path.display()))?;
