@@ -1126,7 +1126,7 @@ fn draw_team(f: &mut Frame, area: Rect, app: &App) {
             Line::from(vec![
                 Span::styled("  Team: ", Style::default().fg(colors::FG_MUTED)),
                 Span::styled(
-                    &status.config.name,
+                    sanitize_control_chars(&status.config.name),
                     Style::default()
                         .fg(colors::ACCENT_CYAN)
                         .add_modifier(Modifier::BOLD),
@@ -1204,7 +1204,7 @@ fn draw_team(f: &mut Frame, area: Rect, app: &App) {
                         Style::default().fg(status_color),
                     )),
                     Cell::from(Span::styled(
-                        &member.name,
+                        sanitize_control_chars(&member.name),
                         Style::default()
                             .fg(colors::FG_PRIMARY)
                             .add_modifier(Modifier::BOLD),
