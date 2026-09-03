@@ -195,7 +195,10 @@ impl Model for InfoModel {
                     let _ = writeln!(
                         output,
                         "{}",
-                        Self::render_kv("Version", &style::version(&info.version))
+                        Self::render_kv(
+                            "Version",
+                            &style::version(&style::sanitize_terminal_text(&info.version))
+                        )
                     );
                     let _ = writeln!(
                         output,
