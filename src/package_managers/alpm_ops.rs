@@ -5,7 +5,6 @@
 use std::sync::{Arc, LazyLock, Mutex};
 
 use anyhow::{Context, Result};
-use owo_colors::OwoColorize;
 use regex::Regex;
 
 use crate::cli::progress::{Accent, Outcome, ProgressTask, TaskKind, TaskSpec};
@@ -387,35 +386,61 @@ fn remove_cache_file_and_signature(archive: &std::path::Path, removed: &mut usiz
 /// List orphaned packages - INSTANT
 pub use crate::package_managers::alpm_direct::list_orphans_fast as list_orphans_direct;
 
-/// Display package info beautifully
+/// Display package info through the shared key-value renderer.
+///
+/// The sync-DB path matches the daemon path field for field. Package
+/// metadata can carry terminal escape sequences, so every displayed field
+/// is sanitized the same way search results are.
 pub fn display_pkg_info(info: &PackageInfo) {
-    // Package metadata can carry terminal escape sequences, so every
-    // displayed field is sanitized the same way search results are.
-    let name = crate::cli::style::sanitize_terminal_text(&info.name);
-    let version = crate::cli::style::sanitize_terminal_text(&info.version.to_string());
-    let description = crate::cli::style::sanitize_terminal_text(&info.description);
-    let repo = crate::cli::style::sanitize_terminal_text(&info.repo);
-    let url = crate::cli::style::sanitize_terminal_text(info.url.as_deref().unwrap_or("-"));
-    // Use println! instead of tracing to avoid logs bleeding into output
-    println!("{} {}", name.white().bold(), version.green());
-    println!("  {} {}", "Description:".dimmed(), description);
-    println!("  {} {}", "Repository:".dimmed(), repo.cyan());
-    println!("  {} {}", "URL:".dimmed(), url);
-    println!(
-        "  {} {:.2} MB",
-        "Size:".dimmed(),
-        info.size as f64 / 1024.0 / 1024.0
+    use crate::cli::{style, ui};
+    ui::print_kv(
+        "Name",
+        &style::package(&style::sanitize_terminal_text(&info.name)),
     );
-    println!(
-        "  {} {:.2} MB",
-        "Download:".dimmed(),
-        info.download_size.unwrap_or(0) as f64 / 1024.0 / 1024.0
+    ui::print_kv(
+        "Version",
+        &style::version(&style::sanitize_terminal_text(&info.version.to_string())),
     );
+    ui::print_kv(
+        "Description",
+        &style::sanitize_terminal_text(&info.description),
+    );
+    ui::print_kv(
+        "Source",
+        &format!(
+            "Official repository ({})",
+            style::info(&style::sanitize_terminal_text(&info.repo))
+        ),
+    );
+    ui::print_kv(
+        "URL",
+        &style::url(&style::sanitize_terminal_text(
+            info.url.as_deref().unwrap_or("-"),
+        )),
+    );
+    ui::print_kv("Size", &style::size(info.size));
+    ui::print_kv("Download", &style::size(info.download_size.unwrap_or(0)));
     if !info.licenses.is_empty() {
-        println!("  {} {}", "License:".dimmed(), info.licenses.join(", "));
+        ui::print_kv(
+            "License",
+            &info
+                .licenses
+                .iter()
+                .map(|license| style::sanitize_terminal_text(license))
+                .collect::<Vec<_>>()
+                .join(", "),
+        );
     }
     if !info.depends.is_empty() {
-        println!("  {} {}", "Depends:".dimmed(), info.depends.join(", "));
+        ui::print_kv(
+            "Depends",
+            &info
+                .depends
+                .iter()
+                .map(|depend| style::sanitize_terminal_text(depend))
+                .collect::<Vec<_>>()
+                .join(", "),
+        );
     }
 }
 
