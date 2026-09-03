@@ -82,11 +82,6 @@ fi
 OMG="./target/release/omg"
 OMGD="./target/release/omgd"
 OMG_FAST="./target/release/omg-fast"
-BENCH_DIR="$(mktemp -d -t omg-bench-XXXX)"
-export OMG_DAEMON_DATA_DIR="$BENCH_DIR/data"
-export OMG_SOCKET_PATH="$BENCH_DIR/omg.sock"
-DAEMON_LOG="$BENCH_DIR/omgd.log"
-mkdir -p "$OMG_DAEMON_DATA_DIR"
 
 # Colors for output
 RED='\033[0;31m'
@@ -96,13 +91,20 @@ BLUE='\033[0;34m'
 NC='\033[0m' # No Color
 
 if ! command -v bc >/dev/null 2>&1; then
-    echo -e "${RED}❌ 'bc' is required for benchmarking (install: pacman -S bc)${NC}" >&2
+    echo -e "${RED}❌ 'bc' is required for benchmarking (install: omg install bc)${NC}" >&2
     exit 1
 fi
 
 # Build release first
 echo -e "${BLUE}🔨 Building release binaries...${NC}"
-cargo build --release --features arch --quiet
+CARGO_INCREMENTAL=0 cargo build --release --features arch --locked --quiet
+
+mkdir -p "$HOME/.cache/build-targets"
+BENCH_DIR="$(mktemp -d "$HOME/.cache/build-targets/omg-bench-XXXXXX")"
+export OMG_DAEMON_DATA_DIR="$BENCH_DIR/data"
+export OMG_SOCKET_PATH="$BENCH_DIR/omg.sock"
+DAEMON_LOG="$BENCH_DIR/omgd.log"
+mkdir -p "$OMG_DAEMON_DATA_DIR"
 
 echo "========================================================"
 echo -e "${GREEN}🚀 OMG World-Class Performance Benchmark${NC}"
@@ -133,7 +135,7 @@ DAEMON_PID=$!
 
 # Optimized daemon ready check (faster than sleep 2)
 echo -n "Waiting for daemon to be ready..."
-for i in {1..20}; do
+for i in {1..50}; do
     if $OMG status > /dev/null 2>&1; then
         echo " ready!"
         break
@@ -145,6 +147,15 @@ if ! $OMG status > /dev/null 2>&1; then
     echo -e "${RED}❌ OMG daemon failed to start${NC}" >&2
     tail -n 50 "$DAEMON_LOG" >&2 || true
     kill $DAEMON_PID > /dev/null 2>&1 || true
+    exit 1
+fi
+
+if ! $OMG search firefox --no-aur 2>/dev/null | grep -qi firefox; then
+    echo -e "${RED}❌ Preflight failed: omg search firefox --no-aur did not print firefox${NC}" >&2
+    exit 1
+fi
+if ! $OMG info firefox 2>/dev/null | grep -qi firefox; then
+    echo -e "${RED}❌ Preflight failed: omg info firefox did not print firefox${NC}" >&2
     exit 1
 fi
 

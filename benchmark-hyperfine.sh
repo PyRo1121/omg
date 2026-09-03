@@ -16,7 +16,7 @@ set -e
 # - 40-60% faster execution than manual bash loops
 #
 # REQUIREMENTS:
-#   sudo pacman -S hyperfine    # Arch Linux
+#   omg install hyperfine       # Arch Linux
 #   brew install hyperfine      # macOS
 #
 # USAGE:
@@ -30,10 +30,15 @@ set -e
 export PATH="$HOME/.cargo/bin:$PATH"
 
 WARMUP=3
-MIN_RUNS=10
+MIN_RUNS=20
+MAX_RUNS=50
 FAST_MODE=false
 UPDATE_MODE=false
 EXPORT_DIR="benchmark_results"
+REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+UPDATE_WORK_DIRS=()
+DAEMON_PID=""
+BENCH_DIR=""
 
 print_usage() {
     cat << EOF
@@ -47,10 +52,13 @@ Options:
 
 Environment Variables:
   OMG_BENCH_WARMUP        Number of warmup runs (default: 3, fast: 1)
-  OMG_BENCH_RUNS          Minimum runs (default: 10, fast: 5)
-  OMG_BENCH_EXPORT_DIR    Results directory (default: benchmark_results)
-  OMG_BENCH_BINARY        Path to a prebuilt omg binary to benchmark instead
-                          of building (intended for --update mode)
+  OMG_BENCH_RUNS          Minimum runs (default: 20, fast: 5)
+  OMG_BENCH_MAX_RUNS      Maximum runs (default: 50, fast: 15)
+  OMG_BENCH_EXPORT_DIR    Scratch JSON/MD directory (default: benchmark_results)
+  OMG_BENCH_SKIP_RECORD   Set to 1 to skip writing benchmarks/records/
+  OMG_BENCH_SKIP_UPDATE   Set to 1 to skip update discovery in a full run
+  OMG_BENCH_BINARY        Path to a prebuilt omg binary (skips cargo build).
+                          omgd and omg-fast are taken from the same directory.
   OMG_BENCH_TARGET_DIR    Cargo target directory (default:
                           ~/.cache/build-targets/omg-benchmark-hyperfine)
   OMG_BENCH_SOURCE_CACHE  Cache dir to copy AUR/package-DB fixtures from
@@ -90,13 +98,16 @@ done
 if [ "$FAST_MODE" = true ]; then
     WARMUP=${OMG_BENCH_WARMUP:-1}
     MIN_RUNS=${OMG_BENCH_RUNS:-5}
+    MAX_RUNS=${OMG_BENCH_MAX_RUNS:-15}
 else
     WARMUP=${OMG_BENCH_WARMUP:-3}
-    MIN_RUNS=${OMG_BENCH_RUNS:-10}
+    MIN_RUNS=${OMG_BENCH_RUNS:-20}
+    MAX_RUNS=${OMG_BENCH_MAX_RUNS:-50}
 fi
 
 EXPORT_DIR=${OMG_BENCH_EXPORT_DIR:-benchmark_results}
 mkdir -p "$EXPORT_DIR"
+BENCH_SOURCE_CACHE="${OMG_BENCH_SOURCE_CACHE:-${OMG_CACHE_DIR:-$HOME/.cache/omg}}"
 
 RED='\033[0;31m'
 GREEN='\033[0;32m'
@@ -108,7 +119,7 @@ if ! command -v hyperfine &>/dev/null; then
     echo -e "${RED}❌ hyperfine not installed${NC}"
     echo ""
     echo "Install with:"
-    echo "  Arch Linux:  sudo pacman -S hyperfine"
+    echo "  Arch Linux:  omg install hyperfine"
     echo "  macOS:       brew install hyperfine"
     echo "  Cargo:       cargo install hyperfine"
     echo ""
@@ -120,28 +131,96 @@ if ! command -v hyperfine &>/dev/null; then
     fi
 fi
 
+cleanup() {
+    if [ -n "${DAEMON_PID:-}" ]; then
+        kill "$DAEMON_PID" >/dev/null 2>&1 || true
+        wait "$DAEMON_PID" 2>/dev/null || true
+        DAEMON_PID=""
+    fi
+    if [ -n "${BENCH_DIR:-}" ] && [ -d "$BENCH_DIR" ]; then
+        rm -rf -- "$BENCH_DIR"
+        BENCH_DIR=""
+    fi
+    local dir
+    for dir in "${UPDATE_WORK_DIRS[@]}"; do
+        rm -rf -- "$dir"
+    done
+}
+trap cleanup EXIT
+
+run_hyperfine() {
+    local json="$1"
+    local md="$2"
+    shift 2
+    hyperfine --shell=none --output=pipe --input=null \
+        --warmup "$WARMUP" --min-runs "$MIN_RUNS" --max-runs "$MAX_RUNS" \
+        --export-json "$json" --export-markdown "$md" \
+        "$@"
+}
+
+preflight_match() {
+    local label="$1"
+    local needle="$2"
+    local outfile="$3"
+    shift 3
+    if ! "$@" >"$outfile" 2>&1; then
+        echo -e "${RED}❌ Preflight failed: ${label} (non-zero exit)${NC}" >&2
+        cat "$outfile" >&2
+        exit 1
+    fi
+    if ! grep -qiE "$needle" "$outfile"; then
+        echo -e "${RED}❌ Preflight failed: ${label} (no match for /${needle}/)${NC}" >&2
+        echo "----- output -----" >&2
+        head -c 4000 "$outfile" >&2
+        echo "" >&2
+        exit 1
+    fi
+    local bytes lines
+    bytes=$(wc -c < "$outfile" | tr -d ' ')
+    lines=$(wc -l < "$outfile" | tr -d ' ')
+    echo -e "  ${GREEN}ok${NC} ${label}  ${bytes} bytes, ${lines} lines"
+}
+
+archive_results() {
+    if [ "${OMG_BENCH_SKIP_RECORD:-}" = 1 ]; then
+        echo "Skipping benchmarks/records/ (OMG_BENCH_SKIP_RECORD=1)"
+        return 0
+    fi
+    python3 "$REPO_ROOT/scripts/record-benchmark-run.py" \
+        --source "$EXPORT_DIR" \
+        --warmup "$WARMUP" \
+        --min-runs "$MIN_RUNS" \
+        --max-runs "$MAX_RUNS"
+}
+
 TARGET_DIR="${OMG_BENCH_TARGET_DIR:-$HOME/.cache/build-targets/omg-benchmark-hyperfine}"
 
 if [ -n "${OMG_BENCH_BINARY:-}" ]; then
-    if [ "$UPDATE_MODE" != true ]; then
-        echo -e "${RED}❌ OMG_BENCH_BINARY is supported only with --update${NC}" >&2
-        exit 1
-    fi
     echo -e "${BLUE}🔧 Using prebuilt binary: $OMG_BENCH_BINARY${NC}"
     if [ ! -x "$OMG_BENCH_BINARY" ]; then
         echo -e "${RED}❌ OMG_BENCH_BINARY is set but not executable: $OMG_BENCH_BINARY${NC}" >&2
         exit 1
     fi
     OMG="$OMG_BENCH_BINARY"
-    OMGD="$TARGET_DIR/release/omgd"
-    OMG_FAST="$TARGET_DIR/release/omg-fast"
+    bin_dir="$(cd "$(dirname "$OMG")" && pwd)"
+    OMGD="$bin_dir/omgd"
+    OMG_FAST="$bin_dir/omg-fast"
 else
     echo -e "${BLUE}🔨 Building release binaries...${NC}"
-    CARGO_TARGET_DIR="$TARGET_DIR" cargo build --release --locked --features arch --quiet
+    CARGO_INCREMENTAL=0 CARGO_TARGET_DIR="$TARGET_DIR" cargo build --release --locked --features arch --quiet
 
     OMG="$TARGET_DIR/release/omg"
     OMGD="$TARGET_DIR/release/omgd"
     OMG_FAST="$TARGET_DIR/release/omg-fast"
+fi
+
+if [ ! -x "$OMG" ]; then
+    echo -e "${RED}❌ omg binary not executable: $OMG${NC}" >&2
+    exit 1
+fi
+if [ ! -x "$OMGD" ]; then
+    echo -e "${RED}❌ omgd binary not found next to omg: $OMGD${NC}" >&2
+    exit 1
 fi
 
 # ----------------------------------------------------------------------------
@@ -162,13 +241,16 @@ fi
 run_update_benchmark() {
     if [ "$EUID" -eq 0 ]; then
         echo -e "${RED}❌ Run the update benchmark as a regular user${NC}" >&2
-        exit 1
+        return 1
     fi
 
-    local source_cache="${OMG_BENCH_SOURCE_CACHE:-${OMG_CACHE_DIR:-$HOME/.cache/omg}}"
+    local source_cache="$BENCH_SOURCE_CACHE"
     local fixture_archive="$source_cache/aur/_meta/packages-meta-ext-v1.json.gz"
     local fixture_index="$source_cache/aur/_meta/packages-meta-ext-v1.rkyv"
-    local fixture_local_db="$source_cache/local_db.bin"
+    local fixture_local_db="$source_cache/local_db_rdeps.bin"
+    if [ ! -f "$fixture_local_db" ] && [ -f "$source_cache/local_db.bin" ]; then
+        fixture_local_db="$source_cache/local_db.bin"
+    fi
     local fixture_sync_db="$source_cache/sync_db.bin"
 
     local missing_fixture=0
@@ -182,10 +264,10 @@ run_update_benchmark() {
     if [ "$missing_fixture" -ne 0 ]; then
         echo "" >&2
         echo "Update discovery benchmarks need a populated omg cache with:" >&2
-        echo "  local_db.bin, sync_db.bin, aur/_meta/packages-meta-ext-v1.json.gz," >&2
+        echo "  local_db_rdeps.bin (or legacy local_db.bin), sync_db.bin," >&2
         echo "  aur/_meta/packages-meta-ext-v1.rkyv" >&2
         echo "Populate the OMG metadata cache first, or set OMG_BENCH_SOURCE_CACHE." >&2
-        exit 1
+        return 1
     fi
 
     # Isolated scratch space under $HOME/.cache/build-targets (never /tmp),
@@ -193,7 +275,7 @@ run_update_benchmark() {
     mkdir -p "$HOME/.cache/build-targets"
     local work_dir
     work_dir="$(mktemp -d "$HOME/.cache/build-targets/omg-update-bench-XXXXXX")"
-    trap "rm -rf -- '$work_dir'" EXIT
+    UPDATE_WORK_DIRS+=("$work_dir")
 
     local ready_cache="$work_dir/ready-cache"
     local missing_cache="$work_dir/missing-index-cache"
@@ -277,7 +359,7 @@ WRAPPER
         echo -e "${RED}❌ REGRESSION: missing-index update discovery created an AUR index at:${NC}" >&2
         echo "  $missing_index" >&2
         echo "Update discovery must not synchronously rebuild global metadata." >&2
-        exit 1
+        return 1
     fi
     echo -e "${GREEN}✅ Guard passed: missing-index run did not rebuild the AUR index${NC}"
 
@@ -321,6 +403,7 @@ PYEOF
 
 if [ "$UPDATE_MODE" = true ]; then
     run_update_benchmark
+    archive_results
     exit 0
 fi
 
@@ -334,144 +417,188 @@ fi
 echo -e "${YELLOW}CONFIGURATION:${NC}"
 echo "  Warmup runs: $WARMUP"
 echo "  Minimum runs: $MIN_RUNS"
-echo "  Results directory: $EXPORT_DIR/"
+echo "  Maximum runs: $MAX_RUNS"
+echo "  Scratch directory: $EXPORT_DIR/"
+echo "  Records: benchmarks/records/"
 echo ""
 echo -e "${YELLOW}METHODOLOGY:${NC}"
-echo "  • hyperfine uses statistical analysis with outlier detection"
-echo "  • Modified Z-score method (median-based, robust to outliers)"
-echo "  • Automatic run count determination for confidence intervals"
-echo "  • Warm cache benchmarks (realistic usage patterns)"
+echo "  • hyperfine --shell=none (no shell startup in the timed path)"
+echo "  • --output=pipe so tools cannot skip work when stdout is /dev/null"
+echo "  • Preflight: each command must print real results before timing starts"
+echo "  • Warm cache (typical interactive use, not first-boot)"
 echo ""
 
 mkdir -p "$HOME/.cache/build-targets"
 BENCH_DIR="$(mktemp -d "$HOME/.cache/build-targets/omg-bench-XXXXXX")"
 export OMG_DAEMON_DATA_DIR="$BENCH_DIR/data"
 export OMG_SOCKET_PATH="$BENCH_DIR/omg.sock"
+export OMG_CACHE_DIR="$BENCH_DIR/cache"
 DAEMON_LOG="$BENCH_DIR/omgd.log"
-mkdir -p "$OMG_DAEMON_DATA_DIR"
+mkdir -p "$OMG_DAEMON_DATA_DIR" "$OMG_CACHE_DIR"
+
+source_cache="${OMG_BENCH_SOURCE_CACHE:-${HOME}/.cache/omg}"
+if [ -f "$source_cache/sync_db.bin" ]; then
+    cp "$source_cache/sync_db.bin" "$OMG_CACHE_DIR/"
+    if [ -f "$source_cache/local_db_rdeps.bin" ]; then
+        cp "$source_cache/local_db_rdeps.bin" "$OMG_CACHE_DIR/"
+    elif [ -f "$source_cache/local_db.bin" ]; then
+        cp "$source_cache/local_db.bin" "$OMG_CACHE_DIR/"
+    fi
+    echo -e "${BLUE}📦 Seeded daemon cache from $source_cache${NC}"
+fi
 
 echo "Starting OMG Daemon..."
 $OMGD > "$DAEMON_LOG" 2>&1 &
 DAEMON_PID=$!
 
 echo -n "Waiting for daemon to be ready..."
-for i in {1..20}; do
+daemon_ready=0
+for _ in $(seq 1 80); do
     if $OMG status > /dev/null 2>&1; then
-        echo " ready!"
+        daemon_ready=1
+        echo " status ok"
         break
     fi
     sleep 0.1
 done
-
-if ! $OMG status > /dev/null 2>&1; then
+if [ "$daemon_ready" -ne 1 ]; then
     echo -e "${RED}❌ OMG daemon failed to start${NC}" >&2
     tail -n 50 "$DAEMON_LOG" >&2 || true
-    kill $DAEMON_PID > /dev/null 2>&1 || true
     exit 1
 fi
 
-cleanup() {
-    echo "Cleaning up..." >&2
-    if [ -n "$DAEMON_PID" ]; then
-        kill $DAEMON_PID > /dev/null 2>&1 || true
-        wait $DAEMON_PID 2>/dev/null || true
+echo -n "Waiting for search index (firefox)..."
+search_ready=0
+for _ in $(seq 1 100); do
+    if $OMG search firefox --no-aur 2>/dev/null | grep -qi firefox; then
+        search_ready=1
+        echo " ready"
+        break
     fi
-    rm -rf "$BENCH_DIR"
-}
-trap cleanup EXIT
+    sleep 0.1
+done
+if [ "$search_ready" -ne 1 ]; then
+    echo -e "${RED}❌ Daemon never returned a firefox search hit${NC}" >&2
+    tail -n 50 "$DAEMON_LOG" >&2 || true
+    exit 1
+fi
+
+echo -e "\n${BLUE}🔎 Preflight (prove the timed commands do real work)${NC}"
+PRE_DIR="$BENCH_DIR/preflight"
+mkdir -p "$PRE_DIR"
+preflight_match "omg search firefox --no-aur" "firefox" "$PRE_DIR/search.txt" \
+    "$OMG" search firefox --no-aur
+if [ -x "$OMG_FAST" ]; then
+    preflight_match "omg-fast s firefox" "firefox" "$PRE_DIR/search-fast.txt" \
+        "$OMG_FAST" s firefox
+fi
+preflight_match "omg info firefox" "firefox" "$PRE_DIR/info.txt" \
+    "$OMG" info firefox
+if [ -x "$OMG_FAST" ]; then
+    preflight_match "omg-fast i firefox" "firefox" "$PRE_DIR/info-fast.txt" \
+        "$OMG_FAST" i firefox
+fi
+preflight_match "omg status" "." "$PRE_DIR/status.txt" "$OMG" status
+if ! "$OMG" explicit --count >"$PRE_DIR/explicit.txt" 2>&1; then
+    echo -e "${RED}❌ Preflight failed: omg explicit --count${NC}" >&2
+    cat "$PRE_DIR/explicit.txt" >&2
+    exit 1
+fi
+EXPLICIT_COUNT="$(tr -d '[:space:]' < "$PRE_DIR/explicit.txt")"
+if ! [[ "$EXPLICIT_COUNT" =~ ^[0-9]+$ ]] || [ "$EXPLICIT_COUNT" -le 0 ]; then
+    echo -e "${RED}❌ Preflight failed: explicit count was '${EXPLICIT_COUNT}'${NC}" >&2
+    exit 1
+fi
+echo -e "  ${GREEN}ok${NC} omg explicit --count = ${EXPLICIT_COUNT}"
+if command -v pacman >/dev/null 2>&1; then
+    preflight_match "pacman -Ss firefox" "firefox" "$PRE_DIR/pacman-search.txt" \
+        pacman -Ss firefox
+    preflight_match "pacman -Si firefox" "firefox" "$PRE_DIR/pacman-info.txt" \
+        pacman -Si firefox
+fi
+if command -v yay >/dev/null 2>&1; then
+    preflight_match "yay -Ss --repo firefox" "firefox" "$PRE_DIR/yay-search.txt" \
+        yay -Ss --repo firefox
+fi
+
+python3 - "$EXPORT_DIR/preflight.json" "$PRE_DIR" "$EXPLICIT_COUNT" << 'PY'
+import json, sys
+from pathlib import Path
+out, pre_dir, count = Path(sys.argv[1]), Path(sys.argv[2]), sys.argv[3]
+evidence = {"explicit_count": int(count)}
+for path in sorted(pre_dir.glob("*.txt")):
+    text = path.read_text(errors="replace")
+    evidence[path.stem] = {"bytes": len(text.encode()), "lines": text.count("\n")}
+out.write_text(json.dumps(evidence, indent=2) + "\n")
+PY
+
+cat > "$BENCH_DIR/pacman-explicit-count" << 'EOF'
+#!/bin/bash
+set -euo pipefail
+pacman -Qe | wc -l
+EOF
+cat > "$BENCH_DIR/yay-explicit-count" << 'EOF'
+#!/bin/bash
+set -euo pipefail
+yay -Qe | wc -l
+EOF
+chmod +x "$BENCH_DIR/pacman-explicit-count" "$BENCH_DIR/yay-explicit-count"
 
 echo -e "\n${BLUE}📦 Benchmark: SEARCH (firefox)${NC}"
 echo "-------------------------------"
-if command -v pacman &>/dev/null && command -v yay &>/dev/null; then
-    hyperfine --warmup $WARMUP --min-runs $MIN_RUNS \
-        --export-markdown "$EXPORT_DIR/search.md" \
-        --export-json "$EXPORT_DIR/search.json" \
-        --command-name "OMG (Daemon)" "$OMG search firefox --no-aur" \
-        --command-name "pacman" "pacman -Ss firefox" \
-        --command-name "yay (--repo)" "yay -Ss --repo firefox"
-elif command -v pacman &>/dev/null; then
-    hyperfine --warmup $WARMUP --min-runs $MIN_RUNS \
-        --export-markdown "$EXPORT_DIR/search.md" \
-        --export-json "$EXPORT_DIR/search.json" \
-        --command-name "OMG (Daemon)" "$OMG search firefox --no-aur" \
-        --command-name "pacman" "pacman -Ss firefox"
-else
-    echo "Skipped (pacman not available)"
+search_cmds=(--command-name "OMG (Daemon)" "$OMG search firefox --no-aur")
+if [ -x "$OMG_FAST" ]; then
+    search_cmds+=(--command-name "OMG (omg-fast)" "$OMG_FAST s firefox")
 fi
+if command -v pacman >/dev/null 2>&1; then
+    search_cmds+=(--command-name "pacman" "pacman -Ss firefox")
+fi
+if command -v yay >/dev/null 2>&1; then
+    search_cmds+=(--command-name "yay (--repo)" "yay -Ss --repo firefox")
+fi
+run_hyperfine "$EXPORT_DIR/search.json" "$EXPORT_DIR/search.md" "${search_cmds[@]}"
 
 echo -e "\n${BLUE}ℹ️  Benchmark: INFO (firefox)${NC}"
 echo "-------------------------------"
-if command -v pacman &>/dev/null && command -v yay &>/dev/null; then
-    hyperfine --warmup $WARMUP --min-runs $MIN_RUNS \
-        --export-markdown "$EXPORT_DIR/info.md" \
-        --export-json "$EXPORT_DIR/info.json" \
-        --command-name "OMG (Daemon)" "$OMG info firefox" \
-        --command-name "pacman" "pacman -Si firefox" \
-        --command-name "yay (--repo)" "yay -Si --repo firefox"
-elif command -v pacman &>/dev/null; then
-    hyperfine --warmup $WARMUP --min-runs $MIN_RUNS \
-        --export-markdown "$EXPORT_DIR/info.md" \
-        --export-json "$EXPORT_DIR/info.json" \
-        --command-name "OMG (Daemon)" "$OMG info firefox" \
-        --command-name "pacman" "pacman -Si firefox"
-else
-    echo "Skipped (pacman not available)"
+info_cmds=(--command-name "OMG (Daemon)" "$OMG info firefox")
+if [ -x "$OMG_FAST" ]; then
+    info_cmds+=(--command-name "OMG (omg-fast)" "$OMG_FAST i firefox")
 fi
+if command -v pacman >/dev/null 2>&1; then
+    info_cmds+=(--command-name "pacman" "pacman -Si firefox")
+fi
+if command -v yay >/dev/null 2>&1; then
+    info_cmds+=(--command-name "yay (--repo)" "yay -Si --repo firefox")
+fi
+run_hyperfine "$EXPORT_DIR/info.json" "$EXPORT_DIR/info.md" "${info_cmds[@]}"
 
 echo -e "\n${BLUE}⚡ Benchmark: STATUS${NC}"
 echo "-------------------------------"
+status_cmds=(--command-name "OMG (Daemon)" "$OMG status")
 if [ -x "$OMG_FAST" ]; then
-    hyperfine --warmup $WARMUP --min-runs $MIN_RUNS \
-        --export-markdown "$EXPORT_DIR/status.md" \
-        --export-json "$EXPORT_DIR/status.json" \
-        --command-name "OMG (omg-fast)" "$OMG_FAST status" \
-        --command-name "OMG (daemon)" "$OMG status"
-else
-    hyperfine --warmup $WARMUP --min-runs $MIN_RUNS \
-        --export-markdown "$EXPORT_DIR/status.md" \
-        --export-json "$EXPORT_DIR/status.json" \
-        --command-name "OMG (daemon)" "$OMG status"
+    status_cmds+=(--command-name "OMG (omg-fast)" "$OMG_FAST status")
 fi
+run_hyperfine "$EXPORT_DIR/status.json" "$EXPORT_DIR/status.md" "${status_cmds[@]}"
 
 echo -e "\n${BLUE}📋 Benchmark: EXPLICIT COUNT${NC}"
 echo "-------------------------------"
-$OMG explicit --count > /dev/null 2>&1 || true
-
+explicit_cmds=(--command-name "OMG (Daemon)" "$OMG explicit --count")
 if [ -x "$OMG_FAST" ]; then
-    if command -v pacman &>/dev/null && command -v yay &>/dev/null; then
-        hyperfine --warmup $WARMUP --min-runs $MIN_RUNS \
-            --export-markdown "$EXPORT_DIR/explicit.md" \
-            --export-json "$EXPORT_DIR/explicit.json" \
-            --command-name "OMG (omg-fast)" "$OMG_FAST ec" \
-            --command-name "OMG (daemon)" "$OMG explicit --count" \
-            --command-name "pacman" "bash -o pipefail -c 'pacman -Qe | wc -l'" \
-            --command-name "yay" "bash -o pipefail -c 'yay -Qe | wc -l'"
-    elif command -v pacman &>/dev/null; then
-        hyperfine --warmup $WARMUP --min-runs $MIN_RUNS \
-            --export-markdown "$EXPORT_DIR/explicit.md" \
-            --export-json "$EXPORT_DIR/explicit.json" \
-            --command-name "OMG (omg-fast)" "$OMG_FAST ec" \
-            --command-name "OMG (daemon)" "$OMG explicit --count" \
-            --command-name "pacman" "bash -o pipefail -c 'pacman -Qe | wc -l'"
-    else
-        hyperfine --warmup $WARMUP --min-runs $MIN_RUNS \
-            --export-markdown "$EXPORT_DIR/explicit.md" \
-            --export-json "$EXPORT_DIR/explicit.json" \
-            --command-name "OMG (omg-fast)" "$OMG_FAST ec" \
-            --command-name "OMG (daemon)" "$OMG explicit --count"
-    fi
-else
-    if command -v pacman &>/dev/null; then
-        hyperfine --warmup $WARMUP --min-runs $MIN_RUNS \
-            --export-markdown "$EXPORT_DIR/explicit.md" \
-            --export-json "$EXPORT_DIR/explicit.json" \
-            --command-name "OMG (daemon)" "$OMG explicit --count" \
-            --command-name "pacman" "bash -o pipefail -c 'pacman -Qe | wc -l'"
-    else
-        hyperfine --warmup $WARMUP --min-runs $MIN_RUNS \
-            --export-markdown "$EXPORT_DIR/explicit.md" \
-            --export-json "$EXPORT_DIR/explicit.json" \
-            --command-name "OMG (daemon)" "$OMG explicit --count"
+    explicit_cmds+=(--command-name "OMG (omg-fast)" "$OMG_FAST ec")
+fi
+if command -v pacman >/dev/null 2>&1; then
+    explicit_cmds+=(--command-name "pacman" "$BENCH_DIR/pacman-explicit-count")
+fi
+if command -v yay >/dev/null 2>&1; then
+    explicit_cmds+=(--command-name "yay" "$BENCH_DIR/yay-explicit-count")
+fi
+run_hyperfine "$EXPORT_DIR/explicit.json" "$EXPORT_DIR/explicit.md" "${explicit_cmds[@]}"
+
+if [ "$FAST_MODE" != true ] && [ "${OMG_BENCH_SKIP_UPDATE:-}" != 1 ]; then
+    echo -e "\n${BLUE}🔄 Benchmark: UPDATE DISCOVERY${NC}"
+    echo "-------------------------------"
+    if ! run_update_benchmark; then
+        echo -e "${YELLOW}Update discovery benchmark skipped or failed; query results still stand.${NC}"
     fi
 fi
 
@@ -480,9 +607,7 @@ echo "========================================================"
 echo -e "${GREEN}✅ Benchmarks Complete!${NC}"
 echo "========================================================"
 echo ""
-echo "Results saved to:"
-echo "  📄 Markdown tables: $EXPORT_DIR/*.md"
-echo "  📊 JSON data:       $EXPORT_DIR/*.json"
+echo "Scratch JSON/MD: $EXPORT_DIR/"
 echo ""
 echo -e "${YELLOW}Summary:${NC}"
 echo ""
@@ -495,7 +620,4 @@ for md_file in "$EXPORT_DIR"/*.md; do
     fi
 done
 
-echo -e "${BLUE}💡 Tips:${NC}"
-echo "  • JSON files can be used for CI regression detection"
-echo "  • Compare with previous runs: hyperfine --export-json old.json ..."
-echo "  • For cold cache benchmarks, see benchmark.sh --help"
+archive_results

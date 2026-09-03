@@ -32,6 +32,8 @@ node_modules/
 # ---- Logs and debug output ----
 *.log
 cargo_tree_*.txt
+__pycache__/
+*.pyc
 
 # ---- Screenshots and generated images ----
 screenshot-*.png
@@ -45,7 +47,7 @@ release.sh
 release_and_publish.sh
 test_*.sh
 
-# ---- Benchmark reports (keep latest.md + summary.json only) ----
+# ---- Benchmark scratch (canonical copies live in benchmarks/records/) ----
 benchmark_report.md
 benchmark_results/
 benchmarks/report_*.md

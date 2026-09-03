@@ -4,12 +4,12 @@
 
 > **Alpha.** OMG is alpha software. The CLI, flags, and on-disk formats can change without a compatibility guarantee. Use it on machines you can recover, and file issues when something breaks.
 
-[![Benchmark](https://img.shields.io/badge/search-5--11ms%20(12--24x%20faster)-brightgreen?style=flat-square)](benchmarks/latest.md)
+[![Benchmark](https://img.shields.io/badge/search-13ms%20(19x%20vs%20pacman)-brightgreen?style=flat-square)](benchmarks/latest.md)
 [![License](https://img.shields.io/badge/license-MIT-blue?style=flat-square)](LICENSE)
 [![Rust](https://img.shields.io/badge/rust-1.93%2B-orange?style=flat-square)](https://www.rust-lang.org)
 [![codecov](https://codecov.io/gh/pyro1121/omg/branch/main/graph/badge.svg?style=flat-square)](https://codecov.io/gh/pyro1121/omg)
 
-OMG replaces `pacman`, `yay`, `nvm`, `pyenv`, `rustup`, `rbenv`, and `jenv` with a single binary. It queries packages in **5-11ms** via a lightweight background daemon that keeps repository indexes in memory.
+OMG replaces `pacman`, `yay`, `nvm`, `pyenv`, `rustup`, `rbenv`, and `jenv` with a single binary. It queries packages in **about 11ms** (13ms mean) via a background daemon that keeps repository indexes in memory.
 
 ---
 
@@ -79,7 +79,7 @@ omg hook fish | source
 ## 60-Second Tour
 
 ```bash
-# 1. Search packages across official repos and AUR in ~6ms
+# 1. Search packages across official repos and AUR in ~11ms
 omg search ripgrep
 
 # 2. Install official packages or AUR packages with auto-elevation
@@ -104,7 +104,7 @@ omg dash
 ## Key Features
 
 ### Faster Package Operations
-Direct `libalpm` integration and an in-memory repository index eliminate subprocess startup overhead. Search results return in 5-11ms compared to 130-150ms with `pacman` and `yay`.
+Direct `libalpm` integration and an in-memory repository index eliminate subprocess startup overhead. `omg search firefox --no-aur` returns in **13ms mean / 11ms median** compared to **247ms** with `pacman` and **366ms** with `yay --repo`.
 
 ### Universal Runtime Manager
 Manage Node.js, Bun, Python, Go, Rust, Ruby, Java, and Pi from one CLI. OMG honors existing `.nvmrc`, `.python-version`, `rust-toolchain.toml`, and `.tool-versions` files automatically.
@@ -125,16 +125,19 @@ Build and install AUR packages safely unprivileged as your regular user. Multi-p
 
 ## Performance Benchmarks
 
-Measured on Arch Linux (Linux 6.18, AMD Ryzen / Intel i9, local pacman sync databases):
+Measured 2026-09-03 on Arch Linux (kernel 7.2.2, Intel Core i9-14900K, 31 GiB RAM, local pacman sync databases) with [hyperfine](https://github.com/sharkdp/hyperfine) 1.20. Timed commands were preflighted (search/info had to print `firefox`; explicit count was 273). Flags: `--shell=none --output=pipe`, 3 warmup, 20–50 runs.
 
-| Operation | OMG (Daemon) | pacman | yay | Speedup |
-| :--- | :--- | :--- | :--- | :---: |
-| **`search`** | **5.4-11.1ms** | 133ms | 150ms | **12-24x faster** |
-| **`info`** | **3.4-6.1ms** | 138ms | 300ms | **21-38x faster** |
-| **`explicit`** | **< 2ms** | 14ms | 27ms | **7-14x faster** |
-| **`status`** | **< 10ms** | N/A | N/A | Instant overview |
+| Operation | OMG (daemon) | omg-fast | pacman | yay | vs pacman |
+| :--- | ---: | ---: | ---: | ---: | :---: |
+| **`search firefox --no-aur`** | **13.1 ms** (median 11.4) | 11.2 ms | 247 ms | 366 ms | **19×** |
+| **`info firefox`** | 26.4 ms | **10.7 ms** | 226 ms | 543 ms | 9× / **21×** fast |
+| **`explicit --count`** | **10.4 ms** | 10.4 ms | 32 ms | 54 ms | **3×** |
+| **`status`** | **11.9 ms** | 10.7 ms | — | — | — |
+| **`update` discovery** | **829 ms** | — | — | — | — |
 
-Reproduce locally: [`./benchmark.sh`](benchmark.sh). Methodology and historical runs: [benchmarks/latest.md](benchmarks/latest.md).
+`omg search` / `omg info` / `omg status` go through the daemon. `omg-fast` is the thin IPC client (same index, less CLI work). Search speedup uses daemon mean vs `pacman -Ss`. Info’s 21× figure is `omg-fast` vs `pacman -Si`; the full `omg info` path is 9×.
+
+Reproduce: [`./benchmark-hyperfine.sh`](benchmark-hyperfine.sh). This run: [benchmarks/records/20260903_015949-5c43ddcc](benchmarks/records/20260903_015949-5c43ddcc/). History: [benchmarks/latest.md](benchmarks/latest.md).
 
 ---
 
