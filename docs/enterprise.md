@@ -66,33 +66,13 @@ omg enterprise license-scan --export csv
 
 ## 📜 Policy Management
 
-Define and enforce rules across the entire organization. Policies are pushed from the central control plane to all connected machines.
+Define and enforce rules across the entire organization. Enterprise policies are configured in the dashboard. The local host file `~/.config/omg/policy.toml` is a different surface (`omg audit policy`).
 
-### Hierarchical Policies
-
-Policies can be set at the Organization level and inherited by Teams, with specific overrides where necessary.
+### Viewing policy
 
 ```bash
 # View active policies
 omg enterprise policy show
-
-# Set a rule (admin only)
-omg enterprise policy set --scope organization --rule "require_pgp=true"
-```
-
-### Inheritance Model
-
-```mermaid
-graph TD
-    Org[Organization Policy] --> TeamA[Team A]
-    Org --> TeamB[Team B]
-    TeamA --> User1[User 1]
-    TeamA --> User2[User 2]
-    TeamB --> User3[User 3]
-    
-    subgraph "Overrides"
-    TeamB -- "Add Rule" --> TeamB
-    end
 ```
 
 ---

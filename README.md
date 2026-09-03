@@ -2,7 +2,7 @@
 
 **The fastest unified package manager for Arch Linux + universal runtime version manager.**
 
-> **Alpha.** OMG is alpha software. The CLI, flags, and on-disk formats can change without a compatibility guarantee. Use it on machines you can recover, and file issues when something breaks.
+> **Alpha.** OMG is alpha software. The CLI, flags, and on-disk formats can change without compatibility guarantees. Use it on machines you can recover, and file issues when something breaks.
 
 [![Benchmark](https://img.shields.io/badge/search-13ms%20(19x%20vs%20pacman)-brightgreen?style=flat-square)](benchmarks/latest.md)
 [![License](https://img.shields.io/badge/license-MIT-blue?style=flat-square)](LICENSE)

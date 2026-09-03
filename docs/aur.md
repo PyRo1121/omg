@@ -1,6 +1,6 @@
 # AUR Support
 
-OMG supports the Arch User Repository (AUR), combining the functionality of `yay` and `paru` with measured better performance (see benchmarks below).
+OMG supports the Arch User Repository (AUR) with the same install, search, and update commands used for official packages.
 
 ## Overview
 
@@ -8,7 +8,7 @@ OMG treats AUR packages as first-class citizens, with no distinction between off
 
 **Key advantages over yay/paru:**
 
-- **50% faster** package operations through intelligent optimizations
+- **One command surface** for official and AUR packages
 - **No sudo timeouts** during long builds
 - **Parallel source downloads** for multi-source packages
 - **Smart dependency resolution** that skips unnecessary API calls
@@ -20,13 +20,13 @@ OMG treats AUR packages as first-class citizens, with no distinction between off
 
 When building AUR packages with multiple sources, OMG downloads them all concurrently instead of sequentially.
 
-**Impact**: Reduces download time proportionally to source count. A package with 5 sources downloads ~5x faster.
+**Impact**: Total download time approaches the slowest single source instead of the sum.
 
 ### 2. Smart Dependency Resolution
 
 Before querying the AUR API for dependencies, OMG filters out packages already installed on your system.
 
-**Impact**: Eliminates unnecessary network calls and reduces dependency resolution time by 30-40% for packages with many deps.
+**Impact**: Eliminates unnecessary network calls for packages with many deps.
 
 ### 3. Sudoloop Mechanism
 
@@ -34,11 +34,11 @@ OMG automatically maintains sudo authentication throughout the entire build proc
 
 **Impact**: No more password prompts mid-build. Critical for packages with long compilation times (e.g., `chromium`, `linux`).
 
-### 4. Optimized PKGBUILD Parsing
+### 4. Metadata Archive
 
-Regex patterns for parsing PKGBUILDs are compiled once at startup using `lazy_static`, not on every parse.
+Bulk update checks use the AUR metadata archive instead of one request per package.
 
-**Impact**: ~30% faster PKGBUILD parsing, especially noticeable when processing many packages.
+**Impact**: Fewer API calls and faster update discovery across many AUR packages.
 
 ### 5. Streamlined Build Process
 
@@ -58,20 +58,17 @@ Add these to your `~/.config/omg/config.toml`:
 
 ```toml
 [aur]
-# Directory for building AUR packages (default: /tmp/omg-aur)
-build_dir = "/tmp/omg-aur"
+# Build isolation (default: "bubblewrap"); "chroot" or "native"
+build_method = "bubblewrap"
 
-# Keep build artifacts after installation (default: false)
-keep_build = false
+# Maximum concurrent AUR builds (default: CPU count)
+build_concurrency = 4
 
-# Number of concurrent source downloads (default: 4)
-max_downloads = 4
+# Require interactive PKGBUILD review before building (default: true)
+review_pkgbuild = true
 
-# Sudoloop refresh interval in seconds (default: 240)
-sudo_refresh = 240
-
-# Skip dependency installation confirmation (default: false)
-skip_dep_confirm = false
+# Reuse build outputs when the PKGBUILD hash matches (default: true)
+cache_builds = true
 ```
 
 ## Usage Examples
@@ -95,26 +92,7 @@ omg remove spotify
 
 ## Benchmarks
 
-Performance comparison installing `yay` package (includes dependencies):
-
-| Tool | Time | Relative |
-| ------ | ------ | ---------- |
-| **OMG (optimized)** | **9.1s** | **1.0x (baseline)** |
-| OMG (before optimization) | 18.2s | 2.0x slower |
-| yay | ~15-20s | 1.6-2.2x slower |
-| paru | ~14-19s | 1.5-2.1x slower |
-
-### Multi-source Package Benchmark
-
-Installing a package with 5 source files:
-
-| Tool | Download Time | Build Time | Total |
-| ------ | --------------- | ------------ | ------- |
-| **OMG (parallel)** | **2.3s** | 8.1s | **10.4s** |
-| OMG (sequential) | 11.2s | 8.1s | 19.3s |
-| yay | 10.8s | 8.3s | 19.1s |
-
-**Note**: Times may vary based on network speed, CPU, and package complexity.
+Reproducible measurements live in `benchmarks/records/` (search, info, status, and explicit operations). AUR install times depend on network speed, CPU, and package complexity, so they are not published as fixed numbers.
 
 ## How It Works
 
@@ -134,35 +112,25 @@ When you run `omg install <aur-package>`:
 
 ### Sudo timeout during builds
 
-If you're still experiencing sudo timeouts (shouldn't happen with sudoloop):
+OMG refreshes sudo authentication automatically during builds. If a prompt still appears, run `omg doctor` to diagnose privilege issues.
+
+### Slow builds
+
+Raise the concurrent build limit:
 
 ```toml
 [aur]
-sudo_refresh = 120  # Refresh every 2 minutes instead of 4
-```
-
-### Slow downloads
-
-Increase parallel download limit:
-
-```toml
-[aur]
-max_downloads = 8  # Download up to 8 sources concurrently
+build_concurrency = 8  # Build up to 8 packages concurrently
 ```
 
 ### Build failures
 
-Keep artifacts for debugging:
+Point `pkgdest` and `srcdest` at known locations so outputs survive for inspection:
 
 ```toml
 [aur]
-keep_build = true
-```
-
-Then inspect the build directory:
-
-```bash
-ls /tmp/omg-aur/<package-name>/
+pkgdest = "/var/cache/omg/packages"
+srcdest = "/var/cache/omg/sources"
 ```
 
 ## Comparison with yay/paru
@@ -173,8 +141,7 @@ ls /tmp/omg-aur/<package-name>/
 | Smart dep resolution | ✅ Yes | ❌ No | ❌ No |
 | Sudoloop | ✅ Yes | ❌ No | ⚠️ Partial |
 | Progress tracking | ✅ Real-time | ⚠️ Basic | ⚠️ Basic |
-| PKGBUILD caching | ✅ Yes | ❌ No | ❌ No |
-| Speed (yay install) | **9.1s** | ~18s | ~16s |
+| Build cache reuse | ✅ Yes | ❌ No | ❌ No |
 
 ## Technical Details
 

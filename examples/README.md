@@ -16,12 +16,12 @@ This directory contains example configuration files to help you get started with
 2. **Customize for your needs:**
    - Edit `~/.config/omg/config.toml` for general settings
    - Edit `~/.config/omg/policy.toml` for security policies
-   - Copy `.tool-versions` to your project root for runtime locking
+   - Copy `examples/.tool-versions` to your project root for runtime locking
 
 3. **Verify configuration:**
    ```bash
    omg config get
-   omg policy check
+   omg audit policy
    ```
 
 ---
@@ -239,13 +239,10 @@ omg config validate
 
 ```bash
 # Show current policy
-omg policy show
+omg enterprise policy show
 
-# Check if package would be allowed
-omg policy check firefox
-
-# Test policy changes
-omg policy validate
+# Preview whether a package install would proceed
+omg install --dry-run firefox
 ```
 
 ### Verify Runtime Versions
@@ -256,9 +253,6 @@ omg list
 
 # Check against .tool-versions
 omg env check
-
-# Show version conflicts
-omg env diff
 ```
 
 ---
@@ -279,9 +273,9 @@ omg env diff
 **Symptom:** `omg install` fails with policy error
 
 **Solutions:**
-1. Check policy: `omg policy check <package>`
-2. Temporarily bypass: `omg install --force <package>` (not recommended)
-3. Adjust policy: Edit `~/.config/omg/policy.toml`
+1. Check enterprise policy: `omg enterprise policy show`
+2. Preview the install: `omg install --dry-run <package>`
+3. Adjust enterprise policy in the dashboard, or the local host file with `omg audit policy`
 
 ### Runtime Versions Not Switching
 

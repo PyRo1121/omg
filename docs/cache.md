@@ -19,13 +19,13 @@ The "Hot" layer uses a high-performance, concurrent memory cache designed for su
 
 ---
 
-## 💾 Tier 2: Persistent Storage (Cold Cache)
+## 💾 Tier 2: Persistent Snapshot (Cold Cache)
 
-For data that must survive reboots or daemon restarts, OMG uses an embedded, ACID-compliant database. This ensures that even in the event of a system crash or power loss, your transaction history and security logs remain uncorrupted.
+For data that must survive reboots or daemon restarts, OMG keeps a versioned JSON status snapshot. The daemon writes it through a same-directory temporary file, `fsync`, and atomic rename, so a crash can never leave a truncated file behind.
 
-- **Technology**: A pure-Rust, transactional atomic database.
-- **Durability**: Guaranteed data integrity through atomic commits.
-- **Location**: Stored locally in `~/.local/share/omg/cache.redb`.
+- **Technology**: Versioned JSON snapshot (`status-cache.json`).
+- **Durability**: Atomic replacement plus owner-only file mode.
+- **Location**: Stored locally in `~/.local/share/omg/` (`OMG_DAEMON_DATA_DIR` overrides it).
 - **Latency**: < 5ms (disk-dependent)
 
 ---
@@ -39,7 +39,7 @@ A specialized binary snapshot file is maintained by the daemon to store your sys
 ## 🔄 Data Lifecycle Patterns
 
 ### Search Request Flow
-The system always attempts to serve results from Tier 1 (Memory). If there is a miss, it falls back to Tier 3 (Local Index). If the local results are insufficient, only then does it trigger a Tier 4 (Network) request to the AUR.
+The system always attempts to serve results from Tier 1 (Memory). If there is a miss, it falls back to the daemon's local package index. If the local results are insufficient, only then does it make a network request to the AUR.
 
 ### Status Monitoring
 System status is generated in the background every 5 minutes and stored in both Tier 1 and Tier 2. This ensures that tools like `omg-fast` always have access to a pre-computed, durable state without needing to query the system live.

@@ -6,23 +6,9 @@ description: The complete guide to the fastest unified package manager
 
 # OMG Documentation
 
-## The Problem Every Developer Knows
+## What Is OMG
 
-You're setting up a new machine. Or onboarding a teammate. Or just trying to get a project running. And suddenly you're juggling:
-
-```bash
-pacman -Syu                    # System packages
-yay -S some-aur-package        # AUR packages
-nvm install 20 && nvm use 20   # Node.js
-pyenv install 3.12.0           # Python
-rustup default stable          # Rust
-rbenv install 3.2.0            # Ruby
-sdk install java 21            # Java
-```
-
-Seven different tools. Seven different syntaxes. Seven different config files. Seven different ways things can break.
-
-**OMG fixes this.**
+OMG is a unified package manager and runtime version manager. It replaces pacman, yay, nvm, pyenv, rustup, rbenv, and jenv with one tool.
 
 ---
 

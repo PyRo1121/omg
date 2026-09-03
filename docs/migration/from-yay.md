@@ -89,7 +89,7 @@ omg list node --available
 
 ```bash
 omg audit
-omg audit sbom --format cyclonedx
+omg audit sbom --output sbom.json
 ```
 
 ### Team Sync
