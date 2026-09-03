@@ -215,7 +215,7 @@ impl Model for InfoModel {
                         format!(
                             "{} ({})",
                             info.source.styled_label(),
-                            style::info(&info.repo)
+                            style::info(&style::sanitize_terminal_text(&info.repo))
                         )
                     };
                     let _ = writeln!(output, "{}", Self::render_kv("Source", &source_val));
@@ -501,10 +501,10 @@ mod tests {
         let mut model = InfoModel::new("test".to_string());
         let _ = model.update(InfoMsg::InfoReceived(PackageInfo {
             name: "test-pkg".to_string(),
-            version: format!("1.0.0\u{1b}[31m\u{202e}spoofed"),
+            version: format!("1.0.0\u{200b}\u{1b}[31m\u{202e}spoofed"),
             description: "Test".to_string(),
             source: InfoSource::Official,
-            repo: "extra".to_string(),
+            repo: "extra\u{1b}[31m\u{202e}repo".to_string(),
             url: None,
             size: None,
             licenses: vec![],
@@ -520,8 +520,12 @@ mod tests {
             "view must exclude the raw ANSI control sequence, got: {view}"
         );
         assert!(
-            !view.contains('\u{202e}'),
-            "view must exclude the bidi override, got: {view}"
+            !view.contains('\u{202e}') && !view.contains('\u{200b}'),
+            "view must exclude the bidi override and zero-width chars, got: {view}"
+        );
+        assert!(
+            view.contains("1.0.0") && view.contains("extra"),
+            "version and repo must still render after sanitization, got: {view}"
         );
     }
 

@@ -162,7 +162,8 @@ pub fn command(cmd: &str) -> String {
 /// Remove terminal-control and bidi-override characters from remote text.
 ///
 /// Package metadata is untrusted and must not move the cursor, set terminal
-/// state, create hidden OSC links, or reorder the visible command line.
+/// state, create hidden OSC links, reorder the visible command line, or
+/// smuggle invisible characters that spoof visible content.
 #[must_use]
 pub fn sanitize_terminal_text(text: &str) -> String {
     text.chars()
@@ -170,9 +171,16 @@ pub fn sanitize_terminal_text(text: &str) -> String {
             !character.is_control()
                 && !matches!(
                     character,
-                    '\u{202a}'
-                        ..='\u{202e}' | '\u{2066}'
-                        ..='\u{2069}'
+                    // Bidi embedding/override/isolate (Trojan Source class)
+                    '\u{202a}'..='\u{202e}'
+                        | '\u{2066}'..='\u{2069}'
+                        // Zero-width + invisible formatting (LRM/RLM/ZWJ/WJ)
+                        | '\u{200b}'..='\u{200f}'
+                        | '\u{2060}'..='\u{2064}'
+                        // Unicode line/paragraph separator (breaks single-line layout)
+                        | '\u{2028}' | '\u{2029}'
+                        // Zero-width no-break space / BOM in the middle of text
+                        | '\u{feff}'
                 )
         })
         .collect()
@@ -287,7 +295,39 @@ mod tests {
     }
 
     #[test]
-    #[serial]
+    fn test_sanitize_strips_terminal_control_and_osc_bytes() {
+        let cleaned = sanitize_terminal_text("core\u{1b}]0;pwn\u{202e}db\u{7}");
+        assert_eq!(cleaned, "core]0;pwndb");
+        assert!(!cleaned.chars().any(char::is_control));
+    }
+
+    #[test]
+    fn test_sanitize_strips_bidi_overrides_and_isolates() {
+        let cleaned = sanitize_terminal_text("a\u{202a}b\u{202c}c\u{2066}d\u{2069}e");
+        assert_eq!(cleaned, "abcde");
+    }
+
+    #[test]
+    fn test_sanitize_strips_invisible_characters() {
+        let cleaned = sanitize_terminal_text(
+            "x\u{200b}y\u{200c}z\u{200d}w\u{200e}v\u{200f}u\u{2060}t\u{2061}s\u{2064}r\u{feff}q",
+        );
+        assert_eq!(cleaned, "xyzwvutsrq");
+    }
+
+    #[test]
+    fn test_sanitize_strips_line_and_paragraph_separators() {
+        let cleaned = sanitize_terminal_text("one\u{2028}two\u{2029}three");
+        assert_eq!(cleaned, "onetwothree");
+    }
+
+    #[test]
+    fn test_sanitize_preserves_visible_multibyte_text() {
+        let cleaned = sanitize_terminal_text("v1.2.3 — ✓ 日本語 emoji 🎉 width →");
+        assert_eq!(cleaned, "v1.2.3 — ✓ 日本語 emoji 🎉 width →");
+    }
+
+    #[test]
     fn test_unicode_icons() {
         temp_env::with_var("OMG_UNICODE", Some("1"), || {
             assert_eq!(icon("✓", "OK"), "✓");
