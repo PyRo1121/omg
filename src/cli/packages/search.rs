@@ -683,7 +683,7 @@ mod tests {
     #[test]
     fn picker_is_json_and_pipe_safe() {
         assert!(!should_offer_picker(true));
-        assert!(!should_offer_picker(!console::user_attended()));
+        assert_eq!(should_offer_picker(false), console::user_attended());
     }
 
     #[test]

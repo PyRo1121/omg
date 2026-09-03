@@ -246,8 +246,12 @@ pub async fn update(check_only: bool, yes: bool, dry_run: bool) -> Result<()> {
     }
 
     let mut all_updates: Vec<UpdateInfo> = Vec::with_capacity(32);
+    let skip_aur = crate::core::paths::test_mode() || crate::core::env::distro::is_debian_like();
     let official_pb = modern_ui::modern_spinner("Checking", "official repositories");
-    let aur_pb = modern_ui::modern_spinner("Checking", "AUR packages");
+    // The serial path never started an AUR spinner on hosts that skip that
+    // lane. Starting one here and leaving it live on Skipped would keep a
+    // "Checking AUR packages" ticker on Debian and under tests.
+    let aur_pb = (!skip_aur).then(|| modern_ui::modern_spinner("Checking", "AUR packages"));
     let check_start = std::time::Instant::now();
 
     // The official and AUR checks touch independent state (sync databases
@@ -260,7 +264,7 @@ pub async fn update(check_only: bool, yes: bool, dry_run: bool) -> Result<()> {
         }
     };
     let aur_fut = async {
-        if crate::core::paths::test_mode() || crate::core::env::distro::is_debian_like() {
+        if skip_aur {
             return Ok(AurCheck::Skipped);
         }
         // The AUR lane must enforce the user's security policy the same
@@ -277,7 +281,16 @@ pub async fn update(check_only: bool, yes: bool, dry_run: bool) -> Result<()> {
     let (official_result, aur_result): (Result<Vec<UpdateInfo>>, Result<AurCheck>) =
         tokio::join!(official_fut, aur_fut);
 
-    let official_updates = official_result?;
+    let official_updates = match official_result {
+        Ok(updates) => updates,
+        Err(error) => {
+            modern_ui::finish_clear(&official_pb);
+            if let Some(pb) = &aur_pb {
+                modern_ui::finish_clear(pb);
+            }
+            return Err(error);
+        }
+    };
     let check_elapsed = check_start.elapsed();
 
     if official_updates.is_empty() {
@@ -297,10 +310,23 @@ pub async fn update(check_only: bool, yes: bool, dry_run: bool) -> Result<()> {
     let official_count = official_updates.len();
     all_updates.extend(official_updates);
 
-    let aur_packages = match aur_result? {
-        AurCheck::Skipped => Vec::new(),
-        AurCheck::Failed(error) => {
-            modern_ui::finish_clear(&aur_pb);
+    let aur_packages = match aur_result {
+        Err(error) => {
+            if let Some(pb) = &aur_pb {
+                modern_ui::finish_clear(pb);
+            }
+            return Err(error);
+        }
+        Ok(AurCheck::Skipped) => {
+            if let Some(pb) = &aur_pb {
+                modern_ui::finish_clear(pb);
+            }
+            Vec::new()
+        }
+        Ok(AurCheck::Failed(error)) => {
+            if let Some(pb) = &aur_pb {
+                modern_ui::finish_clear(pb);
+            }
             if official_count == 0 {
                 return Err(error).context("Failed to check AUR updates");
             }
@@ -309,7 +335,7 @@ pub async fn update(check_only: bool, yes: bool, dry_run: bool) -> Result<()> {
             ));
             Vec::new()
         }
-        AurCheck::Ready { policy, raw } => {
+        Ok(AurCheck::Ready { policy, raw }) => {
             let aur_elapsed = check_start.elapsed();
             let count = raw.len();
             let ScreenedAurUpdates { allowed, skipped } =
@@ -322,14 +348,16 @@ pub async fn update(check_only: bool, yes: bool, dry_run: bool) -> Result<()> {
                     repo: "AUR".to_string(),
                 });
             }
-            if count == 0 {
-                modern_ui::finish_info(&aur_pb, "No updates in AUR");
-            } else {
-                modern_ui::finish_success(
-                    &aur_pb,
-                    "Found",
-                    &format!("{count} AUR update(s) in {:.2}s", aur_elapsed.as_secs_f64()),
-                );
+            if let Some(pb) = &aur_pb {
+                if count == 0 {
+                    modern_ui::finish_info(pb, "No updates in AUR");
+                } else {
+                    modern_ui::finish_success(
+                        pb,
+                        "Found",
+                        &format!("{count} AUR update(s) in {:.2}s", aur_elapsed.as_secs_f64()),
+                    );
+                }
             }
             for (name, violation) in &skipped {
                 modern_ui::print_warning(&format!(
