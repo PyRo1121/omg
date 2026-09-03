@@ -1,7 +1,7 @@
 {
-  "timestamp": "2026-09-03T02:18:51Z",
-  "search_ms": 7.7,
-  "speedup": "23.5x",
-  "commit": "e4d3f42db88a63261f89c9a4e55e38940e977039",
-  "record": "20260903_021851-e4d3f42"
+  "timestamp": "2026-09-03T11:22:32Z",
+  "search_ms": 9.5,
+  "speedup": "22.9x",
+  "commit": "60d20dcc29e4bd8d38b27ee48fa0466f06341454",
+  "record": "20260903_112232-60d20dc"
 }
