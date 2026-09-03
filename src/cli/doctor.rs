@@ -264,6 +264,7 @@ fn check_arch_infra() -> usize {
     let mut issues = 0;
 
     let conf_path = crate::core::paths::pacman_conf_path();
+    let mut db_path: Option<String> = None;
     if conf_path.exists() {
         match crate::core::pacman_conf::PacmanConfig::parse(&conf_path) {
             Ok(config) => {
@@ -273,6 +274,7 @@ fn check_arch_infra() -> usize {
                     conf_path.display(),
                     config.repos.len()
                 );
+                db_path = config.db_path;
             }
             Err(e) => {
                 println!(
@@ -307,6 +309,8 @@ fn check_arch_infra() -> usize {
         );
         issues += 1;
     }
+
+    issues += check_pacman_lock(db_path.as_deref());
 
     issues
 }
@@ -368,19 +372,100 @@ async fn check_network(arch_backend: bool) -> usize {
         GENERIC_DNS_HOSTS
     };
     for host in dns_hosts {
-        match std::net::ToSocketAddrs::to_socket_addrs(&format!("{host}:443")) {
-            Ok(addrs) => {
-                let count = addrs.count();
+        // A dead resolver blocks ToSocketAddrs forever and would hang the
+        // whole doctor run, so resolve off the executor with a hard timeout.
+        let lookup = format!("{host}:443");
+        let resolved = tokio::time::timeout(
+            Duration::from_secs(5),
+            tokio::task::spawn_blocking(move || {
+                std::net::ToSocketAddrs::to_socket_addrs(lookup.as_str())
+                    .map(std::iter::Iterator::count)
+            }),
+        )
+        .await;
+        match resolved {
+            Ok(Ok(Ok(count))) => {
                 println!("    {} {} ({} addresses)", style::success("✓"), host, count);
             }
-            Err(e) => {
+            Ok(Ok(Err(e))) => {
                 println!("    {} {} ({})", style::error("✗"), host, e);
+                issues += 1;
+            }
+            Ok(Err(e)) => {
+                println!(
+                    "    {} {} (resolver task failed: {e})",
+                    style::error("✗"),
+                    host
+                );
+                issues += 1;
+            }
+            Err(_) => {
+                println!("    {} {} (DNS timeout)", style::error("✗"), host);
                 issues += 1;
             }
         }
     }
 
     issues
+}
+
+/// A package-manager process holding the ALPM database lock, by binary name.
+/// Kept small and exact: anything else holding db.lck is either a wrapper
+/// around these or a stale lock from a crashed run.
+#[cfg(feature = "arch")]
+const DB_LOCK_HOLDERS: &[&str] = &["pacman", "yay", "paru", "pikaur", "omg"];
+
+/// Whether any package-manager process is currently running, by binary
+/// name. Shared by the lock check and its test so both agree on liveness.
+#[cfg(feature = "arch")]
+fn package_manager_running() -> bool {
+    std::fs::read_dir("/proc")
+        .into_iter()
+        .flatten()
+        .flatten()
+        .any(|entry| {
+            let name = entry.file_name();
+            let Some(pid) = name
+                .to_str()
+                .filter(|name| name.bytes().all(|b| b.is_ascii_digit()))
+            else {
+                return false;
+            };
+            let comm = std::fs::read_to_string(format!("/proc/{pid}/comm"))
+                .map(|comm| comm.trim().to_string())
+                .unwrap_or_default();
+            DB_LOCK_HOLDERS.contains(&comm.as_str())
+        })
+}
+
+/// Report a stale pacman database lock. A live lock means a manager is
+/// mid-transaction and doctor stays quiet; a lock with no manager behind
+/// it blocks every future transaction until removed.
+#[cfg(feature = "arch")]
+fn check_pacman_lock(db_path: Option<&str>) -> usize {
+    let lock = std::path::Path::new(db_path.unwrap_or("/var/lib/pacman")).join("db.lck");
+    if !lock.exists() {
+        return 0;
+    }
+    if package_manager_running() {
+        println!(
+            "  {} Database lock held by a running package manager ({})",
+            style::success("✓"),
+            lock.display()
+        );
+        return 0;
+    }
+    println!(
+        "  {} Stale database lock with no package manager running ({})",
+        style::error("✗"),
+        lock.display()
+    );
+    println!(
+        "    {} Remove it: sudo rm {}",
+        style::dim("→"),
+        lock.display()
+    );
+    1
 }
 
 /// Check for end-of-life runtimes
@@ -699,6 +784,24 @@ mod tests {
         assert!(!mirror_status_is_issue(
             reqwest::StatusCode::TEMPORARY_REDIRECT
         ));
+    }
+
+    /// A lock file with no package manager behind it is stale and counts
+    /// as an issue; a missing lock is healthy. The live-manager branch is
+    /// not unit-tested: it depends on real process state.
+    #[cfg(feature = "arch")]
+    #[test]
+    fn stale_lock_without_a_manager_is_an_issue() {
+        // Host-state dependent: a genuinely running manager means the lock
+        // is live, so the stale assertion only runs on quiet machines.
+        if package_manager_running() {
+            return;
+        }
+        let dir = tempfile::TempDir::new().expect("isolated db dir");
+        let dir_str = dir.path().to_string_lossy().into_owned();
+        assert_eq!(check_pacman_lock(Some(&dir_str)), 0);
+        std::fs::write(dir.path().join("db.lck"), b"").expect("stale lock");
+        assert_eq!(check_pacman_lock(Some(&dir_str)), 1);
     }
 
     // W3-A-02: every supported backend distro must get a healthy OS verdict;
