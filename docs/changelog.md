@@ -47,6 +47,7 @@ Read Python and Deno project pins, map compatible requests to installed versions
 
 ### 🐛 Bug Fixes
 
+- **Ci**: Align tests with current CLI contracts
 - **Tui**: Sanitize remaining team fields
 - **Doctor**: Report healthy runs with warnings
 - Sanitize TUI team names
