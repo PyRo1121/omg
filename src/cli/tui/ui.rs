@@ -1426,6 +1426,63 @@ mod tests {
             .collect()
     }
 
+    /// Builds a backend version from raw metadata text. The strict parser
+    /// rejects poisoned strings, so this goes through the domain type's serde
+    /// path the way cached/remote metadata does.
+    fn poisoned_version(raw: &str) -> crate::package_managers::types::Version {
+        #[cfg(feature = "arch")]
+        {
+            serde_json::from_str(&format!(
+                r#"{{"pkgver":{},"epoch":null,"pkgrel":{{"major":1,"minor":null}}}}"#,
+                serde_json::to_string(raw).expect("json version string")
+            ))
+            .expect("serde constructs versions without strict validation")
+        }
+        #[cfg(not(feature = "arch"))]
+        {
+            let _ = raw;
+            crate::package_managers::types::DebVersion::new(raw)
+        }
+    }
+
+    #[test]
+    fn packages_rows_render_sanitized_version_strings() {
+        let mut terminal = Terminal::new(TestBackend::new(120, 40)).expect("test terminal");
+        let mut app = app_on(Tab::Packages);
+        app.search_results = vec![crate::package_managers::SyncPackage {
+            name: "evil".to_string(),
+            version: poisoned_version("1.0\u{1b}[31m\u{202e}evil"),
+            description: "browser".to_string(),
+            repo: "AUR".to_string(),
+            download_size: 0,
+            installed: false,
+        }];
+
+        terminal
+            .draw(|frame| draw(frame, &app))
+            .expect("draw packages");
+        let rendered: String = terminal
+            .backend()
+            .buffer()
+            .content()
+            .iter()
+            .map(ratatui::buffer::Cell::symbol)
+            .collect();
+
+        assert!(
+            !rendered.chars().any(char::is_control),
+            "package version controls must not reach the TUI buffer"
+        );
+        assert!(
+            !rendered.contains('\u{202e}'),
+            "package version bidi overrides must not reach the TUI buffer"
+        );
+        assert!(
+            rendered.contains("1.0[31mevil"),
+            "sanitized version text must stay visible"
+        );
+    }
+
     #[test]
     fn width_helpers_replace_terminal_controls_before_rendering() {
         let rendered = truncate_width("safe\x1b[31m\ntext", 40);
