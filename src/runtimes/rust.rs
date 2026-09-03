@@ -21,8 +21,8 @@ use tar::Archive;
 
 use super::common::{
     BudgetedReader, BudgetedSink, MAX_DECOMPRESSED_BYTES, activate_version, begin_staged_install,
-    complete_staged_install, copy_regular_tree, download_with_progress, get_current_version,
-    is_valid_version_dir, list_installed_versions, parse_sha256_digest, print_already_installed,
+    complete_staged_install, copy_regular_tree, download_with_progress,
+    is_valid_version_dir, parse_sha256_digest, print_already_installed,
     print_installed, print_using, replace_staged_install, validate_download_filename,
 };
 use crate::core::archive::stripped_archive_path;
@@ -140,15 +140,6 @@ impl RustManager {
         });
 
         Ok(versions)
-    }
-
-    pub fn list_installed(&self) -> Result<Vec<String>> {
-        list_installed_versions(&self.versions_dir)
-    }
-
-    #[must_use]
-    pub fn current_version(&self) -> Option<String> {
-        get_current_version(&self.versions_dir)
     }
 
     /// Install Rust - PURE RUST, NO SUBPROCESS
@@ -373,6 +364,9 @@ impl RustManager {
         Ok(())
     }
 }
+
+// Generate common runtime manager methods (list_installed, current_version)
+crate::runtimes::common::impl_runtime_common!(RustManager);
 
 impl RustManager {
     pub(crate) fn parse_toolchain_content(
@@ -978,12 +972,12 @@ mod tests {
         )?;
 
         assert!(!version_dir.exists());
-        assert!(list_installed_versions(versions.path())?.is_empty());
+        assert!(crate::runtimes::common::list_installed_versions(versions.path())?.is_empty());
 
         complete_staged_install(&staging, &version_dir, "stable-x86_64-unknown-linux-gnu")?;
         assert!(version_dir.join(RUST_METADATA_FILE).is_file());
         assert_eq!(
-            list_installed_versions(versions.path())?,
+            crate::runtimes::common::list_installed_versions(versions.path())?,
             vec!["stable-x86_64-unknown-linux-gnu".to_string()]
         );
         Ok(())
