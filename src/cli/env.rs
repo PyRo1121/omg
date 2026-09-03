@@ -285,14 +285,54 @@ async fn sync_lockfile(url_or_id: &str, root: &Path) -> Result<()> {
 
     EnvironmentState::parse_lockfile(&content)
         .context("Downloaded Gist contains an invalid omg.lock")?;
+    backup_replaced_lock(root, &content)?;
     crate::core::safe_ops::atomic_write_file_sync(root.join("omg.lock"), content)
         .context("Failed to write omg.lock from Gist")?;
     Ok(())
 }
 
+/// Preserve the local lock before a pull overwrites it with the team
+/// version. Returns whether a backup was taken: only when a local lock
+/// exists and actually differs from the incoming content.
+fn backup_replaced_lock(root: &Path, incoming: &str) -> Result<bool> {
+    let lock_path = root.join("omg.lock");
+    let Ok(existing) = std::fs::read_to_string(&lock_path) else {
+        return Ok(false);
+    };
+    if existing == incoming {
+        return Ok(false);
+    }
+    let backup = root.join("omg.lock.backup");
+    crate::core::safe_ops::atomic_write_file_sync(&backup, existing)
+        .context("Failed to back up local omg.lock before pull")?;
+    tracing::info!(
+        "Replaced local omg.lock with the team version; previous copy kept at {}",
+        backup.display()
+    );
+    Ok(true)
+}
+
 #[cfg(test)]
 mod tests {
-    use super::{parse_gist_id, sanitize_remote_error_body};
+    use super::{backup_replaced_lock, parse_gist_id, sanitize_remote_error_body};
+
+    #[test]
+    fn replaced_lock_is_backed_up_once_and_identical_content_is_not() {
+        let dir = tempfile::TempDir::new().expect("isolated workspace");
+        // No local lock: nothing to preserve.
+        assert!(!backup_replaced_lock(dir.path(), "new").expect("backup"));
+        assert!(!dir.path().join("omg.lock.backup").exists());
+        // Identical content: no backup taken.
+        std::fs::write(dir.path().join("omg.lock"), "same").expect("seed lock");
+        assert!(!backup_replaced_lock(dir.path(), "same").expect("backup"));
+        assert!(!dir.path().join("omg.lock.backup").exists());
+        // Differing content: previous copy preserved.
+        assert!(backup_replaced_lock(dir.path(), "new").expect("backup"));
+        assert_eq!(
+            std::fs::read_to_string(dir.path().join("omg.lock.backup")).expect("backup"),
+            "same"
+        );
+    }
 
     #[test]
     fn gist_ids_are_extracted_and_strictly_validated() {
