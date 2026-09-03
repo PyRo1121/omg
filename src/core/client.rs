@@ -30,17 +30,38 @@ use crate::daemon::protocol::{
 #[cfg(unix)]
 use std::os::unix::net::UnixStream as SyncUnixStream;
 
+/// Validate a daemon socket parent directory, refusing symlinked,
+/// foreign-owned, or group/world-accessible parents with one shared message.
+pub fn validate_socket_with_context(socket_path: &std::path::Path) -> Result<()> {
+    paths::validate_socket_parent(socket_path).with_context(|| {
+        format!(
+            "Refusing insecure daemon socket directory for {}",
+            socket_path.display()
+        )
+    })
+}
+
+/// Poll until the daemon answers a ping or attempts run out. The daemon
+/// needs time to build its in-memory index and bind the socket.
+pub fn wait_for_daemon_ready(socket_path: &std::path::Path, attempts: u32, interval: Duration) -> bool {
+    for _ in 0..attempts {
+        std::thread::sleep(interval);
+        if socket_path.exists()
+            && let Ok(mut client) = DaemonClient::connect_sync()
+            && client.ping_sync().is_ok()
+        {
+            return true;
+        }
+    }
+    false
+}
+
 /// Create a new sync connection to the daemon.
 fn connect_sync_stream_with_timeout(timeout: Duration) -> Result<SyncUnixStream> {
     tracing::debug!("Connecting to daemon...");
 
     let socket_path = default_socket_path();
-    paths::validate_socket_parent(&socket_path).with_context(|| {
-        format!(
-            "Refusing insecure daemon socket directory for {}",
-            socket_path.display()
-        )
-    })?;
+    validate_socket_with_context(&socket_path)?;
     let stream = SyncUnixStream::connect(&socket_path)
         .with_context(|| format!("Failed to connect to daemon at {}", socket_path.display()))?;
 
@@ -103,12 +124,7 @@ impl DaemonClient {
         if Self::daemon_disabled() {
             anyhow::bail!("Daemon disabled by environment");
         }
-        paths::validate_socket_parent(&socket_path).with_context(|| {
-            format!(
-                "Refusing insecure daemon socket directory for {}",
-                socket_path.display()
-            )
-        })?;
+        validate_socket_with_context(&socket_path)?;
         tracing::debug!("Connecting to daemon at {:?}", socket_path);
 
         const MAX_CONNECT_RETRIES: u32 = 2;

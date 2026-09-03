@@ -151,6 +151,7 @@ fn fast_status_from_daemon() -> Result<(u32, u32, u32, u32)> {
 fn connect_daemon_stream() -> Result<UnixStream> {
     const DAEMON_IO_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(30);
     let path = omg_lib::core::paths::socket_path();
+    omg_lib::core::client::validate_socket_with_context(&path)?;
     let stream = UnixStream::connect(&path)
         .with_context(|| format!("daemon not running (no listener at {})", path.display()))?;
     stream.set_read_timeout(Some(DAEMON_IO_TIMEOUT))?;

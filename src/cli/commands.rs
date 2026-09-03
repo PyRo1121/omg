@@ -689,16 +689,11 @@ pub fn daemon(foreground: bool) -> Result<()> {
             // NOTE: this is an intentional short synchronous block on the CLI's own
             // current-thread runtime; the command does nothing else while waiting and
             // the process exits right after, so no other task is starved.
-            for _ in 0..30 {
-                std::thread::sleep(std::time::Duration::from_millis(100));
-                if socket_path.exists()
-                    && let Ok(mut client) = crate::core::client::DaemonClient::connect_sync()
-                    && client.ping_sync().is_ok()
-                {
-                    ready = true;
-                    break;
-                }
-            }
+            ready = crate::core::client::wait_for_daemon_ready(
+                &socket_path,
+                30,
+                std::time::Duration::from_millis(100),
+            );
         }
 
         daemon_start_result(spawn, ready, socket_path.exists())
