@@ -63,7 +63,7 @@ fn main() {
         return;
     }
 
-    // 1. Try reading the fast binary status file (<1ms)
+    // Try reading the fast binary status file (<1ms)
     if let Some(status) = FastStatus::read_default() {
         display_status(
             cmd,
@@ -75,13 +75,13 @@ fn main() {
         return;
     }
 
-    // 2. Try querying the daemon socket via IPC
+    // Querying the daemon socket via IPC
     if let Ok((total, explicit, orphans, updates)) = fast_status_from_daemon() {
         display_status(cmd, total, explicit, orphans, updates);
         return;
     }
 
-    // 3. Fall back to direct fast status calculation on Arch Linux
+    // Fall back to direct fast status calculation on Arch Linux
     #[cfg(feature = "arch")]
     if let Ok((total, explicit, orphans)) = omg_lib::package_managers::pacman_db::get_counts_fast()
     {

@@ -691,8 +691,8 @@ pub fn enable_turbo_mode() -> Result<()> {
 
     crate::cli::modern_ui::print_phase_header("⚡", "TURBO MODE", "Fast package operations");
 
-    // Step 1: strip any capabilities an older omg version may have granted.
-    // This runs a privileged command, so ask first in an attended terminal.
+    // Strip capabilities an older omg version may have granted. This runs
+    // a privileged command, so ask first in an attended terminal.
     println!(
         "  {} Removing legacy file capabilities from {}...",
         "→".cyan(),
@@ -735,7 +735,7 @@ pub fn enable_turbo_mode() -> Result<()> {
     }
     println!();
 
-    // Step 2: warm the sudo credential cache so subsequent operations are
+    // Warm the sudo credential cache so subsequent operations are
     // prompt-free for the timestamp window; sudoloop keeps it alive during
     // long AUR builds.
     println!("  {} Turbo now means:", "→".cyan());
@@ -753,7 +753,7 @@ pub fn enable_turbo_mode() -> Result<()> {
     );
     println!();
 
-    // Step 3: optional NOPASSWD guidance for unattended operation.
+    // Optional NOPASSWD guidance for unattended operation.
     if console::user_attended() {
         let user = whoami::username().unwrap_or_else(|_| "username".to_string());
         println!(

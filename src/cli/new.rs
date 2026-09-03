@@ -53,13 +53,11 @@ pub fn run(stack: &str, name: &str) -> Result<()> {
     // Post-scaffold setup
     println!("\n{}", style::header("Finalizing..."));
 
-    // 1. Create .tool-versions if not present
     let tool_versions_path = target_dir.join(".tool-versions");
     if !tool_versions_path.exists() {
         lock_runtimes(&target_dir, canonical_stack)?;
     }
 
-    // 2. Initialize Git if not present
     if !target_dir.join(".git").exists() {
         println!("  {} Initializing git...", style::dim("→"));
         let status = Command::new("git")

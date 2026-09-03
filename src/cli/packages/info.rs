@@ -67,7 +67,7 @@ pub fn info_sync(package: &str) -> Result<bool> {
         return Ok(false);
     }
 
-    // 1. Try daemon first (ULTRA FAST - <1ms)
+    // Try daemon first (ULTRA FAST - <1ms)
     #[cfg(unix)]
     if let Ok(mut client) = DaemonClient::connect_sync_with_timeout(DAEMON_INFO_TIMEOUT)
         && let Ok(info) = client.info_sync(package)
@@ -250,7 +250,7 @@ async fn info_fallback(package: &str) -> Result<()> {
         anyhow::bail!("Package '{package}' not found. Try: omg search {package}");
     }
 
-    // 3. Try AUR directly as final fallback (Arch only)
+    // Try AUR directly as final fallback (Arch only)
     #[cfg(feature = "arch")]
     {
         ui::print_header("OMG", &format!("Package info for '{package}'"));

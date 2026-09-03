@@ -227,13 +227,11 @@ pub async fn run_interactive(skip_shell: bool, skip_daemon: bool) -> Result<()> 
 
     let mut state = WizardState::default();
 
-    // Step 1: Detect and confirm shell
     if !skip_shell {
         state.shell = Some(select_shell(&mut stdout)?);
         println!();
     }
 
-    // Step 2: Daemon startup preference
     if !skip_daemon {
         state.daemon_startup = effective_daemon_startup(
             select_daemon_startup(&mut stdout)?,
@@ -242,15 +240,12 @@ pub async fn run_interactive(skip_shell: bool, skip_daemon: bool) -> Result<()> 
         println!();
     }
 
-    // Step 3: Telemetry consent
     state.telemetry_enabled = select_telemetry_consent(&mut stdout)?;
     println!();
 
-    // Step 4: Build optimization
     state.build_config = select_build_config(&mut stdout)?;
     println!();
 
-    // Step 5: Environment capture
     state.capture_env = confirm_env_capture(&mut stdout)?;
     println!();
 
