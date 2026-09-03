@@ -26,11 +26,25 @@ rollback CLI guard. Reapply rustfmt on current main.
 ### ⚠️  Breaking Changes
 
 - Sanitize remote strings at render boundaries; revert breaking sha2/p256/p384 bump
+### ⚡ Performance
+
+- **Runtimes**: Skip vendor fetch for exact version requests
+
+resolve_requested_version returns early when the request is not partial, so exact versions and aliases avoid list_available network work.
+
 ### ✨ New Features
 
 - **Runtimes**: Uninstall versions via omg use RUNTIME VERSION --uninstall
 - **Hook**: Add --uninstall removing shell integration with backup
 - **Install**: Add --uninstall removing binaries and shell integration
+- **Runtimes**: Add native Deno management
+
+Install verified Deno release archives, resolve stable aliases and project pins, expose the vendor bin directory without shims, and register Deno across CLI discovery and health checks.
+
+- **Hooks**: Resolve project runtime ranges
+
+Read Python and Deno project pins, map compatible requests to installed versions, normalize Java feature pins, and keep each vendor bin directory intact on PATH.
+
 ### 🐛 Bug Fixes
 
 - Sanitize AUR build package names
@@ -43,6 +57,18 @@ rollback CLI guard. Reapply rustfmt on current main.
 - **Sbom**: Populate component licenses from package databases
 - **Team**: Back up local omg.lock before a pull overwrites it
 - **History**: Archive retired transactions instead of dropping them
+- **Rust**: Stream component archives through disk
+
+Share tar entry safety across runtime and component extraction, and replace Rust's in-memory XZ buffer with a bounded same-filesystem temporary file.
+
+- **Python**: Select exact standalone assets
+
+Page through bounded GitHub release results, reject incompatible build variants, preserve Python prerelease identity, and stop an install search after the matching page.
+
+- **Java**: Normalize Adoptium feature requests
+
+Accept Java feature pins such as 21 and 21.0, reject unsupported update requests before network access, and keep the extracted JDK bin directory intact.
+
 - **Osv**: Scope cache key by ecosystem and validate severity scores
 - **Update**: Refresh Arch daemon snapshot after sync before probing
 - **Clippy**: Clear main gate blocked by recent landings
@@ -97,6 +123,7 @@ v0.1.215 never became GitHub Latest after CI tagged it.
 
 ### 🔧 Maintenance
 
+- Sync Cargo.lock with toml_edit
 - **Deps**: Update rust dependencies ([#183](https://github.com/PyRo1121/omg/issues/183))
 ## [0.1.215] - 2026-09-03
 ### Bench
