@@ -306,7 +306,14 @@ fn pkgbuild_review_text(bytes: &[u8]) -> Result<String> {
     let text = String::from_utf8_lossy(bytes);
     Ok(text
         .chars()
-        .filter(|character| matches!(character, '\n' | '\t') || !character.is_control())
+        .filter(|character| {
+            matches!(character, '\n' | '\t')
+                || (!character.is_control()
+                    && !matches!(
+                        character,
+                        '\u{202a}'..='\u{202e}' | '\u{2066}'..='\u{2069}'
+                    ))
+        })
         .collect())
 }
 
@@ -3979,6 +3986,10 @@ mod tests {
         let rendered = pkgbuild_review_text(b"pkgname=safe\n\x1b]52;c;secret\x07\n")
             .expect("small PKGBUILD must render");
         assert_eq!(rendered, "pkgname=safe\n]52;c;secret\n");
+
+        let bidi = pkgbuild_review_text(b"pkgname=safe\n\xe2\x80\xaao\xe2\x81\xa7i\n")
+            .expect("PKGBUILD with bidi characters must render");
+        assert_eq!(bidi, "pkgname=safe\noi\n");
 
         let oversized = vec![b'x'; MAX_PKGBUILD_REVIEW_BYTES + 1];
         let error = pkgbuild_review_text(&oversized)
