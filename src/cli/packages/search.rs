@@ -3,11 +3,124 @@ use std::io::Write;
 use anyhow::{Context, Result};
 use serde::Serialize;
 
-use crate::cli::packages::common::{description_width, validate_search_query};
+use crate::cli::packages::common::validate_search_query;
 use crate::cli::style;
-use crate::core::format::truncate;
 use crate::core::{Package, PackageSource};
 use crate::package_managers::{VersionDisplay, get_package_manager};
+use nucleo_matcher::{
+    Config, Matcher, Utf32String,
+    pattern::{CaseMatching, Normalization, Pattern},
+};
+
+/// Display tier for one search hit. Lower sorts first. A single table owns
+/// result ordering for the daemon, native, and AUR paths together.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+enum MatchTier {
+    Exact,
+    Prefix,
+    WordBoundary,
+    Fuzzy,
+    Substring,
+}
+
+/// Language packs flood generic queries (`firefox` matches hundreds of
+/// `firefox-*-i18n-*`). They sort after real packages in every tier and
+/// collapse into one group row unless the query names them directly.
+fn is_langpack(name: &str) -> bool {
+    let lower = name.to_lowercase();
+    lower.contains("-i18n-")
+        || lower.ends_with("-i18n")
+        || lower.ends_with("-l10n")
+        || lower.ends_with("-lang")
+        || lower.ends_with("-locale")
+}
+
+/// Base name for grouping: `firefox-developer-edition-i18n-ach` groups
+/// under `firefox-developer-edition-i18n`.
+fn group_base(name: &str) -> Option<&str> {
+    name.find("-i18n-")
+        .map(|index| &name[..index + "-i18n-".len() - 1])
+}
+
+fn match_tier(query: &str, name: &str) -> MatchTier {
+    if name == query {
+        return MatchTier::Exact;
+    }
+    if name.starts_with(query) {
+        return MatchTier::Prefix;
+    }
+    if name.split(['-', '_', ' ']).any(|word| word == query) {
+        return MatchTier::WordBoundary;
+    }
+    MatchTier::Substring
+}
+
+/// Order display packages so the user sees intent first: exact name, name
+/// prefix, whole-word hits, fuzzy hits, then plain substring hits.
+/// Language packs sink below same-tier real packages.
+fn rank_display_packages(query: &str, packages: &mut Vec<DisplayPackage>) {
+    let query_lower = query.to_lowercase();
+    let pattern = Pattern::parse(&query_lower, CaseMatching::Ignore, Normalization::Smart);
+    let mut matcher = Matcher::new(Config::DEFAULT);
+    let owned = std::mem::take(packages);
+    let mut scored: Vec<((MatchTier, bool, u32), DisplayPackage)> = owned
+        .into_iter()
+        .map(|pkg| {
+            let name_lower = pkg.name.to_lowercase();
+            let mut tier = match_tier(&query_lower, &name_lower);
+            let haystack = Utf32String::from(name_lower.as_str());
+            let fuzzy = pattern.score(haystack.slice(..), &mut matcher).unwrap_or(0);
+            if tier == MatchTier::Substring && fuzzy > 0 {
+                tier = MatchTier::Fuzzy;
+            }
+            ((tier, is_langpack(&name_lower), fuzzy), pkg)
+        })
+        .collect();
+    scored.sort_by(|a, b| {
+        a.0.0
+            .cmp(&b.0.0)
+            .then_with(|| a.0.1.cmp(&b.0.1))
+            .then_with(|| b.0.2.cmp(&a.0.2))
+            .then_with(|| a.1.name.cmp(&b.1.name))
+    });
+    packages.extend(scored.into_iter().map(|(_, pkg)| pkg));
+}
+
+/// Collapse language-pack floods into one row per base package. The row
+/// keeps the first hit's version and source and reports the pack count.
+fn group_langpacks(packages: Vec<DisplayPackage>) -> Vec<DisplayPackage> {
+    let mut grouped: Vec<DisplayPackage> = Vec::with_capacity(packages.len());
+    let mut pending: Option<(String, DisplayPackage, usize)> = None;
+    let flush = |grouped: &mut Vec<DisplayPackage>,
+                 pending: &mut Option<(String, DisplayPackage, usize)>| {
+        if let Some((_, mut first, count)) = pending.take() {
+            if count > 1 {
+                first.name = format!("{} (+{} language packs)", first.name, count - 1);
+            }
+            grouped.push(first);
+        }
+    };
+    for pkg in packages {
+        let base = group_base(&pkg.name).map(str::to_string);
+        let matches = match (&pending, &base) {
+            (Some((pending_base, _, _)), Some(base)) => pending_base == base,
+            _ => false,
+        };
+        if matches {
+            if let Some((_, _, count)) = pending.as_mut() {
+                *count += 1;
+            }
+            continue;
+        }
+        flush(&mut grouped, &mut pending);
+        match base {
+            Some(base) => pending = Some((base, pkg, 1)),
+            None => grouped.push(pkg),
+        }
+    }
+    flush(&mut grouped, &mut pending);
+    grouped
+}
 
 #[cfg(unix)]
 use crate::core::client::{DaemonClient, SyncDaemonClient};
@@ -123,6 +236,8 @@ async fn search_internal(
     let total_matches = official_total.saturating_add(aur_count);
 
     crate::core::usage::track_search_result(true);
+    rank_display_packages(query, &mut display_packages);
+    display_packages = group_langpacks(display_packages);
     truncate_search_results(&mut display_packages, limit);
 
     if json {
@@ -140,12 +255,14 @@ async fn search_internal(
     }
 
     let mut stdout = std::io::BufWriter::new(std::io::stdout());
-    let desc_width = description_width();
-    // Modern search header - no extra blank line
     writeln!(stdout, "{}", style::header("Search Results"))?;
 
-    for pkg in display_packages.iter().take(limit) {
-        write_package_line(&mut stdout, pkg, desc_width)?;
+    let rich = style::colors_enabled();
+    for (index, pkg) in display_packages.iter().take(limit).enumerate() {
+        if rich && index > 0 {
+            writeln!(stdout, "  {}", style::dim("\u{2500}\u{2500}\u{2500}"))?;
+        }
+        write_package_line(&mut stdout, pkg)?;
     }
 
     if total_matches > limit {
@@ -313,12 +430,32 @@ fn search_sync_official_only(query: &str, limit: usize) -> Result<bool> {
             return Ok(true);
         }
 
+        let mut packages: Vec<DisplayPackage> = res
+            .packages
+            .into_iter()
+            .map(|pkg| DisplayPackage {
+                name: pkg.name,
+                version: pkg.version,
+                description: pkg.description,
+                source: pkg.source.label().to_string(),
+                votes: None,
+                popularity: None,
+                maintainer: None,
+                out_of_date: None,
+            })
+            .collect();
+        rank_display_packages(query, &mut packages);
+        packages = group_langpacks(packages);
+
         let mut stdout = std::io::BufWriter::new(std::io::stdout());
-        let desc_width = description_width();
         writeln!(stdout, "{}", style::header("Search Results"))?;
 
-        for pkg in res.packages.iter().take(limit) {
-            write_daemon_package(&mut stdout, pkg, desc_width)?;
+        let rich = style::colors_enabled();
+        for (index, pkg) in packages.iter().take(limit).enumerate() {
+            if rich && index > 0 {
+                writeln!(stdout, "  {}", style::dim("\u{2500}\u{2500}\u{2500}"))?;
+            }
+            write_package_line(&mut stdout, pkg)?;
         }
 
         if res.total > limit {
@@ -344,23 +481,15 @@ fn styled_source(source: &str) -> String {
 }
 
 #[inline]
-fn write_package_line<W: Write>(
-    w: &mut W,
-    pkg: &DisplayPackage,
-    desc_width: usize,
-) -> std::io::Result<()> {
+fn write_package_line<W: Write>(w: &mut W, pkg: &DisplayPackage) -> std::io::Result<()> {
     let source_style = styled_source(&pkg.source);
 
     write!(
         w,
-        "  {} {} ({}) - {}",
-        style::package(&pkg.name),
-        style::version(&pkg.version),
+        "  {} {} ({})",
+        style::package(&style::sanitize_terminal_text(&pkg.name)),
+        style::version(&style::sanitize_terminal_text(&pkg.version)),
         source_style,
-        style::dim(&truncate(
-            &style::sanitize_terminal_text(&pkg.description),
-            desc_width,
-        ))
     )?;
 
     if let Some(votes) = pkg.votes {
@@ -378,28 +507,6 @@ fn write_package_line<W: Write>(
     writeln!(w)
 }
 
-#[cfg(unix)]
-#[inline]
-fn write_daemon_package<W: Write>(
-    w: &mut W,
-    pkg: &crate::daemon::protocol::PackageInfo,
-    desc_width: usize,
-) -> std::io::Result<()> {
-    let source_style = styled_source(pkg.source.label());
-
-    writeln!(
-        w,
-        "  {} {} ({}) - {}",
-        style::package(&pkg.name),
-        style::version(&pkg.version),
-        source_style,
-        style::dim(&truncate(
-            &style::sanitize_terminal_text(&pkg.description),
-            desc_width,
-        ))
-    )
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -409,8 +516,21 @@ mod tests {
     /// string.
     fn format_package(pkg: &super::DisplayPackage) -> String {
         let mut buf = Vec::new();
-        write_package_line(&mut buf, pkg, 50).expect("in-memory writer cannot fail");
+        write_package_line(&mut buf, pkg).expect("in-memory writer cannot fail");
         String::from_utf8(buf).expect("writer only emits UTF-8")
+    }
+
+    fn display(name: &str) -> DisplayPackage {
+        DisplayPackage {
+            name: name.to_string(),
+            version: "1".to_string(),
+            description: String::new(),
+            source: "Official".to_string(),
+            votes: None,
+            popularity: None,
+            maintainer: None,
+            out_of_date: None,
+        }
     }
 
     #[test]
@@ -436,9 +556,9 @@ mod tests {
     #[test]
     fn package_writer_strips_terminal_control_sequences() {
         let package = DisplayPackage {
-            name: "safe".to_string(),
-            version: "1".to_string(),
-            description: "normal\x1b]52;c;secret\x07\nforged".to_string(),
+            name: "safe\x1b]52;c;secret\x07".to_string(),
+            version: "1\nforged".to_string(),
+            description: "not rendered".to_string(),
             source: "official".to_string(),
             votes: None,
             popularity: None,
@@ -450,6 +570,49 @@ mod tests {
         assert!(!output.contains('\x1b'));
         assert!(!output.contains('\x07'));
         assert!(!output.contains("\nforged"));
+        assert!(!output.contains("not rendered"));
+    }
+
+    #[test]
+    fn firefox_exact_match_sorts_first() {
+        let mut packages = vec![
+            display("browserpass-firefox"),
+            display("firefox-developer-edition-i18n-af"),
+            display("firefox"),
+            display("firefox-adblock-plus"),
+            display("curl-impersonate"),
+        ];
+        rank_display_packages("firefox", &mut packages);
+        let names: Vec<&str> = packages.iter().map(|pkg| pkg.name.as_str()).collect();
+        assert_eq!(names[0], "firefox");
+        assert!(names.contains(&"firefox-adblock-plus"));
+        assert_eq!(names.last(), Some(&"curl-impersonate"));
+    }
+
+    #[test]
+    fn langpacks_sink_below_real_packages() {
+        let mut packages = vec![
+            display("firefox-developer-edition-i18n-af"),
+            display("firefox-developer-edition"),
+        ];
+        rank_display_packages("firefox", &mut packages);
+        assert_eq!(packages[0].name, "firefox-developer-edition");
+    }
+
+    #[test]
+    fn langpacks_collapse_into_one_group_row() {
+        let packages = vec![
+            display("firefox"),
+            display("firefox-developer-edition-i18n-af"),
+            display("firefox-developer-edition-i18n-an"),
+            display("firefox-developer-edition-i18n-ar"),
+        ];
+        let grouped = group_langpacks(packages);
+        assert_eq!(grouped.len(), 2);
+        assert_eq!(
+            grouped[1].name,
+            "firefox-developer-edition-i18n-af (+2 language packs)"
+        );
     }
 
     #[test]

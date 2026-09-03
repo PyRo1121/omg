@@ -11,21 +11,6 @@ use crate::package_managers::types::UpdateInfo;
 use anyhow::Context;
 use anyhow::Result;
 
-/// Get description truncation width based on terminal size.
-///
-/// Reserves space for package name, version, source label, and formatting
-/// chrome (~45 chars), then uses the rest for the description.
-/// Falls back to 50 chars if terminal width is unavailable.
-pub fn description_width() -> usize {
-    crossterm::terminal::size()
-        .map(|(cols, _)| {
-            let cols = cols as usize;
-            // Reserve ~45 chars for "  name version (source) - " prefix chrome
-            cols.saturating_sub(45).max(20)
-        })
-        .unwrap_or(50)
-}
-
 /// Validate a search query for safety.
 ///
 /// Rejects queries that are too long, contain control characters,
@@ -544,10 +529,5 @@ mod tests {
         assert!(is_valid_search_query("firefox"));
         assert!(!is_valid_search_query("../passwd"));
         assert!(!is_valid_search_query("test;ls"));
-    }
-
-    #[test]
-    fn test_description_width_has_minimum() {
-        assert!(description_width() >= 20);
     }
 }
