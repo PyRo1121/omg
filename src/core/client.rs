@@ -226,21 +226,21 @@ impl DaemonClient {
             id,
             package: package.to_string(),
         })?;
-        extract_response(&response, id, as_info)
+        extract_response(response, id, as_info)
     }
 
     /// Ping the daemon
     pub async fn ping(&mut self) -> Result<String> {
         let id = self.request_id.fetch_add(1, Ordering::SeqCst);
         let response = self.call(Request::Ping { id }).await?;
-        extract_response(&response, id, as_ping)
+        extract_response(response, id, as_ping)
     }
 
     /// Ping the daemon synchronously
     pub fn ping_sync(&mut self) -> Result<String> {
         let id = self.request_id.fetch_add(1, Ordering::SeqCst);
         let response = self.call_sync(&Request::Ping { id })?;
-        extract_response(&response, id, as_ping)
+        extract_response(response, id, as_ping)
     }
 
     /// Search for packages
@@ -253,7 +253,7 @@ impl DaemonClient {
                 limit,
             })
             .await?;
-        extract_response(&response, id, as_search)
+        extract_response(response, id, as_search)
     }
 
     /// Get package info
@@ -265,21 +265,21 @@ impl DaemonClient {
                 package: package.to_string(),
             })
             .await?;
-        extract_response(&response, id, as_info)
+        extract_response(response, id, as_info)
     }
 
     /// Get system status
     pub async fn status(&mut self) -> Result<StatusResult> {
         let id = self.request_id.fetch_add(1, Ordering::SeqCst);
         let response = self.call(Request::Status { id }).await?;
-        extract_response(&response, id, as_status)
+        extract_response(response, id, as_status)
     }
 
     /// List available package updates via daemon (uses hot ALPM worker)
     pub async fn list_updates(&mut self) -> Result<Vec<UpdateEntry>> {
         let id = self.request_id.fetch_add(1, Ordering::SeqCst);
         let response = self.call(Request::ListUpdates { id }).await?;
-        extract_response(&response, id, as_updates)
+        extract_response(response, id, as_updates)
     }
 
     /// Rebuild the daemon's immutable package index after a database sync.
@@ -295,7 +295,7 @@ impl DaemonClient {
     pub async fn security_audit(&mut self) -> Result<SecurityAuditResult> {
         let id = self.request_id.fetch_add(1, Ordering::SeqCst);
         let response = self.call(Request::SecurityAudit { id }).await?;
-        extract_response(&response, id, as_audit)
+        extract_response(response, id, as_audit)
     }
 
     /// Get fuzzy suggestions for a package name
@@ -308,7 +308,7 @@ impl DaemonClient {
                 limit,
             })
             .await?;
-        extract_response(&response, id, as_suggest)
+        extract_response(response, id, as_suggest)
     }
 }
 
@@ -351,65 +351,65 @@ fn decode_response(frame: &[u8], expected_id: u64) -> Result<ResponseResult> {
 }
 
 fn extract_response<T>(
-    response: &ResponseResult,
+    response: ResponseResult,
     request_id: u64,
-    extract: fn(&ResponseResult) -> Option<T>,
+    extract: fn(ResponseResult) -> Option<T>,
 ) -> Result<T> {
     extract(response)
         .ok_or_else(|| anyhow::anyhow!("Invalid response type for request {request_id}"))
 }
 
-fn as_ping(response: &ResponseResult) -> Option<String> {
+fn as_ping(response: ResponseResult) -> Option<String> {
     if let ResponseResult::Ping(value) = response {
-        Some(value.clone())
+        Some(value)
     } else {
         None
     }
 }
 
-fn as_info(response: &ResponseResult) -> Option<DetailedPackageInfo> {
+fn as_info(response: ResponseResult) -> Option<DetailedPackageInfo> {
     if let ResponseResult::Info(value) = response {
-        Some(value.clone())
+        Some(value)
     } else {
         None
     }
 }
 
-fn as_search(response: &ResponseResult) -> Option<SearchResult> {
+fn as_search(response: ResponseResult) -> Option<SearchResult> {
     if let ResponseResult::Search(value) = response {
-        Some(value.clone())
+        Some(value)
     } else {
         None
     }
 }
 
-fn as_status(response: &ResponseResult) -> Option<StatusResult> {
+fn as_status(response: ResponseResult) -> Option<StatusResult> {
     if let ResponseResult::Status(value) = response {
-        Some(value.clone())
+        Some(value)
     } else {
         None
     }
 }
 
-fn as_updates(response: &ResponseResult) -> Option<Vec<UpdateEntry>> {
+fn as_updates(response: ResponseResult) -> Option<Vec<UpdateEntry>> {
     if let ResponseResult::ListUpdates(value) = response {
-        Some(value.clone())
+        Some(value)
     } else {
         None
     }
 }
 
-fn as_audit(response: &ResponseResult) -> Option<SecurityAuditResult> {
+fn as_audit(response: ResponseResult) -> Option<SecurityAuditResult> {
     if let ResponseResult::SecurityAudit(value) = response {
-        Some(value.clone())
+        Some(value)
     } else {
         None
     }
 }
 
-fn as_suggest(response: &ResponseResult) -> Option<Vec<String>> {
+fn as_suggest(response: ResponseResult) -> Option<Vec<String>> {
     if let ResponseResult::Suggest(value) = response {
-        Some(value.clone())
+        Some(value)
     } else {
         None
     }
@@ -460,7 +460,7 @@ impl SyncDaemonClient {
             id,
             package: package.to_string(),
         })?;
-        extract_response(&response, id, as_info)
+        extract_response(response, id, as_info)
     }
 
     /// Search packages
@@ -471,14 +471,14 @@ impl SyncDaemonClient {
             query: query.to_string(),
             limit,
         })?;
-        extract_response(&response, id, as_search)
+        extract_response(response, id, as_search)
     }
 
     /// Get system status
     pub fn status(&mut self) -> Result<StatusResult> {
         let id = self.request_id.fetch_add(1, Ordering::SeqCst);
         let response = self.call(&Request::Status { id })?;
-        extract_response(&response, id, as_status)
+        extract_response(response, id, as_status)
     }
 }
 
