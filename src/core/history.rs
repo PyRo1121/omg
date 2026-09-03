@@ -69,8 +69,10 @@ pub struct Transaction {
 
 /// Loads and appends package transactions under a cross-process file lock.
 ///
-/// The log file is capped at [`MAX_HISTORY_TRANSACTIONS`] entries; every
-/// write atomically replaces the file via a temporary file and rename.
+/// The log file is capped at [`MAX_HISTORY_TRANSACTIONS`] entries; retired
+/// entries move to a sibling `.archive.jsonl` file instead of being
+/// dropped. Every write atomically replaces the file via a temporary file
+/// and rename.
 pub struct HistoryManager {
     log_path: PathBuf,
 }
@@ -274,9 +276,62 @@ impl HistoryManager {
 
         let excess = history.len().saturating_sub(MAX_HISTORY_TRANSACTIONS);
         if excess > 0 {
-            history.drain(0..excess);
+            // Retired entries move to a sibling JSONL archive instead of
+            // vanishing: rollback plans and audits can still read them,
+            // and a full history is never silently truncated.
+            self.archive_drained(&history.drain(0..excess).collect::<Vec<_>>())?;
         }
         self.save(&history)
+    }
+
+    /// Append retired transactions to the `<log>.archive.jsonl` file, one
+    /// JSON object per line. Runs inside the history lock, so the archive
+    /// preserves global append order.
+    fn archive_drained(&self, drained: &[Transaction]) -> Result<()> {
+        if drained.is_empty() {
+            return Ok(());
+        }
+        let archive_path = self.archive_path();
+        let mut content = Vec::new();
+        for transaction in drained {
+            serde_json::to_writer(&mut content, transaction)
+                .context("Failed to serialize archived transaction")?;
+            content.push(b'\n');
+        }
+        let mut options = fs::OpenOptions::new();
+        options.create(true).append(true);
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::OpenOptionsExt as _;
+            options.mode(0o600);
+        }
+        use std::io::Write as _;
+        options
+            .open(&archive_path)
+            .with_context(|| format!("Failed to open history archive: {}", archive_path.display()))?
+            .write_all(&content)
+            .with_context(|| {
+                format!(
+                    "Failed to append history archive: {}",
+                    archive_path.display()
+                )
+            })?;
+        if let Err(error) = crate::core::safe_ops::restore_original_user_ownership(&archive_path) {
+            tracing::warn!("Failed to restore history archive ownership: {error:#}");
+        }
+        Ok(())
+    }
+
+    /// Sibling of the live history file holding every retired transaction.
+    fn archive_path(&self) -> PathBuf {
+        let file_name = self.log_path.file_name().map_or_else(
+            || "history.json".to_string(),
+            |name| name.to_string_lossy().into_owned(),
+        );
+        match self.log_path.parent() {
+            Some(parent) => parent.join(format!("{file_name}.archive.jsonl")),
+            None => PathBuf::from(format!("{file_name}.archive.jsonl")),
+        }
     }
 
     fn with_history_lock<T>(&self, op: impl FnOnce() -> Result<T>) -> Result<T> {
@@ -288,7 +343,8 @@ impl HistoryManager {
             use std::os::unix::fs::OpenOptionsExt as _;
             options.mode(0o600).custom_flags(nix::libc::O_NOFOLLOW);
         }
-        let lock = options.open(&lock_path)
+        let lock = options
+            .open(&lock_path)
             .with_context(|| format!("Failed to open history lock: {}", lock_path.display()))?;
         lock.lock()
             .with_context(|| format!("Failed to lock package history: {}", lock_path.display()))?;
@@ -335,6 +391,37 @@ mod tests {
     /// assertions are deterministic (paired with `#[serial(history_ownership)]`).
     fn reset_corrupt_history_warning_for_tests() {
         CORRUPT_HISTORY_WARNED.store(false, Ordering::Relaxed);
+    }
+
+    /// Retired transactions land in the sibling archive instead of
+    /// vanishing: over-cap histories keep every entry across both files.
+    #[test]
+    #[serial_test::serial(history_ownership)]
+    fn retired_transactions_are_archived_not_dropped() -> Result<()> {
+        let directory = tempfile::tempdir()?;
+        let manager = HistoryManager::new_in(directory.path().join("history.json"))?;
+        for index in 0..(MAX_HISTORY_TRANSACTIONS + 5) {
+            manager.add_transaction(
+                TransactionType::Install,
+                vec![PackageChange {
+                    name: format!("pkg-{index}"),
+                    old_version: None,
+                    new_version: Some("1.0".to_string()),
+                    source: "official".to_string(),
+                }],
+                true,
+            )?;
+        }
+        let live = manager.load()?;
+        assert_eq!(live.len(), MAX_HISTORY_TRANSACTIONS);
+        let archive = std::fs::read_to_string(directory.path().join("history.json.archive.jsonl"))?;
+        let archived: Vec<Transaction> = archive
+            .lines()
+            .map(serde_json::from_str)
+            .collect::<serde_json::Result<_>>()?;
+        assert_eq!(archived.len(), 5);
+        assert_eq!(archived[0].changes[0].name, "pkg-0");
+        Ok(())
     }
 
     #[test]
