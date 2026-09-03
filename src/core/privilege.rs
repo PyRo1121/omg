@@ -5,7 +5,38 @@
 
 use std::sync::atomic::{AtomicBool, Ordering};
 
-/// Reserved argv token that marks a process as sudo-re-executed.
+/// Environment variables stripped from every sudo child. One list so a new
+/// scrub variable cannot be added in one elevation path and missed in another.
+const PRIVILEGED_ENV_SCRUB: &[&str] = &[
+    // Force terminal-based password prompt, never GUI askpass
+    "SUDO_ASKPASS",
+    "SSH_ASKPASS",
+    "SSH_ASKPASS_REQUIRE",
+    // Cargo build environment
+    "CARGO_PRIMARY_PACKAGE",
+    "CARGO_MANIFEST_DIR",
+    "CARGO_TARGET_DIR",
+    "CARGO_PKG_NAME",
+    "CARGO_PKG_VERSION",
+    "OUT_DIR",
+    // Library injection vectors
+    "LD_PRELOAD",
+    "LD_LIBRARY_PATH",
+    "LD_AUDIT",
+    "LD_DEBUG",
+    // Script execution vectors
+    "PYTHONPATH",
+    "RUBYLIB",
+    "PERL5LIB",
+    "NODE_PATH",
+];
+
+/// Strip [`PRIVILEGED_ENV_SCRUB`] from a sudo command builder.
+fn scrub_privileged_env(command: &mut tokio::process::Command) {
+    for name in PRIVILEGED_ENV_SCRUB {
+        command.env_remove(name);
+    }
+}
 ///
 /// Elevation must travel through argv because sudo's default `env_reset`
 /// strips `OMG_ELEVATED` from the child environment. The child (see
@@ -120,7 +151,9 @@ pub async fn run_privileged_program(program: &str, args: &[&str]) -> anyhow::Res
             );
         }
         // One interactive authentication prompt with inherited stdio.
-        let status = tokio::process::Command::new("sudo")
+        let mut auth_cmd = tokio::process::Command::new("sudo");
+        scrub_privileged_env(&mut auth_cmd);
+        let status = auth_cmd
             .arg("-v")
             .stdin(std::process::Stdio::inherit())
             .stdout(std::process::Stdio::inherit())
@@ -133,10 +166,9 @@ pub async fn run_privileged_program(program: &str, args: &[&str]) -> anyhow::Res
         }
     }
 
-    let status = tokio::process::Command::new("sudo")
-        .env_remove("SUDO_ASKPASS")
-        .env_remove("SSH_ASKPASS")
-        .env_remove("SSH_ASKPASS_REQUIRE")
+    let mut elevated = tokio::process::Command::new("sudo");
+    scrub_privileged_env(&mut elevated);
+    let status = elevated
         .arg("--")
         .arg(program)
         .args(args)
@@ -378,28 +410,9 @@ fn payload_command(
         // sudo's default env_reset strips OMG_ELEVATED from the child, which
         // made every fast-elevated path dead code. The child strips this
         // marker and sets OMG_ELEVATED itself before any dispatch.
-        .env("OMG_ELEVATED", "1")
-        // Force terminal-based password prompt, never GUI askpass
-        .env_remove("SUDO_ASKPASS")
-        .env_remove("SSH_ASKPASS")
-        .env_remove("SSH_ASKPASS_REQUIRE")
-        // Cargo build environment
-        .env_remove("CARGO_PRIMARY_PACKAGE")
-        .env_remove("CARGO_MANIFEST_DIR")
-        .env_remove("CARGO_TARGET_DIR")
-        .env_remove("CARGO_PKG_NAME")
-        .env_remove("CARGO_PKG_VERSION")
-        .env_remove("OUT_DIR")
-        // Security: library injection vectors
-        .env_remove("LD_PRELOAD")
-        .env_remove("LD_LIBRARY_PATH")
-        .env_remove("LD_AUDIT")
-        .env_remove("LD_DEBUG")
-        // Security: script execution vectors
-        .env_remove("PYTHONPATH")
-        .env_remove("RUBYLIB")
-        .env_remove("PERL5LIB")
-        .env_remove("NODE_PATH")
+        .env("OMG_ELEVATED", "1");
+    scrub_privileged_env(&mut command);
+    command
         // Inherit terminal so output and any password prompt stay attached
         .stdin(std::process::Stdio::inherit())
         .stdout(std::process::Stdio::inherit())
