@@ -24,9 +24,9 @@ Counts at this commit. Run `find src -name '*.rs' | wc -l` to regenerate. Run `f
 
 - [ ] Delete or wire up `PgpVerifier` in `src/core/security/pgp.rs:1`. It has zero production callers. AUR verification delegates to makepkg through `src/package_managers/aur/client.rs:2992`.
 - [ ] Delete or wire up the dead elevation path in `src/core/privilege.rs:165`. `PrivilegeChecker`, `SystemPrivilegeChecker`, `elevate_if_needed`, `elevate_for_operation`, and `ELEVATION_MUTEX` have no production callers. `src/bin/omg.rs:739` documents the direct path.
-- [ ] Delete `PackageServiceBuilder` in `src/core/packages/service.rs:31`. It has zero callers outside its file.
-- [ ] Delete `get_explicit_count_fast` in `src/package_managers/alpm_direct.rs:367`. Grep shows no callers in `src/`.
-- [ ] Delete `list_explicit_sync` in `src/package_managers/mock.rs:179`. It has no callers.
+- [x] `PackageService::builder`. Dismissed. Round D follow up proved tests use it heavily (`tests/update_integration_tests.rs`, service unit tests). Test use of a builder is legitimate API use. No action.
+- [x] `get_explicit_count_fast` in `src/package_managers/alpm_direct.rs:367`. Dismissed. `benches/count_bench.rs` benchmarks it. A benched function is not dead. No action.
+- [x] `list_explicit_sync` in `src/package_managers/mock.rs:179`. Deleted. The doc claimed CLI test-mode use, grep disproved it.
 - [ ] Collapse the duplicated version resolvers into `runtimes/common.rs`. Five copies share one shape. See `runtimes/node.rs:196`, `runtimes/bun.rs:122`, `runtimes/go.rs:132`, `runtimes/python.rs:221`, `runtimes/ruby.rs:160`.
 - [ ] Collapse the staged install copies into `runtimes/common.rs`. Each runtime reimplements download, extract, and publish. Start at `runtimes/node.rs:148`.
 - [ ] Unify the two compliance exporters. `src/cli/enterprise.rs:84` and `src/cli/security.rs:1209` share one arg shape and diverge on file sets and permissions. Use `write_private_export` for inventory bearing files.
@@ -44,6 +44,8 @@ Counts at this commit. Run `find src -name '*.rs' | wc -l` to regenerate. Run `f
 - [ ] Deduplicate the repeated test names. `test_info_nonexistent_package` exists in five files. `test_update_check`, `test_install_remove_cycle`, `test_invalid_command`, and `test_concurrent_operations` repeat. Move them behind one helper in `tests/common/`.
 - [ ] Cover `keyserver.rs` from integration tests or record why inline unit tests are the boundary. Zero files in `tests/` touch it today.
 - [ ] Cover `validate_image_ref` in `src/core/security/validation.rs:147` or record the boundary. Zero files in `tests/` touch it.
+- [x] Duplicated `test_update_check`, `test_install_remove_cycle`, `test_concurrent_operations` across files. Dismissed after Round D recheck. Same names, different backends (arch file is arch gated, debian uses debian fixtures, matrix uses mock distros). Per backend coverage, not duplication. No action.
+- [x] Ignored macos and fedora lanes. Dismissed. Both have dedicated CI jobs (`ci.yml:301` fedora, `:498` macos). No action.
 - [ ] Decide the ignored lane in `tests/integration/security_real_world.rs:20`. All five real world security tests carry ignore. Either run them in CI or state the lane is manual.
 
 ## Phase 4. Prose and small hygiene
@@ -64,11 +66,11 @@ One phase at a time. One small unit per commit. Verify each unit with its cited 
 
 Second loop, five slices over terrain the first pass covered lightly. Each item re verified by grep in the main thread before listing. Numbers continue the phases above.
 
-- [ ] Sanitize remote AUR metadata in the tea info path. `src/cli/tea/info_model.rs:171,187,192,197,215` renders name, description, url, maintainer, and header with zero sanitize calls. The non tea path in `packages/info.rs` sanitizes the same fields. Route the tea sites through `style::sanitize_terminal_text`. Terminal escape injection, medium.
+- [x] Sanitize remote AUR metadata in the tea info path. `src/cli/tea/info_model.rs:171,187,192,197,215` renders name, description, url, maintainer, and header with zero sanitize calls. The non tea path in `packages/info.rs` sanitizes the same fields. Route the tea sites through `style::sanitize_terminal_text`. Terminal escape injection, medium.
 - [ ] Sanitize the AUR install echo in `src/cli/modern_ui.rs:609`. Name, version, and description print raw before the confirm prompt. Same fix, one call site each.
 - [ ] Sanitize the AUR progress prefix fed from `src/package_managers/aur/client.rs:2838` into `src/cli/modern_ui.rs:240`. The newer `ProgressTask` lanes sanitize. This older path does not.
-- [ ] Replace the TUI sanitizer in `src/cli/tui/ui.rs:23`. It strips control chars only. Bidi overrides pass through. Delegate to `style::sanitize_terminal_text` and sanitize `pkg.name` and `pkg.version` at `ui.rs:827,837`. Medium.
-- [ ] Sanitize manifest echo in `src/cli/migrate.rs:124,129,194`. Manifest strings arrive from another machine and print raw. Execution is validated, display is not. Medium.
+- [x] Replace the TUI sanitizer in `src/cli/tui/ui.rs:23`. It strips control chars only. Bidi overrides pass through. Delegate to `style::sanitize_terminal_text` and sanitize `pkg.name` and `pkg.version` at `ui.rs:827,837`. Medium.
+- [x] Sanitize manifest echo in `src/cli/migrate.rs:124,129,194`. Manifest strings arrive from another machine and print raw. Execution is validated, display is not. Medium.
 - [ ] Stop cloning decoded payloads in `src/core/client.rs:379`. `as_search`, `as_status`, `as_audit`, and `as_updates` clone an already owned value. Pass ownership into the extractor. Medium, hottest return path.
 - [ ] Add `validate_socket_parent` to `src/bin/omg-fast.rs:151`. Duplicate of the Phase 1 item above. Close one of the two when fixed. Corroborated twice. Low.
 - [ ] Check config symlinks in `src/config/settings.rs:239`. Load follows symlinks with no ownership or mode check. Mirror the `read_regular_file` guard. Medium.
@@ -78,7 +80,7 @@ Second loop, five slices over terrain the first pass covered lightly. Each item 
 - [ ] Reject `..` in `validate_image_ref` in `src/core/security/validation.rs:147`. Package names have the check, image refs do not. Argv usage contains it today. Low.
 - [ ] Reject `..` in `pkg.filename` in `src/package_managers/debian_pure.rs:627`. Index supplied name joins the fetch path unchecked. Hash still gates bytes. Low.
 - [ ] Unify control.tar extraction with the data.tar hardening in `src/package_managers/debian_db/transaction.rs:1683`. Control path relies on crate defaults. Low.
-- [ ] Delete dead request variants `Request::Health`, `Request::CacheStats`, `Request::CacheClear` in `src/daemon/protocol.rs:59`. Zero production constructors outside the dispatch arms. Delete with `DaemonClient::status` in `src/core/client.rs:272` and `:478`. Low.
+- [x] Dead request variants `Request::Health`, `Request::CacheStats`, `Request::CacheClear`. Dismissed. Round D proved them exercised by daemon tests, not dead. No CLI wiring is fine for daemon API surface. No action.
 - [ ] Delete dead config `TeamConfig.auto_sync` in `src/core/env/team.rs:41`, the full `NotificationSettings` block at `:45`, and enforce or delete `Workspace.runtimes` in `src/cli/workspace.rs:25`. Parsed but never read, grep proven. Low.
 - [ ] Delete dead `get_configured_repos` in `src/core/pacman_conf.rs:294`, `dry_run` in `src/package_managers/debian_db/transaction.rs:2473`, and `total_download_size` at `:977`. Zero production callers each. Low.
 - [ ] Fix the `--force` provenance bypass in `src/cli/self_update.rs:140`. Force doubles as the unverified provenance escape while docs name only the env var. Document or separate. Low.
@@ -113,7 +115,7 @@ Dead code, dead tests, slop, and duplication round. Each death claim carries a c
 - [ ] Delete dead `toggle`, `status`, and `set_enabled` in `src/cli/telemetry.rs:12,56,84`. Zero callers. Dispatch uses `privacy_status` and friends. Delete as one unit.
 - [ ] Delete dead `highlight` in `src/cli/style.rs:213`. Only a comment mentions it.
 - [ ] Delete or read `CliContext` fields `verbose`, `quiet`, `no_color` in `src/cli/mod.rs:114`. Written once, never read. Only `ctx.json` is consumed.
-- [ ] Delete or gate the tier feature API (`current_tier`, `has_feature`, `require_feature`, `features_for_tier`) in `src/core/license.rs:902,908,913,928`. Zero CLI callers. Public lib surface, so gate or deprecate rather than silent delete.
+- [x] Tier feature API (`current_tier`, `has_feature`, `require_feature`, `features_for_tier`) in `src/core/license.rs`. Dismissed. Public lib surface pinned by integration tests in `tests/coverage_11.rs` and `tests/e2e_tests.rs`. Test only use does not prove dead public API. No action.
 - [ ] Delete `pacman_sync_dir` in `src/core/paths.rs:322` or move it behind test cfg. Only a test calls it. Production uses the validated variant.
 - [ ] Delete `pacman_cache_dirs` in `src/core/paths.rs:352`. Zero callers. The gated `_result` twin owns the contract.
 - [ ] Fix the unreachable `SlsaError::RekorBodyHashHex` in `src/core/security/slsa.rs:78`. The decode path returns `Ok(false)` instead of raising it. Wire the error or delete the variant.

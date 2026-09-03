@@ -107,7 +107,7 @@ pub enum PgpKeyIdStatus {
 /// - `PgpKeyIdStatus` indicating the validation result:
 ///   - `"ABCDEF1234567890ABCDEF1234567890ABCDEF12"` → `FullFingerprint`
 ///   - `"ABCDEF1234567890"` → `LongKeyId`
-///   - `"ABCDEF12"` or any 1–15 hex chars → `ShortKeyId` (rejected)
+///   - `"ABCDEF12"` or any 1-15 hex chars → `ShortKeyId` (rejected)
 ///   - `""` → `Empty`, `>64 chars` → `TooLong`, non-hex → `InvalidChars`,
 ///     other hex lengths → `NonStandardLength`
 #[inline]
