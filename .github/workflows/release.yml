@@ -489,11 +489,13 @@ jobs:
         run: |
           WRANGLER="$PWD/.github/deps/release-tools/node_modules/.bin/wrangler"
           "$WRANGLER" --version
+          # Wrangler 4 defaults R2 CLI commands to local Miniflare storage.
+          # Without --remote the job succeeds against a runner-local fake bucket.
           for artifact in release/omg-v*.tar.gz; do
             [ -f "$artifact" ] || continue
             basename=$(basename "$artifact")
             content_type="application/octet-stream"
-            "$WRANGLER" r2 object put "omg-releases/$basename" \
+            "$WRANGLER" r2 object put "omg-releases/$basename" --remote \
               --file="$artifact" \
               --content-type="$content_type"
             echo "✓ Uploaded $basename"
@@ -502,7 +504,7 @@ jobs:
           for checksum in release/omg-v*.sha256; do
             [ -f "$checksum" ] || continue
             basename=$(basename "$checksum")
-            "$WRANGLER" r2 object put "omg-releases/$basename" \
+            "$WRANGLER" r2 object put "omg-releases/$basename" --remote \
               --file="$checksum" \
               --content-type="text/plain"
             echo "✓ Uploaded $basename"
@@ -522,7 +524,7 @@ jobs:
           for artifact in release/omg-v*.tar.gz; do
             [ -f "$artifact" ] || continue
             basename=$(basename "$artifact")
-            "$WRANGLER" r2 object get "omg-releases/$basename" \
+            "$WRANGLER" r2 object get "omg-releases/$basename" --remote \
               --file="$verify_dir/$basename" >/dev/null
             expected=$(sha256sum "$artifact" | awk '{print $1}')
             actual=$(sha256sum "$verify_dir/$basename" | awk '{print $1}')
@@ -536,7 +538,7 @@ jobs:
           for checksum in release/omg-v*.sha256; do
             [ -f "$checksum" ] || continue
             basename=$(basename "$checksum")
-            "$WRANGLER" r2 object get "omg-releases/$basename" \
+            "$WRANGLER" r2 object get "omg-releases/$basename" --remote \
               --file="$verify_dir/$basename" >/dev/null
             if ! cmp -s "$checksum" "$verify_dir/$basename"; then
               echo "::error::Round-trip verification failed for $basename"
@@ -554,7 +556,7 @@ jobs:
         run: |
           WRANGLER="$PWD/.github/deps/release-tools/node_modules/.bin/wrangler"
           echo -n "$VERSION" > release/latest-version
-          "$WRANGLER" r2 object put "omg-releases/latest-version" \
+          "$WRANGLER" r2 object put "omg-releases/latest-version" --remote \
             --file=release/latest-version \
             --content-type="text/plain"
           echo "✓ Updated latest-version → $VERSION"
