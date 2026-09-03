@@ -825,7 +825,7 @@ fn draw_packages(f: &mut Frame, area: Rect, app: &App) {
                         }),
                 )),
                 Cell::from(Span::styled(
-                    pkg.version.version_string(),
+                    sanitize_control_chars(&pkg.version.version_string()).into_owned(),
                     base_style.fg(colors::ACCENT_GREEN),
                 )),
                 Cell::from(Span::styled(pkg.repo.as_str(), base_style.fg(source_color))),
@@ -1126,7 +1126,7 @@ fn draw_team(f: &mut Frame, area: Rect, app: &App) {
             Line::from(vec![
                 Span::styled("  Team: ", Style::default().fg(colors::FG_MUTED)),
                 Span::styled(
-                    &status.config.name,
+                    sanitize_control_chars(&status.config.name),
                     Style::default()
                         .fg(colors::ACCENT_CYAN)
                         .add_modifier(Modifier::BOLD),
@@ -1204,7 +1204,7 @@ fn draw_team(f: &mut Frame, area: Rect, app: &App) {
                         Style::default().fg(status_color),
                     )),
                     Cell::from(Span::styled(
-                        &member.name,
+                        sanitize_control_chars(&member.name),
                         Style::default()
                             .fg(colors::FG_PRIMARY)
                             .add_modifier(Modifier::BOLD),
@@ -1424,6 +1424,115 @@ mod tests {
             .iter()
             .map(ratatui::buffer::Cell::symbol)
             .collect()
+    }
+
+    /// Builds a backend version from raw metadata text. The strict parser
+    /// rejects poisoned strings, so this goes through the domain type's serde
+    /// path the way cached/remote metadata does.
+    fn poisoned_version(raw: &str) -> crate::package_managers::types::Version {
+        #[cfg(feature = "arch")]
+        {
+            serde_json::from_str(&format!(
+                r#"{{"pkgver":{},"epoch":null,"pkgrel":{{"major":1,"minor":null}}}}"#,
+                serde_json::to_string(raw).expect("json version string")
+            ))
+            .expect("serde constructs versions without strict validation")
+        }
+        #[cfg(not(feature = "arch"))]
+        {
+            let _ = raw;
+            crate::package_managers::types::DebVersion::new(raw)
+        }
+    }
+
+    #[test]
+    fn packages_rows_render_sanitized_version_strings() {
+        let mut terminal = Terminal::new(TestBackend::new(120, 40)).expect("test terminal");
+        let mut app = app_on(Tab::Packages);
+        app.search_results = vec![crate::package_managers::SyncPackage {
+            name: "evil".to_string(),
+            version: poisoned_version("1.0\u{1b}[31m\u{202e}evil"),
+            description: "browser".to_string(),
+            repo: "AUR".to_string(),
+            download_size: 0,
+            installed: false,
+        }];
+
+        terminal
+            .draw(|frame| draw(frame, &app))
+            .expect("draw packages");
+        let rendered: String = terminal
+            .backend()
+            .buffer()
+            .content()
+            .iter()
+            .map(ratatui::buffer::Cell::symbol)
+            .collect();
+
+        assert!(
+            !rendered.chars().any(char::is_control),
+            "package version controls must not reach the TUI buffer"
+        );
+        assert!(
+            !rendered.contains('\u{202e}'),
+            "package version bidi overrides must not reach the TUI buffer"
+        );
+        assert!(
+            rendered.contains("1.0[31mevil"),
+            "sanitized version text must stay visible"
+        );
+    }
+
+    #[test]
+    fn team_tab_renders_sanitized_team_and_member_names() {
+        let mut terminal = Terminal::new(TestBackend::new(120, 40)).expect("test terminal");
+        let mut app = app_on(Tab::Team);
+        app.team_status = Some(crate::core::env::team::TeamStatus {
+            format_version: crate::core::env::team::TeamStatus::STATUS_FORMAT_VERSION,
+            config: crate::core::env::team::TeamConfig {
+                team_id: "fleet".to_string(),
+                name: "Core\u{1b}[31m\u{202e}Team".to_string(),
+                member_id: "me".to_string(),
+                remote_url: None,
+                auto_push: false,
+            },
+            lock_hash: String::new(),
+            members: vec![crate::core::env::team::TeamMember {
+                id: "m1".to_string(),
+                name: "\u{202e}nhoj\u{1b}[0m".to_string(),
+                env_hash: String::new(),
+                last_sync: 0,
+                in_sync: true,
+                drift_summary: None,
+            }],
+            updated_at: 0,
+        });
+
+        terminal.draw(|frame| draw(frame, &app)).expect("draw team");
+        let rendered: String = terminal
+            .backend()
+            .buffer()
+            .content()
+            .iter()
+            .map(ratatui::buffer::Cell::symbol)
+            .collect();
+
+        assert!(
+            !rendered.chars().any(char::is_control),
+            "team name controls must not reach the TUI buffer"
+        );
+        assert!(
+            !rendered.contains('\u{202e}'),
+            "team name bidi overrides must not reach the TUI buffer"
+        );
+        assert!(
+            rendered.contains("Core[31mTeam"),
+            "sanitized team name must stay visible"
+        );
+        assert!(
+            rendered.contains("nhoj[0m"),
+            "sanitized member name must stay visible"
+        );
     }
 
     #[test]
