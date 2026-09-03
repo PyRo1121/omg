@@ -638,7 +638,9 @@ fn populate_action_url(
     action.sha256 = Some(pkg.sha256.clone());
     // filename is relative to the repo root:
     // "pool/main/v/vim/vim_9.0.1234-1_amd64.deb"
-    action.url = Some(format!(
+    if pkg.filename.split('/').any(|part| part == ".." || part.is_empty()) {
+        anyhow::bail!("Refusing package filename with traversal: {}", pkg.filename);
+    }action.url = Some(format!(
         "{}/{}",
         repo.uri.trim_end_matches('/'),
         pkg.filename
