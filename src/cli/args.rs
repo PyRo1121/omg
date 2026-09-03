@@ -235,6 +235,9 @@ pub enum Commands {
         /// Shell type
         #[arg(value_enum)]
         shell: ShellKind,
+        /// Remove OMG shell integration from the rc file instead of printing it
+        #[arg(long)]
+        uninstall: bool,
     },
 
     /// Manage Git hooks for environment synchronization

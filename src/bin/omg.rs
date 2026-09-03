@@ -1233,8 +1233,16 @@ async fn dispatch_command(command: &Commands, ctx: &omg_lib::cli::CliContext) ->
         Commands::List { runtime, available } => {
             runtimes::list_versions(runtime.as_deref(), *available, ctx.json).await?;
         }
-        Commands::Hook { shell } => {
-            hooks::print_hook(shell.as_str())?;
+        Commands::Hook { shell, uninstall } => {
+            if *uninstall {
+                if hooks::remove_hook(shell.as_str())? {
+                    println!("Shell integration removed (rc file backed up with .omg-backup)");
+                } else {
+                    println!("No OMG shell integration found");
+                }
+            } else {
+                hooks::print_hook(shell.as_str())?;
+            }
         }
         Commands::Hooks { command } => handle_hooks_command(command)?,
         Commands::Workspace { command } => handle_workspace_command(command).await?,
