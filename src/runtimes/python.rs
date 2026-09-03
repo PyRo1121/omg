@@ -219,6 +219,9 @@ impl PythonManager {
     /// requests pass through unchanged, preserving the already-installed fast
     /// path and the existing not-found UX.
     async fn resolve_requested_version(&self, version: &str) -> Result<String> {
+        if !crate::runtimes::common::is_partial_version(version) {
+            return Ok(version.to_owned());
+        }
         let available = self.list_available().await?;
         let names: Vec<String> = available.into_iter().map(|entry| entry.version).collect();
         Ok(crate::runtimes::resolve_version_request(&names, version))

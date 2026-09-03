@@ -120,6 +120,9 @@ impl BunManager {
     /// non-numeric requests pass through unchanged, preserving the
     /// already-installed fast path and the existing not-found UX.
     async fn resolve_requested_version(&self, version: &str) -> Result<String> {
+        if !crate::runtimes::common::is_partial_version(version) {
+            return Ok(version.to_owned());
+        }
         let available = self.list_available().await?;
         Ok(crate::runtimes::resolve_version_request(
             &available_version_names(&available),
