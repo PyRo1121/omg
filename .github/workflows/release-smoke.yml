@@ -6,6 +6,7 @@ on:
       - ".github/workflows/release-smoke.yml"
       - "scripts/release-smoke.sh"
       - "scripts/test-release-smoke.sh"
+      - "scripts/report-smoke-sentry.sh"
       - "tests/cli_behavior_inventory.tsv"
   workflow_dispatch:
     inputs:

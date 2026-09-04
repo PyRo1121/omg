@@ -383,6 +383,11 @@ finalize_results() {
     awk 'NR > 1 { printf ",\n" } { printf "  %s", $0 } END { if (NR > 0) printf "\n" }' "$results_ndjson"
     printf ']\n'
   } > "$run_evidence/results.json"
+  if ! timeout --kill-after=2s 12s env OMG_SMOKE_RELEASE="$tag" \
+      "$repo_root/scripts/report-smoke-sentry.sh" "$run_evidence/results.json" \
+      > "$run_evidence/reporting.log" 2>&1; then
+    printf 'warning: Sentry reporting failed; results remain in %s\n' "$run_evidence" >&2
+  fi
 }
 
 release="latest"

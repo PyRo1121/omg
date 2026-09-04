@@ -122,6 +122,32 @@ soft passes hide product failures.
   `~/.cache/build-targets/omg-release-smoke`, not `/tmp`. The runner removes
   each distribution's temporary directory when that run exits.
 
+### Optional Sentry reporting
+
+`report-smoke-sentry.sh` runs after the coordinator has collected results and each
+case has completed cleanup. It reads `~/.config/omg-smoke/sentry.json`, or the path
+in `OMG_SMOKE_SENTRY_CONFIG`. Missing configuration disables reporting. Reporting
+requires `jq` and `curl`; failures do not change the original test exit status.
+
+Keep the configuration outside the repository with permissions `600`. Its JSON
+object contains a `dsn` string for a hosted Sentry project. Do not put API tokens,
+passwords, or a production environment dump in this file.
+
+The reporter sends one failure-summary event per invocation containing only case
+IDs, distribution names, result categories, exit codes, elapsed seconds, release,
+and run ID. It does not upload stdout, stderr, guest disks, serial logs, credentials,
+or arbitrary input fields. `PASS`, `EXPECTED_REJECTION`, and `BLOCKED` cases are
+not sent as errors. Full diagnostics stay in local evidence.
+
+Transport is bounded to eight seconds, and the coordinator allows at most twelve
+seconds for reporting. It does not retry automatically. `reporting.log` records
+acceptance or failure without the DSN. HTTP acceptance is not proof that an event
+is visible in the project UI. Replay a saved failure report explicitly with:
+
+```bash
+OMG_SMOKE_RELEASE=v0.1.218 ./scripts/report-smoke-sentry.sh /path/to/run/results.json
+```
+
 Run the network-free coordinator fixtures with:
 
 ```bash
@@ -141,6 +167,39 @@ The Ubuntu pin (`ubuntu:24.04`) mirrors `Dockerfile.ubuntu`.
 shadow mode and uploads per-case evidence even on failure.
 
 ---
+
+## benchmark-qemu-ubuntu.sh
+
+Runs a local headless KVM guest for the first comparative benchmark, Ubuntu
+candidate-package information lookup. It uses the pinned Ubuntu 20260826 cloud
+image and published OMG v0.1.218 archive. Both are checked against pinned SHA-256
+values. It does not compile software or install packages on the host.
+
+```bash
+./scripts/benchmark-qemu-ubuntu.sh
+```
+
+Requirements are Docker access, a readable/writable `/dev/kvm`, `gh`, `jq`, and GNU
+coreutils. QEMU and SSH tools are installed as prebuilt packages inside a disposable
+Debian controller. The controller is limited to two CPUs and 3 GiB RAM without
+additional swap. The guest receives two vCPUs and 1536 MiB RAM.
+
+The guest uses a fresh overlay and pre-provisioned SSH host keys. After cloud-init
+and sudo checks, it installs hyperfine inside the guest, verifies matching package
+name and candidate version, and measures OMG, apt-cache, and apt with three warmups
+and 30 samples each. Native commands print additional metadata. This is not a
+claim of identical output work or full package-manager equivalence.
+
+Evidence is retained under `~/.cache/build-targets/omg-qemu-benchmark/run-*`.
+It includes raw hyperfine samples, preflight output, guest metadata, repository
+hashes, setup/boot logs, and cleanup status. Temporary guest disks and private
+keys are removed during cleanup. Run-level failures use `HARNESS_ERROR` until
+finer phase classification is implemented; inspect the preserved logs for cause.
+The optional Sentry reporter runs only afterward and never uploads those raw logs.
+
+The runner currently supports only this Ubuntu scenario. Arch, Debian, Fedora,
+search, mutation, cold-start, and controlled repeated-guest comparisons remain
+unfinished. Do not treat this runner as completion of the exhaustive release matrix.
 
 ## Release Artifact Naming (canonical scheme)
 
