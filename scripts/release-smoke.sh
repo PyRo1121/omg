@@ -162,8 +162,8 @@ validate_checksum() {
 
 write_result() {
   local evidence_dir=$1 case_id=$2 distro=$3 result=$4 exit_code=$5 elapsed=$6 expectation=$7
-  printf '{"case_id":"%s","distro":"%s","result":"%s","exit_code":%s,"elapsed_seconds":%s,"expectation":"%s"}\n' \
-    "$case_id" "$distro" "$result" "$exit_code" "$elapsed" "$expectation" > "$evidence_dir/result.json"
+  printf '{"case_id":"%s","distro":"%s","result":"%s","exit_code":%s,"elapsed_seconds":%s,"expectation":"%s","artifact_source":"%s"}\n' \
+    "$case_id" "$distro" "$result" "$exit_code" "$elapsed" "$expectation" "$artifact_source" > "$evidence_dir/result.json"
   cat "$evidence_dir/result.json" >> "$results_ndjson"
 }
 
@@ -298,13 +298,12 @@ run_case() (
   exec 3>&- 4>&-
 
   case "$expectation" in
-    pass)
+    pass|known-defect)
       if [[ $observed_exit -eq "${case_exit[$case_id]}" ]]; then result="PASS"; else result="PRODUCT_FAIL"; fi
       ;;
     expected-rejection)
       if [[ $observed_exit -eq "${case_exit[$case_id]}" ]]; then result="EXPECTED_REJECTION"; else result="PRODUCT_FAIL"; fi
       ;;
-    known-defect) result="PRODUCT_FAIL" ;;
     blocked|not-applicable) result="BLOCKED" ;;
     *) result="HARNESS_ERROR" ;;
   esac
@@ -454,6 +453,10 @@ if [[ ! "$timeout_seconds" =~ ^[1-9][0-9]{0,3}$ ]]; then
   exit 2
 fi
 command -v timeout >/dev/null 2>&1 || { printf 'error: GNU timeout is required\n' >&2; exit 3; }
+artifact_source=published
+if [[ -n "$staged_dir" ]]; then
+  artifact_source=staged
+fi
 load_release_cases || exit $?
 repo="${OMG_SMOKE_REPOSITORY:-${GITHUB_REPOSITORY:-PyRo1121/omg}}"
 tag="$release"

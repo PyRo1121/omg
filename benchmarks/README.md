@@ -279,11 +279,10 @@ but does not generically execute all arguments, prerequisites, assertions, and
 cleanup declarations. Exact JSON text selects a bounded executor. This is not yet
 an exhaustive registry-driven engine.
 
-Known-defect expectations currently force `PRODUCT_FAIL` even if a later artifact
-passes. A future result model must keep the observed outcome separate from the
-expected defect so a fixed release is detectable. Blocked declarations must never
-execute first and only be relabeled afterward. Dependency failures must identify
-which command was not reached.
+Historical known-defect expectations are recorded separately from observed
+results. Staged candidates and published artifacts are labeled distinctly.
+Blocked declarations must never execute first and only be relabeled afterward.
+Dependency failures must identify which command was not reached.
 
 Container execution is bounded, but release lookup, downloads, and image pulls
 still need their own deadlines. Archive member validation and signature/provenance

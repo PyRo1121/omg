@@ -79,12 +79,13 @@ chmod 700 "$scratch/bin/gh"
 
 make_stage() {
   local destination=$1
-  local archive="omg-v9.9.9-x86_64-linux-arch.tar.gz"
+  local directory="omg-v9.9.9-x86_64-linux-${2:-arch}"
+  local archive="$directory.tar.gz"
   rm -rf "$destination"
-  mkdir -p "$destination/root/omg-v9.9.9-x86_64-linux-arch"
-  printf '#!/usr/bin/env bash\nexit 0\n' > "$destination/root/omg-v9.9.9-x86_64-linux-arch/omg"
-  chmod 700 "$destination/root/omg-v9.9.9-x86_64-linux-arch/omg"
-  tar -czf "$destination/$archive" -C "$destination/root" "omg-v9.9.9-x86_64-linux-arch"
+  mkdir -p "$destination/root/$directory"
+  printf '#!/usr/bin/env bash\nexit 0\n' > "$destination/root/$directory/omg"
+  chmod 700 "$destination/root/$directory/omg"
+  tar -czf "$destination/$archive" -C "$destination/root" "$directory"
   printf '%s  %s\n' "$(sha256sum "$destination/$archive" | awk '{print $1}')" "$archive" > "$destination/${archive}.sha256"
 }
 
@@ -156,9 +157,20 @@ work_root="$HOME/.cache/build-targets/omg-release-smoke"
 [[ -z "$(find "$work_root" -mindepth 1 -print -quit)" ]] || fail "artifact scratch survived failing case"
 grep -q '"result":"PRODUCT_FAIL"' "$(results_file "$scratch/failing-evidence")" || fail "failing case was not a product failure"
 
+make_stage "$scratch/fedora" fedora
+fedora_args=(--release v9.9.9 --distro fedora --case release-package-search-tree --container-engine fake-engine --staged-dir "$scratch/fedora")
+assert_rc 0 "$runner" "${fedora_args[@]}" --evidence-dir "$scratch/fixed-defect"
+grep -q '"result":"PASS"' "$(results_file "$scratch/fixed-defect")" || fail "fixed defect was forced to fail"
+grep -q '"expectation":"known-defect"' "$(results_file "$scratch/fixed-defect")" || fail "historical expectation was lost"
+export FAKE_RUN_EXIT=7
+assert_rc 1 "$runner" "${fedora_args[@]}" --evidence-dir "$scratch/remaining-defect"
+unset FAKE_RUN_EXIT
+grep -q '"result":"PRODUCT_FAIL"' "$(results_file "$scratch/remaining-defect")" || fail "remaining defect was hidden"
+
 export FAKE_GH_SOURCE="$scratch/valid"
 assert_rc 0 "$runner" "${base_args[@]}" --evidence-dir "$scratch/published-evidence"
 grep -q '"result":"PASS"' "$(results_file "$scratch/published-evidence")" || fail "published artifact path did not pass"
+grep -q '"artifact_source":"published"' "$(results_file "$scratch/published-evidence")" || fail "published source is not recorded"
 
 family_args=(--release v9.9.9 --distro arch --family package --container-engine fake-engine)
 assert_rc 0 "$runner" "${family_args[@]}" --staged-dir "$scratch/valid" --evidence-dir "$scratch/family-evidence"
@@ -178,6 +190,7 @@ result="$(results_file "$scratch/pass-evidence")"
 grep -q '"case_id":"release-package-search-tree"' "$result" || fail "result omits case id"
 grep -q '"distro":"arch"' "$result" || fail "result omits distro"
 grep -q '"result":"PASS"' "$result" || fail "result omits pass classification"
+grep -q '"artifact_source":"staged"' "$result" || fail "staged result is indistinguishable from a published release"
 grep -q '"exit_code":0' "$result" || fail "result omits exit code"
 grep -Eq '"elapsed_seconds":[0-9]+' "$result" || fail "result omits elapsed seconds"
 assert_rc 0 "$runner" "${base_args[@]}" --staged-dir "$scratch/valid" --evidence-dir "$scratch/pass-evidence"

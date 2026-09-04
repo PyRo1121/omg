@@ -115,7 +115,11 @@ soft passes hide product failures.
   base. Each contract writes `transcript.txt`, `probe.sh`, `metadata.txt`, and
   `result.json` there. The run directory also contains the aggregate
   `results.json`. Each result contains `case_id`, `distro`, `result`,
-  `exit_code`, `elapsed_seconds`, and `expectation`. Result values distinguish
+  `exit_code`, `elapsed_seconds`, `expectation`, and `artifact_source`.
+  `artifact_source` distinguishes published archives from local staged artifacts.
+  Historical `known-defect` expectations never override the observed result.
+  A fixed probe passes; a probe that still violates its assertions fails.
+  Result values distinguish
   `PASS`, `EXPECTED_REJECTION`, `PRODUCT_FAIL`, `HARNESS_ERROR`, and `BLOCKED`.
   Later invocations never replace prior aggregate or per-case evidence.
 - Downloaded archives and extracted binaries use temporary directories under
