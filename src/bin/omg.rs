@@ -624,7 +624,29 @@ fn strip_internal_invocation_markers(args: &mut Vec<String>, is_root: bool) -> (
     (true, parent_records)
 }
 
+#[cfg(unix)]
+fn restore_sigpipe_default() -> Result<()> {
+    use nix::sys::signal::{SigHandler, Signal, signal};
+
+    // SAFETY: This runs once, before the runtime or any worker thread exists.
+    // SIG_DFL restores normal Unix pipeline behavior without installing a
+    // callback or accessing shared state from a signal handler.
+    #[expect(
+        unsafe_code,
+        reason = "setting process signal disposition is inherently unsafe"
+    )]
+    unsafe {
+        signal(Signal::SIGPIPE, SigHandler::SigDfl)?;
+    }
+    Ok(())
+}
+
 fn main() {
+    #[cfg(unix)]
+    if let Err(error) = restore_sigpipe_default() {
+        finish(Err(error.context("Failed to configure Unix pipe handling")));
+    }
+
     let mut args: Vec<String> = std::env::args().collect();
 
     // Strip the sudo re-exec marker. Elevation travels via argv because

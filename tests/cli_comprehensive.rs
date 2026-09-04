@@ -46,6 +46,37 @@ fn every_declared_command_renders_binary_help() {
     }
 }
 
+#[cfg(unix)]
+#[test]
+fn closed_stdout_uses_sigpipe_without_a_panic_report() {
+    use std::os::unix::net::UnixStream;
+    use std::os::unix::process::ExitStatusExt as _;
+    use std::process::{Command, Stdio};
+
+    let runtime_dir = tempfile::tempdir().expect("runtime directory");
+    let (reader, writer) = UnixStream::pair().expect("stdout socket pair");
+    drop(reader);
+    let writer = std::os::fd::OwnedFd::from(writer);
+
+    let child = Command::new(env!("CARGO_BIN_EXE_omg"))
+        .arg("daemon-status")
+        .env("OMG_DISABLE_DAEMON", "1")
+        .env("OMG_DISABLE_TELEMETRY", "1")
+        .env("XDG_RUNTIME_DIR", runtime_dir.path())
+        .stdout(Stdio::from(writer))
+        .stderr(Stdio::piped())
+        .spawn()
+        .expect("spawn omg with closed stdout");
+    let output = child.wait_with_output().expect("wait for omg");
+    let stderr = String::from_utf8_lossy(&output.stderr);
+
+    assert_eq!(output.status.signal(), Some(nix::libc::SIGPIPE));
+    assert!(
+        !stderr.contains("panicked"),
+        "unexpected panic report: {stderr}"
+    );
+}
+
 // =======================
 // CORE PACKAGE MANAGEMENT
 // =======================
