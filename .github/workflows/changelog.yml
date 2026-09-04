@@ -44,6 +44,14 @@ jobs:
 
       - name: Generate Changelog
         run: |
+          manifest_version=$(awk -F '"' '$1 ~ /^version = / { print $2; exit }' Cargo.toml)
+          latest_tag=$(git describe --tags --abbrev=0 --match 'v*' 2>/dev/null || true)
+          if [[ "v$manifest_version" != "$latest_tag" ]] \
+            && grep -Fq "## [$manifest_version] - " docs/changelog.md; then
+            echo "::notice::Keeping the prepared v$manifest_version changelog section until its tag exists"
+            exit 0
+          fi
+
           git-cliff --output docs/changelog.md
 
           # Escape HTML-like tags for MDX compatibility
