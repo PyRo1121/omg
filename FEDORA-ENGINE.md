@@ -33,13 +33,18 @@ S1. Correct the raw-Rust database-header reader using zerocopy views and a
     native SQLite fixture. Compare installed records with `rpm -qa`; preserve
     malformed-input rejection. Package archive/signature parsing is separate.
     Focused tests and native parity are required; fuzz coverage remains future work.
-S2. InRelease-equivalent: verify repomd.xml signatures (sequoia, already
-    in-tree) BEFORE any metadata use; bind primary.xml checksums to
-    verified repomd (mirrors the Debian signature-chain blockers).
-S3. Streaming primary.xml.gz -> internal CompactPackage records ->
-    rkyv mmap index under ~/.cache/omg/dnf, format-versioned, atomic
-    publish, daemon prewarm. This replaces the deleted dead scaffolding
-    with the REAL implementation (wave: dnf repo-metadata deletion).
+S2. Preserve Fedora's configured repository trust policy. The pinned Fedora
+    image has repo_gpgcheck=0 and gpgcheck=1: metadata signatures and package
+    signatures are separate checks. Resolve metalinks and bind primary metadata
+    to the selected repomd checksums. Do not require a detached metadata signature
+    that the configured repository does not publish, or silently bypass package
+    signature verification. Test corrupt metadata and mirror changes.
+S3. Stream verified primary metadata into compact records and a versioned,
+    atomically published index under ~/.cache/omg/dnf. Real DNF5 cache inspection
+    found primary.xml.zck for Fedora and updates, and primary.xml.zst for openh264.
+    Select the supported primary representation from repomd explicitly; do not
+    assume gzip or mistake a .solv cache for XML. Include enabled repository set,
+    architecture, metadata digests, and policy in cache identity.
 S4. search/info/list_updates/get_status over the mmap index (O(1)/scan);
     list_updates un-blocks (currently explicit fail-closed).
 S5. Transactions stay on the dnf CLI (already correct); benchmark
