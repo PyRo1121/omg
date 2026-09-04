@@ -3,14 +3,22 @@
 
 from __future__ import annotations
 
+from dataclasses import dataclass
 import json
 import math
 import os
 import sys
 
 
-def extract_command_time_from_hyperfine(json_path: str, command: str) -> float | None:
-    """Extract one command's positive mean time in milliseconds."""
+@dataclass(frozen=True, slots=True)
+class Measurement:
+    mean_ms: float
+    stddev_ms: float | None
+    samples: int | None
+
+
+def extract_command_measurement(json_path: str, command: str) -> Measurement | None:
+    """Extract one command's timing distribution from Hyperfine JSON."""
     try:
         with open(json_path, encoding="utf-8") as handle:
             data = json.load(handle)
@@ -26,14 +34,31 @@ def extract_command_time_from_hyperfine(json_path: str, command: str) -> float |
         mean = result.get("mean")
         if isinstance(mean, bool) or not isinstance(mean, (int, float)):
             return None
-        milliseconds = float(mean) * 1000
-        return milliseconds if math.isfinite(milliseconds) and milliseconds > 0 else None
+        mean_ms = float(mean) * 1000
+        if not math.isfinite(mean_ms) or mean_ms <= 0:
+            return None
+
+        stddev = result.get("stddev")
+        stddev_ms = (
+            float(stddev) * 1000
+            if not isinstance(stddev, bool)
+            and isinstance(stddev, (int, float))
+            and math.isfinite(float(stddev))
+            and stddev >= 0
+            else None
+        )
+        times = result.get("times")
+        samples = len(times) if isinstance(times, list) and len(times) > 1 else None
+        return Measurement(mean_ms=mean_ms, stddev_ms=stddev_ms, samples=samples)
     return None
 
 
-def extract_search_time_from_hyperfine(json_path: str) -> float | None:
-    """Extract the daemon search mean from hyperfine JSON."""
-    return extract_command_time_from_hyperfine(json_path, "OMG (Daemon)")
+def confidence_bounds(measurement: Measurement) -> tuple[float, float]:
+    """Return an approximate 95% confidence interval for the measured mean."""
+    if measurement.stddev_ms is None or measurement.samples is None:
+        return measurement.mean_ms, measurement.mean_ms
+    margin = 1.96 * measurement.stddev_ms / math.sqrt(measurement.samples)
+    return max(measurement.mean_ms - margin, sys.float_info.min), measurement.mean_ms + margin
 
 
 def parse_positive_number(value: object) -> float | None:
@@ -95,17 +120,19 @@ def check_regression() -> int:
         print(f"Failing closed: baseline {baseline_path} must be a JSON object")
         return 1
 
-    current_search_ms = None
-    current_pacman_ms = None
+    current_search = None
+    current_pacman = None
     for json_path in hyperfine_json_paths:
-        current_search_ms = extract_search_time_from_hyperfine(json_path)
-        if current_search_ms is not None:
-            current_pacman_ms = extract_command_time_from_hyperfine(json_path, "pacman")
+        current_search = extract_command_measurement(json_path, "OMG (Daemon)")
+        if current_search is not None:
+            current_pacman = extract_command_measurement(json_path, "pacman")
             break
 
-    if current_search_ms is None:
-        current_search_ms = extract_search_time_from_markdown(markdown_report_path)
-    if current_search_ms is None:
+    if current_search is None:
+        markdown_search_ms = extract_search_time_from_markdown(markdown_report_path)
+        if markdown_search_ms is not None:
+            current_search = Measurement(markdown_search_ms, None, None)
+    if current_search is None:
         print("❌ Could not extract current search time from any source.")
         return 1
 
@@ -124,31 +151,50 @@ def check_regression() -> int:
         threshold = 1.35
 
     print(f"Baseline Search: {baseline_search_ms}ms")
-    print(f"Current Search: {current_search_ms}ms")
+    print(f"Current Search: {current_search.mean_ms}ms")
 
-    absolute_regression = current_search_ms > baseline_search_ms * threshold
+    search_lower, search_upper = confidence_bounds(current_search)
+    if search_lower != search_upper:
+        print(f"Current search mean 95% interval: {search_lower:.2f}ms to {search_upper:.2f}ms")
+
+    absolute_limit = baseline_search_ms * threshold
+    absolute_regression = current_search.mean_ms > absolute_limit
+    credible_absolute_regression = search_lower > absolute_limit
     baseline_speedup = parse_positive_number(baseline.get("speedup"))
     current_speedup = None
-    if current_pacman_ms is not None:
-        current_speedup = current_pacman_ms / current_search_ms
+    maximum_current_speedup = None
+    if current_pacman is not None:
+        current_speedup = current_pacman.mean_ms / current_search.mean_ms
+        _, pacman_upper = confidence_bounds(current_pacman)
+        maximum_current_speedup = pacman_upper / search_lower
     if baseline_speedup is not None and current_speedup is not None:
         print(f"Baseline speedup vs pacman: {baseline_speedup:.2f}x")
         print(f"Current speedup vs pacman: {current_speedup:.2f}x")
 
+    relative_limit = baseline_speedup / threshold if baseline_speedup is not None else None
     relative_regression = (
-        baseline_speedup is not None
+        relative_limit is not None
         and current_speedup is not None
-        and current_speedup < baseline_speedup / threshold
+        and current_speedup < relative_limit
     )
-    if absolute_regression and (
-        baseline_speedup is None or current_speedup is None or relative_regression
+    credible_relative_regression = (
+        relative_limit is not None
+        and maximum_current_speedup is not None
+        and maximum_current_speedup < relative_limit
+    )
+    if credible_absolute_regression and (
+        baseline_speedup is None
+        or current_speedup is None
+        or credible_relative_regression
     ):
-        difference = ((current_search_ms / baseline_search_ms) - 1) * 100
+        difference = ((current_search.mean_ms / baseline_search_ms) - 1) * 100
         print("❌ PERFORMANCE REGRESSION DETECTED!")
         print(f"Search time increased by {difference:.2f}% (exceeds configured threshold)")
         return 1
 
-    if absolute_regression:
+    if absolute_regression and relative_regression:
+        print("Point estimates cross both limits, but measurement uncertainty overlaps the control limit.")
+    elif absolute_regression:
         print("Absolute time moved with the in-run pacman control; treating it as runner noise.")
     print("✅ Performance check passed.")
     return 0

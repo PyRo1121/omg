@@ -128,11 +128,6 @@ jobs:
             echo "speedup=${SPEEDUP}x" >> $GITHUB_OUTPUT
           fi
 
-      - name: Performance Regression Gate
-        run: |
-          chmod +x scripts/check-perf-regression.py
-          python3 scripts/check-perf-regression.py
-
       - name: Generate Badge JSON
         env:
           BENCH_SPEEDUP: ${{ steps.bench.outputs.speedup }}
@@ -157,6 +152,11 @@ jobs:
             benchmark-badge.json
             benchmark_output.txt
           retention-days: 90
+
+      - name: Performance Regression Gate
+        run: |
+          chmod +x scripts/check-perf-regression.py
+          python3 scripts/check-perf-regression.py
 
 
   commit-results:

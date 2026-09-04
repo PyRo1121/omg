@@ -7,7 +7,7 @@ Canonical performance history for OMG.
 | `benchmarks/records/<id>/` | One hyperfine run: full JSON, markdown tables, `meta.json` |
 | `benchmarks/records/INDEX.md` | Newest-first index of those runs |
 | `benchmarks/latest.md` | Human summary of the most recent recorded run |
-| `benchmarks/summary.json` | CI regression gate (search mean). Updated only by CI or `--update-gate` |
+| `benchmarks/summary.json` | Reviewed CI regression baseline. Updated only by an explicit `--update-gate` run |
 | `benchmarks/badge.json` | Shields.io endpoint for the README badge |
 | `benchmarks/baselines/` | Pinned comparison snapshots |
 | `benchmark_results/` | Scratch output from a local run (**gitignored**) |

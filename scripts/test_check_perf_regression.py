@@ -18,6 +18,10 @@ def run_gate(
     baseline_speedup: str | None,
     current_search_ms: float,
     current_pacman_ms: float | None,
+    current_search_stddev_ms: float | None = None,
+    current_pacman_stddev_ms: float | None = None,
+    search_samples: int | None = None,
+    pacman_samples: int | None = None,
 ) -> subprocess.CompletedProcess[str]:
     with tempfile.TemporaryDirectory() as directory:
         root = Path(directory)
@@ -31,11 +35,25 @@ def run_gate(
             json.dumps(baseline), encoding="utf-8"
         )
 
-        results: list[dict[str, object]] = [
-            {"command": "OMG (Daemon)", "mean": current_search_ms / 1000}
-        ]
+        search_result: dict[str, object] = {
+            "command": "OMG (Daemon)",
+            "mean": current_search_ms / 1000,
+        }
+        if current_search_stddev_ms is not None:
+            search_result["stddev"] = current_search_stddev_ms / 1000
+        if search_samples is not None:
+            search_result["times"] = [current_search_ms / 1000] * search_samples
+        results: list[dict[str, object]] = [search_result]
         if current_pacman_ms is not None:
-            results.append({"command": "pacman", "mean": current_pacman_ms / 1000})
+            pacman_result: dict[str, object] = {
+                "command": "pacman",
+                "mean": current_pacman_ms / 1000,
+            }
+            if current_pacman_stddev_ms is not None:
+                pacman_result["stddev"] = current_pacman_stddev_ms / 1000
+            if pacman_samples is not None:
+                pacman_result["times"] = [current_pacman_ms / 1000] * pacman_samples
+            results.append(pacman_result)
         (root / "benchmark_results" / "search.json").write_text(
             json.dumps({"results": results}), encoding="utf-8"
         )
@@ -64,12 +82,31 @@ class PerformanceRegressionGateTests(unittest.TestCase):
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
         self.assertIn("runner noise", result.stdout)
 
+    def test_borderline_ratio_with_observed_variance_is_not_credible(self) -> None:
+        result = run_gate(
+            baseline_search_ms=6.4,
+            baseline_speedup="29.4x",
+            current_search_ms=10.158,
+            current_pacman_ms=220.7,
+            current_search_stddev_ms=0.8,
+            current_pacman_stddev_ms=1.8,
+            search_samples=15,
+            pacman_samples=13,
+        )
+
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertIn("measurement uncertainty", result.stdout)
+
     def test_search_specific_regression_fails_against_control_ratio(self) -> None:
         result = run_gate(
             baseline_search_ms=6.4,
             baseline_speedup="29.4x",
             current_search_ms=12.0,
             current_pacman_ms=180.0,
+            current_search_stddev_ms=0.1,
+            current_pacman_stddev_ms=1.0,
+            search_samples=15,
+            pacman_samples=13,
         )
 
         self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
