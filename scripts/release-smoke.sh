@@ -22,6 +22,7 @@ Options:
   --case ID                  Run one release contract
   --family NAME              Run one contract family (default: package)
   --tier NAME                Run one execution tier (default: container)
+  --timeout-seconds N        Container execution limit, 1..9999 (default: 300)
   --container-engine ENGINE  docker or podman (default: $OMG_SMOKE_ENGINE or docker)
   --evidence-dir PATH        Evidence base (default: target/release-smoke)
 
@@ -182,24 +183,24 @@ write_probe() {
 set -euo pipefail
 export DEBIAN_FRONTEND=noninteractive
 bin="/probe/${OMG_PROBE_BIN}"
-bash -c "${OMG_PROBE_INDEX_CMD}"
+bash -c "${OMG_PROBE_INDEX_CMD}" || exit 120
 version_line="$(printf '%s\n' "$("$bin" --version)" | head -n 1 | tr -d '[:space:]')"
 [[ "$version_line" == "omg${OMG_PROBE_VERSION_NUM}" ]]
-bash -c "${OMG_PROBE_REMOVED_ASSERT}"
+bash -c "${OMG_PROBE_REMOVED_ASSERT}" || exit 120
 case "$OMG_SMOKE_PROBE_KIND" in
   search-tree)
-    search_output="$("$bin" search tree)"
+    search_output="$("$bin" search tree)" || exit 1
     printf '%s\n' "$search_output"
     grep -Eqi '^[[:space:]]+tree[[:space:]]' <<< "$search_output"
     ;;
   install-tree)
-    "$bin" install --yes tree
+    "$bin" install --yes tree || exit 1
     bash -c "${OMG_PROBE_INSTALLED_ASSERT}"
     ;;
   remove-tree)
-    "$bin" install --yes tree
-    bash -c "${OMG_PROBE_INSTALLED_ASSERT}"
-    "$bin" remove --yes tree
+    "$bin" install --yes tree || exit 120
+    bash -c "${OMG_PROBE_INSTALLED_ASSERT}" || exit 120
+    "$bin" remove --yes tree || exit 1
     bash -c "${OMG_PROBE_REMOVED_ASSERT}"
     ;;
   *)
@@ -252,9 +253,10 @@ resolve_artifact() {
   digest="$(validate_checksum "$workdir/$archive" "$workdir/${archive}.sha256" "$archive")" || return 1
 }
 
-run_case() {
+run_case() (
   local distro=$1 case_id=$2 stage=$3
   local expectation evidence_dir started elapsed probe_bin probe_kind observed_exit result
+  local container_name="omg-smoke-${BASHPID}-${distro}-${case_id}" cleanup_ok=true
   expectation="$(target_for_distro "${case_targets[$case_id]}" "$distro")" || expectation="missing"
   evidence_dir="$run_evidence/${distro}-${case_id}"
   mkdir -p "$evidence_dir"
@@ -263,12 +265,23 @@ run_case() {
   cp "$stage/probe-${case_id}.sh" "$evidence_dir/probe.sh"
   probe_bin="omg-${tag}${distro_suffix}/omg"
 
+  cleanup_container() {
+    local remaining
+    timeout --kill-after=5s 10s "$engine" rm --force "$container_name" >> "$evidence_dir/cleanup.txt" 2>&1 || true
+    remaining="$(timeout --kill-after=5s 10s "$engine" ps --all --quiet --filter "name=^/${container_name}$" 2>> "$evidence_dir/cleanup.txt")" || return 1
+    [[ -z "$remaining" ]] || return 1
+    printf 'verified absent: %s\n' "$container_name" >> "$evidence_dir/cleanup.txt"
+  }
+  trap 'cleanup_container || exit 3' EXIT
+  trap 'exit 130' INT
+  trap 'exit 143' TERM
+
   exec 3>&1 4>&2
   exec > >(tee "$evidence_dir/transcript.txt") 2>&1
   set -x
   started=$SECONDS
   observed_exit=0
-  "$engine" run --rm \
+  timeout --kill-after=5s "${timeout_seconds}s" "$engine" run --rm --name "$container_name" \
     -e OMG_SMOKE_PROBE_KIND="$probe_kind" \
     -e OMG_PROBE_VERSION_NUM="$version" \
     -e OMG_PROBE_BIN="$probe_bin" \
@@ -277,6 +290,8 @@ run_case() {
     -e OMG_PROBE_REMOVED_ASSERT="$distro_removed_assert" \
     -v "$stage:/probe:ro" \
     "$distro_image" bash -x "/probe/probe-${case_id}.sh" || observed_exit=$?
+  cleanup_container || cleanup_ok=false
+  trap - EXIT INT TERM
   elapsed=$((SECONDS - started))
   set +x
   exec 1>&3 2>&4
@@ -293,6 +308,12 @@ run_case() {
     blocked|not-applicable) result="BLOCKED" ;;
     *) result="HARNESS_ERROR" ;;
   esac
+  case "$observed_exit" in
+    120|124|125|126|127|137) result="HARNESS_ERROR" ;;
+  esac
+  if [[ "$cleanup_ok" != true ]]; then
+    result="HARNESS_ERROR"
+  fi
 
   {
     printf 'case_id=%s\n' "$case_id"
@@ -313,7 +334,7 @@ run_case() {
     PRODUCT_FAIL) return 1 ;;
     HARNESS_ERROR|BLOCKED) return 3 ;;
   esac
-}
+)
 
 run_distro() (
   set -euo pipefail
@@ -371,13 +392,14 @@ distro="all"
 case_id=""
 family="package"
 tier="container"
+timeout_seconds=300
 engine="${OMG_SMOKE_ENGINE:-docker}"
 evidence_base="${OMG_SMOKE_EVIDENCE_DIR:-$repo_root/target/release-smoke}"
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --help|-h) usage; exit 0 ;;
-    --release|--staged-dir|--distro|--case|--family|--tier|--container-engine|--evidence-dir)
+    --release|--staged-dir|--distro|--case|--family|--tier|--timeout-seconds|--container-engine|--evidence-dir)
       [[ $# -ge 2 ]] || { printf 'error: %s requires a value\n' "$1" >&2; exit 2; }
       case "$1" in
         --release) release=$2; release_set=true ;;
@@ -386,6 +408,7 @@ while [[ $# -gt 0 ]]; do
         --case) case_id=$2 ;;
         --family) family=$2 ;;
         --tier) tier=$2 ;;
+        --timeout-seconds) timeout_seconds=$2 ;;
         --container-engine) engine=$2 ;;
         --evidence-dir) evidence_base=$2 ;;
       esac
@@ -421,6 +444,11 @@ if [[ -n "$staged_dir" ]]; then
   fi
 fi
 
+if [[ ! "$timeout_seconds" =~ ^[1-9][0-9]{0,3}$ ]]; then
+  printf 'error: --timeout-seconds must be an integer between 1 and 9999\n' >&2
+  exit 2
+fi
+command -v timeout >/dev/null 2>&1 || { printf 'error: GNU timeout is required\n' >&2; exit 3; }
 load_release_cases || exit $?
 repo="${OMG_SMOKE_REPOSITORY:-${GITHUB_REPOSITORY:-PyRo1121/omg}}"
 tag="$release"

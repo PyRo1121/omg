@@ -101,6 +101,13 @@ soft passes hide product failures.
   2 and list valid contract identifiers.
 - `--distro` accepts `arch`, `debian`, `ubuntu`, `fedora`, or `all`. A product
   failure on one distribution does not stop the remaining distributions.
+- `--timeout-seconds` limits each container execution to 300 seconds by default.
+  GNU `timeout` is required. A timeout reports `HARNESS_ERROR` with exit code
+  124, or 137 if forced termination was needed. Setup failures use code 120.
+  Container launch failures also report `HARNESS_ERROR`.
+- Every executed case records container-removal output in `cleanup.txt` and
+  queries the engine to verify that the case's container is absent. Unverified
+  cleanup overrides a passing product result with `HARNESS_ERROR`.
 - `--container-engine` defaults to `$OMG_SMOKE_ENGINE`, then `docker`. Missing
   or unavailable infrastructure exits 3. Product failures exit 1. Invalid
   usage exits 2.

@@ -35,7 +35,21 @@ set -euo pipefail
 case "${1:-}" in
   info) exit "${FAKE_INFO_EXIT:-0}" ;;
   pull) exit 0 ;;
-  run) exit "${FAKE_RUN_EXIT:-0}" ;;
+  run)
+    if [[ "${FAKE_HANG:-0}" == 1 ]]; then
+      touch "$FAKE_CONTAINER_STATE"
+      sleep 30
+    fi
+    exit "${FAKE_RUN_EXIT:-0}"
+    ;;
+  rm)
+    [[ "${FAKE_CLEANUP_FAIL:-0}" != 1 ]] || exit 1
+    rm -f "$FAKE_CONTAINER_STATE"
+    ;;
+  ps)
+    [[ "${FAKE_CLEANUP_FAIL:-0}" != 1 ]] || exit 1
+    if [[ -f "$FAKE_CONTAINER_STATE" ]]; then printf 'remaining-container\n'; fi
+    ;;
   *) exit 2 ;;
 esac
 EOF
@@ -85,6 +99,9 @@ export TMPDIR="$scratch/tmp"
 export HOME="$scratch/home"
 mkdir -p "$HOME"
 
+assert_rc 2 "$runner" --timeout-seconds 0
+assert_rc 2 "$runner" --timeout-seconds -1
+assert_rc 2 "$runner" --timeout-seconds 1.5
 assert_rc 2 "$runner" --family invalid
 assert_rc 2 "$runner" --tier invalid
 assert_rc 2 "$runner" --case not-a-contract
@@ -103,6 +120,28 @@ assert_rc 3 "$runner" "${base_args[@]}" --staged-dir "$scratch/missing" --eviden
 grep -q '"result":"HARNESS_ERROR"' "$(results_file "$scratch/missing-evidence")" || fail "missing sidecar was not a harness error"
 
 make_stage "$scratch/valid"
+export FAKE_CONTAINER_STATE="$scratch/container-state"
+for failure_code in 120 125 126 127; do
+  export FAKE_RUN_EXIT="$failure_code"
+  assert_rc 3 "$runner" "${base_args[@]}" --staged-dir "$scratch/valid" --evidence-dir "$scratch/launch-error-$failure_code"
+  grep -q '"result":"HARNESS_ERROR"' "$(results_file "$scratch/launch-error-$failure_code")" || fail "setup or engine failure was blamed on the product"
+done
+unset FAKE_RUN_EXIT
+
+export FAKE_HANG=1
+assert_rc 3 "$runner" "${base_args[@]}" --timeout-seconds 1 --staged-dir "$scratch/valid" --evidence-dir "$scratch/timeout"
+unset FAKE_HANG
+[[ ! -e "$FAKE_CONTAINER_STATE" ]] || fail "container survived timeout"
+[[ -z "$(find "$HOME/.cache/build-targets/omg-release-smoke" -mindepth 1 -print -quit)" ]] || fail "artifact scratch survived timeout"
+grep -R -q 'verified absent:' "$scratch/timeout" || fail "timeout has no cleanup proof"
+grep -q '"exit_code":124' "$(results_file "$scratch/timeout")" || fail "timeout code was lost"
+grep -q '"result":"HARNESS_ERROR"' "$(results_file "$scratch/timeout")" || fail "timeout was reported as a product verdict"
+
+export FAKE_CLEANUP_FAIL=1
+assert_rc 3 "$runner" "${base_args[@]}" --staged-dir "$scratch/valid" --evidence-dir "$scratch/cleanup-error"
+unset FAKE_CLEANUP_FAIL
+grep -q '"result":"HARNESS_ERROR"' "$(results_file "$scratch/cleanup-error")" || fail "unverified cleanup passed"
+
 export FAKE_INFO_EXIT=1
 assert_rc 3 "$runner" "${base_args[@]}" --staged-dir "$scratch/valid" --evidence-dir "$scratch/blocked-evidence"
 unset FAKE_INFO_EXIT
