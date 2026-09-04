@@ -193,13 +193,13 @@ case "$OMG_SMOKE_PROBE_KIND" in
     grep -Eqi '^[[:space:]]+tree[[:space:]]' <<< "$search_output"
     ;;
   install-tree)
-    "$bin" install -y tree
+    "$bin" install --yes tree
     bash -c "${OMG_PROBE_INSTALLED_ASSERT}"
     ;;
   remove-tree)
-    "$bin" install -y tree
+    "$bin" install --yes tree
     bash -c "${OMG_PROBE_INSTALLED_ASSERT}"
-    "$bin" remove -y tree
+    "$bin" remove --yes tree
     bash -c "${OMG_PROBE_REMOVED_ASSERT}"
     ;;
   *)
@@ -215,7 +215,7 @@ record_nonexecution() {
   local distro=$1 result=$2 message=$3 case_id expectation evidence_dir
   for case_id in "${selected_cases[@]}"; do
     expectation="$(target_for_distro "${case_targets[$case_id]}" "$distro")" || expectation="missing"
-    evidence_dir="$evidence_base/${distro}-${case_id}-$(date -u +%Y%m%dT%H%M%SZ)-$$"
+    evidence_dir="$run_evidence/${distro}-${case_id}"
     mkdir -p "$evidence_dir"
     printf '%s: %s\n' "$result" "$message" > "$evidence_dir/transcript.txt"
     {
@@ -256,7 +256,7 @@ run_case() {
   local distro=$1 case_id=$2 stage=$3
   local expectation evidence_dir started elapsed probe_bin probe_kind observed_exit result
   expectation="$(target_for_distro "${case_targets[$case_id]}" "$distro")" || expectation="missing"
-  evidence_dir="$evidence_base/${distro}-${case_id}-$(date -u +%Y%m%dT%H%M%SZ)-$$"
+  evidence_dir="$run_evidence/${distro}-${case_id}"
   mkdir -p "$evidence_dir"
   probe_kind="$(probe_kind_for_args "${case_args[$case_id]}")" || return 3
   write_probe "$stage/probe-${case_id}.sh"
@@ -359,7 +359,7 @@ finalize_results() {
     printf '[\n'
     awk 'NR > 1 { printf ",\n" } { printf "  %s", $0 } END { if (NR > 0) printf "\n" }' "$results_ndjson"
     printf ']\n'
-  } > "$evidence_base/results.json"
+  } > "$run_evidence/results.json"
 }
 
 release="latest"
@@ -428,7 +428,8 @@ else
   distros=("$distro")
 fi
 mkdir -p "$evidence_base"
-results_ndjson="$evidence_base/.results-$$.ndjson"
+run_evidence="$(mktemp -d "$evidence_base/run-$(date -u +%Y%m%dT%H%M%SZ)-XXXXXX")"
+results_ndjson="$run_evidence/.results.ndjson"
 : > "$results_ndjson"
 trap 'rm -f "$results_ndjson"' EXIT
 

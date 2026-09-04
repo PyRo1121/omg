@@ -104,12 +104,13 @@ soft passes hide product failures.
 - `--container-engine` defaults to `$OMG_SMOKE_ENGINE`, then `docker`. Missing
   or unavailable infrastructure exits 3. Product failures exit 1. Invalid
   usage exits 2.
-- Each contract writes `transcript.txt`, `probe.sh`, `metadata.txt`, and
-  `result.json` under the evidence base. The invocation also writes
+- Each invocation creates a timestamped `run-*` directory under the evidence
+  base. Each contract writes `transcript.txt`, `probe.sh`, `metadata.txt`, and
+  `result.json` there. The run directory also contains the aggregate
   `results.json`. Each result contains `case_id`, `distro`, `result`,
   `exit_code`, `elapsed_seconds`, and `expectation`. Result values distinguish
   `PASS`, `EXPECTED_REJECTION`, `PRODUCT_FAIL`, `HARNESS_ERROR`, and `BLOCKED`.
-  Prior evidence is never erased.
+  Later invocations never replace prior aggregate or per-case evidence.
 
 Run the network-free coordinator fixtures with:
 

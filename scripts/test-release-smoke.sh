@@ -14,6 +14,10 @@ fail() {
   exit 1
 }
 
+results_file() {
+  find "$1" -mindepth 2 -maxdepth 2 -name results.json -type f -print -quit
+}
+
 assert_rc() {
   local expected=$1
   shift
@@ -89,43 +93,50 @@ make_stage "$scratch/mismatch"
 printf '0%.0s' {1..64} > "$scratch/mismatch/omg-v9.9.9-x86_64-linux-arch.tar.gz.sha256"
 printf '  omg-v9.9.9-x86_64-linux-arch.tar.gz\n' >> "$scratch/mismatch/omg-v9.9.9-x86_64-linux-arch.tar.gz.sha256"
 assert_rc 3 "$runner" "${base_args[@]}" --staged-dir "$scratch/mismatch" --evidence-dir "$scratch/mismatch-evidence"
-grep -q '"result":"HARNESS_ERROR"' "$scratch/mismatch-evidence/results.json" || fail "checksum mismatch was not a harness error"
+grep -q '"result":"HARNESS_ERROR"' "$(results_file "$scratch/mismatch-evidence")" || fail "checksum mismatch was not a harness error"
 
 make_stage "$scratch/missing"
 rm "$scratch/missing/omg-v9.9.9-x86_64-linux-arch.tar.gz.sha256"
 assert_rc 3 "$runner" "${base_args[@]}" --staged-dir "$scratch/missing" --evidence-dir "$scratch/missing-evidence"
-grep -q '"result":"HARNESS_ERROR"' "$scratch/missing-evidence/results.json" || fail "missing sidecar was not a harness error"
+grep -q '"result":"HARNESS_ERROR"' "$(results_file "$scratch/missing-evidence")" || fail "missing sidecar was not a harness error"
 
 make_stage "$scratch/valid"
 export FAKE_INFO_EXIT=1
 assert_rc 3 "$runner" "${base_args[@]}" --staged-dir "$scratch/valid" --evidence-dir "$scratch/blocked-evidence"
 unset FAKE_INFO_EXIT
-grep -q '"result":"BLOCKED"' "$scratch/blocked-evidence/results.json" || fail "unavailable engine was not blocked"
+grep -q '"result":"BLOCKED"' "$(results_file "$scratch/blocked-evidence")" || fail "unavailable engine was not blocked"
 
 export FAKE_RUN_EXIT=7
 assert_rc 1 "$runner" "${base_args[@]}" --staged-dir "$scratch/valid" --evidence-dir "$scratch/failing-evidence"
 unset FAKE_RUN_EXIT
 find "$scratch/tmp" -mindepth 1 -maxdepth 1 -name 'omg-release-smoke-*' -print -quit | grep -q . && fail "temporary workdir survived failing case"
-grep -q '"result":"PRODUCT_FAIL"' "$scratch/failing-evidence/results.json" || fail "failing case was not a product failure"
+grep -q '"result":"PRODUCT_FAIL"' "$(results_file "$scratch/failing-evidence")" || fail "failing case was not a product failure"
 
 export FAKE_GH_SOURCE="$scratch/valid"
 assert_rc 0 "$runner" "${base_args[@]}" --evidence-dir "$scratch/published-evidence"
-grep -q '"result":"PASS"' "$scratch/published-evidence/results.json" || fail "published artifact path did not pass"
+grep -q '"result":"PASS"' "$(results_file "$scratch/published-evidence")" || fail "published artifact path did not pass"
 
 family_args=(--release v9.9.9 --distro arch --family package --container-engine fake-engine)
 assert_rc 0 "$runner" "${family_args[@]}" --staged-dir "$scratch/valid" --evidence-dir "$scratch/family-evidence"
-[[ "$(grep -c '"case_id"' "$scratch/family-evidence/results.json")" -eq 3 ]] || fail "package family did not select three contracts"
+[[ "$(grep -c '"case_id"' "$(results_file "$scratch/family-evidence")")" -eq 3 ]] || fail "package family did not select three contracts"
+grep -R -q 'install --yes tree' "$scratch/family-evidence" || fail "install probe did not preserve canonical --yes"
+grep -R -q 'remove --yes tree' "$scratch/family-evidence" || fail "remove probe did not preserve canonical --yes"
+if grep -R -E '(install|remove) -y tree' "$scratch/family-evidence" >/dev/null; then
+  fail "probe substituted the short -y alias"
+fi
 
 export GH_TOKEN='fixture-secret-that-must-not-leak'
 assert_rc 0 "$runner" "${base_args[@]}" --staged-dir "$scratch/valid" --evidence-dir "$scratch/pass-evidence"
 if grep -R -F "$GH_TOKEN" "$scratch/pass-evidence" >/dev/null; then
   fail "secret appeared in evidence"
 fi
-result="$scratch/pass-evidence/results.json"
+result="$(results_file "$scratch/pass-evidence")"
 grep -q '"case_id":"release-package-search-tree"' "$result" || fail "result omits case id"
 grep -q '"distro":"arch"' "$result" || fail "result omits distro"
 grep -q '"result":"PASS"' "$result" || fail "result omits pass classification"
 grep -q '"exit_code":0' "$result" || fail "result omits exit code"
 grep -Eq '"elapsed_seconds":[0-9]+' "$result" || fail "result omits elapsed seconds"
+assert_rc 0 "$runner" "${base_args[@]}" --staged-dir "$scratch/valid" --evidence-dir "$scratch/pass-evidence"
+[[ "$(find "$scratch/pass-evidence" -mindepth 2 -maxdepth 2 -name results.json -type f | wc -l)" -eq 2 ]] || fail "a later invocation replaced prior aggregate evidence"
 
 printf 'PASS: release smoke fixture suite\n'
