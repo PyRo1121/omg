@@ -15,11 +15,17 @@ OMG is the fastest unified package manager for Linux, replacing pacman, yay, nvm
 
 - **Fedora**: Decode native RPM database headers
 - **Ci**: Preserve prepared changelog sections
+### 👷 CI/CD
+
+- Add published release smoke matrix
 ### 📚 Documentation
 
 - **Fedora**: Record observed repository formats and trust policy
 - **Fedora**: Distinguish database and archive header formats
 - Record v0.1.218 verification [skip ci]
+### 🧪 Testing
+
+- **Cli**: Make command contracts structural
 ## [0.1.218] - 2026-09-04
 ### 🐛 Bug Fixes
 
