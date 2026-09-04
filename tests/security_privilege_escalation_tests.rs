@@ -236,6 +236,42 @@ mod privilege_escalation {
         assert_eq!(action_rule["automerge"], false);
         assert_eq!(action_rule["minimumReleaseAge"], "7 days");
 
+        let workflows = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join(".github/workflows");
+        for entry in std::fs::read_dir(workflows).expect("workflow directory") {
+            let path = entry.expect("workflow entry").path();
+            if path.extension().and_then(std::ffi::OsStr::to_str) != Some("yml") {
+                continue;
+            }
+            let source = std::fs::read_to_string(&path).expect("workflow source");
+            for line in source.lines() {
+                let trimmed = line.trim();
+                let Some(action) = trimmed
+                    .strip_prefix("- uses: ")
+                    .or_else(|| trimmed.strip_prefix("uses: "))
+                else {
+                    continue;
+                };
+                if action.starts_with("./") {
+                    continue;
+                }
+                let reference = action
+                    .split_once('@')
+                    .map(|(_, reference)| reference)
+                    .expect("external actions must have a reference")
+                    .split_whitespace()
+                    .next()
+                    .expect("action reference");
+                assert!(
+                    reference.len() == 40
+                        && reference
+                            .chars()
+                            .all(|character| character.is_ascii_hexdigit()),
+                    "{} has a mutable action reference: {action}",
+                    path.display()
+                );
+            }
+        }
+
         let Some(audit) = read_checkout_file(".github/workflows/audit.yml") else {
             eprintln!("skipping audit.yml assertions: .github is not present in this checkout");
             return;
@@ -276,9 +312,8 @@ mod privilege_escalation {
             return;
         };
         assert!(
-            workflow.contains(
-                "actions/attest-build-provenance@977bb373ede98d70efdf65b84cb5f73e068dcc2a"
-            ) && workflow.contains("release/*.tar.gz")
+            workflow.contains("actions/attest-build-provenance@")
+                && workflow.contains("release/*.tar.gz")
                 && workflow.contains("release/*.cdx.json")
                 && workflow.contains("cargo-cyclonedx@0.5.9")
                 && workflow.contains("attestations: write")
@@ -286,10 +321,10 @@ mod privilege_escalation {
             "published archives must receive GitHub/Sigstore provenance with minimal required permissions"
         );
         let publish_release = workflow
-            .find("softprops/action-gh-release@3bb12739c298aeb8a4eeaf626c5b8d85266b0e65")
+            .find("softprops/action-gh-release@")
             .expect("verified artifacts must be published to a GitHub Release");
         let attestation = workflow
-            .find("actions/attest-build-provenance@977bb373ede98d70efdf65b84cb5f73e068dcc2a")
+            .find("actions/attest-build-provenance@")
             .expect("release attestation step must exist");
         assert!(
             attestation < publish_release,
@@ -364,9 +399,16 @@ mod privilege_escalation {
                 .contains("rustup/archive/1.28.2/x86_64-unknown-linux-gnu/rustup-init")
                 && source
                     .contains("20a06e644b0d9bd2fbdbfd52d42540bdde820ea7df86e92e533c073da0cdd43c");
-            let uses_pinned_toolchain_action = source
-                .contains("dtolnay/rust-toolchain@4360b52568e2003a75bf9bc1d59f33a8e3fc893c")
-                && source.contains("toolchain: \"1.93.1\"");
+            let uses_pinned_toolchain_action = source.lines().any(|line| {
+                let Some(pin) = line.split("dtolnay/rust-toolchain@").nth(1) else {
+                    return false;
+                };
+                let commit = pin.split_whitespace().next().unwrap_or_default();
+                commit.len() == 40
+                    && commit
+                        .chars()
+                        .all(|character| character.is_ascii_hexdigit())
+            }) && source.contains("toolchain: \"1.93.1\"");
             assert!(
                 uses_verified_rustup || uses_pinned_toolchain_action,
                 "{relative} must use either hash-verified rustup-init or the pinned toolchain action"

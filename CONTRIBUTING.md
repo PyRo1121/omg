@@ -25,13 +25,7 @@ cd omg
 # Build the project
 cargo build --features arch  # or 'debian', 'fedora', etc.
 
-# Run tests
-cargo test --features arch --lib
-
-# Run clippy (linter)
-cargo clippy --features arch -- -D warnings -W clippy::pedantic
-
-# Format code
+make ci-local-quick
 cargo fmt
 ```
 
@@ -119,34 +113,25 @@ cargo fmt -- --check
 
 ### Linting
 
-We enforce strict linting with `clippy`:
+Run the checks that match the GitHub workflow:
+
+Use this target while editing:
 
 ```bash
-# Run clippy (enforces -D warnings)
-cargo clippy --features arch -- -D warnings -W clippy::pedantic
-
-# Fix auto-fixable warnings
-cargo clippy --features arch --fix
+make ci-local-quick
 ```
 
-For cross-platform coverage, run feature-scoped checks locally (matches CI strategy):
+Use this target before pushing:
 
 ```bash
-# Portable baseline (no system package manager bindings)
-cargo clippy --all-targets --no-default-features --features pgp,license -- -D warnings
-
-# Debian native bindings (requires libapt-pkg-dev)
-cargo clippy --all-targets --no-default-features --features debian -- -D warnings
-
-# Arch native bindings (requires libalpm)
-cargo clippy --all-targets --no-default-features --features arch,license -- -D warnings
+make ci-local-full
 ```
 
-`cargo clippy --all-targets --all-features` will compile Debian FFI bindings and requires APT development headers (`libapt-pkg-dev`) to be installed.
+Both targets use Rust 1.93.1, locked dependencies, and build output under `~/.cache/build-targets/omg-ci-local`. The full target checks the portable, `debian-pure`, and Arch feature sets. It also runs all hermetic Arch tests. GitHub runs the native Debian, Fedora, Ubuntu, macOS, Docker, coverage, and CodeQL jobs.
+
+Do not run `cargo clippy --all-targets --all-features` on Arch. That command enables incompatible native package-manager bindings.
 
 **Key clippy rules we follow:**
-
-- `-W clippy::pedantic` - Pedantic lints enabled
 - No `as any`, `@ts-ignore`, or type error suppression
 - No `.unwrap()` in production code (use `.expect()` with context)
 - Prefer `Arc` over `Clone` for large types in async contexts
@@ -358,13 +343,10 @@ python3 scripts/check-perf-regression.py
 
 ### Before Submitting
 
-1. **Run all checks:**
+1. **Run the local gate:**
 
    ```bash
-   cargo fmt -- --check
-   cargo clippy --features arch -- -D warnings -W clippy::pedantic
-   cargo test --features arch --lib
-   cargo build --release --features arch
+   make ci-local-full
    ```
 
 2. **Update documentation** if you:
@@ -447,9 +429,8 @@ Any performance improvements/regressions? Include benchmark results if applicabl
 List any breaking changes and migration guide.
 
 ## Checklist
-- [ ] Tests pass (`cargo test --features arch --lib`)
-- [ ] Linting passes (`cargo clippy --features arch -- -D warnings`)
-- [ ] Formatting checked (`cargo fmt -- --check`)
+- [ ] Local gate passes (`make ci-local-full`)
+- [ ] GitHub platform jobs pass
 - [ ] Documentation updated (if needed)
 - [ ] Benchmarks run (if performance-related)
 ```

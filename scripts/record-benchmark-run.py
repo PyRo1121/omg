@@ -6,7 +6,7 @@ full hyperfine exports plus host/git metadata into a timestamped record that
 is meant to be committed.
 
 Does not overwrite benchmarks/summary.json unless --update-gate is passed.
-That file is the CI regression baseline and should stay CI-measured.
+That file is the reviewed regression baseline and automated runs must not move it.
 """
 from __future__ import annotations
 
@@ -269,7 +269,7 @@ def main() -> int:
     parser.add_argument(
         "--update-gate",
         action="store_true",
-        help="Also write benchmarks/summary.json from this run (CI only)",
+        help="Also write benchmarks/summary.json from this reviewed run",
     )
     parser.add_argument("--id", default="", help="Record id (default: UTC timestamp + short sha)")
     parser.add_argument("--warmup", type=int, default=None)

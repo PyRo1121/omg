@@ -37,6 +37,8 @@ help:
 	@echo "  make clippy-strict   - Clippy with pedantic+nursery"
 	@echo "  make audit           - Security audit dependencies"
 	@echo "  make qa              - Run all quality checks"
+	@echo "  make ci-local-quick  - Run edit-time CI checks"
+	@echo "  make ci-local-full   - Run the full local pre-push gate"
 	@echo ""
 	@echo "Benchmarking:"
 	@echo "  make bench               - Full benchmark suite"
@@ -257,10 +259,27 @@ dev-stop:
 dev-check: fmt check test-lib
 	@echo "✓ Development checks passed!"
 
+CI_LOCAL_TARGET_DIR ?= $(HOME)/.cache/build-targets/omg-ci-local
+
+ci-local-quick ci-local-full: export CARGO_TARGET_DIR := $(CI_LOCAL_TARGET_DIR)
+
 ci-local-quick:
 	cargo fmt --all -- --check
-	cargo clippy --all-targets --no-default-features --features pgp,license \
-		--locked -- -D warnings -D clippy::pedantic -A clippy::module_name_repetitions
 	cargo check --all-targets --no-default-features --features pgp,license --locked
+	cargo check --manifest-path fuzz/Cargo.toml --all-targets --locked
+	python3 -m unittest discover -s scripts -p 'test_*.py'
+	bash -n install.sh benchmark.sh benchmark-hyperfine.sh scripts/*.sh
 
-.PHONY: ci-local-quick
+ci-local-full: ci-local-quick
+	cargo clippy --all-targets --no-default-features --features pgp,license \
+		--locked -- -D warnings
+	cargo clippy --all-targets --no-default-features --features debian-pure \
+		--locked -- -D warnings
+	cargo clippy --all-targets --no-default-features --features arch,pgp,license \
+		--locked -- -D warnings
+	cargo nextest run --lib --no-default-features --features pgp,license \
+		--locked --profile ci
+	cargo nextest run --no-default-features --features arch,pgp,license \
+		--locked --profile ci --no-fail-fast
+
+.PHONY: ci-local-quick ci-local-full
