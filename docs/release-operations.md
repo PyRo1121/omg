@@ -22,9 +22,9 @@ gate-on-ci ──▶ build-arch / build-debian / build-ubuntu / build-fedora / b
 
 Hard guarantees enforced in `.github/workflows/release.yml`:
 
-- **No publish from a red commit.** `gate-on-ci` requires a successful `CI`
-  run for the exact release commit; in-progress runs are *watched to
-  completion* rather than raced. The only bypass is a no-op dry run.
+- **No publish from a red commit.** `gate-on-ci` requires successful `CI` and
+  `Benchmark` runs for the exact release commit; in-progress runs are *watched
+  to completion* rather than raced. The only bypass is a no-op dry run.
 - **Reproducible dependency set.** Every build uses `--locked` against
   `Cargo.lock`; the SBOM job fails if generation mutates the lockfile.
 - **Artifact allowlist.** `scripts/collect-release-artifacts.sh` refuses
@@ -39,6 +39,15 @@ Hard guarantees enforced in `.github/workflows/release.yml`:
   7-day dwell time), containers are digest-pinned, and `wrangler` is installed
   with `npm ci` from a committed lockfile (`.github/deps/release-tools`), so
   downloaded npm packages are checked against their locked integrity hashes.
+
+## Recovering an R2 sync
+
+If GitHub publication succeeds but `sync-r2` does not, dispatch the `Release`
+workflow from `main` with `sync_existing_tag` set to the published tag. This
+path does not rebuild or edit the release. It downloads exactly five archives
+and five checksum sidecars, verifies every checksum and GitHub attestation
+against the tag's commit, then runs the normal production R2 upload,
+round-trip verification, and latest-marker sequence.
 
 ## Client-side verification chain
 
@@ -104,4 +113,4 @@ Rotation procedure:
   explicit error directing users to the manual path rather than
   installing a wrong-arch binary.
 
-**Last Updated:** 2026-08-30
+**Last Updated:** 2026-09-04
