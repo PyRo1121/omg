@@ -141,7 +141,9 @@ identify the binaries and pinned container images. A separate
 [CI run of the same runner](https://github.com/PyRo1121/omg/actions/runs/33912270669)
 contains transcripts and uploaded cleanup evidence. These results prove only
 these package cases on these images, not every command or every Linux distribution.
-No headless QEMU benchmark results have been recorded yet.
+A [local headless QEMU runner](scripts/README.md#benchmark-qemu-ubuntush) now
+executes an Ubuntu candidate-information benchmark with raw samples. Its initial
+runs do not establish performance across the four-distribution matrix.
 
 Run the current suite from a shell with Docker access:
 

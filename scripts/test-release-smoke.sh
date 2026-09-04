@@ -183,4 +183,32 @@ grep -Eq '"elapsed_seconds":[0-9]+' "$result" || fail "result omits elapsed seco
 assert_rc 0 "$runner" "${base_args[@]}" --staged-dir "$scratch/valid" --evidence-dir "$scratch/pass-evidence"
 [[ "$(find "$scratch/pass-evidence" -mindepth 2 -maxdepth 2 -name results.json -type f | wc -l)" -eq 2 ]] || fail "a later invocation replaced prior aggregate evidence"
 
+reporter="$repo_root/scripts/report-smoke-sentry.sh"
+mkdir -p "$scratch/sentry-run"
+printf '%s\n' '{"dsn":"https://fixturekey@o123.ingest.us.sentry.io/123"}' > "$scratch/sentry-config.json"
+printf '%s\n' '[{"case_id":"release-package-search-tree","distro":"arch","result":"PRODUCT_FAIL","exit_code":1,"elapsed_seconds":2,"stderr":"fixture-private-token","environment":{"GH_TOKEN":"fixture-private-token"}}]' > "$scratch/sentry-run/results.json"
+cat > "$scratch/bin/curl" <<'EOF'
+#!/usr/bin/env bash
+set -euo pipefail
+cat > "$FAKE_SENTRY_ENVELOPE"
+printf '%s' "${FAKE_SENTRY_HTTP:-200}"
+EOF
+chmod 700 "$scratch/bin/curl"
+export OMG_SMOKE_SENTRY_CONFIG="$scratch/sentry-config.json"
+export FAKE_SENTRY_ENVELOPE="$scratch/envelope.txt"
+assert_rc 0 "$reporter" "$scratch/sentry-run/results.json"
+if grep -q 'fixture-private-token' "$FAKE_SENTRY_ENVELOPE"; then
+  fail "Sentry reporter included unapproved fields"
+fi
+jq -se 'length == 3 and .[1].type == "event" and .[2].extra.failures[0].result == "PRODUCT_FAIL"' "$FAKE_SENTRY_ENVELOPE" >/dev/null || fail "invalid Sentry envelope"
+rm "$FAKE_SENTRY_ENVELOPE"
+assert_rc 0 "$reporter" "$result"
+[[ ! -f "$FAKE_SENTRY_ENVELOPE" ]] || fail "passing run sent an error report"
+export FAKE_SENTRY_HTTP=429
+assert_rc 1 "$reporter" "$scratch/sentry-run/results.json"
+export FAKE_RUN_EXIT=7
+assert_rc 1 "$runner" "${base_args[@]}" --staged-dir "$scratch/valid" --evidence-dir "$scratch/reporting-failure"
+unset FAKE_RUN_EXIT FAKE_SENTRY_HTTP OMG_SMOKE_SENTRY_CONFIG FAKE_SENTRY_ENVELOPE
+grep -q '"result":"PRODUCT_FAIL"' "$(results_file "$scratch/reporting-failure")" || fail "reporting failure changed the test verdict"
+
 printf 'PASS: release smoke fixture suite\n'
