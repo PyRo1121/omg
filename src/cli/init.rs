@@ -210,7 +210,7 @@ pub async fn run_interactive(skip_shell: bool, skip_daemon: bool) -> Result<()> 
     // Check if we are in a non-interactive terminal (e.g. CI)
     if !std::io::stdout().is_terminal() || !std::io::stdin().is_terminal() {
         println!("Non-interactive terminal detected, running with defaults...");
-        return run_defaults().await;
+        return run_defaults(skip_shell, skip_daemon).await;
     }
 
     let mut stdout = io::stdout();
@@ -347,51 +347,55 @@ fn apply_telemetry_config(stdout: &mut io::Stdout, enabled: bool) -> Result<()> 
     Ok(())
 }
 
-/// Run with defaults (non-interactive)
-pub async fn run_defaults() -> Result<()> {
+fn write_styled(stdout: &mut io::Stdout, color: Color, text: &str) -> Result<()> {
+    if crate::cli::style::colors_enabled() {
+        execute!(stdout, SetForegroundColor(color), Print(text), ResetColor)?;
+    } else {
+        write!(stdout, "{text}")?;
+    }
+    Ok(())
+}
+
+/// Run with defaults (non-interactive).
+pub async fn run_defaults(skip_shell: bool, skip_daemon: bool) -> Result<()> {
     let mut stdout = io::stdout();
 
     println!();
-    execute!(
-        stdout,
-        SetForegroundColor(Color::Cyan),
-        Print("OMG"),
-        ResetColor,
-        Print(" Setting up with defaults...\n")
-    )?;
-    println!();
+    write_styled(&mut stdout, Color::Cyan, "OMG")?;
+    println!(" Setting up with defaults...\n");
 
-    // Detect shell
-    let shell = detect_current_shell();
-    if let Some(s) = shell {
-        install_shell_hook(&mut stdout, s, false)?;
+    let shell = if skip_shell {
+        println!("  → Shell hook: skipped");
+        None
+    } else {
+        let shell = detect_current_shell();
+        if let Some(shell) = shell {
+            install_shell_hook(&mut stdout, shell, false)?;
+        }
+        shell
+    };
+
+    if skip_daemon {
+        println!("  → Daemon setup: skipped");
+    } else {
+        let daemon_disabled = crate::core::client::DaemonClient::daemon_disabled();
+        configure_daemon_startup(
+            &mut stdout,
+            if daemon_disabled {
+                DaemonStartup::Manual
+            } else {
+                DaemonStartup::OnDemand
+            },
+        )?;
     }
 
-    // Start daemon unless explicitly disabled or running under tests; spawned
-    // daemons must never inherit this process's stdio (it is short-lived).
-    let daemon_disabled = crate::core::client::DaemonClient::daemon_disabled();
-    configure_daemon_startup(
-        &mut stdout,
-        if daemon_disabled {
-            DaemonStartup::Manual
-        } else {
-            DaemonStartup::OnDemand
-        },
-    )?;
-
-    // Capture environment
     capture_environment(&mut stdout).await?;
 
     println!();
-    execute!(
-        stdout,
-        SetForegroundColor(Color::Green),
-        Print("✓"),
-        ResetColor,
-        Print(" Setup complete! Restart your shell to activate the hook."),
-        ResetColor
-    )?;
+    write_styled(&mut stdout, Color::Green, "✓")?;
+    println!(" Setup complete!");
     if let Some(shell) = shell {
+        println!("  Restart your shell to activate the hook.");
         println!("  Config updated: {}", shell.config_file());
     }
 
@@ -757,24 +761,14 @@ fn install_shell_hook(stdout: &mut io::Stdout, shell: Shell, start_daemon: bool)
     let config_path = resolve_config_path(shell)?;
     let hook_cmd = shell.hook_command();
 
-    execute!(
-        stdout,
-        Print("  "),
-        SetForegroundColor(Color::Blue),
-        Print("→"),
-        ResetColor,
-        Print(format!(" Installing {} hook...", shell.name()))
-    )?;
+    write!(stdout, "  ")?;
+    write_styled(stdout, Color::Blue, "→")?;
+    write!(stdout, " Installing {} hook...", shell.name())?;
 
     if let Some(content) = read_optional_shell_rc(&config_path.to_string_lossy())?
         && content.contains("omg hook")
     {
-        execute!(
-            stdout,
-            SetForegroundColor(Color::Yellow),
-            Print(" (already installed)\n"),
-            ResetColor
-        )?;
+        writeln!(stdout, " (already installed)")?;
         return Ok(());
     }
 
@@ -799,67 +793,40 @@ fn install_shell_hook(stdout: &mut io::Stdout, shell: Shell, start_daemon: bool)
 
     writeln!(file, "{hook_cmd}")?;
 
-    execute!(
-        stdout,
-        SetForegroundColor(Color::Green),
-        Print(" ✓\n"),
-        ResetColor
-    )?;
+    write!(stdout, " ")?;
+    write_styled(stdout, Color::Green, "✓")?;
+    writeln!(stdout)?;
 
     Ok(())
 }
 
 fn configure_daemon_startup(stdout: &mut io::Stdout, startup: DaemonStartup) -> Result<()> {
-    execute!(
-        stdout,
-        Print("  "),
-        SetForegroundColor(Color::Blue),
-        Print("→"),
-        ResetColor,
-        Print(" Configuring daemon...")
-    )?;
+    write!(stdout, "  ")?;
+    write_styled(stdout, Color::Blue, "→")?;
+    write!(stdout, " Configuring daemon...")?;
 
     match startup {
         DaemonStartup::OnShellInit => {
-            // The shell hook already handles this
-            execute!(
-                stdout,
-                SetForegroundColor(Color::Green),
-                Print(" ✓ (via shell hook)\n"),
-                ResetColor
-            )?;
+            write!(stdout, " ")?;
+            write_styled(stdout, Color::Green, "✓")?;
+            writeln!(stdout, " (via shell hook)")?;
         }
         DaemonStartup::OnDemand => match start_on_demand_daemon() {
-            Ok(()) => execute!(
-                stdout,
-                SetForegroundColor(Color::Green),
-                Print(" ✓ (started)\n"),
-                ResetColor
-            )?,
-            Err(error) => execute!(
-                stdout,
-                SetForegroundColor(Color::Yellow),
-                Print(format!(" (not started: {error}; continuing setup)\n")),
-                ResetColor
-            )?,
+            Ok(()) => {
+                write!(stdout, " ")?;
+                write_styled(stdout, Color::Green, "✓")?;
+                writeln!(stdout, " (started)")?;
+            }
+            Err(error) => writeln!(stdout, " (not started: {error}; continuing setup)")?,
         },
         DaemonStartup::Systemd => {
-            // Create systemd user service
             create_systemd_service()?;
-            execute!(
-                stdout,
-                SetForegroundColor(Color::Green),
-                Print(" ✓ (systemd service created)\n"),
-                ResetColor
-            )?;
+            write!(stdout, " ")?;
+            write_styled(stdout, Color::Green, "✓")?;
+            writeln!(stdout, " (systemd service created)")?;
         }
         DaemonStartup::Manual => {
-            execute!(
-                stdout,
-                SetForegroundColor(Color::Yellow),
-                Print(" (skipped - run 'omg daemon' when ready)\n"),
-                ResetColor
-            )?;
+            writeln!(stdout, " (skipped - run 'omg daemon' when ready)")?;
         }
     }
 
@@ -960,42 +927,24 @@ WantedBy=default.target
 }
 
 async fn capture_environment(stdout: &mut io::Stdout) -> Result<()> {
-    execute!(
-        stdout,
-        Print("  "),
-        SetForegroundColor(Color::Blue),
-        Print("→"),
-        ResetColor,
-        Print(" Capturing environment...")
-    )?;
+    write!(stdout, "  ")?;
+    write_styled(stdout, Color::Blue, "→")?;
+    write!(stdout, " Capturing environment...")?;
     stdout.flush()?;
 
     // Use the existing env capture function
     match crate::core::env::fingerprint::EnvironmentState::capture().await {
         Ok(state) => {
             if let Err(e) = state.save("omg.lock") {
-                execute!(
-                    stdout,
-                    SetForegroundColor(Color::Yellow),
-                    Print(format!(" (failed: {e})\n")),
-                    ResetColor
-                )?;
+                writeln!(stdout, " (failed: {e})")?;
             } else {
-                execute!(
-                    stdout,
-                    SetForegroundColor(Color::Green),
-                    Print(" ✓\n"),
-                    ResetColor
-                )?;
+                write!(stdout, " ")?;
+                write_styled(stdout, Color::Green, "✓")?;
+                writeln!(stdout)?;
             }
         }
         Err(e) => {
-            execute!(
-                stdout,
-                SetForegroundColor(Color::Yellow),
-                Print(format!(" (skipped: {e})\n")),
-                ResetColor
-            )?;
+            writeln!(stdout, " (skipped: {e})")?;
         }
     }
 

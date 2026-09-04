@@ -270,6 +270,49 @@ fn init_defaults_writes_omg_lock_in_working_directory() {
     );
 }
 
+#[test]
+fn init_defaults_respects_skip_shell() {
+    let project = TestProject::new();
+    let home = tempfile::TempDir::new().expect("home tempdir");
+    let result = project.run_with_env(
+        &["init", "--defaults", "--skip-shell", "--skip-daemon"],
+        &[
+            ("HOME", home.path().to_str().expect("utf8 home")),
+            ("SHELL", "/usr/bin/zsh"),
+        ],
+    );
+
+    result.assert_success();
+    result.assert_stdout_contains("Shell hook: skipped");
+    assert!(
+        !result.stdout.contains("Installing zsh hook"),
+        "{}",
+        result.stdout
+    );
+    assert!(
+        !result.stdout.contains("Restart your shell"),
+        "{}",
+        result.stdout
+    );
+    assert!(!home.path().join(".zshrc").exists());
+}
+
+#[test]
+fn redirected_init_defaults_emits_no_ansi() {
+    let project = TestProject::new();
+    let home = tempfile::TempDir::new().expect("home tempdir");
+    let result = project.run_with_env(
+        &["init", "--defaults", "--skip-shell", "--skip-daemon"],
+        &[
+            ("HOME", home.path().to_str().expect("utf8 home")),
+            ("SHELL", "/usr/bin/zsh"),
+        ],
+    );
+
+    result.assert_success();
+    assert!(!result.combined_output().contains("\u{1b}["));
+}
+
 /// Bare `omg init` under a non-TTY (piped by the harness) must announce the
 /// fallback AND actually run the defaults setup — proving it is a real
 /// fallback, not just a printed message.

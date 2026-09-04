@@ -1090,7 +1090,7 @@ async fn handle_update_command(
 
 async fn handle_init_command(defaults: bool, skip_shell: bool, skip_daemon: bool) -> Result<()> {
     if defaults {
-        omg_lib::cli::init::run_defaults().await
+        omg_lib::cli::init::run_defaults(skip_shell, skip_daemon).await
     } else {
         omg_lib::cli::init::run_interactive(skip_shell, skip_daemon).await
     }
