@@ -393,13 +393,10 @@ pub use crate::package_managers::alpm_direct::list_orphans_fast as list_orphans_
 /// is sanitized the same way search results are.
 pub fn display_pkg_info(info: &PackageInfo) {
     use crate::cli::{style, ui};
-    ui::print_kv(
-        "Name",
-        &style::package(&style::sanitize_terminal_text(&info.name)),
-    );
-    ui::print_kv(
-        "Version",
-        &style::version(&style::sanitize_terminal_text(&info.version.to_string())),
+    println!(
+        "{} {}\n",
+        style::emphasis(&style::sanitize_terminal_text(&info.name)),
+        style::dim(&style::sanitize_terminal_text(&info.version.to_string())),
     );
     ui::print_kv(
         "Description",
@@ -409,17 +406,25 @@ pub fn display_pkg_info(info: &PackageInfo) {
         "Source",
         &format!(
             "Official repository ({})",
-            style::info(&style::sanitize_terminal_text(&info.repo))
+            style::sanitize_terminal_text(&info.repo)
         ),
     );
     ui::print_kv(
         "URL",
         &style::url(&style::sanitize_terminal_text(
-            info.url.as_deref().unwrap_or("-"),
+            info.url
+                .as_deref()
+                .filter(|url| !url.is_empty())
+                .unwrap_or("unknown"),
         )),
     );
     ui::print_kv("Size", &style::size(info.size));
-    ui::print_kv("Download", &style::size(info.download_size.unwrap_or(0)));
+    ui::print_kv(
+        "Download",
+        &info
+            .download_size
+            .map_or_else(|| "unknown".to_string(), style::size),
+    );
     if !info.licenses.is_empty() {
         ui::print_kv(
             "License",
