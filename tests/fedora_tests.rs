@@ -22,6 +22,47 @@ mod dnf_integration {
     }
 
     #[tokio::test]
+    async fn repository_lookup_finds_tree_before_installation() -> Result<()> {
+        if common::TestConfig::default().skip_if_no_system("dnf_uninstalled_repository_lookup") {
+            common::report_skip("system tests disabled (set OMG_RUN_SYSTEM_TESTS=1)");
+            return Ok(());
+        }
+        let pm = DnfPackageManager::new();
+        assert!(
+            !pm.list_installed()
+                .await?
+                .iter()
+                .any(|package| package.name == "tree"),
+            "run this regression in the fresh Fedora smoke image with tree absent"
+        );
+        let search = pm.search("tree").await?;
+        assert!(
+            search
+                .iter()
+                .any(|package| package.name == "tree" && !package.installed)
+        );
+        let info = pm
+            .info("tree")
+            .await?
+            .expect("available repository package");
+        assert_eq!(info.name, "tree");
+        assert!(!info.installed);
+
+        for arguments in [vec!["info", "tree"], vec!["--json", "info", "tree"]] {
+            let output = std::process::Command::new(assert_cmd::cargo::cargo_bin!("omg"))
+                .args(arguments)
+                .output()?;
+            assert!(
+                output.status.success(),
+                "CLI info failed: {}",
+                String::from_utf8_lossy(&output.stderr)
+            );
+            assert!(String::from_utf8_lossy(&output.stdout).contains("tree"));
+        }
+        Ok(())
+    }
+
+    #[tokio::test]
     async fn test_search_common_package() {
         require_system_tests!();
 

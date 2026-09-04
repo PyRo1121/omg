@@ -149,7 +149,10 @@ pub async fn info_with_json(package: &str, json: bool) -> Result<()> {
         return info_json(package).await;
     }
 
-    if crate::core::paths::test_mode() || !console::user_attended() {
+    if crate::core::paths::test_mode()
+        || !console::user_attended()
+        || get_package_manager()?.name() != "pacman"
+    {
         return info_fallback(package).await;
     }
 
@@ -229,13 +232,19 @@ async fn info_json(package: &str) -> Result<()> {
         }
     }
 
+    if pm.name() != "pacman"
+        && let Some(info) = pm.info(package).await?
+    {
+        println!(
+            "{}",
+            serde_json::to_string_pretty(&info)
+                .context("Failed to serialize package info as JSON")?
+        );
+        return Ok(());
+    }
     anyhow::bail!("Package '{package}' not found")
 }
 
-#[allow(
-    clippy::unused_async,
-    reason = "the Arch feature branch awaits while fallback builds do not"
-)]
 async fn info_fallback(package: &str) -> Result<()> {
     // Try sync path first
     if info_sync(package)? {
@@ -245,6 +254,30 @@ async fn info_fallback(package: &str) -> Result<()> {
     #[cfg(any(feature = "debian", feature = "debian-pure"))]
     if is_debian_like() {
         anyhow::bail!("Package '{package}' not found. Try: omg search {package}");
+    }
+
+    let pm = get_package_manager()?;
+    if pm.name() != "pacman" {
+        let info = pm
+            .info(package)
+            .await?
+            .with_context(|| format!("Package '{package}' not found. Try: omg search {package}"))?;
+        ui::print_kv("Name", &style::package(&info.name));
+        ui::print_kv("Version", &style::version(&info.version.to_string()));
+        ui::print_kv(
+            "Description",
+            &style::sanitize_terminal_text(&info.description),
+        );
+        ui::print_kv(
+            "Status",
+            if info.installed {
+                "installed"
+            } else {
+                "not installed"
+            },
+        );
+        ui::print_kv("Source", &format!("Official repository ({})", pm.name()));
+        return Ok(());
     }
 
     // Try AUR directly as final fallback (Arch only)

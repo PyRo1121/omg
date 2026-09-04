@@ -1,4 +1,4 @@
-//! Pure Rust DNF/Fedora package manager backend
+//! DNF/Fedora package manager backend
 //!
 //! Reads installed packages directly from the RPM `SQLite` database for
 //! fast queries without CLI overhead.
@@ -10,10 +10,9 @@
 //!
 //! ## Known limitation
 //!
-//! Repository metadata access (repomd/primary.xml) is not integrated:
-//! `search` and `info` cover installed packages only, and `list_updates`
-//! fails explicitly instead of reporting a fake empty update set.
-//! Transactions delegate to the `dnf` CLI.
+//! Repository queries and transactions use DNF's configured repository policy.
+//! A standalone Rust repository index is not implemented yet. `list_updates`
+//! still fails explicitly instead of reporting a fake empty update set.
 
 use std::future::Future;
 use std::pin::Pin;
@@ -430,6 +429,85 @@ impl DnfPackageManager {
         Ok(packages)
     }
 
+    fn parse_available_packages(output: &[u8]) -> Result<Vec<Package>> {
+        let text = std::str::from_utf8(output).context("DNF repository output is not UTF-8")?;
+        text.lines()
+            .filter(|line| !line.is_empty())
+            .map(|line| {
+                let mut fields = line.splitn(3, '\t');
+                let name = fields.next().context("DNF repository row has no name")?;
+                let version = fields.next().context("DNF repository row has no version")?;
+                let summary = fields.next().context("DNF repository row has no summary")?;
+                anyhow::ensure!(
+                    !name.is_empty()
+                        && name
+                            .bytes()
+                            .all(|byte| byte.is_ascii_alphanumeric() || b"+._-".contains(&byte)),
+                    "DNF repository row has invalid package name"
+                );
+                anyhow::ensure!(
+                    !version.is_empty() && !version.chars().any(char::is_whitespace),
+                    "DNF repository row has invalid version"
+                );
+                Ok(Package {
+                    name: name.to_owned(),
+                    version: parse_version_or_zero(version),
+                    description: summary.to_owned(),
+                    source: PackageSource::Official,
+                    installed: false,
+                })
+            })
+            .collect()
+    }
+
+    async fn available_packages(package: Option<&str>) -> Result<Vec<Package>> {
+        use tokio::io::AsyncReadExt;
+
+        const MAX_OUTPUT_BYTES: u64 = 64 * 1024 * 1024;
+        let operation = async {
+            #[expect(
+                clippy::literal_string_with_formatting_args,
+                reason = "DNF interprets these query-format placeholders, not Rust"
+            )]
+            let query_format = "%{name}\t%{evr}\t%{summary}\n";
+            let mut command = tokio::process::Command::new("dnf");
+            command
+                .args(["repoquery", "--available", "--latest-limit=1"])
+                .arg(format!("--arch={},noarch", std::env::consts::ARCH))
+                .args(["--queryformat", query_format])
+                .stdin(std::process::Stdio::null())
+                .stdout(std::process::Stdio::piped())
+                .stderr(std::process::Stdio::inherit())
+                .kill_on_drop(true);
+            if let Some(name) = package {
+                crate::core::security::validate_package_name(name)?;
+                command.arg(name);
+            }
+            let mut child = command
+                .spawn()
+                .context("Could not start DNF repository query")?;
+            let stdout = child.stdout.take().context("DNF stdout was not captured")?;
+            let mut bytes = Vec::new();
+            stdout
+                .take(MAX_OUTPUT_BYTES + 1)
+                .read_to_end(&mut bytes)
+                .await?;
+            anyhow::ensure!(
+                bytes.len() as u64 <= MAX_OUTPUT_BYTES,
+                "DNF repository output exceeds 64 MiB"
+            );
+            let status = child
+                .wait()
+                .await
+                .context("Could not wait for DNF repository query")?;
+            anyhow::ensure!(status.success(), "DNF repository query failed: {status}");
+            Self::parse_available_packages(&bytes)
+        };
+        tokio::time::timeout(std::time::Duration::from_secs(60), operation)
+            .await
+            .context("DNF repository query timed out after 60 seconds")?
+    }
+
     /// A handle sharing this manager's caches, so blocking workers mutate
     /// the same state as the caller instead of a throwaway copy.
     #[must_use]
@@ -485,9 +563,15 @@ impl PackageManager for DnfPackageManager {
                 })
                 .collect();
 
-            // Repository search is unavailable until DNF repo metadata is
-            // integrated; only installed packages match here.
-            tracing::debug!("DNF repository search unavailable; returning installed matches only");
+            results.extend(
+                Self::available_packages(None)
+                    .await?
+                    .into_iter()
+                    .filter(|package| {
+                        package.name.to_lowercase().contains(&query_lower)
+                            || package.description.to_lowercase().contains(&query_lower)
+                    }),
+            );
 
             // Deduplicate by name; sort installed rows first within a name
             // so dedup keeps the entry carrying `installed: true`.
@@ -513,7 +597,7 @@ impl PackageManager for DnfPackageManager {
             if !is_root() {
                 // Native elevation with the exact resolved package list —
                 // no omg re-exec, no second listing or confirmation prompt.
-                let mut args = vec!["install", "-y", "--"];
+                let mut args = vec!["install", "-y"];
                 args.extend(packages.iter().map(String::as_str));
                 crate::core::privilege::run_privileged_program("dnf", &args).await?;
                 self.invalidate_installed_cache();
@@ -524,7 +608,7 @@ impl PackageManager for DnfPackageManager {
                 // Share caches so post-install invalidation reaches the caller.
                 let manager = self.cache_handle();
                 move || {
-                    let mut args = vec!["install", "-y", "--"];
+                    let mut args = vec!["install", "-y"];
                     let pkg_refs: Vec<&str> = packages.iter().map(String::as_str).collect();
                     args.extend_from_slice(&pkg_refs);
                     manager.run_dnf(&args)
@@ -540,7 +624,7 @@ impl PackageManager for DnfPackageManager {
             crate::core::security::validate_package_names(&packages)?;
 
             if !is_root() {
-                let mut args = vec!["remove", "-y", "--"];
+                let mut args = vec!["remove", "-y"];
                 args.extend(packages.iter().map(String::as_str));
                 crate::core::privilege::run_privileged_program("dnf", &args).await?;
                 self.invalidate_installed_cache();
@@ -550,7 +634,7 @@ impl PackageManager for DnfPackageManager {
             tokio::task::spawn_blocking({
                 let manager = self.cache_handle();
                 move || {
-                    let mut args = vec!["remove", "-y", "--"];
+                    let mut args = vec!["remove", "-y"];
                     let pkg_refs: Vec<&str> = packages.iter().map(String::as_str).collect();
                     args.extend_from_slice(&pkg_refs);
                     manager.run_dnf(&args)
@@ -612,11 +696,10 @@ impl PackageManager for DnfPackageManager {
                 }));
             }
 
-            // Repository lookups are unavailable until DNF repo metadata is
-            // integrated; report an honest miss instead of pretending.
-            tracing::debug!("DNF repository info unavailable for {package}");
-
-            Ok(None)
+            Ok(Self::available_packages(Some(&package))
+                .await?
+                .into_iter()
+                .find(|candidate| candidate.name == package))
         })
     }
 
@@ -743,6 +826,48 @@ mod tests {
     async fn test_dnf_manager_creation() {
         let manager = DnfPackageManager::new();
         assert_eq!(manager.name(), "dnf");
+    }
+
+    #[tokio::test]
+    async fn repository_lookup_rejects_option_operands_before_spawning() {
+        let error = DnfPackageManager::available_packages(Some("--config=untrusted"))
+            .await
+            .expect_err("option-like operand must be rejected");
+        assert!(
+            error
+                .downcast_ref::<crate::core::security::ValidationError>()
+                .is_some()
+        );
+    }
+
+    #[test]
+    fn available_repository_rows_preserve_epoch_and_uninstalled_state() {
+        let packages = DnfPackageManager::parse_available_packages(
+            b"tree\t2:2.2.1-4.fc44\tDirectory listing\n",
+        )
+        .expect("valid repository row");
+        assert_eq!(packages.len(), 1);
+        assert_eq!(packages[0].name, "tree");
+        assert_eq!(packages[0].version.to_string(), "2:2.2.1-4.fc44");
+        assert_eq!(packages[0].description, "Directory listing");
+        assert!(!packages[0].installed);
+    }
+
+    #[test]
+    fn malformed_repository_rows_do_not_become_empty_searches() {
+        for row in [
+            b"tree".as_slice(),
+            b"tree\t\tmissing version",
+            b"bad/name\t1-1\tx",
+            b"tree\t1-1\t\xff",
+        ] {
+            assert!(DnfPackageManager::parse_available_packages(row).is_err());
+        }
+        assert!(
+            DnfPackageManager::parse_available_packages(b"")
+                .expect("empty repo")
+                .is_empty()
+        );
     }
 
     #[test]
