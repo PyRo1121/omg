@@ -75,48 +75,59 @@ python3 scripts/generate-benchmark-chart.py --output docs/assets/
 
 ## release-smoke.sh
 
-**Purpose:** Verify the exact archives users download. For each selected
-distro it resolves a published release with `gh`, validates the archive
-against its sha256 sidecar, pulls a digest-pinned distro image, and runs the
-shipped `omg` binary inside one disposable container: package-index
-preparation, exact `--version` match, `omg search tree`, `omg install -y tree`,
-a native installed assertion, `omg remove -y tree`, and a native removed
-assertion. No retries, no soft passes.
+**Purpose:** Verify the exact archives users download or stage for release.
+The runner validates each archive against its sha256 sidecar, pulls a
+digest-pinned distro image, and executes selected release contracts from
+`tests/cli_behavior_inventory.tsv` in disposable containers. No retries or
+soft passes hide product failures.
 
 **Usage:**
 
 ```bash
 ./scripts/release-smoke.sh --release latest --distro arch
-./scripts/release-smoke.sh --release v0.1.217 --distro all
-./scripts/release-smoke.sh --release latest --distro all --container-engine podman \
-  --evidence-dir ~/.cache/omg-smoke
+./scripts/release-smoke.sh --release v0.1.217 --distro all --family package
+./scripts/release-smoke.sh --release v0.1.218 --staged-dir ./dist --distro all
+./scripts/release-smoke.sh --release latest --distro ubuntu \
+  --case release-package-search-tree --tier container
 ```
 
-- `--release` defaults to `latest` (latest published, non-draft release); an
-  explicit `vX.Y.Z` tag is also accepted.
-- `--distro` is `arch`, `debian`, `ubuntu`, `fedora`, or `all` (default). With
-  `all`, a semantic failure on one distro does not stop the others; the run
-  still exits 1.
-- `--container-engine` defaults to `$OMG_SMOKE_ENGINE`, then `docker`. The
-  engine executable and `<engine> info` are checked before any network access
-  (exit 3 if unavailable). Pull failures are also exit 3; semantic failures
-  exit 1; invalid usage exits 2.
-- Evidence: each invocation writes a unique per-distro directory (default base
-  `target/release-smoke`, overridable with `--evidence-dir` or
-  `$OMG_SMOKE_EVIDENCE_DIR`) containing `transcript.txt` (full shell tracing),
-  `probe.sh`, and `metadata.txt` (status, release tag, image, archive digest,
-  elapsed seconds). Prior evidence is never erased.
+- `--release` defaults to the latest published, non-draft release. An explicit
+  `vX.Y.Z` tag selects one published release.
+- `--staged-dir` switches artifact acquisition to local archives. It requires
+  an explicit release tag. Staged and published artifacts use the same strict
+  checksum validation path.
+- `--case`, `--family`, and `--tier` select registry contracts. Phase 2 exposes
+  the `package` family and `container` tier. Unknown or empty selections exit
+  2 and list valid contract identifiers.
+- `--distro` accepts `arch`, `debian`, `ubuntu`, `fedora`, or `all`. A product
+  failure on one distribution does not stop the remaining distributions.
+- `--container-engine` defaults to `$OMG_SMOKE_ENGINE`, then `docker`. Missing
+  or unavailable infrastructure exits 3. Product failures exit 1. Invalid
+  usage exits 2.
+- Each contract writes `transcript.txt`, `probe.sh`, `metadata.txt`, and
+  `result.json` under the evidence base. The invocation also writes
+  `results.json`. Each result contains `case_id`, `distro`, `result`,
+  `exit_code`, `elapsed_seconds`, and `expectation`. Result values distinguish
+  `PASS`, `EXPECTED_REJECTION`, `PRODUCT_FAIL`, `HARNESS_ERROR`, and `BLOCKED`.
+  Prior evidence is never erased.
+
+Run the network-free coordinator fixtures with:
+
+```bash
+./scripts/test-release-smoke.sh
+```
+
+The fixture suite checks usage errors, missing and mismatched sidecars,
+cleanup after semantic failure, secret redaction, and the result schema. It
+uses a controlled fake engine and does not pull images or mutate packages.
 
 **Image provenance:** the digest pins for Arch (`archlinux`), Debian
 (`debian:bookworm`), and Fedora (`fedora`) mirror the build container images in
-`.github/workflows/release.yml` (`build-arch`, `build-debian`, `build-fedora`);
-the Ubuntu pin (`ubuntu:24.04`) mirrors the `FROM` line of `Dockerfile.ubuntu`.
-Update those sources first, then the `load_case` registry in the script.
+`.github/workflows/release.yml` (`build-arch`, `build-debian`, `build-fedora`).
+The Ubuntu pin (`ubuntu:24.04`) mirrors `Dockerfile.ubuntu`.
 
-**Used in:** `.github/workflows/release-smoke.yml` (shadow mode: runs on pull
-requests touching the workflow or the script, and on `workflow_dispatch` with
-an optional release tag; it uploads per-case evidence even on failure and does
-not gate releases).
+**Used in:** `.github/workflows/release-smoke.yml`. The workflow remains in
+shadow mode and uploads per-case evidence even on failure.
 
 ---
 
