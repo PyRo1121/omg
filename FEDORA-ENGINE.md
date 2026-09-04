@@ -1,17 +1,20 @@
 # Fedora/DNF Engine — Research Verdicts & Build Plan (2026-08 research)
 
-Goal: beat dnf5 (C++) on every user-visible latency, using the same
-mmap-index architecture that made our Debian/Arch paths fast.
+Goal: reduce repeated metadata-loading work with a Rust index, then measure
+search and information lookup against equivalent DNF5 operations. Do not infer
+transaction speedups or cross-distribution performance from query timings.
 
 ## Research verdicts
 
-1. RPM header format: NO maintained pure-Rust parser crate exists.
-   -> Write raw Rust: we ALREADY hand-parse RPM headers in dnf.rs
-   (parse_rpm_header). Extend with zerocopy (already a dependency!)
-   U16/U32<BigEndian> borrowed views over the 96-byte lead + signature
-   + header regions: zero-copy, bounds-checked, no new crate.
-   (rpm crate exists w/ sig verification but is heavyweight; only its
-   OpenPGP check matters, and sequoia is already in-tree for that.)
+1. RPM database headers and RPM package archives are different boundaries.
+   SQLite `Packages.blob` starts with two big-endian lengths, then index entries
+   and payload. It does not include archive magic/reserved bytes or an RPM lead.
+   The reader uses existing zerocopy views and borrowed tag data. A real Fedora
+   fixture protects this distinction. `rpmdb` 0.1.1 reads installed databases;
+   `rpm` 0.27.1 parses package archives and signatures. These crates exist, but
+   neither was adopted for this bounded database correction.
+   Sources: https://docs.rs/rpmdb/0.1.1/rpmdb/ and
+   https://docs.rs/rpm/0.27.1/rpm/.
 2. Repo metadata: rpmrepo_metadata 0.7.0 (streaming repomd/primary.xml)
    is the only real crate option. Alternative: quick-xml streaming over
    primary.xml.gz — we already ship flate2/zstd/lz4 decompressors.
@@ -26,8 +29,10 @@ mmap-index architecture that made our Debian/Arch paths fast.
 
 ## Build order (each slice gated + compose-verified)
 
-S1. Raw-Rust RPM lead/signature/header reader via zerocopy views,
-    bounds-checked, hostile-input fuzzed; replaces ad-hoc blob parser.
+S1. Correct the raw-Rust database-header reader using zerocopy views and a
+    native SQLite fixture. Compare installed records with `rpm -qa`; preserve
+    malformed-input rejection. Package archive/signature parsing is separate.
+    Focused tests and native parity are required; fuzz coverage remains future work.
 S2. InRelease-equivalent: verify repomd.xml signatures (sequoia, already
     in-tree) BEFORE any metadata use; bind primary.xml checksums to
     verified repomd (mirrors the Debian signature-chain blockers).
@@ -41,10 +46,10 @@ S5. Transactions stay on the dnf CLI (already correct); benchmark
     S3/S4 vs `dnf5 info/search` cold+warm in Dockerfile.fedora compose.
 
 ## R&D synthesis (wave: /tmp/omg-fleet13, 15 citation-backed reports)
-+ RPM reader: zerocopy fixed-layout views + checked Rust for variable data;
-  reject bytemuck/nom. Steal librpm validation invariants (lead magic check,
-  tag types 1..9, STRING count-one). rpm crate = differential-test oracle
-  only. No drop-in pure-Rust parser exists (proven across #2/#11/#12).
++ RPM reader: zerocopy fixed-layout views and checked Rust for variable data.
+  Apply validation to the representation actually read. Do not impose archive
+  lead/magic checks on database blobs. Compare against native librpm output and
+  real fixtures; synthetic headers alone previously concealed the format mismatch.
 + Index envelope: content-addressed generations named
   `(verified repomd digest, schema version, arch, repo set)` with magic/
   writer-version/arch/repomd-digest fields (#6/#8) — Nix-style identity,
