@@ -56,6 +56,11 @@ fn quiesce_active() -> bool {
     *lock_quiesce_count() > 0
 }
 
+fn hide_progress(progress: &MultiProgress) {
+    let _ = progress.clear();
+    progress.set_draw_target(ProgressDrawTarget::hidden());
+}
+
 /// Suppress live progress drawing while an interactive prompt owns the
 /// terminal.
 ///
@@ -67,7 +72,7 @@ pub fn quiesce_terminal() -> TerminalQuiesceGuard {
     let mut count = lock_quiesce_count();
     *count += 1;
     if *count == 1 {
-        progress_registry().set_draw_target(ProgressDrawTarget::hidden());
+        hide_progress(progress_registry());
     }
     TerminalQuiesceGuard { _private: () }
 }
@@ -755,6 +760,27 @@ mod tests {
         progress.set_message(message.to_string());
         progress.tick();
         (progress, terminal)
+    }
+
+    #[test]
+    fn hiding_progress_clears_existing_rows_before_a_prompt() {
+        let terminal = RecordingTerm::default();
+        let progress = MultiProgress::with_draw_target(ProgressDrawTarget::term_like(Box::new(
+            terminal.clone(),
+        )));
+        let spinner = progress.add(ProgressBar::new_spinner());
+        spinner.set_message("active build");
+        spinner.tick();
+        let event_count = terminal.events().len();
+
+        hide_progress(&progress);
+
+        assert!(
+            terminal.events()[event_count..]
+                .iter()
+                .any(|event| event == "clear"),
+            "an existing progress row must be erased before prompt rendering"
+        );
     }
 
     #[test]
