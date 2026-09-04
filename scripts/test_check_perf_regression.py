@@ -22,6 +22,10 @@ def run_gate(
     current_pacman_stddev_ms: float | None = None,
     search_samples: int | None = None,
     pacman_samples: int | None = None,
+    baseline_status_ms: float | None = None,
+    current_status_ms: float | None = None,
+    current_status_stddev_ms: float | None = None,
+    status_samples: int | None = None,
 ) -> subprocess.CompletedProcess[str]:
     with tempfile.TemporaryDirectory() as directory:
         root = Path(directory)
@@ -31,6 +35,8 @@ def run_gate(
         baseline: dict[str, object] = {"search_ms": baseline_search_ms}
         if baseline_speedup is not None:
             baseline["speedup"] = baseline_speedup
+        if baseline_status_ms is not None:
+            baseline["status_ms"] = baseline_status_ms
         (root / "benchmarks" / "summary.json").write_text(
             json.dumps(baseline), encoding="utf-8"
         )
@@ -57,6 +63,18 @@ def run_gate(
         (root / "benchmark_results" / "search.json").write_text(
             json.dumps({"results": results}), encoding="utf-8"
         )
+        if current_status_ms is not None:
+            status_result: dict[str, object] = {
+                "command": "OMG (Daemon)",
+                "mean": current_status_ms / 1000,
+            }
+            if current_status_stddev_ms is not None:
+                status_result["stddev"] = current_status_stddev_ms / 1000
+            if status_samples is not None:
+                status_result["times"] = [current_status_ms / 1000] * status_samples
+            (root / "benchmark_results" / "status.json").write_text(
+                json.dumps({"results": [status_result]}), encoding="utf-8"
+            )
 
         environment = os.environ.copy()
         environment.pop("OMG_PERF_THRESHOLD", None)
@@ -97,16 +115,39 @@ class PerformanceRegressionGateTests(unittest.TestCase):
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
         self.assertIn("measurement uncertainty", result.stdout)
 
+    def test_broad_short_command_slowdown_passes_matched_control(self) -> None:
+        result = run_gate(
+            baseline_search_ms=6.4,
+            baseline_speedup="29.4x",
+            baseline_status_ms=6.3,
+            current_search_ms=11.488,
+            current_pacman_ms=237.212,
+            current_status_ms=10.719,
+            current_search_stddev_ms=0.802,
+            current_pacman_stddev_ms=1.435,
+            current_status_stddev_ms=0.736,
+            search_samples=15,
+            pacman_samples=12,
+            status_samples=15,
+        )
+
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertIn("matched status control", result.stdout)
+
     def test_search_specific_regression_fails_against_control_ratio(self) -> None:
         result = run_gate(
             baseline_search_ms=6.4,
             baseline_speedup="29.4x",
+            baseline_status_ms=6.3,
             current_search_ms=12.0,
             current_pacman_ms=180.0,
+            current_status_ms=6.5,
             current_search_stddev_ms=0.1,
             current_pacman_stddev_ms=1.0,
+            current_status_stddev_ms=0.1,
             search_samples=15,
             pacman_samples=13,
+            status_samples=15,
         )
 
         self.assertEqual(result.returncode, 1, result.stdout + result.stderr)

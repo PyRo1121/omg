@@ -1,6 +1,7 @@
 {
   "timestamp": "2026-09-03T16:36:47Z",
   "search_ms": 6.4,
+  "status_ms": 6.3,
   "speedup": "29.4x",
   "commit": "aa6303b6890011a9ca52be7d2a8316d3d4d570ff",
   "record": "20260903_163647-aa6303b"

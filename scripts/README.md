@@ -32,7 +32,7 @@ The script takes no arguments. It reads the baseline from
 `benchmark_results/search.json` (hyperfine export), falling back to
 `benchmark_results.json` or `benchmark_report.md`.
 
-**How it works:** Reads Hyperfine JSON output and compares both the absolute search mean and the search-to-pacman speedup with the reviewed baseline. A run fails when both signals regress beyond the default 35% tolerance and their 95% confidence bounds clear the limits. If distribution data is absent, the point estimates retain the fail-closed behavior. Missing, unreadable, or corrupt baseline timing also fails closed.
+**How it works:** Reads Hyperfine JSON output and compares the absolute search mean with two controls. The pacman comparison detects broad search-cost changes. The `omg status` comparison controls for fixed CLI startup, scheduling, and daemon IPC costs on the same runner. A run fails when the available signals regress beyond the default 35% tolerance and their 95% confidence bounds clear the limits. If a control or its distribution data is absent, the remaining signals retain the fail-closed behavior. Missing, unreadable, or corrupt baseline timing also fails closed.
 
 **Used in:** `.github/workflows/benchmark.yml`
 

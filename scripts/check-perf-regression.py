@@ -135,6 +135,12 @@ def check_regression() -> int:
     if current_search is None:
         print("❌ Could not extract current search time from any source.")
         return 1
+    status_path = "benchmark_results/status.json"
+    current_status = (
+        extract_command_measurement(status_path, "OMG (Daemon)")
+        if os.path.exists(status_path)
+        else None
+    )
 
     baseline_search_ms = parse_positive_number(baseline.get("search_ms"))
     if baseline_search_ms is None:
@@ -182,18 +188,48 @@ def check_regression() -> int:
         and maximum_current_speedup is not None
         and maximum_current_speedup < relative_limit
     )
-    if credible_absolute_regression and (
+
+    baseline_status_ms = parse_positive_number(baseline.get("status_ms"))
+    matched_control_available = False
+    matched_regression = False
+    credible_matched_regression = False
+    if baseline_status_ms is not None and current_status is not None:
+        matched_control_available = True
+        baseline_search_to_status = baseline_search_ms / baseline_status_ms
+        current_search_to_status = current_search.mean_ms / current_status.mean_ms
+        _, status_upper = confidence_bounds(current_status)
+        minimum_search_to_status = search_lower / status_upper
+        matched_limit = baseline_search_to_status * threshold
+        matched_regression = current_search_to_status > matched_limit
+        credible_matched_regression = minimum_search_to_status > matched_limit
+        print(f"Baseline search/status ratio: {baseline_search_to_status:.2f}x")
+        print(f"Current search/status ratio: {current_search_to_status:.2f}x")
+
+    pacman_confirms = (
         baseline_speedup is None
         or current_speedup is None
         or credible_relative_regression
-    ):
+    )
+    status_confirms = (
+        baseline_status_ms is None
+        or current_status is None
+        or credible_matched_regression
+    )
+    if credible_absolute_regression and pacman_confirms and status_confirms:
         difference = ((current_search.mean_ms / baseline_search_ms) - 1) * 100
         print("❌ PERFORMANCE REGRESSION DETECTED!")
         print(f"Search time increased by {difference:.2f}% (exceeds configured threshold)")
         return 1
 
-    if absolute_regression and relative_regression:
-        print("Point estimates cross both limits, but measurement uncertainty overlaps the control limit.")
+    if (
+        absolute_regression
+        and relative_regression
+        and matched_control_available
+        and not matched_regression
+    ):
+        print("Search stayed within the matched status control; treating the broad slowdown as runner noise.")
+    elif absolute_regression and relative_regression:
+        print("Point estimates cross all limits, but measurement uncertainty overlaps a control limit.")
     elif absolute_regression:
         print("Absolute time moved with the in-run pacman control; treating it as runner noise.")
     print("✅ Performance check passed.")

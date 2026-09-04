@@ -321,7 +321,10 @@ def main() -> int:
     search = load_json(source / "search.json") or {}
     daemon = find_result(search.get("results") or [], "OMG (Daemon)")
     pacman = find_result(search.get("results") or [], "pacman")
+    status = load_json(source / "status.json") or {}
+    status_daemon = find_result(status.get("results") or [], "OMG (Daemon)")
     search_ms = round(ms(daemon), 1) if daemon else None
+    status_ms = round(ms(status_daemon), 1) if status_daemon else None
     speedup = None
     if daemon and pacman and ms(daemon) > 0:
         speedup = f"{ms(pacman) / ms(daemon):.1f}x"
@@ -342,6 +345,7 @@ def main() -> int:
             "search_mean_ms": search_ms,
             "search_median_ms": round(ms(daemon, "median"), 1) if daemon else None,
             "pacman_search_mean_ms": round(ms(pacman), 1) if pacman else None,
+            "status_mean_ms": status_ms,
             "speedup": speedup,
         },
     }
@@ -364,12 +368,16 @@ def main() -> int:
         )
 
     if args.update_gate:
-        if search_ms is None or not speedup:
-            print("Cannot update gate: missing daemon or pacman search result", file=sys.stderr)
+        if search_ms is None or status_ms is None or not speedup:
+            print(
+                "Cannot update gate: missing daemon search, daemon status, or pacman result",
+                file=sys.stderr,
+            )
             return 1
         summary = {
             "timestamp": timestamp,
             "search_ms": search_ms,
+            "status_ms": status_ms,
             "speedup": speedup,
             "commit": git.get("commit", ""),
             "record": record_id,
