@@ -31,9 +31,6 @@ use crate::package_managers::types::{UpdateInfo, parse_version_or_zero};
 use rusqlite::{Connection, OpenFlags};
 use zerocopy::{FromBytes, Immutable, KnownLayout, big_endian::U32};
 
-/// RPM header magic bytes
-const RPM_HEADER_MAGIC: [u8; 8] = [0x8e, 0xad, 0xe8, 0x01, 0x00, 0x00, 0x00, 0x00];
-
 /// RPM tag constants for parsing header entries
 #[cfg(feature = "fedora")]
 mod rpm_tags {
@@ -268,27 +265,14 @@ impl DnfPackageManager {
         })
     }
 
-    /// Parse an RPM header region into a tag -> raw-bytes map.
-    ///
-    /// S1 rewrite (FEDORA-ENGINE.md; citations: /tmp/omg-fleet13
-    /// rnd-pm-formats + rnd-pm-10): the header intro and every index entry
-    /// are read through zero-copy `zerocopy` big-endian views, and all
-    /// librpm validation invariants are enforced fail-closed:
-    /// - magic AND reserved words must match (`8e ad e8 01 00 00 00 00`);
-    /// - entry counts are capped before any allocation;
-    /// - tag types must be in librpm's range 1..=9 (stored NULL/type 0 and
-    ///   out-of-range types are rejected, not skipped);
-    /// - STRING and I18NSTRING carry exactly one element (count-one rule);
-    /// - entry data regions must lie fully inside the declared data area —
-    ///   hostile or negative offsets are hard errors, never silent skips.
-    fn parse_rpm_header(blob: &[u8]) -> Result<HashMap<u32, Vec<u8>>> {
+    /// Database blobs omit the magic/reserved prefix used in RPM archive headers.
+    /// Tag data borrows from the validated payload rather than copying unused fields.
+    fn parse_rpm_header(blob: &[u8]) -> Result<HashMap<u32, &[u8]>> {
         const MAX_HEADER_ENTRIES: u32 = 100_000;
 
         #[derive(FromBytes, KnownLayout, Immutable)]
         #[repr(C)]
         struct HeaderIntro {
-            magic: [u8; 4],
-            reserved: [u8; 4],
             num_entries: U32,
             data_size: U32,
         }
@@ -307,11 +291,8 @@ impl DnfPackageManager {
         }
         let (intro_bytes, rest) = blob.split_at(size_of::<HeaderIntro>());
         let intro = HeaderIntro::ref_from_bytes(intro_bytes).expect("intro length checked above");
-        if intro.magic != RPM_HEADER_MAGIC[..4] || intro.reserved != RPM_HEADER_MAGIC[4..8] {
-            anyhow::bail!("Invalid RPM header magic");
-        }
-
         let num_entries = intro.num_entries.get();
+        anyhow::ensure!(num_entries > 0, "RPM database header must contain entries");
         anyhow::ensure!(
             num_entries <= MAX_HEADER_ENTRIES,
             "RPM header declares {num_entries} entries (limit {MAX_HEADER_ENTRIES})"
@@ -383,7 +364,7 @@ impl DnfPackageManager {
                 "RPM tag {tag} data region exceeds payload"
             );
 
-            tags.insert(tag, payload[base..abs_end].to_vec());
+            tags.insert(tag, &payload[base..abs_end]);
         }
 
         Ok(tags)
@@ -420,8 +401,7 @@ impl DnfPackageManager {
     /// Read RPM database directly from `SQLite` (Fedora 33+, RHEL 9+)
     ///
     /// Opens `/var/lib/rpm/rpmdb.sqlite` in read-only mode and parses
-    /// RPM header blobs from the `Packages` table. This is 50-100x faster
-    /// than spawning `rpm -qa`.
+    /// RPM header blobs from the `Packages` table without a subprocess.
     fn read_rpm_sqlite(db_path: &Path) -> Result<Vec<InstalledPackage>> {
         let conn = Connection::open_with_flags(
             db_path,
@@ -766,10 +746,24 @@ mod tests {
     }
 
     #[test]
+    fn reads_native_fedora_sqlite_header() {
+        let blob = include_bytes!("../../tests/data/fedora-publicsuffix.rpmhdr");
+        let directory = write_packages_db(&[blob.as_slice()]);
+        let packages = DnfPackageManager::read_rpm_sqlite(&directory.path().join("rpmdb.sqlite"))
+            .expect("native Fedora database header must decode");
+        assert_eq!(packages.len(), 1);
+        assert_eq!(packages[0].name, "publicsuffix-list-dafsa");
+        assert_eq!(packages[0].version, "20260116");
+        assert_eq!(packages[0].release, "1.fc44");
+        assert_eq!(
+            packages[0].summary,
+            "Cross-vendor public domain suffix database in DAFSA form"
+        );
+    }
+
+    #[test]
     fn test_rpm_header_parsing() {
-        // Test RPM header parsing with minimal valid header
         let mut header = Vec::new();
-        header.extend_from_slice(&RPM_HEADER_MAGIC);
         header.extend_from_slice(&[0, 0, 0, 1]); // 1 entry
         header.extend_from_slice(&[0, 0, 0, 5]); // 5 bytes data ("test\0")
         // Entry: tag=1000 (NAME), type=6 (STRING), offset=0.
@@ -791,7 +785,6 @@ mod tests {
 
     fn strict_header(entries: &[(u32, u32, i32, u32)], data: &[u8]) -> Vec<u8> {
         let mut header = Vec::new();
-        header.extend_from_slice(&RPM_HEADER_MAGIC);
         header.extend_from_slice(&(entries.len() as u32).to_be_bytes());
         header.extend_from_slice(&(data.len() as u32).to_be_bytes());
         for (tag, typ, off, count) in entries {
@@ -850,13 +843,20 @@ mod tests {
     }
 
     #[test]
-    fn test_parse_rpm_header_rejects_invalid_magic() {
+    fn test_parse_rpm_header_rejects_empty_header() {
         let error = DnfPackageManager::parse_rpm_header(&[0u8; 32])
-            .expect_err("invalid magic must not parse as an empty tag map");
+            .expect_err("an empty header must not parse as a package");
         assert!(
-            error.to_string().contains("Invalid RPM header magic"),
+            error.to_string().contains("must contain entries"),
             "got: {error}"
         );
+    }
+
+    #[test]
+    fn database_reader_rejects_archive_framing() {
+        let mut archive = vec![0x8e, 0xad, 0xe8, 0x01, 0, 0, 0, 0];
+        archive.extend(strict_header(&[(1000, 6, 0, 1)], b"test\0"));
+        assert!(DnfPackageManager::parse_rpm_header(&archive).is_err());
     }
 
     #[test]
@@ -976,16 +976,7 @@ mod tests {
     }
 
     fn minimal_named_rpm_header(name: &[u8]) -> Vec<u8> {
-        let mut header = Vec::new();
-        header.extend_from_slice(&RPM_HEADER_MAGIC);
-        header.extend_from_slice(&[0, 0, 0, 1]);
-        header.extend_from_slice(&(name.len() as u32).to_be_bytes());
-        header.extend_from_slice(&1000u32.to_be_bytes());
-        header.extend_from_slice(&6u32.to_be_bytes());
-        header.extend_from_slice(&0i32.to_be_bytes());
-        header.extend_from_slice(&1u32.to_be_bytes());
-        header.extend_from_slice(name);
-        header
+        strict_header(&[(1000, 6, 0, 1)], name)
     }
 
     fn write_packages_db(blobs: &[&[u8]]) -> tempfile::TempDir {
