@@ -1,7 +1,6 @@
 //! `omg snapshot` - Create and restore environment snapshots
 
 use anyhow::{Context, Result};
-use owo_colors::OwoColorize;
 use serde::{Deserialize, Serialize};
 use std::fs;
 use std::path::PathBuf;
@@ -87,7 +86,7 @@ pub async fn create(message: Option<String>) -> Result<()> {
         }
     }
 
-    println!("{} Creating snapshot...\n", "OMG".cyan().bold());
+    println!("{} Creating snapshot...\n", style::runtime("OMG"));
 
     let state = EnvironmentState::capture().await?;
 
@@ -145,8 +144,8 @@ pub async fn create(message: Option<String>) -> Result<()> {
     });
     save_index(&index)?;
 
-    println!("  {} Snapshot created!", "✓".green());
-    println!("  ID: {}", id.cyan());
+    println!("  {} Snapshot created!", style::positive("✓"));
+    println!("  ID: {}", style::accent(&id));
     if let Some(msg) = &message {
         println!("  Message: {msg}");
     }
@@ -155,7 +154,7 @@ pub async fn create(message: Option<String>) -> Result<()> {
     println!();
     println!(
         "  Restore with: {}",
-        format!("omg snapshot restore {id}").cyan()
+        style::accent(&format!("omg snapshot restore {id}"))
     );
 
     Ok(())
@@ -163,23 +162,26 @@ pub async fn create(message: Option<String>) -> Result<()> {
 
 /// List all snapshots
 pub fn list() -> Result<()> {
-    println!("{} Snapshots\n", "OMG".cyan().bold());
+    println!("{} Snapshots\n", style::runtime("OMG"));
 
     let index = load_index()?;
 
     if index.snapshots.is_empty() {
-        println!("  {} No snapshots found", "○".dimmed());
+        println!("  {} No snapshots found", style::dim("○"));
         println!();
-        println!("  Create one with: {}", "omg snapshot create".cyan());
+        println!(
+            "  Create one with: {}",
+            style::accent("omg snapshot create")
+        );
         return Ok(());
     }
 
     println!(
         "  {:12} {:20} {:12} {}",
-        "ID".bold(),
-        "Date".bold(),
-        "Hash".bold(),
-        "Message".bold()
+        style::emphasis("ID"),
+        style::emphasis("Date"),
+        style::emphasis("Hash"),
+        style::emphasis("Message")
     );
     println!("  {}", "─".repeat(60));
 
@@ -190,9 +192,9 @@ pub fn list() -> Result<()> {
 
         println!(
             "  {} {} {} {}",
-            snap.id.cyan(),
-            date.dimmed(),
-            short_hash.dimmed(),
+            style::accent(&snap.id),
+            style::dim(&date),
+            style::dim(&short_hash),
             msg
         );
     }
@@ -212,13 +214,13 @@ pub async fn restore(id: &str, dry_run: bool, yes: bool) -> Result<()> {
 
     println!(
         "{} {} snapshot {}\n",
-        "OMG".cyan().bold(),
+        style::runtime("OMG"),
         if dry_run {
             "Preview restore of"
         } else {
             "Restoring"
         },
-        id.yellow()
+        style::caution(id)
     );
 
     // Load snapshot
@@ -236,7 +238,7 @@ pub async fn restore(id: &str, dry_run: bool, yes: bool) -> Result<()> {
     let current = EnvironmentState::capture().await?;
 
     // Calculate diff
-    println!("  {}", "Changes to apply:".bold());
+    println!("  {}", style::emphasis("Changes to apply:"));
     println!();
 
     // Runtime changes
@@ -254,9 +256,9 @@ pub async fn restore(id: &str, dry_run: bool, yes: bool) -> Result<()> {
             let from_str = from.as_deref().unwrap_or("(none)");
             println!(
                 "    {} {} → {}",
-                style::sanitize_terminal_text(runtime).yellow(),
-                style::sanitize_terminal_text(from_str).dimmed(),
-                style::sanitize_terminal_text(to).green()
+                style::caution(&style::sanitize_terminal_text(runtime)),
+                style::dim(&style::sanitize_terminal_text(from_str)),
+                style::positive(&style::sanitize_terminal_text(to))
             );
         }
         println!();
@@ -278,7 +280,11 @@ pub async fn restore(id: &str, dry_run: bool, yes: bool) -> Result<()> {
     if !to_install.is_empty() {
         println!("  Packages to install ({}):", to_install.len());
         for pkg in to_install.iter().take(10) {
-            println!("    {} {}", "+".green(), style::sanitize_terminal_text(pkg));
+            println!(
+                "    {} {}",
+                style::positive("+"),
+                style::sanitize_terminal_text(pkg)
+            );
         }
         if to_install.len() > 10 {
             println!("    ... and {} more", to_install.len() - 10);
@@ -289,7 +295,11 @@ pub async fn restore(id: &str, dry_run: bool, yes: bool) -> Result<()> {
     if !to_remove.is_empty() {
         println!("  Packages to remove ({}):", to_remove.len());
         for pkg in to_remove.iter().take(10) {
-            println!("    {} {}", "-".red(), style::sanitize_terminal_text(pkg));
+            println!(
+                "    {} {}",
+                style::negative("-"),
+                style::sanitize_terminal_text(pkg)
+            );
         }
         if to_remove.len() > 10 {
             println!("    ... and {} more", to_remove.len() - 10);
@@ -298,15 +308,18 @@ pub async fn restore(id: &str, dry_run: bool, yes: bool) -> Result<()> {
     }
 
     if runtime_changes.is_empty() && to_install.is_empty() && to_remove.is_empty() {
-        println!("  {} Environment already matches snapshot!", "✓".green());
+        println!(
+            "  {} Environment already matches snapshot!",
+            style::positive("✓")
+        );
         return Ok(());
     }
 
     if dry_run {
-        println!("  {} No changes made (dry run)", "ℹ".blue());
+        println!("  {} No changes made (dry run)", style::info("ℹ"));
         println!(
             "  Run without --dry-run to apply: {}",
-            format!("omg snapshot restore {id}").cyan()
+            style::accent(&format!("omg snapshot restore {id}"))
         );
         return Ok(());
     }
@@ -316,7 +329,7 @@ pub async fn restore(id: &str, dry_run: bool, yes: bool) -> Result<()> {
         println!();
         println!(
             "  {} Package changes found ({} to install, {} to remove):",
-            "⚠".yellow(),
+            style::caution("⚠"),
             to_install.len(),
             to_remove.len()
         );
@@ -328,7 +341,7 @@ pub async fn restore(id: &str, dry_run: bool, yes: bool) -> Result<()> {
                 .interact()?;
 
             if !confirm {
-                println!("  {} Snapshot restore cancelled", "ℹ".blue());
+                println!("  {} Snapshot restore cancelled", style::info("ℹ"));
                 return Ok(());
             }
         } else {
@@ -342,7 +355,7 @@ pub async fn restore(id: &str, dry_run: bool, yes: bool) -> Result<()> {
 
     // Consent covers the complete restore. Do not mutate runtimes or packages
     // before the package-change gate above succeeds.
-    println!("  {}", "Applying changes...".bold());
+    println!("  {}", style::emphasis("Applying changes..."));
 
     for (runtime, _, target_ver) in &runtime_changes {
         println!("    Switching {runtime} to {target_ver}...");
@@ -362,7 +375,7 @@ pub async fn restore(id: &str, dry_run: bool, yes: bool) -> Result<()> {
     }
 
     println!();
-    println!("  {} Snapshot restore complete!", "✓".green());
+    println!("  {} Snapshot restore complete!", style::positive("✓"));
 
     Ok(())
 }
@@ -392,7 +405,11 @@ pub fn delete(id: &str) -> Result<()> {
     index.snapshots.retain(|s| s.id != id);
     save_index(&index)?;
 
-    println!("{} Deleted snapshot {}", "✓".green(), id.yellow());
+    println!(
+        "{} Deleted snapshot {}",
+        style::positive("✓"),
+        style::caution(id)
+    );
 
     Ok(())
 }

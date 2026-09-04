@@ -280,8 +280,6 @@ impl ParallelBuilder {
         packages: &[String],
         jobs: &HashMap<String, BuildJob>,
     ) -> Result<ParallelBuildSummary> {
-        use owo_colors::OwoColorize;
-
         // Builds within a wave run concurrently; the final ALPM install step
         // inside `AurClient::install` serializes on the process-wide
         // INSTALL_LOCK so concurrent installs cannot race the ALPM database
@@ -289,7 +287,7 @@ impl ParallelBuilder {
         println!();
         println!(
             "  {} Building wave {}/{} ({} package{})",
-            "→".cyan().bold(),
+            crate::cli::style::accent("→"),
             level_num,
             total_levels,
             packages.len(),

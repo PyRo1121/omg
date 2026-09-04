@@ -9,7 +9,6 @@ use crate::core::client::DaemonClient;
 #[cfg(unix)]
 use crate::daemon::protocol::{Request, ResponseResult};
 use crate::package_managers::get_package_manager;
-use owo_colors::OwoColorize;
 use std::fmt::Write;
 
 /// Status data structure
@@ -76,7 +75,7 @@ impl StatusModel {
 
     /// Render a metric line
     fn render_metric(label: &str, value: &str) -> String {
-        format!("  {:<20} {}", label.bold(), value)
+        format!("  {:<20} {}", style::emphasis(label), value)
     }
 }
 
@@ -167,7 +166,7 @@ impl Model for StatusModel {
     fn view(&self) -> String {
         match self.state {
             StatusState::Idle => String::new(),
-            StatusState::Loading => "⟳ Gathering system status...".cyan().dimmed().to_string(),
+            StatusState::Loading => style::accent("⟳ Gathering system status..."),
             StatusState::Complete => {
                 if let Some(data) = &self.data {
                     let mut output = String::new();
@@ -176,10 +175,10 @@ impl Model for StatusModel {
                     let _ = writeln!(
                         output,
                         "  {} Status Overview ({:.1}ms)",
-                        "📋".bold(),
+                        style::emphasis("📋"),
                         data.duration_ms
                     );
-                    let _ = writeln!(output, "  {}", "─".repeat(40).dimmed());
+                    let _ = writeln!(output, "  {}", style::dim(&"─".repeat(40)));
 
                     // Metrics
                     let _ = writeln!(
@@ -187,7 +186,7 @@ impl Model for StatusModel {
                         "{}",
                         Self::render_metric(
                             "Total Packages:",
-                            &data.total_packages.to_string().cyan().to_string()
+                            &style::accent(&data.total_packages.to_string())
                         )
                     );
                     let _ = writeln!(
@@ -195,7 +194,7 @@ impl Model for StatusModel {
                         "{}",
                         Self::render_metric(
                             "Explicitly Installed:",
-                            &data.explicit_packages.to_string().green().to_string()
+                            &style::positive(&data.explicit_packages.to_string())
                         )
                     );
 
@@ -205,14 +204,14 @@ impl Model for StatusModel {
                             "{}",
                             Self::render_metric(
                                 "Orphans/Updates:",
-                                &"skipped (fast mode)".dimmed().to_string()
+                                &style::dim("skipped (fast mode)")
                             )
                         );
                     } else {
                         let orphans_str = if data.orphan_packages > 0 {
-                            data.orphan_packages.to_string().yellow().to_string()
+                            style::caution(&data.orphan_packages.to_string())
                         } else {
-                            "0".dimmed().to_string()
+                            style::dim("0")
                         };
                         let _ = writeln!(
                             output,
@@ -221,12 +220,9 @@ impl Model for StatusModel {
                         );
 
                         let updates_str = if data.updates_available > 0 {
-                            data.updates_available
-                                .to_string()
-                                .bright_magenta()
-                                .to_string()
+                            style::community(&data.updates_available.to_string())
                         } else {
-                            "0".dimmed().to_string()
+                            style::dim("0")
                         };
                         let _ = writeln!(
                             output,
@@ -250,7 +246,7 @@ impl Model for StatusModel {
             }
             StatusState::Failed => {
                 if let Some(err) = &self.error {
-                    format!("\n✗ Status failed: {}\n", err.red())
+                    format!("\n✗ Status failed: {}\n", style::negative(err))
                 } else {
                     "\n✗ Status failed\n".to_string()
                 }

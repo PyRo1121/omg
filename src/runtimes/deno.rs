@@ -4,7 +4,6 @@
 //! complete `<version>/bin` directory without command shims.
 
 use anyhow::{Context, Result};
-use owo_colors::OwoColorize;
 use std::fs;
 use std::path::{Path, PathBuf};
 
@@ -14,7 +13,7 @@ use super::common::{
     normalize_version, parse_sha256_digest, print_already_installed, print_installed, print_using,
     remove_file_best_effort, require_regular_file, validate_download_filename, version_cmp,
 };
-use crate::core::http::download_client;
+use crate::{cli::style, core::http::download_client};
 
 const DENO_API_URL: &str = "https://api.github.com/repos/denoland/deno/releases";
 
@@ -92,8 +91,8 @@ impl DenoManager {
 
         println!(
             "{} Installing Deno {}...\n",
-            "OMG".cyan().bold(),
-            version.yellow()
+            style::runtime("OMG"),
+            style::caution(&version)
         );
 
         let filename = format!("deno-{}.zip", deno_target()?);
@@ -102,7 +101,7 @@ impl DenoManager {
 
         println!(
             "{} Fetching Deno v{} release metadata...",
-            "→".blue(),
+            style::informative("→"),
             version
         );
         let release = self.release_metadata(&version).await?;
@@ -114,11 +113,15 @@ impl DenoManager {
             .context("Deno vendor ZIP has no browser download URL")?;
         let checksum = self.checksum_for_asset(&release, &filename).await?;
 
-        println!("{} Downloading Deno v{}...", "→".blue(), version);
+        println!(
+            "{} Downloading Deno v{}...",
+            style::informative("→"),
+            version
+        );
         let download_path = self.versions_dir.join(&filename);
         download_with_progress(self.client, &url, &download_path, &checksum).await?;
 
-        println!("{} Extracting...", "→".blue());
+        println!("{} Extracting...", style::informative("→"));
         let staging = begin_staged_install(&self.versions_dir)?;
         // Vendor ZIPs carry `deno` at the archive root, so strip 0 lands it
         // at `<version>/bin/deno` and any future sibling tools beside it.

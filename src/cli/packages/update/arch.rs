@@ -147,26 +147,24 @@ async fn run_sysupgrade() -> anyhow::Result<()> {
 }
 
 pub async fn update_turbo() -> Result<()> {
-    use owo_colors::OwoColorize;
-
     modern_ui::print_phase_header("🚀", "TURBO System Update", "cached, no sync");
     println!(
         "  {} Checking for updates (cached, no sync)...",
-        "⚡".bright_yellow()
+        style::caution("⚡")
     );
 
     let updates = crate::package_managers::get_update_list()?;
     if updates.is_empty() {
         println!();
-        println!("  {} System is up to date!", "✓".green().bold());
+        println!("  {} System is up to date!", style::positive("✓"));
         println!();
         return Ok(());
     }
 
     println!(
         "  {} Found {} update(s) - upgrading now...",
-        "→".cyan(),
-        updates.len().to_string().bright_yellow()
+        style::accent("→"),
+        style::caution(&updates.len().to_string())
     );
     println!();
 
@@ -207,8 +205,6 @@ fn parent_recorded_changes(
 }
 
 pub async fn update(check_only: bool, yes: bool, dry_run: bool) -> Result<()> {
-    use owo_colors::OwoColorize;
-
     let pm = get_package_manager()?;
 
     let skip_sync = check_only || dry_run || !crate::core::caps::can_write_pacman_db();
@@ -390,8 +386,8 @@ pub async fn update(check_only: bool, yes: bool, dry_run: bool) -> Result<()> {
         println!();
         println!(
             "  {} Run {} to install updates",
-            "→".dimmed(),
-            "omg update".cyan().bold()
+            style::dim("→"),
+            style::runtime("omg update")
         );
         println!();
         return Ok(());
@@ -409,7 +405,7 @@ pub async fn update(check_only: bool, yes: bool, dry_run: bool) -> Result<()> {
         .map_err(|error| anyhow::anyhow!("Confirmation prompt task failed: {error}"))??
         {
             println!();
-            println!("  {} Upgrade cancelled", "✗".yellow());
+            println!("  {} Upgrade cancelled", style::caution("✗"));
             println!();
             return Ok(());
         }
@@ -436,7 +432,7 @@ pub async fn update(check_only: bool, yes: bool, dry_run: bool) -> Result<()> {
                 // sudo, so no parent spinner can remain active.
                 println!(
                     "  {} Syncing & upgrading {official_count} official packages...",
-                    "→".magenta()
+                    style::community("→")
                 );
                 crate::package_managers::arch::run_privileged_operation(
                     "fullupdate",
@@ -460,7 +456,7 @@ pub async fn update(check_only: bool, yes: bool, dry_run: bool) -> Result<()> {
             println!();
             println!(
                 "  {} Building {} AUR package{} in parallel...",
-                "→".magenta(),
+                style::community("→"),
                 aur_packages.len(),
                 if aur_packages.len() == 1 { "" } else { "s" }
             );
@@ -488,7 +484,7 @@ pub async fn update(check_only: bool, yes: bool, dry_run: bool) -> Result<()> {
                 let error = style::sanitize_terminal_text(&format!("{error:#}"));
                 println!(
                     "  {} Failed to build {}: {error}",
-                    "✗".red(),
+                    style::negative("✗"),
                     style::package(package_base)
                 );
             }

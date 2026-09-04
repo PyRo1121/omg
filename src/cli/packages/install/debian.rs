@@ -1,6 +1,6 @@
 use anyhow::{Context, Result};
 
-use crate::cli::modern_ui;
+use crate::cli::{modern_ui, style};
 use crate::package_managers::get_package_manager;
 
 use super::enforce_install_policy;
@@ -72,7 +72,6 @@ pub async fn install(packages: &[String]) -> Result<()> {
 
 pub fn install_dry_run(packages: &[String]) -> Result<()> {
     use comfy_table::{Table, modifiers::UTF8_ROUND_CORNERS, presets::UTF8_FULL};
-    use owo_colors::OwoColorize;
 
     use crate::package_managers::debian_db;
     use crate::package_managers::debian_db::resolver::DependencyResolver;
@@ -101,26 +100,26 @@ pub fn install_dry_run(packages: &[String]) -> Result<()> {
         match debian_db::get_info_fast(pkg_name)? {
             Some(info) => {
                 let status = if upgrade_set.contains(pkg_name.as_str()) {
-                    format!("{} Upgrade", "↺".yellow())
+                    format!("{} Upgrade", style::caution("↺"))
                 } else if debian_db::is_installed_fast(pkg_name)? {
-                    format!("{} Installed", "•".blue())
+                    format!("{} Installed", style::informative("•"))
                 } else {
-                    format!("{} Install", "✓".green())
+                    format!("{} Install", style::positive("✓"))
                 };
 
                 table.add_row(vec![
-                    info.name.bold().to_string(),
-                    info.version.cyan().to_string(),
+                    style::emphasis(&info.name),
+                    style::accent(&info.version.to_string()),
                     "--".to_string(),
                     status,
                 ]);
             }
             None => {
                 table.add_row(vec![
-                    pkg_name.bold().to_string(),
+                    style::emphasis(pkg_name),
                     String::new(),
                     String::new(),
-                    format!("{} Not found", "!".red()),
+                    format!("{} Not found", style::negative("!")),
                 ]);
             }
         }
@@ -130,17 +129,16 @@ pub fn install_dry_run(packages: &[String]) -> Result<()> {
     println!();
     println!(
         "  {} Total download size: {}",
-        "→".cyan().bold(),
-        format!(
+        style::accent("→"),
+        style::emphasis(&format!(
             "{:.2} MB",
             resolution.download_size as f64 / 1024.0 / 1024.0
-        )
-        .bold()
+        ))
     );
     if !resolution.to_install.is_empty() || !resolution.to_upgrade.is_empty() {
         println!(
             "  {} Plan: {} install, {} upgrade",
-            "→".cyan().bold(),
+            style::accent("→"),
             resolution.to_install.len(),
             resolution.to_upgrade.len()
         );
@@ -148,8 +146,8 @@ pub fn install_dry_run(packages: &[String]) -> Result<()> {
     println!();
     println!(
         "  {} {} No changes will be made (dry run)",
-        "ℹ".blue(),
-        "•".dimmed()
+        style::info("ℹ"),
+        style::dim("•")
     );
     println!();
 

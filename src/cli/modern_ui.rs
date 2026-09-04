@@ -139,6 +139,10 @@ const fn output_mode_for(verbose: u8, quiet: bool, terminal: bool) -> OutputMode
 pub fn configure_output(verbose: u8, quiet: bool) {
     let mode = output_mode_for(verbose, quiet, std::io::stderr().is_terminal());
     OUTPUT_MODE.store(mode as u8, Ordering::Relaxed);
+
+    let colors_enabled = crate::cli::style::colors_enabled();
+    console::set_colors_enabled(colors_enabled);
+    console::set_colors_enabled_stderr(colors_enabled);
 }
 
 /// Current rendering policy.

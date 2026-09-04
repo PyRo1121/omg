@@ -719,8 +719,6 @@ fn check_shell_hook() -> bool {
 ///    operation and accept the trade-off themselves in /etc/sudoers.
 #[cfg(target_os = "linux")]
 pub fn enable_turbo_mode() -> Result<()> {
-    use owo_colors::OwoColorize;
-
     let exe = std::env::current_exe()?;
     let exe_path = exe.display();
 
@@ -730,7 +728,7 @@ pub fn enable_turbo_mode() -> Result<()> {
     // a privileged command, so ask first in an attended terminal.
     println!(
         "  {} Removing legacy file capabilities from {}...",
-        "→".cyan(),
+        crate::cli::style::accent("→"),
         exe_path
     );
     let cleanup_done = if console::user_attended()
@@ -739,7 +737,10 @@ pub fn enable_turbo_mode() -> Result<()> {
             .default(true)
             .interact()?
     {
-        println!("  {} Skipped capability cleanup", "ℹ".blue());
+        println!(
+            "  {} Skipped capability cleanup",
+            crate::cli::style::info("ℹ")
+        );
         false
     } else {
         true
@@ -754,18 +755,21 @@ pub fn enable_turbo_mode() -> Result<()> {
             Ok(status) if status.success() => {
                 println!(
                     "  {} No file capabilities remain (or none were set)",
-                    "✓".green()
+                    crate::cli::style::positive("✓")
                 );
             }
             Ok(status) => {
                 println!(
                     "  {} `setcap -r` exited with code {}",
-                    "⚠".yellow(),
+                    crate::cli::style::caution("⚠"),
                     status.code().unwrap_or(-1)
                 );
             }
             Err(error) => {
-                println!("  {} Could not run `setcap -r`: {error}", "⚠".yellow());
+                println!(
+                    "  {} Could not run `setcap -r`: {error}",
+                    crate::cli::style::caution("⚠")
+                );
             }
         }
     }
@@ -774,18 +778,18 @@ pub fn enable_turbo_mode() -> Result<()> {
     // Warm the sudo credential cache so subsequent operations are
     // prompt-free for the timestamp window; sudoloop keeps it alive during
     // long AUR builds.
-    println!("  {} Turbo now means:", "→".cyan());
+    println!("  {} Turbo now means:", crate::cli::style::accent("→"));
     println!(
         "    {} Sudo credential caching (sudoloop) — one prompt per session",
-        "•".dimmed()
+        crate::cli::style::dim("•")
     );
     println!(
         "    {} Native package-manager execution with exact arguments",
-        "•".dimmed()
+        crate::cli::style::dim("•")
     );
     println!(
         "    {} No permanent privileges granted to any binary",
-        "•".dimmed()
+        crate::cli::style::dim("•")
     );
     println!();
 
@@ -794,7 +798,7 @@ pub fn enable_turbo_mode() -> Result<()> {
         let user = whoami::username().unwrap_or_else(|_| "username".to_string());
         println!(
             "  {} For fully unattended operation (YOUR choice, affects only you):",
-            "ℹ".blue()
+            crate::cli::style::info("ℹ")
         );
         println!("     sudo visudo -f /etc/sudoers.d/omg-turbo",);
         let omg_bin = std::env::current_exe().map_or_else(
@@ -806,7 +810,7 @@ pub fn enable_turbo_mode() -> Result<()> {
         println!(
             "  {} File capabilities are NEVER recommended: they grant privileges to\n\
                  every user on the system.",
-            "⚠".yellow()
+            crate::cli::style::caution("⚠")
         );
     }
 
@@ -815,9 +819,11 @@ pub fn enable_turbo_mode() -> Result<()> {
 
 #[cfg(not(target_os = "linux"))]
 pub fn enable_turbo_mode() -> Result<()> {
-    use owo_colors::OwoColorize;
     println!();
-    println!("  {} Turbo mode is only available on Linux", "ℹ".blue());
+    println!(
+        "  {} Turbo mode is only available on Linux",
+        crate::cli::style::info("ℹ")
+    );
     println!();
     println!("  Prompt-light sudo credential caching is only available on Linux.");
     println!();

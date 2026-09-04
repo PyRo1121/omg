@@ -9,7 +9,6 @@
 //! - Version aliasing (latest, lts, lts/iron, etc.)
 
 use anyhow::{Context, Result};
-use owo_colors::OwoColorize;
 use serde::Deserialize;
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -19,7 +18,7 @@ use super::common::{
     extract_tar_xz, normalize_version, parse_sha256_digest, print_already_installed,
     print_installed, print_using, remove_file_best_effort,
 };
-use crate::core::http::download_client;
+use crate::{cli::style, core::http::download_client};
 
 const NODE_DIST_URL: &str = "https://nodejs.org/dist";
 
@@ -158,8 +157,8 @@ impl NodeManager {
 
         println!(
             "{} Installing Node.js {}...\n",
-            "OMG".cyan().bold(),
-            version.yellow()
+            style::runtime("OMG"),
+            style::caution(&version)
         );
 
         let filename = format!("node-v{version}-{}.tar.xz", node_platform()?);
@@ -170,11 +169,11 @@ impl NodeManager {
         // A vendor checksum is required before installing a downloaded runtime.
         let checksum = self.fetch_checksum(&version, &filename).await?;
 
-        println!("{} Downloading {}...", "→".blue(), filename);
+        println!("{} Downloading {}...", style::informative("→"), filename);
         let download_path = self.versions_dir.join(&filename);
         download_with_progress(self.client, &url, &download_path, &checksum).await?;
 
-        println!("{} Extracting (pure Rust)...", "→".blue());
+        println!("{} Extracting (pure Rust)...", style::informative("→"));
         let staging = begin_staged_install(&self.versions_dir)?;
         extract_tar_xz(&download_path, staging.path(), 1).await?;
         complete_staged_install(&staging, &version_dir, &version)?;

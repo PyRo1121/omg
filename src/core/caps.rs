@@ -37,17 +37,19 @@ pub fn maybe_show_turbo_hint() -> bool {
         Ok(false) | Err(_) => return false,
     }
 
-    use owo_colors::OwoColorize;
     eprintln!();
     eprintln!(
         "  {} {}",
-        "TIP:".bright_cyan().bold(),
-        "Prime sudo credentials for prompt-light package operations:".dimmed()
+        crate::cli::style::runtime("TIP:"),
+        crate::cli::style::dim("Prime sudo credentials for prompt-light package operations:")
     );
-    eprintln!("       {}", "omg doctor --turbo".cyan().bold());
     eprintln!(
         "       {}",
-        "(uses sudo credential caching; grants no permanent privileges)".dimmed()
+        crate::cli::style::runtime("omg doctor --turbo")
+    );
+    eprintln!(
+        "       {}",
+        crate::cli::style::dim("(uses sudo credential caching; grants no permanent privileges)")
     );
     eprintln!();
 

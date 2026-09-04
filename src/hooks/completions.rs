@@ -3,11 +3,10 @@
 use anyhow::{Context, Result};
 use clap::CommandFactory;
 use clap_complete::{Shell, generate};
-use owo_colors::OwoColorize;
 use std::fs;
 use std::io;
 
-use crate::cli::Cli;
+use crate::cli::{Cli, style};
 
 /// Generate and optionally install shell completions
 pub fn generate_completions(shell: &str, to_stdout: bool) -> Result<()> {
@@ -66,14 +65,14 @@ fn install_completions(shell: &str) -> Result<()> {
 
             println!(
                 "{} Installed bash completions to {}",
-                "✓".green(),
+                style::positive("✓"),
                 path.display()
             );
             println!();
             println!("  Restart your shell or run:");
             println!(
                 "  {}",
-                "source ~/.local/share/bash-completion/completions/omg".cyan()
+                style::accent("source ~/.local/share/bash-completion/completions/omg")
             );
         }
         "zsh" => {
@@ -87,18 +86,18 @@ fn install_completions(shell: &str) -> Result<()> {
 
             println!(
                 "{} Installed zsh completions to {}",
-                "✓".green(),
+                style::positive("✓"),
                 path.display()
             );
             println!();
             println!(
                 "  Add this to your {} (before compinit):",
-                "~/.zshrc".cyan()
+                style::accent("~/.zshrc")
             );
-            println!("  {}", "fpath=(~/.zfunc $fpath)".yellow());
+            println!("  {}", style::caution("fpath=(~/.zfunc $fpath)"));
             println!();
             println!("  Then restart your shell or run:");
-            println!("  {}", "autoload -Uz compinit && compinit".cyan());
+            println!("  {}", style::accent("autoload -Uz compinit && compinit"));
         }
         "fish" => {
             // Install to ~/.config/fish/completions/
@@ -111,7 +110,7 @@ fn install_completions(shell: &str) -> Result<()> {
 
             println!(
                 "{} Installed fish completions to {}",
-                "✓".green(),
+                style::positive("✓"),
                 path.display()
             );
             println!();
@@ -134,12 +133,12 @@ fn install_completions(shell: &str) -> Result<()> {
 
             println!(
                 "{} Installed PowerShell completions to {}",
-                "✓".green(),
+                style::positive("✓"),
                 path.display()
             );
             println!();
             println!("  Add this to your PowerShell profile:");
-            println!("  {}", format!(". {}", path.display()).cyan());
+            println!("  {}", style::accent(&format!(". {}", path.display())));
         }
         "elvish" => {
             let dir = home.join(".config/elvish/lib");
@@ -152,12 +151,12 @@ fn install_completions(shell: &str) -> Result<()> {
 
             println!(
                 "{} Installed elvish completions to {}",
-                "✓".green(),
+                style::positive("✓"),
                 path.display()
             );
             println!();
             println!("  Add this to your rc.elv:");
-            println!("  {}", "use omg".cyan());
+            println!("  {}", style::accent("use omg"));
         }
         _ => {
             anyhow::bail!(

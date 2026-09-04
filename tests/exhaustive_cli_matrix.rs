@@ -318,6 +318,7 @@ mod runtime_matrix {
         let res = project.run(&["run", "test"]);
         res.assert_success();
         res.assert_stdout_contains("running tests");
+        res.assert_no_ansi();
     }
 }
 

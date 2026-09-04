@@ -13,7 +13,6 @@ use crate::package_managers::{apt_get_system_status, apt_list_all_package_names}
 use crate::cli::{TransactionTypeFilter, style, ui};
 use crate::core::env::distro::use_debian_backend;
 use dialoguer::{Confirm, Select};
-use owo_colors::OwoColorize;
 
 #[cfg(feature = "arch")]
 use crate::package_managers::get_system_status;
@@ -455,45 +454,57 @@ pub fn status_sync() -> Result<()> {
     // Package stats
     println!(
         "  {} {} total, {} explicit",
-        "Packages".bold(),
-        total.to_string().cyan(),
-        explicit.to_string().cyan()
+        style::emphasis("Packages"),
+        style::accent(&total.to_string()),
+        style::accent(&explicit.to_string())
     );
 
     // Updates
     if updates > 0 {
         println!(
             "  {} {} available",
-            "Updates".bold(),
-            updates.to_string().yellow().bold()
+            style::emphasis("Updates"),
+            style::caution(&updates.to_string())
         );
     } else {
-        println!("  {} {}", "Updates".bold(), "Up to date".green());
+        println!(
+            "  {} {}",
+            style::emphasis("Updates"),
+            style::positive("Up to date")
+        );
     }
 
     // Orphans (only show if > 0)
     if orphans > 0 {
         println!(
             "  {} {}",
-            "Orphans".bold(),
-            format!("{orphans} packages").yellow()
+            style::emphasis("Orphans"),
+            style::caution(&format!("{orphans} packages"))
         );
     }
 
     // Security
     match security_vulnerabilities {
         Some(0) => {
-            println!("  {} {}", "Security".bold(), "No known issues".green());
+            println!(
+                "  {} {}",
+                style::emphasis("Security"),
+                style::positive("No known issues")
+            );
         }
         Some(count) => {
             println!(
                 "  {} {}",
-                "Security".bold(),
-                format!("{count} vulnerabilities").red().bold()
+                style::emphasis("Security"),
+                style::negative(&format!("{count} vulnerabilities"))
             );
         }
         None => {
-            println!("  {} {}", "Security".bold(), "Not scanned".dimmed());
+            println!(
+                "  {} {}",
+                style::emphasis("Security"),
+                style::dim("Not scanned")
+            );
         }
     }
 
@@ -504,9 +515,13 @@ pub fn status_sync() -> Result<()> {
             .and_then(|mut client| client.ping_sync())
             .is_ok();
         if running {
-            println!("  {} {}", "Daemon".bold(), "Running".green());
+            println!(
+                "  {} {}",
+                style::emphasis("Daemon"),
+                style::positive("Running")
+            );
         } else {
-            println!("  {} {}", "Daemon".bold(), "Offline".dimmed());
+            println!("  {} {}", style::emphasis("Daemon"), style::dim("Offline"));
         }
     }
 
@@ -514,19 +529,19 @@ pub fn status_sync() -> Result<()> {
     #[cfg(unix)]
     {
         println!();
-        println!("  {}", "Runtimes".bold());
+        println!("  {}", style::emphasis("Runtimes"));
 
         if let Some(versions) = cached_runtimes {
             for (rt_name, v) in &versions {
                 let label = runtime_display_name(rt_name);
-                println!("    {} {} {}", "·".cyan(), label, v.dimmed());
+                println!("    {} {} {}", style::accent("·"), label, style::dim(v));
             }
         } else {
             // Fallback to local probing if daemon is down
             for rt_name in crate::runtimes::SUPPORTED_RUNTIMES {
                 if let Some(v) = crate::runtimes::probe_version(rt_name) {
                     let label = runtime_display_name(rt_name);
-                    println!("    {} {} {}", "·".cyan(), label, v.dimmed());
+                    println!("    {} {} {}", style::accent("·"), label, style::dim(&v));
                 }
             }
         }
@@ -537,26 +552,26 @@ pub fn status_sync() -> Result<()> {
     if updates > 0 {
         println!(
             "  {} Run {} to see detailed package changes",
-            "Tip".dimmed().italic(),
-            "omg update --check".cyan()
+            style::dim("Tip"),
+            style::accent("omg update --check")
         );
     } else if security_vulnerabilities.is_some_and(|count| count > 0) {
         println!(
             "  {} Run {} to identify and fix security issues",
-            "Tip".dimmed().italic(),
-            "omg audit".cyan()
+            style::dim("Tip"),
+            style::accent("omg audit")
         );
     } else if security_vulnerabilities.is_none() {
         println!(
             "  {} Run {} to scan for vulnerabilities",
-            "Tip".dimmed().italic(),
-            "omg audit".cyan()
+            style::dim("Tip"),
+            style::accent("omg audit")
         );
     } else {
         println!(
             "  {} Your system is healthy! Run {} for an interactive view",
-            "Tip".dimmed().italic(),
-            "omg dash".cyan()
+            style::dim("Tip"),
+            style::accent("omg dash")
         );
     }
 

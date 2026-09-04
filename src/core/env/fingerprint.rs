@@ -4,7 +4,6 @@
 //! to detect environment drift and ensure reproducibility.
 
 use anyhow::{Context, Result};
-use owo_colors::OwoColorize;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use std::collections::BTreeMap;
@@ -376,48 +375,57 @@ impl DriftReport {
         if !self.has_drift {
             println!(
                 "{} No drift detected. Environment matches lockfile.",
-                "✓".green()
+                crate::cli::style::positive("✓")
             );
             return;
         }
 
-        println!("{} Environment drift detected!\n", "⚠".yellow().bold());
+        println!(
+            "{} Environment drift detected!\n",
+            crate::cli::style::caution("⚠")
+        );
 
         if !self.missing_runtimes.is_empty() {
-            println!("{}", "Missing Runtimes:".red());
+            println!("{}", crate::cli::style::negative("Missing Runtimes:"));
             for r in &self.missing_runtimes {
                 println!("  - {r}");
             }
         }
 
         if !self.different_runtimes.is_empty() {
-            println!("{}", "Version Mismatches:".yellow());
+            println!("{}", crate::cli::style::caution("Version Mismatches:"));
             for (name, expected, actual) in &self.different_runtimes {
                 println!(
                     "  ~ {} (expected: {}, actual: {})",
                     name,
-                    expected.green(),
-                    actual.red()
+                    crate::cli::style::positive(expected),
+                    crate::cli::style::negative(actual)
                 );
             }
         }
 
         if !self.extra_runtimes.is_empty() {
-            println!("{}", "Extra Runtimes (not in lockfile):".blue());
+            println!(
+                "{}",
+                crate::cli::style::informative("Extra Runtimes (not in lockfile):")
+            );
             for r in &self.extra_runtimes {
                 println!("  + {r}");
             }
         }
 
         if !self.missing_packages.is_empty() {
-            println!("\n{}", "Missing Packages:".red());
+            println!("\n{}", crate::cli::style::negative("Missing Packages:"));
             for p in &self.missing_packages {
                 println!("  - {p}");
             }
         }
 
         if !self.extra_packages.is_empty() {
-            println!("\n{}", "Extra Packages (not in lockfile):".blue());
+            println!(
+                "\n{}",
+                crate::cli::style::informative("Extra Packages (not in lockfile):")
+            );
             for p in &self.extra_packages {
                 println!("  + {p}");
             }

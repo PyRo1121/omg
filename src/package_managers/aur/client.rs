@@ -1201,7 +1201,7 @@ impl AurClient {
         Self::fetch_missing_pgp_keys(&pkgbuild_path).await?;
         println!(
             "  {} Building {package} {version} from history...",
-            "→".blue()
+            crate::cli::style::informative("→")
         );
         verify_reviewed_pkgbuild(&pkgbuild_path, &reviewed_digest)?;
         let status = self
@@ -1532,8 +1532,16 @@ impl AurClient {
 
             if !status.success() {
                 println!();
-                println!("  {} Build failed for {}", "✗".red(), package);
-                println!("  {} Check log: {}", "→".dimmed(), log_path.display());
+                println!(
+                    "  {} Build failed for {}",
+                    crate::cli::style::negative("✗"),
+                    package
+                );
+                println!(
+                    "  {} Check log: {}",
+                    crate::cli::style::dim("→"),
+                    log_path.display()
+                );
                 return Err(AurError::BuildFailed {
                     package: package.to_string(),
                     log_path: log_path.display().to_string(),
@@ -2539,7 +2547,10 @@ impl AurClient {
 
         if bwrap_available {
             tracing::info!("Using bubblewrap sandbox for secure AUR build");
-            println!("{} Building in sandbox (bubblewrap)...", "🔒".green());
+            println!(
+                "{} Building in sandbox (bubblewrap)...",
+                crate::cli::style::positive("🔒")
+            );
 
             // Repository dependencies were installed before entering the
             // sandbox; the untrusted build itself receives no sudo-capable TTY.
@@ -2728,7 +2739,7 @@ impl AurClient {
             tracing::debug!("bubblewrap not found, using regular makepkg");
             println!(
                 "{} Building without sandbox (install 'bubblewrap' for isolation)...",
-                "→".dimmed()
+                crate::cli::style::dim("→")
             );
             self.run_native_makepkg(pkg_dir, env, package).await
         }
@@ -3349,7 +3360,10 @@ impl AurClient {
         // Serialize database mutations across all concurrent builds.
         let _install_guard = INSTALL_LOCK.lock().await;
 
-        println!("{} Installing built package...", "→".blue());
+        println!(
+            "{} Installing built package...",
+            crate::cli::style::informative("→")
+        );
 
         // Only an already-root process may mutate ALPM directly.
         if crate::core::caps::can_write_pacman_db() {
@@ -3411,7 +3425,10 @@ impl AurClient {
                 std::fs::remove_dir_all(&self.build_dir)?;
                 std::fs::create_dir_all(&self.build_dir)?;
             }
-            println!("{} Cleaned all AUR build directories", "✓".green());
+            println!(
+                "{} Cleaned all AUR build directories",
+                crate::cli::style::positive("✓")
+            );
         }
         Ok(())
     }

@@ -82,6 +82,316 @@ fn every_declared_command_renders_binary_help() {
     }
 }
 
+#[derive(Debug)]
+struct BehaviorCase {
+    name: String,
+    args: Vec<String>,
+    safety: String,
+    expected_exit: i32,
+    expected_ux: String,
+}
+
+fn behavior_cases() -> Vec<BehaviorCase> {
+    include_str!("cli_behavior_inventory.tsv")
+        .lines()
+        .enumerate()
+        .skip(1)
+        .map(|(line_index, line)| {
+            let line_number = line_index + 1;
+            let fields: Vec<&str> = line.split('\t').collect();
+            assert_eq!(
+                fields.len(),
+                5,
+                "behavior inventory line {line_number} must have five fields: {line}"
+            );
+            assert!(
+                matches!(
+                    fields[2],
+                    "read" | "isolated-write" | "controlled-error" | "help-boundary"
+                ),
+                "unknown safety class on behavior inventory line {line_number}: {}",
+                fields[2]
+            );
+            assert_eq!(
+                fields[4], "pass",
+                "only reviewed passing UX contracts belong in the inventory"
+            );
+
+            BehaviorCase {
+                name: fields[0].to_string(),
+                args: serde_json::from_str(fields[1]).unwrap_or_else(|error| {
+                    panic!("invalid args JSON on behavior inventory line {line_number}: {error}")
+                }),
+                safety: fields[2].to_string(),
+                expected_exit: fields[3].parse().unwrap_or_else(|error| {
+                    panic!("invalid exit code on behavior inventory line {line_number}: {error}")
+                }),
+                expected_ux: fields[4].to_string(),
+            }
+        })
+        .collect()
+}
+
+fn command_args_without_global_flags(args: &[String]) -> &[String] {
+    let command_index = args
+        .iter()
+        .position(|arg| !matches!(arg.as_str(), "--json" | "--quiet" | "--verbose"))
+        .unwrap_or(args.len());
+    &args[command_index..]
+}
+
+#[test]
+fn behavior_inventory_covers_every_declared_command() {
+    let cases = behavior_cases();
+    assert!(
+        cases.len() >= 128,
+        "unexpectedly small behavior inventory: {}",
+        cases.len()
+    );
+
+    let unique_names: std::collections::HashSet<&str> =
+        cases.iter().map(|case| case.name.as_str()).collect();
+    assert_eq!(
+        unique_names.len(),
+        cases.len(),
+        "behavior case names must be unique"
+    );
+
+    let missing: Vec<String> = command_paths()
+        .into_iter()
+        .filter(|path| !path.is_empty())
+        .filter(|path| {
+            !cases.iter().any(|case| {
+                command_args_without_global_flags(&case.args)
+                    .get(..path.len())
+                    .is_some_and(|prefix| prefix == path)
+            })
+        })
+        .map(|path| format!("omg {}", path.join(" ")))
+        .collect();
+    assert!(
+        missing.is_empty(),
+        "declared commands missing behavior cases: {missing:?}"
+    );
+}
+
+fn prepare_behavior_fixture(project: &TestProject) -> (String, String) {
+    use std::os::unix::fs::PermissionsExt as _;
+    use std::process::Command;
+
+    project.create_file("Makefile", ".PHONY: smoke\nsmoke:\n\t@echo smoke-task-ok\n");
+    project.create_file("README.md", "# CLI behavior smoke fixture\n");
+    project.create_file("project/README.md", "# Nested audit fixture\n");
+
+    let pacman_local = project
+        .pacman_root
+        .path()
+        .join("var/lib/pacman/local/pacman-7.0.0-1");
+    std::fs::create_dir_all(&pacman_local).expect("create isolated pacman local database");
+    std::fs::create_dir_all(project.pacman_root.path().join("var/lib/pacman/sync"))
+        .expect("create isolated pacman sync database");
+    std::fs::write(
+        project
+            .pacman_root
+            .path()
+            .join("var/lib/pacman/local/ALPM_DB_VERSION"),
+        "9\n",
+    )
+    .expect("write isolated pacman database version");
+    std::fs::write(
+        pacman_local.join("desc"),
+        "%NAME%\npacman\n\n%VERSION%\n7.0.0-1\n\n%DESC%\nIsolated package manager fixture\n\n%ARCH%\nx86_64\n\n%BUILDDATE%\n1700000000\n\n%INSTALLDATE%\n1700000000\n\n%PACKAGER%\nOMG Smoke <smoke@example.invalid>\n\n%SIZE%\n1048576\n\n%REASON%\n0\n\n%LICENSE%\nGPL-2.0-or-later\n\n",
+    )
+    .expect("write isolated pacman package metadata");
+
+    let home = project.create_dir("home");
+    std::fs::write(home.join(".bashrc"), "").expect("write isolated bashrc");
+    std::fs::write(home.join(".zshrc"), "").expect("write isolated zshrc");
+
+    let bin = project.create_dir("bin");
+    for (name, body) in [
+        (
+            "docker",
+            "#!/bin/sh\necho 'permission denied while connecting to isolated Docker fixture' >&2\nexit 1\n",
+        ),
+        (
+            "cargo",
+            "#!/bin/sh\necho 'error: no Rust toolchain is configured in the isolated fixture' >&2\nexit 1\n",
+        ),
+    ] {
+        let path = bin.join(name);
+        std::fs::write(&path, body).expect("write isolated command stub");
+        std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o700))
+            .expect("make isolated command stub executable");
+    }
+
+    let git = |args: &[&str]| {
+        let output = Command::new("git")
+            .args(args)
+            .current_dir(project.path())
+            .env("GIT_CONFIG_GLOBAL", "/dev/null")
+            .env("GIT_CONFIG_NOSYSTEM", "1")
+            .output()
+            .expect("run git fixture command");
+        assert!(
+            output.status.success(),
+            "git fixture command failed: git {}\n{}",
+            args.join(" "),
+            String::from_utf8_lossy(&output.stderr)
+        );
+    };
+    git(&["init", "--quiet", "--initial-branch=main"]);
+    git(&["add", "README.md", "Makefile"]);
+    git(&[
+        "-c",
+        "user.name=OMG Smoke",
+        "-c",
+        "user.email=smoke@example.invalid",
+        "commit",
+        "--quiet",
+        "-m",
+        "fixture",
+    ]);
+
+    let inherited_path = std::env::var("PATH").unwrap_or_default();
+    (
+        home.to_string_lossy().into_owned(),
+        format!("{}:{inherited_path}", bin.display()),
+    )
+}
+
+fn has_ansi(text: &str) -> bool {
+    text.as_bytes().windows(2).any(|pair| pair == b"\x1b[")
+}
+
+#[test]
+#[serial]
+fn behavior_inventory_runs_in_hermetic_state() {
+    use std::fmt::Write as _;
+    use std::time::Instant;
+
+    let project = TestProject::for_distro("arch");
+    let (home, path) = prepare_behavior_fixture(&project);
+    let root = project.path().to_string_lossy().into_owned();
+    let evidence_dir =
+        std::env::var_os("OMG_CLI_BEHAVIOR_EVIDENCE_DIR").map(std::path::PathBuf::from);
+    if let Some(dir) = &evidence_dir {
+        std::fs::create_dir_all(dir).expect("create CLI behavior evidence directory");
+    }
+
+    let mut index = String::from(
+        "case\tcommand\tsafety\texpected_exit\texit\tstdout_bytes\tstderr_bytes\telapsed_ms\tissues\tux_verdict\n",
+    );
+    let mut failures = Vec::new();
+
+    for (number, case) in behavior_cases().into_iter().enumerate() {
+        let expanded_args: Vec<String> = case
+            .args
+            .iter()
+            .map(|arg| arg.replace("${ROOT}", &root))
+            .collect();
+        let args: Vec<&str> = expanded_args.iter().map(String::as_str).collect();
+        let started = Instant::now();
+        let result = project.run_with_env(
+            &args,
+            &[
+                ("HOME", &home),
+                ("PATH", &path),
+                ("SHELL", "/bin/bash"),
+                ("NO_COLOR", "1"),
+                ("TERM", "dumb"),
+                ("GIT_CONFIG_GLOBAL", "/dev/null"),
+                ("GIT_CONFIG_NOSYSTEM", "1"),
+                ("OMG_TEST_COMMAND_TIMEOUT_SECS", "20"),
+            ],
+        );
+        let elapsed_ms = started.elapsed().as_secs_f64() * 1000.0;
+        let mut issues = Vec::new();
+        if result.exit_code != case.expected_exit {
+            issues.push(format!(
+                "expected exit {}, got {}",
+                case.expected_exit, result.exit_code
+            ));
+        }
+        if has_ansi(&result.stdout) || has_ansi(&result.stderr) {
+            issues.push("ANSI escape sequence in redirected output".to_string());
+        }
+        let combined = result.combined_output();
+        if combined.contains("panicked at") || combined.contains("thread 'main' panicked") {
+            issues.push("Rust panic report".to_string());
+        }
+        if case.safety == "help-boundary" && !result.stdout.contains("Usage:") {
+            issues.push("help boundary did not render Usage".to_string());
+        }
+        if case.expected_exit != 0 && result.stderr.trim().is_empty() {
+            issues.push("failure did not explain itself on stderr".to_string());
+        }
+        if matches!(case.name.as_str(), "outdated-json" | "audit-licenses")
+            && serde_json::from_str::<serde_json::Value>(&result.stdout).is_err()
+        {
+            issues.push("JSON output did not parse".to_string());
+        }
+
+        let actual_ux = if issues.is_empty() { "pass" } else { "fail" };
+        if actual_ux != case.expected_ux {
+            failures.push(format!("{}: {}", case.name, issues.join("; ")));
+        }
+        let command = format!("omg {}", expanded_args.join(" "));
+        let issue_summary = if issues.is_empty() {
+            "none".to_string()
+        } else {
+            issues.join("; ")
+        };
+        writeln!(
+            index,
+            "{}\t{}\t{}\t{}\t{}\t{}\t{}\t{elapsed_ms:.1}\t{}\t{actual_ux}",
+            case.name,
+            command,
+            case.safety,
+            case.expected_exit,
+            result.exit_code,
+            result.stdout.len(),
+            result.stderr.len(),
+            issue_summary.replace('\t', " ")
+        )
+        .expect("write CLI behavior index row");
+
+        if let Some(dir) = &evidence_dir {
+            let transcript = format!(
+                "command: {command}\nsafety: {}\nexpected_exit: {}\nexit: {}\nelapsed_ms: {elapsed_ms:.1}\nissues: {issue_summary}\nux_verdict: {actual_ux}\n--- stdout ---\n{}\n--- stderr ---\n{}",
+                case.safety, case.expected_exit, result.exit_code, result.stdout, result.stderr
+            );
+            std::fs::write(
+                dir.join(format!("{:03}-{}.txt", number + 1, case.name)),
+                transcript,
+            )
+            .expect("write CLI behavior transcript");
+        }
+    }
+
+    if let Some(dir) = evidence_dir {
+        std::fs::write(dir.join("index.tsv"), index).expect("write CLI behavior index");
+    }
+    for artifact in ["manifest.json", "privacy.json", "sbom.json"] {
+        let path = project.path().join(artifact);
+        match std::fs::read_to_string(&path)
+            .ok()
+            .and_then(|contents| serde_json::from_str::<serde_json::Value>(&contents).ok())
+        {
+            Some(_) => {}
+            None => failures.push(format!(
+                "artifact {artifact} was not written as valid JSON at {}",
+                path.display()
+            )),
+        }
+    }
+    assert!(
+        failures.is_empty(),
+        "CLI behavior inventory failures:\n{}",
+        failures.join("\n")
+    );
+}
+
 #[test]
 fn root_help_prioritizes_common_commands() {
     let result = run_omg(&["--help"]);
@@ -192,6 +502,7 @@ mod install_tests {
                 .contains("no changes will be made (dry run)"),
             "Dry run must state that no changes are made: {combined}"
         );
+        result.assert_no_ansi();
     }
 }
 
@@ -217,6 +528,7 @@ mod remove_tests {
                         || combined.to_lowercase().contains("error"))),
             "Nonexistent removal should report an idempotent removal or explain the error: {combined}"
         );
+        result.assert_no_ansi();
     }
 }
 
@@ -237,6 +549,7 @@ mod update_tests {
         let result = run_omg(&["update", "--check"]);
         result.assert_success();
         result.assert_stdout_contains("Checking for updates");
+        result.assert_no_ansi();
     }
 }
 
@@ -280,6 +593,14 @@ mod runtime_tests {
     fn test_which_help() {
         let result = run_omg(&["which", "--help"]);
         result.assert_success();
+    }
+
+    #[test]
+    fn redirected_runtime_install_output_has_no_ansi() {
+        let project = TestProject::new();
+        let result = project.run(&["use", "python", "3.12.0"]);
+        result.assert_success();
+        result.assert_no_ansi();
     }
 }
 
@@ -355,6 +676,29 @@ mod env_tests {
         let result = run_omg(&["snapshot", "--help"]);
         result.assert_success();
         result.assert_stdout_contains("snapshot");
+    }
+
+    #[test]
+    fn redirected_snapshot_output_has_no_ansi() {
+        for args in [
+            ["snapshot", "create", "--message", "smoke"].as_slice(),
+            ["snapshot", "list"].as_slice(),
+            ["snapshot", "restore", "missing", "--dry-run"].as_slice(),
+        ] {
+            run_omg(args).assert_no_ansi();
+        }
+    }
+
+    #[test]
+    fn redirected_environment_drift_output_has_no_ansi() {
+        let project = TestProject::new();
+        let capture = project.run(&["env", "capture"]);
+        capture.assert_success();
+        capture.assert_no_ansi();
+
+        let check = project.run(&["env", "check"]);
+        check.assert_success();
+        check.assert_no_ansi();
     }
 }
 
@@ -524,7 +868,7 @@ mod ui_tests {
 
     #[test]
     fn test_completions_bash() {
-        let result = run_omg(&["completions", "bash"]);
+        let result = run_omg(&["completions", "bash", "--stdout"]);
         result.assert_success();
         // Should generate bash completion script
         assert!(!result.stdout.is_empty());
@@ -532,16 +876,32 @@ mod ui_tests {
 
     #[test]
     fn test_completions_fish() {
-        let result = run_omg(&["completions", "fish"]);
+        let result = run_omg(&["completions", "fish", "--stdout"]);
         result.assert_success();
         assert!(!result.stdout.is_empty());
     }
 
     #[test]
     fn test_completions_powershell() {
-        let result = run_omg(&["completions", "powershell"]);
+        let result = run_omg(&["completions", "powershell", "--stdout"]);
         result.assert_success();
         assert!(!result.stdout.is_empty());
+    }
+
+    #[test]
+    fn redirected_completion_install_output_has_no_ansi() {
+        let home = tempfile::TempDir::new().expect("temporary home");
+        let result = run_omg_with_env(
+            &["completions", "bash"],
+            &[("HOME", home.path().to_str().expect("UTF-8 temporary path"))],
+        );
+        result.assert_success();
+        result.assert_no_ansi();
+        assert!(
+            home.path()
+                .join(".local/share/bash-completion/completions/omg")
+                .is_file()
+        );
     }
 
     #[test]
@@ -621,6 +981,7 @@ mod package_ops_tests {
     fn test_clean_cache_dry_run() {
         let result = run_omg(&["clean", "--cache", "--dry-run"]);
         result.assert_success();
+        result.assert_no_ansi();
         let output = result.stdout;
         assert!(
             output.contains("Would clear package cache"),
@@ -636,6 +997,7 @@ mod package_ops_tests {
     fn test_clean_orphans_dry_run() {
         let result = run_omg(&["clean", "--orphans", "--dry-run"]);
         result.assert_success();
+        result.assert_no_ansi();
         let output = result.stdout;
         assert!(
             output.contains("Would remove") && output.to_lowercase().contains("orphan"),
@@ -711,6 +1073,10 @@ mod workflow_tests {
 
         let info_result = run_omg(&["info", "git"]);
         info_result.assert_success();
+
+        let verbose_info = run_omg(&["--verbose", "info", "git"]);
+        verbose_info.assert_success();
+        verbose_info.assert_no_ansi();
     }
 
     #[test]
@@ -718,8 +1084,14 @@ mod workflow_tests {
         // Workflow: check status, list explicit packages
         let status_result = run_omg(&["status"]);
         status_result.assert_success();
+        status_result.assert_no_ansi();
+
+        let verbose_status = run_omg(&["--verbose", "status"]);
+        verbose_status.assert_success();
+        verbose_status.assert_no_ansi();
 
         let explicit_result = run_omg(&["explicit"]);
         explicit_result.assert_success();
+        explicit_result.assert_no_ansi();
     }
 }

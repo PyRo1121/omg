@@ -10,7 +10,6 @@
 //! - rust-toolchain.toml support
 
 use anyhow::{Context, Result};
-use owo_colors::OwoColorize;
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeSet;
 use std::fs;
@@ -23,6 +22,7 @@ use super::common::{
     is_valid_version_dir, parse_sha256_digest, print_already_installed, print_installed,
     print_using, replace_staged_install, validate_download_filename,
 };
+use crate::cli::style;
 use crate::core::archive::stripped_archive_path;
 use crate::core::http::download_client;
 
@@ -158,8 +158,8 @@ impl RustManager {
             return self.activate_toolchain(&toolchain);
         }
 
-        let prefix = "OMG".cyan().bold().to_string();
-        let toolchain_name = toolchain.name().yellow().to_string();
+        let prefix = style::runtime("OMG");
+        let toolchain_name = style::caution(&toolchain.name());
         tracing::info!("{prefix} Installing Rust {toolchain_name}...\n");
 
         self.install_with_profile(&toolchain, "default", &[], &[])
@@ -484,7 +484,7 @@ impl RustManager {
         target: &str,
         manifest: &toml::Value,
     ) -> Result<()> {
-        tracing::info!("{} Downloading {}...", "→".blue(), component);
+        tracing::info!("{} Downloading {}...", style::informative("→"), component);
         let url = manifest_component_url(manifest, component, target)?;
         let filename = url
             .rsplit('/')
@@ -499,7 +499,7 @@ impl RustManager {
         let download_path = download_dir.path().join(filename);
 
         download_with_progress(self.client, url, &download_path, &checksum).await?;
-        tracing::info!("{} Extracting {}...", "→".blue(), component);
+        tracing::info!("{} Extracting {}...", style::informative("→"), component);
         Self::extract_component(&download_path, dest_dir)?;
         Ok(())
     }

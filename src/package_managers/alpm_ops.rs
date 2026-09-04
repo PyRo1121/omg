@@ -1363,12 +1363,11 @@ fn commit_alpm_transaction(
 
     if alpm.trans_add().is_empty() && alpm.trans_remove().is_empty() {
         main_task.clear();
-        use owo_colors::OwoColorize;
         println!();
         // Deliberately neutral wording: this also fires when every requested
         // removal target was already absent, where "system is up to date"
         // would be misleading.
-        println!("  {} Nothing to do", "✓".green().bold());
+        println!("  {} Nothing to do", crate::cli::style::positive("✓"));
         println!();
         return Ok(());
     }

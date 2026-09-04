@@ -8,11 +8,13 @@ use std::io::{BufReader, Read, Seek, SeekFrom, Write};
 use std::path::{Path, PathBuf};
 
 use anyhow::{Context, Result};
-use owo_colors::OwoColorize;
 use serde::Deserialize;
 use sha2::{Digest, Sha256};
 
-use crate::cli::progress::{Accent, Outcome, ProgressTask, TaskKind, TaskSpec};
+use crate::cli::{
+    progress::{Accent, Outcome, ProgressTask, TaskKind, TaskSpec},
+    style,
+};
 use crate::core::archive::stripped_archive_path;
 
 pub(crate) const GITHUB_USER_AGENT: &str = "omg-package-manager/0.1";
@@ -1392,33 +1394,32 @@ fn extract_domain(url: &str) -> &str {
 
 /// Print installation success message
 pub(crate) fn print_installed(runtime: &str, version: &str) {
-    let check_green = "✓".green();
-    let check = check_green.bold();
-    let rt = runtime.cyan();
-    let ver = version.yellow();
-    println!("\n{check} {rt} {ver} installed successfully!");
+    println!(
+        "\n{} {} {} installed successfully!",
+        style::positive("✓"),
+        style::runtime(runtime),
+        style::caution(version)
+    );
 }
 
 /// Print version switch message
 pub(crate) fn print_using(runtime: &str, version: &str, bin_path: &Path) {
-    // Bind styled temporaries to avoid Rust 2024 drop order issues
-    let check = "✓".green();
-    let rt = runtime.cyan();
-    let ver = version.yellow();
-    println!("{check} Now using {rt} {ver}");
-
-    let path_label = "PATH:".dimmed();
-    let path_display = bin_path.display();
-    println!("  {path_label} {path_display}");
+    println!(
+        "{} Now using {} {}",
+        style::positive("✓"),
+        style::runtime(runtime),
+        style::caution(version)
+    );
+    println!("  {} {}", style::dim("PATH:"), bin_path.display());
 }
 
 /// Print already installed message
 pub(crate) fn print_already_installed(runtime: &str, version: &str) {
     println!(
         "{} {} {} is already installed",
-        "✓".green(),
-        runtime.cyan(),
-        version.yellow()
+        style::positive("✓"),
+        style::runtime(runtime),
+        style::caution(version)
     );
 }
 

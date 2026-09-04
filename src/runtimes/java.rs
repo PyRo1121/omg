@@ -12,7 +12,6 @@ use std::fs;
 use std::path::{Path, PathBuf};
 
 use anyhow::{Context, Result};
-use owo_colors::OwoColorize;
 use serde::Deserialize;
 
 use super::common::{
@@ -20,7 +19,7 @@ use super::common::{
     extract_tar_gz, normalize_version, parse_sha256_digest, print_already_installed,
     print_installed, remove_file_best_effort, validate_download_filename,
 };
-use crate::core::http::download_client;
+use crate::{cli::style, core::http::download_client};
 
 const ADOPTIUM_API: &str = "https://api.adoptium.net/v3";
 
@@ -108,13 +107,13 @@ impl JavaManager {
 
         println!(
             "{} Installing Java {} (Adoptium)...\n",
-            "OMG".cyan().bold(),
-            version.yellow()
+            style::runtime("OMG"),
+            style::caution(&version)
         );
 
         let (os, arch) = java_platform()?;
 
-        println!("{} Querying Adoptium API...", "→".blue());
+        println!("{} Querying Adoptium API...", style::informative("→"));
 
         let binaries: Vec<AdoptiumBinary> = self
             .client
@@ -138,13 +137,17 @@ impl JavaManager {
         fs::create_dir_all(&self.versions_dir)?;
 
         let archive_name = validate_download_filename(&binary.package.name)?;
-        println!("{} Downloading {}...", "→".blue(), archive_name);
+        println!(
+            "{} Downloading {}...",
+            style::informative("→"),
+            archive_name
+        );
         let download_path = self.versions_dir.join(archive_name);
         let checksum = parse_sha256_digest(&binary.package.checksum, "Adoptium")?;
         download_with_progress(self.client, &binary.package.link, &download_path, &checksum)
             .await?;
 
-        println!("{} Extracting (pure Rust)...", "→".blue());
+        println!("{} Extracting (pure Rust)...", style::informative("→"));
         let staging = begin_staged_install(&self.versions_dir)?;
         extract_tar_gz(&download_path, staging.path(), 1).await?;
         complete_staged_install(&staging, &version_dir, &version)?;
@@ -161,16 +164,12 @@ impl JavaManager {
         let version_dir = self.versions_dir.join(&version);
         activate_version(&self.versions_dir, &version, Path::new("bin/java"))?;
 
-        println!("{} Now using Java {version}", "✓".green());
+        println!("{} Now using Java {version}", style::positive("✓"));
+        println!("  {} {}", style::dim("JAVA_HOME:"), version_dir.display());
         println!(
             "  {} {}",
-            "JAVA_HOME:".dimmed(),
-            version_dir.display().dimmed()
-        );
-        println!(
-            "  {} {}",
-            "PATH:".dimmed(),
-            self.versions_dir.join("current/bin").display().dimmed()
+            style::dim("PATH:"),
+            self.versions_dir.join("current/bin").display()
         );
 
         Ok(())

@@ -185,7 +185,49 @@ pub fn arrow(msg: &str) -> String {
     maybe_color(msg, |m| format!("{} {}", icon("→", ">").cyan().bold(), m))
 }
 
-/// Dimmed/muted text
+/// Bold text for labels and totals.
+#[must_use]
+pub fn emphasis(msg: &str) -> String {
+    maybe_color(msg, |message| message.bold().to_string())
+}
+
+/// Cyan accent text for identifiers and directional markers.
+#[must_use]
+pub fn accent(msg: &str) -> String {
+    maybe_color(msg, |message| message.cyan().to_string())
+}
+
+/// Green text for positive state without adding an icon.
+#[must_use]
+pub fn positive(msg: &str) -> String {
+    maybe_color(msg, |message| message.green().to_string())
+}
+
+/// Red text for negative state without adding an icon.
+#[must_use]
+pub fn negative(msg: &str) -> String {
+    maybe_color(msg, |message| message.red().to_string())
+}
+
+/// Yellow text for caution state without adding an icon.
+#[must_use]
+pub fn caution(msg: &str) -> String {
+    maybe_color(msg, |message| message.yellow().to_string())
+}
+
+/// Magenta accent text for community-provided values.
+#[must_use]
+pub fn community(msg: &str) -> String {
+    maybe_color(msg, |message| message.magenta().to_string())
+}
+
+/// Blue informational text without adding a status icon.
+#[must_use]
+pub fn informative(msg: &str) -> String {
+    maybe_color(msg, |message| message.blue().to_string())
+}
+
+/// Dimmed/muted text.
 #[must_use]
 pub fn dim(msg: &str) -> String {
     maybe_color(msg, |m| m.dimmed().to_string())
@@ -329,6 +371,42 @@ mod tests {
     fn test_omg_colors_never_disables() {
         temp_env::with_var("OMG_COLORS", Some("never"), || {
             assert!(!colors_enabled());
+        });
+    }
+
+    #[test]
+    #[serial]
+    fn semantic_text_styles_are_plain_when_colors_are_disabled() {
+        temp_env::with_var("NO_COLOR", Some("1"), || {
+            for rendered in [
+                emphasis("label"),
+                accent("accent"),
+                positive("positive"),
+                negative("negative"),
+                caution("caution"),
+                community("community"),
+                informative("informative"),
+            ] {
+                assert!(!rendered.contains("\u{1b}["), "{rendered:?}");
+            }
+        });
+    }
+
+    #[test]
+    #[serial]
+    fn semantic_text_styles_honor_forced_color() {
+        temp_env::with_vars([("NO_COLOR", None), ("OMG_COLORS", Some("always"))], || {
+            for rendered in [
+                emphasis("label"),
+                accent("accent"),
+                positive("positive"),
+                negative("negative"),
+                caution("caution"),
+                community("community"),
+                informative("informative"),
+            ] {
+                assert!(rendered.contains("\u{1b}["), "{rendered:?}");
+            }
         });
     }
 

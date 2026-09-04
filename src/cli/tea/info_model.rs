@@ -9,7 +9,6 @@ use crate::core::PackageSource;
 #[cfg(unix)]
 use crate::core::client::DaemonClient;
 use crate::package_managers::get_package_manager;
-use owo_colors::OwoColorize;
 use std::fmt::Write;
 use std::time::Duration;
 use unicode_width::UnicodeWidthStr;
@@ -31,8 +30,8 @@ pub enum InfoSource {
 impl InfoSource {
     pub fn styled_label(&self) -> String {
         match self {
-            Self::Official => "Official Repository".cyan().to_string(),
-            Self::Aur => "AUR (Arch User Repository)".yellow().to_string(),
+            Self::Official => style::accent("Official Repository"),
+            Self::Aur => style::caution("AUR (Arch User Repository)"),
         }
     }
 }
@@ -111,7 +110,7 @@ impl InfoModel {
 
     /// Render a key-value pair
     fn render_kv(key: &str, value: &str) -> String {
-        format!("  {:<15} {}", key.bold(), value)
+        format!("  {:<15} {}", style::emphasis(key), value)
     }
 }
 
@@ -158,10 +157,9 @@ impl Model for InfoModel {
     fn view(&self) -> String {
         match self.state {
             InfoState::Idle => String::new(),
-            InfoState::Loading => format!("⟳ Fetching info for '{}'...", self.package_name)
-                .cyan()
-                .dimmed()
-                .to_string(),
+            InfoState::Loading => {
+                style::accent(&format!("⟳ Fetching info for '{}'...", self.package_name))
+            }
             InfoState::Complete => {
                 if let Some(info) = &self.info {
                     let mut output = String::new();
@@ -175,12 +173,12 @@ impl Model for InfoModel {
                     let _ = writeln!(
                         output,
                         "\n{} {}\n{} {}\n{}{}\n",
-                        "┌─".cyan().bold(),
-                        "OMG".cyan().bold(),
-                        "│".cyan().bold(),
-                        subtitle.white(),
-                        "└".cyan().bold(),
-                        "─".repeat(subtitle.width()).cyan().bold()
+                        style::accent("┌─"),
+                        style::runtime("OMG"),
+                        style::accent("│"),
+                        style::emphasis(&subtitle),
+                        style::accent("└"),
+                        style::accent(&"─".repeat(subtitle.width()))
                     );
 
                     // Details

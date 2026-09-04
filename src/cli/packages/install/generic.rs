@@ -1,6 +1,6 @@
 use anyhow::{Context, Result};
 
-use crate::cli::modern_ui;
+use crate::cli::{modern_ui, style};
 use crate::package_managers::get_package_manager;
 
 use super::enforce_install_policy;
@@ -60,7 +60,6 @@ pub async fn install(packages: &[String]) -> Result<()> {
 
 pub fn install_dry_run(packages: &[String]) -> Result<()> {
     use comfy_table::{Table, modifiers::UTF8_ROUND_CORNERS, presets::UTF8_FULL};
-    use owo_colors::OwoColorize;
 
     crate::core::security::validate_package_names(packages)?;
 
@@ -74,10 +73,10 @@ pub fn install_dry_run(packages: &[String]) -> Result<()> {
 
     for pkg_name in packages {
         table.add_row(vec![
-            pkg_name.bold().to_string(),
+            style::emphasis(pkg_name),
             String::new(),
             String::new(),
-            format!("{} Pending", "•".blue()),
+            format!("{} Pending", style::informative("•")),
         ]);
     }
 
@@ -85,8 +84,8 @@ pub fn install_dry_run(packages: &[String]) -> Result<()> {
     println!();
     println!(
         "  {} {} No changes will be made (dry run)",
-        "ℹ".blue(),
-        "•".dimmed()
+        style::info("ℹ"),
+        style::dim("•")
     );
     println!();
 

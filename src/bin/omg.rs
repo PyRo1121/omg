@@ -43,11 +43,10 @@ fn print_fast_success(packages: &[String], action: &str) {
 /// Print system update success message
 #[cfg(feature = "arch")]
 fn print_system_updated(suffix: &str) {
-    use owo_colors::OwoColorize;
     println!();
     println!(
         "  {} System updated successfully{suffix}",
-        "✓".green().bold()
+        omg_lib::cli::style::positive("✓")
     );
     println!();
 }
@@ -249,9 +248,11 @@ fn try_fast_elevated(
         }
         "update" | "upgrade" => Some(execute_fast_system_update("")),
         "fullupdate" => {
-            use owo_colors::OwoColorize;
             println!();
-            println!("  {} Syncing package databases...", "→".cyan().bold());
+            println!(
+                "  {} Syncing package databases...",
+                omg_lib::cli::style::accent("→")
+            );
 
             let sync_result = tokio::runtime::Builder::new_current_thread()
                 .enable_all()
@@ -263,16 +264,15 @@ fn try_fast_elevated(
                 return Some(Err(e));
             }
 
-            println!("  {} Upgrading system...", "→".cyan().bold());
+            println!("  {} Upgrading system...", omg_lib::cli::style::accent("→"));
             println!();
 
             Some(execute_fast_system_update(""))
         }
         "turboupdate" => {
-            use owo_colors::OwoColorize;
             println!(
                 "\n  {} Turbo upgrade (skipping sync)...\n",
-                "🚀".bright_magenta().bold()
+                omg_lib::cli::style::community("🚀")
             );
             Some(execute_fast_system_update(" (turbo)"))
         }
@@ -1587,16 +1587,19 @@ mod fast_path_tests {
     #[test]
     fn root_help_selection_rejects_subcommand_scoped_flags() {
         assert_eq!(
-            root_help_selection(&args_or_panic(&["--help", "--all-commands"])),
+            root_help_selection(&args_or_panic(&["omg", "--help", "--all-commands"])),
             Some(true)
         );
-        assert_eq!(root_help_selection(&args_or_panic(&["help"])), Some(false));
         assert_eq!(
-            root_help_selection(&args_or_panic(&["clean", "--all"])),
+            root_help_selection(&args_or_panic(&["omg", "help"])),
+            Some(false)
+        );
+        assert_eq!(
+            root_help_selection(&args_or_panic(&["omg", "clean", "--all"])),
             None
         );
         assert_eq!(
-            root_help_selection(&args_or_panic(&["completions", "bash", "--help"])),
+            root_help_selection(&args_or_panic(&["omg", "completions", "bash", "--help"])),
             None
         );
     }

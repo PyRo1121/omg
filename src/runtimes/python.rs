@@ -8,7 +8,6 @@
 //! - Virtual environment support
 
 use anyhow::{Context, Result};
-use owo_colors::OwoColorize;
 use std::fs;
 use std::path::{Path, PathBuf};
 
@@ -18,7 +17,7 @@ use super::common::{
     normalize_version, parse_sha256_digest, print_already_installed, print_installed, print_using,
     remove_file_best_effort, validate_download_filename, version_cmp,
 };
-use crate::core::http::download_client;
+use crate::{cli::style, core::http::download_client};
 
 const PBS_RELEASES_URL: &str =
     "https://api.github.com/repos/indygreg/python-build-standalone/releases";
@@ -226,7 +225,7 @@ impl PythonManager {
             )?;
             println!(
                 "{} OMG_TEST_MODE active — synthetic Python runtime was not activated",
-                "⚠".yellow()
+                style::caution("⚠")
             );
             print_installed("Python", &version);
             return Ok(());
@@ -234,13 +233,17 @@ impl PythonManager {
 
         println!(
             "{} Installing Python {}...\n",
-            "OMG".cyan().bold(),
-            version.yellow()
+            style::runtime("OMG"),
+            style::caution(&version)
         );
 
         let target = python_target()?;
 
-        println!("{} Finding Python {} release...", "→".blue(), version);
+        println!(
+            "{} Finding Python {} release...",
+            style::informative("→"),
+            version
+        );
 
         let releases = fetch_github_releases(
             self.client,
@@ -278,11 +281,11 @@ impl PythonManager {
 
         fs::create_dir_all(&self.versions_dir)?;
 
-        println!("{} Downloading {}...", "→".blue(), asset_name);
+        println!("{} Downloading {}...", style::informative("→"), asset_name);
         let download_path = self.versions_dir.join(asset_name);
         download_with_progress(self.client, url, &download_path, &checksum).await?;
 
-        println!("{} Extracting (pure Rust)...", "→".blue());
+        println!("{} Extracting (pure Rust)...", style::informative("→"));
         let staging = begin_staged_install(&self.versions_dir)?;
         extract_tar_gz(&download_path, staging.path(), 1).await?;
         complete_staged_install(&staging, &version_dir, &version)?;

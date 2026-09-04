@@ -7,7 +7,7 @@ use crossterm::{
     cursor,
     event::{self, Event, KeyCode, KeyEvent, KeyEventKind, KeyModifiers},
     execute,
-    style::{Color, Print, ResetColor, SetForegroundColor, Stylize},
+    style::{Color, Print, ResetColor, SetForegroundColor},
     terminal::{self, ClearType},
 };
 use std::io::{self, IsTerminal, Write};
@@ -963,13 +963,19 @@ fn print_completion(stdout: &mut io::Stdout, state: &WizardState) -> Result<()> 
     )?;
     println!();
 
-    println!("  {} Restart your shell or run:", "Next:".bold());
+    println!(
+        "  {} Restart your shell or run:",
+        crate::cli::style::emphasis("Next:")
+    );
     if let Some(shell) = state.shell {
         println!("      source {}", shell.config_file());
     }
     println!();
 
-    println!("  {} Try these commands:", "Quick start:".bold());
+    println!(
+        "  {} Try these commands:",
+        crate::cli::style::emphasis("Quick start:")
+    );
     println!("      omg search vim          # 22x faster than pacman");
     println!("      omg use node 20         # Install & switch Node.js");
     println!("      omg status              # System overview");

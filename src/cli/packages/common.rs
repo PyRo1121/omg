@@ -142,8 +142,6 @@ where
 /// `debian`/`debian-pure`) or the generic module (when Arch is absent).
 #[cfg(any(feature = "debian", feature = "debian-pure", not(feature = "arch")))]
 pub(crate) async fn update_official_only(check_only: bool, yes: bool, dry_run: bool) -> Result<()> {
-    use owo_colors::OwoColorize;
-
     let pm = crate::package_managers::get_package_manager()?;
 
     let official_updates = if check_only || dry_run {
@@ -215,8 +213,8 @@ pub(crate) async fn update_official_only(check_only: bool, yes: bool, dry_run: b
         println!();
         println!(
             "  {} Run {} to install updates",
-            "→".dimmed(),
-            "omg update".cyan().bold()
+            crate::cli::style::dim("→"),
+            crate::cli::style::runtime("omg update")
         );
         println!();
         return Ok(());
@@ -226,7 +224,7 @@ pub(crate) async fn update_official_only(check_only: bool, yes: bool, dry_run: b
         println!();
         if !confirm_proceed_with_upgrade().await? {
             println!();
-            println!("  {} Upgrade cancelled", "✗".yellow());
+            println!("  {} Upgrade cancelled", crate::cli::style::caution("✗"));
             println!();
             return Ok(());
         }

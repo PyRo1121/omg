@@ -1,6 +1,6 @@
+use crate::cli::style;
 use anyhow::{Context, Result};
 use dialoguer::{Confirm, Select, theme::ColorfulTheme};
-use owo_colors::OwoColorize;
 use semver::{Version, VersionReq};
 use serde::Deserialize;
 use std::collections::HashMap;
@@ -455,7 +455,7 @@ impl TaskDetector {
             }
             println!(
                 "{} Found '{}' in multiple ecosystems:",
-                "OMG".cyan().bold(),
+                style::runtime("OMG"),
                 task_name
             );
             let selection = Select::with_theme(&ColorfulTheme::default())
@@ -537,7 +537,7 @@ pub fn run_task_advanced(
                 };
                 println!(
                     "{} Task '{task_name}' not found, trying '{display_cmd}'...",
-                    "→".yellow()
+                    style::caution("→")
                 );
                 let mut args: Vec<String> = prefix_args
                     .iter()
@@ -558,10 +558,10 @@ pub fn run_task_advanced(
     for task in matches {
         println!(
             "{} Running task '{}' via {} ({})...",
-            "OMG".cyan().bold(),
-            task.name.white().bold(),
-            task.ecosystem.to_string().magenta(),
-            task.source.blue()
+            style::runtime("OMG"),
+            style::package(&task.name),
+            style::community(&task.ecosystem.to_string()),
+            style::accent(&task.source)
         );
 
         execute_process(
@@ -1144,13 +1144,13 @@ pub fn run_task_watch(task_name: &str, extra_args: &[String]) -> Result<()> {
 
     println!(
         "{} Watch mode: {} (Ctrl+C to stop)\n",
-        "OMG".cyan().bold(),
-        task_name.white().bold()
+        style::runtime("OMG"),
+        style::package(task_name)
     );
 
     // Initial run; surface failures in watch mode instead of discarding them.
     if let Err(error) = run_task(task_name, extra_args) {
-        eprintln!("{} Task failed: {error}", "!".yellow());
+        eprintln!("{} Task failed: {error}", style::caution("!"));
     }
 
     // Set up file watcher. Events under build-artifact/VCS directories are
@@ -1190,7 +1190,7 @@ pub fn run_task_watch(task_name: &str, extra_args: &[String]) -> Result<()> {
             Err(error) => {
                 eprintln!(
                     "{} Failed to watch {}: {error}",
-                    "!".yellow(),
+                    style::caution("!"),
                     path.display()
                 );
             }
@@ -1204,7 +1204,7 @@ pub fn run_task_watch(task_name: &str, extra_args: &[String]) -> Result<()> {
             })?;
     }
 
-    println!("  {} Watching for changes...\n", "→".dimmed());
+    println!("  {} Watching for changes...\n", style::dim("→"));
 
     process_watch_events(&rx, Duration::from_millis(300), || {
         rerun_task_in_watch(task_name, extra_args);
@@ -1238,11 +1238,11 @@ fn process_watch_events<T>(
 fn rerun_task_in_watch(task_name: &str, extra_args: &[String]) {
     println!(
         "\n{} File changed, re-running {}...\n",
-        "→".yellow(),
-        task_name.cyan()
+        style::caution("→"),
+        style::accent(task_name)
     );
     if let Err(error) = run_task(task_name, extra_args) {
-        eprintln!("{} Task failed: {error}", "!".yellow());
+        eprintln!("{} Task failed: {error}", style::caution("!"));
     }
 }
 
@@ -1288,9 +1288,9 @@ pub async fn run_tasks_parallel(tasks_str: &str, extra_args: &[String]) -> Resul
 
     println!(
         "{} Running {} tasks in parallel: {}\n",
-        "OMG".cyan().bold(),
+        style::runtime("OMG"),
         task_names.len(),
-        task_names.join(", ").white().bold()
+        style::package(&task_names.join(", "))
     );
 
     let handles: Vec<_> = task_names
@@ -1308,21 +1308,21 @@ pub async fn run_tasks_parallel(tasks_str: &str, extra_args: &[String]) -> Resul
     for handle in handles {
         match handle.await {
             Ok((task, Ok(()))) => {
-                println!("  {} Task '{}' completed", "✓".green(), task);
+                println!("  {} Task '{}' completed", style::positive("✓"), task);
             }
             Ok((task, Err(e))) => {
-                println!("  {} Task '{}' failed: {}", "✗".red(), task, e);
+                println!("  {} Task '{}' failed: {}", style::negative("✗"), task, e);
                 all_success = false;
             }
             Err(e) => {
-                println!("  {} Task panicked: {}", "✗".red(), e);
+                println!("  {} Task panicked: {}", style::negative("✗"), e);
                 all_success = false;
             }
         }
     }
 
     if all_success {
-        println!("\n{}", "All tasks completed successfully!".green());
+        println!("\n{}", style::positive("All tasks completed successfully!"));
         Ok(())
     } else {
         anyhow::bail!("Some tasks failed")

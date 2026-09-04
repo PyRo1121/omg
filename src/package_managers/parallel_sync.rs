@@ -4,7 +4,6 @@ use std::path::{Path, PathBuf};
 use std::time::Duration;
 
 use anyhow::{Context, Result};
-use owo_colors::OwoColorize;
 use reqwest::Client;
 use std::os::unix::fs::PermissionsExt;
 use tokio::fs::File;
@@ -539,7 +538,7 @@ struct StagedRepository {
 pub async fn sync_databases_parallel() -> Result<()> {
     println!(
         "{} Synchronizing package databases...\n",
-        "OMG".cyan().bold()
+        crate::cli::style::runtime("OMG")
     );
 
     // Resolve the complete repository policy before creating staging files or
@@ -710,7 +709,10 @@ pub async fn sync_databases_parallel() -> Result<()> {
     commit_staged_files(&staged_files, errors.len())?;
 
     crate::package_managers::alpm_direct::clear_alpm_cache();
-    println!("{} Databases synchronized successfully!\n", "✓".green());
+    println!(
+        "{} Databases synchronized successfully!\n",
+        crate::cli::style::positive("✓")
+    );
     Ok(())
 }
 

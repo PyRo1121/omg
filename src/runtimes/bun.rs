@@ -8,7 +8,6 @@
 //! - Version aliasing (latest)
 
 use anyhow::{Context, Result};
-use owo_colors::OwoColorize;
 use std::fs;
 use std::path::{Path, PathBuf};
 
@@ -18,7 +17,7 @@ use super::common::{
     parse_sha256_digest, print_already_installed, print_installed, print_using,
     remove_file_best_effort, version_cmp,
 };
-use crate::core::http::download_client;
+use crate::{cli::style, core::http::download_client};
 
 const BUN_RELEASES_URL: &str = "https://github.com/oven-sh/bun/releases/download";
 const BUN_API_URL: &str = "https://api.github.com/repos/oven-sh/bun/releases";
@@ -86,8 +85,8 @@ impl BunManager {
 
         println!(
             "{} Installing Bun {}...\n",
-            "OMG".cyan().bold(),
-            version.yellow()
+            style::runtime("OMG"),
+            style::caution(&version)
         );
 
         let filename = format!("bun-{}.zip", bun_platform()?);
@@ -96,11 +95,15 @@ impl BunManager {
 
         fs::create_dir_all(&self.versions_dir)?;
 
-        println!("{} Downloading Bun v{}...", "→".blue(), version);
+        println!(
+            "{} Downloading Bun v{}...",
+            style::informative("→"),
+            version
+        );
         let download_path = self.versions_dir.join(&filename);
         download_with_progress(self.client, &url, &download_path, &checksum).await?;
 
-        println!("{} Extracting (pure Rust)...", "→".blue());
+        println!("{} Extracting (pure Rust)...", style::informative("→"));
         let staging = begin_staged_install(&self.versions_dir)?;
         extract_zip(&download_path, staging.path(), 1).await?;
         complete_staged_install(&staging, &version_dir, &version)?;

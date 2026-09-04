@@ -7,7 +7,6 @@
 //! - Compatible with Ubuntu/Debian glibc
 
 use anyhow::{Context, Result};
-use owo_colors::OwoColorize;
 use std::fs;
 use std::path::{Path, PathBuf};
 
@@ -17,7 +16,7 @@ use super::common::{
     parse_sha256_digest, print_already_installed, print_installed, print_using,
     remove_file_best_effort, validate_download_filename, version_cmp,
 };
-use crate::core::http::download_client;
+use crate::{cli::style, core::http::download_client};
 
 const RUBY_VERSIONS_URL: &str = "https://api.github.com/repos/ruby/ruby-builder/releases";
 
@@ -87,8 +86,8 @@ impl RubyManager {
 
         println!(
             "{} Installing Ruby {}...\n",
-            "OMG".cyan().bold(),
-            version.yellow()
+            style::runtime("OMG"),
+            style::caution(&version)
         );
 
         // Use the release-specific, pre-built Ruby from GitHub ruby-builder.
@@ -123,7 +122,10 @@ impl RubyManager {
 
         fs::create_dir_all(&self.versions_dir)?;
 
-        println!("{} Downloading pre-built Ruby {version}...", "→".blue());
+        println!(
+            "{} Downloading pre-built Ruby {version}...",
+            style::informative("→")
+        );
         let archive_name = validate_download_filename(&asset.name)?;
         let download_path = self.versions_dir.join(archive_name);
 
@@ -134,12 +136,15 @@ impl RubyManager {
         download_with_progress(self.client, download_url, &download_path, &checksum)
             .await
             .with_context(|| {
-                eprintln!("{} Pre-built Ruby {version} not available", "!".yellow());
+                eprintln!(
+                    "{} Pre-built Ruby {version} not available",
+                    style::caution("!")
+                );
                 eprintln!("  Try: omg list ruby --available");
                 format!("Failed to download Ruby {version}")
             })?;
 
-        println!("{} Extracting (pure Rust)...", "→".blue());
+        println!("{} Extracting (pure Rust)...", style::informative("→"));
         let staging = begin_staged_install(&self.versions_dir)?;
         extract_tar_gz(&download_path, staging.path(), 1).await?;
         complete_staged_install(&staging, &version_dir, &version)?;

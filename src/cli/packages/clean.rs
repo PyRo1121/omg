@@ -3,7 +3,8 @@
 #[cfg(any(feature = "arch", feature = "debian", feature = "debian-pure"))]
 use anyhow::Context;
 use anyhow::Result;
-use owo_colors::OwoColorize;
+
+use crate::cli::style;
 
 #[cfg(any(feature = "debian", feature = "debian-pure"))]
 use crate::core::env::distro::is_debian_like;
@@ -71,8 +72,8 @@ pub async fn clean(orphans: bool, cache: bool, aur: bool, all: bool, dry_run: bo
             if !do_orphans {
                 println!(
                     "  {} To remove orphan packages: {}",
-                    "·".dimmed(),
-                    "omg clean --orphans".cyan()
+                    style::dim("·"),
+                    style::accent("omg clean --orphans")
                 );
                 println!();
                 return Ok(());
@@ -87,19 +88,19 @@ pub async fn clean(orphans: bool, cache: bool, aur: bool, all: bool, dry_run: bo
                         .map(|(_, _, orphan_count, _)| orphan_count)
                         .context("Failed to inspect orphan packages")?;
                 if orphan_count == 0 {
-                    println!("  {} No orphan packages found", "✓".green().bold());
+                    println!("  {} No orphan packages found", style::positive("✓"));
                 } else {
                     println!(
                         "  {} Would remove {orphan_count} orphan packages",
-                        "→".cyan()
+                        style::accent("→")
                     );
                     println!(
                         "    Run: {} without --dry-run to apply",
-                        "omg clean --orphans".cyan()
+                        style::accent("omg clean --orphans")
                     );
                 }
                 println!();
-                println!("  {} No changes made (dry run)", "ℹ".blue().dimmed());
+                println!("  {} No changes made (dry run)", style::info("ℹ"));
                 return Ok(());
             }
             crate::package_managers::apt_remove_orphans().await?;
@@ -134,28 +135,28 @@ pub async fn clean(orphans: bool, cache: bool, aur: bool, all: bool, dry_run: bo
                 if !orphan_list.is_empty() {
                     println!(
                         "  {} {} orphan packages can be removed",
-                        "·".dimmed(),
-                        orphan_list.len().to_string().yellow()
+                        style::dim("·"),
+                        style::caution(&orphan_list.len().to_string())
                     );
-                    println!("    Run: {}", "omg clean --orphans".cyan());
+                    println!("    Run: {}", style::accent("omg clean --orphans"));
                 }
             }
 
             println!(
                 "  {} To clear package cache: {}",
-                "·".dimmed(),
-                "omg clean --cache".cyan()
+                style::dim("·"),
+                style::accent("omg clean --cache")
             );
             #[cfg(feature = "arch")]
             println!(
                 "  {} To clear AUR builds: {}",
-                "·".dimmed(),
-                "omg clean --aur".cyan()
+                style::dim("·"),
+                style::accent("omg clean --aur")
             );
             println!(
                 "  {} To clean everything: {}",
-                "·".dimmed(),
-                "omg clean --all".cyan()
+                style::dim("·"),
+                style::accent("omg clean --all")
             );
             println!();
             return Ok(());
@@ -169,16 +170,16 @@ pub async fn clean(orphans: bool, cache: bool, aur: bool, all: bool, dry_run: bo
                         list_orphans_direct().context("Failed to list orphan packages")?;
                     println!(
                         "  {} Would remove {} orphan packages:",
-                        "→".cyan(),
+                        style::accent("→"),
                         orphan_list.len()
                     );
                     for pkg in orphan_list.iter().take(10) {
-                        println!("    {} {}", "·".dimmed(), pkg);
+                        println!("    {} {}", style::dim("·"), pkg);
                     }
                     if orphan_list.len() > 10 {
                         println!(
                             "    {} and {} more...",
-                            "·".dimmed(),
+                            style::dim("·"),
                             orphan_list.len() - 10
                         );
                     }
@@ -211,7 +212,7 @@ pub async fn clean(orphans: bool, cache: bool, aur: bool, all: bool, dry_run: bo
                             let freed_mb = freed as f64 / 1024.0 / 1024.0;
                             println!(
                                 "  {} Would clear package cache: {} archive(s) ({:.2} MB, keep 1 recent version)",
-                                "→".cyan(),
+                                style::accent("→"),
                                 removed,
                                 freed_mb
                             );
@@ -219,7 +220,7 @@ pub async fn clean(orphans: bool, cache: bool, aur: bool, all: bool, dry_run: bo
                         Err(e) => {
                             println!(
                                 "  {} Would clear package cache (keep 1 recent version): {e}",
-                                "→".cyan()
+                                style::accent("→")
                             );
                         }
                     }
@@ -235,7 +236,7 @@ pub async fn clean(orphans: bool, cache: bool, aur: bool, all: bool, dry_run: bo
                         Ok(referenced) if !referenced.is_empty() => {
                             println!(
                                 "  {} Cleaning will remove cached versions referenced by recent rollback plans:",
-                                "⚠".yellow().bold()
+                                style::caution("⚠")
                             );
                             for (name, version) in &referenced {
                                 println!("    - {name} {version}");
@@ -254,7 +255,7 @@ pub async fn clean(orphans: bool, cache: bool, aur: bool, all: bool, dry_run: bo
                         Ok((removed, freed)) => {
                             println!(
                                 "  {} Removed {} files, freed {:.2} MB",
-                                "✓".green().bold(),
+                                style::positive("✓"),
                                 removed,
                                 freed as f64 / 1024.0 / 1024.0
                             );
@@ -281,7 +282,10 @@ pub async fn clean(orphans: bool, cache: bool, aur: bool, all: bool, dry_run: bo
             #[cfg(feature = "arch")]
             {
                 if dry_run {
-                    println!("  {} Would clean all AUR build directories", "→".cyan());
+                    println!(
+                        "  {} Would clean all AUR build directories",
+                        style::accent("→")
+                    );
                 } else {
                     let aur_client = AurClient::new()?;
                     aur_client.clean_all()?;
@@ -295,7 +299,7 @@ pub async fn clean(orphans: bool, cache: bool, aur: bool, all: bool, dry_run: bo
 
         if dry_run {
             println!();
-            println!("  {} No changes made (dry run)", "ℹ".blue().dimmed());
+            println!("  {} No changes made (dry run)", style::info("ℹ"));
             println!();
         } else {
             crate::cli::modern_ui::print_success("Cleanup complete!");
@@ -321,21 +325,21 @@ async fn handle_debian_pure_clean(
         if !orphan_list.is_empty() {
             println!(
                 "  {} {} orphan packages can be removed",
-                "·".dimmed(),
-                orphan_list.len().to_string().yellow()
+                style::dim("·"),
+                style::caution(&orphan_list.len().to_string())
             );
-            println!("    Run: {}", "omg clean --orphans".cyan());
+            println!("    Run: {}", style::accent("omg clean --orphans"));
         }
 
         println!(
             "  {} To clear package cache: {}",
-            "·".dimmed(),
-            "omg clean --cache".cyan()
+            style::dim("·"),
+            style::accent("omg clean --cache")
         );
         println!(
             "  {} To clean everything: {}",
-            "·".dimmed(),
-            "omg clean --all".cyan()
+            style::dim("·"),
+            style::accent("omg clean --all")
         );
         println!();
         return Ok(());
@@ -346,20 +350,20 @@ async fn handle_debian_pure_clean(
         let orphan_list = list_orphans_fast().context("Failed to list orphan packages")?;
 
         if orphan_list.is_empty() {
-            println!("  {} No orphan packages found", "✓".green().bold());
+            println!("  {} No orphan packages found", style::positive("✓"));
         } else if dry_run {
             println!(
                 "  {} Would remove {} orphan packages:",
-                "→".cyan(),
+                style::accent("→"),
                 orphan_list.len()
             );
             for pkg in orphan_list.iter().take(10) {
-                println!("    {} {}", "·".dimmed(), pkg);
+                println!("    {} {}", style::dim("·"), pkg);
             }
             if orphan_list.len() > 10 {
                 println!(
                     "    {} and {} more...",
-                    "·".dimmed(),
+                    style::dim("·"),
                     orphan_list.len() - 10
                 );
             }
@@ -375,7 +379,7 @@ async fn handle_debian_pure_clean(
 
             println!(
                 "  {} Removed {} orphan packages",
-                "✓".green().bold(),
+                style::positive("✓"),
                 orphan_list.len()
             );
         }
@@ -384,7 +388,7 @@ async fn handle_debian_pure_clean(
     // Handle cache cleanup
     if do_cache {
         if dry_run {
-            println!("  {} Would clear APT package cache", "→".cyan());
+            println!("  {} Would clear APT package cache", style::accent("→"));
         } else {
             crate::cli::modern_ui::print_info("Clearing package cache...");
 
@@ -401,7 +405,7 @@ fn report_cache_clean(result: Result<(usize, u64)>) -> Result<()> {
         Ok((removed, freed)) => {
             println!(
                 "  {} Removed {} files, freed {:.2} MB",
-                "✓".green().bold(),
+                style::positive("✓"),
                 removed,
                 freed as f64 / 1024.0 / 1024.0
             );

@@ -202,6 +202,15 @@ impl CommandResult {
             self.stderr
         );
     }
+
+    pub fn assert_no_ansi(&self) {
+        assert!(
+            !self.combined_output().contains("\u{1b}["),
+            "redirected output contains ANSI escapes\nstdout: {}\nstderr: {}",
+            self.stdout,
+            self.stderr
+        );
+    }
 }
 
 /// Run an OMG command

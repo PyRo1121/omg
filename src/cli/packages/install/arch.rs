@@ -4,7 +4,7 @@ use anyhow::{Context, Result};
 use dialoguer::Select;
 use futures::future::BoxFuture;
 
-use crate::cli::{modern_ui, ui};
+use crate::cli::{modern_ui, style, ui};
 #[cfg(unix)]
 use crate::core::client::DaemonClient;
 #[cfg(unix)]
@@ -245,7 +245,6 @@ fn local_archive_preview(
 
 pub async fn install_dry_run(packages: &[String]) -> Result<()> {
     use comfy_table::{Table, modifiers::UTF8_ROUND_CORNERS, presets::UTF8_FULL};
-    use owo_colors::OwoColorize;
 
     modern_ui::print_phase_header("📋", "Install Preview", "dry run");
 
@@ -263,10 +262,10 @@ pub async fn install_dry_run(packages: &[String]) -> Result<()> {
         if let Some(info) = local_archive_preview(pkg_name)? {
             let size_mb = info.installed_size as f64 / 1024.0 / 1024.0;
             table.add_row(vec![
-                info.name.bold().to_string(),
-                info.version.to_string().cyan().to_string(),
+                style::emphasis(&info.name),
+                style::accent(&info.version.to_string()),
                 format!("{size_mb:.2} MB installed"),
-                format!("{} Local archive", "✓".green()),
+                format!("{} Local archive", style::positive("✓")),
             ]);
             continue;
         }
@@ -290,10 +289,10 @@ pub async fn install_dry_run(packages: &[String]) -> Result<()> {
                             total_size += info.download_size;
 
                             table.add_row(vec![
-                                info.name.bold().to_string(),
-                                info.version.cyan().to_string(),
+                                style::emphasis(&info.name),
+                                style::accent(&info.version),
                                 format!("{size_mb:.2} MB"),
-                                format!("{} Official", "✓".green()),
+                                format!("{} Official", style::positive("✓")),
                             ]);
                             continue;
                         }
@@ -314,10 +313,10 @@ pub async fn install_dry_run(packages: &[String]) -> Result<()> {
                 total_size += info.download_size.unwrap_or(0);
 
                 table.add_row(vec![
-                    info.name.bold().to_string(),
-                    info.version.to_string().cyan().to_string(),
+                    style::emphasis(&info.name),
+                    style::accent(&info.version.to_string()),
                     format!("{size_mb:.2} MB"),
-                    format!("{} Official", "✓".green()),
+                    format!("{} Official", style::positive("✓")),
                 ]);
             }
             Ok(None) => {
@@ -325,10 +324,10 @@ pub async fn install_dry_run(packages: &[String]) -> Result<()> {
                     .await
                     .with_context(|| format!("Package '{pkg_name}' was not found"))?;
                 table.add_row(vec![
-                    info.name.bold().to_string(),
-                    info.version.to_string().magenta().to_string(),
+                    style::emphasis(&info.name),
+                    style::community(&info.version.to_string()),
                     String::new(),
-                    format!("{} AUR", "✓".green()),
+                    format!("{} AUR", style::positive("✓")),
                 ]);
             }
             Err(error) => {
@@ -343,14 +342,14 @@ pub async fn install_dry_run(packages: &[String]) -> Result<()> {
     println!();
     println!(
         "  {} Total download size: {}",
-        "→".cyan().bold(),
-        format!("{:.2} MB", total_size as f64 / 1024.0 / 1024.0).bold()
+        style::accent("→"),
+        style::emphasis(&format!("{:.2} MB", total_size as f64 / 1024.0 / 1024.0))
     );
     println!();
     println!(
         "  {} {} No changes will be made (dry run)",
-        "ℹ".blue(),
-        "•".dimmed()
+        style::info("ℹ"),
+        style::dim("•")
     );
     println!();
 
@@ -441,8 +440,6 @@ fn handle_missing_package(
             return Err(original_error);
         }
 
-        use owo_colors::OwoColorize;
-
         modern_ui::print_error(&format!("Package '{pkg_name}' not found"));
         modern_ui::print_info("Did you mean one of these?");
         println!();
@@ -466,9 +463,9 @@ fn handle_missing_package(
                 println!();
                 println!(
                     "  {} Replacing {} with {}",
-                    "→".cyan().bold(),
-                    pkg_name.bold(),
-                    new_pkg.green().bold()
+                    style::accent("→"),
+                    style::emphasis(&pkg_name),
+                    style::positive(&new_pkg)
                 );
                 println!();
                 let remaining_hops = consume_replacement_hop(replacement_hops, &new_pkg)?;
@@ -484,7 +481,11 @@ fn handle_missing_package(
             }
         } else {
             for (i, suggestion) in suggestions.iter().enumerate().take(5) {
-                println!("    {}. {}", (i + 1).to_string().cyan(), suggestion.bold());
+                println!(
+                    "    {}. {}",
+                    style::accent(&(i + 1).to_string()),
+                    style::emphasis(suggestion)
+                );
             }
             println!();
         }
@@ -544,16 +545,15 @@ async fn try_aur_package(pkg_name: &str) -> Result<crate::core::Package> {
     let (package, preferred_binary) = resolve_aur_package(pkg_name).await?;
 
     if preferred_binary {
-        use owo_colors::OwoColorize;
         println!();
         println!(
             "  {} Found pre-built binary package: {}",
-            "→".cyan().bold(),
-            package.name.green().bold()
+            style::accent("→"),
+            style::positive(&package.name)
         );
         println!(
             "  {} This installs in seconds instead of compiling from source",
-            "ℹ".blue()
+            style::info("ℹ")
         );
     }
 

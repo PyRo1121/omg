@@ -2,7 +2,6 @@ use std::future::Future;
 use std::pin::Pin;
 
 use anyhow::Result as AnyhowResult;
-use owo_colors::OwoColorize;
 
 use crate::core::{Package, PackageSource, can_write_pacman_db, privilege};
 use crate::package_managers::{
@@ -176,7 +175,10 @@ impl PackageManager for ArchPackageManager {
     fn update(&self) -> Pin<Box<dyn Future<Output = AnyhowResult<()>> + Send + '_>> {
         Box::pin(async move {
             run_privileged_operation("update", &[], &[], || async {
-                tracing::info!("{} Starting full system upgrade...", "OMG".cyan().bold());
+                tracing::info!(
+                    "{} Starting full system upgrade...",
+                    crate::cli::style::runtime("OMG")
+                );
                 run_alpm_transaction(Vec::new(), TransactionKind::SystemUpgrade).await
             })
             .await
@@ -322,14 +324,20 @@ fn orphan_history_change(
 pub async fn remove_orphans() -> AnyhowResult<()> {
     let orphans = list_orphans().await?;
     if orphans.is_empty() {
-        tracing::info!("{} No orphan packages to remove.", "✓".green());
+        tracing::info!(
+            "{} No orphan packages to remove.",
+            crate::cli::style::positive("✓")
+        );
         return Ok(());
     }
 
     let count = orphans.len();
-    tracing::info!("{} Found {count} orphan package(s):", "OMG".cyan().bold());
+    tracing::info!(
+        "{} Found {count} orphan package(s):",
+        crate::cli::style::runtime("OMG")
+    );
     for pkg in &orphans {
-        tracing::info!("  {} {}", "→".dimmed(), pkg);
+        tracing::info!("  {} {}", crate::cli::style::dim("→"), pkg);
     }
 
     let history = crate::core::history::HistoryManager::new()?;

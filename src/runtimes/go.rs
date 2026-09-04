@@ -13,7 +13,6 @@ use std::{
 };
 
 use anyhow::{Context, Result};
-use owo_colors::OwoColorize;
 use serde::Deserialize;
 
 use super::common::{
@@ -21,7 +20,7 @@ use super::common::{
     extract_tar_gz, normalize_version, parse_sha256_digest, print_already_installed,
     print_installed, remove_file_best_effort,
 };
-use crate::core::http::download_client;
+use crate::{cli::style, core::http::download_client};
 
 const GO_DOWNLOAD_URL: &str = "https://go.dev/dl";
 const GO_VERSIONS_URL: &str = "https://go.dev/dl/?mode=json&include=all";
@@ -95,8 +94,8 @@ impl GoManager {
 
         println!(
             "{} Installing Go {}...\n",
-            "OMG".cyan().bold(),
-            version.yellow()
+            style::runtime("OMG"),
+            style::caution(&version)
         );
 
         let filename = format!("go{version}.{}.tar.gz", go_platform()?);
@@ -108,11 +107,11 @@ impl GoManager {
         let releases = self.list_available().await?;
         let checksum = checksum_for_file(&releases, &filename)?;
 
-        println!("{} Downloading {filename}...", "→".blue());
+        println!("{} Downloading {filename}...", style::informative("→"));
         let download_path = self.versions_dir.join(&filename);
         download_with_progress(self.client, &url, &download_path, &checksum).await?;
 
-        println!("{} Extracting (pure Rust)...", "→".blue());
+        println!("{} Extracting (pure Rust)...", style::informative("→"));
         let staging = begin_staged_install(&self.versions_dir)?;
         extract_tar_gz(&download_path, staging.path(), 1).await?;
         complete_staged_install(&staging, &version_dir, &version)?;
@@ -159,9 +158,9 @@ impl GoManager {
     }
 
     fn print_version_info(version: &str, goroot: &Path, bin_dir: &Path) {
-        println!("{} Now using Go {version}", "✓".green());
-        println!("  {} {}", "GOROOT:".dimmed(), goroot.display().dimmed());
-        println!("  {} {}", "PATH:".dimmed(), bin_dir.display().dimmed());
+        println!("{} Now using Go {version}", style::positive("✓"));
+        println!("  {} {}", style::dim("GOROOT:"), goroot.display());
+        println!("  {} {}", style::dim("PATH:"), bin_dir.display());
     }
 }
 

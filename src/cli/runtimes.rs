@@ -1,7 +1,6 @@
 use anyhow::{Context, Result};
-use owo_colors::OwoColorize;
 
-use crate::cli::ui;
+use crate::cli::{style, ui};
 use crate::runtimes::{
     BunManager, DenoManager, GoManager, JavaManager, NodeManager, PiManager, PythonManager,
     RubyManager, RustManager, SUPPORTED_RUNTIMES,
@@ -110,7 +109,11 @@ pub async fn use_version(runtime: &str, version: Option<&str>) -> Result<()> {
         let Some(v) = active.get(&runtime) else {
             anyhow::bail!("No version specified and none detected in .tool-versions, .nvmrc, etc.");
         };
-        println!("{} Detected version {} from file", "→".blue(), v.yellow());
+        println!(
+            "{} Detected version {} from file",
+            style::informative("→"),
+            style::caution(v)
+        );
         v.clone()
     };
     crate::core::security::validate_runtime_version(&version)?;
@@ -183,7 +186,7 @@ pub fn uninstall_version(runtime: &str, version: &str) -> Result<()> {
         ),
     }
 
-    println!("{} Removed {runtime} {version}", "✓".green());
+    println!("{} Removed {runtime} {version}", style::positive("✓"));
     Ok(())
 }
 
@@ -377,10 +380,10 @@ pub async fn list_versions(runtime: Option<&str>, available: bool, json: bool) -
     match rt.to_lowercase().as_str() {
         "node" | "nodejs" => {
             let mgr = NodeManager::new();
-            println!("{} Available remote versions:", "→".blue());
+            println!("{} Available remote versions:", style::informative("→"));
             for v in mgr.list_available().await?.iter().take(20) {
                 let lts = crate::runtimes::node::get_lts_name(v)
-                    .map(|s| format!(" ({})", s.cyan()))
+                    .map(|s| format!(" ({})", style::accent(s)))
                     .unwrap_or_default();
                 ui::print_list_item(&v.version, Some(&lts));
             }
@@ -389,7 +392,7 @@ pub async fn list_versions(runtime: Option<&str>, available: bool, json: bool) -
             let mgr = PythonManager::new();
             println!(
                 "{} Available remote versions (python-build-standalone):",
-                "→".blue()
+                style::informative("→")
             );
             for v in mgr.list_available().await?.iter().take(20) {
                 let pre = if v.prerelease { " (pre-release)" } else { "" };
@@ -398,14 +401,14 @@ pub async fn list_versions(runtime: Option<&str>, available: bool, json: bool) -
         }
         "rust" => {
             let mgr = RustManager::new();
-            println!("{} Available remote versions:", "→".blue());
+            println!("{} Available remote versions:", style::informative("→"));
             for v in mgr.list_available().await?.iter().take(20) {
                 ui::print_list_item(&v.version, Some(&v.channel));
             }
         }
         "go" | "golang" => {
             let mgr = GoManager::new();
-            println!("{} Available remote versions:", "→".blue());
+            println!("{} Available remote versions:", style::informative("→"));
             for v in mgr.list_available().await?.iter().take(20) {
                 let stable = if v.stable() { " (stable)" } else { "" };
                 ui::print_list_item(v.version(), Some(stable));
@@ -413,14 +416,20 @@ pub async fn list_versions(runtime: Option<&str>, available: bool, json: bool) -
         }
         "ruby" => {
             let mgr = RubyManager::new();
-            println!("{} Available remote versions (ruby-builder):", "→".blue());
+            println!(
+                "{} Available remote versions (ruby-builder):",
+                style::informative("→")
+            );
             for v in mgr.list_available().await?.iter().take(20) {
                 ui::print_list_item(&v.version, None);
             }
         }
         "java" | "jdk" => {
             let mgr = JavaManager::new();
-            println!("{} Available remote versions (Adoptium):", "→".blue());
+            println!(
+                "{} Available remote versions (Adoptium):",
+                style::informative("→")
+            );
             for v in mgr.list_available().await?.iter().take(20) {
                 let lts = if v.lts { " (LTS)" } else { "" };
                 ui::print_list_item(&v.version, Some(lts));
@@ -428,7 +437,7 @@ pub async fn list_versions(runtime: Option<&str>, available: bool, json: bool) -
         }
         "bun" | "bunjs" => {
             let mgr = BunManager::new();
-            println!("{} Available remote versions:", "→".blue());
+            println!("{} Available remote versions:", style::informative("→"));
             for v in mgr.list_available().await?.iter().take(20) {
                 let pre = if v.prerelease { " (pre-release)" } else { "" };
                 ui::print_list_item(&v.version, Some(pre));
@@ -441,7 +450,10 @@ pub async fn list_versions(runtime: Option<&str>, available: bool, json: bool) -
         }
         "deno" => {
             let mgr = DenoManager::new();
-            println!("{} Available remote versions (denoland/deno):", "→".blue());
+            println!(
+                "{} Available remote versions (denoland/deno):",
+                style::informative("→")
+            );
             for v in mgr.list_available().await?.iter().take(20) {
                 let pre = if v.prerelease { " (pre-release)" } else { "" };
                 ui::print_list_item(&v.version, Some(pre));
