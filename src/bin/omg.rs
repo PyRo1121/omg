@@ -331,10 +331,20 @@ fn has_help_flag(args: &[String]) -> bool {
     args.iter().any(|a| matches!(a.as_str(), "--help" | "-h"))
 }
 
-fn has_all_flag(args: &[String]) -> bool {
-    // `--all` is a subcommand-scoped flag (clean/list), not a global flag;
-    // only the global `--all-commands` toggles full help output here.
-    args.iter().any(|a| a == "--all-commands")
+fn root_help_selection(args: &[String]) -> Option<bool> {
+    let tail = args.get(1..)?;
+    if tail.is_empty()
+        || tail.len() > 2
+        || tail
+            .iter()
+            .any(|arg| !matches!(arg.as_str(), "--help" | "-h" | "help" | "--all-commands"))
+    {
+        return None;
+    }
+
+    tail.iter()
+        .any(|arg| matches!(arg.as_str(), "--help" | "-h" | "help"))
+        .then(|| tail.iter().any(|arg| arg == "--all-commands"))
 }
 
 /// True when the global `--json` flag appears anywhere in the raw arguments.
@@ -453,6 +463,10 @@ fn try_fast_info(args: &[String]) -> bool {
 }
 
 fn try_fast_completions(args: &[String]) -> Result<bool> {
+    if has_help_flag(args) {
+        return Ok(false);
+    }
+
     if matches!(args.len(), 3 | 4)
         && args[1] == "completions"
         && (args.len() == 3 || args[3] == "--stdout")
@@ -461,16 +475,6 @@ fn try_fast_completions(args: &[String]) -> Result<bool> {
         let shell = &args[2];
         if shell.starts_with('-') {
             return Ok(false);
-        }
-
-        if has_help_flag(args) {
-            let use_all = has_all_flag(args);
-            // Defer malformed invocations to clap's own error/help rendering.
-            let Ok(cli) = Cli::try_parse_from(args.iter()) else {
-                return Ok(false);
-            };
-            omg_lib::cli::help::print_help(&cli, use_all)?;
-            return Ok(true);
         }
 
         let stdout = args.len() == 4;
@@ -648,6 +652,10 @@ fn main() {
     }
 
     let mut args: Vec<String> = std::env::args().collect();
+
+    if let Some(show_all) = root_help_selection(&args) {
+        finish(omg_lib::cli::help::print_root_help(show_all));
+    }
 
     // Strip the sudo re-exec marker. Elevation travels via argv because
     // sudo's env_reset strips OMG_ELEVATED from the child environment (see
@@ -1401,7 +1409,7 @@ async fn dispatch_command(command: &Commands, ctx: &omg_lib::cli::CliContext) ->
 #[cfg(test)]
 mod fast_path_tests {
     use super::{
-        has_all_flag, has_json_flag, parse_fast_list_tail, try_fast_completions,
+        has_json_flag, parse_fast_list_tail, root_help_selection, try_fast_completions,
         try_fast_explicit_count, try_fast_hooks,
     };
 
@@ -1577,18 +1585,20 @@ mod fast_path_tests {
     }
 
     #[test]
-    fn all_commands_flag_is_the_only_global_all_toggle() {
-        // Regression: `--all` is a subcommand-scoped flag, not a global one.
-        assert!(has_all_flag(&args_or_panic(&[
-            "completions",
-            "bash",
-            "--all-commands"
-        ])));
-        assert!(!has_all_flag(&args_or_panic(&[
-            "completions",
-            "bash",
-            "--all"
-        ])));
+    fn root_help_selection_rejects_subcommand_scoped_flags() {
+        assert_eq!(
+            root_help_selection(&args_or_panic(&["--help", "--all-commands"])),
+            Some(true)
+        );
+        assert_eq!(root_help_selection(&args_or_panic(&["help"])), Some(false));
+        assert_eq!(
+            root_help_selection(&args_or_panic(&["clean", "--all"])),
+            None
+        );
+        assert_eq!(
+            root_help_selection(&args_or_panic(&["completions", "bash", "--help"])),
+            None
+        );
     }
 
     fn args_or_panic(list: &[&str]) -> Vec<String> {

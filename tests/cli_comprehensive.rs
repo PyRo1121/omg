@@ -19,31 +19,101 @@ fn command_paths() -> Vec<Vec<String>> {
     }
 
     let command = Cli::command();
-    let mut paths = Vec::new();
+    let mut paths = vec![Vec::new()];
     collect(&command, &mut Vec::new(), &mut paths);
     paths
 }
 
 #[test]
 fn every_declared_command_renders_binary_help() {
+    use std::fmt::Write as _;
+
     let paths = command_paths();
     assert!(
-        paths.len() >= 75,
+        paths.len() >= 120,
         "unexpectedly small command tree: {paths:?}"
     );
+    let evidence_dir = std::env::var_os("OMG_CLI_SMOKE_EVIDENCE_DIR").map(std::path::PathBuf::from);
+    if let Some(dir) = &evidence_dir {
+        std::fs::create_dir_all(dir).expect("create CLI smoke evidence directory");
+    }
+    let mut index = String::from("command\texit\tstdout_bytes\tstderr_bytes\n");
 
     for path in paths {
         let mut args: Vec<&str> = path.iter().map(String::as_str).collect();
         args.push("--help");
         let result = run_omg(&args);
+        let command = if path.is_empty() {
+            "omg".to_string()
+        } else {
+            format!("omg {}", path.join(" "))
+        };
         assert!(
             result.success && result.stdout.contains("Usage:"),
-            "`omg {}` did not render help\nstdout: {}\nstderr: {}",
-            args.join(" "),
+            "`{command} --help` did not render help\nstdout: {}\nstderr: {}",
             result.stdout,
             result.stderr
         );
+
+        if let Some(dir) = &evidence_dir {
+            let filename = if path.is_empty() {
+                "omg.txt".to_string()
+            } else {
+                format!("omg-{}.txt", path.join("-"))
+            };
+            let transcript = format!(
+                "command: {command} --help\nexit: {}\n--- stdout ---\n{}--- stderr ---\n{}",
+                result.exit_code, result.stdout, result.stderr
+            );
+            std::fs::write(dir.join(filename), transcript).expect("write CLI help transcript");
+            writeln!(
+                index,
+                "{command}\t{}\t{}\t{}",
+                result.exit_code,
+                result.stdout.len(),
+                result.stderr.len()
+            )
+            .expect("write CLI smoke index row");
+        }
     }
+
+    if let Some(dir) = evidence_dir {
+        std::fs::write(dir.join("index.tsv"), index).expect("write CLI smoke index");
+    }
+}
+
+#[test]
+fn root_help_prioritizes_common_commands() {
+    let result = run_omg(&["--help"]);
+
+    result.assert_success();
+    result.assert_stdout_contains("Usage: omg");
+    result.assert_stdout_contains("search");
+    assert!(!result.stdout.contains("enterprise"), "{}", result.stdout);
+    result.assert_stdout_contains("omg --help --all-commands");
+}
+
+#[test]
+fn all_commands_help_exposes_advanced_commands() {
+    let result = run_omg(&["--help", "--all-commands"]);
+
+    result.assert_success();
+    result.assert_stdout_contains("enterprise");
+    result.assert_stdout_contains("workspace");
+}
+
+#[test]
+fn completions_help_stays_scoped_after_the_shell_argument() {
+    let result = run_omg(&["completions", "bash", "--help"]);
+
+    result.assert_success();
+    result.assert_stdout_contains("Generate shell completions");
+    result.assert_stdout_contains("Usage: omg completions");
+    assert!(
+        !result.stdout.contains("Essential Commands"),
+        "{}",
+        result.stdout
+    );
 }
 
 #[cfg(unix)]
