@@ -93,8 +93,11 @@ passed. Fedora remained red. Its uploaded artifacts contain per-case transcripts
 metadata, result JSON, and cleanup logs. GitHub artifact retention is finite;
 retain the archive and its digest before using it as long-term release evidence.
 
-There are **no recorded QEMU smoke passes or QEMU performance measurements** in
-this evidence set. Do not label these Docker results as QEMU results.
+This committed smoke evidence set contains Docker results, not QEMU results.
+The separate [Ubuntu QEMU runner](../scripts/README.md#benchmark-qemu-ubuntush)
+has since completed local candidate-information benchmarks and retains raw samples
+in its local run directory. It does not yet cover the other distributions or
+establish a four-distribution performance headline.
 
 ## Run the existing checks
 
@@ -187,7 +190,9 @@ inside the timed region of a CLI benchmark.
 
 ## Headless QEMU design for OMG
 
-This is the proposed implementation and acceptance contract, not a runnable tier yet.
+This is the full proposed acceptance contract. The initial Ubuntu information
+runner implements only a subset; the remaining requirements below are not claims
+of completed coverage.
 
 1. Use distribution-owned cloud-image catalogs for
    [Arch](https://geo.mirror.pkgbuild.com/images/latest/),
@@ -286,7 +291,8 @@ checks need explicit tests beyond a matching SHA-256 sidecar. Captured shell tra
 are not a general secret-redaction implementation. These are review findings,
 not claims that the missing safeguards have been implemented.
 
-At review time Docker worked locally through the newly authorized docker group.
-`/dev/kvm` was accessible, but `qemu-system-x86_64` and `qemu-img` were unavailable.
-No guest-image build has been pinned or booted for this program. Publishing QEMU
-pass marks or QEMU benchmark numbers must wait for real guest evidence.
+At the initial review Docker and `/dev/kvm` worked, but native QEMU binaries were
+unavailable. The Ubuntu runner now installs prebuilt QEMU tools in a disposable
+controller and boots the checksum-pinned 20260826 Ubuntu image. Native host QEMU
+installation is not required. Other guest targets and the full comparison protocol
+remain unimplemented. Publish only results supported by the retained run evidence.
