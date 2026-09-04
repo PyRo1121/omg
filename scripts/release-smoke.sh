@@ -319,7 +319,9 @@ run_distro() (
   set -euo pipefail
   local distro=$1 workdir stage case_id rc case_rc=0
   load_distro "$distro" || return 2
-  workdir="$(mktemp -d "${TMPDIR:-/tmp}/omg-release-smoke-${distro}.XXXXXX")"
+  local work_root="$HOME/.cache/build-targets/omg-release-smoke"
+  mkdir -p "$work_root" || return 3
+  workdir="$(mktemp -d "$work_root/${distro}.XXXXXX")" || return 3
   trap 'rm -rf "$workdir"' EXIT
   stage="$workdir/stage"
   mkdir -p "$stage"

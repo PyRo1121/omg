@@ -111,6 +111,9 @@ soft passes hide product failures.
   `exit_code`, `elapsed_seconds`, and `expectation`. Result values distinguish
   `PASS`, `EXPECTED_REJECTION`, `PRODUCT_FAIL`, `HARNESS_ERROR`, and `BLOCKED`.
   Later invocations never replace prior aggregate or per-case evidence.
+- Downloaded archives and extracted binaries use temporary directories under
+  `~/.cache/build-targets/omg-release-smoke`, not `/tmp`. The runner removes
+  each distribution's temporary directory when that run exits.
 
 Run the network-free coordinator fixtures with:
 

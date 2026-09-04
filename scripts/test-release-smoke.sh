@@ -82,6 +82,8 @@ base_args=(
 )
 export PATH="$scratch/bin:$PATH"
 export TMPDIR="$scratch/tmp"
+export HOME="$scratch/home"
+mkdir -p "$HOME"
 
 assert_rc 2 "$runner" --family invalid
 assert_rc 2 "$runner" --tier invalid
@@ -110,6 +112,9 @@ export FAKE_RUN_EXIT=7
 assert_rc 1 "$runner" "${base_args[@]}" --staged-dir "$scratch/valid" --evidence-dir "$scratch/failing-evidence"
 unset FAKE_RUN_EXIT
 find "$scratch/tmp" -mindepth 1 -maxdepth 1 -name 'omg-release-smoke-*' -print -quit | grep -q . && fail "temporary workdir survived failing case"
+work_root="$HOME/.cache/build-targets/omg-release-smoke"
+[[ -d "$work_root" ]] || fail "runner did not use disk-backed artifact scratch"
+[[ -z "$(find "$work_root" -mindepth 1 -print -quit)" ]] || fail "artifact scratch survived failing case"
 grep -q '"result":"PRODUCT_FAIL"' "$(results_file "$scratch/failing-evidence")" || fail "failing case was not a product failure"
 
 export FAKE_GH_SOURCE="$scratch/valid"
