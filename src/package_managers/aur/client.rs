@@ -314,6 +314,7 @@ fn sandbox_command(home: &Path, user: &str) -> Command {
     command.args([
         "--clearenv",
         "--share-net",
+        "--unshare-pid",
         "--new-session",
         "--die-with-parent",
     ]);
@@ -2672,9 +2673,10 @@ impl AurClient {
             let pacman_cache_root_str = pacman_cache_root.to_string_lossy();
             let home_str = home.to_string_lossy();
 
-            // bwrap must remain omg's direct child so --die-with-parent
-            // terminates the sandbox when omg exits. --new-session removes
-            // the controlling terminal and blocks reuse of tty-scoped sudo.
+            // Keep bwrap as omg's direct child for parent-death handling.
+            // Its PID namespace makes cancellation kill compiler descendants
+            // too; --die-with-parent alone only kills the direct command.
+            // --new-session blocks reuse of tty-scoped sudo credentials.
             let mut cmd = sandbox_command(&home, &build_user_name);
             cmd.args([
                 "--ro-bind",
@@ -3898,7 +3900,78 @@ mod tests {
         assert_eq!(command.get_program(), "bwrap");
         assert!(args.contains(&"--new-session".as_ref()));
         assert!(args.contains(&"--die-with-parent".as_ref()));
+        assert!(args.contains(&"--unshare-pid".as_ref()));
         assert!(!args.contains(&"setsid".as_ref()));
+    }
+
+    #[cfg(target_os = "linux")]
+    #[tokio::test]
+    #[ignore = "requires bubblewrap and permission to create PID namespaces"]
+    async fn cancelling_logged_sandbox_build_terminates_descendants() {
+        use rustix::process::{Pid, PidfdFlags, Signal, pidfd_open, pidfd_send_signal};
+        use tokio::io::{AsyncBufReadExt, unix::AsyncFd};
+
+        let directory = tempfile::tempdir().expect("isolated build logs");
+        let client = AurClient {
+            build_dir: directory.path().to_path_buf(),
+            settings: Settings::default(),
+            package_base_locks: Arc::new(dashmap::DashMap::new()),
+        };
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let port = listener.local_addr().unwrap().port().to_string();
+        let mut command = sandbox_command(directory.path(), "builder");
+        command.args(["--ro-bind", "/", "/", "--", "/bin/bash", "-c"]);
+        // Keep the host /proc mount in this fixture so the child can report
+        // its host PID even after PID isolation is enabled. The production
+        // sandbox mounts its own /proc instead. A socket provides readiness
+        // and bounds the child's lifetime if fixture setup fails.
+        command.arg(
+            r#"/bin/bash -c '
+                exec 3<>/dev/tcp/127.0.0.1/"$1" || exit 1
+                read -r host_pid rest < /proc/self/stat
+                printf "%s\n" "$host_pid" >&3
+                read -r -t 30 finish <&3
+            ' child "$1" & wait"#,
+        );
+        command.arg("build").arg(port).stdin(Stdio::null());
+        let mut runner = tokio::spawn(async move {
+            client
+                .run_logged_build_command(&mut command, "fixture")
+                .await
+        });
+        let _abort_runner = scopeguard::guard(runner.abort_handle(), |handle| handle.abort());
+        let (stream, _) = tokio::select! {
+            result = tokio::time::timeout(Duration::from_secs(5), listener.accept()) => {
+                result.expect("build child must signal readiness").expect("accept readiness")
+            }
+            result = &mut runner => panic!("sandbox exited before child readiness: {result:?}"),
+        };
+        let mut readiness = tokio::io::BufReader::new(stream);
+        let mut pid = String::new();
+        tokio::time::timeout(Duration::from_secs(5), readiness.read_line(&mut pid))
+            .await
+            .unwrap()
+            .unwrap();
+        let pid =
+            Pid::from_raw(pid.trim().parse().expect("child host PID")).expect("nonzero child PID");
+        let exit = AsyncFd::new(pidfd_open(pid, PidfdFlags::NONBLOCK).unwrap()).unwrap();
+        let _cleanup_child = scopeguard::guard(&exit, |exit| {
+            // The failed regression must not leak its fixture. A pidfd
+            // cannot accidentally signal an unrelated process after PID reuse.
+            let _ = pidfd_send_signal(exit.get_ref(), Signal::KILL);
+        });
+
+        runner.abort();
+        assert!(
+            runner
+                .await
+                .expect_err("runner must be cancelled")
+                .is_cancelled()
+        );
+        let _exited = tokio::time::timeout(Duration::from_secs(2), exit.readable())
+            .await
+            .expect("cancelling a sandbox build must terminate its compiler descendants")
+            .expect("observe child exit");
     }
 
     #[test]
