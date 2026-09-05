@@ -172,38 +172,53 @@ shadow mode and uploads per-case evidence even on failure.
 
 ---
 
-## benchmark-qemu-ubuntu.sh
+## benchmark-qemu.sh
 
-Runs a local headless KVM guest for the first comparative benchmark, Ubuntu
-candidate-package information lookup. It uses the pinned Ubuntu 20260826 cloud
-image and published OMG v0.1.218 archive. Both are checked against pinned SHA-256
-values. It does not compile software or install packages on the host.
+Run all four supported x86_64 guest baselines sequentially. The profiles use Arch
+20260901, Debian 12 Bookworm, Ubuntu 24.04, and Fedora 44. Each image has a pinned
+checksum. Image signatures are not independently verified by this script.
 
 ```bash
-./scripts/benchmark-qemu-ubuntu.sh
+./scripts/benchmark-qemu.sh --distro all --staged-dir /path/to/artifacts --benchmark
+./scripts/benchmark-qemu.sh --distro ubuntu --release v0.1.218
 ```
 
+The staged directory must contain the selected distro archives and checksum
+sidecars using the canonical names below. Missing staged inputs fail rather than
+falling back to published files. Omit `--staged-dir` to download published archives.
+Published v0.1.218 still has known Fedora defects. The passing four-guest record
+uses fixed Debian and Fedora candidates, not four passing published artifacts.
+
 Requirements are Docker access, a readable/writable `/dev/kvm`, `gh`, `jq`, and GNU
-coreutils. QEMU and SSH tools are installed as prebuilt packages inside a disposable
-Debian controller. The controller is limited to two CPUs and 3 GiB RAM without
-additional swap. The guest receives two vCPUs and 1536 MiB RAM.
+coreutils. The script does not compile software or install host packages. Prebuilt
+QEMU and SSH tools run inside disposable Debian controllers. Each controller has
+two CPUs and a 3 GiB memory limit. Each guest has two vCPUs and 1536 MiB RAM.
 
-The guest uses a fresh overlay and pre-provisioned SSH host keys. After cloud-init
-and sudo checks, it installs hyperfine inside the guest, verifies matching package
-name and candidate version, and measures OMG, apt-cache, and apt with three warmups
-and 30 samples each. Native commands print additional metadata. This is not a
-claim of identical output work or full package-manager equivalence.
+Each guest verifies strict SSH host keys, sudo, a changed boot ID after reboot,
+its distro identity, package search, installation, installed-version parity with
+a native tool, removal, and native absence. Debian and Ubuntu also verify local
+archive consent and a local-file install/remove cycle. Tests use disposable guest
+state. APT fixtures use HTTPS on Ubuntu, IPv4, bounded network retries, no
+translation or desktop indexes, and stopped periodic APT timers. Package signature
+validation remains enabled.
 
-Evidence is retained under `~/.cache/build-targets/omg-qemu-benchmark/run-*`.
-It includes raw hyperfine samples, preflight output, guest metadata, repository
-hashes, setup/boot logs, and cleanup status. Temporary guest disks and private
-keys are removed during cleanup. Run-level failures use `HARNESS_ERROR` until
-finer phase classification is implemented; inspect the preserved logs for cause.
-The optional Sentry reporter runs only afterward and never uploads those raw logs.
+Add `--benchmark` for three warmups and 30 fresh-process samples per command.
+The comparisons are OMG installed information against pacman, apt-cache, or RPM.
+Native output includes additional metadata. Debug candidates, warm queries, and
+one guest per distro do not establish release speedups or identical output work.
 
-The runner currently supports only this Ubuntu scenario. Arch, Debian, Fedora,
-search, mutation, cold-start, and controlled repeated-guest comparisons remain
-unfinished. Do not treat this runner as completion of the exhaustive release matrix.
+Evidence is retained under `~/.cache/build-targets/omg-qemu-benchmark/`.
+An all-distro run produces `suite-*/<distro>/run-*` directories and aggregate
+`results.json`. Logs, raw timing samples, archive checksums, repository hashes,
+reboot proof, and cleanup receipts remain readable by the operator. Private keys
+and guest disks are deleted. Product failures and setup failures remain distinct.
+The optional Sentry reporter runs after timing and cleanup without uploading logs.
+
+Cold-cache benchmarks, repeated-guest statistics, and exhaustive CLI coverage
+remain separate work. Passing this runner does not declare that every OMG command
+works on every distro. The published Debian artifact also fails to load on Debian
+13 because it requires libapt-pkg.so.6.0. Do not infer Debian 13 support from the
+Bookworm result.
 
 ## Release Artifact Naming (canonical scheme)
 

@@ -141,9 +141,12 @@ identify the binaries and pinned container images. A separate
 [CI run of the same runner](https://github.com/PyRo1121/omg/actions/runs/33912270669)
 contains transcripts and uploaded cleanup evidence. These results prove only
 these package cases on these images, not every command or every Linux distribution.
-A [local headless QEMU runner](scripts/README.md#benchmark-qemu-ubuntush) now
-executes an Ubuntu candidate-information benchmark with raw samples. Its initial
-runs do not establish performance across the four-distribution matrix.
+The [local headless QEMU runner](scripts/README.md#benchmark-qemush) now passes
+boot, reboot, sudo, and package lifecycles on all four supported x86_64 baselines.
+The [live receipt](benchmarks/records/qemu-four-distros-20260905.json) contains
+artifact hashes and 240 warm timing samples. Debian and Fedora use fixed local
+candidates. These results do not mean their published artifacts are fixed, that
+every CLI command passes, or that debug-build timings establish release speedups.
 
 Run the current suite from a shell with Docker access:
 

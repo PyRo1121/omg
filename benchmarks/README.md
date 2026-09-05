@@ -93,11 +93,22 @@ passed. Fedora remained red. Its uploaded artifacts contain per-case transcripts
 metadata, result JSON, and cleanup logs. GitHub artifact retention is finite;
 retain the archive and its digest before using it as long-term release evidence.
 
-This committed smoke evidence set contains Docker results, not QEMU results.
-The separate [Ubuntu QEMU runner](../scripts/README.md#benchmark-qemu-ubuntush)
-has since completed local candidate-information benchmarks and retains raw samples
-in its local run directory. It does not yet cover the other distributions or
-establish a four-distribution performance headline.
+The release-smoke record above contains Docker results. The separate
+[four-distro QEMU runner](../scripts/README.md#benchmark-qemush) now has a
+[committed live receipt](records/qemu-four-distros-20260905.json) for Arch,
+Debian 12, Ubuntu 24.04, and Fedora 44. All four guests passed reboot, sudo,
+package lifecycle, native-version checks, and cleanup. The receipt retains
+240 raw warm timing samples and artifact hashes.
+
+Arch and Ubuntu used unchanged published archives. Debian and Fedora used
+locally built candidates. These debug candidates and single-guest samples do
+not establish release speedups. The published Debian artifact fails on a fresh
+Bookworm installation without its archive-directory initialization fix. It also
+fails to load on Debian 13 because of its libapt-pkg.so.6.0 dependency. The
+published Fedora defects remain until fixed artifacts are released.
+
+The shared runner replaces the Ubuntu-only script. It does not complete the
+exhaustive CLI inventory, cold-cache trials, or repeated-guest statistics.
 
 ## Run the existing checks
 
