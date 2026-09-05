@@ -96,6 +96,38 @@ mod dnf_integration {
     }
 
     #[tokio::test]
+    async fn cleanup_preview_preserves_installed_packages() -> Result<()> {
+        if common::TestConfig::default().skip_if_no_system("dnf_cleanup_preview") {
+            common::report_skip("system tests disabled (set OMG_RUN_SYSTEM_TESTS=1)");
+            return Ok(());
+        }
+        let snapshot = || -> Result<Vec<String>> {
+            let output = std::process::Command::new("rpm")
+                .args(["-qa", "--qf", "%{NAME}-%{VERSION}-%{RELEASE}.%{ARCH}\n"])
+                .output()?;
+            assert!(output.status.success());
+            let mut packages: Vec<String> = String::from_utf8(output.stdout)?
+                .lines()
+                .map(str::to_owned)
+                .collect();
+            packages.sort();
+            Ok(packages)
+        };
+        let before = snapshot()?;
+        let output = std::process::Command::new(assert_cmd::cargo::cargo_bin!("omg"))
+            .args(["clean", "--all", "--dry-run"])
+            .output()?;
+        assert!(
+            output.status.success(),
+            "{}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        assert!(String::from_utf8(output.stdout)?.contains("No changes made (dry run)"));
+        assert_eq!(snapshot()?, before);
+        Ok(())
+    }
+
+    #[tokio::test]
     async fn test_search_common_package() {
         require_system_tests!();
 

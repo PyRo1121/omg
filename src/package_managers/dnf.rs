@@ -73,6 +73,12 @@ enum RepositoryQuery {
     Unneeded,
 }
 
+#[derive(Debug, Clone, Copy)]
+pub(crate) enum DnfCleanup {
+    Orphans,
+    PackageCache,
+}
+
 #[derive(Debug)]
 struct VersionedPackage {
     name: String,
@@ -617,6 +623,29 @@ impl DnfPackageManager {
             repos_dir: self.repos_dir.clone(),
             installed_cache: Arc::clone(&self.installed_cache),
         }
+    }
+
+    pub(crate) async fn orphan_packages() -> Result<Vec<String>> {
+        let output = Self::repository_output(RepositoryQuery::Unneeded, None).await?;
+        Ok(Self::parse_versioned_packages(&output)?
+            .into_iter()
+            .map(|package| format!("{}.{}", package.name, package.architecture))
+            .collect())
+    }
+
+    pub(crate) async fn cleanup(&self, operation: DnfCleanup) -> Result<()> {
+        // Keep native confirmation for autoremove; a preview is not authorization.
+        let args: &[&str] = match operation {
+            DnfCleanup::Orphans => &["autoremove"],
+            DnfCleanup::PackageCache => &["clean", "packages"],
+        };
+        if !is_root() {
+            crate::core::privilege::run_privileged_program("dnf", args).await?;
+            self.invalidate_installed_cache();
+            return Ok(());
+        }
+        let manager = self.cache_handle();
+        tokio::task::spawn_blocking(move || manager.run_dnf(args)).await?
     }
 
     /// Execute the `dnf` CLI as root (callers escalate via
