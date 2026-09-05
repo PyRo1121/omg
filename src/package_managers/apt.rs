@@ -499,62 +499,15 @@ fn open_cache(local_files: &[String]) -> Result<Cache> {
 }
 
 fn install_blocking(packages: &[String]) -> Result<()> {
-    if contains_local_debian_package(packages) {
-        return install_with_apt_get_blocking(packages);
-    }
-
-    let cache = open_cache(&[])?;
-    for spec in packages {
-        let (pkg_name, requested_version) = spec
-            .split_once('=')
-            .map_or((spec.as_str(), None), |(name, version)| {
-                (name, Some(version))
-            });
-        let pkg = cache
-            .get(pkg_name)
-            .with_context(|| format!("Package not found: {pkg_name}"))?;
-        if let Some(version) = requested_version {
-            let candidate = pkg.get_version(version).with_context(|| {
-                format!("Version {version} of package {pkg_name} was not found")
-            })?;
-            candidate.set_candidate();
-        }
-        anyhow::ensure!(
-            pkg.mark_install(true, true),
-            "APT could not mark package for installation: {pkg_name}"
-        );
-        pkg.protect();
-    }
-
-    cache
-        .resolve(true)
-        .map_err(|e| anyhow!("APT resolve error: {e:?}"))?;
-
-    let mut acquire_progress = AcquireProgress::apt();
-    let mut install_progress = InstallProgress::apt();
-    cache
-        .commit(&mut acquire_progress, &mut install_progress)
-        .map_err(|e| anyhow!("APT commit error: {e:?}"))?;
-
-    Ok(())
-}
-
-fn contains_local_debian_package(packages: &[String]) -> bool {
-    packages
-        .iter()
-        .any(|package| crate::core::security::is_local_debian_package_file(package))
-}
-
-fn install_with_apt_get_blocking(packages: &[String]) -> Result<()> {
     let status = std::process::Command::new("apt-get")
         .args(["install", "-y", "--"])
         .args(packages)
         .status()
-        .context("Failed to run apt-get for local Debian package installation")?;
+        .context("Failed to run apt-get for Debian package installation")?;
 
     if !status.success() {
         anyhow::bail!(
-            "apt-get failed to install local Debian package with exit code {}",
+            "apt-get failed to install Debian packages with exit code {}",
             status.code().unwrap_or(1)
         );
     }
@@ -683,24 +636,4 @@ fn local_to_packages(local_pkgs: Vec<LocalPackage>) -> Vec<Package> {
             installed: true,
         })
         .collect()
-}
-
-#[cfg(test)]
-mod tests {
-    use super::contains_local_debian_package;
-
-    #[test]
-    fn local_debian_package_selects_apt_get_installation() {
-        assert!(contains_local_debian_package(
-            &["/tmp/demo.deb".to_string()]
-        ));
-        assert!(contains_local_debian_package(&[
-            "curl".to_string(),
-            "/tmp/demo.ddeb".to_string(),
-        ]));
-        assert!(!contains_local_debian_package(&[
-            "curl".to_string(),
-            "libssl-dev".to_string(),
-        ]));
-    }
 }
