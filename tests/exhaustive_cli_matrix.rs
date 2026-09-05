@@ -75,7 +75,7 @@ mod arch_matrix {
     fn test_status() {
         let res = run_arch(&["status"]);
         res.assert_success();
-        res.assert_stdout_contains("Packages");
+        res.assert_stdout_contains("packages installed");
     }
 
     #[test]
@@ -161,7 +161,7 @@ mod debian_matrix {
     fn test_status() {
         let res = run_debian(&["status"]);
         res.assert_success();
-        res.assert_stdout_contains("Packages");
+        res.assert_stdout_contains("packages installed");
     }
 
     #[test]
