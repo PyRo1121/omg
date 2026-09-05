@@ -246,9 +246,9 @@ impl DnfPackageManager {
             .collect())
     }
 
-    fn read_user_installed_names() -> Result<HashSet<String>> {
+    pub(crate) fn read_user_installed_names() -> Result<HashSet<String>> {
         let output = Command::new("dnf")
-            .args(["repoquery", "--userinstalled", "--qf", "%{name}"])
+            .args(["repoquery", "--userinstalled", "--qf", "%{name}\n"])
             .output()
             .context("Failed to execute dnf repoquery --userinstalled")?;
         if !output.status.success() {

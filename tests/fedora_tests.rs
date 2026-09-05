@@ -63,6 +63,39 @@ mod dnf_integration {
     }
 
     #[tokio::test]
+    async fn explicit_cli_matches_native_backend_without_a_daemon() -> Result<()> {
+        if common::TestConfig::default().skip_if_no_system("dnf_explicit_cli") {
+            common::report_skip("system tests disabled (set OMG_RUN_SYSTEM_TESTS=1)");
+            return Ok(());
+        }
+        let mut expected = DnfPackageManager::new().list_explicit().await?;
+        expected.sort();
+        expected.dedup();
+        let binary = assert_cmd::cargo::cargo_bin!("omg");
+        let listing = std::process::Command::new(binary)
+            .args(["--json", "explicit"])
+            .output()?;
+        assert!(
+            listing.status.success(),
+            "{}",
+            String::from_utf8_lossy(&listing.stderr)
+        );
+        let listing: serde_json::Value = serde_json::from_slice(&listing.stdout)?;
+        assert_eq!(listing["packages"], serde_json::json!(expected));
+        let count = std::process::Command::new(binary)
+            .args(["--json", "explicit", "--count"])
+            .output()?;
+        assert!(
+            count.status.success(),
+            "{}",
+            String::from_utf8_lossy(&count.stderr)
+        );
+        let count: serde_json::Value = serde_json::from_slice(&count.stdout)?;
+        assert_eq!(count["count"], serde_json::json!(expected.len()));
+        Ok(())
+    }
+
+    #[tokio::test]
     async fn test_search_common_package() {
         require_system_tests!();
 

@@ -104,6 +104,20 @@ pub fn explicit_sync_with_json(count: bool, json: bool) -> Result<()> {
         return Ok(());
     }
 
+    #[cfg(feature = "fedora")]
+    if crate::package_managers::get_package_manager()?.name() == "dnf" {
+        let packages: Vec<String> =
+            crate::package_managers::dnf::DnfPackageManager::read_user_installed_names()
+                .context("Failed to list explicitly installed Fedora packages")?
+                .into_iter()
+                .collect();
+        return if count {
+            print_count(packages.len(), json)
+        } else {
+            display_explicit_list(packages, json)
+        };
+    }
+
     if count {
         if let Some(c) = crate::core::fast_status::FastStatus::read_explicit_count() {
             print_count(c, json)?;
