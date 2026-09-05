@@ -296,14 +296,35 @@ fn nvm_hostile_multicomponent_pin_refused_by_validator() {
     std::fs::create_dir_all(nvm.join("versions/node/v20.11.1")).expect("create fixture directory");
     let inner_target = nvm.join("versions/node/v20.12.0/bin");
     std::fs::create_dir_all(&inner_target).expect("create fixture directory");
+    // nvm_node_bin prepends 'v' only to the first component of the pin.
+    let hostile_pin = "20.11.1/../v20.12.0";
+    let unvalidated_bin = nvm
+        .join("versions/node")
+        .join(format!("v{hostile_pin}"))
+        .join("bin");
+    assert!(unvalidated_bin.is_dir(), "unguarded lookup must find a bin");
+    assert_eq!(
+        unvalidated_bin
+            .canonicalize()
+            .expect("resolve hostile path"),
+        inner_target.canonicalize().expect("resolve target"),
+        "hostile path must reach the existing target inside the nvm tree"
+    );
     with_test_env(
         &[
             ("OMG_DATA_DIR", data.to_str().unwrap()),
             ("NVM_DIR", nvm.to_str().unwrap()),
         ],
         || {
-            let additions = build_path_additions(&pin_map(&[("node", "20.11.1/../20.12.0")]))
-                .expect("resolution");
+            let valid = build_path_additions(&pin_map(&[("node", "20.12.0")]))
+                .expect("resolve valid nvm pin");
+            assert_eq!(
+                valid,
+                vec![inner_target.display().to_string()],
+                "the target must be accepted through a valid pin"
+            );
+            let additions =
+                build_path_additions(&pin_map(&[("node", hostile_pin)])).expect("resolution");
             assert!(
                 additions.is_empty(),
                 "traversal pin must be rejected even when the target exists, got {additions:?}"
