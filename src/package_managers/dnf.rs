@@ -1051,9 +1051,14 @@ impl PackageManager for DnfPackageManager {
         let action = match kind {
             TransactionType::Install => "install",
             TransactionType::Remove => "remove",
-            TransactionType::Update | TransactionType::Sync => return None,
+            TransactionType::Update => "upgrade",
+            TransactionType::Sync => return None,
         };
         Some(Box::pin(async move {
+            anyhow::ensure!(
+                kind != TransactionType::Update || packages.is_empty(),
+                "System updates do not accept package operands"
+            );
             crate::core::security::validate_package_names(packages)?;
             let mut args = vec![action.to_owned(), "-y".to_owned()];
             args.extend_from_slice(packages);
@@ -1133,19 +1138,7 @@ impl PackageManager for DnfPackageManager {
     }
 
     fn update(&self) -> Pin<Box<dyn Future<Output = Result<()>> + Send + '_>> {
-        Box::pin(async move {
-            if !is_root() {
-                crate::core::privilege::run_privileged_program("dnf", &["upgrade", "-y"]).await?;
-                self.invalidate_installed_cache();
-                return Ok(());
-            }
-
-            tokio::task::spawn_blocking({
-                let manager = self.cache_handle();
-                move || manager.run_dnf(&["upgrade", "-y"])
-            })
-            .await?
-        })
+        Box::pin(self.execute_dnf(vec!["upgrade".to_owned(), "-y".to_owned()]))
     }
 
     fn sync(&self) -> Pin<Box<dyn Future<Output = Result<()>> + Send + '_>> {
@@ -1502,6 +1495,28 @@ mod tests {
         assert_eq!(
             packages[0].summary,
             "Cross-vendor public domain suffix database in DAFSA form"
+        );
+    }
+
+    #[tokio::test]
+    async fn native_update_history_requires_a_system_wide_operation() {
+        use crate::core::history::TransactionType;
+        let manager = DnfPackageManager::new();
+        assert!(
+            manager
+                .transact_with_history(TransactionType::Update, &[], None)
+                .is_some()
+        );
+        let packages = vec!["tree".to_owned()];
+        let operation = manager
+            .transact_with_history(TransactionType::Update, &packages, None)
+            .expect("native update capability");
+        assert!(
+            operation
+                .await
+                .unwrap_err()
+                .to_string()
+                .contains("do not accept package operands")
         );
     }
 

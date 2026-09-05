@@ -477,12 +477,19 @@ mod dnf_integration {
             "tree must be absent before this lifecycle fixture"
         );
         let snapshot = || -> Result<Vec<String>> {
-            let output = std::process::Command::new("rpm").arg("-qa").output()?;
+            let output = std::process::Command::new("rpm")
+                .args(["-qa", "--qf", "%{NAME}\t%{NEVRA}\n"])
+                .output()?;
             anyhow::ensure!(output.status.success(), "RPM inventory failed");
-            let mut rows: Vec<_> = String::from_utf8(output.stdout)?
-                .lines()
-                .map(str::to_owned)
-                .collect();
+            let mut rows = Vec::new();
+            for line in std::str::from_utf8(&output.stdout)?.lines() {
+                let (name, identity) = line
+                    .split_once('\t')
+                    .ok_or_else(|| anyhow::anyhow!("Invalid RPM inventory row"))?;
+                if name != "gpg-pubkey" {
+                    rows.push(identity.to_owned());
+                }
+            }
             rows.sort();
             Ok(rows)
         };
@@ -817,13 +824,132 @@ mod dnf_operations {
         Ok(())
     }
 
-    #[tokio::test]
-    #[ignore = "requires root privileges and modifies system"]
-    async fn test_update_all_packages() -> Result<()> {
-        let pm = DnfPackageManager::new();
-
-        pm.update().await?;
-
+    #[test]
+    #[ignore = "upgrades the system; requires a disposable VM snapshot and external rollback"]
+    fn test_update_all_packages() -> Result<()> {
+        use omg_lib::core::history::{HistoryManager, TransactionType};
+        use std::collections::BTreeSet;
+        #[derive(PartialEq, Eq, PartialOrd, Ord)]
+        struct Installed {
+            name: String,
+            version: String,
+            architecture: String,
+        }
+        let snapshot = || -> Result<BTreeSet<Installed>> {
+            let output = std::process::Command::new("rpm")
+                .args([
+                    "-qa",
+                    "--qf",
+                    "%{NAME}\t%{EPOCHNUM}:%{VERSION}-%{RELEASE}\t%{ARCH}\n",
+                ])
+                .output()?;
+            anyhow::ensure!(output.status.success(), "RPM inventory failed");
+            let mut packages = BTreeSet::new();
+            for line in std::str::from_utf8(&output.stdout)?.lines() {
+                let fields: Vec<_> = line.split('\t').collect();
+                anyhow::ensure!(
+                    fields.len() == 3 && fields.iter().all(|field| !field.is_empty()),
+                    "Invalid RPM inventory row"
+                );
+                if fields[0] == "gpg-pubkey" {
+                    continue;
+                }
+                anyhow::ensure!(
+                    packages.insert(Installed {
+                        name: fields[0].to_owned(),
+                        version: fields[1].to_owned(),
+                        architecture: fields[2].to_owned()
+                    }),
+                    "Duplicate native installed identity"
+                );
+            }
+            Ok(packages)
+        };
+        let before = snapshot()?;
+        let fixture = tempfile::tempdir_in(dirs::cache_dir().expect("user cache directory"))?;
+        let history = HistoryManager::new_in(fixture.path().join("history.json"))?;
+        let update = || {
+            std::process::Command::new(assert_cmd::cargo::cargo_bin!("omg"))
+                .env("OMG_DATA_DIR", fixture.path())
+                .stdin(std::process::Stdio::null())
+                .args(["update", "--yes"])
+                .output()
+        };
+        let applied = update()?;
+        anyhow::ensure!(
+            applied.status.success(),
+            "Update failed: {}",
+            String::from_utf8_lossy(&applied.stderr)
+        );
+        let after = snapshot()?;
+        anyhow::ensure!(
+            before != after,
+            "This fixture requires available package upgrades"
+        );
+        let records = history.read_snapshot()?;
+        anyhow::ensure!(
+            records.len() == 1
+                && records[0].success
+                && records[0].transaction_type == TransactionType::Update,
+            "Expected one successful update record: {records:?}"
+        );
+        let mut removed: Vec<_> = before
+            .difference(&after)
+            .map(|package| (package.name.clone(), package.version.clone()))
+            .collect();
+        let mut added: Vec<_> = after
+            .difference(&before)
+            .map(|package| (package.name.clone(), package.version.clone()))
+            .collect();
+        let mut recorded_removed: Vec<_> = records[0]
+            .changes
+            .iter()
+            .filter_map(|change| {
+                change
+                    .old_version
+                    .as_ref()
+                    .map(|version| (change.name.clone(), version.clone()))
+            })
+            .collect();
+        let mut recorded_added: Vec<_> = records[0]
+            .changes
+            .iter()
+            .filter_map(|change| {
+                change
+                    .new_version
+                    .as_ref()
+                    .map(|version| (change.name.clone(), version.clone()))
+            })
+            .collect();
+        removed.sort();
+        added.sort();
+        recorded_removed.sort();
+        recorded_added.sort();
+        anyhow::ensure!(
+            removed == recorded_removed,
+            "Recorded removed versions differ from the native RPM delta"
+        );
+        anyhow::ensure!(
+            added == recorded_added,
+            "Recorded added versions differ from the native RPM delta"
+        );
+        println!(
+            "Native RPM delta matched: {} removed builds, {} added builds",
+            removed.len(),
+            added.len()
+        );
+        println!("OMG update record: {}", serde_json::to_string(&records)?);
+        let noop = update()?;
+        anyhow::ensure!(
+            noop.status.success(),
+            "No-op update failed: {}",
+            String::from_utf8_lossy(&noop.stderr)
+        );
+        anyhow::ensure!(
+            snapshot()? == after && history.read_snapshot()?.len() == 1,
+            "No-op update changed package state or invented history"
+        );
+        fixture.close()?;
         Ok(())
     }
 

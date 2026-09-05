@@ -284,6 +284,12 @@ impl PackageService {
             });
         }
 
+        if let Some(operation) =
+            self.backend
+                .transact_with_history(TransactionType::Update, &[], self.history.as_ref())
+        {
+            return operation.await;
+        }
         let result = async {
             self.backend.update().await?;
 
