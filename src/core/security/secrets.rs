@@ -660,10 +660,14 @@ mod tests {
 
     #[test]
     fn test_redaction() {
-        let redacted = SecretScanner::redact("secret_token_1234567890abcdef");
+        let secret = "secret_token_1234567890abcdef";
+        let redacted = SecretScanner::redact(secret);
 
-        assert!(redacted.contains('*'), "Should contain asterisks");
-        assert!(!redacted.is_empty(), "Should produce output");
+        assert!(
+            !redacted.contains(secret),
+            "must not expose the full secret"
+        );
+        assert_eq!(redacted, "secr**********...cdef");
     }
 
     #[test]
@@ -674,9 +678,13 @@ mod tests {
         assert_eq!(redacted, "********");
         assert!(!secret.chars().any(|character| redacted.contains(character)));
 
-        let longer = SecretScanner::redact("пароль12345678");
-        assert!(longer.contains('*'), "got: {longer}");
-        assert!(longer.contains("..."), "got: {longer}");
+        let long_secret = "пароль12345678";
+        let longer = SecretScanner::redact(long_secret);
+        assert!(
+            !longer.contains(long_secret),
+            "must not expose the full secret"
+        );
+        assert_eq!(longer, "паро******...5678");
     }
 
     #[cfg(unix)]
