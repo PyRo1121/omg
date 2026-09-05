@@ -16,11 +16,13 @@ OMG is the fastest unified package manager for Linux, replacing pacman, yay, nvm
 - **Cli**: Unify status output and limit local build jobs
 ### 🐛 Bug Fixes
 
+- **Aur**: Isolate sandbox PIDs for descendant cleanup
 - **Aur**: Separate build review and simplify verified execution
 - **Fedora**: Decode native RPM database headers
 - **Ci**: Preserve prepared changelog sections
 ### 👷 CI/CD
 
+- **Aur**: Gate builds on isolated sandbox cancellation test
 - Add published release smoke matrix
 ### 📚 Documentation
 
