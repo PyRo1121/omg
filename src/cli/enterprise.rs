@@ -181,11 +181,14 @@ pub fn license_scan(export: Option<&str>, _ctx: &CliContext) -> Result<()> {
             format!("{} total packages", scan.total),
         ),
         Cmd::spacer(),
-        Cmd::card("License Inventory", license_inventory),
+        Components::limited_card("License Inventory", license_inventory, 20),
         if violations.is_empty() {
             Cmd::none()
         } else {
-            Cmd::batch([Cmd::spacer(), Cmd::card("Policy Violations", violations)])
+            Cmd::batch([
+                Cmd::spacer(),
+                Components::limited_card("Policy Violations", violations, 20),
+            ])
         },
         if unknown.is_empty() {
             Cmd::none()
