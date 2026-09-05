@@ -95,6 +95,173 @@ mod dnf_integration {
         Ok(())
     }
 
+    #[test]
+    fn size_cli_matches_native_installed_packages() -> Result<()> {
+        if common::TestConfig::default().skip_if_no_system("dnf_size_cli") {
+            common::report_skip("system tests disabled (set OMG_RUN_SYSTEM_TESTS=1)");
+            return Ok(());
+        }
+        let before = std::process::Command::new("rpm")
+            .args([
+                "-qa",
+                "--qf",
+                "%{NAME}\t%{NAME}-%{EPOCHNUM}:%{VERSION}-%{RELEASE}.%{ARCH}\t%{SIZE}\n",
+            ])
+            .output()?;
+        assert!(before.status.success());
+        let snapshot = String::from_utf8(before.stdout)?;
+        let mut packages = snapshot
+            .lines()
+            .filter(|line| !line.starts_with("gpg-pubkey\t"))
+            .map(|line| -> Result<(&str, i64)> {
+                let (_, sized_identity) = line.split_once('\t').expect("RPM package name");
+                let (name, size) = sized_identity.split_once('\t').expect("RPM size row");
+                Ok((name, size.parse()?))
+            })
+            .collect::<Result<Vec<_>>>()?;
+        packages.sort_by(|left, right| right.1.cmp(&left.1).then_with(|| left.0.cmp(right.0)));
+        let binary = assert_cmd::cargo::cargo_bin!("omg");
+        let top = std::process::Command::new(binary)
+            .env("NO_COLOR", "1")
+            .env("LC_ALL", "C")
+            .args(["size", "--limit", "3"])
+            .output()?;
+        assert!(
+            top.status.success(),
+            "{}",
+            String::from_utf8_lossy(&top.stderr)
+        );
+        let top = String::from_utf8(top.stdout)?;
+        let mut cursor = 0;
+        for (name, _) in packages.iter().take(3) {
+            cursor += top[cursor..].find(name).expect("ranked native identity") + name.len();
+        }
+        assert!(top.contains(&format!("Number of Packages: {}", packages.len())));
+        let providers = std::process::Command::new("dnf")
+            .args([
+                "--setopt=disable_excludes=*",
+                "repoquery",
+                "--installed",
+                "--providers-of=requires",
+                "--qf",
+                "%{full_nevra}\n",
+                "glibc",
+            ])
+            .output()?;
+        assert!(providers.status.success());
+        let providers = String::from_utf8(providers.stdout)?;
+        let root = std::process::Command::new("rpm")
+            .args([
+                "-q",
+                "glibc",
+                "--qf",
+                "%{NAME}-%{EPOCHNUM}:%{VERSION}-%{RELEASE}.%{ARCH}\n",
+            ])
+            .output()?;
+        assert!(root.status.success());
+        let root = String::from_utf8(root.stdout)?;
+        let expected: std::collections::BTreeSet<_> =
+            providers.lines().chain(root.lines()).collect();
+        let tree = std::process::Command::new(binary)
+            .env("NO_COLOR", "1")
+            .env("LC_ALL", "C")
+            .args(["size", "--tree", "glibc", "--limit", "10000"])
+            .output()?;
+        assert!(
+            tree.status.success(),
+            "{}",
+            String::from_utf8_lossy(&tree.stderr)
+        );
+        let tree = String::from_utf8(tree.stdout)?;
+        for name in &expected {
+            assert!(tree.contains(name), "missing provider {name}");
+        }
+        assert!(tree.contains(&format!("Number of Packages: {}", expected.len())));
+        assert!(tree.contains("not a minimal dependency closure"));
+        let missing = std::process::Command::new(binary)
+            .args(["size", "--tree", "omg-no-such-package"])
+            .output()?;
+        assert!(!missing.status.success());
+        assert!(String::from_utf8_lossy(&missing.stderr).contains("is not installed"));
+        let after = std::process::Command::new("rpm")
+            .args([
+                "-qa",
+                "--qf",
+                "%{NAME}\t%{NAME}-%{EPOCHNUM}:%{VERSION}-%{RELEASE}.%{ARCH}\t%{SIZE}\n",
+            ])
+            .output()?;
+        assert!(after.status.success());
+        let after = String::from_utf8(after.stdout)?;
+        let mut before: Vec<_> = snapshot.lines().collect();
+        let mut after: Vec<_> = after.lines().collect();
+        before.sort_unstable();
+        after.sort_unstable();
+        assert_eq!(before, after);
+        Ok(())
+    }
+
+    #[test]
+    fn size_cli_does_not_hide_excluded_installed_packages() -> Result<()> {
+        use std::os::unix::fs::PermissionsExt;
+
+        if common::TestConfig::default().skip_if_no_system("dnf_size_exclusions") {
+            common::report_skip("system tests disabled (set OMG_RUN_SYSTEM_TESTS=1)");
+            return Ok(());
+        }
+        let cache = dirs::cache_dir().expect("user cache directory");
+        std::fs::create_dir_all(&cache)?;
+        let fixture = tempfile::tempdir_in(cache)?;
+        let dnf = fixture.path().join("dnf");
+        std::fs::write(
+            &dnf,
+            "#!/bin/sh\nexec /usr/bin/dnf --setopt=excludepkgs=glibc \"$@\"\n",
+        )?;
+        std::fs::set_permissions(&dnf, std::fs::Permissions::from_mode(0o700))?;
+        let hidden = std::process::Command::new(&dnf)
+            .args(["repoquery", "--installed", "--qf", "%{name}\n", "glibc"])
+            .output()?;
+        assert!(hidden.status.success());
+        assert!(
+            hidden.stdout.is_empty(),
+            "exclusion fixture must hide glibc from ordinary queries"
+        );
+        let installed = std::process::Command::new("rpm")
+            .args(["-qa", "--qf", "%{NAME}\n"])
+            .output()?;
+        assert!(installed.status.success());
+        let count = String::from_utf8(installed.stdout)?
+            .lines()
+            .filter(|name| *name != "gpg-pubkey")
+            .count();
+        let inherited = std::env::var_os("PATH").expect("native command PATH");
+        let path = std::env::join_paths(
+            std::iter::once(fixture.path().to_path_buf()).chain(std::env::split_paths(&inherited)),
+        )?;
+        for arguments in [
+            vec!["size", "--limit", "0"],
+            vec!["size", "--tree", "glibc"],
+        ] {
+            let output = std::process::Command::new(assert_cmd::cargo::cargo_bin!("omg"))
+                .env("PATH", &path)
+                .env("NO_COLOR", "1")
+                .args(&arguments)
+                .output()?;
+            assert!(
+                output.status.success(),
+                "{}",
+                String::from_utf8_lossy(&output.stderr)
+            );
+            if arguments[1] == "--limit" {
+                assert!(
+                    String::from_utf8(output.stdout)?
+                        .contains(&format!("Number of Packages: {count}"))
+                );
+            }
+        }
+        fixture.close()?;
+        Ok(())
+    }
+
     #[tokio::test]
     async fn cleanup_preview_preserves_installed_packages() -> Result<()> {
         if common::TestConfig::default().skip_if_no_system("dnf_cleanup_preview") {

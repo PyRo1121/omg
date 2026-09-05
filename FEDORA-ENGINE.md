@@ -1,8 +1,8 @@
 # Fedora/DNF Engine — Research Verdicts & Build Plan (2026-08 research)
 
-Goal: reduce repeated metadata-loading work with a Rust index, then measure
-search and information lookup against equivalent DNF5 operations. Do not infer
-transaction speedups or cross-distribution performance from query timings.
+Correct package operations come first. A Rust index and performance comparisons
+remain future work. Do not infer transaction speedups or cross-distribution
+performance from query timings.
 
 ## Research verdicts
 
@@ -27,7 +27,32 @@ transaction speedups or cross-distribution performance from query timings.
    per-invocation parse. Same pattern as debian_db (rkyv mmap) and
    pacman_db.
 
-## Build order (each slice gated + compose-verified)
+## Installed size queries
+
+`omg size` reads installed package identities and byte sizes through DNF5.
+It retains every installed version and architecture, including concurrent kernel
+builds. RPM signing-key records named `gpg-pubkey` are not installed packages.
+
+`omg size --tree PACKAGE` lists the selected package and installed providers of
+its direct requirements. Alternative requirements can have several installed
+providers. This is not a minimal or recursive dependency closure. An ambiguous
+package selector fails instead of choosing an arbitrary installed build. A
+version/architecture-qualified selector can select a specific build.
+
+These read-only queries use `--setopt=disable_excludes=*` so transaction filters
+do not hide installed packages. Available-package queries and transactions retain
+the configured exclusion and signature policies. Native output is bounded to
+64 MiB and 60 seconds. Invalid sizes and arithmetic overflow are errors, not zero.
+
+Fedora 44 QEMU verification covers native package parity, configured exclusions,
+missing packages, concurrent locally built RPM versions, ambiguous selectors,
+and unchanged RPM inventories during queries. This does not establish exhaustive
+Fedora CLI coverage or repair an already published artifact.
+
+DNF5 documents [provider queries](https://dnf5.readthedocs.io/en/latest/commands/repoquery.8.html)
+and [exclusion configuration](https://dnf5.readthedocs.io/en/latest/dnf5.conf.5.html).
+
+## Future index build order
 
 S1. Correct the raw-Rust database-header reader using zerocopy views and a
     native SQLite fixture. Compare installed records with `rpm -qa`; preserve
@@ -45,9 +70,9 @@ S3. Stream verified primary metadata into compact records and a versioned,
     Select the supported primary representation from repomd explicitly; do not
     assume gzip or mistake a .solv cache for XML. Include enabled repository set,
     architecture, metadata digests, and policy in cache identity.
-S4. search/info/list_updates/get_status over the mmap index (O(1)/scan);
-    list_updates un-blocks (currently explicit fail-closed).
-S5. Transactions stay on the dnf CLI (already correct); benchmark
+S4. Move search/info/list_updates/get_status from native DNF queries to the
+    proposed index only after equivalent behavior is verified.
+S5. Transactions stay on the dnf CLI; benchmark
     S3/S4 vs `dnf5 info/search` cold+warm in Dockerfile.fedora compose.
 
 ## R&D synthesis (wave: /tmp/omg-fleet13, 15 citation-backed reports)

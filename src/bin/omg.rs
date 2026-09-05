@@ -1390,7 +1390,7 @@ async fn dispatch_command(command: &Commands, ctx: &omg_lib::cli::CliContext) ->
             outdated::run(ctx.json).await?;
         }
         Commands::Size { tree, limit } => {
-            size::run(tree.as_deref(), *limit)?;
+            size::run(tree.as_deref(), *limit).await?;
         }
         Commands::Blame { package } => {
             blame::run(package)?;

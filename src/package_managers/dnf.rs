@@ -66,11 +66,19 @@ struct InstalledPackage {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum RepositoryQuery {
-    Available,
+enum RepositoryQuery<'a> {
+    Available(Option<&'a str>),
     Installed,
     Upgrades,
     Unneeded,
+    InstalledSizes(InstalledSizeQuery<'a>),
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum InstalledSizeQuery<'a> {
+    All,
+    Package(&'a str),
+    RequirementProviders(&'a str),
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -483,11 +491,39 @@ impl DnfPackageManager {
     }
 
     async fn available_packages(package: Option<&str>) -> Result<Vec<Package>> {
-        let bytes = Self::repository_output(RepositoryQuery::Available, package).await?;
+        let bytes = Self::repository_output(RepositoryQuery::Available(package)).await?;
         Self::parse_available_packages(&bytes)
     }
 
-    async fn repository_output(query: RepositoryQuery, package: Option<&str>) -> Result<Vec<u8>> {
+    pub(crate) async fn installed_package_sizes(
+        query: InstalledSizeQuery<'_>,
+    ) -> Result<Vec<(String, i64)>> {
+        let output = Self::repository_output(RepositoryQuery::InstalledSizes(query)).await?;
+        Self::parse_installed_sizes(&output)
+    }
+
+    fn parse_installed_sizes(output: &[u8]) -> Result<Vec<(String, i64)>> {
+        let text = std::str::from_utf8(output).context("DNF installed sizes are not UTF-8")?;
+        text.lines()
+            .map(|line| {
+                let (identity, bytes) = line
+                    .split_once('\t')
+                    .context("DNF installed size row must contain identity and bytes")?;
+                anyhow::ensure!(
+                    !identity.is_empty()
+                        && !identity
+                            .chars()
+                            .any(|ch| ch.is_whitespace() || ch.is_control()),
+                    "DNF installed size row has an invalid package identity"
+                );
+                let bytes: i64 = bytes.parse().context("Invalid DNF installed size")?;
+                anyhow::ensure!(bytes >= 0, "DNF installed size must not be negative");
+                Ok((identity.to_owned(), bytes))
+            })
+            .collect()
+    }
+
+    async fn repository_output(query: RepositoryQuery<'_>) -> Result<Vec<u8>> {
         use tokio::io::AsyncReadExt;
 
         const MAX_OUTPUT_BYTES: u64 = 64 * 1024 * 1024;
@@ -497,16 +533,20 @@ impl DnfPackageManager {
                 reason = "DNF interprets these query-format placeholders, not Rust"
             )]
             let query_format = match query {
-                RepositoryQuery::Available => "%{name}\t%{evr}\t%{summary}\n",
+                RepositoryQuery::Available(_) => "%{name}\t%{evr}\t%{summary}\n",
+                RepositoryQuery::InstalledSizes(_) => "%{full_nevra}\t%{installsize}\n",
                 _ => "%{name}\t%{arch}\t%{evr}\t%{repoid}\n",
             };
             let selection = match query {
-                RepositoryQuery::Available => "--available",
-                RepositoryQuery::Installed => "--installed",
+                RepositoryQuery::Available(_) => "--available",
+                RepositoryQuery::Installed | RepositoryQuery::InstalledSizes(_) => "--installed",
                 RepositoryQuery::Upgrades => "--upgrades",
                 RepositoryQuery::Unneeded => "--unneeded",
             };
             let mut command = tokio::process::Command::new("dnf");
+            if matches!(query, RepositoryQuery::InstalledSizes(_)) {
+                command.arg("--setopt=disable_excludes=*");
+            }
             command
                 .args(["repoquery", selection])
                 .args(["--queryformat", query_format])
@@ -514,12 +554,30 @@ impl DnfPackageManager {
                 .stdout(std::process::Stdio::piped())
                 .stderr(std::process::Stdio::inherit())
                 .kill_on_drop(true);
-            if query != RepositoryQuery::Unneeded {
+            if matches!(
+                query,
+                RepositoryQuery::Available(_)
+                    | RepositoryQuery::Installed
+                    | RepositoryQuery::Upgrades
+            ) {
                 command.arg("--latest-limit=1");
             }
-            if query == RepositoryQuery::Available {
+            if matches!(query, RepositoryQuery::Available(_)) {
                 command.arg(format!("--arch={},noarch", std::env::consts::ARCH));
             }
+            let package = match query {
+                RepositoryQuery::Available(package) => package,
+                RepositoryQuery::InstalledSizes(InstalledSizeQuery::Package(package)) => {
+                    Some(package)
+                }
+                RepositoryQuery::InstalledSizes(InstalledSizeQuery::RequirementProviders(
+                    package,
+                )) => {
+                    command.arg("--providers-of=requires");
+                    Some(package)
+                }
+                _ => None,
+            };
             if let Some(name) = package {
                 crate::core::security::validate_package_name(name)?;
                 command.arg(name);
@@ -626,7 +684,7 @@ impl DnfPackageManager {
     }
 
     pub(crate) async fn orphan_packages() -> Result<Vec<String>> {
-        let output = Self::repository_output(RepositoryQuery::Unneeded, None).await?;
+        let output = Self::repository_output(RepositoryQuery::Unneeded).await?;
         Ok(Self::parse_versioned_packages(&output)?
             .into_iter()
             .map(|package| format!("{}.{}", package.name, package.architecture))
@@ -864,7 +922,7 @@ impl PackageManager for DnfPackageManager {
             let (orphans, updates) = if fast {
                 (0, 0)
             } else {
-                let unneeded = Self::repository_output(RepositoryQuery::Unneeded, None).await?;
+                let unneeded = Self::repository_output(RepositoryQuery::Unneeded).await?;
                 (
                     Self::parse_versioned_packages(&unneeded)?.len(),
                     self.list_updates().await?.len(),
@@ -889,8 +947,8 @@ impl PackageManager for DnfPackageManager {
 
     fn list_updates(&self) -> Pin<Box<dyn Future<Output = Result<Vec<UpdateInfo>>> + Send + '_>> {
         Box::pin(async move {
-            let installed = Self::repository_output(RepositoryQuery::Installed, None).await?;
-            let upgrades = Self::repository_output(RepositoryQuery::Upgrades, None).await?;
+            let installed = Self::repository_output(RepositoryQuery::Installed).await?;
+            let upgrades = Self::repository_output(RepositoryQuery::Upgrades).await?;
             Self::match_updates(
                 &Self::parse_versioned_packages(&installed)?,
                 &Self::parse_versioned_packages(&upgrades)?,
@@ -916,6 +974,45 @@ impl PackageManager for DnfPackageManager {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn installed_sizes_preserve_builds_architectures_epochs_and_large_values() {
+        let sizes = DnfPackageManager::parse_installed_sizes(
+            b"kernel-core-0:1-1.x86_64\t4294967296\nkernel-core-0:2-1.x86_64\t12\nlib-1:3-1.i686\t0\nlib-1:3-1.x86_64\t8\n",
+        ).expect("native size rows");
+        assert_eq!(sizes.len(), 4);
+        assert_eq!(
+            sizes[0],
+            ("kernel-core-0:1-1.x86_64".to_owned(), 4_294_967_296)
+        );
+        assert_eq!(sizes[2], ("lib-1:3-1.i686".to_owned(), 0));
+        assert!(
+            DnfPackageManager::parse_installed_sizes(b"")
+                .expect("empty RPM database")
+                .is_empty()
+        );
+    }
+
+    #[test]
+    fn installed_sizes_reject_malformed_native_output() {
+        for malformed in [
+            b"pkg".as_slice(),
+            b"\t1",
+            b"bad name\t1",
+            b"pkg\t-1",
+            b"pkg\tNaN",
+            b"pkg\t9223372036854775808",
+            b"pkg\t1\textra",
+            b"pkg\t",
+            b"\xff\t1",
+            b"pkg\x1b\t1",
+        ] {
+            assert!(
+                DnfPackageManager::parse_installed_sizes(malformed).is_err(),
+                "accepted {malformed:?}"
+            );
+        }
+    }
 
     #[tokio::test]
     async fn test_dnf_manager_creation() {
