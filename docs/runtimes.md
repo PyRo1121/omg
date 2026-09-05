@@ -103,10 +103,11 @@ cd .  # Auto-switch to nightly
 
 # Use specific version
 omg use rust 1.75.0
-
-# Install toolchain with components
-omg use rust stable --components clippy,rustfmt
 ```
+
+Only one Rust toolchain mutation can run at a time within an OMG data directory. If another operation is running, wait for it to finish and retry. The lock covers updates, removal, and activation. It is released when the operation or process ends. Do not delete `versions/rust/.mutation.lock`; its presence alone does not mean an operation is running.
+
+Incremental component and target additions must match the installed toolchain's recorded compiler release, including its nightly commit. If the upstream release changes, OMG rejects that incremental addition before copying or replacing files. Retry setup to refresh the toolchain first. This does not undo a preceding channel refresh. Legacy metadata remains readable, but a missing or empty release identity requires a complete reinstall before incremental additions. Matching compiler identity does not verify an identical whole manifest.
 
 ### Deno
 
@@ -285,19 +286,22 @@ Safety is a first-class citizen in OMG's runtime management:
 
 ### Cryptographic Verification
 
-**Every download is verified:**
+OMG verifies downloaded runtime archives against published checksums or release digests:
 
 - **Node.js**: SHA256 checksums from `SHASUMS256.txt`
 - **Python**: SHA256 digests from python-build-standalone release metadata
 - **Rust**: SHA256 from rust-lang.org manifests
 - **Go**: Official binary checksums
 - **Java**: Adoptium checksums
+- **Ruby**: SHA256 digests from GitHub release metadata
 - **Bun**: SHA256 digests from GitHub release metadata
 - **Deno**: SHA256 digests or official checksum sidecars from Deno releases
 
+Pi installation is delegated to npm with `--global --ignore-scripts`, followed by an installed-version check. It does not use OMG's archive-digest verification path; registry and integrity handling follow npm's configuration.
+
 ### Secure Transport
 
-- All runtime downloads use HTTPS with certificate validation
+Official runtime endpoints use HTTPS with certificate validation. The shared HTTP client rejects HTTPS-to-HTTP redirects. npm-managed installation follows npm's transport configuration.
 
 ### Sandboxed Installations
 

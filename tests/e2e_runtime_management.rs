@@ -87,6 +87,47 @@ fn every_supported_runtime_has_uninstall_dispatch() {
 }
 
 #[test]
+#[cfg(unix)]
+fn rust_mutations_respect_another_process_lock() -> anyhow::Result<()> {
+    let project = TestProject::new();
+    let version = "1.93.1-x86_64-unknown-linux-gnu";
+    let versions = project.data_dir.path().join("versions/rust");
+    let toolchain = versions.join(version);
+    std::fs::create_dir_all(toolchain.join("bin"))?;
+    std::fs::write(toolchain.join("bin/rustc"), b"fixture, never executed")?;
+    std::fs::write(
+        toolchain.join(".omg-toolchain.toml"),
+        "release = \"1.93.1\"\ncomponents = [\"rustc\"]\ntargets = []\n",
+    )?;
+    let lock = std::fs::File::create(versions.join(".mutation.lock"))?;
+    lock.lock()?;
+
+    for args in [
+        vec!["use", "rust", version, "--uninstall"],
+        vec!["use", "rust", version],
+    ] {
+        let result = project.run_with_env(&args, &[("OMG_TEST_COMMAND_TIMEOUT_SECS", "5")]);
+        println!("{args:?}\n{}", result.combined_output());
+        result.assert_failure();
+        assert!(
+            result
+                .combined_output()
+                .contains("Another Rust toolchain operation is running")
+        );
+        assert_eq!(
+            std::fs::read(toolchain.join("bin/rustc"))?,
+            b"fixture, never executed"
+        );
+        assert!(std::fs::symlink_metadata(versions.join("current")).is_err());
+    }
+
+    drop(lock);
+    project.run(&["use", "rust", version]).assert_success();
+    assert_eq!(std::fs::read_link(versions.join("current"))?, toolchain);
+    Ok(())
+}
+
+#[test]
 fn test_use_invalid_runtime() {
     init_test_env();
 

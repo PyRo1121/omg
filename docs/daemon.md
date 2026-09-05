@@ -16,7 +16,7 @@ When the daemon starts, it resolves its operating environment and establishes a 
 
 - **Socket Resolution**: It identifies the optimal path for the Unix socket, prioritizing the user's runtime directory (`$XDG_RUNTIME_DIR`) and falling back to systemic shared locations.
 - **Cleanup and Bind**: It ensures a fresh start by removing any stale socket files and binding with strict `0600` permissions (user read/write only).
-- **Background Forking**: By default, it detaches from the terminal to run as a persistent background service, logging its activity to stdout/stderr (point your service manager or log file at it; if you run `omgd` under systemd/journald, output is captured there).
+- **Detached Launch**: `omg daemon start` discards stdout and stderr. Run `omgd` directly or through a service manager configured to capture output when you need logs.
 
 ### 2. State Management
 
@@ -32,8 +32,8 @@ The daemon maintains a comprehensive, thread-safe view of the system's package a
 A dedicated worker thread handles ongoing system maintenance without interrupting user operations:
 
 - **Periodic Refresh**: Every 5 minutes, the daemon performs a background "vital signs" check.
-- **Vulnerability Scanning**: Continuous background analysis of installed packages against the ALSA and OSV databases.
-- **Prompt Optimization**: Updates the binary status file used by `omg-fast` to ensure shell prompts are always accurate and instant.
+- **Vulnerability Scanning**: Analysis of installed packages runs as part of the periodic status refresh.
+- **Prompt Status**: Updates the binary status file read by `omg-fast`. Its contents can lag system changes between refreshes.
 
 ---
 
@@ -57,15 +57,8 @@ Requests are automatically routed to specialized handlers based on their type:
 
 ## 🔒 Reliability and Failure Recovery
 
-The daemon is designed for 100% uptime with graceful degradation:
+Recovery mechanisms include:
 
 - **Graceful Shutdown**: Upon receiving a termination signal (SIGINT/SIGTERM), the daemon signals all background tasks to complete their current work, saves its persistent state, and cleanly removes the socket file.
 - **Self-Healing Index**: If the package index becomes corrupted or outdated, the daemon automatically rebuilds it from the underlying system databases.
 - **Network Resilience**: If the internet connection is lost, the daemon falls back to local-only mode, serving results from its cache and system databases.
-
-### Performance Profile
-
-- **Baseline Memory**: ~40MB (including full repository index)
-- **Idle CPU**: &lt;1%
-- **IPC Latency**: ~100μs
-- **Recovery Time**: &lt;1s from cold start

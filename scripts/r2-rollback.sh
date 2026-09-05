@@ -45,7 +45,7 @@ if [[ -z "$version" ]]; then
   echo "error: version argument required" >&2
   usage
 fi
-semver_re='^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)(-[0-9A-Za-z-]+(\.[0-9A-Za-z-]+)*)?(\+[0-9A-Za-z-]+(\.[0-9A-Za-z-]+)*)?$'
+semver_re='^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)(-(0|[1-9][0-9]*|[0-9]*[A-Za-z-][0-9A-Za-z-]*)(\.(0|[1-9][0-9]*|[0-9]*[A-Za-z-][0-9A-Za-z-]*))*)?(\+[0-9A-Za-z-]+(\.[0-9A-Za-z-]+)*)?$'
 if [[ ! "$version" =~ $semver_re ]]; then
   echo "error: version must be an exact semver (e.g. 0.1.214, 1.2.3)" >&2
   exit 65
@@ -90,7 +90,8 @@ printf '%s' "$version" > "$marker"
 trap 'rm -f "$marker"' EXIT
 "$WRANGLER" r2 object put "omg-releases/latest-version" --remote \
   --file="$marker" \
-  --content-type="text/plain"
+  --content-type="text/plain" \
+  --cache-control="no-store"
 
 # Verify what was published.
 body="$("$WRANGLER" r2 object get "omg-releases/latest-version" --remote --pipe 2>/dev/null || true)"

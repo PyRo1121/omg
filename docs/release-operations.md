@@ -32,6 +32,11 @@ Hard guarantees enforced in `.github/workflows/release.yml`:
   sidecars, and the CycloneDX SBOM.
 - **Fail-closed publish.** If any uploaded R2 object cannot be re-downloaded
   byte-identical, the job aborts *before* the `latest-version` marker moves.
+- **Cache policy matches mutability.** Version-addressed archives and `.sha256`
+  sidecars are uploaded with `Cache-Control: public, max-age=31536000,
+  immutable`; the only mutable pointer, the `latest-version` marker, is
+  published with `Cache-Control: no-store` by both `release.yml` and
+  `scripts/r2-rollback.sh`, so rollbacks reach clients immediately.
 - **Remote R2 only.** Wrangler 4's `r2 object` commands default to local
   Miniflare storage. `release.yml` and `scripts/r2-rollback.sh` pass `--remote`
   so publishes hit the production `omg-releases` bucket.
@@ -43,7 +48,8 @@ Hard guarantees enforced in `.github/workflows/release.yml`:
 ## Recovering an R2 sync
 
 If GitHub publication succeeds but `sync-r2` does not, dispatch the `Release`
-workflow from `main` with `sync_existing_tag` set to the published tag. This
+workflow from `main` with `sync_existing_tag` set to the published tag and
+`dry_run` set to `false`. The default dry run does not sync or publish. This
 path does not rebuild or edit the release. It downloads exactly five archives
 and five checksum sidecars, verifies every checksum and GitHub attestation
 against the tag's commit, then runs the normal production R2 upload,
@@ -55,16 +61,23 @@ Clients never trust the release bucket alone:
 
 | Layer | Installer (`install.sh`) | `omg self-update` |
 |---|---|---|
-| TLS | HTTPS-only pinned hosts | HTTPS + redacted error URLs |
+| TLS | HTTPS-only pinned hosts (`releases.omg.latham.cloud`) | HTTPS + redacted error URLs |
+| Latest resolution | R2 `latest-version` marker only: bounded bare-SemVer text, fail-closed; exact `OMG_VERSION` installs use the given tag verbatim | R2 `latest-version` marker only (R2-only, fail-closed) |
 | Checksum | mandatory `.sha256` sidecar | pinned digest verified before extraction |
-| Downgrade protection | version check in release metadata | refuses older versions without `--force` |
-| Build provenance | `gh attestation verify` when `gh` is installed | `gh attestation verify`, fail-closed; skipped with warning only if `gh` missing |
+| Downgrade protection | installs only the resolved latest or the exact requested version | refuses older versions without `--force` |
+| Build provenance | `gh attestation verify`; missing `gh` causes refusal unless `OMG_INSTALL_ALLOW_UNVERIFIED_PROVENANCE=1` explicitly opts out | `gh attestation verify`; missing `gh` causes refusal unless `OMG_SELF_UPDATE_ALLOW_UNVERIFIED_PROVENANCE=1` explicitly opts out |
 | Size bounds | curl + disk constraints | 256 MiB streaming cap, 16 MiB prealloc cap |
 
 The provenance layer exists precisely because a compromise of the R2
 credentials could rewrite binaries **and** checksum sidecars together;
 Sigstore attestations are anchored outside the bucket and cannot be forged
 without the CI runner itself.
+
+Both clients download archives and sidecars from the R2 release domain
+(`https://releases.omg.latham.cloud`). GitHub Releases remains the documented
+mirror of the same immutable objects, and the installer pins each archive to
+the version it already resolved — the installer resolves "latest" from the R2
+marker only, so a rollback re-pointing that marker is immediately authoritative.
 
 ## Rollback
 

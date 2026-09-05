@@ -1083,6 +1083,11 @@ omg snapshot restore abc123
 omg snapshot delete abc123
 ```
 
+Creation and deletion share a persistent `.index.lock` in the snapshots directory.
+A competing mutation fails with a retry message. Both commands validate the index
+before changing snapshot files. This does not make the snapshot file and index a
+crash-atomic pair.
+
 ---
 
 ### omg diff

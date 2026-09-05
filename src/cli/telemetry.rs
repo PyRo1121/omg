@@ -288,6 +288,7 @@ fn collect_text_directory(
 
 /// Disable telemetry on this machine.
 pub fn opt_out_api() -> Result<()> {
+    let _write_lock = Settings::write_lock()?;
     let mut settings = Settings::load().context("Failed to load OMG settings")?;
     settings.telemetry_enabled = false;
     settings.save()?;
@@ -301,6 +302,7 @@ pub fn opt_out_api() -> Result<()> {
 
 /// Enable telemetry on this machine.
 pub fn opt_in_api() -> Result<()> {
+    let _write_lock = Settings::write_lock()?;
     let mut settings = Settings::load().context("Failed to load OMG settings")?;
     settings.telemetry_enabled = true;
     settings.save()?;

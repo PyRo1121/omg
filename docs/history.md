@@ -66,12 +66,20 @@ pub struct PackageChange {
 }
 ```
 
-### History Limits
+### Recording failures
 
-- **Maximum entries**: 1000 transactions
-- **Automatic pruning**: When limit reached, oldest entries are removed
-- **Persistence**: JSON format for human readability and easy backup
-- **Corruption handling**: Rejects malformed history and preserves the original file for recovery
+`omg audit fix` records successful package upgrades as `Update` transactions, with the old and target versions needed for rollback. Delegated updates have one history owner to avoid duplicate records.
+
+For audit fixes and the fast update path, if an update succeeds but recording fails, OMG returns an error stating that the package operation succeeded but its history could not be persisted. The packages remain changed. Do not interpret this error as a failed or reversed package transaction.
+
+### History limits
+
+- The live history retains at most 1,000 transactions.
+- Older entries are appended to `history.json.archive.jsonl`. Normal history, rollback, and rollback-cache protection read both files, including when the live file is absent.
+- Identical transaction IDs and contents left by interrupted retirement are returned once. Conflicting records with the same ID fail explicitly rather than selecting one.
+- Malformed live or archived history causes reads to fail without moving or replacing either file. Corruption is not reported as empty history. Archive reads currently collect the combined history in memory.
+- When recording a new transaction, malformed live history is moved to a `history.json.corrupt-*` file for manual recovery before the fresh log is written. Preserved bytes are not automatically available to rollback.
+- A failed transaction can include successful individual changes. The transaction-level status does not describe each package separately, and automatic rollback rejects failed transactions.
 
 ## Viewing History
 
@@ -243,7 +251,7 @@ impl HistoryManager {
     /// Save transaction list to disk
     pub fn save(&self, history: &[Transaction]) -> Result<()>;
     
-    /// Add a new transaction (auto-prunes to 1000 entries)
+    /// Add a new transaction (archives entries beyond the 1000-entry live limit)
     pub fn add_transaction(
         &self,
         transaction_type: TransactionType,
@@ -334,21 +342,6 @@ mkdir -p ~/.local/share/omg
 
 # Verify permissions
 ls -la ~/.local/share/omg/
-```
-
-### Corrupted history file
-
-If `history.json` is corrupted, OMG gracefully handles it:
-
-```rust
-let history: Vec<Transaction> = serde_json::from_str(&content)
-    .unwrap_or_default();  // Returns empty Vec on error
-```
-
-To manually reset:
-
-```bash
-rm ~/.local/share/omg/history.json
 ```
 
 ### Rollback fails

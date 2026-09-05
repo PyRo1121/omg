@@ -32,7 +32,7 @@ OMG protects against:
 - **Leaked Credentials**: Secret scanning for 20+ credential types
 - **Compliance Violations**: SBOM generation for FDA, FedRAMP, SOC2
 - **Privilege Escalation**: User-level operations only
-- **Network Attacks**: HTTPS-only with certificate validation
+- **Network Attacks**: Certificate validation for HTTPS requests and rejection of HTTPS-to-HTTP redirects
 - **Data Tampering**: Checksum verification and hash-chained audit logs
 
 ### Security Grades
@@ -162,10 +162,8 @@ When a package is integrated into the system, it passes through a rigorous 5-sta
 
 ### Network Security
 
-- **HTTPS Only**: All network traffic uses TLS
-- **Certificate Pinning**: Known certificates for critical endpoints
-- **Timeout Protection**: 5-second timeout for vulnerability API
-- **Retry Logic**: Exponential backoff for failures
+- **TLS Validation**: HTTPS requests use standard certificate validation. OMG does not pin endpoint certificates. The shared client rejects HTTPS-to-HTTP redirects.
+- **Vulnerability Requests**: The shared client has a 15-second total request timeout and a 5-second connect timeout. These are per-request limits, not a bound on an entire multi-request scan.
 
 ### File System Security
 
@@ -317,7 +315,7 @@ This data enables the GitHub badge to show real install counts. No personal info
 **Non-interactive opt-out:** Skip the consent prompt and keep telemetry disabled with `OMG_NO_TELEMETRY=1` (the variable must be set for the installer's bash, not for curl):
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/PyRo1121/omg/main/install.sh | OMG_NO_TELEMETRY=1 bash
+curl -fsSL https://omg.latham.cloud/install.sh | OMG_NO_TELEMETRY=1 bash
 ```
 
 Or disable via config:

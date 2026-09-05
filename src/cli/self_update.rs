@@ -12,10 +12,15 @@ use crate::cli::progress::{Accent, Outcome, ProgressTask, TaskKind, TaskSpec};
 use crate::cli::style;
 use crate::core::env::distro::{Distro, detect_distro};
 
-const GITHUB_OWNER: &str = "PyRo1121";
-const GITHUB_REPO: &str = "omg";
 const GITHUB_RELEASES_PAGE: &str = "https://github.com/PyRo1121/omg/releases";
-const GITHUB_API_LATEST_RELEASE: &str = "https://api.github.com/repos/PyRo1121/omg/releases/latest";
+
+const RELEASES_BASE_URL: &str = "https://releases.omg.latham.cloud";
+
+// GitHub's latest release cannot replace this pointer because rollback changes
+// only the R2 marker.
+const LATEST_VERSION_URL: &str = "https://releases.omg.latham.cloud/latest-version";
+const MAX_LATEST_VERSION_BYTES: usize = 256;
+const MAX_CHECKSUM_BYTES: usize = 1024;
 
 /// Repository used to verify Sigstore build-provenance attestations.
 const ATTESTATION_REPO: &str = "PyRo1121/omg";
@@ -30,9 +35,7 @@ const ATTESTATION_REPO: &str = "PyRo1121/omg";
 /// closed.
 const ALLOW_UNVERIFIED_PROVENANCE_ENV: &str = "OMG_SELF_UPDATE_ALLOW_UNVERIFIED_PROVENANCE";
 
-/// Upper bound for the update archive download.
-///
-/// Release tarballs are a few MiB. The cap bounds both `Vec` preallocation
+/// Hard cap on the update archive download: bounds both `Vec` preallocation
 /// driven by the server-reported `Content-Length` and streaming growth, so a
 /// hostile release server cannot trigger runaway allocation.
 const MAX_DOWNLOAD_BYTES: usize = 256 * 1024 * 1024;
@@ -40,15 +43,10 @@ const MAX_DOWNLOAD_BYTES: usize = 256 * 1024 * 1024;
 /// Cap on `Vec::with_capacity` preallocation before streaming proves the size.
 const MAX_PREALLOC_BYTES: usize = 16 * 1024 * 1024;
 
-/// Update OMG to the latest version
+/// Update OMG to the latest version.
 ///
-/// Fails closed: the pinned SHA-256 sidecar published next to each release
-/// archive must be fetched and the archive digest verified before extraction;
-/// any missing or malformed checksum aborts the update. The archive's
-/// Sigstore build-provenance attestation must also verify. When the GitHub
-/// CLI is absent, provenance cannot be checked, so the update is refused
-/// unless the user explicitly opts in via the
-/// `OMG_SELF_UPDATE_ALLOW_UNVERIFIED_PROVENANCE=1` escape hatch.
+/// The latest version, archive, and checksum come from R2. The archive must
+/// also pass GitHub's Sigstore attestation check before installation.
 ///
 /// # Errors
 ///
@@ -114,20 +112,12 @@ pub async fn run(force: bool, version: Option<String>) -> Result<()> {
     println!(
         "  {} Downloading {}...",
         style::maybe_color("⬇", |t| t.blue().to_string()),
-        artifact.file_name
+        artifact.object_name()
     );
 
-    // Integrity gate: fetch the pinned digest before downloading the archive.
-    let expected_digest = fetch_checksum(&artifact.checksum_url()).await?;
+    let bytes = fetch_release_archive(&artifact).await?;
 
-    let bytes = download_verified(
-        &artifact.download_url(),
-        artifact.file_name.clone(),
-        &expected_digest,
-    )
-    .await?;
-
-    let archive_name = artifact.file_name.clone();
+    let archive_name = artifact.object_name();
 
     // Perform blocking extraction and binary replacement in a separate thread
     // to avoid blocking the tokio async runtime
@@ -223,70 +213,95 @@ fn locate_binary(extract_dir: &std::path::Path, archive_name: &str) -> Option<st
     flat.is_file().then_some(flat)
 }
 
-/// A platform-specific release archive published by CI.
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct LatestVersion(Version);
+
+impl LatestVersion {
+    fn parse(raw: &str) -> Result<Self> {
+        if raw.len() > MAX_LATEST_VERSION_BYTES {
+            anyhow::bail!(
+                "latest-version marker exceeded the {MAX_LATEST_VERSION_BYTES} byte bound"
+            );
+        }
+        let trimmed = raw.trim();
+        if trimmed.is_empty() {
+            anyhow::bail!("latest-version marker is empty");
+        }
+        if trimmed.starts_with(['v', 'V']) {
+            anyhow::bail!(
+                "latest-version marker must be bare semantic version text without a 'v' tag prefix"
+            );
+        }
+        let version =
+            Version::parse(trimmed).context("latest-version marker is not valid semantic version");
+        Ok(Self(version?))
+    }
+
+    fn into_version(self) -> Version {
+        self.0
+    }
+}
+
 #[derive(Debug)]
 struct ReleaseArtifact {
-    /// Git tag for the release, e.g. `v1.2.3`.
-    tag: String,
-    /// Archive file name on the release server, e.g.
-    /// `omg-v1.2.3-x86_64-linux-debian.tar.gz`.
-    file_name: String,
+    version: Version,
+    arch: &'static str,
+    target: &'static str,
 }
 
 impl ReleaseArtifact {
-    /// Archive URL on GitHub Releases.
-    fn download_url(&self) -> String {
-        format!(
-            "https://github.com/{GITHUB_OWNER}/{GITHUB_REPO}/releases/download/{}/{}",
-            self.tag, self.file_name
-        )
+    fn object_name(&self) -> String {
+        format!("omg-v{}-{}-{}.tar.gz", self.version, self.arch, self.target)
     }
 
-    /// URL of the SHA-256 sidecar published next to the archive.
-    fn checksum_url(&self) -> String {
-        format!("{}.sha256", self.download_url())
+    fn archive_url(&self) -> String {
+        format!("{RELEASES_BASE_URL}/{}", self.object_name())
     }
 }
 
-/// Parse a semantic version, tolerating a leading `v` and surrounding
-/// whitespace.
-///
-/// `Version` only renders `[0-9A-Za-z-.]` characters, so interpolating it into
-/// artifact URLs can never break out of the path segment — unlike the raw
-/// server-provided string that was previously used verbatim.
 fn parse_version(raw: &str) -> Result<Version> {
     let trimmed = raw.trim().trim_start_matches('v');
     Version::parse(trimmed).with_context(|| format!("invalid semantic version: {raw:?}"))
 }
 
-/// Fetch the latest published version from GitHub Releases and validate it.
 async fn fetch_latest_version() -> Result<Version> {
-    #[derive(serde::Deserialize)]
-    struct GithubLatestRelease {
-        tag_name: String,
-    }
-
-    let response = crate::core::http::shared_client()
-        .get(GITHUB_API_LATEST_RELEASE)
-        .send()
-        .await
-        .context("Failed to check for updates")?;
-    if !response.status().is_success() {
-        anyhow::bail!("Failed to fetch version info: {}", response.status());
-    }
-    let body = response
-        .text()
-        .await
-        .context("Failed to read GitHub latest-release response body")?;
-    let release: GithubLatestRelease =
-        serde_json::from_str(&body).context("GitHub latest-release metadata was not valid JSON")?;
-    parse_version(&release.tag_name).context("GitHub latest-release tag was not valid semver")
+    let safe_url = crate::core::http::redact_url(LATEST_VERSION_URL);
+    let response = send_get(LATEST_VERSION_URL, &safe_url).await?;
+    let body = read_bounded_body(response, MAX_LATEST_VERSION_BYTES, &safe_url).await?;
+    LatestVersion::parse(&body).map(LatestVersion::into_version)
 }
 
-/// The `(arch, target)` fragment of the artifacts built by
-/// `.github/workflows/release.yml`, for each distro this updater supports.
-///
-/// Returns `None` when no matching artifact exists.
+async fn read_bounded_body(
+    response: reqwest::Response,
+    max: usize,
+    safe_url: &str,
+) -> Result<String> {
+    let mut body = Vec::new();
+    let mut stream = response.bytes_stream();
+    while let Some(item) = stream.next().await {
+        let chunk =
+            item.with_context(|| format!("Failed to read response body from {safe_url}"))?;
+        if body.len().saturating_add(chunk.len()) > max {
+            anyhow::bail!("response body from {safe_url} exceeded the {max} byte bound");
+        }
+        body.extend_from_slice(&chunk);
+    }
+    String::from_utf8(body)
+        .with_context(|| format!("response body from {safe_url} was not UTF-8 text"))
+}
+
+async fn send_get(url: &str, safe_url: &str) -> Result<reqwest::Response> {
+    let response = crate::core::http::shared_client()
+        .get(url)
+        .send()
+        .await
+        .with_context(|| format!("Failed to fetch {safe_url}"))?;
+    if !response.status().is_success() {
+        anyhow::bail!("Request failed: {} ({safe_url})", response.status());
+    }
+    Ok(response)
+}
+
 fn release_target(distro: Distro) -> Option<(&'static str, &'static str)> {
     let arch = match std::env::consts::ARCH {
         "x86_64" => "x86_64",
@@ -303,7 +318,6 @@ fn release_target(distro: Distro) -> Option<(&'static str, &'static str)> {
     }
 }
 
-/// Select the release artifact for the running platform.
 fn release_artifact(version: &Version) -> Result<ReleaseArtifact> {
     let Some((release_arch, target)) = release_target(detect_distro()) else {
         anyhow::bail!(
@@ -319,38 +333,26 @@ fn release_artifact(version: &Version) -> Result<ReleaseArtifact> {
         );
     }
     Ok(ReleaseArtifact {
-        tag: format!("v{version}"),
-        file_name: format!("omg-v{version}-{release_arch}-{target}.tar.gz"),
+        version: version.clone(),
+        arch: release_arch,
+        target,
     })
 }
 
-/// Fetch the pinned SHA-256 digest for the artifact from its sidecar file.
+async fn fetch_release_archive(artifact: &ReleaseArtifact) -> Result<Vec<u8>> {
+    let archive_url = artifact.archive_url();
+    let checksum_url = format!("{archive_url}.sha256");
+    let expected_digest = fetch_checksum(&checksum_url).await?;
+    download_verified(&archive_url, artifact.object_name(), &expected_digest).await
+}
+
 async fn fetch_checksum(url: &str) -> Result<String> {
     let safe_url = crate::core::http::redact_url(url);
-    let response = crate::core::http::shared_client()
-        .get(url)
-        .send()
-        .await
-        .with_context(|| format!("Failed to fetch checksum sidecar {safe_url}"))?;
-    if !response.status().is_success() {
-        anyhow::bail!(
-            "Checksum sidecar request failed: {} ({safe_url})",
-            response.status()
-        );
-    }
-    let body = response
-        .text()
-        .await
-        .context("Failed to read checksum sidecar body")?;
+    let response = send_get(url, &safe_url).await?;
+    let body = read_bounded_body(response, MAX_CHECKSUM_BYTES, &safe_url).await?;
     parse_checksum(&body)
 }
 
-/// Parse a `sha256sum`-style sidecar (`<hex>  <file name>`) into the pinned
-/// lowercase-hex SHA-256 digest.
-///
-/// CI emits these with `sha256sum` (Linux), `shasum -a 256` (macOS), and
-/// `Get-FileHash` (Windows, which writes CRLF line endings), so `\r` and
-/// case differences must be tolerated.
 fn parse_checksum(body: &str) -> Result<String> {
     let line = body
         .lines()
@@ -367,11 +369,16 @@ fn parse_checksum(body: &str) -> Result<String> {
     Ok(digest.to_ascii_lowercase())
 }
 
-/// Stream `url` into memory while hashing it, enforcing the download size
-/// cap, then verify the pinned digest before the bytes reach extraction.
-///
-/// Fails closed: any mismatch aborts the update instead of installing
-/// unverified bytes.
+fn check_download_size(streamed: usize, chunk: usize) -> Result<()> {
+    if streamed.saturating_add(chunk) > MAX_DOWNLOAD_BYTES {
+        anyhow::bail!(
+            "Update download exceeded the {} MiB size cap",
+            MAX_DOWNLOAD_BYTES / (1024 * 1024)
+        );
+    }
+    Ok(())
+}
+
 async fn download_verified(
     url: &str,
     archive_name: String,
@@ -387,9 +394,6 @@ async fn download_verified(
         anyhow::bail!("Update download failed: {} ({safe_url})", response.status());
     }
 
-    // Preallocate from Content-Length only up to the prealloc cap, so a
-    // hostile or buggy server cannot force a huge allocation up front; the
-    // hard cap below still bounds streaming growth.
     let prealloc = response
         .content_length()
         .and_then(|len| usize::try_from(len).ok())
@@ -409,12 +413,7 @@ async fn download_verified(
     let mut stream = response.bytes_stream();
     while let Some(item) = stream.next().await {
         let chunk = item.context("Failed to read update download chunk")?;
-        if bytes.len() + chunk.len() > MAX_DOWNLOAD_BYTES {
-            anyhow::bail!(
-                "Update download exceeded the {} MiB size cap",
-                MAX_DOWNLOAD_BYTES / (1024 * 1024)
-            );
-        }
+        check_download_size(bytes.len(), chunk.len())?;
         hasher.update(&chunk);
         bytes.extend_from_slice(&chunk);
         task.inc(chunk.len() as u64);
@@ -431,24 +430,6 @@ async fn download_verified(
     Ok(bytes)
 }
 
-/// Verify the Sigstore build-provenance attestation of `archive_path` using
-/// the GitHub CLI (`gh attestation verify`).
-///
-/// Release archives carry SLSA provenance attestations generated by GitHub
-/// Actions (see `release.yml`); verifying them proves the archive was built
-/// by this repository's CI at the pinned commit — closing the trust gap where
-/// a compromise of the release bucket could rewrite both binaries and
-/// checksum sidecars together.
-///
-/// Returns `Ok(true)` when the attestation verified, `Ok(false)` when no
-/// attestation-capable tool (`gh`) is installed locally, and an error when an
-/// attestation tool IS present but rejects the archive (fail closed).
-///
-/// # Errors
-///
-/// Returns an error when `gh` is installed and the attestation does not
-/// verify (tampered or non-CI-built archive), or when `gh` itself fails to
-/// execute the verification.
 fn verify_attestation(archive_path: &std::path::Path) -> Result<bool> {
     let output = std::process::Command::new("gh")
         .args(["attestation", "verify"])
@@ -574,6 +555,86 @@ mod tests {
     }
 
     #[test]
+    fn latest_version_parses_bare_semver_marker_text() {
+        let expected = Version::new(1, 2, 3);
+        assert_eq!(
+            LatestVersion::parse("1.2.3")
+                .expect("bare semver must parse")
+                .into_version(),
+            expected
+        );
+        assert_eq!(
+            LatestVersion::parse("  1.2.3\n")
+                .expect("surrounding whitespace must be tolerated")
+                .into_version(),
+            expected
+        );
+        assert_eq!(
+            LatestVersion::parse("1.2.3-rc.1+b5")
+                .expect("pre-release must parse")
+                .into_version(),
+            Version::parse("1.2.3-rc.1+b5").expect("baseline pre-release")
+        );
+    }
+
+    #[test]
+    fn latest_version_rejects_malformed_and_hostile_marker_bodies() {
+        for raw in [
+            "",
+            "   \n\n",
+            "v1.2.3",
+            "V1.2.3",
+            "not-a-version",
+            "1.2",
+            "1.2.3.4",
+            "1.2.3/../../evil",
+            "https://evil.example/1.2.3",
+        ] {
+            assert!(
+                LatestVersion::parse(raw).is_err(),
+                "marker body {raw:?} must be rejected"
+            );
+        }
+    }
+
+    #[test]
+    fn latest_version_rejects_marker_bodies_beyond_the_byte_bound() {
+        let padded = format!("1.2.3\n{}", " ".repeat(MAX_LATEST_VERSION_BYTES));
+        assert!(padded.len() > MAX_LATEST_VERSION_BYTES);
+        assert!(LatestVersion::parse(&padded).is_err());
+    }
+
+    #[test]
+    fn release_artifact_names_match_the_github_release_asset_contract() {
+        let artifact = ReleaseArtifact {
+            version: Version::parse("1.2.3").expect("baseline version"),
+            arch: "x86_64",
+            target: "linux-arch",
+        };
+        assert_eq!(
+            artifact.object_name(),
+            "omg-v1.2.3-x86_64-linux-arch.tar.gz"
+        );
+        assert_eq!(
+            artifact.archive_url(),
+            "https://releases.omg.latham.cloud/omg-v1.2.3-x86_64-linux-arch.tar.gz"
+        );
+    }
+
+    #[test]
+    fn release_artifact_names_include_pre_release_and_build_metadata() {
+        let artifact = ReleaseArtifact {
+            version: Version::parse("1.2.3-rc.1+b5").expect("baseline pre-release"),
+            arch: "aarch64",
+            target: "darwin",
+        };
+        assert_eq!(
+            artifact.object_name(),
+            "omg-v1.2.3-rc.1+b5-aarch64-darwin.tar.gz"
+        );
+    }
+
+    #[test]
     fn parse_checksum_accepts_sha256sum_sidecar_format() {
         let digest = "a".repeat(64);
         let body = format!("{digest}  omg-v1.2.3-x86_64-linux-arch.tar.gz\n");
@@ -621,6 +682,14 @@ mod tests {
             parse_checksum(&format!("{}  omg.tar.gz", "a".repeat(63))).is_err(),
             "truncated digests must be rejected"
         );
+    }
+
+    #[test]
+    fn download_size_accepts_the_limit_and_rejects_larger_payloads() {
+        assert!(check_download_size(MAX_DOWNLOAD_BYTES, 0).is_ok());
+        assert!(check_download_size(MAX_DOWNLOAD_BYTES - 1, 1).is_ok());
+        assert!(check_download_size(MAX_DOWNLOAD_BYTES, 1).is_err());
+        assert!(check_download_size(usize::MAX, 1).is_err());
     }
 
     #[test]

@@ -31,8 +31,8 @@ jobs:
   #
   # release.yml triggers independently of ci.yml, so without this job a tag
   # could be published while CI is red. Publishing is only allowed for a
-  # commit that already has a *successful* CI run. The only bypass is a pure
-  # no-op dry run via workflow_dispatch.
+  # commit with successful CI and benchmark runs. Non-publishing dry runs
+  # bypass this gate; existing-tag sync uses the published release path.
   # ════════════════════════════════════════════════════════════════════════════
   gate-on-ci:
     name: "Gate on CI"
@@ -51,9 +51,10 @@ jobs:
       - name: Require successful CI and benchmark runs for this commit
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          DRY_RUN: ${{ inputs.dry_run }}
         run: |
-          if [[ "$GITHUB_EVENT_NAME" == "workflow_dispatch" && "${{ inputs.dry_run }}" == "true" ]]; then
-            echo "No-op dry run requested"
+          if [[ "$GITHUB_EVENT_NAME" == "workflow_dispatch" && "$DRY_RUN" == "true" ]]; then
+            echo "Dry run requested; publication disabled"
             exit 0
           fi
 
@@ -405,7 +406,12 @@ jobs:
           EXPECTED_COMMIT: ${{ github.sha }}
           RELEASE_TAG: v${{ steps.release_notes.outputs.version }}
         run: |
-          tag_commit=$(git ls-remote origin "refs/tags/$RELEASE_TAG" | awk '{print $1}')
+          tag_commit=$(git ls-remote origin "refs/tags/$RELEASE_TAG" "refs/tags/$RELEASE_TAG^{}" |
+            awk -v ref="refs/tags/$RELEASE_TAG" '
+              $2 == ref { direct = $1 }
+              $2 == ref "^{}" { peeled = $1 }
+              END { print (peeled != "" ? peeled : direct) }
+            ')
           if [[ "$tag_commit" != "$EXPECTED_COMMIT" ]]; then
             echo "::error::Expected $RELEASE_TAG to identify $EXPECTED_COMMIT, got ${tag_commit:-missing}"
             exit 1
@@ -436,13 +442,8 @@ jobs:
     if: >-
       ${{
         always() &&
-        (
-          (github.event_name == 'workflow_dispatch' && inputs.sync_existing_tag != '') ||
-          (
-            needs.release.result == 'success' &&
-            (github.event_name == 'push' || (github.event_name == 'workflow_dispatch' && inputs.dry_run == 'false'))
-          )
-        )
+        (github.event_name == 'push' || (github.event_name == 'workflow_dispatch' && inputs.dry_run == 'false')) &&
+        (inputs.sync_existing_tag != '' || needs.release.result == 'success')
       }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -541,7 +542,8 @@ jobs:
             content_type="application/octet-stream"
             "$WRANGLER" r2 object put "omg-releases/$basename" --remote \
               --file="$artifact" \
-              --content-type="$content_type"
+              --content-type="$content_type" \
+              --cache-control="public, max-age=31536000, immutable"
             echo "✓ Uploaded $basename"
           done
 
@@ -550,7 +552,8 @@ jobs:
             basename=$(basename "$checksum")
             "$WRANGLER" r2 object put "omg-releases/$basename" --remote \
               --file="$checksum" \
-              --content-type="text/plain"
+              --content-type="text/plain" \
+              --cache-control="public, max-age=31536000, immutable"
             echo "✓ Uploaded $basename"
           done
 
@@ -602,5 +605,6 @@ jobs:
           echo -n "$VERSION" > release/latest-version
           "$WRANGLER" r2 object put "omg-releases/latest-version" --remote \
             --file=release/latest-version \
-            --content-type="text/plain"
+            --content-type="text/plain" \
+            --cache-control="no-store"
           echo "✓ Updated latest-version → $VERSION"
