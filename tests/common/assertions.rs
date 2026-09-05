@@ -6,6 +6,28 @@
 
 use super::CommandResult;
 
+/// Assert normal CLI completion, without requiring command success.
+///
+/// These input-robustness tests allow success/help (0), an application error
+/// from `src/bin/omg.rs::finish` (1), or a clap argument error (2). They do not
+/// run arbitrary child commands whose exit statuses would need another policy.
+/// A signal (-1 in `CommandResult`), Rust panic (101 or panic output), or the
+/// harness timeout marker must fail even if another field looks successful.
+pub fn assert_process_completed(result: &CommandResult) {
+    assert!(
+        !result.stderr.contains("[test harness timeout]"),
+        "Command timed out: {result:?}"
+    );
+    assert!(
+        matches!(result.exit_code, 0..=2),
+        "Command did not complete with an ordinary CLI exit code (0, 1, or 2): {result:?}"
+    );
+    assert!(
+        !result.contains("panicked at"),
+        "Command emitted a Rust panic diagnostic: {result:?}"
+    );
+}
+
 /// Assert that a package search succeeds and lists every expected package.
 pub fn assert_search_results(result: &CommandResult, expected_packages: &[&str]) {
     result.assert_success();
