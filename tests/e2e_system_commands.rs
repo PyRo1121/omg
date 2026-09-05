@@ -105,24 +105,28 @@ fn test_config_get_specific_value() {
 
 // Contract pinned at src/cli/config.rs:43-136 and 13-39: `config set` accepts
 // the whitelisted key `telemetry.enabled`, persists it via Settings::save, and
-// `config get telemetry.enabled` prints exactly the stored boolean. The old
-// version used 'test.key' (not writable → set failed) and nested `if success`
-// guards so it passed without proving anything.
+// `config get telemetry.enabled` prints exactly the stored boolean. Use true
+// rather than the default false so a lost write cannot pass. The runner keeps
+// telemetry transport disabled separately with OMG_DISABLE_TELEMETRY=1.
 #[test]
 fn test_config_set_and_get() {
     init_test_env();
 
     let project = TestProject::new();
 
-    let set_result = project.run(&["config", "set", "telemetry.enabled", "false"]);
+    let default_result = project.run(&["config", "get", "telemetry.enabled"]);
+    default_result.assert_success();
+    assert_eq!(default_result.stdout.trim(), "false");
+
+    let set_result = project.run(&["config", "set", "telemetry.enabled", "true"]);
     set_result.assert_success();
 
     let get_result = project.run(&["config", "get", "telemetry.enabled"]);
     get_result.assert_success();
     assert_eq!(
         get_result.stdout.trim(),
-        "false",
-        "config get must return the persisted value"
+        "true",
+        "config get must return the persisted non-default value"
     );
 }
 
@@ -453,12 +457,27 @@ fn test_init_in_project() {
 
     let project = TestProject::new();
 
-    let result = project.run(&["init"]);
+    let shell_config = project.home_dir.path().join(".bashrc");
+    assert!(
+        !shell_config.exists(),
+        "Test home must start without a bashrc"
+    );
 
-    // Non-interactive terminals fall through to run_defaults(), which finishes
-    // with the completion banner (src/cli/init.rs:327-332).
+    let result = project.run_with_env(&["init"], &[("SHELL", "/bin/bash")]);
+
+    // Null stdin selects run_defaults without prompting or touching host HOME.
     result.assert_success();
     result.assert_stdout_contains("Setup complete!");
+    let content = std::fs::read_to_string(&shell_config)
+        .expect("init must write shell configuration inside the isolated HOME");
+    assert!(content.contains(r#"eval "$(omg hook bash)""#), "{content}");
+    assert!(!project.path().join(".bashrc").exists());
+
+    // A second invocation must see the same home and leave the hook unchanged.
+    let repeated = project.run_with_env(&["init"], &[("SHELL", "/bin/bash")]);
+    repeated.assert_success();
+    repeated.assert_stdout_contains("already installed");
+    assert_eq!(std::fs::read_to_string(&shell_config).unwrap(), content);
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
@@ -638,15 +657,15 @@ fn test_workflow_config_set_and_list() {
 
     let project = TestProject::new();
 
-    // Set a config value
-    let set_result = project.run(&["config", "set", "telemetry.enabled", "false"]);
+    // Persist a non-default value; transport remains disabled by the runner.
+    let set_result = project.run(&["config", "set", "telemetry.enabled", "true"]);
     set_result.assert_success();
 
     let list_result = project.run(&["config", "list"]);
     list_result.assert_success();
 
     assert!(
-        list_result.stdout.contains("telemetry.enabled = false"),
+        list_result.stdout.contains("telemetry.enabled = true"),
         "Config list must reflect the persisted value: {}",
         list_result.stdout
     );
