@@ -201,10 +201,10 @@ mod dnf_integration {
     }
 
     #[test]
-    fn size_cli_does_not_hide_excluded_installed_packages() -> Result<()> {
+    fn installed_metadata_does_not_hide_excluded_packages() -> Result<()> {
         use std::os::unix::fs::PermissionsExt;
 
-        if common::TestConfig::default().skip_if_no_system("dnf_size_exclusions") {
+        if common::TestConfig::default().skip_if_no_system("dnf_installed_metadata_exclusions") {
             common::report_skip("system tests disabled (set OMG_RUN_SYSTEM_TESTS=1)");
             return Ok(());
         }
@@ -225,22 +225,26 @@ mod dnf_integration {
             hidden.stdout.is_empty(),
             "exclusion fixture must hide glibc from ordinary queries"
         );
-        let installed = std::process::Command::new("rpm")
-            .args(["-qa", "--qf", "%{NAME}\n"])
-            .output()?;
-        assert!(installed.status.success());
-        let count = String::from_utf8(installed.stdout)?
-            .lines()
-            .filter(|name| *name != "gpg-pubkey")
-            .count();
+        let selector = format!("glibc.{}", std::env::consts::ARCH);
         let inherited = std::env::var_os("PATH").expect("native command PATH");
         let path = std::env::join_paths(
             std::iter::once(fixture.path().to_path_buf()).chain(std::env::split_paths(&inherited)),
         )?;
         for arguments in [
             vec!["size", "--limit", "0"],
-            vec!["size", "--tree", "glibc"],
+            vec!["size", "--tree", &selector],
+            vec!["why", &selector],
+            vec!["why", "--reverse", &selector],
         ] {
+            let baseline = std::process::Command::new(assert_cmd::cargo::cargo_bin!("omg"))
+                .env("NO_COLOR", "1")
+                .args(&arguments)
+                .output()?;
+            assert!(
+                baseline.status.success(),
+                "{}",
+                String::from_utf8_lossy(&baseline.stderr)
+            );
             let output = std::process::Command::new(assert_cmd::cargo::cargo_bin!("omg"))
                 .env("PATH", &path)
                 .env("NO_COLOR", "1")
@@ -251,14 +255,106 @@ mod dnf_integration {
                 "{}",
                 String::from_utf8_lossy(&output.stderr)
             );
-            if arguments[1] == "--limit" {
-                assert!(
-                    String::from_utf8(output.stdout)?
-                        .contains(&format!("Number of Packages: {count}"))
-                );
-            }
+            assert_eq!(
+                baseline.stdout, output.stdout,
+                "exclusions changed {arguments:?}"
+            );
         }
         fixture.close()?;
+        Ok(())
+    }
+
+    #[test]
+    fn why_cli_matches_native_reasons_and_reverse_requirements() -> Result<()> {
+        if common::TestConfig::default().skip_if_no_system("dnf_why_cli") {
+            common::report_skip("system tests disabled (set OMG_RUN_SYSTEM_TESTS=1)");
+            return Ok(());
+        }
+        let selector = format!("glibc.{}", std::env::consts::ARCH);
+        #[expect(
+            clippy::literal_string_with_formatting_args,
+            reason = "DNF interprets these query placeholders, not Rust"
+        )]
+        let format = "%{full_nevra}\t%{reason}\n";
+        let native = std::process::Command::new("dnf")
+            .args([
+                "--setopt=disable_excludes=*",
+                "repoquery",
+                "--installed",
+                "--qf",
+                format,
+                &selector,
+            ])
+            .output()?;
+        assert!(native.status.success());
+        let native = String::from_utf8(native.stdout)?;
+        assert_eq!(native.lines().count(), 1);
+        let (identity, reason) = native
+            .trim_end_matches('\n')
+            .split_once('\t')
+            .expect("native installation reason");
+        let binary = assert_cmd::cargo::cargo_bin!("omg");
+        let output = std::process::Command::new(binary)
+            .env("NO_COLOR", "1")
+            .args(["why", &selector])
+            .output()?;
+        assert!(
+            output.status.success(),
+            "{}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        let output = String::from_utf8(output.stdout)?;
+        assert!(output.contains(identity));
+        assert!(output.contains(&format!("Reason: {reason}")));
+        let native = std::process::Command::new("dnf")
+            .args([
+                "--setopt=disable_excludes=*",
+                "repoquery",
+                "--installed",
+                "--qf",
+                format,
+                &format!("--whatrequires={selector}"),
+            ])
+            .output()?;
+        assert!(native.status.success());
+        let native = String::from_utf8(native.stdout)?;
+        let expected: Vec<_> = native
+            .lines()
+            .map(|line| line.split_once('\t').expect("native dependent"))
+            .filter(|(name, _)| *name != identity)
+            .collect();
+        let output = std::process::Command::new(binary)
+            .env("NO_COLOR", "1")
+            .args(["why", "--reverse", &selector])
+            .output()?;
+        assert!(
+            output.status.success(),
+            "{}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        let output = String::from_utf8(output.stdout)?;
+        for (identity, reason) in &expected {
+            assert!(
+                output.contains(&format!("{identity}: {reason}")),
+                "missing {identity}"
+            );
+        }
+        assert!(
+            !expected.is_empty(),
+            "glibc fixture must have native requiring packages"
+        );
+        assert!(output.contains(&format!("Dependents ({})", expected.len())));
+        assert!(!output.contains("Safe to remove:"));
+        for arguments in [
+            vec!["why", "omg-no-such-package"],
+            vec!["why", "--reverse", "omg-no-such-package"],
+        ] {
+            let output = std::process::Command::new(binary)
+                .args(arguments)
+                .output()?;
+            assert!(!output.status.success());
+            assert!(String::from_utf8_lossy(&output.stderr).contains("is not installed"));
+        }
         Ok(())
     }
 

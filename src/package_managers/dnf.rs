@@ -72,6 +72,7 @@ enum RepositoryQuery<'a> {
     Upgrades,
     Unneeded,
     InstalledSizes(InstalledSizeQuery<'a>),
+    InstalledReasons(InstalledReasonQuery<'a>),
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -79,6 +80,18 @@ pub(crate) enum InstalledSizeQuery<'a> {
     All,
     Package(&'a str),
     RequirementProviders(&'a str),
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum InstalledReasonQuery<'a> {
+    Package(&'a str),
+    RequiredBy(&'a str),
+}
+
+#[derive(Debug)]
+pub(crate) struct InstalledPackageReason {
+    pub(crate) identity: String,
+    pub(crate) reason: String,
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -523,6 +536,41 @@ impl DnfPackageManager {
             .collect()
     }
 
+    pub(crate) async fn installed_package_reasons(
+        query: InstalledReasonQuery<'_>,
+    ) -> Result<Vec<InstalledPackageReason>> {
+        let output = Self::repository_output(RepositoryQuery::InstalledReasons(query)).await?;
+        Self::parse_installed_reasons(&output)
+    }
+
+    fn parse_installed_reasons(output: &[u8]) -> Result<Vec<InstalledPackageReason>> {
+        let text = std::str::from_utf8(output).context("DNF installed reasons are not UTF-8")?;
+        text.lines()
+            .map(|line| {
+                let (identity, reason) = line
+                    .split_once('\t')
+                    .context("DNF reason row must contain identity and reason")?;
+                anyhow::ensure!(
+                    !identity.is_empty()
+                        && !identity
+                            .chars()
+                            .any(|ch| ch.is_whitespace() || ch.is_control()),
+                    "DNF reason row has an invalid package identity"
+                );
+                anyhow::ensure!(
+                    !reason.is_empty()
+                        && reason.trim() == reason
+                        && !reason.chars().any(char::is_control),
+                    "DNF reason row has an invalid installation reason"
+                );
+                Ok(InstalledPackageReason {
+                    identity: identity.to_owned(),
+                    reason: reason.to_owned(),
+                })
+            })
+            .collect()
+    }
+
     async fn repository_output(query: RepositoryQuery<'_>) -> Result<Vec<u8>> {
         use tokio::io::AsyncReadExt;
 
@@ -535,16 +583,24 @@ impl DnfPackageManager {
             let query_format = match query {
                 RepositoryQuery::Available(_) => "%{name}\t%{evr}\t%{summary}\n",
                 RepositoryQuery::InstalledSizes(_) => "%{full_nevra}\t%{installsize}\n",
-                _ => "%{name}\t%{arch}\t%{evr}\t%{repoid}\n",
+                RepositoryQuery::InstalledReasons(_) => "%{full_nevra}\t%{reason}\n",
+                RepositoryQuery::Installed
+                | RepositoryQuery::Upgrades
+                | RepositoryQuery::Unneeded => "%{name}\t%{arch}\t%{evr}\t%{repoid}\n",
             };
             let selection = match query {
                 RepositoryQuery::Available(_) => "--available",
-                RepositoryQuery::Installed | RepositoryQuery::InstalledSizes(_) => "--installed",
+                RepositoryQuery::Installed
+                | RepositoryQuery::InstalledSizes(_)
+                | RepositoryQuery::InstalledReasons(_) => "--installed",
                 RepositoryQuery::Upgrades => "--upgrades",
                 RepositoryQuery::Unneeded => "--unneeded",
             };
             let mut command = tokio::process::Command::new("dnf");
-            if matches!(query, RepositoryQuery::InstalledSizes(_)) {
+            if matches!(
+                query,
+                RepositoryQuery::InstalledSizes(_) | RepositoryQuery::InstalledReasons(_)
+            ) {
                 command.arg("--setopt=disable_excludes=*");
             }
             command
@@ -567,7 +623,8 @@ impl DnfPackageManager {
             }
             let package = match query {
                 RepositoryQuery::Available(package) => package,
-                RepositoryQuery::InstalledSizes(InstalledSizeQuery::Package(package)) => {
+                RepositoryQuery::InstalledSizes(InstalledSizeQuery::Package(package))
+                | RepositoryQuery::InstalledReasons(InstalledReasonQuery::Package(package)) => {
                     Some(package)
                 }
                 RepositoryQuery::InstalledSizes(InstalledSizeQuery::RequirementProviders(
@@ -576,7 +633,15 @@ impl DnfPackageManager {
                     command.arg("--providers-of=requires");
                     Some(package)
                 }
-                _ => None,
+                RepositoryQuery::InstalledReasons(InstalledReasonQuery::RequiredBy(package)) => {
+                    crate::core::security::validate_package_name(package)?;
+                    command.arg(format!("--whatrequires={package}"));
+                    None
+                }
+                RepositoryQuery::Installed
+                | RepositoryQuery::Upgrades
+                | RepositoryQuery::Unneeded
+                | RepositoryQuery::InstalledSizes(InstalledSizeQuery::All) => None,
             };
             if let Some(name) = package {
                 crate::core::security::validate_package_name(name)?;
@@ -1012,6 +1077,49 @@ mod tests {
                 "accepted {malformed:?}"
             );
         }
+    }
+
+    #[test]
+    fn installed_reasons_preserve_native_classifications() {
+        let rows = DnfPackageManager::parse_installed_reasons(b"a-0:1-1.noarch\tGroup\nb-1:2-1.x86_64\tExternal User\nc-0:3-1.i686\tWeak Dependency\n").expect("native reason rows");
+        assert_eq!(rows.len(), 3);
+        assert_eq!(rows[1].identity, "b-1:2-1.x86_64");
+        assert_eq!(rows[1].reason, "External User");
+        assert_eq!(rows[2].reason, "Weak Dependency");
+        assert!(
+            DnfPackageManager::parse_installed_reasons(b"")
+                .expect("empty result")
+                .is_empty()
+        );
+    }
+
+    #[test]
+    fn installed_reasons_reject_malformed_rows() {
+        for row in [
+            b"a".as_slice(),
+            b"\tUser",
+            b"a\t",
+            b"a\t User",
+            b"a\tUser\textra",
+            b"a\tUser\x1b",
+            b"a b\tUser",
+            b"\xff\tUser",
+        ] {
+            assert!(
+                DnfPackageManager::parse_installed_reasons(row).is_err(),
+                "accepted {row:?}"
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn reverse_reason_query_rejects_option_injection() {
+        let error = DnfPackageManager::installed_package_reasons(InstalledReasonQuery::RequiredBy(
+            "--help",
+        ))
+        .await
+        .expect_err("invalid package operand");
+        assert!(error.to_string().contains("cannot start with '-'"));
     }
 
     #[tokio::test]

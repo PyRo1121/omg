@@ -1384,7 +1384,7 @@ async fn dispatch_command(command: &Commands, ctx: &omg_lib::cli::CliContext) ->
             handle_init_command(*defaults, *skip_shell, *skip_daemon).await?;
         }
         Commands::Why { package, reverse } => {
-            why::run(package, *reverse)?;
+            why::run(package, *reverse).await?;
         }
         Commands::Outdated => {
             outdated::run(ctx.json).await?;

@@ -52,6 +52,22 @@ Fedora CLI coverage or repair an already published artifact.
 DNF5 documents [provider queries](https://dnf5.readthedocs.io/en/latest/commands/repoquery.8.html)
 and [exclusion configuration](https://dnf5.readthedocs.io/en/latest/dnf5.conf.5.html).
 
+## Recorded installation reasons
+
+`omg why PACKAGE` displays DNF5's recorded reason for a specific installed build.
+It preserves labels such as `Group`, `User`, `Weak Dependency`, and `External User`.
+It does not infer an account identity or reconstruct the original transaction.
+
+`omg why --reverse PACKAGE` lists other installed packages whose direct
+requirements match that package through DNF5's native provider resolution. Each
+entry retains its full identity and native installation reason. Current
+requirements are not proof of historical cause or removal safety.
+
+Both modes reject missing or ambiguous package selectors. These installed-fact
+queries ignore exclusion filters without changing transaction policy. Reason-only
+mode does not load reverse requirements. Terminal commands are constructed after
+native asynchronous queries have finished.
+
 ## Future index build order
 
 S1. Correct the raw-Rust database-header reader using zerocopy views and a
