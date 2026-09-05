@@ -31,6 +31,18 @@ OMG is the fastest unified package manager for Linux, replacing pacman, yay, nvm
 - Record v0.1.218 verification [skip ci]
 ### 🧪 Testing
 
+- **Aur**: Make sandbox cancellation fixture Docker-safe
+
+The required CI gate failed because the ignored regression bound the
+
+whole host root. A read-only /dev makes bash `cmd &` fail opening
+
+/dev/null. Bind the same system paths production uses, keep host /proc
+
+for the pidfd check, and include the build log when the sandbox exits
+
+before readiness.
+
 - **Cli**: Make command contracts structural
 ## [0.1.218] - 2026-09-04
 ### 🐛 Bug Fixes
