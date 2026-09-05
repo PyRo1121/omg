@@ -73,6 +73,7 @@ enum RepositoryQuery<'a> {
     Unneeded,
     InstalledSizes(InstalledSizeQuery<'a>),
     InstalledReasons(InstalledReasonQuery<'a>),
+    InstalledDetails(&'a str),
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -90,6 +91,14 @@ pub(crate) enum InstalledReasonQuery<'a> {
 
 #[derive(Debug)]
 pub(crate) struct InstalledPackageReason {
+    pub(crate) identity: String,
+    pub(crate) reason: String,
+}
+
+#[derive(Debug)]
+pub(crate) struct InstalledPackageDetails {
+    pub(crate) name: String,
+    pub(crate) version: String,
     pub(crate) identity: String,
     pub(crate) reason: String,
 }
@@ -571,6 +580,45 @@ impl DnfPackageManager {
             .collect()
     }
 
+    pub(crate) async fn installed_package_details(
+        package: &str,
+    ) -> Result<Vec<InstalledPackageDetails>> {
+        let output = Self::repository_output(RepositoryQuery::InstalledDetails(package)).await?;
+        Self::parse_installed_details(&output)
+    }
+
+    fn parse_installed_details(output: &[u8]) -> Result<Vec<InstalledPackageDetails>> {
+        let text = std::str::from_utf8(output).context("DNF installed details are not UTF-8")?;
+        text.lines()
+            .map(|line| {
+                let fields: Vec<_> = line.split('\t').take(5).collect();
+                anyhow::ensure!(
+                    fields.len() == 4,
+                    "DNF installed details require four fields"
+                );
+                anyhow::ensure!(
+                    fields[..3].iter().all(|field| !field.is_empty()
+                        && !field
+                            .chars()
+                            .any(|ch| ch.is_whitespace() || ch.is_control())),
+                    "Invalid DNF installed identity fields"
+                );
+                anyhow::ensure!(
+                    !fields[3].is_empty()
+                        && fields[3].trim() == fields[3]
+                        && !fields[3].chars().any(char::is_control),
+                    "Invalid DNF installed reason"
+                );
+                Ok(InstalledPackageDetails {
+                    name: fields[0].to_owned(),
+                    version: fields[1].to_owned(),
+                    identity: fields[2].to_owned(),
+                    reason: fields[3].to_owned(),
+                })
+            })
+            .collect()
+    }
+
     async fn repository_output(query: RepositoryQuery<'_>) -> Result<Vec<u8>> {
         use tokio::io::AsyncReadExt;
 
@@ -584,6 +632,9 @@ impl DnfPackageManager {
                 RepositoryQuery::Available(_) => "%{name}\t%{evr}\t%{summary}\n",
                 RepositoryQuery::InstalledSizes(_) => "%{full_nevra}\t%{installsize}\n",
                 RepositoryQuery::InstalledReasons(_) => "%{full_nevra}\t%{reason}\n",
+                RepositoryQuery::InstalledDetails(_) => {
+                    "%{name}\t%{evr}\t%{full_nevra}\t%{reason}\n"
+                }
                 RepositoryQuery::Installed
                 | RepositoryQuery::Upgrades
                 | RepositoryQuery::Unneeded => "%{name}\t%{arch}\t%{evr}\t%{repoid}\n",
@@ -592,14 +643,17 @@ impl DnfPackageManager {
                 RepositoryQuery::Available(_) => "--available",
                 RepositoryQuery::Installed
                 | RepositoryQuery::InstalledSizes(_)
-                | RepositoryQuery::InstalledReasons(_) => "--installed",
+                | RepositoryQuery::InstalledReasons(_)
+                | RepositoryQuery::InstalledDetails(_) => "--installed",
                 RepositoryQuery::Upgrades => "--upgrades",
                 RepositoryQuery::Unneeded => "--unneeded",
             };
             let mut command = tokio::process::Command::new("dnf");
             if matches!(
                 query,
-                RepositoryQuery::InstalledSizes(_) | RepositoryQuery::InstalledReasons(_)
+                RepositoryQuery::InstalledSizes(_)
+                    | RepositoryQuery::InstalledReasons(_)
+                    | RepositoryQuery::InstalledDetails(_)
             ) {
                 command.arg("--setopt=disable_excludes=*");
             }
@@ -624,9 +678,8 @@ impl DnfPackageManager {
             let package = match query {
                 RepositoryQuery::Available(package) => package,
                 RepositoryQuery::InstalledSizes(InstalledSizeQuery::Package(package))
-                | RepositoryQuery::InstalledReasons(InstalledReasonQuery::Package(package)) => {
-                    Some(package)
-                }
+                | RepositoryQuery::InstalledReasons(InstalledReasonQuery::Package(package))
+                | RepositoryQuery::InstalledDetails(package) => Some(package),
                 RepositoryQuery::InstalledSizes(InstalledSizeQuery::RequirementProviders(
                     package,
                 )) => {
@@ -1120,6 +1173,26 @@ mod tests {
         .await
         .expect_err("invalid package operand");
         assert!(error.to_string().contains("cannot start with '-'"));
+    }
+
+    #[test]
+    fn installed_details_preserve_canonical_names_and_native_versions() {
+        let rows = DnfPackageManager::parse_installed_details(
+            b"a\t2:1.0-3\ta-2:1.0-3.x86_64\tExternal User\n",
+        )
+        .expect("native detail row");
+        assert_eq!(rows[0].name, "a");
+        assert_eq!(rows[0].version, "2:1.0-3");
+        assert_eq!(rows[0].identity, "a-2:1.0-3.x86_64");
+        assert_eq!(rows[0].reason, "External User");
+        for row in [
+            b"a\t1\ta\t".as_slice(),
+            b"a\t\ta\tUser",
+            b"a\t1\ta\tUser\textra",
+            b"a\t1\ta\tUser\x1b",
+        ] {
+            assert!(DnfPackageManager::parse_installed_details(row).is_err());
+        }
     }
 
     #[tokio::test]

@@ -146,24 +146,44 @@ impl HistoryManager {
         self.with_history_lock(|| self.load_locked())
     }
 
+    /// Read a locked snapshot without quarantining malformed diagnostic input.
+    pub fn read_snapshot(&self) -> Result<Vec<Transaction>> {
+        self.with_history_lock(|| {
+            let Some(content) = self.read_content()? else {
+                return Ok(Vec::new());
+            };
+            serde_json::from_str(&content)
+                .with_context(|| format!("Invalid package history: {}", self.log_path.display()))
+        })
+    }
+
+    fn read_content(&self) -> Result<Option<String>> {
+        let metadata = match fs::symlink_metadata(&self.log_path) {
+            Ok(metadata) => metadata,
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+            Err(error) => {
+                return Err(error).with_context(|| {
+                    format!(
+                        "Failed to inspect history file: {}",
+                        self.log_path.display()
+                    )
+                });
+            }
+        };
+        anyhow::ensure!(
+            !metadata.file_type().is_symlink(),
+            "Refusing to read history that is a symlink: {}",
+            self.log_path.display()
+        );
+        fs::read_to_string(&self.log_path)
+            .map(Some)
+            .with_context(|| format!("Failed to read history file: {}", self.log_path.display()))
+    }
+
     fn load_locked(&self) -> Result<Vec<Transaction>> {
-        // Refuse symlinks before reading, mirroring the audit log discipline.
-        let is_symlink = std::fs::symlink_metadata(&self.log_path)
-            .map(|meta| meta.file_type().is_symlink())
-            .unwrap_or(false);
-        if !self.log_path.exists() {
+        let Some(content) = self.read_content()? else {
             return Ok(Vec::new());
-        }
-        if is_symlink {
-            anyhow::bail!(
-                "Refusing to read history that is a symlink: {}",
-                self.log_path.display()
-            );
-        }
-
-        let content = fs::read_to_string(&self.log_path)
-            .with_context(|| format!("Failed to read history file: {}", self.log_path.display()))?;
-
+        };
         match serde_json::from_str(&content) {
             Ok(history) => Ok(history),
             Err(error) => {
@@ -500,6 +520,28 @@ mod tests {
         )?;
 
         assert!(!path.exists(), "elevated child must not duplicate history");
+        Ok(())
+    }
+
+    #[test]
+    #[serial_test::serial(history_ownership)]
+    fn diagnostic_snapshot_preserves_unreadable_history() -> Result<()> {
+        let dir = tempfile::tempdir()?;
+        let path = dir.path().join("history.json");
+        let manager = HistoryManager::new_in(&path)?;
+        assert!(manager.read_snapshot()?.is_empty());
+        for content in [b"invalid history".as_slice(), b"{\"version\":999}", b"\xff"] {
+            fs::write(&path, content)?;
+            assert!(manager.read_snapshot().is_err());
+            assert_eq!(fs::read(&path)?, content);
+        }
+        assert!(!fs::read_dir(dir.path())?.any(|entry| {
+            entry
+                .expect("directory entry")
+                .file_name()
+                .to_string_lossy()
+                .contains(".corrupt-")
+        }));
         Ok(())
     }
 

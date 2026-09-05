@@ -1393,7 +1393,7 @@ async fn dispatch_command(command: &Commands, ctx: &omg_lib::cli::CliContext) ->
             size::run(tree.as_deref(), *limit).await?;
         }
         Commands::Blame { package } => {
-            blame::run(package)?;
+            blame::run(package).await?;
         }
         Commands::Diff { from, to } => {
             diff::run(from.as_deref(), to).await?;

@@ -235,6 +235,7 @@ mod dnf_integration {
             vec!["size", "--tree", &selector],
             vec!["why", &selector],
             vec!["why", "--reverse", &selector],
+            vec!["blame", &selector],
         ] {
             let baseline = std::process::Command::new(assert_cmd::cargo::cargo_bin!("omg"))
                 .env("NO_COLOR", "1")
@@ -355,6 +356,109 @@ mod dnf_integration {
             assert!(!output.status.success());
             assert!(String::from_utf8_lossy(&output.stderr).contains("is not installed"));
         }
+        Ok(())
+    }
+
+    #[test]
+    fn blame_cli_uses_native_details_and_canonical_omg_history() -> Result<()> {
+        use omg_lib::core::history::{HistoryManager, PackageChange, Transaction, TransactionType};
+
+        if common::TestConfig::default().skip_if_no_system("dnf_blame_cli") {
+            common::report_skip("system tests disabled (set OMG_RUN_SYSTEM_TESTS=1)");
+            return Ok(());
+        }
+        let cache = dirs::cache_dir().expect("user cache directory");
+        std::fs::create_dir_all(&cache)?;
+        let fixture = tempfile::tempdir_in(cache)?;
+        let selector = format!("glibc.{}", std::env::consts::ARCH);
+        let invoke = || {
+            std::process::Command::new(assert_cmd::cargo::cargo_bin!("omg"))
+                .env("OMG_DATA_DIR", fixture.path())
+                .env("NO_COLOR", "1")
+                .args(["blame", &selector])
+                .output()
+        };
+        let empty = invoke()?;
+        assert!(
+            empty.status.success(),
+            "{}",
+            String::from_utf8_lossy(&empty.stderr)
+        );
+        let empty = String::from_utf8(empty.stdout)?;
+        assert!(empty.contains("No OMG transaction history found"));
+        let native = std::process::Command::new("dnf")
+            .args([
+                "--setopt=disable_excludes=*",
+                "repoquery",
+                "--installed",
+                "--qf",
+                "%{name}\t%{evr}\t%{full_nevra}\t%{reason}\n",
+                &selector,
+            ])
+            .output()?;
+        assert!(native.status.success());
+        let native = String::from_utf8(native.stdout)?;
+        let fields: Vec<_> = native.trim_end_matches('\n').split('\t').collect();
+        assert_eq!(fields.len(), 4);
+        assert!(empty.contains(&format!("Version: {}", fields[1])));
+        assert!(empty.contains(fields[2]));
+        assert!(empty.contains(&format!("Install Reason: {}", fields[3])));
+        let requiring = std::process::Command::new("dnf")
+            .args([
+                "--setopt=disable_excludes=*",
+                "repoquery",
+                "--installed",
+                "--qf",
+                "%{full_nevra}\n",
+                &format!("--whatrequires={selector}"),
+            ])
+            .output()?;
+        assert!(requiring.status.success());
+        let requiring = String::from_utf8(requiring.stdout)?;
+        for identity in requiring.lines().filter(|identity| *identity != fields[2]) {
+            assert!(
+                empty.contains(identity),
+                "missing native requiring package {identity}"
+            );
+        }
+        let transaction = |id: &str, timestamp: &str, success: bool| -> Result<Transaction> {
+            Ok(Transaction {
+                id: id.to_owned(),
+                timestamp: timestamp.parse()?,
+                transaction_type: TransactionType::Install,
+                changes: vec![PackageChange {
+                    name: fields[0].to_owned(),
+                    old_version: None,
+                    new_version: Some(id.to_owned()),
+                    source: "qa-fixture".to_owned(),
+                }],
+                success,
+            })
+        };
+        let history_path = fixture.path().join("history.json");
+        HistoryManager::new_in(&history_path)?.save(&[
+            transaction("fixture-old", "2026-01-01T00:00:00Z", true)?,
+            transaction("fixture-failed", "2026-01-02T00:00:00Z", false)?,
+        ])?;
+        let before = std::fs::read(&history_path)?;
+        let output = invoke()?;
+        assert!(
+            output.status.success(),
+            "{}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        let output = String::from_utf8(output.stdout)?;
+        assert!(output.contains("failed to install → fixture-failed"));
+        assert!(output.contains("installed → fixture-old"));
+        assert!(output.find("fixture-failed") < output.find("fixture-old"));
+        assert!(output.contains("matched by package name"));
+        assert_eq!(before, std::fs::read(&history_path)?);
+        std::fs::write(&history_path, b"invalid history")?;
+        let corrupt = invoke()?;
+        assert!(!corrupt.status.success());
+        assert!(!String::from_utf8(corrupt.stdout)?.contains("No OMG transaction history"));
+        assert_eq!(std::fs::read(&history_path)?, b"invalid history");
+        fixture.close()?;
         Ok(())
     }
 

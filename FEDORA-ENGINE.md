@@ -68,6 +68,24 @@ queries ignore exclusion filters without changing transaction policy. Reason-onl
 mode does not load reverse requirements. Terminal commands are constructed after
 native asynchronous queries have finished.
 
+## Package history diagnostics
+
+`omg blame PACKAGE` combines native installed identity, EVR, installation reason,
+and current direct requiring packages with the selected user's OMG history.
+Qualified selectors use the canonical native package name for history lookup.
+History is name-scoped, not proof about a particular installed architecture or
+build. Failed records are displayed as failed actions.
+
+The diagnostic uses a locked, read-only history snapshot. Missing history is
+reported as missing. Malformed history fails without quarantine or rewriting.
+Existing package-operation recovery remains separate. Native DNF history is not
+imported, and absent OMG records do not establish an installation date or actor.
+
+A real unprivileged Fedora tree install/remove cycle restored the RPM inventory,
+but the generic transaction path wrote no OMG history. Producer-side recording
+remains a confirmed follow-up. That cycle also reproduced an RPM SQLite reader
+warning with native fallback; its cause has not yet been isolated.
+
 ## Future index build order
 
 S1. Correct the raw-Rust database-header reader using zerocopy views and a
