@@ -171,11 +171,12 @@ mod why_contracts {
             "reason=0 must render as explicitly installed, got:\n{out}"
         );
         assert!(
-            out.contains("beta") && out.contains("✓ installed"),
+            out.lines().any(|line| line.contains("beta: ✓ installed")),
             "installed dependency beta must be marked ✓, got:\n{out}"
         );
         assert!(
-            out.contains("missingdep") && out.contains("✗ not installed"),
+            out.lines()
+                .any(|line| line.contains("missingdep: ✗ not installed")),
             "absent dependency missingdep must be marked ✗, got:\n{out}"
         );
         assert!(
