@@ -83,8 +83,11 @@ imported, and absent OMG records do not establish an installation date or actor.
 
 A real unprivileged Fedora tree install/remove cycle restored the RPM inventory,
 but the generic transaction path wrote no OMG history. Producer-side recording
-remains a confirmed follow-up. That cycle also reproduced an RPM SQLite reader
-warning with native fallback; its cause has not yet been isolated.
+remains a confirmed follow-up. The SQLite warning from that cycle was isolated
+to the translated `gnat-srpm-macros` header. The reader now accepts I18NSTRING
+arrays and validates every declared string terminator within the payload.
+The captured native header passes through the SQLite reader without fallback;
+installed summaries retain the default-locale string.
 
 ## Future index build order
 

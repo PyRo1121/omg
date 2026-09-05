@@ -377,7 +377,7 @@ impl DnfPackageManager {
                 "RPM tag {tag} has unsupported type {tag_type}"
             );
             anyhow::ensure!(
-                !matches!(tag_type, 6 | 9) || count == 1, // 6=STRING 9=I18NSTRING
+                tag_type != 6 || count == 1,
                 "RPM string tag {tag} must have count 1, got {count}"
             );
 
@@ -397,11 +397,12 @@ impl DnfPackageManager {
                 5 => count.saturating_mul(8),
                 7 => count,
                 6 | 8 | 9 => {
-                    // Strings terminate inside the declared payload only;
-                    // bytes beyond it can never satisfy a NUL.
+                    let last = count.checked_sub(1).context("RPM string array is empty")?;
                     payload[base..]
                         .iter()
-                        .position(|&b| b == 0)
+                        .enumerate()
+                        .filter_map(|(index, &byte)| (byte == 0).then_some(index))
+                        .nth(last)
                         .ok_or_else(|| anyhow::anyhow!("RPM tag {tag} string missing terminator"))?
                 }
                 _ => unreachable!("type range validated above"),
@@ -431,6 +432,7 @@ impl DnfPackageManager {
         // Helper to extract string from tag data
         let get_string = |tag: u32| -> String {
             tags.get(&tag)
+                .and_then(|data| data.split(|&byte| byte == 0).next())
                 .map(|data| String::from_utf8_lossy(data).to_string())
                 .unwrap_or_default()
         };
@@ -1320,6 +1322,33 @@ mod tests {
             packages[0].summary,
             "Cross-vendor public domain suffix database in DAFSA form"
         );
+    }
+
+    #[test]
+    fn reads_native_translated_header() {
+        let blob = include_bytes!("../../tests/data/fedora-gnat-srpm.rpmhdr");
+        let directory = write_packages_db(&[blob.as_slice()]);
+        let packages = DnfPackageManager::read_rpm_sqlite(&directory.path().join("rpmdb.sqlite"))
+            .expect("translated native header");
+        assert_eq!(packages[0].name, "gnat-srpm-macros");
+        assert_eq!(packages[0].version, "7");
+        assert_eq!(
+            packages[0].summary,
+            "RPM macros needed when source packages that need GNAT are built"
+        );
+    }
+
+    #[test]
+    fn string_arrays_require_every_declared_terminator() {
+        for kind in [8, 9] {
+            let valid = strict_header(&[(1004, kind, 0, 2)], b"first\0second\0");
+            assert!(DnfPackageManager::parse_rpm_header(&valid).is_ok());
+            let missing = strict_header(&[(1004, kind, 0, 2)], b"first\0second");
+            assert!(DnfPackageManager::parse_rpm_header(&missing).is_err());
+            let mut outside = missing;
+            outside.push(0);
+            assert!(DnfPackageManager::parse_rpm_header(&outside).is_err());
+        }
     }
 
     #[test]

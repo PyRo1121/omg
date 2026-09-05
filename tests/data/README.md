@@ -30,6 +30,21 @@ Unlike the earlier synthetic fixtures, this record starts with the two big-endia
 entry/data lengths and has no archive magic prefix. The integration test inserts
 these exact bytes into SQLite and reads them through the production database reader.
 
+## Translated native header
+
+`fedora-gnat-srpm.rpmhdr` is the unmodified `Packages.blob` for
+`gnat-srpm-macros` version `7` in the Fedora 44 Cloud 44-1.7 guest after
+installing RPM build tools. Its SHA-256 is
+`5c70d6f87c2adf1c31c584b306d918429024d43206fe848c9246a71028af7c5a`.
+Both SUMMARY (1004) and DESCRIPTION (1005) have I18NSTRING type 9 and count 2.
+The old reader rejected this real record because it imposed the scalar STRING
+count-one rule on translated arrays.
+
+The regression exercises the production SQLite reader. Array validation checks
+all declared terminators inside the payload. Package summaries use the first,
+default-locale string, matching `LC_ALL=C rpm` for this fixture.
+See <https://rpm.org/docs/6.0.x/manual/tags.html>.
+
 ## Native DNF upgrade records
 
 `fedora-installed.tsv` and `fedora-upgrades.tsv` were captured from the same pinned
