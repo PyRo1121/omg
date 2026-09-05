@@ -804,5 +804,111 @@
         ]
       }
     }
-  ]
+  ],
+  "default_path_follow_up": {
+    "runner_sha256": "9b00a5fcf0d0ad5f6cb515cb1f61985684f74110e6d3e9e3184dcb9ceb484bce",
+    "benchmark": false,
+    "source_suite": "suite-OmHcRb",
+    "source_suite_results": [
+      {
+        "case_id": "qemu-arch-lifecycle",
+        "distro": "arch",
+        "result": "PASS",
+        "artifact_source": "staged",
+        "exit_code": 0,
+        "elapsed_seconds": 249
+      },
+      {
+        "case_id": "qemu-debian-lifecycle",
+        "distro": "debian",
+        "result": "PASS",
+        "artifact_source": "staged",
+        "exit_code": 0,
+        "elapsed_seconds": 94
+      },
+      {
+        "case_id": "qemu-ubuntu-lifecycle",
+        "distro": "ubuntu",
+        "result": "PASS",
+        "artifact_source": "staged",
+        "exit_code": 0,
+        "elapsed_seconds": 126
+      },
+      {
+        "case_id": "qemu-fedora-lifecycle",
+        "distro": "fedora",
+        "result": "HARNESS_ERROR",
+        "artifact_source": "staged",
+        "exit_code": 124,
+        "elapsed_seconds": 155
+      }
+    ],
+    "note": "Fedora controller creation timed out. Its separately retained retry run-N4VEvQ passed. The failed suite is not relabeled.",
+    "verified_runs": [
+      {
+        "run": "run-XiqC2m",
+        "result": {
+          "case_id": "qemu-arch-lifecycle",
+          "distro": "arch",
+          "result": "PASS",
+          "artifact_source": "staged",
+          "exit_code": 0,
+          "elapsed_seconds": 249
+        },
+        "guest_exit_code": 0,
+        "cleanup": "omg-qemu-run-XiqC2m\nverified absent: omg-qemu-run-XiqC2m\n",
+        "metadata": "distro=arch\nrelease=v0.1.218\nartifact_source=staged\nimage_url=https://geo.mirror.pkgbuild.com/images/latest/Arch-Linux-x86_64-cloudimg-20260901.583572.qcow2\nimage_digest=e3e688f97a71b265ce202905a504253f60f3680cf57d011a45411c43bedfa930\nfirmware=uefi\n",
+        "guest_metadata": "NAME=\"Arch Linux\"\nPRETTY_NAME=\"Arch Linux\"\nID=arch\nBUILD_ID=rolling\nANSI_COLOR=\"38;2;23;147;209\"\nHOME_URL=\"https://archlinux.org/\"\nDOCUMENTATION_URL=\"https://wiki.archlinux.org/\"\nSUPPORT_URL=\"https://bbs.archlinux.org/\"\nBUG_REPORT_URL=\"https://gitlab.archlinux.org/groups/archlinux/-/issues\"\nPRIVACY_POLICY_URL=\"https://terms.archlinux.org/docs/privacy-policy/\"\nLOGO=archlinux-logo\nLinux omg-qa 7.2.2-arch1-1 #1 SMP PREEMPT_DYNAMIC Fri, 28 Aug 2026 16:09:39 +0000 x86_64 GNU/Linux\ne3e095f5a7e3e5a103cbed56bc8aa3334deadd50c3a8fa463a45086f418f1216  /home/bench/omg-v0.1.218-x86_64-linux-arch/omg\nnative_version=2.3.2-1\n",
+        "reboot": "reboot verified: 2eacc0f2-ce3a-4c7f-8503-68a5082f22af -> 5e4b0327-6583-4471-a6d3-11737645a9e1"
+      },
+      {
+        "run": "run-MzUzPl",
+        "result": {
+          "case_id": "qemu-debian-lifecycle",
+          "distro": "debian",
+          "result": "PASS",
+          "artifact_source": "staged",
+          "exit_code": 0,
+          "elapsed_seconds": 94
+        },
+        "guest_exit_code": 0,
+        "cleanup": "omg-qemu-run-MzUzPl\nverified absent: omg-qemu-run-MzUzPl\n",
+        "metadata": "distro=debian\nrelease=v0.1.218\nartifact_source=staged\nimage_url=https://cloud.debian.org/images/cloud/bookworm/20260903-2590/debian-12-generic-amd64-20260903-2590.qcow2\nimage_digest=804377dd07318360c39a75e57b326243442a43bae1e12b33d5f490a64713c15c080a0323cb55d52b381139db9187702d38f36b8b142b8ef36da1031d9de41c2d\nfirmware=bios\n",
+        "guest_metadata": "PRETTY_NAME=\"Debian GNU/Linux 12 (bookworm)\"\nNAME=\"Debian GNU/Linux\"\nVERSION_ID=\"12\"\nVERSION=\"12 (bookworm)\"\nVERSION_CODENAME=bookworm\nID=debian\nHOME_URL=\"https://www.debian.org/\"\nSUPPORT_URL=\"https://www.debian.org/support\"\nBUG_REPORT_URL=\"https://bugs.debian.org/\"\nLinux omg-qa 6.1.0-52-amd64 #1 SMP PREEMPT_DYNAMIC Debian 6.1.180-1 (2026-08-03) x86_64 GNU/Linux\n64a56bfd3c215a3b9204740647c60dce62a2d63e76190f63e465040438244b83  /home/bench/omg-v0.1.218-x86_64-linux-debian/omg\nnative_version=2.1.0-1\n",
+        "reboot": "reboot verified: bcef0d43-7e3b-4c8b-8e51-6d42e73b15a6 -> fe3a6aa4-3ce5-4fed-a98e-d0ea902e0ef6"
+      },
+      {
+        "run": "run-uMzALy",
+        "result": {
+          "case_id": "qemu-ubuntu-lifecycle",
+          "distro": "ubuntu",
+          "result": "PASS",
+          "artifact_source": "staged",
+          "exit_code": 0,
+          "elapsed_seconds": 126
+        },
+        "guest_exit_code": 0,
+        "cleanup": "omg-qemu-run-uMzALy\nverified absent: omg-qemu-run-uMzALy\n",
+        "metadata": "distro=ubuntu\nrelease=v0.1.218\nartifact_source=staged\nimage_url=https://cloud-images.ubuntu.com/noble/20260826/noble-server-cloudimg-amd64.img\nimage_digest=d0fe84bb5f80853425fa6be28e2c106f30104c3cfe8611933f2e65c9b63f0e30\nfirmware=bios\n",
+        "guest_metadata": "PRETTY_NAME=\"Ubuntu 24.04.4 LTS\"\nNAME=\"Ubuntu\"\nVERSION_ID=\"24.04\"\nVERSION=\"24.04.4 LTS (Noble Numbat)\"\nVERSION_CODENAME=noble\nID=ubuntu\nID_LIKE=debian\nHOME_URL=\"https://www.ubuntu.com/\"\nSUPPORT_URL=\"https://help.ubuntu.com/\"\nBUG_REPORT_URL=\"https://bugs.launchpad.net/ubuntu/\"\nPRIVACY_POLICY_URL=\"https://www.ubuntu.com/legal/terms-and-policies/privacy-policy\"\nUBUNTU_CODENAME=noble\nLOGO=ubuntu-logo\nLinux omg-qa 6.8.0-138-generic #138-Ubuntu SMP PREEMPT_DYNAMIC Fri Jul 31 22:41:49 UTC 2026 x86_64 x86_64 x86_64 GNU/Linux\n91cd90f3674c0588338a2bd159a14d1006f6f1676d6bf4f8499406fe89c551cc  /home/bench/omg-v0.1.218-x86_64-linux-ubuntu/omg\nnative_version=2.1.1-2ubuntu3.24.04.2\n",
+        "reboot": "reboot verified: 5a4da571-f75c-4484-9935-e1cbf5c5159e -> 215207d7-b694-48b9-a94c-5273ad7fc252"
+      },
+      {
+        "run": "run-N4VEvQ",
+        "result": {
+          "case_id": "qemu-fedora-lifecycle",
+          "distro": "fedora",
+          "result": "PASS",
+          "artifact_source": "staged",
+          "exit_code": 0,
+          "elapsed_seconds": 84
+        },
+        "guest_exit_code": 0,
+        "cleanup": "omg-qemu-run-N4VEvQ\nverified absent: omg-qemu-run-N4VEvQ\n",
+        "metadata": "distro=fedora\nrelease=v0.1.218\nartifact_source=staged\nimage_url=https://download.fedoraproject.org/pub/fedora/linux/releases/44/Cloud/x86_64/images/Fedora-Cloud-Base-Generic-44-1.7.x86_64.qcow2\nimage_digest=28680fe5b371a5a82ebf43a31926e086a168e59949d03969c5093e7071f90b7f\nfirmware=bios\n",
+        "guest_metadata": "NAME=\"Fedora Linux\"\nVERSION=\"44 (Cloud Edition)\"\nRELEASE_TYPE=stable\nID=fedora\nVERSION_ID=44\nVERSION_CODENAME=\"\"\nPRETTY_NAME=\"Fedora Linux 44 (Cloud Edition)\"\nANSI_COLOR=\"0;38;2;60;110;180\"\nLOGO=fedora-logo-icon\nCPE_NAME=\"cpe:/o:fedoraproject:fedora:44\"\nHOME_URL=\"https://fedoraproject.org/\"\nDOCUMENTATION_URL=\"https://docs.fedoraproject.org/en-US/fedora/f44/\"\nSUPPORT_URL=\"https://ask.fedoraproject.org/\"\nBUG_REPORT_URL=\"https://bugzilla.redhat.com/\"\nREDHAT_BUGZILLA_PRODUCT=\"Fedora\"\nREDHAT_BUGZILLA_PRODUCT_VERSION=44\nREDHAT_SUPPORT_PRODUCT=\"Fedora\"\nREDHAT_SUPPORT_PRODUCT_VERSION=44\nSUPPORT_END=2027-05-19\nVARIANT=\"Cloud Edition\"\nVARIANT_ID=cloud\nLinux omg-qa 6.19.10-300.fc44.x86_64 #1 SMP PREEMPT_DYNAMIC Wed Mar 25 18:23:49 UTC 2026 x86_64 GNU/Linux\nc32f8eaf31d91794c324a18d796e83a560dd3388e56b2bbfb51a4823b96fcf11  /home/bench/omg-v0.1.218-x86_64-linux-fedora/omg\nnative_version=2.2.1-4.fc44\n",
+        "reboot": "reboot verified: 3035c43b-b1ea-4277-ab4b-56d9cd632138 -> eb03d0a0-5a69-4408-af4d-376e18cfa8fc"
+      }
+    ]
+  }
 }

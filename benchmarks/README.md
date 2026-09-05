@@ -98,7 +98,11 @@ The release-smoke record above contains Docker results. The separate
 [committed live receipt](records/qemu-four-distros-20260905.json) for Arch,
 Debian 12, Ubuntu 24.04, and Fedora 44. All four guests passed reboot, sudo,
 package lifecycle, native-version checks, and cleanup. The receipt retains
-240 raw warm timing samples and artifact hashes.
+240 raw warm timing samples and artifact hashes. Its `default_path_follow_up`
+records a later no-benchmark run against the failure-handling fixes. Arch,
+Debian, and Ubuntu passed in that suite. Fedora passed on a separate retry after
+a Docker controller-creation timeout. Both the failed suite and retry remain
+in the receipt rather than presenting them as one uninterrupted green run.
 
 Arch and Ubuntu used unchanged published archives. Debian and Fedora used
 locally built candidates. These debug candidates and single-guest samples do

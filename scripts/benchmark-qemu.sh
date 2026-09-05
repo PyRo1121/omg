@@ -22,9 +22,9 @@ done
 [[ "$tag" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]] || exit 2
 case "$distro" in all|arch|debian|ubuntu|fedora) ;; *) exit 2 ;; esac
 [[ -z "$staged_dir" || -d "$staged_dir" ]] || exit 2
-for tool in docker gh timeout sha256sum jq; do command -v "$tool" >/dev/null || exit 3; done
-[[ -r /dev/kvm && -w /dev/kvm ]] || { echo 'error: KVM unavailable' >&2; exit 3; }
-timeout 15 docker info >/dev/null
+command -v jq >/dev/null || exit 3
+source_kind=published
+[[ -z "$staged_dir" ]] || source_kind=staged
 mkdir -p "$root"
 root=$(cd "$root" && pwd)
 if [[ "$distro" == all ]]; then
@@ -33,10 +33,17 @@ if [[ "$distro" == all ]]; then
   args=(--release "$tag")
   [[ -z "$staged_dir" ]] || args+=(--staged-dir "$staged_dir")
   [[ "$benchmark" == false ]] || args+=(--benchmark)
+  jq -n --arg source "$source_kind" '["arch", "debian", "ubuntu", "fedora"] | map({case_id:("qemu-"+.+"-lifecycle"), distro:., result:"NOT_RUN", artifact_source:$source, exit_code:null, elapsed_seconds:0})' > "$suite/results.json"
   for target in arch debian ubuntu fedora; do
+    jq --arg target "$target" 'map(if .distro == $target then .result = "INCOMPLETE" else . end)' "$suite/results.json" > "$suite/results.next.json"
+    mv "$suite/results.next.json" "$suite/results.json"
     "$0" --distro "$target" --evidence-dir "$suite/$target" "${args[@]}" || rc=1
+    reports=("$suite/$target"/run-*/results.json)
+    if [[ ${#reports[@]} -eq 1 && -f "${reports[0]}" ]] && jq -e --arg target "$target" 'length == 1 and .[0].distro == $target' "${reports[0]}" >/dev/null; then
+      jq --arg target "$target" --slurpfile report "${reports[0]}" 'map(if .distro == $target then $report[0][0] else . end)' "$suite/results.json" > "$suite/results.next.json"
+      mv "$suite/results.next.json" "$suite/results.json"
+    else rc=1; fi
   done
-  jq -s 'add' "$suite"/*/run-*/results.json > "$suite/results.json"
   printf 'Suite evidence: %s\n' "$suite"
   exit "$rc"
 fi
@@ -66,8 +73,6 @@ work=$(mktemp -d "$root/run-XXXXXX")
 controller="omg-qemu-${work##*/}"
 printf 'Starting %s. Evidence: %s\n' "$distro" "$work"
 result=HARNESS_ERROR
-source_kind=published
-[[ -z "$staged_dir" ]] || source_kind=staged
 cleanup() {
   local rc=$? remaining
   trap - EXIT
@@ -93,6 +98,9 @@ trap 'exit 130' INT
 trap 'exit 143' TERM
 mkdir -p "$work/release" "$work/guest"
 : > "$work/guest/serial.log"
+for tool in docker timeout sha256sum; do command -v "$tool" >/dev/null || exit 3; done
+[[ -n "$staged_dir" ]] || { command -v gh >/dev/null || exit 3; }
+timeout --kill-after=2s 15s docker version --format '{{.Server.Version}}' > "$work/engine-preflight.log" 2>&1 || exit 3
 { date -u; uname -a; cat /proc/loadavg; grep -E 'MemTotal|MemAvailable|SwapFree' /proc/meminfo; } > "$work/host-metadata.txt"
 archive="omg-${tag}-x86_64-linux-${distro}.tar.gz"
 if [[ -n "$staged_dir" ]]; then
@@ -176,6 +184,7 @@ distro=$1; tag=$2; digest=$3; benchmark=$4
 actual_id=$(awk -F= '$1 == "ID" {gsub(/"/, "", $2); print $2}' /etc/os-release)
 [[ "$actual_id" == "$distro" && $(uname -m) == x86_64 ]] || exit 120
 mkdir -p evidence
+trap 'status=$?; printf "%s\n" "$status" > evidence/exit-code' EXIT
 printf '%s  release.tar.gz\n' "$digest" | sha256sum -c -
 tar -xzf release.tar.gz
 bin="$HOME/omg-${tag}-x86_64-linux-${distro}/omg"
@@ -246,5 +255,10 @@ timeout 60 docker exec -w /work/guest "$controller" scp "${opts[@]}" -P 2222 /wo
 rc=0
 timeout 600 docker exec -w /work/guest "$controller" ssh "${opts[@]}" -p 2222 bench@127.0.0.1 "bash guest-check.sh '$distro' '$tag' '$digest' '$benchmark'" > "$work/guest-check.log" 2>&1 || rc=$?
 timeout 60 docker exec -w /work/guest "$controller" scp -r "${opts[@]}" -P 2222 bench@127.0.0.1:evidence /work/guest/ > "$work/evidence-copy.log" 2>&1
+guest_rc=$(<"$work/guest/evidence/exit-code")
+if [[ ! "$guest_rc" =~ ^[0-9]+$ || "$guest_rc" != "$rc" ]]; then
+  printf 'Guest exit %s differs from transport exit %s\n' "$guest_rc" "$rc" >&2
+  exit 3
+fi
 case "$rc" in 0) result=PASS ;; 120|124|125|126|127|137|255) result=HARNESS_ERROR ;; *) result=PRODUCT_FAIL ;; esac
 exit "$rc"

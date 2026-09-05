@@ -224,4 +224,81 @@ assert_rc 1 "$runner" "${base_args[@]}" --staged-dir "$scratch/valid" --evidence
 unset FAKE_RUN_EXIT FAKE_SENTRY_HTTP OMG_SMOKE_SENTRY_CONFIG FAKE_SENTRY_ENVELOPE
 grep -q '"result":"PRODUCT_FAIL"' "$(results_file "$scratch/reporting-failure")" || fail "reporting failure changed the test verdict"
 
-printf 'PASS: release smoke fixture suite\n'
+cat > "$scratch/bin/docker" <<'EOF'
+#!/usr/bin/env bash
+set -euo pipefail
+case "$1" in
+  version)
+    if [[ -n ${FAKE_QEMU_SUITE_PID:-} ]]; then kill -TERM "$FAKE_QEMU_SUITE_PID"; fi
+    exit "${FAKE_QEMU_INFO_EXIT:-42}" ;;
+  run)
+    for argument in "$@"; do
+      if [[ "$argument" == type=bind,src=*,dst=/work ]]; then
+        work=${argument#type=bind,src=}
+        work=${work%,dst=/work}
+        touch "$work/guest/"{client-key,guest-host-key,user-data,seed.img,overlay.qcow2,base.qcow2,vars.fd,qemu.pid}
+      fi
+    done
+    printf '%s\n' "$work" > "$FAKE_QEMU_STATE"
+    printf 'fixture-controller\n' ;;
+  exec)
+    for argument in "$@"; do
+      [[ "$argument" != ssh ]] || exit "${FAKE_QEMU_TRANSPORT_EXIT:-${FAKE_QEMU_GUEST_EXIT:-0}}"
+      if [[ "$argument" == bench@127.0.0.1:evidence && ${FAKE_QEMU_MISSING_RECEIPT:-0} == 0 ]]; then
+        work=$(<"$FAKE_QEMU_STATE")
+        mkdir -p "$work/guest/evidence"
+        printf '%s\n' "${FAKE_QEMU_GUEST_EXIT:-0}" > "$work/guest/evidence/exit-code"
+      fi
+    done ;;
+  rm)
+    [[ ${FAKE_QEMU_CLEANUP_FAIL:-0} == 0 ]] || exit 1
+    rm -f "$FAKE_QEMU_STATE" ;;
+  ps) [[ ! -f "$FAKE_QEMU_STATE" ]] || printf 'fixture-controller\n' ;;
+  *) exit 99 ;;
+esac
+EOF
+chmod 700 "$scratch/bin/docker"
+qemu_runner="$repo_root/scripts/benchmark-qemu.sh"
+assert_rc 1 "$qemu_runner" --distro all --staged-dir "$scratch/valid" --evidence-dir "$scratch/qemu-unavailable"
+qemu_result=$(find "$scratch/qemu-unavailable" -mindepth 2 -maxdepth 2 -name results.json -print -quit)
+[[ -n "$qemu_result" ]] || fail 'QEMU suite omitted unavailable-engine results'
+jq -e 'length == 4 and ([.[].distro] | sort) == ["arch", "debian", "fedora", "ubuntu"] and all(.[]; .result == "HARNESS_ERROR" and .exit_code == 3)' "$qemu_result" >/dev/null || fail 'QEMU suite omitted a requested distro or misclassified preflight failure'
+
+assert_rc 143 bash -c 'export FAKE_QEMU_SUITE_PID=$$; exec "$@"' _ "$qemu_runner" --distro all --staged-dir "$scratch/valid" --evidence-dir "$scratch/qemu-interrupted"
+qemu_result=$(find "$scratch/qemu-interrupted" -mindepth 2 -maxdepth 2 -name results.json -print -quit)
+jq -e 'length == 4 and .[0].result == "INCOMPLETE" and all(.[1:][]; .result == "NOT_RUN")' "$qemu_result" >/dev/null || fail 'interrupted QEMU suite lost target states'
+for attempt in {1..100}; do
+  child_result=$(find "$scratch/qemu-interrupted" -mindepth 4 -maxdepth 4 -name results.json -print -quit)
+  if [[ -n "$child_result" ]] && jq -e '.[0].result == "HARNESS_ERROR"' "$child_result" >/dev/null 2>&1; then break; fi
+  sleep 0.1
+done
+[[ -n "$child_result" ]] || fail 'interrupted QEMU child did not record its exit'
+
+export FAKE_QEMU_INFO_EXIT=0 FAKE_QEMU_STATE="$scratch/qemu-controller"
+for scenario in pass product-failure timeout cleanup-failure transport-failure missing-receipt; do
+  export FAKE_QEMU_GUEST_EXIT=0 FAKE_QEMU_CLEANUP_FAIL=0 FAKE_QEMU_MISSING_RECEIPT=0
+  unset FAKE_QEMU_TRANSPORT_EXIT
+  expected_rc=0
+  expected_result=PASS
+  case "$scenario" in
+    product-failure) export FAKE_QEMU_GUEST_EXIT=1; expected_rc=1; expected_result=PRODUCT_FAIL ;;
+    timeout) export FAKE_QEMU_GUEST_EXIT=124; expected_rc=124; expected_result=HARNESS_ERROR ;;
+    cleanup-failure) export FAKE_QEMU_CLEANUP_FAIL=1; expected_rc=3; expected_result=HARNESS_ERROR ;;
+    transport-failure) export FAKE_QEMU_TRANSPORT_EXIT=1; expected_rc=3; expected_result=HARNESS_ERROR ;;
+    missing-receipt) export FAKE_QEMU_MISSING_RECEIPT=1; expected_rc=1; expected_result=HARNESS_ERROR ;;
+  esac
+  evidence="$scratch/qemu-$scenario"
+  assert_rc "$expected_rc" "$qemu_runner" --distro arch --release v9.9.9 --staged-dir "$scratch/valid" --evidence-dir "$evidence"
+  qemu_result=$(results_file "$evidence")
+  jq -e --arg result "$expected_result" --argjson rc "$expected_rc" 'length == 1 and .[0].result == $result and .[0].exit_code == $rc' "$qemu_result" >/dev/null || fail "QEMU $scenario verdict mismatch"
+  work=${qemu_result%/results.json}
+  for file in client-key guest-host-key user-data seed.img overlay.qcow2 base.qcow2 vars.fd qemu.pid; do
+    [[ ! -e "$work/guest/$file" ]] || fail "QEMU $scenario retained $file"
+  done
+  if [[ "$scenario" != cleanup-failure ]]; then
+    [[ ! -f "$FAKE_QEMU_STATE" ]] || fail "QEMU $scenario retained its controller"
+  fi
+done
+unset FAKE_QEMU_INFO_EXIT FAKE_QEMU_STATE FAKE_QEMU_GUEST_EXIT FAKE_QEMU_CLEANUP_FAIL FAKE_QEMU_TRANSPORT_EXIT FAKE_QEMU_MISSING_RECEIPT
+
+printf 'PASS: release smoke and QEMU fixture suite\n'

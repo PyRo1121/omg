@@ -189,8 +189,9 @@ falling back to published files. Omit `--staged-dir` to download published archi
 Published v0.1.218 still has known Fedora defects. The passing four-guest record
 uses fixed Debian and Fedora candidates, not four passing published artifacts.
 
-Requirements are Docker access, a readable/writable `/dev/kvm`, `gh`, `jq`, and GNU
-coreutils. The script does not compile software or install host packages. Prebuilt
+Requirements are local Docker access, `/dev/kvm` available to the controller,
+`jq`, and GNU coreutils. Published downloads also require `gh`. Docker validates
+device access. The script does not compile software or install host packages. Prebuilt
 QEMU and SSH tools run inside disposable Debian controllers. Each controller has
 two CPUs and a 3 GiB memory limit. Each guest has two vCPUs and 1536 MiB RAM.
 
@@ -212,7 +213,16 @@ An all-distro run produces `suite-*/<distro>/run-*` directories and aggregate
 `results.json`. Logs, raw timing samples, archive checksums, repository hashes,
 reboot proof, and cleanup receipts remain readable by the operator. Private keys
 and guest disks are deleted. Product failures and setup failures remain distinct.
+The guest writes its own exit receipt. A missing receipt or a mismatch with the
+Docker/SSH exit status is a harness error, not a product failure or a pass.
 The optional Sentry reporter runs after timing and cleanup without uploading logs.
+
+The aggregate receipt exists before the first guest starts. It contains four
+requested targets throughout the run. `NOT_RUN` means a target has not started.
+`INCOMPLETE` means it started but the coordinator has not collected a final result.
+Treat either state as unverified, including after interruption. The existing
+`test-release-smoke.sh` suite tests these states and QEMU failure handling with a
+fake Docker boundary. Those fixtures do not claim to execute guest commands.
 
 Cold-cache benchmarks, repeated-guest statistics, and exhaustive CLI coverage
 remain separate work. Passing this runner does not declare that every OMG command
