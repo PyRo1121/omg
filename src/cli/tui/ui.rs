@@ -548,11 +548,7 @@ fn draw_system_info(f: &mut Frame, area: Rect, app: &App) {
     let disk_used_gb = app.system_metrics.disk_usage / 1024 / 1024;
     let disk_free_gb = app.system_metrics.disk_free / 1024 / 1024;
     let disk_total = disk_used_gb + disk_free_gb;
-    let disk_percent = if disk_total > 0 {
-        (disk_used_gb * 100 / disk_total) as u16
-    } else {
-        0
-    };
+    let disk_percent = (disk_used_gb * 100).checked_div(disk_total).unwrap_or(0) as u16;
 
     let disk_lines = vec![
         Line::from(""),

@@ -49,10 +49,10 @@ jobs:
           persist-credentials: false
 
       - name: Set up Rust
-        # Match rust-toolchain.toml (1.93.1) instead of floating "stable".
+        # Match rust-toolchain.toml (1.95.0) instead of floating "stable".
         uses: dtolnay/rust-toolchain@6bed0761d98439e5a578e2877258200ad565ba87 # stable
         with:
-          toolchain: "1.93.1"
+          toolchain: "1.95.0"
 
       - name: Cache cargo
         uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0

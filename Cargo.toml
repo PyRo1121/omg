@@ -2,7 +2,7 @@
 name = "omg"
 version = "0.1.218"
 edition = "2024"
-rust-version = "1.93.1"
+rust-version = "1.95.0"
 description = "The Fastest Unified Package Manager for Arch Linux + All Language Runtimes"
 authors = ["OMG Team"]
 license = "MIT"

@@ -800,7 +800,7 @@ pub fn enable_turbo_mode() -> Result<()> {
             "  {} For fully unattended operation (YOUR choice, affects only you):",
             crate::cli::style::info("ℹ")
         );
-        println!("     sudo visudo -f /etc/sudoers.d/omg-turbo",);
+        println!("     sudo visudo -f /etc/sudoers.d/omg-turbo");
         let omg_bin = std::env::current_exe().map_or_else(
             |_| "/usr/local/bin/omg".to_string(),
             |p| p.to_string_lossy().into_owned(),

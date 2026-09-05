@@ -408,7 +408,7 @@ mod privilege_escalation {
                     && commit
                         .chars()
                         .all(|character| character.is_ascii_hexdigit())
-            }) && source.contains("toolchain: \"1.93.1\"");
+            }) && source.contains("toolchain: \"1.95.0\"");
             assert!(
                 uses_verified_rustup || uses_pinned_toolchain_action,
                 "{relative} must use either hash-verified rustup-init or the pinned toolchain action"

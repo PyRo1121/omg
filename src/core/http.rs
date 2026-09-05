@@ -13,7 +13,7 @@ const DEFAULT_TIMEOUT: Duration = Duration::from_secs(15);
 const DEFAULT_CONNECT_TIMEOUT: Duration = Duration::from_secs(5);
 const DEFAULT_READ_TIMEOUT: Duration = Duration::from_secs(30);
 const DOWNLOAD_CONNECT_TIMEOUT: Duration = Duration::from_secs(10);
-const DOWNLOAD_READ_TIMEOUT: Duration = Duration::from_secs(60);
+const DOWNLOAD_READ_TIMEOUT: Duration = Duration::from_mins(1);
 
 static SHARED_CLIENT: LazyLock<Client> = LazyLock::new(|| {
     build_client(
