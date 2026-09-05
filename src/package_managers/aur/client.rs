@@ -3919,12 +3919,35 @@ mod tests {
         };
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
         let port = listener.local_addr().unwrap().port().to_string();
+        let log_path = client.build_log_path("fixture");
         let mut command = sandbox_command(directory.path(), "builder");
-        command.args(["--ro-bind", "/", "/", "--", "/bin/bash", "-c"]);
-        // Keep the host /proc mount in this fixture so the child can report
-        // its host PID even after PID isolation is enabled. The production
-        // sandbox mounts its own /proc instead. A socket provides readiness
-        // and bounds the child's lifetime if fixture setup fails.
+        // Keep the host /proc mount so the child can report its host PID after
+        // PID isolation. Production mounts a fresh /proc instead. Do not bind
+        // the whole host root: a read-only /dev makes `cmd &` fail opening
+        // /dev/null, and Docker cgroup mounts break --ro-bind / /. A socket
+        // provides readiness and bounds the child's lifetime if setup fails.
+        command.args([
+            "--ro-bind",
+            "/usr",
+            "/usr",
+            "--ro-bind",
+            "/lib",
+            "/lib",
+            "--ro-bind",
+            "/lib64",
+            "/lib64",
+            "--symlink",
+            "/usr/bin",
+            "/bin",
+            "--ro-bind",
+            "/proc",
+            "/proc",
+            "--dev",
+            "/dev",
+            "--",
+            "/bin/bash",
+            "-c",
+        ]);
         command.arg(
             r#"/bin/bash -c '
                 exec 3<>/dev/tcp/127.0.0.1/"$1" || exit 1
@@ -3944,7 +3967,10 @@ mod tests {
             result = tokio::time::timeout(Duration::from_secs(5), listener.accept()) => {
                 result.expect("build child must signal readiness").expect("accept readiness")
             }
-            result = &mut runner => panic!("sandbox exited before child readiness: {result:?}"),
+            result = &mut runner => {
+                let log = std::fs::read_to_string(&log_path).unwrap_or_default();
+                panic!("sandbox exited before child readiness: {result:?}\nlog:\n{log}");
+            }
         };
         let mut readiness = tokio::io::BufReader::new(stream);
         let mut pid = String::new();
