@@ -483,7 +483,7 @@ pub async fn update(check_only: bool, yes: bool, dry_run: bool) -> Result<()> {
             for (package_base, error) in build_summary.failures() {
                 let error = style::sanitize_terminal_text(&format!("{error:#}"));
                 println!(
-                    "  {} Failed to build {}: {error}",
+                    "  {} {}: {error}",
                     style::negative("✗"),
                     style::package(package_base)
                 );
