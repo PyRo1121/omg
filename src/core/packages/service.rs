@@ -177,6 +177,13 @@ impl PackageService {
                 }
             }
 
+            if let Some(operation) = self.backend.transact_with_history(
+                TransactionType::Install,
+                packages,
+                self.history.as_ref(),
+            ) {
+                return operation.await;
+            }
             let result = self.backend.install(packages).await;
             self.finish_transaction(TransactionType::Install, changes, result)
         }
@@ -215,6 +222,13 @@ impl PackageService {
                 }
             }
 
+            if let Some(operation) = self.backend.transact_with_history(
+                TransactionType::Install,
+                packages,
+                self.history.as_ref(),
+            ) {
+                return operation.await;
+            }
             let result = self.backend.install(packages).await;
             self.finish_transaction(TransactionType::Install, changes, result)
         }
@@ -243,6 +257,13 @@ impl PackageService {
             });
         }
 
+        if let Some(operation) = self.backend.transact_with_history(
+            TransactionType::Remove,
+            packages,
+            self.history.as_ref(),
+        ) {
+            return operation.await;
+        }
         let result = self.backend.remove(packages).await;
 
         self.finish_transaction(TransactionType::Remove, changes, result)

@@ -18,7 +18,7 @@ use std::future::Future;
 use std::pin::Pin;
 
 use anyhow::{Context, Result};
-use std::collections::{HashMap, HashSet};
+use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::sync::{Arc, RwLock};
@@ -101,6 +101,33 @@ pub(crate) struct InstalledPackageDetails {
     pub(crate) version: String,
     pub(crate) identity: String,
     pub(crate) reason: String,
+}
+
+#[derive(Debug, serde::Deserialize)]
+struct NativeTransaction {
+    id: u64,
+    comment: String,
+    status: String,
+    packages: Vec<NativeTransactionPackage>,
+}
+
+#[derive(Debug, serde::Deserialize)]
+struct NativeTransactionPackage {
+    nevra: String,
+    action: String,
+}
+
+#[derive(Default)]
+struct NativeVersionChanges {
+    removed: BTreeSet<String>,
+    added: BTreeSet<String>,
+}
+
+#[derive(Debug)]
+enum NativeOutcome {
+    NoTransaction,
+    Committed(Vec<crate::core::history::PackageChange>),
+    Failed,
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -622,89 +649,86 @@ impl DnfPackageManager {
     }
 
     async fn repository_output(query: RepositoryQuery<'_>) -> Result<Vec<u8>> {
-        use tokio::io::AsyncReadExt;
+        #[expect(
+            clippy::literal_string_with_formatting_args,
+            reason = "DNF interprets these query-format placeholders, not Rust"
+        )]
+        let query_format = match query {
+            RepositoryQuery::Available(_) => "%{name}\t%{evr}\t%{summary}\n",
+            RepositoryQuery::InstalledSizes(_) => "%{full_nevra}\t%{installsize}\n",
+            RepositoryQuery::InstalledReasons(_) => "%{full_nevra}\t%{reason}\n",
+            RepositoryQuery::InstalledDetails(_) => "%{name}\t%{evr}\t%{full_nevra}\t%{reason}\n",
+            RepositoryQuery::Installed | RepositoryQuery::Upgrades | RepositoryQuery::Unneeded => {
+                "%{name}\t%{arch}\t%{evr}\t%{repoid}\n"
+            }
+        };
+        let selection = match query {
+            RepositoryQuery::Available(_) => "--available",
+            RepositoryQuery::Installed
+            | RepositoryQuery::InstalledSizes(_)
+            | RepositoryQuery::InstalledReasons(_)
+            | RepositoryQuery::InstalledDetails(_) => "--installed",
+            RepositoryQuery::Upgrades => "--upgrades",
+            RepositoryQuery::Unneeded => "--unneeded",
+        };
+        let mut command = tokio::process::Command::new("dnf");
+        if matches!(
+            query,
+            RepositoryQuery::InstalledSizes(_)
+                | RepositoryQuery::InstalledReasons(_)
+                | RepositoryQuery::InstalledDetails(_)
+        ) {
+            command.arg("--setopt=disable_excludes=*");
+        }
+        command
+            .args(["repoquery", selection])
+            .args(["--queryformat", query_format]);
+        if matches!(
+            query,
+            RepositoryQuery::Available(_) | RepositoryQuery::Installed | RepositoryQuery::Upgrades
+        ) {
+            command.arg("--latest-limit=1");
+        }
+        if matches!(query, RepositoryQuery::Available(_)) {
+            command.arg(format!("--arch={},noarch", std::env::consts::ARCH));
+        }
+        let package = match query {
+            RepositoryQuery::Available(package) => package,
+            RepositoryQuery::InstalledSizes(InstalledSizeQuery::Package(package))
+            | RepositoryQuery::InstalledReasons(InstalledReasonQuery::Package(package))
+            | RepositoryQuery::InstalledDetails(package) => Some(package),
+            RepositoryQuery::InstalledSizes(InstalledSizeQuery::RequirementProviders(package)) => {
+                command.arg("--providers-of=requires");
+                Some(package)
+            }
+            RepositoryQuery::InstalledReasons(InstalledReasonQuery::RequiredBy(package)) => {
+                crate::core::security::validate_package_name(package)?;
+                command.arg(format!("--whatrequires={package}"));
+                None
+            }
+            RepositoryQuery::Installed
+            | RepositoryQuery::Upgrades
+            | RepositoryQuery::Unneeded
+            | RepositoryQuery::InstalledSizes(InstalledSizeQuery::All) => None,
+        };
+        if let Some(name) = package {
+            crate::core::security::validate_package_name(name)?;
+            command.arg(name);
+        }
+        Self::query_output(command).await
+    }
 
+    async fn query_output(mut command: tokio::process::Command) -> Result<Vec<u8>> {
+        use tokio::io::AsyncReadExt;
         const MAX_OUTPUT_BYTES: u64 = 64 * 1024 * 1024;
         let operation = async {
-            #[expect(
-                clippy::literal_string_with_formatting_args,
-                reason = "DNF interprets these query-format placeholders, not Rust"
-            )]
-            let query_format = match query {
-                RepositoryQuery::Available(_) => "%{name}\t%{evr}\t%{summary}\n",
-                RepositoryQuery::InstalledSizes(_) => "%{full_nevra}\t%{installsize}\n",
-                RepositoryQuery::InstalledReasons(_) => "%{full_nevra}\t%{reason}\n",
-                RepositoryQuery::InstalledDetails(_) => {
-                    "%{name}\t%{evr}\t%{full_nevra}\t%{reason}\n"
-                }
-                RepositoryQuery::Installed
-                | RepositoryQuery::Upgrades
-                | RepositoryQuery::Unneeded => "%{name}\t%{arch}\t%{evr}\t%{repoid}\n",
-            };
-            let selection = match query {
-                RepositoryQuery::Available(_) => "--available",
-                RepositoryQuery::Installed
-                | RepositoryQuery::InstalledSizes(_)
-                | RepositoryQuery::InstalledReasons(_)
-                | RepositoryQuery::InstalledDetails(_) => "--installed",
-                RepositoryQuery::Upgrades => "--upgrades",
-                RepositoryQuery::Unneeded => "--unneeded",
-            };
-            let mut command = tokio::process::Command::new("dnf");
-            if matches!(
-                query,
-                RepositoryQuery::InstalledSizes(_)
-                    | RepositoryQuery::InstalledReasons(_)
-                    | RepositoryQuery::InstalledDetails(_)
-            ) {
-                command.arg("--setopt=disable_excludes=*");
-            }
-            command
-                .args(["repoquery", selection])
-                .args(["--queryformat", query_format])
+            let mut child = command
                 .stdin(std::process::Stdio::null())
                 .stdout(std::process::Stdio::piped())
                 .stderr(std::process::Stdio::inherit())
-                .kill_on_drop(true);
-            if matches!(
-                query,
-                RepositoryQuery::Available(_)
-                    | RepositoryQuery::Installed
-                    | RepositoryQuery::Upgrades
-            ) {
-                command.arg("--latest-limit=1");
-            }
-            if matches!(query, RepositoryQuery::Available(_)) {
-                command.arg(format!("--arch={},noarch", std::env::consts::ARCH));
-            }
-            let package = match query {
-                RepositoryQuery::Available(package) => package,
-                RepositoryQuery::InstalledSizes(InstalledSizeQuery::Package(package))
-                | RepositoryQuery::InstalledReasons(InstalledReasonQuery::Package(package))
-                | RepositoryQuery::InstalledDetails(package) => Some(package),
-                RepositoryQuery::InstalledSizes(InstalledSizeQuery::RequirementProviders(
-                    package,
-                )) => {
-                    command.arg("--providers-of=requires");
-                    Some(package)
-                }
-                RepositoryQuery::InstalledReasons(InstalledReasonQuery::RequiredBy(package)) => {
-                    crate::core::security::validate_package_name(package)?;
-                    command.arg(format!("--whatrequires={package}"));
-                    None
-                }
-                RepositoryQuery::Installed
-                | RepositoryQuery::Upgrades
-                | RepositoryQuery::Unneeded
-                | RepositoryQuery::InstalledSizes(InstalledSizeQuery::All) => None,
-            };
-            if let Some(name) = package {
-                crate::core::security::validate_package_name(name)?;
-                command.arg(name);
-            }
-            let mut child = command
+                .kill_on_drop(true)
                 .spawn()
-                .context("Could not start DNF repository query")?;
+                .context("Could not start DNF query")?;
             let stdout = child.stdout.take().context("DNF stdout was not captured")?;
             let mut bytes = Vec::new();
             stdout
@@ -713,18 +737,188 @@ impl DnfPackageManager {
                 .await?;
             anyhow::ensure!(
                 bytes.len() as u64 <= MAX_OUTPUT_BYTES,
-                "DNF repository output exceeds 64 MiB"
+                "DNF query output exceeds 64 MiB"
             );
-            let status = child
-                .wait()
-                .await
-                .context("Could not wait for DNF repository query")?;
-            anyhow::ensure!(status.success(), "DNF repository query failed: {status}");
+            let status = child.wait().await.context("Could not wait for DNF query")?;
+            anyhow::ensure!(status.success(), "DNF query failed: {status}");
             Ok(bytes)
         };
         tokio::time::timeout(std::time::Duration::from_secs(60), operation)
             .await
-            .context("DNF repository query timed out after 60 seconds")?
+            .context("DNF query timed out after 60 seconds")?
+    }
+
+    async fn native_history(since: Option<u64>) -> Result<Vec<NativeTransaction>> {
+        let range = since.map_or_else(|| "last".to_owned(), |id| format!("{}..last", id.max(1)));
+        let mut command = tokio::process::Command::new("dnf");
+        command.args(["history", "info", "--json", &range]);
+        let output = Self::query_output(command).await?;
+        let transactions: Vec<NativeTransaction> =
+            serde_json::from_slice(&output).context("Invalid native DNF history")?;
+        anyhow::ensure!(
+            transactions.iter().all(|transaction| transaction.id > 0),
+            "Invalid native transaction ID"
+        );
+        Ok(transactions)
+    }
+
+    fn native_outcome(transactions: &[NativeTransaction], comment: &str) -> Result<NativeOutcome> {
+        let mut matching = transactions
+            .iter()
+            .filter(|transaction| transaction.comment == comment);
+        let Some(transaction) = matching.next() else {
+            return Ok(NativeOutcome::NoTransaction);
+        };
+        anyhow::ensure!(
+            matching.next().is_none(),
+            "Duplicate DNF transaction correlation"
+        );
+        match transaction.status.as_str() {
+            "Ok" => Ok(NativeOutcome::Committed(Self::native_changes(
+                &transaction.packages,
+            )?)),
+            "Error" => Ok(NativeOutcome::Failed),
+            status => anyhow::bail!("DNF transaction has unresolved status '{status}'"),
+        }
+    }
+
+    fn native_changes(
+        packages: &[NativeTransactionPackage],
+    ) -> Result<Vec<crate::core::history::PackageChange>> {
+        use crate::core::history::PackageChange;
+        let mut grouped: BTreeMap<(&str, &str), NativeVersionChanges> = BTreeMap::new();
+        for package in packages {
+            anyhow::ensure!(
+                !package
+                    .nevra
+                    .chars()
+                    .any(|ch| ch.is_whitespace() || ch.is_control()),
+                "Invalid native NEVRA"
+            );
+            let (nvr, architecture) = package
+                .nevra
+                .rsplit_once('.')
+                .context("Native NEVRA has no architecture")?;
+            let (nv, release) = nvr
+                .rsplit_once('-')
+                .context("Native NEVRA has no release")?;
+            let (name, version) = nv.rsplit_once('-').context("Native NEVRA has no version")?;
+            anyhow::ensure!(
+                [name, version, release, architecture]
+                    .iter()
+                    .all(|field| !field.is_empty()),
+                "Native NEVRA has an empty field"
+            );
+            let evr = &nvr[name.len() + 1..];
+            let changes = grouped.entry((name, architecture)).or_default();
+            match package.action.as_str() {
+                "Install" | "Upgrade" | "Downgrade" => {
+                    changes.added.insert(evr.to_owned());
+                }
+                "Remove" | "Replaced" => {
+                    changes.removed.insert(evr.to_owned());
+                }
+                "Reinstall" => {
+                    changes.removed.insert(evr.to_owned());
+                    changes.added.insert(evr.to_owned());
+                }
+                "Reason Change" => {}
+                action => anyhow::bail!("Unsupported native DNF action '{action}'"),
+            }
+        }
+        let mut result = Vec::new();
+        for ((name, _architecture), changes) in grouped {
+            if changes.removed.len() == 1 && changes.added.len() == 1 {
+                result.push(PackageChange {
+                    name: name.to_owned(),
+                    old_version: changes.removed.into_iter().next(),
+                    new_version: changes.added.into_iter().next(),
+                    source: "dnf".to_owned(),
+                });
+            } else {
+                result.extend(changes.removed.into_iter().map(|version| PackageChange {
+                    name: name.to_owned(),
+                    old_version: Some(version),
+                    new_version: None,
+                    source: "dnf".to_owned(),
+                }));
+                result.extend(changes.added.into_iter().map(|version| PackageChange {
+                    name: name.to_owned(),
+                    old_version: None,
+                    new_version: Some(version),
+                    source: "dnf".to_owned(),
+                }));
+            }
+        }
+        Ok(result)
+    }
+
+    async fn execute_dnf(&self, args: Vec<String>) -> Result<()> {
+        let operation = if is_root() {
+            let manager = self.cache_handle();
+            tokio::task::spawn_blocking(move || {
+                let arguments: Vec<_> = args.iter().map(String::as_str).collect();
+                manager.run_dnf(&arguments)
+            })
+            .await
+            .map_err(anyhow::Error::from)
+            .and_then(std::convert::identity)
+        } else {
+            let arguments: Vec<_> = args.iter().map(String::as_str).collect();
+            crate::core::privilege::run_privileged_program("dnf", &arguments).await
+        };
+        self.invalidate_installed_cache();
+        operation
+    }
+
+    async fn recorded_mutation(
+        &self,
+        kind: crate::core::history::TransactionType,
+        args: Vec<String>,
+        history: Option<&crate::core::history::HistoryManager>,
+    ) -> Result<()> {
+        let Some(history) = history.filter(|_| !crate::core::privilege::parent_owns_history())
+        else {
+            return self.execute_dnf(args).await;
+        };
+        let before = Self::native_history(None)
+            .await?
+            .iter()
+            .map(|transaction| transaction.id)
+            .max()
+            .unwrap_or(0);
+        let comment = format!("omg-{}", uuid::Uuid::new_v4());
+        let mut command_args = vec![format!("--comment={comment}")];
+        command_args.extend(args);
+        let operation = self.execute_dnf(command_args).await;
+        let observed = match Self::native_history(Some(before)).await {
+            Ok(transactions) => Self::native_outcome(&transactions, &comment),
+            Err(error) => Err(error),
+        };
+        let persistence = match observed {
+            Ok(NativeOutcome::NoTransaction) if operation.is_ok() => Ok(()),
+            Ok(NativeOutcome::NoTransaction | NativeOutcome::Failed) => history
+                .add_transaction(kind, Vec::new(), false)
+                .and_then(|()| {
+                    anyhow::ensure!(
+                        operation.is_err(),
+                        "DNF reported a failed journal transaction after command success"
+                    );
+                    Ok(())
+                }),
+            Ok(NativeOutcome::Committed(changes)) => history.add_transaction(kind, changes, true),
+            Err(error) => Err(error),
+        };
+        match (operation, persistence) {
+            (Ok(()), Ok(())) => Ok(()),
+            (Err(error), Ok(())) => Err(error),
+            (Ok(()), Err(error)) => {
+                Err(error.context("DNF operation succeeded but its history could not be recorded"))
+            }
+            (Err(operation), Err(history)) => anyhow::bail!(
+                "DNF operation failed: {operation}; history recording also failed: {history}"
+            ),
+        }
     }
 
     fn parse_versioned_packages(output: &[u8]) -> Result<Vec<VersionedPackage>> {
@@ -847,6 +1041,26 @@ impl PackageManager for DnfPackageManager {
         "dnf"
     }
 
+    fn transact_with_history<'a>(
+        &'a self,
+        kind: crate::core::history::TransactionType,
+        packages: &'a [String],
+        history: Option<&'a crate::core::history::HistoryManager>,
+    ) -> Option<Pin<Box<dyn Future<Output = Result<()>> + Send + 'a>>> {
+        use crate::core::history::TransactionType;
+        let action = match kind {
+            TransactionType::Install => "install",
+            TransactionType::Remove => "remove",
+            TransactionType::Update | TransactionType::Sync => return None,
+        };
+        Some(Box::pin(async move {
+            crate::core::security::validate_package_names(packages)?;
+            let mut args = vec![action.to_owned(), "-y".to_owned()];
+            args.extend_from_slice(packages);
+            self.recorded_mutation(kind, args, history).await
+        }))
+    }
+
     fn search(
         &self,
         query: &str,
@@ -901,27 +1115,9 @@ impl PackageManager for DnfPackageManager {
         Box::pin(async move {
             crate::core::security::validate_package_names(&packages)?;
 
-            if !is_root() {
-                // Native elevation with the exact resolved package list —
-                // no omg re-exec, no second listing or confirmation prompt.
-                let mut args = vec!["install", "-y"];
-                args.extend(packages.iter().map(String::as_str));
-                crate::core::privilege::run_privileged_program("dnf", &args).await?;
-                self.invalidate_installed_cache();
-                return Ok(());
-            }
-
-            tokio::task::spawn_blocking({
-                // Share caches so post-install invalidation reaches the caller.
-                let manager = self.cache_handle();
-                move || {
-                    let mut args = vec!["install", "-y"];
-                    let pkg_refs: Vec<&str> = packages.iter().map(String::as_str).collect();
-                    args.extend_from_slice(&pkg_refs);
-                    manager.run_dnf(&args)
-                }
-            })
-            .await?
+            let mut args = vec!["install".to_owned(), "-y".to_owned()];
+            args.extend(packages);
+            self.execute_dnf(args).await
         })
     }
 
@@ -930,24 +1126,9 @@ impl PackageManager for DnfPackageManager {
         Box::pin(async move {
             crate::core::security::validate_package_names(&packages)?;
 
-            if !is_root() {
-                let mut args = vec!["remove", "-y"];
-                args.extend(packages.iter().map(String::as_str));
-                crate::core::privilege::run_privileged_program("dnf", &args).await?;
-                self.invalidate_installed_cache();
-                return Ok(());
-            }
-
-            tokio::task::spawn_blocking({
-                let manager = self.cache_handle();
-                move || {
-                    let mut args = vec!["remove", "-y"];
-                    let pkg_refs: Vec<&str> = packages.iter().map(String::as_str).collect();
-                    args.extend_from_slice(&pkg_refs);
-                    manager.run_dnf(&args)
-                }
-            })
-            .await?
+            let mut args = vec!["remove".to_owned(), "-y".to_owned()];
+            args.extend(packages);
+            self.execute_dnf(args).await
         })
     }
 
@@ -1322,6 +1503,70 @@ mod tests {
             packages[0].summary,
             "Cross-vendor public domain suffix database in DAFSA form"
         );
+    }
+
+    #[test]
+    fn native_history_correlates_only_our_transaction() {
+        let mut transactions: Vec<NativeTransaction> = serde_json::from_str(r#"[
+            {"id":1,"comment":"ours","status":"Ok","packages":[{"nevra":"tree-0:2.2.1-4.fc44.x86_64","action":"Install"}]},
+            {"id":2,"comment":"someone-else","status":"Ok","packages":[{"nevra":"unrelated","action":"Future Action"}]}
+        ]"#).expect("native history fixture");
+        let NativeOutcome::Committed(changes) =
+            DnfPackageManager::native_outcome(&transactions, "ours").expect("matching transaction")
+        else {
+            panic!("expected committed transaction");
+        };
+        assert_eq!(changes.len(), 1);
+        assert_eq!(changes[0].name, "tree");
+        assert_eq!(changes[0].new_version.as_deref(), Some("0:2.2.1-4.fc44"));
+        assert!(matches!(
+            DnfPackageManager::native_outcome(&transactions, "no-op").unwrap(),
+            NativeOutcome::NoTransaction
+        ));
+        transactions[1].comment = "ours".to_owned();
+        assert!(DnfPackageManager::native_outcome(&transactions, "ours").is_err());
+    }
+
+    #[test]
+    fn native_history_pairs_versions_by_name_and_architecture() {
+        let packages: Vec<NativeTransactionPackage> = serde_json::from_str(
+            r#"[
+            {"nevra":"a-b-2:1-1.x86_64","action":"Replaced"},
+            {"nevra":"a-b-2:2-1.x86_64","action":"Upgrade"},
+            {"nevra":"a-b-2:3-1.i686","action":"Install"}
+        ]"#,
+        )
+        .unwrap();
+        let changes = DnfPackageManager::native_changes(&packages).unwrap();
+        assert_eq!(changes.len(), 2);
+        let upgrade = changes
+            .iter()
+            .find(|change| change.old_version.is_some())
+            .unwrap();
+        assert_eq!(upgrade.name, "a-b");
+        assert_eq!(upgrade.old_version.as_deref(), Some("2:1-1"));
+        assert_eq!(upgrade.new_version.as_deref(), Some("2:2-1"));
+        for package in [
+            NativeTransactionPackage {
+                nevra: "broken".to_owned(),
+                action: "Install".to_owned(),
+            },
+            NativeTransactionPackage {
+                nevra: "a-0:1-1.noarch".to_owned(),
+                action: "Future Action".to_owned(),
+            },
+        ] {
+            assert!(DnfPackageManager::native_changes(&[package]).is_err());
+        }
+    }
+
+    #[test]
+    fn native_failure_does_not_turn_planned_versions_into_committed_changes() {
+        let transactions: Vec<NativeTransaction> = serde_json::from_str(r#"[{"id":1,"comment":"ours","status":"Error","packages":[{"nevra":"a-0:1-1.noarch","action":"Install"}]}]"#).unwrap();
+        assert!(matches!(
+            DnfPackageManager::native_outcome(&transactions, "ours").unwrap(),
+            NativeOutcome::Failed
+        ));
     }
 
     #[test]

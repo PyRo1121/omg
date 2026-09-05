@@ -40,7 +40,16 @@ pub async fn install(packages: &[String]) -> Result<()> {
         ),
     );
 
-    pm.install(packages).await?;
+    let history = crate::core::history::HistoryManager::new()?;
+    if let Some(operation) = pm.transact_with_history(
+        crate::core::history::TransactionType::Install,
+        packages,
+        Some(&history),
+    ) {
+        operation.await?;
+    } else {
+        pm.install(packages).await?;
+    }
 
     modern_ui::print_success_with_packages(
         &format!(

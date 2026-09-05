@@ -462,6 +462,184 @@ mod dnf_integration {
         Ok(())
     }
 
+    #[test]
+    fn native_transactions_record_install_remove_and_ignore_noops() -> Result<()> {
+        use omg_lib::core::history::{HistoryManager, TransactionType};
+        if common::TestConfig::default().skip_if_no_system("dnf_transaction_history") {
+            common::report_skip("system tests disabled (set OMG_RUN_SYSTEM_TESTS=1)");
+            return Ok(());
+        }
+        let absent = std::process::Command::new("rpm")
+            .args(["-q", "tree"])
+            .output()?;
+        anyhow::ensure!(
+            absent.status.code() == Some(1),
+            "tree must be absent before this lifecycle fixture"
+        );
+        let snapshot = || -> Result<Vec<String>> {
+            let output = std::process::Command::new("rpm").arg("-qa").output()?;
+            anyhow::ensure!(output.status.success(), "RPM inventory failed");
+            let mut rows: Vec<_> = String::from_utf8(output.stdout)?
+                .lines()
+                .map(str::to_owned)
+                .collect();
+            rows.sort();
+            Ok(rows)
+        };
+        let before = snapshot()?;
+        let cache = dirs::cache_dir().expect("user cache directory");
+        std::fs::create_dir_all(&cache)?;
+        let fixture = tempfile::tempdir_in(cache)?;
+        let history = HistoryManager::new_in(fixture.path().join("history.json"))?;
+        let run = |arguments: &[&str]| {
+            std::process::Command::new(assert_cmd::cargo::cargo_bin!("omg"))
+                .env("OMG_DATA_DIR", fixture.path())
+                .env("NO_COLOR", "1")
+                .stdin(std::process::Stdio::null())
+                .args(arguments)
+                .output()
+        };
+        let verified = (|| -> Result<()> {
+            let install = run(&["install", "tree", "--yes"])?;
+            anyhow::ensure!(
+                install.status.success(),
+                "Install failed: {}",
+                String::from_utf8_lossy(&install.stderr)
+            );
+            let records = history.read_snapshot()?;
+            anyhow::ensure!(
+                records.len() == 1,
+                "Expected exactly one installation transaction"
+            );
+            let record = &records[0];
+            anyhow::ensure!(
+                record.success && record.transaction_type == TransactionType::Install,
+                "Incorrect installation outcome"
+            );
+            let change = record
+                .changes
+                .iter()
+                .find(|change| change.name == "tree")
+                .ok_or_else(|| anyhow::anyhow!("Installation history omitted tree"))?;
+            let native = std::process::Command::new("rpm")
+                .args(["-q", "tree", "--qf", "%{EPOCHNUM}:%{VERSION}-%{RELEASE}"])
+                .output()?;
+            anyhow::ensure!(native.status.success(), "Native installed version failed");
+            anyhow::ensure!(
+                change.old_version.is_none()
+                    && change.new_version.as_deref() == Some(std::str::from_utf8(&native.stdout)?),
+                "Recorded version differs from RPM"
+            );
+            let noop = run(&["install", "tree", "--yes"])?;
+            anyhow::ensure!(noop.status.success(), "No-op install failed");
+            anyhow::ensure!(
+                history.read_snapshot()?.len() == 1,
+                "No-op invented a transaction"
+            );
+            let blame = run(&["blame", "tree"])?;
+            anyhow::ensure!(
+                blame.status.success()
+                    && String::from_utf8(blame.stdout)?.contains("OMG Transaction History (1)"),
+                "blame did not find real installation history"
+            );
+            Ok(())
+        })();
+        let present = std::process::Command::new("rpm")
+            .args(["-q", "tree"])
+            .output()?;
+        if present.status.success() {
+            let removed = run(&["remove", "tree", "--yes"])?;
+            anyhow::ensure!(snapshot()? == before, "RPM inventory was not restored");
+            anyhow::ensure!(
+                removed.status.success(),
+                "Fixture cleanup failed: {}",
+                String::from_utf8_lossy(&removed.stderr)
+            );
+        } else {
+            anyhow::ensure!(
+                present.status.code() == Some(1),
+                "Cannot determine fixture package state"
+            );
+            anyhow::ensure!(snapshot()? == before, "RPM inventory was not restored");
+        }
+        verified?;
+        let records = history.read_snapshot()?;
+        anyhow::ensure!(records.len() == 2, "Expected install and remove history");
+        let removed = &records[1];
+        anyhow::ensure!(
+            removed.success && removed.transaction_type == TransactionType::Remove,
+            "Incorrect removal outcome"
+        );
+        anyhow::ensure!(
+            removed.changes.iter().any(|change| change.name == "tree"
+                && change.old_version.is_some()
+                && change.new_version.is_none()),
+            "Removal history omitted tree"
+        );
+        fixture.close()?;
+        Ok(())
+    }
+
+    #[tokio::test]
+    #[serial_test::serial(history_ownership)]
+    async fn native_history_honors_custom_and_disabled_service_history() -> Result<()> {
+        use omg_lib::core::history::HistoryManager;
+        use omg_lib::core::packages::PackageService;
+        if common::TestConfig::default().skip_if_no_system("dnf_history_ownership") {
+            common::report_skip("system tests disabled (set OMG_RUN_SYSTEM_TESTS=1)");
+            return Ok(());
+        }
+        let absent = std::process::Command::new("rpm")
+            .args(["-q", "tree"])
+            .output()?;
+        anyhow::ensure!(absent.status.code() == Some(1), "tree must be absent");
+        let fixture = tempfile::tempdir_in(dirs::cache_dir().expect("user cache directory"))?;
+        let custom_path = fixture.path().join("custom.json");
+        let default = HistoryManager::new()?;
+        let default_before = serde_json::to_vec(&default.read_snapshot()?)?;
+        let manager = std::sync::Arc::new(DnfPackageManager::new());
+        let packages = vec!["tree".to_owned()];
+        enum Owner {
+            Service,
+            Disabled,
+            Parent,
+        }
+        for owner in [Owner::Service, Owner::Disabled, Owner::Parent] {
+            manager.install(&packages).await?;
+            let builder = PackageService::builder(manager.clone());
+            let service = match owner {
+                Owner::Service | Owner::Parent => builder
+                    .history(HistoryManager::new_in(&custom_path)?)
+                    .build()?,
+                Owner::Disabled => builder.without_history().build()?,
+            };
+            omg_lib::core::privilege::set_parent_owns_history(matches!(owner, Owner::Parent));
+            let outcome = service.remove(&packages, false).await;
+            omg_lib::core::privilege::set_parent_owns_history(false);
+            let remaining = std::process::Command::new("rpm")
+                .args(["-q", "tree"])
+                .output()?;
+            if remaining.status.success() {
+                manager.remove(&packages).await?;
+            }
+            outcome?;
+            anyhow::ensure!(
+                remaining.status.code() == Some(1),
+                "Service removal did not remove tree"
+            );
+            anyhow::ensure!(
+                HistoryManager::new_in(&custom_path)?.read_snapshot()?.len() == 1,
+                "Service history setting was not respected"
+            );
+            anyhow::ensure!(
+                serde_json::to_vec(&default.read_snapshot()?)? == default_before,
+                "Backend wrote to the default history unexpectedly"
+            );
+        }
+        fixture.close()?;
+        Ok(())
+    }
+
     #[tokio::test]
     async fn cleanup_preview_preserves_installed_packages() -> Result<()> {
         if common::TestConfig::default().skip_if_no_system("dnf_cleanup_preview") {
