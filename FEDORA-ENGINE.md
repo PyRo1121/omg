@@ -90,7 +90,7 @@ installed summaries retain the default-locale string.
 
 ## Native transaction recording
 
-CLI install and remove operations attach a unique DNF5 transaction comment.
+CLI install, remove, and update operations attach a unique DNF5 transaction comment.
 Bounded journal reads select that comment rather than assuming the last native
 transaction belongs to OMG. Successful records retain canonical names and exact
 RPM EVRs. Replacement versions pair only within the same name and architecture.
@@ -106,9 +106,15 @@ failure returns an error that says the package operation succeeded.
 Fedora 44 checks cover unprivileged install, no-op, remove, real blame history,
 custom and disabled destinations, parent ownership, an unrelated later native
 transaction, a native command failure, and a persistence failure. The lifecycle
-restores the RPM inventory. Update, cleanup, and sync do not use this recording
-path yet. Partial RPM failure recovery and exhaustive command coverage remain
-unverified.
+restores the RPM inventory. Cleanup and sync do not use this recording path yet.
+Partial RPM failure recovery and exhaustive command coverage remain unverified.
+
+The ignored `dnf_operations::test_update_all_packages` test upgrades a disposable
+VM through the real CLI. It compares every recorded old and new version with
+independent RPM inventory differences, then checks a no-op update. The Fedora 44
+candidate matched 196 removed builds and 204 added builds. Reboot checks passed,
+and an offline disk snapshot restored that guest's original package inventory.
+The test requires an external VM snapshot and rollback; it is not a host test.
 
 ## Future index build order
 
