@@ -128,6 +128,101 @@ mod privilege_escalation {
     }
 
     #[test]
+    fn installer_marker_bounds_survive_curl_without_streaming_limits() {
+        let directory = tempfile::tempdir().expect("marker fixture");
+        let body_path = directory.path().join("body");
+        for (case, body, valid) in [
+            ("newline", b"1.2.3\n".to_vec(), true),
+            (
+                "at limit",
+                [b"1.2.3".as_slice(), &[b'\n'; 251]].concat(),
+                true,
+            ),
+            (
+                "over limit",
+                [b"1.2.3".as_slice(), &[b'\n'; 252]].concat(),
+                false,
+            ),
+            ("NUL", b"1.2.\x003".to_vec(), false),
+        ] {
+            std::fs::write(&body_path, &body).expect("write marker body");
+            let output = run_installer_functions(
+                "curl() { cat \"$BODY\"; }\nOMG_VERSION=latest\nresolve_version",
+                &[("BODY", body_path.as_os_str())],
+            );
+            assert_eq!(output.status.success(), valid, "{case}");
+        }
+    }
+
+    #[test]
+    fn installer_file_bounds_survive_curl_without_streaming_limits() {
+        for (stage, file, status) in [
+            ("archive", "fixture.tar.xz", 1),
+            ("checksum", "fixture.tar.xz.sha256", 2),
+        ] {
+            let directory = tempfile::tempdir().expect("download fixture");
+            let body_path = directory.path().join("body");
+            std::fs::write(&body_path, [b'x'; 4096]).expect("oversized response");
+            let output = run_installer_functions(
+                r#"
+MAX_ARCHIVE_BYTES=32
+MAX_CHECKSUM_BYTES=32
+OMG_VERSION=v1.2.3
+check_runtime_dependencies() { :; }
+detect_os() { printf linux; }
+detect_distro() { printf arch; }
+detect_arch() { printf x86_64; }
+select_artifact() { printf fixture.tar.xz; }
+mktemp() { printf '%s\n' "$DIRECTORY"; }
+cleanup_tmp_dir() { :; }
+header() { :; }
+info() { :; }
+start_spinner() { :; }
+stop_spinner() { :; }
+fail_spinner() { :; }
+fixture_body() {
+  if [[ "$STAGE" == archive || "$1" == *.sha256 ]]; then
+    cat "$BODY"
+  else
+    printf archive
+  fi
+}
+curl() {
+  local output='' url=''
+  while (( $# )); do
+    case "$1" in
+      -o) output="$2"; shift 2 ;;
+      --max-filesize) shift 2 ;;
+      https://*) url="$1"; shift ;;
+      *) shift ;;
+    esac
+  done
+  if [[ -n "$output" ]]; then
+    fixture_body "$url" > "$output"
+  else
+    fixture_body "$url"
+  fi
+}
+install_from_release
+"#,
+                &[
+                    ("BODY", body_path.as_os_str()),
+                    ("DIRECTORY", directory.path().as_os_str()),
+                    ("STAGE", std::ffi::OsStr::new(stage)),
+                ],
+            );
+            assert_eq!(output.status.code(), Some(status), "{stage}");
+            let bytes = std::fs::metadata(directory.path().join(file))
+                .expect("downloaded candidate")
+                .len();
+            assert_eq!(
+                bytes, 33,
+                "{stage} must retain only the limit plus one byte"
+            );
+        }
+    }
+
+    #[test]
     fn installer_maps_arch_derivatives_to_arch_artifacts() {
         let temp = tempfile::tempdir().expect("os-release fixture directory");
         let os_release = temp.path().join("os-release");
