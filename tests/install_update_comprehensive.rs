@@ -1017,14 +1017,56 @@ mod command_integration_tests {
 
     #[test]
     fn test_status_after_failed_install() {
-        let bad_install = run_omg(&["install", "-y", "nonexistent-pkg"]);
-        bad_install.assert_failure();
-        bad_install.assert_contains("not found");
+        let project = common::TestProject::new();
+        project.run(&["install", "-y", "git"]).assert_success();
 
-        // Status must still work after the failure.
-        let status = run_omg(&["status"]);
+        let before = project.run(&["explicit", "--json"]);
+        before.assert_success();
+        assert_eq!(
+            serde_json::from_str::<serde_json::Value>(&before.stdout).unwrap(),
+            serde_json::json!({ "packages": ["git"], "count": 1 }),
+            "The initial CLI install must persist a nonempty inventory"
+        );
+        let state_path = project.data_dir.path().join("mock_state_pacman.json");
+        let before_state = std::fs::read(&state_path).unwrap();
+
+        // A real policy rejection is deterministic offline, unlike a missing
+        // package lookup that falls through to the live AUR service.
+        let policy_path = project.config_dir.path().join("policy.toml");
+        std::fs::write(&policy_path, "banned_packages = [\"firefox\"]\n").unwrap();
+        let bad_install = project.run(&["install", "-y", "firefox"]);
+        bad_install.assert_failure();
+        let error = bad_install.combined_output();
+        assert!(
+            error.contains("firefox") && error.contains("banned"),
+            "Expected the injected policy rejection, got: {error}"
+        );
+
+        let status = project.run(&["status"]);
         status.assert_success();
-        status.assert_contains("Packages");
+        status.assert_stdout_contains("1 packages installed · 1 explicit");
+        assert_eq!(
+            std::fs::read(&state_path).unwrap(),
+            before_state,
+            "The failed install and subsequent status must preserve persisted state"
+        );
+        let after_failure = project.run(&["explicit", "--json"]);
+        after_failure.assert_success();
+        assert_eq!(
+            serde_json::from_str::<serde_json::Value>(&after_failure.stdout).unwrap(),
+            serde_json::json!({ "packages": ["git"], "count": 1 }),
+            "The same project must retain git and must not install banned firefox"
+        );
+
+        std::fs::remove_file(policy_path).unwrap();
+        project.run(&["install", "-y", "firefox"]).assert_success();
+        let recovered = project.run(&["explicit", "--json"]);
+        recovered.assert_success();
+        assert_eq!(
+            serde_json::from_str::<serde_json::Value>(&recovered.stdout).unwrap(),
+            serde_json::json!({ "packages": ["firefox", "git"], "count": 2 }),
+            "Lifting the ban must permit a new install without losing the old one"
+        );
     }
 
     #[test]
