@@ -15,6 +15,9 @@ pub fn resolve_active_version(runtime: &str) -> Result<Option<String>> {
     if let Some(version) = versions.get(&runtime) {
         return Ok(Some(version.clone()));
     }
+    if SUPPORTED_RUNTIMES.contains(&runtime.as_str()) {
+        return Ok(crate::runtimes::probe_version(&runtime));
+    }
     Ok(None)
 }
 
