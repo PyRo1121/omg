@@ -168,6 +168,20 @@ Preserve archive data and report persistence failures explicitly. Coordinate dat
 
 Bring in the QEMU lifecycle runner, contract-driven smoke tests, failure evidence, and benchmark records. Add the token-stdin contract required by the security changes on qa-setup.
 
+### 🔧 Maintenance
+
+- **Rust**: Upgrade toolchain to 1.95.0
+
+  - pin rust-toolchain.toml, Cargo rust-version, CI workflows, and
+
+Dockerfiles to 1.95.0
+
+  - apply clippy 1.95 idioms (match guards, is_ok_and, let chains)
+
+surfaced by the stricter toolchain
+
+  - cargo check and clippy pass on 1.95.0
+
 ### 🧪 Testing
 
 - **Daemon**: Prove cache clear removes a populated query
