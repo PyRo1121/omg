@@ -170,6 +170,9 @@ Bring in the QEMU lifecycle runner, contract-driven smoke tests, failure evidenc
 
 ### 🔧 Maintenance
 
+- **Deps**: Regenerate fuzz lockfile for toml_edit 0.25
+- **Deps**: Regenerate Cargo.lock for toml_edit 0.25
+- **Deps**: Update rust dependencies
 - **Rust**: Upgrade toolchain to 1.95.0
 
   - pin rust-toolchain.toml, Cargo rust-version, CI workflows, and
