@@ -20,7 +20,7 @@
 #   curl -fsSL https://... | OMG_NO_TELEMETRY=1 bash
 #
 
-set -u
+set -uo pipefail
 
 # 🔒 Telemetry opt-out (set before running to skip prompt)
 # Usage: OMG_NO_TELEMETRY=1 curl ... | bash
