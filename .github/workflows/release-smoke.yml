@@ -1,14 +1,13 @@
 name: Release Smoke
 
-# Shadow-mode proof for the release artifact smoke test. It runs the shared
-# runner against the latest published release (or a tag supplied through
-# workflow_dispatch) so a later change can turn its results into a release gate. It must not block releases and must not be
-# edited together with release.yml.
 on:
   pull_request:
     paths:
       - ".github/workflows/release-smoke.yml"
       - "scripts/release-smoke.sh"
+      - "scripts/test-release-smoke.sh"
+      - "scripts/report-smoke-sentry.sh"
+      - "tests/cli_behavior_inventory.tsv"
   workflow_dispatch:
     inputs:
       release_tag:
@@ -24,6 +23,18 @@ permissions:
   contents: read
 
 jobs:
+  runner-fixtures:
+    name: Runner fixtures
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Test release smoke coordinator
+        run: ./scripts/test-release-smoke.sh
+
   smoke:
     name: "Smoke ${{ matrix.distro }}"
     runs-on: ubuntu-latest
