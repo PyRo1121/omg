@@ -630,12 +630,11 @@ fn verify_fulcio_chain(
     for ext in leaf.extensions() {
         match ext.parsed_extension() {
             ParsedExtension::BasicConstraints(bc) => is_ca = bc.ca,
-            ParsedExtension::ExtendedKeyUsage(eku) => {
+            ParsedExtension::ExtendedKeyUsage(eku)
                 // codeSigning OID 1.3.6.1.5.5.7.3.3
-                if eku.code_signing {
+                if eku.code_signing => {
                     has_code_signing_eku = true;
                 }
-            }
             _ => {}
         }
     }

@@ -82,8 +82,7 @@ fn main() {
     if let Ok((total, explicit, orphans)) = omg_lib::package_managers::pacman_db::get_counts_fast()
     {
         let updates = omg_lib::package_managers::pacman_db::check_updates_cached()
-            .map(|u| u.len() as u32)
-            .unwrap_or(0);
+            .map_or(0, |u| u.len() as u32);
         display_status(cmd, total as u32, explicit as u32, orphans as u32, updates);
         return;
     }

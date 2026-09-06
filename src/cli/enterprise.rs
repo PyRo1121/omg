@@ -492,7 +492,7 @@ fn generate_license_csv(scan: &LicenseScan) -> Result<String> {
     let mut writer = csv::Writer::from_writer(Vec::new());
     writer.write_record(["license", "count"])?;
     let mut licenses: Vec<_> = scan.by_license.iter().collect();
-    licenses.sort_unstable_by(|(left, _), (right, _)| left.cmp(right));
+    licenses.sort_unstable_by_key(|(left, _)| *left);
     for (license, count) in licenses {
         let license = spreadsheet_safe_cell(license);
         writer.write_record([&*license, count.to_string().as_str()])?;

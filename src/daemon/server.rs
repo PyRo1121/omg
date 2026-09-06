@@ -35,10 +35,10 @@ const STATUS_REFRESH_INTERVAL: Duration = Duration::from_mins(5);
 const MEMORY_CLEANUP_INTERVAL: Duration = Duration::from_mins(30);
 
 /// Socket health check interval (60 seconds) - detect deleted socket files
-const SOCKET_HEALTH_CHECK_INTERVAL: Duration = Duration::from_secs(60);
+const SOCKET_HEALTH_CHECK_INTERVAL: Duration = Duration::from_mins(1);
 
 /// Close clients that hold a connection without sending a complete frame.
-const CLIENT_IDLE_TIMEOUT: Duration = Duration::from_secs(60);
+const CLIENT_IDLE_TIMEOUT: Duration = Duration::from_mins(1);
 
 /// Bound response writes so a local client that stops reading cannot retain a
 /// connection permit indefinitely.

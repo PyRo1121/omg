@@ -72,7 +72,7 @@ const DPKG_UPDATES_PATH: &str = "/var/lib/dpkg/updates";
 /// next transaction refuses to proceed until the operator completes dpkg
 /// recovery and removes the file.
 const DPKG_TRANSACTION_JOURNAL_PATH: &str = "/var/lib/dpkg/omg-transaction-journal.json";
-const MAINTAINER_SCRIPT_TIMEOUT: Duration = Duration::from_secs(15 * 60);
+const MAINTAINER_SCRIPT_TIMEOUT: Duration = Duration::from_mins(15);
 static DPKG_TRANSACTION_LOCK: LazyLock<Arc<tokio::sync::Mutex<()>>> =
     LazyLock::new(|| Arc::new(tokio::sync::Mutex::new(())));
 

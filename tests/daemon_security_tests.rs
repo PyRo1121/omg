@@ -184,6 +184,48 @@ async fn test_cache_stats_handler() {
 async fn test_cache_clear_handler() {
     let (_temp_dir, state) = init_state();
 
+    // Even a search with no matches caches a query result. Repeated reads
+    // let Moka run maintenance so its eventually consistent entry count
+    // becomes visible through CacheStats before testing invalidation.
+    tokio::time::timeout(std::time::Duration::from_secs(2), async {
+        loop {
+            let search = handle_request(
+                Arc::clone(&state),
+                Request::Search {
+                    id: 553,
+                    query: "cache-clear-fixture".to_string(),
+                    limit: None,
+                },
+            )
+            .await;
+            match search {
+                Response::Success {
+                    id: 553,
+                    result: omg_lib::daemon::protocol::ResponseResult::Search(result),
+                } => {
+                    assert!(result.packages.is_empty());
+                    assert_eq!(result.total, 0);
+                }
+                other => panic!("Expected successful fixture search, got: {other:?}"),
+            }
+            match handle_request(Arc::clone(&state), Request::CacheStats { id: 554 }).await {
+                Response::Success {
+                    id: 554,
+                    result: omg_lib::daemon::protocol::ResponseResult::CacheStats { size, .. },
+                } => {
+                    if size > 0 {
+                        assert_eq!(size, 1, "Only the fixture query should be cached");
+                        break;
+                    }
+                }
+                other => panic!("Expected cache statistics before clear, got: {other:?}"),
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+        }
+    })
+    .await
+    .expect("Fixture search must populate the cache before clear");
+
     let req = Request::CacheClear { id: 555 };
     let response = handle_request(Arc::clone(&state), req).await;
 
@@ -197,6 +239,14 @@ async fn test_cache_clear_handler() {
             }
         }
         Response::Error { message, .. } => unreachable!("CacheClear failed: {}", message),
+    }
+
+    match handle_request(state, Request::CacheStats { id: 556 }).await {
+        Response::Success {
+            id: 556,
+            result: omg_lib::daemon::protocol::ResponseResult::CacheStats { size, .. },
+        } => assert_eq!(size, 0, "CacheClear must remove the populated query"),
+        other => panic!("Expected cache statistics after clear, got: {other:?}"),
     }
 }
 

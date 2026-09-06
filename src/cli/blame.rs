@@ -93,7 +93,7 @@ fn newest_transactions_for_package<'a>(
                 .any(|change| change.name == package)
         })
         .collect();
-    relevant.sort_by(|left, right| right.timestamp.cmp(&left.timestamp));
+    relevant.sort_by_key(|entry| std::cmp::Reverse(entry.timestamp));
     relevant
 }
 

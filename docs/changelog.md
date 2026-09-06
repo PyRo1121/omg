@@ -14,6 +14,16 @@ OMG is the fastest unified package manager for Linux, replacing pacman, yay, nvm
 ### ♻️  Refactoring
 
 - **Cli**: Unify status output and limit local build jobs
+### ⚠️  Breaking Changes
+
+- **Runtimes**: Prove offline pin detection activates installed versions
+
+[#238](https://github.com/PyRo1121/omg/issues/238) merged into test-audit/home-isolation after [#237](https://github.com/PyRo1121/omg/issues/237) already landed on
+
+main, so these two tests never reached main. Port the leftover
+
+non-breaking coverage onto current main.
+
 ### ✨ New Features
 
 - **Install**: Add interactive fuzzy package discovery
@@ -92,34 +102,7 @@ keyring. Port the leftover non-breaking smoke setup onto current main.
 - **Release**: Bound probes and verify container cleanup
 - **Release**: Keep artifact scratch off tmpfs
 - **Release**: Preserve smoke contract evidence
-- **Cli**: Bound report output and harden unattended runtime
-
-  - limit reverse-dependency, dependents, and license cards to 20 visible
-
-rows with an explicit omitted count so oversized reports stay readable
-
-  - skip optional account identity prompts when no terminal is attended
-
-  - reject dash/team dashboard with an actionable error before TUI setup
-
-  - add arch contract, comprehensive, and matrix regression tests
-
-  - record live-review audit evidence
-
 - **History**: Validate live history through its file descriptor
-- **Installer**: Propagate bounded pipeline failures
-- **Installer**: Bound release responses while streaming
-- **Privacy**: Include archived history in local exports
-- **Ci**: Permit pivot_root in the sandbox fixture profile
-
-Verify a pinned upstream Moby seccomp profile and add pivot_root only to its CAP_SYS_ADMIN allow rule. Keep other restrictions and the descendant cleanup assertion intact.
-
-- **Aur**: Isolate sandbox PIDs for descendant cleanup
-- **Aur**: Separate build review and simplify verified execution
-- **Core**: Harden history and package mutation recovery
-
-Preserve archive data and report persistence failures explicitly. Coordinate database publication and runtime mutations, tighten installer provenance checks, and include the approved tracked documentation and security changes.
-
 - **Cli**: Stop inventing package mutation summaries
 - **Runtimes**: Report global selection when project has no pin
 - **Python**: Bound release page size without shrinking discovery
@@ -135,6 +118,33 @@ Preserve archive data and report persistence failures explicitly. Coordinate dat
 - **Fedora**: Expose correct explicit package listing
 - **Fedora**: Implement native update discovery and status counts
 - **Fedora**: Restore repository queries and package lifecycle
+- **Cli**: Bound report output and harden unattended runtime
+
+  - limit reverse-dependency, dependents, and license cards to 20 visible
+
+rows with an explicit omitted count so oversized reports stay readable
+
+  - skip optional account identity prompts when no terminal is attended
+
+  - reject dash/team dashboard with an actionable error before TUI setup
+
+  - add arch contract, comprehensive, and matrix regression tests
+
+  - record live-review audit evidence
+
+- **Installer**: Propagate bounded pipeline failures
+- **Installer**: Bound release responses while streaming
+- **Privacy**: Include archived history in local exports
+- **Ci**: Permit pivot_root in the sandbox fixture profile
+
+Verify a pinned upstream Moby seccomp profile and add pivot_root only to its CAP_SYS_ADMIN allow rule. Keep other restrictions and the descendant cleanup assertion intact.
+
+- **Core**: Harden history and package mutation recovery
+
+Preserve archive data and report persistence failures explicitly. Coordinate database publication and runtime mutations, tighten installer provenance checks, and include the approved tracked documentation and security changes.
+
+- **Aur**: Isolate sandbox PIDs for descendant cleanup
+- **Aur**: Separate build review and simplify verified execution
 - **Fedora**: Decode native RPM database headers
 - **Ci**: Preserve prepared changelog sections
 ### 👷 CI/CD
@@ -160,6 +170,7 @@ Bring in the QEMU lifecycle runner, contract-driven smoke tests, failure evidenc
 
 ### 🧪 Testing
 
+- **Daemon**: Prove cache clear removes a populated query
 - **Completion**: Log zpty child startup and stop compinit prompting
 
 The runner showed the child spawned but never printed READY, so the
@@ -216,6 +227,9 @@ production code.
 
 - **Install**: Restore recovery inventory assertions
 - **Install**: Restore recovery inventory assertions
+- **Cli**: Align status and HTTPS checks with current contracts
+- **History**: Isolate resource-limited coverage output
+- **History**: Refuse live FIFOs without blocking
 - **Daemon**: Fail fixture setup instead of reporting skipped security checks
 - **Install**: Distinguish archive metadata from filename identity
 - **Why**: Associate dependency status with its package row
@@ -225,13 +239,10 @@ production code.
 - **Hooks**: Make hostile runtime pin fixture reach its target
 - **Security**: Reject tampering, secret leaks and expired signer chains
 - **Cli**: Align status assertions with installed-package report
-- **Install**: Preserve inventory across policy failure and recovery
-- **Cli**: Align status and HTTPS checks with current contracts
-- **History**: Isolate resource-limited coverage output
-- **History**: Refuse live FIFOs without blocking
 - **Installer**: Cover failed bounded transfers
 - **Installer**: Cover legacy curl streaming bounds
 - **Privacy**: Cover archived history in local exports
+- **Install**: Preserve inventory across policy failure and recovery
 - **Aur**: Make sandbox cancellation fixture Docker-safe
 
 The required CI gate failed because the ignored regression bound the

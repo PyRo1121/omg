@@ -21,8 +21,7 @@ fn docker_available() -> bool {
     Command::new("docker")
         .arg("--version")
         .output()
-        .map(|o| o.status.success())
-        .unwrap_or(false)
+        .is_ok_and(|o| o.status.success())
 }
 
 fn build_docker_image() -> bool {

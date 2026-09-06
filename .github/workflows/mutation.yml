@@ -30,11 +30,11 @@ jobs:
           persist-credentials: false
 
       - name: Install Rust toolchain
-        # Match rust-toolchain.toml (1.93.1) instead of floating "stable",
+        # Match rust-toolchain.toml (1.95.0) instead of floating "stable",
         # so weekly mutation runs stay comparable across weeks.
         uses: dtolnay/rust-toolchain@6bed0761d98439e5a578e2877258200ad565ba87 # stable
         with:
-          toolchain: "1.93.1"
+          toolchain: "1.95.0"
 
       - name: Setup Rust cache
         uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2

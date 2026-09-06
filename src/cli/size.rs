@@ -286,7 +286,7 @@ fn show_top_packages_debian(limit: usize) -> Result<Cmd<()>> {
 
     let mut packages = debian_db::get_all_packages_with_sizes()?;
 
-    packages.sort_by(|a, b| b.1.cmp(&a.1));
+    packages.sort_by_key(|(_, size)| std::cmp::Reverse(*size));
 
     let total: i64 = packages.iter().map(|(_, s)| s).sum();
 
@@ -325,7 +325,7 @@ fn show_package_tree_debian(package: &str) -> Result<Cmd<()>> {
         }
     }
 
-    dep_sizes.sort_by(|a, b| b.1.cmp(&a.1));
+    dep_sizes.sort_by_key(|(_, size)| std::cmp::Reverse(*size));
     let total_deps: i64 = dep_sizes.iter().map(|(_, s)| s).sum();
 
     let mut commands = vec![
