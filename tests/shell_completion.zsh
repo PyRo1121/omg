@@ -48,12 +48,17 @@ watchdog() {
 }
 watchdog &
 wd=$!
+print -r -- 'phase: watchdog armed'
 mkdir "$fixture/fpath"
 cp "${0:A:h}/../src/hooks/completions/zsh.zsh" "$fixture/fpath/_omg"
+child_log=/tmp/omg-zsh-child.log
+: > "$child_log"
 cat > "$fixture/.zshrc" <<'RC'
+print -r -- 'child: zshrc start' >> /tmp/omg-zsh-child.log
 fpath=("$ZDOTDIR/fpath" $fpath)
 autoload -Uz compinit
-compinit -D
+compinit -i -D
+print -r -- 'child: compinit done' >> /tmp/omg-zsh-child.log
 PROMPT='READY> '
 omg() {
     case "$5" in
@@ -70,7 +75,7 @@ bindkey '^X' capture_buffer
 RC
 export ZDOTDIR=$fixture TERM=xterm
 zpty child zsh -d -i
-print -r -- 'phase: zpty spawned'
+print -r -- 'phase: zpty spawned, waiting for prompt'
 zpty -r child output '*READY>*'
 print -r -- 'phase: prompt ready'
 zpty -w -n child $'omg install frfx\t\C-x'

@@ -123,6 +123,8 @@ jobs:
           rc=$?
           set -e
           cat /tmp/shell-completion.log
+          echo '--- child zsh startup log ---'
+          cat /tmp/omg-zsh-child.log 2>/dev/null || true
           exit "$rc"
 
       - name: Check local CI targets
