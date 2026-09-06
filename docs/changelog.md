@@ -61,6 +61,9 @@ Preserve archive data and report persistence failures explicitly. Coordinate dat
 - Record v0.1.218 verification [skip ci]
 ### 🧪 Testing
 
+- **Daemon**: Fail fixture setup instead of reporting skipped security checks
+- **Install**: Distinguish archive metadata from filename identity
+- **Why**: Associate dependency status with its package row
 - **Harness**: Isolate home paths and verify persisted shell configuration
 - **Runtimes**: Parse and compare complete JSON listing responses
 - **Properties**: Reject abnormal process exits and timeouts
