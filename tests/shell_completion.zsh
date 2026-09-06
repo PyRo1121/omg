@@ -26,10 +26,13 @@ done
 BASH
 
 zmodload zsh/zpty
+zmodload zsh/system
+owner=$sysparams[pid]
 cache_root=${XDG_CACHE_HOME:-$HOME/.cache}
 mkdir -p "$cache_root"
 fixture=$(mktemp -d "$cache_root/omg-zsh-completion.XXXXXXXX")
 cleanup() {
+    [[ $sysparams[pid] == $owner ]] || return 0
     if zpty -t child 2>/dev/null; then
         zpty -d child
     fi
