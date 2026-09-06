@@ -13,8 +13,96 @@
 
 pub mod common;
 
+use common::assertions::assert_process_completed;
 use common::*;
 use proptest::prelude::*;
+
+#[cfg(test)]
+mod process_completion_oracle {
+    use crate::common::CommandResult;
+    use crate::common::assertions::assert_process_completed;
+
+    fn command_result(exit_code: i32, stderr: &str) -> CommandResult {
+        CommandResult {
+            success: exit_code == 0,
+            exit_code,
+            stdout: String::new(),
+            stderr: stderr.to_owned(),
+        }
+    }
+
+    #[test]
+    fn process_completion_accepts_success() {
+        assert_process_completed(&command_result(0, ""));
+    }
+
+    #[test]
+    fn process_completion_accepts_ordinary_cli_errors() {
+        for (exit_code, stderr) in [
+            (1, "Error: invalid runtime version"),
+            (2, "error: unrecognized subcommand 'invalid'"),
+        ] {
+            assert_process_completed(&command_result(exit_code, stderr));
+        }
+    }
+
+    #[test]
+    fn process_completion_rejects_timeout_even_with_ordinary_exit() {
+        // A process can exit between the timeout check and the kill attempt.
+        for exit_code in 0..=2 {
+            let result = command_result(
+                exit_code,
+                "[test harness timeout] command exceeded 60s: omg status",
+            );
+            assert!(
+                std::panic::catch_unwind(|| assert_process_completed(&result)).is_err(),
+                "Timeout must fail even with exit code {exit_code}"
+            );
+        }
+    }
+
+    #[test]
+    #[should_panic(expected = "ordinary CLI exit code")]
+    fn process_completion_rejects_signal_without_output() {
+        assert_process_completed(&command_result(-1, ""));
+    }
+
+    #[test]
+    #[should_panic(expected = "ordinary CLI exit code")]
+    fn process_completion_rejects_panic_exit_without_output() {
+        assert_process_completed(&command_result(101, ""));
+    }
+
+    #[test]
+    fn process_completion_rejects_unexpected_exit_codes() {
+        for exit_code in [3, 126, 127, 130, 139, 255] {
+            let result = command_result(exit_code, "");
+            assert!(
+                std::panic::catch_unwind(|| assert_process_completed(&result)).is_err(),
+                "Unexpected exit code {exit_code} must fail"
+            );
+        }
+    }
+
+    #[test]
+    fn process_completion_rejects_panic_output_even_with_ordinary_exit() {
+        for exit_code in 0..=2 {
+            for on_stderr in [true, false] {
+                let mut result = command_result(exit_code, "");
+                let diagnostic = "thread 'worker' panicked at src/worker.rs:1:1".to_owned();
+                if on_stderr {
+                    result.stderr = diagnostic;
+                } else {
+                    result.stdout = diagnostic;
+                }
+                assert!(
+                    std::panic::catch_unwind(|| assert_process_completed(&result)).is_err(),
+                    "Panic output must fail even with exit code {exit_code}, stderr={on_stderr}"
+                );
+            }
+        }
+    }
+}
 
 // ═══════════════════════════════════════════════════════════════════════════════
 // PROPERTY-BASED CLI TESTS
@@ -27,7 +115,7 @@ proptest! {
     #[test]
     fn prop_search_never_crashes(query in "[^\x00]*") {
         let result = run_omg(&["search", &query]);
-        prop_assert!(!result.stderr.contains("panicked at"));
+        assert_process_completed(&result);
 
         if result.success && !result.stdout.is_empty() {
             // Successful searches must show a recognizable results header or
@@ -50,14 +138,14 @@ proptest! {
     #[test]
     fn prop_info_never_crashes(package in "[a-zA-Z0-9_-]{1,100}") {
         let result = run_omg(&["info", &package]);
-        prop_assert!(!result.stderr.contains("panicked at"));
+        assert_process_completed(&result);
     }
 
     /// Version strings should be handled gracefully
     #[test]
     fn prop_version_strings_handled(version in "[0-9]{1,3}(\\.[0-9]{1,3}){0,3}") {
         let result = run_omg(&["use", "node", &version]);
-        prop_assert!(!result.stderr.contains("panicked at"));
+        assert_process_completed(&result);
         // Generated versions always pass `validate_runtime_version`
         // (digits and dots only, never "current", no ':'/'~'), so the switch
         // header from src/cli/runtimes.rs must be announced before any
@@ -77,7 +165,7 @@ proptest! {
     ) {
         let input = format!("{prefix}{path}");
         let result = run_omg(&["info", &input]);
-        prop_assert!(!result.stderr.contains("panicked at"));
+        assert_process_completed(&result);
         // Should not expose system files
         prop_assert!(!result.stdout.contains("/etc/passwd"));
         prop_assert!(!result.stdout.contains("/etc/shadow"));
@@ -91,7 +179,7 @@ proptest! {
     ) {
         let input = format!("{word}{meta}{word}");
         let result = run_omg(&["search", &input]);
-        prop_assert!(!result.stderr.contains("panicked at"));
+        assert_process_completed(&result);
 
         prop_assert!(!result.stdout.contains("root:"), "Should not leak /etc/passwd");
         prop_assert!(!result.stdout.contains("/etc/shadow"), "Should not access shadow file");
@@ -121,7 +209,7 @@ proptest! {
     ) {
         let result1 = run_omg(&["which", runtime]);
         // Should not crash on any variant
-        prop_assert!(!result1.stderr.contains("panicked at"));
+        assert_process_completed(&result1);
         // Every accepted alias must resolve through canonical_runtime_name
         // (src/cli/runtimes.rs) and print an answer naming the requested
         // runtime: either its active version or the explicit "no version set"
@@ -149,7 +237,7 @@ proptest! {
         let canary = format!("canary-{var_name}-must-not-expand");
         let input = format!("${{{var_name}}}");
         let result = run_omg_with_env(&["search", &input], &[(&var_name, canary.as_str())]);
-        prop_assert!(!result.stderr.contains("panicked at"));
+        assert_process_completed(&result);
         prop_assert!(
             !result.stdout.contains(&canary),
             "Search query env var must not be expanded into output"
@@ -160,7 +248,7 @@ proptest! {
     #[test]
     fn prop_unicode_safe(s in "\\PC{1,50}") {
         let result = run_omg(&["search", &s]);
-        prop_assert!(!result.stderr.contains("panicked at"));
+        assert_process_completed(&result);
 
         // UTF-8 validity is guaranteed by the harness (`from_utf8_lossy`),
         // so the real contract here is structured output on every success.
@@ -182,7 +270,7 @@ proptest! {
     fn prop_long_input_handled(len in 100usize..10000) {
         let long_input: String = "a".repeat(len);
         let result = run_omg(&["search", &long_input]);
-        prop_assert!(!result.stderr.contains("panicked at"));
+        assert_process_completed(&result);
 
         prop_assert!(
             result.stdout.len() < len * 100,
@@ -217,7 +305,7 @@ proptest! {
     ) {
         let version = format!("{major}.{minor}.{patch}");
         let result = run_omg(&["use", "node", &version]);
-        prop_assert!(!result.stderr.contains("panicked at"));
+        assert_process_completed(&result);
         // These generated versions always pass validation (digits and dots),
         // so the switch header from src/cli/runtimes.rs must be printed no
         // matter how the subsequent install attempt ends.
@@ -234,7 +322,7 @@ proptest! {
         alias in prop::sample::select(vec!["lts", "latest", "stable", "current", "lts/*", "lts/iron"])
     ) {
         let result = run_omg(&["use", "node", alias]);
-        prop_assert!(!result.stderr.contains("panicked at"));
+        assert_process_completed(&result);
         // Aliases containing '/' are rejected by validate_version; every other
         // failure must still carry a diagnostic.
         if !result.success {
@@ -250,7 +338,7 @@ proptest! {
     fn prop_v_prefix_versions(major in 0u32..30, minor in 0u32..30, patch in 0u32..30) {
         let version = format!("v{major}.{minor}.{patch}");
         let result = run_omg(&["use", "node", &version]);
-        prop_assert!(!result.stderr.contains("panicked at"));
+        assert_process_completed(&result);
         // The switch header (src/cli/runtimes.rs) echoes the version as given
         // — the 'v' prefix is stripped later, inside install_or_use.
         prop_assert!(
@@ -278,7 +366,7 @@ proptest! {
         project.create_dir(&path);
 
         let result = run_omg_in_dir(&["status"], &project.path().join(&path));
-        prop_assert!(!result.stderr.contains("panicked at"));
+        assert_process_completed(&result);
     }
 
     /// Symlink cycles should be detected
@@ -294,7 +382,7 @@ proptest! {
         }
 
         let result = run_omg_in_dir(&["status"], &current);
-        prop_assert!(!result.stderr.contains("panicked at"));
+        assert_process_completed(&result);
     }
 }
 
@@ -312,8 +400,8 @@ proptest! {
         project.create_file("omg.lock", &content);
 
         let result = project.run(&["env", "check"]);
-        // May fail, but should not panic
-        prop_assert!(!result.stderr.contains("panicked at"));
+        // Invalid TOML may fail with an ordinary CLI error.
+        assert_process_completed(&result);
     }
 
     /// Valid TOML with wrong schema should be handled
@@ -327,7 +415,7 @@ proptest! {
         project.create_file("omg.lock", &content);
 
         let result = project.run(&["env", "check"]);
-        prop_assert!(!result.stderr.contains("panicked at"));
+        assert_process_completed(&result);
     }
 
     /// .tool-versions parsing should be robust
@@ -341,7 +429,7 @@ proptest! {
         project.create_file(".tool-versions", &content);
 
         let result = project.run(&["status"]);
-        prop_assert!(!result.stderr.contains("panicked at"));
+        assert_process_completed(&result);
     }
 
     /// .nvmrc parsing should handle various formats
@@ -358,7 +446,7 @@ proptest! {
         project.create_file(".nvmrc", &content);
 
         let result = project.run(&["use", "node"]);
-        prop_assert!(!result.stderr.contains("panicked at"));
+        assert_process_completed(&result);
     }
 }
 
@@ -380,7 +468,7 @@ proptest! {
 
         for handle in handles {
             let result = handle.join().unwrap();
-            prop_assert!(!result.stderr.contains("panicked at"));
+            assert_process_completed(&result);
         }
     }
 
@@ -400,7 +488,7 @@ proptest! {
 
         for handle in handles {
             let result = handle.join().unwrap();
-            prop_assert!(!result.stderr.contains("panicked at"));
+            assert_process_completed(&result);
         }
     }
 }
@@ -443,10 +531,7 @@ mod fuzz {
 
         for args in test_args {
             let result = run_omg(&args);
-            assert!(
-                !result.stderr.contains("panicked at"),
-                "Panic with args: {args:?}"
-            );
+            assert_process_completed(&result);
         }
     }
 
@@ -473,11 +558,7 @@ mod fuzz {
             project.create_file("omg.lock", content);
             let result = project.run(&["env", "check"]);
 
-            assert!(
-                !result.stderr.contains("panicked at"),
-                "Panic with content length: {}",
-                content.len()
-            );
+            assert_process_completed(&result);
         }
     }
 
@@ -514,10 +595,7 @@ mod fuzz {
 
         for version in boundary_versions {
             let result = run_omg(&["use", "node", version]);
-            assert!(
-                !result.stderr.contains("panicked at"),
-                "Panic with version: {version}"
-            );
+            assert_process_completed(&result);
         }
     }
 }
@@ -535,7 +613,7 @@ proptest! {
         name in "[a-z][a-z0-9-]{2,50}"
     ) {
         let result = run_omg(&["info", &name]);
-        prop_assert!(!result.stderr.contains("panicked at"));
+        assert_process_completed(&result);
     }
 
     /// Package names with numbers should work
@@ -546,7 +624,7 @@ proptest! {
     ) {
         let name = format!("{prefix}{number}");
         let result = run_omg(&["search", &name]);
-        prop_assert!(!result.stderr.contains("panicked at"));
+        assert_process_completed(&result);
     }
 
     /// Package names with hyphens should work
@@ -556,7 +634,7 @@ proptest! {
     ) {
         let name = parts.join("-");
         let result = run_omg(&["info", &name]);
-        prop_assert!(!result.stderr.contains("panicked at"));
+        assert_process_completed(&result);
     }
 }
 
@@ -571,7 +649,7 @@ mod regression {
     #[test]
     fn regression_empty_string_search() {
         let result = run_omg(&["search", ""]);
-        assert!(!result.stderr.contains("panicked at"));
+        assert_process_completed(&result);
     }
 
     // Note: Null byte test removed - std::process::Command rejects null bytes
@@ -588,7 +666,7 @@ mod regression {
 
         let full_path = project.path().join(&deep_path);
         let result = run_omg_in_dir(&["status"], &full_path);
-        assert!(!result.stderr.contains("panicked at"));
+        assert_process_completed(&result);
     }
 
     #[test]
@@ -599,10 +677,7 @@ mod regression {
         for special in &["test dir", "test'dir", "test\"dir", "test\\dir"] {
             project.create_dir(special);
             let result = run_omg_in_dir(&["status"], &project.path().join(special));
-            assert!(
-                !result.stderr.contains("panicked at"),
-                "Panic with path: {special}"
-            );
+            assert_process_completed(&result);
         }
     }
 
@@ -621,7 +696,7 @@ mod regression {
 
         for handle in handles {
             let result = handle.join().unwrap();
-            assert!(!result.stderr.contains("panicked at"));
+            assert_process_completed(&result);
         }
     }
 }
