@@ -1054,19 +1054,33 @@ mod command_integration_tests {
 
         let status = project.run(&["status"]);
         status.assert_success();
-        status.assert_stdout_contains("1 packages installed");
-
-        let after = project.run(&["explicit", "--json"]);
-        after.assert_success();
+        status.assert_stdout_contains("1 packages installed · 1 explicit");
         assert_eq!(
-            serde_json::from_str::<serde_json::Value>(&after.stdout).unwrap(),
-            serde_json::from_str::<serde_json::Value>(&before.stdout).unwrap(),
-            "The original package must remain visible after recovery"
+            std::fs::read(&state_path).unwrap(),
+            before_state,
+            "The failed install and subsequent status must preserve persisted state"
         );
+        let after_failure = project.run(&["explicit", "--json"]);
+        after_failure.assert_success();
+        assert_eq!(
+            serde_json::from_str::<serde_json::Value>(&after_failure.stdout).unwrap(),
+            serde_json::json!({ "packages": ["git"], "count": 1 }),
+            "The same project must retain git and must not install banned firefox"
+        );
+
         assert_eq!(
             std::fs::read(&state_path).unwrap(),
             before_state,
             "Recovery reads must not rewrite the persisted inventory"
+        );
+        std::fs::remove_file(policy_path).unwrap();
+        project.run(&["install", "-y", "firefox"]).assert_success();
+        let recovered = project.run(&["explicit", "--json"]);
+        recovered.assert_success();
+        assert_eq!(
+            serde_json::from_str::<serde_json::Value>(&recovered.stdout).unwrap(),
+            serde_json::json!({ "packages": ["firefox", "git"], "count": 2 }),
+            "Lifting the ban must permit a new install without losing the old one"
         );
     }
 

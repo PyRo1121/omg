@@ -61,6 +61,35 @@ Preserve archive data and report persistence failures explicitly. Coordinate dat
 - Record v0.1.218 verification [skip ci]
 ### 🧪 Testing
 
+- **Install**: Restore inventory assertions dropped by [#247](https://github.com/PyRo1121/omg/issues/247) merge
+
+The [#247](https://github.com/PyRo1121/omg/issues/247) merge into main kept the policy-failure setup but replaced the
+
+exact status, persisted-state, and recovery checks with a weaker
+
+substring assertion, leaving unused mock-state locals. Restore the
+
+stronger body the PR asked to keep across that conflict.
+
+- **Install**: Restore persisted-inventory assertions dropped by [#247](https://github.com/PyRo1121/omg/issues/247)
+
+The [#247](https://github.com/PyRo1121/omg/issues/247) merge kept the isolated TestProject setup but replaced the
+
+byte-preservation and recovery checks with a status substring that a
+
+fresh empty inventory can also satisfy.
+
+- **Install**: Restore inventory checks dropped in [#247](https://github.com/PyRo1121/omg/issues/247) merge
+
+The [#247](https://github.com/PyRo1121/omg/issues/247)/[#234](https://github.com/PyRo1121/omg/issues/234) merge kept a substring status check that does not exist
+
+on CommandResult and discarded the persisted-state and recovery
+
+assertions. Restore the original stronger body without changing
+
+production code.
+
+- **Install**: Restore recovery inventory assertions
 - **Daemon**: Fail fixture setup instead of reporting skipped security checks
 - **Install**: Distinguish archive metadata from filename identity
 - **Why**: Associate dependency status with its package row
