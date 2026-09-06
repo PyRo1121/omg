@@ -114,6 +114,12 @@ jobs:
       - name: Check shell syntax
         run: bash -n install.sh benchmark.sh benchmark-hyperfine.sh scripts/*.sh
 
+      - name: Check Bash and Zsh package completion
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y --no-install-recommends zsh
+          timeout 20s zsh tests/shell_completion.zsh
+
       - name: Check local CI targets
         run: make -n ci-local-quick ci-local-full
 

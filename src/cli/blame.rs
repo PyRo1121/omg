@@ -5,6 +5,7 @@ use anyhow::Result;
 use crate::cli::tea::Cmd;
 use crate::core::history::{HistoryManager, TransactionType};
 
+#[cfg(any(feature = "arch", feature = "debian", feature = "debian-pure"))]
 const REVERSE_DEPENDENCY_DISPLAY_LIMIT: usize = 20;
 
 /// Show package installation history

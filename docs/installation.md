@@ -232,26 +232,39 @@ omg search vim
 **Bash:**
 
 ```bash
-omg completions bash > ~/.local/share/bash-completion/completions/omg
+omg completions bash
+source ~/.local/share/bash-completion/completions/omg
 ```
 
 **Zsh:**
 
 ```bash
-omg completions zsh > ~/.zfunc/_omg
+omg completions zsh
 ```
+
+Add `~/.zfunc` to `fpath` before `compinit` in your `~/.zshrc`:
+
+```zsh
+fpath=(~/.zfunc $fpath)
+autoload -Uz compinit
+compinit
+```
+
+Start a new shell, then try `omg install frfx<Tab>` to complete a fuzzy package name.
 
 **Fish:**
 
 ```bash
-omg completions fish > ~/.config/fish/completions/omg.fish
+omg completions fish
 ```
 
 **PowerShell:**
 
 ```powershell
-omg completions powershell > $PROFILE\..\omg-completion.ps1
+omg completions powershell
 ```
+
+Follow the installer output to load the generated completion file. To generate a script for a custom location instead, use `omg completions <shell> --stdout`; do not redirect the installer output.
 
 ---
 

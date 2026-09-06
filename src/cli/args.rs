@@ -60,8 +60,7 @@ pub enum Commands {
     /// Install packages with security grading and source auto-detection
     #[command(visible_alias = "i")]
     Install {
-        /// Package names to install
-        #[arg(required = true)]
+        /// Package names to install (omit to search interactively)
         packages: Vec<String>,
         /// Skip confirmation
         #[arg(short = 'y', long)]
@@ -322,10 +321,10 @@ pub enum Commands {
         #[arg(short, long, value_enum)]
         shell: ShellKind,
         /// Current word being completed
-        #[arg(short, long)]
+        #[arg(short, long, allow_hyphen_values = true)]
         current: String,
         /// Last word on the command line
-        #[arg(short, long)]
+        #[arg(short, long, allow_hyphen_values = true)]
         last: String,
         /// Full command line
         #[arg(short, long)]
