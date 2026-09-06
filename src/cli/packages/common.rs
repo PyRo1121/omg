@@ -351,8 +351,7 @@ pub(crate) async fn confirm_package_mutation(
     .map_err(Into::into)
 }
 
-/// Removal orchestration shared by every compiled backend: usage tracking
-/// and success reporting around `PackageService::remove`.
+/// Track removal requests around `PackageService::remove`.
 #[cfg(any(not(feature = "arch"), feature = "debian", feature = "debian-pure"))]
 pub(crate) async fn remove_via_service(packages: &[String]) -> Result<()> {
     let manager = crate::package_managers::get_package_manager()?;
@@ -381,12 +380,7 @@ pub(crate) async fn remove_with_manager(
 
     crate::core::usage::track_remove_result(result.is_ok());
 
-    result?;
-
-    crate::cli::ui::print_spacer();
-    crate::cli::ui::print_success("Packages removed successfully");
-    crate::cli::ui::print_spacer();
-    Ok(())
+    result
 }
 
 #[cfg(test)]

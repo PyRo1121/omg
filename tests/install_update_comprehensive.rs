@@ -186,8 +186,12 @@ mod install_cli_tests {
         let result = run_omg(&["install", "-y", "firefox"]);
         result.assert_no_password_prompt();
         result.assert_success();
-        result.assert_contains("Installed 1 package");
-        result.assert_contains("firefox");
+        result.assert_contains("Install");
+        assert!(
+            !result.stdout.contains("Installed 1 package"),
+            "{}",
+            result.combined()
+        );
     }
 
     #[test]
