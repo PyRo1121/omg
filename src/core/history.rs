@@ -181,11 +181,34 @@ impl HistoryManager {
                 self.log_path.display()
             );
         }
-        if !self.log_path.exists() {
-            return Ok(Vec::new());
+        let mut options = fs::OpenOptions::new();
+        options.read(true);
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::OpenOptionsExt as _;
+            options.custom_flags(nix::libc::O_NOFOLLOW | nix::libc::O_NONBLOCK);
         }
-
-        let content = fs::read_to_string(&self.log_path)
+        let mut file = match options.open(&self.log_path) {
+            Ok(file) => file,
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(Vec::new()),
+            Err(error) => {
+                return Err(error).with_context(|| {
+                    format!("Failed to read history file: {}", self.log_path.display())
+                });
+            }
+        };
+        if !file.metadata()?.is_file() {
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::InvalidInput,
+                format!(
+                    "History file must be a regular file: {}",
+                    self.log_path.display()
+                ),
+            )
+            .into());
+        }
+        let mut content = String::new();
+        std::io::Read::read_to_string(&mut file, &mut content)
             .with_context(|| format!("Failed to read history file: {}", self.log_path.display()))?;
 
         serde_json::from_str(&content).with_context(|| {
@@ -252,6 +275,19 @@ impl HistoryManager {
         changes: Vec<PackageChange>,
         operation_result: Result<()>,
     ) -> Result<()> {
+        crate::core::security::audit::record_operation(
+            &transaction_type.to_string(),
+            &changes
+                .iter()
+                .map(|change| change.name.clone())
+                .collect::<Vec<_>>(),
+            if operation_result.is_ok() {
+                "succeeded"
+            } else {
+                "failed"
+            },
+        )
+        .context("Package operation finished but audit persistence failed")?;
         if crate::core::privilege::parent_owns_history() {
             return operation_result;
         }
@@ -449,6 +485,36 @@ mod tests {
     use super::*;
 
     #[test]
+    fn history_read_errors_do_not_quarantine_live_data() -> Result<()> {
+        let directory = tempfile::tempdir()?;
+        let manager = HistoryManager::new_in(directory.path().join("history.json"))?;
+        fs::write(&manager.log_path, [0xff])?;
+
+        for result in [
+            manager.load().map(|_| ()),
+            manager.add_transaction(TransactionType::Sync, Vec::new(), true),
+        ] {
+            let error = result.expect_err("invalid UTF-8 must remain a read error");
+            assert_eq!(
+                error
+                    .downcast_ref::<std::io::Error>()
+                    .expect("I/O error")
+                    .kind(),
+                std::io::ErrorKind::InvalidData,
+            );
+        }
+        assert_eq!(fs::read(&manager.log_path)?, [0xff]);
+        assert!(!fs::read_dir(directory.path())?.any(|entry| {
+            entry
+                .expect("history directory entry")
+                .file_name()
+                .to_string_lossy()
+                .contains(".corrupt-")
+        }));
+        Ok(())
+    }
+
+    #[test]
     #[cfg(unix)]
     fn history_reads_reject_dangling_live_symlinks() -> Result<()> {
         let directory = tempfile::tempdir()?;
@@ -485,6 +551,8 @@ mod tests {
                     "--nocapture",
                 ])
                 .env_remove("BASH_ENV")
+                // The intentional file limit must not truncate an inherited coverage profile.
+                .env("LLVM_PROFILE_FILE", "/dev/null")
                 .env(CHILD, "1")
                 .output()?;
             print!("{}", String::from_utf8_lossy(&output.stdout));
@@ -807,6 +875,7 @@ mod tests {
         let directory = tempfile::tempdir()?;
         let path = directory.path().join("history.json");
         fs::create_dir(&path)?;
+        fs::write(path.join("retained"), b"retained")?;
         let manager = HistoryManager::new_in(&path)?;
 
         let read_error = manager
@@ -818,6 +887,7 @@ mod tests {
             .expect_err("I/O failure must not start fresh history");
         assert!(append_error.downcast_ref::<std::io::Error>().is_some());
         assert!(path.is_dir());
+        assert_eq!(fs::read(path.join("retained"))?, b"retained");
         assert!(!fs::read_dir(directory.path())?.any(|entry| {
             entry.is_ok_and(|entry| entry.file_name().to_string_lossy().contains(".corrupt-"))
         }));

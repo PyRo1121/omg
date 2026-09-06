@@ -176,8 +176,8 @@ mod cli_foundation {
         let result = run_omg(&["install"]);
         assert!(!result.success, "install without args should fail");
         assert!(
-            result.stderr.contains("required") || result.stderr.contains("error"),
-            "Should report missing arguments"
+            result.stderr.contains("No packages specified") || result.stderr.contains("error"),
+            "bare install must fail with guidance"
         );
     }
 
@@ -1605,10 +1605,8 @@ mod error_messages {
         let result = run_omg(&["install"]);
         assert!(!result.success, "Install without args should fail");
         assert!(
-            result.stderr.contains("required")
-                || result.stderr.contains("error")
-                || result.stderr.contains("argument"),
-            "Should report missing arguments"
+            result.stderr.contains("No packages specified") || result.stderr.contains("error"),
+            "bare install must fail with guidance"
         );
     }
 

@@ -40,6 +40,8 @@ pub enum RekorError {
 /// Failures hashing artifacts or talking to Rekor.
 #[derive(Debug, Error)]
 pub enum SlsaError {
+    #[error("An exact --certificate-identity is required to establish signer trust")]
+    IdentityRequired,
     #[error(transparent)]
     Rekor(#[from] RekorError),
     #[error("Failed to query Rekor")]
@@ -947,6 +949,9 @@ impl SlsaVerifier {
         provenance_path: Option<impl AsRef<Path>>,
         required_identity: Option<&str>,
     ) -> Result<VerificationResult, SlsaError> {
+        if required_identity.is_none_or(|identity| identity.trim().is_empty()) {
+            return Err(SlsaError::IdentityRequired);
+        }
         // Calculate artifact hash, keeping the bytes around: P-256 ECDSA
         // verification hashes the message itself, so the artifact content
         // must be available at verification time.
@@ -1858,5 +1863,19 @@ mod tests {
             matches!(err, RekorError::EntrySetMalformed { .. }),
             "got: {err}"
         );
+    }
+}
+
+#[cfg(test)]
+mod required_signer_tests {
+    #[tokio::test]
+    async fn no_identity_fails_before_file_or_network_access() {
+        for identity in [None, Some(""), Some("   ")] {
+            let error = super::SlsaVerifier::default()
+                .verify_provenance("/nonexistent/artifact", None::<&str>, identity)
+                .await
+                .unwrap_err();
+            assert!(matches!(error, super::SlsaError::IdentityRequired));
+        }
     }
 }

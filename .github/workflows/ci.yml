@@ -114,6 +114,19 @@ jobs:
       - name: Check shell syntax
         run: bash -n install.sh benchmark.sh benchmark-hyperfine.sh scripts/*.sh
 
+      - name: Check Bash and Zsh package completion
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y --no-install-recommends zsh
+          set +e
+          timeout -k 10s 30s zsh tests/shell_completion.zsh > /tmp/shell-completion.log 2>&1
+          rc=$?
+          set -e
+          cat /tmp/shell-completion.log
+          echo '--- child zsh startup log ---'
+          cat /tmp/omg-zsh-child.log 2>/dev/null || true
+          exit "$rc"
+
       - name: Check local CI targets
         run: make -n ci-local-quick ci-local-full
 
@@ -202,7 +215,7 @@ jobs:
             setup: |
               apt-get update
               DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
-                ca-certificates curl git build-essential pkg-config \
+                ca-certificates curl git build-essential pkg-config sudo \
                 libssl-dev libapt-pkg-dev clang cmake zlib1g-dev liblzma-dev libbz2-dev
               curl --proto '=https' --tlsv1.2 -fsSL \
                 https://static.rust-lang.org/rustup/archive/1.28.2/x86_64-unknown-linux-gnu/rustup-init \
@@ -220,7 +233,7 @@ jobs:
             setup: |
               apt-get update
               DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
-                ca-certificates curl git build-essential pkg-config \
+                ca-certificates curl git build-essential pkg-config sudo \
                 libssl-dev libapt-pkg-dev clang cmake zlib1g-dev liblzma-dev libbz2-dev
               curl --proto '=https' --tlsv1.2 -fsSL \
                 https://static.rust-lang.org/rustup/archive/1.28.2/x86_64-unknown-linux-gnu/rustup-init \
@@ -467,7 +480,7 @@ jobs:
             setup: |
               apt-get update
               DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
-                ca-certificates curl git build-essential pkg-config \
+                ca-certificates curl git build-essential pkg-config sudo \
                 libssl-dev libapt-pkg-dev clang cmake zlib1g-dev liblzma-dev libbz2-dev
               curl --proto '=https' --tlsv1.2 -fsSL \
                 https://static.rust-lang.org/rustup/archive/1.28.2/x86_64-unknown-linux-gnu/rustup-init \

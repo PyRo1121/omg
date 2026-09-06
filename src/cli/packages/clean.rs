@@ -38,6 +38,19 @@ pub async fn clean(orphans: bool, cache: bool, aur: bool, all: bool, dry_run: bo
     }
     println!();
 
+    #[cfg(not(feature = "arch"))]
+    if aur {
+        anyhow::bail!("AUR cleanup is not available without the Arch backend");
+    }
+
+    #[cfg(feature = "fedora")]
+    if crate::package_managers::get_package_manager()?.name() == "dnf" {
+        if aur {
+            anyhow::bail!("AUR cleanup is not available on Fedora");
+        }
+        return handle_fedora_clean(orphans, cache, all, dry_run).await;
+    }
+
     // AUR cleanup needs an Arch-style package database. On Debian-like hosts
     // the Debian backends own routing below and cannot serve AUR, so fail
     // explicitly instead of silently ignoring the flag — including when the
@@ -45,15 +58,6 @@ pub async fn clean(orphans: bool, cache: bool, aur: bool, all: bool, dry_run: bo
     #[cfg(any(feature = "debian", feature = "debian-pure"))]
     if aur && is_debian_like() {
         anyhow::bail!("AUR cleanup is not available on Debian-like systems");
-    }
-
-    // Without any Arch backend at all there is no AUR to clean anywhere.
-    #[cfg(all(
-        any(feature = "debian", feature = "debian-pure"),
-        not(feature = "arch")
-    ))]
-    if aur {
-        anyhow::bail!("AUR cleanup is not available without the Arch backend");
     }
 
     #[cfg(any(feature = "debian", feature = "debian-pure"))]
@@ -308,7 +312,45 @@ pub async fn clean(orphans: bool, cache: bool, aur: bool, all: bool, dry_run: bo
     }
 }
 
-/// Handle clean operations for debian-pure backend
+#[cfg(feature = "fedora")]
+async fn handle_fedora_clean(orphans: bool, cache: bool, all: bool, dry_run: bool) -> Result<()> {
+    use crate::package_managers::dnf::{DnfCleanup, DnfPackageManager};
+
+    let manager = DnfPackageManager::new();
+    if !orphans && !cache && !all {
+        let packages = DnfPackageManager::orphan_packages().await?;
+        println!(
+            "{} orphan packages can be removed (omg clean --orphans)",
+            packages.len()
+        );
+        println!("To clear downloaded package archives: omg clean --cache");
+        return Ok(());
+    }
+    if orphans || all {
+        if dry_run {
+            let packages = DnfPackageManager::orphan_packages().await?;
+            println!("Would remove {} orphan packages:", packages.len());
+            for package in packages {
+                println!("  {package}");
+            }
+        } else {
+            let history = crate::core::history::HistoryManager::new()?;
+            manager.cleanup(DnfCleanup::Orphans, Some(&history)).await?;
+        }
+    }
+    if cache || all {
+        if dry_run {
+            println!("Would clear downloaded package archives (dnf clean packages)");
+        } else {
+            manager.cleanup(DnfCleanup::PackageCache, None).await?;
+        }
+    }
+    if dry_run {
+        println!("No changes made (dry run)");
+    }
+    Ok(())
+}
+
 #[cfg(feature = "debian-pure")]
 async fn handle_debian_pure_clean(
     orphans: bool,
@@ -452,7 +494,12 @@ mod tests {
     }
 
     #[tokio::test]
-    #[cfg(not(any(feature = "arch", feature = "debian", feature = "debian-pure")))]
+    #[cfg(not(any(
+        feature = "arch",
+        feature = "debian",
+        feature = "debian-pure",
+        feature = "fedora"
+    )))]
     async fn clean_orphans_without_backend_fails() {
         let error = clean(true, false, false, false, false)
             .await
@@ -465,7 +512,12 @@ mod tests {
     }
 
     #[tokio::test]
-    #[cfg(not(any(feature = "arch", feature = "debian", feature = "debian-pure")))]
+    #[cfg(not(any(
+        feature = "arch",
+        feature = "debian",
+        feature = "debian-pure",
+        feature = "fedora"
+    )))]
     async fn clean_cache_without_backend_fails() {
         let error = clean(false, true, false, false, false)
             .await

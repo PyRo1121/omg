@@ -14,8 +14,84 @@ OMG is the fastest unified package manager for Linux, replacing pacman, yay, nvm
 ### ♻️  Refactoring
 
 - **Cli**: Unify status output and limit local build jobs
+### ✨ New Features
+
+- **Install**: Add interactive fuzzy package discovery
 ### 🐛 Bug Fixes
 
+- **Ci**: Install sudo in debian jobs for the privilege lookup tests
+- **Tests**: Align coverage contracts with shipped behavior
+
+The coverage matrix under arch+pgp+license was the only place these
+
+contracts ran, and main let them drift behind shipped changes. Bare
+
+install now guides instead of citing clap, the https guard splits at
+
+the first test module, installer fixtures carry the variables the
+
+provenance gate reads, updates only query OSV when an explicit policy
+
+can act on the grade, and the package handoff transports the requested
+
+path so history records it when archive metadata is unreadable.
+
+- **Ci**: Keep the zpty completion check from hanging Quick Gate
+
+A zsh blocked in zpty -r ignored the plain SIGTERM from timeout, so the
+
+step hung until the job was cancelled. An in-test watchdog TERMs the
+
+script after 15 seconds, the CI wrapper uses timeout -k as backstop and
+
+redirects output so orphaned zpty children cannot hold the step open.
+
+- **Cli**: Route print_warning through the shared progress printer
+
+The new parallel-build wave-failure notice called print_warning, which
+
+still used raw println and could splice into live AUR forge frames.
+
+- **Cli**: Cap AUR review output and ignore self in doctor lock scan
+
+Long PKGBUILD dumps and a self-matching process scan made updates look
+
+stuck or locked. Preview the reviewed files, keep the digest, and treat
+
+only other package managers as live lock holders.
+
+- **Cli**: Stop inventing package mutation summaries
+- **Runtimes**: Treat rustlang as rust in which lookup
+
+The documented rustlang alias never reached the new global-current
+
+probe, so omg which rustlang printed no version set when rust was
+
+already selected. Map it the same way hooks already do.
+
+- **Runtimes**: Report global selection when project has no pin
+- **Python**: Bound release page size without shrinking discovery
+- **Completion**: Retain fuzzy matches in Bash and Zsh
+- **Blame**: Drop unused test cfg on display-limit constant
+
+Portable --all-targets still compiled the constant under cfg(test) with no call sites, which is the same dead_code failure this PR is fixing.
+
+- **Blame**: Gate reverse-dependency display limit to backends
+- **Release**: Initialize Arch trust and avoid partial upgrades
+
+[#257](https://github.com/PyRo1121/omg/issues/257) merged into PyRo1121/qa-qemu-four-distros, so main still refreshed
+
+Arch metadata with pacman -Sy and never initialized the disposable
+
+keyring. Port the leftover non-breaking smoke setup onto current main.
+
+- **Security**: Remediate retained Daybreak scan findings
+- **Qa**: Initialize Arch trust and avoid partial upgrades
+- **Qa**: Preserve QEMU failure and interruption evidence
+- **Qa**: Report observed outcomes independently of known defects
+- **Release**: Bound probes and verify container cleanup
+- **Release**: Keep artifact scratch off tmpfs
+- **Release**: Preserve smoke contract evidence
 - **Cli**: Bound report output and harden unattended runtime
 
   - limit reverse-dependency, dependents, and license cards to 20 visible
@@ -30,6 +106,7 @@ rows with an explicit omitted count so oversized reports stay readable
 
   - record live-review audit evidence
 
+- **History**: Validate live history through its file descriptor
 - **Installer**: Propagate bounded pipeline failures
 - **Installer**: Bound release responses while streaming
 - **Privacy**: Include archived history in local exports
@@ -37,12 +114,27 @@ rows with an explicit omitted count so oversized reports stay readable
 
 Verify a pinned upstream Moby seccomp profile and add pivot_root only to its CAP_SYS_ADMIN allow rule. Keep other restrictions and the descendant cleanup assertion intact.
 
+- **Aur**: Isolate sandbox PIDs for descendant cleanup
+- **Aur**: Separate build review and simplify verified execution
 - **Core**: Harden history and package mutation recovery
 
 Preserve archive data and report persistence failures explicitly. Coordinate database publication and runtime mutations, tighten installer provenance checks, and include the approved tracked documentation and security changes.
 
-- **Aur**: Isolate sandbox PIDs for descendant cleanup
-- **Aur**: Separate build review and simplify verified execution
+- **Cli**: Stop inventing package mutation summaries
+- **Runtimes**: Report global selection when project has no pin
+- **Python**: Bound release page size without shrinking discovery
+- **Fedora**: Preserve caller history during orphan cleanup
+- **Fedora**: Record actual native upgrade changes
+- **Fedora**: Record correlated native package transactions
+- **Fedora**: Accept and bound translated RPM string arrays
+- **Fedora**: Add truthful package history diagnostics
+- **Fedora**: Expose recorded reasons and reverse requirements
+- **Fedora**: Report installed package sizes and providers
+- **Apt**: Use native frontend for repository installs
+- **Fedora**: Support native orphan and package-cache cleanup
+- **Fedora**: Expose correct explicit package listing
+- **Fedora**: Implement native update discovery and status counts
+- **Fedora**: Restore repository queries and package lifecycle
 - **Fedora**: Decode native RPM database headers
 - **Ci**: Preserve prepared changelog sections
 ### 👷 CI/CD
@@ -52,6 +144,7 @@ Preserve archive data and report persistence failures explicitly. Coordinate dat
 - Add published release smoke matrix
 ### 📚 Documentation
 
+- **Benchmarks**: Define fair native comparisons and evidence
 - **Tests**: Record mutation evidence and remaining verification gaps
 - **Privacy**: State the local export size limit
 - **Installer**: Pass environment options to bash
@@ -59,8 +152,70 @@ Preserve archive data and report persistence failures explicitly. Coordinate dat
 - **Fedora**: Record observed repository formats and trust policy
 - **Fedora**: Distinguish database and archive header formats
 - Record v0.1.218 verification [skip ci]
+### 🔒 Security
+
+- **Qa**: Integrate four-distro QEMU validation into qa-setup
+
+Bring in the QEMU lifecycle runner, contract-driven smoke tests, failure evidence, and benchmark records. Add the token-stdin contract required by the security changes on qa-setup.
+
 ### 🧪 Testing
 
+- **Completion**: Log zpty child startup and stop compinit prompting
+
+The runner showed the child spawned but never printed READY, so the
+
+hang sits inside the child's .zshrc. The child now logs its startup to
+
+/tmp/omg-zsh-child.log, the wrapper prints that log, and compinit runs
+
+with -i so a directory-permission audit can never stop for an
+
+interactive answer.
+
+- **Completion**: Report phases so a CI hang is diagnosable
+
+The runner never showed where the zpty check stopped because the
+
+wrapper aborted before printing the log. The wrapper now always prints
+
+it and the test marks each phase, so a hang names the phase that never
+
+finished.
+
+- **Qa**: Verify four distro lifecycles in headless QEMU
+- **Benchmarks**: Run Ubuntu QEMU with post-run error reporting
+- **Release**: Classify Fedora package failures
+- **Release**: Drive smoke cases from contracts
+- **Install**: Restore inventory assertions dropped by [#247](https://github.com/PyRo1121/omg/issues/247) merge
+
+The [#247](https://github.com/PyRo1121/omg/issues/247) merge into main kept the policy-failure setup but replaced the
+
+exact status, persisted-state, and recovery checks with a weaker
+
+substring assertion, leaving unused mock-state locals. Restore the
+
+stronger body the PR asked to keep across that conflict.
+
+- **Install**: Restore persisted-inventory assertions dropped by [#247](https://github.com/PyRo1121/omg/issues/247)
+
+The [#247](https://github.com/PyRo1121/omg/issues/247) merge kept the isolated TestProject setup but replaced the
+
+byte-preservation and recovery checks with a status substring that a
+
+fresh empty inventory can also satisfy.
+
+- **Install**: Restore inventory checks dropped in [#247](https://github.com/PyRo1121/omg/issues/247) merge
+
+The [#247](https://github.com/PyRo1121/omg/issues/247)/[#234](https://github.com/PyRo1121/omg/issues/234) merge kept a substring status check that does not exist
+
+on CommandResult and discarded the persisted-state and recovery
+
+assertions. Restore the original stronger body without changing
+
+production code.
+
+- **Install**: Restore recovery inventory assertions
+- **Install**: Restore recovery inventory assertions
 - **Daemon**: Fail fixture setup instead of reporting skipped security checks
 - **Install**: Distinguish archive metadata from filename identity
 - **Why**: Associate dependency status with its package row
@@ -70,10 +225,13 @@ Preserve archive data and report persistence failures explicitly. Coordinate dat
 - **Hooks**: Make hostile runtime pin fixture reach its target
 - **Security**: Reject tampering, secret leaks and expired signer chains
 - **Cli**: Align status assertions with installed-package report
+- **Install**: Preserve inventory across policy failure and recovery
+- **Cli**: Align status and HTTPS checks with current contracts
+- **History**: Isolate resource-limited coverage output
+- **History**: Refuse live FIFOs without blocking
 - **Installer**: Cover failed bounded transfers
 - **Installer**: Cover legacy curl streaming bounds
 - **Privacy**: Cover archived history in local exports
-- **Install**: Preserve inventory across policy failure and recovery
 - **Aur**: Make sandbox cancellation fixture Docker-safe
 
 The required CI gate failed because the ignored regression bound the

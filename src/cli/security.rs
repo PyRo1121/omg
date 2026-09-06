@@ -135,19 +135,24 @@ pub async fn scan(_ctx: &CliContext) -> Result<()> {
             for (pkg, vulns) in res.vulnerabilities {
                 println!(
                     "  {} ({} issues):",
-                    style::maybe_color(&pkg, |t| t.white().bold().to_string()),
+                    style::maybe_color(&style::sanitize_terminal_text(&pkg), |t| t
+                        .white()
+                        .bold()
+                        .to_string()),
                     vulns.len()
                 );
                 for vuln in vulns {
                     let score = vuln
                         .score
-                        .map(|s| format!(" [Score: {s}]"))
+                        .map(|s| format!(" [Score: {}]", style::sanitize_terminal_text(&s)))
                         .unwrap_or_default();
                     println!(
                         "    {} {} - {}{}",
                         style::maybe_color("→", |t| t.red().to_string()),
-                        style::maybe_color(&vuln.id, |t| t.yellow().to_string()),
-                        vuln.summary,
+                        style::maybe_color(&style::sanitize_terminal_text(&vuln.id), |t| t
+                            .yellow()
+                            .to_string()),
+                        style::sanitize_terminal_text(&vuln.summary),
                         style::dim(&score)
                     );
                 }
@@ -337,6 +342,9 @@ pub fn verify_audit_log(_ctx: &CliContext) -> Result<()> {
         style::runtime("OMG")
     );
 
+    crate::core::security::audit::ensure_complete_collection(
+        &crate::core::paths::data_dir().join("audit/incomplete"),
+    )?;
     let logger = AuditLogger::new().context("Failed to open audit log")?;
     let report = match logger.verify_integrity() {
         Ok(report) => report,
@@ -354,7 +362,7 @@ pub fn verify_audit_log(_ctx: &CliContext) -> Result<()> {
 
     if report.is_valid() {
         println!(
-            "{} Audit log integrity verified",
+            "{} Local audit chain consistency verified",
             style::maybe_color("✓", |t| t.green().to_string())
         );
         println!(
@@ -367,7 +375,13 @@ pub fn verify_audit_log(_ctx: &CliContext) -> Result<()> {
             style::dim("Valid:"),
             report.valid_entries
         );
-        println!("  {} Intact", style::dim("Chain:"));
+        println!(
+            "  {} Internally consistent; not authenticated",
+            style::dim("Chain:")
+        );
+        println!(
+            "  A log owner can rewrite and rehash history; this check does not prove authenticity or completeness."
+        );
     } else {
         println!(
             "{} Audit log integrity FAILED",
@@ -1029,7 +1043,9 @@ fn package_has_available_update(package: &str) -> Result<bool> {
 /// Best-effort CVSS base score for a vulnerability; unparsable or missing
 /// scores count as 0.0 so they never cross a severity threshold by accident.
 fn vuln_score(score: Option<&str>) -> f64 {
-    score.and_then(|s| s.parse::<f64>().ok()).unwrap_or(0.0)
+    score
+        .and_then(crate::core::security::vulnerability::parse_severity_score)
+        .unwrap_or(0.0)
 }
 
 /// Auto-fix vulnerabilities by upgrading packages

@@ -720,7 +720,7 @@ mod env_security {
 mod network_security {
     fn production_source(source: &str) -> &str {
         source
-            .rsplit_once("#[cfg(test)]")
+            .split_once("#[cfg(test)]")
             .map_or(source, |(production, _)| production)
     }
 
@@ -756,12 +756,12 @@ mod network_security {
             "src/runtimes/node.rs",
         );
         assert_no_plaintext_http(
-            include_str!("../src/runtimes/python.rs"),
+            production_source(include_str!("../src/runtimes/python.rs")),
             "src/runtimes/python.rs",
         );
         assert_no_plaintext_http(include_str!("../src/runtimes/go.rs"), "src/runtimes/go.rs");
         assert_no_plaintext_http(
-            include_str!("../src/runtimes/rust.rs"),
+            production_source(include_str!("../src/runtimes/rust.rs")),
             "src/runtimes/rust.rs",
         );
         assert_no_plaintext_http(

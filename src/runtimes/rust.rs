@@ -9,6 +9,7 @@
 //! - Profile-based installation (minimal or default)
 //! - rust-toolchain.toml support
 
+use crate::core::http::BoundedResponseExt;
 use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeSet;
@@ -619,12 +620,13 @@ impl RustManager {
         let manifest = self
             .client
             .get(&url)
+            .timeout(std::time::Duration::from_secs(30))
             .send()
             .await
             .with_context(|| format!("Failed to fetch Rust manifest from {url}"))?
             .error_for_status()
             .with_context(|| format!("Rust manifest request failed for channel '{channel}'"))?
-            .text()
+            .bounded_text()
             .await
             .context("Failed to read Rust version manifest")?;
 

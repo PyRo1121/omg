@@ -4,7 +4,12 @@ use anyhow::Result;
 #[cfg(feature = "arch")]
 use std::collections::{HashMap, HashSet, VecDeque};
 
-#[cfg(any(feature = "arch", feature = "debian", feature = "debian-pure"))]
+#[cfg(any(
+    feature = "arch",
+    feature = "debian",
+    feature = "debian-pure",
+    feature = "fedora"
+))]
 use crate::cli::tea::Cmd;
 
 #[cfg(feature = "arch")]
@@ -15,9 +20,24 @@ const REVERSE_DEPENDENCY_DISPLAY_LIMIT: usize = 20;
     clippy::needless_return,
     reason = "additive backend feature branches return before compiled fallbacks"
 )]
-pub fn run(package: &str, reverse: bool) -> Result<()> {
-    // SECURITY: Validate package name
+#[cfg_attr(
+    not(feature = "fedora"),
+    expect(
+        clippy::unused_async,
+        reason = "Shared async entry point for the Fedora backend"
+    )
+)]
+pub async fn run(package: &str, reverse: bool) -> Result<()> {
     crate::core::security::validate_package_name(package)?;
+
+    #[cfg(feature = "fedora")]
+    if matches!(
+        crate::core::env::distro::detect_distro(),
+        crate::core::env::distro::Distro::Fedora
+    ) {
+        crate::cli::tea::run_report(show_reason_fedora(package, reverse).await?)?;
+        return Ok(());
+    }
 
     #[cfg(any(feature = "debian", feature = "debian-pure"))]
     if crate::core::env::distro::is_debian_like() {
@@ -60,6 +80,58 @@ pub fn run(package: &str, reverse: bool) -> Result<()> {
         let _ = reverse;
         why_requires_backend()
     }
+}
+
+#[cfg(feature = "fedora")]
+async fn show_reason_fedora(package: &str, reverse: bool) -> Result<Cmd<()>> {
+    use crate::cli::components::Components;
+    use crate::package_managers::dnf::{DnfPackageManager, InstalledReasonQuery};
+
+    let mut selected =
+        DnfPackageManager::installed_package_reasons(InstalledReasonQuery::Package(package))
+            .await?;
+    anyhow::ensure!(!selected.is_empty(), "Package '{package}' is not installed");
+    anyhow::ensure!(
+        selected.len() == 1,
+        "Package '{package}' matches multiple installed builds; specify a version and architecture"
+    );
+    let root = selected.remove(0);
+    if !reverse {
+        return Ok(Cmd::batch(vec![
+            Cmd::header("Recorded Install Reason", &root.identity),
+            Components::kv_list(Some("DNF metadata"), vec![("Reason", root.reason)]),
+            Cmd::info(format!(
+                "Use 'omg why --reverse {package}' for current direct requiring packages."
+            )),
+        ]));
+    }
+    let mut dependents =
+        DnfPackageManager::installed_package_reasons(InstalledReasonQuery::RequiredBy(package))
+            .await?;
+    dependents.retain(|entry| entry.identity != root.identity);
+    dependents.sort_by(|left, right| left.identity.cmp(&right.identity));
+    let count = dependents.len();
+    let mut commands = vec![Cmd::header(
+        "Reverse Dependencies",
+        format!("current direct requirements on {}", root.identity),
+    )];
+    if dependents.is_empty() {
+        commands.push(Cmd::info(
+            "No other installed packages directly require this package.",
+        ));
+    } else {
+        commands.push(Components::kv_list(
+            Some(format!("Dependents ({count})")),
+            dependents
+                .into_iter()
+                .map(|entry| (entry.identity, entry.reason))
+                .collect(),
+        ));
+    }
+    commands.push(Cmd::info(
+        "Current requirements do not prove historical cause or removal safety.",
+    ));
+    Ok(Cmd::batch(commands))
 }
 
 #[cfg(feature = "arch")]
@@ -383,29 +455,32 @@ fn show_reverse_deps_debian(package: &str) -> Cmd<()> {
     ])
 }
 
-#[cfg(any(
-    not(any(feature = "arch", feature = "debian", feature = "debian-pure")),
-    test
-))]
+#[cfg(not(any(feature = "arch", feature = "debian", feature = "debian-pure")))]
 fn why_requires_backend() -> Result<()> {
-    anyhow::bail!(
-        "Package dependency analysis is not available without an Arch or Debian package backend"
-    )
+    anyhow::bail!("Package dependency analysis requires a supported package backend")
 }
 
-#[cfg(test)]
+#[cfg(all(
+    test,
+    not(any(
+        feature = "arch",
+        feature = "debian",
+        feature = "debian-pure",
+        feature = "fedora"
+    ))
+))]
 mod tests {
     use super::*;
 
-    #[test]
-    fn why_without_backend_is_an_error() {
-        let error =
-            why_requires_backend().expect_err("why with no backend must not look like success");
+    #[tokio::test]
+    async fn why_without_backend_is_an_error() {
+        let error = run("tree", false)
+            .await
+            .expect_err("why requires a backend");
         assert!(
             error
                 .to_string()
-                .contains("not available without an Arch or Debian package backend"),
-            "got: {error}"
+                .contains("requires a supported package backend")
         );
     }
 }

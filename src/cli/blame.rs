@@ -5,18 +5,79 @@ use anyhow::Result;
 use crate::cli::tea::Cmd;
 use crate::core::history::{HistoryManager, TransactionType};
 
+#[cfg(any(feature = "arch", feature = "debian", feature = "debian-pure"))]
 const REVERSE_DEPENDENCY_DISPLAY_LIMIT: usize = 20;
 
 /// Show package installation history
-pub fn run(package: &str) -> Result<()> {
-    // SECURITY: Validate package name
+#[cfg_attr(
+    not(feature = "fedora"),
+    expect(
+        clippy::unused_async,
+        reason = "Shared async entry point for the Fedora backend"
+    )
+)]
+pub async fn run(package: &str) -> Result<()> {
     crate::core::security::validate_package_name(package)?;
+
+    #[cfg(feature = "fedora")]
+    if matches!(
+        crate::core::env::distro::detect_distro(),
+        crate::core::env::distro::Distro::Fedora
+    ) {
+        crate::cli::tea::run_report(build_blame_fedora(package).await?)?;
+        return Ok(());
+    }
 
     let cmd = build_blame_output(package)?;
     // Fails (non-zero exit) when the command tree contains Cmd::Error.
     crate::cli::tea::run_report(cmd)?;
 
     Ok(())
+}
+
+#[cfg(feature = "fedora")]
+async fn build_blame_fedora(package: &str) -> Result<Cmd<()>> {
+    use crate::cli::components::Components;
+    use crate::package_managers::dnf::{DnfPackageManager, InstalledReasonQuery};
+
+    let mut selected = DnfPackageManager::installed_package_details(package).await?;
+    anyhow::ensure!(!selected.is_empty(), "Package '{package}' is not installed");
+    anyhow::ensure!(
+        selected.len() == 1,
+        "Package '{package}' matches multiple installed builds; specify a version and architecture"
+    );
+    let root = selected.remove(0);
+    let mut dependents =
+        DnfPackageManager::installed_package_reasons(InstalledReasonQuery::RequiredBy(package))
+            .await?;
+    dependents.retain(|entry| entry.identity != root.identity);
+    dependents.sort_by(|left, right| left.identity.cmp(&right.identity));
+    let mut commands = vec![
+        Cmd::header("Package History", root.identity),
+        Components::kv_list(
+            Some("Native Package Information"),
+            vec![
+                ("Name", root.name.as_str()),
+                ("Version", root.version.as_str()),
+                ("Install Reason", root.reason.as_str()),
+            ],
+        ),
+    ];
+    commands.extend(transaction_history(&root.name)?);
+    commands.push(Cmd::info(
+        "OMG history is matched by package name, not by installed build or architecture.",
+    ));
+    if dependents.is_empty() {
+        commands.push(Cmd::info(
+            "No other installed packages directly require this package.",
+        ));
+    } else {
+        commands.push(Cmd::card(
+            format!("Currently required by ({} packages)", dependents.len()),
+            dependents.into_iter().map(|entry| entry.identity).collect(),
+        ));
+    }
+    Ok(Cmd::batch(commands))
 }
 
 fn newest_transactions_for_package<'a>(
@@ -58,7 +119,14 @@ fn build_blame_output(package: &str) -> Result<Cmd<()>> {
         ],
     ));
 
-    // Search transaction history
+    commands.extend(transaction_history(package)?);
+    commands.push(Cmd::spacer());
+    commands.push(show_required_by(package)?);
+    Ok(Cmd::batch(commands))
+}
+
+fn transaction_history(package: &str) -> Result<Vec<Cmd<()>>> {
+    let mut commands = Vec::new();
     let history = HistoryManager::new()?;
     let transactions = history.load()?;
 
@@ -68,7 +136,7 @@ fn build_blame_output(package: &str) -> Result<Cmd<()>> {
         use crate::cli::tea::{StyledTextConfig, TextStyle};
         commands.push(Cmd::spacer());
         commands.push(Cmd::styled_text(StyledTextConfig {
-            text: "No transaction history found (Package may have been installed before OMG tracking began)".to_string(),
+            text: "No OMG transaction history found for this package".to_string(),
             style: TextStyle::Muted,
         }));
     } else {
@@ -79,11 +147,15 @@ fn build_blame_output(package: &str) -> Result<Cmd<()>> {
                 // Safe: we filtered for transactions containing this package above
                 let change = txn.changes.iter().find(|c| c.name == package)?;
 
-                let action = match txn.transaction_type {
-                    TransactionType::Install => "installed",
-                    TransactionType::Remove => "removed",
-                    TransactionType::Update => "updated",
-                    TransactionType::Sync => "synced",
+                let action = match (txn.transaction_type, txn.success) {
+                    (TransactionType::Install, true) => "installed",
+                    (TransactionType::Remove, true) => "removed",
+                    (TransactionType::Update, true) => "updated",
+                    (TransactionType::Sync, true) => "synced",
+                    (TransactionType::Install, false) => "failed to install",
+                    (TransactionType::Remove, false) => "failed to remove",
+                    (TransactionType::Update, false) => "failed to update",
+                    (TransactionType::Sync, false) => "failed to sync",
                 };
 
                 let version_info = match (&change.old_version, &change.new_version) {
@@ -103,7 +175,7 @@ fn build_blame_output(package: &str) -> Result<Cmd<()>> {
 
         commands.push(Cmd::spacer());
         commands.push(Cmd::card(
-            format!("Transaction History ({})", relevant.len()),
+            format!("OMG Transaction History ({})", relevant.len()),
             txn_content,
         ));
 
@@ -116,11 +188,7 @@ fn build_blame_output(package: &str) -> Result<Cmd<()>> {
         }
     }
 
-    // Show what requires this package
-    commands.push(Cmd::spacer());
-    commands.push(show_required_by(package)?);
-
-    Ok(Cmd::batch(commands))
+    Ok(commands)
 }
 
 #[cfg(feature = "arch")]
@@ -285,14 +353,20 @@ mod ordering_tests {
 
 #[cfg(all(
     test,
-    not(any(feature = "arch", feature = "debian", feature = "debian-pure"))
+    not(any(
+        feature = "arch",
+        feature = "debian",
+        feature = "debian-pure",
+        feature = "fedora"
+    ))
 ))]
 mod tests {
     use super::*;
 
-    #[test]
-    fn blame_without_backend_does_not_pretend_the_package_is_missing() {
-        let error = build_blame_output("bash")
+    #[tokio::test]
+    async fn blame_without_backend_does_not_pretend_the_package_is_missing() {
+        let error = run("bash")
+            .await
             .expect_err("blame with no backend must not look like not-installed");
         assert!(
             error

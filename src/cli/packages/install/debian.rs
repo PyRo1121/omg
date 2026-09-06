@@ -54,6 +54,10 @@ pub async fn install(packages: &[String]) -> Result<()> {
 
     pm.install(packages).await?;
 
+    let labels = packages
+        .iter()
+        .map(|package| crate::core::security::artifact::display_target(package).to_owned())
+        .collect::<Vec<_>>();
     modern_ui::print_success_with_packages(
         &format!(
             "Installed {} {}",
@@ -64,9 +68,9 @@ pub async fn install(packages: &[String]) -> Result<()> {
                 "packages"
             }
         ),
-        packages,
+        &labels,
     );
-    crate::core::usage::track_install_result(packages, true);
+    crate::core::usage::track_install_result(&labels, true);
     Ok(())
 }
 

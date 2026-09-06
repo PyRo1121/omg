@@ -81,32 +81,44 @@ impl CompletionEngine {
         Self
     }
 
-    /// Perform fuzzy matching on a list of candidates (10x faster with nucleo)
+    /// Rank candidates using the shared fuzzy matcher.
     #[must_use]
-    pub fn fuzzy_match(&self, pattern: &str, candidates: Vec<String>) -> Vec<String> {
+    pub fn fuzzy_match(&self, pattern: &str, mut candidates: Vec<String>) -> Vec<String> {
+        Self::fuzzy_indices(pattern, &candidates, candidates.len())
+            .into_iter()
+            .map(|index| std::mem::take(&mut candidates[index]))
+            .collect()
+    }
+
+    pub(crate) fn fuzzy_indices(pattern: &str, candidates: &[String], limit: usize) -> Vec<usize> {
         if pattern.is_empty() {
-            return candidates;
+            return (0..candidates.len()).take(limit).collect();
         }
 
         let mut matcher = Matcher::new(Config::DEFAULT);
         let pat = Pattern::parse(pattern, CaseMatching::Ignore, Normalization::Smart);
 
-        let mut matches: Vec<(String, u32)> = candidates
-            .into_iter()
-            .filter_map(|cand| {
-                let haystack = Utf32String::from(cand.as_str());
+        let mut matches: Vec<(usize, u32)> = candidates
+            .iter()
+            .enumerate()
+            .filter_map(|(index, candidate)| {
+                let haystack = Utf32String::from(candidate.as_str());
                 let score = pat.score(haystack.slice(..), &mut matcher)?;
-                Some((cand, score))
+                Some((index, score))
             })
             .collect();
 
         matches.sort_by(|a, b| {
             b.1.cmp(&a.1)
-                .then_with(|| a.0.len().cmp(&b.0.len()))
-                .then_with(|| a.0.cmp(&b.0))
+                .then_with(|| candidates[a.0].len().cmp(&candidates[b.0].len()))
+                .then_with(|| candidates[a.0].cmp(&candidates[b.0]))
         });
 
-        matches.into_iter().map(|(s, _)| s).collect()
+        matches
+            .into_iter()
+            .take(limit)
+            .map(|(index, _)| index)
+            .collect()
     }
 
     /// Probe context (package.json, .nvmrc, etc.) to prioritize versions

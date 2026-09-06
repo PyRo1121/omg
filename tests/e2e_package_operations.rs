@@ -651,8 +651,8 @@ fn test_error_missing_package_argument() {
     result.assert_failure();
     let output = result.combined_output();
     assert!(
-        output.contains("required arguments were not provided"),
-        "clap must name the missing required arguments. Got:\n{output}"
+        output.contains("No packages specified"),
+        "bare install must fail with guidance instead of a clap contract error. Got:\n{output}"
     );
 }
 
