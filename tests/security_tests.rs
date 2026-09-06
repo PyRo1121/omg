@@ -284,7 +284,7 @@ mod filesystem_security {
 
             let result = project.run(&["status"]);
             assert!(
-                result.contains("Packages"),
+                result.contains("packages installed"),
                 "a world-writable cwd must not prevent status from reporting packages, got: {}",
                 result.combined_output()
             );
@@ -641,7 +641,7 @@ mod env_security {
 
     fn assert_status_reports_packages(result: &CommandResult) {
         assert!(
-            result.contains("Packages"),
+            result.contains("packages installed"),
             "status must still report package counts, got: {}",
             result.combined_output()
         );
@@ -801,7 +801,7 @@ mod privilege_tests {
             vec!["completions", "bash", "--stdout"],
         ];
         let expected_needles = [
-            "Packages",
+            "packages installed",
             "runtime versions",
             "node",
             "Usage",
