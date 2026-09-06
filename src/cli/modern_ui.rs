@@ -476,17 +476,11 @@ pub fn print_error(msg: &str) {
 /// Warning state - subtle warning indicator
 pub fn print_warning(msg: &str) {
     let line = if crate::cli::style::colors_enabled() {
-        format!("  {} {}", "!".yellow().bold(), msg)
+        format!("\n  {} {}\n", "!".yellow().bold(), msg)
     } else {
-        format!("  ! {msg}")
+        format!("\n  ! {msg}\n")
     };
-    if quiesce_active() {
-        defer_line(line);
-        return;
-    }
-    println!();
-    println!("{line}");
-    println!();
+    emit_or_defer(line);
 }
 
 /// Info message - neutral informational
