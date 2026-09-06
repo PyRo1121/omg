@@ -16,6 +16,20 @@ OMG is the fastest unified package manager for Linux, replacing pacman, yay, nvm
 - **Cli**: Unify status output and limit local build jobs
 ### 🐛 Bug Fixes
 
+- **Cli**: Bound report output and harden unattended runtime
+
+  - limit reverse-dependency, dependents, and license cards to 20 visible
+
+rows with an explicit omitted count so oversized reports stay readable
+
+  - skip optional account identity prompts when no terminal is attended
+
+  - reject dash/team dashboard with an actionable error before TUI setup
+
+  - add arch contract, comprehensive, and matrix regression tests
+
+  - record live-review audit evidence
+
 - **Installer**: Propagate bounded pipeline failures
 - **Installer**: Bound release responses while streaming
 - **Privacy**: Include archived history in local exports
@@ -38,6 +52,7 @@ Preserve archive data and report persistence failures explicitly. Coordinate dat
 - Add published release smoke matrix
 ### 📚 Documentation
 
+- **Tests**: Record mutation evidence and remaining verification gaps
 - **Privacy**: State the local export size limit
 - **Installer**: Pass environment options to bash
 - **Release**: Clarify consent for client downgrades
