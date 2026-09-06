@@ -19,6 +19,7 @@ pub struct ArchiveSnapshot {
     name: String,
     digest: String,
     signature: Option<(File, String)>,
+    original: String,
 }
 
 /// Keep the internal descriptor transport out of user-facing package labels.
@@ -132,6 +133,7 @@ impl ArchiveSnapshot {
             name,
             digest,
             signature,
+            original: canonical.to_string_lossy().into_owned(),
         })
     }
 
@@ -159,12 +161,13 @@ impl ArchiveSnapshot {
             |(file, hash)| format!("{}-{hash}", file.as_raw_fd()),
         );
         format!(
-            "{PREFIX}{}/{}/{}/{}/{}",
+            "{PREFIX}{}/{}/{}/{}/{}/{}",
             std::process::id(),
             self.file.as_raw_fd(),
             self.digest,
             signature,
-            self.name
+            self.name,
+            self.original
         )
     }
 
@@ -172,8 +175,11 @@ impl ArchiveSnapshot {
         let Some(rest) = value.strip_prefix(PREFIX) else {
             return Ok(None);
         };
-        let fields: Vec<_> = rest.split('/').collect();
-        anyhow::ensure!(fields.len() == 5, "Malformed package handoff");
+        let fields: Vec<_> = rest.splitn(6, '/').collect();
+        anyhow::ensure!(
+            fields.len() == 5 || fields.len() == 6,
+            "Malformed package handoff"
+        );
         let pid: u32 = fields[0].parse()?;
         let fd: u32 = fields[1].parse()?;
         anyhow::ensure!(
@@ -194,7 +200,22 @@ impl ArchiveSnapshot {
             name: fields[4].to_owned(),
             digest: fields[2].to_owned(),
             signature,
+            original: handoff_original(value).unwrap_or(fields[4]).to_owned(),
         }))
+    }
+}
+
+/// The caller's requested path as recorded in the descriptor's last field.
+///
+/// History records what the user asked for even when the archive metadata is
+/// unreadable. Returns the original path when present, else the basename.
+pub fn handoff_original(value: &str) -> Option<&str> {
+    let rest = value.strip_prefix(PREFIX)?;
+    let fields: Vec<_> = rest.splitn(6, '/').collect();
+    if fields.len() == 6 && !fields[5].is_empty() && fields[5] != "." && fields[5] != ".." {
+        Some(fields[5])
+    } else {
+        fields.get(4).copied()
     }
 }
 
@@ -332,6 +353,30 @@ mod tests {
         let staged = StagedInputs::prepare(&[snapshot.handoff()])?;
         assert_eq!(std::fs::read(&staged.targets[0])?, b"approved");
         Ok(())
+    }
+
+    #[test]
+    fn handoff_descriptor_round_trips_the_requested_path() -> Result<()> {
+        let dir = tempfile::tempdir()?;
+        let path = dir.path().join("example.pkg.tar.zst");
+        std::fs::write(&path, b"approved")?;
+        let snapshot = ArchiveSnapshot::capture(&path)?;
+        let descriptor = snapshot.handoff();
+        assert_eq!(
+            handoff_original(&descriptor),
+            Some(path.to_string_lossy().as_ref()),
+            "the descriptor must carry the caller's requested path"
+        );
+        let recovered = ArchiveSnapshot::from_handoff(&descriptor)?.unwrap();
+        assert_eq!(recovered.original, path.to_string_lossy());
+        Ok(())
+    }
+
+    #[test]
+    fn legacy_five_field_descriptor_keeps_the_basename_label() {
+        let legacy = format!("{PREFIX}123/4/{}/none/example.pkg.tar.zst", "a".repeat(64));
+        assert_eq!(handoff_original(&legacy), Some("example.pkg.tar.zst"));
+        assert_eq!(display_target(&legacy), "example.pkg.tar.zst");
     }
     #[test]
     fn forged_unsealed_handoff_is_rejected() -> Result<()> {

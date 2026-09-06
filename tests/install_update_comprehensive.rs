@@ -163,9 +163,9 @@ mod install_cli_tests {
     fn test_install_no_packages_shows_error() {
         let result = run_omg(&["install"]);
         result.assert_failure();
-        // Pinned clap contract: PACKAGES is `required = true`
-        // (src/cli/args.rs Install).
-        result.assert_contains("required arguments");
+        // Bare install prompts in a terminal; a noninteractive run fails with
+        // guidance instead of a clap contract error (src/cli/packages/install.rs).
+        result.assert_contains("No packages specified");
     }
 
     #[test]

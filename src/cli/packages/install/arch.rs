@@ -214,7 +214,9 @@ fn history_package_name(package: &str) -> String {
         // History must retain the package operation's original error even when
         // an invalid local archive has no readable metadata.
         tracing::warn!("Could not read local package name for history: {error}");
-        package.to_string()
+        crate::core::security::artifact::handoff_original(package)
+            .unwrap_or(package)
+            .to_string()
     })
 }
 
