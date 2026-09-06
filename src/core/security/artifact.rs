@@ -37,7 +37,7 @@ pub fn is_handoff(path: &str) -> bool {
 fn digest(file: &mut File) -> Result<String> {
     file.rewind()?;
     let mut hash = Sha256::new();
-    let mut buffer = [0; 64 * 1024];
+    let mut buffer = vec![0u8; 64 * 1024];
     loop {
         let count = file.read(&mut buffer)?;
         if count == 0 {

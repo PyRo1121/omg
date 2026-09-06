@@ -344,24 +344,22 @@ impl PackageService {
         changes: Vec<PackageChange>,
         operation_result: Result<()>,
     ) -> Result<()> {
-        match &self.history {
-            Some(history) => history.finish_operation(transaction_type, changes, operation_result),
-            None => {
-                crate::core::security::audit::record_operation(
-                    &transaction_type.to_string(),
-                    &changes
-                        .iter()
-                        .map(|change| change.name.clone())
-                        .collect::<Vec<_>>(),
-                    if operation_result.is_ok() {
-                        "succeeded"
-                    } else {
-                        "failed"
-                    },
-                )?;
-                operation_result
-            }
+        if let Some(history) = &self.history {
+            return history.finish_operation(transaction_type, changes, operation_result);
         }
+        crate::core::security::audit::record_operation(
+            &transaction_type.to_string(),
+            &changes
+                .iter()
+                .map(|change| change.name.clone())
+                .collect::<Vec<_>>(),
+            if operation_result.is_ok() {
+                "succeeded"
+            } else {
+                "failed"
+            },
+        )?;
+        operation_result
     }
 
     /// List available updates

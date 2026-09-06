@@ -2670,7 +2670,7 @@ impl AurClient {
     }
 
     async fn git_clone_from(&self, package: &str, url: &str) -> Result<()> {
-        let safe_url = crate::core::http::redact_url(&url);
+        let safe_url = crate::core::http::redact_url(url);
         let dest = self.build_dir.join(package);
 
         let spinner = create_spinner("Cloning repository...");
@@ -2693,7 +2693,7 @@ impl AurClient {
                 "--depth=1",
                 "--filter=blob:none", // Partial clone: download only needed blobs on demand
                 "--",
-                &url,
+                url,
                 dest_str.as_ref(),
             ]);
 
@@ -2716,7 +2716,7 @@ impl AurClient {
             let mut command = Command::new("git");
             command
                 .args(["clone", "--depth=1", "--filter=blob:none", "--"])
-                .arg(&url)
+                .arg(url)
                 .arg(&dest)
                 .env("GIT_TERMINAL_PROMPT", "0")
                 .stdin(std::process::Stdio::null());

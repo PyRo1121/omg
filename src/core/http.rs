@@ -286,7 +286,7 @@ mod metadata_limit_tests {
         tokio::spawn(async move {
             let (mut stream, _) = listener.accept().await.unwrap();
             let mut request = [0; 2048];
-            stream.read(&mut request).await.unwrap();
+            let _ = stream.read(&mut request).await.unwrap();
             // The client may correctly reject before the entire body is sent.
             let _result = stream.write_all(&bytes).await;
         });
