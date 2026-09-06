@@ -43,7 +43,7 @@ Because of the reaction we want you to have when you see how fast it is. 12-24x 
 
 ```bash
 # One-liner
-curl -fsSL https://raw.githubusercontent.com/PyRo1121/omg/main/install.sh | bash
+curl -fsSL https://omg.latham.cloud/install.sh | bash
 
 # Or build from source
 git clone https://github.com/PyRo1121/omg.git

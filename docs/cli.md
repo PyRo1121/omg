@@ -659,6 +659,10 @@ omg privacy [SUBCOMMAND]
 | `opt-out` | Disable telemetry collection |
 | `opt-in` | Re-enable telemetry collection |
 
+Local exports include archived package history. Each source file is limited to
+64 MiB. Larger files cause the export to fail rather than silently omitting or
+truncating data. Streaming exports for larger archives are not supported.
+
 ---
 
 ## 🛡️ Security & Audit
@@ -1082,6 +1086,11 @@ omg snapshot restore abc123
 # Delete old snapshot
 omg snapshot delete abc123
 ```
+
+Creation and deletion share a persistent `.index.lock` in the snapshots directory.
+A competing mutation fails with a retry message. Both commands validate the index
+before changing snapshot files. This does not make the snapshot file and index a
+crash-atomic pair.
 
 ---
 

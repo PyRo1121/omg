@@ -14,6 +14,7 @@ Utility scripts for development, testing, and CI of the OMG project.
 | `gen-release-notes.sh` | Generate release notes for a version | `./scripts/gen-release-notes.sh <version>` |
 | `r2-rollback.sh` | Roll back R2 release artifacts | `./scripts/r2-rollback.sh` |
 | `record-benchmark-run.py` | Archive a hyperfine run into `benchmarks/records/` | `python3 scripts/record-benchmark-run.py` |
+| `release-smoke.sh` | Smoke-test a published release archive in distro containers | `./scripts/release-smoke.sh --release latest --distro all` |
 
 ---
 
@@ -69,6 +70,53 @@ python3 scripts/generate-benchmark-chart.py --output docs/assets/
 ```
 
 **Used in:** `.github/workflows/release.yml`
+
+---
+
+## release-smoke.sh
+
+**Purpose:** Verify the exact archives users download. For each selected
+distro it resolves a published release with `gh`, validates the archive
+against its sha256 sidecar, pulls a digest-pinned distro image, and runs the
+shipped `omg` binary inside one disposable container: package-index
+preparation, exact `--version` match, `omg search tree`, `omg install -y tree`,
+a native installed assertion, `omg remove -y tree`, and a native removed
+assertion. No retries, no soft passes.
+
+**Usage:**
+
+```bash
+./scripts/release-smoke.sh --release latest --distro arch
+./scripts/release-smoke.sh --release v0.1.217 --distro all
+./scripts/release-smoke.sh --release latest --distro all --container-engine podman \
+  --evidence-dir ~/.cache/omg-smoke
+```
+
+- `--release` defaults to `latest` (latest published, non-draft release); an
+  explicit `vX.Y.Z` tag is also accepted.
+- `--distro` is `arch`, `debian`, `ubuntu`, `fedora`, or `all` (default). With
+  `all`, a semantic failure on one distro does not stop the others; the run
+  still exits 1.
+- `--container-engine` defaults to `$OMG_SMOKE_ENGINE`, then `docker`. The
+  engine executable and `<engine> info` are checked before any network access
+  (exit 3 if unavailable). Pull failures are also exit 3; semantic failures
+  exit 1; invalid usage exits 2.
+- Evidence: each invocation writes a unique per-distro directory (default base
+  `target/release-smoke`, overridable with `--evidence-dir` or
+  `$OMG_SMOKE_EVIDENCE_DIR`) containing `transcript.txt` (full shell tracing),
+  `probe.sh`, and `metadata.txt` (status, release tag, image, archive digest,
+  elapsed seconds). Prior evidence is never erased.
+
+**Image provenance:** the digest pins for Arch (`archlinux`), Debian
+(`debian:bookworm`), and Fedora (`fedora`) mirror the build container images in
+`.github/workflows/release.yml` (`build-arch`, `build-debian`, `build-fedora`);
+the Ubuntu pin (`ubuntu:24.04`) mirrors the `FROM` line of `Dockerfile.ubuntu`.
+Update those sources first, then the `load_case` registry in the script.
+
+**Used in:** `.github/workflows/release-smoke.yml` (shadow mode: runs on pull
+requests touching the workflow or the script, and on `workflow_dispatch` with
+an optional release tag; it uploads per-case evidence even on failure and does
+not gate releases).
 
 ---
 

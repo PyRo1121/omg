@@ -16,7 +16,7 @@ Every command below matches the current `omg --help` output. When in doubt, run 
 
 ```bash
 # Install OMG (Linux/macOS, including Linux inside WSL)
-curl -fsSL https://raw.githubusercontent.com/PyRo1121/omg/main/install.sh | bash
+curl -fsSL https://omg.latham.cloud/install.sh | bash
 
 # Shell integration (auto-switch runtimes)
 eval "$(omg hook zsh)"      # Zsh
@@ -420,7 +420,7 @@ Keyboard shortcuts in the TUI:
 
 ```bash
 # 1. Install OMG
-curl -fsSL https://raw.githubusercontent.com/PyRo1121/omg/main/install.sh | bash
+curl -fsSL https://omg.latham.cloud/install.sh | bash
 
 # 2. Set up shell
 eval "$(omg hook zsh)"
@@ -459,7 +459,7 @@ omg run dev            # Start coding!
 ```yaml
 # .github/workflows/ci.yml
 - name: Install OMG
-  run: curl -fsSL https://raw.githubusercontent.com/PyRo1121/omg/main/install.sh | bash
+  run: curl -fsSL https://omg.latham.cloud/install.sh | bash
 
 - name: Check environment matches omg.lock
   run: omg env check

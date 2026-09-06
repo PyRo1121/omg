@@ -215,7 +215,7 @@ git commit -m "chore: update environment lock"
 
 ```bash
 # 1. Install OMG
-curl -fsSL https://raw.githubusercontent.com/PyRo1121/omg/main/install.sh | bash
+curl -fsSL https://omg.latham.cloud/install.sh | bash
 
 # 2. Setup shell
 echo 'eval "$(omg hook zsh)"' >> ~/.zshrc

@@ -5,7 +5,7 @@
 # Canonical source: this file. The omg-web production copy must remain byte-identical.
 #
 # Usage:
-#   curl -fsSL https://raw.githubusercontent.com/PyRo1121/omg/main/install.sh | bash
+#   curl -fsSL https://omg.latham.cloud/install.sh | bash
 #
 # Options (set before piping to bash):
 #   OMG_NO_TELEMETRY=1  - Disable anonymous telemetry (no prompt)
@@ -20,7 +20,7 @@
 #   curl -fsSL https://... | OMG_NO_TELEMETRY=1 bash
 #
 
-set -u
+set -uo pipefail
 
 # 🔒 Telemetry opt-out (set before running to skip prompt)
 # Usage: OMG_NO_TELEMETRY=1 curl ... | bash
@@ -46,6 +46,12 @@ DATA_DIR="${XDG_DATA_HOME:-$HOME/.local/share}/omg"
 CONFIG_DIR="${XDG_CONFIG_HOME:-$HOME/.config}/omg"
 REPO_OWNER="PyRo1121"
 REPO_NAME="omg"
+
+RELEASES_BASE_URL="https://releases.omg.latham.cloud"
+LATEST_VERSION_URL="${RELEASES_BASE_URL}/latest-version"
+MAX_LATEST_VERSION_BYTES=256
+MAX_ARCHIVE_BYTES=$((256 * 1024 * 1024))
+MAX_CHECKSUM_BYTES=1024
 
 # Detect directory
 SCRIPT_SOURCE="${BASH_SOURCE[0]:-$0}"
@@ -131,7 +137,7 @@ install_binary() {
 
 check_runtime_dependencies() {
   local missing=()
-  local deps=("curl" "tar")
+  local deps=("curl" "tar" "head" "tr")
 
   for dep in "${deps[@]}"; do
     if ! command -v "$dep" >/dev/null 2>&1; then
@@ -157,6 +163,16 @@ calculate_sha256() {
     sha256sum "$file" | awk '{print $1}'
   else
     shasum -a 256 "$file" | awk '{print $1}'
+  fi
+}
+
+check_file_size_bound() {
+  local file="$1" max_bytes="$2" label="$3"
+  local size
+  size=$(wc -c < "$file") || return 1
+  if (( size > max_bytes )); then
+    warn "${label} exceeded the ${max_bytes} byte bound"
+    return 1
   fi
 }
 
@@ -248,17 +264,62 @@ select_artifact() {
   echo "$asset_name"
 }
 
-fetch_release_json() {
-  local api_base="https://api.github.com/repos/${REPO_OWNER}/${REPO_NAME}/releases"
+validate_version_tag() {
+  local tag="$1"
+  [[ "$tag" == v* ]] && validate_bare_version "${tag#v}"
+}
 
-  if [[ "$OMG_VERSION" == "latest" ]]; then
-    curl -fsSL "${api_base}/latest"
-  elif [[ "$OMG_VERSION" =~ ^v[0-9]+\.[0-9]+\.[0-9]+([.-][0-9A-Za-z.-]+)?$ ]]; then
-    curl -fsSL "${api_base}/tags/${OMG_VERSION}"
-  else
-    warn "OMG_VERSION must be 'latest' or a version tag such as v1.2.3"
+validate_bare_version() {
+  local version="$1"
+  if [[ ! "$version" =~ ^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)(-[0-9A-Za-z-]+(\.[0-9A-Za-z-]+)*)?(\+[0-9A-Za-z-]+(\.[0-9A-Za-z-]+)*)?$ ]]; then
     return 1
   fi
+
+  local without_build="${version%%+*}"
+  if [[ "$without_build" == *-* ]]; then
+    local prerelease="${without_build#*-}"
+    local identifier
+    local identifiers=()
+    IFS='.' read -r -a identifiers <<< "$prerelease"
+    for identifier in "${identifiers[@]}"; do
+      if [[ "$identifier" =~ ^[0-9]+$ && "$identifier" != "0" && "$identifier" == 0* ]]; then
+        return 1
+      fi
+    done
+  fi
+}
+
+# GitHub's latest release cannot replace the R2 marker because rollback changes
+# only that marker.
+resolve_version() {
+  if [[ "$OMG_VERSION" != "latest" ]]; then
+    if ! validate_version_tag "$OMG_VERSION"; then
+      warn "OMG_VERSION must be 'latest' or a version tag such as v1.2.3"
+      return 1
+    fi
+    echo "$OMG_VERSION"
+    return 0
+  fi
+
+  local marker="" LC_ALL=C
+  # Preserve trailing newlines and reject NULs that command substitution would discard.
+  if ! marker=$(curl -fsSL --max-filesize "$MAX_LATEST_VERSION_BYTES" "$LATEST_VERSION_URL" |
+    head -c "$((MAX_LATEST_VERSION_BYTES + 1))" | tr '\000' '\001' && printf .); then
+    warn "Unable to read the latest-version marker from ${LATEST_VERSION_URL}"
+    return 1
+  fi
+  marker="${marker%.}"
+  if (( ${#marker} > MAX_LATEST_VERSION_BYTES )); then
+    warn "latest-version marker exceeded the ${MAX_LATEST_VERSION_BYTES} byte bound"
+    return 1
+  fi
+  marker="${marker#"${marker%%[![:space:]]*}"}"
+  marker="${marker%"${marker##*[![:space:]]}"}"
+  if ! validate_bare_version "$marker"; then
+    warn "latest-version marker is not a valid bare semantic version"
+    return 1
+  fi
+  echo "v${marker}"
 }
 
 install_from_release() {
@@ -278,22 +339,11 @@ install_from_release() {
     error "Intel macOS is unsupported. OMG supports macOS releases on Apple Silicon (aarch64)."
   fi
 
-  # Use GitHub releases (always up-to-date)
-  local release_json
-  if ! release_json=$(fetch_release_json 2>/dev/null); then
-    warn "Unable to fetch GitHub release metadata"
-    return 1
-  fi
-
-  # Extract actual version tag from release JSON
   local actual_version
-  actual_version=$(printf "%s" "$release_json" | grep -Eo '"tag_name"\s*:\s*"[^"]+"' | head -n1 | cut -d'"' -f4)
-  if [[ ! "$actual_version" =~ ^v[0-9]+\.[0-9]+\.[0-9]+([.-][0-9A-Za-z.-]+)?$ ]]; then
-    warn "Release metadata returned an invalid version tag"
+  if ! actual_version=$(resolve_version); then
     return 1
   fi
 
-  # Select correct artifact name
   local artifact_name
   artifact_name=$(select_artifact "$actual_version" "$detected_os" "$detected_distro" "$detected_arch")
 
@@ -302,64 +352,47 @@ install_from_release() {
     return 1
   fi
 
-  # Find download URL for the artifact
-  local asset_url=""
-  while IFS= read -r candidate; do
-    case "$candidate" in
-    *"/$artifact_name")
-      asset_url="$candidate"
-      break
-      ;;
-    esac
-  done < <(
-    printf "%s" "$release_json" |
-      grep -Eo '"browser_download_url"\s*:\s*"[^"]+"' |
-      cut -d '"' -f4
-  )
-
-  if [[ -z "$asset_url" ]]; then
-    warn "No prebuilt binary found for ${detected_os}/${detected_distro}/${detected_arch} (artifact: ${artifact_name})"
-    return 1
-  fi
-  case "$asset_url" in
-  "https://github.com/${REPO_OWNER}/${REPO_NAME}/releases/download/"*) ;;
-  *)
-    warn "Release metadata returned an unexpected download origin"
-    return 1
-    ;;
-  esac
+  local asset_url="${RELEASES_BASE_URL}/${artifact_name}"
 
   header "Installing Prebuilt OMG"
   info "Platform: ${detected_os}/${detected_distro}/${detected_arch}"
   tmp_dir=$(mktemp -d)
   trap 'cleanup_tmp_dir' RETURN
 
-  # Save under the real artifact name so the published .sha256 sidecar
-  # (which references the archive by name) verifies in place.
   start_spinner "Downloading prebuilt binary"
   local download_file="$tmp_dir/$artifact_name"
 
-  if curl -fsSL "$asset_url" -o "$download_file" >/dev/null 2>&1; then
+  if curl -fsSL --max-filesize "$MAX_ARCHIVE_BYTES" "$asset_url" 2>/dev/null |
+    head -c "$((MAX_ARCHIVE_BYTES + 1))" > "$download_file"; then
     stop_spinner "Download complete"
   else
     fail_spinner "Download failed"
     return 1
   fi
 
+  if ! check_file_size_bound "$download_file" "$MAX_ARCHIVE_BYTES" "Downloaded ${artifact_name}"; then
+    fail_spinner "Download failed"
+    return 1
+  fi
+
   # Verify against the release's .sha256 sidecar without trusting the
-  # sidecar's filename field as a filesystem path. Note the trust limit:
-  # sidecar and artifact share one origin, so this proves integrity
-  # against a corrupted download, not against a compromised release.
-  # Sigstore attestation is checked by `omg self-update`, not here.
+  # sidecar's filename field as a filesystem path. Trust limit: sidecar and
+  # artifact share one origin, so this proves integrity against a corrupted
+  # download, not against a compromised release.
   start_spinner "Verifying checksum"
-  if curl -fsSL "${asset_url}.sha256" -o "${download_file}.sha256" >/dev/null 2>&1; then
+  if curl -fsSL --max-filesize "$MAX_CHECKSUM_BYTES" "${asset_url}.sha256" 2>/dev/null |
+    head -c "$((MAX_CHECKSUM_BYTES + 1))" > "${download_file}.sha256"; then
+    if ! check_file_size_bound "${download_file}.sha256" "$MAX_CHECKSUM_BYTES" "Checksum sidecar for ${artifact_name}"; then
+      fail_spinner "Checksum verification failed"
+      return 2
+    fi
     local expected_checksum
     local actual_checksum
     expected_checksum=$(awk 'NR == 1 { print $1 }' "${download_file}.sha256")
     if [[ ! "$expected_checksum" =~ ^[0-9a-f]{64}$ ]]; then
       fail_spinner "Checksum verification failed"
       warn "Published checksum for ${artifact_name} is malformed"
-      return 1
+      return 2
     fi
     actual_checksum=$(calculate_sha256 "$download_file")
     if [[ "$actual_checksum" == "$expected_checksum" ]]; then
@@ -367,19 +400,15 @@ install_from_release() {
     else
       fail_spinner "Checksum verification failed"
       warn "Downloaded ${artifact_name} does not match its published sha256"
-      return 1
+      return 2
     fi
   else
     fail_spinner "Checksum unavailable"
     warn "No .sha256 sidecar published for ${artifact_name}; refusing to install unverified binaries"
-    return 1
+    return 2
   fi
 
-  # Provenance gate: every release archive carries a Sigstore build-provenance
-  # attestation generated by GitHub Actions. Verify it when the GitHub CLI is
-  # available; without it, warn loudly instead of failing hard (gh is not
-  # installed in many minimal environments, and the checksum gate above is
-  # already mandatory).
+  # Checksums from the download origin do not replace build provenance.
   if command -v gh >/dev/null 2>&1; then
     start_spinner "Verifying build provenance"
     if gh attestation verify "$download_file" -R "${REPO_OWNER}/${REPO_NAME}" >/dev/null 2>&1; then
@@ -388,10 +417,19 @@ install_from_release() {
       fail_spinner "Build provenance verification failed"
       warn "Sigstore attestation verification failed for ${artifact_name}"
       warn "Possible supply-chain tampering — run manually: gh attestation verify <archive> -R ${REPO_OWNER}/${REPO_NAME}"
-      return 1
+      return 2
     fi
   else
-    info "GitHub CLI not found; skipping provenance check (install gh to enable)"
+    case "${OMG_INSTALL_ALLOW_UNVERIFIED_PROVENANCE:-}" in
+      1|true|yes)
+        warn "Installing without verified build provenance because OMG_INSTALL_ALLOW_UNVERIFIED_PROVENANCE is set"
+        ;;
+      *)
+        warn "GitHub CLI not found; refusing to install without verified build provenance"
+        warn "Install gh, or explicitly accept the risk with OMG_INSTALL_ALLOW_UNVERIFIED_PROVENANCE=1"
+        return 2
+        ;;
+    esac
   fi
 
   start_spinner "Extracting binaries"
@@ -893,7 +931,13 @@ fi
 
 main() {
   print_banner
-  if ! install_from_release; then
+  local release_status=0
+  install_from_release || release_status=$?
+  if [[ "$release_status" -ne 0 ]]; then
+    # Only an unavailable release permits the existing local-source path.
+    if [[ "$release_status" -ne 1 ]]; then
+      error "Release installation stopped; refusing a source-build fallback"
+    fi
     if [[ "$IS_SOURCE_INSTALL" != "true" ]]; then
       error "No verified prebuilt release is available for this platform; refusing to build unpinned repository HEAD"
     fi

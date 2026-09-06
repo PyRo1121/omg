@@ -5,6 +5,8 @@ use anyhow::Result;
 use crate::cli::tea::Cmd;
 use crate::core::history::{HistoryManager, TransactionType};
 
+const REVERSE_DEPENDENCY_DISPLAY_LIMIT: usize = 20;
+
 /// Show package installation history
 #[cfg_attr(
     not(feature = "fedora"),
@@ -125,7 +127,7 @@ fn build_blame_output(package: &str) -> Result<Cmd<()>> {
 fn transaction_history(package: &str) -> Result<Vec<Cmd<()>>> {
     let mut commands = Vec::new();
     let history = HistoryManager::new()?;
-    let transactions = history.read_snapshot()?;
+    let transactions = history.load()?;
 
     let relevant = newest_transactions_for_package(&transactions, package);
 
@@ -263,9 +265,10 @@ fn show_required_by(package: &str) -> Result<Cmd<()>> {
     if required_by.is_empty() {
         Ok(Cmd::info("Nothing depends on this package"))
     } else {
-        Ok(Cmd::card(
+        Ok(crate::cli::components::Components::limited_card(
             format!("Required by ({} packages)", required_by.len()),
             required_by,
+            REVERSE_DEPENDENCY_DISPLAY_LIMIT,
         ))
     }
 }
@@ -281,9 +284,10 @@ fn show_required_by_debian(package: &str) -> Result<Cmd<()>> {
     if deps.is_empty() {
         Ok(Cmd::info("Nothing depends on this package"))
     } else {
-        Ok(Cmd::card(
+        Ok(crate::cli::components::Components::limited_card(
             format!("Required by ({} packages)", deps.len()),
             deps,
+            REVERSE_DEPENDENCY_DISPLAY_LIMIT,
         ))
     }
 }

@@ -113,7 +113,7 @@ git push
 
 ```bash
 # 1. Install OMG
-curl -fsSL https://raw.githubusercontent.com/PyRo1121/omg/main/install.sh | bash
+curl -fsSL https://omg.latham.cloud/install.sh | bash
 
 # 2. Set up shell integration
 echo 'eval "$(omg hook zsh)"' >> ~/.zshrc
@@ -240,7 +240,7 @@ jobs:
       # Install OMG
       - name: Install OMG
         run: |
-          curl -fsSL https://raw.githubusercontent.com/PyRo1121/omg/main/install.sh | bash
+          curl -fsSL https://omg.latham.cloud/install.sh | bash
           echo "$HOME/.local/bin" >> $GITHUB_PATH
 
       # Verify environment against omg.lock
@@ -279,7 +279,7 @@ variables:
   OMG_SOCKET_PATH: "/tmp/omg.sock"
 
 before_script:
-  - curl -fsSL https://raw.githubusercontent.com/PyRo1121/omg/main/install.sh | bash
+  - curl -fsSL https://omg.latham.cloud/install.sh | bash
   - export PATH="$HOME/.local/bin:$PATH"
   - omg env check
 
@@ -304,7 +304,7 @@ build:
 FROM archlinux:latest
 
 # Install OMG
-RUN curl -fsSL https://raw.githubusercontent.com/PyRo1121/omg/main/install.sh | bash
+RUN curl -fsSL https://omg.latham.cloud/install.sh | bash
 
 # Copy project
 WORKDIR /app

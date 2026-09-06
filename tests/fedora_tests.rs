@@ -513,7 +513,7 @@ mod dnf_integration {
                 "Install failed: {}",
                 String::from_utf8_lossy(&install.stderr)
             );
-            let records = history.read_snapshot()?;
+            let records = history.load()?;
             anyhow::ensure!(
                 records.len() == 1,
                 "Expected exactly one installation transaction"
@@ -540,7 +540,7 @@ mod dnf_integration {
             let noop = run(&["install", "tree", "--yes"])?;
             anyhow::ensure!(noop.status.success(), "No-op install failed");
             anyhow::ensure!(
-                history.read_snapshot()?.len() == 1,
+                history.load()?.len() == 1,
                 "No-op invented a transaction"
             );
             let blame = run(&["blame", "tree"])?;
@@ -570,7 +570,7 @@ mod dnf_integration {
             anyhow::ensure!(snapshot()? == before, "RPM inventory was not restored");
         }
         verified?;
-        let records = history.read_snapshot()?;
+        let records = history.load()?;
         anyhow::ensure!(records.len() == 2, "Expected install and remove history");
         let removed = &records[1];
         anyhow::ensure!(
@@ -603,7 +603,7 @@ mod dnf_integration {
         let fixture = tempfile::tempdir_in(dirs::cache_dir().expect("user cache directory"))?;
         let custom_path = fixture.path().join("custom.json");
         let default = HistoryManager::new()?;
-        let default_before = serde_json::to_vec(&default.read_snapshot()?)?;
+        let default_before = serde_json::to_vec(&default.load()?)?;
         let manager = std::sync::Arc::new(DnfPackageManager::new());
         let packages = vec!["tree".to_owned()];
         enum Owner {
@@ -635,11 +635,11 @@ mod dnf_integration {
                 "Service removal did not remove tree"
             );
             anyhow::ensure!(
-                HistoryManager::new_in(&custom_path)?.read_snapshot()?.len() == 1,
+                HistoryManager::new_in(&custom_path)?.load()?.len() == 1,
                 "Service history setting was not respected"
             );
             anyhow::ensure!(
-                serde_json::to_vec(&default.read_snapshot()?)? == default_before,
+                serde_json::to_vec(&default.load()?)? == default_before,
                 "Backend wrote to the default history unexpectedly"
             );
         }
@@ -861,7 +861,7 @@ mod dnf_operations {
             );
             let preview = run(&["clean", "--orphans", "--dry-run"], b"")?;
             anyhow::ensure!(
-                preview.status.success() && installed()? && history.read_snapshot()?.is_empty(),
+                preview.status.success() && installed()? && history.load()?.is_empty(),
                 "Preview mutated state or history"
             );
             let decline = run(&["clean", "--orphans"], b"n\n")?;
@@ -869,7 +869,7 @@ mod dnf_operations {
                 decline.status.code() == Some(1) && installed()?,
                 "Native decline did not preserve the fixture"
             );
-            let declined = history.read_snapshot()?;
+            let declined = history.load()?;
             anyhow::ensure!(
                 declined.len() == 1 && !declined[0].success && declined[0].changes.is_empty(),
                 "Unexpected decline history: {declined:?}; stderr: {}",
@@ -880,7 +880,7 @@ mod dnf_operations {
                 accepted.status.success() && !installed()?,
                 "Accepted cleanup did not remove the orphan"
             );
-            let records = history.read_snapshot()?;
+            let records = history.load()?;
             anyhow::ensure!(
                 records.len() == 2
                     && records[1].success
@@ -903,7 +903,7 @@ mod dnf_operations {
                 "Cache cleanup failed"
             );
             anyhow::ensure!(
-                history.read_snapshot()?.len() == 2,
+                history.load()?.len() == 2,
                 "Empty or cache cleanup invented package history"
             );
             Ok(())
@@ -978,7 +978,7 @@ mod dnf_operations {
             before != after,
             "This fixture requires available package upgrades"
         );
-        let records = history.read_snapshot()?;
+        let records = history.load()?;
         anyhow::ensure!(
             records.len() == 1
                 && records[0].success
@@ -1038,7 +1038,7 @@ mod dnf_operations {
             String::from_utf8_lossy(&noop.stderr)
         );
         anyhow::ensure!(
-            snapshot()? == after && history.read_snapshot()?.len() == 1,
+            snapshot()? == after && history.load()?.len() == 1,
             "No-op update changed package state or invented history"
         );
         fixture.close()?;

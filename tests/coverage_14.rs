@@ -171,11 +171,12 @@ mod why_contracts {
             "reason=0 must render as explicitly installed, got:\n{out}"
         );
         assert!(
-            out.contains("beta") && out.contains("✓ installed"),
+            out.lines().any(|line| line.contains("beta: ✓ installed")),
             "installed dependency beta must be marked ✓, got:\n{out}"
         );
         assert!(
-            out.contains("missingdep") && out.contains("✗ not installed"),
+            out.lines()
+                .any(|line| line.contains("missingdep: ✗ not installed")),
             "absent dependency missingdep must be marked ✗, got:\n{out}"
         );
         assert!(
@@ -330,6 +331,72 @@ mod why_contracts {
 
 mod snapshot_contracts {
     use super::*;
+
+    #[test]
+    fn held_index_lock_blocks_snapshot_mutations() -> anyhow::Result<()> {
+        let project = TestProject::new();
+        let id = create_snapshot(&project, "original");
+        let directory = project.data_dir.path().join("snapshots");
+        let original = fs::read(directory.join("index.json"))?;
+        let lock = fs::File::create(directory.join(".index.lock"))?;
+        lock.lock()?;
+        for args in [
+            vec!["snapshot", "create", "--message", "must not appear"],
+            vec!["snapshot", "delete", id.as_str()],
+        ] {
+            let result = project.run_with_env(&args, &[("OMG_TEST_COMMAND_TIMEOUT_SECS", "5")]);
+            result.assert_failure();
+            assert!(
+                result
+                    .combined_output()
+                    .contains("Another snapshot mutation is running")
+            );
+            assert_eq!(fs::read(directory.join("index.json"))?, original);
+            assert!(directory.join(format!("{id}.json")).is_file());
+        }
+        drop(lock);
+        create_snapshot(&project, "after release");
+        project.run(&["snapshot", "delete", &id]).assert_success();
+        assert_eq!(read_snapshot_index(&project).len(), 1);
+        Ok(())
+    }
+
+    #[test]
+    fn corrupt_index_is_checked_before_snapshot_mutation() -> anyhow::Result<()> {
+        let project = TestProject::new();
+        let id = create_snapshot(&project, "preserve");
+        let directory = project.data_dir.path().join("snapshots");
+        let snapshot = directory.join(format!("{id}.json"));
+        let original = fs::read(&snapshot)?;
+        fs::write(directory.join("index.json"), b"malformed index")?;
+        for args in [
+            vec!["snapshot", "delete", id.as_str()],
+            vec!["snapshot", "create", "--message", "must not appear"],
+        ] {
+            project.run(&args).assert_failure();
+            assert_eq!(
+                fs::read(&snapshot)?,
+                original,
+                "snapshot bytes must survive index errors"
+            );
+            assert_eq!(fs::read(directory.join("index.json"))?, b"malformed index");
+            let json_files = fs::read_dir(&directory)?
+                .collect::<std::io::Result<Vec<_>>>()?
+                .into_iter()
+                .filter(|entry| {
+                    entry
+                        .path()
+                        .extension()
+                        .is_some_and(|extension| extension == "json")
+                })
+                .count();
+            assert_eq!(
+                json_files, 2,
+                "failed create must not leave an unindexed snapshot"
+            );
+        }
+        Ok(())
+    }
 
     /// Contract: `snapshot create --message M` appends exactly one index
     /// entry carrying the message and an ID of the form

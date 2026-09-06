@@ -16,6 +16,10 @@ on:
   push:
     branches: [main]
     paths:
+      - "build.rs"
+      - "install.sh"
+      - "benchmark.sh"
+      - "benchmark-hyperfine.sh"
       - "src/**"
       - "tests/**"
       - "Cargo.toml"
@@ -29,22 +33,10 @@ on:
       - ".config/**"
       - "deny.toml"
       - ".github/workflows/ci.yml"
+  # Always report the required check on PRs. The job-level change filter
+  # below skips platform builds for documentation/configuration-only changes.
   pull_request:
     branches: [main]
-    paths:
-      - "src/**"
-      - "tests/**"
-      - "Cargo.toml"
-      - "Cargo.lock"
-      - "Makefile"
-      - "benches/**"
-      - "fuzz/**"
-      - "scripts/**"
-      - "rust-toolchain.toml"
-      - ".cargo/**"
-      - ".config/**"
-      - "deny.toml"
-      - ".github/workflows/ci.yml"
   merge_group:
     types: [checks_requested]
   workflow_dispatch:
@@ -193,7 +185,7 @@ jobs:
             features: arch,pgp,license
             setup: |
               pacman -Syu --noconfirm
-              pacman -S --noconfirm --needed base-devel git pkgconf openssl libarchive clang cmake curl
+              pacman -S --noconfirm --needed base-devel git pkgconf openssl libarchive clang cmake curl jq
               curl --proto '=https' --tlsv1.2 -fsSL \
                 https://static.rust-lang.org/rustup/archive/1.28.2/x86_64-unknown-linux-gnu/rustup-init \
                 -o /tmp/rustup-init
@@ -316,6 +308,26 @@ jobs:
           cargo nextest run --lib --no-default-features --features ${{ matrix.features }} \
             --locked --profile ci --no-fail-fast
 
+      - name: Prepare sandbox regression executable
+        if: matrix.platform == 'arch'
+        shell: bash
+        run: |
+          set -euo pipefail
+          binary=$(cargo test --lib --no-run --no-default-features --features arch,pgp,license \
+            --locked --message-format=json | jq -r \
+            'select(.reason == "compiler-artifact" and .target.name == "omg_lib" and .profile.test) | .executable // empty')
+          test -n "$binary"
+          install -Dm755 "$binary" target/sandbox-test/omg-lib-tests
+
+      - name: Upload sandbox regression executable
+        if: matrix.platform == 'arch'
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: aur-sandbox-test
+          path: target/sandbox-test/omg-lib-tests
+          retention-days: 1
+          if-no-files-found: error
+
       - name: Run platform-specific integration tests
         run: |
           if [[ "${{ matrix.platform }}" == "fedora" ]]; then
@@ -364,6 +376,51 @@ jobs:
           path: target/release/omg
           retention-days: 7
           if-no-files-found: error
+
+  sandbox-cancellation:
+    name: "AUR sandbox cancellation"
+    needs: [quick-gate, linux-matrix]
+    if: needs.quick-gate.outputs.should-build == 'true' || github.event_name == 'workflow_dispatch' || github.event_name == 'merge_group'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: aur-sandbox-test
+          path: fixture
+
+      - name: Prepare sandbox runtime image
+        run: |
+          docker build --tag omg-sandbox-regression - <<'DOCKERFILE'
+          FROM archlinux:latest@sha256:b0deabeb3d283da2c7f7dbf0eea051b7b2cd0554e0b737cc457fd21683bdcdd1
+          RUN pacman -Syu --noconfirm --needed bubblewrap && pacman -Scc --noconfirm
+          DOCKERFILE
+
+      - name: Prepare sandbox seccomp profile
+        run: |
+          curl -fsS https://raw.githubusercontent.com/moby/profiles/61eaf32614c7c71b60bd8927d3e6a4ffc8ff1f31/seccomp/default.json -o seccomp-default.json
+          echo '536529b665dd0972c37bfb569f5d4ac8a53592e7b00752bc39ff063ca9864c74  seccomp-default.json' | sha256sum --check
+          jq '(.syscalls[] | select(.includes.caps == ["CAP_SYS_ADMIN"]) | .names) += ["pivot_root"]' \
+            seccomp-default.json > seccomp-sandbox.json
+
+      - name: Verify descendant cleanup
+        timeout-minutes: 2
+        run: |
+          chmod +x fixture/omg-lib-tests
+          # Only this fixture gets namespace permissions, not compilation or
+          # other tests. No checkout, credentials, or Docker socket are mounted.
+          # Bubblewrap also needs pivot_root, which the default profile denies.
+          docker run --rm --cap-add SYS_ADMIN --security-opt apparmor=unconfined \
+            --security-opt "seccomp=$PWD/seccomp-sandbox.json" \
+            --pids-limit 128 --memory 1g --cpus 2 \
+            --mount "type=bind,source=$PWD/fixture,target=/fixture,readonly" \
+            omg-sandbox-regression /bin/bash -euo pipefail -c '
+              test_name=package_managers::aur::client::tests::cancelling_logged_sandbox_build_terminates_descendants
+              /fixture/omg-lib-tests --ignored --list | grep -Fx "$test_name: test"
+              /fixture/omg-lib-tests --exact "$test_name" --ignored --nocapture
+            '
 
   #############################################################################
   # STAGE 2a: Feature-intersection compile checks
@@ -607,7 +664,7 @@ jobs:
   # not mint a release tag.
   ci-success:
     name: "CI Success"
-    needs: [quick-gate, portable, linux-matrix, feature-intersections, macos, ubuntu]
+    needs: [quick-gate, portable, linux-matrix, sandbox-cancellation, feature-intersections, macos, ubuntu]
     if: always()
     runs-on: ubuntu-latest
     timeout-minutes: 5
@@ -620,6 +677,7 @@ jobs:
           QUICK_GATE: ${{ needs.quick-gate.result }}
           PORTABLE: ${{ needs.portable.result }}
           LINUX_MATRIX: ${{ needs.linux-matrix.result }}
+          SANDBOX_CANCELLATION: ${{ needs.sandbox-cancellation.result }}
           FEATURE_INTERSECTIONS: ${{ needs.feature-intersections.result }}
           MACOS: ${{ needs.macos.result }}
           UBUNTU: ${{ needs.ubuntu.result }}
@@ -631,6 +689,7 @@ jobs:
           echo "| Quick Gate | $QUICK_GATE |" >> $GITHUB_STEP_SUMMARY
           echo "| Portable Rust | $PORTABLE |" >> $GITHUB_STEP_SUMMARY
           echo "| Linux Matrix | $LINUX_MATRIX |" >> $GITHUB_STEP_SUMMARY
+          echo "| AUR Sandbox Cancellation | $SANDBOX_CANCELLATION |" >> $GITHUB_STEP_SUMMARY
           echo "| Feature Intersections | $FEATURE_INTERSECTIONS |" >> $GITHUB_STEP_SUMMARY
           echo "| macOS | $MACOS |" >> $GITHUB_STEP_SUMMARY
           echo "| Ubuntu | $UBUNTU |" >> $GITHUB_STEP_SUMMARY
@@ -643,6 +702,7 @@ jobs:
           declare -A required_results=(
             ["Portable Rust"]="$PORTABLE"
             ["Linux Matrix"]="$LINUX_MATRIX"
+            ["AUR Sandbox Cancellation"]="$SANDBOX_CANCELLATION"
             ["Feature Intersections"]="$FEATURE_INTERSECTIONS"
             ["macOS"]="$MACOS"
             ["Ubuntu"]="$UBUNTU"
@@ -653,6 +713,11 @@ jobs:
               exit 1
             fi
           done
+
+          if [[ "$LINUX_MATRIX" == "success" && "$SANDBOX_CANCELLATION" != "success" ]]; then
+            echo "::error::Arch builds completed without the required sandbox regression"
+            exit 1
+          fi
 
           echo "" >> $GITHUB_STEP_SUMMARY
           echo "All required checks passed!" >> $GITHUB_STEP_SUMMARY
@@ -668,11 +733,13 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           LINUX_MATRIX: ${{ needs.linux-matrix.result }}
+          SANDBOX_CANCELLATION: ${{ needs.sandbox-cancellation.result }}
           FEATURE_INTERSECTIONS: ${{ needs.feature-intersections.result }}
           MACOS: ${{ needs.macos.result }}
           UBUNTU: ${{ needs.ubuntu.result }}
         run: |
           if [[ "$LINUX_MATRIX" != "success" \
+             || "$SANDBOX_CANCELLATION" != "success" \
              || "$FEATURE_INTERSECTIONS" != "success" \
              || "$MACOS" != "success" \
              || "$UBUNTU" != "success" ]]; then

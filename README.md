@@ -40,7 +40,7 @@ omg use ruby 3.3.0
 ### Universal Installer (Linux & macOS)
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/PyRo1121/omg/main/install.sh | bash
+curl -fsSL https://omg.latham.cloud/install.sh | bash
 ```
 
 ### Arch Linux (AUR)

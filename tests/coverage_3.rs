@@ -85,6 +85,82 @@ fn seed_history(project: &TestProject, entries: &[String]) {
 // ═══════════════════════════════════════════════════════════════════════════
 
 #[test]
+#[cfg(unix)]
+fn history_command_refuses_a_fifo_without_blocking() {
+    use std::os::unix::fs::{FileTypeExt as _, MetadataExt as _};
+
+    let project = TestProject::for_distro("arch");
+    let path = project.data_dir.path().join("history.json");
+    nix::unistd::mkfifo(
+        &path,
+        nix::sys::stat::Mode::S_IRUSR | nix::sys::stat::Mode::S_IWUSR,
+    )
+    .unwrap();
+    let before = std::fs::symlink_metadata(&path).unwrap();
+    let result = project.run_with_env(&["history"], &[("OMG_TEST_COMMAND_TIMEOUT_SECS", "5")]);
+    result.assert_failure();
+    result.assert_stderr_contains("History file must be a regular file");
+    let after = std::fs::symlink_metadata(path).unwrap();
+    assert!(after.file_type().is_fifo());
+    assert_eq!((after.dev(), after.ino()), (before.dev(), before.ino()));
+}
+
+#[test]
+fn privacy_export_preserves_archived_history_text() {
+    let project = TestProject::for_distro("arch");
+    let archive_path = project.data_dir.path().join("history.json.archive.jsonl");
+    let output_path = project.data_dir.path().join("privacy-export.json");
+    let archive = "{\"id\":\"older\"}\n{\"id\":\"newer\"}\n";
+    std::fs::write(&archive_path, archive).unwrap();
+
+    project
+        .run(&[
+            "privacy",
+            "export",
+            "--output",
+            output_path.to_str().unwrap(),
+        ])
+        .assert_success();
+    let export: serde_json::Value =
+        serde_json::from_slice(&std::fs::read(output_path).unwrap()).unwrap();
+    assert_eq!(export["local"]["history.json.archive.jsonl"], archive);
+    assert_eq!(std::fs::read_to_string(archive_path).unwrap(), archive);
+}
+
+#[test]
+#[cfg(unix)]
+fn history_command_refuses_dangling_live_symlinks() {
+    let project = TestProject::for_distro("arch");
+    let history_path = project.data_dir.path().join("history.json");
+    let target = project.data_dir.path().join("missing-history.json");
+    std::os::unix::fs::symlink(&target, &history_path).unwrap();
+
+    let result = project.run(&["history", "--json"]);
+    result.assert_failure();
+    result.assert_stderr_contains("Refusing to read history that is a symlink");
+    assert_eq!(std::fs::read_link(history_path).unwrap(), target);
+    assert!(!target.exists());
+}
+
+#[test]
+fn archived_transactions_are_visible_to_history_and_rollback() -> anyhow::Result<()> {
+    let project = TestProject::for_distro("arch");
+    let transaction: serde_json::Value =
+        serde_json::from_str(&txn_json(SYNC_TXN_ID, "Sync", true, ""))?;
+    let archived = format!("{}\n", serde_json::to_string(&transaction)?);
+    let path = project.data_dir.path().join("history.json.archive.jsonl");
+    std::fs::write(&path, &archived)?;
+    let history = project.run(&["history", "--json"]);
+    history.assert_success();
+    history.assert_stdout_contains(SYNC_TXN_ID);
+    let rollback = project.run(&["rollback", SYNC_TXN_ID, "--yes"]);
+    rollback.assert_success();
+    rollback.assert_stdout_contains("Nothing to roll back");
+    assert_eq!(std::fs::read_to_string(path)?, archived);
+    Ok(())
+}
+
+#[test]
 fn rollback_sync_transaction_reports_nothing_to_do() {
     let project = TestProject::for_distro("arch");
     seed_history(&project, &[txn_json(SYNC_TXN_ID, "Sync", true, "")]);
@@ -186,6 +262,79 @@ fn rollback_existing_transaction_without_yes_requires_yes_flag() {
     // The remedy must be copy-pasteable automation advice, not just a complaint.
     result.assert_stderr_contains("omg rollback");
     result.assert_stderr_contains("--yes");
+}
+
+#[test]
+fn removal_reports_retirement_failure_without_rewriting_corrupt_history() {
+    let project = TestProject::for_distro("arch");
+    project
+        .mock_install("omg-history-retirement-fixture", "1.2.3")
+        .unwrap();
+    let entries = (0..1_000)
+        .map(|_| txn_json(&uuid::Uuid::new_v4().to_string(), "Sync", true, ""))
+        .collect::<Vec<_>>();
+    seed_history(&project, &entries);
+    let live_path = project.data_dir.path().join("history.json");
+    let archive_path = project.data_dir.path().join("history.json.archive.jsonl");
+    let original_live = std::fs::read(&live_path).unwrap();
+    let original_archive = b"{\"id\":\"incomplete";
+    std::fs::write(&archive_path, original_archive).unwrap();
+
+    let result = project.run(&["remove", "--yes", "--", "omg-history-retirement-fixture"]);
+    result.assert_failure();
+    result.assert_stderr_contains(
+        "Package operation succeeded but its history could not be persisted",
+    );
+    result.assert_stderr_contains("Failed to validate history archive");
+    assert_eq!(std::fs::read(live_path).unwrap(), original_live);
+    assert_eq!(std::fs::read(archive_path).unwrap(), original_archive);
+    let state: serde_json::Value = serde_json::from_str(
+        &std::fs::read_to_string(project.data_dir.path().join("mock_state_pacman.json")).unwrap(),
+    )
+    .unwrap();
+    assert!(
+        !state["installed"]
+            .as_object()
+            .unwrap()
+            .contains_key("omg-history-retirement-fixture")
+    );
+}
+
+#[test]
+fn normal_remove_records_known_version_once() {
+    let project = TestProject::for_distro("arch");
+    project
+        .mock_install("omg-history-fixture", "1.2.3")
+        .unwrap();
+
+    project
+        .run(&["remove", "--yes", "--", "omg-history-fixture"])
+        .assert_success();
+
+    let state: serde_json::Value = serde_json::from_str(
+        &std::fs::read_to_string(project.data_dir.path().join("mock_state_pacman.json")).unwrap(),
+    )
+    .unwrap();
+    assert!(
+        !state["installed"]
+            .as_object()
+            .unwrap()
+            .contains_key("omg-history-fixture")
+    );
+
+    let history = project.run(&["history", "--json"]);
+    history.assert_success();
+    let entries: Vec<serde_json::Value> = serde_json::from_str(&history.stdout).unwrap();
+    assert_eq!(entries.len(), 1);
+    assert_eq!(entries[0]["transaction_type"], "Remove");
+    assert_eq!(entries[0]["success"], true);
+    assert_eq!(entries[0]["changes"].as_array().unwrap().len(), 1);
+    assert_eq!(entries[0]["changes"][0]["name"], "omg-history-fixture");
+    assert_eq!(entries[0]["changes"][0]["old_version"], "1.2.3");
+    assert_eq!(
+        entries[0]["changes"][0]["new_version"],
+        serde_json::Value::Null
+    );
 }
 
 #[test]

@@ -15,6 +15,7 @@
 use proptest::prelude::*;
 
 pub mod common;
+use common::assertions::assert_process_completed;
 use common::*;
 
 // ═══════════════════════════════════════════════════════════════════════════════
@@ -255,10 +256,6 @@ proptest! {
         args in "[^\x00]{0,100}"
     ) {
         let result = run_omg(&[&command, &args]);
-        // Panic-freedom contract: no Rust panic message AND no panic exit
-        // code (101). Arbitrary input may be rejected with any error, but it
-        // must never crash the process.
-        prop_assert!(!result.stderr.contains("panicked at"));
-        prop_assert_ne!(result.exit_code, 101);
+        assert_process_completed(&result);
     }
 }

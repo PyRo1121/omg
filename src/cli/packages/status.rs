@@ -1,12 +1,10 @@
 //! Status command - system-wide package status overview
 
 use anyhow::{Context, Result};
-use owo_colors::OwoColorize;
 use serde::Serialize;
 use std::io::Write;
 
-use crate::cli::style;
-use crate::cli::tea::run_status_elm;
+use crate::cli::tea::{StatusData, run_status_elm};
 #[cfg(unix)]
 use crate::core::client::DaemonClient;
 #[cfg(unix)]
@@ -146,63 +144,15 @@ fn display_status_report(
 ) -> Result<()> {
     let mut stdout = std::io::BufWriter::new(std::io::stdout());
 
-    writeln!(
-        stdout,
-        "  {} Status Overview ({:.1}ms)",
-        style::maybe_color("📋", |t| t.bold().to_string()),
-        duration.as_secs_f64() * 1000.0
-    )?;
-    writeln!(stdout, "  {}", style::dim(&"─".repeat(40)))?;
-
-    writeln!(
-        stdout,
-        "  {:<20} {}",
-        style::maybe_color("Total Packages:", |t| t.bold().to_string()),
-        style::maybe_color(&total.to_string(), |t| t.cyan().to_string())
-    )?;
-    writeln!(
-        stdout,
-        "  {:<20} {}",
-        style::maybe_color("Explicitly Installed:", |t| t.bold().to_string()),
-        style::version(&explicit.to_string())
-    )?;
-
-    if fast {
-        writeln!(
-            stdout,
-            "  {:<20} {}",
-            style::dim("Orphans/Updates:"),
-            style::dim("skipped (fast mode)")
-        )?;
-    } else {
-        writeln!(
-            stdout,
-            "  {:<20} {}",
-            style::maybe_color("Orphan Packages:", |t| t.bold().to_string()),
-            if orphans > 0 {
-                style::maybe_color(&orphans.to_string(), |t| t.yellow().to_string())
-            } else {
-                style::dim("0")
-            }
-        )?;
-        writeln!(
-            stdout,
-            "  {:<20} {}",
-            style::maybe_color("Updates Available:", |t| t.bold().to_string()),
-            if updates > 0 {
-                style::maybe_color(&updates.to_string(), |t| t.bright_magenta().to_string())
-            } else {
-                style::dim("0")
-            }
-        )?;
-    }
-
-    writeln!(
-        stdout,
-        "\n  {} {}",
-        style::arrow("Tip:"),
-        style::dim("Use 'omg clean' to remove orphans and free up disk space.")
-    )?;
+    let report = StatusData {
+        total_packages: total,
+        explicit_packages: explicit,
+        orphan_packages: orphans,
+        updates_available: updates,
+        duration_ms: duration.as_secs_f64() * 1000.0,
+        fast_mode: fast,
+    };
+    stdout.write_all(report.render().as_bytes())?;
 
     stdout.flush()?;
     Ok(())

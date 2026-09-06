@@ -185,6 +185,23 @@ fn test_info_shows_package_details() {
 
     result.assert_success();
     let output = result.combined_output();
+    assert!(
+        output
+            .lines()
+            .next()
+            .is_some_and(|line| line.starts_with("pacman ")),
+        "info must lead with package identity. Got:\n{output}"
+    );
+    assert!(
+        !output.contains("Name:"),
+        "duplicate package identity: {output}"
+    );
+    assert!(
+        output
+            .lines()
+            .any(|line| line.trim() == "Download: unknown"),
+        "missing fixture download size must remain unknown. Got:\n{output}"
+    );
     for field in ["Description:", "Size:", "Download:"] {
         assert!(
             output.contains(field),

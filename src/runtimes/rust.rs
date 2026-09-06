@@ -143,6 +143,7 @@ impl RustManager {
     /// Install Rust - PURE RUST, NO SUBPROCESS
     pub async fn install(&self, version: &str) -> Result<()> {
         let toolchain = RustToolchainSpec::parse(version)?;
+        let _mutation_lock = self.lock_mutations()?;
         let version_dir = self.toolchain_dir(&toolchain);
 
         Self::reject_invalid_toolchain_path(&version_dir)?;
@@ -172,6 +173,7 @@ impl RustManager {
     /// Remove an installed toolchain. Refuses the active toolchain.
     pub fn uninstall(&self, version: &str) -> Result<()> {
         let toolchain = RustToolchainSpec::parse(version)?;
+        let _mutation_lock = self.lock_mutations()?;
         super::common::uninstall_version(&self.versions_dir, &toolchain.name())
     }
 
@@ -203,6 +205,7 @@ impl RustManager {
 
     pub async fn ensure_toolchain(&self, request: &RustToolchainRequest) -> Result<()> {
         let toolchain = RustToolchainSpec::parse(&request.channel)?;
+        let _mutation_lock = self.lock_mutations()?;
         if is_valid_version_dir(&self.toolchain_dir(&toolchain)) {
             self.refresh_rolling_toolchain(&toolchain).await?;
         }
@@ -230,6 +233,33 @@ impl RustManager {
                 &status.missing_targets,
             )
             .await
+        }
+    }
+
+    /// The root-wide lease protects toolchain snapshots and the shared current pointer.
+    /// Acquisition never waits, so holding it across downloads cannot block the executor.
+    /// Keep the lock file in place; unlinking it would permit locks on different inodes.
+    fn lock_mutations(&self) -> Result<fs::File> {
+        fs::create_dir_all(&self.versions_dir)?;
+        let path = self.versions_dir.join(".mutation.lock");
+        let mut options = fs::OpenOptions::new();
+        options.create(true).read(true).write(true).truncate(false);
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::OpenOptionsExt as _;
+            options.mode(0o600).custom_flags(nix::libc::O_NOFOLLOW);
+        }
+        let lock = options
+            .open(&path)
+            .with_context(|| format!("Failed to open Rust mutation lock: {}", path.display()))?;
+        match lock.try_lock() {
+            Ok(()) => Ok(lock),
+            Err(fs::TryLockError::WouldBlock) => {
+                anyhow::bail!("Another Rust toolchain operation is running; retry when it finishes")
+            }
+            Err(fs::TryLockError::Error(error)) => {
+                Err(error).context("Failed to acquire Rust toolchain mutation lock")
+            }
         }
     }
 
@@ -452,25 +482,45 @@ impl RustManager {
             );
         }
 
-        let staging = begin_staged_install(&self.versions_dir)?;
-        copy_regular_tree(&version_dir, staging.path())?;
-
-        // Same as fresh installs: one manifest fetch serves every addition.
         let manifest = self
             .fetch_manifest(&toolchain.channel, toolchain.date.as_deref())
             .await?;
+        self.apply_incremental_from_manifest(toolchain, components, targets, &manifest)
+            .await
+    }
+
+    async fn apply_incremental_from_manifest(
+        &self,
+        toolchain: &RustToolchainSpec,
+        components: &[String],
+        targets: &[String],
+        manifest: &toml::Value,
+    ) -> Result<()> {
+        let version_dir = self.toolchain_dir(toolchain);
+        let mut metadata = Self::read_metadata(&version_dir)?;
+        let installed_release = metadata
+            .release
+            .as_deref()
+            .filter(|release| !release.trim().is_empty())
+            .context("Rust toolchain has no recorded release identity; a complete reinstall is required before adding components or targets")?;
+        anyhow::ensure!(
+            installed_release == manifest_release(manifest)?,
+            "Rust manifest release identity does not match the installed toolchain; retry setup before adding components or targets"
+        );
+        let staging = begin_staged_install(&self.versions_dir)?;
+        copy_regular_tree(&version_dir, staging.path())?;
+
         for component in components {
-            self.install_component(staging.path(), component, &toolchain.host, &manifest)
+            self.install_component(staging.path(), component, &toolchain.host, manifest)
                 .await?;
         }
         for target in targets {
             if is_additional_target(target, &toolchain.host) {
-                self.install_component(staging.path(), "rust-std", target, &manifest)
+                self.install_component(staging.path(), "rust-std", target, manifest)
                     .await?;
             }
         }
 
-        let mut metadata = Self::read_metadata(staging.path())?;
         metadata.components.extend(components.iter().cloned());
         metadata.targets.extend(targets.iter().cloned());
         Self::write_metadata(staging.path(), &metadata)?;
@@ -1066,6 +1116,174 @@ mod tests {
             published.is_empty(),
             "over-budget extraction must not publish output"
         );
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn ensure_toolchain_locks_before_reading_and_releases_after_error() -> Result<()> {
+        let versions = TempDir::new()?;
+        let manager = RustManager {
+            versions_dir: versions.path().to_path_buf(),
+            client: download_client(),
+        };
+        let request = RustToolchainRequest {
+            channel: "1.93.1".to_string(),
+            ..Default::default()
+        };
+        let version_dir = manager.toolchain_dir(&RustToolchainSpec::parse(&request.channel)?);
+        fs::create_dir(&version_dir)?;
+        fs::write(version_dir.join(RUST_METADATA_FILE), "[invalid metadata")?;
+        let lock = fs::File::create(versions.path().join(".mutation.lock"))?;
+        lock.lock()?;
+
+        let busy = manager
+            .ensure_toolchain(&request)
+            .await
+            .expect_err("writer is busy");
+        assert!(
+            busy.to_string()
+                .contains("Another Rust toolchain operation is running")
+        );
+        drop(lock);
+
+        let malformed = manager
+            .ensure_toolchain(&request)
+            .await
+            .expect_err("metadata is invalid");
+        assert!(malformed.downcast_ref::<toml::de::Error>().is_some());
+        let _released = manager.lock_mutations()?;
+        Ok(())
+    }
+
+    #[test]
+    #[cfg(unix)]
+    fn mutation_lock_rejects_symlinks_without_changing_the_target() -> Result<()> {
+        let versions = TempDir::new()?;
+        let manager = RustManager {
+            versions_dir: versions.path().to_path_buf(),
+            client: download_client(),
+        };
+        let target = versions.path().join("preserved");
+        fs::write(&target, b"unchanged")?;
+        std::os::unix::fs::symlink(&target, versions.path().join(".mutation.lock"))?;
+
+        assert!(manager.lock_mutations().is_err());
+        assert_eq!(fs::read(target)?, b"unchanged");
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn incremental_updates_require_matching_release_identity() -> Result<()> {
+        use sha2::{Digest as _, Sha256};
+        use tokio::io::{AsyncReadExt as _, AsyncWriteExt as _};
+
+        let archive = gzip_tar(&component_archive(
+            "clippy/clippy/bin/cargo-clippy",
+            EntryType::Regular,
+            b"candidate component",
+        )?)?;
+        let checksum = format!("{:x}", Sha256::digest(&archive));
+        for (installed, candidate, compatible) in [
+            (
+                Some("1.95.0-nightly (aaaa 2026-01-01)"),
+                "1.95.0-nightly (bbbb 2026-01-02)",
+                false,
+            ),
+            (Some("1.93.1"), "1.94.0", false),
+            (None, "1.93.1", false),
+            (Some(""), "", false),
+            (Some("1.93.1"), "1.93.1", true),
+        ] {
+            let versions = TempDir::new()?;
+            let manager = RustManager {
+                versions_dir: versions.path().to_path_buf(),
+                client: download_client(),
+            };
+            let toolchain = RustToolchainSpec::parse("nightly")?;
+            let version_dir = manager.toolchain_dir(&toolchain);
+            fs::create_dir_all(version_dir.join("bin"))?;
+            fs::write(version_dir.join("bin/rustc"), b"installed compiler")?;
+            RustManager::write_metadata(
+                &version_dir,
+                &RustToolchainMetadata {
+                    release: installed.map(str::to_string),
+                    components: BTreeSet::from(["rustc".to_string()]),
+                    targets: BTreeSet::new(),
+                },
+            )?;
+            let original_metadata = fs::read(version_dir.join(RUST_METADATA_FILE))?;
+            let _mutation_lock = manager.lock_mutations()?;
+            let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await?;
+            let address = listener.local_addr()?;
+            let manifest: toml::Value = toml::from_str(&format!(
+                "[pkg.rustc]\nversion = {candidate:?}\n[pkg.clippy-preview.target.{}]\nurl = \"http://{address}/clippy.tar.gz\"\nhash = \"{checksum}\"\n",
+                toolchain.host,
+            ))?;
+            let serve = async {
+                let (mut socket, _) = listener.accept().await?;
+                let mut request = [0; 2048];
+                assert!(
+                    socket.read(&mut request).await? > 0,
+                    "component request is present"
+                );
+                socket
+                    .write_all(
+                        format!(
+                            "HTTP/1.1 200 OK\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
+                            archive.len()
+                        )
+                        .as_bytes(),
+                    )
+                    .await?;
+                socket.write_all(&archive).await?;
+                Ok::<(), std::io::Error>(())
+            };
+            let components = ["clippy".to_string()];
+            let update =
+                manager.apply_incremental_from_manifest(&toolchain, &components, &[], &manifest);
+            tokio::pin!(update);
+            let result = tokio::time::timeout(std::time::Duration::from_secs(5), async {
+                tokio::select! {
+                    result = &mut update => result,
+                    served = serve => { served?; update.await }
+                }
+            })
+            .await?;
+            println!(
+                "installed={installed:?} candidate={candidate:?} accepted={} new_component={}",
+                result.is_ok(),
+                version_dir.join("bin/cargo-clippy").exists()
+            );
+            assert_eq!(result.is_ok(), compatible, "{result:?}");
+            assert_eq!(
+                fs::read(version_dir.join("bin/rustc"))?,
+                b"installed compiler"
+            );
+            if compatible {
+                assert_eq!(
+                    fs::read(version_dir.join("bin/cargo-clippy"))?,
+                    b"candidate component"
+                );
+                let metadata = RustManager::read_metadata(&version_dir)?;
+                assert_eq!(metadata.release.as_deref(), installed);
+                assert_eq!(
+                    metadata.components,
+                    BTreeSet::from(["rustc".to_string(), "clippy".to_string()])
+                );
+            } else {
+                assert!(
+                    result
+                        .expect_err("incompatible identity")
+                        .to_string()
+                        .contains("release identity")
+                );
+                assert!(!version_dir.join("bin/cargo-clippy").exists());
+                assert_eq!(
+                    fs::read(version_dir.join(RUST_METADATA_FILE))?,
+                    original_metadata
+                );
+            }
+        }
         Ok(())
     }
 

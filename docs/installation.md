@@ -2,12 +2,16 @@
 
 Complete installation instructions for OMG across all supported platforms.
 
+Downloaded releases require GitHub CLI (`gh`) for build-provenance verification.
+If `gh` is missing, installation stops. An explicit opt-out is documented under
+[Installation Options](#installation-options).
+
 ## Quick Install (Recommended)
 
 ### Linux & macOS
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/PyRo1121/omg/main/install.sh | bash
+curl -fsSL https://omg.latham.cloud/install.sh | bash
 ```
 
 ### Windows Subsystem for Linux
@@ -15,7 +19,7 @@ curl -fsSL https://raw.githubusercontent.com/PyRo1121/omg/main/install.sh | bash
 Run the Linux installer inside your WSL distribution:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/PyRo1121/omg/main/install.sh | bash
+curl -fsSL https://omg.latham.cloud/install.sh | bash
 ```
 
 Native Windows is not supported.
@@ -54,7 +58,7 @@ yay -S omg
 **Universal Installer (Recommended):**
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/PyRo1121/omg/main/install.sh | bash
+curl -fsSL https://omg.latham.cloud/install.sh | bash
 ```
 
 **Manual Installation:**
@@ -90,7 +94,7 @@ omg --version
 **Universal Installer (Recommended):**
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/PyRo1121/omg/main/install.sh | bash
+curl -fsSL https://omg.latham.cloud/install.sh | bash
 ```
 
 **Features:**
@@ -107,7 +111,7 @@ curl -fsSL https://raw.githubusercontent.com/PyRo1121/omg/main/install.sh | bash
 Homebrew packaging is not available yet. Use the universal installer:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/PyRo1121/omg/main/install.sh | bash
+curl -fsSL https://omg.latham.cloud/install.sh | bash
 ```
 
 **Supported Architectures:**
@@ -128,7 +132,7 @@ curl -fsSL https://raw.githubusercontent.com/PyRo1121/omg/main/install.sh | bash
 Run the universal Linux installer from inside the WSL distribution:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/PyRo1121/omg/main/install.sh | bash
+curl -fsSL https://omg.latham.cloud/install.sh | bash
 ```
 
 OMG detects and uses the package backend for the installed Linux distribution. Native Windows, PowerShell, Scoop, and Winget are not supported.
@@ -253,24 +257,36 @@ omg completions powershell > $PROFILE\..\omg-completion.ps1
 
 ## Installation Options
 
+To explicitly accept checksum-only verification when `gh` is missing, pass the
+opt-out to the shell running the installer. This cannot bypass a failed
+attestation check. Checksum and provenance refusals also stop the local-source
+fallback.
+
+```bash
+curl -fsSL https://omg.latham.cloud/install.sh | OMG_INSTALL_ALLOW_UNVERIFIED_PROVENANCE=1 bash
+```
+
+The opt-out accepts only `1`, `true`, or `yes`; other values leave verification
+required. Use it only when you accept the missing provenance verification.
+
 The universal installer (`install.sh`) supports several environment variables:
 
 ```bash
 # Disable telemetry (variable must reach the installer's bash, not curl)
-curl -fsSL https://raw.githubusercontent.com/PyRo1121/omg/main/install.sh | OMG_NO_TELEMETRY=1 bash
+curl -fsSL https://omg.latham.cloud/install.sh | OMG_NO_TELEMETRY=1 bash
 
 # Skip shell integration
-OMG_SKIP_SHELL=1 curl -fsSL https://raw.githubusercontent.com/PyRo1121/omg/main/install.sh | bash
+curl -fsSL https://omg.latham.cloud/install.sh | OMG_SKIP_SHELL=1 bash
 
 # Install specific version
-OMG_VERSION=v0.1.215 curl -fsSL https://raw.githubusercontent.com/PyRo1121/omg/main/install.sh | bash
+curl -fsSL https://omg.latham.cloud/install.sh | OMG_VERSION=v0.1.215 bash
 
 # Custom install directory
-INSTALL_DIR=~/.omg/bin curl -fsSL https://raw.githubusercontent.com/PyRo1121/omg/main/install.sh | bash
+curl -fsSL https://omg.latham.cloud/install.sh | INSTALL_DIR="$HOME/.omg/bin" bash
 
 # Combine options
-OMG_VERSION=v0.1.215 \
-  curl -fsSL https://raw.githubusercontent.com/PyRo1121/omg/main/install.sh | OMG_NO_TELEMETRY=1 OMG_SKIP_SHELL=1 bash
+curl -fsSL https://omg.latham.cloud/install.sh |
+  OMG_VERSION=v0.1.215 OMG_NO_TELEMETRY=1 OMG_SKIP_SHELL=1 bash
 ```
 
 ---
@@ -372,7 +388,7 @@ Use OMG in CI/CD pipelines:
 
 ```yaml
 - name: Install OMG
-  run: curl -fsSL https://raw.githubusercontent.com/PyRo1121/omg/main/install.sh | bash
+  run: curl -fsSL https://omg.latham.cloud/install.sh | bash
   
 - name: Use specific Node version
   run: |
@@ -384,14 +400,14 @@ Use OMG in CI/CD pipelines:
 
 ```yaml
 before_script:
-  - curl -fsSL https://raw.githubusercontent.com/PyRo1121/omg/main/install.sh | bash
+  - curl -fsSL https://omg.latham.cloud/install.sh | bash
   - omg use node 20
 ```
 
 **Jenkins:**
 
 ```groovy
-sh 'curl -fsSL https://raw.githubusercontent.com/PyRo1121/omg/main/install.sh | bash'
+sh 'curl -fsSL https://omg.latham.cloud/install.sh | bash'
 sh 'omg use python 3.12'
 ```
 

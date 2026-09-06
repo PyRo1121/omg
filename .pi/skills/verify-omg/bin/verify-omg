@@ -105,7 +105,7 @@ build() {
   mkdir -p "$TARGET_DIR"
   (
     cd "$REPO_ROOT"
-    CARGO_TARGET_DIR="$TARGET_DIR" cargo build --bin omg
+    CARGO_TARGET_DIR="$TARGET_DIR" cargo build -j 2 --locked --bin omg
   )
   "$OMG_BIN" --version
 }

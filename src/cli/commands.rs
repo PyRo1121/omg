@@ -441,47 +441,17 @@ fn status_requires_backend() -> Result<StatusSnapshot> {
 }
 
 pub fn status_sync() -> Result<()> {
-    // Modern header without old styling
-    use crate::cli::modern_ui;
-    modern_ui::print_phase_header("📊", "System Status", "overview");
-
     let (total, explicit, orphans, updates, security_vulnerabilities, cached_runtimes) =
         read_status_snapshot()?;
 
-    // Modern minimal status layout - no box drawing
-    println!();
-
-    // Package stats
-    println!(
-        "  {} {} total, {} explicit",
-        style::emphasis("Packages"),
-        style::accent(&total.to_string()),
-        style::accent(&explicit.to_string())
-    );
-
-    // Updates
-    if updates > 0 {
-        println!(
-            "  {} {} available",
-            style::emphasis("Updates"),
-            style::caution(&updates.to_string())
-        );
-    } else {
-        println!(
-            "  {} {}",
-            style::emphasis("Updates"),
-            style::positive("Up to date")
-        );
-    }
-
-    // Orphans (only show if > 0)
-    if orphans > 0 {
-        println!(
-            "  {} {}",
-            style::emphasis("Orphans"),
-            style::caution(&format!("{orphans} packages"))
-        );
-    }
+    let report = crate::cli::tea::StatusData {
+        total_packages: total,
+        explicit_packages: explicit,
+        orphan_packages: orphans,
+        updates_available: updates,
+        ..crate::cli::tea::StatusData::default()
+    };
+    print!("{}", report.render());
 
     // Security
     match security_vulnerabilities {
@@ -528,50 +498,27 @@ pub fn status_sync() -> Result<()> {
     // Runtimes - INSTANT FROM CACHE (Unix only, from daemon)
     #[cfg(unix)]
     {
-        println!();
-        println!("  {}", style::emphasis("Runtimes"));
-
-        if let Some(versions) = cached_runtimes {
-            for (rt_name, v) in &versions {
-                let label = runtime_display_name(rt_name);
-                println!("    {} {} {}", style::accent("·"), label, style::dim(v));
-            }
-        } else {
-            // Fallback to local probing if daemon is down
-            for rt_name in crate::runtimes::SUPPORTED_RUNTIMES {
-                if let Some(v) = crate::runtimes::probe_version(rt_name) {
-                    let label = runtime_display_name(rt_name);
-                    println!("    {} {} {}", style::accent("·"), label, style::dim(&v));
-                }
+        let versions = cached_runtimes.unwrap_or_else(|| {
+            crate::runtimes::SUPPORTED_RUNTIMES
+                .iter()
+                .filter_map(|name| {
+                    crate::runtimes::probe_version(name)
+                        .map(|version| ((*name).to_string(), version))
+                })
+                .collect()
+        });
+        if !versions.is_empty() {
+            println!("\n  {}", style::emphasis("Runtimes"));
+            for (name, version) in &versions {
+                println!("    {} {}", runtime_display_name(name), version);
             }
         }
     }
 
-    // Modern tip styling
-    println!();
-    if updates > 0 {
+    if security_vulnerabilities != Some(0) {
         println!(
-            "  {} Run {} to see detailed package changes",
-            style::dim("Tip"),
-            style::accent("omg update --check")
-        );
-    } else if security_vulnerabilities.is_some_and(|count| count > 0) {
-        println!(
-            "  {} Run {} to identify and fix security issues",
-            style::dim("Tip"),
+            "\n  Check vulnerabilities with {}",
             style::accent("omg audit")
-        );
-    } else if security_vulnerabilities.is_none() {
-        println!(
-            "  {} Run {} to scan for vulnerabilities",
-            style::dim("Tip"),
-            style::accent("omg audit")
-        );
-    } else {
-        println!(
-            "  {} Your system is healthy! Run {} for an interactive view",
-            style::dim("Tip"),
-            style::accent("omg dash")
         );
     }
 

@@ -40,27 +40,35 @@ fn print_fast_success(packages: &[String], action: &str) {
     omg_lib::cli::modern_ui::print_success_with_packages(&msg, packages);
 }
 
-/// Print system update success message
 #[cfg(feature = "arch")]
-fn print_system_updated(suffix: &str) {
-    println!();
+fn execute_fast_system_update(suffix: &str) -> Result<()> {
+    use omg_lib::core::history::HistoryManager;
+
+    let history = HistoryManager::new()?;
+    let updates = omg_lib::package_managers::get_update_list()?;
+    execute_recorded_system_update(&history, updates, || {
+        omg_lib::package_managers::execute_transaction(
+            Vec::new(),
+            omg_lib::package_managers::TransactionKind::SystemUpgrade,
+            None,
+        )
+    })?;
     println!(
-        "  {} System updated successfully{suffix}",
+        "\n  {} System updated successfully{suffix}\n",
         omg_lib::cli::style::positive("✓")
     );
-    println!();
+    Ok(())
 }
 
 #[cfg(feature = "arch")]
-fn execute_fast_system_update(suffix: &str) -> Result<()> {
-    use omg_lib::core::history::{HistoryManager, PackageChange, TransactionType};
+fn execute_recorded_system_update(
+    history: &omg_lib::core::history::HistoryManager,
+    updates: Vec<omg_lib::package_managers::types::UpdateInfo>,
+    operation: impl FnOnce() -> Result<()>,
+) -> Result<()> {
+    use omg_lib::core::history::{PackageChange, TransactionType};
 
-    // Snapshot pending updates BEFORE upgrading so the history entry carries
-    // real old→new versions. This elevated arm is the sole writer for the
-    // official portion of delegated updates (`update --fast`, `--turbo`, and
-    // the deferred-sync leg of plain `omg update`); without it those
-    // upgrades were invisible to `omg history` / rollback.
-    let changes: Vec<PackageChange> = omg_lib::package_managers::get_update_list()?
+    let changes: Vec<PackageChange> = updates
         .into_iter()
         .map(|update| PackageChange {
             name: update.name,
@@ -70,33 +78,7 @@ fn execute_fast_system_update(suffix: &str) -> Result<()> {
         })
         .collect();
 
-    let result = omg_lib::package_managers::execute_transaction(
-        Vec::new(),
-        omg_lib::package_managers::TransactionKind::SystemUpgrade,
-        None,
-    );
-
-    // Record regardless of outcome (failures are part of history) with the
-    // TRUE transaction result — a failed upgrade must not be recorded as a
-    // success. anyhow::Error is not Clone, so the history entry carries only
-    // a failure marker; the real pacman error is reported verbatim by the
-    // `finish(result)` call below and by `omg update`'s non-elevated arm.
-    // https://docs.rs/anyhow/latest/anyhow/struct.Error.html (no Clone impl)
-    let record_result = if result.is_ok() {
-        Ok(())
-    } else {
-        Err(anyhow::anyhow!("system upgrade transaction failed"))
-    };
-    if let Err(error) = HistoryManager::new().and_then(|history| {
-        history.finish_operation(TransactionType::Update, changes, record_result)
-    }) {
-        tracing::warn!("Failed to record update history: {error:#}");
-    }
-
-    if result.is_ok() {
-        print_system_updated(suffix);
-    }
-    result
+    history.finish_operation(TransactionType::Update, changes, operation())
 }
 
 /// Split an elevated re-exec invocation into its sub-command and trailing
@@ -105,10 +87,14 @@ fn execute_fast_system_update(suffix: &str) -> Result<()> {
 /// Returns `None` when the invocation must fall through to full clap parsing:
 /// missing sub-command or `--` separator, any token between the command and
 /// separator, or any flag-looking package token. The minimal path accepts only
-/// the internal protocol shape `omg <command> -- <packages...>`.
+/// the internal protocol shape `omg <command> -- <packages...>`. Install and
+/// remove without a history-owning parent use the normal CLI history owner.
 #[cfg(feature = "arch")]
-fn split_elevated_invocation(args: &[String]) -> Option<(&str, &[String])> {
+fn split_elevated_invocation(args: &[String], parent_records: bool) -> Option<(&str, &[String])> {
     let command = args.get(1)?;
+    if matches!(command.as_str(), "install" | "remove") && !parent_records {
+        return None;
+    }
     let separator_pos = args.iter().position(|a| a == "--")?;
     if separator_pos != 2 {
         return None;
@@ -125,13 +111,6 @@ fn split_elevated_invocation(args: &[String]) -> Option<(&str, &[String])> {
     }
     let packages = &args[separator_pos + 1..];
     Some((command.as_str(), packages))
-}
-
-/// ULTRA-FAST elevated path - when we're re-exec'd with sudo, skip ALL initialization
-/// and go straight to the transaction. This eliminates ~150ms of startup overhead.
-#[cfg(feature = "arch")]
-fn validate_fast_install_consent(packages: &[String], parent_validated: bool) -> Result<()> {
-    omg_lib::core::security::ensure_local_archive_consent(packages, parent_validated)
 }
 
 #[cfg(feature = "arch")]
@@ -185,7 +164,7 @@ fn try_fast_elevated(
     // labels in src/cli/packages/update/arch.rs). They still require the literal `--`
     // separator, and every token after it must be a package name; anything else
     // falls through to clap via split_elevated_invocation.
-    let (command, package_tokens) = split_elevated_invocation(args)?;
+    let (command, package_tokens) = split_elevated_invocation(args, parent_records)?;
     let packages: Vec<String> = package_tokens.to_vec();
 
     // Handle commands that may have packages
@@ -193,12 +172,6 @@ fn try_fast_elevated(
         "install" if !packages.is_empty() => {
             // Validate package names or local package files (security).
             omg_lib::core::security::validate_package_names_or_files(&packages).ok()?;
-            // The parent marker proves this is a delegated flow that already
-            // passed the CLI's --allow-local-file gate. Direct root fast-path
-            // invocations must fall through to clap to establish consent.
-            if let Err(error) = validate_fast_install_consent(&packages, parent_records) {
-                return Some(Err(error));
-            }
             // Direct transaction with minimal success output
             let is_local_artifact = packages
                 .iter()
@@ -210,15 +183,6 @@ fn try_fast_elevated(
             };
             let result =
                 omg_lib::package_managers::execute_transaction(packages.clone(), kind, None);
-            let result = if parent_records {
-                result
-            } else {
-                record_fast_transaction(
-                    omg_lib::core::history::TransactionType::Install,
-                    &packages,
-                    result,
-                )
-            };
             if result.is_ok() {
                 print_fast_success(&packages, "installed");
             }
@@ -232,15 +196,6 @@ fn try_fast_elevated(
                 omg_lib::package_managers::TransactionKind::Remove { recursive: false },
                 None,
             );
-            let result = if parent_records {
-                result
-            } else {
-                record_fast_transaction(
-                    omg_lib::core::history::TransactionType::Remove,
-                    &packages,
-                    result,
-                )
-            };
             if result.is_ok() {
                 print_fast_success(&packages, "removed");
             }
@@ -290,31 +245,6 @@ fn try_fast_elevated(
         }
         _ => None,
     }
-}
-
-#[cfg(feature = "arch")]
-/// Record an elevated fast-path transaction in package history.
-///
-/// Elevated (`sudo omg ... --`) invocations previously mutated the system
-/// without any history entry, leaving those packages invisible to
-/// `omg history` / `omg rollback`.
-fn record_fast_transaction(
-    kind: omg_lib::core::history::TransactionType,
-    packages: &[String],
-    result: anyhow::Result<()>,
-) -> anyhow::Result<()> {
-    use omg_lib::core::history::{HistoryManager, PackageChange};
-
-    let changes: Vec<PackageChange> = packages
-        .iter()
-        .map(|name| PackageChange {
-            name: name.clone(),
-            old_version: None,
-            new_version: None,
-            source: "pacman".to_string(),
-        })
-        .collect();
-    HistoryManager::new()?.finish_operation(kind, changes, result)
 }
 
 /// Parse a `--limit` value accepted by the fast search path.
@@ -1421,9 +1351,7 @@ mod fast_path_tests {
     };
 
     #[cfg(feature = "arch")]
-    use super::{
-        split_elevated_invocation, strip_internal_invocation_markers, validate_fast_install_consent,
-    };
+    use super::{split_elevated_invocation, strip_internal_invocation_markers};
 
     fn args(list: &[&str]) -> Vec<String> {
         list.iter().map(std::string::ToString::to_string).collect()
@@ -1432,14 +1360,20 @@ mod fast_path_tests {
     #[cfg(feature = "arch")]
     #[test]
     fn elevated_local_archive_requires_parent_validated_consent() {
-        let packages = vec!["/var/cache/pkg/example-1.0-1-x86_64.pkg.tar.zst".to_string()];
-        let error = validate_fast_install_consent(&packages, false)
-            .expect_err("direct root fast path must not bypass local-file consent");
-        assert!(error.to_string().contains("--allow-local-file"));
-        validate_fast_install_consent(&packages, true)
-            .expect("validated parent flow may delegate its approved archive");
-        validate_fast_install_consent(&["ripgrep".to_string()], false)
-            .expect("repository package does not require local-file consent");
+        let argv = args(&[
+            "omg",
+            "install",
+            "--",
+            "/var/cache/pkg/example-1.0-1-x86_64.pkg.tar.zst",
+        ]);
+        assert!(
+            split_elevated_invocation(&argv, false).is_none(),
+            "unowned local archives must use normal CLI consent validation"
+        );
+        assert_eq!(
+            split_elevated_invocation(&argv, true),
+            Some(("install", &argv[3..]))
+        );
     }
 
     #[cfg(feature = "arch")]
@@ -1496,15 +1430,16 @@ mod fast_path_tests {
         // Regression for the blocker: `update -- --check` previously discarded
         // the flag tokens and force-ran a full system upgrade.
         assert!(
-            split_elevated_invocation(&args(&["omg", "update", "--", "--check"])).is_none(),
+            split_elevated_invocation(&args(&["omg", "update", "--", "--check"]), true).is_none(),
             "check-only update must not take the transaction fast path"
         );
         assert!(
-            split_elevated_invocation(&args(&["omg", "update", "--", "--dry-run"])).is_none(),
+            split_elevated_invocation(&args(&["omg", "update", "--", "--dry-run"]), true).is_none(),
             "dry-run must not perform a real upgrade"
         );
         assert!(
-            split_elevated_invocation(&args(&["omg", "install", "--", "-y", "ripgrep"])).is_none(),
+            split_elevated_invocation(&args(&["omg", "install", "--", "-y", "ripgrep"]), true)
+                .is_none(),
             "flag-looking package tokens must defer to clap"
         );
     }
@@ -1513,12 +1448,15 @@ mod fast_path_tests {
     #[test]
     fn elevated_package_lists_require_the_exact_internal_shape() {
         assert!(
-            split_elevated_invocation(&args(&["omg", "install", "extra", "--", "ripgrep", "jq"]))
-                .is_none(),
+            split_elevated_invocation(
+                &args(&["omg", "install", "extra", "--", "ripgrep", "jq"]),
+                true
+            )
+            .is_none(),
             "pre-separator packages must fall through instead of disappearing"
         );
         let argv = args(&["omg", "install", "--", "ripgrep", "jq"]);
-        let parsed = split_elevated_invocation(&argv)
+        let parsed = split_elevated_invocation(&argv, true)
             .map(|(command, packages)| (command, packages.to_vec()));
         assert_eq!(
             parsed,
@@ -1529,16 +1467,39 @@ mod fast_path_tests {
     #[cfg(feature = "arch")]
     #[test]
     fn elevated_invocations_without_separator_or_command_are_rejected() {
-        assert!(split_elevated_invocation(&args(&["omg"])).is_none());
-        assert!(split_elevated_invocation(&args(&["omg", "update"])).is_none());
-        assert!(split_elevated_invocation(&args(&["--", "update"])).is_none());
-        assert!(split_elevated_invocation(&args(&["omg", "--", "update"])).is_none());
+        assert!(split_elevated_invocation(&args(&["omg"]), true).is_none());
+        assert!(split_elevated_invocation(&args(&["omg", "update"]), true).is_none());
+        assert!(split_elevated_invocation(&args(&["--", "update"]), true).is_none());
+        assert!(split_elevated_invocation(&args(&["omg", "--", "update"]), true).is_none());
         // `update --` with no trailing tokens stays on the fast path (empty
         // package list), matching the original elevated behavior.
         let argv = args(&["omg", "update", "--"]);
         let parsed =
-            split_elevated_invocation(&argv).map(|(command, pkgs)| (command, pkgs.to_vec()));
+            split_elevated_invocation(&argv, false).map(|(command, pkgs)| (command, pkgs.to_vec()));
         assert_eq!(parsed, Some(("update", Vec::new())));
+    }
+
+    #[cfg(feature = "arch")]
+    #[test]
+    fn unowned_elevated_mutations_defer_to_full_history_owner() {
+        for command in ["remove", "install"] {
+            let argv = args(&["omg", command, "--", "ripgrep"]);
+            assert!(
+                split_elevated_invocation(&argv, false).is_none(),
+                "unowned {command} must use the normal history owner"
+            );
+            assert_eq!(
+                split_elevated_invocation(&argv, true),
+                Some((command, &argv[3..]))
+            );
+        }
+        for command in ["update", "upgrade", "fullupdate", "turboupdate", "sync"] {
+            let argv = args(&["omg", command, "--"]);
+            assert_eq!(
+                split_elevated_invocation(&argv, false),
+                Some((command, &argv[3..]))
+            );
+        }
     }
 
     #[test]
@@ -1619,6 +1580,80 @@ mod fast_path_tests {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[cfg(feature = "arch")]
+    fn pending_update() -> Vec<omg_lib::package_managers::types::UpdateInfo> {
+        vec![omg_lib::package_managers::types::UpdateInfo {
+            name: "example".to_string(),
+            old_version: "1.0".to_string(),
+            new_version: "2.0".to_string(),
+            repo: "core".to_string(),
+        }]
+    }
+
+    #[cfg(feature = "arch")]
+    #[test]
+    fn system_update_reports_history_failure_after_mutation() -> Result<()> {
+        let directory = tempfile::tempdir()?;
+        let path = directory.path().join("history.json");
+        std::fs::create_dir(&path)?;
+        let history = omg_lib::core::history::HistoryManager::new_in(path)?;
+        let mut mutated = false;
+
+        let result = execute_recorded_system_update(&history, pending_update(), || {
+            mutated = true;
+            Ok(())
+        });
+
+        assert!(mutated);
+        let error = result.expect_err("history failure must not report complete success");
+        assert!(error.to_string().contains("Package operation succeeded"));
+        Ok(())
+    }
+
+    #[cfg(feature = "arch")]
+    #[test]
+    fn system_update_preserves_both_operation_and_history_failures() -> Result<()> {
+        let directory = tempfile::tempdir()?;
+        let path = directory.path().join("history.json");
+        std::fs::create_dir(&path)?;
+        let history = omg_lib::core::history::HistoryManager::new_in(path)?;
+
+        let error = execute_recorded_system_update(&history, pending_update(), || {
+            Err(anyhow::anyhow!("transaction failed"))
+        })
+        .expect_err("both failures must be returned");
+        let message = format!("{error:#}");
+        assert!(message.contains("transaction failed"));
+        assert!(message.contains("history persistence also failed"));
+        Ok(())
+    }
+
+    #[cfg(feature = "arch")]
+    #[test]
+    fn system_update_records_versions_and_preserves_operation_error() -> Result<()> {
+        use omg_lib::core::history::{HistoryManager, TransactionType};
+
+        let directory = tempfile::tempdir()?;
+        let history = HistoryManager::new_in(directory.path().join("history.json"))?;
+        execute_recorded_system_update(&history, pending_update(), || Ok(()))?;
+        let error = execute_recorded_system_update(&history, pending_update(), || {
+            Err(anyhow::anyhow!("transaction failed"))
+        })
+        .expect_err("operation failure must be returned");
+        assert_eq!(error.to_string(), "transaction failed");
+
+        let transactions = history.load()?;
+        assert_eq!(transactions.len(), 2);
+        assert!(transactions[0].success);
+        assert!(!transactions[1].success);
+        for transaction in transactions {
+            assert_eq!(transaction.transaction_type, TransactionType::Update);
+            assert_eq!(transaction.changes[0].old_version.as_deref(), Some("1.0"));
+            assert_eq!(transaction.changes[0].new_version.as_deref(), Some("2.0"));
+        }
+        Ok(())
+    }
 
     #[test]
     fn dry_run_clean_never_requires_root() {
