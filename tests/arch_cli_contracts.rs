@@ -116,6 +116,27 @@ fn advertised_json_outputs_are_valid_json() -> Result<()> {
 }
 
 #[test]
+fn successful_requests_do_not_invent_transaction_summaries() -> Result<()> {
+    let root = TempDir::new()?;
+    for (args, unsupported_claim) in [
+        (["install", "--yes", "firefox"], "Installed 1 package"),
+        (
+            ["remove", "--yes", "firefox"],
+            "Packages removed successfully",
+        ),
+    ] {
+        let output = run(root.path(), &args);
+        assert!(output.success, "{}", output_text(&output));
+        assert!(
+            !output.stdout.contains(unsupported_claim),
+            "{}",
+            output_text(&output)
+        );
+    }
+    Ok(())
+}
+
+#[test]
 fn clean_dry_run_never_attempts_privilege_escalation() -> Result<()> {
     let root = TempDir::new()?;
     let output = run(root.path(), &["clean", "--all", "--dry-run"]);

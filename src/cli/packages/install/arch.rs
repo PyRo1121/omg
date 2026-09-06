@@ -142,25 +142,9 @@ pub async fn install(packages: &[String], yes: bool, replacement_hops: u32) -> R
 
     record_install_history(packages, &missing_packages, operation_result)?;
 
-    // AUR and replacement installs report and track their actual identities
-    // inside the dedicated path. Only report requested packages completed by
-    // this official/local transaction, avoiding duplicate or false outcomes.
-    let installed_requested = packages_excluding(packages, &missing_packages);
-    if !installed_requested.is_empty() {
-        modern_ui::print_success_with_packages(
-            &format!(
-                "Installed {} {}",
-                installed_requested.len(),
-                if installed_requested.len() == 1 {
-                    "package"
-                } else {
-                    "packages"
-                }
-            ),
-            &installed_requested,
-        );
-
-        crate::core::usage::track_install_result(&installed_requested, true);
+    let completed_requests = packages_excluding(packages, &missing_packages);
+    if !completed_requests.is_empty() {
+        crate::core::usage::track_install_result(&completed_requests, true);
     }
     Ok(())
 }
