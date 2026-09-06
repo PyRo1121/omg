@@ -16,21 +16,39 @@ OMG is the fastest unified package manager for Linux, replacing pacman, yay, nvm
 - **Cli**: Unify status output and limit local build jobs
 ### 🐛 Bug Fixes
 
+- **Installer**: Propagate bounded pipeline failures
+- **Installer**: Bound release responses while streaming
+- **Privacy**: Include archived history in local exports
+- **Ci**: Permit pivot_root in the sandbox fixture profile
+
+Verify a pinned upstream Moby seccomp profile and add pivot_root only to its CAP_SYS_ADMIN allow rule. Keep other restrictions and the descendant cleanup assertion intact.
+
 - **Aur**: Isolate sandbox PIDs for descendant cleanup
 - **Aur**: Separate build review and simplify verified execution
+- **Core**: Harden history and package mutation recovery
+
+Preserve archive data and report persistence failures explicitly. Coordinate database publication and runtime mutations, tighten installer provenance checks, and include the approved tracked documentation and security changes.
+
 - **Fedora**: Decode native RPM database headers
 - **Ci**: Preserve prepared changelog sections
 ### 👷 CI/CD
 
+- Report required PR checks and gate audited dependency upgrades
 - **Aur**: Gate builds on isolated sandbox cancellation test
 - Add published release smoke matrix
 ### 📚 Documentation
 
+- **Privacy**: State the local export size limit
+- **Installer**: Pass environment options to bash
+- **Release**: Clarify consent for client downgrades
 - **Fedora**: Record observed repository formats and trust policy
 - **Fedora**: Distinguish database and archive header formats
 - Record v0.1.218 verification [skip ci]
 ### 🧪 Testing
 
+- **Installer**: Cover failed bounded transfers
+- **Installer**: Cover legacy curl streaming bounds
+- **Privacy**: Cover archived history in local exports
 - **Aur**: Make sandbox cancellation fixture Docker-safe
 
 The required CI gate failed because the ignored regression bound the
