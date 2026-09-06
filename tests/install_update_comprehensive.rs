@@ -1042,6 +1042,12 @@ mod command_integration_tests {
             "Expected the injected policy rejection, got: {error}"
         );
 
+        assert_eq!(
+            std::fs::read(&state_path).unwrap(),
+            before_state,
+            "Policy rejection must preserve the persisted inventory"
+        );
+
         let status = project.run(&["status"]);
         status.assert_success();
         status.assert_stdout_contains("1 packages installed · 1 explicit");
