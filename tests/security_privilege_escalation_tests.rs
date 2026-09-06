@@ -293,7 +293,7 @@ install_from_release
     }
 
     #[test]
-    fn installer_provenance_opt_out_only_covers_missing_gh() {
+    fn installer_requires_gh_for_provenance_and_fails_closed() {
         let installer = include_str!("../install.sh");
         let start = installer
             .find("  if command -v gh >/dev/null 2>&1; then")
@@ -301,34 +301,30 @@ install_from_release
         let (gate, _) = installer[start..]
             .split_once("  start_spinner \"Extracting binaries\"")
             .expect("extraction boundary");
-        for (present, status, opt_out, accepted) in [
-            (false, 0, "", false),
-            (false, 0, "0", false),
-            (false, 0, "TRUE", false),
-            (false, 0, "typo", false),
-            (false, 0, "1", true),
-            (false, 0, "true", true),
-            (false, 0, "yes", true),
-            (true, 0, "", true),
-            (true, 1, "1", false),
-        ] {
+        for (present, status) in [(false, 0), (true, 0), (true, 1)] {
             let output = run_installer_functions(
                 &format!(
-                    "command() {{ return {}; }}\ngh() {{ return {status}; }}\nstart_spinner() {{ :; }}\nstop_spinner() {{ :; }}\nfail_spinner() {{ :; }}\ndownload_file=fixture\nartifact_name=fixture\nverify_fixture() {{\n{gate}\n}}\nverify_fixture\n",
+                    "command() {{ return {}; }}\ngh() {{ return {status}; }}\nstart_spinner() {{ :; }}\nstop_spinner() {{ :; }}\nfail_spinner() {{ :; }}\nREPO_OWNER=owner\nREPO_NAME=name\nactual_version=1.0.0\ndownload_file=fixture\nartifact_name=fixture\nverify_fixture() {{\n{gate}\n}}\nverify_fixture\n",
                     i32::from(!present)
                 ),
-                &[(
-                    "OMG_INSTALL_ALLOW_UNVERIFIED_PROVENANCE",
-                    std::ffi::OsStr::new(opt_out),
-                )],
+                &[],
             );
+            let expected = match (present, status) {
+                (true, 0) => 0,
+                (true, 1) => 2,
+                _ => 1,
+            };
             assert_eq!(
                 output.status.code(),
-                Some(2 * i32::from(!accepted)),
-                "present={present} status={status} opt_out={opt_out}: {}",
+                Some(expected),
+                "present={present} status={status}: {}",
                 String::from_utf8_lossy(&output.stdout)
             );
         }
+        assert!(
+            !installer.contains("OMG_INSTALL_ALLOW_UNVERIFIED_PROVENANCE"),
+            "the provenance gate must not offer an unverified opt-out"
+        );
     }
 
     #[test]
@@ -337,7 +333,6 @@ install_from_release
             (0, false, true),
             (1, true, true),
             (1, false, false),
-            (2, true, false),
             (2, false, false),
         ] {
             let output = run_installer_functions(

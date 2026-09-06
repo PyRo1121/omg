@@ -291,15 +291,21 @@ impl PackageService {
             let community = up.repo.eq_ignore_ascii_case("aur");
             let version = crate::package_managers::parse_version(&up.new_version)
                 .context("Invalid update version")?;
-            let grade = self
-                .policy
-                .assign_grade(
-                    self.vulnerability_source.as_ref(),
-                    &up.name,
-                    &version,
-                    !community,
-                )
-                .await?;
+            // Grades need vulnerability evidence only when an explicit policy
+            // can act on them; the default policy allows every grade, so the
+            // optional OSV source must never gate a plain update.
+            let grade = if crate::core::security::policy::explicit_policy_exists() {
+                self.policy
+                    .assign_grade(
+                        self.vulnerability_source.as_ref(),
+                        &up.name,
+                        &version,
+                        !community,
+                    )
+                    .await?
+            } else {
+                crate::core::security::SecurityGrade::Verified
+            };
             // UpdateInfo has no licenses. Enforce those using the actual
             // prepared packages in the privileged backend, including dependencies.
             let mut candidate_policy = self.policy.clone();
