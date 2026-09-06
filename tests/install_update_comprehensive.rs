@@ -1046,9 +1046,28 @@ mod command_integration_tests {
             "Expected the injected policy rejection, got: {error}"
         );
 
+        assert_eq!(
+            std::fs::read(&state_path).unwrap(),
+            before_state,
+            "Policy rejection must preserve the persisted inventory"
+        );
+
         let status = project.run(&["status"]);
         status.assert_success();
-        status.assert_contains("packages installed");
+        status.assert_stdout_contains("1 packages installed");
+
+        let after = project.run(&["explicit", "--json"]);
+        after.assert_success();
+        assert_eq!(
+            serde_json::from_str::<serde_json::Value>(&after.stdout).unwrap(),
+            serde_json::from_str::<serde_json::Value>(&before.stdout).unwrap(),
+            "The original package must remain visible after recovery"
+        );
+        assert_eq!(
+            std::fs::read(&state_path).unwrap(),
+            before_state,
+            "Recovery reads must not rewrite the persisted inventory"
+        );
     }
 
     #[test]
