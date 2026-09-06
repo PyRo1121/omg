@@ -213,13 +213,15 @@ fn test_docker_status() {
     let (success, stdout, _stderr) = run_in_docker(&["omg", "status"]);
 
     assert!(success, "Status command should succeed");
+    // Contract: `status_sync` prints the modern phase header and package totals
+    // (src/cli/commands.rs:447-461).
     let plain = strip_ansi(&stdout);
     assert!(
-        plain.lines().any(|line| line.trim() == "Status"),
+        plain.contains("System Status overview"),
         "status must render its report header, got: {plain}"
     );
     assert!(
-        plain.contains("packages installed") && plain.contains("explicit"),
+        plain.contains("Packages") && plain.to_lowercase().contains("total"),
         "status must include the total package count line, got: {plain}"
     );
 }
