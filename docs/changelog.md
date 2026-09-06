@@ -61,6 +61,12 @@ Preserve archive data and report persistence failures explicitly. Coordinate dat
 - Record v0.1.218 verification [skip ci]
 ### 🧪 Testing
 
+- **Harness**: Isolate home paths and verify persisted shell configuration
+- **Runtimes**: Parse and compare complete JSON listing responses
+- **Properties**: Reject abnormal process exits and timeouts
+- **Hooks**: Make hostile runtime pin fixture reach its target
+- **Security**: Reject tampering, secret leaks and expired signer chains
+- **Cli**: Align status assertions with installed-package report
 - **Installer**: Cover failed bounded transfers
 - **Installer**: Cover legacy curl streaming bounds
 - **Privacy**: Cover archived history in local exports
