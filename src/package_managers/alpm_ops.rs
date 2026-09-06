@@ -330,9 +330,7 @@ fn clean_cache_internal(keep_versions: usize, dry_run: bool) -> Result<(usize, u
         for (old, _) in versions.into_iter().skip(keep_versions) {
             if dry_run {
                 removed += 1;
-                let archive_len = std::fs::metadata(&old)
-                    .map(|metadata| metadata.len())
-                    .unwrap_or(0);
+                let archive_len = std::fs::metadata(&old).map_or(0, |metadata| metadata.len());
                 freed = freed.saturating_add(archive_len);
             } else {
                 // Only credit bytes that were actually freed; failures are

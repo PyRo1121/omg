@@ -53,9 +53,8 @@ fn load_index() -> Result<SnapshotIndex> {
 /// Read a snapshot-sidecar file, refusing symlinks so a planted link
 /// cannot redirect the read outside the snapshots directory.
 fn read_snapshot_file(path: &PathBuf) -> Result<String> {
-    let is_symlink = std::fs::symlink_metadata(path)
-        .map(|meta| meta.file_type().is_symlink())
-        .unwrap_or(false);
+    let is_symlink =
+        std::fs::symlink_metadata(path).is_ok_and(|meta| meta.file_type().is_symlink());
     if is_symlink {
         anyhow::bail!(
             "Refusing to read snapshot file that is a symlink: {}",

@@ -1559,7 +1559,7 @@ pub fn stats(json: bool) -> Result<()> {
 
     // Sync hint
     if crate::core::license::load_license().is_some() {
-        println!("  {} Synced to dashboard", style::success("✓"),);
+        println!("  {} Synced to dashboard", style::success("✓"));
     } else {
         println!(
             "  {} {}",

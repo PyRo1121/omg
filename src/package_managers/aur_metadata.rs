@@ -347,8 +347,8 @@ mod tests {
 
     #[test]
     fn future_cache_timestamp_is_not_fresh() {
-        let future = SystemTime::now() + Duration::from_secs(3600);
-        assert!(!modified_within_ttl(future, Duration::from_secs(7200)));
+        let future = SystemTime::now() + Duration::from_hours(1);
+        assert!(!modified_within_ttl(future, Duration::from_hours(2)));
     }
 
     #[test]
@@ -362,14 +362,14 @@ mod tests {
         assert!(metadata_index_is_fresh(
             &archive,
             &index,
-            Duration::from_secs(60)
+            Duration::from_mins(1)
         ));
         assert!(!metadata_index_is_fresh(&archive, &index, Duration::ZERO));
         std::fs::remove_file(&archive).unwrap();
         assert!(!metadata_index_is_fresh(
             &archive,
             &index,
-            Duration::from_secs(60)
+            Duration::from_mins(1)
         ));
     }
 
@@ -392,7 +392,7 @@ mod tests {
         assert!(!metadata_index_is_fresh(
             &archive,
             &index,
-            Duration::from_secs(60)
+            Duration::from_mins(1)
         ));
     }
 
@@ -419,7 +419,7 @@ mod tests {
             "the published archive must be the validated bytes"
         );
         assert!(
-            metadata_index_is_fresh(&archive, &index, Duration::from_secs(60)),
+            metadata_index_is_fresh(&archive, &index, Duration::from_mins(1)),
             "a just-published generation must be coherent and fresh"
         );
     }

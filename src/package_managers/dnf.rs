@@ -743,7 +743,7 @@ impl DnfPackageManager {
             anyhow::ensure!(status.success(), "DNF query failed: {status}");
             Ok(bytes)
         };
-        tokio::time::timeout(std::time::Duration::from_secs(60), operation)
+        tokio::time::timeout(std::time::Duration::from_mins(1), operation)
             .await
             .context("DNF query timed out after 60 seconds")?
     }

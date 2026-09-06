@@ -509,19 +509,18 @@ fn try_fast_hooks(args: &[String]) -> bool {
 
     if args.len() >= 2 {
         match args[1].as_str() {
-            "hook" => {
-                if args.len() == 3 {
-                    let shell = &args[2];
-                    if hooks::print_hook(shell).is_ok() {
-                        return true;
-                    }
-                }
-            }
-            "hook-env" => {
-                if args.len() == 3 && !args[2].starts_with('-') && hooks::hook_env(&args[2]).is_ok()
-                {
+            "hook" if args.len() == 3 => {
+                let shell = &args[2];
+                if hooks::print_hook(shell).is_ok() {
                     return true;
                 }
+            }
+            "hook-env"
+                if args.len() == 3
+                    && !args[2].starts_with('-')
+                    && hooks::hook_env(&args[2]).is_ok() =>
+            {
+                return true;
             }
             _ => {}
         }

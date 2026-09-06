@@ -133,9 +133,7 @@ impl TestConfig {
 
     pub fn is_ubuntu(&self) -> bool {
         self.target_distro.as_deref() == Some("ubuntu")
-            || fs::read_to_string("/etc/os-release")
-                .map(|s| s.contains("Ubuntu"))
-                .unwrap_or(false)
+            || fs::read_to_string("/etc/os-release").is_ok_and(|s| s.contains("Ubuntu"))
     }
 }
 
@@ -238,7 +236,7 @@ fn command_timeout(env_vars: &[(&str, &str)]) -> Duration {
     configured
         .and_then(|value| value.parse::<u64>().ok())
         .filter(|seconds| *seconds > 0)
-        .map_or(Duration::from_secs(60), Duration::from_secs)
+        .map_or(Duration::from_mins(1), Duration::from_secs)
 }
 
 pub fn run_omg_with_options(

@@ -81,7 +81,7 @@ jobs:
             -o /tmp/rustup-init
           echo "20a06e644b0d9bd2fbdbfd52d42540bdde820ea7df86e92e533c073da0cdd43c  /tmp/rustup-init" | sha256sum --check
           chmod +x /tmp/rustup-init
-          /tmp/rustup-init -y --profile minimal --default-toolchain 1.93.1
+          /tmp/rustup-init -y --profile minimal --default-toolchain 1.95.0
           rm -f /tmp/rustup-init
           echo "$HOME/.cargo/bin" >> "$GITHUB_PATH"
 
@@ -153,7 +153,7 @@ jobs:
             -o /tmp/rustup-init
           echo "20a06e644b0d9bd2fbdbfd52d42540bdde820ea7df86e92e533c073da0cdd43c  /tmp/rustup-init" | sha256sum --check
           chmod +x /tmp/rustup-init
-          /tmp/rustup-init -y --profile minimal --default-toolchain 1.93.1
+          /tmp/rustup-init -y --profile minimal --default-toolchain 1.95.0
           echo 'export PATH="$CARGO_HOME/bin:$PATH"' >> $GITHUB_ENV
 
       - name: Build
@@ -197,10 +197,10 @@ jobs:
             cmake
 
       - name: Install Rust toolchain
-        # Match rust-toolchain.toml (1.93.1) instead of floating "stable"
+        # Match rust-toolchain.toml (1.95.0) instead of floating "stable"
         uses: dtolnay/rust-toolchain@6bed0761d98439e5a578e2877258200ad565ba87 # stable
         with:
-          toolchain: "1.93.1"
+          toolchain: "1.95.0"
 
       - name: Build
         run: cargo build --release --no-default-features --features debian,pgp,license --locked
@@ -239,7 +239,7 @@ jobs:
             -o /tmp/rustup-init
           echo "20a06e644b0d9bd2fbdbfd52d42540bdde820ea7df86e92e533c073da0cdd43c  /tmp/rustup-init" | sha256sum --check
           chmod +x /tmp/rustup-init
-          /tmp/rustup-init -y --profile minimal --default-toolchain 1.93.1
+          /tmp/rustup-init -y --profile minimal --default-toolchain 1.95.0
           echo "$HOME/.cargo/bin" >> $GITHUB_PATH
 
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -280,10 +280,10 @@ jobs:
           persist-credentials: false
 
       - name: Install Rust toolchain
-        # Match rust-toolchain.toml (1.93.1) instead of floating "stable"
+        # Match rust-toolchain.toml (1.95.0) instead of floating "stable"
         uses: dtolnay/rust-toolchain@6bed0761d98439e5a578e2877258200ad565ba87 # stable
         with:
-          toolchain: "1.93.1"
+          toolchain: "1.95.0"
 
       - name: Build
         run: cargo build --release --no-default-features --features macos,pgp,license --locked
@@ -328,7 +328,7 @@ jobs:
       - name: Install SBOM metadata toolchain
         uses: dtolnay/rust-toolchain@6bed0761d98439e5a578e2877258200ad565ba87 # stable
         with:
-          toolchain: "1.93.1"
+          toolchain: "1.95.0"
 
       - name: Install SBOM generator
         uses: taiki-e/install-action@e67fa11c4b9316fa714ddf0abed07a0c3143b95b # v2.87.4

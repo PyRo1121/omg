@@ -102,7 +102,7 @@ jobs:
       - name: Install Rust
         uses: dtolnay/rust-toolchain@6bed0761d98439e5a578e2877258200ad565ba87 # stable
         with:
-          toolchain: "1.93.1"
+          toolchain: "1.95.0"
           components: rustfmt, clippy
 
       - name: Check formatting
@@ -144,7 +144,7 @@ jobs:
       - name: Install Rust
         uses: dtolnay/rust-toolchain@6bed0761d98439e5a578e2877258200ad565ba87 # stable
         with:
-          toolchain: "1.93.1"
+          toolchain: "1.95.0"
           components: clippy
 
       - name: Setup cache
@@ -204,7 +204,7 @@ jobs:
                 -o /tmp/rustup-init
               echo "20a06e644b0d9bd2fbdbfd52d42540bdde820ea7df86e92e533c073da0cdd43c  /tmp/rustup-init" | sha256sum --check
               chmod +x /tmp/rustup-init
-              /tmp/rustup-init -y --profile minimal --default-toolchain 1.93.1
+              /tmp/rustup-init -y --profile minimal --default-toolchain 1.95.0
               rm -f /tmp/rustup-init
               echo "$HOME/.cargo/bin" >> $GITHUB_PATH
               "$HOME/.cargo/bin/rustup" component add clippy rustfmt
@@ -222,7 +222,7 @@ jobs:
                 -o /tmp/rustup-init
               echo "20a06e644b0d9bd2fbdbfd52d42540bdde820ea7df86e92e533c073da0cdd43c  /tmp/rustup-init" | sha256sum --check
               chmod +x /tmp/rustup-init
-              /tmp/rustup-init -y --profile minimal --default-toolchain 1.93.1
+              /tmp/rustup-init -y --profile minimal --default-toolchain 1.95.0
               rm -f /tmp/rustup-init
               echo "$HOME/.cargo/bin" >> $GITHUB_PATH
               "$HOME/.cargo/bin/rustup" component add clippy
@@ -240,7 +240,7 @@ jobs:
                 -o /tmp/rustup-init
               echo "20a06e644b0d9bd2fbdbfd52d42540bdde820ea7df86e92e533c073da0cdd43c  /tmp/rustup-init" | sha256sum --check
               chmod +x /tmp/rustup-init
-              /tmp/rustup-init -y --profile minimal --default-toolchain 1.93.1
+              /tmp/rustup-init -y --profile minimal --default-toolchain 1.95.0
               rm -f /tmp/rustup-init
               echo "$HOME/.cargo/bin" >> $GITHUB_PATH
               "$HOME/.cargo/bin/rustup" component add clippy
@@ -259,7 +259,7 @@ jobs:
                 -o /tmp/rustup-init
               echo "20a06e644b0d9bd2fbdbfd52d42540bdde820ea7df86e92e533c073da0cdd43c  /tmp/rustup-init" | sha256sum --check
               chmod +x /tmp/rustup-init
-              /tmp/rustup-init -y --profile minimal --default-toolchain 1.93.1
+              /tmp/rustup-init -y --profile minimal --default-toolchain 1.95.0
               rm -f /tmp/rustup-init
               echo "$HOME/.cargo/bin" >> $GITHUB_PATH
               "$HOME/.cargo/bin/rustup" component add clippy rustfmt
@@ -469,7 +469,7 @@ jobs:
                 -o /tmp/rustup-init
               echo "20a06e644b0d9bd2fbdbfd52d42540bdde820ea7df86e92e533c073da0cdd43c  /tmp/rustup-init" | sha256sum --check
               chmod +x /tmp/rustup-init
-              /tmp/rustup-init -y --profile minimal --default-toolchain 1.93.1
+              /tmp/rustup-init -y --profile minimal --default-toolchain 1.95.0
               rm -f /tmp/rustup-init
               echo "$HOME/.cargo/bin" >> $GITHUB_PATH
               "$HOME/.cargo/bin/rustup" component add clippy
@@ -487,7 +487,7 @@ jobs:
                 -o /tmp/rustup-init
               echo "20a06e644b0d9bd2fbdbfd52d42540bdde820ea7df86e92e533c073da0cdd43c  /tmp/rustup-init" | sha256sum --check
               chmod +x /tmp/rustup-init
-              /tmp/rustup-init -y --profile minimal --default-toolchain 1.93.1
+              /tmp/rustup-init -y --profile minimal --default-toolchain 1.95.0
               rm -f /tmp/rustup-init
               echo "$HOME/.cargo/bin" >> $GITHUB_PATH
               "$HOME/.cargo/bin/rustup" component add clippy
@@ -557,7 +557,7 @@ jobs:
         # the latest "stable").
         uses: dtolnay/rust-toolchain@6bed0761d98439e5a578e2877258200ad565ba87 # stable
         with:
-          toolchain: "1.93.1"
+          toolchain: "1.95.0"
 
       - name: Setup cache
         if: inputs.skip-cache != true
@@ -627,7 +627,7 @@ jobs:
       - name: Install Rust
         uses: dtolnay/rust-toolchain@6bed0761d98439e5a578e2877258200ad565ba87 # stable
         with:
-          toolchain: "1.93.1"
+          toolchain: "1.95.0"
           components: clippy
 
       - name: Setup cache

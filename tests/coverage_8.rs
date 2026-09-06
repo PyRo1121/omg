@@ -139,10 +139,7 @@ fn spawn_mock_daemon(socket_path: &std::path::Path, reply: ReplyFn) -> JoinHandl
         let Ok((mut stream, _)) = listener.accept() else {
             return captured;
         };
-        loop {
-            let Ok(bytes) = protocol::read_frame(&mut stream) else {
-                break;
-            };
+        while let Ok(bytes) = protocol::read_frame(&mut stream) {
             let Ok((_, payload)) = protocol::split_frame(&bytes) else {
                 break;
             };

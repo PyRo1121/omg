@@ -596,11 +596,9 @@ impl App {
                     self.search_mode = false;
                     // Search will be triggered in the main loop
                 }
-                KeyCode::Backspace => {
-                    if !self.search_query.is_empty() {
-                        self.search_query.pop();
-                        self.note_query_change();
-                    }
+                KeyCode::Backspace if !self.search_query.is_empty() => {
+                    self.search_query.pop();
+                    self.note_query_change();
                 }
                 KeyCode::Char(c) => {
                     self.search_query.push(c);
@@ -630,10 +628,8 @@ impl App {
             KeyCode::Char('6') => self.switch_tab(Tab::Team),
 
             // List navigation
-            KeyCode::Up | KeyCode::Char('k') => {
-                if self.selected_index > 0 {
-                    self.selected_index -= 1;
-                }
+            KeyCode::Up | KeyCode::Char('k') if self.selected_index > 0 => {
+                self.selected_index -= 1;
             }
             KeyCode::Down | KeyCode::Char('j') => {
                 let max = match self.current_tab {
@@ -647,15 +643,13 @@ impl App {
             }
 
             // Search
-            KeyCode::Char('/') => {
-                if self.current_tab == Tab::Packages {
-                    self.search_mode = true;
-                    self.search_query.clear();
-                    self.search_results.clear();
-                    self.search_error = None;
-                    self.selected_index = 0;
-                    self.note_query_change();
-                }
+            KeyCode::Char('/') if self.current_tab == Tab::Packages => {
+                self.search_mode = true;
+                self.search_query.clear();
+                self.search_results.clear();
+                self.search_error = None;
+                self.selected_index = 0;
+                self.note_query_change();
             }
             KeyCode::Esc => {
                 self.pending_confirmation = None;
