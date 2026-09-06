@@ -356,9 +356,7 @@ mod package_management {
         let result = run_omg(&["status"]);
         assert!(result.success, "Status should succeed");
         assert!(
-            result.stdout.contains("Packages")
-                || result.stdout.contains("Updates")
-                || result.stdout.contains("Runtimes"),
+            result.stdout.contains("packages installed") && result.stdout.contains("Updates"),
             "Status should show system info"
         );
     }
@@ -1084,12 +1082,8 @@ mod daemon {
             "Status should succeed with daemon support enabled. Output: {combined}"
         );
 
-        // Should produce meaningful output
         assert!(
-            result.stdout.contains("Package")
-                || result.stdout.contains("Runtime")
-                || result.stdout.contains("OMG")
-                || combined.contains("daemon"),
+            result.stdout.contains("packages installed") && result.stdout.contains("Daemon"),
             "Status should show system info or daemon status. Output: {combined}"
         );
     }
@@ -1554,13 +1548,12 @@ mod output_format {
         let result = run_omg(&["status"]);
         assert!(result.success, "Status should succeed");
 
-        // Should have some structured output
-        assert!(
-            result.stdout.contains("Package")
-                || result.stdout.contains("Runtime")
-                || result.stdout.contains("OMG"),
-            "Status should have structured sections"
-        );
+        for section in ["Updates", "Orphans", "Security", "Daemon"] {
+            assert!(
+                result.stdout.contains(section),
+                "Status must include {section}"
+            );
+        }
     }
 }
 

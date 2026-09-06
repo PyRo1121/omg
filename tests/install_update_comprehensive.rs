@@ -699,7 +699,7 @@ mod e2e_workflow_tests {
 
         let status = run_omg(&["status"]);
         status.assert_success();
-        status.assert_contains("Packages");
+        status.assert_contains("packages installed");
 
         let update = run_omg(&["update", "--dry-run"]);
         update.assert_success();
@@ -953,7 +953,7 @@ mod system_state_tests {
 
         let result = run_omg(&["status"]);
         result.assert_success();
-        result.assert_contains("Packages");
+        result.assert_contains("packages installed");
     }
 }
 
@@ -1024,7 +1024,7 @@ mod command_integration_tests {
         // Status must still work after the failure.
         let status = run_omg(&["status"]);
         status.assert_success();
-        status.assert_contains("Packages");
+        status.assert_contains("packages installed");
     }
 
     #[test]
@@ -1037,7 +1037,7 @@ mod command_integration_tests {
         // observable result, not merely avoid panicking.
         let status = run_omg(&["status"]);
         status.assert_success();
-        status.assert_contains("Packages");
+        status.assert_contains("packages installed");
 
         let search = run_omg(&["search", "firefox"]);
         search.assert_success();
