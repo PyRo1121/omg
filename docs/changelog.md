@@ -11,9 +11,39 @@ OMG is the fastest unified package manager for Linux, replacing pacman, yay, nvm
 ---
 
 ## [Unreleased]
+### ♻️  Refactoring
+
+- **Cli**: Unify status output and limit local build jobs
 ### 🐛 Bug Fixes
 
+- **Aur**: Isolate sandbox PIDs for descendant cleanup
+- **Aur**: Separate build review and simplify verified execution
+- **Fedora**: Decode native RPM database headers
 - **Ci**: Preserve prepared changelog sections
+### 👷 CI/CD
+
+- **Aur**: Gate builds on isolated sandbox cancellation test
+- Add published release smoke matrix
+### 📚 Documentation
+
+- **Fedora**: Record observed repository formats and trust policy
+- **Fedora**: Distinguish database and archive header formats
+- Record v0.1.218 verification [skip ci]
+### 🧪 Testing
+
+- **Aur**: Make sandbox cancellation fixture Docker-safe
+
+The required CI gate failed because the ignored regression bound the
+
+whole host root. A read-only /dev makes bash `cmd &` fail opening
+
+/dev/null. Bind the same system paths production uses, keep host /proc
+
+for the pidfd check, and include the build log when the sandbox exits
+
+before readiness.
+
+- **Cli**: Make command contracts structural
 ## [0.1.218] - 2026-09-04
 ### 🐛 Bug Fixes
 

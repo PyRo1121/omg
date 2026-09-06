@@ -4,7 +4,7 @@ use std::sync::Arc;
 use anyhow::{Context, Result};
 use tokio::task::JoinSet;
 
-use super::AurClient;
+use super::{AurClient, client::AuthorizedBuild};
 
 #[derive(Debug, Clone)]
 pub struct BuildJob {
@@ -135,36 +135,40 @@ impl ParallelBuilder {
             );
         }
 
-        // Acquire sudo credentials visibly, before any spinner exists, so the
-        // password prompt is never fighting a progress bar for the terminal.
-        // Every wave-internal build would otherwise pre-acquire lazily, with
-        // bars already drawn.
-        if !crate::core::caps::can_write_pacman_db() {
-            // `jobs` is non-empty here (checked above); the prompt only needs
-            // one package name for its message.
-            let package = jobs
-                .first()
-                .expect("invariant: jobs checked non-empty above");
-            AurClient::preacquire_install_privileges(&package.package, "parallel AUR build")
-                .await?;
-        }
-
-        // Start a shared sudoloop for the entire parallel build session.
-        // This keeps credentials alive across all waves and prevents
-        // individual builds from each trying to prompt for sudo.
-        let _sudoloop = if crate::core::sudoloop::can_use_sudoloop() {
-            tracing::debug!("Starting shared sudoloop for parallel AUR builds");
-            Some(crate::core::sudoloop::SudoLoop::start())
-        } else {
-            None
-        };
-
         let dep_graph = Self::build_dependency_graph(&jobs);
         let build_levels = Self::topological_levels(&dep_graph)?;
         let jobs_by_package: HashMap<String, BuildJob> = jobs
             .into_iter()
             .map(|job| (job.package.clone(), job))
             .collect();
+
+        let mut authorized_jobs = HashMap::with_capacity(jobs_by_package.len());
+        for package in build_levels.iter().flatten() {
+            let job = jobs_by_package
+                .get(package)
+                .with_context(|| format!("Missing build job for package base '{package}'"))?;
+            let authorized = self
+                .client
+                .authorize_package_outputs(&job.package, &job.outputs)
+                .await?;
+            authorized_jobs.insert(package.clone(), authorized);
+        }
+
+        if !crate::core::caps::can_write_pacman_db() {
+            let package = jobs_by_package
+                .values()
+                .next()
+                .expect("invariant: jobs checked non-empty above");
+            AurClient::preacquire_install_privileges(&package.package, "parallel AUR build")
+                .await?;
+        }
+
+        let _sudoloop = if crate::core::sudoloop::can_use_sudoloop() {
+            tracing::debug!("Starting shared sudoloop for parallel AUR builds");
+            Some(crate::core::sudoloop::SudoLoop::start())
+        } else {
+            None
+        };
 
         tracing::info!(
             "Building {} package base(s) in {} parallel wave(s)",
@@ -175,7 +179,13 @@ impl ParallelBuilder {
         let mut summary = ParallelBuildSummary::default();
         for (level_idx, level) in build_levels.iter().enumerate() {
             let level_summary = self
-                .build_level(level_idx + 1, build_levels.len(), level, &jobs_by_package)
+                .build_level(
+                    level_idx + 1,
+                    build_levels.len(),
+                    level,
+                    &jobs_by_package,
+                    &mut authorized_jobs,
+                )
                 .await?;
             let wave_failed = level_summary.failed_output_count() > 0;
             summary.merge(level_summary);
@@ -279,6 +289,7 @@ impl ParallelBuilder {
         total_levels: usize,
         packages: &[String],
         jobs: &HashMap<String, BuildJob>,
+        authorized_jobs: &mut HashMap<String, AuthorizedBuild>,
     ) -> Result<ParallelBuildSummary> {
         // Builds within a wave run concurrently; the final ALPM install step
         // inside `AurClient::install` serializes on the process-wide
@@ -301,37 +312,34 @@ impl ParallelBuilder {
         let mut in_flight_jobs = HashMap::new();
         let mut package_iter = packages.iter();
 
-        for _ in 0..concurrency {
-            if let Some(pkg) = package_iter.next() {
+        // Drain the independent wave even after a failure; aborting a native
+        // build's setsid waiter can leave its compiler process group running.
+        let mut summary = ParallelBuildSummary::default();
+        loop {
+            while tasks.len() < concurrency {
+                let Some(package) = package_iter.next() else {
+                    break;
+                };
                 let client = Arc::clone(&self.client);
                 let job = jobs
-                    .get(pkg)
-                    .cloned()
-                    .with_context(|| format!("Missing build job for package base '{pkg}'"))?;
-                let task_job = job.clone();
+                    .get(package)
+                    .with_context(|| format!("Missing build job for package base '{package}'"))?;
+                let authorized = authorized_jobs.remove(package).with_context(|| {
+                    format!("Missing authorization for package base '{package}'")
+                })?;
 
+                tracing::info!("Building {} for outputs {:?}", job.package, job.outputs);
                 let task = tasks.spawn(async move {
-                    tracing::info!(
-                        "Building {} for outputs {:?}",
-                        task_job.package,
-                        task_job.outputs
-                    );
                     client
-                        .install_package_outputs(&task_job.package, &task_job.outputs)
+                        .install_authorized_package_outputs(authorized, None)
                         .await
-                        .with_context(|| format!("Failed to build {}", task_job.package))
                 });
                 in_flight_jobs.insert(task.id(), job);
             }
-        }
 
-        // A failed package must not detach its already-running siblings. In
-        // particular, aborting a `setsid -w makepkg` task kills the waiter but
-        // can leave the compiler process group alive and still writing to the
-        // terminal. Drain the current independent wave, record each result,
-        // and stop before any dependent wave starts.
-        let mut summary = ParallelBuildSummary::default();
-        while let Some(result) = tasks.join_next_with_id().await {
+            let Some(result) = tasks.join_next_with_id().await else {
+                break;
+            };
             let (task_id, build_result) = match result {
                 Ok((task_id, build_result)) => (task_id, build_result),
                 Err(join_error) => {
@@ -342,29 +350,7 @@ impl ParallelBuilder {
             let job = in_flight_jobs
                 .remove(&task_id)
                 .with_context(|| format!("Missing build job for completed task {task_id}"))?;
-            summary.record_job_result(&job, build_result);
-
-            if let Some(pkg) = package_iter.next() {
-                let client = Arc::clone(&self.client);
-                let job = jobs
-                    .get(pkg)
-                    .cloned()
-                    .with_context(|| format!("Missing build job for package base '{pkg}'"))?;
-                let task_job = job.clone();
-
-                let task = tasks.spawn(async move {
-                    tracing::info!(
-                        "Building {} for outputs {:?}",
-                        task_job.package,
-                        task_job.outputs
-                    );
-                    client
-                        .install_package_outputs(&task_job.package, &task_job.outputs)
-                        .await
-                        .with_context(|| format!("Failed to build {}", task_job.package))
-                });
-                in_flight_jobs.insert(task.id(), job);
-            }
+            summary.record_job_result(job, build_result);
         }
 
         Ok(summary)

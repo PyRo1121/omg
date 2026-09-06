@@ -22,6 +22,42 @@ pub struct StatusData {
     pub fast_mode: bool,
 }
 
+impl StatusData {
+    pub(crate) fn render(&self) -> String {
+        let mut output = format!(
+            "{}\n\n  {} packages installed · {} explicit\n",
+            style::emphasis("Status"),
+            self.total_packages,
+            self.explicit_packages,
+        );
+        if self.fast_mode {
+            let _ = writeln!(
+                output,
+                "\n  Updates and orphans not checked. Run omg status for a full check."
+            );
+            return output;
+        }
+
+        let _ = writeln!(output, "\n  {:<10} {}", "Updates", self.updates_available);
+        let _ = writeln!(output, "  {:<10} {}", "Orphans", self.orphan_packages);
+        if self.updates_available > 0 {
+            let _ = writeln!(
+                output,
+                "\n  Review updates with {}",
+                style::accent("omg outdated")
+            );
+        }
+        if self.orphan_packages > 0 {
+            let _ = writeln!(
+                output,
+                "\n  Preview orphan removal with {}",
+                style::accent("omg clean --orphans --dry-run")
+            );
+        }
+        output
+    }
+}
+
 /// Status state machine
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum StatusState {
@@ -71,11 +107,6 @@ impl StatusModel {
     pub const fn with_fast_mode(mut self, fast: bool) -> Self {
         self.fast_mode = fast;
         self
-    }
-
-    /// Render a metric line
-    fn render_metric(label: &str, value: &str) -> String {
-        format!("  {:<20} {}", style::emphasis(label), value)
     }
 }
 
@@ -169,77 +200,7 @@ impl Model for StatusModel {
             StatusState::Loading => style::accent("⟳ Gathering system status..."),
             StatusState::Complete => {
                 if let Some(data) = &self.data {
-                    let mut output = String::new();
-
-                    // Header
-                    let _ = writeln!(
-                        output,
-                        "  {} Status Overview ({:.1}ms)",
-                        style::emphasis("📋"),
-                        data.duration_ms
-                    );
-                    let _ = writeln!(output, "  {}", style::dim(&"─".repeat(40)));
-
-                    // Metrics
-                    let _ = writeln!(
-                        output,
-                        "{}",
-                        Self::render_metric(
-                            "Total Packages:",
-                            &style::accent(&data.total_packages.to_string())
-                        )
-                    );
-                    let _ = writeln!(
-                        output,
-                        "{}",
-                        Self::render_metric(
-                            "Explicitly Installed:",
-                            &style::positive(&data.explicit_packages.to_string())
-                        )
-                    );
-
-                    if data.fast_mode {
-                        let _ = writeln!(
-                            output,
-                            "{}",
-                            Self::render_metric(
-                                "Orphans/Updates:",
-                                &style::dim("skipped (fast mode)")
-                            )
-                        );
-                    } else {
-                        let orphans_str = if data.orphan_packages > 0 {
-                            style::caution(&data.orphan_packages.to_string())
-                        } else {
-                            style::dim("0")
-                        };
-                        let _ = writeln!(
-                            output,
-                            "{}",
-                            Self::render_metric("Orphan Packages:", &orphans_str)
-                        );
-
-                        let updates_str = if data.updates_available > 0 {
-                            style::community(&data.updates_available.to_string())
-                        } else {
-                            style::dim("0")
-                        };
-                        let _ = writeln!(
-                            output,
-                            "{}",
-                            Self::render_metric("Updates Available:", &updates_str)
-                        );
-                    }
-
-                    // Tip
-                    let _ = writeln!(
-                        output,
-                        "\n  {} {}",
-                        style::arrow("Tip:"),
-                        style::dim("Use 'omg clean' to remove orphans and free up disk space.")
-                    );
-
-                    output
+                    data.render()
                 } else {
                     "No data available".to_string()
                 }
@@ -258,6 +219,41 @@ impl Model for StatusModel {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn fast_status_does_not_recommend_unchecked_cleanup() {
+        let data = StatusData {
+            total_packages: 120,
+            explicit_packages: 40,
+            orphan_packages: 8,
+            updates_available: 3,
+            fast_mode: true,
+            ..StatusData::default()
+        };
+        let output = data.render();
+        assert!(output.contains("120 packages installed · 40 explicit"));
+        assert!(output.contains("Updates and orphans not checked"));
+        assert!(!output.contains("omg clean"));
+        assert!(!output.contains("omg outdated"));
+    }
+
+    #[test]
+    fn complete_status_only_recommends_actions_for_observed_findings() {
+        let clean = StatusData::default().render();
+        assert!(!clean.contains("omg clean"));
+        assert!(!clean.contains("omg outdated"));
+        let data = StatusData {
+            orphan_packages: 2,
+            updates_available: 5,
+            ..StatusData::default()
+        };
+        let output = data.render();
+        assert!(output.contains("omg clean --orphans --dry-run"));
+        assert!(output.contains("omg outdated"));
+        let mut model = StatusModel::new();
+        let _ = model.update(StatusMsg::Loaded(data));
+        assert_eq!(model.view(), output);
+    }
 
     #[test]
     fn test_status_model_initial_state() {

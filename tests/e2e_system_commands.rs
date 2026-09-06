@@ -501,14 +501,13 @@ fn test_status_shows_system_state() {
 
     result.assert_success();
 
-    // Both renderers print a status overview heading: the Elm UI emits
-    // "System Status overview" and the fallback "Status Overview (...)"
-    // (src/cli/packages/status.rs:103-165).
     let output = result.stdout.to_lowercase();
     assert!(
-        output.contains("status overview"),
-        "Status must render its overview heading: {output}"
+        output.lines().any(|line| line.trim() == "status"),
+        "Status must render its heading: {output}"
     );
+    assert!(output.contains("packages installed"), "{output}");
+    assert!(!output.contains("tip:"), "{output}");
 }
 
 #[test]

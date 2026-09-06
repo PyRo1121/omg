@@ -1,4 +1,5 @@
 [build]
+jobs = 2
 rustflags = []
 
 # CPU-Specific Optimization (5-10% improvement on native hardware)
