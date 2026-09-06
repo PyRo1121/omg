@@ -56,7 +56,13 @@ pub async fn install(packages: &[String], yes: bool, replacement_hops: u32) -> R
                 None,
                 crate::core::security::SecurityGrade::Community,
             )?;
-            modern_ui::finish_info(&pb, &format!("Local package: {pkg}"));
+            modern_ui::finish_info(
+                &pb,
+                &format!(
+                    "Local package: {}",
+                    crate::core::security::artifact::display_target(pkg)
+                ),
+            );
             continue;
         }
 
@@ -142,25 +148,9 @@ pub async fn install(packages: &[String], yes: bool, replacement_hops: u32) -> R
 
     record_install_history(packages, &missing_packages, operation_result)?;
 
-    // AUR and replacement installs report and track their actual identities
-    // inside the dedicated path. Only report requested packages completed by
-    // this official/local transaction, avoiding duplicate or false outcomes.
-    let installed_requested = packages_excluding(packages, &missing_packages);
-    if !installed_requested.is_empty() {
-        modern_ui::print_success_with_packages(
-            &format!(
-                "Installed {} {}",
-                installed_requested.len(),
-                if installed_requested.len() == 1 {
-                    "package"
-                } else {
-                    "packages"
-                }
-            ),
-            &installed_requested,
-        );
-
-        crate::core::usage::track_install_result(&installed_requested, true);
+    let completed_requests = packages_excluding(packages, &missing_packages);
+    if !completed_requests.is_empty() {
+        crate::core::usage::track_install_result(&completed_requests, true);
     }
     Ok(())
 }
@@ -224,7 +214,9 @@ fn history_package_name(package: &str) -> String {
         // History must retain the package operation's original error even when
         // an invalid local archive has no readable metadata.
         tracing::warn!("Could not read local package name for history: {error}");
-        package.to_string()
+        crate::core::security::artifact::handoff_original(package)
+            .unwrap_or(package)
+            .to_string()
     })
 }
 
@@ -239,7 +231,6 @@ fn local_archive_preview(
         return Ok(None);
     }
 
-    crate::core::security::validate_local_package_file(package)?;
     crate::package_managers::alpm_ops::load_local_package_metadata(package).map(Some)
 }
 

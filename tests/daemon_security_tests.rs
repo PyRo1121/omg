@@ -1,5 +1,7 @@
 #![expect(clippy::unwrap_used, clippy::expect_used)]
+use common::mocks::{MockPackageDb, MockPackageManager};
 use omg_lib::daemon::handlers::{DaemonState, GLOBAL_RATE_LIMIT_BURST, handle_request};
+use omg_lib::daemon::index::PackageIndex;
 use omg_lib::daemon::protocol::{Request, Response, error_codes};
 pub mod common;
 
@@ -7,48 +9,31 @@ use serial_test::serial;
 use std::sync::Arc;
 use tempfile::TempDir;
 
-/// Initialize an isolated daemon state for tests that require a working backend.
-///
-/// Under backend-less feature combinations the index cannot build. Those runs
-/// report a counted skip instead of failing the suite.
-fn init_state_or_skip(context: &str) -> Option<(TempDir, Arc<DaemonState>)> {
-    #[cfg(feature = "arch")]
-    {
-        omg_lib::package_managers::clear_alpm_cache();
-        omg_lib::package_managers::invalidate_caches().expect("Failed to invalidate caches");
-    }
-
-    let temp_dir = TempDir::new().unwrap();
-    let state = temp_env::with_vars(
+/// Initialize daemon handler tests without accessing a system package database.
+fn init_state() -> (TempDir, Arc<DaemonState>) {
+    let temp_dir = TempDir::new().expect("Failed to create daemon security test directory");
+    temp_env::with_vars(
         [
             ("OMG_DAEMON_DATA_DIR", Some(temp_dir.path().as_os_str())),
             ("OMG_DATA_DIR", Some(temp_dir.path().as_os_str())),
         ],
-        || {
-            omg_lib::core::security::init_audit_logger()
-                .map_err(anyhow::Error::from)
-                .and_then(|()| DaemonState::new())
-                .map(Arc::new)
-        },
+        omg_lib::core::security::init_audit_logger,
+    )
+    .expect("Failed to initialize audit logger");
+
+    let package_manager = Arc::new(MockPackageManager::new(MockPackageDb::default()));
+    let state = Arc::new(
+        DaemonState::new_isolated(temp_dir.path(), PackageIndex::empty(), package_manager)
+            .expect("Failed to create isolated daemon state"),
     );
 
-    match state {
-        Ok(state) => Some((temp_dir, state)),
-        Err(error) => {
-            common::report_skip(&format!(
-                "{context}: no usable package database on this combo: {error:#}"
-            ));
-            None
-        }
-    }
+    (temp_dir, state)
 }
 
 #[tokio::test]
 #[serial]
 async fn test_global_rate_limiting() {
-    let Some((_temp_dir, state)) = init_state_or_skip("daemon security test") else {
-        return;
-    };
+    let (_temp_dir, state) = init_state();
 
     let req = Request::Ping { id: 1 };
 
@@ -71,9 +56,7 @@ async fn test_global_rate_limiting() {
 #[tokio::test]
 #[serial]
 async fn test_input_validation_audit() {
-    let Some((temp_dir, state)) = init_state_or_skip("daemon security test") else {
-        return;
-    };
+    let (temp_dir, state) = init_state();
 
     // Send request with invalid package name to trigger audit log
     let invalid_pkg = "invalid; rm -rf /";
@@ -120,9 +103,7 @@ async fn test_input_validation_audit() {
 #[tokio::test]
 #[serial]
 async fn test_health_endpoint_returns_status() {
-    let Some((_temp_dir, state)) = init_state_or_skip("daemon security test") else {
-        return;
-    };
+    let (_temp_dir, state) = init_state();
 
     let req = Request::Health { id: 42 };
     let response = handle_request(Arc::clone(&state), req).await;
@@ -157,9 +138,7 @@ async fn test_health_endpoint_returns_status() {
 #[tokio::test]
 #[serial]
 async fn test_ping_returns_pong() {
-    let Some((_temp_dir, state)) = init_state_or_skip("daemon security test") else {
-        return;
-    };
+    let (_temp_dir, state) = init_state();
 
     let req = Request::Ping { id: 123 };
     let response = handle_request(Arc::clone(&state), req).await;
@@ -180,9 +159,7 @@ async fn test_ping_returns_pong() {
 #[tokio::test]
 #[serial]
 async fn test_cache_stats_handler() {
-    let Some((_temp_dir, state)) = init_state_or_skip("daemon security test") else {
-        return;
-    };
+    let (_temp_dir, state) = init_state();
 
     let req = Request::CacheStats { id: 999 };
     let response = handle_request(Arc::clone(&state), req).await;
@@ -205,9 +182,49 @@ async fn test_cache_stats_handler() {
 #[tokio::test]
 #[serial]
 async fn test_cache_clear_handler() {
-    let Some((_temp_dir, state)) = init_state_or_skip("daemon security test") else {
-        return;
-    };
+    let (_temp_dir, state) = init_state();
+
+    // Even a search with no matches caches a query result. Repeated reads
+    // let Moka run maintenance so its eventually consistent entry count
+    // becomes visible through CacheStats before testing invalidation.
+    tokio::time::timeout(std::time::Duration::from_secs(2), async {
+        loop {
+            let search = handle_request(
+                Arc::clone(&state),
+                Request::Search {
+                    id: 553,
+                    query: "cache-clear-fixture".to_string(),
+                    limit: None,
+                },
+            )
+            .await;
+            match search {
+                Response::Success {
+                    id: 553,
+                    result: omg_lib::daemon::protocol::ResponseResult::Search(result),
+                } => {
+                    assert!(result.packages.is_empty());
+                    assert_eq!(result.total, 0);
+                }
+                other => panic!("Expected successful fixture search, got: {other:?}"),
+            }
+            match handle_request(Arc::clone(&state), Request::CacheStats { id: 554 }).await {
+                Response::Success {
+                    id: 554,
+                    result: omg_lib::daemon::protocol::ResponseResult::CacheStats { size, .. },
+                } => {
+                    if size > 0 {
+                        assert_eq!(size, 1, "Only the fixture query should be cached");
+                        break;
+                    }
+                }
+                other => panic!("Expected cache statistics before clear, got: {other:?}"),
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+        }
+    })
+    .await
+    .expect("Fixture search must populate the cache before clear");
 
     let req = Request::CacheClear { id: 555 };
     let response = handle_request(Arc::clone(&state), req).await;
@@ -223,14 +240,20 @@ async fn test_cache_clear_handler() {
         }
         Response::Error { message, .. } => unreachable!("CacheClear failed: {}", message),
     }
+
+    match handle_request(state, Request::CacheStats { id: 556 }).await {
+        Response::Success {
+            id: 556,
+            result: omg_lib::daemon::protocol::ResponseResult::CacheStats { size, .. },
+        } => assert_eq!(size, 0, "CacheClear must remove the populated query"),
+        other => panic!("Expected cache statistics after clear, got: {other:?}"),
+    }
 }
 
 #[tokio::test]
 #[serial]
 async fn test_explicit_count_handler() {
-    let Some((_temp_dir, state)) = init_state_or_skip("daemon security test") else {
-        return;
-    };
+    let (_temp_dir, state) = init_state();
 
     let req = Request::ExplicitCount { id: 777 };
     let response = handle_request(Arc::clone(&state), req).await;

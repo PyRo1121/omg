@@ -40,6 +40,8 @@ pub enum RekorError {
 /// Failures hashing artifacts or talking to Rekor.
 #[derive(Debug, Error)]
 pub enum SlsaError {
+    #[error("An exact --certificate-identity is required to establish signer trust")]
+    IdentityRequired,
     #[error(transparent)]
     Rekor(#[from] RekorError),
     #[error("Failed to query Rekor")]
@@ -946,6 +948,9 @@ impl SlsaVerifier {
         provenance_path: Option<impl AsRef<Path>>,
         required_identity: Option<&str>,
     ) -> Result<VerificationResult, SlsaError> {
+        if required_identity.is_none_or(|identity| identity.trim().is_empty()) {
+            return Err(SlsaError::IdentityRequired);
+        }
         // Calculate artifact hash, keeping the bytes around: P-256 ECDSA
         // verification hashes the message itself, so the artifact content
         // must be available at verification time.
@@ -1290,6 +1295,10 @@ mod tests {
                 .to_public_key_pem(rsa::pkcs8::LineEnding::LF)
                 .expect("spki pem")
         };
+        let rsa_spki_der = {
+            use rsa::pkcs8::EncodePublicKey as _;
+            public.to_public_key_der().expect("rsa spki der")
+        };
         let signing = rsa::pkcs1v15::SigningKey::<sha2::Sha256>::new(private);
         use rsa::signature::SignatureEncoding as _;
         use rsa::signature::hazmat::PrehashSigner as _;
@@ -1325,7 +1334,16 @@ mod tests {
                 !verified,
                 "plain-key entries are self-attestations and never verify"
             );
-            let _ = integrity_expected;
+            assert_eq!(
+                SlsaVerifier::verify_digest_with_bytes(
+                    rsa_spki_der.as_bytes(),
+                    &artifact_hash,
+                    artifact_bytes.as_slice(),
+                    sig,
+                ),
+                integrity_expected,
+                "RSA verification must distinguish correct and incorrect artifact signatures"
+            );
         }
 
         // Hash mismatch must fail even with a valid signature.
@@ -1441,8 +1459,10 @@ mod tests {
             .unwrap();
 
         let leaf_key = KeyPair::generate().unwrap();
-        let mut leaf_params =
-            CertificateParams::new(vec!["signer@example.com".to_string()]).unwrap();
+        let mut leaf_params = CertificateParams::new(Vec::new()).unwrap();
+        leaf_params.subject_alt_names = vec![rcgen::SanType::Rfc822Name(
+            "signer@example.com".try_into().unwrap(),
+        )];
         leaf_params.extended_key_usages = vec![ExtendedKeyUsagePurpose::CodeSigning];
         let leaf = leaf_params
             .signed_by(&leaf_key, &intermediate, &intermediate_key)
@@ -1450,10 +1470,17 @@ mod tests {
 
         let root_pem = root.pem();
         let roots = [root_pem.as_str()];
-        let now = u64::try_from(jiff::Timestamp::now().as_second()).unwrap();
+        let intermediate_pem = intermediate.pem();
+        let before_expiry = 1_590_969_600; // 2020-06-01 UTC
+        let after_expiry = 1_622_505_600; // 2021-06-01 UTC
 
+        assert_eq!(
+            verify_fulcio_chain(leaf.der(), before_expiry, &roots, &intermediate_pem).as_deref(),
+            Some("signer@example.com"),
+            "the same chain must bind the signer identity before intermediate expiry"
+        );
         assert!(
-            verify_fulcio_chain(leaf.der(), now, &roots, &intermediate.pem()).is_none(),
+            verify_fulcio_chain(leaf.der(), after_expiry, &roots, &intermediate_pem).is_none(),
             "an expired intermediate must invalidate the chain"
         );
     }
@@ -1835,5 +1862,19 @@ mod tests {
             matches!(err, RekorError::EntrySetMalformed { .. }),
             "got: {err}"
         );
+    }
+}
+
+#[cfg(test)]
+mod required_signer_tests {
+    #[tokio::test]
+    async fn no_identity_fails_before_file_or_network_access() {
+        for identity in [None, Some(""), Some("   ")] {
+            let error = super::SlsaVerifier::default()
+                .verify_provenance("/nonexistent/artifact", None::<&str>, identity)
+                .await
+                .unwrap_err();
+            assert!(matches!(error, super::SlsaError::IdentityRequired));
+        }
     }
 }

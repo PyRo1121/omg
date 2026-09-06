@@ -5,9 +5,9 @@
 #   ./scripts/r2-rollback.sh <version> [--dry-run]
 #
 # Re-points the single mutable `latest-version` marker at an already-published
-# release version WITHOUT touching any archives or checksums. Clients running
-# `omg self-update` resolve this marker, so a rollback takes effect on their
-# next update check - installed binaries are not modified.
+# release version WITHOUT touching any archives or checksums. Existing clients
+# require `omg self-update --force` to accept an older version. The marker does
+# not bypass downgrade protection or modify installed binaries.
 #
 # Requirements:
 #   - env CLOUDFLARE_API_TOKEN + CLOUDFLARE_ACCOUNT_ID with object write
@@ -45,7 +45,7 @@ if [[ -z "$version" ]]; then
   echo "error: version argument required" >&2
   usage
 fi
-semver_re='^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)(-[0-9A-Za-z-]+(\.[0-9A-Za-z-]+)*)?(\+[0-9A-Za-z-]+(\.[0-9A-Za-z-]+)*)?$'
+semver_re='^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)(-(0|[1-9][0-9]*|[0-9]*[A-Za-z-][0-9A-Za-z-]*)(\.(0|[1-9][0-9]*|[0-9]*[A-Za-z-][0-9A-Za-z-]*))*)?(\+[0-9A-Za-z-]+(\.[0-9A-Za-z-]+)*)?$'
 if [[ ! "$version" =~ $semver_re ]]; then
   echo "error: version must be an exact semver (e.g. 0.1.214, 1.2.3)" >&2
   exit 65
@@ -90,7 +90,8 @@ printf '%s' "$version" > "$marker"
 trap 'rm -f "$marker"' EXIT
 "$WRANGLER" r2 object put "omg-releases/latest-version" --remote \
   --file="$marker" \
-  --content-type="text/plain"
+  --content-type="text/plain" \
+  --cache-control="no-store"
 
 # Verify what was published.
 body="$("$WRANGLER" r2 object get "omg-releases/latest-version" --remote --pipe 2>/dev/null || true)"

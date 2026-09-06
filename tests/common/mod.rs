@@ -246,6 +246,16 @@ pub fn run_omg_with_options(
     dir: Option<&Path>,
     env_vars: &[(&str, &str)],
 ) -> CommandResult {
+    let home = TempDir::new().expect("Failed to create isolated home");
+    run_omg_with_home(args, dir, env_vars, home.path())
+}
+
+fn run_omg_with_home(
+    args: &[&str],
+    dir: Option<&Path>,
+    env_vars: &[(&str, &str)],
+    home: &Path,
+) -> CommandResult {
     #[cfg(not(debug_assertions))]
     panic!("Hermetic CLI tests require the debug profile; release binaries ignore OMG_TEST_MODE");
     let start = Instant::now();
@@ -256,21 +266,34 @@ pub fn run_omg_with_options(
         .env("OMG_TEST_MODE", "1")
         .env("OMG_DISABLE_DAEMON", "1")
         .env("OMG_DISABLE_TELEMETRY", "1")
+        .stdin(Stdio::null())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped());
 
-    // Isolate tests by using unique data/config dirs if not provided
-    let temp_data = TempDir::new().unwrap();
-    let temp_config = TempDir::new().unwrap();
-
-    let has_data_dir = env_vars.iter().any(|(k, _)| *k == "OMG_DATA_DIR");
-    let has_config_dir = env_vars.iter().any(|(k, _)| *k == "OMG_CONFIG_DIR");
-
-    if !has_data_dir {
-        cmd.env("OMG_DATA_DIR", temp_data.path());
+    // Never inherit host home/cache paths. Explicit overrides are applied below,
+    // including deliberately invalid HOME values used by security tests.
+    cmd.env("HOME", home);
+    for (key, relative_path) in [
+        ("XDG_CONFIG_HOME", ".config"),
+        ("XDG_DATA_HOME", ".local/share"),
+        ("XDG_CACHE_HOME", ".cache"),
+        ("XDG_STATE_HOME", ".local/state"),
+        ("XDG_RUNTIME_DIR", ".run"),
+        ("XDG_CONFIG_DIRS", ".config"),
+        ("XDG_DATA_DIRS", ".local/share"),
+        ("OMG_DATA_DIR", ".local/share/omg"),
+        ("OMG_CONFIG_DIR", ".config/omg"),
+        ("OMG_CACHE_DIR", ".cache/omg"),
+    ] {
+        let path = home.join(relative_path);
+        fs::create_dir_all(&path).expect("Failed to create isolated CLI directory");
+        cmd.env(key, path);
     }
-    if !has_config_dir {
-        cmd.env("OMG_CONFIG_DIR", temp_config.path());
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt as _;
+        fs::set_permissions(home.join(".run"), fs::Permissions::from_mode(0o700))
+            .expect("Failed to secure isolated runtime directory");
     }
     if !env_vars.iter().any(|(key, _)| *key == "OMG_TEST_DISTRO") {
         cmd.env("OMG_TEST_DISTRO", "arch");
@@ -367,6 +390,7 @@ fn run_shell(cmd: &str) -> CommandResult {
 /// A test project with managed temp directory
 pub struct TestProject {
     pub dir: TempDir,
+    pub home_dir: TempDir,
     pub data_dir: TempDir,
     pub config_dir: TempDir,
     pub pacman_root: TempDir,
@@ -378,6 +402,7 @@ impl TestProject {
         init_test_env();
         Self {
             dir: TempDir::new().expect("Failed to create temp dir"),
+            home_dir: TempDir::new().expect("Failed to create isolated home"),
             data_dir: TempDir::new().expect("Failed to create data dir"),
             config_dir: TempDir::new().expect("Failed to create config dir"),
             pacman_root: TempDir::new().expect("Failed to create pacman root"),
@@ -430,7 +455,7 @@ impl TestProject {
         if !vars.iter().any(|(k, _)| *k == "OMG_TEST_DISTRO") {
             vars.push(("OMG_TEST_DISTRO", self.distro()));
         }
-        run_omg_with_options(args, Some(self.path()), &vars)
+        run_omg_with_home(args, Some(self.path()), &vars, self.home_dir.path())
     }
 
     pub fn mock_install(&self, package: &str, version: &str) -> Result<()> {

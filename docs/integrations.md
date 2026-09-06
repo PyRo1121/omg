@@ -233,7 +233,7 @@ jobs:
       - uses: actions/checkout@v4
       
       - name: Install OMG
-        run: curl -fsSL https://raw.githubusercontent.com/PyRo1121/omg/main/install.sh | bash
+        run: curl -fsSL https://omg.latham.cloud/install.sh | bash
       
       - name: Add OMG to PATH
         run: echo "$HOME/.local/bin" >> $GITHUB_PATH
@@ -271,7 +271,7 @@ jobs:
 image: archlinux:latest
 
 before_script:
-  - curl -fsSL https://raw.githubusercontent.com/PyRo1121/omg/main/install.sh | bash
+  - curl -fsSL https://omg.latham.cloud/install.sh | bash
   - export PATH="$HOME/.local/bin:$PATH"
   - omg env check
 
@@ -297,7 +297,7 @@ pipeline {
   stages {
     stage('Setup') {
       steps {
-        sh 'curl -fsSL https://raw.githubusercontent.com/PyRo1121/omg/main/install.sh | bash'
+        sh 'curl -fsSL https://omg.latham.cloud/install.sh | bash'
         sh 'export PATH="$HOME/.local/bin:$PATH"'
       }
     }
@@ -334,7 +334,7 @@ jobs:
       - checkout
       - run:
           name: Install OMG
-          command: curl -fsSL https://raw.githubusercontent.com/PyRo1121/omg/main/install.sh | bash
+          command: curl -fsSL https://omg.latham.cloud/install.sh | bash
       - run:
           name: Check environment against omg.lock
           command: |
@@ -412,7 +412,7 @@ PROMPT='$(omg_runtime) %~ %# '
 FROM archlinux:latest
 
 # Install OMG
-RUN curl -fsSL https://raw.githubusercontent.com/PyRo1121/omg/main/install.sh | bash
+RUN curl -fsSL https://omg.latham.cloud/install.sh | bash
 
 # Copy environment lock
 COPY omg.lock /app/
@@ -433,7 +433,7 @@ CMD ["omg", "run", "start"]
 # Build stage
 FROM archlinux:latest AS builder
 
-RUN curl -fsSL https://raw.githubusercontent.com/PyRo1121/omg/main/install.sh | bash
+RUN curl -fsSL https://omg.latham.cloud/install.sh | bash
 
 COPY . /app
 WORKDIR /app
@@ -592,7 +592,7 @@ git clone https://github.com/team/project
 cd project
 
 # Install OMG
-curl -fsSL https://raw.githubusercontent.com/PyRo1121/omg/main/install.sh | bash
+curl -fsSL https://omg.latham.cloud/install.sh | bash
 
 # Verify environment matches omg.lock (install pinned runtimes with: omg use node <version>)
 omg env check
@@ -622,7 +622,7 @@ jobs:
       - uses: actions/checkout@v4
       
       - name: Install OMG
-        run: curl -fsSL https://raw.githubusercontent.com/PyRo1121/omg/main/install.sh | bash
+        run: curl -fsSL https://omg.latham.cloud/install.sh | bash
       
       - name: Check environment against omg.lock
         run: omg env check

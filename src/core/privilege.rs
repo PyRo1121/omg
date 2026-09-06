@@ -5,6 +5,86 @@
 
 use std::sync::atomic::{AtomicBool, Ordering};
 
+/// Privileged command lookup never consults the invoking user's PATH.
+pub const SYSTEM_PATH: &str = "/usr/sbin:/usr/bin:/sbin:/bin";
+
+/// Resolve an executable whose file and every ancestor are controlled by root.
+/// Canonicalization permits the standard /bin -> /usr/bin merged layout.
+pub fn trusted_program(program: &str) -> anyhow::Result<std::path::PathBuf> {
+    let input = std::path::Path::new(program);
+    let candidates = if input.is_absolute() {
+        vec![input.to_path_buf()]
+    } else {
+        anyhow::ensure!(
+            input.components().count() == 1,
+            "Invalid system program: {program}"
+        );
+        SYSTEM_PATH
+            .split(':')
+            .map(|dir| std::path::Path::new(dir).join(input))
+            .collect()
+    };
+    for candidate in candidates {
+        if let Ok(path) = trusted_executable_path(&candidate) {
+            return Ok(path);
+        }
+    }
+    anyhow::bail!("No root-controlled system executable found for {program}")
+}
+
+fn trusted_executable_path(path: &std::path::Path) -> anyhow::Result<std::path::PathBuf> {
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::MetadataExt;
+        let path = std::fs::canonicalize(path)?;
+        let metadata = std::fs::metadata(&path)?;
+        anyhow::ensure!(
+            metadata.is_file() && metadata.mode() & 0o111 != 0,
+            "Not executable"
+        );
+        for ancestor in path.ancestors() {
+            let metadata = std::fs::metadata(ancestor)?;
+            anyhow::ensure!(
+                metadata.uid() == 0 && metadata.mode() & 0o022 == 0,
+                "Executable path is writable by an unprivileged account: {}",
+                ancestor.display()
+            );
+        }
+        Ok(path)
+    }
+    #[cfg(not(unix))]
+    anyhow::bail!(
+        "Privilege elevation is unsupported on this platform: {}",
+        path.display()
+    )
+}
+
+pub fn system_command(program: &str) -> anyhow::Result<std::process::Command> {
+    let mut command = std::process::Command::new(trusted_program(program)?);
+    command.env("PATH", SYSTEM_PATH);
+    for name in PRIVILEGED_ENV_SCRUB {
+        command.env_remove(name);
+    }
+    Ok(command)
+}
+
+pub fn sudo_command() -> anyhow::Result<tokio::process::Command> {
+    Ok(system_command("sudo")?.into())
+}
+
+/// Linux keeps the executing inode pinned, even if ~/.local/bin/omg is replaced.
+/// Never canonicalize this proc path back to the mutable installation pathname.
+fn elevation_executable() -> anyhow::Result<std::path::PathBuf> {
+    #[cfg(target_os = "linux")]
+    {
+        let path = std::path::PathBuf::from(format!("/proc/{}/exe", std::process::id()));
+        std::fs::metadata(&path)?;
+        Ok(path)
+    }
+    #[cfg(not(target_os = "linux"))]
+    trusted_executable_path(&std::env::current_exe()?)
+}
+
 /// Environment variables stripped from every sudo child. One list so a new
 /// scrub variable cannot be added in one elevation path and missed in another.
 const PRIVILEGED_ENV_SCRUB: &[&str] = &[
@@ -33,6 +113,7 @@ const PRIVILEGED_ENV_SCRUB: &[&str] = &[
 
 /// Strip [`PRIVILEGED_ENV_SCRUB`] from a sudo command builder.
 fn scrub_privileged_env(command: &mut tokio::process::Command) {
+    command.env("PATH", SYSTEM_PATH);
     for name in PRIVILEGED_ENV_SCRUB {
         command.env_remove(name);
     }
@@ -129,9 +210,24 @@ pub async fn run_privileged_program(program: &str, args: &[&str]) -> anyhow::Res
         args,
     )?;
 
+    if matches!(
+        std::path::Path::new(program)
+            .file_name()
+            .and_then(|name| name.to_str()),
+        Some("apt-get" | "dnf")
+    ) && args.first().is_some_and(|arg| {
+        matches!(
+            *arg,
+            "install" | "upgrade" | "dist-upgrade" | "full-upgrade"
+        )
+    }) {
+        crate::core::security::policy::require_native_plan_support(program)?;
+    }
+    let program_path = trusted_program(program)?;
+
     // Pre-flight: validate/refresh credentials WITHOUT running the payload,
     // so a password requirement is detected before any partial work.
-    let authenticated = tokio::process::Command::new("sudo")
+    let authenticated = sudo_command()?
         .arg("-n")
         .arg("-v")
         .stdin(std::process::Stdio::null())
@@ -147,11 +243,11 @@ pub async fn run_privileged_program(program: &str, args: &[&str]) -> anyhow::Res
                 "Privilege elevation requires a password but no interactive terminal is available.\n\
                  \n\
                  Run 'omg doctor --turbo' interactively to prime sudo credentials,\n\
-                 or configure narrowly scoped NOPASSWD rules for automation."
+                 and use your administrator-approved sudo policy for automation."
             );
         }
         // One interactive authentication prompt with inherited stdio.
-        let mut auth_cmd = tokio::process::Command::new("sudo");
+        let mut auth_cmd = sudo_command()?;
         scrub_privileged_env(&mut auth_cmd);
         let status = auth_cmd
             .arg("-v")
@@ -166,11 +262,13 @@ pub async fn run_privileged_program(program: &str, args: &[&str]) -> anyhow::Res
         }
     }
 
-    let mut elevated = tokio::process::Command::new("sudo");
+    let audit_targets = args.iter().map(|arg| (*arg).to_owned()).collect::<Vec<_>>();
+    crate::core::security::audit::record_operation(program, &audit_targets, "attempt")?;
+    let mut elevated = sudo_command()?;
     scrub_privileged_env(&mut elevated);
     let status = elevated
         .arg("--")
-        .arg(program)
+        .arg(program_path)
         .args(args)
         .stdin(std::process::Stdio::inherit())
         .stdout(std::process::Stdio::inherit())
@@ -179,6 +277,15 @@ pub async fn run_privileged_program(program: &str, args: &[&str]) -> anyhow::Res
         .await
         .map_err(|e| anyhow::anyhow!("Failed to run {program} under sudo: {e}"))?;
 
+    crate::core::security::audit::record_operation(
+        program,
+        &audit_targets,
+        if status.success() {
+            "succeeded"
+        } else {
+            "failed"
+        },
+    )?;
     if status.success() {
         Ok(())
     } else {
@@ -439,12 +546,30 @@ fn payload_command(
 /// step still runs. Only whole-process re-exec points should use
 /// [`run_self_sudo`], which exits to mimic exec() semantics.
 async fn sudo_payload_status(args: &[&str]) -> anyhow::Result<std::process::ExitStatus> {
-    let exe = std::env::current_exe()?;
+    let exe = elevation_executable()?;
 
     // Detect if we're running in development/test mode.
     let is_test_mode =
         crate::core::paths::test_mode() || std::env::var("CARGO_PRIMARY_PACKAGE").is_ok();
-    sudo_payload_status_in(std::path::Path::new("sudo"), exe, is_test_mode, args).await
+    let owned_args = args.iter().map(|arg| (*arg).to_owned()).collect::<Vec<_>>();
+    let pinned = if args.first() == Some(&"install") {
+        Some(crate::core::security::artifact::SnapshotInputs::capture(
+            &owned_args,
+        )?)
+    } else {
+        None
+    };
+    let policy = crate::core::security::policy::policy_handoff()?;
+    let mut args: Vec<_> = pinned
+        .as_ref()
+        .map_or(owned_args.as_slice(), |inputs| inputs.targets.as_slice())
+        .iter()
+        .map(String::as_str)
+        .collect();
+    if let Some(policy) = &policy {
+        args.insert(0, policy);
+    }
+    sudo_payload_status_in(&trusted_program("sudo")?, exe, is_test_mode, &args).await
 }
 
 /// Dev-mode-injectable core of [`sudo_payload_status`]: `dev_mode` short-
@@ -476,7 +601,9 @@ async fn sudo_payload_status_in(
     // required" and the entire privileged operation was silently re-executed,
     // repeating its side effects. The validation only refreshes the sudo
     // timestamp; it never runs the payload.
-    let validated = tokio::process::Command::new(sudo_program)
+    let mut preflight = tokio::process::Command::new(sudo_program);
+    scrub_privileged_env(&mut preflight);
+    let validated = preflight
         .arg("-n")
         .arg("-v")
         .stdin(std::process::Stdio::null())
@@ -493,7 +620,7 @@ async fn sudo_payload_status_in(
                 "Failed to run sudo for privilege elevation: {e}\n\
                  \n\
                  Run 'omg doctor --turbo' interactively to prime sudo credentials,\n\
-                 or configure narrowly scoped NOPASSWD rules for automation."
+                 and use your administrator-approved sudo policy for automation."
             ));
         }
     };
@@ -505,8 +632,7 @@ async fn sudo_payload_status_in(
                 "Privilege elevation failed (--yes flag prevents password prompt).\n\
                  \n\
                  Run 'omg doctor --turbo' interactively to prime sudo credentials.\n\
-                 For automation, configure NOPASSWD only for the required native\n\
-                 package-manager executables.\n\
+                 For automation, use an administrator-approved authenticated session.\n\
                  \n\
                  Alternative: remove --yes to allow a password prompt.\n\
                  Current user: {user}; omg executable: {exe}",
@@ -819,5 +945,46 @@ mod tests {
                 "Operation {op} should be rejected"
             );
         }
+    }
+}
+
+#[cfg(all(test, unix))]
+mod trusted_program_tests {
+    use super::*;
+    #[test]
+    fn lookup_ignores_hostile_path_and_rejects_writable_program() -> anyhow::Result<()> {
+        use std::os::unix::fs::PermissionsExt;
+        let directory = tempfile::tempdir()?;
+        let fake = directory.path().join("sudo");
+        std::fs::write(&fake, "#!/bin/sh\nexit 77\n")?;
+        std::fs::set_permissions(&fake, std::fs::Permissions::from_mode(0o755))?;
+        assert!(trusted_executable_path(&fake).is_err());
+        let command = system_command("sudo")?;
+        assert!(std::path::Path::new(command.get_program()).is_absolute());
+        assert_eq!(
+            command
+                .get_envs()
+                .find(|(key, _)| *key == "PATH")
+                .unwrap()
+                .1
+                .unwrap(),
+            SYSTEM_PATH
+        );
+        Ok(())
+    }
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn elevation_uses_the_running_inode() -> anyhow::Result<()> {
+        use std::os::unix::fs::MetadataExt;
+        let pinned = elevation_executable()?;
+        assert_eq!(
+            pinned,
+            std::path::PathBuf::from(format!("/proc/{}/exe", std::process::id()))
+        );
+        assert_eq!(
+            std::fs::metadata(pinned)?.ino(),
+            std::fs::metadata(std::env::current_exe()?)?.ino()
+        );
+        Ok(())
     }
 }

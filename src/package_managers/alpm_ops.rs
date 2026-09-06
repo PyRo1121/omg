@@ -40,9 +40,10 @@ pub(crate) struct LocalPackageMetadata {
 
 #[cfg(feature = "arch")]
 pub(crate) fn load_local_package_metadata(path: &str) -> Result<LocalPackageMetadata> {
-    let canonical = std::fs::canonicalize(path)
-        .with_context(|| format!("Failed to resolve local package file {path}"))?;
-    let canonical = canonical
+    let snapshot =
+        crate::core::security::artifact::ArchiveSnapshot::capture(std::path::Path::new(path))?;
+    let pinned = snapshot.path();
+    let canonical = pinned
         .to_str()
         .context("Local package path contains invalid UTF-8")?;
     let alpm = open_default_alpm()?;
@@ -391,13 +392,10 @@ pub use crate::package_managers::alpm_direct::list_orphans_fast as list_orphans_
 /// is sanitized the same way search results are.
 pub fn display_pkg_info(info: &PackageInfo) {
     use crate::cli::{style, ui};
-    ui::print_kv(
-        "Name",
-        &style::package(&style::sanitize_terminal_text(&info.name)),
-    );
-    ui::print_kv(
-        "Version",
-        &style::version(&style::sanitize_terminal_text(&info.version.to_string())),
+    println!(
+        "{} {}\n",
+        style::emphasis(&style::sanitize_terminal_text(&info.name)),
+        style::dim(&style::sanitize_terminal_text(&info.version.to_string())),
     );
     ui::print_kv(
         "Description",
@@ -407,17 +405,25 @@ pub fn display_pkg_info(info: &PackageInfo) {
         "Source",
         &format!(
             "Official repository ({})",
-            style::info(&style::sanitize_terminal_text(&info.repo))
+            style::sanitize_terminal_text(&info.repo)
         ),
     );
     ui::print_kv(
         "URL",
         &style::url(&style::sanitize_terminal_text(
-            info.url.as_deref().unwrap_or("-"),
+            info.url
+                .as_deref()
+                .filter(|url| !url.is_empty())
+                .unwrap_or("unknown"),
         )),
     );
     ui::print_kv("Size", &style::size(info.size));
-    ui::print_kv("Download", &style::size(info.download_size.unwrap_or(0)));
+    ui::print_kv(
+        "Download",
+        &info
+            .download_size
+            .map_or_else(|| "unknown".to_string(), style::size),
+    );
     if !info.licenses.is_empty() {
         ui::print_kv(
             "License",
@@ -481,6 +487,19 @@ pub fn execute_transaction(
     kind: TransactionKind,
     handle: Option<&mut alpm::Alpm>,
 ) -> Result<()> {
+    let staged = if matches!(
+        kind,
+        TransactionKind::Install | TransactionKind::InstallAurArtifact
+    ) {
+        Some(crate::core::security::artifact::StagedInputs::prepare(
+            &packages,
+        )?)
+    } else {
+        None
+    };
+    let packages = staged
+        .as_ref()
+        .map_or(packages, |inputs| inputs.targets.clone());
     let pacman_config = crate::core::pacman_conf::PacmanConfig::parse(paths::pacman_conf_path())
         .context("Failed to load transaction options from pacman.conf")?;
 
@@ -1082,8 +1101,10 @@ fn prepare_alpm_transaction<'a>(
             alpm::Error::HandleLock => {
                 anyhow::anyhow!(
                     "✗ Database is locked by another process.\n  \
-                 → Check if pacman, yay, or another package manager is running.\n  \
-                 → If no other process is running, remove: /var/lib/pacman/db.lck"
+                 → Check holders with: pgrep -a '^(pacman|yay|paru|pikaur|omg|omgd|makepkg)$'\n  \
+                 → If a manager is mid-transaction, wait for it and retry.\n  \
+                 → Only when no manager is running, clear the stale lock: sudo rm /var/lib/pacman/db.lck\n  \
+                 → Then re-run; `omg doctor` reports stale vs live locks"
                 )
             }
             _ => anyhow::anyhow!("Failed to initialize transaction: {e}"),
@@ -1347,6 +1368,21 @@ fn commit_alpm_transaction(
     alpm.trans_prepare()
         .map_err(|e| anyhow::anyhow!(format_trans_prepare_error(&e.to_string())))?;
 
+    let candidates = alpm
+        .trans_add()
+        .into_iter()
+        .map(|package| {
+            Ok((
+                package.name().to_owned(),
+                crate::package_managers::parse_version(package.version().as_str())
+                    .context("Invalid prepared package version")?,
+                package.origin() != alpm::PackageFrom::SyncDb,
+                package.licenses().iter().next().map(str::to_owned),
+            ))
+        })
+        .collect::<Result<Vec<_>>>()?;
+    crate::core::security::policy::check_prepared_packages(candidates)?;
+
     // RECURSE expands the removal set during preparation. Validate the final
     // set, not only the user's explicit targets, so dependencies protected by
     // HoldPkg cannot be removed as a cascade.
@@ -1371,8 +1407,32 @@ fn commit_alpm_transaction(
     }
 
     main_task.set_message("Finalizing...");
-    alpm.trans_commit()
-        .context("Transaction failed to commit. Run 'omg cleanup' if issue persists.")?;
+    let targets = alpm
+        .trans_add()
+        .into_iter()
+        .chain(alpm.trans_remove())
+        .map(|package| package.name().to_owned())
+        .collect::<Vec<_>>();
+    let operation = match kind {
+        TransactionKind::Install | TransactionKind::InstallAurArtifact => "install",
+        TransactionKind::Remove { .. } => "remove",
+        TransactionKind::SystemUpgrade => "upgrade",
+    };
+    crate::core::security::audit::record_operation(operation, &targets, "attempt")?;
+    let result = alpm
+        .trans_commit()
+        .map_err(|error| anyhow::anyhow!("Transaction failed to commit: {error}"));
+    crate::core::security::audit::record_operation(
+        operation,
+        &targets,
+        if result.is_ok() {
+            "succeeded"
+        } else {
+            "failed"
+        },
+    )
+    .context("Package transaction finished but audit persistence failed")?;
+    result?;
 
     main_task.finish(Outcome::Done);
 

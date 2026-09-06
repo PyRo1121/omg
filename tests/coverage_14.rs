@@ -171,11 +171,12 @@ mod why_contracts {
             "reason=0 must render as explicitly installed, got:\n{out}"
         );
         assert!(
-            out.contains("beta") && out.contains("✓ installed"),
+            out.lines().any(|line| line.contains("beta: ✓ installed")),
             "installed dependency beta must be marked ✓, got:\n{out}"
         );
         assert!(
-            out.contains("missingdep") && out.contains("✗ not installed"),
+            out.lines()
+                .any(|line| line.contains("missingdep: ✗ not installed")),
             "absent dependency missingdep must be marked ✗, got:\n{out}"
         );
         assert!(
@@ -330,6 +331,72 @@ mod why_contracts {
 
 mod snapshot_contracts {
     use super::*;
+
+    #[test]
+    fn held_index_lock_blocks_snapshot_mutations() -> anyhow::Result<()> {
+        let project = TestProject::new();
+        let id = create_snapshot(&project, "original");
+        let directory = project.data_dir.path().join("snapshots");
+        let original = fs::read(directory.join("index.json"))?;
+        let lock = fs::File::create(directory.join(".index.lock"))?;
+        lock.lock()?;
+        for args in [
+            vec!["snapshot", "create", "--message", "must not appear"],
+            vec!["snapshot", "delete", id.as_str()],
+        ] {
+            let result = project.run_with_env(&args, &[("OMG_TEST_COMMAND_TIMEOUT_SECS", "5")]);
+            result.assert_failure();
+            assert!(
+                result
+                    .combined_output()
+                    .contains("Another snapshot mutation is running")
+            );
+            assert_eq!(fs::read(directory.join("index.json"))?, original);
+            assert!(directory.join(format!("{id}.json")).is_file());
+        }
+        drop(lock);
+        create_snapshot(&project, "after release");
+        project.run(&["snapshot", "delete", &id]).assert_success();
+        assert_eq!(read_snapshot_index(&project).len(), 1);
+        Ok(())
+    }
+
+    #[test]
+    fn corrupt_index_is_checked_before_snapshot_mutation() -> anyhow::Result<()> {
+        let project = TestProject::new();
+        let id = create_snapshot(&project, "preserve");
+        let directory = project.data_dir.path().join("snapshots");
+        let snapshot = directory.join(format!("{id}.json"));
+        let original = fs::read(&snapshot)?;
+        fs::write(directory.join("index.json"), b"malformed index")?;
+        for args in [
+            vec!["snapshot", "delete", id.as_str()],
+            vec!["snapshot", "create", "--message", "must not appear"],
+        ] {
+            project.run(&args).assert_failure();
+            assert_eq!(
+                fs::read(&snapshot)?,
+                original,
+                "snapshot bytes must survive index errors"
+            );
+            assert_eq!(fs::read(directory.join("index.json"))?, b"malformed index");
+            let json_files = fs::read_dir(&directory)?
+                .collect::<std::io::Result<Vec<_>>>()?
+                .into_iter()
+                .filter(|entry| {
+                    entry
+                        .path()
+                        .extension()
+                        .is_some_and(|extension| extension == "json")
+                })
+                .count();
+            assert_eq!(
+                json_files, 2,
+                "failed create must not leave an unindexed snapshot"
+            );
+        }
+        Ok(())
+    }
 
     /// Contract: `snapshot create --message M` appends exactly one index
     /// entry carrying the message and an ID of the form
@@ -690,5 +757,72 @@ mod snapshot_contracts {
             .map(|rd| rd.flatten().count())
             .unwrap_or(0);
         assert_eq!(stray, 0, "rejected create must not leave snapshot files");
+    }
+}
+
+#[cfg(feature = "arch")]
+mod install_discovery {
+    use super::*;
+
+    #[test]
+    fn completion_keeps_package_context_after_options_and_targets() {
+        let project = TestProject::for_distro("arch");
+        install_fake_local_db(&project, &[("firefox", "1.0-1", 0, &[])]);
+        let cache = serde_json::json!({
+            "format_version": 1,
+            "entries": {
+                "aur_last_refresh": jiff::Timestamp::now().to_string(),
+                "aur_packages": "firefox-nightly"
+            }
+        });
+        let cache_path = project.data_dir.path().join("completion-cache.json");
+        let original = serde_json::to_vec(&cache).unwrap();
+        fs::write(&cache_path, &original).unwrap();
+
+        for (last, full) in [
+            ("install", "omg install frfx"),
+            ("-y", "omg install -y frfx"),
+            ("git", "omg install git frfx"),
+            ("tool", "omg install tool frfx"),
+            ("i", "omg -q i frfx"),
+        ] {
+            let result = project.run(&[
+                "complete",
+                "--shell",
+                "zsh",
+                "--current",
+                "frfx",
+                "--last",
+                last,
+                "--full",
+                full,
+            ]);
+            result.assert_success();
+            assert_eq!(
+                result.stdout.lines().collect::<Vec<_>>(),
+                vec!["firefox", "firefox-nightly"],
+                "completion context: {full}"
+            );
+        }
+        assert_eq!(fs::read(cache_path).unwrap(), original);
+    }
+
+    #[test]
+    fn install_without_targets_needs_a_terminal_and_preserves_inventory() {
+        let project = TestProject::for_distro("arch");
+        project.mock_install("git", "1.0-1").unwrap();
+        let state_path = project.data_dir.path().join("mock_state_pacman.json");
+        let original = fs::read(&state_path).unwrap();
+        for args in [
+            vec!["install"],
+            vec!["i"],
+            vec!["install", "-y"],
+            vec!["install", "--dry-run"],
+        ] {
+            let result = project.run(&args);
+            result.assert_failure();
+            result.assert_stderr_contains("No packages specified; run `omg install` in a terminal");
+            assert_eq!(fs::read(&state_path).unwrap(), original);
+        }
     }
 }

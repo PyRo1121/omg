@@ -1,20 +1,9 @@
 _omg_completions() {
-    local cur last full
+    local cur last full suggestions suggestion
     COMPREPLY=()
     cur="${COMP_WORDS[COMP_CWORD]}"
     last="${COMP_WORDS[COMP_CWORD - 1]}"
     full="${COMP_LINE}"
-
-    # Dynamic completion for package names and more
-    case "$last" in
-    install | i | remove | r | info | use | ls | list | which | tool | env | run | new)
-        local suggestions=$(omg complete --shell bash --current "$cur" --last "$last" --full "$full" 2>/dev/null)
-        if [[ -n "$suggestions" ]]; then
-            COMPREPLY=($(compgen -W "$suggestions" -- "$cur"))
-            return 0
-        fi
-        ;;
-    esac
 
     # Main command completion (visible commands + their visible aliases)
     if [[ $COMP_CWORD -eq 1 ]]; then
@@ -23,13 +12,13 @@ _omg_completions() {
         return 0
     fi
 
-    # Fallback to dynamic completion for any context
     if [[ $COMP_CWORD -gt 1 ]]; then
-        local suggestions=$(omg complete --shell bash --current "$cur" --last "$last" --full "$full" 2>/dev/null)
-        if [[ -n "$suggestions" ]]; then
-            COMPREPLY=($(compgen -W "$suggestions" -- "$cur"))
-            return 0
-        fi
+        suggestions=$(omg complete --shell bash --current "$cur" --last "$last" --full "$full" 2>/dev/null) || return 0
+        while IFS= read -r suggestion; do
+            if [[ -n "$suggestion" ]]; then
+                COMPREPLY+=("$suggestion")
+            fi
+        done <<< "$suggestions"
     fi
 }
 

@@ -4,7 +4,7 @@
 
 pub mod common;
 
-use clap::CommandFactory;
+use clap::{CommandFactory, Parser};
 use common::*;
 use omg_lib::cli::Cli;
 
@@ -29,10 +29,6 @@ fn every_declared_command_renders_binary_help() {
     use std::fmt::Write as _;
 
     let paths = command_paths();
-    assert!(
-        paths.len() >= 120,
-        "unexpectedly small command tree: {paths:?}"
-    );
     let evidence_dir = std::env::var_os("OMG_CLI_SMOKE_EVIDENCE_DIR").map(std::path::PathBuf::from);
     if let Some(dir) = &evidence_dir {
         std::fs::create_dir_all(dir).expect("create CLI smoke evidence directory");
@@ -82,60 +78,491 @@ fn every_declared_command_renders_binary_help() {
     }
 }
 
-#[derive(Debug)]
-struct BehaviorCase {
-    name: String,
-    args: Vec<String>,
-    safety: String,
-    expected_exit: i32,
-    expected_ux: String,
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Safety {
+    Read,
+    IsolatedWrite,
+    ControlledError,
+    HelpBoundary,
+    PackageMutation,
+    ServiceMutation,
+    Interactive,
 }
 
+impl Safety {
+    fn parse(raw: &str, line_number: usize) -> Self {
+        match raw {
+            "read" => Self::Read,
+            "isolated-write" => Self::IsolatedWrite,
+            "controlled-error" => Self::ControlledError,
+            "help-boundary" => Self::HelpBoundary,
+            "package-mutation" => Self::PackageMutation,
+            "service-mutation" => Self::ServiceMutation,
+            "interactive" => Self::Interactive,
+            other => {
+                panic!("unknown safety class on behavior inventory line {line_number}: {other}")
+            }
+        }
+    }
+
+    const fn as_str(self) -> &'static str {
+        match self {
+            Self::Read => "read",
+            Self::IsolatedWrite => "isolated-write",
+            Self::ControlledError => "controlled-error",
+            Self::HelpBoundary => "help-boundary",
+            Self::PackageMutation => "package-mutation",
+            Self::ServiceMutation => "service-mutation",
+            Self::Interactive => "interactive",
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum UxState {
+    Pass,
+    Declared,
+}
+
+impl UxState {
+    fn parse(raw: &str, line_number: usize) -> Self {
+        match raw {
+            "pass" => Self::Pass,
+            "declared" => Self::Declared,
+            other => panic!(
+                "unknown expected_ux state on behavior inventory line {line_number}: {other}"
+            ),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+enum Tier {
+    Hermetic,
+    Container,
+    Qemu,
+    Pty,
+    NestedContainer,
+    Network,
+    Credentialed,
+}
+
+impl Tier {
+    fn parse(raw: &str, line_number: usize) -> Self {
+        match raw {
+            "hermetic" => Self::Hermetic,
+            "container" => Self::Container,
+            "qemu" => Self::Qemu,
+            "pty" => Self::Pty,
+            "nested-container" => Self::NestedContainer,
+            "network" => Self::Network,
+            "credentialed" => Self::Credentialed,
+            other => {
+                panic!("unknown execution tier on behavior inventory line {line_number}: {other}")
+            }
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Distro {
+    Arch,
+    Debian,
+    Ubuntu,
+    Fedora,
+}
+
+impl Distro {
+    fn parse(raw: &str, line_number: usize) -> Self {
+        match raw {
+            "arch" => Self::Arch,
+            "debian" => Self::Debian,
+            "ubuntu" => Self::Ubuntu,
+            "fedora" => Self::Fedora,
+            other => panic!("unknown distro on behavior inventory line {line_number}: {other}"),
+        }
+    }
+
+    const fn index(self) -> usize {
+        match self {
+            Self::Arch => 0,
+            Self::Debian => 1,
+            Self::Ubuntu => 2,
+            Self::Fedora => 3,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum ReleaseExpectation {
+    Pass,
+    ExpectedRejection,
+    KnownDefect,
+    Blocked,
+    NotApplicable,
+    Pending,
+}
+
+impl ReleaseExpectation {
+    fn parse(raw: &str, line_number: usize) -> Self {
+        match raw {
+            "pass" => Self::Pass,
+            "expected-rejection" => Self::ExpectedRejection,
+            "known-defect" => Self::KnownDefect,
+            "blocked" => Self::Blocked,
+            "not-applicable" => Self::NotApplicable,
+            "pending" => Self::Pending,
+            other => panic!(
+                "unknown release expectation on behavior inventory line {line_number}: {other}"
+            ),
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum TargetExpectations {
+    HermeticPass,
+    ReleaseMatrix([ReleaseExpectation; 4]),
+}
+
+impl TargetExpectations {
+    fn parse(raw: &str, line_number: usize) -> Self {
+        if raw == "hermetic:pass" {
+            return Self::HermeticPass;
+        }
+
+        let mut expectations = [None; 4];
+        for entry in raw.split(',') {
+            let (distro, expectation) = entry.split_once(':').unwrap_or_else(|| {
+                panic!(
+                    "release target on behavior inventory line {line_number} must be distro:expectation: {entry}"
+                )
+            });
+            let distro = Distro::parse(distro, line_number);
+            let slot = &mut expectations[distro.index()];
+            assert!(
+                slot.is_none(),
+                "duplicate distro on behavior inventory line {line_number}: {distro:?}"
+            );
+            *slot = Some(ReleaseExpectation::parse(expectation, line_number));
+        }
+
+        let [Some(arch), Some(debian), Some(ubuntu), Some(fedora)] = expectations else {
+            panic!(
+                "release targets on behavior inventory line {line_number} must classify arch, debian, ubuntu, and fedora"
+            );
+        };
+        Self::ReleaseMatrix([arch, debian, ubuntu, fedora])
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum Assertion {
+    JsonStdout,
+    Artifact(String),
+}
+
+impl Assertion {
+    fn parse(raw: &str, line_number: usize) -> Self {
+        match raw {
+            "json-stdout" => Self::JsonStdout,
+            _ => match Self::parse_artifact_path(raw) {
+                Ok(relative) => Self::Artifact(relative),
+                Err(reason) => panic!(
+                    "artifact assertion on behavior inventory line {line_number} must be `artifact:<root-relative path>` without traversal ({reason}): {raw}"
+                ),
+            },
+        }
+    }
+
+    fn parse_artifact_path(raw: &str) -> Result<String, String> {
+        let relative = raw
+            .strip_prefix("artifact:")
+            .ok_or_else(|| "missing `artifact:` prefix".to_string())?;
+        let path = std::path::Path::new(relative);
+        if relative.is_empty()
+            || path.is_absolute()
+            || path
+                .components()
+                .any(|component| !matches!(component, std::path::Component::Normal(_)))
+            || relative
+                .split('/')
+                .any(|component| component.is_empty() || component == "." || component == "..")
+        {
+            return Err(
+                "path must be relative with no root, prefix, `.`, `..`, or empty components"
+                    .to_string(),
+            );
+        }
+        Ok(relative.to_string())
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Cleanup {
+    TempdirDrop,
+    None,
+    ContainerPrune,
+    HostStateRestore,
+    VmRevert,
+    DaemonStop,
+}
+
+impl Cleanup {
+    fn parse(raw: &str, line_number: usize) -> Self {
+        match raw {
+            "tempdir-drop" => Self::TempdirDrop,
+            "none" => Self::None,
+            "container-prune" => Self::ContainerPrune,
+            "host-state-restore" => Self::HostStateRestore,
+            "vm-revert" => Self::VmRevert,
+            "daemon-stop" => Self::DaemonStop,
+            other => {
+                panic!("unknown cleanup scope on behavior inventory line {line_number}: {other}")
+            }
+        }
+    }
+}
+
+#[derive(Debug)]
+struct BehaviorCase {
+    id: String,
+    line: usize,
+    args: Vec<String>,
+    safety: Safety,
+    expected_exit: Option<i32>,
+    expected_ux: UxState,
+    requires: Vec<String>,
+    tiers: Vec<Tier>,
+    targets: TargetExpectations,
+    assertions: Vec<Assertion>,
+    cleanup: Cleanup,
+}
+
+impl BehaviorCase {
+    fn validate_schema(&self) {
+        assert!(
+            !self.tiers.is_empty(),
+            "case {} on line {}: execution tiers cannot be empty",
+            self.id,
+            self.line
+        );
+        let unique_tiers: std::collections::HashSet<Tier> = self.tiers.iter().copied().collect();
+        assert_eq!(
+            unique_tiers.len(),
+            self.tiers.len(),
+            "case {} on line {}: execution tiers must be unique",
+            self.id,
+            self.line
+        );
+
+        match self.expected_ux {
+            UxState::Pass => {
+                assert!(
+                    self.expected_exit.is_some(),
+                    "case {} on line {}: executable rows must declare an expected exit code",
+                    self.id,
+                    self.line
+                );
+                if self.runs_hermetically() {
+                    assert_eq!(
+                        self.targets,
+                        TargetExpectations::HermeticPass,
+                        "case {} on line {}: hermetic rows must target hermetic:pass",
+                        self.id,
+                        self.line
+                    );
+                    assert_eq!(
+                        self.cleanup,
+                        Cleanup::TempdirDrop,
+                        "case {} on line {}: hermetic rows clean up by dropping the tempdir fixture",
+                        self.id,
+                        self.line
+                    );
+                    assert!(
+                        !matches!(
+                            self.safety,
+                            Safety::PackageMutation | Safety::ServiceMutation | Safety::Interactive
+                        ),
+                        "case {} on line {}: mutation and interactive cases cannot run hermetically",
+                        self.id,
+                        self.line
+                    );
+                } else {
+                    let TargetExpectations::ReleaseMatrix(expectations) = &self.targets else {
+                        panic!(
+                            "case {} on line {}: non-hermetic executable rows need release expectations",
+                            self.id, self.line
+                        );
+                    };
+                    assert!(
+                        expectations
+                            .iter()
+                            .all(|expectation| *expectation != ReleaseExpectation::Pending),
+                        "case {} on line {}: executable release expectations cannot remain pending",
+                        self.id,
+                        self.line
+                    );
+                }
+            }
+            UxState::Declared => {
+                assert!(
+                    !self.tiers.contains(&Tier::Hermetic),
+                    "case {} on line {}: declaration rows must name non-hermetic tiers",
+                    self.id,
+                    self.line
+                );
+                assert!(
+                    self.expected_exit.is_none(),
+                    "case {} on line {}: declaration rows cannot claim an exit code",
+                    self.id,
+                    self.line
+                );
+                let TargetExpectations::ReleaseMatrix(expectations) = &self.targets else {
+                    panic!(
+                        "case {} on line {}: declaration rows need release expectations",
+                        self.id, self.line
+                    );
+                };
+                assert!(
+                    expectations
+                        .iter()
+                        .all(|expectation| *expectation == ReleaseExpectation::Pending),
+                    "case {} on line {}: declaration rows must remain pending until executed",
+                    self.id,
+                    self.line
+                );
+                assert!(
+                    self.cleanup != Cleanup::TempdirDrop,
+                    "case {} on line {}: declaration rows do not use hermetic cleanup",
+                    self.id,
+                    self.line
+                );
+            }
+        }
+    }
+
+    fn runs_hermetically(&self) -> bool {
+        self.tiers == [Tier::Hermetic] && self.expected_ux == UxState::Pass
+    }
+}
+
+const BEHAVIOR_INVENTORY_HEADER: &str = "case\targs_json\tsafety\texpected_exit\texpected_ux\trequires\ttier\ttargets\tassertions\tcleanup";
+
 fn behavior_cases() -> Vec<BehaviorCase> {
-    include_str!("cli_behavior_inventory.tsv")
-        .lines()
+    let mut lines = include_str!("cli_behavior_inventory.tsv").lines();
+    assert_eq!(
+        lines.next(),
+        Some(BEHAVIOR_INVENTORY_HEADER),
+        "behavior inventory header must match the ten-column contract exactly"
+    );
+    lines
         .enumerate()
-        .skip(1)
+        .filter(|(_, line)| !line.is_empty())
         .map(|(line_index, line)| {
-            let line_number = line_index + 1;
+            let line_number = line_index + 2;
             let fields: Vec<&str> = line.split('\t').collect();
             assert_eq!(
                 fields.len(),
-                5,
-                "behavior inventory line {line_number} must have five fields: {line}"
+                10,
+                "behavior inventory line {line_number} must have ten columns (case, args_json, safety, expected_exit, expected_ux, requires, tier, targets, assertions, cleanup): {line}"
             );
-            assert!(
-                matches!(
-                    fields[2],
-                    "read" | "isolated-write" | "controlled-error" | "help-boundary"
-                ),
-                "unknown safety class on behavior inventory line {line_number}: {}",
-                fields[2]
-            );
-            assert_eq!(
-                fields[4], "pass",
-                "only reviewed passing UX contracts belong in the inventory"
-            );
-
-            BehaviorCase {
-                name: fields[0].to_string(),
+            let expected_exit = if fields[3] == "-" {
+                None
+            } else {
+                Some(fields[3].parse().unwrap_or_else(|error| {
+                    panic!("invalid exit code on behavior inventory line {line_number}: {error}")
+                }))
+            };
+            let case = BehaviorCase {
+                id: fields[0].to_string(),
+                line: line_number,
                 args: serde_json::from_str(fields[1]).unwrap_or_else(|error| {
                     panic!("invalid args JSON on behavior inventory line {line_number}: {error}")
                 }),
-                safety: fields[2].to_string(),
-                expected_exit: fields[3].parse().unwrap_or_else(|error| {
-                    panic!("invalid exit code on behavior inventory line {line_number}: {error}")
-                }),
-                expected_ux: fields[4].to_string(),
-            }
+                safety: Safety::parse(fields[2], line_number),
+                expected_exit,
+                expected_ux: UxState::parse(fields[4], line_number),
+                requires: if fields[5] == "-" {
+                    Vec::new()
+                } else {
+                    fields[5]
+                        .split(',')
+                        .map(str::to_string)
+                        .collect()
+                },
+                tiers: fields[6]
+                    .split(',')
+                    .map(|raw| Tier::parse(raw, line_number))
+                    .collect(),
+                targets: TargetExpectations::parse(fields[7], line_number),
+                assertions: if fields[8] == "-" {
+                    Vec::new()
+                } else {
+                    fields[8]
+                        .split(',')
+                        .map(|raw| Assertion::parse(raw, line_number))
+                        .collect()
+                },
+                cleanup: Cleanup::parse(fields[9], line_number),
+            };
+            case.validate_schema();
+            case
         })
         .collect()
 }
 
+// `self-update --version` shares Clap's generated version argument ID, but the
+// command disables the generated flag.
+fn declared_long_flags() -> Vec<(Vec<String>, String)> {
+    fn collect(
+        command: &clap::Command,
+        prefix: &mut Vec<String>,
+        flags: &mut Vec<(Vec<String>, String)>,
+    ) {
+        for argument in command.get_arguments() {
+            if argument.get_id() == "help"
+                || (argument.get_id() == "version" && !command.is_disable_version_flag_set())
+            {
+                continue;
+            }
+            if let Some(long_flag) = argument.get_long() {
+                flags.push((prefix.clone(), long_flag.to_string()));
+            }
+        }
+        for subcommand in command.get_subcommands() {
+            prefix.push(subcommand.get_name().to_string());
+            collect(subcommand, prefix, flags);
+            prefix.pop();
+        }
+    }
+
+    let command = Cli::command();
+    let mut flags = Vec::new();
+    collect(&command, &mut Vec::new(), &mut flags);
+    flags
+}
+
+fn global_long_flags() -> Vec<String> {
+    Cli::command()
+        .get_arguments()
+        .filter(|argument| {
+            argument.is_global_set()
+                && argument.get_long().is_some()
+                && !matches!(argument.get_id().as_str(), "help" | "version")
+        })
+        .filter_map(|argument| argument.get_long().map(str::to_string))
+        .collect()
+}
+
 fn command_args_without_global_flags(args: &[String]) -> &[String] {
+    let globals: Vec<String> = global_long_flags()
+        .iter()
+        .map(|flag| format!("--{flag}"))
+        .collect();
     let command_index = args
         .iter()
-        .position(|arg| !matches!(arg.as_str(), "--json" | "--quiet" | "--verbose"))
+        .position(|arg| !globals.contains(arg))
         .unwrap_or(args.len());
     &args[command_index..]
 }
@@ -143,29 +570,18 @@ fn command_args_without_global_flags(args: &[String]) -> &[String] {
 #[test]
 fn behavior_inventory_covers_every_declared_command() {
     let cases = behavior_cases();
-    assert!(
-        cases.len() >= 128,
-        "unexpectedly small behavior inventory: {}",
-        cases.len()
-    );
-
-    let unique_names: std::collections::HashSet<&str> =
-        cases.iter().map(|case| case.name.as_str()).collect();
-    assert_eq!(
-        unique_names.len(),
-        cases.len(),
-        "behavior case names must be unique"
-    );
+    let executable: Vec<&BehaviorCase> = cases
+        .iter()
+        .filter(|case| case.expected_ux == UxState::Pass)
+        .collect();
 
     let missing: Vec<String> = command_paths()
         .into_iter()
         .filter(|path| !path.is_empty())
         .filter(|path| {
-            !cases.iter().any(|case| {
-                command_args_without_global_flags(&case.args)
-                    .get(..path.len())
-                    .is_some_and(|prefix| prefix == path)
-            })
+            !executable
+                .iter()
+                .any(|case| normalized_command_path(&case.args).starts_with(path.as_slice()))
         })
         .map(|path| format!("omg {}", path.join(" ")))
         .collect();
@@ -173,6 +589,142 @@ fn behavior_inventory_covers_every_declared_command() {
         missing.is_empty(),
         "declared commands missing behavior cases: {missing:?}"
     );
+}
+
+#[test]
+fn behavior_inventory_covers_every_declared_long_flag() {
+    let cases = behavior_cases();
+    let contract_args: Vec<(Vec<String>, &Vec<String>)> = cases
+        .iter()
+        .map(|case| (normalized_command_path(&case.args), &case.args))
+        .collect();
+
+    let covered = |flag_path: &[String], flag: &str| {
+        let needle = format!("--{flag}");
+        contract_args.iter().any(|(path, args)| {
+            args.contains(&needle) && (flag_path.is_empty() || path.as_slice() == flag_path)
+        })
+    };
+
+    let missing: Vec<String> = declared_long_flags()
+        .iter()
+        .filter(|(path, flag)| !covered(path, flag))
+        .map(|(path, flag)| format!("omg {} --{flag}", path.join(" ")))
+        .collect();
+    assert!(
+        missing.is_empty(),
+        "declared long flags missing contract rows:\n{}",
+        missing.join("\n")
+    );
+}
+
+#[test]
+fn behavior_inventory_contract_keys_are_unique() {
+    let cases = behavior_cases();
+    let mut ids = std::collections::HashSet::new();
+    let mut keys = std::collections::HashSet::<(Vec<String>, Vec<String>, Vec<String>)>::new();
+    for case in &cases {
+        assert!(
+            ids.insert(case.id.clone()),
+            "duplicate case id {} on line {}",
+            case.id,
+            case.line
+        );
+        let key = (
+            normalized_command_path(&case.args),
+            case.args.clone(),
+            case.requires.clone(),
+        );
+        assert!(
+            keys.insert(key),
+            "duplicate contract key (command path, args, prerequisites) for case {} on line {}",
+            case.id,
+            case.line
+        );
+    }
+}
+
+#[test]
+fn behavior_inventory_prerequisites_resolve_to_earlier_rows() {
+    let cases = behavior_cases();
+    let mut seen = std::collections::HashSet::new();
+    for case in &cases {
+        for prerequisite in &case.requires {
+            assert!(
+                seen.contains(prerequisite),
+                "case {} on line {} requires {prerequisite}, which is not an earlier case",
+                case.id,
+                case.line
+            );
+        }
+        seen.insert(case.id.clone());
+    }
+}
+
+fn normalized_command_path(args: &[String]) -> Vec<String> {
+    let stripped = command_args_without_global_flags(args);
+    command_paths()
+        .into_iter()
+        .filter(|path| !path.is_empty() && stripped.starts_with(path.as_slice()))
+        .max_by_key(Vec::len)
+        .unwrap_or_default()
+}
+
+#[test]
+fn behavior_inventory_header_matches_the_ten_column_contract() {
+    assert_eq!(
+        include_str!("cli_behavior_inventory.tsv").lines().next(),
+        Some(BEHAVIOR_INVENTORY_HEADER),
+        "behavior inventory must open with the exact ten-column header"
+    );
+}
+
+#[test]
+fn behavior_inventory_artifact_parser_rejects_escaping_paths() {
+    for raw in ["artifact:/etc", "artifact:../x", "artifact:a/../x"] {
+        assert!(
+            Assertion::parse_artifact_path(raw).is_err(),
+            "artifact parser must reject {raw}"
+        );
+    }
+    assert_eq!(
+        Assertion::parse_artifact_path("artifact:manifest.json").as_deref(),
+        Ok("manifest.json")
+    );
+}
+
+#[test]
+fn behavior_inventory_release_targets_classify_every_distro_once() {
+    let valid = "arch:pending,debian:pending,ubuntu:pending,fedora:pending";
+    assert!(matches!(
+        TargetExpectations::parse(valid, 1),
+        TargetExpectations::ReleaseMatrix(_)
+    ));
+    for invalid in [
+        "arch:pending,debian:pending,ubuntu:pending",
+        "arch:pending,arch:pending,ubuntu:pending,fedora:pending",
+    ] {
+        assert!(
+            std::panic::catch_unwind(|| TargetExpectations::parse(invalid, 1)).is_err(),
+            "release target parser must reject {invalid}"
+        );
+    }
+}
+
+#[test]
+fn behavior_inventory_declaration_args_parse() {
+    for case in behavior_cases()
+        .into_iter()
+        .filter(|case| case.expected_ux == UxState::Declared)
+    {
+        let args = std::iter::once("omg".to_string()).chain(case.args.clone());
+        assert!(
+            Cli::try_parse_from(args).is_ok(),
+            "declaration case {} on line {} must use valid CLI arguments",
+            case.id,
+            case.line
+        );
+    }
 }
 
 fn prepare_behavior_fixture(project: &TestProject) -> (String, String) {
@@ -290,6 +842,20 @@ fn behavior_inventory_runs_in_hermetic_state() {
             .iter()
             .map(|arg| arg.replace("${ROOT}", &root))
             .collect();
+        let command = format!("omg {}", expanded_args.join(" "));
+        if !case.runs_hermetically() {
+            writeln!(
+                index,
+                "{}\t{command}\t{}\t-\t-\t-\t-\t-\tdeclared\tdeclared",
+                case.id,
+                case.safety.as_str()
+            )
+            .expect("write CLI behavior index row");
+            continue;
+        }
+        let expected_exit = case
+            .expected_exit
+            .expect("executable rows declare an exit code");
         let args: Vec<&str> = expanded_args.iter().map(String::as_str).collect();
         let started = Instant::now();
         let result = project.run_with_env(
@@ -307,10 +873,10 @@ fn behavior_inventory_runs_in_hermetic_state() {
         );
         let elapsed_ms = started.elapsed().as_secs_f64() * 1000.0;
         let mut issues = Vec::new();
-        if result.exit_code != case.expected_exit {
+        if result.exit_code != expected_exit {
             issues.push(format!(
-                "expected exit {}, got {}",
-                case.expected_exit, result.exit_code
+                "expected exit {expected_exit}, got {}",
+                result.exit_code
             ));
         }
         if has_ansi(&result.stdout) || has_ansi(&result.stderr) {
@@ -320,23 +886,41 @@ fn behavior_inventory_runs_in_hermetic_state() {
         if combined.contains("panicked at") || combined.contains("thread 'main' panicked") {
             issues.push("Rust panic report".to_string());
         }
-        if case.safety == "help-boundary" && !result.stdout.contains("Usage:") {
+        if case.safety == Safety::HelpBoundary && !result.stdout.contains("Usage:") {
             issues.push("help boundary did not render Usage".to_string());
         }
-        if case.expected_exit != 0 && result.stderr.trim().is_empty() {
+        if case.expected_exit != Some(0) && result.stderr.trim().is_empty() {
             issues.push("failure did not explain itself on stderr".to_string());
         }
-        if matches!(case.name.as_str(), "outdated-json" | "audit-licenses")
-            && serde_json::from_str::<serde_json::Value>(&result.stdout).is_err()
-        {
-            issues.push("JSON output did not parse".to_string());
+        for assertion in &case.assertions {
+            match assertion {
+                Assertion::JsonStdout => {
+                    if serde_json::from_str::<serde_json::Value>(&result.stdout).is_err() {
+                        issues.push("JSON output did not parse".to_string());
+                    }
+                }
+                Assertion::Artifact(relative) => {
+                    let path = project.path().join(relative);
+                    if std::fs::read_to_string(&path)
+                        .ok()
+                        .and_then(|contents| {
+                            serde_json::from_str::<serde_json::Value>(&contents).ok()
+                        })
+                        .is_none()
+                    {
+                        issues.push(format!(
+                            "artifact {relative} was not written as valid JSON at {}",
+                            path.display()
+                        ));
+                    }
+                }
+            }
         }
 
         let actual_ux = if issues.is_empty() { "pass" } else { "fail" };
-        if actual_ux != case.expected_ux {
-            failures.push(format!("{}: {}", case.name, issues.join("; ")));
+        if actual_ux != "pass" {
+            failures.push(format!("{}: {}", case.id, issues.join("; ")));
         }
-        let command = format!("omg {}", expanded_args.join(" "));
         let issue_summary = if issues.is_empty() {
             "none".to_string()
         } else {
@@ -344,11 +928,9 @@ fn behavior_inventory_runs_in_hermetic_state() {
         };
         writeln!(
             index,
-            "{}\t{}\t{}\t{}\t{}\t{}\t{}\t{elapsed_ms:.1}\t{}\t{actual_ux}",
-            case.name,
-            command,
-            case.safety,
-            case.expected_exit,
+            "{}\t{command}\t{}\t{expected_exit}\t{}\t{}\t{}\t{elapsed_ms:.1}\t{}\t{actual_ux}",
+            case.id,
+            case.safety.as_str(),
             result.exit_code,
             result.stdout.len(),
             result.stderr.len(),
@@ -358,11 +940,14 @@ fn behavior_inventory_runs_in_hermetic_state() {
 
         if let Some(dir) = &evidence_dir {
             let transcript = format!(
-                "command: {command}\nsafety: {}\nexpected_exit: {}\nexit: {}\nelapsed_ms: {elapsed_ms:.1}\nissues: {issue_summary}\nux_verdict: {actual_ux}\n--- stdout ---\n{}\n--- stderr ---\n{}",
-                case.safety, case.expected_exit, result.exit_code, result.stdout, result.stderr
+                "command: {command}\nsafety: {}\nexpected_exit: {expected_exit}\nexit: {}\nelapsed_ms: {elapsed_ms:.1}\nissues: {issue_summary}\nux_verdict: {actual_ux}\n--- stdout ---\n{}\n--- stderr ---\n{}",
+                case.safety.as_str(),
+                result.exit_code,
+                result.stdout,
+                result.stderr
             );
             std::fs::write(
-                dir.join(format!("{:03}-{}.txt", number + 1, case.name)),
+                dir.join(format!("{:03}-{}.txt", number + 1, case.id)),
                 transcript,
             )
             .expect("write CLI behavior transcript");
@@ -371,19 +956,6 @@ fn behavior_inventory_runs_in_hermetic_state() {
 
     if let Some(dir) = evidence_dir {
         std::fs::write(dir.join("index.tsv"), index).expect("write CLI behavior index");
-    }
-    for artifact in ["manifest.json", "privacy.json", "sbom.json"] {
-        let path = project.path().join(artifact);
-        match std::fs::read_to_string(&path)
-            .ok()
-            .and_then(|contents| serde_json::from_str::<serde_json::Value>(&contents).ok())
-        {
-            Some(_) => {}
-            None => failures.push(format!(
-                "artifact {artifact} was not written as valid JSON at {}",
-                path.display()
-            )),
-        }
     }
     assert!(
         failures.is_empty(),
@@ -401,6 +973,36 @@ fn root_help_prioritizes_common_commands() {
     result.assert_stdout_contains("search");
     assert!(!result.stdout.contains("enterprise"), "{}", result.stdout);
     result.assert_stdout_contains("omg --help --all-commands");
+}
+
+#[test]
+fn redirected_status_has_no_terminal_escape_sequences() {
+    let result = run_omg(&["status"]);
+
+    result.assert_success();
+    assert!(
+        !result.stdout.contains('\u{1b}'),
+        "redirected status output contains terminal escapes: {:?}",
+        result.stdout
+    );
+}
+
+#[test]
+fn tui_commands_require_an_attended_terminal() {
+    for args in [&["dash"][..], &["team", "dashboard"][..]] {
+        let result = run_omg(args);
+
+        assert!(!result.success, "{args:?} unexpectedly succeeded");
+        assert!(
+            result.stderr.contains("requires an interactive terminal"),
+            "{args:?} produced an unclear error: {}",
+            result.stderr
+        );
+        assert!(
+            !result.combined_output().contains('\u{1b}'),
+            "{args:?} emitted terminal escapes without a terminal"
+        );
+    }
 }
 
 #[test]
@@ -761,6 +1363,24 @@ mod security_tests {
         let result = run_omg(&["account", "--help"]);
         result.assert_success();
         result.assert_stdout_contains("link");
+    }
+
+    #[test]
+    fn account_link_does_not_prompt_without_a_terminal() {
+        let result = run_omg_with_env(
+            &["account", "link", "invalid-token"],
+            &[
+                ("HTTP_PROXY", "http://127.0.0.1:9"),
+                ("HTTPS_PROXY", "http://127.0.0.1:9"),
+            ],
+        );
+
+        result.assert_failure();
+        assert!(
+            !result.stdout.contains("Your name") && !result.stdout.contains("Your email"),
+            "non-interactive account linking must not consume stdin:\n{}",
+            result.stdout
+        );
     }
 }
 

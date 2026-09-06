@@ -56,8 +56,13 @@ pub async fn complete(_shell: &str, current: &str, last: &str, full: Option<&str
     let engine = crate::core::completion::CompletionEngine::new();
 
     let full = full.unwrap_or_default();
-    let in_tool = full.split_whitespace().any(|token| token == "tool");
-    let in_env = full.split_whitespace().any(|token| token == "env");
+    let root = full
+        .split_whitespace()
+        .skip(1)
+        .find(|word| !word.starts_with('-'));
+    let in_tool = root == Some("tool");
+    let in_env = root == Some("env");
+    let last = package_completion_command(root, last);
 
     // Fast path: empty current means show top suggestions only (limit 50 for speed)
     let limit = if current.is_empty() { 50 } else { 200 };
@@ -96,6 +101,13 @@ pub async fn complete(_shell: &str, current: &str, last: &str, full: Option<&str
     Ok(())
 }
 
+fn package_completion_command<'a>(root: Option<&'a str>, last: &'a str) -> &'a str {
+    match root {
+        Some(command @ ("install" | "i" | "remove" | "r" | "info")) => command,
+        _ => last,
+    }
+}
+
 /// Complete package names for install/remove/info commands
 async fn complete_package_names(
     engine: &crate::core::completion::CompletionEngine,
@@ -107,21 +119,26 @@ async fn complete_package_names(
     if in_tool && last == "install" {
         return Ok(engine.fuzzy_match(current, crate::cli::tool::registry_tool_names()));
     }
+    Ok(engine.fuzzy_match(current, available_package_names().await?))
+}
+
+pub(crate) async fn available_package_names() -> Result<Vec<String>> {
     // Official lookup failures fail closed; AUR names remain optional enrichment.
     #[allow(
         unused_mut,
         reason = "mutated only when the Arch completion branch is compiled"
     )]
-    let mut names = get_package_names_with_fallback().await?;
+    let mut names = tokio::task::spawn_blocking(official_package_names).await??;
 
     // Include AUR packages on Arch. Skip on Debian even if Arch is compiled in.
     #[cfg(feature = "arch")]
     {
         #[cfg(any(feature = "debian", feature = "debian-pure"))]
         if crate::core::env::distro::is_debian_like() {
-            return Ok(engine.fuzzy_match(current, names));
+            return Ok(names);
         }
 
+        let engine = crate::core::completion::CompletionEngine::new();
         if let Ok(aur_names) = engine.get_aur_package_names().await {
             names.extend(aur_names);
             names.sort();
@@ -129,7 +146,7 @@ async fn complete_package_names(
         }
     }
 
-    Ok(engine.fuzzy_match(current, names))
+    Ok(names)
 }
 
 /// Complete installed package names for remove command
@@ -191,30 +208,18 @@ fn get_installed_package_names() -> Result<Vec<String>> {
     package_completion_requires_backend()
 }
 
-/// Get package names from daemon with fallback to direct access
+/// Read the complete local catalog, not a capped daemon search result.
 #[allow(
     clippy::needless_return,
     reason = "additive backend feature branches return before compiled fallbacks"
 )]
-async fn get_package_names_with_fallback() -> Result<Vec<String>> {
+fn official_package_names() -> Result<Vec<String>> {
     #[cfg(feature = "debian")]
     if use_debian_backend() {
         return apt_list_all_package_names()
             .context("Failed to list official package names for completion");
     }
 
-    // Try daemon first. A missing or down daemon is expected and falls back.
-    #[cfg(unix)]
-    if let Ok(mut client) = crate::core::client::DaemonClient::connect().await {
-        match client.search("", None).await {
-            Ok(res) => return Ok(res.packages.into_iter().map(|pkg| pkg.name).collect()),
-            Err(error) => {
-                tracing::debug!("Daemon package-name search failed, using local lookup: {error}");
-            }
-        }
-    }
-
-    // Fallback to a direct query. Local lookup failures fail closed.
     #[cfg(any(feature = "debian", feature = "debian-pure"))]
     if crate::core::env::distro::is_debian_like() {
         return crate::package_managers::debian_db::search_fast("")

@@ -43,7 +43,7 @@ Because of the reaction we want you to have when you see how fast it is. 12-24x 
 
 ```bash
 # One-liner
-curl -fsSL https://raw.githubusercontent.com/PyRo1121/omg/main/install.sh | bash
+curl -fsSL https://omg.latham.cloud/install.sh | bash
 
 # Or build from source
 git clone https://github.com/PyRo1121/omg.git
@@ -187,7 +187,7 @@ OMG rejects unsupported names with a list of native runtimes. It never downloads
 - **PGP verification** (Sequoia-OpenPGP)
 - **SLSA provenance** (Sigstore/Rekor)
 - **Secret scanning** (20+ credential patterns)
-- **Audit logging** (tamper-evident, hash-chained)
+- **Audit logging** (hash-chained; user-owned logs are not authenticated)
 - **Policy enforcement** (grade-based blocking)
 
 ### What are security grades?
@@ -205,7 +205,7 @@ Yes. OMG:
 - Verifies PGP signatures on official packages
 - Runs without root (except for system package installs via sudo)
 - Uses HTTPS for all network requests
-- Maintains tamper-evident audit logs
+- Maintains hash-chained local audit logs
 
 ---
 

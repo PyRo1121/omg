@@ -1,0 +1,67 @@
+name: Release Smoke
+
+on:
+  pull_request:
+    paths:
+      - ".github/workflows/release-smoke.yml"
+      - "scripts/release-smoke.sh"
+      - "scripts/test-release-smoke.sh"
+      - "scripts/report-smoke-sentry.sh"
+      - "tests/cli_behavior_inventory.tsv"
+  workflow_dispatch:
+    inputs:
+      release_tag:
+        description: "Release tag to smoke (e.g. v0.1.217); empty means latest published release"
+        required: false
+        default: ""
+
+concurrency:
+  group: release-smoke-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  runner-fixtures:
+    name: Runner fixtures
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Test release smoke coordinator
+        run: ./scripts/test-release-smoke.sh
+
+  smoke:
+    name: "Smoke ${{ matrix.distro }}"
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        distro: [arch, debian, ubuntu, fedora]
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Run release artifact smoke test
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          RELEASE_TAG: ${{ inputs.release_tag || 'latest' }}
+        run: |
+          ./scripts/release-smoke.sh \
+            --release "$RELEASE_TAG" \
+            --distro "${{ matrix.distro }}" \
+            --evidence-dir release-smoke-evidence
+
+      - name: Upload per-case evidence
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: release-smoke-${{ matrix.distro }}
+          path: release-smoke-evidence/
+          if-no-files-found: warn

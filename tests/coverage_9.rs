@@ -102,6 +102,43 @@ fn which_resolves_pin_from_parent_directory() {
 }
 
 #[test]
+#[cfg(unix)]
+fn which_reports_global_selection_but_prefers_project_pins() {
+    let project = TestProject::new();
+    let versions = project.data_dir.path().join("versions/python");
+    std::fs::create_dir_all(versions.join("3.12.14")).unwrap();
+    std::os::unix::fs::symlink("3.12.14", versions.join("current")).unwrap();
+    for args in [
+        vec!["which", "python"],
+        vec!["--verbose", "which", "PYTHON3"],
+    ] {
+        let result = project.run_with_env(&args, NO_MISE_ENV);
+        result.assert_success();
+        result.assert_stdout_contains("3.12.14");
+        assert!(!result.stdout.contains("no version set"));
+    }
+    project.create_file(".python-version", "3.11.16");
+    let result = project.run_with_env(&["which", "python"], NO_MISE_ENV);
+    result.assert_success();
+    result.assert_stdout_contains("3.11.16");
+    assert!(!result.stdout.contains("3.12.14"));
+}
+
+#[test]
+#[cfg(unix)]
+fn which_rejects_external_global_symlink_targets() {
+    let project = TestProject::new();
+    let versions = project.data_dir.path().join("versions/python");
+    std::fs::create_dir_all(versions.join("3.12.14")).unwrap();
+    let external = project.create_dir("3.12.14");
+    std::os::unix::fs::symlink(external, versions.join("current")).unwrap();
+    let result = project.run_with_env(&["which", "python"], NO_MISE_ENV);
+    result.assert_success();
+    result.assert_stdout_contains("no version set");
+    assert!(!result.stdout.contains("3.12.14"));
+}
+
+#[test]
 fn which_prints_no_version_notice_when_unset() {
     let project = TestProject::new();
 
@@ -195,23 +232,16 @@ fn list_json_native_runtime_emits_exact_structured_entry() {
     let result = project.run_with_env(&["list", "bun", "--json"], NO_MISE_ENV);
     result.assert_success();
 
-    // Contract: the entry carries exactly the documented fields — runtime
-    // name, active version resolved through the symlink, and the installed
-    // list. (serde_json emits keys alphabetically: current, installed, runtime.)
-    result.assert_stdout_contains("\"current\": \"9.9.9\"");
-    result.assert_stdout_contains("\"runtime\": \"bun\"");
-    let expected_installed = "\"installed\": [\n    \"9.9.9\"\n  ]";
-    assert!(
-        result.stdout.contains(expected_installed),
-        "installed must list exactly [\"9.9.9\"].\nexpected:\n{expected_installed}\nstdout:\n{}",
-        result.stdout
-    );
-    // No stray fields beyond the three contract keys.
-    let value_lines = result.stdout.lines().filter(|l| l.contains("\":")).count();
+    let actual: serde_json::Value =
+        serde_json::from_str(&result.stdout).expect("list --json must emit valid JSON only");
     assert_eq!(
-        value_lines, 3,
-        "entry must have exactly three fields:\n{}",
-        result.stdout
+        actual,
+        serde_json::json!({
+            "runtime": "bun",
+            "current": "9.9.9",
+            "installed": ["9.9.9"],
+        }),
+        "listing must contain exactly the seeded runtime entry"
     );
 }
 
@@ -222,28 +252,25 @@ fn list_json_all_runtimes_emits_nine_entries_with_required_fields() {
     let result = project.run_with_env(&["list", "--json"], NO_MISE_ENV);
     result.assert_success();
 
-    // Contract: one entry per natively supported runtime, each carrying
-    // runtime/current/installed keys.
-    let names = [
+    let actual: serde_json::Value =
+        serde_json::from_str(&result.stdout).expect("list --json must emit valid JSON only");
+    let expected: Vec<serde_json::Value> = [
         "node", "python", "rust", "go", "ruby", "java", "bun", "pi", "deno",
-    ];
-    let count = result.stdout.matches("\"runtime\":").count();
+    ]
+    .into_iter()
+    .map(|runtime| {
+        serde_json::json!({
+            "runtime": runtime,
+            "current": null,
+            "installed": [],
+        })
+    })
+    .collect();
     assert_eq!(
-        count, 9,
-        "exactly nine native runtime entries expected, stdout:\n{}",
-        result.stdout
+        actual,
+        serde_json::Value::Array(expected),
+        "empty store must list exactly one empty entry per native runtime"
     );
-    for name in names {
-        let field = format!("\"runtime\": \"{name}\"");
-        assert!(
-            result.stdout.contains(&field),
-            "missing {field} in JSON listing:\n{}",
-            result.stdout
-        );
-    }
-    // Every entry must carry both remaining fields.
-    assert_eq!(result.stdout.matches("\"current\":").count(), 9);
-    assert_eq!(result.stdout.matches("\"installed\":").count(), 9);
 }
 
 #[test]

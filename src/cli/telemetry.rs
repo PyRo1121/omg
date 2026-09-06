@@ -99,7 +99,11 @@ fn collect_local_privacy_data_from(
         files.insert("license.json".to_string(), value);
     }
 
-    for name in ["machine-id", "license-clock.highwater"] {
+    for name in [
+        "machine-id",
+        "license-clock.highwater",
+        "history.json.archive.jsonl",
+    ] {
         if let Some(value) = read_text_file(&data_dir.join(name))? {
             files.insert(name.to_string(), serde_json::Value::String(value));
         }
@@ -288,6 +292,7 @@ fn collect_text_directory(
 
 /// Disable telemetry on this machine.
 pub fn opt_out_api() -> Result<()> {
+    let _write_lock = Settings::write_lock()?;
     let mut settings = Settings::load().context("Failed to load OMG settings")?;
     settings.telemetry_enabled = false;
     settings.save()?;
@@ -301,6 +306,7 @@ pub fn opt_out_api() -> Result<()> {
 
 /// Enable telemetry on this machine.
 pub fn opt_in_api() -> Result<()> {
+    let _write_lock = Settings::write_lock()?;
     let mut settings = Settings::load().context("Failed to load OMG settings")?;
     settings.telemetry_enabled = true;
     settings.save()?;
@@ -354,6 +360,9 @@ mod tests {
             br#"{"key":"secret-key","tier":"pro","features":["sbom"],"customer":"customer@example.com","expires_at":null,"validated_at":1700000000,"token":"secret-token","machine_id":"bound-machine"}"#,
         )
         .expect("write license fixture");
+        let archive = "{\"id\":\"older\"}\n{\"id\":\"newer\"}\n";
+        std::fs::write(data_dir.join("history.json.archive.jsonl"), archive)
+            .expect("write history archive fixture");
         std::fs::write(data_dir.join("machine-id"), "machine-fixture")
             .expect("write machine ID fixture");
         std::fs::write(data_dir.join("license-clock.highwater"), "1700000000")
@@ -389,6 +398,7 @@ mod tests {
             "telemetry_queue.json",
             "telemetry_session.json",
             "history.json",
+            "history.json.archive.jsonl",
             "license.json",
             "machine-id",
             "license-clock.highwater",
@@ -401,6 +411,7 @@ mod tests {
         ] {
             assert!(files.contains_key(category), "missing category {category}");
         }
+        assert_eq!(files["history.json.archive.jsonl"], archive);
         assert_eq!(files["audit"]["audit.jsonl"], "audit-fixture\n");
         assert_eq!(files["license.json"]["tier"], "pro");
         assert_eq!(files["license.json"]["machine_id"], "bound-machine");

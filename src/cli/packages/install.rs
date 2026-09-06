@@ -4,6 +4,8 @@ use anyhow::Result;
 
 use super::dispatch_backend;
 
+mod picker;
+
 /// Maximum number of user-selected AUR replacement hops before aborting.
 /// Each accepted suggestion re-enters the install flow for one package; the
 /// bound turns a pathological suggestion chain into a clean error instead of
@@ -29,11 +31,7 @@ pub(crate) async fn enforce_install_policy(
         .await
     {
         Ok(grade) => grade,
-        Err(error)
-            if !crate::core::paths::config_dir()
-                .join("policy.toml")
-                .is_file() =>
-        {
+        Err(error) if !crate::core::security::policy::explicit_policy_exists() => {
             // The built-in defaults remain usable when a platform has no OSV
             // ecosystem or the evidence service is temporarily unavailable.
             // An explicit policy file is different: its control must fail
@@ -73,7 +71,24 @@ pub async fn install(
     dry_run: bool,
     allow_local_file: bool,
 ) -> Result<()> {
-    let packages = deduplicate_packages(packages);
+    let packages = if packages.is_empty() {
+        use std::io::IsTerminal as _;
+
+        anyhow::ensure!(
+            std::io::stdin().is_terminal() && std::io::stdout().is_terminal(),
+            "No packages specified; run `omg install` in a terminal to search, or provide package names"
+        );
+        crate::cli::modern_ui::print_info("Loading package names...");
+        let candidates = crate::cli::commands::available_package_names().await?;
+        let selected = tokio::task::spawn_blocking(move || picker::choose(candidates)).await??;
+        let Some(package) = selected else {
+            crate::cli::modern_ui::print_warning("Installation cancelled");
+            return Ok(());
+        };
+        vec![package]
+    } else {
+        deduplicate_packages(packages)
+    };
     install_with_replacement_budget(
         &packages,
         yes,
@@ -123,6 +138,11 @@ async fn install_with_replacement_budget(
     if dry_run {
         return install_dry_run(packages).await;
     }
+
+    #[cfg(unix)]
+    let pinned = crate::core::security::artifact::SnapshotInputs::capture(packages)?;
+    #[cfg(unix)]
+    let packages = pinned.targets.as_slice();
 
     if confirmation == MutationConfirmation::Required
         && !super::common::confirm_package_mutation("installation", packages.len(), yes).await?

@@ -76,7 +76,7 @@ omg search node --limit 10
 Install packages from official repositories or AUR.
 
 ```bash
-omg install <packages...> [OPTIONS]
+omg install [packages...] [OPTIONS]
 ```
 
 **Options:**
@@ -89,6 +89,12 @@ omg install <packages...> [OPTIONS]
 **Examples:**
 
 ```bash
+# Search interactively without knowing the exact name
+omg install
+
+# Search and preview without installing
+omg install --dry-run
+
 # Install single package
 omg install neovim
 
@@ -101,6 +107,21 @@ omg install visual-studio-code-bin
 # Skip confirmation
 omg install neovim -y
 ```
+
+With no package arguments, an interactive terminal opens a fuzzy package picker.
+Type to filter, use Up/Down to highlight a package, and press Enter to select it.
+Escape or Ctrl-C cancels without installing. Selection uses the normal confirmation
+and security checks; `--yes` skips confirmation but never selects a package for you.
+Without a terminal, package names are required.
+
+The picker and shell completion use the complete local package-name catalog plus
+available AUR names. AUR names are cached for 24 hours; a cache miss may fetch the
+index with a bounded network timeout. If AUR is unavailable, local names remain
+available. Neither discovery path synchronizes package databases or installs packages.
+
+After [setting up shell completion](installation.md#3-optional-enable-shell-completions),
+try `omg install frfx<Tab>`. Package completion also works after `-y`, additional
+package names, and the `i` alias.
 
 **Security:**
 
@@ -589,14 +610,19 @@ omg completions <shell> [OPTIONS]
 
 ```bash
 # Install Zsh completions
-omg completions zsh > ~/.zsh/completions/_omg
+omg completions zsh
 
 # Install Bash completions
-omg completions bash > /etc/bash_completion.d/omg
+omg completions bash
 
 # Install Fish completions
-omg completions fish > ~/.config/fish/completions/omg.fish
+omg completions fish
+
+# Print a script without installing it
+omg completions zsh --stdout > _omg
 ```
+
+Follow the printed shell setup instructions after installation. See [shell completion setup](installation.md#3-optional-enable-shell-completions) for Zsh's `fpath` and `compinit` configuration.
 
 ---
 
@@ -658,6 +684,10 @@ omg privacy [SUBCOMMAND]
 | `export [-o <file>]` | Export local OMG data |
 | `opt-out` | Disable telemetry collection |
 | `opt-in` | Re-enable telemetry collection |
+
+Local exports include archived package history. Each source file is limited to
+64 MiB. Larger files cause the export to fail rather than silently omitting or
+truncating data. Streaming exports for larger archives are not supported.
 
 ---
 
@@ -1082,6 +1112,11 @@ omg snapshot restore abc123
 # Delete old snapshot
 omg snapshot delete abc123
 ```
+
+Creation and deletion share a persistent `.index.lock` in the snapshots directory.
+A competing mutation fails with a retry message. Both commands validate the index
+before changing snapshot files. This does not make the snapshot file and index a
+crash-atomic pair.
 
 ---
 

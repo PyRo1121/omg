@@ -25,9 +25,8 @@ use which::which;
 use super::error::AurError;
 use super::parallel_build::BuildJob;
 use super::utils::{
-    build_user, create_dir_as_user, create_dir_as_user_sync, has_word_boundary_match,
-    is_root_owned, is_symlink, original_user, original_user_home, remove_dir_as_user,
-    validate_build_dir,
+    build_user, create_dir_as_user, create_dir_as_user_sync, has_word_boundary_match, is_symlink,
+    original_user, original_user_home, remove_dir_as_user, validate_build_dir,
 };
 
 use super::super::aur_deps::{check_dependencies_for_outputs, dependency_name};
@@ -44,20 +43,11 @@ use crate::core::{Package, PackageSource, paths};
 use crate::package_managers::{get_potential_aur_packages, pacman_db};
 use crate::runtimes::common::{BudgetedReader, BudgetedWriter, MAX_DECOMPRESSED_BYTES};
 
+use crate::core::security::artifact::ArchiveSnapshot;
 const AUR_RPC_URL: &str = "https://aur.archlinux.org/rpc";
 const AUR_GIT_URL: &str = "https://aur.archlinux.org";
 const AUR_RPC_MAX_URI: usize = 4400;
 const AUR_SEARCH_MAX_BYTES: usize = 100;
-const AUR_GIT_PULL_ARGS: &[&str] = &[
-    "-c",
-    "core.hooksPath=/dev/null",
-    "-c",
-    "protocol.file.allow=user",
-    "-c",
-    "pull.rebase=false",
-    "pull",
-    "--ff-only",
-];
 
 /// Process-wide lock around ALPM database mutations so parallel AUR builds never race.
 /// ALPM serializes installs on `/var/lib/pacman/db.lck`, so concurrent installs — e.g. parallel AUR build
@@ -157,6 +147,63 @@ fn require_fetchable_pgp_key_id(key_id: &str) -> Result<()> {
     }
 }
 
+#[cfg(feature = "pgp")]
+fn create_scoped_pgp_home(
+    valid_keys: &[String],
+    source_home: &Path,
+    cache_dir: &Path,
+) -> Result<tempfile::TempDir> {
+    use crate::core::security::keyserver;
+
+    std::fs::create_dir_all(cache_dir).with_context(|| {
+        format!(
+            "Failed to create AUR cache directory: {}",
+            cache_dir.display()
+        )
+    })?;
+    let build_keyring = tempfile::Builder::new()
+        .prefix("aur-pgp-")
+        .tempdir_in(cache_dir)
+        .context("Failed to create package-scoped AUR PGP keyring")?;
+    let exported = std::process::Command::new("gpg")
+        .arg("--no-options")
+        .arg("--batch")
+        .arg("--homedir")
+        .arg(source_home)
+        .arg("--export")
+        .args(valid_keys)
+        .output()
+        .context("Failed to export AUR PGP keys")?;
+    anyhow::ensure!(
+        exported.status.success() && !exported.stdout.is_empty(),
+        "Failed to export AUR PGP keys: {}",
+        String::from_utf8_lossy(&exported.stderr).trim()
+    );
+    let key_bundle = build_keyring.path().join("trusted-keys.pgp");
+    std::fs::write(&key_bundle, &exported.stdout).context("Failed to stage AUR PGP keys")?;
+    let imported = std::process::Command::new("gpg")
+        .arg("--no-options")
+        .arg("--batch")
+        .arg("--homedir")
+        .arg(build_keyring.path())
+        .arg("--import")
+        .arg(&key_bundle)
+        .output()
+        .context("Failed to initialize package-scoped AUR PGP keyring")?;
+    anyhow::ensure!(
+        imported.status.success(),
+        "Failed to initialize package-scoped AUR PGP keyring: {}",
+        String::from_utf8_lossy(&imported.stderr).trim()
+    );
+    for key_id in valid_keys {
+        anyhow::ensure!(
+            keyserver::is_key_in_gnupg(key_id, build_keyring.path())?,
+            "Package-scoped AUR PGP keyring is missing {key_id}"
+        );
+    }
+    Ok(build_keyring)
+}
+
 fn require_unprivileged_builder(package: &str, is_root: bool) -> Result<()> {
     if is_root {
         anyhow::bail!(
@@ -193,6 +240,130 @@ struct MakepkgEnv {
     builddir: PathBuf,
     compiler_cache_dirs: Vec<PathBuf>,
     extra_env: Vec<(String, String)>,
+    pgp_home: Option<tempfile::TempDir>,
+}
+
+#[derive(Debug)]
+pub(crate) struct AuthorizedBuild {
+    package: String,
+    requested_outputs: Vec<String>,
+    reviewed_digest: Option<ReviewedSource>,
+}
+
+/// The exact local source files approved before any build command runs.
+#[derive(Debug)]
+struct ReviewedSource {
+    files: std::collections::BTreeMap<PathBuf, Vec<u8>>,
+    digest: String,
+}
+
+impl ReviewedSource {
+    fn read_source_file(path: &Path) -> Result<Vec<u8>> {
+        use std::io::Read;
+        use std::os::unix::fs::OpenOptionsExt;
+        let file = std::fs::OpenOptions::new()
+            .read(true)
+            .custom_flags(nix::libc::O_NOFOLLOW | nix::libc::O_NONBLOCK)
+            .open(path)?;
+        anyhow::ensure!(
+            file.metadata()?.is_file(),
+            "AUR source must be a regular file"
+        );
+        let mut bytes = Vec::new();
+        file.take(16 * 1024 * 1024 + 1).read_to_end(&mut bytes)?;
+        anyhow::ensure!(
+            bytes.len() <= 16 * 1024 * 1024,
+            "AUR source file exceeds limit"
+        );
+        Ok(bytes)
+    }
+    fn capture(directory: &Path) -> Result<Self> {
+        fn visit(
+            root: &Path,
+            directory: &Path,
+            files: &mut std::collections::BTreeMap<PathBuf, Vec<u8>>,
+            budget: &mut usize,
+            entries: &mut usize,
+            depth: usize,
+        ) -> Result<()> {
+            anyhow::ensure!(depth <= 64, "AUR source nesting exceeds limit");
+            for entry in std::fs::read_dir(directory)? {
+                let entry = entry?;
+                *entries += 1;
+                anyhow::ensure!(*entries <= 10_000, "AUR source entry count exceeds limit");
+                if entry.file_name() == ".git" {
+                    continue;
+                }
+                let path = entry.path();
+                let metadata = std::fs::symlink_metadata(&path)?;
+                anyhow::ensure!(
+                    !metadata.file_type().is_symlink(),
+                    "AUR source symlinks must be replaced with reviewed regular files: {}",
+                    path.display()
+                );
+                if metadata.is_dir() {
+                    visit(root, &path, files, budget, entries, depth + 1)?;
+                } else {
+                    anyhow::ensure!(
+                        metadata.is_file()
+                            && metadata.len() <= 16 * 1024 * 1024
+                            && files.len() < 10_000,
+                        "AUR source manifest exceeds file/count limits"
+                    );
+                    let bytes = ReviewedSource::read_source_file(&path)?;
+                    *budget = budget
+                        .checked_add(bytes.len())
+                        .context("AUR source size overflow")?;
+                    anyhow::ensure!(
+                        *budget <= 64 * 1024 * 1024,
+                        "AUR source manifest exceeds 64 MiB"
+                    );
+                    files.insert(path.strip_prefix(root)?.to_owned(), bytes);
+                }
+            }
+            Ok(())
+        }
+        let mut files = std::collections::BTreeMap::new();
+        visit(directory, directory, &mut files, &mut 0, &mut 0, 0)?;
+        anyhow::ensure!(
+            files.contains_key(Path::new("PKGBUILD")) && files.contains_key(Path::new(".SRCINFO")),
+            "AUR review requires PKGBUILD and .SRCINFO"
+        );
+        let mut hash = Sha256::new();
+        for (path, bytes) in &files {
+            let path = path.to_str().context("AUR source path is not UTF-8")?;
+            use std::os::unix::fs::PermissionsExt;
+            hash.update(
+                std::fs::symlink_metadata(directory.join(path))?
+                    .permissions()
+                    .mode()
+                    .to_le_bytes(),
+            );
+            hash.update((path.len() as u64).to_le_bytes());
+            hash.update(path.as_bytes());
+            hash.update((bytes.len() as u64).to_le_bytes());
+            hash.update(bytes);
+        }
+        Ok(Self {
+            files,
+            digest: hex::encode(hash.finalize()),
+        })
+    }
+    fn verify(&self, directory: &Path) -> Result<()> {
+        let current = Self::capture(directory)?;
+        anyhow::ensure!(
+            current.digest == self.digest,
+            "AUR source manifest changed after review"
+        );
+        Ok(())
+    }
+    fn text(&self, path: &Path) -> Result<&str> {
+        let bytes = self
+            .files
+            .get(path)
+            .with_context(|| format!("Unreviewed AUR input: {}", path.display()))?;
+        Ok(std::str::from_utf8(bytes)?)
+    }
 }
 
 #[derive(Debug)]
@@ -209,6 +380,7 @@ struct CachedArchiveIdentity {
     version: String,
     base: String,
     install_script: Option<String>,
+    architecture: Option<String>,
 }
 
 #[derive(Clone, Copy)]
@@ -241,6 +413,28 @@ fn configure_build_environment(command: &mut Command, home: &Path, user: &str) {
         .env("LOGNAME", user)
         .env("LANG", "C.UTF-8")
         .env("LC_ALL", "C.UTF-8");
+}
+
+fn native_build_command() -> Result<Command> {
+    let mut command = Command::new(crate::core::privilege::trusted_program("setpriv")?);
+    command
+        .args(["--no-new-privs", "--"])
+        .arg(crate::core::privilege::trusted_program("setsid")?)
+        .args(["-w", "makepkg"]);
+    Ok(command)
+}
+
+fn sandbox_command(home: &Path, user: &str) -> Command {
+    let mut command = Command::new("bwrap");
+    configure_build_environment(&mut command, home, user);
+    command.args([
+        "--clearenv",
+        "--share-net",
+        "--unshare-pid",
+        "--new-session",
+        "--die-with-parent",
+    ]);
+    command
 }
 
 /// Make `/etc/resolv.conf` usable when it points outside the read-only `/etc`
@@ -325,6 +519,7 @@ fn pkgbuild_digest(bytes: &[u8]) -> String {
 /// Re-read `pkgbuild_path` and confirm its bytes still hash to the digest the
 /// user reviewed. A mismatch means the PKGBUILD changed between review and
 /// build and the reviewed script is not the one about to run.
+#[cfg(test)]
 fn verify_reviewed_pkgbuild(pkgbuild_path: &Path, reviewed_digest: &str) -> Result<()> {
     let bytes = std::fs::read(pkgbuild_path)
         .with_context(|| format!("Failed to re-read PKGBUILD: {}", pkgbuild_path.display()))?;
@@ -336,25 +531,63 @@ fn verify_reviewed_pkgbuild(pkgbuild_path: &Path, reviewed_digest: &str) -> Resu
     Ok(())
 }
 
-fn pkgbuild_review_panel(package: &str, digest: &str, review: &str) -> String {
+/// Preview lines shown in the interactive review panel before the
+/// truncation notice. Full PKGBUILD dumps per package are what make
+/// `omg update` output feel like spam; the file stays on disk at
+/// `pkgbuild_path` and the SHA-256 covers every byte, so a capped preview
+/// keeps output scannable without weakening what the digest attests.
+const MAX_PKGBUILD_PREVIEW_LINES: usize = 40;
+
+fn pkgbuild_review_panel(
+    package: &str,
+    digest: &str,
+    review: &str,
+    pkgbuild_path: &Path,
+) -> String {
     let package = crate::cli::style::sanitize_terminal_text(package);
     let divider = "─".repeat(72);
+    let trimmed = review.trim_end();
+    let total_lines = trimmed.lines().count();
+    let preview = trimmed
+        .lines()
+        .take(MAX_PKGBUILD_PREVIEW_LINES)
+        .collect::<Vec<_>>()
+        .join("\n");
+    let overflow = total_lines.saturating_sub(MAX_PKGBUILD_PREVIEW_LINES);
 
     if crate::cli::style::colors_enabled() {
+        let tail = if overflow > 0 {
+            format!(
+                "\n{}",
+                format!(
+                    "… ({overflow} more lines — full PKGBUILD at {})",
+                    pkgbuild_path.display()
+                )
+                .dimmed()
+            )
+        } else {
+            String::new()
+        };
         format!(
-            "\n  {} {}\n\n    {} {}\n\n  {}\n{}\n  {}",
+            "\n  {} {}\n\n    {} {}\n\n  {}\n{preview}{tail}\n  {}",
             " AUR ".black().on_magenta().bold(),
             format!("Review {package}").bold(),
             "SHA-256".dimmed(),
             digest.dimmed(),
             divider.dimmed(),
-            review.trim_end(),
             divider.dimmed()
         )
     } else {
+        let tail = if overflow > 0 {
+            format!(
+                "\n… ({overflow} more lines — full PKGBUILD at {})",
+                pkgbuild_path.display()
+            )
+        } else {
+            String::new()
+        };
         format!(
-            "\n  AUR  Review {package}\n\n    SHA-256 {digest}\n\n  {divider}\n{}\n  {divider}",
-            review.trim_end()
+            "\n  AUR  Review {package}\n\n    SHA-256 {digest}\n\n  {divider}\n{preview}{tail}\n  {divider}"
         )
     }
 }
@@ -1190,7 +1423,7 @@ impl AurClient {
                 .context("rollback work dir name must be valid UTF-8")?,
         )?;
 
-        let env = self.makepkg_env(&pkg_dir).await?;
+        let mut env = self.makepkg_env(&pkg_dir).await?;
         // SECURITY (audit F-03, second wave): a force-pushed history commit
         // is exactly as untrusted as a fresh build, and the version match
         // alone does not prove the PKGBUILD is the one originally installed.
@@ -1198,12 +1431,12 @@ impl AurClient {
         // independent of the user's day-to-day review preference.
         let pkgbuild_path = pkg_dir.join("PKGBUILD");
         let reviewed_digest = Self::review_pkgbuild(package, &pkgbuild_path).await?;
-        Self::fetch_missing_pgp_keys(&pkgbuild_path).await?;
+        env.pgp_home = Self::fetch_missing_pgp_keys(&pkgbuild_path).await?;
         println!(
             "  {} Building {package} {version} from history...",
             crate::cli::style::informative("→")
         );
-        verify_reviewed_pkgbuild(&pkgbuild_path, &reviewed_digest)?;
+        reviewed_digest.verify(&pkg_dir)?;
         let status = self
             .run_build(&pkg_dir, &env, package)
             .await
@@ -1227,7 +1460,16 @@ impl AurClient {
             return Err(AurError::PackageArchiveNotFound(package.to_string()).into());
         };
 
-        Self::install_built_packages(&[archive], sudoloop.as_ref()).await?;
+        crate::cli::modern_ui::print_info(&format!("Installing {package} {version}"));
+        let archives = Self::authorize_archives(
+            &[archive],
+            &reviewed_digest,
+            &base,
+            &[package.to_owned()],
+            false,
+        )?;
+        Self::install_built_packages(&archives, sudoloop.as_ref()).await?;
+        crate::cli::modern_ui::print_success(&format!("Installed {package} {version}"));
         // The historical checkout is reproducible from AUR history on demand;
         // leaving every UUID-named worktree behind would grow the build dir
         // without bound. Removal is best-effort: a leftover checkout never
@@ -1288,7 +1530,7 @@ impl AurClient {
         }
 
         if !console::user_attended() {
-            let status = tokio::process::Command::new("sudo")
+            let status = crate::core::privilege::sudo_command()?
                 .args(["-n", "true"])
                 .stdin(std::process::Stdio::null())
                 .stdout(std::process::Stdio::null())
@@ -1303,7 +1545,7 @@ impl AurClient {
             }
         }
 
-        let status = tokio::process::Command::new("sudo")
+        let status = crate::core::privilege::sudo_command()?
             .arg("-v")
             .stdin(std::process::Stdio::inherit())
             .stdout(std::process::Stdio::null())
@@ -1317,11 +1559,11 @@ impl AurClient {
         Ok(())
     }
 
-    pub(crate) async fn install_package_outputs(
+    pub(crate) async fn authorize_package_outputs(
         &self,
         package: &str,
         requested_outputs: &[String],
-    ) -> Result<()> {
+    ) -> Result<AuthorizedBuild> {
         crate::core::security::validate_package_name(package)?;
         if requested_outputs.is_empty() {
             anyhow::bail!("AUR build plan for '{package}' has no package outputs");
@@ -1329,62 +1571,37 @@ impl AurClient {
         for output in requested_outputs {
             crate::core::security::validate_package_name(output)?;
         }
-
         require_unprivileged_builder(package, crate::core::is_root())?;
 
-        // Every checkout and build for one package base shares a directory.
-        // Serialize each checkout and build phase so parallel jobs cannot
-        // pull, clean, or run makepkg in that directory concurrently.
         let package_lock = self.package_base_lock(package);
-        let package_checkout_guard = package_lock.lock().await;
-
-        // Prompt before starting the build, then keep the credential alive so
-        // package installation cannot unexpectedly prompt midway through.
-        Self::preacquire_install_privileges(package, "AUR build").await?;
-
-        // Start sudoloop for long build operations.
-        // Now that credentials are pre-acquired, the loop will keep
-        // them alive throughout the entire build+install cycle.
-        let sudoloop = if crate::core::sudoloop::can_use_sudoloop() {
-            tracing::debug!("Starting sudoloop for AUR build");
-            Some(crate::core::sudoloop::SudoLoop::start())
-        } else {
-            None
-        };
-
+        let _package_checkout_guard = package_lock.lock().await;
         create_dir_as_user(&self.build_dir).await?;
-        let package_checkout_file_guard = self.acquire_package_base_file_lock(package).await?;
-
-        // SECURITY: Validate package directory is safe (prevents symlink attacks)
+        let _package_checkout_file_guard = self.acquire_package_base_file_lock(package).await?;
         let pkg_dir = validate_build_dir(&self.build_dir, package)?;
 
         if pkg_dir.exists() {
             let pull_pb =
                 crate::cli::modern_ui::modern_spinner("Updating", &format!("{package} source"));
-            if let Err(e) = self.git_pull(&pkg_dir).await {
+            if let Err(error) = self.git_pull(&pkg_dir).await {
                 crate::cli::modern_ui::finish_clear(&pull_pb);
                 tracing::warn!(
-                    "Git pull failed for {}: {}. Recovering by recloning package repository.",
-                    package,
-                    e
+                    "Git pull failed for {package}: {error}. Recovering by recloning package repository."
                 );
-
-                remove_dir_as_user(&pkg_dir).await.map_err(|cleanup_err| {
-                    tracing::warn!(
-                        "Failed to remove stale AUR cache for {}: {}",
-                        package,
-                        cleanup_err
-                    );
-                    AurError::GitPullFailed(package.to_string())
-                })?;
-
+                remove_dir_as_user(&pkg_dir)
+                    .await
+                    .map_err(|cleanup_error| {
+                        tracing::warn!(
+                            "Failed to remove stale AUR cache for {package}: {cleanup_error}"
+                        );
+                        AurError::GitPullFailed(package.to_string())
+                    })?;
                 let recover_pb = crate::cli::modern_ui::modern_spinner(
                     "Recovering",
                     &format!("{package} source checkout"),
                 );
-                self.git_clone(package).await.map_err(|clone_err| {
+                self.git_clone(package).await.map_err(|clone_error| {
                     crate::cli::modern_ui::finish_clear(&recover_pb);
-                    tracing::warn!("Recovery clone failed for {}: {}", package, clone_err);
+                    tracing::warn!("Recovery clone failed for {package}: {clone_error}");
                     AurError::GitPullFailed(package.to_string())
                 })?;
                 crate::cli::modern_ui::finish_success(&recover_pb, "Recovered", "source checkout");
@@ -1398,11 +1615,9 @@ impl AurClient {
         } else {
             let clone_pb =
                 crate::cli::modern_ui::modern_spinner("Cloning", &format!("{package} from AUR"));
-            self.git_clone(package).await.map_err(|e| {
+            self.git_clone(package).await.map_err(|error| {
                 crate::cli::modern_ui::finish_clear(&clone_pb);
-                tracing::warn!("Git clone failed for {}: {}", package, e);
-                // Single source of user guidance lives in AurError; the
-                // underlying failure is logged above, not duplicated here.
+                tracing::warn!("Git clone failed for {package}: {error}");
                 AurError::GitCloneFailed(package.to_string())
             })?;
             crate::cli::modern_ui::finish_success(
@@ -1416,32 +1631,71 @@ impl AurClient {
         if !pkgbuild_path.exists() {
             return Err(AurError::PkgbuildNotFound(package.to_string()).into());
         }
-
-        // The user's PKGBUILD review MUST precede every network/filesystem
-        // side effect triggered by the PKGBUILD's contents (wave-12
-        // aud-aur-client blocker). That includes PGP key fetching (network
-        // access plus keyring writes), AUR dependency installation (a system
-        // mutation driven by unreviewed depends), and parse_sources ->
-        // download_sources, which writes attacker-named files into SRCDEST.
-        // Seal the reviewed bytes: the digest is re-checked immediately
-        // before makepkg runs, so anything that swapped the PKGBUILD between
-        // the user's review and the build aborts the build.
         let reviewed_digest = if self.settings.aur.review_pkgbuild {
             Some(Self::review_pkgbuild(package, &pkgbuild_path).await?)
         } else {
-            None
+            Some(ReviewedSource::capture(&pkg_dir)?)
         };
 
-        Self::fetch_missing_pgp_keys(&pkgbuild_path).await?;
+        Ok(AuthorizedBuild {
+            package: package.to_string(),
+            requested_outputs: requested_outputs.to_vec(),
+            reviewed_digest,
+        })
+    }
 
-        let env = self.makepkg_env(&pkg_dir).await?;
+    pub(crate) async fn install_package_outputs(
+        &self,
+        package: &str,
+        requested_outputs: &[String],
+    ) -> Result<()> {
+        let authorized = self
+            .authorize_package_outputs(package, requested_outputs)
+            .await?;
+        Self::preacquire_install_privileges(&authorized.package, "AUR build").await?;
+        let sudoloop = if crate::core::sudoloop::can_use_sudoloop() {
+            tracing::debug!("Starting sudoloop for AUR build");
+            Some(crate::core::sudoloop::SudoLoop::start())
+        } else {
+            None
+        };
+        self.install_authorized_package_outputs(authorized, sudoloop.as_ref())
+            .await
+    }
+
+    pub(crate) async fn install_authorized_package_outputs(
+        &self,
+        authorized: AuthorizedBuild,
+        sudoloop: Option<&crate::core::sudoloop::SudoLoop>,
+    ) -> Result<()> {
+        let AuthorizedBuild {
+            package,
+            requested_outputs,
+            reviewed_digest,
+        } = authorized;
+        let package_lock = self.package_base_lock(&package);
+        let package_checkout_guard = package_lock.lock().await;
+        let package_checkout_file_guard = self.acquire_package_base_file_lock(&package).await?;
+        let pkg_dir = validate_build_dir(&self.build_dir, &package)?;
+        let pkgbuild_path = pkg_dir.join("PKGBUILD");
+        if !pkgbuild_path.exists() {
+            return Err(AurError::PkgbuildNotFound(package).into());
+        }
+        if let Some(digest) = &reviewed_digest {
+            digest.verify(&pkg_dir)?;
+        }
+
+        let pgp_home = Self::fetch_missing_pgp_keys(&pkgbuild_path).await?;
+
+        let mut env = self.makepkg_env(&pkg_dir).await?;
+        env.pgp_home = pgp_home;
 
         let dependency_plan = self
-            .aur_dependency_plan(&pkg_dir, package, requested_outputs)
+            .aur_dependency_plan(&pkg_dir, &package, &requested_outputs)
             .await?;
         let requested_outputs = dependency_plan.package_outputs;
         let mut dependency_builds =
-            AHashSet::from_iter([package.to_string(), Self::package_base_marker(package)]);
+            AHashSet::from_iter([package.clone(), Self::package_base_marker(&package)]);
         drop(package_checkout_file_guard);
         drop(package_checkout_guard);
         Self::install_official_dependencies(&dependency_plan.official_dependencies).await?;
@@ -1450,15 +1704,15 @@ impl AurClient {
                 "Installing AUR dependency for {package}: {dep}"
             ));
             let dep_packages = self
-                .build_only(&dep, &mut dependency_builds, sudoloop.as_ref())
+                .build_only(&dep, &mut dependency_builds, sudoloop)
                 .await?;
-            Self::install_built_packages(&dep_packages, sudoloop.as_ref()).await?;
+            Self::install_built_packages(&dep_packages, sudoloop).await?;
             crate::cli::modern_ui::print_success(&format!("Installed dependency: {dep}"));
         }
         Self::ensure_dependencies_satisfied(&pkg_dir, &requested_outputs).await?;
 
         let _package_build_guard = package_lock.lock().await;
-        let _package_build_file_guard = self.acquire_package_base_file_lock(package).await?;
+        let _package_build_file_guard = self.acquire_package_base_file_lock(&package).await?;
 
         // Best-effort pre-download: makepkg still fetches anything we miss.
         match parse_sources(&pkg_dir) {
@@ -1483,67 +1737,37 @@ impl AurClient {
         let cache_key = self.cache_key(&pkg_dir, &env.makeflags)?;
 
         let cached = self
-            .cached_artifacts(package, &requested_outputs, &env.pkgdest, &cache_key)
+            .cached_artifacts(
+                &package,
+                &requested_outputs,
+                &pkg_dir,
+                &env.pkgdest,
+                &cache_key,
+            )
             .await?;
-
-        // Cache-poisoning defense (audit SEC02-02): a hit from the
-        // user-writable cache must still BE what is about to be installed.
-        // Each archive is verified positionally against its requested OUTPUT,
-        // not against the package base: installing a split-package output
-        // alone never matched a base-name check, which kept that output's
-        // cache permanently cold and forced a rebuild on every install.
-        // Any identity mismatch rejects ALL cached artifacts for this base
-        // and falls through to a fresh build.
-        let mut pkg_files: Vec<PathBuf> = match cached {
-            Some(archives)
-                if archives.len() == requested_outputs.len()
-                    && archives
-                        .iter()
-                        .zip(&requested_outputs)
-                        .all(|(archive, output)| {
-                            Self::cached_archive_matches(archive, output)
-                                && Self::cached_artifact_provenance_ok(
-                                    archive, &pkg_dir, package, output,
-                                )
-                        }) =>
-            {
+        let mut pkg_files = match cached {
+            Some(archives) => {
                 crate::cli::modern_ui::print_info(&format!("Using cached build for {package}"));
                 archives
-            }
-            Some(_) => {
-                // cached_artifacts only returns Some when every requested
-                // artifact was found, so a mismatch here means identity.
-                tracing::info!("Cache identity check failed for {package}; rebuilding");
-                Vec::new()
             }
             None => Vec::new(),
         };
 
-        if pkg_files.is_empty() {
+        let fresh = pkg_files.is_empty();
+        if fresh {
             if let Some(digest) = &reviewed_digest {
-                verify_reviewed_pkgbuild(&pkgbuild_path, digest)?;
+                digest.verify(&pkg_dir)?;
             }
-            let log_path = self.build_log_path(package);
+            let log_path = self.build_log_path(&package);
 
             let status = self
-                .run_build(&pkg_dir, &env, package)
+                .run_build(&pkg_dir, &env, &package)
                 .await
                 .with_context(|| format!("Failed to run makepkg for '{package}'"))?;
 
             if !status.success() {
-                println!();
-                println!(
-                    "  {} Build failed for {}",
-                    crate::cli::style::negative("✗"),
-                    package
-                );
-                println!(
-                    "  {} Check log: {}",
-                    crate::cli::style::dim("→"),
-                    log_path.display()
-                );
                 return Err(AurError::BuildFailed {
-                    package: package.to_string(),
+                    package: package.clone(),
                     log_path: log_path.display().to_string(),
                 }
                 .into());
@@ -1551,16 +1775,23 @@ impl AurClient {
 
             pkg_files = Self::find_built_packages(&pkg_dir, &env.pkgdest, &requested_outputs)
                 .await
-                .map_err(|_| AurError::PackageArchiveNotFound(package.to_string()))?;
-            self.write_cache_key(package, &cache_key).await?;
+                .map_err(|_| AurError::PackageArchiveNotFound(package.clone()))?;
+            self.write_cache_key(&package, &cache_key).await?;
         }
 
-        println!();
-        println!();
+        let pkg_files = Self::authorize_archives(
+            &pkg_files,
+            reviewed_digest
+                .as_ref()
+                .context("Missing reviewed source")?,
+            &package,
+            &requested_outputs,
+            fresh,
+        )?;
         let output_names = requested_outputs.join(", ");
-        let install_pb = crate::cli::modern_ui::modern_spinner("Installing", &output_names);
-        Self::install_built_packages(&pkg_files, sudoloop.as_ref()).await?;
-        crate::cli::modern_ui::finish_success(&install_pb, "Installed", &output_names);
+        crate::cli::modern_ui::print_info(&format!("Installing {output_names}"));
+        Self::install_built_packages(&pkg_files, sudoloop).await?;
+        crate::cli::modern_ui::print_success(&format!("Installed {output_names}"));
 
         Ok(())
     }
@@ -1570,7 +1801,7 @@ impl AurClient {
         package: &'a str,
         in_flight: &'a mut AHashSet<String>,
         sudoloop: Option<&'a crate::core::sudoloop::SudoLoop>,
-    ) -> BoxFuture<'a, Result<Vec<PathBuf>>> {
+    ) -> BoxFuture<'a, Result<Vec<ArchiveSnapshot>>> {
         async move {
             Self::enter_dependency_build(in_flight, package)?;
             let package_base = match self.resolve_package_base(package).await {
@@ -1619,7 +1850,7 @@ impl AurClient {
         package_base: &str,
         in_flight: &mut AHashSet<String>,
         sudoloop: Option<&crate::core::sudoloop::SudoLoop>,
-    ) -> Result<Vec<PathBuf>> {
+    ) -> Result<Vec<ArchiveSnapshot>> {
         crate::core::security::validate_package_name(package)?;
         let package_lock = self.package_base_lock(package_base);
         let package_checkout_guard = package_lock.lock().await;
@@ -1682,9 +1913,9 @@ impl AurClient {
         let reviewed_digest = if self.settings.aur.review_pkgbuild {
             Some(Self::review_pkgbuild(package_base, &pkgbuild_path).await?)
         } else {
-            None
+            Some(ReviewedSource::capture(&pkg_dir)?)
         };
-        Self::fetch_missing_pgp_keys(&pkgbuild_path).await?;
+        let pgp_home = Self::fetch_missing_pgp_keys(&pkgbuild_path).await?;
 
         let dependency_plan = self
             .aur_dependency_plan(&pkg_dir, package, &[package.to_string()])
@@ -1705,30 +1936,32 @@ impl AurClient {
 
         let _package_build_guard = package_lock.lock().await;
         let _package_build_file_guard = self.acquire_package_base_file_lock(package_base).await?;
-        let env = self.makepkg_env(&pkg_dir).await?;
+        let mut env = self.makepkg_env(&pkg_dir).await?;
+        env.pgp_home = pgp_home;
         let cache_key = self.cache_key(&pkg_dir, &env.makeflags)?;
         if let Some(archives) = self
-            .cached_artifacts(package_base, &package_outputs, &env.pkgdest, &cache_key)
+            .cached_artifacts(
+                package_base,
+                &package_outputs,
+                &pkg_dir,
+                &env.pkgdest,
+                &cache_key,
+            )
             .await?
-            && archives.len() == package_outputs.len()
-            && archives
-                .iter()
-                .zip(&package_outputs)
-                .all(|(archive, output)| {
-                    Self::cached_archive_matches(archive, output)
-                        && Self::cached_artifact_provenance_ok(
-                            archive,
-                            &pkg_dir,
-                            package_base,
-                            output,
-                        )
-                })
         {
-            return Ok(archives);
+            return Self::authorize_archives(
+                &archives,
+                reviewed_digest
+                    .as_ref()
+                    .context("Missing reviewed source")?,
+                package_base,
+                &package_outputs,
+                false,
+            );
         }
 
         if let Some(digest) = &reviewed_digest {
-            verify_reviewed_pkgbuild(&pkgbuild_path, digest)?;
+            digest.verify(&pkg_dir)?;
         }
         let log_path = self.build_log_path(package);
         let status = self
@@ -1748,7 +1981,15 @@ impl AurClient {
             .await
             .map_err(|_| AurError::PackageArchiveNotFound(package.to_string()))?;
         self.write_cache_key(package_base, &cache_key).await?;
-        Ok(pkg_files)
+        Self::authorize_archives(
+            &pkg_files,
+            reviewed_digest
+                .as_ref()
+                .context("Missing reviewed source")?,
+            package_base,
+            &package_outputs,
+            true,
+        )
     }
 
     /// Resolve an AUR name (output or base) to its package base via one RPC
@@ -1879,42 +2120,110 @@ impl AurClient {
                 continue;
             };
             match key.trim() {
-                "pkgname" if name.is_none() => name = Some(value.trim().to_string()),
-                "pkgver" if version.is_none() => version = Some(value.trim().to_string()),
+                "pkgname" => {
+                    if name.is_some() {
+                        return None;
+                    }
+                    name = Some(value.trim().to_string());
+                }
+                "pkgver" => {
+                    if version.is_some() {
+                        return None;
+                    }
+                    version = Some(value.trim().to_string());
+                }
                 _ => {}
             }
         }
         Some((name?, version?))
     }
 
-    /// Verify a cached archive's embedded .PKGINFO names the requested
-    /// package AND that the archive carries provenance from the exact
-    /// reviewed PKGBUILD. Defense against cross-package cache substitution
-    /// (audit SEC02-02) and full cache poisoning (SEC-R2-01): the cache key
-    /// and the archive both live in the attacker-writable cache tree, so a
-    /// matching pkgname alone proves nothing — the artifact must also match
-    /// the fetched .SRCINFO version/base and embed the exact .INSTALL hook
-    /// the reviewed PKGBUILD declares. Any missing proof falls through to a
-    /// fresh, reviewed rebuild.
-    #[cfg(test)]
-    fn select_cached_artifact(
+    /// Accept a complete, ordered set of cached outputs only when every
+    /// archive's identity, version, package base, and install hook match the
+    /// checkout. A matching cache key alone is not proof: both the key and
+    /// archives live in a user-writable directory.
+    fn select_cached_artifacts(
         archives: Vec<PathBuf>,
-        package: &str,
+        outputs: &[String],
         pkg_dir: &Path,
         package_base: &str,
-    ) -> Option<PathBuf> {
-        let mut archives = archives.into_iter();
-        let archive = archives.next()?;
-        if archives.next().is_some()
-            || !Self::cached_archive_matches(&archive, package)
-            || !Self::cached_artifact_provenance_ok(&archive, pkg_dir, package_base, package)
+    ) -> Option<Vec<PathBuf>> {
+        if outputs.is_empty()
+            || archives.len() != outputs.len()
+            || !archives.iter().zip(outputs).all(|(archive, output)| {
+                Self::cached_artifact_provenance_ok(archive, pkg_dir, package_base, output)
+            })
         {
             tracing::warn!(
-                "Rejecting cached build for {package}: archive identity or provenance did not match"
+                "Rejecting cached build for {package_base}: incomplete outputs or archive identity/provenance mismatch"
             );
             return None;
         }
-        Some(archive)
+        Some(archives)
+    }
+
+    fn authorize_archives(
+        paths: &[PathBuf],
+        source: &ReviewedSource,
+        base: &str,
+        outputs: &[String],
+        fresh: bool,
+    ) -> Result<Vec<ArchiveSnapshot>> {
+        let srcinfo = source.text(Path::new(".SRCINFO"))?;
+        let expected_version =
+            Self::srcinfo_version(srcinfo).context("Missing reviewed package version")?;
+        anyhow::ensure!(
+            Self::srcinfo_pkgbase(srcinfo) == Some(base)
+                && paths.len() == outputs.len()
+                && !paths.is_empty(),
+            "AUR output set/base does not match reviewed source"
+        );
+        let pkgbuild = source.text(Path::new("PKGBUILD"))?;
+        // VCS recipes intentionally calculate pkgver during build. A changed
+        // version still cannot change output names/base or approved root hooks.
+        let dynamic_version = fresh
+            && pkgbuild.lines().any(|line| {
+                line.trim_start().starts_with("pkgver()")
+                    || line.trim_start().starts_with("pkgver ()")
+            });
+        paths
+            .iter()
+            .zip(outputs)
+            .map(|(path, output)| {
+                let snapshot = ArchiveSnapshot::capture(path)?;
+                let identity = Self::cached_archive_identity(Path::new(&snapshot.handoff()))?
+                    .context("Archive lacks package identity")?;
+                anyhow::ensure!(
+                    identity.name == *output
+                        && identity.base == base
+                        && (identity.version == expected_version || dynamic_version),
+                    "AUR archive identity/version differs from reviewed source: {output}"
+                );
+                let architecture = identity
+                    .architecture
+                    .as_deref()
+                    .context("Archive lacks architecture")?;
+                let allowed_arch = srcinfo
+                    .lines()
+                    .filter_map(|line| line.split_once('='))
+                    .any(|(key, value)| key.trim() == "arch" && value.trim() == architecture);
+                anyhow::ensure!(
+                    allowed_arch
+                        && (architecture == "any" || architecture == std::env::consts::ARCH),
+                    "AUR archive architecture is not approved for this host"
+                );
+                let declared = Self::srcinfo_install_script(srcinfo, output);
+                let expected_hook = declared
+                    .as_deref()
+                    .map(|path| source.text(Path::new(path)))
+                    .transpose()?;
+                anyhow::ensure!(
+                    identity.install_script.as_deref() == expected_hook,
+                    "AUR archive contains an undeclared or changed installation hook: {output}"
+                );
+                Ok(snapshot)
+            })
+            .collect()
     }
 
     /// Provenance proof for one cached archive (SEC-R2-01): a cached
@@ -2011,7 +2320,7 @@ impl AurClient {
                         return false;
                     }
                 };
-                if embedded.trim_end() != expected.trim_end() {
+                if embedded != expected {
                     tracing::warn!(
                         "Cached artifact provenance for {output}: .INSTALL hook in {} does not match the reviewed install script '{install_file}'; rejecting cache hit",
                         archive.display()
@@ -2042,15 +2351,21 @@ impl AurClient {
         let mut install_script: Option<String> = None;
         for entry in tar_archive.entries()? {
             let entry = entry?;
-            let entry_path = entry.path()?;
-            if entry_path.components().count() > 2 {
-                continue;
-            }
-            match entry_path.file_name().and_then(|name| name.to_str()) {
-                Some(".PKGINFO" | "PKGINFO") if pkginfo.is_none() => {
+            let entry_path = entry.path()?.into_owned();
+            let normalized = crate::core::archive::stripped_archive_path(&entry_path, 0)?;
+            match normalized.as_deref().and_then(Path::to_str) {
+                Some(".PKGINFO") => {
+                    anyhow::ensure!(
+                        pkginfo.is_none() && entry.header().entry_type().is_file(),
+                        "Duplicate or non-regular .PKGINFO"
+                    );
                     pkginfo = Some(Self::read_bounded_archive_member(entry)?);
                 }
-                Some(".INSTALL") if install_script.is_none() => {
+                Some(".INSTALL") => {
+                    anyhow::ensure!(
+                        install_script.is_none() && entry.header().entry_type().is_file(),
+                        "Duplicate or non-regular .INSTALL"
+                    );
                     install_script = Some(Self::read_bounded_archive_member(entry)?);
                 }
                 _ => {}
@@ -2059,6 +2374,18 @@ impl AurClient {
         let Some(pkginfo) = pkginfo else {
             return Ok(None);
         };
+        let architecture = pkginfo
+            .lines()
+            .filter_map(|line| {
+                line.split_once('=').and_then(|(key, value)| {
+                    (key.trim() == "arch").then(|| value.trim().to_owned())
+                })
+            })
+            .collect::<Vec<_>>();
+        anyhow::ensure!(
+            architecture.len() <= 1,
+            "Archive has duplicate architecture fields"
+        );
         Ok(
             Self::parse_pkginfo_identity(&pkginfo).map(|(name, version, base)| {
                 CachedArchiveIdentity {
@@ -2066,6 +2393,7 @@ impl AurClient {
                     version,
                     base,
                     install_script,
+                    architecture: architecture.into_iter().next(),
                 }
             }),
         )
@@ -2098,9 +2426,24 @@ impl AurClient {
                 continue;
             };
             match key.trim() {
-                "pkgname" if name.is_none() => name = Some(value.trim().to_string()),
-                "pkgver" if version.is_none() => version = Some(value.trim().to_string()),
-                "pkgbase" if base.is_none() => base = Some(value.trim().to_string()),
+                "pkgname" => {
+                    if name.is_some() {
+                        return None;
+                    }
+                    name = Some(value.trim().to_string());
+                }
+                "pkgver" => {
+                    if version.is_some() {
+                        return None;
+                    }
+                    version = Some(value.trim().to_string());
+                }
+                "pkgbase" => {
+                    if base.is_some() {
+                        return None;
+                    }
+                    base = Some(value.trim().to_string());
+                }
                 _ => {}
             }
         }
@@ -2121,45 +2464,27 @@ impl AurClient {
     /// `pkgname =` it belongs to; returns `None` when that output declares
     /// no install script.
     fn srcinfo_install_script(content: &str, pkgname: &str) -> Option<String> {
-        let mut current_block_is_target = false;
-        let mut install: Option<String> = None;
+        let mut block: Option<&str> = None;
+        let mut common: Option<String> = None;
+        let mut selected: Option<String> = None;
         for line in content.lines() {
             let Some((key, value)) = line.split_once('=') else {
                 continue;
             };
             let value = value.trim();
             match key.trim() {
-                "pkgname" => {
-                    if install.is_some() {
-                        break; // Found in the target block; later blocks are sibling outputs.
+                "pkgname" => block = Some(value),
+                "install" if !value.is_empty() => {
+                    if block.is_none() {
+                        common = Some(value.to_owned());
+                    } else if block == Some(pkgname) {
+                        selected = Some(value.to_owned());
                     }
-                    current_block_is_target = value == pkgname;
-                }
-                "install" if current_block_is_target && install.is_none() && !value.is_empty() => {
-                    install = Some(value.to_string());
                 }
                 _ => {}
             }
         }
-        install
-    }
-
-    fn cached_archive_matches(archive: &Path, package: &str) -> bool {
-        let Some((name, _version)) = Self::pkg_name_and_version_from_archive(archive) else {
-            tracing::warn!(
-                "Cached archive {} has no readable .PKGINFO; rejecting",
-                archive.display()
-            );
-            return false;
-        };
-        if name != package {
-            tracing::warn!(
-                "Cached archive {} claims pkgname '{name}', expected '{package}'; rejecting",
-                archive.display()
-            );
-            return false;
-        }
-        true
+        selected.or(common)
     }
 
     pub(crate) fn pkg_name_and_version_from_archive(path: &Path) -> Option<(String, String)> {
@@ -2169,7 +2494,11 @@ impl AurClient {
     }
 
     fn package_archive_reader(path: &Path, budget: u64) -> Result<Box<dyn Read>> {
-        let file = File::open(path)?;
+        let pinned = ArchiveSnapshot::from_handoff(&path.to_string_lossy())?;
+        let file = match &pinned {
+            Some(snapshot) => snapshot.reader()?,
+            None => File::open(path)?,
+        };
         if path.extension().is_some_and(|ext| ext == "zst") {
             let decoder = ruzstd::decoding::StreamingDecoder::new(file)
                 .map_err(|error| anyhow::anyhow!("zstd: {error}"))?;
@@ -2336,8 +2665,12 @@ impl AurClient {
     }
 
     async fn git_clone(&self, package: &str) -> Result<()> {
-        let url = format!("{AUR_GIT_URL}/{package}.git");
-        let safe_url = crate::core::http::redact_url(&url);
+        self.git_clone_from(package, &format!("{AUR_GIT_URL}/{package}.git"))
+            .await
+    }
+
+    async fn git_clone_from(&self, package: &str, url: &str) -> Result<()> {
+        let safe_url = crate::core::http::redact_url(url);
         let dest = self.build_dir.join(package);
 
         let spinner = create_spinner("Cloning repository...");
@@ -2346,7 +2679,7 @@ impl AurClient {
             let home = original_user_home()?;
             let dest_str = dest.to_string_lossy();
 
-            let mut cmd = Command::new("sudo");
+            let mut cmd = crate::core::privilege::sudo_command()?;
             cmd.args(["-u", &user]);
 
             if let Some(ref home_path) = home {
@@ -2360,7 +2693,7 @@ impl AurClient {
                 "--depth=1",
                 "--filter=blob:none", // Partial clone: download only needed blobs on demand
                 "--",
-                &url,
+                url,
                 dest_str.as_ref(),
             ]);
 
@@ -2383,7 +2716,7 @@ impl AurClient {
             let mut command = Command::new("git");
             command
                 .args(["clone", "--depth=1", "--filter=blob:none", "--"])
-                .arg(&url)
+                .arg(url)
                 .arg(&dest)
                 .env("GIT_TERMINAL_PROMPT", "0")
                 .stdin(std::process::Stdio::null());
@@ -2401,118 +2734,23 @@ impl AurClient {
     }
 
     async fn git_pull(&self, pkg_dir: &Path) -> Result<()> {
-        if !crate::core::is_root() && is_root_owned(pkg_dir) {
-            // Prefer a pwd lookup over the `USER` env var, which the
-            // invoking environment can set to anything.
-            let current_user = whoami::username().unwrap_or_default();
-            let current_user = if current_user.is_empty() {
-                std::env::var("USER").unwrap_or_else(|_| "nobody".to_string())
-            } else {
-                current_user
-            };
-            let fix_spinner = create_spinner("Fixing directory ownership...");
-            let fix_result = Command::new("sudo")
-                .args(["chown", "-R", &format!("{current_user}:{current_user}")])
-                .arg(pkg_dir)
-                .status()
-                .await;
+        let package = pkg_dir
+            .file_name()
+            .and_then(|name| name.to_str())
+            .context("Invalid AUR source directory")?;
+        crate::core::security::validate_package_name(package)?;
+        self.refresh_checkout_from(pkg_dir, &format!("{AUR_GIT_URL}/{package}.git"))
+            .await
+    }
 
-            match fix_result {
-                Ok(status) if status.success() => {
-                    fix_spinner.finish_and_clear();
-                    tracing::info!("Fixed ownership of {}", pkg_dir.display());
-                }
-                _ => {
-                    fix_spinner.finish_and_clear();
-                    anyhow::bail!(
-                        "Build directory '{}' is owned by root.\n  \
-                         → This was likely created by a previous 'sudo omg install'.\n  \
-                         → Fix: sudo chown -R $USER:$USER ~/.cache/omg/aur/\n  \
-                         → Or clean and reinstall: rm -rf ~/.cache/omg/aur/{} && omg install {}",
-                        pkg_dir.display(),
-                        pkg_dir
-                            .file_name()
-                            .and_then(|n| n.to_str())
-                            .unwrap_or("package"),
-                        pkg_dir
-                            .file_name()
-                            .and_then(|n| n.to_str())
-                            .unwrap_or("package")
-                    );
-                }
-            }
-        }
-
-        let spinner = create_spinner("Pulling latest changes...");
-
-        if let Some(user) = original_user() {
-            let home = original_user_home()?;
-            let pkg_dir_str = pkg_dir.to_string_lossy();
-
-            let mut cmd = Command::new("sudo");
-            cmd.args(["-u", &user]);
-
-            if let Some(ref home_path) = home {
-                cmd.arg("-H");
-                cmd.env("HOME", home_path);
-            }
-
-            // The checkout was writable to untrusted build code (wave-12
-            // aud-aur-client): a planted .git/hooks/post-merge or
-            // core.hooksPath would execute as the real user on this pull.
-            // Hooks are disabled outright and global/system config is
-            // isolated so repository-local config cannot inject behavior.
-            cmd.args(["git", "-C", pkg_dir_str.as_ref()]);
-            cmd.args(AUR_GIT_PULL_ARGS);
-            cmd.env("GIT_TERMINAL_PROMPT", "0");
-            cmd.env("GIT_CONFIG_NOSYSTEM", "1");
-            configure_auxiliary_output(&mut cmd);
-
-            let status = cmd
-                .stdin(std::process::Stdio::null())
-                .status()
-                .await
-                .with_context(|| format!("Failed to run git pull as user '{user}'"))?;
-
-            spinner.finish_and_clear();
-
-            if !status.success() {
-                anyhow::bail!(
-                    "git pull failed in {}\n  → Try: rm -rf ~/.cache/omg/aur/{} && omg install {}",
-                    pkg_dir.display(),
-                    pkg_dir
-                        .file_name()
-                        .and_then(|n| n.to_str())
-                        .unwrap_or("package"),
-                    pkg_dir
-                        .file_name()
-                        .and_then(|n| n.to_str())
-                        .unwrap_or("package")
-                );
-            }
-        } else {
-            let mut command = Command::new("git");
-            command
-                .arg("-C")
-                .arg(pkg_dir)
-                .args(AUR_GIT_PULL_ARGS)
-                .env("GIT_TERMINAL_PROMPT", "0")
-                .env("GIT_CONFIG_NOSYSTEM", "1")
-                .stdin(std::process::Stdio::null());
-            configure_auxiliary_output(&mut command);
-            let status = command
-                .status()
-                .await
-                .with_context(|| format!("Failed to run git pull in {}", pkg_dir.display()))?;
-            spinner.finish_and_clear();
-            if !status.success() {
-                anyhow::bail!(
-                    "git pull failed in {}\n  → Try removing the cached AUR checkout and reinstalling",
-                    pkg_dir.display()
-                );
-            }
-        }
-        Ok(())
+    async fn refresh_checkout_from(&self, pkg_dir: &Path, url: &str) -> Result<()> {
+        let package = pkg_dir
+            .file_name()
+            .and_then(|name| name.to_str())
+            .context("Invalid AUR source directory")?;
+        crate::core::security::validate_package_name(package)?;
+        remove_dir_as_user(pkg_dir).await?;
+        self.git_clone_from(package, url).await
     }
 
     async fn run_build(
@@ -2521,6 +2759,14 @@ impl AurClient {
         env: &MakepkgEnv,
         package: &str,
     ) -> Result<std::process::ExitStatus> {
+        if !self.settings.aur.allow_network {
+            let sources = parse_sources(pkg_dir)?;
+            let summary = download_sources(sources, &env.srcdest).await;
+            anyhow::ensure!(
+                summary.failed == 0,
+                "AUR source prefetch failed; build networking is disabled. Cache the declared sources before retrying."
+            );
+        }
         match self.settings.aur.build_method {
             AurBuildMethod::Bubblewrap => self.run_sandboxed_makepkg(pkg_dir, env, package).await,
             AurBuildMethod::Chroot => self.run_chroot_build(pkg_dir, env, package).await,
@@ -2547,10 +2793,6 @@ impl AurClient {
 
         if bwrap_available {
             tracing::info!("Using bubblewrap sandbox for secure AUR build");
-            println!(
-                "{} Building in sandbox (bubblewrap)...",
-                crate::cli::style::positive("🔒")
-            );
 
             // Repository dependencies were installed before entering the
             // sandbox; the untrusted build itself receives no sudo-capable TTY.
@@ -2616,6 +2858,25 @@ impl AurClient {
             }
             let compiler_cache_mounts =
                 Self::sandbox_cache_mounts(&cache_base, &env.compiler_cache_dirs)?;
+            let pgp_home = env
+                .pgp_home
+                .as_ref()
+                .map(|home| {
+                    home.path().canonicalize().with_context(|| {
+                        format!(
+                            "Failed to canonicalize package-scoped PGP keyring: {}",
+                            home.path().display()
+                        )
+                    })
+                })
+                .transpose()?;
+            if let Some(path) = &pgp_home {
+                anyhow::ensure!(
+                    path.starts_with(&cache_base),
+                    "Security: package-scoped PGP keyring escapes cache directory: {}",
+                    path.display()
+                );
+            }
 
             let pkg_dir_str = pkg_dir_canonical.to_string_lossy();
             let (build_user_name, home) = build_identity();
@@ -2629,18 +2890,19 @@ impl AurClient {
             let pacman_cache_root_str = pacman_cache_root.to_string_lossy();
             let home_str = home.to_string_lossy();
 
-            // SECURITY (audit sec2 F-01): the sandbox inherits the caller's
-            // controlling TTY, where omg's sudoloop keeps a live tty-scoped
-            // sudo ticket. Run bwrap under setsid so processes inside the
-            // sandbox have NO controlling terminal and cannot silently reuse
-            // that ticket (`sudo -n` fails without a tty). Output still
-            // streams because stdio fds remain attached.
-            let mut cmd = Command::new("setsid");
-            configure_build_environment(&mut cmd, &home, &build_user_name);
-            cmd.arg("-w").arg("bwrap");
+            // Keep bwrap as omg's direct child for parent-death handling.
+            // Its PID namespace makes cancellation kill compiler descendants
+            // too; --die-with-parent alone only kills the direct command.
+            // --new-session blocks reuse of tty-scoped sudo credentials.
+            let mut cmd = sandbox_command(&home, &build_user_name);
+            if self.settings.aur.allow_network {
+                crate::cli::modern_ui::print_warning(
+                    "AUR build networking is enabled: untrusted build code can reach host-local and private services.",
+                );
+            } else {
+                cmd.arg("--unshare-net");
+            }
             cmd.args([
-                "--clearenv",
-                "--share-net",
                 "--ro-bind",
                 "/usr",
                 "/usr",
@@ -2681,6 +2943,11 @@ impl AurClient {
                 cmd.arg(cache_dir);
                 cmd.arg(cache_dir);
             }
+            if let Some(path) = &pgp_home {
+                cmd.args(["--bind"]);
+                cmd.arg(path);
+                cmd.arg(path);
+            }
             cmd.args([
                 "--tmpfs",
                 "/tmp",
@@ -2695,7 +2962,7 @@ impl AurClient {
             cmd.args(["--ro-bind"]);
             cmd.arg(&*pacman_cache_root_str);
             cmd.arg(&*pacman_cache_root_str);
-            cmd.args(["--die-with-parent", "--chdir"]);
+            cmd.arg("--chdir");
             cmd.arg(&*pkg_dir_str);
             for (key, value) in [
                 ("HOME", home_str.as_ref()),
@@ -2717,6 +2984,10 @@ impl AurClient {
             cmd.arg(&*srcdest_str);
             cmd.args(["--setenv", "BUILDDIR"]);
             cmd.arg(&*builddir_str);
+            if let Some(path) = &pgp_home {
+                cmd.args(["--setenv", "GNUPGHOME"]);
+                cmd.arg(path);
+            }
 
             for (key, value) in &env.extra_env {
                 cmd.args(["--setenv", key, value]);
@@ -2753,30 +3024,16 @@ impl AurClient {
     ) -> Result<std::process::ExitStatus> {
         let (build_user, build_home) = build_identity();
 
-        // If running as root, drop privileges without preserving root's
-        // environment. makepkg refuses to run as root, and `sudo -E` would
-        // expose root credentials and injection variables to the PKGBUILD.
-        let mut cmd = Command::new("setsid");
+        // Install and rollback reject root before reaching the build path.
+        // Untrusted PKGBUILDs still need an allowlisted environment.
+        let mut cmd = native_build_command()?;
         configure_build_environment(&mut cmd, &build_home, &build_user);
-        cmd.arg("-w");
-        if crate::core::is_root() {
-            tracing::debug!(
-                "Running makepkg as user '{}' (de-escalated from root), HOME={}",
-                build_user,
-                build_home.display()
-            );
-            cmd.args(["sudo", "-H", "-u", build_user.as_str(), "--", "makepkg"]);
-        } else {
-            cmd.arg("makepkg");
+        if let Some(pgp_home) = &env.pgp_home {
+            cmd.env("GNUPGHOME", pgp_home.path());
         }
 
-        // SECURITY: run makepkg in a NEW SESSION without a controlling TTY.
-        // sudo timestamps are tty-scoped by default (timestamp_type=tty), so
-        // while omg holds a warm credential in THIS terminal, a malicious
-        // PKGBUILD calling `sudo -n ...` inside build()/package() previously
-        // inherited that ticket and escalated to root silently. Under setsid
-        // there is no controlling terminal, so the attacker's sudo -n fails.
-        // -w makes setsid wait and propagate makepkg's real exit status.
+        // no_new_privs blocks privilege gains even with global sudo tickets.
+        // setsid detaches the authentication TTY and propagates the build status.
 
         cmd.args(self.makepkg_args())
             .env("MAKEFLAGS", &env.makeflags)
@@ -2800,6 +3057,10 @@ impl AurClient {
         env: &MakepkgEnv,
         package: &str,
     ) -> Result<std::process::ExitStatus> {
+        anyhow::ensure!(
+            self.settings.aur.allow_network,
+            "Chroot devtools cannot enforce offline builds; choose bubblewrap or explicitly enable aur.allow_network"
+        );
         let mut cmd = if which("pkgctl").is_ok() {
             let mut cmd = Command::new("pkgctl");
             cmd.arg("build");
@@ -2819,6 +3080,9 @@ impl AurClient {
 
         let (build_user, build_home) = build_identity();
         configure_build_environment(&mut cmd, &build_home, &build_user);
+        if let Some(pgp_home) = &env.pgp_home {
+            cmd.env("GNUPGHOME", pgp_home.path());
+        }
         cmd.current_dir(pkg_dir)
             .env("MAKEFLAGS", &env.makeflags)
             .env("PKGDEST", &env.pkgdest)
@@ -2941,10 +3205,10 @@ impl AurClient {
 
     /// Display and confirm a PKGBUILD before any script-driven side effect.
     ///
-    /// Returns the SHA-256 hex digest of the reviewed PKGBUILD bytes so the
-    /// caller can re-verify the file immediately before building; a mismatch
-    /// means the reviewed script and the executed script diverged.
-    async fn review_pkgbuild(package: &str, pkgbuild_path: &Path) -> Result<String> {
+    /// Captures all local build inputs and their manifest digest so the caller
+    /// can reject additions, removals, permission changes and modified content
+    /// immediately before building.
+    async fn review_pkgbuild(package: &str, pkgbuild_path: &Path) -> Result<ReviewedSource> {
         // Quiesce before joining the review queue: a queued review should
         // hold one continuous quiesce across the wait and confirm, so
         // concurrent spinners neither flicker nor overwrite review output.
@@ -2959,12 +3223,28 @@ impl AurClient {
             );
         }
 
-        let bytes = tokio::fs::read(pkgbuild_path)
-            .await
-            .with_context(|| format!("Failed to read PKGBUILD: {}", pkgbuild_path.display()))?;
-        let review = pkgbuild_review_text(&bytes)?;
-        let digest = pkgbuild_digest(&bytes);
-        println!("{}", pkgbuild_review_panel(package, &digest, &review));
+        let source_dir = pkgbuild_path.parent().context("Missing source directory")?;
+        let source = ReviewedSource::capture(source_dir)?;
+        for (path, bytes) in &source.files {
+            let review = if std::str::from_utf8(bytes).is_ok() {
+                pkgbuild_review_text(bytes)?
+            } else {
+                format!(
+                    "Binary input: {} bytes, SHA-256 {}",
+                    bytes.len(),
+                    pkgbuild_digest(bytes)
+                )
+            };
+            println!(
+                "{}",
+                pkgbuild_review_panel(
+                    &format!("{package}: {}", path.display()),
+                    &source.digest,
+                    &review,
+                    &source_dir.join(path),
+                )
+            );
+        }
 
         let prompt = pkgbuild_review_prompt(package);
         let proceed = tokio::task::spawn_blocking(move || {
@@ -2978,7 +3258,7 @@ impl AurClient {
         if !proceed {
             anyhow::bail!("Build aborted by user after PKGBUILD review.");
         }
-        Ok(digest)
+        Ok(source)
     }
 
     /// Whether AUR builds will demand interactive PKGBUILD review. The
@@ -2989,7 +3269,7 @@ impl AurClient {
     }
 
     #[cfg(feature = "pgp")]
-    async fn fetch_missing_pgp_keys(pkgbuild_path: &Path) -> Result<()> {
+    async fn fetch_missing_pgp_keys(pkgbuild_path: &Path) -> Result<Option<tempfile::TempDir>> {
         use crate::core::security::keyserver;
 
         let pkgbuild_path = pkgbuild_path.to_path_buf();
@@ -3018,26 +3298,28 @@ impl AurClient {
                     }
                 }
             }
-            Ok::<_, anyhow::Error>(Some((missing_keys, gnupg_home)))
+            Ok::<_, anyhow::Error>(Some((pkgbuild.validpgpkeys, missing_keys, gnupg_home)))
         })
         .await
         .context("AUR PGP keyring inspection task failed")??;
-        let Some((missing_keys, gnupg_home)) = keyring_state else {
-            return Ok(());
+        let Some((valid_keys, missing_keys, gnupg_home)) = keyring_state else {
+            return Ok(None);
         };
-        if missing_keys.is_empty() {
-            return Ok(());
-        }
 
-        tracing::info!("Fetching {} missing PGP key(s)...", missing_keys.len());
-        let fetched_keys = keyserver::fetch_keys(&missing_keys)
-            .await
-            .into_iter()
-            .map(|(key_id, result)| match result {
-                Ok(certificate) => Ok((key_id, certificate)),
-                Err(error) => Err(anyhow::anyhow!("Failed to fetch PGP key {key_id}: {error}")),
-            })
-            .collect::<Result<Vec<_>>>()?;
+        let fetched_keys = if missing_keys.is_empty() {
+            Vec::new()
+        } else {
+            tracing::info!("Fetching {} missing PGP key(s)...", missing_keys.len());
+            keyserver::fetch_keys(&missing_keys)
+                .await
+                .into_iter()
+                .map(|(key_id, result)| match result {
+                    Ok(certificate) => Ok((key_id, certificate)),
+                    Err(error) => Err(anyhow::anyhow!("Failed to fetch PGP key {key_id}: {error}")),
+                })
+                .collect::<Result<Vec<_>>>()?
+        };
+        let cache_dir = paths::cache_dir();
 
         tokio::task::spawn_blocking(move || {
             for (key_id, certificate) in fetched_keys {
@@ -3046,7 +3328,8 @@ impl AurClient {
                 keyserver::import_key_into_gnupg(&certificate, &gnupg_home)
                     .with_context(|| format!("Failed to import key {key_id} into GnuPG"))?;
             }
-            Ok::<(), anyhow::Error>(())
+
+            create_scoped_pgp_home(&valid_keys, &gnupg_home, &cache_dir).map(Some)
         })
         .await
         .context("AUR PGP key import task failed")?
@@ -3054,9 +3337,9 @@ impl AurClient {
 
     #[cfg(not(feature = "pgp"))]
     #[expect(clippy::unused_async)]
-    async fn fetch_missing_pgp_keys(_pkgbuild_path: &Path) -> Result<()> {
+    async fn fetch_missing_pgp_keys(_pkgbuild_path: &Path) -> Result<Option<tempfile::TempDir>> {
         tracing::debug!("PGP feature disabled, skipping key fetch");
-        Ok(())
+        Ok(None)
     }
 
     fn sandbox_cache_mounts(cache_base: &Path, cache_dirs: &[PathBuf]) -> Result<Vec<PathBuf>> {
@@ -3235,6 +3518,7 @@ impl AurClient {
             builddir,
             compiler_cache_dirs,
             extra_env,
+            pgp_home: None,
         })
     }
 
@@ -3277,11 +3561,13 @@ impl AurClient {
 
     /// Look up a cached build: the hash file lives under `cache_name` (the
     /// package base) while the archive search targets the requested output
-    /// artifacts, which may be split-package outputs of that base.
+    /// artifacts, which may be split-package outputs of that base. Only
+    /// archives validated against the checkout are returned.
     async fn cached_artifacts(
         &self,
         cache_name: &str,
         artifacts: &[String],
+        pkg_dir: &Path,
         pkgdest: &Path,
         cache_key: &str,
     ) -> Result<Option<Vec<PathBuf>>> {
@@ -3291,6 +3577,7 @@ impl AurClient {
 
         let cache_name = cache_name.to_string();
         let artifacts = artifacts.to_vec();
+        let pkg_dir = pkg_dir.to_path_buf();
         let pkgdest = pkgdest.to_path_buf();
         let cache_key = cache_key.to_string();
         let cache_path = self.cache_path(&cache_name);
@@ -3303,7 +3590,11 @@ impl AurClient {
                 return Ok(None);
             }
 
-            Ok(Self::find_packages_in_dir_all(&pkgdest, &artifacts))
+            Ok(
+                Self::find_packages_in_dir_all(&pkgdest, &artifacts).and_then(|archives| {
+                    Self::select_cached_artifacts(archives, &artifacts, &pkg_dir, &cache_name)
+                }),
+            )
         })
         .await?
     }
@@ -3321,7 +3612,7 @@ impl AurClient {
 
         let cache_key = cache_key.to_string();
         if let Some(user) = original_user() {
-            let mut child = Command::new("sudo")
+            let mut child = crate::core::privilege::sudo_command()?
                 .args(["-u", &user, "tee"])
                 .arg(&cache_path)
                 .stdin(Stdio::piped())
@@ -3350,7 +3641,7 @@ impl AurClient {
 
     /// Install the built package via direct ALPM or elevated OMG transaction.
     async fn install_built_packages(
-        pkg_paths: &[PathBuf],
+        pkg_paths: &[ArchiveSnapshot],
         sudoloop: Option<&crate::core::sudoloop::SudoLoop>,
     ) -> Result<()> {
         if pkg_paths.is_empty() {
@@ -3360,17 +3651,9 @@ impl AurClient {
         // Serialize database mutations across all concurrent builds.
         let _install_guard = INSTALL_LOCK.lock().await;
 
-        println!(
-            "{} Installing built package...",
-            crate::cli::style::informative("→")
-        );
-
         // Only an already-root process may mutate ALPM directly.
         if crate::core::caps::can_write_pacman_db() {
-            let packages = pkg_paths
-                .iter()
-                .map(|path| path.to_string_lossy().into_owned())
-                .collect();
+            let packages = pkg_paths.iter().map(ArchiveSnapshot::handoff).collect();
             tokio::task::spawn_blocking(move || {
                 crate::package_managers::execute_transaction(
                     packages,
@@ -3386,15 +3669,8 @@ impl AurClient {
                 sl.refresh_now().await;
             }
 
-            let package_strs: Vec<String> = pkg_paths
-                .iter()
-                .map(|path| {
-                    path.canonicalize()
-                        .unwrap_or_else(|_| path.clone())
-                        .to_string_lossy()
-                        .into_owned()
-                })
-                .collect();
+            let package_strs: Vec<String> =
+                pkg_paths.iter().map(ArchiveSnapshot::handoff).collect();
             let mut args = vec!["install", "--"];
             let pkg_refs: Vec<&str> = package_strs.iter().map(String::as_str).collect();
             args.extend(pkg_refs);
@@ -3409,13 +3685,13 @@ impl AurClient {
         if self.build_dir.exists() {
             if let Some(user) = original_user() {
                 let build_dir_str = self.build_dir.to_string_lossy();
-                let status = std::process::Command::new("sudo")
+                let status = crate::core::privilege::system_command("sudo")?
                     .args(["-u", &user, "rm", "-rf", "--", build_dir_str.as_ref()])
                     .status()?;
                 if !status.success() {
                     anyhow::bail!("Failed to clean directory as user '{user}'");
                 }
-                let status = std::process::Command::new("sudo")
+                let status = crate::core::privilege::system_command("sudo")?
                     .args(["-u", &user, "mkdir", "-p", "--", build_dir_str.as_ref()])
                     .status()?;
                 if !status.success() {
@@ -3653,6 +3929,102 @@ mod tests {
     }
 
     #[test]
+    fn source_additions_and_duplicate_archive_fields_are_rejected() -> Result<()> {
+        let directory = tempfile::tempdir()?;
+        std::fs::write(
+            directory.path().join("PKGBUILD"),
+            "source ./optional-helper\n",
+        )?;
+        std::fs::write(
+            directory.path().join(".SRCINFO"),
+            "pkgbase = example\npkgname = example\n",
+        )?;
+        let source = ReviewedSource::capture(directory.path())?;
+        source.verify(directory.path())?;
+        std::fs::write(directory.path().join("optional-helper"), "evil\n")?;
+        assert!(source.verify(directory.path()).is_err());
+        let valid = "pkgname = example\npkgver = 1-1\npkgbase = example\n";
+        assert!(AurClient::parse_pkginfo_identity(valid).is_some());
+        for extra in ["pkgname = other\n", "pkgver = 2-1\n", "pkgbase = other\n"] {
+            assert!(AurClient::parse_pkginfo_identity(&format!("{valid}{extra}")).is_none());
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn reviewed_source_and_fresh_archive_share_one_authorization_boundary() -> Result<()> {
+        let directory = tempfile::tempdir()?;
+        std::fs::write(
+            directory.path().join("PKGBUILD"),
+            "pkgname=demo\npkgver=1\n",
+        )?;
+        std::fs::write(
+            directory.path().join(".SRCINFO"),
+            "pkgbase = demo\npkgver = 1\npkgrel = 1\narch = any\ninstall = demo.install\npkgname = demo\n",
+        )?;
+        std::fs::write(
+            directory.path().join("demo.install"),
+            "post_install() { :; }\n",
+        )?;
+        let source = ReviewedSource::capture(directory.path())?;
+        let archive_dir = tempfile::tempdir()?;
+        let archive = archive_dir.path().join("demo-1-1-any.pkg.tar.gz");
+        let info = "pkgname = demo\npkgbase = demo\npkgver = 1-1\narch = any\n";
+        write_pkg_archive(&archive, info, Some("post_install() { :; }\n"));
+        let accepted = AurClient::authorize_archives(
+            std::slice::from_ref(&archive),
+            &source,
+            "demo",
+            &["demo".to_owned()],
+            true,
+        )?;
+        write_pkg_archive(&archive, info, Some("post_install() { evil; }\n"));
+        assert!(
+            AurClient::authorize_archives(
+                std::slice::from_ref(&archive),
+                &source,
+                "demo",
+                &["demo".to_owned()],
+                true
+            )
+            .is_err()
+        );
+        // The previously approved snapshot still carries the original bytes.
+        let identity =
+            AurClient::cached_archive_identity(Path::new(&accepted[0].handoff()))?.unwrap();
+        assert_eq!(
+            identity.install_script.as_deref(),
+            Some("post_install() { :; }\n")
+        );
+        std::fs::write(directory.path().join("demo.install"), "changed")?;
+        assert!(source.verify(directory.path()).is_err());
+        assert!(
+            AurClient::authorize_archives(&[], &source, "demo", &["demo".to_owned()], true)
+                .is_err()
+        );
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn native_child_cannot_gain_new_privileges() -> Result<()> {
+        // Exercise the real setpriv boundary without sudo or package mutation.
+        let output = Command::new(crate::core::privilege::trusted_program("setpriv")?)
+            .args(["--no-new-privs", "--", "/usr/bin/cat", "/proc/self/status"])
+            .output()
+            .await?;
+        assert!(output.status.success());
+        assert!(String::from_utf8(output.stdout)?.contains("NoNewPrivs:\t1"));
+        let command = native_build_command()?;
+        assert!(
+            command
+                .as_std()
+                .get_args()
+                .any(|argument| argument == "--no-new-privs")
+        );
+        Ok(())
+    }
+
+    #[test]
     fn aur_rpc_error_envelope_is_not_an_empty_success() {
         let error = decode_aur_rpc_body::<AurResponse>(
             br#"{"type":"error","error":"Incorrect request type specified.","results":"malformed"}"#,
@@ -3703,17 +4075,17 @@ mod tests {
     }
 
     #[test]
-    fn pkginfo_parser_tolerates_partial_metadata_and_deduplicates_keys() {
+    fn pkginfo_parser_tolerates_partial_metadata_and_rejects_duplicate_keys() {
         assert_eq!(
             AurClient::parse_pkginfo_name_version("pkgname = example\npkgver = 1.0-1\n"),
             Some(("example".to_string(), "1.0-1".to_string()))
         );
-        // First occurrence wins (guards against duplicate-key takeover).
+        // Reject parser ambiguity rather than choosing an occurrence.
         assert_eq!(
             AurClient::parse_pkginfo_name_version(
                 "pkgname = first\npkgname = second\npkgver = a\npkgver = b\n"
             ),
-            Some(("first".to_string(), "a".to_string()))
+            None
         );
         // Missing either required key fails closed.
         assert_eq!(
@@ -3764,7 +4136,12 @@ mod tests {
         );
 
         assert_eq!(
-            AurClient::select_cached_artifact(vec![archive], "requested", &pkg_dir, "requested"),
+            AurClient::select_cached_artifacts(
+                vec![archive],
+                &["requested".to_string()],
+                &pkg_dir,
+                "requested"
+            ),
             None
         );
     }
@@ -3836,6 +4213,115 @@ mod tests {
             error.to_string().contains("xz"),
             "unexpected error: {error:#}"
         );
+    }
+
+    #[test]
+    fn sandbox_launcher_uses_bwrap_directly_and_detaches_the_tty() {
+        let command = sandbox_command(Path::new("/home/builder"), "builder");
+        let command = command.as_std();
+        let args: Vec<_> = command.get_args().collect();
+
+        assert_eq!(command.get_program(), "bwrap");
+        assert!(args.contains(&"--new-session".as_ref()));
+        assert!(args.contains(&"--die-with-parent".as_ref()));
+        assert!(args.contains(&"--unshare-pid".as_ref()));
+        assert!(!args.contains(&"setsid".as_ref()));
+    }
+
+    #[cfg(target_os = "linux")]
+    #[tokio::test]
+    #[ignore = "requires bubblewrap and permission to create PID namespaces"]
+    async fn cancelling_logged_sandbox_build_terminates_descendants() {
+        use rustix::process::{Pid, PidfdFlags, Signal, pidfd_open, pidfd_send_signal};
+        use tokio::io::{AsyncBufReadExt, unix::AsyncFd};
+
+        let directory = tempfile::tempdir().expect("isolated build logs");
+        let client = AurClient {
+            build_dir: directory.path().to_path_buf(),
+            settings: Settings::default(),
+            package_base_locks: Arc::new(dashmap::DashMap::new()),
+        };
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let port = listener.local_addr().unwrap().port().to_string();
+        let log_path = client.build_log_path("fixture");
+        let mut command = sandbox_command(directory.path(), "builder");
+        // Keep the host /proc mount so the child can report its host PID after
+        // PID isolation. Production mounts a fresh /proc instead. Do not bind
+        // the whole host root: a read-only /dev makes `cmd &` fail opening
+        // /dev/null, and Docker cgroup mounts break --ro-bind / /. A socket
+        // provides readiness and bounds the child's lifetime if setup fails.
+        command.args([
+            "--ro-bind",
+            "/usr",
+            "/usr",
+            "--ro-bind",
+            "/lib",
+            "/lib",
+            "--ro-bind",
+            "/lib64",
+            "/lib64",
+            "--symlink",
+            "/usr/bin",
+            "/bin",
+            "--ro-bind",
+            "/proc",
+            "/proc",
+            "--dev",
+            "/dev",
+            "--",
+            "/bin/bash",
+            "-c",
+        ]);
+        command.arg(
+            r#"/bin/bash -c '
+                exec 3<>/dev/tcp/127.0.0.1/"$1" || exit 1
+                read -r host_pid rest < /proc/self/stat
+                printf "%s\n" "$host_pid" >&3
+                read -r -t 30 finish <&3
+            ' child "$1" & wait"#,
+        );
+        command.arg("build").arg(port).stdin(Stdio::null());
+        let mut runner = tokio::spawn(async move {
+            client
+                .run_logged_build_command(&mut command, "fixture")
+                .await
+        });
+        let _abort_runner = scopeguard::guard(runner.abort_handle(), |handle| handle.abort());
+        let (stream, _) = tokio::select! {
+            result = tokio::time::timeout(Duration::from_secs(5), listener.accept()) => {
+                result.expect("build child must signal readiness").expect("accept readiness")
+            }
+            result = &mut runner => {
+                let log = std::fs::read_to_string(&log_path).unwrap_or_default();
+                panic!("sandbox exited before child readiness: {result:?}\nlog:\n{log}");
+            }
+        };
+        let mut readiness = tokio::io::BufReader::new(stream);
+        let mut pid = String::new();
+        tokio::time::timeout(Duration::from_secs(5), readiness.read_line(&mut pid))
+            .await
+            .unwrap()
+            .unwrap();
+        let pid =
+            Pid::from_raw(pid.trim().parse().expect("child host PID")).expect("nonzero child PID");
+        let exit = AsyncFd::new(pidfd_open(pid, PidfdFlags::NONBLOCK).unwrap()).unwrap();
+        let _cleanup_child = scopeguard::guard(&exit, |exit| {
+            // The failed regression must not leak its fixture. A pidfd
+            // cannot accidentally signal an unrelated process after PID reuse.
+            let _ = pidfd_send_signal(exit.get_ref(), Signal::KILL);
+        });
+
+        runner.abort();
+        assert!(
+            runner
+                .await
+                .expect_err("runner must be cancelled")
+                .is_cancelled()
+        );
+        let _exited = tokio::time::timeout(Duration::from_secs(2), exit.readable())
+            .await
+            .expect("cancelling a sandbox build must terminate its compiler descendants")
+            .expect("observe child exit");
     }
 
     #[test]
@@ -4007,7 +4493,12 @@ mod tests {
     fn pkgbuild_review_panel_is_inline_and_package_specific() {
         let review = "pkgname=google-chrome\npkgver=140.0\n";
         let digest = pkgbuild_digest(review.as_bytes());
-        let panel = pkgbuild_review_panel("google-chrome", &digest, review);
+        let panel = pkgbuild_review_panel(
+            "google-chrome",
+            &digest,
+            review,
+            std::path::Path::new("/tmp/PKGBUILD"),
+        );
 
         assert!(panel.contains("AUR"));
         assert!(panel.contains("Review google-chrome"));
@@ -4017,6 +4508,24 @@ mod tests {
             pkgbuild_review_prompt("google-chrome"),
             "Build google-chrome from this PKGBUILD?"
         );
+    }
+
+    #[test]
+    fn pkgbuild_review_panel_truncates_long_pkgbuilds() {
+        let review = (0..100)
+            .map(|i| format!("line{i}=value"))
+            .collect::<Vec<_>>()
+            .join("\n");
+        let digest = pkgbuild_digest(review.as_bytes());
+        let path = std::path::Path::new("/cache/aur/chatgpt-desktop/PKGBUILD");
+        let panel = pkgbuild_review_panel("chatgpt-desktop", &digest, &review, path);
+
+        assert!(panel.contains("line0=value"));
+        assert!(panel.contains("line39=value"));
+        assert!(!panel.contains("line40=value"));
+        assert!(panel.contains("60 more lines"));
+        assert!(panel.contains("/cache/aur/chatgpt-desktop/PKGBUILD"));
+        assert!(panel.contains(&format!("SHA-256 {digest}")));
     }
 
     #[tokio::test]
@@ -4387,7 +4896,12 @@ mod tests {
         );
 
         assert_eq!(
-            AurClient::select_cached_artifact(vec![poisoned], "mypkg", &pkg_dir, "mypkg"),
+            AurClient::select_cached_artifacts(
+                vec![poisoned],
+                &["mypkg".to_string()],
+                &pkg_dir,
+                "mypkg"
+            ),
             None,
             "a cache hit whose .INSTALL hook does not match the reviewed install script must be rejected"
         );
@@ -4409,9 +4923,91 @@ mod tests {
         );
 
         assert_eq!(
-            AurClient::select_cached_artifact(vec![genuine.clone()], "mypkg", &pkg_dir, "mypkg"),
-            Some(genuine),
+            AurClient::select_cached_artifacts(
+                vec![genuine.clone()],
+                &["mypkg".to_string()],
+                &pkg_dir,
+                "mypkg"
+            ),
+            Some(vec![genuine]),
             "a cache hit whose .PKGINFO and .INSTALL match the reviewed source must be usable"
+        );
+    }
+
+    #[tokio::test]
+    async fn cached_artifacts_requires_all_split_outputs_to_match_the_checkout() {
+        let dir = tempfile::tempdir().expect("temp dir");
+        let pkg_dir = provenance_pkg_dir(
+            dir.path(),
+            "pkgbase = shared\npkgver = 1.0\npkgrel = 1\n\npkgname = app\n\npkgname = libs\n",
+            None,
+        );
+        let mut settings = Settings::default();
+        settings.aur.cache_builds = true;
+        let client = AurClient {
+            build_dir: dir.path().to_path_buf(),
+            settings,
+            package_base_locks: Arc::new(dashmap::DashMap::new()),
+        };
+        let cache_path = client.cache_path("shared");
+        std::fs::create_dir_all(cache_path.parent().unwrap()).unwrap();
+        std::fs::write(cache_path, "matching-key").unwrap();
+        let write_split_archive = |path: &Path, pkginfo: &str| {
+            let encoder = zstd::Encoder::new(std::fs::File::create(path).unwrap(), 0).unwrap();
+            let mut archive = tar::Builder::new(encoder);
+            let mut header = tar::Header::new_gnu();
+            header.set_size(pkginfo.len() as u64);
+            header.set_cksum();
+            archive
+                .append_data(&mut header, ".PKGINFO", pkginfo.as_bytes())
+                .unwrap();
+            archive.into_inner().unwrap().finish().unwrap();
+        };
+        let app = dir.path().join("app-1.0-1-x86_64.pkg.tar.zst");
+        let libs = dir.path().join("libs-1.0-1-x86_64.pkg.tar.zst");
+        write_split_archive(&app, "pkgname = app\npkgver = 1.0-1\npkgbase = shared\n");
+        write_split_archive(&libs, "pkgname = libs\npkgver = 1.0-1\npkgbase = shared\n");
+        let outputs = ["app".to_string(), "libs".to_string()];
+
+        assert_eq!(
+            client
+                .cached_artifacts("shared", &outputs, &pkg_dir, dir.path(), "matching-key")
+                .await
+                .unwrap(),
+            Some(vec![app.clone(), libs.clone()]),
+        );
+        assert!(
+            AurClient::select_cached_artifacts(
+                vec![libs.clone(), app],
+                &outputs,
+                &pkg_dir,
+                "shared"
+            )
+            .is_none(),
+            "archives must correspond to their requested outputs in order",
+        );
+        assert!(
+            AurClient::select_cached_artifacts(Vec::new(), &[], &pkg_dir, "shared").is_none(),
+            "empty outputs must not be treated as a cache hit",
+        );
+
+        std::fs::remove_file(&libs).unwrap();
+        assert!(
+            client
+                .cached_artifacts("shared", &outputs, &pkg_dir, dir.path(), "matching-key")
+                .await
+                .unwrap()
+                .is_none(),
+            "a missing split output must reject the whole cached build",
+        );
+        write_split_archive(&libs, "pkgname = libs\npkgver = 9.9-1\npkgbase = shared\n");
+        assert!(
+            client
+                .cached_artifacts("shared", &outputs, &pkg_dir, dir.path(), "matching-key")
+                .await
+                .unwrap()
+                .is_none(),
+            "a matching hash and filename must not hide one poisoned split output",
         );
     }
 
@@ -4433,7 +5029,12 @@ mod tests {
         );
 
         assert_eq!(
-            AurClient::select_cached_artifact(vec![poisoned], "mypkg", &pkg_dir, "mypkg"),
+            AurClient::select_cached_artifacts(
+                vec![poisoned],
+                &["mypkg".to_string()],
+                &pkg_dir,
+                "mypkg"
+            ),
             None,
             "an undeclared .INSTALL hook in a cached artifact must be rejected"
         );
@@ -4461,12 +5062,22 @@ mod tests {
         );
 
         assert_eq!(
-            AurClient::select_cached_artifact(vec![wrong_version], "mypkg", &pkg_dir, "mypkg"),
+            AurClient::select_cached_artifacts(
+                vec![wrong_version],
+                &["mypkg".to_string()],
+                &pkg_dir,
+                "mypkg"
+            ),
             None,
             "a cache hit whose .PKGINFO version differs from the reviewed .SRCINFO must be rejected"
         );
         assert_eq!(
-            AurClient::select_cached_artifact(vec![wrong_base], "mypkg", &pkg_dir, "mypkg"),
+            AurClient::select_cached_artifacts(
+                vec![wrong_base],
+                &["mypkg".to_string()],
+                &pkg_dir,
+                "mypkg"
+            ),
             None,
             "a cache hit whose .PKGINFO pkgbase differs from the reviewed package base must be rejected"
         );
@@ -4486,7 +5097,12 @@ mod tests {
         );
 
         assert_eq!(
-            AurClient::select_cached_artifact(vec![archive], "mypkg", &pkg_dir, "mypkg"),
+            AurClient::select_cached_artifacts(
+                vec![archive],
+                &["mypkg".to_string()],
+                &pkg_dir,
+                "mypkg"
+            ),
             None,
             "provenance cannot be proven without .SRCINFO; must fail closed"
         );
@@ -4845,8 +5461,85 @@ mod tests {
         );
     }
 
+    #[cfg(feature = "pgp")]
     #[test]
-    fn aur_pull_overrides_user_rebase_configuration() {
+    fn package_scoped_pgp_home_contains_public_keys_without_secret_material() {
+        use crate::core::security::keyserver;
+
+        if which::which("gpg").is_err() {
+            return;
+        }
+        let source_home = tempfile::tempdir().unwrap();
+        let cache_dir = tempfile::tempdir().unwrap();
+        let identity = format!(
+            "OMG scoped keyring test {} <test@example.invalid>",
+            uuid::Uuid::new_v4()
+        );
+        let generated = std::process::Command::new("gpg")
+            .args([
+                "--no-options",
+                "--batch",
+                "--pinentry-mode",
+                "loopback",
+                "--passphrase",
+                "",
+                "--homedir",
+            ])
+            .arg(source_home.path())
+            .args(["--quick-generate-key", &identity, "ed25519", "sign", "1d"])
+            .output()
+            .unwrap();
+        assert!(
+            generated.status.success(),
+            "{}",
+            String::from_utf8_lossy(&generated.stderr)
+        );
+        let listing = std::process::Command::new("gpg")
+            .args([
+                "--no-options",
+                "--batch",
+                "--with-colons",
+                "--fingerprint",
+                "--homedir",
+            ])
+            .arg(source_home.path())
+            .args(["--list-keys", &identity])
+            .output()
+            .unwrap();
+        let fingerprint = String::from_utf8_lossy(&listing.stdout)
+            .lines()
+            .find_map(|line| {
+                let fields: Vec<_> = line.split(':').collect();
+                (fields.first() == Some(&"fpr"))
+                    .then(|| fields.get(9).copied())
+                    .flatten()
+            })
+            .expect("generated key fingerprint")
+            .to_string();
+
+        let scoped = create_scoped_pgp_home(
+            std::slice::from_ref(&fingerprint),
+            source_home.path(),
+            cache_dir.path(),
+        )
+        .unwrap();
+        assert!(keyserver::is_key_in_gnupg(&fingerprint, scoped.path()).unwrap());
+        let secrets = std::process::Command::new("gpg")
+            .args(["--no-options", "--batch", "--with-colons", "--homedir"])
+            .arg(scoped.path())
+            .arg("--list-secret-keys")
+            .output()
+            .unwrap();
+        assert!(
+            !String::from_utf8_lossy(&secrets.stdout)
+                .lines()
+                .any(|line| line.starts_with("sec:")),
+            "package-scoped keyrings must not expose the user's secret keys"
+        );
+    }
+
+    #[tokio::test]
+    async fn aur_refresh_discards_tainted_git_configuration_and_dirty_sources() {
         let temp = tempfile::tempdir().unwrap();
         let remote = temp.path().join("remote.git");
         let seed = temp.path().join("seed");
@@ -4950,18 +5643,37 @@ mod tests {
         );
         std::fs::write(checkout.join("PKGBUILD"), "pkgver=2\n").unwrap();
 
-        let mut pull_args: Vec<&std::ffi::OsStr> = vec!["-C".as_ref(), checkout.as_os_str()];
-        pull_args.extend(
-            AUR_GIT_PULL_ARGS
-                .iter()
-                .map(|arg| std::ffi::OsStr::new(*arg)),
-        );
-        let pull = git(&pull_args);
-
+        let marker = temp.path().join("filter-executed");
+        let filter = format!("touch {}; cat", marker.display());
         assert!(
-            pull.status.success(),
-            "dirty VCS PKGBUILDs must not inherit pull.rebase=true: {}",
-            String::from_utf8_lossy(&pull.stderr)
+            git(&[
+                "-C".as_ref(),
+                checkout.as_os_str(),
+                "config".as_ref(),
+                "filter.hostile.smudge".as_ref(),
+                filter.as_ref()
+            ])
+            .status
+            .success()
+        );
+        std::fs::write(checkout.join(".gitattributes"), "* filter=hostile\n").unwrap();
+        let client = AurClient {
+            build_dir: temp.path().to_path_buf(),
+            settings: Settings::default(),
+            package_base_locks: Arc::new(dashmap::DashMap::new()),
+        };
+        client
+            .refresh_checkout_from(&checkout, remote.to_str().unwrap())
+            .await
+            .unwrap();
+        assert!(
+            !marker.exists(),
+            "a tainted checkout must never execute a Git filter on the host"
+        );
+        assert!(!checkout.join(".gitattributes").exists());
+        assert_ne!(
+            std::fs::read_to_string(checkout.join("PKGBUILD")).unwrap(),
+            "pkgver=2\n"
         );
     }
 

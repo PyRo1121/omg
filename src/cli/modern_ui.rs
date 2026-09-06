@@ -56,6 +56,11 @@ fn quiesce_active() -> bool {
     *lock_quiesce_count() > 0
 }
 
+fn hide_progress(progress: &MultiProgress) {
+    let _ = progress.clear();
+    progress.set_draw_target(ProgressDrawTarget::hidden());
+}
+
 /// Suppress live progress drawing while an interactive prompt owns the
 /// terminal.
 ///
@@ -67,7 +72,7 @@ pub fn quiesce_terminal() -> TerminalQuiesceGuard {
     let mut count = lock_quiesce_count();
     *count += 1;
     if *count == 1 {
-        progress_registry().set_draw_target(ProgressDrawTarget::hidden());
+        hide_progress(progress_registry());
     }
     TerminalQuiesceGuard { _private: () }
 }
@@ -110,9 +115,17 @@ pub(crate) fn register_spinner(bar: ProgressBar) -> ProgressBar {
 }
 
 /// Print `line`, or buffer it while a terminal quiesce is active.
+///
+/// In interactive mode the line goes through the shared `MultiProgress`,
+/// which suspends live spinners for the write; raw `println!` would splice
+/// mid-frame and read as spinner spam under parallel builds.
 pub(crate) fn emit_or_defer(line: String) {
     if quiesce_active() {
         lock_deferred_lines().push(line);
+        return;
+    }
+    if output_mode() == OutputMode::Interactive {
+        let _ = progress_registry().println(&line);
     } else {
         println!("{line}");
     }
@@ -222,14 +235,14 @@ pub fn aur_build_progress(package: &str, log_path: &Path) -> AurBuildProgress {
     let progress = match mode {
         OutputMode::Interactive => {
             if crate::cli::style::colors_enabled() {
-                println!(
+                emit_or_defer(format!(
                     "  {} {}  {}",
                     "◇".magenta().bold(),
                     "AUR forge".bold(),
                     format!("log → {}", log_path.display()).dimmed()
-                );
+                ));
             } else {
-                println!("  + AUR forge  log -> {}", log_path.display());
+                emit_or_defer(format!("  + AUR forge  log -> {}", log_path.display()));
             }
 
             let progress = register_spinner(ProgressBar::new_spinner());
@@ -463,17 +476,11 @@ pub fn print_error(msg: &str) {
 /// Warning state - subtle warning indicator
 pub fn print_warning(msg: &str) {
     let line = if crate::cli::style::colors_enabled() {
-        format!("  {} {}", "!".yellow().bold(), msg)
+        format!("\n  {} {}\n", "!".yellow().bold(), msg)
     } else {
-        format!("  ! {msg}")
+        format!("\n  ! {msg}\n")
     };
-    if quiesce_active() {
-        defer_line(line);
-        return;
-    }
-    println!();
-    println!("{line}");
-    println!();
+    emit_or_defer(line);
 }
 
 /// Info message - neutral informational
@@ -755,6 +762,27 @@ mod tests {
         progress.set_message(message.to_string());
         progress.tick();
         (progress, terminal)
+    }
+
+    #[test]
+    fn hiding_progress_clears_existing_rows_before_a_prompt() {
+        let terminal = RecordingTerm::default();
+        let progress = MultiProgress::with_draw_target(ProgressDrawTarget::term_like(Box::new(
+            terminal.clone(),
+        )));
+        let spinner = progress.add(ProgressBar::new_spinner());
+        spinner.set_message("active build");
+        spinner.tick();
+        let event_count = terminal.events().len();
+
+        hide_progress(&progress);
+
+        assert!(
+            terminal.events()[event_count..]
+                .iter()
+                .any(|event| event == "clear"),
+            "an existing progress row must be erased before prompt rendering"
+        );
     }
 
     #[test]

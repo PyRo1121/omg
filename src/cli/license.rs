@@ -29,13 +29,18 @@ pub async fn activate(key: &str) -> Result<()> {
 
     println!("{} Linking dashboard account...\n", style::runtime("OMG"));
 
-    println!(
-        "  {} Optional identity so the dashboard can name this machine. Press Enter to skip.\n",
-        style::maybe_color("📋", |t| t.cyan().to_string())
-    );
-
-    let user_name = prompt("  Your name (optional): ");
-    let user_email = prompt("  Your email (optional): ");
+    let (user_name, user_email) = if console::user_attended() {
+        println!(
+            "  {} Optional identity so the dashboard can name this machine. Press Enter to skip.\n",
+            style::maybe_color("📋", |t| t.cyan().to_string())
+        );
+        (
+            prompt("  Your name (optional): "),
+            prompt("  Your email (optional): "),
+        )
+    } else {
+        (String::new(), String::new())
+    };
 
     let user_name_opt = if user_name.is_empty() {
         None

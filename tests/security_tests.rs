@@ -284,7 +284,7 @@ mod filesystem_security {
 
             let result = project.run(&["status"]);
             assert!(
-                result.contains("Packages"),
+                result.contains("packages installed"),
                 "a world-writable cwd must not prevent status from reporting packages, got: {}",
                 result.combined_output()
             );
@@ -641,7 +641,7 @@ mod env_security {
 
     fn assert_status_reports_packages(result: &CommandResult) {
         assert!(
-            result.contains("Packages"),
+            result.contains("packages installed"),
             "status must still report package counts, got: {}",
             result.combined_output()
         );
@@ -720,7 +720,7 @@ mod env_security {
 mod network_security {
     fn production_source(source: &str) -> &str {
         source
-            .rsplit_once("#[cfg(test)]")
+            .split_once("#[cfg(test)]")
             .map_or(source, |(production, _)| production)
     }
 
@@ -756,12 +756,12 @@ mod network_security {
             "src/runtimes/node.rs",
         );
         assert_no_plaintext_http(
-            include_str!("../src/runtimes/python.rs"),
+            production_source(include_str!("../src/runtimes/python.rs")),
             "src/runtimes/python.rs",
         );
         assert_no_plaintext_http(include_str!("../src/runtimes/go.rs"), "src/runtimes/go.rs");
         assert_no_plaintext_http(
-            include_str!("../src/runtimes/rust.rs"),
+            production_source(include_str!("../src/runtimes/rust.rs")),
             "src/runtimes/rust.rs",
         );
         assert_no_plaintext_http(
@@ -801,7 +801,7 @@ mod privilege_tests {
             vec!["completions", "bash", "--stdout"],
         ];
         let expected_needles = [
-            "Packages",
+            "packages installed",
             "runtime versions",
             "node",
             "Usage",

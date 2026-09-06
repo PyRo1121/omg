@@ -238,7 +238,16 @@ pub(crate) async fn update_official_only(check_only: bool, yes: bool, dry_run: b
     let count = official_updates.len();
     let pb =
         crate::cli::modern_ui::modern_spinner("Upgrading", &format!("{count} official packages"));
-    pm.update().await?;
+    let history = crate::core::history::HistoryManager::new()?;
+    if let Some(operation) = pm.transact_with_history(
+        crate::core::history::TransactionType::Update,
+        &[],
+        Some(&history),
+    ) {
+        operation.await?;
+    } else {
+        pm.update().await?;
+    }
     crate::cli::modern_ui::finish_success(&pb, "Upgraded", &format!("{count} packages"));
 
     crate::core::usage::track_update_result(count, true);
@@ -342,8 +351,7 @@ pub(crate) async fn confirm_package_mutation(
     .map_err(Into::into)
 }
 
-/// Removal orchestration shared by every compiled backend: usage tracking
-/// and success reporting around `PackageService::remove`.
+/// Track removal requests around `PackageService::remove`.
 #[cfg(any(not(feature = "arch"), feature = "debian", feature = "debian-pure"))]
 pub(crate) async fn remove_via_service(packages: &[String]) -> Result<()> {
     let manager = crate::package_managers::get_package_manager()?;
@@ -372,12 +380,7 @@ pub(crate) async fn remove_with_manager(
 
     crate::core::usage::track_remove_result(result.is_ok());
 
-    result?;
-
-    crate::cli::ui::print_spacer();
-    crate::cli::ui::print_success("Packages removed successfully");
-    crate::cli::ui::print_spacer();
-    Ok(())
+    result
 }
 
 #[cfg(test)]

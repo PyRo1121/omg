@@ -335,17 +335,31 @@ struct DatabasePublication {
     published: bool,
 }
 
-fn rollback_database_publication(publications: &mut [DatabasePublication]) -> Vec<String> {
+fn rollback_database_publication(
+    publications: &mut [DatabasePublication],
+    staging: &mut tempfile::TempDir,
+) -> Vec<String> {
     let mut errors = Vec::new();
     for publication in publications.iter_mut().rev() {
-        if publication.published
-            && publication.publish
-            && let Err(error) = std::fs::rename(&publication.destination, &publication.staged)
-        {
-            errors.push(format!(
-                "failed to withdraw {}: {error}",
-                publication.destination.display()
-            ));
+        if publication.published && publication.publish {
+            let result = if publication.backup.is_some() {
+                rustix::fs::linkat(
+                    rustix::fs::CWD,
+                    &publication.destination,
+                    rustix::fs::CWD,
+                    &publication.staged,
+                    rustix::fs::AtFlags::empty(),
+                )
+                .map_err(std::io::Error::from)
+            } else {
+                std::fs::rename(&publication.destination, &publication.staged)
+            };
+            if let Err(error) = result {
+                errors.push(format!(
+                    "failed to withdraw {}: {error}",
+                    publication.destination.display()
+                ));
+            }
         }
         if let Some(backup) = &publication.backup
             && let Err(error) = std::fs::rename(backup, &publication.destination)
@@ -356,6 +370,24 @@ fn rollback_database_publication(publications: &mut [DatabasePublication]) -> Ve
             ));
         }
     }
+    for publication in publications.iter() {
+        if (publication.backup.is_some() || (publication.published && publication.publish))
+            && let Err(error) =
+                crate::core::safe_ops::sync_parent_directory_sync(&publication.destination)
+        {
+            errors.push(format!(
+                "failed to sync rollback for {}: {error}",
+                publication.destination.display()
+            ));
+        }
+    }
+    if !errors.is_empty() {
+        staging.disable_cleanup(true);
+        errors.push(format!(
+            "Recovery files retained at {}",
+            staging.path().display()
+        ));
+    }
     errors
 }
 
@@ -363,6 +395,7 @@ fn rollback_database_publication(publications: &mut [DatabasePublication]) -> Ve
 fn commit_staged_databases(
     databases: &[(PathBuf, PathBuf)],
     failed_downloads: usize,
+    staging: &mut tempfile::TempDir,
 ) -> Result<()> {
     let files = databases
         .iter()
@@ -372,15 +405,40 @@ fn commit_staged_databases(
             publish: true,
         })
         .collect::<Vec<_>>();
-    commit_staged_files(&files, failed_downloads)
+    let database_root = databases
+        .first()
+        .expect("nonempty database fixture")
+        .1
+        .parent()
+        .expect("database fixture parent");
+    commit_staged_files(&files, failed_downloads, database_root, staging)
 }
 
-fn commit_staged_files(files: &[StagedFile], failed_downloads: usize) -> Result<()> {
+fn commit_staged_files(
+    files: &[StagedFile],
+    failed_downloads: usize,
+    database_root: &Path,
+    staging: &mut tempfile::TempDir,
+) -> Result<()> {
     anyhow::ensure!(
         failed_downloads == 0,
         "Failed to sync {failed_downloads} database(s); live databases were left unchanged"
     );
 
+    let root = paths::pacman_root_result()?;
+    let mut alpm = alpm::Alpm::new(
+        root.to_str().context("Pacman root must be valid UTF-8")?,
+        database_root
+            .to_str()
+            .context("Pacman database path must be valid UTF-8")?,
+    )
+    .context("Failed to initialize package database writer")?;
+    alpm.trans_init(alpm::TransFlag::empty()).with_context(|| {
+        format!(
+            "Failed to acquire package database lock in {}",
+            database_root.display()
+        )
+    })?;
     let mut publications = files
         .iter()
         .map(|file| DatabasePublication {
@@ -417,10 +475,18 @@ fn commit_staged_files(files: &[StagedFile], failed_downloads: usize) -> Result<
 
     for index in 0..publications.len() {
         match std::fs::symlink_metadata(&publications[index].destination) {
-            Ok(_) => {}
+            Ok(metadata) if metadata.is_file() || metadata.file_type().is_symlink() => {}
+            Ok(_) => {
+                let rollback_errors = rollback_database_publication(&mut publications, staging);
+                anyhow::bail!(
+                    "Refusing to replace database path that is not a file or symlink: {}; rollback errors: {}",
+                    publications[index].destination.display(),
+                    rollback_errors.join("; ")
+                );
+            }
             Err(error) if error.kind() == std::io::ErrorKind::NotFound => continue,
             Err(error) => {
-                let rollback_errors = rollback_database_publication(&mut publications);
+                let rollback_errors = rollback_database_publication(&mut publications, staging);
                 anyhow::bail!(
                     "Failed to inspect live database {}: {error}; rollback errors: {}",
                     publications[index].destination.display(),
@@ -431,8 +497,14 @@ fn commit_staged_files(files: &[StagedFile], failed_downloads: usize) -> Result<
         let backup = publications[index]
             .staged
             .with_extension(format!("omg-backup-{index}"));
-        if let Err(error) = std::fs::rename(&publications[index].destination, &backup) {
-            let rollback_errors = rollback_database_publication(&mut publications);
+        if let Err(error) = rustix::fs::linkat(
+            rustix::fs::CWD,
+            &publications[index].destination,
+            rustix::fs::CWD,
+            &backup,
+            rustix::fs::AtFlags::empty(),
+        ) {
+            let rollback_errors = rollback_database_publication(&mut publications, staging);
             anyhow::bail!(
                 "Failed to stage live database {} for replacement: {error}; rollback errors: {}",
                 publications[index].destination.display(),
@@ -443,14 +515,17 @@ fn commit_staged_files(files: &[StagedFile], failed_downloads: usize) -> Result<
     }
 
     for index in 0..publications.len() {
-        if publications[index].publish
-            && let Err(error) = std::fs::rename(
-                &publications[index].staged,
-                &publications[index].destination,
-            )
-        {
+        let publication = &publications[index];
+        let result = if publication.publish {
+            std::fs::rename(&publication.staged, &publication.destination)
+        } else if publication.backup.is_some() {
+            std::fs::remove_file(&publication.destination)
+        } else {
+            Ok(())
+        };
+        if let Err(error) = result {
             let failed_destination = publications[index].destination.display().to_string();
-            let rollback_errors = rollback_database_publication(&mut publications);
+            let rollback_errors = rollback_database_publication(&mut publications, staging);
             anyhow::bail!(
                 "Failed to publish staged package database to {failed_destination}: {error}; rollback errors: {}",
                 rollback_errors.join("; ")
@@ -467,17 +542,7 @@ fn commit_staged_files(files: &[StagedFile], failed_downloads: usize) -> Result<
             crate::core::safe_ops::sync_parent_directory_sync(&publications[index].destination)
         {
             let failed_destination = publications[index].destination.display().to_string();
-            let mut rollback_errors = rollback_database_publication(&mut publications);
-            for publication in &publications {
-                if let Err(sync_error) =
-                    crate::core::safe_ops::sync_parent_directory_sync(&publication.destination)
-                {
-                    rollback_errors.push(format!(
-                        "failed to sync rollback for {}: {sync_error}",
-                        publication.destination.display()
-                    ));
-                }
-            }
+            let rollback_errors = rollback_database_publication(&mut publications, staging);
             anyhow::bail!(
                 "Failed to sync published package database {failed_destination}: {error}; rollback errors: {}",
                 rollback_errors.join("; ")
@@ -498,7 +563,8 @@ fn commit_staged_files(files: &[StagedFile], failed_downloads: usize) -> Result<
             );
         }
     }
-    Ok(())
+    alpm.trans_release()
+        .context("Failed to release package database lock")
 }
 
 fn verify_staged_databases(
@@ -706,9 +772,24 @@ pub async fn sync_databases_parallel() -> Result<()> {
             ]
         })
         .collect::<Vec<_>>();
-    commit_staged_files(&staged_files, errors.len())?;
-
-    crate::package_managers::alpm_direct::clear_alpm_cache();
+    let database_root = sync_dir
+        .parent()
+        .context("Package sync directory has no database root")?
+        .to_path_buf();
+    let failed_downloads = errors.len();
+    tokio::task::spawn_blocking(move || {
+        let mut staging = staging;
+        let result = commit_staged_files(
+            &staged_files,
+            failed_downloads,
+            &database_root,
+            &mut staging,
+        );
+        crate::package_managers::alpm_direct::clear_alpm_cache();
+        result
+    })
+    .await
+    .context("Package database publication task failed")??;
     println!(
         "{} Databases synchronized successfully!\n",
         crate::cli::style::positive("✓")
@@ -751,14 +832,176 @@ mod tests {
     use super::*;
 
     #[test]
+    fn database_publication_preserves_unexpected_directories() {
+        let root = tempfile::tempdir().unwrap();
+        let mut staging = tempfile::tempdir_in(root.path()).unwrap();
+        let destination = root.path().join("core.db");
+        let staged = staging.path().join("core.staged");
+        std::fs::create_dir(&destination).unwrap();
+        std::fs::write(destination.join("keep"), b"existing contents").unwrap();
+        std::fs::write(&staged, b"new database").unwrap();
+
+        let result = commit_staged_databases(&[(staged, destination.clone())], 0, &mut staging);
+        drop(staging);
+        assert!(
+            destination.is_dir(),
+            "publication must not replace a directory"
+        );
+        let error = result.expect_err("unexpected destination kind must be refused");
+        assert!(error.to_string().contains("not a file or symlink"));
+        assert_eq!(
+            std::fs::read(destination.join("keep")).unwrap(),
+            b"existing contents"
+        );
+    }
+
+    #[test]
+    fn database_publication_replaces_symlinks_without_changing_their_targets() {
+        let root = tempfile::tempdir().unwrap();
+        let mut staging = tempfile::tempdir_in(root.path()).unwrap();
+        let destination = root.path().join("core.db");
+        let target = root.path().join("shared.db");
+        let staged = staging.path().join("core.staged");
+        std::fs::write(&target, b"shared database").unwrap();
+        std::os::unix::fs::symlink(&target, &destination).unwrap();
+        std::fs::write(&staged, b"new database").unwrap();
+
+        commit_staged_databases(&[(staged, destination.clone())], 0, &mut staging).unwrap();
+        drop(staging);
+        assert!(std::fs::symlink_metadata(&destination).unwrap().is_file());
+        assert_eq!(std::fs::read(destination).unwrap(), b"new database");
+        assert_eq!(std::fs::read(target).unwrap(), b"shared database");
+    }
+
+    #[test]
+    fn rollback_removes_new_database_without_a_predecessor() {
+        let root = tempfile::tempdir().unwrap();
+        let mut staging = tempfile::tempdir_in(root.path()).unwrap();
+        let destination = root.path().join("core.db");
+        let staged = staging.path().join("core.staged");
+        let extra = staging.path().join("extra.staged");
+        std::fs::write(&staged, b"new database").unwrap();
+        std::fs::write(&extra, b"new extra database").unwrap();
+
+        commit_staged_databases(
+            &[
+                (staged.clone(), destination.clone()),
+                (extra, root.path().join("missing/extra.db")),
+            ],
+            0,
+            &mut staging,
+        )
+        .expect_err("publication to a missing parent must fail");
+        assert!(
+            !destination.exists(),
+            "rollback must restore the original absence"
+        );
+        assert_eq!(std::fs::read(staged).unwrap(), b"new database");
+        drop(staging);
+        assert!(!destination.exists());
+    }
+
+    #[test]
+    fn failed_publication_restores_symlink_identity() {
+        let root = tempfile::tempdir().unwrap();
+        let mut staging = tempfile::tempdir_in(root.path()).unwrap();
+        let destination = root.path().join("core.db");
+        let target = root.path().join("shared.db");
+        let staged = staging.path().join("core.staged");
+        let extra = staging.path().join("extra.staged");
+        std::fs::write(&target, b"shared database").unwrap();
+        std::os::unix::fs::symlink(&target, &destination).unwrap();
+        std::fs::write(&staged, b"new database").unwrap();
+        std::fs::write(&extra, b"new extra database").unwrap();
+
+        commit_staged_databases(
+            &[
+                (staged, destination.clone()),
+                (extra, root.path().join("missing/extra.db")),
+            ],
+            0,
+            &mut staging,
+        )
+        .expect_err("publication to a missing parent must fail");
+        drop(staging);
+        assert_eq!(std::fs::read_link(destination).unwrap(), target);
+        assert_eq!(std::fs::read(target).unwrap(), b"shared database");
+    }
+
+    #[test]
+    fn failed_database_rollback_retains_its_recovery_files() {
+        let root = tempfile::tempdir().unwrap();
+        let mut staging = tempfile::tempdir_in(root.path()).unwrap();
+        let backup = staging.path().join("core.backup");
+        let destination = root.path().join("core.db");
+        std::fs::write(&backup, b"old database").unwrap();
+        std::fs::create_dir(&destination).unwrap();
+        std::fs::write(destination.join("peer-file"), b"peer").unwrap();
+        let mut publications = [DatabasePublication {
+            staged: staging.path().join("core.staged"),
+            destination: destination.clone(),
+            publish: true,
+            backup: Some(backup.clone()),
+            published: false,
+        }];
+
+        let errors = rollback_database_publication(&mut publications, &mut staging);
+        assert!(
+            errors
+                .iter()
+                .any(|error| error.contains("failed to restore"))
+        );
+        assert!(
+            errors
+                .iter()
+                .any(|error| error.contains(staging.path().to_str().unwrap()))
+        );
+        drop(staging);
+        assert_eq!(
+            std::fs::read(backup).expect("recovery backup must survive failed rollback"),
+            b"old database"
+        );
+        assert_eq!(
+            std::fs::read(destination.join("peer-file")).unwrap(),
+            b"peer"
+        );
+    }
+
+    #[test]
+    fn database_publication_respects_an_existing_alpm_lease() {
+        let mut directory = tempfile::tempdir().expect("database root");
+        let live = directory.path().join("core.db");
+        let staged = directory.path().join("core.staged");
+        std::fs::write(&live, b"old").unwrap();
+        std::fs::write(&staged, b"new").unwrap();
+        let lease = alpm::Alpm::new("/", directory.path().to_str().unwrap()).unwrap();
+        lease.trans_init(alpm::TransFlag::empty()).unwrap();
+
+        let error = commit_staged_databases(&[(staged.clone(), live.clone())], 0, &mut directory)
+            .expect_err("a leased database must refuse publication");
+        assert_eq!(
+            error.downcast_ref::<alpm::Error>(),
+            Some(&alpm::Error::HandleLock)
+        );
+        assert_eq!(std::fs::read(&live).unwrap(), b"old");
+        assert_eq!(std::fs::read(&staged).unwrap(), b"new");
+        assert!(directory.path().join("db.lck").exists());
+
+        drop(lease);
+        commit_staged_databases(&[(staged, live.clone())], 0, &mut directory).unwrap();
+        assert_eq!(std::fs::read(live).unwrap(), b"new");
+        assert!(!directory.path().join("db.lck").exists());
+    }
+
+    #[test]
     fn failed_staged_set_does_not_replace_live_databases() {
-        let directory = tempfile::tempdir().expect("database directory");
+        let mut directory = tempfile::tempdir().expect("database directory");
         let live = directory.path().join("core.db");
         let staged = directory.path().join("core.db.staged");
         std::fs::write(&live, b"old").expect("seed live database");
         std::fs::write(&staged, b"new").expect("seed staged database");
 
-        let error = commit_staged_databases(&[(staged, live.clone())], 1)
+        let error = commit_staged_databases(&[(staged, live.clone())], 1, &mut directory)
             .expect_err("failed download set must not publish");
 
         assert!(error.to_string().contains("1 database"));
@@ -767,7 +1010,8 @@ mod tests {
 
     #[test]
     fn missing_optional_signature_removes_stale_live_signature() {
-        let directory = tempfile::tempdir().expect("database directory");
+        let mut directory = tempfile::tempdir().expect("database directory");
+        let database_root = directory.path().to_path_buf();
         let live_database = directory.path().join("core.db");
         let live_signature = directory.path().join("core.db.sig");
         let staged_database = directory.path().join("core.staged");
@@ -790,6 +1034,8 @@ mod tests {
                 },
             ],
             0,
+            &database_root,
+            &mut directory,
         )
         .expect("publish unsigned optional database");
 
@@ -799,7 +1045,8 @@ mod tests {
 
     #[test]
     fn publication_failure_restores_every_live_database() {
-        let directory = tempfile::tempdir().expect("database directory");
+        let mut directory = tempfile::tempdir().expect("database directory");
+        let directory_path = directory.path().to_path_buf();
         let core_live = directory.path().join("core.db");
         let core_staged = directory.path().join("core.staged");
         let extra_staged = directory.path().join("extra.staged");
@@ -814,6 +1061,7 @@ mod tests {
                 (extra_staged.clone(), extra_live),
             ],
             0,
+            &mut directory,
         )
         .expect_err("a mid-publication failure must roll back earlier databases");
 
@@ -821,13 +1069,19 @@ mod tests {
         assert_eq!(std::fs::read(core_live).unwrap(), b"old-core");
         assert_eq!(std::fs::read(core_staged).unwrap(), b"new-core");
         assert_eq!(std::fs::read(extra_staged).unwrap(), b"new-extra");
+        assert!(!directory.path().join("db.lck").exists());
+        drop(directory);
+        assert!(
+            !directory_path.exists(),
+            "successful rollback must permit cleanup"
+        );
     }
 
     #[test]
     fn published_database_is_world_readable_like_pacman() {
         use std::os::unix::fs::PermissionsExt;
 
-        let directory = tempfile::tempdir().expect("database directory");
+        let mut directory = tempfile::tempdir().expect("database directory");
         let live = directory.path().join("core.db");
         let staged = directory.path().join("core.db.staged");
         std::fs::write(&staged, b"new").expect("seed staged database");
@@ -836,7 +1090,8 @@ mod tests {
         std::fs::set_permissions(&staged, std::fs::Permissions::from_mode(0o600))
             .expect("seed staged mode");
 
-        commit_staged_databases(&[(staged, live.clone())], 0).expect("publish staged database");
+        commit_staged_databases(&[(staged, live.clone())], 0, &mut directory)
+            .expect("publish staged database");
 
         let mode = std::fs::metadata(&live)
             .expect("live database")
