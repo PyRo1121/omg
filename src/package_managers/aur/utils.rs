@@ -1,4 +1,3 @@
-use std::os::unix::fs::MetadataExt;
 use std::path::{Path, PathBuf};
 
 use alpm_types::SystemArchitecture;
@@ -168,8 +167,8 @@ fn sudo_as_user_command(
     program: &str,
     flags: &[&str],
     path: &Path,
-) -> std::process::Command {
-    let mut command = std::process::Command::new("sudo");
+) -> Result<std::process::Command> {
+    let mut command = crate::core::privilege::system_command("sudo")?;
     command
         .arg("-u")
         .arg(user)
@@ -177,7 +176,7 @@ fn sudo_as_user_command(
         .args(flags)
         .arg("--")
         .arg(path.as_os_str());
-    command
+    Ok(command)
 }
 
 fn ensure_sudo_success(
@@ -196,7 +195,7 @@ fn ensure_sudo_success(
 
 pub async fn create_dir_as_user(path: &Path) -> Result<()> {
     if let Some(user) = original_user() {
-        let status = Command::from(sudo_as_user_command(&user, "mkdir", &["-p"], path))
+        let status = Command::from(sudo_as_user_command(&user, "mkdir", &["-p"], path)?)
             .status()
             .await
             .with_context(|| {
@@ -214,13 +213,9 @@ pub async fn create_dir_as_user(path: &Path) -> Result<()> {
     }
 }
 
-pub fn is_root_owned(path: &Path) -> bool {
-    path.metadata().is_ok_and(|m| m.uid() == 0)
-}
-
 pub async fn remove_dir_as_user(path: &Path) -> Result<()> {
     if let Some(user) = original_user() {
-        let status = Command::from(sudo_as_user_command(&user, "rm", &["-rf"], path))
+        let status = Command::from(sudo_as_user_command(&user, "rm", &["-rf"], path)?)
             .status()
             .await
             .with_context(|| {
@@ -240,7 +235,7 @@ pub async fn remove_dir_as_user(path: &Path) -> Result<()> {
 
 pub fn create_dir_as_user_sync(path: &Path) -> Result<()> {
     if let Some(user) = original_user() {
-        let status = sudo_as_user_command(&user, "mkdir", &["-p"], path)
+        let status = sudo_as_user_command(&user, "mkdir", &["-p"], path)?
             .status()
             .with_context(|| {
                 format!(
@@ -276,8 +271,11 @@ mod tests {
 
     #[test]
     fn sudo_as_user_command_always_separates_path_from_options() {
-        let command = sudo_as_user_command("builder", "rm", &["-rf"], Path::new("-cache"));
-        assert_eq!(command.get_program(), "sudo");
+        let command = sudo_as_user_command("builder", "rm", &["-rf"], Path::new("-cache")).unwrap();
+        assert_eq!(
+            command.get_program(),
+            crate::core::privilege::trusted_program("sudo").unwrap()
+        );
         assert_eq!(
             command.get_args().collect::<Vec<_>>(),
             ["-u", "builder", "rm", "-rf", "--", "-cache"]

@@ -6,6 +6,7 @@
 //! - Pre-built binaries (no compilation required)
 //! - Compatible with Ubuntu/Debian glibc
 
+use crate::core::http::BoundedResponseExt;
 use anyhow::{Context, Result};
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -45,12 +46,13 @@ impl RubyManager {
             .client
             .get(format!("{RUBY_VERSIONS_URL}?per_page=100"))
             .header("User-Agent", GITHUB_USER_AGENT)
+            .timeout(std::time::Duration::from_secs(30))
             .send()
             .await
             .context("Failed to fetch Ruby releases from GitHub")?
             .error_for_status()
             .context("GitHub Ruby release-list request failed")?
-            .json()
+            .bounded_json()
             .await
             .context("Failed to parse Ruby release data")?;
 
@@ -100,12 +102,13 @@ impl RubyManager {
             .client
             .get(format!("{RUBY_VERSIONS_URL}/tags/ruby-{version}"))
             .header("User-Agent", GITHUB_USER_AGENT)
+            .timeout(std::time::Duration::from_secs(30))
             .send()
             .await
             .context("Failed to fetch Ruby release metadata")?
             .error_for_status()
             .with_context(|| format!("Ruby {version} release metadata was not found"))?
-            .json()
+            .bounded_json()
             .await
             .context("Failed to parse Ruby release metadata")?;
         let expected_name = format!("ruby-{version}-{}-{arch}.tar.gz", ruby_platform()?);

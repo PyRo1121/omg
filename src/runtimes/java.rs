@@ -7,6 +7,7 @@
 //! - LTS version detection
 //! - `JAVA_HOME` auto-configuration
 
+use crate::core::http::BoundedResponseExt;
 use std::collections::HashSet;
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -66,12 +67,13 @@ impl JavaManager {
         let releases: AvailableReleases = self
             .client
             .get(format!("{ADOPTIUM_API}/info/available_releases"))
+            .timeout(std::time::Duration::from_secs(30))
             .send()
             .await
             .context("Failed to fetch Java versions from Adoptium")?
             .error_for_status()
             .context("Adoptium version-list request failed")?
-            .json()
+            .bounded_json()
             .await
             .context("Failed to parse Java version data")?;
 
@@ -121,12 +123,13 @@ impl JavaManager {
                 "{ADOPTIUM_API}/assets/latest/{version}/hotspot?\
                  architecture={arch}&image_type=jdk&os={os}&vendor=eclipse"
             ))
+            .timeout(std::time::Duration::from_secs(30))
             .send()
             .await
             .context("Failed to fetch JDK data from Adoptium")?
             .error_for_status()
             .with_context(|| format!("Adoptium has no JDK {version} for {arch}-{os}"))?
-            .json()
+            .bounded_json()
             .await
             .context("Failed to parse JDK data")?;
 

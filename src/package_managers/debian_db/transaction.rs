@@ -461,14 +461,16 @@ impl Transaction {
     /// finishes downloading, it's queued for unpacking while other packages continue
     /// downloading. This overlaps I/O-bound (download) and CPU-bound (decompress) work.
     pub async fn execute(&mut self) -> Result<()> {
+        anyhow::ensure!(
+            cfg!(test),
+            "Pure Debian mutations are disabled until repository authority is verified; use the native APT backend"
+        );
         self.validate_action_identifiers()?;
         // POSIX record locks interoperate with apt/dpkg but are process-wide,
         // so pair them with a Tokio mutex to serialize transactions inside
         // this process as well. Keep both locks through rollback/completion.
         let process_lock = Arc::clone(&DPKG_TRANSACTION_LOCK).lock_owned().await;
         let dpkg_locks = acquire_dpkg_locks().await?;
-        let _process_lock = DPKG_TRANSACTION_LOCK.lock().await;
-        let _dpkg_locks = acquire_dpkg_locks().await?;
         // Journal before any mutation; a SIGKILL leaves it behind as the
         // recovery signal for the next transaction (see journal const doc).
         let package_names: Vec<String> = self
@@ -1014,6 +1016,10 @@ impl Transaction {
     /// `indicatif` progress bars are thread-safe and keep drawing from the
     /// blocking thread.
     pub async fn execute_removal(&mut self) -> Result<()> {
+        anyhow::ensure!(
+            cfg!(test),
+            "Pure Debian mutations are disabled; use the native APT backend"
+        );
         self.validate_action_identifiers()?;
         if self.to_remove.is_empty() {
             return Ok(());

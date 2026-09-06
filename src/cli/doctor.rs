@@ -715,8 +715,7 @@ fn check_shell_hook() -> bool {
 /// 1. removes any file capabilities previously granted by older versions,
 /// 2. relies on sudo's credential cache + omg's sudoloop for near-zero-prompt
 ///    operation (the same model as yay/paru),
-/// 3. prints opt-in NOPASSWD guidance for users who want truly unattended
-///    operation and accept the trade-off themselves in /etc/sudoers.
+/// 3. explains that package operations retain their normal sudo authorization.
 #[cfg(target_os = "linux")]
 pub fn enable_turbo_mode() -> Result<()> {
     let exe = std::env::current_exe()?;
@@ -746,7 +745,7 @@ pub fn enable_turbo_mode() -> Result<()> {
         true
     };
     if cleanup_done {
-        let remove = std::process::Command::new("sudo")
+        let remove = crate::core::privilege::system_command("sudo")?
             .arg("setcap")
             .arg("-r")
             .arg(&exe)
@@ -793,26 +792,9 @@ pub fn enable_turbo_mode() -> Result<()> {
     );
     println!();
 
-    // Optional NOPASSWD guidance for unattended operation.
-    if console::user_attended() {
-        let user = whoami::username().unwrap_or_else(|_| "username".to_string());
-        println!(
-            "  {} For fully unattended operation (YOUR choice, affects only you):",
-            crate::cli::style::info("ℹ")
-        );
-        println!("     sudo visudo -f /etc/sudoers.d/omg-turbo",);
-        let omg_bin = std::env::current_exe().map_or_else(
-            |_| "/usr/local/bin/omg".to_string(),
-            |p| p.to_string_lossy().into_owned(),
-        );
-        println!("       {user} ALL=(ALL) NOPASSWD: {omg_bin}, /usr/bin/dnf, /usr/bin/apt-get");
-        println!();
-        println!(
-            "  {} File capabilities are NEVER recommended: they grant privileges to\n\
-                 every user on the system.",
-            crate::cli::style::caution("⚠")
-        );
-    }
+    println!(
+        "  Authenticate when prompted. Broad passwordless package-manager rules grant unrestricted root authority."
+    );
 
     Ok(())
 }

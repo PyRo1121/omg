@@ -7,6 +7,7 @@
 //! - Checksum verification (SHA256)
 //! - GOROOT auto-configuration
 
+use crate::core::http::BoundedResponseExt;
 use std::{
     fs,
     path::{Path, PathBuf},
@@ -70,12 +71,13 @@ impl GoManager {
     pub async fn list_available(&self) -> Result<Vec<GoVersion>> {
         self.client
             .get(GO_VERSIONS_URL)
+            .timeout(std::time::Duration::from_secs(30))
             .send()
             .await
             .context("Failed to fetch Go version list. Check your internet connection.")?
             .error_for_status()
             .context("Go version-list request failed")?
-            .json()
+            .bounded_json()
             .await
             .context("Failed to parse Go version list from go.dev")
     }

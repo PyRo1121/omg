@@ -109,7 +109,7 @@ mod privilege_escalation {
             "the installer must not clone and execute unpinned repository HEAD"
         );
         assert!(
-            installer.contains("refusing to build unpinned repository HEAD"),
+            installer.contains("refusing unverified installation or source fallback"),
             "a missing verified release must fail closed"
         );
     }

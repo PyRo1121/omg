@@ -8,6 +8,7 @@
 //! - Pure Rust XZ extraction
 //! - Version aliasing (latest, lts, lts/iron, etc.)
 
+use crate::core::http::BoundedResponseExt;
 use anyhow::{Context, Result};
 use serde::Deserialize;
 use std::fs;
@@ -96,12 +97,13 @@ impl NodeManager {
 
         self.client
             .get(&url)
+            .timeout(std::time::Duration::from_secs(30))
             .send()
             .await
             .context("Failed to fetch Node.js version list. Check your internet connection.")?
             .error_for_status()
             .context("Node.js version list request failed")?
-            .json()
+            .bounded_json()
             .await
             .context("Failed to parse Node.js version list from nodejs.org")
     }
@@ -208,11 +210,12 @@ impl NodeManager {
         let text = self
             .client
             .get(&url)
+            .timeout(std::time::Duration::from_secs(30))
             .send()
             .await?
             .error_for_status()
             .context("Failed to fetch Node.js checksum manifest")?
-            .text()
+            .bounded_text()
             .await?;
         let digest_line = text
             .lines()

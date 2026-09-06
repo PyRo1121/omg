@@ -131,6 +131,7 @@ pub async fn run(force: bool, version: Option<String>) -> Result<()> {
 
     // Perform blocking extraction and binary replacement in a separate thread
     // to avoid blocking the tokio async runtime
+    let attestation_tag = format!("v{target_version}");
     tokio::task::spawn_blocking(move || -> Result<()> {
         // Provenance gate: `gh attestation verify` requires a file on disk, so
         // stage the digest-verified bytes for both the verification and the
@@ -139,7 +140,7 @@ pub async fn run(force: bool, version: Option<String>) -> Result<()> {
             .context("Failed to stage archive for attestation verification")?;
         fs::write(attestation_file.path(), &bytes)
             .context("Failed to write archive for attestation verification")?;
-        if !verify_attestation(attestation_file.path())? {
+        if !verify_attestation(attestation_file.path(), &attestation_tag)? {
             refuse_unverified_provenance()?;
         }
 
@@ -449,11 +450,18 @@ async fn download_verified(
 /// Returns an error when `gh` is installed and the attestation does not
 /// verify (tampered or non-CI-built archive), or when `gh` itself fails to
 /// execute the verification.
-fn verify_attestation(archive_path: &std::path::Path) -> Result<bool> {
+fn verify_attestation(archive_path: &std::path::Path, tag: &str) -> Result<bool> {
     let output = std::process::Command::new("gh")
         .args(["attestation", "verify"])
         .arg(archive_path)
-        .args(["-R", ATTESTATION_REPO])
+        .args([
+            "-R",
+            ATTESTATION_REPO,
+            "--source-ref",
+            &format!("refs/tags/{tag}"),
+            "--signer-workflow",
+            "PyRo1121/omg/.github/workflows/release.yml",
+        ])
         .stdin(std::process::Stdio::null())
         .output();
 

@@ -908,12 +908,32 @@ impl HomebrewPackageManager {
     }
 
     async fn run_brew(&self, args: &[&str]) -> Result<()> {
+        if args
+            .first()
+            .is_some_and(|argument| matches!(*argument, "install" | "upgrade" | "reinstall"))
+        {
+            crate::core::security::policy::require_native_plan_support("Homebrew")?;
+        }
+        let targets = args
+            .iter()
+            .map(|argument| (*argument).to_owned())
+            .collect::<Vec<_>>();
+        crate::core::security::audit::record_operation("brew", &targets, "attempt")?;
         let brew_path = self.prefix.join("bin").join("brew");
 
         let mut cmd = tokio::process::Command::new(&brew_path);
         cmd.args(args);
 
         let status = cmd.status().await?;
+        crate::core::security::audit::record_operation(
+            "brew",
+            &targets,
+            if status.success() {
+                "succeeded"
+            } else {
+                "failed"
+            },
+        )?;
 
         if status.success() {
             Ok(())

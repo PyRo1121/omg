@@ -64,7 +64,7 @@ impl std::fmt::Display for SecurityGrade {
     }
 }
 
-#[derive(Debug, Serialize, Deserialize, Clone)]
+#[derive(Debug, Serialize, Deserialize, Clone, PartialEq, Eq)]
 pub struct SecurityPolicy {
     #[serde(default = "default_minimum_grade")]
     pub minimum_grade: SecurityGrade,
@@ -96,6 +96,42 @@ impl Default for SecurityPolicy {
             banned_packages: Vec::new(),
         }
     }
+}
+
+static INHERITED_POLICY: std::sync::OnceLock<SecurityPolicy> = std::sync::OnceLock::new();
+pub const POLICY_MARKER: &str = "__omg_policy=";
+
+/// The privileged child receives the parent's policy as bounded argv data,
+/// since sudo resets XDG configuration environment variables.
+pub fn inherit_policy(argument: &str) -> anyhow::Result<()> {
+    anyhow::ensure!(
+        crate::core::privilege::is_root(),
+        "Only an elevated child can inherit policy"
+    );
+    let encoded = argument
+        .strip_prefix(POLICY_MARKER)
+        .ok_or_else(|| anyhow::anyhow!("Missing policy marker"))?;
+    anyhow::ensure!(encoded.len() <= 65536, "Inherited policy exceeds limit");
+    let policy = serde_json::from_slice(&hex::decode(encoded)?)?;
+    INHERITED_POLICY
+        .set(policy)
+        .map_err(|_| anyhow::anyhow!("Duplicate inherited policy"))
+}
+
+pub fn explicit_policy_exists() -> bool {
+    INHERITED_POLICY.get().is_some() || paths::config_dir().join("policy.toml").exists()
+}
+
+pub fn policy_handoff() -> anyhow::Result<Option<String>> {
+    if !explicit_policy_exists() {
+        return Ok(None);
+    }
+    let bytes = serde_json::to_vec(&SecurityPolicy::load_default()?)?;
+    anyhow::ensure!(
+        bytes.len() <= 32768,
+        "Security policy exceeds elevation handoff limit"
+    );
+    Ok(Some(format!("{POLICY_MARKER}{}", hex::encode(bytes))))
 }
 
 impl SecurityPolicy {
@@ -142,6 +178,9 @@ impl SecurityPolicy {
     /// Load from default location (~/.config/omg/policy.toml).
     /// A missing file uses the built-in default; a corrupt or unreadable file fails closed.
     pub fn load_default() -> Result<Self, PolicyError> {
+        if let Some(policy) = INHERITED_POLICY.get() {
+            return Ok(policy.clone());
+        }
         Self::load_optional(paths::config_dir().join("policy.toml"))
     }
 
@@ -397,6 +436,51 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn prepared_plan_checks_dependencies_and_actual_licenses() {
+        let mut policy = SecurityPolicy {
+            allowed_licenses: vec!["MIT".to_owned()],
+            ..SecurityPolicy::default()
+        };
+        let package = |name: &str, license: &str| {
+            (
+                name.to_owned(),
+                crate::package_managers::parse_version_or_zero("1.0"),
+                false,
+                Some(license.to_owned()),
+            )
+        };
+        super::check_prepared_with_source(
+            &policy,
+            vec![package("app", "MIT"), package("dependency", "MIT")],
+            &EmptyVulns,
+        )
+        .await
+        .unwrap();
+        policy.banned_packages.push("dependency".to_owned());
+        assert!(
+            super::check_prepared_with_source(
+                &policy,
+                vec![package("app", "MIT"), package("dependency", "MIT")],
+                &EmptyVulns
+            )
+            .await
+            .unwrap_err()
+            .to_string()
+            .contains("dependency")
+        );
+        policy.banned_packages.clear();
+        assert!(
+            super::check_prepared_with_source(
+                &policy,
+                vec![package("app", "GPL-3.0")],
+                &EmptyVulns
+            )
+            .await
+            .is_err()
+        );
+    }
+
+    #[tokio::test]
     async fn official_packages_are_verified_not_locked_by_name() {
         let policy = SecurityPolicy::default();
         let version = crate::package_managers::parse_version_or_zero("2.40");
@@ -483,4 +567,56 @@ mod tests {
                 .is_ok()
         );
     }
+}
+
+/// Native backends that cannot expose and bind their final dependency plan
+/// must not silently bypass an explicitly installed OMG policy.
+pub fn require_native_plan_support(backend: &str) -> anyhow::Result<()> {
+    let policy = SecurityPolicy::load_default()?;
+    anyhow::ensure!(
+        !explicit_policy_exists() && policy == SecurityPolicy::default(),
+        "{backend} cannot enforce an explicit OMG policy on its final dependency transaction; use a backend with prepared-plan policy enforcement"
+    );
+    Ok(())
+}
+
+/// Evaluate all additions after resolution, using actual archive/repository identities.
+pub fn check_prepared_packages(
+    packages: Vec<(String, Version, bool, Option<String>)>,
+) -> anyhow::Result<()> {
+    let policy = SecurityPolicy::load_default()?;
+    if !explicit_policy_exists() {
+        for (name, _, community, license) in packages {
+            policy.check_source(&name, community, license.as_deref())?;
+        }
+        return Ok(());
+    }
+    // ALPM's synchronous callback may run inside a Tokio current-thread runtime.
+    // A separate bounded worker owns its runtime rather than nesting block_on.
+    std::thread::spawn(move || -> anyhow::Result<()> {
+        let runtime = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()?;
+        runtime.block_on(async move {
+            let scanner = super::vulnerability::VulnerabilityScanner::new();
+            check_prepared_with_source(&policy, packages, &scanner).await
+        })
+    })
+    .join()
+    .map_err(|_| anyhow::anyhow!("Prepared transaction policy worker failed"))?
+}
+
+async fn check_prepared_with_source(
+    policy: &SecurityPolicy,
+    packages: Vec<(String, Version, bool, Option<String>)>,
+    scanner: &dyn super::vulnerability::VulnerabilitySource,
+) -> anyhow::Result<()> {
+    for (name, version, community, license) in packages {
+        policy.check_source(&name, community, license.as_deref())?;
+        let grade = policy
+            .assign_grade(scanner, &name, &version, !community)
+            .await?;
+        policy.check_package(&name, community, license.as_deref(), grade)?;
+    }
+    Ok(())
 }

@@ -232,7 +232,7 @@ impl DnfPackageManager {
     }
 
     fn read_user_installed_names() -> Result<HashSet<String>> {
-        let output = Command::new("dnf")
+        let output = crate::core::privilege::system_command("dnf")?
             .args(["repoquery", "--userinstalled", "--qf", "%{name}"])
             .output()
             .context("Failed to execute dnf repoquery --userinstalled")?;
@@ -444,9 +444,26 @@ impl DnfPackageManager {
     /// Execute the `dnf` CLI as root (callers escalate via
     /// `run_privileged_child` first) and invalidate caches on success.
     fn run_dnf(&self, args: &[&str]) -> Result<()> {
-        let mut cmd = Command::new("dnf");
+        if args
+            .first()
+            .is_some_and(|arg| matches!(*arg, "install" | "upgrade"))
+        {
+            crate::core::security::policy::require_native_plan_support("DNF")?;
+        }
+        let mut cmd = crate::core::privilege::system_command("dnf")?;
 
+        let targets = args.iter().map(|arg| (*arg).to_owned()).collect::<Vec<_>>();
+        crate::core::security::audit::record_operation("dnf", &targets, "attempt")?;
         let status = cmd.args(args).status()?;
+        crate::core::security::audit::record_operation(
+            "dnf",
+            &targets,
+            if status.success() {
+                "succeeded"
+            } else {
+                "failed"
+            },
+        )?;
 
         if status.success() {
             self.invalidate_installed_cache();
@@ -662,7 +679,8 @@ impl PackageManager for DnfPackageManager {
                 0
             } else {
                 tokio::task::spawn_blocking(|| {
-                    Command::new("dnf")
+                    crate::core::privilege::system_command("dnf")
+                        .map_err(std::io::Error::other)?
                         .args(["-q", "--cacheonly", "check-update"])
                         .output()
                 })

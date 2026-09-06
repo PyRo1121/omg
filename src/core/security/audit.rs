@@ -2,7 +2,8 @@
 //!
 //! Provides append-only audit logs with SHA-256 chain verification to detect
 //! modification of retained entries. The local chain alone cannot prove that
-//! an attacker with filesystem access did not truncate or delete log history.
+//! an attacker with filesystem access did not truncate, delete, or rewrite and
+//! rehash the entire history. It is not authenticity or completeness evidence.
 
 #[cfg(unix)]
 use nix::libc;
@@ -885,6 +886,7 @@ fn record_global(
     description: &str,
 ) {
     let Ok(mut guard) = AUDIT_LOGGER.lock() else {
+        mark_audit_incomplete();
         tracing::error!("Audit logger state is poisoned; dropping event {event} for {resource}");
         return;
     };
@@ -904,6 +906,7 @@ fn record_global(
                 }
             }
             Err(error) => {
+                mark_audit_incomplete();
                 tracing::warn!(
                     "Audit logger unavailable, dropping event {event} for {resource}: {error}"
                 );
@@ -912,9 +915,11 @@ fn record_global(
         }
     }
     let Some(logger) = guard.as_mut() else {
+        mark_audit_incomplete();
         return;
     };
     if let Err(error) = logger.log(event, severity, resource, description) {
+        mark_audit_incomplete();
         tracing::warn!("Failed to persist audit event {event} for {resource}: {error}");
     }
 }
@@ -939,6 +944,7 @@ pub fn audit_log_nonblocking(
     match AUDIT_QUEUE.try_send(message) {
         Ok(()) => {}
         Err(std::sync::mpsc::TrySendError::Full(message)) => {
+            mark_audit_incomplete();
             tracing::error!(
                 "Audit queue is full; dropping event {} for {}",
                 message.event,
@@ -946,6 +952,7 @@ pub fn audit_log_nonblocking(
             );
         }
         Err(std::sync::mpsc::TrySendError::Disconnected(message)) => {
+            mark_audit_incomplete();
             tracing::error!(
                 "Audit writer is unavailable; dropping event {} for {}",
                 message.event,
@@ -1352,5 +1359,96 @@ mod tests {
             .unwrap();
         assert_eq!(entries[0].description, "lazy-init regression event");
         assert_eq!(entries[0].event_type, AuditEventType::PolicyViolation);
+    }
+}
+
+/// Durable operation records are not subject to the daemon's best-effort queue.
+pub fn record_operation(operation: &str, targets: &[String], outcome: &str) -> anyhow::Result<()> {
+    let mut logger = if crate::core::privilege::is_root() {
+        use std::os::unix::fs::MetadataExt;
+        let directory = Path::new("/var/log/omg");
+        std::fs::create_dir_all(directory)?;
+        for path in directory.ancestors() {
+            let metadata = std::fs::symlink_metadata(path)?;
+            anyhow::ensure!(
+                metadata.is_dir() && metadata.uid() == 0 && metadata.mode() & 0o022 == 0,
+                "Untrusted system audit directory"
+            );
+        }
+        AuditLogger::new_in(directory.join("audit.jsonl"))?
+    } else {
+        AuditLogger::new()?
+    };
+    let actor = std::env::var("SUDO_UID")
+        .unwrap_or_else(|_| rustix::process::getuid().as_raw().to_string());
+    let event = match operation.to_ascii_lowercase().as_str() {
+        "install" | "install_blocking" => AuditEventType::PackageInstall,
+        "remove" | "remove_blocking" => AuditEventType::PackageRemove,
+        "update" | "upgrade" | "update_blocking" => AuditEventType::PackageUpgrade,
+        "downgrade" => AuditEventType::PackageDowngrade,
+        _ => AuditEventType::SecurityAudit,
+    };
+    logger.log(
+        event,
+        AuditSeverity::Info,
+        &bounded_audit_field(&targets.join(", ")),
+        &bounded_audit_field(&format!(
+            "Package operation {operation}: {outcome}; invoking uid={actor}"
+        )),
+    )?;
+    Ok(())
+}
+
+pub fn ensure_complete_collection(marker: &Path) -> anyhow::Result<()> {
+    match std::fs::symlink_metadata(marker) {
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(()),
+        Err(error) => Err(error.into()),
+        Ok(_) => anyhow::bail!(
+            "Audit collection is incomplete: events were lost; chain consistency cannot establish completeness"
+        ),
+    }
+}
+
+fn mark_audit_incomplete() {
+    if let Err(error) = mark_audit_incomplete_at(&paths::data_dir().join("audit/incomplete")) {
+        tracing::error!("Cannot persist audit incompleteness marker: {error}");
+    }
+}
+
+fn mark_audit_incomplete_at(path: &Path) -> std::io::Result<()> {
+    if let Some(parent) = path.parent() {
+        std::fs::create_dir_all(parent)?;
+    }
+    let mut options = OpenOptions::new();
+    options.write(true).create_new(true);
+    #[cfg(unix)]
+    options.mode(0o600).custom_flags(libc::O_NOFOLLOW);
+    match options.open(path) {
+        Ok(mut file) => {
+            file.write_all(b"Audit events were lost; this collection is incomplete.\n")?;
+            file.sync_all()
+        }
+        Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => Ok(()),
+        Err(error) => Err(error),
+    }
+}
+
+#[cfg(test)]
+mod completeness_tests {
+    #[test]
+    fn loss_marker_survives_repeated_failures_and_refuses_verification() -> anyhow::Result<()> {
+        let directory = tempfile::tempdir()?;
+        let path = directory.path().join("audit/incomplete");
+        super::ensure_complete_collection(&path)?;
+        super::mark_audit_incomplete_at(&path)?;
+        super::mark_audit_incomplete_at(&path)?;
+        assert!(super::ensure_complete_collection(&path).is_err());
+        #[cfg(unix)]
+        {
+            let dangling = directory.path().join("dangling");
+            std::os::unix::fs::symlink("missing", &dangling)?;
+            assert!(super::ensure_complete_collection(&dangling).is_err());
+        }
+        Ok(())
     }
 }

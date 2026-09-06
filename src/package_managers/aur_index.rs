@@ -184,8 +184,11 @@ pub fn build_index(json_path: &Path, output_path: &Path) -> Result<()> {
     let decoder = GzDecoder::new(reader);
 
     // Parse the JSON array. AUR's metadata is a large array of objects.
-    let mut raw_entries: Vec<AurJsonPackage> =
-        serde_json::from_reader(decoder).context("Failed to parse AUR JSON metadata")?;
+    let mut raw_entries: Vec<AurJsonPackage> = serde_json::from_reader::<_, BoundedPackages>(
+        crate::runtimes::common::BudgetedReader::new(decoder, 256 * 1024 * 1024),
+    )
+    .context("Failed to parse bounded AUR JSON metadata")?
+    .0;
 
     // Sort by name for binary search (critical for zero-copy lookups)
     raw_entries.sort_by(|a, b| a.name.cmp(&b.name));
@@ -247,6 +250,24 @@ mod tests {
         build_index(&json_path, &index_path)?;
         let index = AurIndex::open(&index_path)?;
         Ok((temp_dir, index))
+    }
+
+    #[test]
+    fn oversized_gzip_field_preserves_previous_index() -> Result<()> {
+        let directory = tempfile::tempdir()?;
+        let json_path = directory.path().join("source.gz");
+        let index_path = directory.path().join("index.bin");
+        std::fs::write(&index_path, b"previous-index")?;
+        let data = serde_json::json!([{"Name":"example", "Version":"1", "Description":"x".repeat(65537), "LastModified":1}]);
+        let mut encoder = flate2::write::GzEncoder::new(
+            File::create(&json_path)?,
+            flate2::Compression::default(),
+        );
+        encoder.write_all(data.to_string().as_bytes())?;
+        encoder.finish()?;
+        assert!(build_index(&json_path, &index_path).is_err());
+        assert_eq!(std::fs::read(&index_path)?, b"previous-index");
+        Ok(())
     }
 
     #[test]
@@ -417,5 +438,42 @@ mod tests {
         );
 
         Ok(())
+    }
+}
+
+struct BoundedPackages(Vec<AurJsonPackage>);
+impl<'de> serde::Deserialize<'de> for BoundedPackages {
+    fn deserialize<D: serde::Deserializer<'de>>(
+        deserializer: D,
+    ) -> std::result::Result<Self, D::Error> {
+        struct PackagesVisitor;
+        impl<'de> serde::de::Visitor<'de> for PackagesVisitor {
+            type Value = BoundedPackages;
+            fn expecting(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+                formatter.write_str("a bounded AUR package array")
+            }
+            fn visit_seq<A: serde::de::SeqAccess<'de>>(
+                self,
+                mut seq: A,
+            ) -> std::result::Result<Self::Value, A::Error> {
+                let mut packages = Vec::new();
+                while let Some(package) = seq.next_element::<AurJsonPackage>()? {
+                    if packages.len() == 250_000
+                        || package.name.len() > 256
+                        || package
+                            .description
+                            .as_ref()
+                            .is_some_and(|text| text.len() > 65536)
+                    {
+                        return Err(serde::de::Error::custom(
+                            "AUR metadata exceeds record/field limit",
+                        ));
+                    }
+                    packages.push(package);
+                }
+                Ok(BoundedPackages(packages))
+            }
+        }
+        deserializer.deserialize_seq(PackagesVisitor)
     }
 }

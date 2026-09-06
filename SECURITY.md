@@ -141,7 +141,7 @@ AUR packages are community-maintained and not officially verified.
 
    ```bash
    omg audit log
-   omg audit verify  # Check for tampering
+   omg audit verify  # Check local hash-chain consistency
    ```
 
 4. **Scan for Vulnerabilities:**
@@ -245,3 +245,62 @@ We thank security researchers who responsibly disclose vulnerabilities. Credits 
 ---
 
 **Last Updated:** 2026-02-01
+
+## Security boundaries and retained trust
+
+Release installation requires GitHub CLI (`gh`) verification of the archive's
+attestation against the requested tag and `.github/workflows/release.yml` in
+`PyRo1121/omg`. A missing verifier or rejected attestation stops the installer.
+Source builds require explicitly running a checked-out `install.sh --from-source`;
+piped execution never builds the current directory. The initial bootstrap script
+is executable code: fetching it from mutable `main` trusts the repository owner
+and delivery channel before any archive verification runs. For reproducibility,
+review a checkout at a commit you trust and run that copy of the script. Archive
+attestation does not retroactively authenticate the bootstrap script.
+
+Runtime downloads trust their documented upstream publishers. A digest delivered
+by that publisher detects corruption but cannot protect against compromise of the
+publisher and its metadata together. OMG does not claim independent provenance
+for every runtime. SLSA artifact verification requires an explicit certificate
+identity; a valid signature from an arbitrary signer is insufficient.
+
+AUR review covers the complete local regular-file source manifest, including
+`.SRCINFO`, patches and install hooks. Source symlinks are rejected; replace them
+with reviewed regular files. All cached, fresh, dependency and rollback archives
+must match the reviewed output identity and exact install-hook bytes. Package
+archives are snapshotted into sealed Linux files before approval and copied into
+private root staging for the complete privileged transaction.
+
+Bubblewrap builds are offline by default. The host prefetcher accepts only public
+HTTPS destinations, checks every redirect and pins resolved addresses. Sources
+that require build-time networking (including unsupported VCS prefetches) require
+an explicit `[aur] allow_network = true` setting. That setting exposes local and
+private services to the build; it is a trust decision. Chroot devtools cannot
+promise this offline boundary and require the same explicit setting. Native
+builds remain an explicit unsafe option and execute with `no_new_privs` so they
+cannot gain root through a cached sudo ticket.
+
+Explicit package policies are enforced again against ALPM's prepared install or
+upgrade plan, including dependencies. Native APT/DNF/Homebrew install and upgrade paths
+refuse explicit policies because OMG cannot guarantee their final plan matches a
+separate precheck. Use their default policy or an enforceable ALPM transaction.
+Pure-Debian production mutations are disabled until independently authenticated
+repository authority is implemented; the native APT backend remains available.
+
+Local audit verification establishes internal hash-chain consistency only. The
+owner can rewrite and rehash a user-owned collection, remove entries, or delete
+its incompleteness marker; successful verification is not proof of authenticity
+or completeness. Operations executed inside privileged OMG backends additionally persist attempt
+and outcome records synchronously under root-controlled `/var/log/omg`. Direct
+external native launches record their attempt/outcome in the invoking user’s
+collection. An
+abruptly terminated operation may have an attempt without a completion record.
+Daemon queue overflow or persistence failure leaves a durable `audit/incomplete`
+marker and verification refuses to describe that collection as complete. Root
+can still alter system logs. Independently retained or remotely collected logs
+are required for evidence against the machine's administrator.
+
+Dashboard account linking accepts `omg account link --token-stdin` or
+`OMG_DASHBOARD_TOKEN`, avoiding a token in process arguments. Prefer stdin from
+a secret manager; environment variables remain visible to sufficiently privileged
+processes and should not be entered literally in shell history.

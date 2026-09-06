@@ -82,18 +82,12 @@ impl crate::package_managers::PackageManager for AptPackageManager {
         let packages = packages.to_vec();
         Box::pin(async move {
             crate::core::security::validate_debian_package_names_or_files(&packages)?;
-            #[cfg(unix)]
-            let packages = packages
-                .iter()
-                .map(|package| {
-                    if crate::core::security::is_local_debian_package_file(package) {
-                        return crate::core::security::validate_local_debian_package_file(package)
-                            .map(|path| path.to_string_lossy().into_owned());
-                    }
-                    Ok(package.clone())
-                })
-                .collect::<Result<Vec<_>>>()?;
 
+            if !is_root() && contains_local_debian_package(&packages) {
+                let mut args = vec!["install", "--allow-local-file", "-y", "--"];
+                args.extend(packages.iter().map(String::as_str));
+                return crate::core::privilege::run_privileged_child(&args).await;
+            }
             if !is_root() {
                 // Exact resolved package list goes straight to apt-get — no
                 // re-exec, no second listing or prompt.
@@ -499,6 +493,24 @@ fn open_cache(local_files: &[String]) -> Result<Cache> {
 }
 
 fn install_blocking(packages: &[String]) -> Result<()> {
+    crate::core::security::audit::record_operation("install_blocking", packages, "attempt")?;
+    let result = install_blocking_inner(packages);
+    crate::core::security::audit::record_operation(
+        "install_blocking",
+        packages,
+        if result.is_ok() {
+            "succeeded"
+        } else {
+            "failed"
+        },
+    )?;
+    result
+}
+
+fn install_blocking_inner(packages: &[String]) -> Result<()> {
+    crate::core::security::policy::require_native_plan_support("APT")?;
+    let staged = crate::core::security::artifact::StagedInputs::prepare(packages)?;
+    let packages = staged.targets.as_slice();
     if contains_local_debian_package(packages) {
         return install_with_apt_get_blocking(packages);
     }
@@ -546,7 +558,7 @@ fn contains_local_debian_package(packages: &[String]) -> bool {
 }
 
 fn install_with_apt_get_blocking(packages: &[String]) -> Result<()> {
-    let status = std::process::Command::new("apt-get")
+    let status = crate::core::privilege::system_command("apt-get")?
         .args(["install", "-y", "--"])
         .args(packages)
         .status()
@@ -563,6 +575,21 @@ fn install_with_apt_get_blocking(packages: &[String]) -> Result<()> {
 }
 
 fn remove_blocking(packages: &[String]) -> Result<()> {
+    crate::core::security::audit::record_operation("remove_blocking", packages, "attempt")?;
+    let result = remove_blocking_inner(packages);
+    crate::core::security::audit::record_operation(
+        "remove_blocking",
+        packages,
+        if result.is_ok() {
+            "succeeded"
+        } else {
+            "failed"
+        },
+    )?;
+    result
+}
+
+fn remove_blocking_inner(packages: &[String]) -> Result<()> {
     let cache = open_cache(&[])?;
     for pkg_name in packages {
         let pkg = cache
@@ -589,6 +616,22 @@ fn remove_blocking(packages: &[String]) -> Result<()> {
 }
 
 fn update_blocking() -> Result<()> {
+    crate::core::security::audit::record_operation("update_blocking", &[], "attempt")?;
+    let result = update_blocking_inner();
+    crate::core::security::audit::record_operation(
+        "update_blocking",
+        &[],
+        if result.is_ok() {
+            "succeeded"
+        } else {
+            "failed"
+        },
+    )?;
+    result
+}
+
+fn update_blocking_inner() -> Result<()> {
+    crate::core::security::policy::require_native_plan_support("APT")?;
     let cache = open_cache(&[])?;
     cache
         .upgrade(Upgrade::SafeUpgrade)
