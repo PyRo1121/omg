@@ -27,6 +27,7 @@ BASH
 
 zmodload zsh/zpty
 zmodload zsh/system
+print -r -- 'phase: zpty module loaded'
 owner=$sysparams[pid]
 cache_root=${XDG_CACHE_HOME:-$HOME/.cache}
 mkdir -p "$cache_root"
@@ -40,12 +41,24 @@ cleanup() {
 }
 trap cleanup EXIT
 trap 'exit 1' HUP INT TERM
+print -r -- 'phase: fixture ready'
+watchdog() {
+    sleep 15
+    kill -TERM "$owner" 2>/dev/null
+}
+watchdog &
+wd=$!
+print -r -- 'phase: watchdog armed'
 mkdir "$fixture/fpath"
 cp "${0:A:h}/../src/hooks/completions/zsh.zsh" "$fixture/fpath/_omg"
+child_log=/tmp/omg-zsh-child.log
+: > "$child_log"
 cat > "$fixture/.zshrc" <<'RC'
+print -r -- 'child: zshrc start' >> /tmp/omg-zsh-child.log
 fpath=("$ZDOTDIR/fpath" $fpath)
 autoload -Uz compinit
-compinit -D
+compinit -i -D
+print -r -- 'child: compinit done' >> /tmp/omg-zsh-child.log
 PROMPT='READY> '
 omg() {
     case "$5" in
@@ -62,16 +75,27 @@ bindkey '^X' capture_buffer
 RC
 export ZDOTDIR=$fixture TERM=xterm
 zpty child zsh -d -i
+print -r -- 'phase: zpty spawned, waiting for prompt'
 zpty -r child output '*READY>*'
+print -r -- 'phase: prompt ready'
 zpty -w -n child $'omg install frfx\t\C-x'
+print -r -- 'phase: typed frfx'
 zpty -r child output '*CAPTURE:*:END*'
+print -r -- 'phase: captured frfx'
 print -r -- "$output"
 [[ "$output" == *'CAPTURE:omg install firefox :END'* ]]
 zpty -w -n child $'\C-a\C-komg install gt\t\C-x'
+print -r -- 'phase: typed gt'
 zpty -r child output '*CAPTURE:*:END*'
+print -r -- 'phase: captured gt'
 print -r -- "$output"
 [[ "$output" == *'CAPTURE:omg install git :END'* ]]
 zpty -w -n child $'\C-a\C-komg install zzzz-unmatched\t\C-x'
+print -r -- 'phase: typed unmatched'
 zpty -r child output '*CAPTURE:*:END*'
+print -r -- 'phase: captured unmatched'
 print -r -- "$output"
 [[ "$output" == *'CAPTURE:omg install zzzz-unmatched:END'* ]]
+kill "$wd" 2>/dev/null
+wait "$wd" 2>/dev/null || true
+print -r -- 'phase: all captures verified'

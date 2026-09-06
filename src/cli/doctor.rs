@@ -437,9 +437,20 @@ const DB_LOCK_HOLDERS: &[&str] = &["pacman", "yay", "paru", "pikaur", "omg"];
 
 /// Whether any package-manager process is currently running, by binary
 /// name. Shared by the lock check and its test so both agree on liveness.
+///
+/// The calling process is excluded by PID: without this, `omg doctor`
+/// (comm `omg`) always matches itself and a stale lock is misreported as
+/// held by a running manager.
 #[cfg(feature = "arch")]
 fn package_manager_running() -> bool {
-    std::fs::read_dir("/proc")
+    any_manager_running(std::path::Path::new("/proc"), std::process::id())
+}
+
+/// Testable core of [`package_manager_running`]: scan `proc_root` for
+/// [`DB_LOCK_HOLDERS`] entries other than `self_pid`.
+#[cfg(feature = "arch")]
+fn any_manager_running(proc_root: &std::path::Path, self_pid: u32) -> bool {
+    std::fs::read_dir(proc_root)
         .into_iter()
         .flatten()
         .flatten()
@@ -448,10 +459,12 @@ fn package_manager_running() -> bool {
             let Some(pid) = name
                 .to_str()
                 .filter(|name| name.bytes().all(|b| b.is_ascii_digit()))
+                .and_then(|name| name.parse::<u32>().ok())
+                .filter(|pid| *pid != self_pid)
             else {
                 return false;
             };
-            let comm = std::fs::read_to_string(format!("/proc/{pid}/comm"))
+            let comm = std::fs::read_to_string(proc_root.join(pid.to_string()).join("comm"))
                 .map(|comm| comm.trim().to_string())
                 .unwrap_or_default();
             DB_LOCK_HOLDERS.contains(&comm.as_str())
@@ -825,6 +838,25 @@ mod tests {
         assert!(!mirror_status_is_issue(
             reqwest::StatusCode::TEMPORARY_REDIRECT
         ));
+    }
+
+    #[cfg(feature = "arch")]
+    #[test]
+    fn manager_scan_ignores_self_pid_but_finds_other_managers() {
+        let proc = tempfile::TempDir::new().expect("isolated proc dir");
+        let self_pid = 4242;
+        std::fs::create_dir(proc.path().join(self_pid.to_string())).expect("self pid dir");
+        std::fs::write(proc.path().join(self_pid.to_string()).join("comm"), "omg\n")
+            .expect("self comm");
+        // Only ourselves present: no other manager running.
+        assert!(!any_manager_running(proc.path(), self_pid));
+        // An unrelated process does not count either.
+        std::fs::create_dir(proc.path().join("999")).expect("other pid dir");
+        std::fs::write(proc.path().join("999").join("comm"), "bash\n").expect("other comm");
+        assert!(!any_manager_running(proc.path(), self_pid));
+        // A real second manager does count.
+        std::fs::write(proc.path().join("999").join("comm"), "pacman\n").expect("pacman comm");
+        assert!(any_manager_running(proc.path(), self_pid));
     }
 
     /// A lock file with no package manager behind it is stale and counts

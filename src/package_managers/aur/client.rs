@@ -531,25 +531,63 @@ fn verify_reviewed_pkgbuild(pkgbuild_path: &Path, reviewed_digest: &str) -> Resu
     Ok(())
 }
 
-fn pkgbuild_review_panel(package: &str, digest: &str, review: &str) -> String {
+/// Preview lines shown in the interactive review panel before the
+/// truncation notice. Full PKGBUILD dumps per package are what make
+/// `omg update` output feel like spam; the file stays on disk at
+/// `pkgbuild_path` and the SHA-256 covers every byte, so a capped preview
+/// keeps output scannable without weakening what the digest attests.
+const MAX_PKGBUILD_PREVIEW_LINES: usize = 40;
+
+fn pkgbuild_review_panel(
+    package: &str,
+    digest: &str,
+    review: &str,
+    pkgbuild_path: &Path,
+) -> String {
     let package = crate::cli::style::sanitize_terminal_text(package);
     let divider = "─".repeat(72);
+    let trimmed = review.trim_end();
+    let total_lines = trimmed.lines().count();
+    let preview = trimmed
+        .lines()
+        .take(MAX_PKGBUILD_PREVIEW_LINES)
+        .collect::<Vec<_>>()
+        .join("\n");
+    let overflow = total_lines.saturating_sub(MAX_PKGBUILD_PREVIEW_LINES);
 
     if crate::cli::style::colors_enabled() {
+        let tail = if overflow > 0 {
+            format!(
+                "\n{}",
+                format!(
+                    "… ({overflow} more lines — full PKGBUILD at {})",
+                    pkgbuild_path.display()
+                )
+                .dimmed()
+            )
+        } else {
+            String::new()
+        };
         format!(
-            "\n  {} {}\n\n    {} {}\n\n  {}\n{}\n  {}",
+            "\n  {} {}\n\n    {} {}\n\n  {}\n{preview}{tail}\n  {}",
             " AUR ".black().on_magenta().bold(),
             format!("Review {package}").bold(),
             "SHA-256".dimmed(),
             digest.dimmed(),
             divider.dimmed(),
-            review.trim_end(),
             divider.dimmed()
         )
     } else {
+        let tail = if overflow > 0 {
+            format!(
+                "\n… ({overflow} more lines — full PKGBUILD at {})",
+                pkgbuild_path.display()
+            )
+        } else {
+            String::new()
+        };
         format!(
-            "\n  AUR  Review {package}\n\n    SHA-256 {digest}\n\n  {divider}\n{}\n  {divider}",
-            review.trim_end()
+            "\n  AUR  Review {package}\n\n    SHA-256 {digest}\n\n  {divider}\n{preview}{tail}\n  {divider}"
         )
     }
 }
@@ -3185,8 +3223,8 @@ impl AurClient {
             );
         }
 
-        let source =
-            ReviewedSource::capture(pkgbuild_path.parent().context("Missing source directory")?)?;
+        let source_dir = pkgbuild_path.parent().context("Missing source directory")?;
+        let source = ReviewedSource::capture(source_dir)?;
         for (path, bytes) in &source.files {
             let review = if std::str::from_utf8(bytes).is_ok() {
                 pkgbuild_review_text(bytes)?
@@ -3202,7 +3240,8 @@ impl AurClient {
                 pkgbuild_review_panel(
                     &format!("{package}: {}", path.display()),
                     &source.digest,
-                    &review
+                    &review,
+                    &source_dir.join(path),
                 )
             );
         }
@@ -4454,7 +4493,12 @@ mod tests {
     fn pkgbuild_review_panel_is_inline_and_package_specific() {
         let review = "pkgname=google-chrome\npkgver=140.0\n";
         let digest = pkgbuild_digest(review.as_bytes());
-        let panel = pkgbuild_review_panel("google-chrome", &digest, review);
+        let panel = pkgbuild_review_panel(
+            "google-chrome",
+            &digest,
+            review,
+            std::path::Path::new("/tmp/PKGBUILD"),
+        );
 
         assert!(panel.contains("AUR"));
         assert!(panel.contains("Review google-chrome"));
@@ -4464,6 +4508,24 @@ mod tests {
             pkgbuild_review_prompt("google-chrome"),
             "Build google-chrome from this PKGBUILD?"
         );
+    }
+
+    #[test]
+    fn pkgbuild_review_panel_truncates_long_pkgbuilds() {
+        let review = (0..100)
+            .map(|i| format!("line{i}=value"))
+            .collect::<Vec<_>>()
+            .join("\n");
+        let digest = pkgbuild_digest(review.as_bytes());
+        let path = std::path::Path::new("/cache/aur/chatgpt-desktop/PKGBUILD");
+        let panel = pkgbuild_review_panel("chatgpt-desktop", &digest, &review, path);
+
+        assert!(panel.contains("line0=value"));
+        assert!(panel.contains("line39=value"));
+        assert!(!panel.contains("line40=value"));
+        assert!(panel.contains("60 more lines"));
+        assert!(panel.contains("/cache/aur/chatgpt-desktop/PKGBUILD"));
+        assert!(panel.contains(&format!("SHA-256 {digest}")));
     }
 
     #[tokio::test]

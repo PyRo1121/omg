@@ -1103,8 +1103,10 @@ fn prepare_alpm_transaction<'a>(
             alpm::Error::HandleLock => {
                 anyhow::anyhow!(
                     "✗ Database is locked by another process.\n  \
-                 → Check if pacman, yay, or another package manager is running.\n  \
-                 → If no other process is running, remove: /var/lib/pacman/db.lck"
+                 → Check holders with: pgrep -a '^(pacman|yay|paru|pikaur|omg|omgd|makepkg)$'\n  \
+                 → If a manager is mid-transaction, wait for it and retry.\n  \
+                 → Only when no manager is running, clear the stale lock: sudo rm /var/lib/pacman/db.lck\n  \
+                 → Then re-run; `omg doctor` reports stale vs live locks"
                 )
             }
             _ => anyhow::anyhow!("Failed to initialize transaction: {e}"),
