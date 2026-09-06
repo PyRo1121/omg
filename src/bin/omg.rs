@@ -798,7 +798,14 @@ fn command_requires_root(command: &Commands) -> bool {
             all,
             dry_run,
             ..
-        } => !dry_run && (*orphans || *cache || *all),
+        } => {
+            let native_fedora = cfg!(feature = "fedora")
+                && matches!(
+                    omg_lib::core::env::distro::detect_distro(),
+                    omg_lib::core::env::distro::Distro::Fedora,
+                );
+            !dry_run && (*orphans || *cache || *all) && !native_fedora
+        }
         _ => false,
     }
 }
@@ -1626,7 +1633,7 @@ mod tests {
     }
 
     #[test]
-    fn only_privileged_clean_actions_require_root() {
+    fn clean_elevation_uses_native_fedora_or_root_dispatch() {
         let aur_only = Commands::Clean {
             orphans: false,
             cache: false,
@@ -1642,7 +1649,12 @@ mod tests {
             dry_run: false,
         };
         assert!(!command_requires_root(&aur_only));
-        assert!(command_requires_root(&cache));
+        let native_fedora = cfg!(feature = "fedora")
+            && matches!(
+                omg_lib::core::env::distro::detect_distro(),
+                omg_lib::core::env::distro::Distro::Fedora,
+            );
+        assert_eq!(command_requires_root(&cache), !native_fedora);
         assert!(command_requires_root(&Commands::Sync));
     }
 }
