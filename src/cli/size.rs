@@ -2,7 +2,12 @@
 
 use anyhow::Result;
 
-#[cfg(any(feature = "arch", feature = "debian", feature = "debian-pure"))]
+#[cfg(any(
+    feature = "arch",
+    feature = "debian",
+    feature = "debian-pure",
+    feature = "fedora"
+))]
 use crate::cli::tea::Cmd;
 
 /// Show disk usage analysis
@@ -10,9 +15,25 @@ use crate::cli::tea::Cmd;
     clippy::needless_return,
     reason = "additive backend feature branches return before compiled fallbacks"
 )]
-pub fn run(tree: Option<&str>, limit: usize) -> Result<()> {
+#[cfg_attr(
+    not(feature = "fedora"),
+    expect(
+        clippy::unused_async,
+        reason = "Shared async entry point for the Fedora backend"
+    )
+)]
+pub async fn run(tree: Option<&str>, limit: usize) -> Result<()> {
     if let Some(package) = tree {
         crate::core::security::validate_package_name(package)?;
+    }
+
+    #[cfg(feature = "fedora")]
+    if matches!(
+        crate::core::env::distro::detect_distro(),
+        crate::core::env::distro::Distro::Fedora
+    ) {
+        crate::cli::tea::run_report(show_sizes_fedora(tree, limit).await?)?;
+        return Ok(());
     }
 
     #[cfg(any(feature = "debian", feature = "debian-pure"))]
@@ -40,8 +61,68 @@ pub fn run(tree: Option<&str>, limit: usize) -> Result<()> {
     #[cfg(not(feature = "arch"))]
     {
         let _ = (tree, limit);
-        anyhow::bail!("size command requires the arch feature");
+        anyhow::bail!("Size analysis requires a supported package backend");
     }
+}
+
+#[cfg(feature = "fedora")]
+async fn show_sizes_fedora(tree: Option<&str>, limit: usize) -> Result<Cmd<()>> {
+    use crate::cli::components::Components;
+    use crate::package_managers::dnf::{DnfPackageManager, InstalledSizeQuery};
+
+    let (mut packages, root_description) = if let Some(package) = tree {
+        let mut selected =
+            DnfPackageManager::installed_package_sizes(InstalledSizeQuery::Package(package))
+                .await?;
+        anyhow::ensure!(!selected.is_empty(), "Package '{package}' is not installed");
+        anyhow::ensure!(
+            selected.len() == 1,
+            "Package '{package}' matches multiple installed builds; specify a version and architecture"
+        );
+        let root = selected.remove(0);
+        let mut providers = DnfPackageManager::installed_package_sizes(
+            InstalledSizeQuery::RequirementProviders(package),
+        )
+        .await?;
+        providers.retain(|(identity, _)| identity != &root.0);
+        let description = format!("Package: {} ({})", root.0, format_size(root.1));
+        providers.push(root);
+        (providers, Some(description))
+    } else {
+        (
+            DnfPackageManager::installed_package_sizes(InstalledSizeQuery::All).await?,
+            None,
+        )
+    };
+    packages.sort_by(|left, right| right.1.cmp(&left.1).then_with(|| left.0.cmp(&right.0)));
+    let total = packages.iter().try_fold(0_i64, |total, (_, size)| {
+        total
+            .checked_add(*size)
+            .ok_or_else(|| anyhow::anyhow!("Installed package size total overflow"))
+    })?;
+    let mut commands = if let Some(description) = root_description {
+        vec![
+            Cmd::header("Installed Requirement Providers", description),
+            Cmd::info(
+                "Includes installed providers of direct requirements, not a minimal dependency closure.",
+            ),
+        ]
+    } else {
+        vec![Cmd::header("Disk Usage Analysis", "by installed size")]
+    };
+    commands.push(Cmd::spacer());
+    commands.push(Cmd::card(
+        format!("Top {limit} Packages"),
+        top_packages_content(&packages, limit),
+    ));
+    commands.push(Components::kv_list(
+        Some("Summary"),
+        vec![
+            ("Total Installed Size", format_size(total)),
+            ("Number of Packages", packages.len().to_string()),
+        ],
+    ));
+    Ok(Cmd::batch(commands))
 }
 
 #[cfg(feature = "arch")]
@@ -177,7 +258,12 @@ fn show_package_tree(package: &str) -> Result<Cmd<()>> {
     Ok(Cmd::batch(commands))
 }
 
-#[cfg(any(feature = "arch", feature = "debian", feature = "debian-pure"))]
+#[cfg(any(
+    feature = "arch",
+    feature = "debian",
+    feature = "debian-pure",
+    feature = "fedora"
+))]
 fn top_packages_content(packages: &[(String, i64)], limit: usize) -> Vec<String> {
     // An empty package list must render an empty card, not panic on [0].
     let max_size = packages.first().map_or(0, |&(_, size)| size);
@@ -282,12 +368,12 @@ fn show_package_tree_debian(package: &str) -> Result<Cmd<()>> {
     Ok(Cmd::batch(commands))
 }
 
-#[cfg(test)]
-fn size_requires_backend() -> anyhow::Result<()> {
-    anyhow::bail!("Size analysis is not available without an Arch or Debian package backend")
-}
-
-#[cfg(any(feature = "arch", feature = "debian", feature = "debian-pure"))]
+#[cfg(any(
+    feature = "arch",
+    feature = "debian",
+    feature = "debian-pure",
+    feature = "fedora"
+))]
 fn format_size(bytes: i64) -> String {
     const KB: i64 = 1024;
     const MB: i64 = KB * 1024;
@@ -304,7 +390,12 @@ fn format_size(bytes: i64) -> String {
     }
 }
 
-#[cfg(any(feature = "arch", feature = "debian", feature = "debian-pure"))]
+#[cfg(any(
+    feature = "arch",
+    feature = "debian",
+    feature = "debian-pure",
+    feature = "fedora"
+))]
 fn generate_bar(value: i64, max: i64, width: usize) -> String {
     let ratio = if max > 0 {
         (value as f64 / max as f64).min(1.0)
@@ -342,19 +433,28 @@ fn get_cache_size() -> Result<i64> {
 mod tests {
     use super::*;
 
-    #[test]
-    fn size_without_backend_is_an_error() {
-        let error = size_requires_backend()
-            .expect_err("size analysis with no backend must not look like success");
+    #[cfg(not(any(
+        feature = "arch",
+        feature = "debian",
+        feature = "debian-pure",
+        feature = "fedora"
+    )))]
+    #[tokio::test]
+    async fn size_without_backend_is_an_error() {
+        let error = run(None, 20).await.expect_err("size requires a backend");
         assert!(
             error
                 .to_string()
-                .contains("not available without an Arch or Debian package backend"),
-            "got: {error}"
+                .contains("requires a supported package backend")
         );
     }
 
-    #[cfg(any(feature = "arch", feature = "debian", feature = "debian-pure"))]
+    #[cfg(any(
+        feature = "arch",
+        feature = "debian",
+        feature = "debian-pure",
+        feature = "fedora"
+    ))]
     #[test]
     fn empty_package_list_renders_empty_content_instead_of_panicking() {
         let content = top_packages_content(&[], 20);
@@ -364,7 +464,12 @@ mod tests {
         );
     }
 
-    #[cfg(any(feature = "arch", feature = "debian", feature = "debian-pure"))]
+    #[cfg(any(
+        feature = "arch",
+        feature = "debian",
+        feature = "debian-pure",
+        feature = "fedora"
+    ))]
     #[test]
     fn top_packages_content_ranks_and_truncates() {
         let packages = vec![

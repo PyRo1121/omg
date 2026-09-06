@@ -1,3 +1,5 @@
+#[cfg(unix)]
+pub mod artifact;
 pub mod audit;
 #[cfg(feature = "pgp")]
 pub mod keyserver;

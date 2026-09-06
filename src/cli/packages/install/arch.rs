@@ -56,7 +56,13 @@ pub async fn install(packages: &[String], yes: bool, replacement_hops: u32) -> R
                 None,
                 crate::core::security::SecurityGrade::Community,
             )?;
-            modern_ui::finish_info(&pb, &format!("Local package: {pkg}"));
+            modern_ui::finish_info(
+                &pb,
+                &format!(
+                    "Local package: {}",
+                    crate::core::security::artifact::display_target(pkg)
+                ),
+            );
             continue;
         }
 
@@ -223,7 +229,6 @@ fn local_archive_preview(
         return Ok(None);
     }
 
-    crate::core::security::validate_local_package_file(package)?;
     crate::package_managers::alpm_ops::load_local_package_metadata(package).map(Some)
 }
 

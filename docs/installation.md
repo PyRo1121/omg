@@ -444,3 +444,12 @@ After installation:
 - 💬 **Discussions**: <https://github.com/PyRo1121/omg/discussions>
 - 🐛 **Issues**: <https://github.com/PyRo1121/omg/issues>
 - 📧 **Email**: <olen@latham.cloud>
+
+### Release verification prerequisite
+
+Install GitHub CLI (`gh`) before running the installer. Release archives must
+pass both checksum validation and attestation verification for the selected tag
+and OMG release workflow. Missing or rejected provenance stops installation.
+For an explicit source build, review a trusted checkout and run
+`bash ./install.sh --from-source`. See [Security boundaries](../SECURITY.md#security-boundaries-and-retained-trust)
+for bootstrap and upstream publisher trust limits.

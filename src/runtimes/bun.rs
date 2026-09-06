@@ -7,6 +7,7 @@
 //! - Pre-built binaries from GitHub releases
 //! - Version aliasing (latest)
 
+use crate::core::http::BoundedResponseExt;
 use anyhow::{Context, Result};
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -48,12 +49,13 @@ impl BunManager {
             .client
             .get(format!("{BUN_API_URL}?per_page=20"))
             .header("User-Agent", GITHUB_USER_AGENT)
+            .timeout(std::time::Duration::from_secs(30))
             .send()
             .await
             .context("Failed to fetch Bun releases from GitHub")?
             .error_for_status()
             .context("Bun releases request failed")?
-            .json()
+            .bounded_json()
             .await
             .context("Failed to parse Bun release data")?;
 
@@ -138,12 +140,13 @@ impl BunManager {
             .client
             .get(format!("{BUN_API_URL}/tags/bun-v{version}"))
             .header("User-Agent", GITHUB_USER_AGENT)
+            .timeout(std::time::Duration::from_secs(30))
             .send()
             .await
             .context("Failed to fetch Bun release metadata")?
             .error_for_status()
             .context("Bun release metadata request failed")?
-            .json()
+            .bounded_json()
             .await
             .context("Failed to parse Bun release metadata")?;
 

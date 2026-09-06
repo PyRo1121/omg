@@ -1068,6 +1068,11 @@ mod command_integration_tests {
             "The same project must retain git and must not install banned firefox"
         );
 
+        assert_eq!(
+            std::fs::read(&state_path).unwrap(),
+            before_state,
+            "Recovery reads must not rewrite the persisted inventory"
+        );
         std::fs::remove_file(policy_path).unwrap();
         project.run(&["install", "-y", "firefox"]).assert_success();
         let recovered = project.run(&["explicit", "--json"]);

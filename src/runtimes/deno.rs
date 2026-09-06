@@ -3,6 +3,7 @@
 //! Installs official `denoland/deno` release ZIPs. Activation exposes the
 //! complete `<version>/bin` directory without command shims.
 
+use crate::core::http::BoundedResponseExt;
 use anyhow::{Context, Result};
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -145,12 +146,13 @@ impl DenoManager {
         self.client
             .get(format!("{DENO_API_URL}/tags/v{version}"))
             .header("User-Agent", GITHUB_USER_AGENT)
+            .timeout(std::time::Duration::from_secs(30))
             .send()
             .await
             .context("Failed to fetch Deno release metadata")?
             .error_for_status()
             .context("Deno release metadata request failed")?
-            .json()
+            .bounded_json()
             .await
             .context("Failed to parse Deno release metadata")
     }
@@ -244,6 +246,7 @@ async fn fetch_checksum_sidecar(
     let response = client
         .get(url)
         .header("User-Agent", GITHUB_USER_AGENT)
+        .timeout(std::time::Duration::from_secs(30))
         .send()
         .await
         .with_context(|| format!("Failed to fetch Deno checksum sidecar from {url}"))?

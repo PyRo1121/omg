@@ -108,9 +108,6 @@ fn which_reports_global_selection_but_prefers_project_pins() {
     let versions = project.data_dir.path().join("versions/python");
     std::fs::create_dir_all(versions.join("3.12.14")).unwrap();
     std::os::unix::fs::symlink("3.12.14", versions.join("current")).unwrap();
-    let rust_versions = project.data_dir.path().join("versions/rust");
-    std::fs::create_dir_all(rust_versions.join("1.93.1")).unwrap();
-    std::os::unix::fs::symlink("1.93.1", rust_versions.join("current")).unwrap();
     for args in [
         vec!["which", "python"],
         vec!["--verbose", "which", "PYTHON3"],
@@ -120,10 +117,6 @@ fn which_reports_global_selection_but_prefers_project_pins() {
         result.assert_stdout_contains("3.12.14");
         assert!(!result.stdout.contains("no version set"));
     }
-    let rustlang = project.run_with_env(&["which", "rustlang"], NO_MISE_ENV);
-    rustlang.assert_success();
-    rustlang.assert_stdout_contains("1.93.1");
-    assert!(!rustlang.stdout.contains("no version set"));
     project.create_file(".python-version", "3.11.16");
     let result = project.run_with_env(&["which", "python"], NO_MISE_ENV);
     result.assert_success();

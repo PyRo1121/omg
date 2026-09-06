@@ -136,6 +136,8 @@ pub struct AurBuildSettings {
     pub secure_makepkg: bool,
     /// Allow native builds without sandboxing
     pub allow_unsafe_builds: bool,
+    /// Explicitly expose host networking to sandboxed build code.
+    pub allow_network: bool,
     /// Use AUR metadata archive for bulk update checks
     pub use_metadata_archive: bool,
     /// Metadata archive cache TTL (seconds)
@@ -193,6 +195,7 @@ impl Default for AurBuildSettings {
             review_pkgbuild: true,
             secure_makepkg: true,
             allow_unsafe_builds: false,
+            allow_network: false,
             use_metadata_archive: true,
             metadata_cache_ttl_secs: 300,
             makeflags: None,
@@ -217,12 +220,13 @@ impl Settings {
         let table: toml::Table = toml::from_str(content).context("Config is not valid TOML")?;
 
         const ROOT_KEYS: [&str; 2] = ["telemetry_enabled", "aur"];
-        const AUR_KEYS: [&str; 15] = [
+        const AUR_KEYS: [&str; 16] = [
             "build_method",
             "build_concurrency",
             "review_pkgbuild",
             "secure_makepkg",
             "allow_unsafe_builds",
+            "allow_network",
             "use_metadata_archive",
             "metadata_cache_ttl_secs",
             "makeflags",
@@ -425,6 +429,7 @@ impl Settings {
         "review_pkgbuild",
         "secure_makepkg",
         "allow_unsafe_builds",
+        "allow_network",
         "use_metadata_archive",
         "metadata_cache_ttl_secs",
         "makeflags",

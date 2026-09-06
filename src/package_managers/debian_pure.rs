@@ -52,10 +52,11 @@ fn validate_pure_mutation_with_privileges(packages: &[String], has_privileges: b
 }
 
 fn validate_pure_mutation(packages: &[String]) -> Result<()> {
-    validate_pure_mutation_with_privileges(
-        packages,
-        crate::core::paths::test_mode() || crate::core::is_root(),
-    )
+    anyhow::ensure!(
+        cfg!(test),
+        "Pure Debian mutations are unsupported: use the native APT backend; the user cache is not installation authority"
+    );
+    validate_pure_mutation_with_privileges(packages, crate::core::is_root() || cfg!(test))
 }
 
 impl PackageManager for PureDebianPackageManager {
@@ -216,6 +217,10 @@ impl PackageManager for PureDebianPackageManager {
             anyhow::ensure!(
                 crate::core::paths::test_mode() || crate::core::is_root(),
                 "Pure Debian package transactions require root privileges"
+            );
+            anyhow::ensure!(
+                cfg!(test),
+                "Pure Debian mutations are unsupported; use native APT"
             );
             let start = Instant::now();
             tracing::info!("Starting pure Rust system upgrade");

@@ -85,6 +85,27 @@ fn seed_history(project: &TestProject, entries: &[String]) {
 // ═══════════════════════════════════════════════════════════════════════════
 
 #[test]
+#[cfg(unix)]
+fn history_command_refuses_a_fifo_without_blocking() {
+    use std::os::unix::fs::{FileTypeExt as _, MetadataExt as _};
+
+    let project = TestProject::for_distro("arch");
+    let path = project.data_dir.path().join("history.json");
+    nix::unistd::mkfifo(
+        &path,
+        nix::sys::stat::Mode::S_IRUSR | nix::sys::stat::Mode::S_IWUSR,
+    )
+    .unwrap();
+    let before = std::fs::symlink_metadata(&path).unwrap();
+    let result = project.run_with_env(&["history"], &[("OMG_TEST_COMMAND_TIMEOUT_SECS", "5")]);
+    result.assert_failure();
+    result.assert_stderr_contains("History file must be a regular file");
+    let after = std::fs::symlink_metadata(path).unwrap();
+    assert!(after.file_type().is_fifo());
+    assert_eq!((after.dev(), after.ino()), (before.dev(), before.ino()));
+}
+
+#[test]
 fn privacy_export_preserves_archived_history_text() {
     let project = TestProject::for_distro("arch");
     let archive_path = project.data_dir.path().join("history.json.archive.jsonl");

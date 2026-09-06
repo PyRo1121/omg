@@ -2,6 +2,7 @@
 //!
 //! Shared functionality for downloading, extracting, and managing runtime versions.
 
+use crate::core::http::BoundedResponseExt;
 use std::cmp::Ordering;
 use std::fs::{self, File};
 use std::io::{BufReader, Read, Seek, SeekFrom, Write};
@@ -79,6 +80,7 @@ where
         let response = client
             .get(format!("{releases_url}?per_page={per_page}&page={page}"))
             .header("User-Agent", GITHUB_USER_AGENT)
+            .timeout(std::time::Duration::from_secs(30))
             .send()
             .await
             .with_context(|| format!("Failed to fetch GitHub releases from {releases_url}"))?;
@@ -92,7 +94,7 @@ where
         let page_releases: Vec<GithubRelease> = response
             .error_for_status()
             .with_context(|| format!("GitHub releases request failed: {releases_url}"))?
-            .json()
+            .bounded_json()
             .await
             .with_context(|| format!("Failed to parse GitHub releases payload: {releases_url}"))?;
         let short = page_releases.len() < per_page as usize;
@@ -547,9 +549,11 @@ fn extract_tar_entries<R: std::io::Read>(
     task.set_message("Extracting...");
     let mut pending_links = Vec::new();
 
+    let mut entry_budget = ArchiveEntryBudget::default();
     for entry in archive.entries()? {
         let mut entry = entry?;
         let path = entry.path()?;
+        entry_budget.charge(&path)?;
         let Some(stripped) = select(&path)? else {
             continue;
         };
@@ -730,11 +734,14 @@ pub(crate) async fn extract_zip(
         fs::create_dir_all(&dest_dir)?;
         let mut remaining_budget = MAX_DECOMPRESSED_BYTES;
 
+        let mut entry_budget = ArchiveEntryBudget::default();
+        anyhow::ensure!(archive.len() <= MAX_ARCHIVE_ENTRIES, "Archive contains too many entries");
         for i in 0..archive.len() {
             let mut file = archive.by_index(i)?;
             let path = file.enclosed_name().ok_or_else(|| {
                 anyhow::anyhow!("Unsafe path in runtime ZIP archive: {}", file.name())
             })?;
+            entry_budget.charge(&path)?;
             let Some(stripped) = stripped_archive_path(&path, strip_components)? else {
                 continue;
             };
@@ -2254,5 +2261,84 @@ mod tests {
         assert_eq!(ok, 10);
         assert_eq!(error.kind(), std::io::ErrorKind::InvalidData);
         assert_eq!(sink.into_inner().len(), 10);
+    }
+}
+
+const MAX_ARCHIVE_ENTRIES: usize = 250_000;
+#[derive(Default)]
+struct ArchiveEntryBudget {
+    entries: usize,
+    path_bytes: usize,
+}
+impl ArchiveEntryBudget {
+    fn charge(&mut self, path: &Path) -> Result<()> {
+        self.entries += 1;
+        self.path_bytes = self
+            .path_bytes
+            .checked_add(path.as_os_str().len())
+            .context("Archive path budget overflow")?;
+        anyhow::ensure!(
+            self.entries <= MAX_ARCHIVE_ENTRIES
+                && path.components().count() <= 64
+                && self.path_bytes <= 32 * 1024 * 1024,
+            "Archive exceeds entry count, depth, or pathname budget"
+        );
+        Ok(())
+    }
+}
+#[cfg(test)]
+mod entry_budget_tests {
+    use super::*;
+    #[tokio::test]
+    async fn empty_tar_entry_flood_is_rejected_even_when_selection_skips_everything() -> Result<()>
+    {
+        let directory = tempfile::tempdir()?;
+        let archive_path = directory.path().join("empty-flood.tar.gz");
+        let encoder = flate2::write::GzEncoder::new(
+            File::create(&archive_path)?,
+            flate2::Compression::fast(),
+        );
+        let mut builder = tar::Builder::new(encoder);
+        for _ in 0..=MAX_ARCHIVE_ENTRIES {
+            let mut header = tar::Header::new_gnu();
+            header.set_mode(0o644);
+            header.set_size(0);
+            header.set_cksum();
+            builder.append_data(&mut header, "runtime/empty", std::io::empty())?;
+        }
+        builder.into_inner()?.finish()?;
+        let decoder = flate2::read::GzDecoder::new(File::open(&archive_path)?);
+        let mut archive = tar::Archive::new(decoder);
+        let output = directory.path().join("out");
+        let error = extract_tar_entries(
+            &mut archive,
+            &output,
+            &|_| Ok(None),
+            &extract_task(&archive_path),
+        )
+        .unwrap_err();
+        assert!(error.to_string().contains("entry count"), "{error}");
+        assert!(!output.exists());
+        Ok(())
+    }
+
+    #[test]
+    fn empty_entries_and_deep_paths_are_bounded() {
+        let mut budget = ArchiveEntryBudget {
+            entries: MAX_ARCHIVE_ENTRIES,
+            path_bytes: 0,
+        };
+        assert!(budget.charge(Path::new("empty")).is_err());
+        let deep = std::iter::repeat_n("x", 65).collect::<Vec<_>>().join("/");
+        assert!(
+            ArchiveEntryBudget::default()
+                .charge(Path::new(&deep))
+                .is_err()
+        );
+        assert!(
+            ArchiveEntryBudget::default()
+                .charge(Path::new("runtime/bin/node"))
+                .is_ok()
+        );
     }
 }

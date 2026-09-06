@@ -29,6 +29,18 @@ pub trait PackageManager: Send + Sync {
         self.search("")
     }
 
+    /// Execute with native transaction evidence when the backend supports it.
+    /// The caller owns the history destination; `None` disables OMG recording.
+    /// Returning `None` leaves the operation and recording to the caller.
+    fn transact_with_history<'a>(
+        &'a self,
+        _kind: crate::core::history::TransactionType,
+        _packages: &'a [String],
+        _history: Option<&'a crate::core::history::HistoryManager>,
+    ) -> Option<Pin<Box<dyn Future<Output = Result<()>> + Send + 'a>>> {
+        None
+    }
+
     /// Install packages
     fn install(&self, packages: &[String])
     -> Pin<Box<dyn Future<Output = Result<()>> + Send + '_>>;

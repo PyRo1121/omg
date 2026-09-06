@@ -6,7 +6,6 @@ use crate::core::security::{
 };
 use crate::package_managers::types::UpdateInfo;
 use crate::package_managers::{PackageManager, VersionDisplay};
-#[cfg(feature = "arch")]
 use anyhow::Context;
 use anyhow::Result;
 use std::sync::Arc;
@@ -32,6 +31,14 @@ impl PackageService {
         PackageServiceBuilder::new(backend)
     }
 
+    fn require_persisted_policy(&self) -> Result<()> {
+        anyhow::ensure!(
+            cfg!(test) || self.policy == SecurityPolicy::load_default()?,
+            "Custom service policy must match the persisted policy enforced by the privileged backend"
+        );
+        Ok(())
+    }
+
     /// Search for packages
     pub async fn search(&self, query: &str) -> Result<Vec<Package>> {
         let results = self.backend.search(query).await?;
@@ -43,6 +50,11 @@ impl PackageService {
     /// The `yes` parameter is accepted for API compatibility but not used at this layer.
     /// Interactive prompts are handled by the underlying package manager implementations.
     pub async fn install(&self, packages: &[String], _yes: bool) -> Result<()> {
+        self.require_persisted_policy()?;
+        #[cfg(unix)]
+        let pinned = crate::core::security::artifact::SnapshotInputs::capture(packages)?;
+        #[cfg(unix)]
+        let packages = pinned.targets.as_slice();
         let mut changes: Vec<PackageChange> = Vec::new();
 
         #[cfg(feature = "arch")]
@@ -177,6 +189,13 @@ impl PackageService {
                 }
             }
 
+            if let Some(operation) = self.backend.transact_with_history(
+                TransactionType::Install,
+                packages,
+                self.history.as_ref(),
+            ) {
+                return operation.await;
+            }
             let result = self.backend.install(packages).await;
             self.finish_transaction(TransactionType::Install, changes, result)
         }
@@ -215,6 +234,13 @@ impl PackageService {
                 }
             }
 
+            if let Some(operation) = self.backend.transact_with_history(
+                TransactionType::Install,
+                packages,
+                self.history.as_ref(),
+            ) {
+                return operation.await;
+            }
             let result = self.backend.install(packages).await;
             self.finish_transaction(TransactionType::Install, changes, result)
         }
@@ -243,6 +269,13 @@ impl PackageService {
             });
         }
 
+        if let Some(operation) = self.backend.transact_with_history(
+            TransactionType::Remove,
+            packages,
+            self.history.as_ref(),
+        ) {
+            return operation.await;
+        }
         let result = self.backend.remove(packages).await;
 
         self.finish_transaction(TransactionType::Remove, changes, result)
@@ -255,6 +288,24 @@ impl PackageService {
         self.backend.sync().await?;
         let updates = self.list_updates().await?;
         for up in &updates {
+            let community = up.repo.eq_ignore_ascii_case("aur");
+            let version = crate::package_managers::parse_version(&up.new_version)
+                .context("Invalid update version")?;
+            let grade = self
+                .policy
+                .assign_grade(
+                    self.vulnerability_source.as_ref(),
+                    &up.name,
+                    &version,
+                    !community,
+                )
+                .await?;
+            // UpdateInfo has no licenses. Enforce those using the actual
+            // prepared packages in the privileged backend, including dependencies.
+            let mut candidate_policy = self.policy.clone();
+            candidate_policy.allowed_licenses.clear();
+            candidate_policy.check_package(&up.name, community, None, grade)?;
+
             changes.push(PackageChange {
                 name: up.name.clone(),
                 old_version: Some(up.old_version.clone()),
@@ -263,6 +314,13 @@ impl PackageService {
             });
         }
 
+        self.require_persisted_policy()?;
+        if let Some(operation) =
+            self.backend
+                .transact_with_history(TransactionType::Update, &[], self.history.as_ref())
+        {
+            return operation.await;
+        }
         let result = async {
             self.backend.update().await?;
 
@@ -288,7 +346,21 @@ impl PackageService {
     ) -> Result<()> {
         match &self.history {
             Some(history) => history.finish_operation(transaction_type, changes, operation_result),
-            None => operation_result,
+            None => {
+                crate::core::security::audit::record_operation(
+                    &transaction_type.to_string(),
+                    &changes
+                        .iter()
+                        .map(|change| change.name.clone())
+                        .collect::<Vec<_>>(),
+                    if operation_result.is_ok() {
+                        "succeeded"
+                    } else {
+                        "failed"
+                    },
+                )?;
+                operation_result
+            }
         }
     }
 

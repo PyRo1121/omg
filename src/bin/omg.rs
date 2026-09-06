@@ -8,7 +8,7 @@
 #[global_allocator]
 static GLOBAL: mimalloc::MiMalloc = mimalloc::MiMalloc;
 
-use anyhow::Result;
+use anyhow::{Context, Result};
 use clap::Parser;
 
 #[cfg(feature = "license")]
@@ -597,6 +597,15 @@ fn main() {
     #[cfg_attr(not(feature = "arch"), allow(unused_variables))]
     let (reexec_elevated, parent_records) =
         strip_internal_invocation_markers(&mut args, omg_lib::core::privilege::is_root());
+    if reexec_elevated
+        && args
+            .get(1)
+            .is_some_and(|arg| arg.starts_with(omg_lib::core::security::policy::POLICY_MARKER))
+    {
+        if let Err(error) = omg_lib::core::security::policy::inherit_policy(&args.remove(1)) {
+            finish(Err(error));
+        }
+    }
     // The marker has already been authenticated by root re-exec parsing.
     // Preserve its history-ownership contract if flags route the child through
     // the full clap path instead of the minimal transaction path.
@@ -728,7 +737,14 @@ fn command_requires_root(command: &Commands) -> bool {
             all,
             dry_run,
             ..
-        } => !dry_run && (*orphans || *cache || *all),
+        } => {
+            let native_fedora = cfg!(feature = "fedora")
+                && matches!(
+                    omg_lib::core::env::distro::detect_distro(),
+                    omg_lib::core::env::distro::Distro::Fedora,
+                );
+            !dry_run && (*orphans || *cache || *all) && !native_fedora
+        }
         _ => false,
     }
 }
@@ -977,13 +993,21 @@ fn handle_container_command(command: &ContainerCommands) -> Result<()> {
 async fn handle_license_command(command: &AccountCommands) -> Result<()> {
     use omg_lib::cli::license;
     match command {
-        AccountCommands::Link { token } => {
-            let token = token
-                .clone()
-                .or_else(|| std::env::var("OMG_DASHBOARD_TOKEN").ok())
-                .ok_or_else(|| {
-                    anyhow::anyhow!("No dashboard token: pass <token> or set OMG_DASHBOARD_TOKEN")
-                })?;
+        AccountCommands::Link { token_stdin } => {
+            let token = if *token_stdin {
+                use std::io::Read;
+                let mut token = String::new();
+                std::io::stdin().take(16385).read_to_string(&mut token)?;
+                anyhow::ensure!(
+                    token.len() <= 16384,
+                    "Dashboard token exceeds the input limit"
+                );
+                token.trim_end().to_owned()
+            } else {
+                std::env::var("OMG_DASHBOARD_TOKEN")
+                    .context("Set OMG_DASHBOARD_TOKEN or use --token-stdin")?
+            };
+            anyhow::ensure!(!token.is_empty(), "Dashboard token is empty");
             license::activate(&token).await
         }
         AccountCommands::Status => license::status(),
@@ -1314,16 +1338,16 @@ async fn dispatch_command(command: &Commands, ctx: &omg_lib::cli::CliContext) ->
             handle_init_command(*defaults, *skip_shell, *skip_daemon).await?;
         }
         Commands::Why { package, reverse } => {
-            why::run(package, *reverse)?;
+            why::run(package, *reverse).await?;
         }
         Commands::Outdated => {
             outdated::run(ctx.json).await?;
         }
         Commands::Size { tree, limit } => {
-            size::run(tree.as_deref(), *limit)?;
+            size::run(tree.as_deref(), *limit).await?;
         }
         Commands::Blame { package } => {
-            blame::run(package)?;
+            blame::run(package).await?;
         }
         Commands::Diff { from, to } => {
             diff::run(from.as_deref(), to).await?;
@@ -1661,7 +1685,7 @@ mod tests {
     }
 
     #[test]
-    fn only_privileged_clean_actions_require_root() {
+    fn clean_elevation_uses_native_fedora_or_root_dispatch() {
         let aur_only = Commands::Clean {
             orphans: false,
             cache: false,
@@ -1677,7 +1701,12 @@ mod tests {
             dry_run: false,
         };
         assert!(!command_requires_root(&aur_only));
-        assert!(command_requires_root(&cache));
+        let native_fedora = cfg!(feature = "fedora")
+            && matches!(
+                omg_lib::core::env::distro::detect_distro(),
+                omg_lib::core::env::distro::Distro::Fedora,
+            );
+        assert_eq!(command_requires_root(&cache), !native_fedora);
         assert!(command_requires_root(&Commands::Sync));
     }
 }

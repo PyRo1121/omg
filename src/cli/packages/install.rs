@@ -31,11 +31,7 @@ pub(crate) async fn enforce_install_policy(
         .await
     {
         Ok(grade) => grade,
-        Err(error)
-            if !crate::core::paths::config_dir()
-                .join("policy.toml")
-                .is_file() =>
-        {
+        Err(error) if !crate::core::security::policy::explicit_policy_exists() => {
             // The built-in defaults remain usable when a platform has no OSV
             // ecosystem or the evidence service is temporarily unavailable.
             // An explicit policy file is different: its control must fail
@@ -142,6 +138,11 @@ async fn install_with_replacement_budget(
     if dry_run {
         return install_dry_run(packages).await;
     }
+
+    #[cfg(unix)]
+    let pinned = crate::core::security::artifact::SnapshotInputs::capture(packages)?;
+    #[cfg(unix)]
+    let packages = pinned.targets.as_slice();
 
     if confirmation == MutationConfirmation::Required
         && !super::common::confirm_package_mutation("installation", packages.len(), yes).await?
