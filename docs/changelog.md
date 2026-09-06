@@ -37,12 +37,12 @@ rows with an explicit omitted count so oversized reports stay readable
 
 Verify a pinned upstream Moby seccomp profile and add pivot_root only to its CAP_SYS_ADMIN allow rule. Keep other restrictions and the descendant cleanup assertion intact.
 
-- **Aur**: Isolate sandbox PIDs for descendant cleanup
-- **Aur**: Separate build review and simplify verified execution
 - **Core**: Harden history and package mutation recovery
 
 Preserve archive data and report persistence failures explicitly. Coordinate database publication and runtime mutations, tighten installer provenance checks, and include the approved tracked documentation and security changes.
 
+- **Aur**: Isolate sandbox PIDs for descendant cleanup
+- **Aur**: Separate build review and simplify verified execution
 - **Fedora**: Decode native RPM database headers
 - **Ci**: Preserve prepared changelog sections
 ### 👷 CI/CD
@@ -73,6 +73,7 @@ Preserve archive data and report persistence failures explicitly. Coordinate dat
 - **Installer**: Cover failed bounded transfers
 - **Installer**: Cover legacy curl streaming bounds
 - **Privacy**: Cover archived history in local exports
+- **Install**: Preserve inventory across policy failure and recovery
 - **Aur**: Make sandbox cancellation fixture Docker-safe
 
 The required CI gate failed because the ignored regression bound the
