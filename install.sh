@@ -137,7 +137,7 @@ install_binary() {
 
 check_runtime_dependencies() {
   local missing=()
-  local deps=("curl" "tar")
+  local deps=("curl" "tar" "head" "tr")
 
   for dep in "${deps[@]}"; do
     if ! command -v "$dep" >/dev/null 2>&1; then
@@ -301,17 +301,20 @@ resolve_version() {
     return 0
   fi
 
-  local marker=""
-  if ! marker=$(curl -fsSL --max-filesize "$MAX_LATEST_VERSION_BYTES" "$LATEST_VERSION_URL"); then
+  local marker="" LC_ALL=C
+  # Preserve trailing newlines and reject NULs that command substitution would discard.
+  if ! marker=$(curl -fsSL --max-filesize "$MAX_LATEST_VERSION_BYTES" "$LATEST_VERSION_URL" |
+    head -c "$((MAX_LATEST_VERSION_BYTES + 1))" | tr '\000' '\001' && printf .); then
     warn "Unable to read the latest-version marker from ${LATEST_VERSION_URL}"
     return 1
   fi
-  marker="${marker#"${marker%%[![:space:]]*}"}"
-  marker="${marker%"${marker##*[![:space:]]}"}"
+  marker="${marker%.}"
   if (( ${#marker} > MAX_LATEST_VERSION_BYTES )); then
     warn "latest-version marker exceeded the ${MAX_LATEST_VERSION_BYTES} byte bound"
     return 1
   fi
+  marker="${marker#"${marker%%[![:space:]]*}"}"
+  marker="${marker%"${marker##*[![:space:]]}"}"
   if ! validate_bare_version "$marker"; then
     warn "latest-version marker is not a valid bare semantic version"
     return 1
@@ -359,7 +362,8 @@ install_from_release() {
   start_spinner "Downloading prebuilt binary"
   local download_file="$tmp_dir/$artifact_name"
 
-  if curl -fsSL --max-filesize "$MAX_ARCHIVE_BYTES" "$asset_url" -o "$download_file" >/dev/null 2>&1; then
+  if curl -fsSL --max-filesize "$MAX_ARCHIVE_BYTES" "$asset_url" 2>/dev/null |
+    head -c "$((MAX_ARCHIVE_BYTES + 1))" > "$download_file"; then
     stop_spinner "Download complete"
   else
     fail_spinner "Download failed"
@@ -376,7 +380,8 @@ install_from_release() {
   # artifact share one origin, so this proves integrity against a corrupted
   # download, not against a compromised release.
   start_spinner "Verifying checksum"
-  if curl -fsSL --max-filesize "$MAX_CHECKSUM_BYTES" "${asset_url}.sha256" -o "${download_file}.sha256" >/dev/null 2>&1; then
+  if curl -fsSL --max-filesize "$MAX_CHECKSUM_BYTES" "${asset_url}.sha256" 2>/dev/null |
+    head -c "$((MAX_CHECKSUM_BYTES + 1))" > "${download_file}.sha256"; then
     if ! check_file_size_bound "${download_file}.sha256" "$MAX_CHECKSUM_BYTES" "Checksum sidecar for ${artifact_name}"; then
       fail_spinner "Checksum verification failed"
       return 2
