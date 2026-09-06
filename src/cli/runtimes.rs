@@ -15,6 +15,9 @@ pub fn resolve_active_version(runtime: &str) -> Result<Option<String>> {
     if let Some(version) = versions.get(&runtime) {
         return Ok(Some(version.clone()));
     }
+    if SUPPORTED_RUNTIMES.contains(&runtime.as_str()) {
+        return Ok(crate::runtimes::probe_version(&runtime));
+    }
     Ok(None)
 }
 
@@ -92,6 +95,7 @@ fn canonical_runtime_name(runtime: &str) -> String {
         "nodejs" => "node".to_string(),
         "python3" => "python".to_string(),
         "golang" => "go".to_string(),
+        "rustlang" => "rust".to_string(),
         "jdk" | "openjdk" => "java".to_string(),
         "bunjs" => "bun".to_string(),
         normalized => normalized.to_string(),
@@ -499,6 +503,7 @@ mod tests {
             ("NodeJS", "node"),
             ("python3", "python"),
             ("GOLANG", "go"),
+            ("rustlang", "rust"),
             ("jdk", "java"),
             ("openjdk", "java"),
             ("bunjs", "bun"),
