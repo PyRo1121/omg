@@ -40,7 +40,7 @@ load_case() {
     arch)
       case_suffix="-x86_64-linux-arch"
       case_image="archlinux:latest@sha256:b0deabeb3d283da2c7f7dbf0eea051b7b2cd0554e0b737cc457fd21683bdcdd1"
-      case_index_cmd="pacman -Sy --noconfirm"
+      case_index_cmd="pacman-key --init && pacman-key --populate archlinux && pacman -Syu --noconfirm"
       case_probe_pkg="tree"
       case_installed_assert="pacman -Qi tree"
       case_removed_assert="! pacman -Q tree"
