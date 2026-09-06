@@ -5,9 +5,9 @@
 #   ./scripts/r2-rollback.sh <version> [--dry-run]
 #
 # Re-points the single mutable `latest-version` marker at an already-published
-# release version WITHOUT touching any archives or checksums. Clients running
-# `omg self-update` resolve this marker, so a rollback takes effect on their
-# next update check - installed binaries are not modified.
+# release version WITHOUT touching any archives or checksums. Existing clients
+# require `omg self-update --force` to accept an older version. The marker does
+# not bypass downgrade protection or modify installed binaries.
 #
 # Requirements:
 #   - env CLOUDFLARE_API_TOKEN + CLOUDFLARE_ACCOUNT_ID with object write

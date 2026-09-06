@@ -36,7 +36,7 @@ Hard guarantees enforced in `.github/workflows/release.yml`:
   sidecars are uploaded with `Cache-Control: public, max-age=31536000,
   immutable`; the only mutable pointer, the `latest-version` marker, is
   published with `Cache-Control: no-store` by both `release.yml` and
-  `scripts/r2-rollback.sh`, so rollbacks reach clients immediately.
+  `scripts/r2-rollback.sh`, so subsequent version checks fetch the current marker.
 - **Remote R2 only.** Wrangler 4's `r2 object` commands default to local
   Miniflare storage. `release.yml` and `scripts/r2-rollback.sh` pass `--remote`
   so publishes hit the production `omg-releases` bucket.
@@ -76,14 +76,15 @@ without the CI runner itself.
 Both clients download archives and sidecars from the R2 release domain
 (`https://releases.omg.latham.cloud`). GitHub Releases remains the documented
 mirror of the same immutable objects, and the installer pins each archive to
-the version it already resolved — the installer resolves "latest" from the R2
-marker only, so a rollback re-pointing that marker is immediately authoritative.
+the version it already resolved. The installer resolves "latest" from the R2
+marker only. Repointing the marker changes version selection, not the client's
+downgrade policy.
 
 ## Rollback
 
 `latest-version` is the only intentionally mutable pointer; release operations
-must treat version-addressed archives as immutable. To roll clients back to a
-previously published version:
+must treat version-addressed archives as immutable. To select a previously
+published version for new downloads:
 
 ```bash
 export CLOUDFLARE_API_TOKEN=... CLOUDFLARE_ACCOUNT_ID=...
@@ -92,8 +93,11 @@ export CLOUDFLARE_API_TOKEN=... CLOUDFLARE_ACCOUNT_ID=...
 ```
 
 The script refuses to move the marker to a version whose archives are not
-fully present in R2 (all five platforms). Installed clients update on their
-next `omg self-update` check; nothing is uninstalled or downgraded server-side.
+fully present in R2 (all five platforms). Fresh installations use the selected
+version. Installed clients resolve the same marker, but a normal `omg self-update`
+refuses a version older than the installed binary. Users must run
+`omg self-update --force` to accept that downgrade. Checksum and provenance
+verification still apply. The script does not modify installed binaries.
 
 **To withdraw (rather than roll back) a version with a bad or malicious
 binary:** delete its objects from the R2 `omg-releases/` prefix and from
