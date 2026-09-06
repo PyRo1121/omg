@@ -19,6 +19,23 @@ OMG is the fastest unified package manager for Linux, replacing pacman, yay, nvm
 - **Install**: Add interactive fuzzy package discovery
 ### 🐛 Bug Fixes
 
+- **Ci**: Install sudo in debian jobs for the privilege lookup tests
+- **Tests**: Align coverage contracts with shipped behavior
+
+The coverage matrix under arch+pgp+license was the only place these
+
+contracts ran, and main let them drift behind shipped changes. Bare
+
+install now guides instead of citing clap, the https guard splits at
+
+the first test module, installer fixtures carry the variables the
+
+provenance gate reads, updates only query OSV when an explicit policy
+
+can act on the grade, and the package handoff transports the requested
+
+path so history records it when archive metadata is unreadable.
+
 - **Ci**: Keep the zpty completion check from hanging Quick Gate
 
 A zsh blocked in zpty -r ignored the plain SIGTERM from timeout, so the
