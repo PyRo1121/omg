@@ -78,16 +78,37 @@ build. Failed records are displayed as failed actions.
 
 The diagnostic uses a locked, read-only history snapshot. Missing history is
 reported as missing. Malformed history fails without quarantine or rewriting.
-Existing package-operation recovery remains separate. Native DNF history is not
-imported, and absent OMG records do not establish an installation date or actor.
+Existing package-operation recovery remains separate. Earlier native DNF history
+is not backfilled, and absent OMG records do not establish an installation date
+or actor.
 
-A real unprivileged Fedora tree install/remove cycle restored the RPM inventory,
-but the generic transaction path wrote no OMG history. Producer-side recording
-remains a confirmed follow-up. The SQLite warning from that cycle was isolated
-to the translated `gnat-srpm-macros` header. The reader now accepts I18NSTRING
+An earlier lifecycle exposed missing installation records and a SQLite warning.
+The SQLite warning was isolated to the translated `gnat-srpm-macros` header. The reader now accepts I18NSTRING
 arrays and validates every declared string terminator within the payload.
 The captured native header passes through the SQLite reader without fallback;
 installed summaries retain the default-locale string.
+
+## Native transaction recording
+
+CLI install and remove operations attach a unique DNF5 transaction comment.
+Bounded journal reads select that comment rather than assuming the last native
+transaction belongs to OMG. Successful records retain canonical names and exact
+RPM EVRs. Replacement versions pair only within the same name and architecture.
+Failed native transactions do not turn planned versions into committed changes.
+
+The caller supplies the history destination. PackageService uses its configured
+manager, honors disabled history, and does not add a second predicted record.
+The validated privileged-parent ownership flag also suppresses child recording.
+Unrecorded backend methods remain available to callers that own their history.
+A successful no-op adds no transaction. A completed operation with a persistence
+failure returns an error that says the package operation succeeded.
+
+Fedora 44 checks cover unprivileged install, no-op, remove, real blame history,
+custom and disabled destinations, parent ownership, an unrelated later native
+transaction, a native command failure, and a persistence failure. The lifecycle
+restores the RPM inventory. Update, cleanup, and sync do not use this recording
+path yet. Partial RPM failure recovery and exhaustive command coverage remain
+unverified.
 
 ## Future index build order
 
