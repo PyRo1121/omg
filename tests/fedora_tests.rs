@@ -539,10 +539,7 @@ mod dnf_integration {
             );
             let noop = run(&["install", "tree", "--yes"])?;
             anyhow::ensure!(noop.status.success(), "No-op install failed");
-            anyhow::ensure!(
-                history.load()?.len() == 1,
-                "No-op invented a transaction"
-            );
+            anyhow::ensure!(history.load()?.len() == 1, "No-op invented a transaction");
             let blame = run(&["blame", "tree"])?;
             anyhow::ensure!(
                 blame.status.success()
