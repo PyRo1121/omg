@@ -66,8 +66,7 @@ fn forged_self_asserted_account_does_not_paywall_slsa() {
     let result = project.run(&["audit", "slsa", "artifact.bin"]);
     let out = result.combined_output();
     assert!(
-        out.contains("SLSA verification failed")
-            || out.contains("certificate-identity"),
+        out.contains("SLSA verification failed") || out.contains("certificate-identity"),
         "a forged token must fail before any upgrade offer, got:\n{out}"
     );
     assert!(
