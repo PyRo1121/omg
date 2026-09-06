@@ -61,6 +61,16 @@ Preserve archive data and report persistence failures explicitly. Coordinate dat
 - Record v0.1.218 verification [skip ci]
 ### 🧪 Testing
 
+- **Install**: Restore inventory checks dropped in [#247](https://github.com/PyRo1121/omg/issues/247) merge
+
+The [#247](https://github.com/PyRo1121/omg/issues/247)/[#234](https://github.com/PyRo1121/omg/issues/234) merge kept a substring status check that does not exist
+
+on CommandResult and discarded the persisted-state and recovery
+
+assertions. Restore the original stronger body without changing
+
+production code.
+
 - **Daemon**: Fail fixture setup instead of reporting skipped security checks
 - **Install**: Distinguish archive metadata from filename identity
 - **Why**: Associate dependency status with its package row
