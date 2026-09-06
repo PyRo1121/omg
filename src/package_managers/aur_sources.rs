@@ -15,7 +15,6 @@ use tokio::io::AsyncWriteExt;
 use tracing::{debug, warn};
 
 use crate::cli::progress::{Accent, Outcome, ProgressTask, TaskKind, TaskSpec};
-use crate::core::http::shared_client;
 
 /// Represents a source file that can be downloaded
 #[derive(Debug, Clone)]
@@ -220,15 +219,82 @@ pub async fn download_sources(sources: Vec<SourceFile>, srcdest: &Path) -> Sourc
     SourceDownloadSummary { succeeded, failed }
 }
 
+/// Resolve and pin public addresses on every hop. Disable ambient proxies and
+/// automatic redirects so neither DNS rebinding nor a redirect reaches the LAN.
+fn public_source_address(address: std::net::IpAddr) -> bool {
+    match address {
+        std::net::IpAddr::V4(ip) => {
+            let [a, b, _, _] = ip.octets();
+            !ip.is_private()
+                && !ip.is_loopback()
+                && !ip.is_link_local()
+                && !ip.is_unspecified()
+                && !ip.is_documentation()
+                && !ip.is_broadcast()
+                && a != 0
+                && a < 224
+                && !(a == 100 && (64..=127).contains(&b))
+                && !(a == 192 && b == 0)
+                && !(a == 198 && (18..=19).contains(&b))
+        }
+        std::net::IpAddr::V6(ip) => {
+            let segments = ip.segments();
+            segments[0] & 0xe000 == 0x2000
+                && !(segments[0] == 0x2001 && segments[1] == 0x0db8)
+                && !(segments[0] == 0x2001 && segments[1] == 0)
+                && segments[0] != 0x2002
+        }
+    }
+}
+
+async fn fetch_public_source(value: &str) -> Result<reqwest::Response> {
+    let mut url = reqwest::Url::parse(value)?;
+    for _ in 0..=10 {
+        anyhow::ensure!(
+            url.scheme() == "https" && url.username().is_empty() && url.password().is_none(),
+            "AUR sources require HTTPS without URL credentials"
+        );
+        let host = url.host_str().context("Source URL has no host")?.to_owned();
+        let port = url
+            .port_or_known_default()
+            .context("Source URL has no port")?;
+        let addresses: Vec<_> = tokio::time::timeout(
+            std::time::Duration::from_secs(10),
+            tokio::net::lookup_host((host.as_str(), port)),
+        )
+        .await??
+        .collect();
+        anyhow::ensure!(
+            !addresses.is_empty()
+                && addresses
+                    .iter()
+                    .all(|address| public_source_address(address.ip())),
+            "AUR source resolves to a non-public address"
+        );
+        let client = reqwest::Client::builder()
+            .no_proxy()
+            .redirect(reqwest::redirect::Policy::none())
+            .connect_timeout(std::time::Duration::from_secs(10))
+            .timeout(std::time::Duration::from_secs(300))
+            .resolve_to_addrs(&host, &addresses)
+            .build()?;
+        let response = client.get(url.clone()).send().await?;
+        if !response.status().is_redirection() {
+            return Ok(response);
+        }
+        let location = response
+            .headers()
+            .get(reqwest::header::LOCATION)
+            .context("Source redirect has no location")?
+            .to_str()?;
+        url = url.join(location)?;
+    }
+    anyhow::bail!("Too many AUR source redirects")
+}
+
 /// Download a single file with progress tracking
 async fn download_file(url: &str, dest_path: &Path, task: ProgressTask) -> Result<()> {
-    let client = shared_client();
-    let safe_url = crate::core::http::redact_url(url);
-    let response = client
-        .get(url)
-        .send()
-        .await
-        .with_context(|| format!("Failed to fetch {safe_url}"))?;
+    let response = fetch_public_source(url).await?;
 
     if !response.status().is_success() {
         task.set_message(&format!("HTTP {}", response.status()));
@@ -393,5 +459,49 @@ mod tests {
     fn test_extract_http_source_local_ignored() {
         let result = extract_http_source("local-file.patch");
         assert!(result.is_none());
+    }
+}
+
+#[cfg(test)]
+mod public_source_tests {
+    use super::*;
+    #[test]
+    fn private_and_transition_destinations_are_rejected() {
+        for value in [
+            "127.0.0.1",
+            "10.0.0.1",
+            "172.16.0.1",
+            "192.168.1.1",
+            "169.254.169.254",
+            "100.64.0.1",
+            "0.0.0.0",
+            "224.0.0.1",
+            "::1",
+            "fd00::1",
+            "fe80::1",
+            "::ffff:127.0.0.1",
+            "2002:7f00:1::",
+            "2001:db8::1",
+        ] {
+            assert!(!public_source_address(value.parse().unwrap()), "{value}");
+        }
+        for value in ["1.1.1.1", "2606:4700:4700::1111"] {
+            assert!(public_source_address(value.parse().unwrap()), "{value}");
+        }
+    }
+    #[tokio::test]
+    async fn prefetch_refuses_loopback_before_connecting() {
+        assert!(
+            fetch_public_source("https://127.0.0.1/source")
+                .await
+                .unwrap_err()
+                .to_string()
+                .contains("non-public")
+        );
+        assert!(
+            fetch_public_source("http://example.org/source")
+                .await
+                .is_err()
+        );
     }
 }

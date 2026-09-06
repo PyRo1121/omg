@@ -163,9 +163,9 @@ mod install_cli_tests {
     fn test_install_no_packages_shows_error() {
         let result = run_omg(&["install"]);
         result.assert_failure();
-        // Pinned clap contract: PACKAGES is `required = true`
-        // (src/cli/args.rs Install).
-        result.assert_contains("required arguments");
+        // Bare install prompts in a terminal; a noninteractive run fails with
+        // guidance instead of a clap contract error (src/cli/packages/install.rs).
+        result.assert_contains("No packages specified");
     }
 
     #[test]
@@ -186,8 +186,12 @@ mod install_cli_tests {
         let result = run_omg(&["install", "-y", "firefox"]);
         result.assert_no_password_prompt();
         result.assert_success();
-        result.assert_contains("Installed 1 package");
-        result.assert_contains("firefox");
+        result.assert_contains("Install");
+        assert!(
+            !result.stdout.contains("Installed 1 package"),
+            "{}",
+            result.combined()
+        );
     }
 
     #[test]
@@ -1017,14 +1021,67 @@ mod command_integration_tests {
 
     #[test]
     fn test_status_after_failed_install() {
-        let bad_install = run_omg(&["install", "-y", "nonexistent-pkg"]);
-        bad_install.assert_failure();
-        bad_install.assert_contains("not found");
+        let project = common::TestProject::new();
+        project.run(&["install", "-y", "git"]).assert_success();
 
-        // Status must still work after the failure.
-        let status = run_omg(&["status"]);
+        let before = project.run(&["explicit", "--json"]);
+        before.assert_success();
+        assert_eq!(
+            serde_json::from_str::<serde_json::Value>(&before.stdout).unwrap(),
+            serde_json::json!({ "packages": ["git"], "count": 1 }),
+            "The initial CLI install must persist a nonempty inventory"
+        );
+        let state_path = project.data_dir.path().join("mock_state_pacman.json");
+        let before_state = std::fs::read(&state_path).unwrap();
+
+        // A real policy rejection is deterministic offline, unlike a missing
+        // package lookup that falls through to the live AUR service.
+        let policy_path = project.config_dir.path().join("policy.toml");
+        std::fs::write(&policy_path, "banned_packages = [\"firefox\"]\n").unwrap();
+        let bad_install = project.run(&["install", "-y", "firefox"]);
+        bad_install.assert_failure();
+        let error = bad_install.combined_output();
+        assert!(
+            error.contains("firefox") && error.contains("banned"),
+            "Expected the injected policy rejection, got: {error}"
+        );
+
+        assert_eq!(
+            std::fs::read(&state_path).unwrap(),
+            before_state,
+            "Policy rejection must preserve the persisted inventory"
+        );
+
+        let status = project.run(&["status"]);
         status.assert_success();
-        status.assert_contains("packages installed");
+        status.assert_stdout_contains("1 packages installed · 1 explicit");
+        assert_eq!(
+            std::fs::read(&state_path).unwrap(),
+            before_state,
+            "The failed install and subsequent status must preserve persisted state"
+        );
+        let after_failure = project.run(&["explicit", "--json"]);
+        after_failure.assert_success();
+        assert_eq!(
+            serde_json::from_str::<serde_json::Value>(&after_failure.stdout).unwrap(),
+            serde_json::json!({ "packages": ["git"], "count": 1 }),
+            "The same project must retain git and must not install banned firefox"
+        );
+
+        assert_eq!(
+            std::fs::read(&state_path).unwrap(),
+            before_state,
+            "Recovery reads must not rewrite the persisted inventory"
+        );
+        std::fs::remove_file(policy_path).unwrap();
+        project.run(&["install", "-y", "firefox"]).assert_success();
+        let recovered = project.run(&["explicit", "--json"]);
+        recovered.assert_success();
+        assert_eq!(
+            serde_json::from_str::<serde_json::Value>(&recovered.stdout).unwrap(),
+            serde_json::json!({ "packages": ["firefox", "git"], "count": 2 }),
+            "Lifting the ban must permit a new install without losing the old one"
+        );
     }
 
     #[test]

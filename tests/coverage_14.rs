@@ -759,3 +759,70 @@ mod snapshot_contracts {
         assert_eq!(stray, 0, "rejected create must not leave snapshot files");
     }
 }
+
+#[cfg(feature = "arch")]
+mod install_discovery {
+    use super::*;
+
+    #[test]
+    fn completion_keeps_package_context_after_options_and_targets() {
+        let project = TestProject::for_distro("arch");
+        install_fake_local_db(&project, &[("firefox", "1.0-1", 0, &[])]);
+        let cache = serde_json::json!({
+            "format_version": 1,
+            "entries": {
+                "aur_last_refresh": jiff::Timestamp::now().to_string(),
+                "aur_packages": "firefox-nightly"
+            }
+        });
+        let cache_path = project.data_dir.path().join("completion-cache.json");
+        let original = serde_json::to_vec(&cache).unwrap();
+        fs::write(&cache_path, &original).unwrap();
+
+        for (last, full) in [
+            ("install", "omg install frfx"),
+            ("-y", "omg install -y frfx"),
+            ("git", "omg install git frfx"),
+            ("tool", "omg install tool frfx"),
+            ("i", "omg -q i frfx"),
+        ] {
+            let result = project.run(&[
+                "complete",
+                "--shell",
+                "zsh",
+                "--current",
+                "frfx",
+                "--last",
+                last,
+                "--full",
+                full,
+            ]);
+            result.assert_success();
+            assert_eq!(
+                result.stdout.lines().collect::<Vec<_>>(),
+                vec!["firefox", "firefox-nightly"],
+                "completion context: {full}"
+            );
+        }
+        assert_eq!(fs::read(cache_path).unwrap(), original);
+    }
+
+    #[test]
+    fn install_without_targets_needs_a_terminal_and_preserves_inventory() {
+        let project = TestProject::for_distro("arch");
+        project.mock_install("git", "1.0-1").unwrap();
+        let state_path = project.data_dir.path().join("mock_state_pacman.json");
+        let original = fs::read(&state_path).unwrap();
+        for args in [
+            vec!["install"],
+            vec!["i"],
+            vec!["install", "-y"],
+            vec!["install", "--dry-run"],
+        ] {
+            let result = project.run(&args);
+            result.assert_failure();
+            result.assert_stderr_contains("No packages specified; run `omg install` in a terminal");
+            assert_eq!(fs::read(&state_path).unwrap(), original);
+        }
+    }
+}

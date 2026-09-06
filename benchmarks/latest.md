@@ -1,8 +1,8 @@
 # OMG benchmark — latest recorded run
 
-- **Record:** [`20260903_234941-4b3920e`](records/20260903_234941-4b3920e/)
-- **When:** 2026-09-03T23:49:41Z
-- **Commit:** `4b3920e577daa9de9d15b13e493d38bb33bd4cdd` (`4b3920e`)
+- **Record:** [`20260906_044101-7e05fca`](records/20260906_044101-7e05fca/)
+- **When:** 2026-09-06T04:41:01Z
+- **Commit:** `7e05fca621f989e76843421d35a94a281bc8a06d` (`7e05fca`)
 - **Dirty tree:** yes
 - **Host:** AMD EPYC 7763 64-Core Processor, Linux 6.17.0-1022-azure, 15.6 GiB RAM
 - **Hyperfine:** unknown
@@ -21,13 +21,13 @@ succeed. Runs with a non-zero exit are rejected.
 |---|---|
 | `explicit_count` | 10 |
 | `explicit` | 3 bytes, 1 lines |
-| `info-fast` | 83 bytes, 3 lines |
-| `info` | 583 bytes, 12 lines |
-| `pacman-info` | 1270 bytes, 25 lines |
-| `pacman-search` | 20950 bytes, 458 lines |
-| `search-fast` | 1277 bytes, 21 lines |
-| `search` | 162 bytes, 6 lines |
-| `status` | 301 bytes, 12 lines |
+| `info-fast` | 85 bytes, 3 lines |
+| `info` | 585 bytes, 12 lines |
+| `pacman-info` | 1272 bytes, 25 lines |
+| `pacman-search` | 21158 bytes, 458 lines |
+| `search-fast` | 1309 bytes, 21 lines |
+| `search` | 166 bytes, 6 lines |
+| `status` | 160 bytes, 11 lines |
 
 ## Results
 
@@ -35,38 +35,38 @@ succeed. Runs with a non-zero exit are rejected.
 
 | Command | Mean [ms] | Min [ms] | Max [ms] | Relative |
 |:---|---:|---:|---:|---:|
-| `OMG (Daemon)` | 10.5 ± 2.5 | 9.3 | 19.3 | 1.19 ± 0.29 |
-| `OMG (omg-fast)` | 8.9 ± 0.5 | 8.0 | 10.0 | 1.00 |
-| `pacman` | 230.5 ± 1.1 | 229.3 | 232.5 | 26.01 ± 1.61 |
+| `OMG (Daemon)` | 9.9 ± 0.8 | 8.8 | 11.7 | 1.06 ± 0.15 |
+| `OMG (omg-fast)` | 9.4 ± 1.0 | 8.1 | 12.0 | 1.00 |
+| `pacman` | 229.9 ± 1.2 | 228.4 | 232.7 | 24.56 ± 2.75 |
 
-Daemon mean **10.5 ms** vs pacman **230.5 ms** (21.9×). Median 9.8 ms (15 runs).
+Daemon mean **9.9 ms** vs pacman **229.9 ms** (23.2×). Median 9.7 ms (15 runs).
 
 ### info
 
 | Command | Mean [ms] | Min [ms] | Max [ms] | Relative |
 |:---|---:|---:|---:|---:|
-| `OMG (Daemon)` | 11.6 ± 0.6 | 10.2 | 12.7 | 1.25 ± 0.10 |
-| `OMG (omg-fast)` | 9.2 ± 0.6 | 8.5 | 11.0 | 1.00 |
-| `pacman` | 213.9 ± 2.5 | 211.3 | 221.8 | 23.20 ± 1.44 |
+| `OMG (Daemon)` | 11.9 ± 0.6 | 11.1 | 13.7 | 1.34 ± 0.10 |
+| `OMG (omg-fast)` | 8.9 ± 0.4 | 8.1 | 9.7 | 1.00 |
+| `pacman` | 212.5 ± 1.0 | 211.4 | 215.3 | 23.91 ± 1.13 |
 
-Daemon mean **11.6 ms** vs pacman **213.9 ms** (18.5×). Median 11.5 ms (15 runs).
+Daemon mean **11.9 ms** vs pacman **212.5 ms** (17.8×). Median 11.8 ms (15 runs).
 
 ### status
 
 | Command | Mean [ms] | Min [ms] | Max [ms] | Relative |
 |:---|---:|---:|---:|---:|
-| `OMG (Daemon)` | 9.8 ± 0.7 | 8.9 | 10.8 | 1.25 ± 0.09 |
-| `OMG (omg-fast)` | 7.8 ± 0.2 | 7.6 | 8.2 | 1.00 |
+| `OMG (Daemon)` | 10.0 ± 0.6 | 8.9 | 10.9 | 1.28 ± 0.11 |
+| `OMG (omg-fast)` | 7.9 ± 0.5 | 7.6 | 9.5 | 1.00 |
 
 ### explicit
 
 | Command | Mean [ms] | Min [ms] | Max [ms] | Relative |
 |:---|---:|---:|---:|---:|
-| `OMG (Daemon)` | 8.3 ± 0.2 | 8.1 | 8.8 | 1.04 ± 0.04 |
-| `OMG (omg-fast)` | 8.0 ± 0.2 | 7.7 | 8.6 | 1.00 |
-| `pacman` | 15.4 ± 0.2 | 15.1 | 15.7 | 1.93 ± 0.06 |
+| `OMG (Daemon)` | 8.3 ± 0.1 | 8.1 | 8.6 | 1.05 ± 0.03 |
+| `OMG (omg-fast)` | 7.8 ± 0.2 | 7.6 | 8.4 | 1.00 |
+| `pacman` | 15.3 ± 0.2 | 14.9 | 15.7 | 1.95 ± 0.06 |
 
-Daemon mean **8.3 ms** vs pacman **15.4 ms** (1.9×). Median 8.2 ms (15 runs).
+Daemon mean **8.3 ms** vs pacman **15.3 ms** (1.9×). Median 8.2 ms (15 runs).
 
 ## Reproduce
 

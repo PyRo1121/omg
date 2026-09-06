@@ -350,7 +350,16 @@ impl ParallelBuilder {
             let job = in_flight_jobs
                 .remove(&task_id)
                 .with_context(|| format!("Missing build job for completed task {task_id}"))?;
+            let failed = build_result.is_err();
             summary.record_job_result(job, build_result);
+            if failed {
+                let remaining = tasks.len() + package_iter.len();
+                if remaining > 0 {
+                    crate::cli::modern_ui::print_warning(&format!(
+                        "A build in this wave failed; still waiting on {remaining} remaining build(s) before reporting"
+                    ));
+                }
+            }
         }
 
         Ok(summary)

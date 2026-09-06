@@ -788,7 +788,7 @@ pub async fn validate_license_with_user(
 fn require_license() -> Result<StoredLicense> {
     load_license().ok_or_else(|| {
         anyhow::anyhow!(
-            "No dashboard account linked. Run `omg account link <token>` to sync usage to the dashboard."
+            "No dashboard account linked. Run `omg account link --token-stdin` to sync usage to the dashboard."
         )
     })
 }
@@ -827,7 +827,7 @@ async fn licensed_get<T: serde::de::DeserializeOwned>(
 pub async fn fetch_team_members() -> Result<Vec<TeamMember>> {
     licensed_get(
         super::service_api::TEAM_MEMBERS,
-        "Dashboard rejected this roster request. Relink with `omg account link <token>`.",
+        "Dashboard rejected this roster request. Relink with `omg account link --token-stdin`.",
         "team members",
     )
     .await
@@ -837,7 +837,7 @@ pub async fn fetch_team_members() -> Result<Vec<TeamMember>> {
 pub async fn fetch_policies() -> Result<Vec<PolicyRule>> {
     licensed_get(
         super::service_api::TEAM_POLICIES,
-        "Dashboard rejected this policy request. Relink with `omg account link <token>`.",
+        "Dashboard rejected this policy request. Relink with `omg account link --token-stdin`.",
         "policies",
     )
     .await
@@ -847,7 +847,7 @@ pub async fn fetch_policies() -> Result<Vec<PolicyRule>> {
 pub async fn fetch_audit_logs() -> Result<Vec<AuditLogEntry>> {
     licensed_get(
         super::service_api::TEAM_AUDIT_LOG,
-        "Dashboard rejected this activity request. Relink with `omg account link <token>`.",
+        "Dashboard rejected this activity request. Relink with `omg account link --token-stdin`.",
         "audit logs",
     )
     .await

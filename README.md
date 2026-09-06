@@ -4,7 +4,7 @@
 
 > **Alpha.** OMG is alpha software. The CLI, flags, and on-disk formats can change without compatibility guarantees. Use it on machines you can recover, and file issues when something breaks.
 
-[![Benchmark](https://img.shields.io/badge/search-13ms%20(19x%20vs%20pacman)-brightgreen?style=flat-square)](benchmarks/latest.md)
+[![Benchmark evidence](https://img.shields.io/badge/benchmarks-scope%20and%20raw%20data-blue?style=flat-square)](benchmarks/README.md)
 [![License](https://img.shields.io/badge/license-MIT-blue?style=flat-square)](LICENSE)
 [![Rust](https://img.shields.io/badge/rust-1.93%2B-orange?style=flat-square)](https://www.rust-lang.org)
 [![codecov](https://codecov.io/gh/pyro1121/omg/branch/main/graph/badge.svg?style=flat-square)](https://codecov.io/gh/pyro1121/omg)
@@ -104,7 +104,7 @@ omg dash
 ## Key Features
 
 ### Faster Package Operations
-Direct `libalpm` integration and an in-memory repository index eliminate subprocess startup overhead. `omg search firefox --no-aur` returns in **13ms mean / 11ms median** compared to **247ms** with `pacman` and **366ms** with `yay --repo`.
+OMG uses direct `libalpm` integration and an in-memory repository index on Arch. A recorded local development run measured daemon-backed search at 13.1 ms mean. That run did not establish equivalent search output or cross-distribution release performance. See [benchmark scope and evidence](benchmarks/README.md).
 
 ### Universal Runtime Manager
 Manage Node.js, Bun, Python, Go, Rust, Ruby, Java, and Pi from one CLI. OMG honors existing `.nvmrc`, `.python-version`, `rust-toolchain.toml`, and `.tool-versions` files automatically.
@@ -123,21 +123,43 @@ Build and install AUR packages safely unprivileged as your regular user. Multi-p
 
 ---
 
-## Performance Benchmarks
+## Release smoke evidence and performance
 
-Measured 2026-09-03 on Arch Linux (kernel 7.2.2, Intel Core i9-14900K, 31 GiB RAM, local pacman sync databases) with [hyperfine](https://github.com/sharkdp/hyperfine) 1.20. Timed commands were preflighted (search/info had to print `firefox`; explicit count was 273). Flags: `--shell=none --output=pipe`, 3 warmup, 20–50 runs.
+The published `v0.1.218` x86_64 artifacts were tested locally in disposable Docker
+containers using runner commit `e77c60ef`. These are single-run smoke durations,
+not CLI latency benchmarks. Each includes package-index preparation, assertions,
+and container cleanup. Archive downloads and image pulls are excluded.
 
-| Operation | OMG (daemon) | omg-fast | pacman | yay | vs pacman |
-| :--- | ---: | ---: | ---: | ---: | :---: |
-| **`search firefox --no-aur`** | **13.1 ms** (median 11.4) | 11.2 ms | 247 ms | 366 ms | **19×** |
-| **`info firefox`** | 26.4 ms | **10.7 ms** | 226 ms | 543 ms | 9× / **21×** fast |
-| **`explicit --count`** | **10.4 ms** | 10.4 ms | 32 ms | 54 ms | **3×** |
-| **`status`** | **11.9 ms** | 10.7 ms | — | — | — |
-| **`update` discovery** | **829 ms** | — | — | — | — |
+- Arch passed search, install, and remove in 4, 2, and 4 seconds.
+- Debian passed those cases in 11, 12, and 13 seconds.
+- Ubuntu passed those cases in 24, 26, and 24 seconds.
+- Fedora search and install failed in 12 and 9 seconds. Removal setup failed in
+  9 seconds before removal executed. Fedora is not passing package coverage.
 
-`omg search` / `omg info` / `omg status` go through the daemon. `omg-fast` is the thin IPC client (same index, less CLI work). Search speedup uses daemon mean vs `pacman -Ss`. Info’s 21× figure is `omg-fast` vs `pacman -Si`; the full `omg info` path is 9×.
+[Recorded results and artifact digests](benchmarks/records/release-smoke-v0.1.218-local.json)
+identify the binaries and pinned container images. A separate
+[CI run of the same runner](https://github.com/PyRo1121/omg/actions/runs/33912270669)
+contains transcripts and uploaded cleanup evidence. These results prove only
+these package cases on these images, not every command or every Linux distribution.
+The [local headless QEMU runner](scripts/README.md#benchmark-qemush) now passes
+boot, reboot, sudo, and package lifecycles on all four supported x86_64 baselines.
+The [live receipt](benchmarks/records/qemu-four-distros-20260905.json) contains
+artifact hashes and 240 warm timing samples. Debian and Fedora use fixed local
+candidates. These results do not mean their published artifacts are fixed, that
+every CLI command passes, or that debug-build timings establish release speedups.
 
-Reproduce: [`./benchmark-hyperfine.sh`](benchmark-hyperfine.sh). This run: [benchmarks/records/20260903_015949-5c43ddcc](benchmarks/records/20260903_015949-5c43ddcc/). History: [benchmarks/latest.md](benchmarks/latest.md).
+Run the current suite from a shell with Docker access:
+
+```bash
+./scripts/release-smoke.sh --release v0.1.218 --distro all \
+  --evidence-dir "$HOME/.cache/build-targets/omg-smoke-evidence"
+```
+
+The command currently exits nonzero because Fedora does not pass. See
+[benchmark methodology, limitations, and the researched QEMU design](benchmarks/README.md)
+for the distinction between smoke coverage and performance. Historical
+[Arch development measurements](benchmarks/records/20260903_015949-5c43ddcc/)
+remain available, but are not release-wide speedup claims.
 
 ---
 

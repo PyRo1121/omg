@@ -1,8 +1,8 @@
 # Fedora/DNF Engine — Research Verdicts & Build Plan (2026-08 research)
 
-Goal: reduce repeated metadata-loading work with a Rust index, then measure
-search and information lookup against equivalent DNF5 operations. Do not infer
-transaction speedups or cross-distribution performance from query timings.
+Correct package operations come first. A Rust index and performance comparisons
+remain future work. Do not infer transaction speedups or cross-distribution
+performance from query timings.
 
 ## Research verdicts
 
@@ -27,7 +27,104 @@ transaction speedups or cross-distribution performance from query timings.
    per-invocation parse. Same pattern as debian_db (rkyv mmap) and
    pacman_db.
 
-## Build order (each slice gated + compose-verified)
+## Installed size queries
+
+`omg size` reads installed package identities and byte sizes through DNF5.
+It retains every installed version and architecture, including concurrent kernel
+builds. RPM signing-key records named `gpg-pubkey` are not installed packages.
+
+`omg size --tree PACKAGE` lists the selected package and installed providers of
+its direct requirements. Alternative requirements can have several installed
+providers. This is not a minimal or recursive dependency closure. An ambiguous
+package selector fails instead of choosing an arbitrary installed build. A
+version/architecture-qualified selector can select a specific build.
+
+These read-only queries use `--setopt=disable_excludes=*` so transaction filters
+do not hide installed packages. Available-package queries and transactions retain
+the configured exclusion and signature policies. Native output is bounded to
+64 MiB and 60 seconds. Invalid sizes and arithmetic overflow are errors, not zero.
+
+Fedora 44 QEMU verification covers native package parity, configured exclusions,
+missing packages, concurrent locally built RPM versions, ambiguous selectors,
+and unchanged RPM inventories during queries. This does not establish exhaustive
+Fedora CLI coverage or repair an already published artifact.
+
+DNF5 documents [provider queries](https://dnf5.readthedocs.io/en/latest/commands/repoquery.8.html)
+and [exclusion configuration](https://dnf5.readthedocs.io/en/latest/dnf5.conf.5.html).
+
+## Recorded installation reasons
+
+`omg why PACKAGE` displays DNF5's recorded reason for a specific installed build.
+It preserves labels such as `Group`, `User`, `Weak Dependency`, and `External User`.
+It does not infer an account identity or reconstruct the original transaction.
+
+`omg why --reverse PACKAGE` lists other installed packages whose direct
+requirements match that package through DNF5's native provider resolution. Each
+entry retains its full identity and native installation reason. Current
+requirements are not proof of historical cause or removal safety.
+
+Both modes reject missing or ambiguous package selectors. These installed-fact
+queries ignore exclusion filters without changing transaction policy. Reason-only
+mode does not load reverse requirements. Terminal commands are constructed after
+native asynchronous queries have finished.
+
+## Package history diagnostics
+
+`omg blame PACKAGE` combines native installed identity, EVR, installation reason,
+and current direct requiring packages with the selected user's OMG history.
+Qualified selectors use the canonical native package name for history lookup.
+History is name-scoped, not proof about a particular installed architecture or
+build. Failed records are displayed as failed actions.
+
+The diagnostic uses a locked, read-only history snapshot. Missing history is
+reported as missing. Malformed history fails without quarantine or rewriting.
+Existing package-operation recovery remains separate. Earlier native DNF history
+is not backfilled, and absent OMG records do not establish an installation date
+or actor.
+
+An earlier lifecycle exposed missing installation records and a SQLite warning.
+The SQLite warning was isolated to the translated `gnat-srpm-macros` header. The reader now accepts I18NSTRING
+arrays and validates every declared string terminator within the payload.
+The captured native header passes through the SQLite reader without fallback;
+installed summaries retain the default-locale string.
+
+## Native transaction recording
+
+CLI install, remove, update, and orphan cleanup attach a unique DNF5 transaction comment.
+Bounded journal reads select that comment rather than assuming the last native
+transaction belongs to OMG. Successful records retain canonical names and exact
+RPM EVRs. Replacement versions pair only within the same name and architecture.
+Failed native transactions do not turn planned versions into committed changes.
+
+The caller supplies the history destination. PackageService uses its configured
+manager, honors disabled history, and does not add a second predicted record.
+The validated privileged-parent ownership flag also suppresses child recording.
+Unrecorded backend methods remain available to callers that own their history.
+A successful no-op adds no transaction. A completed operation with a persistence
+failure returns an error that says the package operation succeeded.
+
+Fedora 44 checks cover unprivileged install, no-op, remove, real blame history,
+custom and disabled destinations, parent ownership, an unrelated later native
+transaction, a native command failure, and a persistence failure. The lifecycle
+restores the RPM inventory. Cache cleanup and sync do not record package-version
+changes. Partial RPM failure recovery and exhaustive command coverage remain
+unverified.
+
+Fedora cleanup uses native DNF elevation rather than re-executing OMG through
+sudo, so the caller retains its history destination. Native orphan confirmation
+remains in place. A declined command records failure without committed package
+changes. Preview, empty cleanup, and cache cleanup add no package history.
+The ignored orphan fixture verifies these cases and removes only its own tree
+package; it rejects pre-existing orphans.
+
+The ignored `dnf_operations::test_update_all_packages` test upgrades a disposable
+VM through the real CLI. It compares every recorded old and new version with
+independent RPM inventory differences, then checks a no-op update. The Fedora 44
+candidate matched 196 removed builds and 204 added builds. Reboot checks passed,
+and an offline disk snapshot restored that guest's original package inventory.
+The test requires an external VM snapshot and rollback; it is not a host test.
+
+## Future index build order
 
 S1. Correct the raw-Rust database-header reader using zerocopy views and a
     native SQLite fixture. Compare installed records with `rpm -qa`; preserve
@@ -45,9 +142,9 @@ S3. Stream verified primary metadata into compact records and a versioned,
     Select the supported primary representation from repomd explicitly; do not
     assume gzip or mistake a .solv cache for XML. Include enabled repository set,
     architecture, metadata digests, and policy in cache identity.
-S4. search/info/list_updates/get_status over the mmap index (O(1)/scan);
-    list_updates un-blocks (currently explicit fail-closed).
-S5. Transactions stay on the dnf CLI (already correct); benchmark
+S4. Move search/info/list_updates/get_status from native DNF queries to the
+    proposed index only after equivalent behavior is verified.
+S5. Transactions stay on the dnf CLI; benchmark
     S3/S4 vs `dnf5 info/search` cold+warm in Dockerfile.fedora compose.
 
 ## R&D synthesis (wave: /tmp/omg-fleet13, 15 citation-backed reports)

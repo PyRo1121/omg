@@ -67,7 +67,7 @@ Most developers bolt security on as an afterthought. OMG has it built in:
 - **Vulnerability scanning** — Know about CVEs before they bite you
 - **SBOM generation** — CycloneDX 1.5 format for compliance requirements
 - **Secret scanning** — Catch leaked API keys and credentials
-- **Audit logging** — Hash-chained, tamper-evident logs for compliance
+- **Audit logging** — Hash-chained local logs with explicit authenticity limits
 - **PGP verification** — Verify package signatures automatically
 
 ### It Runs Your Tasks Intelligently
@@ -126,7 +126,7 @@ Capture your complete environment to a lockfile. Share it with teammates. Detect
 
 ### Security & Compliance
 
-Scan for vulnerabilities. Generate SBOMs. Detect leaked secrets. Verify package signatures. Maintain tamper-evident audit logs. Export compliance evidence.
+Scan for vulnerabilities. Generate SBOMs. Detect leaked secrets. Verify package signatures. Maintain hash-chained local audit logs. Export compliance evidence.
 
 ### Task Running
 

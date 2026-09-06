@@ -169,10 +169,8 @@ mod invalid_input_errors {
         result.assert_failure();
         let combined = result.combined_output();
         assert!(
-            combined.contains("required")
-                || combined.contains("missing")
-                || combined.contains("arguments"),
-            "missing-arg error must say what is required. Got:\n{combined}"
+            combined.contains("No packages specified"),
+            "bare install must fail with guidance instead of a clap contract error. Got:\n{combined}"
         );
     }
 }

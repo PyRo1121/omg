@@ -157,9 +157,14 @@ pub fn daemon_data_dir() -> PathBuf {
 #[must_use]
 pub fn config_dir() -> PathBuf {
     env_path("OMG_CONFIG_DIR").unwrap_or_else(|| {
-        dirs::config_dir().map_or_else(
-            || fallback_home_dir().join(".config/omg"),
-            |d| d.join("omg"),
+        elevated_user_home().map_or_else(
+            || {
+                dirs::config_dir().map_or_else(
+                    || fallback_home_dir().join(".config/omg"),
+                    |d| d.join("omg"),
+                )
+            },
+            |home| home.join(".config/omg"),
         )
     })
 }

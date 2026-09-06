@@ -1,7 +1,7 @@
 #compdef omg
 
 _omg() {
-    local -a commands
+    local -a commands suggestions
 
     # Get current context
     local last_word="${words[$CURRENT-1]}"
@@ -23,7 +23,7 @@ _omg() {
         install|i|remove|r|info|use|ls|list|which|tool|env|run|new)
             _omg_dynamic_complete
             if [[ ${#suggestions[@]} -gt 0 ]]; then
-                compadd -a suggestions
+                compadd -U -a suggestions
                 return 0
             fi
             ;;
@@ -33,7 +33,7 @@ _omg() {
     if [[ $CURRENT -gt 2 ]]; then
         _omg_dynamic_complete
         if [[ ${#suggestions[@]} -gt 0 ]]; then
-            compadd -a suggestions
+            compadd -U -a suggestions
             return 0
         fi
     fi
