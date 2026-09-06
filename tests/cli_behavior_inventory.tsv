@@ -161,6 +161,9 @@ enterprise-audit-export-flags	["enterprise","audit-export","--framework","iso270
 enterprise-license-scan-export	["enterprise","license-scan","--export","json"]	read	0	pass	-	hermetic	hermetic:pass	-	tempdir-drop
 history-flags	["history","--limit","3","--search","pacman","--type","install","--from","2024-01-01","--to","2026-12-31"]	read	0	pass	-	hermetic	hermetic:pass	-	tempdir-drop
 rollback-yes	["rollback","--yes"]	controlled-error	1	pass	-	hermetic	hermetic:pass	-	tempdir-drop
+release-package-search-tree	["search","tree"]	read	0	pass	-	container	arch:pass,debian:pass,ubuntu:pass,fedora:known-defect	-	none
+release-package-install-tree	["install","--yes","tree"]	package-mutation	0	pass	-	container	arch:pass,debian:pass,ubuntu:pass,fedora:known-defect	-	container-prune
+release-package-remove-tree	["remove","--yes","tree"]	package-mutation	0	pass	release-package-install-tree	container	arch:pass,debian:pass,ubuntu:pass,fedora:known-defect	-	container-prune
 update-fast	["update","--fast"]	package-mutation	-	declared	-	container	arch:pending,debian:pending,ubuntu:pending,fedora:pending	-	container-prune
 update-turbo	["update","--turbo"]	package-mutation	-	declared	-	container	arch:pending,debian:pending,ubuntu:pending,fedora:pending	-	container-prune
 daemon-foreground	["daemon","--foreground"]	service-mutation	-	declared	-	container	arch:pending,debian:pending,ubuntu:pending,fedora:pending	-	daemon-stop
