@@ -16,6 +16,14 @@ OMG is the fastest unified package manager for Linux, replacing pacman, yay, nvm
 - **Cli**: Unify status output and limit local build jobs
 ### 🐛 Bug Fixes
 
+- **Release**: Initialize Arch trust and avoid partial upgrades
+
+[#257](https://github.com/PyRo1121/omg/issues/257) merged into PyRo1121/qa-qemu-four-distros, so main still refreshed
+
+Arch metadata with pacman -Sy and never initialized the disposable
+
+keyring. Port the leftover non-breaking smoke setup onto current main.
+
 - **Cli**: Bound report output and harden unattended runtime
 
   - limit reverse-dependency, dependents, and license cards to 20 visible
