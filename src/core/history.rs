@@ -538,6 +538,8 @@ mod tests {
                     "--nocapture",
                 ])
                 .env_remove("BASH_ENV")
+                // The intentional file limit must not truncate an inherited coverage profile.
+                .env("LLVM_PROFILE_FILE", "/dev/null")
                 .env(CHILD, "1")
                 .output()?;
             print!("{}", String::from_utf8_lossy(&output.stdout));
