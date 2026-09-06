@@ -118,7 +118,10 @@ jobs:
         run: |
           sudo apt-get update -qq
           sudo apt-get install -y --no-install-recommends zsh
-          timeout 20s zsh tests/shell_completion.zsh
+          timeout -k 10s 30s zsh tests/shell_completion.zsh > /tmp/shell-completion.log 2>&1
+          rc=$?
+          cat /tmp/shell-completion.log
+          exit "$rc"
 
       - name: Check local CI targets
         run: make -n ci-local-quick ci-local-full

@@ -40,6 +40,12 @@ cleanup() {
 }
 trap cleanup EXIT
 trap 'exit 1' HUP INT TERM
+watchdog() {
+    sleep 15
+    kill -TERM "$owner" 2>/dev/null
+}
+watchdog &
+wd=$!
 mkdir "$fixture/fpath"
 cp "${0:A:h}/../src/hooks/completions/zsh.zsh" "$fixture/fpath/_omg"
 cat > "$fixture/.zshrc" <<'RC'
@@ -75,3 +81,5 @@ zpty -w -n child $'\C-a\C-komg install zzzz-unmatched\t\C-x'
 zpty -r child output '*CAPTURE:*:END*'
 print -r -- "$output"
 [[ "$output" == *'CAPTURE:omg install zzzz-unmatched:END'* ]]
+kill "$wd" 2>/dev/null
+wait "$wd" 2>/dev/null || true
