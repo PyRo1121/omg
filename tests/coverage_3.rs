@@ -85,6 +85,28 @@ fn seed_history(project: &TestProject, entries: &[String]) {
 // ═══════════════════════════════════════════════════════════════════════════
 
 #[test]
+fn privacy_export_preserves_archived_history_text() {
+    let project = TestProject::for_distro("arch");
+    let archive_path = project.data_dir.path().join("history.json.archive.jsonl");
+    let output_path = project.data_dir.path().join("privacy-export.json");
+    let archive = "{\"id\":\"older\"}\n{\"id\":\"newer\"}\n";
+    std::fs::write(&archive_path, archive).unwrap();
+
+    project
+        .run(&[
+            "privacy",
+            "export",
+            "--output",
+            output_path.to_str().unwrap(),
+        ])
+        .assert_success();
+    let export: serde_json::Value =
+        serde_json::from_slice(&std::fs::read(output_path).unwrap()).unwrap();
+    assert_eq!(export["local"]["history.json.archive.jsonl"], archive);
+    assert_eq!(std::fs::read_to_string(archive_path).unwrap(), archive);
+}
+
+#[test]
 #[cfg(unix)]
 fn history_command_refuses_dangling_live_symlinks() {
     let project = TestProject::for_distro("arch");

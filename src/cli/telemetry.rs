@@ -356,6 +356,9 @@ mod tests {
             br#"{"key":"secret-key","tier":"pro","features":["sbom"],"customer":"customer@example.com","expires_at":null,"validated_at":1700000000,"token":"secret-token","machine_id":"bound-machine"}"#,
         )
         .expect("write license fixture");
+        let archive = "{\"id\":\"older\"}\n{\"id\":\"newer\"}\n";
+        std::fs::write(data_dir.join("history.json.archive.jsonl"), archive)
+            .expect("write history archive fixture");
         std::fs::write(data_dir.join("machine-id"), "machine-fixture")
             .expect("write machine ID fixture");
         std::fs::write(data_dir.join("license-clock.highwater"), "1700000000")
@@ -391,6 +394,7 @@ mod tests {
             "telemetry_queue.json",
             "telemetry_session.json",
             "history.json",
+            "history.json.archive.jsonl",
             "license.json",
             "machine-id",
             "license-clock.highwater",
@@ -403,6 +407,7 @@ mod tests {
         ] {
             assert!(files.contains_key(category), "missing category {category}");
         }
+        assert_eq!(files["history.json.archive.jsonl"], archive);
         assert_eq!(files["audit"]["audit.jsonl"], "audit-fixture\n");
         assert_eq!(files["license.json"]["tier"], "pro");
         assert_eq!(files["license.json"]["machine_id"], "bound-machine");
