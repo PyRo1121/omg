@@ -61,6 +61,14 @@
       "groupName": "clap CLI ecosystem"
     },
     {
+      "description": "Review audited SLSA/Fulcio API upgrades separately from routine Cargo updates",
+      "matchManagers": ["cargo"],
+      "matchPackageNames": ["sha2", "p256", "p384", "x509-parser"],
+      "groupName": "audited verifier dependencies",
+      "dependencyDashboardApproval": true,
+      "automerge": false
+    },
+    {
       "matchPackageNames": [
         "clap"
       ],
