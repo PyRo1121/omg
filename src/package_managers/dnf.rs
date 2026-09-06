@@ -1005,23 +1005,27 @@ impl DnfPackageManager {
             .collect())
     }
 
-    pub(crate) async fn cleanup(&self, operation: DnfCleanup) -> Result<()> {
-        // Keep native confirmation for autoremove; a preview is not authorization.
-        let args: &[&str] = match operation {
-            DnfCleanup::Orphans => &["autoremove"],
-            DnfCleanup::PackageCache => &["clean", "packages"],
-        };
-        if !is_root() {
-            crate::core::privilege::run_privileged_program("dnf", args).await?;
-            self.invalidate_installed_cache();
-            return Ok(());
+    pub(crate) async fn cleanup(
+        &self,
+        operation: DnfCleanup,
+        history: Option<&crate::core::history::HistoryManager>,
+    ) -> Result<()> {
+        match operation {
+            DnfCleanup::Orphans => {
+                self.recorded_mutation(
+                    crate::core::history::TransactionType::Remove,
+                    vec!["autoremove".to_owned()],
+                    history,
+                )
+                .await
+            }
+            DnfCleanup::PackageCache => {
+                self.execute_dnf(vec!["clean".to_owned(), "packages".to_owned()])
+                    .await
+            }
         }
-        let manager = self.cache_handle();
-        tokio::task::spawn_blocking(move || manager.run_dnf(args)).await?
     }
 
-    /// Execute the `dnf` CLI as root (callers escalate via
-    /// `run_privileged_child` first) and invalidate caches on success.
     fn run_dnf(&self, args: &[&str]) -> Result<()> {
         let mut cmd = Command::new("dnf");
 

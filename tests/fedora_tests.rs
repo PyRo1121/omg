@@ -798,29 +798,121 @@ mod dnf_operations {
     use super::*;
 
     #[tokio::test]
-    #[ignore = "requires root privileges and modifies system"]
-    async fn test_install_and_remove_package() -> Result<()> {
-        let pm = DnfPackageManager::new();
-
-        let test_package = "nano";
-
-        let initial_check = pm.is_installed(test_package).await.unwrap();
-        if initial_check {
-            pm.remove(&[test_package.to_string()]).await?;
+    #[ignore = "requires a disposable VM; installs and removes an orphan fixture"]
+    async fn test_orphan_cleanup_history() -> Result<()> {
+        use omg_lib::core::history::{HistoryManager, TransactionType};
+        use std::io::Write;
+        let installed = || -> Result<bool> {
+            let output = std::process::Command::new("rpm")
+                .args(["-q", "tree"])
+                .output()?;
+            anyhow::ensure!(
+                matches!(output.status.code(), Some(0 | 1)),
+                "Cannot inspect fixture state"
+            );
+            Ok(output.status.success())
+        };
+        let orphans = std::process::Command::new("dnf")
+            .args(["repoquery", "--unneeded", "--queryformat", "%{name}\n"])
+            .output()?;
+        anyhow::ensure!(
+            orphans.status.success() && orphans.stdout.is_empty(),
+            "Fixture requires no pre-existing orphans"
+        );
+        anyhow::ensure!(!installed()?, "Fixture requires tree to be absent");
+        let fixture = tempfile::tempdir_in(dirs::cache_dir().expect("user cache directory"))?;
+        let history = HistoryManager::new_in(fixture.path().join("history.json"))?;
+        let run = |args: &[&str], answer: &[u8]| -> Result<std::process::Output> {
+            let mut child = std::process::Command::new(assert_cmd::cargo::cargo_bin!("omg"))
+                .env("OMG_DATA_DIR", fixture.path())
+                .args(args)
+                .stdin(std::process::Stdio::piped())
+                .stdout(std::process::Stdio::piped())
+                .stderr(std::process::Stdio::piped())
+                .spawn()?;
+            child
+                .stdin
+                .take()
+                .ok_or_else(|| anyhow::anyhow!("Missing fixture input pipe"))?
+                .write_all(answer)?;
+            Ok(child.wait_with_output()?)
+        };
+        let manager = DnfPackageManager::new();
+        let packages = vec!["tree".to_owned()];
+        manager.install(&packages).await?;
+        let verified = (|| -> Result<()> {
+            let native = std::process::Command::new("rpm")
+                .args(["-q", "tree", "--qf", "%{EPOCHNUM}:%{VERSION}-%{RELEASE}"])
+                .output()?;
+            anyhow::ensure!(native.status.success(), "Cannot read fixture version");
+            let version = String::from_utf8(native.stdout)?;
+            let mark = std::process::Command::new("sudo")
+                .args(["-n", "dnf", "-y", "mark", "dependency", "tree"])
+                .stdin(std::process::Stdio::null())
+                .output()?;
+            anyhow::ensure!(mark.status.success(), "Cannot mark fixture as dependency");
+            let selected = std::process::Command::new("dnf")
+                .args(["repoquery", "--unneeded", "--queryformat", "%{name}\n"])
+                .output()?;
+            anyhow::ensure!(
+                selected.status.success()
+                    && std::str::from_utf8(&selected.stdout)?.trim() == "tree",
+                "Unexpected native orphan selection"
+            );
+            let preview = run(&["clean", "--orphans", "--dry-run"], b"")?;
+            anyhow::ensure!(
+                preview.status.success() && installed()? && history.read_snapshot()?.is_empty(),
+                "Preview mutated state or history"
+            );
+            let decline = run(&["clean", "--orphans"], b"n\n")?;
+            anyhow::ensure!(
+                decline.status.code() == Some(1) && installed()?,
+                "Native decline did not preserve the fixture"
+            );
+            let declined = history.read_snapshot()?;
+            anyhow::ensure!(
+                declined.len() == 1 && !declined[0].success && declined[0].changes.is_empty(),
+                "Unexpected decline history: {declined:?}; stderr: {}",
+                String::from_utf8_lossy(&decline.stderr)
+            );
+            let accepted = run(&["clean", "--orphans"], b"y\n")?;
+            anyhow::ensure!(
+                accepted.status.success() && !installed()?,
+                "Accepted cleanup did not remove the orphan"
+            );
+            let records = history.read_snapshot()?;
+            anyhow::ensure!(
+                records.len() == 2
+                    && records[1].success
+                    && records[1].transaction_type == TransactionType::Remove,
+                "Missing cleanup history"
+            );
+            anyhow::ensure!(
+                records[1].changes.len() == 1
+                    && records[1].changes[0].name == "tree"
+                    && records[1].changes[0].old_version.as_deref() == Some(version.as_str())
+                    && records[1].changes[0].new_version.is_none(),
+                "Cleanup history differs from native removal"
+            );
+            anyhow::ensure!(
+                run(&["clean", "--orphans"], b"")?.status.success(),
+                "Empty cleanup failed"
+            );
+            anyhow::ensure!(
+                run(&["clean", "--cache"], b"")?.status.success(),
+                "Cache cleanup failed"
+            );
+            anyhow::ensure!(
+                history.read_snapshot()?.len() == 2,
+                "Empty or cache cleanup invented package history"
+            );
+            Ok(())
+        })();
+        if installed()? {
+            manager.remove(&packages).await?;
         }
-
-        pm.install(&[test_package.to_string()]).await?;
-        assert!(
-            pm.is_installed(test_package).await.unwrap(),
-            "Package should be installed"
-        );
-
-        pm.remove(&[test_package.to_string()]).await?;
-        assert!(
-            !pm.is_installed(test_package).await.unwrap(),
-            "Package should be removed"
-        );
-
+        verified?;
+        fixture.close()?;
         Ok(())
     }
 

@@ -312,7 +312,6 @@ pub async fn clean(orphans: bool, cache: bool, aur: bool, all: bool, dry_run: bo
     }
 }
 
-/// Handle clean operations for debian-pure backend
 #[cfg(feature = "fedora")]
 async fn handle_fedora_clean(orphans: bool, cache: bool, all: bool, dry_run: bool) -> Result<()> {
     use crate::package_managers::dnf::{DnfCleanup, DnfPackageManager};
@@ -335,14 +334,15 @@ async fn handle_fedora_clean(orphans: bool, cache: bool, all: bool, dry_run: boo
                 println!("  {package}");
             }
         } else {
-            manager.cleanup(DnfCleanup::Orphans).await?;
+            let history = crate::core::history::HistoryManager::new()?;
+            manager.cleanup(DnfCleanup::Orphans, Some(&history)).await?;
         }
     }
     if cache || all {
         if dry_run {
             println!("Would clear downloaded package archives (dnf clean packages)");
         } else {
-            manager.cleanup(DnfCleanup::PackageCache).await?;
+            manager.cleanup(DnfCleanup::PackageCache, None).await?;
         }
     }
     if dry_run {
