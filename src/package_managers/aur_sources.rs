@@ -275,7 +275,7 @@ async fn fetch_public_source(value: &str) -> Result<reqwest::Response> {
             .no_proxy()
             .redirect(reqwest::redirect::Policy::none())
             .connect_timeout(std::time::Duration::from_secs(10))
-            .timeout(std::time::Duration::from_secs(300))
+            .timeout(std::time::Duration::from_mins(5))
             .resolve_to_addrs(&host, &addresses)
             .build()?;
         let response = client.get(url.clone()).send().await?;

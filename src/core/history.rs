@@ -173,8 +173,7 @@ impl HistoryManager {
     fn load_locked(&self) -> Result<Vec<Transaction>> {
         // Refuse symlinks before reading, mirroring the audit log discipline.
         let is_symlink = std::fs::symlink_metadata(&self.log_path)
-            .map(|meta| meta.file_type().is_symlink())
-            .unwrap_or(false);
+            .is_ok_and(|meta| meta.file_type().is_symlink());
         if is_symlink {
             anyhow::bail!(
                 "Refusing to read history that is a symlink: {}",
