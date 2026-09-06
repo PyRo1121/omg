@@ -30,7 +30,24 @@ mod privilege_escalation {
     use std::io::Write as _;
     use std::process::{Command, Output, Stdio};
 
-    // Note: MockPrivilegeChecker is only available in unit tests (cfg(test))
+    const RELEASE_VERSION_CASES: &[(&str, bool)] = &[
+        ("1.2.3", true),
+        ("0.0.0", true),
+        ("1.2.3-0", true),
+        ("1.2.3-rc.1", true),
+        ("1.2.3-01a", true),
+        ("1.2.3+007", true),
+        ("1.2.3+build.007", true),
+        ("1.2.3-rc.1+007", true),
+        ("1.2.3-01", false),
+        ("1.2.3-rc.01", false),
+        ("01.2.3", false),
+        ("1.2.3.4", false),
+        ("1.2.3-", false),
+        ("1.2.3+", false),
+        ("1.2.3-rc..1", false),
+        ("v1.2.3", false),
+    ];
 
     fn run_installer_functions(command: &str, env: &[(&str, &std::ffi::OsStr)]) -> Output {
         let installer = include_str!("../install.sh");
@@ -53,6 +70,167 @@ mod privilege_escalation {
             .write_all(script.as_bytes())
             .expect("write installer test script");
         child.wait_with_output().expect("run installer test script")
+    }
+
+    #[test]
+    fn release_version_installer_accepts_matching_bare_versions_and_tags() {
+        for &(version, valid) in RELEASE_VERSION_CASES {
+            assert_eq!(semver::Version::parse(version).is_ok(), valid);
+            for command in [
+                "validate_bare_version \"$CANDIDATE\"",
+                "validate_version_tag \"v$CANDIDATE\"",
+            ] {
+                let output = run_installer_functions(
+                    command,
+                    &[("CANDIDATE", std::ffi::OsStr::new(version))],
+                );
+                assert_eq!(output.status.success(), valid, "{command}: {version}");
+            }
+        }
+    }
+
+    #[test]
+    fn release_version_rollback_rejects_invalid_input_before_credentials() {
+        let directory = tempfile::tempdir().expect("rollback fixture");
+        let script =
+            std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("scripts/r2-rollback.sh");
+        for &(version, valid) in RELEASE_VERSION_CASES {
+            let output = Command::new("bash")
+                .arg(&script)
+                .arg(version)
+                .env_clear()
+                .current_dir(directory.path())
+                .output()
+                .expect("run rollback input validation without credentials");
+            if valid {
+                assert_eq!(output.status.code(), Some(1), "{version}");
+                assert!(String::from_utf8_lossy(&output.stderr).contains("CLOUDFLARE_API_TOKEN"));
+            } else {
+                assert_eq!(output.status.code(), Some(65), "{version}");
+            }
+            assert!(!directory.path().join(".github").exists());
+        }
+    }
+
+    #[test]
+    fn release_version_notes_follow_the_same_semver_contract() {
+        let (validation, _) = include_str!("../scripts/gen-release-notes.sh")
+            .split_once("\nscript_dir=")
+            .expect("release-note validation precedes content generation");
+        for &(version, valid) in RELEASE_VERSION_CASES {
+            let output = Command::new("bash")
+                .args(["--noprofile", "--norc", "-c", validation, "--", version])
+                .env_clear()
+                .output()
+                .expect("run release-note input validation");
+            assert_eq!(output.status.success(), valid, "{version}");
+        }
+    }
+
+    #[test]
+    fn installer_marker_bounds_survive_curl_without_streaming_limits() {
+        let directory = tempfile::tempdir().expect("marker fixture");
+        let body_path = directory.path().join("body");
+        for (case, body, valid) in [
+            ("newline", b"1.2.3\n".to_vec(), true),
+            (
+                "at limit",
+                [b"1.2.3".as_slice(), &[b'\n'; 251]].concat(),
+                true,
+            ),
+            (
+                "over limit",
+                [b"1.2.3".as_slice(), &[b'\n'; 252]].concat(),
+                false,
+            ),
+            ("NUL", b"1.2.\x003".to_vec(), false),
+        ] {
+            std::fs::write(&body_path, &body).expect("write marker body");
+            let output = run_installer_functions(
+                "curl() { cat \"$BODY\"; }\nOMG_VERSION=latest\nresolve_version",
+                &[("BODY", body_path.as_os_str())],
+            );
+            assert_eq!(output.status.success(), valid, "{case}");
+        }
+    }
+
+    #[test]
+    fn installer_marker_rejects_a_failed_partial_transfer() {
+        let output = run_installer_functions(
+            "curl() { printf '1.2.3'; return 22; }\nOMG_VERSION=latest\nresolve_version",
+            &[],
+        );
+        assert!(
+            !output.status.success(),
+            "failed transfer must not select a version"
+        );
+    }
+
+    #[test]
+    fn installer_file_bounds_survive_curl_without_streaming_limits() {
+        for (stage, file, status, expected_bytes) in [
+            ("archive", "fixture.tar.xz", 1, 33),
+            ("checksum", "fixture.tar.xz.sha256", 2, 33),
+            ("archive_failure", "fixture.tar.xz", 1, 0),
+        ] {
+            let directory = tempfile::tempdir().expect("download fixture");
+            let body_path = directory.path().join("body");
+            std::fs::write(&body_path, [b'x'; 4096]).expect("oversized response");
+            let output = run_installer_functions(
+                r#"
+MAX_ARCHIVE_BYTES=32
+MAX_CHECKSUM_BYTES=32
+OMG_VERSION=v1.2.3
+check_runtime_dependencies() { :; }
+detect_os() { printf linux; }
+detect_distro() { printf arch; }
+detect_arch() { printf x86_64; }
+select_artifact() { printf fixture.tar.xz; }
+mktemp() { printf '%s\n' "$DIRECTORY"; }
+cleanup_tmp_dir() { :; }
+header() { :; }
+info() { :; }
+start_spinner() { :; }
+stop_spinner() { :; }
+fail_spinner() { :; }
+fixture_body() {
+  if [[ "$STAGE" == archive || "$1" == *.sha256 ]]; then
+    cat "$BODY"
+  else
+    printf archive
+  fi
+}
+curl() {
+  if [[ "$STAGE" == archive_failure ]]; then return 22; fi
+  local output='' url=''
+  while (( $# )); do
+    case "$1" in
+      -o) output="$2"; shift 2 ;;
+      --max-filesize) shift 2 ;;
+      https://*) url="$1"; shift ;;
+      *) shift ;;
+    esac
+  done
+  if [[ -n "$output" ]]; then
+    fixture_body "$url" > "$output"
+  else
+    fixture_body "$url"
+  fi
+}
+install_from_release
+"#,
+                &[
+                    ("BODY", body_path.as_os_str()),
+                    ("DIRECTORY", directory.path().as_os_str()),
+                    ("STAGE", std::ffi::OsStr::new(stage)),
+                ],
+            );
+            assert_eq!(output.status.code(), Some(status), "{stage}");
+            let bytes = std::fs::metadata(directory.path().join(file))
+                .expect("downloaded candidate")
+                .len();
+            assert_eq!(bytes, expected_bytes, "{stage} candidate size");
+        }
     }
 
     #[test]
@@ -112,6 +290,72 @@ mod privilege_escalation {
             installer.contains("refusing to build unpinned repository HEAD"),
             "a missing verified release must fail closed"
         );
+    }
+
+    #[test]
+    fn installer_provenance_opt_out_only_covers_missing_gh() {
+        let installer = include_str!("../install.sh");
+        let start = installer
+            .find("  if command -v gh >/dev/null 2>&1; then")
+            .expect("provenance gate");
+        let (gate, _) = installer[start..]
+            .split_once("  start_spinner \"Extracting binaries\"")
+            .expect("extraction boundary");
+        for (present, status, opt_out, accepted) in [
+            (false, 0, "", false),
+            (false, 0, "0", false),
+            (false, 0, "TRUE", false),
+            (false, 0, "typo", false),
+            (false, 0, "1", true),
+            (false, 0, "true", true),
+            (false, 0, "yes", true),
+            (true, 0, "", true),
+            (true, 1, "1", false),
+        ] {
+            let output = run_installer_functions(
+                &format!(
+                    "command() {{ return {}; }}\ngh() {{ return {status}; }}\nstart_spinner() {{ :; }}\nstop_spinner() {{ :; }}\nfail_spinner() {{ :; }}\ndownload_file=fixture\nartifact_name=fixture\nverify_fixture() {{\n{gate}\n}}\nverify_fixture\n",
+                    i32::from(!present)
+                ),
+                &[(
+                    "OMG_INSTALL_ALLOW_UNVERIFIED_PROVENANCE",
+                    std::ffi::OsStr::new(opt_out),
+                )],
+            );
+            assert_eq!(
+                output.status.code(),
+                Some(2 * i32::from(!accepted)),
+                "present={present} status={status} opt_out={opt_out}: {}",
+                String::from_utf8_lossy(&output.stdout)
+            );
+        }
+    }
+
+    #[test]
+    fn installer_never_falls_back_after_a_verification_refusal() {
+        for (status, source, accepted) in [
+            (0, false, true),
+            (1, true, true),
+            (1, false, false),
+            (2, true, false),
+            (2, false, false),
+        ] {
+            let output = run_installer_functions(
+                &format!(
+                    "print_banner() {{ :; }}\ninstall_from_release() {{ return {status}; }}\nIS_SOURCE_INSTALL={source}\ncheck_platform() {{ :; }}\ncheck_dependencies() {{ :; }}\nbuild_omg() {{ printf 'BUILT_SOURCE\\n'; }}\nsetup_config() {{ :; }}\nsetup_telemetry() {{ :; }}\nsetup_shell() {{ :; }}\nfinish() {{ :; }}\nmain\n"
+                ),
+                &[],
+            );
+            assert_eq!(
+                output.status.success(),
+                accepted,
+                "status={status} source={source}: {}",
+                String::from_utf8_lossy(&output.stdout)
+            );
+            if status == 2 {
+                assert!(!String::from_utf8_lossy(&output.stdout).contains("BUILT_SOURCE"));
+            }
+        }
     }
 
     #[test]
@@ -198,6 +442,431 @@ mod privilege_escalation {
             !rejected.success(),
             "an unexpected archive must fail the release allowlist"
         );
+    }
+
+    #[test]
+    fn installer_scripts_pass_shell_syntax_check() {
+        for relative in ["install.sh", "scripts/r2-rollback.sh"] {
+            let script = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join(relative);
+            let status = std::process::Command::new("bash")
+                .args(["-n"])
+                .arg(&script)
+                .status()
+                .expect("bash must be available");
+            assert!(
+                status.success(),
+                "{relative} must pass `bash -n` syntax checking"
+            );
+        }
+    }
+
+    #[test]
+    fn installer_resolves_latest_only_from_the_r2_marker() {
+        let installer = include_str!("../install.sh");
+
+        assert!(
+            installer.contains("RELEASES_BASE_URL=\"https://releases.omg.latham.cloud\""),
+            "archives, sidecars, and the marker must come from the R2 release domain"
+        );
+        assert!(
+            installer.contains("LATEST_VERSION_URL=\"${RELEASES_BASE_URL}/latest-version\""),
+            "the installer must resolve latest from the authoritative R2 marker"
+        );
+        assert!(
+            !installer.contains("api.github.com") && !installer.contains("browser_download_url"),
+            "latest resolution must be R2-only: no GitHub release-metadata lookup, \n             which would undermine scripts/r2-rollback.sh rollback authority"
+        );
+        assert!(
+            installer.contains("--max-filesize \"$MAX_LATEST_VERSION_BYTES\""),
+            "the marker fetch must be bounded"
+        );
+        assert!(
+            installer.contains("--max-filesize \"$MAX_ARCHIVE_BYTES\""),
+            "the archive fetch must be bounded"
+        );
+        assert!(
+            installer.contains("--max-filesize \"$MAX_CHECKSUM_BYTES\""),
+            "the checksum fetch must be bounded"
+        );
+        assert!(
+            installer.contains("asset_url=\"${RELEASES_BASE_URL}/${artifact_name}\""),
+            "the archive URL must be constructed directly on the R2 release domain"
+        );
+    }
+
+    struct FakeCurl(tempfile::TempDir);
+
+    impl FakeCurl {
+        fn new(fail: bool) -> Self {
+            let dir = tempfile::tempdir().expect("fake curl directory");
+            let script = if fail {
+                "#!/bin/bash\nexit 1\n"
+            } else {
+                "#!/bin/bash\nprintf '%s\\n' \"$FAKE_MARKER\"\n"
+            };
+            std::fs::write(dir.path().join("curl"), script).expect("write fake curl");
+            #[cfg(unix)]
+            {
+                use std::os::unix::fs::PermissionsExt;
+                let mut permissions = std::fs::metadata(dir.path().join("curl"))
+                    .expect("fake curl metadata")
+                    .permissions();
+                permissions.set_mode(0o755);
+                std::fs::set_permissions(dir.path().join("curl"), permissions)
+                    .expect("chmod fake curl");
+            }
+            Self(dir)
+        }
+
+        fn path_env(&self) -> String {
+            format!(
+                "{}:{}",
+                self.0.path().display(),
+                std::env::var("PATH").unwrap_or_default()
+            )
+        }
+    }
+
+    fn resolve_version(env: &[(&str, &std::ffi::OsStr)]) -> Output {
+        run_installer_functions("resolve_version", env)
+    }
+
+    #[test]
+    fn installer_resolves_bare_semver_marker_to_a_tag() {
+        let fake_curl = FakeCurl::new(false);
+        let output = resolve_version(&[
+            ("OMG_VERSION", "latest".as_ref()),
+            ("FAKE_MARKER", "0.1.215".as_ref()),
+            ("PATH", fake_curl.path_env().as_ref()),
+        ]);
+
+        assert!(output.status.success(), "a bare semver marker must resolve");
+        assert_eq!(String::from_utf8_lossy(&output.stdout).trim(), "v0.1.215");
+    }
+
+    #[test]
+    fn installer_marker_parsing_tolerates_whitespace_and_pre_release() {
+        let fake_curl = FakeCurl::new(false);
+        for (marker, expected) in [
+            ("  1.2.3\n\n", "v1.2.3"),
+            ("1.2.3-rc.1+b5", "v1.2.3-rc.1+b5"),
+        ] {
+            let output = resolve_version(&[
+                ("OMG_VERSION", "latest".as_ref()),
+                ("FAKE_MARKER", marker.as_ref()),
+                ("PATH", fake_curl.path_env().as_ref()),
+            ]);
+            assert!(
+                output.status.success(),
+                "marker {marker:?} must resolve, stderr: {}",
+                String::from_utf8_lossy(&output.stderr)
+            );
+            assert_eq!(String::from_utf8_lossy(&output.stdout).trim(), expected);
+        }
+    }
+
+    #[test]
+    fn installer_fails_closed_on_malformed_marker_bodies() {
+        let fake_curl = FakeCurl::new(false);
+        for marker in [
+            "",
+            "v0.1.215",
+            "V0.1.215",
+            "not-a-version",
+            "1.2",
+            "1.2.3.4",
+            "1.2.3-01",
+            "evil/../../etc",
+            "https://evil.example/1.2.3",
+        ] {
+            let output = resolve_version(&[
+                ("OMG_VERSION", "latest".as_ref()),
+                ("FAKE_MARKER", marker.as_ref()),
+                ("PATH", fake_curl.path_env().as_ref()),
+            ]);
+            assert!(
+                !output.status.success(),
+                "marker body {marker:?} must be rejected"
+            );
+            assert!(
+                !String::from_utf8_lossy(&output.stderr).contains(marker) || marker.is_empty(),
+                "untrusted marker bytes must not be echoed into errors"
+            );
+        }
+    }
+
+    #[test]
+    fn installer_fails_closed_on_oversized_and_unavailable_marker() {
+        let fake_curl = FakeCurl::new(false);
+        let oversized = format!("1.2.3{}9.9.9", " ".repeat(260));
+        let output = resolve_version(&[
+            ("OMG_VERSION", "latest".as_ref()),
+            ("FAKE_MARKER", oversized.as_ref()),
+            ("PATH", fake_curl.path_env().as_ref()),
+        ]);
+        assert!(
+            !output.status.success(),
+            "an oversized marker body must be rejected"
+        );
+
+        let failing_curl = FakeCurl::new(true);
+        let output = resolve_version(&[
+            ("OMG_VERSION", "latest".as_ref()),
+            ("PATH", failing_curl.path_env().as_ref()),
+        ]);
+        assert!(
+            !output.status.success(),
+            "an unavailable marker must fail closed"
+        );
+    }
+
+    #[test]
+    fn installer_enforces_downloaded_file_size_bounds() {
+        let fixture = tempfile::NamedTempFile::new().expect("size fixture");
+        std::fs::write(fixture.path(), b"1234").expect("write size fixture");
+
+        let accepted = run_installer_functions(
+            "check_file_size_bound \"$BOUND_FIXTURE\" 4 fixture",
+            &[("BOUND_FIXTURE", fixture.path().as_os_str())],
+        );
+        assert!(accepted.status.success(), "a file at the limit must pass");
+
+        let rejected = run_installer_functions(
+            "check_file_size_bound \"$BOUND_FIXTURE\" 3 fixture",
+            &[("BOUND_FIXTURE", fixture.path().as_os_str())],
+        );
+        assert!(
+            !rejected.status.success(),
+            "a file over the limit must fail"
+        );
+    }
+
+    #[test]
+    fn installer_exact_version_is_used_verbatim_without_the_marker() {
+        let failing_curl = FakeCurl::new(true);
+        let output = resolve_version(&[
+            ("OMG_VERSION", "v0.1.214".as_ref()),
+            ("PATH", failing_curl.path_env().as_ref()),
+        ]);
+        assert!(
+            output.status.success(),
+            "exact installs must not hit the marker"
+        );
+        assert_eq!(String::from_utf8_lossy(&output.stdout).trim(), "v0.1.214");
+
+        for raw in ["1.2.3", "not-a-tag", "latest"] {
+            let output = resolve_version(&[
+                ("OMG_VERSION", raw.as_ref()),
+                ("PATH", failing_curl.path_env().as_ref()),
+            ]);
+            assert!(
+                !output.status.success(),
+                "OMG_VERSION={raw:?} must not resolve when the marker is unavailable"
+            );
+        }
+    }
+
+    #[test]
+    fn release_workflow_and_rollback_enforce_the_cache_control_contract() {
+        let immutable = "--cache-control=\"public, max-age=31536000, immutable\"";
+        let no_store = "--cache-control=\"no-store\"";
+
+        let Some(workflow) = read_checkout_file(".github/workflows/release.yml") else {
+            eprintln!(
+                "skipping release.yml cache-control assertions: .github is not present in this checkout"
+            );
+            return;
+        };
+        let r2_job = workflow
+            .split("  sync-r2:")
+            .nth(1)
+            .expect("R2 release job must exist");
+        let (archives_region, marker_region) = r2_job
+            .split_once("Upload latest-version marker")
+            .expect("latest-version marker step must exist");
+
+        assert!(
+            archives_region.contains("release/omg-v*.tar.gz")
+                && archives_region.contains("release/omg-v*.sha256"),
+            "both archive and sidecar uploads must be covered by the immutable policy"
+        );
+        assert!(
+            archives_region.matches(immutable).count() >= 2,
+            "every archive and sidecar upload must be marked immutable"
+        );
+        assert!(
+            !archives_region.contains(no_store),
+            "only the mutable marker may be served with no-store"
+        );
+        assert!(
+            marker_region.contains("omg-releases/latest-version")
+                && marker_region.contains(no_store)
+                && !marker_region.contains(immutable),
+            "the mutable latest-version marker must never be cached"
+        );
+
+        let Some(rollback) = read_checkout_file("scripts/r2-rollback.sh") else {
+            panic!("R2 rollback script must exist");
+        };
+        assert!(
+            rollback.contains("omg-releases/latest-version") && rollback.contains(no_store),
+            "the rollback marker publication must also be no-store"
+        );
+        assert!(
+            !rollback
+                .lines()
+                .any(|line| { line.contains("--cache-control") && !line.contains("no-store") }),
+            "rollback must never set an immutable cache policy"
+        );
+    }
+
+    #[test]
+    fn release_sync_requires_publication_permission_for_every_path() {
+        let Some(workflow) = read_checkout_file(".github/workflows/release.yml") else {
+            eprintln!("release workflow fixture is absent from this package");
+            return;
+        };
+        let (_, job) = workflow.split_once("\n  sync-r2:\n").expect("R2 sync job");
+        let (_, condition) = job.split_once("    if: >-\n").expect("job condition");
+        let (condition, _) = condition.split_once("    steps:\n").expect("job steps");
+        assert_eq!(
+            condition.split_whitespace().collect::<Vec<_>>().join(" "),
+            concat!(
+                "${{ always() && ",
+                "(github.event_name == 'push' || (github.event_name == 'workflow_dispatch' && inputs.dry_run == 'false')) && ",
+                "(inputs.sync_existing_tag != '' || needs.release.result == 'success') }}"
+            )
+        );
+    }
+
+    fn release_workflow_script(step: &str) -> Option<String> {
+        let workflow = read_checkout_file(".github/workflows/release.yml")?;
+        let heading = format!("      - name: {step}\n");
+        let (_, step) = workflow.split_once(&heading).expect("release step exists");
+        let (_, body) = step
+            .split_once("        run: |\n")
+            .expect("shell body exists");
+        Some(
+            body.lines()
+                .take_while(|line| line.is_empty() || line.starts_with("          "))
+                .map(|line| line.strip_prefix("          ").unwrap_or(line))
+                .collect::<Vec<_>>()
+                .join("\n"),
+        )
+    }
+
+    #[test]
+    #[cfg(unix)]
+    fn release_dispatch_values_are_data_not_shell_code() {
+        use std::os::unix::fs::PermissionsExt as _;
+        let Some(script) =
+            release_workflow_script("Require successful CI and benchmark runs for this commit")
+        else {
+            eprintln!("release workflow fixture is absent from this package");
+            return;
+        };
+        for value in ["true", "false", "$(touch injected)"] {
+            let fixture = tempfile::tempdir().expect("gate fixture");
+            let gate = fixture.path().join("scripts/require-workflow-success.sh");
+            std::fs::create_dir(gate.parent().unwrap()).unwrap();
+            std::fs::write(&gate, "#!/bin/sh\nprintf '%s\\n' \"$*\" >> gate-calls\n").unwrap();
+            std::fs::set_permissions(&gate, std::fs::Permissions::from_mode(0o700)).unwrap();
+            let rendered = script.replace("${{ inputs.dry_run }}", value);
+            let output = Command::new("bash")
+                .args([
+                    "--noprofile",
+                    "--norc",
+                    "-e",
+                    "-o",
+                    "pipefail",
+                    "-c",
+                    &rendered,
+                ])
+                .env_clear()
+                .env("PATH", std::env::var_os("PATH").expect("PATH"))
+                .env("GITHUB_EVENT_NAME", "workflow_dispatch")
+                .env("GITHUB_SHA", "fixture-commit")
+                .env("DRY_RUN", value)
+                .current_dir(fixture.path())
+                .output()
+                .expect("run gate fixture");
+            assert!(
+                output.status.success(),
+                "{}",
+                String::from_utf8_lossy(&output.stderr)
+            );
+            assert!(
+                !fixture.path().join("injected").exists(),
+                "dispatch value was executed as shell code"
+            );
+            let calls =
+                std::fs::read_to_string(fixture.path().join("gate-calls")).unwrap_or_default();
+            assert_eq!(calls.lines().count(), if value == "true" { 0 } else { 2 });
+        }
+        assert!(
+            read_checkout_file(".github/workflows/release.yml")
+                .unwrap()
+                .contains("DRY_RUN: ${{ inputs.dry_run }}")
+        );
+        assert!(!script.contains("${{ inputs.dry_run }}"));
+    }
+
+    #[test]
+    fn release_remote_tag_check_accepts_annotated_and_lightweight_tags() {
+        let Some(script) = release_workflow_script("Verify remote release tag") else {
+            eprintln!("release workflow fixture is absent from this package");
+            return;
+        };
+        let fixture = tempfile::tempdir().expect("tag fixture");
+        let run = |script: &str, tag: &str, expected: &str| {
+            Command::new("bash")
+                .args([
+                    "--noprofile",
+                    "--norc",
+                    "-e",
+                    "-o",
+                    "pipefail",
+                    "-c",
+                    script,
+                ])
+                .env_clear()
+                .env("PATH", std::env::var_os("PATH").expect("PATH"))
+                .env("HOME", fixture.path())
+                .env("GIT_CONFIG_NOSYSTEM", "1")
+                .env("GIT_CONFIG_GLOBAL", "/dev/null")
+                .env("RELEASE_TAG", tag)
+                .env("EXPECTED_COMMIT", expected)
+                .current_dir(fixture.path())
+                .output()
+                .expect("run local tag fixture")
+        };
+        let setup = run(
+            "git init -q\ngit config user.name Fixture\ngit config user.email fixture@example.invalid\ngit commit -q --allow-empty -m fixture\ngit tag v1.2.3\ngit tag -a v1.2.4 -m annotated\ngit tag -a v1.2.5 v1.2.4 -m nested\ngit remote add origin .\ngit rev-parse HEAD",
+            "",
+            "",
+        );
+        assert!(
+            setup.status.success(),
+            "{}",
+            String::from_utf8_lossy(&setup.stderr)
+        );
+        let commit = String::from_utf8(setup.stdout).expect("commit output");
+        let commit = commit.trim();
+        for (tag, expected, valid) in [
+            ("v1.2.3", commit, true),
+            ("v1.2.4", commit, true),
+            ("v1.2.5", commit, true),
+            ("v9.9.9", commit, false),
+            ("v1.2.4", "0000000000000000000000000000000000000000", false),
+        ] {
+            let output = run(&script, tag, expected);
+            assert_eq!(
+                output.status.success(),
+                valid,
+                "{tag}: {}",
+                String::from_utf8_lossy(&output.stdout)
+            );
+        }
     }
 
     fn read_checkout_file(relative: &str) -> Option<String> {

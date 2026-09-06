@@ -15,7 +15,7 @@ if [[ $# -ne 1 ]]; then
 fi
 
 version="$1"
-semver_re='^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)(-[0-9A-Za-z-]+(\.[0-9A-Za-z-]+)*)?(\+[0-9A-Za-z-]+(\.[0-9A-Za-z-]+)*)?$'
+semver_re='^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)(-(0|[1-9][0-9]*|[0-9]*[A-Za-z-][0-9A-Za-z-]*)(\.(0|[1-9][0-9]*|[0-9]*[A-Za-z-][0-9A-Za-z-]*))*)?(\+[0-9A-Za-z-]+(\.[0-9A-Za-z-]+)*)?$'
 if [[ ! "$version" =~ $semver_re ]]; then
   echo "invalid release version: $version" >&2
   exit 65
@@ -54,7 +54,7 @@ Team, Enterprise, and Fleet commands no longer require a paid JWT. Scripts that 
 
 **Quick Install (Linux/macOS):**
 \`\`\`bash
-curl -fsSL https://raw.githubusercontent.com/PyRo1121/omg/main/install.sh | bash
+curl -fsSL https://omg.latham.cloud/install.sh | bash
 \`\`\`
 
 **Windows Subsystem for Linux:** Use the Linux installer inside your WSL distribution.

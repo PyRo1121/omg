@@ -30,6 +30,52 @@ use omg_lib::core::telemetry::{
 };
 use tempfile::TempDir;
 
+#[test]
+fn config_and_telemetry_mutations_respect_the_config_lock() -> anyhow::Result<()> {
+    let project = TestProject::new();
+    let config = project.config_dir.path().join("config.toml");
+    let original =
+        b"# preserve comments\ntelemetry_enabled = false\n[aur]\nenable_ccache = false\n";
+    fs::write(&config, original)?;
+    let lock = fs::File::create(project.config_dir.path().join("config.lock"))?;
+    lock.lock()?;
+    for args in [
+        vec!["config", "set", "aur.enable_ccache", "true"],
+        vec!["privacy", "opt-in"],
+        vec!["privacy", "opt-out"],
+        vec!["config", "reset", "--yes"],
+    ] {
+        let result = project.run_with_env(&args, &[("OMG_TEST_COMMAND_TIMEOUT_SECS", "5")]);
+        result.assert_failure();
+        assert!(
+            result
+                .combined_output()
+                .contains("Another configuration mutation is running"),
+            "{args:?}: {}",
+            result.combined_output()
+        );
+        assert_eq!(fs::read(&config)?, original);
+    }
+    drop(lock);
+    project
+        .run(&["config", "set", "aur.enable_ccache", "true"])
+        .assert_success();
+    project.run(&["privacy", "opt-out"]).assert_success();
+    let content = fs::read_to_string(&config)?;
+    assert!(content.contains("# preserve comments"));
+    let settings: toml::Value = toml::from_str(&content)?;
+    assert_eq!(settings["telemetry_enabled"].as_bool(), Some(false));
+    assert_eq!(settings["aur"]["enable_ccache"].as_bool(), Some(true));
+    project.run(&["config", "reset", "--yes"]).assert_success();
+    assert_eq!(
+        fs::read_to_string(config.with_extension("toml.backup"))?,
+        content
+    );
+    let reset: toml::Value = toml::from_str(&fs::read_to_string(&config)?)?;
+    assert_eq!(reset["aur"]["enable_ccache"].as_bool(), Some(false));
+    Ok(())
+}
+
 const QUEUE_FILE: &str = "telemetry_queue.json";
 const SESSION_FILE: &str = "telemetry_session.json";
 

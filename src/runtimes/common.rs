@@ -839,27 +839,31 @@ pub(crate) fn complete_staged_install(
     version: &str,
 ) -> Result<()> {
     write_install_marker(staging.path(), version)?;
-    if fs::symlink_metadata(version_dir).is_ok() {
-        anyhow::bail!(
-            "Runtime installation appeared during staging: {}",
-            version_dir.display()
-        );
-    }
-    fs::rename(staging.path(), version_dir).with_context(|| {
-        format!(
-            "Failed to publish runtime installation at {}",
-            version_dir.display()
+    #[cfg(any(target_os = "linux", target_os = "macos"))]
+    {
+        rustix::fs::renameat_with(
+            rustix::fs::CWD,
+            staging.path(),
+            rustix::fs::CWD,
+            version_dir,
+            rustix::fs::RenameFlags::NOREPLACE,
         )
-    })?;
-    Ok(())
+        .with_context(|| {
+            format!(
+                "Failed to publish runtime installation at {}",
+                version_dir.display()
+            )
+        })
+    }
+    #[cfg(not(any(target_os = "linux", target_os = "macos")))]
+    anyhow::bail!("Atomic runtime publication is unsupported on this platform")
 }
 
 /// Atomically replace a published runtime directory with a staged successor.
 ///
-/// The existing version is moved aside first. If publishing the staged tree
-/// fails, the previous directory is restored. A crash after the old tree is
-/// moved aside leaves no published version directory, which is fail-closed:
-/// the next lookup treats the toolchain as uninstalled instead of half-updated.
+/// The staging guard owns the retired tree after the exchange. Publication
+/// never removes the version path, even if the process exits before cleanup.
+/// This does not guarantee durability across power loss.
 pub(crate) fn replace_staged_install(
     staging: &tempfile::TempDir,
     version_dir: &Path,
@@ -872,58 +876,24 @@ pub(crate) fn replace_staged_install(
             version_dir.display()
         );
     }
-    let parent = version_dir.parent().ok_or_else(|| {
-        anyhow::anyhow!(
-            "Runtime version path has no parent directory: {}",
-            version_dir.display()
+    #[cfg(any(target_os = "linux", target_os = "macos"))]
+    {
+        rustix::fs::renameat_with(
+            rustix::fs::CWD,
+            staging.path(),
+            rustix::fs::CWD,
+            version_dir,
+            rustix::fs::RenameFlags::EXCHANGE,
         )
-    })?;
-    let backup = tempfile::Builder::new()
-        .prefix(".replace-")
-        .tempfile_in(parent)
         .with_context(|| {
             format!(
-                "Failed to reserve replacement backup path in {}",
-                parent.display()
-            )
-        })?
-        .into_temp_path();
-    fs::remove_file(&backup).with_context(|| {
-        format!(
-            "Failed to prepare replacement backup path: {}",
-            backup.display()
-        )
-    })?;
-    fs::rename(version_dir, &backup).with_context(|| {
-        format!(
-            "Failed to move existing runtime version aside: {}",
-            version_dir.display()
-        )
-    })?;
-    if let Err(error) = fs::rename(staging.path(), version_dir) {
-        if let Err(restore_error) = fs::rename(&backup, version_dir) {
-            return Err(error).with_context(|| {
-                format!(
-                    "Failed to publish replacement at {} and failed to restore previous version: {restore_error}",
-                    version_dir.display()
-                )
-            });
-        }
-        return Err(error).with_context(|| {
-            format!(
-                "Failed to publish replacement runtime version at {}",
+                "Failed to atomically replace runtime version at {}",
                 version_dir.display()
             )
-        });
+        })
     }
-    if let Err(error) = fs::remove_dir_all(&backup) {
-        tracing::warn!(
-            "Failed to remove replaced runtime backup {}: {error}",
-            backup.display()
-        );
-    }
-    let _ = backup.keep();
-    Ok(())
+    #[cfg(not(any(target_os = "linux", target_os = "macos")))]
+    anyhow::bail!("Atomic runtime replacement is unsupported on this platform")
 }
 
 /// Copy a directory tree of regular files and directories only.
@@ -1898,7 +1868,13 @@ mod tests {
         let staging = begin_staged_install(&versions_dir)?;
         let error = complete_staged_install(&staging, &version_dir, "1.0.0")
             .expect_err("must refuse to publish over an existing version");
-        assert!(error.to_string().contains("appeared during staging"));
+        assert_eq!(
+            error.downcast_ref::<rustix::io::Errno>(),
+            Some(&rustix::io::Errno::EXIST)
+        );
+        assert!(version_dir.is_dir());
+        assert!(fs::read_dir(&version_dir)?.next().is_none());
+        assert!(staging.path().join(INSTALL_MARKER).is_file());
         Ok(())
     }
 
@@ -1914,6 +1890,7 @@ mod tests {
         fs::write(staging.path().join("bin"), "new")?;
         replace_staged_install(&staging, &version_dir, "1.0.0")?;
 
+        assert_eq!(fs::read_to_string(staging.path().join("bin"))?, "old");
         assert_eq!(fs::read_to_string(version_dir.join("bin"))?, "new");
         assert_eq!(
             fs::read_to_string(version_dir.join(INSTALL_MARKER))?,
@@ -1923,6 +1900,27 @@ mod tests {
             list_installed_versions(&versions_dir)?,
             vec!["1.0.0".to_string()]
         );
+        let retired_path = staging.path().to_path_buf();
+        drop(staging);
+        assert!(!retired_path.exists());
+        assert_eq!(fs::read_to_string(version_dir.join("bin"))?, "new");
+        Ok(())
+    }
+
+    #[test]
+    fn replace_staged_install_preserves_trees_when_exchange_fails() -> anyhow::Result<()> {
+        let temp = TempDir::new()?;
+        let version_dir = temp.path().join("1.0.0");
+        fs::create_dir(&version_dir)?;
+        fs::write(version_dir.join("bin"), "old")?;
+        let staging = begin_staged_install(&version_dir)?;
+        fs::write(staging.path().join("bin"), "new")?;
+
+        replace_staged_install(&staging, &version_dir, "1.0.0")
+            .expect_err("cannot exchange a directory with its descendant");
+
+        assert_eq!(fs::read_to_string(version_dir.join("bin"))?, "old");
+        assert_eq!(fs::read_to_string(staging.path().join("bin"))?, "new");
         Ok(())
     }
 

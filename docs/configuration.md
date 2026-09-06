@@ -38,7 +38,12 @@ OMG follows the XDG Base Directory Specification with sensible fallbacks.
 
 ## ⚙️ General Configuration (config.toml)
 
-The main configuration file controls daemon behavior, runtime settings, and feature toggles.
+The main configuration file controls telemetry and AUR builds.
+
+Configuration writes from `omg config`, `omg privacy`, and `omg init` share a
+`config.lock` beside the config file. A competing write fails with a retry message.
+The lock file persists after completion; its presence alone does not mean a writer
+is active. External editors do not participate in this coordination.
 
 ### Complete Example
 
@@ -562,7 +567,7 @@ allow_aur = false
 ```yaml
 # .github/workflows/ci.yml
 - name: Install OMG
-  run: curl -fsSL https://raw.githubusercontent.com/PyRo1121/omg/main/install.sh | bash
+  run: curl -fsSL https://omg.latham.cloud/install.sh | bash
 
 - name: Lock environment
   run: omg env check  # Verify omg.lock matches

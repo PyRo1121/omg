@@ -1153,13 +1153,11 @@ pub async fn fix_vulnerabilities(
             }
         }
 
-        // Perform upgrades. On backends that cannot apply the fix, fail
-        // loudly instead of printing success (fail-closed backend dispatch).
         #[cfg(all(feature = "arch", not(test)))]
         {
             let pacman = crate::package_managers::ArchPackageManager::new();
-            use crate::package_managers::PackageManager;
-            pacman.install(&to_upgrade).await?;
+            let history = crate::core::history::HistoryManager::new()?;
+            apply_security_updates(&pacman, &history, &to_upgrade).await?;
         }
         #[cfg(any(not(feature = "arch"), test))]
         fix_requires_arch()?;
@@ -1180,6 +1178,36 @@ pub async fn fix_vulnerabilities(
     }
 
     Ok(())
+}
+
+#[cfg(any(feature = "arch", test))]
+async fn apply_security_updates(
+    backend: &dyn crate::package_managers::PackageManager,
+    history: &crate::core::history::HistoryManager,
+    packages: &[String],
+) -> Result<()> {
+    use crate::core::history::{PackageChange, TransactionType};
+
+    let updates = backend.list_updates().await?;
+    let changes = packages
+        .iter()
+        .map(|package| {
+            let update = updates
+                .iter()
+                .find(|update| update.name == *package)
+                .with_context(|| {
+                    format!("{package} no longer has an available update; rescan before fixing")
+                })?;
+            Ok(PackageChange {
+                name: update.name.clone(),
+                old_version: Some(update.old_version.clone()),
+                new_version: Some(update.new_version.clone()),
+                source: update.repo.clone(),
+            })
+        })
+        .collect::<Result<Vec<_>>>()?;
+    let result = backend.install(packages).await;
+    history.finish_operation(TransactionType::Update, changes, result)
 }
 
 pub(crate) fn validate_compliance_export_inputs(
@@ -1439,6 +1467,87 @@ pub fn check_eol(_ctx: &CliContext) -> Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[tokio::test]
+    #[serial_test::serial(history_ownership)]
+    async fn security_updates_reject_missing_version_metadata_before_install() -> Result<()> {
+        use crate::package_managers::PackageManager;
+
+        let directory = tempfile::tempdir()?;
+        let history =
+            crate::core::history::HistoryManager::new_in(directory.path().join("history.json"))?;
+        let backend = crate::core::testing::TestPackageManager::new();
+        backend.add_package("example", "2.0", "Example");
+
+        let error = apply_security_updates(&backend, &history, &["example".to_string()])
+            .await
+            .expect_err("do not mutate without rollback metadata");
+
+        assert!(error.to_string().contains("rescan before fixing"));
+        assert!(!backend.is_installed("example").await?);
+        assert!(history.load()?.is_empty());
+        Ok(())
+    }
+
+    #[tokio::test]
+    #[serial_test::serial(history_ownership)]
+    async fn security_updates_propagate_history_failure() -> Result<()> {
+        use crate::package_managers::{PackageManager, types::UpdateInfo};
+
+        let directory = tempfile::tempdir()?;
+        let path = directory.path().join("history.json");
+        std::fs::create_dir(&path)?;
+        let history = crate::core::history::HistoryManager::new_in(path)?;
+        let backend = crate::core::testing::TestPackageManager::new();
+        backend.add_package("example", "2.0", "Example");
+        backend.set_updates(vec![UpdateInfo {
+            name: "example".to_string(),
+            old_version: "1.0".to_string(),
+            new_version: "2.0".to_string(),
+            repo: "core".to_string(),
+        }]);
+
+        let error = apply_security_updates(&backend, &history, &["example".to_string()])
+            .await
+            .expect_err("history failure must not report complete success");
+
+        assert!(backend.is_installed("example").await?);
+        assert!(error.to_string().contains("Package operation succeeded"));
+        Ok(())
+    }
+
+    #[tokio::test]
+    #[serial_test::serial(history_ownership)]
+    async fn security_updates_record_one_update_with_rollback_versions() -> Result<()> {
+        use crate::core::history::{HistoryManager, TransactionType};
+        use crate::core::testing::TestPackageManager;
+        use crate::package_managers::types::UpdateInfo;
+
+        let directory = tempfile::tempdir()?;
+        let history = HistoryManager::new_in(directory.path().join("history.json"))?;
+        let backend = TestPackageManager::new();
+        backend.add_package("example", "2.0", "Example");
+        backend.set_updates(vec![UpdateInfo {
+            name: "example".to_string(),
+            old_version: "1.0".to_string(),
+            new_version: "2.0".to_string(),
+            repo: "core".to_string(),
+        }]);
+
+        apply_security_updates(&backend, &history, &["example".to_string()]).await?;
+
+        let transactions = history.load()?;
+        assert_eq!(transactions.len(), 1);
+        assert!(transactions[0].success);
+        assert_eq!(transactions[0].transaction_type, TransactionType::Update);
+        assert_eq!(transactions[0].changes.len(), 1);
+        let change = &transactions[0].changes[0];
+        assert_eq!(change.name, "example");
+        assert_eq!(change.old_version.as_deref(), Some("1.0"));
+        assert_eq!(change.new_version.as_deref(), Some("2.0"));
+        assert_eq!(change.source, "core");
+        Ok(())
+    }
 
     #[cfg(unix)]
     #[test]

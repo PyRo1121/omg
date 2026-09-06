@@ -42,6 +42,7 @@ pub fn set(key: &str, value: &str) -> Result<()> {
     validate_key(key)?;
     validate_value(value)?;
 
+    let _write_lock = Settings::write_lock()?;
     let mut settings = Settings::load().context("Failed to load OMG settings")?;
 
     match key {
@@ -298,17 +299,16 @@ pub fn reset(yes: bool) -> Result<()> {
         }
     }
 
-    // Create backup
+    let _write_lock = Settings::write_lock()?;
     let backup_path = format!("{config_file}.backup");
     std::fs::copy(&config_file, &backup_path)?;
     println!("  {} Created backup at {backup_path}", style::dim("•"));
 
-    // Remove the config file
-    std::fs::remove_file(&config_file)?;
-
-    // Create default config
-    let default_settings = Settings::default();
-    default_settings.save()?;
+    crate::core::safe_ops::atomic_write_file_sync(
+        &config_file,
+        toml::to_string_pretty(&Settings::default())?,
+    )
+    .context("Failed to reset configuration")?;
 
     println!("{} Configuration reset to defaults", style::success("✓"));
     Ok(())

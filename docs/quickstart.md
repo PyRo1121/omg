@@ -15,7 +15,7 @@ Get up and running with OMG in under 5 minutes.
 ### One-Line Install (Recommended)
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/PyRo1121/omg/main/install.sh | bash
+curl -fsSL https://omg.latham.cloud/install.sh | bash
 ```
 
 **Works on all platforms**: Arch Linux, Debian, Ubuntu, Fedora, macOS (ARM64), Windows (WSL).
@@ -35,7 +35,7 @@ yay -S omg              # Build from source
 #### macOS
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/PyRo1121/omg/main/install.sh | bash
+curl -fsSL https://omg.latham.cloud/install.sh | bash
 ```
 
 Homebrew packaging is not available yet.
@@ -44,7 +44,7 @@ Homebrew packaging is not available yet.
 
 ```bash
 # Coming soon - use one-line installer for now
-curl -fsSL https://raw.githubusercontent.com/PyRo1121/omg/main/install.sh | bash
+curl -fsSL https://omg.latham.cloud/install.sh | bash
 ```
 
 #### Windows Subsystem for Linux
@@ -52,7 +52,7 @@ curl -fsSL https://raw.githubusercontent.com/PyRo1121/omg/main/install.sh | bash
 Run inside your WSL distribution:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/PyRo1121/omg/main/install.sh | bash
+curl -fsSL https://omg.latham.cloud/install.sh | bash
 ```
 
 Native Windows is not supported.

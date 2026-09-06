@@ -358,7 +358,34 @@ impl Settings {
         Ok(())
     }
 
-    /// Save settings to config file
+    /// Hold this lease across the complete read-modify-save operation.
+    pub(crate) fn write_lock() -> Result<std::fs::File> {
+        let path = Self::config_path()?.with_extension("lock");
+        if let Some(parent) = path.parent() {
+            std::fs::create_dir_all(parent).context("Failed to create config directory")?;
+        }
+        let mut options = std::fs::OpenOptions::new();
+        options.create(true).read(true).write(true).truncate(false);
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::OpenOptionsExt as _;
+            options.mode(0o600).custom_flags(nix::libc::O_NOFOLLOW);
+        }
+        let lock = options
+            .open(path)
+            .context("Failed to open configuration lock")?;
+        match lock.try_lock() {
+            Ok(()) => Ok(lock),
+            Err(std::fs::TryLockError::WouldBlock) => {
+                anyhow::bail!("Another configuration mutation is running; retry when it finishes")
+            }
+            Err(std::fs::TryLockError::Error(error)) => {
+                Err(error).context("Failed to acquire configuration lock")
+            }
+        }
+    }
+
+    /// Save a complete settings value, replacing all managed values rather than patching a field.
     pub fn save(&self) -> Result<()> {
         let config_path = Self::config_path()?;
 
@@ -503,6 +530,42 @@ mod tests {
     #[test]
     fn telemetry_requires_explicit_opt_in() {
         assert!(!Settings::default().telemetry_enabled);
+    }
+
+    #[test]
+    fn example_security_defaults_match_runtime_defaults() -> Result<()> {
+        let example = include_str!("../../examples/config.toml")
+            .lines()
+            .map(|line| {
+                let candidate = line.strip_prefix('#').unwrap_or(line);
+                match candidate.split_once(" = ") {
+                    Some((
+                        "telemetry_enabled"
+                        | "build_method"
+                        | "review_pkgbuild"
+                        | "secure_makepkg"
+                        | "allow_unsafe_builds",
+                        _,
+                    )) => candidate,
+                    _ => line,
+                }
+            })
+            .collect::<Vec<_>>()
+            .join("\n");
+        let example: Settings = toml::from_str(&example)?;
+        let defaults = Settings::default();
+        assert_eq!(example.telemetry_enabled, defaults.telemetry_enabled);
+        assert_eq!(
+            std::mem::discriminant(&example.aur.build_method),
+            std::mem::discriminant(&defaults.aur.build_method)
+        );
+        assert_eq!(example.aur.review_pkgbuild, defaults.aur.review_pkgbuild);
+        assert_eq!(example.aur.secure_makepkg, defaults.aur.secure_makepkg);
+        assert_eq!(
+            example.aur.allow_unsafe_builds,
+            defaults.aur.allow_unsafe_builds
+        );
+        Ok(())
     }
 
     /// Saving must preserve user comments and unknown keys, applying only

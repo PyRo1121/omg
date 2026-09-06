@@ -147,7 +147,7 @@ Full-screen TUI showing system status, packages, runtimes, security alerts, and 
 ### Install OMG (30 seconds)
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/PyRo1121/omg/main/install.sh | bash
+curl -fsSL https://omg.latham.cloud/install.sh | bash
 ```
 
 ### Set Up Your Shell (10 seconds)
