@@ -263,7 +263,7 @@ jobs:
       - uses: actions/checkout@v4
       
       - name: Install OMG
-        run: curl -fsSL https://raw.githubusercontent.com/PyRo1121/omg/main/install.sh | bash
+        run: curl -fsSL https://omg.latham.cloud/install.sh | bash
       
       - name: Run in Container
         run: omg container run node:20 -- npm test

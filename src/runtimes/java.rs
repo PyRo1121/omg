@@ -177,7 +177,7 @@ impl JavaManager {
 
     /// Remove an installed version. Refuses the active version.
     pub fn uninstall(&self, version: &str) -> Result<()> {
-        let version = normalize_version(version);
+        let version = java_feature_number(version)?;
         super::common::uninstall_version(&self.versions_dir, &version)
     }
 }
@@ -243,6 +243,23 @@ mod tests {
             fs::read_link(temp.path().join("current")).expect("current link"),
             version_dir
         );
+    }
+
+    #[test]
+    fn java_uninstall_uses_the_same_feature_number_as_install() -> Result<()> {
+        let directory = tempfile::tempdir()?;
+        let version_dir = directory.path().join("21");
+        fs::create_dir(&version_dir)?;
+        let manager = JavaManager {
+            versions_dir: directory.path().to_path_buf(),
+            client: download_client(),
+        };
+
+        assert!(manager.uninstall("21.0.1").is_err());
+        assert!(version_dir.exists());
+        manager.uninstall("v21.0")?;
+        assert!(!version_dir.exists());
+        Ok(())
     }
 
     #[test]

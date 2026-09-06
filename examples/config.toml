@@ -8,38 +8,12 @@
 # GENERAL SETTINGS
 # ============================================================================
 
-# Enable shims for runtime version switching (default: false)
-# - false: Uses PATH modification (faster, recommended)
-# - true: Uses shim binaries (slower, but compatible with more shells)
-#shims_enabled = false
+# Enable telemetry (default: false; opt-in)
+# Runtime opt-out: OMG_DISABLE_TELEMETRY=1 or OMG_TELEMETRY=0
+# OMG_NO_TELEMETRY=1 applies only to installer consent.
+#telemetry_enabled = false
 
-# OMG data directory (default: ~/.local/share/omg)
-# Stores: installed runtimes, package cache, databases
-#data_dir = "/home/user/.local/share/omg"
-
-# Daemon socket path (default: XDG_RUNTIME_DIR or /tmp)
-# Used for CLI-to-daemon communication
-#socket_path = "/tmp/omgd.sock"
-
-# Default shell for hooks (default: "zsh")
-# Options: "bash", "zsh", "fish", "powershell"
-#default_shell = "zsh"
-
-# Auto-update runtime versions on install (default: false)
-# When true, automatically updates to latest patch version
-#auto_update = false
-
-# Enable telemetry (default: true)
-# Helps improve OMG by sending anonymous usage data
-# Set to false to disable (can also use OMG_NO_TELEMETRY=1 env var)
-#telemetry_enabled = true
-
-# Runtime resolution backend (default: "native-then-mise")
-# Options:
-# - "native": Use OMG's built-in runtime management only
-# - "mise": Use mise (bundled) for all runtimes
-# - "native-then-mise": Try OMG native first, fall back to mise
-#runtime_backend = "native-then-mise"
+# Data and socket paths are resolved from the environment, not this file.
 
 # ============================================================================
 # AUR BUILD SETTINGS (Arch Linux only)
@@ -47,28 +21,28 @@
 
 [aur]
 
-# Build method for AUR packages (default: "native")
+# Build method for AUR packages (default: "bubblewrap")
 # Options:
 # - "bubblewrap": Sandboxed builds using bubblewrap (most secure)
 # - "chroot": Builds in a clean chroot (secure, slower)
 # - "native": Direct builds (fast, less secure)
-#build_method = "native"
+#build_method = "bubblewrap"
 
 # Maximum concurrent AUR builds (default: number of CPU cores)
 # Adjust based on available RAM (each build can use 1-2GB)
 #build_concurrency = 8
 
-# Require interactive PKGBUILD review before building (default: false)
+# Require interactive PKGBUILD review before building (default: true)
 # When true, prompts to review PKGBUILD content before build
-#review_pkgbuild = false
+#review_pkgbuild = true
 
 # Use stricter makepkg flags (default: true)
 # Enables: --cleanbuild, --verifysource
 #secure_makepkg = true
 
-# Allow native builds without sandboxing (default: true)
+# Allow native builds without sandboxing (default: false)
 # Set to false to enforce bubblewrap/chroot only
-#allow_unsafe_builds = true
+#allow_unsafe_builds = false
 
 # Use AUR metadata archive for bulk update checks (default: true)
 # Speeds up checking for updates across many packages
@@ -113,20 +87,16 @@
 # EXAMPLE CONFIGURATIONS
 # ============================================================================
 
-# --- Performance-Optimized Setup ---
-# Uncomment for maximum build speed:
+# --- Build Cache Tuning ---
+# Retains the default sandbox and review settings:
 #
 # [aur]
-# build_method = "native"
 # build_concurrency = 16
 # cache_builds = true
 # enable_ccache = true
-# enable_sccache = true
-# secure_makepkg = false
-# allow_unsafe_builds = true
 
 # --- Security-Hardened Setup ---
-# Uncomment for maximum security:
+# Example sandboxed settings with reduced concurrency:
 #
 # [aur]
 # build_method = "bubblewrap"
@@ -139,8 +109,6 @@
 # --- Team/CI Setup ---
 # Uncomment for reproducible team environments:
 #
-# data_dir = "/opt/omg"
-# auto_update = false
 # telemetry_enabled = false
 # [aur]
 # build_method = "chroot"

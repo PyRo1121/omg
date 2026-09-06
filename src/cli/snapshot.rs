@@ -65,14 +65,35 @@ fn read_snapshot_file(path: &PathBuf) -> Result<String> {
     Ok(fs::read_to_string(path)?)
 }
 
+fn load_index_for_update() -> Result<(fs::File, SnapshotIndex)> {
+    let directory = snapshots_dir();
+    fs::create_dir_all(&directory).context("Failed to create snapshots directory")?;
+    let path = directory.join(".index.lock");
+    let mut options = fs::OpenOptions::new();
+    options.create(true).read(true).write(true).truncate(false);
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::OpenOptionsExt as _;
+        options.mode(0o600).custom_flags(nix::libc::O_NOFOLLOW);
+    }
+    let lock = options
+        .open(&path)
+        .context("Failed to open snapshot index lock")?;
+    match lock.try_lock() {
+        Ok(()) => {}
+        Err(fs::TryLockError::WouldBlock) => {
+            anyhow::bail!("Another snapshot mutation is running; retry when it finishes")
+        }
+        Err(fs::TryLockError::Error(error)) => {
+            return Err(error).context("Failed to acquire snapshot index lock");
+        }
+    }
+    let index = load_index()?;
+    Ok((lock, index))
+}
+
 fn save_index(index: &SnapshotIndex) -> Result<()> {
     let path = index_path();
-    if let Some(parent) = path.parent() {
-        fs::create_dir_all(parent).with_context(|| {
-            format!("Failed to create snapshot directory: {}", parent.display())
-        })?;
-    }
-    // Atomic replace so a crash cannot leave a truncated index behind.
     crate::core::safe_ops::atomic_write_file_sync(&path, serde_json::to_string_pretty(index)?)
         .with_context(|| format!("Failed to write snapshot index: {}", path.display()))
 }
@@ -89,6 +110,7 @@ pub async fn create(message: Option<String>) -> Result<()> {
     println!("{} Creating snapshot...\n", style::runtime("OMG"));
 
     let state = EnvironmentState::capture().await?;
+    let (_index_lock, mut index) = load_index_for_update()?;
 
     // UUID-backed IDs make collisions practically impossible; still refuse to
     // overwrite an existing snapshot instead of silently replacing it.
@@ -110,7 +132,6 @@ pub async fn create(message: Option<String>) -> Result<()> {
     // `persist` rename: link fails with AlreadyExists when another `create`
     // wins the race, so the non-overwrite guarantee holds atomically.
     // The temp file is fully synced before linking, so no torn file lands.
-    fs::create_dir_all(snapshots_dir()).context("Failed to create snapshots directory")?;
     {
         use std::io::Write as _;
         let dir = snapshots_dir();
@@ -134,8 +155,6 @@ pub async fn create(message: Option<String>) -> Result<()> {
         }
     }
 
-    // Update index
-    let mut index = load_index()?;
     index.snapshots.push(SnapshotMeta {
         id: id.clone(),
         message: message.clone(),
@@ -391,17 +410,14 @@ pub fn delete(id: &str) -> Result<()> {
         anyhow::bail!("Invalid snapshot ID: {id}");
     }
 
+    let (_index_lock, mut index) = load_index_for_update()?;
     let snapshot_path = snapshots_dir().join(format!("{id}.json"));
 
     if !snapshot_path.exists() {
         anyhow::bail!("Snapshot '{id}' not found");
     }
 
-    // Remove file
     fs::remove_file(&snapshot_path)?;
-
-    // Update index
-    let mut index = load_index()?;
     index.snapshots.retain(|s| s.id != id);
     save_index(&index)?;
 

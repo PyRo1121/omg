@@ -324,6 +324,7 @@ fn apply_telemetry_config(stdout: &mut io::Stdout, enabled: bool) -> Result<()> 
         Print(" Configuring telemetry...")
     )?;
 
+    let _write_lock = Settings::write_lock()?;
     let mut settings = Settings::load().context("Failed to load OMG settings")?;
     settings.telemetry_enabled = enabled;
 
@@ -645,6 +646,7 @@ fn apply_build_config(stdout: &mut io::Stdout, config: &BuildRecommendation) -> 
         Print(" Applying build settings...")
     )?;
 
+    let _write_lock = Settings::write_lock()?;
     let mut settings = Settings::load().context("Failed to load OMG settings")?;
 
     if !config.makeflags.is_empty() {

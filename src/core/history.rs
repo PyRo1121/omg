@@ -1,21 +1,16 @@
 //! Package transaction history
 //!
-//! Records package install/remove/update/sync outcomes to a single JSON
-//! file under the data directory. Writes are atomic (temp file + rename)
-//! and serialized across processes through a sibling `.lock` file so
-//! concurrent omg invocations cannot drop each other's transactions.
+//! Records package outcomes in a bounded live JSON file and a JSONL archive.
+//! Live-file replacements are atomic. A sibling lock coordinates reads and
+//! writes across processes.
 
 use anyhow::{Context, Result};
 use jiff::Timestamp;
 use serde::{Deserialize, Serialize};
 use std::fs;
 use std::path::{Path, PathBuf};
-use std::sync::atomic::{AtomicBool, Ordering};
 
-/// Once-per-process gate shared by `warn_corrupt_history_once` and its tests.
-static CORRUPT_HISTORY_WARNED: AtomicBool = AtomicBool::new(false);
-
-/// Maximum number of transactions to retain in history
+/// Maximum number of transactions to retain in the live file
 const MAX_HISTORY_TRANSACTIONS: usize = 1000;
 
 /// Kind of package operation recorded in the history.
@@ -39,7 +34,7 @@ impl std::fmt::Display for TransactionType {
 }
 
 /// One package affected by a transaction.
-#[derive(Debug, Serialize, Deserialize, Clone)]
+#[derive(Debug, Serialize, Deserialize, Clone, PartialEq, Eq)]
 pub struct PackageChange {
     pub name: String,
     pub old_version: Option<String>,
@@ -58,7 +53,7 @@ impl PackageChange {
 }
 
 /// A completed transaction: what changed, when, and whether it succeeded.
-#[derive(Debug, Serialize, Deserialize, Clone)]
+#[derive(Debug, Serialize, Deserialize, Clone, PartialEq, Eq)]
 pub struct Transaction {
     pub id: String,
     pub timestamp: Timestamp,
@@ -71,8 +66,8 @@ pub struct Transaction {
 ///
 /// The log file is capped at [`MAX_HISTORY_TRANSACTIONS`] entries; retired
 /// entries move to a sibling `.archive.jsonl` file instead of being
-/// dropped. Every write atomically replaces the file via a temporary file
-/// and rename.
+/// dropped. Live-file writes use a temporary file and rename; archive
+/// appends run under the same lock.
 pub struct HistoryManager {
     log_path: PathBuf,
 }
@@ -134,16 +129,45 @@ impl HistoryManager {
         Ok(referenced.into_iter().collect())
     }
 
-    /// Loads every recorded transaction. A missing file is an empty history;
-    /// a malformed file is quarantined (renamed, never deleted) and replaced
-    /// with a fresh empty history so one corrupt file cannot wedge every
-    /// future package operation behind a persistent persistence failure.
-    ///
-    /// Quarantine mutates the history path, so this takes the same
-    /// cross-process lock as [`Self::add_transaction`]. Without that lock a
-    /// concurrent `load` can rename a valid file another process just wrote.
+    /// Loads archived and live transactions without modifying either file.
+    /// Identical records from interrupted retirement are returned once;
+    /// conflicting IDs or malformed data fail rather than choosing a version.
     pub fn load(&self) -> Result<Vec<Transaction>> {
-        self.with_history_lock(|| self.load_locked())
+        self.with_history_lock(|| {
+            let live = self.load_locked()?;
+            let archive_path = self.archive_path();
+            let mut options = fs::OpenOptions::new();
+            options.read(true);
+            #[cfg(unix)]
+            {
+                use std::os::unix::fs::OpenOptionsExt as _;
+                options.custom_flags(nix::libc::O_NOFOLLOW | nix::libc::O_NONBLOCK);
+            }
+            let archive = match options.open(&archive_path) {
+                Ok(file) => {
+                    anyhow::ensure!(file.metadata()?.is_file(), "History archive must be a regular file: {}", archive_path.display());
+                    Some(file)
+                }
+                Err(error) if error.kind() == std::io::ErrorKind::NotFound => None,
+                Err(error) => return Err(error).with_context(|| format!("Failed to read history archive: {}", archive_path.display())),
+            };
+            let archived = archive.into_iter().flat_map(|file| {
+                serde_json::Deserializer::from_reader(std::io::BufReader::new(file))
+                    .into_iter::<Transaction>()
+            });
+            let mut history: Vec<Transaction> = Vec::new();
+            let mut positions = std::collections::HashMap::new();
+            for record in archived.chain(live.into_iter().map(Ok)) {
+                let transaction = record.with_context(|| format!("Failed to read history archive at {}; original file retained for recovery", archive_path.display()))?;
+                if let Some(&position) = positions.get(&transaction.id) {
+                    anyhow::ensure!(history[position] == transaction, "Conflicting history records for transaction {}; original files retained for recovery", transaction.id);
+                    continue;
+                }
+                positions.insert(transaction.id.clone(), history.len());
+                history.push(transaction);
+            }
+            Ok(history)
+        })
     }
 
     fn load_locked(&self) -> Result<Vec<Transaction>> {
@@ -151,27 +175,25 @@ impl HistoryManager {
         let is_symlink = std::fs::symlink_metadata(&self.log_path)
             .map(|meta| meta.file_type().is_symlink())
             .unwrap_or(false);
-        if !self.log_path.exists() {
-            return Ok(Vec::new());
-        }
         if is_symlink {
             anyhow::bail!(
                 "Refusing to read history that is a symlink: {}",
                 self.log_path.display()
             );
         }
+        if !self.log_path.exists() {
+            return Ok(Vec::new());
+        }
 
         let content = fs::read_to_string(&self.log_path)
             .with_context(|| format!("Failed to read history file: {}", self.log_path.display()))?;
 
-        match serde_json::from_str(&content) {
-            Ok(history) => Ok(history),
-            Err(error) => {
-                let quarantined = self.quarantine_corrupt_file(&error)?;
-                warn_corrupt_history_once(&self.log_path, &quarantined, &error);
-                Ok(Vec::new())
-            }
-        }
+        serde_json::from_str(&content).with_context(|| {
+            format!(
+                "Malformed package history at {}; original file retained for recovery",
+                self.log_path.display()
+            )
+        })
     }
 
     /// Renames a malformed history file to `<name>.corrupt-<timestamp>` so it
@@ -265,7 +287,21 @@ impl HistoryManager {
         changes: Vec<PackageChange>,
         success: bool,
     ) -> Result<()> {
-        let mut history = self.load_locked()?;
+        let mut history = match self.load_locked() {
+            Ok(history) => history,
+            Err(error) => {
+                let Some(parse_error) = error.downcast_ref::<serde_json::Error>() else {
+                    return Err(error);
+                };
+                let quarantined = self.quarantine_corrupt_file(parse_error)?;
+                tracing::warn!(
+                    original = %self.log_path.display(),
+                    quarantined = %quarantined.display(),
+                    "Malformed history preserved before starting a new transaction log: {parse_error}"
+                );
+                Vec::new()
+            }
+        };
         history.push(Transaction {
             id: uuid::Uuid::new_v4().to_string(),
             timestamp: Timestamp::now(),
@@ -299,26 +335,72 @@ impl HistoryManager {
             content.push(b'\n');
         }
         let mut options = fs::OpenOptions::new();
-        options.create(true).append(true);
+        options.create(true).read(true).append(true);
         #[cfg(unix)]
         {
             use std::os::unix::fs::OpenOptionsExt as _;
-            options.mode(0o600);
+            options
+                .mode(0o600)
+                .custom_flags(nix::libc::O_NOFOLLOW | nix::libc::O_NONBLOCK);
         }
-        use std::io::Write as _;
-        options
-            .open(&archive_path)
-            .with_context(|| format!("Failed to open history archive: {}", archive_path.display()))?
-            .write_all(&content)
-            .with_context(|| {
+        use std::io::{Read as _, Seek as _, Write as _};
+        let mut archive = options.open(&archive_path).with_context(|| {
+            format!("Failed to open history archive: {}", archive_path.display())
+        })?;
+        let metadata = archive.metadata()?;
+        anyhow::ensure!(
+            metadata.is_file(),
+            "History archive must be a regular file: {}",
+            archive_path.display()
+        );
+        for transaction in serde_json::Deserializer::from_reader(std::io::BufReader::new(&archive))
+            .into_iter::<Transaction>()
+        {
+            transaction.with_context(|| {
                 format!(
-                    "Failed to append history archive: {}",
+                    "Failed to validate history archive at {}; original file retained for recovery",
                     archive_path.display()
                 )
             })?;
+        }
+        if metadata.len() > 0 {
+            let mut last_byte = [0];
+            archive
+                .seek(std::io::SeekFrom::End(-1))
+                .and_then(|_| archive.read_exact(&mut last_byte))
+                .with_context(|| {
+                    format!(
+                        "Failed to inspect history archive boundary: {}",
+                        archive_path.display()
+                    )
+                })?;
+            if last_byte != [b'\n'] {
+                content.insert(0, b'\n');
+            }
+        }
+        if let Err(error) = archive.write_all(&content) {
+            let error = anyhow::Error::new(error).context(format!(
+                "Failed to append history archive: {}",
+                archive_path.display()
+            ));
+            if let Err(recovery_error) = archive
+                .set_len(metadata.len())
+                .and_then(|()| archive.sync_all())
+            {
+                return Err(error.context(format!(
+                    "Failed to restore history archive at {} after append failure: {recovery_error}",
+                    archive_path.display()
+                )));
+            }
+            return Err(error);
+        }
         if let Err(error) = crate::core::safe_ops::restore_original_user_ownership(&archive_path) {
             tracing::warn!("Failed to restore history archive ownership: {error:#}");
         }
+        archive
+            .sync_all()
+            .context("Failed to sync retired history before replacing the live log")?;
+        crate::core::safe_ops::sync_parent_directory_sync(&archive_path)?;
         Ok(())
     }
 
@@ -362,41 +444,172 @@ impl HistoryManager {
     }
 }
 
-/// Warns the user exactly once per process that their history file was
-/// malformed and where the quarantined copy now lives. Mirrors the
-/// once-per-process warning gate in `config::settings`. Returns whether the
-/// warning was emitted (i.e. this was the first corrupt load this process).
-fn warn_corrupt_history_once(
-    original: &Path,
-    quarantined: &Path,
-    parse_error: &serde_json::Error,
-) -> bool {
-    if CORRUPT_HISTORY_WARNED.swap(true, Ordering::Relaxed) {
-        return false;
-    }
-    tracing::warn!(
-        original = %original.display(),
-        quarantined = %quarantined.display(),
-        "Package history file was malformed (parse error: {parse_error}); it has been quarantined to {} and a fresh history has been started",
-        quarantined.display()
-    );
-    true
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
 
-    /// Resets the process-wide corrupt-history warning gate so warning
-    /// assertions are deterministic (paired with `#[serial(history_ownership)]`).
-    fn reset_corrupt_history_warning_for_tests() {
-        CORRUPT_HISTORY_WARNED.store(false, Ordering::Relaxed);
+    #[test]
+    #[cfg(unix)]
+    fn history_reads_reject_dangling_live_symlinks() -> Result<()> {
+        let directory = tempfile::tempdir()?;
+        let manager = HistoryManager::new_in(directory.path().join("history.json"))?;
+        let target = directory.path().join("missing-history.json");
+        std::os::unix::fs::symlink(&target, &manager.log_path)?;
+
+        let error = manager
+            .load()
+            .expect_err("a live symlink must not look like missing history");
+        assert!(error.to_string().contains("symlink"));
+        assert_eq!(fs::read_link(&manager.log_path)?, target);
+        assert!(!target.exists());
+        Ok(())
+    }
+
+    #[test]
+    #[cfg(target_os = "linux")]
+    fn failed_archive_append_restores_its_original_bytes() -> Result<()> {
+        const CHILD: &str = "OMG_TEST_PARTIAL_ARCHIVE_CHILD";
+        if std::env::var_os(CHILD).is_none() {
+            let output = std::process::Command::new("bash")
+                .args([
+                    "--noprofile",
+                    "--norc",
+                    "-c",
+                    "trap '' XFSZ; ulimit -f 1 || exit; exec \"$@\"",
+                    "archive-size-limit",
+                ])
+                .arg(std::env::current_exe()?)
+                .args([
+                    "--exact",
+                    "core::history::tests::failed_archive_append_restores_its_original_bytes",
+                    "--nocapture",
+                ])
+                .env_remove("BASH_ENV")
+                .env(CHILD, "1")
+                .output()?;
+            print!("{}", String::from_utf8_lossy(&output.stdout));
+            assert!(
+                output.status.success(),
+                "limited archive child failed:\n{}",
+                String::from_utf8_lossy(&output.stderr)
+            );
+            return Ok(());
+        }
+
+        let transaction = Transaction {
+            id: uuid::Uuid::new_v4().to_string(),
+            timestamp: Timestamp::now(),
+            transaction_type: TransactionType::Sync,
+            changes: Vec::new(),
+            success: true,
+        };
+        let encoded = serde_json::to_vec(&transaction)?;
+        let mut terminated = encoded.clone();
+        terminated.push(b'\n');
+        for original in [terminated.as_slice(), encoded.as_slice(), &[]] {
+            let directory = tempfile::tempdir()?;
+            let manager = HistoryManager::new_in(directory.path().join("history.json"))?;
+            manager.save(std::slice::from_ref(&transaction))?;
+            let live = fs::read(&manager.log_path)?;
+            fs::write(manager.archive_path(), original)?;
+            let error = manager
+                .with_history_lock(|| manager.archive_drained(&vec![transaction.clone(); 16]))
+                .expect_err("the file-size limit must interrupt the append");
+            assert_eq!(
+                error
+                    .downcast_ref::<std::io::Error>()
+                    .and_then(std::io::Error::raw_os_error),
+                Some(nix::libc::EFBIG)
+            );
+            let after = fs::read(manager.archive_path())?;
+            println!(
+                "partial append original={} after={}",
+                original.len(),
+                after.len()
+            );
+            assert!(after.starts_with(original));
+            assert_eq!(fs::read(&manager.log_path)?, live);
+            assert!(
+                error
+                    .to_string()
+                    .starts_with("Failed to append history archive:"),
+                "{error:#}"
+            );
+            assert_eq!(
+                after, original,
+                "failed append must restore the original archive"
+            );
+            assert_eq!(manager.load()?, vec![transaction.clone()]);
+            manager.with_history_lock(|| {
+                manager.archive_drained(std::slice::from_ref(&transaction))
+            })?;
+            assert_eq!(manager.load()?, vec![transaction.clone()]);
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn archive_append_separates_an_unterminated_final_record() -> Result<()> {
+        let directory = tempfile::tempdir()?;
+        let manager = HistoryManager::new_in(directory.path().join("history.json"))?;
+        let transaction = Transaction {
+            id: uuid::Uuid::new_v4().to_string(),
+            timestamp: Timestamp::now(),
+            transaction_type: TransactionType::Sync,
+            changes: Vec::new(),
+            success: true,
+        };
+        let original = serde_json::to_vec(&transaction)?;
+        fs::write(manager.archive_path(), &original)?;
+
+        manager.archive_drained(std::slice::from_ref(&transaction))?;
+        let archive = fs::read_to_string(manager.archive_path())?;
+        assert!(archive.as_bytes().starts_with(&original));
+        assert_eq!(
+            archive.lines().count(),
+            2,
+            "append must separate JSONL records"
+        );
+        for line in archive.lines() {
+            assert_eq!(serde_json::from_str::<Transaction>(line)?, transaction);
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn retirement_refuses_malformed_archive_without_changing_either_log() -> Result<()> {
+        let directory = tempfile::tempdir()?;
+        let manager = HistoryManager::new_in(directory.path().join("history.json"))?;
+        let history = (0..MAX_HISTORY_TRANSACTIONS)
+            .map(|_| Transaction {
+                id: uuid::Uuid::new_v4().to_string(),
+                timestamp: Timestamp::now(),
+                transaction_type: TransactionType::Sync,
+                changes: Vec::new(),
+                success: true,
+            })
+            .collect::<Vec<_>>();
+        manager.save(&history)?;
+        let original_live = fs::read(&manager.log_path)?;
+        let original_archive = b"{\"id\":\"incomplete";
+        fs::write(manager.archive_path(), original_archive)?;
+
+        let error = manager
+            .add_transaction(TransactionType::Sync, Vec::new(), true)
+            .expect_err("retirement must refuse a malformed archive");
+        assert!(
+            error
+                .to_string()
+                .contains("Failed to validate history archive")
+        );
+        assert_eq!(fs::read(&manager.log_path)?, original_live);
+        assert_eq!(fs::read(manager.archive_path())?, original_archive);
+        Ok(())
     }
 
     /// Retired transactions land in the sibling archive instead of
     /// vanishing: over-cap histories keep every entry across both files.
     #[test]
-    #[serial_test::serial(history_ownership)]
     fn retired_transactions_are_archived_not_dropped() -> Result<()> {
         let directory = tempfile::tempdir()?;
         let manager = HistoryManager::new_in(directory.path().join("history.json"))?;
@@ -412,8 +625,9 @@ mod tests {
                 true,
             )?;
         }
-        let live = manager.load()?;
+        let live: Vec<Transaction> = serde_json::from_slice(&fs::read(&manager.log_path)?)?;
         assert_eq!(live.len(), MAX_HISTORY_TRANSACTIONS);
+        assert_eq!(manager.load()?.len(), MAX_HISTORY_TRANSACTIONS + 5);
         let archive = std::fs::read_to_string(directory.path().join("history.json.archive.jsonl"))?;
         let archived: Vec<Transaction> = archive
             .lines()
@@ -421,6 +635,90 @@ mod tests {
             .collect::<serde_json::Result<_>>()?;
         assert_eq!(archived.len(), 5);
         assert_eq!(archived[0].changes[0].name, "pkg-0");
+        Ok(())
+    }
+
+    #[test]
+    fn archive_reads_deduplicate_identical_records_and_reject_conflicts() -> Result<()> {
+        let directory = tempfile::tempdir()?;
+        let manager = HistoryManager::new_in(directory.path().join("history.json"))?;
+        manager.add_transaction(
+            TransactionType::Update,
+            vec![PackageChange {
+                name: "archived-package".into(),
+                old_version: Some("1".into()),
+                new_version: Some("2".into()),
+                source: "core".into(),
+            }],
+            true,
+        )?;
+        let mut transaction = manager.load()?.remove(0);
+        let record = serde_json::to_string(&transaction)?;
+        fs::write(manager.archive_path(), format!("{record}\n{record}\n"))?;
+        assert_eq!(manager.load()?.len(), 1);
+        fs::remove_file(&manager.log_path)?;
+        assert_eq!(
+            manager.load()?.len(),
+            1,
+            "archive must remain readable without a live file"
+        );
+        assert_eq!(
+            manager.rollback_referenced_versions(1)?,
+            vec![("archived-package".into(), "1".into())]
+        );
+        transaction.success = false;
+        manager.save(std::slice::from_ref(&transaction))?;
+        assert!(
+            manager
+                .load()
+                .expect_err("conflicting ID")
+                .to_string()
+                .contains("Conflicting")
+        );
+        manager.save(&[])?;
+        let malformed = format!("{record}\n{{truncated");
+        fs::write(manager.archive_path(), &malformed)?;
+        assert!(manager.load().is_err());
+        assert_eq!(fs::read_to_string(manager.archive_path())?, malformed);
+        fs::remove_file(manager.archive_path())?;
+        #[cfg(unix)]
+        {
+            let target = directory.path().join("valid-archive");
+            fs::write(&target, &record)?;
+            std::os::unix::fs::symlink(&target, manager.archive_path())?;
+            assert!(manager.load().is_err(), "archive symlink must be refused");
+            assert!(
+                manager
+                    .archive_drained(std::slice::from_ref(&transaction))
+                    .is_err(),
+                "archive writes must refuse symlinks too"
+            );
+            assert_eq!(fs::read_to_string(&target)?, record);
+            fs::remove_file(manager.archive_path())?;
+        }
+        fs::create_dir(manager.archive_path())?;
+        assert!(manager.load().is_err(), "archive directory must be refused");
+        Ok(())
+    }
+
+    #[test]
+    fn history_reads_report_corruption_without_moving_the_file() -> Result<()> {
+        let directory = tempfile::tempdir()?;
+        let path = directory.path().join("history.json");
+        let original = b"[{\"id\":\"preserve-me\", not-valid-json]";
+        fs::write(&path, original)?;
+        let manager = HistoryManager::new_in(&path)?;
+
+        for _ in 0..2 {
+            let error = manager
+                .load()
+                .expect_err("corrupt history is not empty history");
+            assert!(error.downcast_ref::<serde_json::Error>().is_some());
+            assert_eq!(fs::read(&path)?, original);
+            assert!(!fs::read_dir(directory.path())?.any(|entry| {
+                entry.is_ok_and(|entry| entry.file_name().to_string_lossy().contains(".corrupt-"))
+            }));
+        }
         Ok(())
     }
 
@@ -505,41 +803,24 @@ mod tests {
 
     #[test]
     #[serial_test::serial(history_ownership)]
-    fn malformed_history_is_quarantined_and_history_starts_fresh() -> Result<()> {
+    fn history_io_errors_are_not_treated_as_corruption() -> Result<()> {
         let directory = tempfile::tempdir()?;
         let path = directory.path().join("history.json");
-        fs::write(&path, "not valid JSON")?;
+        fs::create_dir(&path)?;
         let manager = HistoryManager::new_in(&path)?;
 
-        let history = manager.load()?;
-
-        assert!(history.is_empty(), "a quarantined history starts fresh");
-        let corrupt_names: Vec<String> = fs::read_dir(directory.path())?
-            .filter_map(std::result::Result::ok)
-            .map(|entry| entry.file_name().to_string_lossy().into_owned())
-            .filter(|name| name.starts_with("history.json.corrupt-"))
-            .collect();
-        assert_eq!(corrupt_names.len(), 1, "exactly one quarantined copy");
-        assert_eq!(
-            fs::read_to_string(directory.path().join(&corrupt_names[0]))?,
-            "not valid JSON",
-            "quarantine must preserve the original bytes"
-        );
-        assert!(!path.exists(), "original path is free for a fresh history");
-
-        // The warning fires once per process and names the quarantined file.
-        // The once-flag is process-wide, so serialise against other tests
-        // that corrupt-load history and reset it for deterministic asserts.
-        reset_corrupt_history_warning_for_tests();
-        let error = serde_json::from_str::<Vec<Transaction>>("not valid JSON").unwrap_err();
-        assert!(
-            warn_corrupt_history_once(&path, Path::new(&corrupt_names[0]), &error),
-            "first call warns"
-        );
-        assert!(
-            !warn_corrupt_history_once(&path, Path::new(&corrupt_names[0]), &error),
-            "second call is deduplicated"
-        );
+        let read_error = manager
+            .load()
+            .expect_err("a directory is not a history file");
+        assert!(read_error.downcast_ref::<std::io::Error>().is_some());
+        let append_error = manager
+            .finish_operation(TransactionType::Install, Vec::new(), Ok(()))
+            .expect_err("I/O failure must not start fresh history");
+        assert!(append_error.downcast_ref::<std::io::Error>().is_some());
+        assert!(path.is_dir());
+        assert!(!fs::read_dir(directory.path())?.any(|entry| {
+            entry.is_ok_and(|entry| entry.file_name().to_string_lossy().contains(".corrupt-"))
+        }));
         Ok(())
     }
 
@@ -567,23 +848,25 @@ mod tests {
         let history = manager.load()?;
         assert_eq!(history.len(), 1);
         assert!(history[0].success);
-        let corrupt_exists = fs::read_dir(directory.path())?
-            .filter_map(std::result::Result::ok)
-            .any(|entry| {
+        let quarantined: Vec<_> = fs::read_dir(directory.path())?
+            .collect::<std::io::Result<Vec<_>>>()?
+            .into_iter()
+            .filter(|entry| {
                 entry
                     .file_name()
                     .to_string_lossy()
                     .starts_with("history.json.corrupt-")
-            });
-        assert!(
-            corrupt_exists,
-            "the malformed file is preserved, not deleted"
+            })
+            .collect();
+        assert_eq!(quarantined.len(), 1);
+        assert_eq!(
+            fs::read_to_string(quarantined[0].path())?,
+            "[not valid JSON"
         );
         Ok(())
     }
 
     #[test]
-    #[serial_test::serial(history_ownership)]
     fn concurrent_corrupt_loads_do_not_rename_a_fresh_history() -> Result<()> {
         use std::sync::{Arc, Barrier};
 
@@ -611,7 +894,11 @@ mod tests {
                         true,
                     )
                 } else {
-                    manager.load().map(|_| ())
+                    match manager.load() {
+                        Ok(history) => assert_eq!(history.len(), 1),
+                        Err(error) => assert!(error.downcast_ref::<serde_json::Error>().is_some()),
+                    }
+                    Ok(())
                 }
             }));
         }

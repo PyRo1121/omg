@@ -976,6 +976,36 @@ fn root_help_prioritizes_common_commands() {
 }
 
 #[test]
+fn redirected_status_has_no_terminal_escape_sequences() {
+    let result = run_omg(&["status"]);
+
+    result.assert_success();
+    assert!(
+        !result.stdout.contains('\u{1b}'),
+        "redirected status output contains terminal escapes: {:?}",
+        result.stdout
+    );
+}
+
+#[test]
+fn tui_commands_require_an_attended_terminal() {
+    for args in [&["dash"][..], &["team", "dashboard"][..]] {
+        let result = run_omg(args);
+
+        assert!(!result.success, "{args:?} unexpectedly succeeded");
+        assert!(
+            result.stderr.contains("requires an interactive terminal"),
+            "{args:?} produced an unclear error: {}",
+            result.stderr
+        );
+        assert!(
+            !result.combined_output().contains('\u{1b}'),
+            "{args:?} emitted terminal escapes without a terminal"
+        );
+    }
+}
+
+#[test]
 fn all_commands_help_exposes_advanced_commands() {
     let result = run_omg(&["--help", "--all-commands"]);
 
@@ -1333,6 +1363,24 @@ mod security_tests {
         let result = run_omg(&["account", "--help"]);
         result.assert_success();
         result.assert_stdout_contains("link");
+    }
+
+    #[test]
+    fn account_link_does_not_prompt_without_a_terminal() {
+        let result = run_omg_with_env(
+            &["account", "link", "invalid-token"],
+            &[
+                ("HTTP_PROXY", "http://127.0.0.1:9"),
+                ("HTTPS_PROXY", "http://127.0.0.1:9"),
+            ],
+        );
+
+        result.assert_failure();
+        assert!(
+            !result.stdout.contains("Your name") && !result.stdout.contains("Your email"),
+            "non-interactive account linking must not consume stdin:\n{}",
+            result.stdout
+        );
     }
 }
 

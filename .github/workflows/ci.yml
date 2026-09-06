@@ -16,6 +16,10 @@ on:
   push:
     branches: [main]
     paths:
+      - "build.rs"
+      - "install.sh"
+      - "benchmark.sh"
+      - "benchmark-hyperfine.sh"
       - "src/**"
       - "tests/**"
       - "Cargo.toml"
@@ -29,22 +33,10 @@ on:
       - ".config/**"
       - "deny.toml"
       - ".github/workflows/ci.yml"
+  # Always report the required check on PRs. The job-level change filter
+  # below skips platform builds for documentation/configuration-only changes.
   pull_request:
     branches: [main]
-    paths:
-      - "src/**"
-      - "tests/**"
-      - "Cargo.toml"
-      - "Cargo.lock"
-      - "Makefile"
-      - "benches/**"
-      - "fuzz/**"
-      - "scripts/**"
-      - "rust-toolchain.toml"
-      - ".cargo/**"
-      - ".config/**"
-      - "deny.toml"
-      - ".github/workflows/ci.yml"
   merge_group:
     types: [checks_requested]
   workflow_dispatch:
@@ -406,14 +398,22 @@ jobs:
           RUN pacman -Syu --noconfirm --needed bubblewrap && pacman -Scc --noconfirm
           DOCKERFILE
 
+      - name: Prepare sandbox seccomp profile
+        run: |
+          curl -fsS https://raw.githubusercontent.com/moby/profiles/61eaf32614c7c71b60bd8927d3e6a4ffc8ff1f31/seccomp/default.json -o seccomp-default.json
+          echo '536529b665dd0972c37bfb569f5d4ac8a53592e7b00752bc39ff063ca9864c74  seccomp-default.json' | sha256sum --check
+          jq '(.syscalls[] | select(.includes.caps == ["CAP_SYS_ADMIN"]) | .names) += ["pivot_root"]' \
+            seccomp-default.json > seccomp-sandbox.json
+
       - name: Verify descendant cleanup
         timeout-minutes: 2
         run: |
           chmod +x fixture/omg-lib-tests
           # Only this fixture gets namespace permissions, not compilation or
           # other tests. No checkout, credentials, or Docker socket are mounted.
-          # Keep Docker's default seccomp policy; SYS_ADMIN permits unshare.
+          # Bubblewrap also needs pivot_root, which the default profile denies.
           docker run --rm --cap-add SYS_ADMIN --security-opt apparmor=unconfined \
+            --security-opt "seccomp=$PWD/seccomp-sandbox.json" \
             --pids-limit 128 --memory 1g --cpus 2 \
             --mount "type=bind,source=$PWD/fixture,target=/fixture,readonly" \
             omg-sandbox-regression /bin/bash -euo pipefail -c '

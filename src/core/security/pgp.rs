@@ -397,6 +397,26 @@ mod tests {
         verifier
             .verify_memory(b"test data", &signature)
             .expect("valid trusted SHA-256 signature");
+        assert!(matches!(
+            verifier.verify_memory(b"altered data", &signature),
+            Err(PgpError::NoValidSignature)
+        ));
+
+        let mut data_file = NamedTempFile::new().unwrap();
+        data_file.write_all(b"test data").unwrap();
+        data_file.flush().unwrap();
+        let mut sig_file = NamedTempFile::new().unwrap();
+        sig_file.write_all(&signature).unwrap();
+        sig_file.flush().unwrap();
+
+        verifier
+            .verify_detached(data_file.path(), sig_file.path())
+            .expect("valid trusted SHA-256 detached signature");
+        std::fs::write(data_file.path(), b"altered data").unwrap();
+        assert!(matches!(
+            verifier.verify_detached(data_file.path(), sig_file.path()),
+            Err(PgpError::NoValidSignature)
+        ));
     }
 
     #[test]
