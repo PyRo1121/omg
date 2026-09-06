@@ -1,10 +1,46 @@
 # OMG Integration Test Suite
 
-These tests exercise the real binary and library seams. By default every CLI
-invocation runs against the **mock package-manager backend** (`OMG_TEST_MODE=1`)
-with fully isolated per-invocation data/config/cache directories, so a plain
-`cargo test` never touches your system. Tests that genuinely need a real
-package database are gated behind the environment flags below.
+The suite mixes production-boundary tests, mock-backend contracts, dependency
+characterization tests, and opt-in live-system tests. Passing counts and line
+coverage alone do not establish that these tests protect their named behavior.
+
+**Do not run the whole suite against a valuable host.** Some tests bypass the
+shared CLI runner, attempt runtime downloads, or call native package tools.
+`OMG_TEST_MODE=1` is not a filesystem, network, or privilege sandbox. The
+`docker_tests` feature also enables execution flags without proving that the
+process is inside a disposable container.
+
+The shared CLI runner isolates HOME, XDG and OMG directories and closes stdin.
+`TestProject` preserves its isolated home and package state between calls.
+These protections do not apply to direct library calls or independently
+constructed processes. Run broad verification in a disposable environment
+with no credentials, no host package access, bounded timeouts, and build/test
+scratch outside RAM-backed `/tmp`.
+
+## Test-quality audit
+
+The 2026-09-05 audit record is in
+[`.audit/deep-audit.tsv`](../.audit/deep-audit.tsv), under `test-audit-*` rows.
+It distinguishes experimentally proven false-green tests from open static
+review candidates. A `coverage_*.rs` filename is not evidence of a weak test;
+many of those files exercise real state transitions, IPC, and error paths.
+
+Four controlled mutations exposed gaps in the old tests: full-secret leakage,
+acceptance of altered PGP data, omitted intermediate-certificate expiry checks,
+and omitted hostile runtime-pin validation. The strengthened tests reject
+those same mutations and pass with unmodified production code.
+
+The audit also replaced crash-string checks with a process-completion oracle,
+parsed JSON rather than matching fragments, corrected ambiguous fixtures, and
+isolated shell configuration writes. Runtime-detection fixtures now assert an
+activation-link transition using seeded installations, not a live download.
+
+Do not interpret the reported pass count as the number of behaviors proven.
+Some tests return successfully when prerequisites or opt-in flags are absent.
+Remaining work includes these silent skips, production paths replaced by test
+replicas, and network dependencies in tests described as hermetic. Broad local
+verification covers the Arch feature set; it does not certify every platform,
+ignored live-system test, doctest, or fuzz campaign.
 
 ## Philosophy
 
@@ -12,8 +48,9 @@ package database are gated behind the environment flags below.
    regression; panic-string greps alone are not coverage
 2. **Isolate everything**: unique data dirs per invocation; no test may
    mutate process-global state without restoring it
-3. **No dishonest surfaces**: a test whose name promises a fault must inject
-   that fault, or it gets deleted
+3. **Prove the claimed fault**: establish a passing control, inject one fault,
+   and require the expected failure. Repair misleading fixtures or rename
+   characterization tests; do not delete tests merely to improve pass counts.
 4. **Real-system coverage is opt-in** via the environment flags below
 
 ## Running Tests
@@ -21,7 +58,7 @@ package database are gated behind the environment flags below.
 ### Quick Start
 
 ```bash
-# Run all unit tests (no system modifications)
+# Run unit tests inside a disposable environment
 cargo test --lib
 
 # Run all integration tests

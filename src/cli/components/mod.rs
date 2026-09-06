@@ -67,6 +67,21 @@ impl Components {
     pub fn status_summary<M>(items: Vec<(impl Into<String>, impl Into<String>)>) -> Cmd<M> {
         Self::kv_list(Some("Status"), items)
     }
+
+    /// Create a card that keeps long lists readable while preserving the total.
+    #[must_use]
+    pub fn limited_card<M>(
+        title: impl Into<String>,
+        items: Vec<String>,
+        visible_limit: usize,
+    ) -> Cmd<M> {
+        let omitted = items.len().saturating_sub(visible_limit);
+        let mut visible: Vec<String> = items.into_iter().take(visible_limit).collect();
+        if omitted > 0 {
+            visible.push(format!("... and {omitted} more"));
+        }
+        Cmd::card(title, visible)
+    }
 }
 
 impl Components {
@@ -154,6 +169,22 @@ mod tests {
             Cmd::View(View::Card(title, content)) => {
                 assert_eq!(title, "Info");
                 assert_eq!(content, vec!["k: v".to_string()]);
+            }
+            other => panic!("expected card, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn limited_card_reports_omitted_items() {
+        let cmd: Cmd<()> = Components::limited_card(
+            "Packages (4 total)",
+            ["one", "two", "three", "four"].map(str::to_string).to_vec(),
+            2,
+        );
+        match cmd {
+            Cmd::View(View::Card(title, content)) => {
+                assert_eq!(title, "Packages (4 total)");
+                assert_eq!(content, ["one", "two", "... and 2 more"]);
             }
             other => panic!("expected card, got {other:?}"),
         }

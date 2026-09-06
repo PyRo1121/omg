@@ -699,7 +699,7 @@ mod e2e_workflow_tests {
 
         let status = run_omg(&["status"]);
         status.assert_success();
-        status.assert_contains("Packages");
+        status.assert_contains("packages installed");
 
         let update = run_omg(&["update", "--dry-run"]);
         update.assert_success();
@@ -953,7 +953,7 @@ mod system_state_tests {
 
         let result = run_omg(&["status"]);
         result.assert_success();
-        result.assert_contains("Packages");
+        result.assert_contains("packages installed");
     }
 }
 
@@ -1017,14 +1017,34 @@ mod command_integration_tests {
 
     #[test]
     fn test_status_after_failed_install() {
-        let bad_install = run_omg(&["install", "-y", "nonexistent-pkg"]);
-        bad_install.assert_failure();
-        bad_install.assert_contains("not found");
+        let project = common::TestProject::new();
+        project.run(&["install", "-y", "git"]).assert_success();
 
-        // Status must still work after the failure.
-        let status = run_omg(&["status"]);
+        let before = project.run(&["explicit", "--json"]);
+        before.assert_success();
+        assert_eq!(
+            serde_json::from_str::<serde_json::Value>(&before.stdout).unwrap(),
+            serde_json::json!({ "packages": ["git"], "count": 1 }),
+            "The initial CLI install must persist a nonempty inventory"
+        );
+        let state_path = project.data_dir.path().join("mock_state_pacman.json");
+        let before_state = std::fs::read(&state_path).unwrap();
+
+        // A real policy rejection is deterministic offline, unlike a missing
+        // package lookup that falls through to the live AUR service.
+        let policy_path = project.config_dir.path().join("policy.toml");
+        std::fs::write(&policy_path, "banned_packages = [\"firefox\"]\n").unwrap();
+        let bad_install = project.run(&["install", "-y", "firefox"]);
+        bad_install.assert_failure();
+        let error = bad_install.combined_output();
+        assert!(
+            error.contains("firefox") && error.contains("banned"),
+            "Expected the injected policy rejection, got: {error}"
+        );
+
+        let status = project.run(&["status"]);
         status.assert_success();
-        status.assert_contains("Packages");
+        status.assert_contains("packages installed");
     }
 
     #[test]
@@ -1037,7 +1057,7 @@ mod command_integration_tests {
         // observable result, not merely avoid panicking.
         let status = run_omg(&["status"]);
         status.assert_success();
-        status.assert_contains("Packages");
+        status.assert_contains("packages installed");
 
         let search = run_omg(&["search", "firefox"]);
         search.assert_success();

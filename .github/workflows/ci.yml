@@ -16,6 +16,10 @@ on:
   push:
     branches: [main]
     paths:
+      - "build.rs"
+      - "install.sh"
+      - "benchmark.sh"
+      - "benchmark-hyperfine.sh"
       - "src/**"
       - "tests/**"
       - "Cargo.toml"
@@ -29,22 +33,10 @@ on:
       - ".config/**"
       - "deny.toml"
       - ".github/workflows/ci.yml"
+  # Always report the required check on PRs. The job-level change filter
+  # below skips platform builds for documentation/configuration-only changes.
   pull_request:
     branches: [main]
-    paths:
-      - "src/**"
-      - "tests/**"
-      - "Cargo.toml"
-      - "Cargo.lock"
-      - "Makefile"
-      - "benches/**"
-      - "fuzz/**"
-      - "scripts/**"
-      - "rust-toolchain.toml"
-      - ".cargo/**"
-      - ".config/**"
-      - "deny.toml"
-      - ".github/workflows/ci.yml"
   merge_group:
     types: [checks_requested]
   workflow_dispatch:

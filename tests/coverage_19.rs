@@ -90,9 +90,8 @@ fn local_package_history_records_the_name_parsed_from_inside_the_archive() {
     let project = TestProject::for_distro("arch");
     prepare_pacman_root(&project);
 
-    let pkg_path = project
-        .path()
-        .join("faketesttool-9.9.9-1-x86_64.pkg.tar.gz");
+    // A filename-derived identity must disagree with the .PKGINFO identity.
+    let pkg_path = project.path().join("decoytool-1.2.3-4-x86_64.pkg.tar.gz");
     write_fake_package(&pkg_path, "faketesttool", "9.9.9-1");
     let path_arg = pkg_path.to_str().expect("utf8 temp path");
 
@@ -117,7 +116,7 @@ fn local_package_history_records_the_name_parsed_from_inside_the_archive() {
     assert_eq!(
         changes[0]["name"].as_str(),
         Some("faketesttool"),
-        "history must record the inner package name from .PKGINFO, not the file path"
+        "history must record faketesttool from .PKGINFO, not decoytool from the filename or the raw path"
     );
     assert_eq!(changes[0]["source"].as_str(), Some("local"));
 }
