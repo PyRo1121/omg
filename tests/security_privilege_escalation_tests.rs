@@ -155,10 +155,23 @@ mod privilege_escalation {
     }
 
     #[test]
+    fn installer_marker_rejects_a_failed_partial_transfer() {
+        let output = run_installer_functions(
+            "curl() { printf '1.2.3'; return 22; }\nOMG_VERSION=latest\nresolve_version",
+            &[],
+        );
+        assert!(
+            !output.status.success(),
+            "failed transfer must not select a version"
+        );
+    }
+
+    #[test]
     fn installer_file_bounds_survive_curl_without_streaming_limits() {
-        for (stage, file, status) in [
-            ("archive", "fixture.tar.xz", 1),
-            ("checksum", "fixture.tar.xz.sha256", 2),
+        for (stage, file, status, expected_bytes) in [
+            ("archive", "fixture.tar.xz", 1, 33),
+            ("checksum", "fixture.tar.xz.sha256", 2, 33),
+            ("archive_failure", "fixture.tar.xz", 1, 0),
         ] {
             let directory = tempfile::tempdir().expect("download fixture");
             let body_path = directory.path().join("body");
@@ -188,6 +201,7 @@ fixture_body() {
   fi
 }
 curl() {
+  if [[ "$STAGE" == archive_failure ]]; then return 22; fi
   local output='' url=''
   while (( $# )); do
     case "$1" in
@@ -215,10 +229,7 @@ install_from_release
             let bytes = std::fs::metadata(directory.path().join(file))
                 .expect("downloaded candidate")
                 .len();
-            assert_eq!(
-                bytes, 33,
-                "{stage} must retain only the limit plus one byte"
-            );
+            assert_eq!(bytes, expected_bytes, "{stage} candidate size");
         }
     }
 
