@@ -1044,7 +1044,7 @@ fn package_has_available_update(package: &str) -> Result<bool> {
 /// scores count as 0.0 so they never cross a severity threshold by accident.
 fn vuln_score(score: Option<&str>) -> f64 {
     score
-        .and_then(|s| crate::core::security::vulnerability::parse_severity_score(s))
+        .and_then(crate::core::security::vulnerability::parse_severity_score)
         .unwrap_or(0.0)
 }
 

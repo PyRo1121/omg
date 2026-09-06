@@ -8,7 +8,9 @@
 #[global_allocator]
 static GLOBAL: mimalloc::MiMalloc = mimalloc::MiMalloc;
 
-use anyhow::{Context, Result};
+#[cfg(feature = "license")]
+use anyhow::Context;
+use anyhow::Result;
 use clap::Parser;
 
 #[cfg(feature = "license")]
@@ -601,10 +603,9 @@ fn main() {
         && args
             .get(1)
             .is_some_and(|arg| arg.starts_with(omg_lib::core::security::policy::POLICY_MARKER))
+        && let Err(error) = omg_lib::core::security::policy::inherit_policy(&args.remove(1))
     {
-        if let Err(error) = omg_lib::core::security::policy::inherit_policy(&args.remove(1)) {
-            finish(Err(error));
-        }
+        finish(Err(error));
     }
     // The marker has already been authenticated by root re-exec parsing.
     // Preserve its history-ownership contract if flags route the child through

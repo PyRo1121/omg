@@ -309,6 +309,56 @@ pub(crate) fn license_matches_allowlist(license: &str, allowed: &[String]) -> bo
     })
 }
 
+pub fn require_native_plan_support(backend: &str) -> anyhow::Result<()> {
+    let policy = SecurityPolicy::load_default()?;
+    anyhow::ensure!(
+        !explicit_policy_exists() && policy == SecurityPolicy::default(),
+        "{backend} cannot enforce an explicit OMG policy on its final dependency transaction; use a backend with prepared-plan policy enforcement"
+    );
+    Ok(())
+}
+
+/// Evaluate all additions after resolution, using actual archive/repository identities.
+pub fn check_prepared_packages(
+    packages: Vec<(String, Version, bool, Option<String>)>,
+) -> anyhow::Result<()> {
+    let policy = SecurityPolicy::load_default()?;
+    if !explicit_policy_exists() {
+        for (name, _, community, license) in packages {
+            policy.check_source(&name, community, license.as_deref())?;
+        }
+        return Ok(());
+    }
+    // ALPM's synchronous callback may run inside a Tokio current-thread runtime.
+    // A separate bounded worker owns its runtime rather than nesting block_on.
+    std::thread::spawn(move || -> anyhow::Result<()> {
+        let runtime = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()?;
+        runtime.block_on(async move {
+            let scanner = super::vulnerability::VulnerabilityScanner::new();
+            check_prepared_with_source(&policy, packages, &scanner).await
+        })
+    })
+    .join()
+    .map_err(|_| anyhow::anyhow!("Prepared transaction policy worker failed"))?
+}
+
+async fn check_prepared_with_source(
+    policy: &SecurityPolicy,
+    packages: Vec<(String, Version, bool, Option<String>)>,
+    scanner: &dyn super::vulnerability::VulnerabilitySource,
+) -> anyhow::Result<()> {
+    for (name, version, community, license) in packages {
+        policy.check_source(&name, community, license.as_deref())?;
+        let grade = policy
+            .assign_grade(scanner, &name, &version, !community)
+            .await?;
+        policy.check_package(&name, community, license.as_deref(), grade)?;
+    }
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -567,56 +617,4 @@ mod tests {
                 .is_ok()
         );
     }
-}
-
-/// Native backends that cannot expose and bind their final dependency plan
-/// must not silently bypass an explicitly installed OMG policy.
-pub fn require_native_plan_support(backend: &str) -> anyhow::Result<()> {
-    let policy = SecurityPolicy::load_default()?;
-    anyhow::ensure!(
-        !explicit_policy_exists() && policy == SecurityPolicy::default(),
-        "{backend} cannot enforce an explicit OMG policy on its final dependency transaction; use a backend with prepared-plan policy enforcement"
-    );
-    Ok(())
-}
-
-/// Evaluate all additions after resolution, using actual archive/repository identities.
-pub fn check_prepared_packages(
-    packages: Vec<(String, Version, bool, Option<String>)>,
-) -> anyhow::Result<()> {
-    let policy = SecurityPolicy::load_default()?;
-    if !explicit_policy_exists() {
-        for (name, _, community, license) in packages {
-            policy.check_source(&name, community, license.as_deref())?;
-        }
-        return Ok(());
-    }
-    // ALPM's synchronous callback may run inside a Tokio current-thread runtime.
-    // A separate bounded worker owns its runtime rather than nesting block_on.
-    std::thread::spawn(move || -> anyhow::Result<()> {
-        let runtime = tokio::runtime::Builder::new_current_thread()
-            .enable_all()
-            .build()?;
-        runtime.block_on(async move {
-            let scanner = super::vulnerability::VulnerabilityScanner::new();
-            check_prepared_with_source(&policy, packages, &scanner).await
-        })
-    })
-    .join()
-    .map_err(|_| anyhow::anyhow!("Prepared transaction policy worker failed"))?
-}
-
-async fn check_prepared_with_source(
-    policy: &SecurityPolicy,
-    packages: Vec<(String, Version, bool, Option<String>)>,
-    scanner: &dyn super::vulnerability::VulnerabilitySource,
-) -> anyhow::Result<()> {
-    for (name, version, community, license) in packages {
-        policy.check_source(&name, community, license.as_deref())?;
-        let grade = policy
-            .assign_grade(scanner, &name, &version, !community)
-            .await?;
-        policy.check_package(&name, community, license.as_deref(), grade)?;
-    }
-    Ok(())
 }
