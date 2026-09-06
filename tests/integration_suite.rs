@@ -540,18 +540,29 @@ mod runtime_management {
 
     #[test]
     fn test_use_with_tool_versions() {
-        let temp_dir = TempDir::new().unwrap();
-        create_test_project(temp_dir.path(), "tool-versions");
+        let project = TestProject::new();
+        create_test_project(project.path(), "tool-versions");
 
-        // Test Node detection from .tool-versions
-        let result = run_omg_in_dir(&["use", "node"], temp_dir.path());
-        result.assert_success();
-        result.assert_stdout_contains("20.10.0");
+        // Real version directories and regular launcher files satisfy the
+        // production installed-version and activation checks without downloads.
+        for (runtime, version, binary) in
+            [("node", "20.10.0", "node"), ("python", "3.11.0", "python3")]
+        {
+            let versions_dir = project.data_dir.path().join("versions").join(runtime);
+            let version_dir = versions_dir.join(version);
+            fs::create_dir_all(version_dir.join("bin")).unwrap();
+            fs::write(version_dir.join("bin").join(binary), b"runtime fixture").unwrap();
+            assert!(!versions_dir.join("current").exists());
 
-        // Test Python detection from .tool-versions
-        let result = run_omg_in_dir(&["use", "python"], temp_dir.path());
-        result.assert_success();
-        result.assert_stdout_contains("3.11.0");
+            let result = project.run_with_env(&["use", runtime], &[("PATH", "")]);
+            result.assert_success();
+            result.assert_stdout_contains(version);
+            assert_eq!(
+                fs::read_link(versions_dir.join("current")).unwrap(),
+                version_dir,
+                "use must activate the version detected from .tool-versions"
+            );
+        }
     }
 
     // Falsifiable contract: both alias spellings are accepted by every
@@ -952,26 +963,49 @@ mod edge_cases {
 
     #[test]
     fn test_deeply_nested_directory() {
-        let temp_dir = TempDir::new().unwrap();
+        let project = TestProject::new();
+        create_test_project(project.path(), "node");
 
-        // Create deeply nested structure with .nvmrc at root
-        create_test_project(temp_dir.path(), "node");
+        // Seed an installed Node version, including the regular file required
+        // by production activation, but leave it inactive until `use` runs.
+        let versions_dir = project.data_dir.path().join("versions/node");
+        let version_dir = versions_dir.join("20.10.0");
+        fs::create_dir_all(version_dir.join("bin")).unwrap();
+        fs::write(version_dir.join("bin/node"), b"runtime fixture").unwrap();
+        assert!(!versions_dir.join("current").exists());
 
-        let deep_path = temp_dir
-            .path()
-            .join("a")
-            .join("b")
-            .join("c")
-            .join("d")
-            .join("e");
-        fs::create_dir_all(&deep_path).unwrap();
+        let deep_path = project.create_dir("a/b/c/d/e");
+        let cache_dir = project.data_dir.path().join("cache");
 
-        // Running from deep path should still find .nvmrc at root
-        let result = run_omg_in_dir(&["use", "node"], &deep_path);
+        // Change only cwd, retaining the project's isolated runtime store.
+        let result = run_omg_with_options(
+            &["use", "node"],
+            Some(&deep_path),
+            &[
+                ("OMG_DATA_DIR", project.data_dir.path().to_str().unwrap()),
+                (
+                    "OMG_CONFIG_DIR",
+                    project.config_dir.path().to_str().unwrap(),
+                ),
+                ("OMG_CACHE_DIR", cache_dir.to_str().unwrap()),
+                (
+                    "OMG_PACMAN_ROOT",
+                    project.pacman_root.path().to_str().unwrap(),
+                ),
+                ("HOME", project.home_dir.path().to_str().unwrap()),
+                ("PATH", ""),
+            ],
+        );
         assert!(
             result.success,
             "Runtime resolution should work from a nested directory: {}",
             result.stderr
+        );
+        result.assert_stdout_contains("20.10.0");
+        assert_eq!(
+            fs::read_link(versions_dir.join("current")).unwrap(),
+            version_dir,
+            "use must activate the version detected from the ancestor .nvmrc"
         );
     }
 
