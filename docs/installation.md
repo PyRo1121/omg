@@ -276,17 +276,17 @@ The universal installer (`install.sh`) supports several environment variables:
 curl -fsSL https://omg.latham.cloud/install.sh | OMG_NO_TELEMETRY=1 bash
 
 # Skip shell integration
-OMG_SKIP_SHELL=1 curl -fsSL https://omg.latham.cloud/install.sh | bash
+curl -fsSL https://omg.latham.cloud/install.sh | OMG_SKIP_SHELL=1 bash
 
 # Install specific version
-OMG_VERSION=v0.1.215 curl -fsSL https://omg.latham.cloud/install.sh | bash
+curl -fsSL https://omg.latham.cloud/install.sh | OMG_VERSION=v0.1.215 bash
 
 # Custom install directory
-INSTALL_DIR=~/.omg/bin curl -fsSL https://omg.latham.cloud/install.sh | bash
+curl -fsSL https://omg.latham.cloud/install.sh | INSTALL_DIR="$HOME/.omg/bin" bash
 
 # Combine options
-OMG_VERSION=v0.1.215 \
-  curl -fsSL https://omg.latham.cloud/install.sh | OMG_NO_TELEMETRY=1 OMG_SKIP_SHELL=1 bash
+curl -fsSL https://omg.latham.cloud/install.sh |
+  OMG_VERSION=v0.1.215 OMG_NO_TELEMETRY=1 OMG_SKIP_SHELL=1 bash
 ```
 
 ---
