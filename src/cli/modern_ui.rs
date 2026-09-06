@@ -115,9 +115,17 @@ pub(crate) fn register_spinner(bar: ProgressBar) -> ProgressBar {
 }
 
 /// Print `line`, or buffer it while a terminal quiesce is active.
+///
+/// In interactive mode the line goes through the shared `MultiProgress`,
+/// which suspends live spinners for the write; raw `println!` would splice
+/// mid-frame and read as spinner spam under parallel builds.
 pub(crate) fn emit_or_defer(line: String) {
     if quiesce_active() {
         lock_deferred_lines().push(line);
+        return;
+    }
+    if output_mode() == OutputMode::Interactive {
+        let _ = progress_registry().println(&line);
     } else {
         println!("{line}");
     }
@@ -227,14 +235,14 @@ pub fn aur_build_progress(package: &str, log_path: &Path) -> AurBuildProgress {
     let progress = match mode {
         OutputMode::Interactive => {
             if crate::cli::style::colors_enabled() {
-                println!(
+                emit_or_defer(format!(
                     "  {} {}  {}",
                     "◇".magenta().bold(),
                     "AUR forge".bold(),
                     format!("log → {}", log_path.display()).dimmed()
-                );
+                ));
             } else {
-                println!("  + AUR forge  log -> {}", log_path.display());
+                emit_or_defer(format!("  + AUR forge  log -> {}", log_path.display()));
             }
 
             let progress = register_spinner(ProgressBar::new_spinner());
