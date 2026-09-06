@@ -19,6 +19,30 @@ OMG is the fastest unified package manager for Linux, replacing pacman, yay, nvm
 - **Install**: Add interactive fuzzy package discovery
 ### 🐛 Bug Fixes
 
+- **Ci**: Keep the zpty completion check from hanging Quick Gate
+
+A zsh blocked in zpty -r ignored the plain SIGTERM from timeout, so the
+
+step hung until the job was cancelled. An in-test watchdog TERMs the
+
+script after 15 seconds, the CI wrapper uses timeout -k as backstop and
+
+redirects output so orphaned zpty children cannot hold the step open.
+
+- **Cli**: Route print_warning through the shared progress printer
+
+The new parallel-build wave-failure notice called print_warning, which
+
+still used raw println and could splice into live AUR forge frames.
+
+- **Cli**: Cap AUR review output and ignore self in doctor lock scan
+
+Long PKGBUILD dumps and a self-matching process scan made updates look
+
+stuck or locked. Preview the reviewed files, keep the digest, and treat
+
+only other package managers as live lock holders.
+
 - **Cli**: Stop inventing package mutation summaries
 - **Runtimes**: Treat rustlang as rust in which lookup
 
@@ -118,6 +142,28 @@ Preserve archive data and report persistence failures explicitly. Coordinate dat
 Bring in the QEMU lifecycle runner, contract-driven smoke tests, failure evidence, and benchmark records. Add the token-stdin contract required by the security changes on qa-setup.
 
 ### 🧪 Testing
+
+- **Completion**: Log zpty child startup and stop compinit prompting
+
+The runner showed the child spawned but never printed READY, so the
+
+hang sits inside the child's .zshrc. The child now logs its startup to
+
+/tmp/omg-zsh-child.log, the wrapper prints that log, and compinit runs
+
+with -i so a directory-permission audit can never stop for an
+
+interactive answer.
+
+- **Completion**: Report phases so a CI hang is diagnosable
+
+The runner never showed where the zpty check stopped because the
+
+wrapper aborted before printing the log. The wrapper now always prints
+
+it and the test marks each phase, so a hang names the phase that never
+
+finished.
 
 - **Qa**: Verify four distro lifecycles in headless QEMU
 - **Benchmarks**: Run Ubuntu QEMU with post-run error reporting
