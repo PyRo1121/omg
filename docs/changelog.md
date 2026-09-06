@@ -14,8 +14,28 @@ OMG is the fastest unified package manager for Linux, replacing pacman, yay, nvm
 ### ♻️  Refactoring
 
 - **Cli**: Unify status output and limit local build jobs
+### ✨ New Features
+
+- **Install**: Add interactive fuzzy package discovery
 ### 🐛 Bug Fixes
 
+- **Cli**: Stop inventing package mutation summaries
+- **Runtimes**: Treat rustlang as rust in which lookup
+
+The documented rustlang alias never reached the new global-current
+
+probe, so omg which rustlang printed no version set when rust was
+
+already selected. Map it the same way hooks already do.
+
+- **Runtimes**: Report global selection when project has no pin
+- **Python**: Bound release page size without shrinking discovery
+- **Completion**: Retain fuzzy matches in Bash and Zsh
+- **Blame**: Drop unused test cfg on display-limit constant
+
+Portable --all-targets still compiled the constant under cfg(test) with no call sites, which is the same dead_code failure this PR is fixing.
+
+- **Blame**: Gate reverse-dependency display limit to backends
 - **Release**: Initialize Arch trust and avoid partial upgrades
 
 [#257](https://github.com/PyRo1121/omg/issues/257) merged into PyRo1121/qa-qemu-four-distros, so main still refreshed
@@ -24,6 +44,13 @@ Arch metadata with pacman -Sy and never initialized the disposable
 
 keyring. Port the leftover non-breaking smoke setup onto current main.
 
+- **Security**: Remediate retained Daybreak scan findings
+- **Qa**: Initialize Arch trust and avoid partial upgrades
+- **Qa**: Preserve QEMU failure and interruption evidence
+- **Qa**: Report observed outcomes independently of known defects
+- **Release**: Bound probes and verify container cleanup
+- **Release**: Keep artifact scratch off tmpfs
+- **Release**: Preserve smoke contract evidence
 - **Cli**: Bound report output and harden unattended runtime
 
   - limit reverse-dependency, dependents, and license cards to 20 visible
@@ -38,6 +65,7 @@ rows with an explicit omitted count so oversized reports stay readable
 
   - record live-review audit evidence
 
+- **History**: Validate live history through its file descriptor
 - **Installer**: Propagate bounded pipeline failures
 - **Installer**: Bound release responses while streaming
 - **Privacy**: Include archived history in local exports
@@ -45,12 +73,27 @@ rows with an explicit omitted count so oversized reports stay readable
 
 Verify a pinned upstream Moby seccomp profile and add pivot_root only to its CAP_SYS_ADMIN allow rule. Keep other restrictions and the descendant cleanup assertion intact.
 
+- **Aur**: Isolate sandbox PIDs for descendant cleanup
+- **Aur**: Separate build review and simplify verified execution
 - **Core**: Harden history and package mutation recovery
 
 Preserve archive data and report persistence failures explicitly. Coordinate database publication and runtime mutations, tighten installer provenance checks, and include the approved tracked documentation and security changes.
 
-- **Aur**: Isolate sandbox PIDs for descendant cleanup
-- **Aur**: Separate build review and simplify verified execution
+- **Cli**: Stop inventing package mutation summaries
+- **Runtimes**: Report global selection when project has no pin
+- **Python**: Bound release page size without shrinking discovery
+- **Fedora**: Preserve caller history during orphan cleanup
+- **Fedora**: Record actual native upgrade changes
+- **Fedora**: Record correlated native package transactions
+- **Fedora**: Accept and bound translated RPM string arrays
+- **Fedora**: Add truthful package history diagnostics
+- **Fedora**: Expose recorded reasons and reverse requirements
+- **Fedora**: Report installed package sizes and providers
+- **Apt**: Use native frontend for repository installs
+- **Fedora**: Support native orphan and package-cache cleanup
+- **Fedora**: Expose correct explicit package listing
+- **Fedora**: Implement native update discovery and status counts
+- **Fedora**: Restore repository queries and package lifecycle
 - **Fedora**: Decode native RPM database headers
 - **Ci**: Preserve prepared changelog sections
 ### 👷 CI/CD
@@ -60,6 +103,7 @@ Preserve archive data and report persistence failures explicitly. Coordinate dat
 - Add published release smoke matrix
 ### 📚 Documentation
 
+- **Benchmarks**: Define fair native comparisons and evidence
 - **Tests**: Record mutation evidence and remaining verification gaps
 - **Privacy**: State the local export size limit
 - **Installer**: Pass environment options to bash
@@ -67,8 +111,18 @@ Preserve archive data and report persistence failures explicitly. Coordinate dat
 - **Fedora**: Record observed repository formats and trust policy
 - **Fedora**: Distinguish database and archive header formats
 - Record v0.1.218 verification [skip ci]
+### 🔒 Security
+
+- **Qa**: Integrate four-distro QEMU validation into qa-setup
+
+Bring in the QEMU lifecycle runner, contract-driven smoke tests, failure evidence, and benchmark records. Add the token-stdin contract required by the security changes on qa-setup.
+
 ### 🧪 Testing
 
+- **Qa**: Verify four distro lifecycles in headless QEMU
+- **Benchmarks**: Run Ubuntu QEMU with post-run error reporting
+- **Release**: Classify Fedora package failures
+- **Release**: Drive smoke cases from contracts
 - **Install**: Restore inventory assertions dropped by [#247](https://github.com/PyRo1121/omg/issues/247) merge
 
 The [#247](https://github.com/PyRo1121/omg/issues/247) merge into main kept the policy-failure setup but replaced the
@@ -98,6 +152,7 @@ assertions. Restore the original stronger body without changing
 production code.
 
 - **Install**: Restore recovery inventory assertions
+- **Install**: Restore recovery inventory assertions
 - **Daemon**: Fail fixture setup instead of reporting skipped security checks
 - **Install**: Distinguish archive metadata from filename identity
 - **Why**: Associate dependency status with its package row
@@ -107,10 +162,13 @@ production code.
 - **Hooks**: Make hostile runtime pin fixture reach its target
 - **Security**: Reject tampering, secret leaks and expired signer chains
 - **Cli**: Align status assertions with installed-package report
+- **Install**: Preserve inventory across policy failure and recovery
+- **Cli**: Align status and HTTPS checks with current contracts
+- **History**: Isolate resource-limited coverage output
+- **History**: Refuse live FIFOs without blocking
 - **Installer**: Cover failed bounded transfers
 - **Installer**: Cover legacy curl streaming bounds
 - **Privacy**: Cover archived history in local exports
-- **Install**: Preserve inventory across policy failure and recovery
 - **Aur**: Make sandbox cancellation fixture Docker-safe
 
 The required CI gate failed because the ignored regression bound the
