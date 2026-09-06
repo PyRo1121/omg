@@ -38,7 +38,7 @@ load_distro() {
     arch)
       distro_suffix="-x86_64-linux-arch"
       distro_image="archlinux:latest@sha256:b0deabeb3d283da2c7f7dbf0eea051b7b2cd0554e0b737cc457fd21683bdcdd1"
-      distro_index_cmd="pacman -Sy --noconfirm"
+      distro_index_cmd="pacman-key --init && pacman-key --populate archlinux && pacman -Syu --noconfirm"
       distro_installed_assert="pacman -Qi tree"
       distro_removed_assert="! pacman -Q tree"
       ;;

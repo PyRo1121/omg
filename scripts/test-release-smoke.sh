@@ -36,6 +36,7 @@ case "${1:-}" in
   info) exit "${FAKE_INFO_EXIT:-0}" ;;
   pull) exit 0 ;;
   run)
+    if [[ -n "${FAKE_ENGINE_ARGS:-}" ]]; then printf '%s\n' "$@" >> "$FAKE_ENGINE_ARGS"; fi
     if [[ "${FAKE_HANG:-0}" == 1 ]]; then
       touch "$FAKE_CONTAINER_STATE"
       sleep 30
@@ -173,7 +174,10 @@ grep -q '"result":"PASS"' "$(results_file "$scratch/published-evidence")" || fai
 grep -q '"artifact_source":"published"' "$(results_file "$scratch/published-evidence")" || fail "published source is not recorded"
 
 family_args=(--release v9.9.9 --distro arch --family package --container-engine fake-engine)
+export FAKE_ENGINE_ARGS="$scratch/engine-args"
 assert_rc 0 "$runner" "${family_args[@]}" --staged-dir "$scratch/valid" --evidence-dir "$scratch/family-evidence"
+grep -Fxq 'OMG_PROBE_INDEX_CMD=pacman-key --init && pacman-key --populate archlinux && pacman -Syu --noconfirm' "$FAKE_ENGINE_ARGS" || fail "Arch setup must initialize trust and perform a full upgrade"
+unset FAKE_ENGINE_ARGS
 [[ "$(grep -c '"case_id"' "$(results_file "$scratch/family-evidence")")" -eq 3 ]] || fail "package family did not select three contracts"
 grep -R -q 'install --yes tree' "$scratch/family-evidence" || fail "install probe did not preserve canonical --yes"
 grep -R -q 'remove --yes tree' "$scratch/family-evidence" || fail "remove probe did not preserve canonical --yes"
