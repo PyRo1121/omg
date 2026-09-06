@@ -589,14 +589,19 @@ omg completions <shell> [OPTIONS]
 
 ```bash
 # Install Zsh completions
-omg completions zsh > ~/.zsh/completions/_omg
+omg completions zsh
 
 # Install Bash completions
-omg completions bash > /etc/bash_completion.d/omg
+omg completions bash
 
 # Install Fish completions
-omg completions fish > ~/.config/fish/completions/omg.fish
+omg completions fish
+
+# Print a script without installing it
+omg completions zsh --stdout > _omg
 ```
+
+Follow the printed shell setup instructions after installation. See [shell completion setup](installation.md#3-optional-enable-shell-completions) for Zsh's `fpath` and `compinit` configuration.
 
 ---
 
