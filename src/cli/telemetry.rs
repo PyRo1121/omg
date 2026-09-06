@@ -99,7 +99,11 @@ fn collect_local_privacy_data_from(
         files.insert("license.json".to_string(), value);
     }
 
-    for name in ["machine-id", "license-clock.highwater"] {
+    for name in [
+        "machine-id",
+        "license-clock.highwater",
+        "history.json.archive.jsonl",
+    ] {
         if let Some(value) = read_text_file(&data_dir.join(name))? {
             files.insert(name.to_string(), serde_json::Value::String(value));
         }
