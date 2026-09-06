@@ -5,6 +5,8 @@ use anyhow::Result;
 use crate::cli::tea::Cmd;
 use crate::core::history::{HistoryManager, TransactionType};
 
+const REVERSE_DEPENDENCY_DISPLAY_LIMIT: usize = 20;
+
 /// Show package installation history
 pub fn run(package: &str) -> Result<()> {
     // SECURITY: Validate package name
@@ -196,9 +198,10 @@ fn show_required_by(package: &str) -> Result<Cmd<()>> {
     if required_by.is_empty() {
         Ok(Cmd::info("Nothing depends on this package"))
     } else {
-        Ok(Cmd::card(
+        Ok(crate::cli::components::Components::limited_card(
             format!("Required by ({} packages)", required_by.len()),
             required_by,
+            REVERSE_DEPENDENCY_DISPLAY_LIMIT,
         ))
     }
 }
@@ -214,9 +217,10 @@ fn show_required_by_debian(package: &str) -> Result<Cmd<()>> {
     if deps.is_empty() {
         Ok(Cmd::info("Nothing depends on this package"))
     } else {
-        Ok(Cmd::card(
+        Ok(crate::cli::components::Components::limited_card(
             format!("Required by ({} packages)", deps.len()),
             deps,
+            REVERSE_DEPENDENCY_DISPLAY_LIMIT,
         ))
     }
 }

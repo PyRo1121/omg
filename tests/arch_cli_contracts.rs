@@ -123,3 +123,40 @@ fn clean_dry_run_never_attempts_privilege_escalation() -> Result<()> {
     assert!(!output_text(&output).contains("sudo:"));
     Ok(())
 }
+
+#[test]
+fn enterprise_license_scan_bounds_large_reports() -> Result<()> {
+    let root = TempDir::new()?;
+    let output = run(root.path(), &["enterprise", "license-scan"]);
+
+    assert!(output.success, "{}", output_text(&output));
+    assert!(
+        output.stdout.lines().count() <= 150,
+        "license scan printed {} lines\n{}",
+        output.stdout.lines().count(),
+        output.stdout
+    );
+    assert!(output.stdout.contains("... and "), "{}", output.stdout);
+    Ok(())
+}
+
+#[test]
+fn dependency_reports_bound_large_reverse_dependency_lists() -> Result<()> {
+    let root = TempDir::new()?;
+    for args in [
+        ["why", "glibc"].as_slice(),
+        ["why", "glibc", "--reverse"].as_slice(),
+        ["blame", "glibc"].as_slice(),
+    ] {
+        let output = run(root.path(), args);
+        assert!(output.success, "{}", output_text(&output));
+        assert!(
+            output.stdout.lines().count() <= 120,
+            "`omg {}` printed {} lines\n{}",
+            args.join(" "),
+            output.stdout.lines().count(),
+            output.stdout
+        );
+    }
+    Ok(())
+}

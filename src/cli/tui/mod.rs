@@ -93,6 +93,11 @@ pub async fn run_with_tab(tab: app::Tab) -> Result<()> {
 
 /// Centralized TUI setup and teardown to avoid code duplication
 async fn run_tui_with_app(mut app: app::App) -> Result<()> {
+    anyhow::ensure!(
+        console::user_attended(),
+        "Interactive dashboard requires an interactive terminal"
+    );
+
     // Setup terminal. Every fallible step must restore previously-acquired
     // terminal state on failure, or the user's shell is left in raw mode.
     enable_raw_mode()?;

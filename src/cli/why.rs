@@ -7,6 +7,9 @@ use std::collections::{HashMap, HashSet, VecDeque};
 #[cfg(any(feature = "arch", feature = "debian", feature = "debian-pure"))]
 use crate::cli::tea::Cmd;
 
+#[cfg(feature = "arch")]
+const REVERSE_DEPENDENCY_DISPLAY_LIMIT: usize = 20;
+
 /// Explain why a package is installed
 #[allow(
     clippy::needless_return,
@@ -124,9 +127,10 @@ fn show_dependency_chain_for_pkg(
             commands.push(Cmd::info("Required by: (orphan - can be removed)"));
             commands.push(Cmd::success("This package is safe to remove"));
         } else {
-            commands.push(Cmd::card(
+            commands.push(Components::limited_card(
                 format!("Required by ({} packages)", required_by.len()),
                 required_by.clone(),
+                REVERSE_DEPENDENCY_DISPLAY_LIMIT,
             ));
 
             // Show one dependency chain
@@ -299,21 +303,20 @@ fn show_reverse_deps(package: &str) -> Result<Cmd<()>> {
         let explicit_count = dependents.iter().filter(|(_, e)| *e).count();
         let dep_count = dependents.len() - explicit_count;
 
-        let dep_list: Vec<(String, String)> = dependents
-            .iter()
-            .map(|(name, is_explicit)| {
-                let marker = if *is_explicit {
-                    "explicit"
-                } else {
-                    "dependency"
-                };
-                (name.clone(), marker.to_string())
-            })
-            .collect();
-
-        commands.push(Components::kv_list(
-            Some(format!("Dependents ({} total)", dependents.len())),
-            dep_list,
+        commands.push(Components::limited_card(
+            format!("Dependents ({} total)", dependents.len()),
+            dependents
+                .iter()
+                .map(|(name, is_explicit)| {
+                    let marker = if *is_explicit {
+                        "explicit"
+                    } else {
+                        "dependency"
+                    };
+                    format!("{name}: {marker}")
+                })
+                .collect(),
+            REVERSE_DEPENDENCY_DISPLAY_LIMIT,
         ));
 
         commands.push(Cmd::spacer());
