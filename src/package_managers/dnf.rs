@@ -20,7 +20,6 @@ use std::pin::Pin;
 use anyhow::{Context, Result};
 use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 use std::path::{Path, PathBuf};
-use std::process::Command;
 use std::sync::{Arc, RwLock};
 
 use crate::core::{Package, PackageSource, is_root};
@@ -272,7 +271,7 @@ impl DnfPackageManager {
     ///
     /// Fallback for systems without `SQLite` RPM database (`BerkeleyDB`, `NDB`).
     fn read_rpm_via_query() -> Result<Vec<InstalledPackage>> {
-        let output = Command::new("rpm")
+        let output = crate::core::privilege::system_command("rpm")?
             .args([
                 "-qa",
                 "--queryformat",
@@ -310,7 +309,7 @@ impl DnfPackageManager {
     }
 
     pub(crate) fn read_user_installed_names() -> Result<HashSet<String>> {
-        let output = Command::new("dnf")
+        let output = crate::core::privilege::system_command("dnf")?
             .args(["repoquery", "--userinstalled", "--qf", "%{name}\n"])
             .output()
             .context("Failed to execute dnf repoquery --userinstalled")?;
@@ -671,7 +670,8 @@ impl DnfPackageManager {
             RepositoryQuery::Upgrades => "--upgrades",
             RepositoryQuery::Unneeded => "--unneeded",
         };
-        let mut command = tokio::process::Command::new("dnf");
+        let mut command =
+            tokio::process::Command::from(crate::core::privilege::system_command("dnf")?);
         if matches!(
             query,
             RepositoryQuery::InstalledSizes(_)
@@ -750,7 +750,8 @@ impl DnfPackageManager {
 
     async fn native_history(since: Option<u64>) -> Result<Vec<NativeTransaction>> {
         let range = since.map_or_else(|| "last".to_owned(), |id| format!("{}..last", id.max(1)));
-        let mut command = tokio::process::Command::new("dnf");
+        let mut command =
+            tokio::process::Command::from(crate::core::privilege::system_command("dnf")?);
         command.args(["history", "info", "--json", &range]);
         let output = Self::query_output(command).await?;
         let transactions: Vec<NativeTransaction> =
@@ -854,6 +855,13 @@ impl DnfPackageManager {
     }
 
     async fn execute_dnf(&self, args: Vec<String>) -> Result<()> {
+        if args
+            .iter()
+            .find(|arg| !arg.starts_with('-'))
+            .is_some_and(|arg| matches!(arg.as_str(), "install" | "upgrade"))
+        {
+            crate::core::security::policy::require_native_plan_support("DNF")?;
+        }
         let operation = if is_root() {
             let manager = self.cache_handle();
             tokio::task::spawn_blocking(move || {
@@ -1027,9 +1035,26 @@ impl DnfPackageManager {
     }
 
     fn run_dnf(&self, args: &[&str]) -> Result<()> {
-        let mut cmd = Command::new("dnf");
+        if args
+            .first()
+            .is_some_and(|arg| matches!(*arg, "install" | "upgrade"))
+        {
+            crate::core::security::policy::require_native_plan_support("DNF")?;
+        }
+        let mut cmd = crate::core::privilege::system_command("dnf")?;
 
+        let targets = args.iter().map(|arg| (*arg).to_owned()).collect::<Vec<_>>();
+        crate::core::security::audit::record_operation("dnf", &targets, "attempt")?;
         let status = cmd.args(args).status()?;
+        crate::core::security::audit::record_operation(
+            "dnf",
+            &targets,
+            if status.success() {
+                "succeeded"
+            } else {
+                "failed"
+            },
+        )?;
 
         if status.success() {
             self.invalidate_installed_cache();

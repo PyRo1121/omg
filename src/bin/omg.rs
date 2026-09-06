@@ -8,7 +8,7 @@
 #[global_allocator]
 static GLOBAL: mimalloc::MiMalloc = mimalloc::MiMalloc;
 
-use anyhow::Result;
+use anyhow::{Context, Result};
 use clap::Parser;
 
 #[cfg(feature = "license")]
@@ -597,6 +597,15 @@ fn main() {
     #[cfg_attr(not(feature = "arch"), allow(unused_variables))]
     let (reexec_elevated, parent_records) =
         strip_internal_invocation_markers(&mut args, omg_lib::core::privilege::is_root());
+    if reexec_elevated
+        && args
+            .get(1)
+            .is_some_and(|arg| arg.starts_with(omg_lib::core::security::policy::POLICY_MARKER))
+    {
+        if let Err(error) = omg_lib::core::security::policy::inherit_policy(&args.remove(1)) {
+            finish(Err(error));
+        }
+    }
     // The marker has already been authenticated by root re-exec parsing.
     // Preserve its history-ownership contract if flags route the child through
     // the full clap path instead of the minimal transaction path.
@@ -984,13 +993,21 @@ fn handle_container_command(command: &ContainerCommands) -> Result<()> {
 async fn handle_license_command(command: &AccountCommands) -> Result<()> {
     use omg_lib::cli::license;
     match command {
-        AccountCommands::Link { token } => {
-            let token = token
-                .clone()
-                .or_else(|| std::env::var("OMG_DASHBOARD_TOKEN").ok())
-                .ok_or_else(|| {
-                    anyhow::anyhow!("No dashboard token: pass <token> or set OMG_DASHBOARD_TOKEN")
-                })?;
+        AccountCommands::Link { token_stdin } => {
+            let token = if *token_stdin {
+                use std::io::Read;
+                let mut token = String::new();
+                std::io::stdin().take(16385).read_to_string(&mut token)?;
+                anyhow::ensure!(
+                    token.len() <= 16384,
+                    "Dashboard token exceeds the input limit"
+                );
+                token.trim_end().to_owned()
+            } else {
+                std::env::var("OMG_DASHBOARD_TOKEN")
+                    .context("Set OMG_DASHBOARD_TOKEN or use --token-stdin")?
+            };
+            anyhow::ensure!(!token.is_empty(), "Dashboard token is empty");
             license::activate(&token).await
         }
         AccountCommands::Status => license::status(),

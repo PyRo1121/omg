@@ -106,6 +106,7 @@ container-stop	["container","stop","missing"]	controlled-error	1	pass	-	hermetic
 container-exec	["container","exec","missing","--","true"]	controlled-error	1	pass	-	hermetic	hermetic:pass	-	tempdir-drop
 container-init	["container","init","--base","debian:bookworm"]	isolated-write	0	pass	-	hermetic	hermetic:pass	-	tempdir-drop
 account-link	["account","link","--help"]	help-boundary	0	pass	-	hermetic	hermetic:pass	-	tempdir-drop
+account-link-stdin	["account","link","--token-stdin"]	controlled-error	1	pass	-	hermetic	hermetic:pass	-	tempdir-drop
 account-status	["account","status"]	read	0	pass	-	hermetic	hermetic:pass	-	tempdir-drop
 account-unlink	["account","unlink"]	isolated-write	0	pass	-	hermetic	hermetic:pass	-	tempdir-drop
 fleet-status	["fleet","status"]	controlled-error	1	pass	-	hermetic	hermetic:pass	-	tempdir-drop

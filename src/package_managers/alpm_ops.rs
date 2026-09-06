@@ -40,9 +40,10 @@ pub(crate) struct LocalPackageMetadata {
 
 #[cfg(feature = "arch")]
 pub(crate) fn load_local_package_metadata(path: &str) -> Result<LocalPackageMetadata> {
-    let canonical = std::fs::canonicalize(path)
-        .with_context(|| format!("Failed to resolve local package file {path}"))?;
-    let canonical = canonical
+    let snapshot =
+        crate::core::security::artifact::ArchiveSnapshot::capture(std::path::Path::new(path))?;
+    let pinned = snapshot.path();
+    let canonical = pinned
         .to_str()
         .context("Local package path contains invalid UTF-8")?;
     let alpm = open_default_alpm()?;
@@ -488,6 +489,19 @@ pub fn execute_transaction(
     kind: TransactionKind,
     handle: Option<&mut alpm::Alpm>,
 ) -> Result<()> {
+    let staged = if matches!(
+        kind,
+        TransactionKind::Install | TransactionKind::InstallAurArtifact
+    ) {
+        Some(crate::core::security::artifact::StagedInputs::prepare(
+            &packages,
+        )?)
+    } else {
+        None
+    };
+    let packages = staged
+        .as_ref()
+        .map_or(packages, |inputs| inputs.targets.clone());
     let pacman_config = crate::core::pacman_conf::PacmanConfig::parse(paths::pacman_conf_path())
         .context("Failed to load transaction options from pacman.conf")?;
 
@@ -1354,6 +1368,21 @@ fn commit_alpm_transaction(
     alpm.trans_prepare()
         .map_err(|e| anyhow::anyhow!(format_trans_prepare_error(&e.to_string())))?;
 
+    let candidates = alpm
+        .trans_add()
+        .into_iter()
+        .map(|package| {
+            Ok((
+                package.name().to_owned(),
+                crate::package_managers::parse_version(package.version().as_str())
+                    .context("Invalid prepared package version")?,
+                package.origin() != alpm::PackageFrom::SyncDb,
+                package.licenses().iter().next().map(str::to_owned),
+            ))
+        })
+        .collect::<Result<Vec<_>>>()?;
+    crate::core::security::policy::check_prepared_packages(candidates)?;
+
     // RECURSE expands the removal set during preparation. Validate the final
     // set, not only the user's explicit targets, so dependencies protected by
     // HoldPkg cannot be removed as a cascade.
@@ -1378,8 +1407,32 @@ fn commit_alpm_transaction(
     }
 
     main_task.set_message("Finalizing...");
-    alpm.trans_commit()
-        .context("Transaction failed to commit. Run 'omg cleanup' if issue persists.")?;
+    let targets = alpm
+        .trans_add()
+        .into_iter()
+        .chain(alpm.trans_remove())
+        .map(|package| package.name().to_owned())
+        .collect::<Vec<_>>();
+    let operation = match kind {
+        TransactionKind::Install | TransactionKind::InstallAurArtifact => "install",
+        TransactionKind::Remove { .. } => "remove",
+        TransactionKind::SystemUpgrade => "upgrade",
+    };
+    crate::core::security::audit::record_operation(operation, &targets, "attempt")?;
+    let result = alpm
+        .trans_commit()
+        .map_err(|error| anyhow::anyhow!("Transaction failed to commit: {error}"));
+    crate::core::security::audit::record_operation(
+        operation,
+        &targets,
+        if result.is_ok() {
+            "succeeded"
+        } else {
+            "failed"
+        },
+    )
+    .context("Package transaction finished but audit persistence failed")?;
+    result?;
 
     main_task.finish(Outcome::Done);
 

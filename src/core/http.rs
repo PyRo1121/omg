@@ -236,3 +236,97 @@ mod tests {
         assert_eq!(redact_url("not a URL with secret"), "<invalid URL>");
     }
 }
+
+/// Metadata is small control-plane input, never an unbounded artifact stream.
+pub(crate) trait BoundedResponseExt {
+    async fn bounded_json<T: serde::de::DeserializeOwned>(self) -> anyhow::Result<T>;
+    async fn bounded_text(self) -> anyhow::Result<String>;
+}
+
+async fn bounded_metadata_body(mut response: reqwest::Response) -> anyhow::Result<Vec<u8>> {
+    const LIMIT: usize = 16 * 1024 * 1024;
+    tokio::time::timeout(Duration::from_secs(30), async move {
+        anyhow::ensure!(
+            response
+                .content_length()
+                .is_none_or(|length| length <= LIMIT as u64),
+            "Metadata exceeds 16 MiB limit"
+        );
+        let mut bytes = Vec::new();
+        while let Some(chunk) = response.chunk().await? {
+            anyhow::ensure!(
+                chunk.len() <= LIMIT - bytes.len(),
+                "Metadata exceeds 16 MiB limit"
+            );
+            bytes.extend_from_slice(&chunk);
+        }
+        Ok(bytes)
+    })
+    .await
+    .map_err(|_| anyhow::anyhow!("Metadata response exceeded 30 second deadline"))?
+}
+
+impl BoundedResponseExt for reqwest::Response {
+    async fn bounded_json<T: serde::de::DeserializeOwned>(self) -> anyhow::Result<T> {
+        Ok(serde_json::from_slice(&bounded_metadata_body(self).await?)?)
+    }
+    async fn bounded_text(self) -> anyhow::Result<String> {
+        Ok(String::from_utf8(bounded_metadata_body(self).await?)?)
+    }
+}
+
+#[cfg(test)]
+mod metadata_limit_tests {
+    use super::*;
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
+
+    async fn response(bytes: Vec<u8>) -> reqwest::Response {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let address = listener.local_addr().unwrap();
+        tokio::spawn(async move {
+            let (mut stream, _) = listener.accept().await.unwrap();
+            let mut request = [0; 2048];
+            stream.read(&mut request).await.unwrap();
+            // The client may correctly reject before the entire body is sent.
+            let _result = stream.write_all(&bytes).await;
+        });
+        reqwest::Client::builder()
+            .no_proxy()
+            .build()
+            .unwrap()
+            .get(format!("http://{address}"))
+            .send()
+            .await
+            .unwrap()
+    }
+
+    #[tokio::test]
+    async fn bounded_metadata_checks_declared_and_streamed_lengths() {
+        let valid = response(b"HTTP/1.1 200 OK\r\nContent-Length: 2\r\n\r\n{}".to_vec()).await;
+        assert_eq!(
+            valid.bounded_json::<serde_json::Value>().await.unwrap(),
+            serde_json::json!({})
+        );
+        let oversized =
+            response(b"HTTP/1.1 200 OK\r\nContent-Length: 16777217\r\n\r\n".to_vec()).await;
+        assert!(
+            oversized
+                .bounded_text()
+                .await
+                .unwrap_err()
+                .to_string()
+                .contains("16 MiB")
+        );
+        let mut streamed = b"HTTP/1.1 200 OK\r\nConnection: close\r\n\r\n".to_vec();
+        streamed.extend(std::iter::repeat_n(b'x', 16 * 1024 * 1024 + 1));
+        assert!(
+            response(streamed)
+                .await
+                .bounded_text()
+                .await
+                .unwrap_err()
+                .to_string()
+                .contains("16 MiB")
+        );
+    }
+}

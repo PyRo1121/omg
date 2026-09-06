@@ -275,6 +275,19 @@ impl HistoryManager {
         changes: Vec<PackageChange>,
         operation_result: Result<()>,
     ) -> Result<()> {
+        crate::core::security::audit::record_operation(
+            &transaction_type.to_string(),
+            &changes
+                .iter()
+                .map(|change| change.name.clone())
+                .collect::<Vec<_>>(),
+            if operation_result.is_ok() {
+                "succeeded"
+            } else {
+                "failed"
+            },
+        )
+        .context("Package operation finished but audit persistence failed")?;
         if crate::core::privilege::parent_owns_history() {
             return operation_result;
         }

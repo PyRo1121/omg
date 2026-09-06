@@ -26,7 +26,6 @@
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Duration;
-use tokio::process::Command;
 use tokio::time::sleep;
 
 /// Interval between sudo credential refreshes (30 seconds)
@@ -64,11 +63,16 @@ impl SudoLoop {
                 // Refresh sudo timestamp with -v (validate, extend timeout).
                 // kill_on_drop ensures an aborted loop cannot leave a detached
                 // sudo child behind.
-                let result = Command::new("sudo")
-                    .arg("-v")
-                    .kill_on_drop(true)
-                    .output()
-                    .await;
+                let result = async {
+                    let output = crate::core::privilege::sudo_command()?
+                        .arg("-v")
+                        .kill_on_drop(true)
+                        .arg("-n")
+                        .output()
+                        .await?;
+                    Ok::<_, anyhow::Error>(output)
+                }
+                .await;
 
                 match result {
                     Ok(output) if output.status.success() => {
@@ -133,13 +137,18 @@ impl SudoLoop {
 
         tracing::debug!("Sudoloop: immediate credential refresh requested");
 
-        let result = Command::new("sudo")
-            .arg("-v")
-            .stdin(std::process::Stdio::inherit())
-            .stdout(std::process::Stdio::null())
-            .stderr(std::process::Stdio::inherit())
-            .status()
-            .await;
+        let result = async {
+            let output = crate::core::privilege::sudo_command()?
+                .arg("-v")
+                .stdin(std::process::Stdio::inherit())
+                .stdout(std::process::Stdio::null())
+                .stderr(std::process::Stdio::inherit())
+                .arg("-n")
+                .status()
+                .await?;
+            Ok::<_, anyhow::Error>(output)
+        }
+        .await;
 
         match result {
             Ok(status) if status.success() => {
@@ -174,7 +183,7 @@ impl Drop for SudoLoop {
 /// - sudo is not installed
 #[must_use]
 pub fn can_use_sudoloop() -> bool {
-    !crate::core::is_root() && which::which("sudo").is_ok()
+    !crate::core::is_root() && crate::core::privilege::trusted_program("sudo").is_ok()
 }
 
 #[cfg(test)]
