@@ -123,9 +123,16 @@ fn split_elevated_invocation(args: &[String], parent_records: bool) -> Option<(&
 /// see the same quiet/verbose contract as normal dispatch. Global flags
 /// are scanned directly instead of running full argument parsing to keep
 /// the fast path fast; `--` ends flag scanning.
+///
+/// The global `--json` flag is threaded here as well: JSON results must own
+/// stdout while diagnostics stay on stderr, so `--json` implies quiet output.
+/// This runs before every fast path, including the sudo re-exec child (whose
+/// argv preserves the flag via the elevation payload), keeping stdout
+/// pure-JSON on both the normal and the elevated path.
 fn configure_fast_path_output(args: &[String]) {
     let mut verbose = 0u8;
     let mut quiet = false;
+    let mut json = false;
     for token in args.iter().skip(1) {
         if token == "--" {
             break;
@@ -142,11 +149,12 @@ fn configure_fast_path_output(args: &[String]) {
             match token.as_str() {
                 "--verbose" => verbose = verbose.saturating_add(1),
                 "--quiet" => quiet = true,
+                "--json" => json = true,
                 _ => {}
             }
         }
     }
-    omg_lib::cli::modern_ui::configure_output(verbose, quiet);
+    omg_lib::cli::modern_ui::configure_output(verbose, quiet || json);
 }
 
 #[cfg(feature = "arch")]
@@ -1496,9 +1504,9 @@ async fn dispatch_command(command: &Commands, ctx: &omg_lib::cli::CliContext) ->
 #[cfg(test)]
 mod fast_path_tests {
     use super::{
-        FastCounter, has_json_flag, info_package_from_fast_args, parse_fast_counter_cmd,
-        parse_fast_list_tail, root_help_selection, try_fast_completions, try_fast_explicit_count,
-        try_fast_hooks,
+        FastCounter, configure_fast_path_output, has_json_flag, info_package_from_fast_args,
+        parse_fast_counter_cmd, parse_fast_list_tail, root_help_selection, try_fast_completions,
+        try_fast_explicit_count, try_fast_hooks,
     };
 
     #[cfg(feature = "arch")]
@@ -1763,6 +1771,33 @@ mod fast_path_tests {
             "explicit", "--count", "--json"
         ])));
         assert!(!has_json_flag(&args_or_panic(&["explicit", "--count"])));
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn fast_path_json_flag_implies_quiet_output() {
+        use omg_lib::cli::modern_ui::{OutputMode, configure_output, output_mode};
+
+        // Regression: `omg --json <cmd>` rendered with the normal policy on
+        // the fast path, so human chrome could share stdout with the JSON
+        // payload. Threading `--json` as quiet keeps stdout pure-JSON while
+        // diagnostics stay on stderr, on both the normal and the sudo
+        // re-exec path (the elevation payload preserves argv verbatim).
+        configure_fast_path_output(&args(&["omg", "--json", "list"]));
+        assert_eq!(output_mode(), OutputMode::Quiet);
+        configure_fast_path_output(&args(&["omg", "list", "--json"]));
+        assert_eq!(output_mode(), OutputMode::Quiet);
+
+        // A `--json` token after `--` is a package name, not the global flag.
+        configure_fast_path_output(&args(&["omg", "install", "--", "--json"]));
+        assert_ne!(output_mode(), OutputMode::Quiet);
+
+        // No flag: policy unchanged from a plain configure_output call.
+        configure_output(0, false);
+        let baseline = output_mode();
+        configure_fast_path_output(&args(&["omg", "list"]));
+        assert_eq!(output_mode(), baseline);
+        configure_output(0, false);
     }
 
     #[test]
