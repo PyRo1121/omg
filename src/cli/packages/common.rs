@@ -311,6 +311,8 @@ async fn confirm_attended(prompt: String, yes: bool, action: &'static str) -> Re
 /// Confirm destructive cleanup unless the caller supplied `--yes`.
 ///
 /// Fails closed on non-TTY so scripts must pass `--yes`.
+/// Only compiled where the cleanup call site in `clean.rs` is live.
+#[cfg(any(feature = "arch", not(feature = "debian-pure")))]
 pub(crate) async fn confirm_cleanup(yes: bool) -> Result<bool> {
     confirm_attended("Proceed with cleanup?".to_string(), yes, "cleanup").await
 }
@@ -480,6 +482,7 @@ mod tests {
         assert!(error.to_string().contains("Use --yes"));
     }
 
+    #[cfg(any(feature = "arch", not(feature = "debian-pure")))]
     #[tokio::test]
     async fn cleanup_confirmation_is_skipped_with_yes_without_prompting() {
         // `--yes` must resolve without touching the TTY so scripts and the
