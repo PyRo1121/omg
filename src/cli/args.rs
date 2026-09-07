@@ -197,6 +197,9 @@ pub enum Commands {
         /// Show what would be cleaned without making changes
         #[arg(long)]
         dry_run: bool,
+        /// Skip confirmation
+        #[arg(short = 'y', long)]
+        yes: bool,
     },
 
     /// List explicitly installed packages

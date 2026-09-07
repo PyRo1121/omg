@@ -464,7 +464,8 @@ impl App {
     }
 
     pub async fn clean_cache() -> Result<()> {
-        crate::cli::packages::clean(true, true, true, false, false).await
+        // TUI button press is the confirmation; skip the CLI prompt.
+        crate::cli::packages::clean(true, true, true, false, false, true).await
     }
 
     #[allow(

@@ -30,7 +30,14 @@ fn apt_cleanup_requests_unsupported_work(cache: bool, aur: bool, all: bool) -> b
     cache || aur || all
 }
 
-pub async fn clean(orphans: bool, cache: bool, aur: bool, all: bool, dry_run: bool) -> Result<()> {
+pub async fn clean(
+    orphans: bool,
+    cache: bool,
+    aur: bool,
+    all: bool,
+    dry_run: bool,
+    yes: bool,
+) -> Result<()> {
     if dry_run {
         crate::cli::modern_ui::print_phase_header("🧹", "Clean Preview", "dry run");
     } else {
@@ -48,7 +55,7 @@ pub async fn clean(orphans: bool, cache: bool, aur: bool, all: bool, dry_run: bo
         if aur {
             anyhow::bail!("AUR cleanup is not available on Fedora");
         }
-        return handle_fedora_clean(orphans, cache, all, dry_run).await;
+        return handle_fedora_clean(orphans, cache, all, dry_run, yes).await;
     }
 
     // AUR cleanup needs an Arch-style package database. On Debian-like hosts
@@ -64,7 +71,7 @@ pub async fn clean(orphans: bool, cache: bool, aur: bool, all: bool, dry_run: bo
     if is_debian_like() {
         #[cfg(feature = "debian-pure")]
         {
-            return handle_debian_pure_clean(orphans, cache, all, dry_run).await;
+            return handle_debian_pure_clean(orphans, cache, all, dry_run, yes).await;
         }
 
         #[cfg(all(feature = "debian", not(feature = "debian-pure")))]
@@ -107,6 +114,10 @@ pub async fn clean(orphans: bool, cache: bool, aur: bool, all: bool, dry_run: bo
                 println!("  {} No changes made (dry run)", style::info("ℹ"));
                 return Ok(());
             }
+            // No top-level prompt here: failure/success reporting below is the
+            // tested contract (debian_tests test_clean_orphans), and stdin may
+            // be piped. `--yes` remains accepted for forward uniformity.
+            let _ = yes;
             crate::package_managers::apt_remove_orphans().await?;
             return Ok(());
         }
@@ -163,6 +174,11 @@ pub async fn clean(orphans: bool, cache: bool, aur: bool, all: bool, dry_run: bo
                 style::accent("omg clean --all")
             );
             println!();
+            return Ok(());
+        }
+
+        if !dry_run && !super::common::confirm_cleanup(yes).await? {
+            crate::cli::modern_ui::print_warning("Cleanup cancelled");
             return Ok(());
         }
 
@@ -313,7 +329,13 @@ pub async fn clean(orphans: bool, cache: bool, aur: bool, all: bool, dry_run: bo
 }
 
 #[cfg(feature = "fedora")]
-async fn handle_fedora_clean(orphans: bool, cache: bool, all: bool, dry_run: bool) -> Result<()> {
+async fn handle_fedora_clean(
+    orphans: bool,
+    cache: bool,
+    all: bool,
+    dry_run: bool,
+    yes: bool,
+) -> Result<()> {
     use crate::package_managers::dnf::{DnfCleanup, DnfPackageManager};
 
     let manager = DnfPackageManager::new();
@@ -326,6 +348,11 @@ async fn handle_fedora_clean(orphans: bool, cache: bool, all: bool, dry_run: boo
         println!("To clear downloaded package archives: omg clean --cache");
         return Ok(());
     }
+    // No top-level prompt here: DnfPackageManager::cleanup owns the y/n
+    // contract, proven by fedora_tests (decline exit 1 + history, accept
+    // removes, empty stdin succeeds). A second prompt would double-consume
+    // piped answers. `--yes` remains accepted for forward uniformity.
+    let _ = yes;
     if orphans || all {
         if dry_run {
             let packages = DnfPackageManager::orphan_packages().await?;
@@ -357,6 +384,7 @@ async fn handle_debian_pure_clean(
     cache: bool,
     all: bool,
     dry_run: bool,
+    yes: bool,
 ) -> Result<()> {
     let do_orphans = orphans || all;
     let do_cache = cache || all;
@@ -386,6 +414,11 @@ async fn handle_debian_pure_clean(
         println!();
         return Ok(());
     }
+
+    // No top-level prompt on this backend: the destructive debian-pure run
+    // shares the piped-stdin failure contract asserted by debian_tests
+    // test_clean_orphans. `--yes` remains accepted for forward uniformity.
+    let _ = yes;
 
     // Handle orphan removal
     if do_orphans {
@@ -501,7 +534,7 @@ mod tests {
         feature = "fedora"
     )))]
     async fn clean_orphans_without_backend_fails() {
-        let error = clean(true, false, false, false, false)
+        let error = clean(true, false, false, false, false, true)
             .await
             .expect_err("orphan removal with no backend must not look like success");
         assert!(
@@ -519,7 +552,7 @@ mod tests {
         feature = "fedora"
     )))]
     async fn clean_cache_without_backend_fails() {
-        let error = clean(false, true, false, false, false)
+        let error = clean(false, true, false, false, false, true)
             .await
             .expect_err("cache cleanup with no backend must not look like success");
         assert!(
@@ -532,7 +565,7 @@ mod tests {
     #[tokio::test]
     #[cfg(not(feature = "arch"))]
     async fn clean_aur_without_arch_fails() {
-        let error = clean(false, false, true, false, false)
+        let error = clean(false, false, true, false, false, true)
             .await
             .expect_err("AUR cleanup without the Arch backend must not look like success");
         // Debian-like hosts hit the earlier host-specific bail

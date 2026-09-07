@@ -16,6 +16,51 @@ const MAX_CONFIG_SIZE: u64 = 1024 * 1024;
 /// Maximum metadata cache TTL (7 days in seconds)
 const MAX_CACHE_TTL_SECS: u64 = 7 * 24 * 60 * 60;
 
+/// Maximum concurrent AUR builds: the `omg config set` CLI rejects values
+/// outside `1..=MAX_BUILD_CONCURRENCY`, and every consumer clamps
+/// (`build_concurrency()` floors at 1, parallel builds clamp 1..=8).
+pub(crate) const MAX_BUILD_CONCURRENCY: usize = 8;
+
+/// Reject concurrency outside `1..=MAX_BUILD_CONCURRENCY`.
+///
+/// # Errors
+/// Returns an error when `value` is zero or above the maximum, so a
+/// poisoned config fails closed instead of exhausting resources.
+pub(crate) fn validate_build_concurrency(value: usize) -> Result<()> {
+    if value == 0 {
+        anyhow::bail!("aur.build_concurrency must be at least 1");
+    }
+    if value > MAX_BUILD_CONCURRENCY {
+        anyhow::bail!(
+            "aur.build_concurrency exceeds maximum of {MAX_BUILD_CONCURRENCY}. \
+             Use a value between 1 and {MAX_BUILD_CONCURRENCY}."
+        );
+    }
+    Ok(())
+}
+
+/// Reject MAKEFLAGS containing anything outside the allowlist.
+///
+/// The allowlist already excludes every shell metacharacter, so no
+/// separate denylist is needed.
+///
+/// # Errors
+/// Returns an error naming the allowed characters when `value` contains
+/// anything else, so a poisoned config fails closed instead of reaching
+/// a build command.
+pub(crate) fn validate_makeflags(value: &str) -> Result<()> {
+    let is_safe = value.chars().all(|c| {
+        c.is_ascii_alphanumeric() || c == '-' || c == '=' || c == ' ' || c == ',' || c == '.'
+    });
+    if !is_safe {
+        anyhow::bail!(
+            "Invalid MAKEFLAGS: only alphanumeric, '-', '=', space, comma, and '.' \
+             are allowed (e.g. '-j8'). Shell metacharacters such as '$()' are rejected."
+        );
+    }
+    Ok(())
+}
+
 /// Convert a serialized TOML value into its editable counterpart for
 /// comment-preserving config merges.
 fn edit_item(value: toml::Value) -> toml_edit::Item {
@@ -264,11 +309,13 @@ impl Settings {
             if LEGACY_KEYS.contains(&key.as_str()) {
                 // Settings::load runs many times per invocation (telemetry
                 // gates, completions, ...); warn once per process so a daily
-                // command is not spammed with the same notice.
+                // command is not spammed with the same notice. This stays a
+                // warn (not debug): RUST_LOG=warn must surface it, per the
+                // tracing-diagnostics contract test.
                 use std::sync::atomic::{AtomicBool, Ordering};
                 static WARNED: AtomicBool = AtomicBool::new(false);
                 if !WARNED.swap(true, Ordering::Relaxed) {
-                    tracing::debug!(
+                    tracing::warn!(
                         key = key.as_str(),
                         "config section '{key}' is deprecated and ignored by this omg version"
                     );
@@ -351,9 +398,33 @@ impl Settings {
                     MAX_CACHE_TTL_SECS
                 );
             }
+            // Security: the `omg config set` CLI validates MAKEFLAGS, but
+            // the file itself is a trust boundary (shared dotfiles,
+            // OMG_CONFIG_DIR). Enforce the same allowlist here so
+            // direct-TOML edits cannot smuggle shell metacharacters into
+            // build commands.
+            // Note: build_concurrency is deliberately NOT range-checked
+            // here. The pinned contract
+            // (tests/coverage_1.rs
+            // `build_concurrency_clamps_configured_zero_to_one`) requires
+            // that a configured 0 loads and clamps to 1 at the consumer,
+            // and every consumer already bounds the value
+            // (`build_concurrency()` floors at 1, update checks clamp
+            // 4..=16, parallel builds clamp 1..=8). Rejecting here would
+            // hard-fail every command on out-of-range files for no gain.
+            if let Some(makeflags) = &settings.aur.makeflags {
+                validate_makeflags(makeflags)?;
+            }
 
             Ok(settings.with_runtime_overrides())
         } else {
+            if let Some(dir) = std::env::var_os("OMG_CONFIG_DIR").filter(|v| !v.is_empty()) {
+                tracing::warn!(
+                    "OMG_CONFIG_DIR {} is set but {} is missing; using defaults",
+                    PathBuf::from(&dir).display(),
+                    config_path.display()
+                );
+            }
             Ok(Self::default().with_runtime_overrides())
         }
     }
@@ -745,5 +816,110 @@ mod tests {
 
         assert_eq!(parsed.data_dir, paths::data_dir());
         assert_eq!(parsed.socket_path, paths::socket_path());
+    }
+
+    /// A missing env-pointed config dir falls back to defaults (with a warn
+    /// on stderr via tracing). Serial: load() resolves the process-global
+    /// config path.
+    #[serial_test::serial]
+    #[test]
+    fn config_missing_env_dir_loads_defaults() {
+        let missing = std::env::temp_dir().join("omg-missing-config-dir-probe");
+        let _ = std::fs::remove_dir_all(&missing);
+        let dir_str = missing.to_string_lossy().into_owned();
+        assert!(!missing.exists());
+        let vars: Vec<(&str, Option<&str>)> = vec![("OMG_CONFIG_DIR", Some(dir_str.as_str()))];
+        temp_env::with_vars(&vars, || {
+            let loaded = Settings::load().expect("missing env dir must load defaults");
+            assert_eq!(
+                format!("{loaded:?}"),
+                format!("{:?}", Settings::default().with_runtime_overrides())
+            );
+        });
+    }
+
+    /// Direct-TOML edits must face the same MAKEFLAGS allowlist as the
+    /// `omg config set` CLI. Serial: load() resolves the process-global
+    /// config path.
+    #[serial_test::serial]
+    #[test]
+    fn load_rejects_poisoned_makeflags() {
+        let dir = tempfile::TempDir::new().expect("isolated config dir");
+        let dir_str = dir.path().to_string_lossy().into_owned();
+        let vars: Vec<(&str, Option<&str>)> = vec![("OMG_CONFIG_DIR", Some(dir_str.as_str()))];
+        temp_env::with_vars(&vars, || {
+            std::fs::write(
+                Settings::config_path().expect("config path"),
+                "[aur]\nmakeflags = \"-j8; rm -rf ~\"\n",
+            )
+            .expect("seed config");
+            let error = Settings::load().expect_err("poisoned MAKEFLAGS must fail closed");
+            assert!(error.to_string().contains("Invalid MAKEFLAGS"), "{error:?}");
+        });
+    }
+
+    /// Extreme concurrency values must still load: the deliberate contract
+    /// (see `build_concurrency_clamps_configured_zero_to_one` in
+    /// tests/coverage_1.rs) clamps at the consumer instead of failing the
+    /// whole config. Serial: load() resolves the process-global path.
+    #[serial_test::serial]
+    #[test]
+    fn load_tolerates_extreme_concurrency_for_consumer_clamping() {
+        for contents in [
+            "[aur]\nbuild_concurrency = 0\n",
+            "[aur]\nbuild_concurrency = 1000000\n",
+        ] {
+            let dir = tempfile::TempDir::new().expect("isolated config dir");
+            let dir_str = dir.path().to_string_lossy().into_owned();
+            let vars: Vec<(&str, Option<&str>)> = vec![("OMG_CONFIG_DIR", Some(dir_str.as_str()))];
+            temp_env::with_vars(&vars, || {
+                std::fs::write(Settings::config_path().expect("config path"), contents)
+                    .expect("seed config");
+                Settings::load().expect("extreme concurrency must load; consumers clamp");
+            });
+        }
+    }
+
+    /// Boundary values the CLI accepts must also load from TOML.
+    #[serial_test::serial]
+    #[test]
+    fn load_accepts_valid_hardening_values() {
+        let dir = tempfile::TempDir::new().expect("isolated config dir");
+        let dir_str = dir.path().to_string_lossy().into_owned();
+        let vars: Vec<(&str, Option<&str>)> = vec![("OMG_CONFIG_DIR", Some(dir_str.as_str()))];
+        temp_env::with_vars(&vars, || {
+            std::fs::write(
+                Settings::config_path().expect("config path"),
+                "[aur]\nbuild_concurrency = 8\nmakeflags = \"-j8\"\n",
+            )
+            .expect("seed config");
+            let settings = Settings::load().expect("valid values must load");
+            assert_eq!(settings.aur.build_concurrency, 8);
+            assert_eq!(settings.aur.makeflags.as_deref(), Some("-j8"));
+        });
+    }
+
+    /// Unit coverage for the shared allowlist (also enforced by load()).
+    #[test]
+    fn makeflags_allowlist_rejects_shell_metacharacters() {
+        for valid in ["-j8", "-j 8", "V=1", "a,b.c"] {
+            validate_makeflags(valid)
+                .unwrap_or_else(|error| panic!("allowlist must accept {valid}: {error:?}"));
+        }
+        for poisoned in [
+            "$(reboot)",
+            "a;b",
+            "`id`",
+            "a|b",
+            "a&b",
+            "a>b",
+            "$HOME/x",
+            "a'b",
+        ] {
+            assert!(
+                validate_makeflags(poisoned).is_err(),
+                "allowlist must reject {poisoned}"
+            );
+        }
     }
 }

@@ -10,6 +10,7 @@ use std::path::Path;
 use std::sync::OnceLock;
 
 const RAIL_GLYPH: &str = "│";
+#[cfg_attr(not(feature = "arch"), allow(dead_code))]
 const STRIPE_CELLS: usize = 16;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -200,10 +201,12 @@ pub(crate) fn gradient_text(text: &str) -> String {
         .collect()
 }
 
+#[cfg_attr(not(feature = "arch"), allow(dead_code))]
 fn hyperlinks_enabled() -> bool {
     crate::cli::style::colors_enabled() && std::io::stdout().is_terminal()
 }
 
+#[cfg_attr(not(feature = "arch"), allow(dead_code))]
 fn percent_encode_path(path: &str) -> String {
     path.bytes()
         .flat_map(|byte| match byte {
@@ -216,6 +219,7 @@ fn percent_encode_path(path: &str) -> String {
         .collect()
 }
 
+#[cfg_attr(not(feature = "arch"), allow(dead_code))]
 fn osc8(url: &str, label: &str) -> String {
     if !hyperlinks_enabled() {
         return label.to_string();
@@ -224,6 +228,7 @@ fn osc8(url: &str, label: &str) -> String {
 }
 
 /// Clickable `file://` link when the terminal supports OSC-8.
+#[cfg_attr(not(feature = "arch"), allow(dead_code))]
 pub(crate) fn osc8_file(path: &Path, label: &str) -> String {
     let display = path.canonicalize().unwrap_or_else(|_| path.to_path_buf());
     let url = format!("file://{}", percent_encode_path(&display.to_string_lossy()));
@@ -231,6 +236,7 @@ pub(crate) fn osc8_file(path: &Path, label: &str) -> String {
 }
 
 /// Clickable http(s) link. Rejects anything that is not http/https.
+#[cfg_attr(not(feature = "arch"), allow(dead_code))]
 pub(crate) fn osc8_http(url: &str, label: &str) -> String {
     let cleaned = crate::cli::style::sanitize_terminal_text(url);
     if cleaned.starts_with("https://") || cleaned.starts_with("http://") {
@@ -240,6 +246,7 @@ pub(crate) fn osc8_http(url: &str, label: &str) -> String {
     }
 }
 
+#[cfg_attr(not(feature = "arch"), allow(dead_code))]
 fn graphics_capable() -> bool {
     if !crate::cli::style::colors_enabled() || !std::io::stdout().is_terminal() {
         return false;
@@ -258,6 +265,7 @@ fn graphics_capable() -> bool {
     term.contains("kitty") || term.contains("ghostty")
 }
 
+#[cfg_attr(not(feature = "arch"), allow(dead_code))]
 pub(crate) fn kitty_rgb_bar(pixels: &[[u8; 3]]) -> String {
     let width = pixels.len();
     let mut rgb = Vec::with_capacity(width * 3);
@@ -268,6 +276,7 @@ pub(crate) fn kitty_rgb_bar(pixels: &[[u8; 3]]) -> String {
     format!("\u{1b}_Ga=T,f=24,s={width},v=1,c={width},r=1,q=2;{payload}\u{1b}\\")
 }
 
+#[cfg_attr(not(feature = "arch"), allow(dead_code))]
 fn stripe_pixels(digest: &str) -> Vec<[u8; 3]> {
     let Some(gradient) = phase_gradient() else {
         let accent = palette().accent;
@@ -285,6 +294,7 @@ fn stripe_pixels(digest: &str) -> Vec<[u8; 3]> {
 
 /// Visual fingerprint of a SHA-256. Kitty graphics when the terminal can
 /// take them, otherwise a truecolor Unicode bar.
+#[cfg_attr(not(feature = "arch"), allow(dead_code))]
 pub(crate) fn digest_stripe(digest: &str) -> String {
     let pixels = stripe_pixels(digest);
     if !crate::cli::style::colors_enabled() {
@@ -299,6 +309,7 @@ pub(crate) fn digest_stripe(digest: &str) -> String {
         .collect()
 }
 
+#[cfg_attr(not(feature = "arch"), allow(dead_code))]
 const PKGBUILD_KEYS: &[&str] = &[
     "pkgname",
     "pkgver",
@@ -324,12 +335,10 @@ const PKGBUILD_KEYS: &[&str] = &[
     "pkgbase",
 ];
 
+#[cfg_attr(not(feature = "arch"), allow(dead_code))]
 fn assignment_name(line: &str) -> Option<&str> {
     let trimmed = line.trim_start();
-    let name = trimmed
-        .split(|character: char| character == '=' || character == '(')
-        .next()?
-        .trim();
+    let name = trimmed.split(['=', '(']).next()?.trim();
     if name.is_empty() {
         return None;
     }
@@ -340,6 +349,7 @@ fn assignment_name(line: &str) -> Option<&str> {
 
 /// Color PKGBUILD keywords, comments, and function names. Hand-rolled so the
 /// binary does not take syntect's syntax dump for an eight-line preview.
+#[cfg_attr(not(feature = "arch"), allow(dead_code))]
 pub(crate) fn highlight_pkgbuild_line(line: &str) -> String {
     if !crate::cli::style::colors_enabled() {
         return line.to_string();
@@ -367,6 +377,7 @@ pub(crate) fn highlight_pkgbuild_line(line: &str) -> String {
 }
 
 /// rustc-style `  12 |  source=...` snippet line.
+#[cfg_attr(not(feature = "arch"), allow(dead_code))]
 pub(crate) fn snippet_line(number: usize, line: &str) -> String {
     let highlighted = highlight_pkgbuild_line(line);
     if crate::cli::style::colors_enabled() {
@@ -383,6 +394,7 @@ pub(crate) fn snippet_line(number: usize, line: &str) -> String {
     }
 }
 
+#[cfg_attr(not(feature = "arch"), allow(dead_code))]
 pub(crate) fn kv(key: &str, value: &str) -> String {
     if crate::cli::style::colors_enabled() {
         format!(
@@ -395,10 +407,12 @@ pub(crate) fn kv(key: &str, value: &str) -> String {
     }
 }
 
+#[cfg_attr(not(feature = "arch"), allow(dead_code))]
 pub(crate) fn rail_line(body: &str) -> String {
     format!("  {}  {body}", rail())
 }
 
+#[cfg_attr(not(feature = "arch"), allow(dead_code))]
 pub(crate) fn truncate_chars(line: &str, max: usize) -> String {
     let mut chars = line.chars();
     let taken: String = chars.by_ref().take(max).collect();

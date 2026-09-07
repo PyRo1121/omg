@@ -9,7 +9,7 @@ tag push (v*) or manual dispatch
         │
         ▼
 gate-on-ci ──▶ build-arch / build-debian / build-ubuntu / build-fedora / build-macos
-   (1)                  │  (digest-pinned distro containers, 1.93.1 toolchain)
+   (1)                  │  (digest-pinned distro containers, 1.95.0 toolchain)
                         ▼
                    release (SBOM → attest → checksum-verified collection → GitHub Release)
                         │

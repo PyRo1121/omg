@@ -8,7 +8,7 @@ Thank you for your interest in contributing to OMG! This guide will help you get
 
 ### Prerequisites
 
-- **Rust:** 1.93 or later (uses Rust Edition 2024)
+- **Rust:** 1.95.0 or later (uses Rust Edition 2024, see `rust-toolchain.toml`)
 - **Platform-specific dependencies:**
   - **Arch Linux:** `base-devel`, `libalpm` (installed by default)
   - **Debian/Ubuntu:** `build-essential`, `libapt-pkg-dev`
@@ -21,6 +21,9 @@ Thank you for your interest in contributing to OMG! This guide will help you get
 # Clone the repository
 git clone https://github.com/PyRo1121/omg.git
 cd omg
+
+# Check your toolchain meets MSRV 1.95.0
+rustc --version
 
 # Build the project
 cargo build --features arch  # or 'debian', 'fedora', etc.
@@ -95,7 +98,7 @@ omg/
 ### Rust Edition & Version
 
 - **Edition:** `2024` (latest stable Rust edition)
-- **MSRV:** `1.93+`
+- **MSRV:** `1.95.0+` (matches `rust-version` in `Cargo.toml`)
 - **Target:** Follow Rust 2024 idioms and zero-cost abstractions
 
 ### Formatting
@@ -126,7 +129,7 @@ Use this target before pushing:
 make ci-local-full
 ```
 
-Both targets use Rust 1.93.1, locked dependencies, and build output under `~/.cache/build-targets/omg-ci-local`. The full target checks the portable, `debian-pure`, and Arch feature sets. It also runs all hermetic Arch tests. GitHub runs the native Debian, Fedora, Ubuntu, macOS, Docker, coverage, and CodeQL jobs.
+Both targets use Rust 1.95.0, locked dependencies, and build output under `~/.cache/build-targets/omg-ci-local`. The full target checks the portable, `debian-pure`, and Arch feature sets. It also runs all hermetic Arch tests. GitHub runs the native Debian, Fedora, Ubuntu, macOS, Docker, coverage, and CodeQL jobs.
 
 Do not run `cargo clippy --all-targets --all-features` on Arch. That command enables incompatible native package-manager bindings.
 
@@ -465,7 +468,7 @@ What actually happened.
 **Environment:**
 - OS: [e.g., Arch Linux]
 - OMG version: [e.g., 0.1.204]
-- Rust version: [e.g., 1.93]
+- Rust version: [e.g., 1.95.0 (`rustc --version`)]
 
 **Logs**
 ```

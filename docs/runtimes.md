@@ -123,6 +123,46 @@ cd .
 omg list deno --available
 ```
 
+### Ruby
+
+```bash
+# Install Ruby 3.3
+omg use ruby 3.3
+
+# Auto-detect from .ruby-version
+echo "3.3.0" > .ruby-version
+cd .
+```
+
+### Java
+
+```bash
+# Install Java 21
+omg use java 21
+
+# Auto-detect from .java-version
+echo "21" > .java-version
+cd .
+```
+
+### Bun
+
+```bash
+# Install Bun 1.0
+omg use bun 1.0
+
+# Auto-detect from .bun-version
+echo "1.0.25" > .bun-version
+cd .
+```
+
+### Pi
+
+```bash
+# Install Pi agent
+omg use pi latest
+```
+
 ### Multiple Runtimes (Typical Project)
 
 ```bash

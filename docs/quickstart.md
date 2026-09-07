@@ -649,9 +649,9 @@ omg audit secrets         # Scan for leaked credentials
 
 ---
 
-## Enable the Daemon (Recommended)
+## Enable the Daemon (Optional speed boost)
 
-The daemon keeps a package index in memory, making searches 12-24x faster. Start it with:
+The daemon keeps a package index in memory, making searches 12-24x faster. It is optional — skip it for the smallest footprint on low-end machines. Start it with:
 
 ```bash
 omg daemon

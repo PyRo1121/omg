@@ -6,7 +6,7 @@ description: Background service lifecycle, IPC, and state management
 
 # Daemon Internals (omgd)
 
-The OMG daemon (`omgd`) is the central services engine that manages system state, package indices, and background synchronization.
+The OMG daemon (`omgd`) is an optional speed boost: it keeps package indices in memory for ~5-11ms searches. Most commands work fully without it by querying package managers directly — just slower. `omg audit` (scan and compliance export) and `omg metrics` require a running daemon. Skip the daemon on low-end machines or when you want the smallest footprint.
 
 ## 🚀 Daemon Lifecycle
 
@@ -16,7 +16,7 @@ When the daemon starts, it resolves its operating environment and establishes a 
 
 - **Socket Resolution**: It identifies the optimal path for the Unix socket, prioritizing the user's runtime directory (`$XDG_RUNTIME_DIR`) and falling back to systemic shared locations.
 - **Cleanup and Bind**: It ensures a fresh start by removing any stale socket files and binding with strict `0600` permissions (user read/write only).
-- **Detached Launch**: `omg daemon start` discards stdout and stderr. Run `omgd` directly or through a service manager configured to capture output when you need logs.
+- **Detached Launch**: `omg daemon` (no subcommands) discards stdout and stderr. Run `omgd` directly or through a service manager configured to capture output when you need logs. For daemon status, use `omg daemon-status`; `omg audit` (scan and compliance export) and `omg metrics` require a running daemon.
 
 ### 2. State Management
 

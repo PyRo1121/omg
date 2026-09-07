@@ -280,8 +280,8 @@ end
 # Create completions directory
 mkdir -p ~/.zsh/completions
 
-# Generate completions
-omg completions zsh > ~/.zsh/completions/_omg
+# Generate completions (note --stdout: bare `omg completions <shell>` installs instead of printing)
+omg completions zsh --stdout > ~/.zsh/completions/_omg
 
 # Add to fpath in ~/.zshrc (if not already)
 fpath=(~/.zsh/completions $fpath)
@@ -296,10 +296,10 @@ compinit
 
 ```bash
 # System-wide
-sudo omg completions bash > /etc/bash_completion.d/omg
+sudo omg completions bash --stdout > /etc/bash_completion.d/omg
 
 # Or user-only
-omg completions bash > ~/.local/share/bash-completion/completions/omg
+omg completions bash --stdout > ~/.local/share/bash-completion/completions/omg
 
 # Source immediately
 source /etc/bash_completion.d/omg
@@ -309,10 +309,10 @@ source /etc/bash_completion.d/omg
 
 ```bash
 # User completions
-omg completions fish > ~/.config/fish/completions/omg.fish
+omg completions fish --stdout > ~/.config/fish/completions/omg.fish
 
 # System-wide
-sudo omg completions fish > /usr/share/fish/vendor_completions.d/omg.fish
+sudo omg completions fish --stdout > /usr/share/fish/vendor_completions.d/omg.fish
 ```
 
 ### Completion Features
@@ -508,7 +508,7 @@ omg daemon
 ```bash
 # Zsh
 rm ~/.zcompdump
-omg completions zsh > ~/.zsh/completions/_omg
+omg completions zsh --stdout > ~/.zsh/completions/_omg
 compinit
 
 # Check fpath

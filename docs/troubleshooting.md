@@ -156,7 +156,7 @@ omg which node
 ```bash
 # For Zsh:
 # 1. Regenerate completions
-omg completions zsh > ~/.zsh/completions/_omg
+omg completions zsh --stdout > ~/.zsh/completions/_omg
 
 # 2. Ensure completions directory is in fpath
 echo $fpath | grep completions
@@ -170,7 +170,7 @@ rm ~/.zcompdump
 compinit
 
 # For Bash:
-omg completions bash > /etc/bash_completion.d/omg
+omg completions bash --stdout > /etc/bash_completion.d/omg
 source /etc/bash_completion.d/omg
 ```
 

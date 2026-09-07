@@ -82,10 +82,10 @@ omg --version
 
 **Features:**
 
-- Native `rust-apt` integration
+- Pure-Rust APT database reads first, `rust-apt` fallback
 - 59-483x faster than apt-cache/Nala
-- Direct APT database access
-- Zero subprocess overhead
+- Direct APT database access for reads; installs and upgrades commit via libapt or `apt-get`
+- Zero subprocess overhead for queries (installs may shell out to `apt-get`)
 
 ---
 
@@ -99,10 +99,10 @@ curl -fsSL https://omg.latham.cloud/install.sh | bash
 
 **Features:**
 
-- Pure Rust DNF/RPM implementation
-- Direct SQLite database access
+- Pure Rust DNF/RPM implementation for queries
+- Direct SQLite database access for reads (`rpm -qa` fallback)
 - 50-100x faster package queries
-- No subprocess calls
+- No subprocess calls for queries (installs, removals, and upgrades run via `dnf`)
 
 ---
 
@@ -143,7 +143,7 @@ OMG detects and uses the package backend for the installed Linux distribution. N
 
 **Prerequisites:**
 
-- Rust 1.93+ (`rustup`)
+- Rust 1.95.0+ (`rustup`; verify with `rustc --version`)
 - Platform build tools:
   - Linux: `gcc`, `pkg-config`, `libssl-dev`
   - Debian/Ubuntu builds (`--features debian`): `libapt-pkg-dev`, `clang`, `cmake`
@@ -375,6 +375,8 @@ chmod +x ~/.local/bin/omg
 ```
 
 ### Daemon not starting
+
+The daemon is optional — most commands work without it via direct queries. `omg audit` (scan) and `omg metrics` require it; compliance export runs without it but skips the vulnerability scan.
 
 ```bash
 # Check daemon status

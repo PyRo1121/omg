@@ -50,5 +50,5 @@ cargo clippy --all-targets --no-default-features --features macos,license --lock
 
 - No new warnings/errors in scoped `clippy` runs
 - No regressions in critical tests (`e2e_package_operations`, daemon cache/lifecycle)
-- README and CONTRIBUTING reflect current Rust requirement (1.93+)
+- README and CONTRIBUTING reflect current Rust requirement (1.95.0+)
 - Release artifacts build successfully on all target platforms

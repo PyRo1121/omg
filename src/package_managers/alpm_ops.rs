@@ -667,11 +667,10 @@ fn download_lane_message(active: u64, done: u64) -> String {
 }
 
 fn finish_download_lane(lane: &Mutex<Option<ProgressTask>>) {
-    if let Some(task) = lane
+    let mut guard = lane
         .lock()
-        .unwrap_or_else(std::sync::PoisonError::into_inner)
-        .take()
-    {
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    if let Some(task) = guard.take() {
         task.finish(Outcome::Done);
     }
 }
