@@ -60,6 +60,7 @@ fn hide_progress(progress: &MultiProgress) {
 
 /// Hide leftover live bar rows after a finished parallel batch, then restore
 /// stderr drawing in interactive mode so later Checking spinners can attach.
+#[cfg_attr(not(feature = "arch"), allow(dead_code))]
 pub(crate) fn clear_live_progress() {
     let progress = progress_registry();
     hide_progress(progress);
