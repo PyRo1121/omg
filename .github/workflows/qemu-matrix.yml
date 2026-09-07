@@ -1,0 +1,544 @@
+# QEMU guest matrix for OMG (release + staged guests, x86_64 and aarch64)
+#
+# Boots disposable KVM guests per distro and runs the package-lifecycle
+# guest check via scripts/benchmark-qemu.sh.
+# - schedule/dispatch default: published release guests, x86_64 (no build).
+# - pull_request (or dispatch + staged=true): per-distro builds packaged
+#   exactly like the release recipe, tested via --staged-dir.
+# - aarch64 legs are staged-only on ubuntu-24.04-arm runners: the release
+#   workflow publishes no aarch64-linux archives, so ARM guests test
+#   arm64-native builds (guest-arm job). Arch has no ARM leg: upstream
+#   publishes no aarch64 cloud image (see scripts/benchmark-qemu.sh).
+# - TSV-driven inventory rows run inside healthy guests via
+#   --inventory-tiers (see scripts/qemu-inventory.sh).
+#
+# Requires /dev/kvm on the runner: fail fast when it is missing instead
+# of silently falling back to TCG.
+
+name: QEMU Matrix
+
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - "src/**"
+      - "tests/**"
+      - "Cargo.toml"
+      - "Cargo.lock"
+      - "build.rs"
+      - "rust-toolchain.toml"
+      - ".cargo/**"
+      - "scripts/benchmark-qemu.sh"
+      - ".github/workflows/qemu-matrix.yml"
+  schedule:
+    # Nightly, staggered off docker-e2e's 02:00 slot.
+    - cron: "17 3 * * *"
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Release tag to test (vX.Y.Z)"
+        type: string
+        default: ""
+      distro:
+        description: "Single distro (empty = all four)"
+        type: choice
+        options: ["", arch, debian, ubuntu, fedora]
+        default: ""
+      arch:
+        description: "Guest arch (empty = both; arm64 runs staged legs only)"
+        type: choice
+        options: ["", x64, arm64]
+        default: ""
+      staged:
+        description: "Build PR binaries and test via --staged-dir"
+        type: boolean
+        default: false
+
+concurrency:
+  group: qemu-${{ github.ref }}-${{ matrix.distro }}
+  # Nightly evidence must never be cancelled by a newer push.
+  cancel-in-progress: ${{ github.event_name != 'schedule' }}
+
+permissions:
+  contents: read
+
+env:
+  GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+  CARGO_TERM_COLOR: always
+  CARGO_INCREMENTAL: 0
+
+jobs:
+  #########################################################################
+  # STAGE 1: per-distro release builds for staged guest legs (PRs only)
+  #########################################################################
+  build-staged:
+    name: "Staged build (${{ matrix.distro }})"
+    if: github.event_name == 'pull_request' || (github.event_name == 'workflow_dispatch' && inputs.staged)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - distro: arch
+            image: archlinux:latest@sha256:b0deabeb3d283da2c7f7dbf0eea051b7b2cd0554e0b737cc457fd21683bdcdd1
+            features: arch,pgp,license
+            setup: |
+              pacman -Syu --noconfirm
+              pacman -S --noconfirm --needed base-devel git pkgconf openssl libarchive clang cmake curl jq
+          - distro: debian
+            image: debian:bookworm@sha256:813017f3d62be4b5891a7acca6a01bdcd4b8513daa81b1ab99d3a50385b26931
+            features: debian,pgp,license
+            setup: |
+              apt-get update
+              DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
+                ca-certificates curl git build-essential pkg-config sudo \
+                libssl-dev libapt-pkg-dev clang cmake zlib1g-dev liblzma-dev libbz2-dev
+          - distro: fedora
+            image: fedora:latest@sha256:6c75d5bf57cb0fa5aa4b92c6a83c86c791644496d9ac230de7711f5b8ec3b898
+            features: fedora,pgp,license
+            setup: |
+              dnf install -y --setopt=install_weak_deps=False \
+                git clang cmake openssl-devel pkgconfig findutils curl procps-ng \
+                rpm dnf sqlite yum-utils fedora-release
+              rpm --initdb
+              dnf makecache --refresh
+    container:
+      image: ${{ matrix.image }}
+    steps:
+      - name: Setup environment
+        run: ${{ matrix.setup }}
+
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba87 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Fix git permissions
+        run: git config --global --add safe.directory "$GITHUB_WORKSPACE"
+
+      - name: Install Rust toolchain
+        # Match rust-toolchain.toml (1.95.0) instead of floating "stable"
+        uses: dtolnay/rust-toolchain@6bed0761d98439e5a578e2877258200ad565ba87 # stable
+        with:
+          toolchain: "1.95.0"
+
+      - name: Cache cargo registry
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: |
+            ~/.cargo/registry/index/
+            ~/.cargo/registry/cache/
+            ~/.cargo/git/db/
+          key: qemu-staged-${{ matrix.distro }}-registry-${{ hashFiles('**/Cargo.lock') }}
+
+      - name: Build
+        run: |
+          export RUSTFLAGS="-C target-cpu=x86-64-v2"
+          cargo build --release --no-default-features --features ${{ matrix.features }} --locked
+
+      - name: Package like the release recipe
+        run: |
+          VERSION=$(awk -F'"' '/^version =/ {print $2; exit}' Cargo.toml)
+          mkdir -p "omg-v${VERSION}-x86_64-linux-${{ matrix.distro }}"
+          cp target/release/omg "omg-v${VERSION}-x86_64-linux-${{ matrix.distro }}/"
+          if [[ "${{ matrix.distro }}" == "arch" ]]; then
+            cp target/release/omgd "omg-v${VERSION}-x86_64-linux-${{ matrix.distro }}/"
+          fi
+          cp README.md LICENSE "omg-v${VERSION}-x86_64-linux-${{ matrix.distro }}/"
+          tar -czf "omg-v${VERSION}-x86_64-linux-${{ matrix.distro }}.tar.gz" "omg-v${VERSION}-x86_64-linux-${{ matrix.distro }}"
+          sha256sum "omg-v${VERSION}-x86_64-linux-${{ matrix.distro }}.tar.gz" > "omg-v${VERSION}-x86_64-linux-${{ matrix.distro }}.tar.gz.sha256"
+
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: staged-${{ matrix.distro }}
+          path: omg-v*.tar.gz*
+          retention-days: 7
+
+  build-staged-ubuntu:
+    name: "Staged build (ubuntu)"
+    if: github.event_name == 'pull_request' || (github.event_name == 'workflow_dispatch' && inputs.staged)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba87 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Install Dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            libapt-pkg-dev \
+            pkg-config \
+            libssl-dev \
+            clang \
+            cmake
+
+      - name: Install Rust toolchain
+        # Match rust-toolchain.toml (1.95.0) instead of floating "stable"
+        uses: dtolnay/rust-toolchain@6bed0761d98439e5a578e2877258200ad565ba87 # stable
+        with:
+          toolchain: "1.95.0"
+
+      - name: Cache cargo registry
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: |
+            ~/.cargo/registry/index/
+            ~/.cargo/registry/cache/
+            ~/.cargo/git/db/
+          key: qemu-staged-ubuntu-registry-${{ hashFiles('**/Cargo.lock') }}
+
+      - name: Build
+        run: cargo build --release --no-default-features --features debian,pgp,license --locked
+
+      - name: Package like the release recipe
+        run: |
+          VERSION=$(awk -F'"' '/^version =/ {print $2; exit}' Cargo.toml)
+          mkdir -p "omg-v${VERSION}-x86_64-linux-ubuntu"
+          cp target/release/omg "omg-v${VERSION}-x86_64-linux-ubuntu/"
+          cp README.md LICENSE "omg-v${VERSION}-x86_64-linux-ubuntu/"
+          tar -czf "omg-v${VERSION}-x86_64-linux-ubuntu.tar.gz" "omg-v${VERSION}-x86_64-linux-ubuntu"
+          sha256sum "omg-v${VERSION}-x86_64-linux-ubuntu.tar.gz" > "omg-v${VERSION}-x86_64-linux-ubuntu.tar.gz.sha256"
+
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: staged-ubuntu
+          path: omg-v*.tar.gz*
+          retention-days: 7
+
+  #########################################################################
+  # STAGE 1b: arm64-native staged builds for the ARM guest legs (PRs only).
+  # No arch row: there is no aarch64 archlinux container image, matching
+  # the missing arch/aarch64 guest pin in scripts/benchmark-qemu.sh.
+  #########################################################################
+  build-staged-arm:
+    name: "Staged build arm64 (${{ matrix.distro }})"
+    if: github.event_name == 'pull_request' || (github.event_name == 'workflow_dispatch' && inputs.staged)
+    runs-on: ubuntu-24.04-arm
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - distro: debian
+            # arm64 per-arch digest (the x64-era list digest is not
+            # arch-resolving here by guarantee; pin the arch explicitly).
+            image: debian:bookworm@sha256:5eac3978974cfa26a880057766c683e55c5763355d30a8beecbd263e0e1621d9
+            features: debian,pgp,license
+            setup: |
+              apt-get update
+              DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
+                ca-certificates curl git build-essential pkg-config sudo \
+                libssl-dev libapt-pkg-dev clang cmake zlib1g-dev liblzma-dev libbz2-dev
+          - distro: fedora
+            # arm64 per-arch digest; see the debian row above.
+            image: fedora:latest@sha256:e402cca673711fee025f9ce21c6c08b1bd25ee26b3c482119c8675fbaaedbc85
+            features: fedora,pgp,license
+            setup: |
+              dnf install -y --setopt=install_weak_deps=False \
+                git clang cmake openssl-devel pkgconfig findutils curl procps-ng \
+                rpm dnf sqlite yum-utils fedora-release
+              rpm --initdb
+              dnf makecache --refresh
+    container:
+      image: ${{ matrix.image }}
+    steps:
+      - name: Setup environment
+        run: ${{ matrix.setup }}
+
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba87 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Fix git permissions
+        run: git config --global --add safe.directory "$GITHUB_WORKSPACE"
+
+      - name: Install Rust toolchain
+        # Match rust-toolchain.toml (1.95.0) instead of floating "stable"
+        uses: dtolnay/rust-toolchain@6bed0761d98439e5a578e2877258200ad565ba87 # stable
+        with:
+          toolchain: "1.95.0"
+
+      - name: Cache cargo registry
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: |
+            ~/.cargo/registry/index/
+            ~/.cargo/registry/cache/
+            ~/.cargo/git/db/
+          key: qemu-staged-arm-${{ matrix.distro }}-registry-${{ hashFiles('**/Cargo.lock') }}
+
+      - name: Build
+        run: |
+          cargo build --release --no-default-features --features ${{ matrix.features }} --locked
+
+      - name: Package like the release recipe
+        run: |
+          VERSION=$(awk -F'"' '/^version =/ {print $2; exit}' Cargo.toml)
+          mkdir -p "omg-v${VERSION}-aarch64-linux-${{ matrix.distro }}"
+          cp target/release/omg "omg-v${VERSION}-aarch64-linux-${{ matrix.distro }}/"
+          cp README.md LICENSE "omg-v${VERSION}-aarch64-linux-${{ matrix.distro }}/"
+          tar -czf "omg-v${VERSION}-aarch64-linux-${{ matrix.distro }}.tar.gz" "omg-v${VERSION}-aarch64-linux-${{ matrix.distro }}"
+          sha256sum "omg-v${VERSION}-aarch64-linux-${{ matrix.distro }}.tar.gz" > "omg-v${VERSION}-aarch64-linux-${{ matrix.distro }}.tar.gz.sha256"
+
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: staged-arm-${{ matrix.distro }}
+          path: omg-v*.tar.gz*
+          retention-days: 7
+
+  build-staged-ubuntu-arm:
+    name: "Staged build arm64 (ubuntu)"
+    if: github.event_name == 'pull_request' || (github.event_name == 'workflow_dispatch' && inputs.staged)
+    runs-on: ubuntu-24.04-arm
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba87 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Install Dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            libapt-pkg-dev \
+            pkg-config \
+            libssl-dev \
+            clang \
+            cmake
+
+      - name: Install Rust toolchain
+        # Match rust-toolchain.toml (1.95.0) instead of floating "stable"
+        uses: dtolnay/rust-toolchain@6bed0761d98439e5a578e2877258200ad565ba87 # stable
+        with:
+          toolchain: "1.95.0"
+
+      - name: Cache cargo registry
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: |
+            ~/.cargo/registry/index/
+            ~/.cargo/registry/cache/
+            ~/.cargo/git/db/
+          key: qemu-staged-arm-ubuntu-registry-${{ hashFiles('**/Cargo.lock') }}
+
+      - name: Build
+        run: cargo build --release --no-default-features --features debian,pgp,license --locked
+
+      - name: Package like the release recipe
+        run: |
+          VERSION=$(awk -F'"' '/^version =/ {print $2; exit}' Cargo.toml)
+          mkdir -p "omg-v${VERSION}-aarch64-linux-ubuntu"
+          cp target/release/omg "omg-v${VERSION}-aarch64-linux-ubuntu/"
+          cp README.md LICENSE "omg-v${VERSION}-aarch64-linux-ubuntu/"
+          tar -czf "omg-v${VERSION}-aarch64-linux-ubuntu.tar.gz" "omg-v${VERSION}-aarch64-linux-ubuntu"
+          sha256sum "omg-v${VERSION}-aarch64-linux-ubuntu.tar.gz" > "omg-v${VERSION}-aarch64-linux-ubuntu.tar.gz.sha256"
+
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: staged-arm-ubuntu
+          path: omg-v*.tar.gz*
+          retention-days: 7
+
+  #########################################################################
+  # STAGE 2: disposable KVM guests per distro
+  #########################################################################
+  guest:
+    name: "QEMU guest (${{ matrix.distro }})"
+    needs: [build-staged, build-staged-ubuntu]
+    # Both build jobs are skipped on schedule/release-dispatch; PR and
+    # dispatch-staged legs require their build green.
+    if: >-
+      always() &&
+      (needs.build-staged.result == 'success' || needs.build-staged.result == 'skipped') &&
+      (needs.build-staged-ubuntu.result == 'success' || needs.build-staged-ubuntu.result == 'skipped')
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    strategy:
+      fail-fast: false
+      matrix:
+        distro: [arch, debian, ubuntu, fedora]
+
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba87 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Open KVM device permissions
+        # Runners expose /dev/kvm root-owned; the job user needs rw for
+        # docker --device passthrough. Best-effort: the next step gates.
+        run: |
+          sudo chmod 666 /dev/kvm || true
+
+      - name: Fail fast without KVM
+        run: |
+          if [[ ! -c /dev/kvm ]]; then
+            echo "::error::/dev/kvm is missing on this runner; refusing TCG fallback"
+            exit 1
+          fi
+          if [[ ! -w /dev/kvm && ! -r /dev/kvm ]]; then
+            echo "::error::/dev/kvm is not accessible on this runner"
+            exit 1
+          fi
+          ls -l /dev/kvm
+
+      - name: Download staged binaries
+        if: github.event_name == 'pull_request' || (github.event_name == 'workflow_dispatch' && inputs.staged)
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: staged-${{ matrix.distro }}
+          path: staged/
+
+      - name: Resolve release tag
+        id: tag
+        run: |
+          if [[ "${{ github.event_name }}" == 'pull_request' || "${{ inputs.staged }}" == 'true' ]]; then
+            VERSION=$(awk -F'"' '/^version =/ {print $2; exit}' Cargo.toml)
+            tag="v$VERSION"
+          elif [[ -n "${{ inputs.tag }}" ]]; then
+            tag="${{ inputs.tag }}"
+          else
+            tag=$(gh release view --json tagName --jq .tagName --repo PyRo1121/omg)
+          fi
+          [[ "$tag" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]] || { echo "::error::bad tag: $tag"; exit 1; }
+          echo "value=$tag" >> "$GITHUB_OUTPUT"
+
+      - name: Run disposable guest lifecycle + inventory rows
+        # inputs is null on schedule/PR: event checks first so those run.
+        # PRs run the fast container tier; nightlies run everything the
+        # disposable guest can safely do (mutations on, credentials off).
+        # The arch input gates dispatch runs (x64 legs skip arm64-only runs).
+        if: >-
+          (github.event_name != 'workflow_dispatch' || inputs.distro == '' || inputs.distro == matrix.distro) &&
+          (github.event_name != 'workflow_dispatch' || inputs.arch == '' || inputs.arch == 'x64')
+        run: |
+          args=(--distro "${{ matrix.distro }}" --release "${{ steps.tag.outputs.value }}")
+          if [[ "${{ github.event_name }}" == 'pull_request' || "${{ inputs.staged }}" == 'true' ]]; then
+            args+=(--staged-dir staged --inventory-tiers container)
+          else
+            # No nested-container: guests have no docker-in-guest (yet).
+            # Declared-ux rows (self-update-*, daemon-foreground) self-skip.
+            args+=(--inventory-tiers qemu,container,network,pty --inventory-allow-mutations)
+          fi
+          ./scripts/benchmark-qemu.sh "${args[@]}"
+
+      - name: Upload guest evidence
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: qemu-evidence-${{ matrix.distro }}
+          path: ${{ env.HOME }}/.cache/build-targets/omg-qemu-benchmark/
+          retention-days: 30
+
+  #########################################################################
+  # STAGE 2b: disposable ARM64 KVM guests (staged builds only).
+  # No published aarch64-linux archives exist, so these legs only run on
+  # PRs (or dispatch + staged=true) once the arm64 builds above succeed.
+  # No arch row: upstream publishes no aarch64 cloud image.
+  #########################################################################
+  guest-arm:
+    name: "QEMU guest arm64 (${{ matrix.distro }})"
+    needs: [build-staged-arm, build-staged-ubuntu-arm]
+    if: >-
+      always() &&
+      (github.event_name == 'pull_request' || (github.event_name == 'workflow_dispatch' && inputs.staged)) &&
+      needs.build-staged-arm.result == 'success' &&
+      needs.build-staged-ubuntu-arm.result == 'success'
+    runs-on: ubuntu-24.04-arm
+    timeout-minutes: 45
+    strategy:
+      fail-fast: false
+      matrix:
+        distro: [debian, ubuntu, fedora]
+
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba87 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Open KVM device permissions
+        # Same passthrough contract as the x64 legs; the in-script KVM
+        # probe (plus the workflow fail-fast below) refuses TCG fallback.
+        run: |
+          sudo chmod 666 /dev/kvm || true
+
+      - name: Fail fast without KVM
+        run: |
+          if [[ ! -c /dev/kvm ]]; then
+            echo "::error::/dev/kvm is missing on this runner; refusing TCG fallback"
+            exit 1
+          fi
+          if [[ ! -w /dev/kvm && ! -r /dev/kvm ]]; then
+            echo "::error::/dev/kvm is not accessible on this runner"
+            exit 1
+          fi
+          ls -l /dev/kvm
+          uname -m
+
+      - name: Download staged arm64 binaries
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: staged-arm-${{ matrix.distro }}
+          path: staged/
+
+      - name: Resolve staged tag
+        id: tag
+        run: |
+          VERSION=$(awk -F'"' '/^version =/ {print $2; exit}' Cargo.toml)
+          tag="v$VERSION"
+          [[ "$tag" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]] || { echo "::error::bad tag: $tag"; exit 1; }
+          echo "value=$tag" >> "$GITHUB_OUTPUT"
+
+      - name: Run disposable ARM guest lifecycle + inventory rows
+        # Staged-only legs run the fast container tier, like x64 PR legs.
+        if: >-
+          (github.event_name != 'workflow_dispatch' || inputs.distro == '' || inputs.distro == matrix.distro) &&
+          (github.event_name != 'workflow_dispatch' || inputs.arch == '' || inputs.arch == 'arm64')
+        run: |
+          ./scripts/benchmark-qemu.sh --arch aarch64 --distro "${{ matrix.distro }}" \
+            --release "${{ steps.tag.outputs.value }}" \
+            --staged-dir staged --inventory-tiers container
+
+      - name: Upload guest evidence
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: qemu-arm-evidence-${{ matrix.distro }}
+          path: ${{ env.HOME }}/.cache/build-targets/omg-qemu-benchmark/
+          retention-days: 30
+
+  #########################################################################
+  # STAGE 3: file/update one issue per QA failure (nightly only).
+  # One-time bootstrap: create the `qa-failure` label in repo settings.
+  #########################################################################
+  file-issues:
+    name: "File QA issues"
+    needs: guest
+    if: always() && github.event_name == 'schedule'
+    permissions:
+      contents: read
+      issues: write
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba87 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          pattern: qemu-evidence-*
+          path: evidence/
+          merge-multiple: true
+
+      - name: File or update failure issues
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          run_url="$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID"
+          shopt -s nullglob
+          for results in evidence/**/results.json evidence/**/inventory/results.json; do
+            ./scripts/qa-file-issue.sh "$results" --run-url "$run_url" --source qemu-matrix
+          done

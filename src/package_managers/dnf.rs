@@ -258,7 +258,7 @@ impl DnfPackageManager {
             match Self::read_rpm_sqlite(db_path) {
                 Ok(packages) => return Ok(packages),
                 Err(e) => {
-                    tracing::warn!("SQLite access failed: {e}, falling back to rpm -qa");
+                    tracing::warn!("SQLite access failed: {e:#}, falling back to rpm -qa");
                 }
             }
         }
@@ -308,9 +308,20 @@ impl DnfPackageManager {
             .collect())
     }
 
+    /// `--qf` value for `dnf repoquery --userinstalled`. Same dnf5 contract
+    /// as [`Self::repository_query_format`]: the row terminator must be the
+    /// two-character escape `\n`; a real newline is silently dropped and all
+    /// names concatenate into one row.
+    const USER_INSTALLED_QUERY_FORMAT: &str = "%{name}\\n";
+
     pub(crate) fn read_user_installed_names() -> Result<HashSet<String>> {
         let output = crate::core::privilege::system_command("dnf")?
-            .args(["repoquery", "--userinstalled", "--qf", "%{name}\n"])
+            .args([
+                "repoquery",
+                "--userinstalled",
+                "--qf",
+                Self::USER_INSTALLED_QUERY_FORMAT,
+            ])
             .output()
             .context("Failed to execute dnf repoquery --userinstalled")?;
         if !output.status.success() {
@@ -500,8 +511,13 @@ impl DnfPackageManager {
 
         for row in rows {
             let blob = row?;
-            let pkg = Self::parse_package_from_blob(&blob)
-                .context("Malformed RPM header in Packages table")?;
+            let pkg = Self::parse_package_from_blob(&blob).with_context(|| {
+                format!(
+                    "Malformed RPM header in Packages table (row {}, {} packages decoded before the failure)",
+                    packages.len() + 1,
+                    packages.len()
+                )
+            })?;
             packages.push(pkg);
         }
 
@@ -647,20 +663,28 @@ impl DnfPackageManager {
             .collect()
     }
 
-    async fn repository_output(query: RepositoryQuery<'_>) -> Result<Vec<u8>> {
-        #[expect(
-            clippy::literal_string_with_formatting_args,
-            reason = "DNF interprets these query-format placeholders, not Rust"
-        )]
-        let query_format = match query {
-            RepositoryQuery::Available(_) => "%{name}\t%{evr}\t%{summary}\n",
-            RepositoryQuery::InstalledSizes(_) => "%{full_nevra}\t%{installsize}\n",
-            RepositoryQuery::InstalledReasons(_) => "%{full_nevra}\t%{reason}\n",
-            RepositoryQuery::InstalledDetails(_) => "%{name}\t%{evr}\t%{full_nevra}\t%{reason}\n",
+    /// Query-format strings for `dnf repoquery --queryformat`.
+    ///
+    /// dnf5 contract (verified against dnf5 on Fedora 44): field separators
+    /// must be real TAB characters (passed through verbatim), but the row
+    /// terminator must be the two-character escape `\n`. A real newline
+    /// inside the format is silently dropped, concatenating every row into
+    /// one mega-row that fails parsing; a literal `\t` escape is passed
+    /// through as text instead of a tab, which also fails parsing.
+    fn repository_query_format(query: &RepositoryQuery<'_>) -> &'static str {
+        match query {
+            RepositoryQuery::Available(_) => "%{name}\t%{evr}\t%{summary}\\n",
+            RepositoryQuery::InstalledSizes(_) => "%{full_nevra}\t%{installsize}\\n",
+            RepositoryQuery::InstalledReasons(_) => "%{full_nevra}\t%{reason}\\n",
+            RepositoryQuery::InstalledDetails(_) => "%{name}\t%{evr}\t%{full_nevra}\t%{reason}\\n",
             RepositoryQuery::Installed | RepositoryQuery::Upgrades | RepositoryQuery::Unneeded => {
-                "%{name}\t%{arch}\t%{evr}\t%{repoid}\n"
+                "%{name}\t%{arch}\t%{evr}\t%{repoid}\\n"
             }
-        };
+        }
+    }
+
+    async fn repository_output(query: RepositoryQuery<'_>) -> Result<Vec<u8>> {
+        let query_format = Self::repository_query_format(&query);
         let selection = match query {
             RepositoryQuery::Available(_) => "--available",
             RepositoryQuery::Installed
@@ -1512,6 +1536,53 @@ mod tests {
     }
 
     #[test]
+    fn repository_query_formats_match_dnf5_row_terminator_contract() {
+        // dnf5 passes real TABs through but silently drops a real newline
+        // inside --queryformat/--qf, concatenating every row into one.
+        // The row terminator must therefore be the two-character `\n`
+        // escape; a literal `\t` escape is passed through as text.
+        let queries = [
+            RepositoryQuery::Available(None),
+            RepositoryQuery::Available(Some("tree")),
+            RepositoryQuery::Installed,
+            RepositoryQuery::Upgrades,
+            RepositoryQuery::Unneeded,
+            RepositoryQuery::InstalledSizes(InstalledSizeQuery::All),
+            RepositoryQuery::InstalledSizes(InstalledSizeQuery::Package("tree")),
+            RepositoryQuery::InstalledReasons(InstalledReasonQuery::Package("tree")),
+            RepositoryQuery::InstalledReasons(InstalledReasonQuery::RequiredBy("tree")),
+            RepositoryQuery::InstalledDetails("tree"),
+        ];
+        for query in &queries {
+            let format = DnfPackageManager::repository_query_format(query);
+            assert!(
+                format.contains('\t'),
+                "dnf5 needs real TAB separators: {format:?}"
+            );
+            assert!(
+                !format.contains('\n'),
+                "dnf5 drops real newlines and concatenates rows: {format:?}"
+            );
+            assert!(
+                format.ends_with("\\n"),
+                "dnf5 needs the literal backslash-n row terminator: {format:?}"
+            );
+            assert!(
+                !format.contains("\\t"),
+                "dnf5 passes literal backslash-t through as text: {format:?}"
+            );
+        }
+        assert!(
+            !DnfPackageManager::USER_INSTALLED_QUERY_FORMAT.contains('\n'),
+            "dnf5 drops real newlines and concatenates names"
+        );
+        assert!(
+            DnfPackageManager::USER_INSTALLED_QUERY_FORMAT.ends_with("\\n"),
+            "dnf5 needs the literal backslash-n row terminator"
+        );
+    }
+
+    #[test]
     fn reads_native_fedora_sqlite_header() {
         let blob = include_bytes!("../../tests/data/fedora-publicsuffix.rpmhdr");
         let directory = write_packages_db(&[blob.as_slice()]);
@@ -1894,5 +1965,21 @@ mod tests {
             message.contains("Malformed RPM header in Packages table"),
             "got: {message}"
         );
+    }
+
+    #[test]
+    fn malformed_row_reports_position_decoded_count_and_cause() {
+        let valid = minimal_named_rpm_header(b"bash\0");
+        let dir = write_packages_db(&[valid.as_slice(), &[0u8; 32]]);
+        let error = DnfPackageManager::read_rpm_sqlite(&dir.path().join("rpmdb.sqlite"))
+            .expect_err("corrupt row must fail loudly");
+        let message = format!("{error:#}");
+        for needle in [
+            "row 2",
+            "1 packages decoded before the failure",
+            "must contain entries",
+        ] {
+            assert!(message.contains(needle), "missing {needle:?} in: {message}");
+        }
     }
 }

@@ -481,8 +481,35 @@ pub fn get_system_status() -> Result<(usize, usize, usize, usize)> {
 }
 
 fn open_cache(local_files: &[String]) -> Result<Cache> {
+    ensure_apt_fetch_dirs();
     let files: Vec<&str> = local_files.iter().map(String::as_str).collect();
     Cache::new(&files).map_err(|e| anyhow!("APT cache error: {e:?}"))
+}
+
+/// Staging directories libapt fetches into. The `apt-get` CLI creates these
+/// on demand, but libapt's fetcher does not: images that ship package lists
+/// without them fail every fetched commit with ENOENT on
+/// `.../partial/*.deb`, which libapt surfaces as the cryptic "ordering was
+/// unable to handle the media swap".
+const APT_FETCH_DIRS: &[&str] = &[
+    "/var/cache/apt/archives/partial",
+    "/var/lib/apt/lists/partial",
+];
+
+/// Best-effort repair of [`APT_FETCH_DIRS`]. Root-only so read-only callers
+/// running unprivileged can never fail here; errors are ignored because a
+/// missing dir is only fatal if a later fetch actually needs it.
+fn ensure_apt_fetch_dirs() {
+    if !is_root() {
+        return;
+    }
+    ensure_fetch_dirs(APT_FETCH_DIRS);
+}
+
+fn ensure_fetch_dirs(dirs: &[&str]) {
+    for dir in dirs {
+        let _ = std::fs::create_dir_all(dir);
+    }
 }
 
 fn install_blocking(packages: &[String]) -> Result<()> {
@@ -504,20 +531,37 @@ fn install_blocking_inner(packages: &[String]) -> Result<()> {
     crate::core::security::policy::require_native_plan_support("APT")?;
     let staged = crate::core::security::artifact::StagedInputs::prepare(packages)?;
     let packages = staged.targets.as_slice();
-    let status = crate::core::privilege::system_command("apt-get")?
-        .args(["install", "-y", "--"])
-        .args(packages)
-        .status()
+    let mut command = crate::core::privilege::system_command("apt-get")?;
+    command.args(["install", "-y", "--"]).args(packages);
+    // Keep stdout live for progress, but capture stderr: apt's own
+    // diagnosis (not just its exit code) is what a bug report needs.
+    command.stdout(std::process::Stdio::inherit());
+    let output = command
+        .output()
         .context("Failed to run apt-get for Debian package installation")?;
 
-    if !status.success() {
-        anyhow::bail!(
-            "apt-get failed to install Debian packages with exit code {}",
-            status.code().unwrap_or(1)
-        );
+    if !output.status.success() {
+        return Err(apt_install_error(&output));
     }
 
     Ok(())
+}
+
+/// Build the install-failure error, preserving apt's own diagnosis.
+/// Pure (no I/O) so the Debian failure path is unit-testable without apt.
+fn apt_install_error(output: &std::process::Output) -> anyhow::Error {
+    const MAX_TAIL_LINES: usize = 12;
+    let code = output.status.code().unwrap_or(1);
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    let lines: Vec<&str> = stderr.lines().collect();
+    let tail = if lines.len() > MAX_TAIL_LINES {
+        lines[lines.len() - MAX_TAIL_LINES..].join("\n")
+    } else {
+        lines.join("\n")
+    };
+    anyhow!(
+        "apt-get failed to install Debian packages with exit code {code}; apt reported:\n{tail}"
+    )
 }
 
 fn remove_blocking(packages: &[String]) -> Result<()> {
@@ -672,4 +716,66 @@ fn local_to_packages(local_pkgs: Vec<LocalPackage>) -> Vec<Package> {
             installed: true,
         })
         .collect()
+}
+
+#[cfg(test)]
+#[cfg(unix)]
+mod tests {
+    use super::apt_install_error;
+
+    fn failed_output(stderr: &[u8]) -> std::process::Output {
+        use std::os::unix::process::ExitStatusExt as _;
+        std::process::Output {
+            status: std::process::ExitStatus::from_raw(256),
+            stdout: Vec::new(),
+            stderr: stderr.to_vec(),
+        }
+    }
+
+    #[test]
+    fn install_error_preserves_apt_diagnosis() {
+        let error = apt_install_error(&failed_output(
+            b"Err: 2 https://deb.debian.org/debian tree amd64 2.1.0-1\n  Could not open partial file\nError: APT commit error: ordering was unable to handle the media swap\n",
+        ));
+        let message = format!("{error}");
+        for needle in [
+            "exit code 1",
+            "ordering was unable to handle the media swap",
+            "Could not open partial file",
+        ] {
+            assert!(message.contains(needle), "missing {needle:?} in: {message}");
+        }
+    }
+
+    #[test]
+    fn fetch_dir_repair_creates_nested_partial_dirs_idempotently() {
+        assert_eq!(
+            APT_FETCH_DIRS,
+            [
+                "/var/cache/apt/archives/partial",
+                "/var/lib/apt/lists/partial"
+            ]
+        );
+        let root = std::env::temp_dir().join(format!("omg-apt-partial-{}", std::process::id()));
+        let nested = root.join("archives/partial");
+        let target = [nested.to_str().expect("temp path must be UTF-8")];
+        ensure_fetch_dirs(&target);
+        assert!(nested.is_dir(), "repair must create {nested:?}");
+        ensure_fetch_dirs(&target);
+        assert!(nested.is_dir(), "repair must be idempotent for {nested:?}");
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn install_error_caps_long_stderr_to_a_tail() {
+        let mut stderr = Vec::new();
+        for index in 0..30 {
+            stderr.extend_from_slice(format!("progress line {index}\n").as_bytes());
+        }
+        stderr.extend_from_slice(b"final diagnosis\n");
+        let message = format!("{error}", error = apt_install_error(&failed_output(&stderr)));
+        assert!(message.contains("final diagnosis"));
+        assert!(!message.contains("progress line 0"));
+        assert!(message.contains("progress line 29"));
+    }
 }

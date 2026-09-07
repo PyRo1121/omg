@@ -32,6 +32,44 @@ Update discovery already falls through to RPC, so waiting on the search dump onl
 
 ### ✨ New Features
 
+- **Qa**: QEMU matrix + native macOS smoke + auto-filing loop ([#274](https://github.com/PyRo1121/omg/issues/274))
+
+* feat(qa): QEMU matrix + native macOS smoke + auto-filing loop
+
+  - benchmark-qemu.sh: --arch x86_64|aarch64, pinned ARM images, KVM/arch
+
+fail-closed probes, --print-pins audit, arch-aware guests
+
+  - release-smoke.sh: native macOS executor (--executor native, macos
+
+distro, shasum/gtimeout fallbacks)
+
+  - report-smoke-sentry.sh: macos distro, uuidgen fallback
+
+  - qa-file-issue.sh: fingerprinted [qa] filing with scrubbed excerpts,
+
+agent runbooks, resolve-on-green, follow-up links, dry-run
+
+  - qemu-inventory.sh: TSV-driven guest rows over SSH
+
+  - qemu-matrix.yml: x86_64 + arm64 (staged) guest legs, nightly filing
+
+  - release-smoke.yml: macos-14 native job, nightly schedule + filing
+
+  - docs: qemu-macos.md verdict, qa-loop.md repeat-loop contract
+
+  - harnesses: test-release-smoke.sh, test-qa-file-issue.sh all green
+
+* fix(qa): keep filing fixture off gitleaks and install macOS gtimeout
+
+The excerpt harness still scrubs a github-pat-shaped token, but the
+
+source file no longer contains a literal that secret scan treats as a
+
+leak. Native macos-14 smoke now installs coreutils so GNU timeout is
+
+present before the probe runs.
+
 - **Install**: Add interactive fuzzy package discovery
 ### 🐛 Bug Fixes
 

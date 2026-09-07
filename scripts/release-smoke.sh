@@ -7,21 +7,28 @@ inventory="$repo_root/tests/cli_behavior_inventory.tsv"
 usage() {
   cat <<'EOF'
 Usage: scripts/release-smoke.sh [--release latest|vX.Y.Z | --staged-dir PATH --release vX.Y.Z]
-                                --distro arch|debian|ubuntu|fedora|all
+                                --distro arch|debian|ubuntu|fedora|macos|all
                                 [--case ID] [--family package] [--tier container]
+                                [--executor container|native]
                                 [--container-engine docker|podman] [--evidence-dir PATH]
 
 Verifies exact OMG release archives and runs selected release contracts inside
-disposable, digest-pinned distro containers.
+disposable, digest-pinned distro containers. With --executor native --distro
+macos the same probes run directly on a macOS host (an ephemeral CI runner or
+a machine whose Homebrew state may change) against the aarch64-darwin archive.
 
 Options:
   --release TAG              Published tag, or the tag represented by --staged-dir
                              (default: latest without --staged-dir)
   --staged-dir PATH          Read archives and sidecars from a local staging directory
-  --distro ID                arch, debian, ubuntu, fedora, or all (default: all)
+  --distro ID                arch, debian, ubuntu, fedora, macos, or all (default: all;
+                             all covers the container distros; macos needs --executor native)
   --case ID                  Run one release contract
   --family NAME              Run one contract family (default: package)
   --tier NAME                Run one execution tier (default: container)
+  --executor NAME            container runs probes in distro images; native runs the
+                             macos probes on the host (default: container;
+                             native only pairs with --distro macos)
   --timeout-seconds N        Container execution limit, 1..9999 (default: 300)
   --container-engine ENGINE  docker or podman (default: $OMG_SMOKE_ENGINE or docker)
   --evidence-dir PATH        Evidence base (default: target/release-smoke)
@@ -36,12 +43,12 @@ EOF
 load_distro() {
   case "$1" in
     arch)
-      case_suffix="-x86_64-linux-arch"
-      case_image="archlinux:latest@sha256:b0deabeb3d283da2c7f7dbf0eea051b7b2cd0554e0b737cc457fd21683bdcdd1"
-      case_index_cmd="pacman-key --init && pacman-key --populate archlinux && pacman -Syu --noconfirm"
-      case_probe_pkg="tree"
-      case_installed_assert="pacman -Qi tree"
-      case_removed_assert="! pacman -Q tree"
+      distro_suffix="-x86_64-linux-arch"
+      distro_image="archlinux:latest@sha256:b0deabeb3d283da2c7f7dbf0eea051b7b2cd0554e0b737cc457fd21683bdcdd1"
+      distro_index_cmd="pacman-key --init && pacman-key --populate archlinux && pacman -Syu --noconfirm"
+      distro_probe_pkg="tree"
+      distro_installed_assert="pacman -Qi tree"
+      distro_removed_assert="! pacman -Q tree"
       ;;
     debian)
       distro_suffix="-x86_64-linux-debian"
@@ -63,6 +70,18 @@ load_distro() {
       distro_index_cmd="dnf -y makecache"
       distro_installed_assert="rpm -q tree"
       distro_removed_assert="! rpm -q tree"
+      ;;
+    macos)
+      # No container image: macos only pairs with --executor native, which runs
+      # the probe on the host against the aarch64-darwin release archive.
+      distro_suffix="-aarch64-darwin"
+      distro_image=""
+      distro_index_cmd="brew update"
+      distro_installed_assert="brew list tree >/dev/null"
+      distro_removed_assert="! brew list tree >/dev/null"
+      # Containers start every case from a fresh filesystem; the shared host
+      # does not, so each native case resets the probe package first.
+      distro_native_reset_cmd="brew uninstall tree || true"
       ;;
     *) return 1 ;;
   esac
@@ -86,6 +105,29 @@ case_family() {
   esac
 }
 
+# Bash 3.2 (macOS /usr/bin/bash, frozen at 3.2.57 since 2007 because Apple
+# will not ship GPLv3 bash) has no associative arrays: `declare -A`/`-gA`,
+# `mapfile`, and $BASHPID all arrived in bash 4.0. Per-case fields therefore
+# live in parallel indexed arrays aligned with selected_cases; the release
+# contract list is tens of rows, so a linear scan is plenty.
+case_field() {
+  # C-style index loop: ${!array[@]} index expansion is avoided so this
+  # stays within bash 2.x-era features; ${#array[@]} is nounset-safe.
+  local which=$1 id=$2 i
+  for ((i = 0; i < ${#selected_cases[@]}; i++)); do
+    if [[ "${selected_cases[$i]}" == "$id" ]]; then
+      case "$which" in
+        args) printf '%s' "${case_args_list[$i]}" ;;
+        exit) printf '%s' "${case_exit_list[$i]}" ;;
+        targets) printf '%s' "${case_targets_list[$i]}" ;;
+        *) return 2 ;;
+      esac
+      return 0
+    fi
+  done
+  return 1
+}
+
 load_release_cases() {
   local header id args safety expected_exit ux requires tiers targets assertions cleanup
   IFS= read -r header < "$inventory"
@@ -96,7 +138,12 @@ load_release_cases() {
   fi
 
   selected_cases=()
-  declare -gA case_args=() case_exit=() case_targets=()
+  # Bash 3.2 (macOS /usr/bin/bash) has no associative arrays: per-case
+  # fields live in parallel indexed arrays aligned with selected_cases.
+  # Plain assignments stay global (no `local`) so run_case can read them.
+  case_args_list=()
+  case_exit_list=()
+  case_targets_list=()
   while IFS=$'\t' read -r id args safety expected_exit ux requires tiers targets assertions cleanup; do
     [[ -n "$id" ]] || continue
     [[ "$id" =~ ^[a-z0-9][a-z0-9-]*$ ]] || {
@@ -113,9 +160,9 @@ load_release_cases() {
       return 3
     }
     selected_cases+=("$id")
-    case_args["$id"]="$args"
-    case_exit["$id"]="$expected_exit"
-    case_targets["$id"]="$targets"
+    case_args_list+=("$args")
+    case_exit_list+=("$expected_exit")
+    case_targets_list+=("$targets")
   done < <(tail -n +2 "$inventory")
 
   if [[ ${#selected_cases[@]} -eq 0 ]]; then
@@ -125,8 +172,12 @@ load_release_cases() {
     return 2
   fi
   for id in "${selected_cases[@]}"; do
-    if ! probe_kind_for_args "${case_args[$id]}" >/dev/null; then
-      printf 'error: release contract %s has no container executor for %s.\n' "$id" "${case_args[$id]}" >&2
+    args="$(case_field args "$id")" || {
+      printf 'error: release contract %s has no recorded args.\n' "$id" >&2
+      return 3
+    }
+    if ! probe_kind_for_args "$args" >/dev/null; then
+      printf 'error: release contract %s has no container executor for %s.\n' "$id" "$args" >&2
       return 3
     fi
   done
@@ -145,19 +196,36 @@ target_for_distro() {
   return 1
 }
 
+select_tool() {
+  local candidate path
+  for candidate in "$@"; do
+    if path="$(command -v "$candidate" 2>/dev/null)"; then printf '%s\n' "$path"; return 0; fi
+  done
+  return 1
+}
+
 validate_checksum() {
   local archive_path=$1 sidecar_path=$2 archive_name=$3
   [[ -f "$archive_path" && ! -L "$archive_path" ]] || return 1
   [[ -f "$sidecar_path" && ! -L "$sidecar_path" ]] || return 1
-  local checksum_lines=()
-  mapfile -t checksum_lines < "$sidecar_path"
+  local checksum_lines=() line
+  while IFS= read -r line || [[ -n "$line" ]]; do
+    checksum_lines+=("$line")
+  done < "$sidecar_path"
   [[ ${#checksum_lines[@]} -eq 1 ]] || return 1
   local sidecar_digest sidecar_filename sidecar_extra
   read -r sidecar_digest sidecar_filename sidecar_extra <<< "${checksum_lines[0]}"
   [[ -z "${sidecar_extra:-}" ]] || return 1
   [[ "$sidecar_digest" =~ ^[0-9a-f]{64}$ ]] || return 1
   [[ "$sidecar_filename" == "$archive_name" ]] || return 1
-  [[ "$(sha256sum "$archive_path" | awk '{print $1}')" == "$sidecar_digest" ]] || return 1
+  # sha256sum (coreutils) or shasum -a 256 (macOS); selected once at startup.
+  local actual
+  if [[ "$(basename "$SHA256_BIN")" == "shasum" ]]; then
+    actual="$("$SHA256_BIN" -a 256 "$archive_path" | awk '{print $1}')"
+  else
+    actual="$("$SHA256_BIN" "$archive_path" | awk '{print $1}')"
+  fi
+  [[ "$actual" == "$sidecar_digest" ]] || return 1
   printf '%s\n' "$sidecar_digest"
 }
 
@@ -183,7 +251,7 @@ write_probe() {
 #!/usr/bin/env bash
 set -euo pipefail
 export DEBIAN_FRONTEND=noninteractive
-bin="/probe/${OMG_PROBE_BIN}"
+bin="${OMG_PROBE_ROOT:-/probe}/${OMG_PROBE_BIN}"
 bash -c "${OMG_PROBE_INDEX_CMD}" || exit 120
 version_line="$(printf '%s\n' "$("$bin" --version)" | head -n 1 | tr -d '[:space:]')"
 [[ "$version_line" == "omg${OMG_PROBE_VERSION_NUM}" ]]
@@ -199,6 +267,11 @@ case "$OMG_SMOKE_PROBE_KIND" in
     bash -c "${OMG_PROBE_INSTALLED_ASSERT}"
     ;;
   remove-tree)
+    # A failing setup install is a PRODUCT signal (the product cannot
+    # install), not rig noise: exit 1 keeps it comparable against the
+    # expected exit instead of masking it as HARNESS_ERROR (see #277,
+    # where "Package not found: tree" from install setup hid a real
+    # repository-lookup defect behind exit 120).
     "$bin" install --yes tree || exit 1
     bash -c "${OMG_PROBE_INSTALLED_ASSERT}" || exit 120
     "$bin" remove --yes tree || exit 1
@@ -214,9 +287,10 @@ PROBE
 }
 
 record_nonexecution() {
-  local distro=$1 result=$2 message=$3 case_id expectation evidence_dir
+  local distro=$1 result=$2 message=$3 case_id expectation evidence_dir targets_entry
   for case_id in "${selected_cases[@]}"; do
-    expectation="$(target_for_distro "${case_targets[$case_id]}" "$distro")" || expectation="missing"
+    targets_entry="$(case_field targets "$case_id")" || targets_entry=""
+    expectation="$(target_for_distro "$targets_entry" "$distro")" || expectation="missing"
     evidence_dir="$run_evidence/${distro}-${case_id}"
     mkdir -p "$evidence_dir"
     printf '%s: %s\n' "$result" "$message" > "$evidence_dir/transcript.txt"
@@ -257,74 +331,112 @@ resolve_artifact() {
 run_case() (
   local distro=$1 case_id=$2 stage=$3
   local expectation evidence_dir started elapsed probe_bin probe_kind observed_exit result
-  local container_name="omg-smoke-${BASHPID}-${distro}-${case_id}" cleanup_ok=true
-  expectation="$(target_for_distro "${case_targets[$case_id]}" "$distro")" || expectation="missing"
+  # $BASHPID is bash 4.0+; $$ plus distro+case (cases run sequentially)
+  # is unique here on bash 3.2 as well.
+  local container_name="omg-smoke-$$-${distro}-${case_id}" cleanup_ok=true
+  if [[ "$executor" == "native" ]]; then
+    # The inventory targets name container distros only; a native macOS run
+    # establishes the baseline, so a matching product exit is a pass.
+    expectation="pass"
+  else
+    targets_entry="$(case_field targets "$case_id")" || targets_entry=""
+    expectation="$(target_for_distro "$targets_entry" "$distro")" || expectation="missing"
+  fi
   evidence_dir="$run_evidence/${distro}-${case_id}"
   mkdir -p "$evidence_dir"
-  probe_kind="$(probe_kind_for_args "${case_args[$case_id]}")" || return 3
+  args_entry="$(case_field args "$case_id")" || return 3
+  probe_kind="$(probe_kind_for_args "$args_entry")" || return 3
   write_probe "$stage/probe-${case_id}.sh"
   cp "$stage/probe-${case_id}.sh" "$evidence_dir/probe.sh"
   probe_bin="omg-${tag}${distro_suffix}/omg"
 
   cleanup_container() {
     local remaining
-    timeout --kill-after=5s 10s "$engine" rm --force "$container_name" >> "$evidence_dir/cleanup.txt" 2>&1 || true
-    remaining="$(timeout --kill-after=5s 10s "$engine" ps --all --quiet --filter "name=^/${container_name}$" 2>> "$evidence_dir/cleanup.txt")" || return 1
+    "$TIMEOUT_BIN" --kill-after=5s 10s "$engine" rm --force "$container_name" >> "$evidence_dir/cleanup.txt" 2>&1 || true
+    remaining="$("$TIMEOUT_BIN" --kill-after=5s 10s "$engine" ps --all --quiet --filter "name=^/${container_name}$" 2>> "$evidence_dir/cleanup.txt")" || return 1
     [[ -z "$remaining" ]] || return 1
     printf 'verified absent: %s\n' "$container_name" >> "$evidence_dir/cleanup.txt"
   }
-  trap 'cleanup_container || exit 3' EXIT
-  trap 'exit 130' INT
-  trap 'exit 143' TERM
-
   exec 3>&1 4>&2
   exec > >(tee "$evidence_dir/transcript.txt") 2>&1
   set -x
   started=$SECONDS
   observed_exit=0
-  timeout --kill-after=5s "${timeout_seconds}s" "$engine" run --rm --name "$container_name" \
-    -e OMG_SMOKE_PROBE_KIND="$probe_kind" \
-    -e OMG_PROBE_VERSION_NUM="$version" \
-    -e OMG_PROBE_BIN="$probe_bin" \
-    -e OMG_PROBE_INDEX_CMD="$distro_index_cmd" \
-    -e OMG_PROBE_INSTALLED_ASSERT="$distro_installed_assert" \
-    -e OMG_PROBE_REMOVED_ASSERT="$distro_removed_assert" \
-    -v "$stage:/probe:ro" \
-    "$distro_image" bash -x "/probe/probe-${case_id}.sh" || observed_exit=$?
-  cleanup_container || cleanup_ok=false
-  trap - EXIT INT TERM
+  if [[ "$executor" == "native" ]]; then
+    trap 'exit 130' INT
+    trap 'exit 143' TERM
+    # Best effort: the probe's own asserts stay authoritative.
+    bash -c "${distro_native_reset_cmd:?native executor needs a reset command}" || true
+    OMG_SMOKE_PROBE_KIND="$probe_kind" \
+      OMG_PROBE_VERSION_NUM="$version" \
+      OMG_PROBE_BIN="$probe_bin" \
+      OMG_PROBE_INDEX_CMD="$distro_index_cmd" \
+      OMG_PROBE_INSTALLED_ASSERT="$distro_installed_assert" \
+      OMG_PROBE_REMOVED_ASSERT="$distro_removed_assert" \
+      OMG_PROBE_ROOT="$stage" \
+      "$TIMEOUT_BIN" --kill-after=5s "${timeout_seconds}s" \
+      bash -x "$stage/probe-${case_id}.sh" || observed_exit=$?
+    trap - INT TERM
+  else
+    trap 'cleanup_container || exit 3' EXIT
+    trap 'exit 130' INT
+    trap 'exit 143' TERM
+    "$TIMEOUT_BIN" --kill-after=5s "${timeout_seconds}s" "$engine" run --rm --name "$container_name" \
+      -e OMG_SMOKE_PROBE_KIND="$probe_kind" \
+      -e OMG_PROBE_VERSION_NUM="$version" \
+      -e OMG_PROBE_BIN="$probe_bin" \
+      -e OMG_PROBE_INDEX_CMD="$distro_index_cmd" \
+      -e OMG_PROBE_INSTALLED_ASSERT="$distro_installed_assert" \
+      -e OMG_PROBE_REMOVED_ASSERT="$distro_removed_assert" \
+      -e OMG_PROBE_ROOT=/probe \
+      -v "$stage:/probe:ro" \
+      "$distro_image" bash -x "/probe/probe-${case_id}.sh" || observed_exit=$?
+    cleanup_container || cleanup_ok=false
+    trap - EXIT INT TERM
+  fi
   elapsed=$((SECONDS - started))
   set +x
   exec 1>&3 2>&4
   exec 3>&- 4>&-
 
+  expected_exit="$(case_field exit "$case_id")" || return 3
   case "$expectation" in
     pass|known-defect)
-      if [[ $observed_exit -eq "${case_exit[$case_id]}" ]]; then result="PASS"; else result="PRODUCT_FAIL"; fi
+      if [[ $observed_exit -eq "$expected_exit" ]]; then result="PASS"; else result="PRODUCT_FAIL"; fi
       ;;
     expected-rejection)
-      if [[ $observed_exit -eq "${case_exit[$case_id]}" ]]; then result="EXPECTED_REJECTION"; else result="PRODUCT_FAIL"; fi
+      if [[ $observed_exit -eq "$expected_exit" ]]; then result="EXPECTED_REJECTION"; else result="PRODUCT_FAIL"; fi
       ;;
     blocked|not-applicable) result="BLOCKED" ;;
     *) result="HARNESS_ERROR" ;;
   esac
+  # Only proven-rig failures map to HARNESS_ERROR: 120 is this script's own
+  # fixture marker, 125/126/127 are engine/exec failures, 255 is transport.
+  # Timeouts (124) and OOM kills (137) stay comparable so a hanging or
+  # memory-blowing product reports PRODUCT_FAIL instead of hiding as rig
+  # noise (audit: every FAIL must first be proven a TRUE product signal).
   case "$observed_exit" in
-    120|124|125|126|127|137) result="HARNESS_ERROR" ;;
+    120|125|126|127|255) result="HARNESS_ERROR" ;;
   esac
   if [[ "$cleanup_ok" != true ]]; then
     result="HARNESS_ERROR"
   fi
 
+  local image_label="$distro_image" engine_label="$engine"
+  if [[ "$executor" == "native" ]]; then
+    image_label="native-host"
+    engine_label="native"
+  fi
   {
     printf 'case_id=%s\n' "$case_id"
     printf 'distro=%s\n' "$distro"
     printf 'result=%s\n' "$result"
     printf 'expectation=%s\n' "$expectation"
     printf 'release=%s\n' "$tag"
-    printf 'image=%s\n' "$distro_image"
+    printf 'image=%s\n' "$image_label"
     printf 'archive=%s\n' "$archive"
     printf 'archive_sha256=%s\n' "$digest"
-    printf 'engine=%s\n' "$engine"
+    printf 'engine=%s\n' "$engine_label"
     printf 'elapsed_seconds=%s\n' "$elapsed"
   } > "$evidence_dir/metadata.txt"
   write_result "$evidence_dir" "$case_id" "$distro" "$result" "$observed_exit" "$elapsed" "$expectation"
@@ -359,7 +471,9 @@ run_distro() (
     record_harness_error "$distro" "release artifact does not contain the expected binary"
     return 3
   fi
-  if ! "$engine" pull "$distro_image"; then
+  if [[ "$executor" == "native" ]]; then
+    [[ -z "$distro_image" ]] || { record_harness_error "$distro" "native executor needs an imageless distro"; return 3; }
+  elif ! "$engine" pull "$distro_image"; then
     record_harness_error "$distro" "failed to pull the pinned container image"
     return 3
   fi
@@ -383,7 +497,7 @@ finalize_results() {
     awk 'NR > 1 { printf ",\n" } { printf "  %s", $0 } END { if (NR > 0) printf "\n" }' "$results_ndjson"
     printf ']\n'
   } > "$run_evidence/results.json"
-  if ! timeout --kill-after=2s 12s env OMG_SMOKE_RELEASE="$tag" \
+  if ! "$TIMEOUT_BIN" --kill-after=2s 12s env OMG_SMOKE_RELEASE="$tag" \
       "$repo_root/scripts/report-smoke-sentry.sh" "$run_evidence/results.json" \
       > "$run_evidence/reporting.log" 2>&1; then
     printf 'warning: Sentry reporting failed; results remain in %s\n' "$run_evidence" >&2
@@ -397,6 +511,7 @@ distro="all"
 case_id=""
 family="package"
 tier="container"
+executor="container"
 timeout_seconds=300
 engine="${OMG_SMOKE_ENGINE:-docker}"
 evidence_base="${OMG_SMOKE_EVIDENCE_DIR:-$repo_root/target/release-smoke}"
@@ -404,7 +519,7 @@ evidence_base="${OMG_SMOKE_EVIDENCE_DIR:-$repo_root/target/release-smoke}"
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --help|-h) usage; exit 0 ;;
-    --release|--staged-dir|--distro|--case|--family|--tier|--timeout-seconds|--container-engine|--evidence-dir)
+    --release|--staged-dir|--distro|--case|--family|--tier|--executor|--timeout-seconds|--container-engine|--evidence-dir)
       [[ $# -ge 2 ]] || { printf 'error: %s requires a value\n' "$1" >&2; exit 2; }
       case "$1" in
         --release) release=$2; release_set=true ;;
@@ -413,6 +528,7 @@ while [[ $# -gt 0 ]]; do
         --case) case_id=$2 ;;
         --family) family=$2 ;;
         --tier) tier=$2 ;;
+        --executor) executor=$2 ;;
         --timeout-seconds) timeout_seconds=$2 ;;
         --container-engine) engine=$2 ;;
         --evidence-dir) evidence_base=$2 ;;
@@ -428,9 +544,23 @@ if [[ "$release" != "latest" && ! "$release" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]; th
   exit 2
 fi
 case "$distro" in
-  arch|debian|ubuntu|fedora|all) ;;
+  arch|debian|ubuntu|fedora|macos|all) ;;
   *) printf 'error: invalid distro %q\n' "$distro" >&2; exit 2 ;;
 esac
+if [[ "$executor" != "container" && "$executor" != "native" ]]; then
+  printf 'error: invalid executor %q; valid values: container|native\n' "$executor" >&2
+  exit 2
+fi
+if [[ "$executor" == "native" && "$distro" != "macos" ]]; then
+  # Native execution mutates the host package manager; only the imageless
+  # macos distro may run there, and only on a disposable host.
+  printf 'error: --executor native only pairs with --distro macos\n' >&2
+  exit 2
+fi
+if [[ "$distro" == "macos" && "$executor" != "native" ]]; then
+  printf 'error: --distro macos requires --executor native\n' >&2
+  exit 2
+fi
 if [[ "$family" != "package" ]]; then
   printf 'error: invalid family %q; valid values: package\n' "$family" >&2
   exit 2
@@ -453,7 +583,14 @@ if [[ ! "$timeout_seconds" =~ ^[1-9][0-9]{0,3}$ ]]; then
   printf 'error: --timeout-seconds must be an integer between 1 and 9999\n' >&2
   exit 2
 fi
-command -v timeout >/dev/null 2>&1 || { printf 'error: GNU timeout is required\n' >&2; exit 3; }
+TIMEOUT_BIN="$(select_tool timeout gtimeout)" || {
+  printf 'error: GNU timeout is required (macOS: brew install coreutils for gtimeout)\n' >&2
+  exit 3
+}
+SHA256_BIN="$(select_tool sha256sum shasum)" || {
+  printf 'error: sha256sum or shasum is required\n' >&2
+  exit 3
+}
 artifact_source=published
 if [[ -n "$staged_dir" ]]; then
   artifact_source=staged
@@ -472,7 +609,7 @@ results_ndjson="$run_evidence/.results.ndjson"
 : > "$results_ndjson"
 trap 'rm -f "$results_ndjson"' EXIT
 
-if ! require_engine; then
+if [[ "$executor" != "native" ]] && ! require_engine; then
   for selected_distro in "${distros[@]}"; do
     record_nonexecution "$selected_distro" "BLOCKED" "container engine is unavailable"
   done
