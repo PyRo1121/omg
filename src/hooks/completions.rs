@@ -183,8 +183,8 @@ fn oh_my_zsh_completions_dir(home: &Path) -> Option<PathBuf> {
         .filter(|zsh| is_oh_my_zsh_layout(zsh))
         .or_else(|| {
             let fallback = home.join(".oh-my-zsh");
-            let known = fallback.join("oh-my-zsh.sh").is_file()
-                || fallback.join("completions").is_dir();
+            let known =
+                fallback.join("oh-my-zsh.sh").is_file() || fallback.join("completions").is_dir();
             known.then_some(fallback)
         })?;
     let completions = omz_root.join("completions");
