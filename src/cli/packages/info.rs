@@ -3,7 +3,6 @@
 use anyhow::{Context, Result};
 use std::time::Duration;
 
-use crate::cli::tea::run_info_elm;
 use crate::cli::{style, ui};
 #[cfg(unix)]
 use crate::core::client::DaemonClient;
@@ -32,24 +31,17 @@ pub fn info_sync(package: &str) -> Result<bool> {
     #[cfg(any(feature = "debian", feature = "debian-pure"))]
     if is_debian_like() {
         if let Some(pkg) = crate::package_managers::debian_db::get_info_fast(package)? {
-            ui::print_kv("Name", &style::package(&pkg.name));
             let version = pkg.version.version_string();
-            ui::print_kv("Version", &style::version(&version));
-            ui::print_kv(
-                "Description",
-                &style::sanitize_terminal_text(&pkg.description),
-            );
-            ui::print_kv(
-                "Status",
-                if pkg.installed {
-                    "installed"
-                } else {
-                    "not installed"
+            let source = format!("Official repository ({})", style::info("apt"));
+            ui::print_package_info(
+                &ui::InfoCore {
+                    name: &pkg.name,
+                    version: &version,
+                    source: &source,
+                    installed: pkg.installed,
+                    description: &pkg.description,
                 },
-            );
-            ui::print_kv(
-                "Source",
-                &format!("Official repository ({})", style::info("apt")),
+                &ui::InfoExtras::none(),
             );
             return Ok(true);
         }
@@ -57,10 +49,6 @@ pub fn info_sync(package: &str) -> Result<bool> {
         {
             if let Some(info) = crate::package_managers::apt_get_sync_pkg_info(package)? {
                 display_package_info(&info);
-                ui::print_kv(
-                    "Source",
-                    &format!("Official repository ({})", style::info("apt")),
-                );
                 return Ok(true);
             }
         }
@@ -72,9 +60,6 @@ pub fn info_sync(package: &str) -> Result<bool> {
     if let Ok(mut client) = DaemonClient::connect_sync_with_timeout(DAEMON_INFO_TIMEOUT)
         && let Ok(info) = client.info_sync(package)
     {
-        ui::print_header("OMG", "Package Information");
-        ui::print_spacer();
-
         display_detailed_info(&info);
 
         // Track usage
@@ -108,32 +93,32 @@ pub fn info_sync(package: &str) -> Result<bool> {
 /// Helper to display detailed info from daemon
 #[cfg(unix)]
 fn display_detailed_info(info: &crate::daemon::protocol::DetailedPackageInfo) {
-    ui::print_kv("Name", &style::package(&info.name));
-    ui::print_kv("Version", &style::version(&info.version));
-    ui::print_kv(
-        "Description",
-        &style::sanitize_terminal_text(&info.description),
-    );
-
     let source_label = if info.source == WirePackageSource::Official {
         format!("Official repository ({})", style::info(&info.repo))
     } else {
         style::warning("AUR (Arch User Repository)")
     };
-    ui::print_kv("Source", &source_label);
-    ui::print_kv(
-        "URL",
-        &style::url(&style::sanitize_terminal_text(&info.url)),
+    let installed = crate::package_managers::is_installed_fast(&info.name).unwrap_or(false);
+    ui::print_package_info(
+        &ui::InfoCore {
+            name: &info.name,
+            version: &info.version,
+            source: &source_label,
+            installed,
+            description: &info.description,
+        },
+        &ui::InfoExtras {
+            url: Some(info.url.as_str()).filter(|url| !url.is_empty()),
+            size: Some(info.size),
+            download: Some(info.download_size),
+            licenses: &info.licenses,
+            depends: &info.depends,
+            maintainer: None,
+            votes: None,
+            popularity: None,
+            out_of_date: false,
+        },
     );
-    ui::print_kv("Size", &style::size(info.size));
-    ui::print_kv("Download", &style::size(info.download_size));
-
-    if !info.licenses.is_empty() {
-        ui::print_kv("License", &info.licenses.join(", "));
-    }
-    if !info.depends.is_empty() {
-        ui::print_kv("Depends", &info.depends.join(", "));
-    }
 }
 
 pub async fn info(package: &str) -> Result<()> {
@@ -149,22 +134,7 @@ pub async fn info_with_json(package: &str, json: bool) -> Result<()> {
         return info_json(package).await;
     }
 
-    if crate::core::paths::test_mode()
-        || !console::user_attended()
-        || get_package_manager()?.name() != "pacman"
-    {
-        return info_fallback(package).await;
-    }
-
-    if let Err(e) = run_info_elm(package.to_string()) {
-        if e.kind() == std::io::ErrorKind::Other {
-            return Err(e.into());
-        }
-        tracing::warn!("Elm UI failed, falling back to basic mode: {}", e);
-        info_fallback(package).await
-    } else {
-        Ok(())
-    }
+    info_fallback(package).await
 }
 
 async fn info_json(package: &str) -> Result<()> {
@@ -262,30 +232,24 @@ async fn info_fallback(package: &str) -> Result<()> {
             .info(package)
             .await?
             .with_context(|| format!("Package '{package}' not found. Try: omg search {package}"))?;
-        ui::print_kv("Name", &style::package(&info.name));
-        ui::print_kv("Version", &style::version(&info.version.to_string()));
-        ui::print_kv(
-            "Description",
-            &style::sanitize_terminal_text(&info.description),
-        );
-        ui::print_kv(
-            "Status",
-            if info.installed {
-                "installed"
-            } else {
-                "not installed"
+        let version = info.version.to_string();
+        let source = format!("Official repository ({})", pm.name());
+        ui::print_package_info(
+            &ui::InfoCore {
+                name: &info.name,
+                version: &version,
+                source: &source,
+                installed: info.installed,
+                description: &info.description,
             },
+            &ui::InfoExtras::none(),
         );
-        ui::print_kv("Source", &format!("Official repository ({})", pm.name()));
         return Ok(());
     }
 
     // Try AUR directly as final fallback (Arch only)
     #[cfg(feature = "arch")]
     {
-        ui::print_header("OMG", &format!("Package info for '{package}'"));
-        ui::print_spacer();
-
         let pb = style::spinner("Searching AUR...");
         let details: Vec<crate::package_managers::AurPackageDetail> =
             match tokio::time::timeout(AUR_INFO_TIMEOUT, search_detailed(package)).await {
@@ -305,25 +269,30 @@ async fn info_fallback(package: &str) -> Result<()> {
             anyhow::bail!("Package '{package}' not found. Try: omg search {package}");
         };
 
-        ui::print_kv("Name", &style::package(&pkg.name));
-        ui::print_kv("Version", &style::version(&pkg.version));
-        ui::print_kv(
-            "Description",
-            &style::sanitize_terminal_text(pkg.description.as_deref().unwrap_or_default()),
+        let description = pkg.description.as_deref().unwrap_or_default();
+        let maintainer = pkg.maintainer.as_deref().unwrap_or("orphan");
+        let source = style::warning("AUR (Arch User Repository)");
+        let installed = crate::package_managers::is_installed_fast(&pkg.name).unwrap_or(false);
+        ui::print_package_info(
+            &ui::InfoCore {
+                name: &pkg.name,
+                version: &pkg.version,
+                source: &source,
+                installed,
+                description,
+            },
+            &ui::InfoExtras {
+                url: None,
+                size: None,
+                download: None,
+                licenses: &[],
+                depends: &[],
+                maintainer: Some(maintainer),
+                votes: Some(pkg.num_votes),
+                popularity: Some(pkg.popularity),
+                out_of_date: pkg.out_of_date.is_some(),
+            },
         );
-        ui::print_kv(
-            "Maintainer",
-            &style::sanitize_terminal_text(pkg.maintainer.as_deref().unwrap_or("orphan")),
-        );
-        ui::print_kv("Votes", &pkg.num_votes.to_string());
-        ui::print_kv("Popularity", &format!("{:.2}%", pkg.popularity));
-        if pkg.out_of_date.is_some() {
-            ui::print_kv("Status", &style::error("OUT OF DATE"));
-        }
-
-        ui::print_spacer();
-        ui::print_warning("Source: Arch User Repository (AUR)");
-        ui::print_spacer();
         Ok(())
     }
 
@@ -334,29 +303,29 @@ async fn info_fallback(package: &str) -> Result<()> {
 /// Display package info (debian only)
 #[cfg(feature = "debian")]
 fn display_package_info(info: &crate::package_managers::types::PackageInfo) {
-    ui::print_kv("Package", &style::package(&info.name));
-    ui::print_kv("Version", &style::version(&info.version.to_string()));
-    ui::print_kv(
-        "Status",
-        if info.installed {
-            "installed"
-        } else {
-            "not installed"
+    let version = info.version.to_string();
+    let source = format!("Official repository ({})", style::info("apt"));
+    let size = info.install_size.and_then(|size| u64::try_from(size).ok());
+    ui::print_package_info(
+        &ui::InfoCore {
+            name: &info.name,
+            version: &version,
+            source: &source,
+            installed: info.installed,
+            description: &info.description,
+        },
+        &ui::InfoExtras {
+            url: info.url.as_deref(),
+            size,
+            download: None,
+            licenses: &[],
+            depends: &info.depends,
+            maintainer: None,
+            votes: None,
+            popularity: None,
+            out_of_date: false,
         },
     );
-    ui::print_kv(
-        "Description",
-        &style::sanitize_terminal_text(&info.description),
-    );
-    if let Some(url) = &info.url {
-        ui::print_kv("URL", &style::sanitize_terminal_text(url));
-    }
-    if let Some(size) = info.install_size {
-        ui::print_kv("Install Size", &format!("{size} bytes"));
-    }
-    if !info.depends.is_empty() {
-        ui::print_kv("Depends", &info.depends.join(", "));
-    }
 }
 
 #[cfg(test)]

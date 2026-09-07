@@ -2,7 +2,7 @@
 //!
 //! Parses `.SRCINFO` and downloads HTTP sources concurrently before makepkg runs.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::path::Path;
 
 const MAX_AUR_SOURCE_BYTES: u64 = 1024 * 1024 * 1024;
@@ -141,6 +141,11 @@ pub async fn download_sources(sources: Vec<SourceFile>, srcdest: &Path) -> Sourc
             failed: sources.len(),
         };
     }
+    let mut seen = HashSet::with_capacity(sources.len());
+    let sources: Vec<SourceFile> = sources
+        .into_iter()
+        .filter(|source| seen.insert(source.filename.clone()))
+        .collect();
 
     // Ensure SRCDEST exists
     if let Err(e) = tokio::fs::create_dir_all(srcdest).await {
@@ -155,11 +160,6 @@ pub async fn download_sources(sources: Vec<SourceFile>, srcdest: &Path) -> Sourc
         // Filename captured for the security check inside the async block.
         let filename = source.filename.clone();
         let dest_path = srcdest.join(&source.filename);
-        let task = ProgressTask::start(&TaskSpec {
-            label: source.filename.clone(),
-            kind: TaskKind::Bytes { total: None },
-            accent: Accent::Network,
-        });
 
         async move {
             // SECURITY (audit ADV-23-01): the filename may come from a
@@ -177,8 +177,6 @@ pub async fn download_sources(sources: Vec<SourceFile>, srcdest: &Path) -> Sourc
             }
             match tokio::fs::symlink_metadata(&dest_path).await {
                 Ok(metadata) if metadata.is_file() => {
-                    task.set_message("cached");
-                    task.finish(Outcome::Done);
                     return Ok(());
                 }
                 Ok(_) => {
@@ -194,6 +192,12 @@ pub async fn download_sources(sources: Vec<SourceFile>, srcdest: &Path) -> Sourc
                     });
                 }
             }
+
+            let task = ProgressTask::start(&TaskSpec {
+                label: source.filename.clone(),
+                kind: TaskKind::Bytes { total: None },
+                accent: Accent::Network,
+            });
 
             download_file(&source.url, &dest_path, task).await
         }

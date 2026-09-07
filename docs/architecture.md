@@ -65,14 +65,13 @@ This document provides a high-level overview of OMG's architecture, component in
 ┌─────────────────────────────────────────────────────────────────────────┐
 │                              USER                                        │
 │                                │                                         │
-│                    ┌───────────┴───────────┐                            │
-│                    ▼                       ▼                            │
-│              ┌──────────┐           ┌──────────────┐                    │
-│              │ omg CLI  │           │ omg-fast CLI │                    │
-│              └────┬─────┘           └──────┬───────┘                    │
-│                   │                        │                            │
-│                   │    Unix Socket IPC     │ Direct status read        │
-│                   ▼                        ▼                            │
+│                                ▼                                         │
+│              ┌──────────┐                                                │
+│              │ omg CLI  │                                                │
+│              └────┬─────┘                                                │
+│                   │                                                      │
+│                   │    Unix Socket IPC / direct status read              │
+│                   ▼                                                      │
 │              ┌────────────────────────────────────┐                     │
 │              │           omgd (Daemon)            │                     │
 │              │  ┌──────────────────────────────┐  │                     │
@@ -114,16 +113,13 @@ This document provides a high-level overview of OMG's architecture, component in
 
 ## 📦 Binary Components
 
-OMG is distributed as a unified set of three specialized binaries, all statically linked for maximum portability and zero dependencies.
+OMG is distributed as two specialized binaries, both statically linked for maximum portability and zero dependencies.
 
 ### omg (The CLI)
-The primary user interface. It is designed for human interaction, providing rich colored output, progress bars, and interactive TUI elements. It handles argument parsing, security policy enforcement, and communicates with the background daemon via a high-performance Unix socket.
+The primary user interface. It is designed for human interaction, providing rich colored output, progress bars, and interactive TUI elements. It handles argument parsing, security policy enforcement, and communicates with the background daemon via a high-performance Unix socket. Prompt counters (`omg ec|tc|oc|uc`) and other hot paths bypass the async runtime for sub-millisecond reads from the daemon's binary status snapshot.
 
 ### omgd (The Daemon)
 The "brain" of the system. It runs as a lightweight background service that maintains an in-memory index of all system packages and language runtimes. It handles heavy lifting like background vulnerability scanning, metadata indexing, and complex dependency resolution.
-
-### omg-fast (The Prompt Optimizer)
-A specialized, ultra-lightweight binary specifically for shell prompts. It achieves sub-millisecond response times by reading a fixed-size binary snapshot of the system's "vital signs" directly from the filesystem. This optimization bypasses the entire IPC and network stack, acting like a shared-memory interface for instant prompt updates.
 
 
 
@@ -231,7 +227,7 @@ The hottest data (recent searches, package details, system status) is kept in a 
 The daemon persists its latest status snapshot as versioned JSON using a same-directory temporary file, `fsync`, and atomic rename. Transaction history and the hash-chained audit log are separate owner-only files; package search indexes are rebuilt from native package-manager databases rather than treated as durable authority.
 
 ### 3. Binary Status
-A specialized binary status file is maintained by the daemon to store your system's "vital signs" (update counts, error status). This is what enables `omg-fast` to power your shell prompt with zero-allocation, zero-IPC reads.
+A specialized binary status file is maintained by the daemon to store your system's "vital signs" (update counts, error status). Prompt counters (`omg ec|tc|oc|uc`) read this snapshot with zero-allocation, zero-IPC access.
 
 ---
 

@@ -141,38 +141,44 @@ where
 /// Compiled exactly when a consumer backend exists: the Debian module (under
 /// `debian`/`debian-pure`) or the generic module (when Arch is absent).
 #[cfg(any(feature = "debian", feature = "debian-pure", not(feature = "arch")))]
-pub(crate) async fn update_official_only(check_only: bool, yes: bool, dry_run: bool) -> Result<()> {
+#[expect(clippy::fn_params_excessive_bools)] // Maps to --check / --yes / --dry-run / --no-sync
+pub(crate) async fn update_official_only(
+    check_only: bool,
+    yes: bool,
+    dry_run: bool,
+    no_sync: bool,
+) -> Result<()> {
     let pm = crate::package_managers::get_package_manager()?;
 
-    let official_updates = if check_only || dry_run {
-        crate::cli::modern_ui::print_phase_header(
-            "🔄",
-            "Update",
-            if check_only {
-                "Checking for updates (no sync)"
+    crate::cli::modern_ui::print_phase_header(
+        "🔄",
+        "Update",
+        if dry_run {
+            if no_sync {
+                "Dry run · cached"
             } else {
-                "Dry run - checking for updates"
-            },
-        );
-        // No sync happened, so the daemon snapshot cannot be stale relative
-        // to this command; probe the daemon (with direct fallback) directly.
+                "Dry run · checking for updates"
+            }
+        } else if no_sync {
+            "Checking for updates · cached"
+        } else {
+            "Checking for updates"
+        },
+    );
+
+    let check_start = std::time::Instant::now();
+    let official_updates = if no_sync {
         match try_daemon_list_updates().await {
             Some(updates) => updates,
             None => pm.list_updates().await?,
         }
     } else {
-        crate::cli::modern_ui::print_phase_header("🔄", "Update", "Checking for updates");
-        let pb = crate::cli::modern_ui::modern_spinner("Syncing", "package databases");
         let sync_start = std::time::Instant::now();
         pm.sync().await?;
-        crate::cli::modern_ui::finish_success(
-            &pb,
+        crate::cli::modern_ui::print_finished_step(
             "Synced",
             &format!("in {:.2}s", sync_start.elapsed().as_secs_f64()),
         );
-        // After a sync the daemon must refresh its frozen snapshot BEFORE its
-        // update list is probed; the pre-sync list must never be served
-        // (stale-index invariant, see `official_updates_after_sync`).
         official_updates_after_sync(
             pm.as_ref(),
             refresh_daemon_index_after_sync(),
@@ -180,22 +186,11 @@ pub(crate) async fn update_official_only(check_only: bool, yes: bool, dry_run: b
         )
         .await?
     };
-
-    let pb = crate::cli::modern_ui::modern_spinner("Checking", "official repositories");
-    let check_start = std::time::Instant::now();
-    if official_updates.is_empty() {
-        crate::cli::modern_ui::finish_info(&pb, "No updates in official repositories");
-    } else {
-        crate::cli::modern_ui::finish_success(
-            &pb,
-            "Found",
-            &format!(
-                "{} update(s) in {:.2}s",
-                official_updates.len(),
-                check_start.elapsed().as_secs_f64()
-            ),
-        );
-    }
+    crate::cli::modern_ui::print_source_lane(
+        "official",
+        official_updates.len(),
+        check_start.elapsed(),
+    );
 
     println!();
     if official_updates.is_empty() {
@@ -280,42 +275,8 @@ pub(crate) fn update_official_only_dry_run(updates: &[UpdateInfo]) -> Result<()>
         .iter()
         .try_for_each(|update| crate::core::security::validate_package_name(&update.name))?;
 
-    crate::cli::ui::print_header("OMG", "Dry Run - Update Preview");
-    crate::cli::ui::print_spacer();
-    println!(
-        "  {} The following packages would be updated:\n",
-        crate::cli::style::info("→")
-    );
-
-    for update in updates.iter().take(50) {
-        println!(
-            "    {} {} {} {} {} ({})",
-            crate::cli::style::success("↑"),
-            crate::cli::style::package(&update.name),
-            crate::cli::style::dim(&update.old_version),
-            crate::cli::style::arrow("->"),
-            crate::cli::style::version(&update.new_version),
-            crate::cli::style::dim("unknown")
-        );
-    }
-
-    if updates.len() > 50 {
-        println!(
-            "    {}",
-            crate::cli::style::dim(&format!("(+{} more updates)", updates.len() - 50))
-        );
-    }
-
-    crate::cli::ui::print_spacer();
-    println!(
-        "  {} Total updates: {}",
-        crate::cli::style::info("→"),
-        updates.len()
-    );
-    println!(
-        "  {} Estimated download: unknown",
-        crate::cli::style::info("→")
-    );
+    crate::cli::modern_ui::print_phase_header("", "Update", "dry run");
+    crate::cli::modern_ui::print_update_summary(updates);
     crate::cli::ui::print_dry_run_footer();
     Ok(())
 }

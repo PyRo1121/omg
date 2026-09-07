@@ -325,6 +325,24 @@ impl DaemonClient {
     }
 }
 
+/// Rebuild a running daemon's ALPM snapshot after this process wrote catalogs.
+///
+/// Mutations stay in the privileged omg child. This only asks omgd to drop a
+/// frozen libalpm handle. A missing daemon is normal for users who disabled it.
+pub async fn refresh_daemon_after_catalog_write() -> Result<()> {
+    match DaemonClient::connect().await {
+        Ok(mut client) => {
+            client.refresh_index().await.context(
+                "ALPM databases changed, but the daemon could not reload them from disk",
+            )?;
+        }
+        Err(error) => {
+            tracing::debug!("Daemon unavailable after ALPM catalog write: {error}");
+        }
+    }
+    Ok(())
+}
+
 /// The single conversion point from a daemon response to a typed client
 /// result. Every accessor on [`DaemonClient`] and [`SyncDaemonClient`]
 /// funnels through here, so a protocol mismatch surfaces as one canonical

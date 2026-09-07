@@ -1144,8 +1144,8 @@ mod update_tests {
         result.assert_stdout_contains("update");
     }
 
-    // Contract: --check mode exits 0 and announces check-only operation
-    // (observed: "Checking for updates (no sync)").
+    // Contract: --check lists pending updates (and refreshes databases
+    // unless --no-sync). Observed: "Checking for updates".
     #[test]
     fn test_update_dry_run() {
         let result = run_omg(&["update", "--check"]);

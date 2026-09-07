@@ -16,10 +16,24 @@ use crate::package_managers::types::{
 };
 
 static CACHE_EPOCH: AtomicU64 = AtomicU64::new(0);
-type CachedAlpmHandle = Option<(Alpm, u64)>;
+
+struct CachedAlpm {
+    handle: Alpm,
+    software_epoch: u64,
+    disk_epoch: pacman_db::AlpmCatalogEpoch,
+}
 
 thread_local! {
-    static ALPM_HANDLE: RefCell<CachedAlpmHandle> = const { RefCell::new(None) };
+    static ALPM_HANDLE: RefCell<Option<CachedAlpm>> = const { RefCell::new(None) };
+}
+
+fn cached_alpm_is_reusable(
+    software_loaded: u64,
+    software_now: u64,
+    disk_loaded: pacman_db::AlpmCatalogEpoch,
+    disk_now: pacman_db::AlpmCatalogEpoch,
+) -> bool {
+    software_loaded == software_now && !disk_now.disk_is_newer_than(disk_loaded)
 }
 
 fn create_alpm_handle() -> Result<Alpm> {
@@ -34,10 +48,27 @@ fn create_alpm_handle() -> Result<Alpm> {
     Ok(alpm)
 }
 
-fn refresh_cached_handle(cached: &mut CachedAlpmHandle, current_epoch: u64) -> Result<()> {
-    if !matches!(cached, Some((_, epoch)) if *epoch == current_epoch) {
-        *cached = Some((create_alpm_handle()?, current_epoch));
+fn refresh_cached_handle(cached: &mut Option<CachedAlpm>, current_software: u64) -> Result<()> {
+    let disk_now =
+        pacman_db::AlpmCatalogEpoch::observe().context("Failed to observe ALPM catalog epoch")?;
+    if cached.as_ref().is_some_and(|loaded| {
+        cached_alpm_is_reusable(
+            loaded.software_epoch,
+            current_software,
+            loaded.disk_epoch,
+            disk_now,
+        )
+    }) {
+        return Ok(());
     }
+    let handle = create_alpm_handle()?;
+    let disk_epoch = pacman_db::AlpmCatalogEpoch::observe()
+        .context("Failed to observe ALPM catalog epoch after ALPM init")?;
+    *cached = Some(CachedAlpm {
+        handle,
+        software_epoch: current_software,
+        disk_epoch,
+    });
     Ok(())
 }
 
@@ -53,9 +84,10 @@ where
             .context("Nested ALPM handle access is not supported")?;
         refresh_cached_handle(&mut maybe_handle, current_epoch)?;
 
-        let (handle, _) = maybe_handle
+        let handle = &maybe_handle
             .as_ref()
-            .context("ALPM handle initialization failed")?;
+            .context("ALPM handle initialization failed")?
+            .handle;
         f(handle)
     })
 }
@@ -72,9 +104,10 @@ where
             .context("Nested ALPM handle access is not supported")?;
         refresh_cached_handle(&mut maybe_handle, current_epoch)?;
 
-        let (handle, _) = maybe_handle
+        let handle = &mut maybe_handle
             .as_mut()
-            .context("ALPM handle initialization failed")?;
+            .context("ALPM handle initialization failed")?
+            .handle;
         f(handle)
     })
 }
@@ -332,10 +365,10 @@ pub fn has_update(package: &str) -> Result<bool> {
     })
 }
 
-/// Check if package is installed - INSTANT
+/// Check if package is installed - FAST (cached local db, no libalpm init)
 #[inline]
 pub fn is_installed_fast(name: &str) -> Result<bool> {
-    with_handle(|handle| Ok(handle.localdb().pkg(name).is_ok()))
+    pacman_db::get_local_package(name).map(|package| package.is_some())
 }
 
 /// Get counts - INSTANT (<1ms, single pass over packages)
@@ -408,6 +441,22 @@ mod tests {
     /// environments without an installed pacman local db (CI containers).
     fn real_pacman_db_available() -> bool {
         paths::pacman_local_dir_result().is_ok_and(|path| path.exists())
+    }
+
+    #[test]
+    fn cached_handle_is_dropped_when_sync_db_epoch_advances() {
+        let dir = tempfile::tempdir().expect("temp sync dir");
+        let older = pacman_db::AlpmCatalogEpoch::UNIX_EPOCH;
+        std::fs::write(dir.path().join("core.db"), b"db").expect("sync db file");
+        let newer = pacman_db::AlpmCatalogEpoch {
+            sync: pacman_db::SyncDbEpoch::from_sync_dir(dir.path()).expect("observe temp sync dir"),
+            local: pacman_db::LocalDbEpoch::UNIX_EPOCH,
+        };
+        assert!(newer.disk_is_newer_than(older));
+        assert!(!cached_alpm_is_reusable(1, 1, older, newer));
+        assert!(cached_alpm_is_reusable(1, 1, newer, newer));
+        assert!(!cached_alpm_is_reusable(1, 2, newer, newer));
+        assert!(cached_alpm_is_reusable(3, 3, newer, older));
     }
 
     #[test]

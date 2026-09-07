@@ -30,6 +30,7 @@ pub struct PacmanConfig {
     pub sig_level: Option<String>,
     pub local_file_sig_level: Option<String>,
     pub remote_file_sig_level: Option<String>,
+    pub parallel_downloads: Option<u32>,
     pub repos: Vec<RepoConfig>,
 }
 
@@ -147,7 +148,7 @@ impl PacmanConfig {
 
             match current_section.as_deref() {
                 Some("options") => {
-                    Self::parse_option(&mut config, key, value);
+                    Self::parse_option(&mut config, key, value)?;
                 }
                 Some(_) => {
                     if let Some(ref mut repo) = current_repo {
@@ -178,7 +179,7 @@ impl PacmanConfig {
         }
     }
 
-    fn parse_option(config: &mut PacmanConfig, key: &str, value: Option<&str>) {
+    fn parse_option(config: &mut PacmanConfig, key: &str, value: Option<&str>) -> Result<()> {
         match key {
             "RootDir" => config.root_dir = value.map(String::from),
             "DBPath" => config.db_path = value.map(String::from),
@@ -241,8 +242,20 @@ impl PacmanConfig {
                         .extend(v.split_whitespace().map(String::from));
                 }
             }
+            "ParallelDownloads" => {
+                let value = value.context("ParallelDownloads requires a value")?;
+                let count: u32 = value
+                    .parse()
+                    .with_context(|| format!("Invalid ParallelDownloads value '{value}'"))?;
+                anyhow::ensure!(
+                    (1..=64).contains(&count),
+                    "ParallelDownloads must be between 1 and 64, got {count}"
+                );
+                config.parallel_downloads = Some(count);
+            }
             _ => {}
         }
+        Ok(())
     }
 
     fn parse_repo_option(repo: &mut RepoConfig, key: &str, value: Option<&str>) {
@@ -362,6 +375,19 @@ mod tests {
             config.resolve_servers(&config.repos[0], "x86_64").unwrap(),
             ["https://mirror.example/core/x86_64"]
         );
+    }
+
+    #[test]
+    fn parallel_downloads_option_is_parsed_and_bounded() {
+        let config = PacmanConfig::parse_str(
+            "[options]\nParallelDownloads = 12\n\n[core]\nServer = https://example.invalid\n",
+        )
+        .expect("valid ParallelDownloads");
+        assert_eq!(config.parallel_downloads, Some(12));
+
+        let error = PacmanConfig::parse_str("[options]\nParallelDownloads = 0\n")
+            .expect_err("zero ParallelDownloads must fail");
+        assert!(error.to_string().contains("between 1 and 64"), "{error}");
     }
 
     #[test]

@@ -149,13 +149,12 @@ The measured daemon-backed search mean was 13.088 ms, median 11.366 ms, with a
 produces 18.9016, which explains the old rounded 19× headline.
 
 That ratio does not establish equivalent work. The preflight recorded 6 output
-lines for OMG, 21 for omg-fast, and 458 for pacman search. Merely finding `firefox`
+lines for OMG and 458 for pacman search. Merely finding `firefox`
 in each output does not prove equal result sets, limits, repository scope, or
 formatting work. This is a comparison of those observed invocations, not a fair
 search-speed guarantee. The root README no longer promotes that ratio.
 
-The record also distinguishes the full CLI from `omg-fast`. Do not substitute a
-thin IPC client's time for the shipped CLI's time. Do not describe a warm daemon
+The record compares the shipped `omg` CLI invocations. Do not describe a warm daemon
 measurement as cold startup. No claim here establishes Debian, Ubuntu, Fedora,
 or QEMU performance from this Arch development run.
 

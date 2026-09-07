@@ -353,12 +353,12 @@ omg daemon
 omg status
 ```
 
-### 2. Use omg-fast for Scripts
+### 2. Use prompt counters in scripts
 
 ```bash
 # Ultra-fast package count
-omg-fast ec  # Explicit count
-omg-fast tc  # Total count
+omg ec  # Explicit count
+omg tc  # Total count
 ```
 
 ### 3. Batch Operations

@@ -108,10 +108,26 @@ impl CompletionEngine {
             })
             .collect();
 
+        let pattern_lower = pattern.to_ascii_lowercase();
         matches.sort_by(|a, b| {
-            b.1.cmp(&a.1)
-                .then_with(|| candidates[a.0].len().cmp(&candidates[b.0].len()))
-                .then_with(|| candidates[a.0].cmp(&candidates[b.0]))
+            let a_prefix = candidates[a.0]
+                .to_ascii_lowercase()
+                .starts_with(&pattern_lower);
+            let b_prefix = candidates[b.0]
+                .to_ascii_lowercase()
+                .starts_with(&pattern_lower);
+            b_prefix.cmp(&a_prefix).then_with(|| {
+                if a_prefix && b_prefix {
+                    candidates[a.0]
+                        .len()
+                        .cmp(&candidates[b.0].len())
+                        .then_with(|| candidates[a.0].cmp(&candidates[b.0]))
+                } else {
+                    b.1.cmp(&a.1)
+                        .then_with(|| candidates[a.0].len().cmp(&candidates[b.0].len()))
+                        .then_with(|| candidates[a.0].cmp(&candidates[b.0]))
+                }
+            })
         });
 
         matches
@@ -352,6 +368,23 @@ mod tests {
 
         let results = engine.fuzzy_match("fire", candidates);
         assert_eq!(results.first().map(String::as_str), Some("firefox"));
+    }
+
+    #[test]
+    fn fuzzy_indices_prefers_short_prefix_over_long_score() {
+        let candidates = vec![
+            "firefox-developer-edition-i18n-trs".to_string(),
+            "firefox".to_string(),
+        ];
+        let ranked = CompletionEngine::fuzzy_indices("fire", &candidates, 10);
+        assert_eq!(ranked.first().copied(), Some(1));
+    }
+
+    #[test]
+    fn fuzzy_indices_ranks_transposed_query() {
+        let candidates = vec!["firefox".to_string(), "python".to_string()];
+        let ranked = CompletionEngine::fuzzy_indices("frfox", &candidates, 10);
+        assert_eq!(ranked.first().copied(), Some(0));
     }
 
     #[test]

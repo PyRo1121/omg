@@ -319,23 +319,23 @@ omgd                            # Start the daemon (blocks in the foreground)
 omgd --socket /path/to/sock     # Custom socket path
 omg daemon-status               # Show detailed daemon status
 omg daemon                      # Start the daemon from the CLI
-omg-fast status                 # Instant status from the daemon's snapshot
+omg status                 # Instant status from the daemon's snapshot
 ```
 
 There is no `omg daemon start/stop/restart` subcommand — the daemon is started with
 `omg daemon`/`omgd` and stopped by killing the process (or your service manager).
 To run it under systemd, see [Configuration](./configuration.md).
 
-### omg-fast (shell-prompt queries)
+### Prompt counters (shell integration)
 
 ```bash
-omg-fast ec        # Explicit count
-omg-fast tc        # Total count
-omg-fast uc        # Updates count
-omg-fast oc        # Orphan count
-omg-fast status    # Full status
-omg-fast s vim     # Search
-omg-fast i vim     # Package info
+omg ec        # Explicit count
+omg tc        # Total count
+omg uc        # Updates count
+omg oc        # Orphan count
+omg status    # Full status
+omg search vim
+omg info vim
 ```
 
 ---

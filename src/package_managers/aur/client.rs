@@ -13,7 +13,6 @@ use alpm_types::Version;
 use anyhow::{Context, Result};
 use dialoguer::Confirm;
 use futures::{FutureExt, StreamExt, future::BoxFuture};
-use indicatif::{ProgressBar, ProgressStyle};
 use owo_colors::OwoColorize;
 use serde::{Deserialize, de::DeserializeOwned};
 use sha2::{Digest, Sha256};
@@ -296,11 +295,27 @@ impl ReviewedSource {
                 }
                 let path = entry.path();
                 let metadata = std::fs::symlink_metadata(&path)?;
-                anyhow::ensure!(
-                    !metadata.file_type().is_symlink(),
-                    "AUR source symlinks must be replaced with reviewed regular files: {}",
-                    path.display()
-                );
+                if metadata.file_type().is_symlink() {
+                    let relative = path.strip_prefix(root)?.to_owned();
+                    anyhow::ensure!(
+                        relative.as_path() != Path::new("PKGBUILD")
+                            && relative.as_path() != Path::new(".SRCINFO"),
+                        "AUR {} must be a regular file, not a symlink",
+                        relative.display()
+                    );
+                    let target = std::fs::read_link(&path)?;
+                    contained_aur_symlink_target(root, &path, &target)?;
+                    let bytes = encode_symlink_manifest(&target);
+                    *budget = budget
+                        .checked_add(bytes.len())
+                        .context("AUR source size overflow")?;
+                    anyhow::ensure!(
+                        *budget <= 64 * 1024 * 1024 && files.len() < 10_000,
+                        "AUR source manifest exceeds file/count limits"
+                    );
+                    files.insert(relative, bytes);
+                    continue;
+                }
                 if metadata.is_dir() {
                     visit(root, &path, files, budget, entries, depth + 1)?;
                 } else {
@@ -349,6 +364,7 @@ impl ReviewedSource {
             digest: hex::encode(hash.finalize()),
         })
     }
+
     fn verify(&self, directory: &Path) -> Result<()> {
         let current = Self::capture(directory)?;
         anyhow::ensure!(
@@ -364,6 +380,57 @@ impl ReviewedSource {
             .with_context(|| format!("Unreviewed AUR input: {}", path.display()))?;
         Ok(std::str::from_utf8(bytes)?)
     }
+}
+
+fn encode_symlink_manifest(target: &Path) -> Vec<u8> {
+    use std::os::unix::ffi::OsStrExt;
+    let mut bytes = Vec::from(&b"symlink\0"[..]);
+    bytes.extend_from_slice(target.as_os_str().as_bytes());
+    bytes
+}
+
+/// Lexically resolve `target` from `link_path` and require the result stay
+/// inside `root`. Absolute links and `..` escapes are attacks. Relative
+/// links that stay in the checkout (license files, vendor aliases) are
+/// hashed by target string, never followed.
+fn contained_aur_symlink_target(root: &Path, link_path: &Path, target: &Path) -> Result<()> {
+    anyhow::ensure!(
+        target.is_relative(),
+        "AUR source symlink must be relative: {} -> {}",
+        link_path.display(),
+        target.display()
+    );
+    let mut resolved = link_path
+        .parent()
+        .map_or_else(|| root.to_path_buf(), Path::to_path_buf);
+    for component in target.components() {
+        match component {
+            std::path::Component::Normal(part) => resolved.push(part),
+            std::path::Component::CurDir => {}
+            std::path::Component::ParentDir => {
+                anyhow::ensure!(
+                    resolved.starts_with(root) && resolved != root && resolved.pop(),
+                    "AUR source symlink escapes the checkout: {} -> {}",
+                    link_path.display(),
+                    target.display()
+                );
+            }
+            std::path::Component::RootDir | std::path::Component::Prefix(_) => {
+                anyhow::bail!(
+                    "AUR source symlink must be relative: {} -> {}",
+                    link_path.display(),
+                    target.display()
+                );
+            }
+        }
+    }
+    anyhow::ensure!(
+        resolved.starts_with(root) && resolved != root,
+        "AUR source symlink escapes the checkout: {} -> {}",
+        link_path.display(),
+        target.display()
+    );
+    Ok(())
 }
 
 #[derive(Debug)]
@@ -398,6 +465,49 @@ fn configure_auxiliary_output(command: &mut Command) {
     } else {
         command.stdout(Stdio::null()).stderr(Stdio::null());
     }
+}
+
+pub(crate) fn refresh_git_checkout(pkg_dir: &Path) -> Result<()> {
+    let steps: [&[&str]; 3] = [
+        &["fetch", "--depth=1", "--filter=blob:none", "origin"],
+        &["clean", "-fd"],
+        &["reset", "--hard", "FETCH_HEAD"],
+    ];
+    let user = original_user();
+    let home = if user.is_some() {
+        original_user_home()?
+    } else {
+        None
+    };
+    for args in steps {
+        let mut cmd = if let Some(ref user) = user {
+            let mut cmd = crate::core::privilege::system_command("sudo")?;
+            cmd.args(["-u", user]);
+            if let Some(ref home_path) = home {
+                cmd.arg("-H");
+                cmd.env("HOME", home_path);
+            }
+            cmd.arg("git");
+            cmd
+        } else {
+            std::process::Command::new("git")
+        };
+        let output = cmd
+            .current_dir(pkg_dir)
+            .args(args)
+            .env("GIT_TERMINAL_PROMPT", "0")
+            .stdin(Stdio::null())
+            .output()
+            .with_context(|| format!("Failed to run git {} in {}", args[0], pkg_dir.display()))?;
+        anyhow::ensure!(
+            output.status.success(),
+            "git {} failed in {}: {}",
+            args.join(" "),
+            pkg_dir.display(),
+            String::from_utf8_lossy(&output.stderr).trim()
+        );
+    }
+    Ok(())
 }
 
 /// Give PKGBUILD-driven processes a minimal deterministic environment.
@@ -531,70 +641,264 @@ fn verify_reviewed_pkgbuild(pkgbuild_path: &Path, reviewed_digest: &str) -> Resu
     Ok(())
 }
 
-/// Preview lines shown in the interactive review panel before the
-/// truncation notice. Full PKGBUILD dumps per package are what make
-/// `omg update` output feel like spam; the file stays on disk at
-/// `pkgbuild_path` and the SHA-256 covers every byte, so a capped preview
-/// keeps output scannable without weakening what the digest attests.
-const MAX_PKGBUILD_PREVIEW_LINES: usize = 40;
+/// Diagnostic preview: threat-relevant assignments first, then fill. The
+/// SHA-256 still covers every byte of every reviewed file.
+const MAX_PKGBUILD_PREVIEW_LINES: usize = 8;
+const PREVIEW_LINE_CHARS: usize = 96;
+const PREVIEW_ASSIGNMENTS: &[&str] = &[
+    "source",
+    "sha256sums",
+    "sha512sums",
+    "b2sums",
+    "install",
+    "url",
+    "depends",
+    "pkgver",
+];
+
+fn assignment_name(line: &str) -> Option<&str> {
+    let trimmed = line.trim_start();
+    let name = trimmed
+        .split(|character: char| character == '=' || character == '(')
+        .next()?
+        .trim();
+    if name.is_empty() {
+        return None;
+    }
+    name.chars()
+        .all(|character| character == '_' || character.is_ascii_alphanumeric())
+        .then_some(name)
+}
+
+fn pkgbuild_maintainer(text: &str) -> Option<String> {
+    for line in text.lines().take(30) {
+        let trimmed = line.trim();
+        let rest = trimmed
+            .strip_prefix("# Maintainer:")
+            .or_else(|| trimmed.strip_prefix("# Contributor:"))?;
+        let cleaned = crate::cli::style::sanitize_terminal_text(rest.trim());
+        if !cleaned.is_empty() {
+            return Some(cleaned);
+        }
+    }
+    None
+}
+
+fn preview_pkgbuild_lines(text: &str, limit: usize) -> Vec<(usize, String)> {
+    let numbered: Vec<(usize, &str)> = text
+        .lines()
+        .enumerate()
+        .map(|(index, line)| (index + 1, line))
+        .collect();
+    let mut picked = Vec::new();
+    let mut used = std::collections::HashSet::new();
+    for (number, line) in &numbered {
+        let Some(name) = assignment_name(line) else {
+            continue;
+        };
+        if !PREVIEW_ASSIGNMENTS.contains(&name) {
+            continue;
+        }
+        if used.insert(*number) {
+            picked.push((*number, (*line).to_string()));
+        }
+        if picked.len() >= limit {
+            return picked;
+        }
+    }
+    for (number, line) in numbered {
+        if used.contains(&number) {
+            continue;
+        }
+        let trimmed = line.trim();
+        if trimmed.is_empty() || trimmed.starts_with('#') {
+            continue;
+        }
+        picked.push((number, line.to_string()));
+        if picked.len() >= limit {
+            break;
+        }
+    }
+    picked
+}
+
+fn join_limited(values: &[String], cap: usize) -> String {
+    if values.len() <= cap {
+        values
+            .iter()
+            .map(|value| crate::cli::style::sanitize_terminal_text(value))
+            .collect::<Vec<_>>()
+            .join(", ")
+    } else {
+        let shown = values[..cap]
+            .iter()
+            .map(|value| crate::cli::style::sanitize_terminal_text(value))
+            .collect::<Vec<_>>()
+            .join(", ");
+        format!("{shown}, +{} more", values.len() - cap)
+    }
+}
+
+struct AurReviewFiles<'a> {
+    relative: &'a Path,
+    bytes: usize,
+    digest: String,
+}
 
 fn pkgbuild_review_panel(
     package: &str,
     digest: &str,
     review: &str,
     pkgbuild_path: &Path,
+    extra_files: &[AurReviewFiles<'_>],
+    verbose: bool,
 ) -> String {
+    use crate::cli::chrome;
+
     let package = crate::cli::style::sanitize_terminal_text(package);
-    let divider = "─".repeat(72);
     let trimmed = review.trim_end();
     let total_lines = trimmed.lines().count();
-    let preview = trimmed
-        .lines()
-        .take(MAX_PKGBUILD_PREVIEW_LINES)
-        .collect::<Vec<_>>()
-        .join("\n");
-    let overflow = total_lines.saturating_sub(MAX_PKGBUILD_PREVIEW_LINES);
+    let meta = crate::package_managers::pkgbuild::PkgBuild::parse_content(trimmed).ok();
+    let version = meta.as_ref().map(|pkg| {
+        format!(
+            "{}-{}",
+            crate::cli::style::sanitize_terminal_text(&pkg.version.to_string()),
+            crate::cli::style::sanitize_terminal_text(&pkg.release)
+        )
+    });
+    let url = meta.as_ref().and_then(|pkg| {
+        let url = crate::cli::style::sanitize_terminal_text(&pkg.url);
+        (!url.is_empty()).then_some(url)
+    });
+    let depends = meta
+        .as_ref()
+        .filter(|pkg| !pkg.depends.is_empty())
+        .map(|pkg| join_limited(&pkg.depends, 5));
+    let maintainer = pkgbuild_maintainer(trimmed);
 
+    let mut lines = Vec::new();
+    lines.push(String::new());
     if crate::cli::style::colors_enabled() {
-        let tail = if overflow > 0 {
-            format!(
-                "\n{}",
-                format!(
-                    "… ({overflow} more lines — full PKGBUILD at {})",
-                    pkgbuild_path.display()
-                )
-                .dimmed()
-            )
-        } else {
-            String::new()
-        };
-        format!(
-            "\n  {} {}\n\n    {} {}\n\n  {}\n{preview}{tail}\n  {}",
-            " AUR ".black().on_magenta().bold(),
-            format!("Review {package}").bold(),
-            "SHA-256".dimmed(),
-            digest.dimmed(),
-            divider.dimmed(),
-            divider.dimmed()
-        )
+        lines.push(format!(
+            "  {}  {}  {}",
+            chrome::accent_rail(),
+            "AUR".bold(),
+            package.bold()
+        ));
     } else {
-        let tail = if overflow > 0 {
-            format!(
-                "\n… ({overflow} more lines — full PKGBUILD at {})",
-                pkgbuild_path.display()
-            )
-        } else {
-            String::new()
-        };
-        format!(
-            "\n  AUR  Review {package}\n\n    SHA-256 {digest}\n\n  {divider}\n{preview}{tail}\n  {divider}"
-        )
+        lines.push(format!("  {}  AUR  {package}", chrome::accent_rail()));
     }
+    lines.push(chrome::rail_line(""));
+    lines.push(chrome::rail_line(&chrome::digest_stripe(digest)));
+    lines.push(chrome::rail_line(""));
+
+    let package_value = match version {
+        Some(version) => format!("{package}  {version}"),
+        None => package,
+    };
+    lines.push(chrome::kv("package", &package_value));
+    if let Some(url) = url {
+        lines.push(chrome::kv("url", &chrome::osc8_http(&url, &url)));
+    }
+    if let Some(depends) = depends {
+        lines.push(chrome::kv("depends", &depends));
+    }
+    if let Some(maintainer) = maintainer {
+        lines.push(chrome::kv("maint", &maintainer));
+    }
+
+    let mut file_names = vec!["PKGBUILD".to_string()];
+    file_names.extend(
+        extra_files
+            .iter()
+            .map(|file| file.relative.display().to_string()),
+    );
+    lines.push(chrome::kv("files", &file_names.join("  ")));
+    lines.push(chrome::kv("sha-256", digest));
+    lines.push(chrome::kv(
+        "open",
+        &chrome::osc8_file(pkgbuild_path, &pkgbuild_path.display().to_string()),
+    ));
+    lines.push(chrome::rail_line(""));
+
+    if verbose {
+        for (number, line) in trimmed.lines().enumerate() {
+            lines.push(chrome::snippet_line(number + 1, line));
+        }
+        for file in extra_files {
+            lines.push(chrome::rail_line(""));
+            lines.push(chrome::kv(
+                "file",
+                &format!(
+                    "{}  {} B  {}",
+                    file.relative.display(),
+                    file.bytes,
+                    file.digest
+                ),
+            ));
+        }
+    } else {
+        let preview = preview_pkgbuild_lines(trimmed, MAX_PKGBUILD_PREVIEW_LINES);
+        for (number, line) in preview {
+            lines.push(chrome::snippet_line(
+                number,
+                &chrome::truncate_chars(&line, PREVIEW_LINE_CHARS),
+            ));
+        }
+        lines.push(chrome::rail_line(""));
+        lines.push(chrome::rail_line(&format!(
+            "{} of {total_lines} lines · remaining source hashed, not printed",
+            MAX_PKGBUILD_PREVIEW_LINES.min(total_lines)
+        )));
+        lines.push(chrome::rail_line("omg -v dumps the full PKGBUILD"));
+        lines.push(chrome::rail_line(
+            "user-submitted · digest seals every reviewed file",
+        ));
+    }
+
+    lines.join("\n")
 }
 
 fn pkgbuild_review_prompt(package: &str) -> String {
     let package = crate::cli::style::sanitize_terminal_text(package);
     format!("Build {package} from this PKGBUILD?")
+}
+
+#[cfg(test)]
+fn pkgbuild_review_summary(package: &str, digest: &str, file_count: usize) -> String {
+    use crate::cli::chrome;
+    let package = crate::cli::style::sanitize_terminal_text(package);
+    let short = if digest.len() > 12 {
+        format!("{}…", &digest[..12])
+    } else {
+        digest.to_string()
+    };
+    let files = if file_count == 1 {
+        "1 file".to_string()
+    } else {
+        format!("{file_count} files")
+    };
+    if crate::cli::style::colors_enabled() {
+        format!(
+            "  {}  {}  {package}  {}  {files}",
+            chrome::accent_rail(),
+            "AUR".bold(),
+            short.dimmed()
+        )
+    } else {
+        format!("  |  AUR  {package}  {short}  {files}")
+    }
+}
+
+async fn confirm_prompt(prompt: String, default: bool) -> Result<bool> {
+    Ok(tokio::task::spawn_blocking(move || {
+        Confirm::with_theme(&crate::cli::ui::prompt_theme())
+            .with_prompt(prompt)
+            .default(default)
+            .interact()
+    })
+    .await
+    .context("PKGBUILD review prompt task failed")??)
 }
 
 async fn drain_build_output<R>(
@@ -1659,15 +1963,21 @@ impl AurClient {
         } else {
             None
         };
-        self.install_authorized_package_outputs(authorized, sudoloop.as_ref())
-            .await
+        let output_names = authorized.requested_outputs.join(", ");
+        let archives = self
+            .install_authorized_package_outputs(authorized, sudoloop.as_ref())
+            .await?;
+        crate::cli::modern_ui::print_info(&format!("Installing {output_names}"));
+        Self::install_built_packages(&archives, sudoloop.as_ref()).await?;
+        crate::cli::modern_ui::print_success(&format!("Installed {output_names}"));
+        Ok(())
     }
 
     pub(crate) async fn install_authorized_package_outputs(
         &self,
         authorized: AuthorizedBuild,
         sudoloop: Option<&crate::core::sudoloop::SudoLoop>,
-    ) -> Result<()> {
+    ) -> Result<Vec<ArchiveSnapshot>> {
         let AuthorizedBuild {
             package,
             requested_outputs,
@@ -1779,7 +2089,7 @@ impl AurClient {
             self.write_cache_key(&package, &cache_key).await?;
         }
 
-        let pkg_files = Self::authorize_archives(
+        Self::authorize_archives(
             &pkg_files,
             reviewed_digest
                 .as_ref()
@@ -1787,13 +2097,7 @@ impl AurClient {
             &package,
             &requested_outputs,
             fresh,
-        )?;
-        let output_names = requested_outputs.join(", ");
-        crate::cli::modern_ui::print_info(&format!("Installing {output_names}"));
-        Self::install_built_packages(&pkg_files, sudoloop).await?;
-        crate::cli::modern_ui::print_success(&format!("Installed {output_names}"));
-
-        Ok(())
+        )
     }
 
     fn build_only<'a>(
@@ -2673,8 +2977,6 @@ impl AurClient {
         let safe_url = crate::core::http::redact_url(url);
         let dest = self.build_dir.join(package);
 
-        let spinner = create_spinner("Cloning repository...");
-
         if let Some(user) = original_user() {
             let home = original_user_home()?;
             let dest_str = dest.to_string_lossy();
@@ -2691,13 +2993,12 @@ impl AurClient {
                 "git",
                 "clone",
                 "--depth=1",
-                "--filter=blob:none", // Partial clone: download only needed blobs on demand
+                "--filter=blob:none",
                 "--",
                 url,
                 dest_str.as_ref(),
             ]);
 
-            // Prevent git from prompting for credentials
             cmd.env("GIT_TERMINAL_PROMPT", "0");
             configure_auxiliary_output(&mut cmd);
 
@@ -2710,8 +3011,6 @@ impl AurClient {
             if !status.success() {
                 anyhow::bail!("git clone failed for {safe_url}");
             }
-
-            spinner.finish_and_clear();
         } else {
             let mut command = Command::new("git");
             command
@@ -2725,7 +3024,6 @@ impl AurClient {
                 .status()
                 .await
                 .with_context(|| format!("Failed to run git clone for {safe_url}"))?;
-            spinner.finish_and_clear();
             if !status.success() {
                 anyhow::bail!("git clone failed for {safe_url}");
             }
@@ -2734,23 +3032,19 @@ impl AurClient {
     }
 
     async fn git_pull(&self, pkg_dir: &Path) -> Result<()> {
-        let package = pkg_dir
-            .file_name()
-            .and_then(|name| name.to_str())
-            .context("Invalid AUR source directory")?;
-        crate::core::security::validate_package_name(package)?;
-        self.refresh_checkout_from(pkg_dir, &format!("{AUR_GIT_URL}/{package}.git"))
-            .await
+        self.refresh_checkout_from(pkg_dir).await
     }
 
-    async fn refresh_checkout_from(&self, pkg_dir: &Path, url: &str) -> Result<()> {
+    async fn refresh_checkout_from(&self, pkg_dir: &Path) -> Result<()> {
         let package = pkg_dir
             .file_name()
             .and_then(|name| name.to_str())
             .context("Invalid AUR source directory")?;
         crate::core::security::validate_package_name(package)?;
-        remove_dir_as_user(pkg_dir).await?;
-        self.git_clone_from(package, url).await
+        let pkg_dir = pkg_dir.to_path_buf();
+        tokio::task::spawn_blocking(move || refresh_git_checkout(&pkg_dir))
+            .await
+            .context("Git refresh task failed")?
     }
 
     async fn run_build(
@@ -3219,44 +3513,45 @@ impl AurClient {
         let _review_guard = REVIEW_LOCK.lock().await;
         if !console::user_attended() {
             anyhow::bail!(
-                "PKGBUILD review requires an interactive terminal. Review the package manually, or explicitly configure aur.review_pkgbuild=false if you accept unreviewed AUR code."
+                "PKGBUILD review requires an interactive terminal. Re-run without --review, or set aur.review_pkgbuild=false."
             );
         }
 
         let source_dir = pkgbuild_path.parent().context("Missing source directory")?;
         let source = ReviewedSource::capture(source_dir)?;
-        for (path, bytes) in &source.files {
-            let review = if std::str::from_utf8(bytes).is_ok() {
-                pkgbuild_review_text(bytes)?
-            } else {
-                format!(
-                    "Binary input: {} bytes, SHA-256 {}",
-                    bytes.len(),
-                    pkgbuild_digest(bytes)
-                )
-            };
-            println!(
-                "{}",
-                pkgbuild_review_panel(
-                    &format!("{package}: {}", path.display()),
-                    &source.digest,
-                    &review,
-                    &source_dir.join(path),
-                )
-            );
-        }
+        let pkgbuild_bytes = source
+            .files
+            .get(Path::new("PKGBUILD"))
+            .context("AUR review captured no PKGBUILD")?;
+        let review = pkgbuild_review_text(pkgbuild_bytes)?;
+        let extra_files: Vec<AurReviewFiles<'_>> = source
+            .files
+            .iter()
+            .filter(|(path, _)| path.as_path() != Path::new("PKGBUILD"))
+            .map(|(path, bytes)| AurReviewFiles {
+                relative: path.as_path(),
+                bytes: bytes.len(),
+                digest: pkgbuild_digest(bytes),
+            })
+            .collect();
+        let verbose = crate::cli::modern_ui::is_verbose();
+        println!(
+            "{}",
+            pkgbuild_review_panel(
+                package,
+                &source.digest,
+                &review,
+                pkgbuild_path,
+                &extra_files,
+                verbose,
+            )
+        );
 
-        let prompt = pkgbuild_review_prompt(package);
-        let proceed = tokio::task::spawn_blocking(move || {
-            Confirm::with_theme(&crate::cli::ui::prompt_theme())
-                .with_prompt(prompt)
-                .default(false)
-                .interact()
-        })
-        .await
-        .context("PKGBUILD review prompt task failed")??;
-        if !proceed {
-            anyhow::bail!("Build aborted by user after PKGBUILD review.");
+        if !crate::core::privilege::get_yes_flag() {
+            let proceed = confirm_prompt(pkgbuild_review_prompt(package), true).await?;
+            if !proceed {
+                anyhow::bail!("Build aborted by user after PKGBUILD review.");
+            }
         }
         Ok(source)
     }
@@ -3381,19 +3676,13 @@ impl AurClient {
 
     fn makepkg_env_sync(&self, pkg_dir: &Path) -> Result<MakepkgEnv> {
         let jobs = std::thread::available_parallelism().map_or(1, std::num::NonZero::get);
-        let makeflags = self
-            .settings
-            .aur
-            .makeflags
-            .clone()
-            .or_else(|| std::env::var("MAKEFLAGS").ok())
-            .unwrap_or_else(|| {
-                if jobs > 1 {
-                    format!("-j{jobs}")
-                } else {
-                    String::new()
-                }
-            });
+        let concurrent = self.settings.aur.build_concurrency.max(1);
+        let makeflags = compiler_job_flags(
+            self.settings.aur.makeflags.as_deref(),
+            std::env::var("MAKEFLAGS").ok().as_deref(),
+            jobs,
+            concurrent,
+        );
 
         let pkgdest = self
             .settings
@@ -3640,7 +3929,7 @@ impl AurClient {
     }
 
     /// Install the built package via direct ALPM or elevated OMG transaction.
-    async fn install_built_packages(
+    pub(crate) async fn install_built_packages(
         pkg_paths: &[ArchiveSnapshot],
         sudoloop: Option<&crate::core::sudoloop::SudoLoop>,
     ) -> Result<()> {
@@ -3708,20 +3997,6 @@ impl AurClient {
         }
         Ok(())
     }
-}
-
-/// Create a spinner
-#[expect(clippy::literal_string_with_formatting_args, clippy::expect_used)] // Static indicatif template is always valid; braces are template syntax not Rust format args
-fn create_spinner(msg: &str) -> ProgressBar {
-    let pb = crate::cli::modern_ui::register_spinner(ProgressBar::new_spinner());
-    pb.set_style(
-        ProgressStyle::default_spinner()
-            .template("{spinner:.cyan} {msg}")
-            .expect("valid template"),
-    );
-    pb.set_message(msg.to_string());
-    pb.enable_steady_tick(std::time::Duration::from_millis(100));
-    pb
 }
 
 fn validate_index_entry_name(name: &str, expected: Option<&str>) -> Result<()> {
@@ -3852,10 +4127,39 @@ pub struct AurPackageDetail {
     pub license: Option<Vec<String>>,
 }
 
+fn compiler_job_flags(
+    configured: Option<&str>,
+    env_makeflags: Option<&str>,
+    cpu_jobs: usize,
+    concurrent_builds: usize,
+) -> String {
+    if let Some(flags) = configured.filter(|flags| !flags.is_empty()) {
+        return flags.to_string();
+    }
+    if let Some(flags) = env_makeflags.filter(|flags| !flags.is_empty()) {
+        return flags.to_string();
+    }
+    let per_build = cpu_jobs.saturating_div(concurrent_builds.max(1)).max(1);
+    if per_build > 1 {
+        format!("-j{per_build}")
+    } else {
+        String::new()
+    }
+}
+
 #[cfg(test)]
 #[expect(clippy::unwrap_used)] // Idiomatic in tests: panics on failure with clear error context
 mod tests {
     use super::*;
+
+    #[test]
+    fn auto_makeflags_divide_cores_across_concurrent_builds() {
+        assert_eq!(compiler_job_flags(None, None, 16, 1), "-j16");
+        assert_eq!(compiler_job_flags(None, None, 16, 4), "-j4");
+        assert_eq!(compiler_job_flags(None, None, 8, 8), "");
+        assert_eq!(compiler_job_flags(Some("-j2"), None, 16, 8), "-j2");
+        assert_eq!(compiler_job_flags(None, Some("-j32"), 16, 8), "-j32");
+    }
 
     #[tokio::test]
     async fn aur_rpc_transport_error_redacts_query_from_display_and_sources() -> Result<()> {
@@ -3948,6 +4252,65 @@ mod tests {
         for extra in ["pkgname = other\n", "pkgver = 2-1\n", "pkgbase = other\n"] {
             assert!(AurClient::parse_pkginfo_identity(&format!("{valid}{extra}")).is_none());
         }
+        Ok(())
+    }
+
+    #[test]
+    fn contained_license_symlink_is_reviewed_by_target() -> Result<()> {
+        let directory = tempfile::tempdir()?;
+        std::fs::write(directory.path().join("PKGBUILD"), "pkgname=demo\n")?;
+        std::fs::write(directory.path().join(".SRCINFO"), "pkgbase = demo\n")?;
+        std::fs::write(directory.path().join("LICENSE"), "0BSD\n")?;
+        std::fs::create_dir(directory.path().join("LICENSES"))?;
+        std::os::unix::fs::symlink("../LICENSE", directory.path().join("LICENSES/0BSD.txt"))?;
+
+        let source = ReviewedSource::capture(directory.path())?;
+        source.verify(directory.path())?;
+        assert!(source.files.contains_key(Path::new("LICENSES/0BSD.txt")));
+        Ok(())
+    }
+
+    #[test]
+    fn live_antigravity_checkout_is_reviewable_when_present() -> Result<()> {
+        let path = PathBuf::from(std::env::var("HOME").unwrap_or_default())
+            .join(".cache/omg/aur/antigravity");
+        if !path.join("PKGBUILD").is_file() {
+            return Ok(());
+        }
+        ReviewedSource::capture(&path).with_context(|| format!("capture {}", path.display()))?;
+        Ok(())
+    }
+
+    #[test]
+    fn escaping_and_absolute_source_symlinks_are_rejected() -> Result<()> {
+        let directory = tempfile::tempdir()?;
+        std::fs::write(directory.path().join("PKGBUILD"), "pkgname=demo\n")?;
+        std::fs::write(directory.path().join(".SRCINFO"), "pkgbase = demo\n")?;
+        std::os::unix::fs::symlink("../../etc/passwd", directory.path().join("escape"))?;
+        let error = ReviewedSource::capture(directory.path()).expect_err("escape");
+        assert!(
+            error.to_string().contains("escapes the checkout"),
+            "{error}"
+        );
+
+        std::fs::remove_file(directory.path().join("escape"))?;
+        std::os::unix::fs::symlink("/etc/passwd", directory.path().join("absolute"))?;
+        let error = ReviewedSource::capture(directory.path()).expect_err("absolute");
+        assert!(error.to_string().contains("must be relative"), "{error}");
+        Ok(())
+    }
+
+    #[test]
+    fn pkgbuild_symlink_is_rejected() -> Result<()> {
+        let directory = tempfile::tempdir()?;
+        std::fs::write(directory.path().join("real-pkgbuild"), "pkgname=demo\n")?;
+        std::fs::write(directory.path().join(".SRCINFO"), "pkgbase = demo\n")?;
+        std::os::unix::fs::symlink("real-pkgbuild", directory.path().join("PKGBUILD"))?;
+        let error = ReviewedSource::capture(directory.path()).expect_err("pkgbuild link");
+        assert!(
+            error.to_string().contains("must be a regular file"),
+            "{error}"
+        );
         Ok(())
     }
 
@@ -4498,16 +4861,33 @@ mod tests {
             &digest,
             review,
             std::path::Path::new("/tmp/PKGBUILD"),
+            &[],
+            false,
         );
 
         assert!(panel.contains("AUR"));
-        assert!(panel.contains("Review google-chrome"));
-        assert!(panel.contains(&format!("SHA-256 {digest}")));
+        assert!(panel.contains("google-chrome"));
+        assert!(!panel.contains("Review google-chrome"));
+        assert!(panel.to_lowercase().contains("sha-256"));
+        assert!(panel.contains(&digest));
         assert!(panel.contains("pkgname=google-chrome"));
+        assert!(!panel.contains(&"─".repeat(72)));
         assert_eq!(
             pkgbuild_review_prompt("google-chrome"),
             "Build google-chrome from this PKGBUILD?"
         );
+    }
+
+    #[test]
+    fn pkgbuild_review_summary_is_one_line_without_source_text() {
+        let digest = pkgbuild_digest(b"pkgname=demo\nsource=('https://example.test')\n");
+        let summary = pkgbuild_review_summary("demo", &digest, 2);
+        assert!(summary.contains("AUR"));
+        assert!(summary.contains("demo"));
+        assert!(summary.contains("2 files"));
+        assert!(summary.contains(&digest[..12]));
+        assert!(!summary.contains("source="));
+        assert!(!summary.contains('\n'));
     }
 
     #[test]
@@ -4518,14 +4898,99 @@ mod tests {
             .join("\n");
         let digest = pkgbuild_digest(review.as_bytes());
         let path = std::path::Path::new("/cache/aur/chatgpt-desktop/PKGBUILD");
-        let panel = pkgbuild_review_panel("chatgpt-desktop", &digest, &review, path);
+        let panel = pkgbuild_review_panel("chatgpt-desktop", &digest, &review, path, &[], false);
 
         assert!(panel.contains("line0=value"));
-        assert!(panel.contains("line39=value"));
-        assert!(!panel.contains("line40=value"));
-        assert!(panel.contains("60 more lines"));
+        assert!(panel.contains("line7=value"));
+        assert!(!panel.contains("line8=value"));
+        assert!(panel.contains("8 of 100 lines"));
         assert!(panel.contains("/cache/aur/chatgpt-desktop/PKGBUILD"));
-        assert!(panel.contains(&format!("SHA-256 {digest}")));
+        assert!(panel.contains(&digest));
+        assert!(panel.contains("omg -v dumps the full PKGBUILD"));
+    }
+
+    #[test]
+    fn pkgbuild_review_panel_verbose_prints_the_full_file() {
+        let review = (0..20)
+            .map(|i| format!("line{i}=value"))
+            .collect::<Vec<_>>()
+            .join("\n");
+        let digest = pkgbuild_digest(review.as_bytes());
+        let srcinfo = AurReviewFiles {
+            relative: Path::new(".SRCINFO"),
+            bytes: 12,
+            digest: pkgbuild_digest(b"srcinfo"),
+        };
+        let panel = pkgbuild_review_panel(
+            "demo",
+            &digest,
+            &review,
+            Path::new("/tmp/PKGBUILD"),
+            &[srcinfo],
+            true,
+        );
+
+        assert!(panel.contains("line19=value"));
+        assert!(panel.contains(".SRCINFO"));
+        assert!(!panel.contains("omg -v dumps the full PKGBUILD"));
+    }
+
+    #[test]
+    fn pkgbuild_review_panel_does_not_dump_srcinfo_by_default() {
+        let review = "pkgname=demo\nsource=(\"https://example.test/a.tar.gz\")\n";
+        let digest = pkgbuild_digest(review.as_bytes());
+        let srcinfo_body = "pkgbase = demo\npkgname = demo\n";
+        let srcinfo = AurReviewFiles {
+            relative: Path::new(".SRCINFO"),
+            bytes: srcinfo_body.len(),
+            digest: pkgbuild_digest(srcinfo_body.as_bytes()),
+        };
+        let panel = pkgbuild_review_panel(
+            "demo",
+            &digest,
+            review,
+            Path::new("/tmp/PKGBUILD"),
+            &[srcinfo],
+            false,
+        );
+
+        assert!(panel.contains(".SRCINFO"));
+        assert!(!panel.contains("pkgbase = demo"));
+        assert!(panel.contains("source="));
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn pkgbuild_review_card_plain_layout() {
+        temp_env::with_var("NO_COLOR", Some("1"), || {
+            let review = concat!(
+                "# Maintainer: Alice\n",
+                "pkgname=ai-usagebar-bin\n",
+                "pkgver=0.1.7\n",
+                "pkgrel=1\n",
+                "url=\"https://example.test/x\"\n",
+                "depends=('gtk3')\n",
+                "source=(\"https://example.test/x.tar.gz\")\n",
+                "sha256sums=('deadbeef')\n",
+            );
+            let digest = pkgbuild_digest(review.as_bytes());
+            let panel = pkgbuild_review_panel(
+                "ai-usagebar-bin",
+                &digest,
+                review,
+                Path::new("/tmp/cache/ai-usagebar-bin/PKGBUILD"),
+                &[],
+                false,
+            );
+            assert!(panel.contains("  |  AUR  ai-usagebar-bin"));
+            assert!(panel.contains("package"));
+            assert!(panel.contains("ai-usagebar-bin"));
+            assert!(panel.contains("Alice"));
+            assert!(panel.contains("source="));
+            assert!(panel.contains("sha256sums="));
+            assert!(panel.contains(&digest));
+            assert!(!panel.contains(&"─".repeat(72)));
+        });
     }
 
     #[tokio::test]
@@ -5556,6 +6021,17 @@ mod tests {
                 .status
                 .success()
         );
+        assert!(
+            git(&[
+                "-C".as_ref(),
+                remote.as_os_str(),
+                "config".as_ref(),
+                "uploadpack.allowFilter".as_ref(),
+                "true".as_ref(),
+            ])
+            .status
+            .success()
+        );
         assert!(git(&["init".as_ref(), seed.as_os_str()]).status.success());
         assert!(
             git(&[
@@ -5662,10 +6138,7 @@ mod tests {
             settings: Settings::default(),
             package_base_locks: Arc::new(dashmap::DashMap::new()),
         };
-        client
-            .refresh_checkout_from(&checkout, remote.to_str().unwrap())
-            .await
-            .unwrap();
+        client.refresh_checkout_from(&checkout).await.unwrap();
         assert!(
             !marker.exists(),
             "a tainted checkout must never execute a Git filter on the host"
@@ -5674,6 +6147,145 @@ mod tests {
         assert_ne!(
             std::fs::read_to_string(checkout.join("PKGBUILD")).unwrap(),
             "pkgver=2\n"
+        );
+    }
+
+    #[test]
+    fn refresh_git_checkout_fetches_new_origin_commit() {
+        let temp = tempfile::tempdir().unwrap();
+        let remote = temp.path().join("remote.git");
+        let seed = temp.path().join("seed");
+        let checkout = temp.path().join("pkg");
+
+        let git = |args: &[&std::ffi::OsStr]| {
+            std::process::Command::new("git")
+                .args(args)
+                .output()
+                .unwrap()
+        };
+        assert!(
+            git(&["init".as_ref(), "--bare".as_ref(), remote.as_os_str()])
+                .status
+                .success()
+        );
+        assert!(
+            git(&[
+                "-C".as_ref(),
+                remote.as_os_str(),
+                "config".as_ref(),
+                "uploadpack.allowFilter".as_ref(),
+                "true".as_ref(),
+            ])
+            .status
+            .success()
+        );
+        assert!(git(&["init".as_ref(), seed.as_os_str()]).status.success());
+        for (key, value) in [
+            ("user.email", "test@example.invalid"),
+            ("user.name", "OMG test"),
+            ("commit.gpgsign", "false"),
+        ] {
+            assert!(
+                git(&[
+                    "-C".as_ref(),
+                    seed.as_os_str(),
+                    "config".as_ref(),
+                    key.as_ref(),
+                    value.as_ref(),
+                ])
+                .status
+                .success()
+            );
+        }
+        std::fs::write(seed.join("PKGBUILD"), "pkgver=1\n").unwrap();
+        assert!(
+            git(&[
+                "-C".as_ref(),
+                seed.as_os_str(),
+                "add".as_ref(),
+                "PKGBUILD".as_ref(),
+            ])
+            .status
+            .success()
+        );
+        assert!(
+            git(&[
+                "-C".as_ref(),
+                seed.as_os_str(),
+                "commit".as_ref(),
+                "-m".as_ref(),
+                "initial".as_ref(),
+            ])
+            .status
+            .success()
+        );
+        assert!(
+            git(&[
+                "-C".as_ref(),
+                seed.as_os_str(),
+                "remote".as_ref(),
+                "add".as_ref(),
+                "origin".as_ref(),
+                remote.as_os_str(),
+            ])
+            .status
+            .success()
+        );
+        assert!(
+            git(&[
+                "-C".as_ref(),
+                seed.as_os_str(),
+                "push".as_ref(),
+                "-u".as_ref(),
+                "origin".as_ref(),
+                "HEAD".as_ref(),
+            ])
+            .status
+            .success()
+        );
+        assert!(
+            git(&["clone".as_ref(), remote.as_os_str(), checkout.as_os_str()])
+                .status
+                .success()
+        );
+        std::fs::write(seed.join("new-file"), "from-origin\n").unwrap();
+        assert!(
+            git(&[
+                "-C".as_ref(),
+                seed.as_os_str(),
+                "add".as_ref(),
+                "new-file".as_ref(),
+            ])
+            .status
+            .success()
+        );
+        assert!(
+            git(&[
+                "-C".as_ref(),
+                seed.as_os_str(),
+                "commit".as_ref(),
+                "-m".as_ref(),
+                "add-file".as_ref(),
+            ])
+            .status
+            .success()
+        );
+        assert!(
+            git(&[
+                "-C".as_ref(),
+                seed.as_os_str(),
+                "push".as_ref(),
+                "origin".as_ref(),
+                "HEAD".as_ref(),
+            ])
+            .status
+            .success()
+        );
+        assert!(!checkout.join("new-file").exists());
+        refresh_git_checkout(&checkout).unwrap();
+        assert_eq!(
+            std::fs::read_to_string(checkout.join("new-file")).unwrap(),
+            "from-origin\n"
         );
     }
 

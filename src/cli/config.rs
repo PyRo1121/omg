@@ -52,7 +52,7 @@ pub fn set(key: &str, value: &str) -> Result<()> {
         "aur.build_concurrency" => {
             let concurrency: usize = value.parse().context("Invalid number")?;
             // Security: Prevent resource exhaustion with reasonable bounds
-            const MAX_CONCURRENCY: usize = 128;
+            const MAX_CONCURRENCY: usize = 8;
             if concurrency == 0 {
                 anyhow::bail!("aur.build_concurrency must be at least 1");
             }
@@ -231,7 +231,7 @@ pub fn validate() -> Result<()> {
                 issues += 1;
             }
 
-            if settings.aur.build_concurrency > 64 {
+            if settings.aur.build_concurrency > 8 {
                 println!(
                     "  {} aur.build_concurrency is unusually high ({})",
                     style::warning("⚠"),

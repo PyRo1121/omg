@@ -119,6 +119,15 @@ async fn complete_package_names(
     if in_tool && last == "install" {
         return Ok(engine.fuzzy_match(current, crate::cli::tool::registry_tool_names()));
     }
+    if !current.is_empty() {
+        #[cfg(unix)]
+        if let Ok(mut client) = crate::core::client::DaemonClient::connect().await
+            && let Ok(suggestions) = client.suggest(current, Some(200)).await
+            && !suggestions.is_empty()
+        {
+            return Ok(suggestions);
+        }
+    }
     Ok(engine.fuzzy_match(current, available_package_names().await?))
 }
 

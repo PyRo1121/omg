@@ -58,7 +58,7 @@ Environment Variables:
   OMG_BENCH_SKIP_RECORD   Set to 1 to skip writing benchmarks/records/
   OMG_BENCH_SKIP_UPDATE   Set to 1 to skip update discovery in a full run
   OMG_BENCH_BINARY        Path to a prebuilt omg binary (skips cargo build).
-                          omgd and omg-fast are taken from the same directory.
+                          omgd is taken from the same directory.
   OMG_BENCH_TARGET_DIR    Cargo target directory (default:
                           ~/.cache/build-targets/omg-benchmark-hyperfine)
   OMG_BENCH_SOURCE_CACHE  Cache dir to copy AUR/package-DB fixtures from
@@ -204,14 +204,12 @@ if [ -n "${OMG_BENCH_BINARY:-}" ]; then
     OMG="$OMG_BENCH_BINARY"
     bin_dir="$(cd "$(dirname "$OMG")" && pwd)"
     OMGD="$bin_dir/omgd"
-    OMG_FAST="$bin_dir/omg-fast"
 else
     echo -e "${BLUE}🔨 Building release binaries...${NC}"
     CARGO_INCREMENTAL=0 CARGO_TARGET_DIR="$TARGET_DIR" cargo build --release --locked --features arch --quiet
 
     OMG="$TARGET_DIR/release/omg"
     OMGD="$TARGET_DIR/release/omgd"
-    OMG_FAST="$TARGET_DIR/release/omg-fast"
 fi
 
 if [ ! -x "$OMG" ]; then
@@ -488,19 +486,11 @@ PRE_DIR="$BENCH_DIR/preflight"
 mkdir -p "$PRE_DIR"
 preflight_match "omg search firefox --no-aur" "firefox" "$PRE_DIR/search.txt" \
     "$OMG" search firefox --no-aur
-if [ -x "$OMG_FAST" ]; then
-    preflight_match "omg-fast s firefox" "firefox" "$PRE_DIR/search-fast.txt" \
-        "$OMG_FAST" s firefox
-fi
 preflight_match "omg info firefox" "firefox" "$PRE_DIR/info.txt" \
     "$OMG" info firefox
-if [ -x "$OMG_FAST" ]; then
-    preflight_match "omg-fast i firefox" "firefox" "$PRE_DIR/info-fast.txt" \
-        "$OMG_FAST" i firefox
-fi
 preflight_match "omg status" "." "$PRE_DIR/status.txt" "$OMG" status
-if ! "$OMG" explicit --count >"$PRE_DIR/explicit.txt" 2>&1; then
-    echo -e "${RED}❌ Preflight failed: omg explicit --count${NC}" >&2
+if ! "$OMG" ec >"$PRE_DIR/explicit.txt" 2>&1; then
+    echo -e "${RED}❌ Preflight failed: omg ec${NC}" >&2
     cat "$PRE_DIR/explicit.txt" >&2
     exit 1
 fi
@@ -509,7 +499,7 @@ if ! [[ "$EXPLICIT_COUNT" =~ ^[0-9]+$ ]] || [ "$EXPLICIT_COUNT" -le 0 ]; then
     echo -e "${RED}❌ Preflight failed: explicit count was '${EXPLICIT_COUNT}'${NC}" >&2
     exit 1
 fi
-echo -e "  ${GREEN}ok${NC} omg explicit --count = ${EXPLICIT_COUNT}"
+echo -e "  ${GREEN}ok${NC} omg ec = ${EXPLICIT_COUNT}"
 if command -v pacman >/dev/null 2>&1; then
     preflight_match "pacman -Ss firefox" "firefox" "$PRE_DIR/pacman-search.txt" \
         pacman -Ss firefox
@@ -546,10 +536,7 @@ chmod +x "$BENCH_DIR/pacman-explicit-count" "$BENCH_DIR/yay-explicit-count"
 
 echo -e "\n${BLUE}📦 Benchmark: SEARCH (firefox)${NC}"
 echo "-------------------------------"
-search_cmds=(--command-name "OMG (Daemon)" "$OMG search firefox --no-aur")
-if [ -x "$OMG_FAST" ]; then
-    search_cmds+=(--command-name "OMG (omg-fast)" "$OMG_FAST s firefox")
-fi
+search_cmds=(--command-name "OMG" "$OMG search firefox --no-aur")
 if command -v pacman >/dev/null 2>&1; then
     search_cmds+=(--command-name "pacman" "pacman -Ss firefox")
 fi
@@ -560,10 +547,7 @@ run_hyperfine "$EXPORT_DIR/search.json" "$EXPORT_DIR/search.md" "${search_cmds[@
 
 echo -e "\n${BLUE}ℹ️  Benchmark: INFO (firefox)${NC}"
 echo "-------------------------------"
-info_cmds=(--command-name "OMG (Daemon)" "$OMG info firefox")
-if [ -x "$OMG_FAST" ]; then
-    info_cmds+=(--command-name "OMG (omg-fast)" "$OMG_FAST i firefox")
-fi
+info_cmds=(--command-name "OMG" "$OMG info firefox")
 if command -v pacman >/dev/null 2>&1; then
     info_cmds+=(--command-name "pacman" "pacman -Si firefox")
 fi
@@ -574,18 +558,12 @@ run_hyperfine "$EXPORT_DIR/info.json" "$EXPORT_DIR/info.md" "${info_cmds[@]}"
 
 echo -e "\n${BLUE}⚡ Benchmark: STATUS${NC}"
 echo "-------------------------------"
-status_cmds=(--command-name "OMG (Daemon)" "$OMG status")
-if [ -x "$OMG_FAST" ]; then
-    status_cmds+=(--command-name "OMG (omg-fast)" "$OMG_FAST status")
-fi
+status_cmds=(--command-name "OMG" "$OMG status")
 run_hyperfine "$EXPORT_DIR/status.json" "$EXPORT_DIR/status.md" "${status_cmds[@]}"
 
 echo -e "\n${BLUE}📋 Benchmark: EXPLICIT COUNT${NC}"
 echo "-------------------------------"
-explicit_cmds=(--command-name "OMG (Daemon)" "$OMG explicit --count")
-if [ -x "$OMG_FAST" ]; then
-    explicit_cmds+=(--command-name "OMG (omg-fast)" "$OMG_FAST ec")
-fi
+explicit_cmds=(--command-name "OMG" "$OMG ec")
 if command -v pacman >/dev/null 2>&1; then
     explicit_cmds+=(--command-name "pacman" "$BENCH_DIR/pacman-explicit-count")
 fi

@@ -8,8 +8,14 @@ use super::alpm_ops::{
     collect_updates, configure_package_filters, configure_signature_policy, get_pkg_info_from_db,
     register_configured_syncdbs,
 };
+use super::pacman_db::AlpmCatalogEpoch;
 use super::types::{PackageInfo, UpdateInfo};
 use crate::core::paths;
+
+struct LoadedAlpm {
+    handle: alpm::Alpm,
+    epoch: AlpmCatalogEpoch,
+}
 
 enum AlpmRequest {
     Info(String, oneshot::Sender<Result<Option<PackageInfo>>>),
@@ -34,14 +40,29 @@ fn initialize_alpm_worker() -> Result<alpm::Alpm> {
     Ok(alpm)
 }
 
+fn load_alpm_worker() -> Result<LoadedAlpm> {
+    let handle = initialize_alpm_worker()?;
+    let epoch = AlpmCatalogEpoch::observe()
+        .context("Failed to observe ALPM catalog epoch after ALPM init")?;
+    Ok(LoadedAlpm { handle, epoch })
+}
+
+fn reincarnate_if_disk_newer(loaded: &mut LoadedAlpm) -> Result<()> {
+    let disk = AlpmCatalogEpoch::observe().context("Failed to observe ALPM catalog epoch")?;
+    if disk.disk_is_newer_than(loaded.epoch) {
+        *loaded = load_alpm_worker()?;
+    }
+    Ok(())
+}
+
 impl AlpmWorker {
     pub fn new() -> Result<Self> {
         let (tx, rx) = mpsc::channel();
         let (ready_tx, ready_rx) = mpsc::sync_channel(1);
 
         thread::spawn(move || {
-            let alpm = match initialize_alpm_worker() {
-                Ok(alpm) => alpm,
+            let mut loaded = match load_alpm_worker() {
+                Ok(loaded) => loaded,
                 Err(error) => {
                     let message = format!("{error:#}");
                     tracing::error!("Failed to initialize ALPM worker: {message}");
@@ -50,7 +71,10 @@ impl AlpmWorker {
                 }
             };
 
-            tracing::info!("ALPM hot worker ready ({} repos)", alpm.syncdbs().len());
+            tracing::info!(
+                "ALPM hot worker ready ({} repos)",
+                loaded.handle.syncdbs().len()
+            );
             if ready_tx.send(Ok(())).is_err() {
                 return;
             }
@@ -58,11 +82,18 @@ impl AlpmWorker {
             while let Ok(req) = rx.recv() {
                 match req {
                     AlpmRequest::Info(name, reply) => {
-                        let res = get_pkg_info_from_db(&alpm, &name);
+                        let res = match reincarnate_if_disk_newer(&mut loaded) {
+                            Ok(()) => get_pkg_info_from_db(&loaded.handle, &name),
+                            Err(error) => Err(error),
+                        };
                         let _ = reply.send(res);
                     }
                     AlpmRequest::ListUpdates(reply) => {
-                        let _ = reply.send(Ok(collect_updates(&alpm)));
+                        let res = match reincarnate_if_disk_newer(&mut loaded) {
+                            Ok(()) => Ok(collect_updates(&loaded.handle)),
+                            Err(error) => Err(error),
+                        };
+                        let _ = reply.send(res);
                     }
                 }
             }

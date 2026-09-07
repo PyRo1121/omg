@@ -291,26 +291,20 @@ impl ParallelBuilder {
         jobs: &HashMap<String, BuildJob>,
         authorized_jobs: &mut HashMap<String, AuthorizedBuild>,
     ) -> Result<ParallelBuildSummary> {
-        // Builds within a wave run concurrently; the final ALPM install step
-        // inside `AurClient::install` serializes on the process-wide
-        // INSTALL_LOCK so concurrent installs cannot race the ALPM database
-        // lock (/var/lib/pacman/db.lck).
-        println!();
-        println!(
-            "  {} Building wave {}/{} ({} package{})",
-            crate::cli::style::accent("→"),
-            level_num,
-            total_levels,
+        // Builds within a wave run concurrently. Successful archives install
+        // once per wave; INSTALL_LOCK serializes ALPM.
+        crate::cli::modern_ui::print_section(&format!(
+            "AUR wave {level_num}/{total_levels} ({} package{})",
             packages.len(),
             if packages.len() == 1 { "" } else { "s" }
-        );
-        println!();
+        ));
 
         let concurrency = Self::concurrency_for_level(self.max_concurrent, packages.len());
 
         let mut tasks = JoinSet::new();
         let mut in_flight_jobs = HashMap::new();
         let mut package_iter = packages.iter();
+        let mut wave_archives = Vec::new();
 
         // Drain the independent wave even after a failure; aborting a native
         // build's setsid waiter can leave its compiler process group running.
@@ -351,7 +345,13 @@ impl ParallelBuilder {
                 .remove(&task_id)
                 .with_context(|| format!("Missing build job for completed task {task_id}"))?;
             let failed = build_result.is_err();
-            summary.record_job_result(job, build_result);
+            match build_result {
+                Ok(archives) => {
+                    wave_archives.extend(archives);
+                    summary.record_job_result(job, Ok(()));
+                }
+                Err(error) => summary.record_job_result(job, Err(error)),
+            }
             if failed {
                 let remaining = tasks.len() + package_iter.len();
                 if remaining > 0 {
@@ -360,6 +360,15 @@ impl ParallelBuilder {
                     ));
                 }
             }
+        }
+
+        if !wave_archives.is_empty() {
+            crate::cli::modern_ui::print_info(&format!(
+                "Installing {} package{}",
+                wave_archives.len(),
+                if wave_archives.len() == 1 { "" } else { "s" }
+            ));
+            AurClient::install_built_packages(&wave_archives, None).await?;
         }
 
         Ok(summary)

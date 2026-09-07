@@ -956,6 +956,77 @@ fn get_newest_db_mtime(sync_dir: &Path) -> Result<SystemTime> {
     Ok(newest)
 }
 
+/// Identity of the on-disk pacman sync directory (`*.db` add/replace/remove).
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
+pub struct SyncDbEpoch(SystemTime);
+
+impl SyncDbEpoch {
+    pub const UNIX_EPOCH: Self = Self(SystemTime::UNIX_EPOCH);
+
+    /// Reads the current identity of the pacman sync directory.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when the sync path cannot be resolved, the directory
+    /// cannot be listed, or an entry's modification time cannot be read.
+    pub fn observe() -> Result<Self> {
+        Self::from_sync_dir(&paths::pacman_sync_dir_result()?)
+    }
+
+    /// Reads the identity of `sync_dir` (newest entry mtime, including the
+    /// directory itself).
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when the directory cannot be listed or an entry's
+    /// modification time cannot be read.
+    pub fn from_sync_dir(sync_dir: &Path) -> Result<Self> {
+        Ok(Self(get_newest_db_mtime(sync_dir)?))
+    }
+}
+
+/// Identity of the on-disk local package database.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
+pub struct LocalDbEpoch(SystemTime);
+
+impl LocalDbEpoch {
+    pub const UNIX_EPOCH: Self = Self(SystemTime::UNIX_EPOCH);
+
+    pub fn observe() -> Result<Self> {
+        Self::from_local_dir(&paths::pacman_local_dir_result()?)
+    }
+
+    pub fn from_local_dir(local_dir: &Path) -> Result<Self> {
+        Ok(Self(get_local_db_mtime(local_dir)?))
+    }
+}
+
+/// Combined on-disk identity for libalpm: sync catalogs and the local db.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct AlpmCatalogEpoch {
+    pub(crate) sync: SyncDbEpoch,
+    pub(crate) local: LocalDbEpoch,
+}
+
+impl AlpmCatalogEpoch {
+    pub const UNIX_EPOCH: Self = Self {
+        sync: SyncDbEpoch::UNIX_EPOCH,
+        local: LocalDbEpoch::UNIX_EPOCH,
+    };
+
+    pub fn observe() -> Result<Self> {
+        Ok(Self {
+            sync: SyncDbEpoch::observe()?,
+            local: LocalDbEpoch::observe()?,
+        })
+    }
+
+    #[must_use]
+    pub fn disk_is_newer_than(self, loaded: Self) -> bool {
+        self.sync > loaded.sync || self.local > loaded.local
+    }
+}
+
 /// Get modification time of local db directory.
 ///
 /// A missing local database is an empty package set, matching
@@ -1628,10 +1699,25 @@ mod tests {
         std::fs::write(&database, b"database").unwrap();
         let populated = get_newest_db_mtime(temp_dir.path()).unwrap();
         assert!(populated > SystemTime::UNIX_EPOCH);
+        assert!(SyncDbEpoch::from_sync_dir(temp_dir.path()).unwrap() > SyncDbEpoch::UNIX_EPOCH);
 
         std::fs::remove_file(database).unwrap();
         let removed = get_newest_db_mtime(temp_dir.path()).unwrap();
         assert_eq!(removed, SystemTime::UNIX_EPOCH);
+    }
+
+    #[test]
+    fn catalog_epoch_advances_when_local_db_changes() {
+        let temp_dir = tempfile::TempDir::new().unwrap();
+        let older = AlpmCatalogEpoch::UNIX_EPOCH;
+        std::fs::write(temp_dir.path().join("ALPM_DB_VERSION"), b"9\n").unwrap();
+        let newer = AlpmCatalogEpoch {
+            sync: SyncDbEpoch::UNIX_EPOCH,
+            local: LocalDbEpoch::from_local_dir(temp_dir.path()).unwrap(),
+        };
+        assert!(newer.disk_is_newer_than(older));
+        assert!(!older.disk_is_newer_than(newer));
+        assert!(!newer.disk_is_newer_than(newer));
     }
 
     #[test]

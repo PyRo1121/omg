@@ -10,7 +10,7 @@
 use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
 use std::time::{Duration, Instant};
 
-use indicatif::{ProgressBar, ProgressStyle};
+use indicatif::{ProgressBar, ProgressDrawTarget, ProgressStyle};
 use owo_colors::OwoColorize;
 
 use crate::cli::modern_ui::{self, OutputMode};
@@ -20,9 +20,9 @@ use crate::cli::style;
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) enum TaskKind {
     /// Indeterminate work with no figures beyond the label and message.
-    #[allow(
-        dead_code,
-        reason = "progress-lane API; constructed by follow-up lanes"
+    #[cfg_attr(
+        not(feature = "arch"),
+        allow(dead_code, reason = "ALPM download lane is Arch-only")
     )]
     Spinner,
     /// Byte-oriented work. The total may arrive after the lane starts, so a
@@ -174,6 +174,14 @@ fn sanitize_label(label: &str) -> String {
     style::sanitize_terminal_text(label)
 }
 
+fn hidden_spinner() -> ProgressBar {
+    ProgressBar::with_draw_target(None, ProgressDrawTarget::hidden())
+}
+
+fn hidden_bar(total: u64) -> ProgressBar {
+    ProgressBar::with_draw_target(Some(total), ProgressDrawTarget::hidden())
+}
+
 impl ProgressTask {
     /// Start a lane according to the current rendering policy.
     ///
@@ -185,24 +193,24 @@ impl ProgressTask {
         let label = sanitize_label(&spec.label);
         let bar = match &spec.kind {
             TaskKind::Spinner => {
-                let bar = ProgressBar::new_spinner();
+                let bar = hidden_spinner();
                 bar.set_style(spinner_style(spec.accent));
                 bar
             }
             TaskKind::Bytes { total } => match total {
                 Some(total) if *total > 0 => {
-                    let bar = ProgressBar::new(*total);
+                    let bar = hidden_bar(*total);
                     bar.set_style(meter_style(spec.accent, BYTES_FIGURES));
                     bar
                 }
                 _ => {
-                    let bar = ProgressBar::new_spinner();
+                    let bar = hidden_spinner();
                     bar.set_style(pending_bytes_style(spec.accent));
                     bar
                 }
             },
             TaskKind::Items { total } => {
-                let bar = ProgressBar::new(*total);
+                let bar = hidden_bar(*total);
                 bar.set_style(meter_style(spec.accent, ITEMS_FIGURES));
                 bar
             }

@@ -2,7 +2,6 @@
 //!
 //! Handles styled output using the existing UI primitives.
 
-use crate::cli::ui;
 use owo_colors::OwoColorize;
 use std::io::{self, BufWriter, Write};
 
@@ -102,22 +101,11 @@ impl<W: Write> Renderer<W> {
 
     /// Print a styled header
     pub fn header(&mut self, title: &str, body: &str) -> io::Result<()> {
-        if self.no_color {
-            writeln!(self.writer, "\n[{title}] {body}")
-        } else {
-            writeln!(
-                self.writer,
-                "\n{} {}",
-                ui::Style::new()
-                    .background(ui::Color::Cyan)
-                    .foreground(ui::Color::Black)
-                    .bold(true)
-                    .padding_left(1)
-                    .padding_right(1)
-                    .render(title),
-                ui::Style::new().bold(true).render(body)
-            )
-        }
+        writeln!(
+            self.writer,
+            "{}",
+            crate::cli::modern_ui::phase_header_text(title, body)
+        )
     }
 
     /// Print a styled card with content.
@@ -185,6 +173,22 @@ mod tests {
                 .expect("card renders");
             let output = String::from_utf8(cursor.into_inner()).expect("UTF-8 output");
             assert!(!output.contains('\u{1b}'));
+        });
+    }
+
+    #[test]
+    fn header_uses_a_bar_instead_of_a_filled_badge() {
+        temp_env::with_var("NO_COLOR", Some("1"), || {
+            let mut cursor = Cursor::new(Vec::new());
+            let mut renderer = Renderer::with_writer(&mut cursor);
+            renderer
+                .header("Why", "for pacman")
+                .expect("header renders");
+            let output = String::from_utf8(cursor.into_inner()).expect("UTF-8 output");
+            assert!(output.contains("Why"));
+            assert!(output.contains("for pacman"));
+            assert!(output.contains('|') || output.contains('┃'));
+            assert!(!output.contains("📦"));
         });
     }
 

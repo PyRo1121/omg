@@ -53,7 +53,7 @@ pub enum Commands {
         #[arg(long)]
         no_aur: bool,
         /// Maximum number of results to display
-        #[arg(short, long, default_value = "50")]
+        #[arg(short, long, default_value = "15")]
         limit: usize,
     },
 
@@ -68,6 +68,9 @@ pub enum Commands {
         /// Show what would be installed without making changes
         #[arg(long)]
         dry_run: bool,
+        /// Show PKGBUILD contents and confirm each AUR build
+        #[arg(long)]
+        review: bool,
         /// Explicitly permit installation from local package archives
         #[arg(long)]
         allow_local_file: bool,
@@ -93,7 +96,7 @@ pub enum Commands {
     /// Update all packages (system + runtimes)
     #[command(visible_alias = "u")]
     Update {
-        /// Only check for updates, don't install
+        /// Only list updates, don't install
         #[arg(short, long)]
         check: bool,
         /// Skip confirmation
@@ -102,6 +105,12 @@ pub enum Commands {
         /// Show what would be updated without making changes
         #[arg(long)]
         dry_run: bool,
+        /// Show PKGBUILD contents and confirm each AUR build
+        #[arg(long)]
+        review: bool,
+        /// Skip refreshing package databases (use the cached view)
+        #[arg(long)]
+        no_sync: bool,
         /// Fast mode: sync + upgrade in single operation (no preview)
         #[arg(short, long)]
         fast: bool,
@@ -1228,6 +1237,37 @@ mod tests {
     #[test]
     fn verify_cli() {
         Cli::command().debug_assert();
+    }
+
+    #[test]
+    fn update_and_install_accept_review_and_no_sync() {
+        let update = Cli::try_parse_from(["omg", "update", "--review", "--no-sync", "--check"])
+            .expect("update flags must parse");
+        match update.command {
+            Commands::Update {
+                check,
+                review,
+                no_sync,
+                ..
+            } => {
+                assert!(check);
+                assert!(review);
+                assert!(no_sync);
+            }
+            other => panic!("expected Update, got {other:?}"),
+        }
+
+        let install = Cli::try_parse_from(["omg", "install", "--review", "firefox"])
+            .expect("install --review must parse");
+        match install.command {
+            Commands::Install {
+                review, packages, ..
+            } => {
+                assert!(review);
+                assert_eq!(packages, ["firefox"]);
+            }
+            other => panic!("expected Install, got {other:?}"),
+        }
     }
 
     #[test]

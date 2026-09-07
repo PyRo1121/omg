@@ -133,8 +133,7 @@ impl FastStatus {
         Some(status)
     }
 
-    /// Read the default status file with full validation (public for the
-    /// omg-fast binary, which previously duplicated this logic unsafely).
+    /// Read the default status file with full validation.
     pub fn read_default() -> Option<Self> {
         let path = paths::fast_status_path();
         #[cfg(unix)]

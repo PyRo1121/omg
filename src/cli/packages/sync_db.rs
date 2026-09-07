@@ -1,30 +1,44 @@
 //! Database sync functionality for packages
 
 use crate::package_managers::get_package_manager;
-use anyhow::{Context, Result};
+use anyhow::Result;
 
 /// Synchronize package databases via the active system package manager
 pub async fn sync_databases() -> Result<()> {
     let pm = get_package_manager()?;
     pm.sync().await?;
 
-    // A running daemon owns an immutable package-index snapshot. Refresh it
-    // after the package databases commit so subsequent searches cannot serve
-    // stale package metadata. Daemon absence is normal; a connected daemon
-    // that rejects the refresh is a consistency failure and is reported.
-    #[cfg(unix)]
-    match crate::core::client::DaemonClient::connect().await {
-        Ok(mut client) => {
-            let packages = client
-                .refresh_index()
+    #[cfg(feature = "arch")]
+    {
+        let aur_start = std::time::Instant::now();
+        match crate::config::Settings::load() {
+            Ok(settings) => {
+                if let Err(error) = crate::package_managers::aur_metadata::sync_aur_metadata(
+                    crate::core::http::download_client(),
+                    &settings,
+                    false,
+                )
                 .await
-                .context("Package databases synced, but daemon index refresh failed")?;
-            tracing::debug!(packages, "Daemon package index refreshed after sync");
-        }
-        Err(error) => {
-            tracing::debug!("Daemon unavailable after package database sync: {error}");
+                {
+                    tracing::warn!("Failed to sync AUR metadata: {error}");
+                } else {
+                    let aur_elapsed = aur_start.elapsed();
+                    if aur_elapsed >= std::time::Duration::from_millis(200) {
+                        crate::cli::modern_ui::print_finished_step(
+                            "AUR index",
+                            &format!("in {:.2}s", aur_elapsed.as_secs_f64()),
+                        );
+                    }
+                }
+            }
+            Err(error) => {
+                tracing::error!("Failed to load OMG settings for AUR metadata sync: {error}");
+            }
         }
     }
+
+    #[cfg(unix)]
+    crate::core::client::refresh_daemon_after_catalog_write().await?;
 
     Ok(())
 }

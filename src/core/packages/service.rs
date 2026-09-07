@@ -374,7 +374,7 @@ impl PackageService {
             unused_mut,
             reason = "mutated only when the Arch AUR branch is compiled"
         )]
-        let mut updates = self.backend.list_updates().await?;
+        let mut updates = self.official_updates().await?;
 
         #[cfg(feature = "arch")]
         if let Some(aur) = &self.aur_client {
@@ -393,6 +393,24 @@ impl PackageService {
         }
 
         Ok(updates)
+    }
+
+    async fn official_updates(&self) -> Result<Vec<UpdateInfo>> {
+        #[cfg(unix)]
+        if let Ok(mut client) = crate::core::client::DaemonClient::connect().await
+            && let Ok(entries) = client.list_updates().await
+        {
+            return Ok(entries
+                .into_iter()
+                .map(|entry| UpdateInfo {
+                    name: entry.name,
+                    old_version: entry.old_version,
+                    new_version: entry.new_version,
+                    repo: entry.repo,
+                })
+                .collect());
+        }
+        self.backend.list_updates().await
     }
 
     /// Get package info

@@ -864,6 +864,13 @@ omg-updates-count() {
 
 # Initialize cache on shell startup
 _omg_refresh_cache
+
+# ~/.zfunc is not on a default omz fpath; prepend both so tab-complete finds _omg.
+if (( $+functions[compdef] )); then
+  fpath=("$HOME/.oh-my-zsh/completions" "$HOME/.zfunc" $fpath)
+  autoload -Uz _omg
+  compdef _omg omg
+fi
 "#;
 
 /// Bash hook script
@@ -1559,6 +1566,23 @@ mod tests {
     fn zsh_and_bash_hooks_keep_command_guard() {
         assert!(ZSH_HOOK.contains("\\command omg hook-env -s zsh"));
         assert!(BASH_HOOK.contains("\\command omg hook-env -s bash"));
+    }
+
+    #[test]
+    fn zsh_hook_registers_completions_on_load() {
+        assert!(
+            ZSH_HOOK.contains("fpath=(\"$HOME/.oh-my-zsh/completions\" \"$HOME/.zfunc\" $fpath)")
+        );
+        assert!(ZSH_HOOK.contains("autoload -Uz _omg"));
+        assert!(ZSH_HOOK.contains("compdef _omg omg"));
+        let registration = ZSH_HOOK
+            .split("# ~/.zfunc is not on a default omz fpath")
+            .nth(1)
+            .expect("completion registration block");
+        assert!(
+            !registration.contains("local "),
+            "top-level hook registration must not use local"
+        );
     }
 
     #[test]

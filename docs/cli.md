@@ -1631,35 +1631,40 @@ omgd --socket /path/to/socket  # Custom socket path
 
 ## ⚡ Ultra-Fast Queries
 
-### omg-fast
-
-Instant system queries for shell prompts.
+Prompt counters and hot-path queries run through the main `omg` binary without starting the full async runtime.
 
 ```bash
-omg-fast <subcommand>
+omg <subcommand>
 ```
 
-**Subcommands:**
+**Prompt counters:**
 
 | Subcommand | Description | Latency |
 | ------------ | ------------- | --------- |
-| `status` | System status | 3ms |
 | `ec` | Explicit count | &lt;1ms |
 | `tc` | Total count | &lt;1ms |
 | `uc` | Updates count | &lt;1ms |
 | `oc` | Orphan count | &lt;1ms |
-| `s <query>` | Search packages | daemon speed |
-| `i <package>` | Package info | daemon speed |
+
+**Hot-path commands:**
+
+| Subcommand | Description | Latency |
+| ------------ | ------------- | --------- |
+| `status` | System status | ~3ms |
+| `search` / `s` | Search packages | daemon speed |
+| `info` / `i` | Package info | daemon speed |
 
 **Examples:**
 
 ```bash
 # Get package counts for shell prompt
-omg-fast ec
-omg-fast tc
+omg ec
+omg tc
 
-# Full status
-omg-fast status
+# Full status and package queries
+omg status
+omg search vim
+omg info vim
 ```
 
 ---

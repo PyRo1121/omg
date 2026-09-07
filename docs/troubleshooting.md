@@ -24,7 +24,7 @@ omg doctor
 omg status
 
 # View daemon status
-omg-fast status
+omg status
 ```
 
 ---
@@ -677,7 +677,7 @@ rm $XDG_RUNTIME_DIR/omg.sock
 # 4. Reinstall if needed
 cd /path/to/omg
 cargo build --release
-cp target/release/{omg,omgd,omg-fast} ~/.local/bin/
+cp target/release/{omg,omgd} ~/.local/bin/
 
 # 5. Start fresh
 omg daemon

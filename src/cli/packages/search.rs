@@ -23,6 +23,8 @@ enum MatchTier {
     Substring,
 }
 
+pub(crate) const DEFAULT_SEARCH_LIMIT: usize = crate::cli::modern_ui::SUMMARY_LIST_CAP;
+
 /// Language packs flood generic queries (`firefox` matches hundreds of
 /// `firefox-*-i18n-*`). They sort after real packages in every tier and
 /// collapse into one group row unless the query names them directly.
@@ -199,7 +201,7 @@ impl DisplayPackage {
 }
 
 pub async fn search(query: &str, detailed: bool, no_aur: bool) -> Result<()> {
-    search_internal(query, detailed, false, no_aur, 50).await
+    search_internal(query, detailed, false, no_aur, DEFAULT_SEARCH_LIMIT).await
 }
 
 pub async fn search_with_json(
@@ -278,7 +280,11 @@ async fn search_internal(
     }
 
     let mut stdout = std::io::BufWriter::new(std::io::stdout());
-    writeln!(stdout, "{}", style::header("Search Results"))?;
+    writeln!(
+        stdout,
+        "{}",
+        crate::cli::modern_ui::phase_header_text("Search", query)
+    )?;
 
     for pkg in display_packages.iter().take(limit) {
         write_package_line(&mut stdout, pkg)?;
@@ -430,7 +436,7 @@ fn search_aur_packages(
 }
 
 pub fn search_sync_cli(query: &str, detailed: bool, no_aur: bool) -> Result<bool> {
-    search_sync_cli_with_limit(query, detailed, no_aur, 50)
+    search_sync_cli_with_limit(query, detailed, no_aur, DEFAULT_SEARCH_LIMIT)
 }
 pub fn search_sync_cli_with_limit(
     query: &str,
@@ -511,7 +517,11 @@ fn search_sync_official_only(query: &str, limit: usize) -> Result<bool> {
         packages = present_search_results(query, packages, false, limit);
 
         let mut stdout = std::io::BufWriter::new(std::io::stdout());
-        writeln!(stdout, "{}", style::header("Search Results"))?;
+        writeln!(
+            stdout,
+            "{}",
+            crate::cli::modern_ui::phase_header_text("Search", query)
+        )?;
 
         for pkg in packages.iter().take(limit) {
             write_package_line(&mut stdout, pkg)?;
@@ -559,7 +569,7 @@ fn write_package_line<W: Write>(w: &mut W, pkg: &DisplayPackage) -> std::io::Res
 
     write!(
         w,
-        "  {} {} ({})",
+        "  {} {}  {}",
         style::package(&style::sanitize_terminal_text(&pkg.name)),
         style::version(&style::sanitize_terminal_text(&pkg.version)),
         source_style,

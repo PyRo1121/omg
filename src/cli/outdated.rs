@@ -99,11 +99,13 @@ pub async fn run(json: bool) -> Result<()> {
     ];
 
     if !groups.major.is_empty() {
+        let major_shown = groups.major.len().min(15);
         commands.push(Cmd::card(
             "Major Updates (may have breaking changes)".to_string(),
             groups
                 .major
                 .iter()
+                .take(major_shown)
                 .map(|p| {
                     format!(
                         "{} {} → {} ({})",
@@ -112,6 +114,13 @@ pub async fn run(json: bool) -> Result<()> {
                 })
                 .collect(),
         ));
+        if groups.major.len() > 15 {
+            use crate::cli::tea::{StyledTextConfig, TextStyle};
+            commands.push(Cmd::styled_text(StyledTextConfig {
+                text: format!("... and {} more major updates", groups.major.len() - 15),
+                style: TextStyle::Muted,
+            }));
+        }
         commands.push(Cmd::spacer());
     }
 
@@ -162,11 +171,13 @@ pub async fn run(json: bool) -> Result<()> {
     }
 
     if !groups.unknown.is_empty() {
+        let unknown_shown = groups.unknown.len().min(15);
         commands.push(Cmd::card(
             "Other Updates (unclassified versions)".to_string(),
             groups
                 .unknown
                 .iter()
+                .take(unknown_shown)
                 .map(|package| {
                     format!(
                         "{} {} → {} ({})",
@@ -175,6 +186,13 @@ pub async fn run(json: bool) -> Result<()> {
                 })
                 .collect(),
         ));
+        if groups.unknown.len() > 15 {
+            use crate::cli::tea::{StyledTextConfig, TextStyle};
+            commands.push(Cmd::styled_text(StyledTextConfig {
+                text: format!("... and {} more other updates", groups.unknown.len() - 15),
+                style: TextStyle::Muted,
+            }));
+        }
         commands.push(Cmd::spacer());
     }
 

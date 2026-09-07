@@ -193,17 +193,131 @@ pub fn print_kv(key: &str, value: &str) {
     println!("  {}: {}", format_kv_key(key), value);
 }
 
+/// Default `omg info` rows. Extra metadata is a separate struct so verbose
+/// output cannot leak into the compact view by accident.
+pub struct InfoCore<'a> {
+    pub name: &'a str,
+    pub version: &'a str,
+    pub source: &'a str,
+    pub installed: bool,
+    pub description: &'a str,
+}
+
+/// Fields shown only with global `-v` / `--verbose`.
+pub struct InfoExtras<'a> {
+    pub url: Option<&'a str>,
+    pub size: Option<u64>,
+    pub download: Option<u64>,
+    pub licenses: &'a [String],
+    pub depends: &'a [String],
+    pub maintainer: Option<&'a str>,
+    pub votes: Option<i32>,
+    pub popularity: Option<f64>,
+    pub out_of_date: bool,
+}
+
+impl InfoExtras<'static> {
+    #[must_use]
+    pub fn none() -> Self {
+        Self {
+            url: None,
+            size: None,
+            download: None,
+            licenses: &[],
+            depends: &[],
+            maintainer: None,
+            votes: None,
+            popularity: None,
+            out_of_date: false,
+        }
+    }
+}
+
+/// Compact Charm-style package info. Extra rows require verbose mode.
+pub fn print_package_info(core: &InfoCore<'_>, extras: &InfoExtras<'_>) {
+    use crate::cli::{modern_ui, style};
+
+    modern_ui::print_phase_header("", "Info", &style::sanitize_terminal_text(core.name));
+    print_kv(
+        "Name",
+        &style::package(&style::sanitize_terminal_text(core.name)),
+    );
+    print_kv(
+        "Version",
+        &style::version(&style::sanitize_terminal_text(core.version)),
+    );
+    print_kv("Source", core.source);
+    print_kv("Installed", if core.installed { "yes" } else { "no" });
+    print_kv(
+        "Description",
+        &style::sanitize_terminal_text(core.description),
+    );
+    if extras.out_of_date {
+        print_kv("Status", &style::error("OUT OF DATE"));
+    }
+    if !modern_ui::is_verbose() {
+        return;
+    }
+    if let Some(url) = extras.url.filter(|url| !url.is_empty()) {
+        print_kv("URL", &style::url(&style::sanitize_terminal_text(url)));
+    }
+    if let Some(size) = extras.size {
+        print_kv("Size", &style::size(size));
+    }
+    if let Some(download) = extras.download {
+        print_kv("Download", &style::size(download));
+    }
+    if !extras.licenses.is_empty() {
+        print_kv(
+            "License",
+            &extras
+                .licenses
+                .iter()
+                .map(|license| style::sanitize_terminal_text(license))
+                .collect::<Vec<_>>()
+                .join(", "),
+        );
+    }
+    if !extras.depends.is_empty() {
+        print_kv(
+            "Depends",
+            &extras
+                .depends
+                .iter()
+                .map(|depend| style::sanitize_terminal_text(depend))
+                .collect::<Vec<_>>()
+                .join(", "),
+        );
+    }
+    if let Some(maintainer) = extras.maintainer {
+        print_kv("Maintainer", &style::sanitize_terminal_text(maintainer));
+    }
+    if let Some(votes) = extras.votes {
+        print_kv("Votes", &votes.to_string());
+    }
+    if let Some(popularity) = extras.popularity {
+        print_kv("Popularity", &format!("{popularity:.2}%"));
+    }
+}
+
 /// Get a themed `ColorfulTheme` for dialoguer prompts.
 /// Keeps using console/dialoguer themes as they are specific to that library.
 pub fn prompt_theme() -> dialoguer::theme::ColorfulTheme {
     use dialoguer::theme::ColorfulTheme;
+    let accent = crate::cli::chrome::palette().accent;
     ColorfulTheme {
         defaults_style: console::Style::new().dim(),
         prompt_style: console::Style::new().bold(),
-        prompt_prefix: console::style("  ?".to_string()).cyan().bold(),
+        prompt_prefix: console::style("  ?".to_string())
+            .true_color(accent.r, accent.g, accent.b)
+            .bold(),
         success_prefix: console::style("  ✓".to_string()).green().bold(),
-        active_item_style: console::Style::new().cyan().bold(),
-        active_item_prefix: console::style("  ❯".to_string()).cyan().bold(),
+        active_item_style: console::Style::new()
+            .true_color(accent.r, accent.g, accent.b)
+            .bold(),
+        active_item_prefix: console::style("  ❯".to_string())
+            .true_color(accent.r, accent.g, accent.b)
+            .bold(),
         inactive_item_prefix: console::style("   ".to_string()),
         ..ColorfulTheme::default()
     }

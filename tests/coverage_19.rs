@@ -198,7 +198,7 @@ fn deferred_sync_update_delegates_official_work_and_parent_records_no_changes() 
 /// ---------------------------------------------------------------------------
 
 #[test]
-fn check_only_update_never_elevates_and_never_writes_history() {
+fn check_only_update_never_writes_history() {
     if omg_lib::core::privilege::is_root() {
         report_skip("deferred-sync parent/child split only applies to non-root callers");
         return;
@@ -216,7 +216,7 @@ fn check_only_update_never_elevates_and_never_writes_history() {
 
     assert!(
         !history_path(&project).exists(),
-        "--check must return before any history recording happens"
+        "--check may refresh databases but must return before any history recording happens"
     );
 }
 

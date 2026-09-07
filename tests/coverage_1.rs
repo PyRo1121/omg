@@ -40,12 +40,12 @@ use omg_lib::config::{AurBuildMethod, Settings};
 use omg_lib::package_managers::AurClient;
 
 #[test]
-fn default_aur_policy_requires_review_and_sandboxing() {
+fn default_aur_policy_sandboxes_without_interactive_review() {
     let settings = Settings::default();
 
     assert!(
-        settings.aur.review_pkgbuild,
-        "default AUR builds must require PKGBUILD review"
+        !settings.aur.review_pkgbuild,
+        "PKGBUILD review is opt-in (--review or aur.review_pkgbuild)"
     );
     assert!(
         matches!(settings.aur.build_method, AurBuildMethod::Bubblewrap),

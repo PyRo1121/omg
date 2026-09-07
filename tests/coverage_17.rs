@@ -357,6 +357,30 @@ async fn download_sources_cached_file_succeeds_without_network() {
     );
 }
 
+#[tokio::test]
+async fn download_sources_dedups_identical_filenames() {
+    let srcdest = tempfile::tempdir().unwrap();
+    fs::write(srcdest.path().join("same.deb"), b"cached").unwrap();
+
+    let summary = download_sources(
+        vec![
+            SourceFile {
+                url: "https://unreachable.invalid/same.deb".to_string(),
+                filename: "same.deb".to_string(),
+            },
+            SourceFile {
+                url: "https://unreachable.invalid/same.deb".to_string(),
+                filename: "same.deb".to_string(),
+            },
+        ],
+        srcdest.path(),
+    )
+    .await;
+
+    assert_eq!(summary.succeeded, 1);
+    assert_eq!(summary.failed, 0);
+}
+
 /// A non-regular file occupying the destination path (here: a directory) must
 /// be reported as a failure, never clobbered or downloaded over.
 #[tokio::test]

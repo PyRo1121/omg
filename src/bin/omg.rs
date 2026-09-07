@@ -34,12 +34,16 @@ use omg_lib::hooks;
 /// Print minimal success message for fast elevated path
 #[cfg(feature = "arch")]
 fn print_fast_success(packages: &[String], action: &str) {
+    let packages: Vec<String> = packages
+        .iter()
+        .map(|pkg| omg_lib::core::security::artifact::display_target(pkg).to_owned())
+        .collect();
     let msg = if packages.len() == 1 {
         format!("1 package {action}")
     } else {
         format!("{} packages {action}", packages.len())
     };
-    omg_lib::cli::modern_ui::print_success_with_packages(&msg, packages);
+    omg_lib::cli::modern_ui::print_success_with_packages(&msg, &packages);
 }
 
 #[cfg(feature = "arch")]
@@ -115,11 +119,10 @@ fn split_elevated_invocation(args: &[String], parent_records: bool) -> Option<(&
     Some((command.as_str(), packages))
 }
 
-#[cfg(feature = "arch")]
-/// Derive the rendering policy for the elevated fast path, which bypasses
-/// clap, so transaction lanes see the same quiet/verbose contract as normal
-/// dispatch. Global flags are scanned directly instead of running full
-/// argument parsing to keep the fast path fast; `--` ends flag scanning.
+/// Derive the rendering policy for fast paths that bypass clap, so they
+/// see the same quiet/verbose contract as normal dispatch. Global flags
+/// are scanned directly instead of running full argument parsing to keep
+/// the fast path fast; `--` ends flag scanning.
 fn configure_fast_path_output(args: &[String]) {
     let mut verbose = 0u8;
     let mut quiet = false;
@@ -285,6 +288,99 @@ fn has_json_flag(args: &[String]) -> bool {
     args.iter().any(|a| a == "--json")
 }
 
+/// Prompt counter commands folded from the former omg-fast binary.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum FastCounter {
+    Explicit,
+    Total,
+    Orphan,
+    Updates,
+}
+
+fn parse_fast_counter_cmd(args: &[String]) -> Option<FastCounter> {
+    if has_help_flag(args) || has_json_flag(args) || args.len() != 2 {
+        return None;
+    }
+    match args[1].as_str() {
+        "ec" => Some(FastCounter::Explicit),
+        "tc" => Some(FastCounter::Total),
+        "oc" => Some(FastCounter::Orphan),
+        "uc" => Some(FastCounter::Updates),
+        _ => None,
+    }
+}
+
+fn print_fast_counter(counter: FastCounter, total: u32, explicit: u32, orphans: u32, updates: u32) {
+    let value = match counter {
+        FastCounter::Total => total,
+        FastCounter::Explicit => explicit,
+        FastCounter::Orphan => orphans,
+        FastCounter::Updates => updates,
+    };
+    println!("{value}");
+}
+
+#[cfg(unix)]
+fn fast_status_from_daemon() -> Result<(u32, u32, u32, u32)> {
+    use omg_lib::core::client::DaemonClient;
+    use omg_lib::daemon::protocol::{Request, ResponseResult};
+
+    let mut client = DaemonClient::connect_sync()?;
+    let ResponseResult::Status(status) = client.call_sync(&Request::Status { id: 0 })? else {
+        anyhow::bail!("Unexpected response from daemon");
+    };
+    Ok((
+        status.total_packages as u32,
+        status.explicit_packages as u32,
+        status.orphan_packages as u32,
+        status.updates_available as u32,
+    ))
+}
+
+/// Ultra-fast path for prompt counters (`omg ec|tc|oc|uc`).
+fn try_fast_counter(args: &[String]) -> Result<bool> {
+    let Some(counter) = parse_fast_counter_cmd(args) else {
+        return Ok(false);
+    };
+
+    if let Some(status) = omg_lib::core::fast_status::FastStatus::read_default() {
+        print_fast_counter(
+            counter,
+            status.total_packages,
+            status.explicit_packages,
+            status.orphan_packages,
+            status.updates_available,
+        );
+        return Ok(true);
+    }
+
+    #[cfg(unix)]
+    if let Ok((total, explicit, orphans, updates)) = fast_status_from_daemon() {
+        print_fast_counter(counter, total, explicit, orphans, updates);
+        return Ok(true);
+    }
+
+    #[cfg(feature = "arch")]
+    if let Ok((total, explicit, orphans)) = omg_lib::package_managers::pacman_db::get_counts_fast()
+    {
+        let updates = omg_lib::package_managers::pacman_db::check_updates_cached()
+            .map(|updates| updates.len() as u32)
+            .unwrap_or(0);
+        print_fast_counter(
+            counter,
+            total as u32,
+            explicit as u32,
+            orphans as u32,
+            updates,
+        );
+        return Ok(true);
+    }
+
+    anyhow::bail!(
+        "could not retrieve package status (try 'omg status' or start daemon with 'omg daemon')"
+    );
+}
+
 /// Ultra-fast path for explicit --count (bypasses tokio entirely)
 fn try_fast_explicit_count(args: &[String]) -> bool {
     if has_help_flag(args) || has_json_flag(args) {
@@ -328,7 +424,7 @@ fn try_fast_search(args: &[String]) -> bool {
     // Find query (first non-flag arg after the command) and parse flags
     let mut query: Option<&str> = None;
     let mut no_aur = false;
-    let mut limit: usize = 50;
+    let mut limit: usize = 15;
     let mut i = 2usize;
     while i < args.len() {
         let arg = &args[i];
@@ -378,20 +474,43 @@ fn try_fast_search(args: &[String]) -> bool {
 
 /// Ultra-fast path for simple info
 fn try_fast_info(args: &[String]) -> bool {
-    if has_help_flag(args) {
+    if has_help_flag(args) || has_json_flag(args) {
         return false;
     }
 
-    if args.len() == 3 && args[1] == "info" {
-        let package = &args[2];
-        if package.starts_with('-') {
-            return false;
+    let Some(package) = info_package_from_fast_args(args) else {
+        return false;
+    };
+    matches!(packages::info_sync(package), Ok(true))
+}
+
+/// `omg info fd` plus global quiet/verbose flags in any order.
+fn info_package_from_fast_args(args: &[String]) -> Option<&str> {
+    let mut package = None;
+    let mut saw_info = false;
+    for token in args.iter().skip(1) {
+        if token == "--" {
+            return None;
         }
-        if matches!(packages::info_sync(package), Ok(true)) {
-            return true;
+        match token.as_str() {
+            "info" if !saw_info => saw_info = true,
+            "-v" | "-q" | "--verbose" | "--quiet" => {}
+            s if s.starts_with("--") => return None,
+            s if s.starts_with('-') => {
+                if s.chars().skip(1).all(|flag| matches!(flag, 'v' | 'q')) {
+                    continue;
+                }
+                return None;
+            }
+            s => {
+                if !saw_info || package.is_some() || s.is_empty() {
+                    return None;
+                }
+                package = Some(s);
+            }
         }
     }
-    false
+    package.filter(|_| saw_info)
 }
 
 fn try_fast_completions(args: &[String]) -> Result<bool> {
@@ -529,7 +648,8 @@ fn try_fast_hooks(args: &[String]) -> bool {
 }
 
 fn try_fast_paths(args: &[String]) -> Result<bool> {
-    if try_fast_explicit_count(args)
+    if try_fast_counter(args)?
+        || try_fast_explicit_count(args)
         || try_fast_search(args)
         || try_fast_info(args)
         || try_fast_which(args)
@@ -615,9 +735,10 @@ fn main() {
     // This runs when sudo omg re-execs us as root. Arch-only: the elevated
     // transaction path does not exist in backend-less builds, so the whole
     // block is gated out there instead of stubbed — no no-op stand-ins.
+    configure_fast_path_output(&args);
+
     #[cfg(feature = "arch")]
     {
-        configure_fast_path_output(&args);
         if let Some(result) = try_fast_elevated(&args, reexec_elevated, parent_records) {
             finish(result);
         }
@@ -1015,11 +1136,12 @@ async fn handle_license_command(command: &AccountCommands) -> Result<()> {
     }
 }
 
-#[expect(clippy::fn_params_excessive_bools)] // Maps directly to CLI flags: --check, --yes, --dry-run, --fast, --turbo
+#[expect(clippy::fn_params_excessive_bools)] // Maps directly to CLI flags: --check, --yes, --dry-run, --no-sync, --fast, --turbo
 async fn handle_update_command(
     check: bool,
     yes: bool,
     dry_run: bool,
+    no_sync: bool,
     fast: bool,
     turbo: bool,
 ) -> Result<()> {
@@ -1038,7 +1160,7 @@ async fn handle_update_command(
     } else if fast {
         packages::update_fast().await
     } else {
-        packages::update(check, yes, dry_run).await
+        packages::update(check, yes, dry_run, no_sync).await
     }
 }
 
@@ -1184,8 +1306,12 @@ async fn dispatch_command(command: &Commands, ctx: &omg_lib::cli::CliContext) ->
             packages: pkgs,
             yes,
             dry_run,
+            review,
             allow_local_file,
         } => {
+            if *review {
+                omg_lib::config::Settings::enable_cli_review_pkgbuild();
+            }
             packages::install(pkgs, *yes, *dry_run, *allow_local_file).await?;
         }
         Commands::Remove {
@@ -1200,10 +1326,15 @@ async fn dispatch_command(command: &Commands, ctx: &omg_lib::cli::CliContext) ->
             check,
             yes,
             dry_run,
+            review,
+            no_sync,
             fast,
             turbo,
         } => {
-            handle_update_command(*check, *yes, *dry_run, *fast, *turbo).await?;
+            if *review {
+                omg_lib::config::Settings::enable_cli_review_pkgbuild();
+            }
+            handle_update_command(*check, *yes, *dry_run, *no_sync, *fast, *turbo).await?;
         }
         Commands::Info { package } => packages::info_with_json(package, ctx.json).await?,
         Commands::Clean {
@@ -1363,8 +1494,9 @@ async fn dispatch_command(command: &Commands, ctx: &omg_lib::cli::CliContext) ->
 #[cfg(test)]
 mod fast_path_tests {
     use super::{
-        has_json_flag, parse_fast_list_tail, root_help_selection, try_fast_completions,
-        try_fast_explicit_count, try_fast_hooks,
+        FastCounter, has_json_flag, info_package_from_fast_args, parse_fast_counter_cmd,
+        parse_fast_list_tail, root_help_selection, try_fast_completions, try_fast_explicit_count,
+        try_fast_hooks,
     };
 
     #[cfg(feature = "arch")]
@@ -1372,6 +1504,68 @@ mod fast_path_tests {
 
     fn args(list: &[&str]) -> Vec<String> {
         list.iter().map(std::string::ToString::to_string).collect()
+    }
+
+    #[test]
+    fn verbose_info_stays_on_the_fast_path() {
+        assert_eq!(
+            info_package_from_fast_args(&args(&["omg", "info", "fd"])),
+            Some("fd")
+        );
+        assert_eq!(
+            info_package_from_fast_args(&args(&["omg", "info", "-v", "fd"])),
+            Some("fd")
+        );
+        assert_eq!(
+            info_package_from_fast_args(&args(&["omg", "-v", "info", "fd"])),
+            Some("fd")
+        );
+        assert_eq!(
+            info_package_from_fast_args(&args(&["omg", "info", "fd", "--verbose"])),
+            Some("fd")
+        );
+        assert_eq!(
+            info_package_from_fast_args(&args(&["omg", "-vv", "info", "fd"])),
+            Some("fd")
+        );
+        assert_eq!(
+            info_package_from_fast_args(&args(&["omg", "--json", "info", "fd"])),
+            None
+        );
+        assert_eq!(
+            info_package_from_fast_args(&args(&["omg", "info", "-v"])),
+            None
+        );
+    }
+
+    #[test]
+    fn prompt_counter_commands_stay_on_the_fast_path() {
+        assert_eq!(
+            parse_fast_counter_cmd(&args(&["omg", "ec"])),
+            Some(FastCounter::Explicit)
+        );
+        assert_eq!(
+            parse_fast_counter_cmd(&args(&["omg", "tc"])),
+            Some(FastCounter::Total)
+        );
+        assert_eq!(
+            parse_fast_counter_cmd(&args(&["omg", "oc"])),
+            Some(FastCounter::Orphan)
+        );
+        assert_eq!(
+            parse_fast_counter_cmd(&args(&["omg", "uc"])),
+            Some(FastCounter::Updates)
+        );
+        assert_eq!(parse_fast_counter_cmd(&args(&["omg", "explicit"])), None);
+        assert_eq!(parse_fast_counter_cmd(&args(&["omg", "ec", "extra"])), None);
+        assert_eq!(
+            parse_fast_counter_cmd(&args(&["omg", "ec", "--help"])),
+            None
+        );
+        assert_eq!(
+            parse_fast_counter_cmd(&args(&["omg", "--json", "ec"])),
+            None
+        );
     }
 
     #[cfg(feature = "arch")]

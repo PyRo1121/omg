@@ -5,6 +5,7 @@ use clap::CommandFactory;
 use clap_complete::{Shell, generate};
 use std::fs;
 use std::io;
+use std::path::{Path, PathBuf};
 
 use crate::cli::{Cli, style};
 
@@ -76,27 +77,35 @@ fn install_completions(shell: &str) -> Result<()> {
             );
         }
         "zsh" => {
-            // Install to ~/.zfunc/_omg (common zsh completions dir)
-            let dir = home.join(".zfunc");
-            fs::create_dir_all(&dir)?;
-            let path = dir.join("_omg");
-
+            let zfunc_dir = home.join(".zfunc");
+            fs::create_dir_all(&zfunc_dir)?;
+            let zfunc_path = zfunc_dir.join("_omg");
             let content = include_str!("completions/zsh.zsh");
-            fs::write(&path, content)?;
+            fs::write(&zfunc_path, content)?;
 
+            let omz_path = oh_my_zsh_completions_dir(&home).map(|dir| dir.join("_omg"));
+            if let Some(ref path) = omz_path {
+                fs::write(path, content)?;
+            }
+
+            let loaded = omz_path.as_ref().unwrap_or(&zfunc_path);
             println!(
                 "{} Installed zsh completions to {}",
                 style::positive("✓"),
-                path.display()
+                loaded.display()
             );
             println!();
-            println!(
-                "  Add this to your {} (before compinit):",
-                style::accent("~/.zshrc")
-            );
-            println!("  {}", style::caution("fpath=(~/.zfunc $fpath)"));
-            println!();
-            println!("  Then restart your shell or run:");
+            if omz_path.is_none() {
+                println!(
+                    "  Add this to your {} (before compinit):",
+                    style::accent("~/.zshrc")
+                );
+                println!("  {}", style::caution("fpath=(~/.zfunc $fpath)"));
+                println!();
+                println!("  Then restart your shell or run:");
+            } else {
+                println!("  Restart your shell or run:");
+            }
             println!("  {}", style::accent("autoload -Uz compinit && compinit"));
         }
         "fish" => {
@@ -166,4 +175,89 @@ fn install_completions(shell: &str) -> Result<()> {
     }
 
     Ok(())
+}
+
+fn oh_my_zsh_completions_dir(home: &Path) -> Option<PathBuf> {
+    let omz_root = std::env::var_os("ZSH")
+        .map(PathBuf::from)
+        .filter(|zsh| is_oh_my_zsh_layout(zsh))
+        .or_else(|| {
+            let fallback = home.join(".oh-my-zsh");
+            let known = fallback.join("oh-my-zsh.sh").is_file()
+                || fallback.join("completions").is_dir();
+            known.then_some(fallback)
+        })?;
+    let completions = omz_root.join("completions");
+    fs::create_dir_all(&completions).ok()?;
+    Some(completions)
+}
+
+fn is_oh_my_zsh_layout(zsh: &Path) -> bool {
+    zsh.file_name().is_some_and(|name| name == "oh-my-zsh") || zsh.join("oh-my-zsh.sh").is_file()
+}
+
+#[cfg(test)]
+#[expect(clippy::unwrap_used)] // Idiomatic in tests: panics on failure with clear error context
+mod tests {
+    use super::*;
+    use std::fs;
+    use tempfile::tempdir;
+
+    #[serial_test::serial]
+    #[test]
+    fn zsh_install_writes_omz_completions_when_present() {
+        let home = tempdir().unwrap();
+        let omz = home.path().join(".oh-my-zsh").join("completions");
+        fs::create_dir_all(&omz).unwrap();
+        let home_str = home.path().to_string_lossy().into_owned();
+        let vars: Vec<(&str, Option<&str>)> =
+            vec![("HOME", Some(home_str.as_str())), ("ZSH", None)];
+        temp_env::with_vars(&vars, || {
+            assert_eq!(
+                dirs::home_dir().as_deref(),
+                Some(home.path()),
+                "dirs::home_dir must honor HOME"
+            );
+            install_completions("zsh").unwrap();
+            assert!(omz.join("_omg").is_file());
+            assert!(home.path().join(".zfunc").join("_omg").is_file());
+        });
+    }
+
+    #[serial_test::serial]
+    #[test]
+    fn zsh_install_creates_omz_completions_dir() {
+        let home = tempdir().unwrap();
+        let omz = home.path().join(".oh-my-zsh");
+        fs::create_dir_all(&omz).unwrap();
+        fs::write(omz.join("oh-my-zsh.sh"), "# stub\n").unwrap();
+        let home_str = home.path().to_string_lossy().into_owned();
+        let vars: Vec<(&str, Option<&str>)> =
+            vec![("HOME", Some(home_str.as_str())), ("ZSH", None)];
+        temp_env::with_vars(&vars, || {
+            install_completions("zsh").unwrap();
+            assert!(omz.join("completions").join("_omg").is_file());
+        });
+    }
+
+    #[serial_test::serial]
+    #[test]
+    fn zsh_install_writes_zfunc_only_without_omz() {
+        let home = tempdir().unwrap();
+        let home_str = home.path().to_string_lossy().into_owned();
+        let vars: Vec<(&str, Option<&str>)> =
+            vec![("HOME", Some(home_str.as_str())), ("ZSH", None)];
+        temp_env::with_vars(&vars, || {
+            install_completions("zsh").unwrap();
+            assert!(home.path().join(".zfunc").join("_omg").is_file());
+            assert!(
+                !home
+                    .path()
+                    .join(".oh-my-zsh")
+                    .join("completions")
+                    .join("_omg")
+                    .is_file()
+            );
+        });
+    }
 }
