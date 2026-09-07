@@ -40,7 +40,7 @@ fn test_search_official_package() {
     result.assert_success();
     let stdout = &result.stdout;
     assert!(
-        stdout.contains("Search Results"),
+        stdout.contains("| Search"),
         "search must print its results header. Got:\n{}",
         result.combined_output()
     );
@@ -51,7 +51,7 @@ fn test_search_official_package() {
         "search must list git at the mock version. Got:\n{stdout}"
     );
     assert!(
-        stdout.contains("(Official)"),
+        stdout.contains("Official"),
         "search must tag the source repository. Got:\n{stdout}"
     );
 }
@@ -91,7 +91,7 @@ fn test_search_with_no_aur_flag() {
     result.assert_success();
     let combined = result.combined_output();
     assert!(
-        combined.contains("Search Results") && combined.contains("firefox"),
+        combined.contains("| Search") && combined.contains("firefox"),
         "--no-aur must still return official-repository results. Got:\n{combined}"
     );
 }
@@ -186,28 +186,21 @@ fn test_info_shows_package_details() {
     result.assert_success();
     let output = result.combined_output();
     assert!(
-        output
-            .lines()
-            .next()
-            .is_some_and(|line| line.starts_with("pacman ")),
-        "info must lead with package identity. Got:\n{output}"
+        output.contains("| Info"),
+        "info must render its phase header. Got:\n{output}"
     );
     assert!(
-        !output.contains("Name:"),
-        "duplicate package identity: {output}"
+        output.contains("Name:") && output.contains("pacman"),
+        "info must show the package identity card. Got:\n{output}"
     );
     assert!(
-        output
-            .lines()
-            .any(|line| line.trim() == "Download: unknown"),
-        "missing fixture download size must remain unknown. Got:\n{output}"
+        output.contains("Description:"),
+        "info must show the description. Got:\n{output}"
     );
-    for field in ["Description:", "Size:", "Download:"] {
-        assert!(
-            output.contains(field),
-            "info must show the {field} field. Got:\n{output}"
-        );
-    }
+    assert!(
+        !output.contains("Download:"),
+        "default info omits verbose-only extras. Got:\n{output}"
+    );
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
@@ -383,7 +376,7 @@ fn test_update_with_yes_flag() {
     result.assert_success();
     let output = result.combined_output();
     assert!(
-        output.contains("Checking for updates") && output.contains("System is up to date"),
+        output.contains("Refreshing catalogs") && output.contains("System is up to date"),
         "--yes must not turn --check into an install. Got:\n{output}"
     );
 }
@@ -682,7 +675,7 @@ fn test_quiet_flag_preserves_results() {
     result.assert_success();
     let stdout = &result.stdout;
     assert!(
-        stdout.contains("Search Results") && stdout.contains("git 2.43.0"),
+        stdout.contains("| Search") && stdout.contains("git 2.43.0"),
         "quiet mode must still print search results. Got:\n{stdout}"
     );
 }

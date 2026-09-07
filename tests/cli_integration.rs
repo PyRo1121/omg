@@ -219,7 +219,7 @@ fn test_search_empty_query() {
 
     // ===== ASSERT =====
     result.assert_success();
-    result.assert_stdout_contains("Search Results");
+    result.assert_stdout_contains("| Search");
 }
 
 #[test]

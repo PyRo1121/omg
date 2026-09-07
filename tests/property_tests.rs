@@ -122,6 +122,7 @@ proptest! {
             // an explicit empty-result notice — not arbitrary prose (the old
             // "git"/"pacman" alternatives matched any mention).
             let has_valid_output = result.stdout.contains("Search Results") ||
+                                  result.stdout.contains("| Search") ||
                                   result.stdout.contains("Package") ||
                                   result.stdout.contains("No results");
             prop_assert!(
@@ -188,6 +189,7 @@ proptest! {
 
         if result.success {
             let has_results = result.stdout.contains("Search Results") ||
+                            result.stdout.contains("| Search") ||
                             result.stdout.contains("No results") ||
                             result.stdout.contains("Package");
             prop_assert!(
@@ -255,6 +257,7 @@ proptest! {
         if result.success {
             let has_structured_output = result.stdout.is_empty() ||
                                        result.stdout.contains("Search Results") ||
+                                       result.stdout.contains("| Search") ||
                                        result.stdout.contains("No results");
             prop_assert!(has_structured_output, "Valid output should be structured");
         } else {

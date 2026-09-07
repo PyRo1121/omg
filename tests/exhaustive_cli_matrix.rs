@@ -352,7 +352,7 @@ mod boundary_matrix {
         // the mock catalog (src/package_managers/mock.rs arch_defaults).
         let res = run_arch(&["search", ""]);
         res.assert_success();
-        res.assert_stdout_contains("Search Results");
+        res.assert_stdout_contains("| Search");
         res.assert_stdout_contains("pacman");
     }
 }

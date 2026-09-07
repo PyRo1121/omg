@@ -179,3 +179,7 @@ container-run-detached	["container","run","--name","smoke","--detach","--env","S
 container-run-interactive	["container","run","--interactive","--name","smoke-tty","debian:bookworm"]	interactive	-	declared	-	nested-container,pty	arch:pending,debian:pending,ubuntu:pending,fedora:pending	-	container-prune
 container-shell-flags	["container","shell","--image","debian:bookworm","--workdir","/tmp","--env","SMOKE=1","--volume","/tmp:/tmp"]	interactive	-	declared	-	nested-container,pty	arch:pending,debian:pending,ubuntu:pending,fedora:pending	-	container-prune
 container-build-flags	["container","build","--dockerfile","Dockerfile","--tag","smoke:latest","--no-cache","--build-arg","SMOKE=1","--target","dev"]	service-mutation	-	declared	-	nested-container	arch:pending,debian:pending,ubuntu:pending,fedora:pending	-	container-prune
+clean-yes	["clean","--all","--dry-run","--yes"]	read	0	pass	-	hermetic	hermetic:pass	-	tempdir-drop
+install-review	["install","--review","--dry-run","pacman"]	read	0	pass	-	hermetic	hermetic:pass	-	tempdir-drop
+update-review	["update","--check","--review"]	read	0	pass	-	hermetic	hermetic:pass	-	tempdir-drop
+update-no-sync	["update","--check","--no-sync"]	read	0	pass	-	hermetic	hermetic:pass	-	tempdir-drop

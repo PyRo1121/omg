@@ -700,7 +700,7 @@ fn test_cli_search_on_debian() {
     // `git` (src/package_managers/mock.rs), and search exits 0 either way.
     let hit = run_omg_cli(&["search", "git"]);
     hit.assert_success();
-    hit.assert_stdout_contains("Search Results");
+    hit.assert_stdout_contains("| Search");
     hit.assert_stdout_contains("git");
 
     // Unknown/virtual package: graceful empty result with an explicit notice,

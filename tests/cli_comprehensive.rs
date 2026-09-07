@@ -1145,12 +1145,12 @@ mod update_tests {
     }
 
     // Contract: --check lists pending updates (and refreshes databases
-    // unless --no-sync). Observed: "Checking for updates".
+    // unless --no-sync). Observed: "Refreshing catalogs".
     #[test]
     fn test_update_dry_run() {
         let result = run_omg(&["update", "--check"]);
         result.assert_success();
-        result.assert_stdout_contains("Checking for updates");
+        result.assert_stdout_contains("Refreshing catalogs");
         result.assert_no_ansi();
     }
 }

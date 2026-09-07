@@ -309,11 +309,13 @@ impl Settings {
             if LEGACY_KEYS.contains(&key.as_str()) {
                 // Settings::load runs many times per invocation (telemetry
                 // gates, completions, ...); warn once per process so a daily
-                // command is not spammed with the same notice.
+                // command is not spammed with the same notice. This stays a
+                // warn (not debug): RUST_LOG=warn must surface it, per the
+                // tracing-diagnostics contract test.
                 use std::sync::atomic::{AtomicBool, Ordering};
                 static WARNED: AtomicBool = AtomicBool::new(false);
                 if !WARNED.swap(true, Ordering::Relaxed) {
-                    tracing::debug!(
+                    tracing::warn!(
                         key = key.as_str(),
                         "config section '{key}' is deprecated and ignored by this omg version"
                     );

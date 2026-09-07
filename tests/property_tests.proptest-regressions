@@ -13,3 +13,4 @@ cc 1040542986b2653569f04d54347f9445b415d03fca46dcc1e798113db301a08a # shrinks to
 cc 8e69ebc5f6a1cb1174d5f9d5d883747e0a2cbe938ba2bb301470b6ad8b871355 # shrinks to major = 0, minor = 0
 cc 5109fd2ebf08e0cebf821a171e7f8d49a8600cc8150da47196c00c0a8d60d10f # shrinks to alias = "lts"
 cc 11c70820de2a0715c468b6110dc5b657d497b7ea48dfa20297b8024fc139d792 # shrinks to parts = ["ijnnpuwftp", "owyd", "ydlzrlzwnv"]
+cc 01ea7af105ea72fe15b28aca818d848a3c56d6aa8965f5b88c8b53d2100dd8d1 # shrinks to s = "a"
