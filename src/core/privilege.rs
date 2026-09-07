@@ -819,7 +819,8 @@ mod tests {
         let removed: std::collections::HashSet<String> = command
             .as_std()
             .get_envs()
-            .filter_map(|(key, value)| value.is_none().then(|| key.to_string_lossy().into_owned()))
+            .filter(|&(_, value)| value.is_none())
+            .map(|(key, _)| key.to_string_lossy().into_owned())
             .collect();
         for name in [
             "LD_PRELOAD",

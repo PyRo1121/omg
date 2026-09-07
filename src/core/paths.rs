@@ -662,7 +662,7 @@ mod tests {
     #[test]
     fn missing_tmp_fallback_stays_on_tmp_path() {
         assert_eq!(
-            uid_temp_socket_path(424243),
+            uid_temp_socket_path(424_243),
             PathBuf::from("/tmp/omg-424243/omg.sock")
         );
     }
@@ -676,7 +676,7 @@ mod tests {
         let squat = PathBuf::from("/tmp/omg-424242");
         let _ = std::fs::remove_dir(&squat);
         std::fs::create_dir(&squat).expect("squat dir");
-        let diverted = uid_temp_socket_path(424242);
+        let diverted = uid_temp_socket_path(424_242);
         std::fs::remove_dir(&squat).expect("squat cleanup");
         assert_eq!(diverted, home_fallback_socket_path());
         assert!(
