@@ -797,6 +797,7 @@ async fn async_main(args: Vec<String>) -> Result<()> {
         Commands::Install { yes: true, .. }
             | Commands::Remove { yes: true, .. }
             | Commands::Update { yes: true, .. }
+            | Commands::Clean { yes: true, .. }
             | Commands::Rollback { yes: true, .. }
             | Commands::Snapshot {
                 command: SnapshotCommands::Restore { yes: true, .. }
@@ -1343,8 +1344,9 @@ async fn dispatch_command(command: &Commands, ctx: &omg_lib::cli::CliContext) ->
             aur,
             all,
             dry_run,
+            yes,
         } => {
-            packages::clean(*orphans, *cache, *aur, *all, *dry_run).await?;
+            packages::clean(*orphans, *cache, *aur, *all, *dry_run, *yes).await?;
         }
         Commands::Explicit { count } => {
             packages::explicit_sync_with_json(*count, ctx.json)?;
@@ -1874,6 +1876,7 @@ mod tests {
             aur: true,
             all: true,
             dry_run: true,
+            yes: false,
         };
         assert!(!command_requires_root(&command));
     }
@@ -1886,6 +1889,7 @@ mod tests {
             aur: true,
             all: false,
             dry_run: false,
+            yes: false,
         };
         let cache = Commands::Clean {
             orphans: false,
@@ -1893,6 +1897,7 @@ mod tests {
             aur: false,
             all: false,
             dry_run: false,
+            yes: false,
         };
         assert!(!command_requires_root(&aur_only));
         let native_fedora = cfg!(feature = "fedora")

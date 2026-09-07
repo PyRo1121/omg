@@ -289,27 +289,44 @@ fn confirmation_policy(yes: bool, attended: bool, action: &str) -> Result<bool> 
     Ok(true)
 }
 
-/// Confirm a privileged package mutation unless the caller supplied `--yes`.
-pub(crate) async fn confirm_package_mutation(
-    action: &'static str,
-    package_count: usize,
-    yes: bool,
-) -> Result<bool> {
+/// Shared attended-confirmation seam: fail-closed `--yes`/non-TTY policy plus
+/// the blocking TTY read off the async executor. Both mutation and cleanup
+/// prompts delegate here so the guard cannot drift between call sites.
+async fn confirm_attended(prompt: String, yes: bool, action: &'static str) -> Result<bool> {
     if !confirmation_policy(yes, console::user_attended(), action)? {
         return Ok(true);
     }
 
     tokio::task::spawn_blocking(move || {
         dialoguer::Confirm::with_theme(&crate::cli::ui::prompt_theme())
-            .with_prompt(format!(
-                "Proceed with {action} of {package_count} package(s)?"
-            ))
+            .with_prompt(prompt)
             .default(false)
             .interact()
     })
     .await
-    .map_err(|error| anyhow::anyhow!("Package confirmation task failed: {error}"))?
+    .map_err(|error| anyhow::anyhow!("Confirmation prompt task failed: {error}"))?
     .map_err(Into::into)
+}
+
+/// Confirm destructive cleanup unless the caller supplied `--yes`.
+///
+/// Fails closed on non-TTY so scripts must pass `--yes`.
+pub(crate) async fn confirm_cleanup(yes: bool) -> Result<bool> {
+    confirm_attended("Proceed with cleanup?".to_string(), yes, "cleanup").await
+}
+
+/// Confirm a privileged package mutation unless the caller supplied `--yes`.
+pub(crate) async fn confirm_package_mutation(
+    action: &'static str,
+    package_count: usize,
+    yes: bool,
+) -> Result<bool> {
+    confirm_attended(
+        format!("Proceed with {action} of {package_count} package(s)?"),
+        yes,
+        action,
+    )
+    .await
 }
 
 /// Track removal requests around `PackageService::remove`.
@@ -461,6 +478,13 @@ mod tests {
         assert!(confirmation_policy(false, true, "installation").unwrap());
         let error = confirmation_policy(false, false, "installation").unwrap_err();
         assert!(error.to_string().contains("Use --yes"));
+    }
+
+    #[tokio::test]
+    async fn cleanup_confirmation_is_skipped_with_yes_without_prompting() {
+        // `--yes` must resolve without touching the TTY so scripts and the
+        // TUI (which passes yes=true) never block on a prompt.
+        assert!(confirm_cleanup(true).await.unwrap());
     }
 
     #[test]

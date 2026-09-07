@@ -99,6 +99,7 @@ omg clean -c                    # Clear package cache
 omg clean --aur                 # Clear AUR build directories
 omg clean -a                    # Everything above (--all)
 omg clean --dry-run -a          # Preview what would be cleaned
+omg clean -a -y                 # Non-interactive (scripts, CI)
 ```
 
 ### Snapshots & Diff

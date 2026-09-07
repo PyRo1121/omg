@@ -253,6 +253,7 @@ omg clean [OPTIONS]
 | `--aur` | | Clear build directories for source-based installs |
 | `--all` | `-a` | Remove all (orphans + cache + aur) |
 | `--dry-run` | | Show what would be cleaned without making changes |
+| `--yes` | `-y` | Skip confirmation |
 
 **Examples:**
 
@@ -271,6 +272,9 @@ omg clean --all
 
 # Preview without changing anything
 omg clean --dry-run --all
+
+# Non-interactive full cleanup (scripts, CI)
+omg clean --all --yes
 ```
 
 ---
