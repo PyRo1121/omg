@@ -372,8 +372,7 @@ fn try_fast_counter(args: &[String]) -> Result<bool> {
     if let Ok((total, explicit, orphans)) = omg_lib::package_managers::pacman_db::get_counts_fast()
     {
         let updates = omg_lib::package_managers::pacman_db::check_updates_cached()
-            .map(|updates| updates.len() as u32)
-            .unwrap_or(0);
+            .map_or(0, |updates| updates.len() as u32);
         print_fast_counter(
             counter,
             total as u32,

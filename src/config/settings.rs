@@ -830,7 +830,7 @@ mod tests {
         temp_env::with_vars(&vars, || {
             let loaded = Settings::load().expect("missing env dir must load defaults");
             assert_eq!(
-                format!("{:?}", loaded),
+                format!("{loaded:?}"),
                 format!("{:?}", Settings::default().with_runtime_overrides())
             );
         });
