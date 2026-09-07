@@ -73,6 +73,7 @@ present before the probe runs.
 - **Install**: Add interactive fuzzy package discovery
 ### 🐛 Bug Fixes
 
+- **Usage**: Re-own usage state after elevated runs ([#301](https://github.com/PyRo1121/omg/issues/301))
 - **Qa**: Qemu-matrix concurrency scope + checkout pin ([#298](https://github.com/PyRo1121/omg/issues/298))
 
 * fix(qa): move matrix concurrency to job scope so the workflow parses
