@@ -206,6 +206,11 @@ impl UsageStats {
     fn path() -> Result<PathBuf> {
         let data_dir = crate::core::paths::data_dir();
         std::fs::create_dir_all(&data_dir)?;
+        // A first-run-elevated invocation creates the data dir as root;
+        // re-own it like history writes do so later unprivileged runs work.
+        if let Err(error) = crate::core::safe_ops::restore_original_user_ownership(&data_dir) {
+            tracing::warn!("Failed to restore usage dir ownership: {error:#}");
+        }
         Ok(data_dir.join("usage.json"))
     }
 
@@ -238,7 +243,13 @@ impl UsageStats {
 
     fn save_to(&self, path: &std::path::Path) -> Result<()> {
         let content = serde_json::to_vec_pretty(self).context("Failed to serialize usage stats")?;
-        crate::core::safe_ops::atomic_write_file_sync(path, content)
+        crate::core::safe_ops::atomic_write_file_sync(path, content)?;
+        // An elevated run re-owns the file as root via the rename above;
+        // mirror the history.json handling so unprivileged runs keep working.
+        if let Err(error) = crate::core::safe_ops::restore_original_user_ownership(path) {
+            tracing::warn!("Failed to restore usage file ownership: {error:#}");
+        }
+        Ok(())
     }
 
     /// Record a command execution.
@@ -487,6 +498,10 @@ fn lock_file_at(lock_path: &std::path::Path) -> Option<std::fs::File> {
             return None;
         }
     };
+    // Same root-owned-lock hazard as history.lock (#285): re-own best-effort.
+    if let Err(error) = crate::core::safe_ops::restore_original_user_ownership(lock_path) {
+        tracing::warn!("Failed to restore usage lock ownership: {error:#}");
+    }
     if let Err(error) = lock.lock() {
         tracing::warn!(
             "Failed to lock usage stats {}: skipping this update ({error})",
