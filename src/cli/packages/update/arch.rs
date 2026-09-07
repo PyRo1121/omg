@@ -95,12 +95,18 @@ fn screen_aur_updates_against_policy(
     screened
 }
 
-/// Number of repositories configured in pacman.conf, for honest sync
-/// reporting; `0` means the configuration was unreadable and the count is
-/// omitted rather than guessed.
-fn configured_repo_count() -> usize {
-    crate::core::pacman_conf::PacmanConfig::parse(crate::core::paths::pacman_conf_path())
-        .map_or(0, |config| config.repos.len())
+const fn update_phase_context(dry_run: bool, no_sync: bool) -> &'static str {
+    if dry_run {
+        if no_sync {
+            "Dry run · cached"
+        } else {
+            "Dry run · checking for updates"
+        }
+    } else if no_sync {
+        "Checking for updates · cached"
+    } else {
+        "Refreshing catalogs"
+    }
 }
 
 pub async fn update_fast() -> Result<()> {
@@ -204,54 +210,34 @@ fn parent_recorded_changes(
         .collect()
 }
 
-pub async fn update(check_only: bool, yes: bool, dry_run: bool) -> Result<()> {
+#[expect(clippy::fn_params_excessive_bools)] // Maps to --check / --yes / --dry-run / --no-sync
+pub async fn update(check_only: bool, yes: bool, dry_run: bool, no_sync: bool) -> Result<()> {
     let pm = get_package_manager()?;
 
-    let skip_sync = check_only || dry_run || !crate::core::caps::can_write_pacman_db();
     let needs_deferred_sync = !check_only && !dry_run && !crate::core::caps::can_write_pacman_db();
 
-    if check_only || dry_run {
-        modern_ui::print_phase_header(
-            "🔄",
-            "Update",
-            if check_only {
-                "Checking for updates (no sync)"
-            } else {
-                "Dry run - checking for updates"
-            },
-        );
-    } else {
-        modern_ui::print_phase_header("🔄", "Update", "Checking for updates");
+    modern_ui::print_phase_header("🔄", "Update", update_phase_context(dry_run, no_sync));
 
-        if !skip_sync {
-            let pb = modern_ui::modern_spinner("Syncing", "package databases");
-            let sync_start = std::time::Instant::now();
-            pm.sync().await?;
-            let sync_elapsed = sync_start.elapsed();
-            let repo_count = configured_repo_count();
-            let detail = if repo_count > 0 {
-                format!(
-                    "{repo_count} repositories in {:.2}s",
-                    sync_elapsed.as_secs_f64()
-                )
-            } else {
-                format!("in {:.2}s", sync_elapsed.as_secs_f64())
-            };
-            modern_ui::finish_success(&pb, "Synced", &detail);
-            // The daemon serves its frozen pre-sync snapshot until told
-            // otherwise; refresh it before probing so the update list
-            // below reflects the sync that just finished.
-            crate::cli::packages::common::refresh_daemon_index_after_sync().await?;
-        }
+    if !no_sync {
+        // Do not animate here. `pm.sync()` elevates and the child owns the
+        // per-repository lanes; a parent spinner hides the sudo prompt and
+        // reprints itself as a second "Syncing package databases" bar.
+        println!();
+        pm.sync().await?;
+        // The daemon serves its frozen pre-sync snapshot until told
+        // otherwise; refresh it before probing so the update list
+        // below reflects the sync that just finished.
+        crate::cli::packages::common::refresh_daemon_index_after_sync().await?;
     }
 
     let mut all_updates: Vec<UpdateInfo> = Vec::with_capacity(32);
     let skip_aur = crate::core::paths::test_mode() || crate::core::env::distro::is_debian_like();
-    let official_pb = modern_ui::modern_spinner("Checking", "official repositories");
-    // The serial path never started an AUR spinner on hosts that skip that
-    // lane. Starting one here and leaving it live on Skipped would keep a
-    // "Checking AUR packages" ticker on Debian and under tests.
-    let aur_pb = (!skip_aur).then(|| modern_ui::modern_spinner("Checking", "AUR packages"));
+    let check_detail = if skip_aur {
+        "official repositories"
+    } else {
+        "official and AUR"
+    };
+    let check_pb = modern_ui::modern_spinner("Checking", check_detail);
     let check_start = std::time::Instant::now();
 
     // The official and AUR checks touch independent state (sync databases
@@ -284,49 +270,21 @@ pub async fn update(check_only: bool, yes: bool, dry_run: bool) -> Result<()> {
     let official_updates = match official_result {
         Ok(updates) => updates,
         Err(error) => {
-            modern_ui::finish_clear(&official_pb);
-            if let Some(pb) = &aur_pb {
-                modern_ui::finish_clear(pb);
-            }
+            modern_ui::finish_clear(&check_pb);
             return Err(error);
         }
     };
     let check_elapsed = check_start.elapsed();
-
-    if official_updates.is_empty() {
-        modern_ui::finish_info(&official_pb, "No updates in official repositories");
-    } else {
-        modern_ui::finish_success(
-            &official_pb,
-            "Found",
-            &format!(
-                "{} update(s) in {:.2}s",
-                official_updates.len(),
-                check_elapsed.as_secs_f64()
-            ),
-        );
-    }
+    modern_ui::finish_clear(&check_pb);
+    modern_ui::print_source_lane("official", official_updates.len(), check_elapsed);
 
     let official_count = official_updates.len();
     all_updates.extend(official_updates);
 
     let aur_packages = match aur_result {
-        Err(error) => {
-            if let Some(pb) = &aur_pb {
-                modern_ui::finish_clear(pb);
-            }
-            return Err(error);
-        }
-        Ok(AurCheck::Skipped) => {
-            if let Some(pb) = &aur_pb {
-                modern_ui::finish_clear(pb);
-            }
-            Vec::new()
-        }
+        Err(error) => return Err(error),
+        Ok(AurCheck::Skipped) => Vec::new(),
         Ok(AurCheck::Failed(error)) => {
-            if let Some(pb) = &aur_pb {
-                modern_ui::finish_clear(pb);
-            }
             if official_count == 0 {
                 return Err(error).context("Failed to check AUR updates");
             }
@@ -348,17 +306,7 @@ pub async fn update(check_only: bool, yes: bool, dry_run: bool) -> Result<()> {
                     repo: "AUR".to_string(),
                 });
             }
-            if let Some(pb) = &aur_pb {
-                if count == 0 {
-                    modern_ui::finish_info(pb, "No updates in AUR");
-                } else {
-                    modern_ui::finish_success(
-                        pb,
-                        "Found",
-                        &format!("{count} AUR update(s) in {:.2}s", aur_elapsed.as_secs_f64()),
-                    );
-                }
-            }
+            modern_ui::print_source_lane("aur", count, aur_elapsed);
             for (name, violation) in &skipped {
                 modern_ui::print_warning(&format!(
                     "Skipping AUR update for {}: {violation}",
@@ -377,7 +325,8 @@ pub async fn update(check_only: bool, yes: bool, dry_run: bool) -> Result<()> {
     }
 
     if dry_run {
-        return update_dry_run(&all_updates);
+        update_dry_run(&all_updates);
+        return Ok(());
     }
 
     modern_ui::print_update_summary(&all_updates);
@@ -428,14 +377,15 @@ pub async fn update(check_only: bool, yes: bool, dry_run: bool) -> Result<()> {
     let operation_result: Result<()> = async {
         if official_count > 0 {
             if needs_deferred_sync {
-                // The elevated child owns terminal output and may prompt for
-                // sudo, so no parent spinner can remain active.
+                // Databases were refreshed before the prompt (or skipped via
+                // `--no-sync`). The child only commits the upgrade. `fullupdate`
+                // would download every repository again.
                 println!(
-                    "  {} Syncing & upgrading {official_count} official packages...",
+                    "  {} Upgrading {official_count} official packages...",
                     style::community("→")
                 );
                 crate::package_managers::arch::run_privileged_operation(
-                    "fullupdate",
+                    "update",
                     &[],
                     &[],
                     || async { Ok(()) },
@@ -453,27 +403,34 @@ pub async fn update(check_only: bool, yes: bool, dry_run: bool) -> Result<()> {
         }
 
         if !aur_packages.is_empty() {
-            println!();
-            println!(
-                "  {} Building {} AUR package{} in parallel...",
-                style::community("→"),
-                aur_packages.len(),
-                if aur_packages.len() == 1 { "" } else { "s" }
-            );
-
             use crate::package_managers::aur::{BuildJob, ParallelBuilder};
             use std::sync::Arc;
 
             let client = Arc::new(crate::package_managers::AurClient::new()?);
+            let max_concurrent = aur_build_concurrency(
+                std::env::var("OMG_AUR_PARALLEL").ok().as_deref(),
+                client.build_concurrency(),
+            );
+            println!();
+            if max_concurrent == 1 || aur_packages.len() == 1 {
+                println!(
+                    "  {} Building {} AUR package{}...",
+                    style::community("→"),
+                    aur_packages.len(),
+                    if aur_packages.len() == 1 { "" } else { "s" }
+                );
+            } else {
+                println!(
+                    "  {} Building {} AUR packages in parallel...",
+                    style::community("→"),
+                    aur_packages.len()
+                );
+            }
             // AUR updates are reported per installed output, but split packages
             // share one PackageBase checkout and must be built together. Resolve
             // the package-base graph only after confirmation so check-only and
             // cancelled updates do not pay an extra network request.
             let jobs: Vec<BuildJob> = client.build_jobs_for_updates(&aur_packages).await?;
-            let max_concurrent = aur_build_concurrency(
-                std::env::var("OMG_AUR_PARALLEL").ok().as_deref(),
-                client.build_concurrency(),
-            );
             let builder = ParallelBuilder::new(client, max_concurrent);
 
             let build_summary = builder.build_packages(jobs).await?;
@@ -520,64 +477,10 @@ pub async fn update(check_only: bool, yes: bool, dry_run: bool) -> Result<()> {
     )
 }
 
-fn update_dry_run(updates: &[UpdateInfo]) -> Result<()> {
-    ui::print_header("OMG", "Dry Run - Update Preview");
-    ui::print_spacer();
-    println!(
-        "  {} The following packages would be updated:\n",
-        style::info("→")
-    );
-
-    let mut total_download: u64 = 0;
-    for update in updates.iter().take(50) {
-        let download_size = match crate::package_managers::get_sync_pkg_info(&update.name) {
-            Ok(Some(info)) => {
-                total_download += info.download_size.unwrap_or(0);
-                format!(
-                    "{:.2} MB",
-                    info.download_size.unwrap_or(0) as f64 / 1024.0 / 1024.0
-                )
-            }
-            Ok(None) => "unknown".to_string(),
-            Err(error) => {
-                return Err(error).with_context(|| {
-                    format!("Failed to look up {} in official repositories", update.name)
-                });
-            }
-        };
-
-        println!(
-            "    {} {} {} {} {} ({})",
-            style::success("↑"),
-            style::package(&update.name),
-            style::dim(&update.old_version),
-            style::arrow("->"),
-            style::version(&update.new_version),
-            style::dim(&download_size)
-        );
-    }
-
-    if updates.len() > 50 {
-        println!(
-            "    {}",
-            style::dim(&format!("(+{} more updates)", updates.len() - 50))
-        );
-    }
-
-    ui::print_spacer();
-    println!("  {} Total updates: {}", style::info("→"), updates.len());
-    let estimate_label = if updates.len() > 50 {
-        "Estimated download (first 50)"
-    } else {
-        "Estimated download"
-    };
-    println!(
-        "  {} {estimate_label}: {:.2} MB",
-        style::info("→"),
-        total_download as f64 / 1024.0 / 1024.0
-    );
+fn update_dry_run(updates: &[UpdateInfo]) {
+    modern_ui::print_phase_header("", "Update", "dry run");
+    modern_ui::print_update_summary(updates);
     ui::print_dry_run_footer();
-    Ok(())
 }
 
 #[cfg(test)]
@@ -595,7 +498,7 @@ mod tests {
 
     #[test]
     fn delegated_official_updates_are_recorded_by_the_child_not_twice() {
-        // Regression: with deferred elevation the child (fullupdate arm)
+        // Regression: with deferred elevation the child (`update` arm)
         // records official changes; the parent must record only its own AUR
         // portion or every official package appears twice in history.
         let all = vec![
@@ -619,6 +522,19 @@ mod tests {
         let recorded = parent_recorded_changes(&all, &aur, false);
 
         assert_eq!(recorded.len(), 2);
+    }
+
+    #[test]
+    fn update_phase_context_keeps_check_wording() {
+        assert_eq!(update_phase_context(false, false), "Refreshing catalogs");
+        assert_eq!(
+            update_phase_context(false, true),
+            "Checking for updates · cached"
+        );
+        assert_eq!(
+            update_phase_context(true, false),
+            "Dry run · checking for updates"
+        );
     }
 
     #[test]

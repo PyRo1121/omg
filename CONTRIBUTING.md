@@ -52,8 +52,7 @@ omg/
 ├── src/
 │   ├── bin/
 │   │   ├── omg.rs          # CLI entry point
-│   │   ├── omgd.rs         # Daemon entry point
-│   │   └── omg-fast.rs     # Fast CLI (direct mode)
+│   │   └── omgd.rs         # Daemon entry point
 │   ├── cli/
 │   │   ├── args.rs         # Argument parsing (clap)
 │   │   └── commands.rs     # Command implementations

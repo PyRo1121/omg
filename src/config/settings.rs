@@ -3,8 +3,12 @@
 use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
 use std::path::{Component, Path, PathBuf};
+use std::sync::atomic::{AtomicBool, Ordering};
 
 use crate::core::paths;
+
+/// Set by `omg install --review` / `omg update --review` for this process.
+static CLI_REVIEW_PKGBUILD: AtomicBool = AtomicBool::new(false);
 
 /// Maximum config file size (1MB) to prevent `DoS` via large configs
 const MAX_CONFIG_SIZE: u64 = 1024 * 1024;
@@ -130,7 +134,8 @@ pub struct AurBuildSettings {
     pub build_method: AurBuildMethod,
     /// Maximum concurrent AUR builds
     pub build_concurrency: usize,
-    /// Require interactive PKGBUILD review before building
+    /// Require interactive PKGBUILD review before building.
+    /// Off by default; enable with `omg update --review` or this setting.
     pub review_pkgbuild: bool,
     /// Use stricter makepkg flags (cleanbuild/verifysource)
     pub secure_makepkg: bool,
@@ -187,12 +192,10 @@ impl Default for Settings {
 
 impl Default for AurBuildSettings {
     fn default() -> Self {
-        let jobs = std::thread::available_parallelism().map_or(1, std::num::NonZero::get);
-
         Self {
             build_method: AurBuildMethod::Bubblewrap,
-            build_concurrency: jobs.max(1),
-            review_pkgbuild: true,
+            build_concurrency: 1,
+            review_pkgbuild: false,
             secure_makepkg: true,
             allow_unsafe_builds: false,
             allow_network: false,
@@ -265,7 +268,7 @@ impl Settings {
                 use std::sync::atomic::{AtomicBool, Ordering};
                 static WARNED: AtomicBool = AtomicBool::new(false);
                 if !WARNED.swap(true, Ordering::Relaxed) {
-                    tracing::warn!(
+                    tracing::debug!(
                         key = key.as_str(),
                         "config section '{key}' is deprecated and ignored by this omg version"
                     );
@@ -291,6 +294,16 @@ impl Settings {
             ROOT_KEYS.join(", "),
             AUR_KEYS.join(", ")
         )
+    }
+
+    /// Opt into PKGBUILD review for this invocation (`--review`).
+    pub fn enable_cli_review_pkgbuild() {
+        CLI_REVIEW_PKGBUILD.store(true, Ordering::SeqCst);
+    }
+
+    #[cfg(test)]
+    fn reset_cli_review_pkgbuild() {
+        CLI_REVIEW_PKGBUILD.store(false, Ordering::SeqCst);
     }
 
     pub fn load() -> Result<Self> {
@@ -339,10 +352,17 @@ impl Settings {
                 );
             }
 
-            Ok(settings)
+            Ok(settings.with_runtime_overrides())
         } else {
-            Ok(Self::default())
+            Ok(Self::default().with_runtime_overrides())
         }
+    }
+
+    fn with_runtime_overrides(mut self) -> Self {
+        if CLI_REVIEW_PKGBUILD.load(Ordering::SeqCst) {
+            self.aur.review_pkgbuild = true;
+        }
+        self
     }
 
     /// Validate all path fields to prevent path traversal attacks
@@ -538,6 +558,11 @@ mod tests {
     }
 
     #[test]
+    fn aur_build_concurrency_defaults_to_one() {
+        assert_eq!(Settings::default().aur.build_concurrency, 1);
+    }
+
+    #[test]
     fn example_security_defaults_match_runtime_defaults() -> Result<()> {
         let example = include_str!("../../examples/config.toml")
             .lines()
@@ -571,6 +596,27 @@ mod tests {
             defaults.aur.allow_unsafe_builds
         );
         Ok(())
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn cli_review_flag_enables_pkgbuild_review() {
+        Settings::reset_cli_review_pkgbuild();
+        assert!(
+            !Settings::default().aur.review_pkgbuild,
+            "PKGBUILD review stays off unless opted in"
+        );
+        Settings::enable_cli_review_pkgbuild();
+        let settings = Settings::default().with_runtime_overrides();
+        Settings::reset_cli_review_pkgbuild();
+        assert!(
+            settings.aur.review_pkgbuild,
+            "--review must turn PKGBUILD review on for this process"
+        );
+        assert!(
+            !Settings::default().aur.review_pkgbuild,
+            "the process flag must not mutate Settings::default"
+        );
     }
 
     /// Saving must preserve user comments and unknown keys, applying only

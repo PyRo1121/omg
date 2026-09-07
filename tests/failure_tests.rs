@@ -173,10 +173,8 @@ fn test_missing_dependency_fails_gracefully() -> Result<()> {
 
 #[test]
 #[serial]
-fn test_locked_database_shows_friendly_message() -> Result<()> {
+fn test_stale_database_lock_is_reclaimed() -> Result<()> {
     let harness = AlpmHarness::new()?;
-
-    // Manually create a lock file
     let lock_file = harness.db_path().join("db.lck");
     std::fs::File::create(&lock_file)?;
 
@@ -189,13 +187,42 @@ fn test_locked_database_shows_friendly_message() -> Result<()> {
         paths::reset_test_overrides();
     }
 
-    // Attempting to create an Alpm handle or start a transaction should fail
-    // when the handle is NOT provided (production path).
-    let result = alpm_ops::execute_transaction(
-        vec!["any-pkg".to_string()],
-        TransactionKind::Install,
-        None, // No injected handle, force creation of new one
+    let result =
+        alpm_ops::execute_transaction(vec!["any-pkg".to_string()], TransactionKind::Install, None);
+
+    assert!(
+        !lock_file.exists(),
+        "an unheld lock file must not survive transaction init"
     );
+    if let Err(error) = result {
+        let message = error.to_string();
+        assert!(
+            !message.contains("Database is locked"),
+            "stale lock must not surface as a live lock, got: {message}"
+        );
+    }
+
+    Ok(())
+}
+
+#[test]
+#[serial]
+fn test_locked_database_shows_friendly_message() -> Result<()> {
+    let harness = AlpmHarness::new()?;
+    let lease = harness.alpm()?;
+    lease.trans_init(alpm::TransFlag::empty())?;
+
+    paths::set_test_overrides(
+        Some(harness.root().to_path_buf()),
+        Some(harness.db_path().to_path_buf()),
+    );
+
+    scopeguard::defer! {
+        paths::reset_test_overrides();
+    }
+
+    let result =
+        alpm_ops::execute_transaction(vec!["any-pkg".to_string()], TransactionKind::Install, None);
 
     assert!(result.is_err(), "Transaction should fail due to lock file");
     let err = result.unwrap_err().to_string();

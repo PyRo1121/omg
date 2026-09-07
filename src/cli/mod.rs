@@ -6,6 +6,7 @@ use anyhow::Result;
 
 mod args;
 pub mod blame;
+pub mod chrome;
 pub mod ci;
 pub mod commands;
 pub mod components;

@@ -391,4 +391,13 @@ mod tests {
         assert!(ArchiveSnapshot::from_handoff(&token).is_err());
         Ok(())
     }
+
+    #[test]
+    fn display_target_hides_handoff_prefix() {
+        assert_eq!(
+            display_target("/__omg_archive/1/3/deadbeef/none/foo.pkg.tar.zst"),
+            "foo.pkg.tar.zst"
+        );
+        assert_eq!(display_target("foo.pkg.tar.zst"), "foo.pkg.tar.zst");
+    }
 }

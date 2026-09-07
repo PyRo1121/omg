@@ -11,7 +11,6 @@ use crate::core::client::DaemonClient;
 use crate::package_managers::get_package_manager;
 use std::fmt::Write;
 use std::time::Duration;
-use unicode_width::UnicodeWidthStr;
 
 #[cfg(feature = "arch")]
 use crate::package_managers::{AurClient, search_detailed};
@@ -55,6 +54,7 @@ pub struct PackageInfo {
     pub maintainer: Option<String>,
     pub popularity: Option<f64>,
     pub out_of_date: bool,
+    pub installed: bool,
 }
 
 /// Info state machine
@@ -163,25 +163,13 @@ impl Model for InfoModel {
             InfoState::Complete => {
                 if let Some(info) = &self.info {
                     let mut output = String::new();
-
-                    // Header. The rule length follows the subtitle's display
-                    // width so multibyte package names keep the box aligned.
-                    let subtitle = format!(
-                        "Package Information: {}",
-                        style::sanitize_terminal_text(&info.name)
-                    );
+                    let subtitle = style::sanitize_terminal_text(&info.name);
                     let _ = writeln!(
                         output,
-                        "\n{} {}\n{} {}\n{}{}\n",
-                        style::accent("┌─"),
-                        style::runtime("OMG"),
-                        style::accent("│"),
-                        style::emphasis(&subtitle),
-                        style::accent("└"),
-                        style::accent(&"─".repeat(subtitle.width()))
+                        "{}",
+                        crate::cli::modern_ui::phase_header_text("Info", &subtitle)
                     );
 
-                    // Details
                     let _ = writeln!(
                         output,
                         "{}",
@@ -198,14 +186,6 @@ impl Model for InfoModel {
                             &style::version(&style::sanitize_terminal_text(&info.version))
                         )
                     );
-                    let _ = writeln!(
-                        output,
-                        "{}",
-                        Self::render_kv(
-                            "Description",
-                            &style::sanitize_terminal_text(&info.description)
-                        )
-                    );
 
                     let source_val = if info.repo == "aur" {
                         info.source.styled_label()
@@ -217,51 +197,19 @@ impl Model for InfoModel {
                         )
                     };
                     let _ = writeln!(output, "{}", Self::render_kv("Source", &source_val));
-
-                    if let Some(url) = &info.url {
-                        let _ = writeln!(
-                            output,
-                            "{}",
-                            Self::render_kv(
-                                "URL",
-                                &style::url(&style::sanitize_terminal_text(url))
-                            )
-                        );
-                    }
-
-                    if let Some(size) = info.size {
-                        let _ = writeln!(output, "{}", Self::render_kv("Size", &style::size(size)));
-                    }
-
-                    if !info.licenses.is_empty() {
-                        let _ = writeln!(
-                            output,
-                            "{}",
-                            Self::render_kv(
-                                "License",
-                                &style::sanitize_terminal_text(&info.licenses.join(", "))
-                            )
-                        );
-                    }
-
-                    if let Some(maintainer) = &info.maintainer {
-                        let _ = writeln!(
-                            output,
-                            "{}",
-                            Self::render_kv(
-                                "Maintainer",
-                                &style::sanitize_terminal_text(maintainer)
-                            )
-                        );
-                    }
-
-                    if let Some(pop) = info.popularity {
-                        let _ = writeln!(
-                            output,
-                            "{}",
-                            Self::render_kv("Popularity", &format!("{pop:.2}%"))
-                        );
-                    }
+                    let _ = writeln!(
+                        output,
+                        "{}",
+                        Self::render_kv("Installed", if info.installed { "yes" } else { "no" })
+                    );
+                    let _ = writeln!(
+                        output,
+                        "{}",
+                        Self::render_kv(
+                            "Description",
+                            &style::sanitize_terminal_text(&info.description)
+                        )
+                    );
 
                     if info.out_of_date {
                         let _ = writeln!(
@@ -271,6 +219,54 @@ impl Model for InfoModel {
                         );
                     }
 
+                    if crate::cli::modern_ui::is_verbose() {
+                        if let Some(url) = &info.url {
+                            let _ = writeln!(
+                                output,
+                                "{}",
+                                Self::render_kv(
+                                    "URL",
+                                    &style::url(&style::sanitize_terminal_text(url))
+                                )
+                            );
+                        }
+
+                        if let Some(size) = info.size {
+                            let _ =
+                                writeln!(output, "{}", Self::render_kv("Size", &style::size(size)));
+                        }
+
+                        if !info.licenses.is_empty() {
+                            let _ = writeln!(
+                                output,
+                                "{}",
+                                Self::render_kv(
+                                    "License",
+                                    &style::sanitize_terminal_text(&info.licenses.join(", "))
+                                )
+                            );
+                        }
+
+                        if let Some(maintainer) = &info.maintainer {
+                            let _ = writeln!(
+                                output,
+                                "{}",
+                                Self::render_kv(
+                                    "Maintainer",
+                                    &style::sanitize_terminal_text(maintainer)
+                                )
+                            );
+                        }
+
+                        if let Some(pop) = info.popularity {
+                            let _ = writeln!(
+                                output,
+                                "{}",
+                                Self::render_kv("Popularity", &format!("{pop:.2}%"))
+                            );
+                        }
+                    }
+
                     output
                 } else {
                     "No info available".to_string()
@@ -278,6 +274,10 @@ impl Model for InfoModel {
             }
         }
     }
+}
+
+fn package_is_installed(name: &str) -> bool {
+    crate::package_managers::is_installed_fast(name).unwrap_or(false)
 }
 
 /// Helper function to fetch package info
@@ -310,6 +310,7 @@ async fn fetch_info(package: &str) -> InfoMsg {
             maintainer: None,
             popularity: None,
             out_of_date: false,
+            installed: package_is_installed(package),
         });
     }
 
@@ -335,6 +336,7 @@ async fn fetch_info(package: &str) -> InfoMsg {
                         maintainer: None,
                         popularity: None,
                         out_of_date: false,
+                        installed: info.installed,
                     });
                 }
                 Ok(None) => {}
@@ -358,6 +360,7 @@ async fn fetch_info(package: &str) -> InfoMsg {
                         maintainer: None,
                         popularity: None,
                         out_of_date: false,
+                        installed: info.installed,
                     });
                 }
                 Ok(None) => return InfoMsg::NotFound(package.to_string()),
@@ -380,6 +383,7 @@ async fn fetch_info(package: &str) -> InfoMsg {
                         maintainer: None,
                         popularity: None,
                         out_of_date: false,
+                        installed: pkg.installed,
                     });
                 }
                 Ok(None) => return InfoMsg::NotFound(package.to_string()),
@@ -436,6 +440,7 @@ async fn fetch_info(package: &str) -> InfoMsg {
                 maintainer,
                 popularity,
                 out_of_date,
+                installed: package_is_installed(package),
             })
         }
     }
@@ -488,6 +493,7 @@ mod tests {
             maintainer: None,
             popularity: None,
             out_of_date: false,
+            installed: false,
         };
         let _cmd = model.update(InfoMsg::InfoReceived(test_info));
         assert_eq!(model.state, InfoState::Complete);
@@ -509,6 +515,7 @@ mod tests {
             maintainer: None,
             popularity: None,
             out_of_date: false,
+            installed: false,
         }));
         let view = model.view();
         assert!(view.contains("test-pkg"));
@@ -521,9 +528,10 @@ mod tests {
             !view.contains('\u{202e}') && !view.contains('\u{200b}'),
             "view must exclude the bidi override and zero-width chars, got: {view}"
         );
+        assert!(view.contains("Installed"));
         assert!(
-            view.contains("1.0.0") && view.contains("extra"),
-            "version and repo must still render after sanitization, got: {view}"
+            !view.contains("URL") && !view.contains("Size"),
+            "compact view must hide verbose fields, got: {view}"
         );
     }
 

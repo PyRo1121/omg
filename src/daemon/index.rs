@@ -553,20 +553,15 @@ impl PackageIndex {
         if query.is_empty() {
             return Vec::new();
         }
-        let query_lower = query.to_ascii_lowercase();
-        let mut suggestions = Vec::with_capacity(limit);
-
-        for item in &self.items {
-            if suggestions.len() >= limit {
-                break;
-            }
-            let name_lower = self.pool.get(item.name_lower_offset);
-            if name_lower.starts_with(&query_lower) {
-                suggestions.push(self.pool.get(item.name_offset).to_string());
-            }
-        }
-
-        suggestions
+        let mut names: Vec<String> = self
+            .items
+            .iter()
+            .map(|item| self.pool.get(item.name_offset).to_string())
+            .collect();
+        crate::core::completion::CompletionEngine::fuzzy_indices(query, &names, limit)
+            .into_iter()
+            .map(|index| std::mem::take(&mut names[index]))
+            .collect()
     }
 }
 
@@ -671,14 +666,19 @@ mod tests {
     fn populated_index_suggests_prefix_matches_and_looks_up_exact_names() {
         let index = fixture_index();
 
-        assert_eq!(
-            index.suggest("fire", 10),
-            vec![
-                "firefox".to_string(),
-                "firefox-developer-edition".to_string()
-            ]
+        let fire = index.suggest("fire", 10);
+        assert!(fire.iter().any(|name| name == "firefox"));
+        assert!(fire.iter().any(|name| name == "firefox-developer-edition"));
+        assert_eq!(fire.first().map(String::as_str), Some("firefox"));
+        assert!(
+            index
+                .suggest("frfox", 10)
+                .iter()
+                .any(|name| name == "firefox"),
+            "suggest must rank fuzzy matches, not prefix-only"
         );
         assert!(index.suggest("zzz", 10).is_empty());
+        assert!(index.suggest("", 10).is_empty());
 
         let firefox = index.get("firefox").expect("exact name must resolve");
         assert_eq!(firefox.version, "146.0");

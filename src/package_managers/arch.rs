@@ -3,10 +3,10 @@ use std::pin::Pin;
 
 use anyhow::Result as AnyhowResult;
 
-use crate::core::{Package, PackageSource, can_write_pacman_db, privilege};
+use crate::core::{can_write_pacman_db, privilege, Package, PackageSource};
 use crate::package_managers::{
-    TransactionKind, get_system_status, invalidate_caches, traits::PackageManager,
-    types::VersionDisplay,
+    get_system_status, invalidate_caches, traits::PackageManager, types::VersionDisplay,
+    TransactionKind,
 };
 
 /// Arch Linux package manager (ALPM) implementation
@@ -62,26 +62,35 @@ where
     if can_write_pacman_db() {
         tracing::debug!("Using direct ALPM access as root");
         operation().await?;
-        invalidate_caches()?;
+        after_privileged_alpm_write().await?;
         return Ok(());
     }
 
-    // FALLBACK: Elevate via sudo (uses ultra-fast elevated path)
-    tracing::debug!("Elevating privileges for {command}");
-    let mut args = vec![command];
-    args.extend_from_slice(command_options);
-    args.push("--");
-    args.extend(packages.iter().map(String::as_str));
-    // For package-mutating delegations the PARENT owns the history record (it
-    // has richer change metadata and AUR handling); the child must stay silent
-    // to avoid double entries. System-upgrade delegations (fullupdate /
-    // turboupdate) carry no packages and the child is their only recorder.
-    if matches!(command, "install" | "remove" | "sync") {
-        args.push(privilege::FLOW_PARENT_RECORDS);
+    // A live parent spinner redraws over sudo's password prompt and over the
+    // elevated child's own progress, which looks like a hung duplicate bar.
+    {
+        let _quiesce = crate::cli::modern_ui::quiesce_terminal();
+        tracing::debug!("Elevating privileges for {command}");
+        let mut args = vec![command];
+        args.extend_from_slice(command_options);
+        args.push("--");
+        args.extend(packages.iter().map(String::as_str));
+        // For package-mutating delegations the PARENT owns the history record (it
+        // has richer change metadata and AUR handling); the child must stay silent
+        // to avoid double entries. System-upgrade delegations (fullupdate /
+        // turboupdate) carry no packages and the child is their only recorder.
+        if matches!(command, "install" | "remove" | "sync") {
+            args.push(privilege::FLOW_PARENT_RECORDS);
+        }
+        privilege::run_privileged_child(&args).await?;
     }
-    privilege::run_privileged_child(&args).await?;
-    invalidate_caches()?;
+    after_privileged_alpm_write().await?;
     Ok(())
+}
+
+async fn after_privileged_alpm_write() -> AnyhowResult<()> {
+    invalidate_caches()?;
+    crate::core::client::refresh_daemon_after_catalog_write().await
 }
 
 impl PackageManager for ArchPackageManager {
@@ -187,11 +196,27 @@ impl PackageManager for ArchPackageManager {
 
     fn sync(&self) -> Pin<Box<dyn Future<Output = AnyhowResult<()>> + Send + '_>> {
         Box::pin(async move {
+            let sync_start = std::time::Instant::now();
             run_privileged_operation("sync", &[], &[], || async {
                 crate::package_managers::sync_databases_parallel().await?;
                 Ok(())
             })
-            .await
+            .await?;
+            let repo_count = crate::core::pacman_conf::PacmanConfig::parse(
+                crate::core::paths::pacman_conf_path(),
+            )
+            .map_or(0, |config| config.repos.len());
+            let sync_elapsed = sync_start.elapsed();
+            let detail = if repo_count > 0 {
+                format!(
+                    "{repo_count} repositories in {:.2}s",
+                    sync_elapsed.as_secs_f64()
+                )
+            } else {
+                format!("in {:.2}s", sync_elapsed.as_secs_f64())
+            };
+            crate::cli::modern_ui::print_finished_step("Synced", &detail);
+            Ok(())
         })
     }
 

@@ -1,6 +1,7 @@
 //! Parallel package-database synchronization with bounded mirror selection.
 
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
 use std::time::Duration;
 
 use anyhow::{Context, Result};
@@ -10,9 +11,7 @@ use tokio::fs::File;
 use tokio::io::AsyncWriteExt;
 
 use crate::cli::progress::{Accent, Outcome, ProgressTask, TaskKind, TaskSpec};
-use crate::config::Settings;
 use crate::core::{http::download_client, paths};
-use crate::package_managers::aur_metadata::sync_aur_metadata;
 
 fn begin_same_dir_temp(dest: &Path) -> Result<(std::fs::File, tempfile::TempPath)> {
     let parent = dest.parent().unwrap_or_else(|| Path::new("."));
@@ -66,6 +65,7 @@ const MAX_SYNC_DB_BYTES: u64 = 512 * 1024 * 1024;
 const MAX_SYNC_SIGNATURE_BYTES: u64 = 1024 * 1024;
 const MIRROR_RACE_TIMEOUT_MS: u64 = 2000;
 const MAX_MIRRORS_PER_REPO: usize = 5;
+const MAX_PARALLEL_REPO_SYNCS: usize = 4;
 async fn race_mirrors(client: &Client, urls: &[String]) -> Option<usize> {
     use futures::future::select_all;
 
@@ -194,25 +194,6 @@ async fn download_db(
     siglevel: alpm::SigLevel,
     task: &ProgressTask,
 ) -> Result<()> {
-    task.set_message("racing mirrors...");
-
-    let urls = if urls.len() > 1 {
-        if let Some(fastest_idx) = race_mirrors(client, &urls).await {
-            let mut reordered = Vec::with_capacity(urls.len());
-            reordered.push(urls[fastest_idx].clone());
-            for (i, url) in urls.iter().enumerate() {
-                if i != fastest_idx {
-                    reordered.push(url.clone());
-                }
-            }
-            reordered
-        } else {
-            urls
-        }
-    } else {
-        urls
-    };
-
     let existing_mtime = if live_dest.exists() {
         tokio::fs::metadata(live_dest)
             .await
@@ -225,6 +206,24 @@ async fn download_db(
             })
     } else {
         None
+    };
+
+    let urls = if existing_mtime.is_some() || urls.len() <= 1 {
+        urls
+    } else {
+        task.set_message("racing mirrors...");
+        if let Some(fastest_idx) = race_mirrors(client, &urls).await {
+            let mut reordered = Vec::with_capacity(urls.len());
+            reordered.push(urls[fastest_idx].clone());
+            for (i, url) in urls.iter().enumerate() {
+                if i != fastest_idx {
+                    reordered.push(url.clone());
+                }
+            }
+            reordered
+        } else {
+            urls
+        }
     };
 
     let mut last_error = None;
@@ -433,6 +432,7 @@ fn commit_staged_files(
             .context("Pacman database path must be valid UTF-8")?,
     )
     .context("Failed to initialize package database writer")?;
+    crate::package_managers::alpm_ops::reclaim_stale_database_lock(database_root)?;
     alpm.trans_init(alpm::TransFlag::empty()).with_context(|| {
         format!(
             "Failed to acquire package database lock in {}",
@@ -602,13 +602,6 @@ struct StagedRepository {
 
 /// Synchronize configured package databases concurrently.
 pub async fn sync_databases_parallel() -> Result<()> {
-    println!(
-        "{} Synchronizing package databases...\n",
-        crate::cli::style::runtime("OMG")
-    );
-
-    // Resolve the complete repository policy before creating staging files or
-    // starting the independent AUR refresh.
     let config = crate::core::pacman_conf::PacmanConfig::parse(paths::pacman_conf_path())
         .context("Failed to load repository servers from pacman.conf")?;
     let repository_urls = repository_database_urls(&config, std::env::consts::ARCH)?;
@@ -635,23 +628,6 @@ pub async fn sync_databases_parallel() -> Result<()> {
 
     // Set up progress lanes
     let client = download_client().clone();
-
-    // Start AUR metadata sync in background
-    let aur_sync_handle = {
-        let client = client.clone();
-        tokio::spawn(async move {
-            let settings = match Settings::load() {
-                Ok(settings) => settings,
-                Err(error) => {
-                    tracing::error!("Failed to load OMG settings for AUR metadata sync: {error}");
-                    return;
-                }
-            };
-            if let Err(e) = sync_aur_metadata(&client, &settings, false).await {
-                tracing::warn!("Failed to sync AUR metadata: {}", e);
-            }
-        })
-    };
 
     // Repository names do not imply a mirror source: an enterprise [core]
     // override must never be replaced with the host's global mirrorlist.
@@ -687,9 +663,9 @@ pub async fn sync_databases_parallel() -> Result<()> {
         })
         .collect();
 
-    // Run all downloads in parallel using JoinSet for structured concurrency
     let repos_count = repos_to_sync.len();
     let mut tasks = tokio::task::JoinSet::new();
+    let sync_slots = Arc::new(tokio::sync::Semaphore::new(MAX_PARALLEL_REPO_SYNCS));
 
     let mut staged_repositories = Vec::with_capacity(repos_count);
     for (i, (name, urls, destination, siglevel)) in repos_to_sync.into_iter().enumerate() {
@@ -706,8 +682,13 @@ pub async fn sync_databases_parallel() -> Result<()> {
             signature: staged_signature.clone(),
             signature_destination,
         });
+        let slots = Arc::clone(&sync_slots);
 
         tasks.spawn(async move {
+            let _permit = slots
+                .acquire()
+                .await
+                .map_err(|error| anyhow::anyhow!("Database sync slot closed: {error}"))?;
             download_db(
                 &client,
                 urls,
@@ -731,11 +712,7 @@ pub async fn sync_databases_parallel() -> Result<()> {
         }
     }
 
-    // Wait for AUR sync to complete
-    if let Err(e) = aur_sync_handle.await {
-        tracing::warn!("AUR sync task panicked: {}", e);
-    }
-
+    crate::cli::modern_ui::clear_live_progress();
     println!();
 
     if errors.is_empty() {
@@ -790,10 +767,6 @@ pub async fn sync_databases_parallel() -> Result<()> {
     })
     .await
     .context("Package database publication task failed")??;
-    println!(
-        "{} Databases synchronized successfully!\n",
-        crate::cli::style::positive("✓")
-    );
     Ok(())
 }
 
@@ -991,6 +964,25 @@ mod tests {
         commit_staged_databases(&[(staged, live.clone())], 0, &mut directory).unwrap();
         assert_eq!(std::fs::read(live).unwrap(), b"new");
         assert!(!directory.path().join("db.lck").exists());
+    }
+
+    #[test]
+    fn database_publication_reclaims_a_stale_lock_file() {
+        let mut directory = tempfile::tempdir().expect("database root");
+        let live = directory.path().join("core.db");
+        let staged = directory.path().join("core.staged");
+        let lock = directory.path().join("db.lck");
+        std::fs::write(&live, b"old").unwrap();
+        std::fs::write(&staged, b"new").unwrap();
+        std::fs::write(&lock, b"").unwrap();
+
+        commit_staged_databases(&[(staged, live.clone())], 0, &mut directory)
+            .expect("a lock file with no live holder must not block publication");
+        assert_eq!(std::fs::read(live).unwrap(), b"new");
+        assert!(
+            !lock.exists(),
+            "publication must consume the reclaimed lock"
+        );
     }
 
     #[test]

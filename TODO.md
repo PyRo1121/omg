@@ -136,3 +136,137 @@ Dead code, dead tests, slop, and duplication round. Each death claim carries a c
 - [x] Dismissed. fast_status needs its error-kind wrapper and self_update needs mode control; both live behind dirty files anyway. No action.
 - [x] Shared helper plus readiness wait; omg-fast fixed for free. Done.
 - [x] One `ensure_local_archive_consent` gate in the security lib; both callers converted. Done.
+
+## Later. Onboarding
+
+Not now. After omg is a working package tool. Revisit this section then. Do not implement from this list while update, install, and completions are still the product.
+
+### Goal
+
+Install to first successful `omg search` / `omg install` in under two minutes, with Tab completion that actually fires. Personalize for a distro only if the user asks. Never become a distro manager. Never attach distro work to `omg update`.
+
+### What exists today
+
+`install.sh` copies the binary to `~/.local/bin`, may append PATH and `omg hook` to the login rc, and runs `omg completions $shell` (stdout discarded; the command still writes files). Flags: `OMG_SKIP_SHELL=1`, `OMG_NO_TELEMETRY=1`.
+
+`omg init` (`src/cli/init.rs`) is a 5-step TTY wizard. Non-TTY falls through to `--defaults`.
+
+1. Shell (zsh/bash/fish, detected from `$SHELL`, parent `/proc`, or passwd).
+2. Daemon start (shell init, on demand, systemd user unit, or manual).
+3. Telemetry consent (default off in the wizard).
+4. AUR build recommendation from CPU/RAM and ccache/sccache.
+5. Capture `omg.lock`.
+
+`omg doctor` already points a missing hook at `omg init`. First-run telemetry uses a marker file (`src/core/telemetry.rs` `is_first_run`), separate from the wizard.
+
+`docs/cli.md` says init installs completions. The wizard does not call `install_completions`. Completions live in `src/hooks/completions.rs` and must land on zsh `fpath` (oh-my-zsh `~/.oh-my-zsh/completions/` plus `~/.zfunc`). That gap bit this machine.
+
+Distro detection (`src/core/env/distro.rs`) is a package-backend enum: Arch, Debian, Ubuntu, Fedora, MacOS, Unknown. `ID=omarchy` with `ID_LIKE=arch` is Arch. There is no flavor/profile type. Do not overload `Distro` for onboarding. A profile is a user choice on top of the backend.
+
+Omarchy's updater (`/usr/bin/omarchy-update`) is a distro ritual. After `pacman -Syu` it runs `omarchy-migrate`, a post-update hook, `yay -Sua`, `mise up`, orphan removal, then restart. Migrations such as `migrations/1788596255.sh` (`omarchy-pkg-add vi`) install brand-new packages. `omg update` is sysupgrade only. That split stays.
+
+### Research (2026-09-06)
+
+**rustup-init.** One installer. PATH modification is an explicit question. Completions are documented separately (`rustup completions`, zsh needs `fpath+=~/.zfunc` before `compinit`). `-y` for CI. rustup#2915: never dump an interactive wizard into a non-TTY or into another tool's pipeline (makepkg/paru). If stdin is not a terminal, take defaults or refuse. Do not auto-launch `omg init` from `omg update` or `makepkg`.
+
+**uv (Astral).** The tool works with no wizard. The installer may edit PATH; `UV_NO_MODIFY_PATH` / `UV_UNMANAGED_INSTALL` for CI. Completions are a documented follow-up (`uv generate-shell-completion`), not a blocking prompt. Self-update can re-touch profiles unless opted out. omg should stay usable if the user skips init.
+
+**mise.** Three steps: install CLI, activate in rc (or shims), then add tools. Completions are extra and need `fpath` setup, same class of bug we hit. `mise bootstrap` can install packages, repos, dotfiles, systemd units, and a login shell, but only from an explicit config the user wrote. Distro-shaped work is opt-in config, not implicit takeover. Copy that rule.
+
+**paru / yay.** First run may write a config file. No distro flavor wizard. They stay AUR helpers. omg should stay a package tool the same way.
+
+**Omarchy.** `omarchy setup …` is security and boot, not package onboarding. Desktop extras belong to `omarchy-migrate` / `omarchy update`. omg may hint. It must not reimplement those scripts.
+
+**This repo's print CLI.** One rail, no boxes. The current init banner is a magenta box and a rocket. When we touch init, drop that. Match `src/cli/modern_ui.rs`. Keep ↑/↓/Enter/q. Keep `--defaults` for CI.
+
+### Gaps to close when we build this
+
+- Completions are not a wizard step. Docs claim they are. install.sh tries; `omg init` does not.
+- zsh completion only works if the write path is on `fpath`. Creating `~/.oh-my-zsh/completions/` matters on Omarchy/omz.
+- `--defaults` does not record telemetry (leaves settings as-is) and starts the daemon on demand, not via systemd.
+- First command can ping telemetry from the install marker before the user has seen the consent step.
+- No PATH check inside `omg init` (install.sh does it; `make install` may not).
+- No distro profile. Skip is the only honest default.
+- Wizard is not idempotent for completions or PATH. Hook install is.
+
+### Target flow
+
+Four layers. Each one works without the next.
+
+1. **Installer.** Binary on PATH. Optional hook. Optional completions. `OMG_SKIP_SHELL=1` stays. Do not run the wizard from `curl | bash` when stdin is the pipe (non-TTY). Print `omg init` as the next command if stdout is a TTY after the pipe returns.
+2. **`omg init`.** Machine setup. Shell, completions, daemon, telemetry, build flags, optional env capture. Idempotent. `omg doctor` repairs it.
+3. **Distro profile.** One skippable step. Writes a setting. May install aliases or a doctor hint. Does not run distro scripts. Does not change `omg update`.
+4. **First command.** Prove it. `omg search firefox` or `omg status`. Completion proof is `omg install <Tab>` after a new shell.
+
+### Wizard steps (when we ship it)
+
+Preflight. If not a TTY, `--defaults` and exit. Detect shell, os-release ID/ID_LIKE, existing hook, existing completions, daemon state. Re-running init must not duplicate rc lines.
+
+0. One line of chrome. Not a box. "Nothing here is required. q quits."
+1. Shell hook. Same as today. Detected shell highlighted.
+2. Completions. Call the same installer as `omg completions`. For zsh write both omz completions (create the dir if oh-my-zsh exists) and `~/.zfunc`. Tell the user they need a new shell, not `source` of a completion file that is not on `fpath`.
+3. Daemon. Same as today. Prefer systemd user unit on Linux when available; keep Manual.
+4. Telemetry. Default off. Record the choice in settings before any ping. First-run ping must respect that file.
+5. Build settings. Same as today. Skip leaves current config.
+6. Distro profile. **Skip is highlighted even when Omarchy is detected.** Options: Skip (pacman/yay only), Omarchy, maybe later CachyOS / EndeavourOS / vanilla Arch. Detected flavor is a label, not an auto-pick. `--distro skip|omarchy|detect` for scripts. `detect` still requires a TTY confirm unless `--yes` was passed with an explicit `--distro`.
+7. Env capture. Default no on a personal machine. Team docs can tell people to pass yes.
+
+Apply, then print three commands that work now. If profile is Omarchy, one extra line: desktop extras stay on `omarchy update` / `omarchy-migrate`. Point `omg doctor` as the repair loop.
+
+### Distro profile (data, not a backend)
+
+New optional setting, not a new `Distro` variant.
+
+```toml
+[profile]
+# none | omarchy | (later names)
+distro = "none"
+```
+
+| Choice | What we write | What we never do |
+| --- | --- | --- |
+| Skip / none | `distro = "none"` | Anything Omarchy-specific |
+| Omarchy | `distro = "omarchy"` | Call `omarchy-migrate`, `mise`, `omarchy-hook`, snapshot, firmware, or orphans on `omg update` |
+| Future names | Same pattern: hint + doctor | Reimplement that distro's updater |
+
+Omarchy profile may:
+
+- Leave a doctor check: if `omarchy-migrate --pending` exits 0, warn to run `omarchy-migrate` or `omarchy update`.
+- Mention `omg clean --orphans` as the omg-side equivalent of their orphan prompt (separate command).
+- Document that AUR is omg, not yay, so `omarchy-update-aur-pkgs` is redundant if they use omg.
+
+Omarchy profile must not:
+
+- `omarchy-pkg-add` from this repo.
+- Copy files out of `/usr/share/omarchy/migrations/`.
+- Pass `--overwrite '/usr/share/omarchy/*'` unless we later prove a real file-conflict failure and treat it as an ALPM flag, not a profile.
+
+Backend detection stays Arch for Omarchy. Profile is flavor. Tests should pin `classify("omarchy", "arch") == Distro::Arch` when that helper is touched.
+
+### Hard no
+
+- No wizard, migrate, mise, or orphan prompt inside `omg update` or `omg install`.
+- No auto-select of a distro because os-release matched.
+- No blocking first-command UX ("run init before you can search").
+- No interactive init from a pipe, CI, or elevated child.
+- No new package-backend enum value named Omarchy.
+
+### Flags
+
+Keep `--defaults`, `--skip-shell`, `--skip-daemon`. Add later: `--skip-completions`, `--distro <id>`, `--yes` (with explicit `--distro`, never implied detect).
+
+### Delivery order
+
+Product first. Then init that matches the docs. Then the skippable profile.
+
+- [ ] Do not start this until search, install, update, and zsh Tab are reliable on a real Omarchy box.
+- [ ] Make `omg init` install completions the same way `omg completions` does. Put zsh files on a directory that is actually on `fpath`.
+- [ ] Record telemetry consent before any first-run ping. Default off.
+- [ ] Drop the box banner when init is retouched. Match the print CLI.
+- [ ] Fix `docs/cli.md` so the listed setup steps match the code.
+- [ ] Add PATH repair to init/doctor for `make install` users who never ran `install.sh`.
+- [ ] Add `[profile] distro` with `none` as default. Skip highlighted in the menu.
+- [ ] Omarchy profile: doctor hint to `omarchy-migrate` / `omarchy update`. No migrate from omg.
+- [ ] `--distro` and `--defaults` never apply Omarchy extras without an explicit id.
+- [ ] Pin `classify("omarchy", "arch")` as Arch when distro tests are next edited.
+- [ ] Keep `omg update` as official plus AUR sysupgrade. Orphans stay on `omg clean --orphans`.

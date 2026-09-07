@@ -139,6 +139,21 @@ impl Request {
         }
     }
 
+    /// Daemon queries that must not serve a frozen libalpm or index snapshot.
+    #[must_use]
+    pub const fn reads_arch_sync_catalog(&self) -> bool {
+        matches!(
+            self,
+            Self::Search { .. }
+                | Self::Info { .. }
+                | Self::Suggest { .. }
+                | Self::Status { .. }
+                | Self::Explicit { .. }
+                | Self::ExplicitCount { .. }
+                | Self::SecurityAudit { .. }
+        )
+    }
+
     /// Returns the variant name as a static string for tracing/logging
     #[must_use]
     pub const fn variant_name(&self) -> &'static str {
@@ -450,6 +465,39 @@ mod tests {
             let decoded: PackageInfo = bitcode::deserialize(payload).expect("decode package frame");
             assert_eq!(decoded.source, source);
         }
+    }
+
+    #[test]
+    fn search_info_and_suggest_read_the_arch_sync_catalog() {
+        assert!(
+            Request::Search {
+                id: 1,
+                query: "pkg".to_string(),
+                limit: None,
+            }
+            .reads_arch_sync_catalog()
+        );
+        assert!(
+            Request::Info {
+                id: 1,
+                package: "pkg".to_string(),
+            }
+            .reads_arch_sync_catalog()
+        );
+        assert!(
+            Request::Suggest {
+                id: 1,
+                query: "pkg".to_string(),
+                limit: None,
+            }
+            .reads_arch_sync_catalog()
+        );
+        assert!(!Request::ListUpdates { id: 1 }.reads_arch_sync_catalog());
+        assert!(Request::Status { id: 1 }.reads_arch_sync_catalog());
+        assert!(Request::Explicit { id: 1 }.reads_arch_sync_catalog());
+        assert!(Request::ExplicitCount { id: 1 }.reads_arch_sync_catalog());
+        assert!(Request::SecurityAudit { id: 1 }.reads_arch_sync_catalog());
+        assert!(!Request::Ping { id: 1 }.reads_arch_sync_catalog());
     }
 
     #[test]

@@ -63,7 +63,7 @@ Native Windows is not supported.
 git clone https://github.com/PyRo1121/omg.git
 cd omg
 cargo build --release
-cp target/release/{omg,omgd,omg-fast} ~/.local/bin/
+cp target/release/{omg,omgd} ~/.local/bin/
 ```
 
 ---

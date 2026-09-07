@@ -32,7 +32,7 @@ For data that must survive reboots or daemon restarts, OMG keeps a versioned JSO
 
 ## 🔍 Tier 3: Binary Snapshot Layer
 
-A specialized binary snapshot file is maintained by the daemon to store your system's "vital signs" (update counts, error status). This is what enables `omg-fast` to power your shell prompt with zero-allocation, zero-IPC reads, achieving instantaneous updates.
+A specialized binary snapshot file is maintained by the daemon to store your system's "vital signs" (update counts, error status). This is what enables `omg ec|tc|oc|uc` to power your shell prompt with zero-allocation, zero-IPC reads, achieving instantaneous updates.
 
 ---
 
@@ -42,4 +42,4 @@ A specialized binary snapshot file is maintained by the daemon to store your sys
 The system always attempts to serve results from Tier 1 (Memory). If there is a miss, it falls back to the daemon's local package index. If the local results are insufficient, only then does it make a network request to the AUR.
 
 ### Status Monitoring
-System status is generated in the background every 5 minutes and stored in both Tier 1 and Tier 2. This ensures that tools like `omg-fast` always have access to a pre-computed, durable state without needing to query the system live.
+System status is generated in the background every 5 minutes and stored in both Tier 1 and Tier 2. This ensures that prompt counters (`omg ec|tc|oc|uc`) always have access to a pre-computed, durable state without needing to query the system live.

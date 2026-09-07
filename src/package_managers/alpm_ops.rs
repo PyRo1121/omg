@@ -2,6 +2,7 @@
 //!
 //! Pure libalpm queries and transactions without spawning a pacman subprocess.
 
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, LazyLock, Mutex};
 
 use anyhow::{Context, Result};
@@ -392,60 +393,31 @@ pub use crate::package_managers::alpm_direct::list_orphans_fast as list_orphans_
 /// is sanitized the same way search results are.
 pub fn display_pkg_info(info: &PackageInfo) {
     use crate::cli::{style, ui};
-    println!(
-        "{} {}\n",
-        style::emphasis(&style::sanitize_terminal_text(&info.name)),
-        style::dim(&style::sanitize_terminal_text(&info.version.to_string())),
+    let version = info.version.to_string();
+    let source = format!(
+        "Official repository ({})",
+        style::sanitize_terminal_text(&info.repo)
     );
-    ui::print_kv(
-        "Description",
-        &style::sanitize_terminal_text(&info.description),
+    ui::print_package_info(
+        &ui::InfoCore {
+            name: &info.name,
+            version: &version,
+            source: &source,
+            installed: info.installed,
+            description: &info.description,
+        },
+        &ui::InfoExtras {
+            url: info.url.as_deref().filter(|url| !url.is_empty()),
+            size: Some(info.size),
+            download: info.download_size,
+            licenses: &info.licenses,
+            depends: &info.depends,
+            maintainer: None,
+            votes: None,
+            popularity: None,
+            out_of_date: false,
+        },
     );
-    ui::print_kv(
-        "Source",
-        &format!(
-            "Official repository ({})",
-            style::sanitize_terminal_text(&info.repo)
-        ),
-    );
-    ui::print_kv(
-        "URL",
-        &style::url(&style::sanitize_terminal_text(
-            info.url
-                .as_deref()
-                .filter(|url| !url.is_empty())
-                .unwrap_or("unknown"),
-        )),
-    );
-    ui::print_kv("Size", &style::size(info.size));
-    ui::print_kv(
-        "Download",
-        &info
-            .download_size
-            .map_or_else(|| "unknown".to_string(), style::size),
-    );
-    if !info.licenses.is_empty() {
-        ui::print_kv(
-            "License",
-            &info
-                .licenses
-                .iter()
-                .map(|license| style::sanitize_terminal_text(license))
-                .collect::<Vec<_>>()
-                .join(", "),
-        );
-    }
-    if !info.depends.is_empty() {
-        ui::print_kv(
-            "Depends",
-            &info
-                .depends
-                .iter()
-                .map(|depend| style::sanitize_terminal_text(depend))
-                .collect::<Vec<_>>()
-                .join(", "),
-        );
-    }
 }
 
 /// RAII Guard for ALPM transactions to ensure release
@@ -664,6 +636,62 @@ fn provider_selection_message(providers: &[String], depend: &str) -> String {
     )
 }
 
+fn progress_event_is_due(last: &mut (String, i32), name: &str, percent: i32) -> bool {
+    let name_changed = last.0.as_str() != name;
+    if name_changed {
+        last.0.clear();
+        last.0.push_str(name);
+        last.1 = percent;
+        return true;
+    }
+    if percent >= last.1 + 5 || percent >= 100 || percent == 0 {
+        last.1 = percent;
+        true
+    } else {
+        false
+    }
+}
+
+fn transaction_overall_percent(percent: i32, n: usize, max: usize) -> u64 {
+    if max == 0 {
+        return u64::try_from(percent.max(0)).unwrap_or(0).min(100);
+    }
+    let completed = n.saturating_sub(1);
+    let increment = usize::try_from(percent.max(0)).unwrap_or(0);
+    let overall = completed.saturating_mul(100).saturating_add(increment) / max;
+    u64::try_from(overall.min(100)).unwrap_or(100)
+}
+
+fn download_lane_message(active: u64, done: u64) -> String {
+    format!("{active} in flight · {done} done")
+}
+
+fn finish_download_lane(lane: &Mutex<Option<ProgressTask>>) {
+    if let Some(task) = lane
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
+        .take()
+    {
+        task.finish(Outcome::Done);
+    }
+}
+
+const fn is_post_download_progress(op: alpm::Progress) -> bool {
+    matches!(
+        op,
+        alpm::Progress::IntegrityStart
+            | alpm::Progress::LoadStart
+            | alpm::Progress::KeyringStart
+            | alpm::Progress::DiskspaceStart
+            | alpm::Progress::ConflictsStart
+            | alpm::Progress::AddStart
+            | alpm::Progress::UpgradeStart
+            | alpm::Progress::DowngradeStart
+            | alpm::Progress::ReinstallStart
+            | alpm::Progress::RemoveStart
+    )
+}
+
 /// Setup ALPM callbacks for progress lanes
 fn setup_alpm_callbacks(
     alpm: &alpm::Alpm,
@@ -839,8 +867,24 @@ fn setup_alpm_callbacks(
     });
 
     let main_task_clone = main_task.clone();
-    alpm.set_progress_cb((), move |op, name, percent, _n, _max, ()| {
-        let msg = match op {
+    let progress_state = Mutex::new((String::new(), 0_i32));
+    let download_lane = Arc::new(Mutex::new(None::<ProgressTask>));
+    let download_counts = Arc::new((AtomicU64::new(0), AtomicU64::new(0)));
+    let progress_download_lane = Arc::clone(&download_lane);
+    alpm.set_progress_cb(progress_state, move |op, name, percent, n, max, state| {
+        if is_post_download_progress(op) {
+            finish_download_lane(&progress_download_lane);
+        }
+        if !progress_event_is_due(
+            state
+                .get_mut()
+                .unwrap_or_else(std::sync::PoisonError::into_inner),
+            name,
+            percent,
+        ) {
+            return;
+        }
+        let verb = match op {
             alpm::Progress::AddStart => "Installing",
             alpm::Progress::UpgradeStart => "Upgrading",
             alpm::Progress::DowngradeStart => "Downgrading",
@@ -852,38 +896,60 @@ fn setup_alpm_callbacks(
             alpm::Progress::LoadStart => "Loading",
             alpm::Progress::KeyringStart => "Checking keyring",
         };
-        main_task_clone.set_message(&format!("{msg}: {name}"));
-        main_task_clone.set_position(u64::try_from(percent).unwrap_or(0));
+        let counts = if max > 0 {
+            format!(" ({n}/{max})")
+        } else {
+            String::new()
+        };
+        let message = if crate::cli::modern_ui::is_verbose() {
+            format!("{verb} {name}{counts}")
+        } else {
+            format!("{verb}{counts}")
+        };
+        main_task_clone.set_message(&message);
+        main_task_clone.set_position(transaction_overall_percent(percent, n, max));
     });
 
-    let dl_lanes = std::sync::Arc::new(dashmap::DashMap::<String, ProgressTask>::new());
-
-    alpm.set_dl_cb(dl_lanes, move |filename, event, map| match event.event() {
-        alpm::DownloadEvent::Init(_) => {
-            if map.len() < usize::try_from(PARALLEL_DOWNLOADS).unwrap_or(usize::MAX) {
-                let task = ProgressTask::start(&TaskSpec {
-                    label: filename.to_string(),
-                    kind: TaskKind::Bytes { total: None },
-                    accent: Accent::Network,
+    let callback_lane = Arc::clone(&download_lane);
+    let callback_counts = Arc::clone(&download_counts);
+    alpm.set_dl_cb(
+        (callback_lane, callback_counts),
+        move |_filename, event, (lane, counts)| match event.event() {
+            alpm::DownloadEvent::Init(_) => {
+                let active = counts.0.fetch_add(1, Ordering::Relaxed) + 1;
+                let done = counts.1.load(Ordering::Relaxed);
+                let mut lane = lane
+                    .lock()
+                    .unwrap_or_else(std::sync::PoisonError::into_inner);
+                let task = lane.get_or_insert_with(|| {
+                    ProgressTask::start(&TaskSpec {
+                        label: "Download".to_string(),
+                        kind: TaskKind::Spinner,
+                        accent: Accent::Network,
+                    })
                 });
-                map.insert(filename.to_string(), task);
+                task.set_message(&download_lane_message(active, done));
             }
-        }
-        alpm::DownloadEvent::Progress(prog) => {
-            if let Some(task) = map.get(filename) {
-                if prog.total > 0 {
-                    task.set_total(Some(u64::try_from(prog.total).unwrap_or(0)));
+            alpm::DownloadEvent::Progress(_) | alpm::DownloadEvent::Retry(_) => {}
+            alpm::DownloadEvent::Completed(_) => {
+                let active = counts
+                    .0
+                    .fetch_update(Ordering::Relaxed, Ordering::Relaxed, |active| {
+                        Some(active.saturating_sub(1))
+                    })
+                    .unwrap_or(0)
+                    .saturating_sub(1);
+                let done = counts.1.fetch_add(1, Ordering::Relaxed) + 1;
+                if let Some(task) = lane
+                    .lock()
+                    .unwrap_or_else(std::sync::PoisonError::into_inner)
+                    .as_ref()
+                {
+                    task.set_message(&download_lane_message(active, done));
                 }
-                task.set_position(u64::try_from(prog.downloaded).unwrap_or(0));
             }
-        }
-        alpm::DownloadEvent::Retry(_) => {}
-        alpm::DownloadEvent::Completed(_) => {
-            if let Some((_, task)) = map.remove(filename) {
-                task.finish(Outcome::Done);
-            }
-        }
-    });
+        },
+    );
 
     main_task
 }
@@ -1088,6 +1154,84 @@ fn transaction_flags(kind: TransactionKind) -> alpm::TransFlag {
     flags
 }
 
+/// Remove `db.lck` when the file exists but no process has it open.
+///
+/// libalpm treats the file's presence as the lock. A leftover from a killed
+/// transaction blocks every later `trans_init` even though nobody holds it.
+/// A live holder is left in place so the subsequent `trans_init` still fails
+/// with `HandleLock`.
+pub(crate) fn reclaim_stale_database_lock(database_root: &std::path::Path) -> Result<()> {
+    let lock = database_root.join("db.lck");
+    match std::fs::symlink_metadata(&lock) {
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(()),
+        Err(error) => {
+            return Err(error).with_context(|| {
+                format!("Failed to inspect package database lock {}", lock.display())
+            });
+        }
+        Ok(_) => {}
+    }
+    if database_lock_has_open_holder(&lock)? {
+        return Ok(());
+    }
+    match std::fs::remove_file(&lock) {
+        Ok(()) => {
+            tracing::debug!(
+                path = %lock.display(),
+                "removed stale package database lock"
+            );
+            Ok(())
+        }
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(()),
+        Err(error) => Err(error).with_context(|| {
+            format!(
+                "Failed to remove stale package database lock {}",
+                lock.display()
+            )
+        }),
+    }
+}
+
+fn database_lock_has_open_holder(lock: &std::path::Path) -> Result<bool> {
+    use std::os::unix::fs::MetadataExt;
+
+    let lock_meta = match std::fs::metadata(lock) {
+        Ok(meta) => meta,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(false),
+        Err(error) => {
+            return Err(error).with_context(|| {
+                format!("Failed to inspect package database lock {}", lock.display())
+            });
+        }
+    };
+    let lock_dev = lock_meta.dev();
+    let lock_ino = lock_meta.ino();
+    let Ok(proc) = std::fs::read_dir("/proc") else {
+        return Ok(true);
+    };
+    for entry in proc.flatten() {
+        let name = entry.file_name();
+        if !name
+            .to_str()
+            .is_some_and(|name| name.bytes().all(|byte| byte.is_ascii_digit()))
+        {
+            continue;
+        }
+        let Ok(fds) = std::fs::read_dir(entry.path().join("fd")) else {
+            continue;
+        };
+        for fd in fds.flatten() {
+            let Ok(fd_meta) = std::fs::metadata(fd.path()) else {
+                continue;
+            };
+            if fd_meta.dev() == lock_dev && fd_meta.ino() == lock_ino {
+                return Ok(true);
+            }
+        }
+    }
+    Ok(false)
+}
+
 /// Prepare an ALPM transaction for execution
 fn prepare_alpm_transaction<'a>(
     alpm: &'a mut alpm::Alpm,
@@ -1096,6 +1240,7 @@ fn prepare_alpm_transaction<'a>(
     pacman_config: &crate::core::pacman_conf::PacmanConfig,
 ) -> Result<AlpmTransaction<'a>> {
     validate_transaction_targets(kind, &packages)?;
+    reclaim_stale_database_lock(std::path::Path::new(alpm.dbpath().trim_end_matches('/')))?;
     alpm.trans_init(transaction_flags(kind))
         .map_err(|e| match e {
             alpm::Error::HandleLock => {
@@ -1308,10 +1453,11 @@ fn configure_transaction_options(
     alpm.set_architectures(architectures)
         .context("Failed to configure package architecture validation")?;
     alpm.set_check_space(true);
-    // Native libalpm parallel downloads during transaction commit. Mirrors
-    // pacman's own `ParallelDownloads = 5` default; pacman.conf plumbing can
-    // be added once the shared parser exposes the option.
-    alpm.set_parallel_downloads(PARALLEL_DOWNLOADS);
+    alpm.set_parallel_downloads(
+        pacman_config
+            .parallel_downloads
+            .unwrap_or(PARALLEL_DOWNLOADS),
+    );
     configure_package_filters(alpm, pacman_config)?;
     alpm.set_noupgrades(pacman_config.no_upgrade.iter())
         .context("Failed to configure protected upgrade paths")?;
@@ -1549,13 +1695,51 @@ mod tests {
 
     use super::{
         AlpmQuestionRefusals, ForwardedAlpmLogLevel, TransactionKind, classify_alpm_log_level,
-        clean_cache, clean_cache_preview, configure_signature_policy, ensure_mirror_servers,
-        ensure_removals_not_held, format_trans_prepare_error, is_keyring_related_error,
-        local_package_siglevel, package_base_name, provider_selection_message,
-        question_refusal_error, register_configured_syncdbs, repository_siglevel,
-        setup_alpm_callbacks, signature_policy, transaction_flags, validate_transaction_targets,
+        clean_cache, clean_cache_preview, configure_signature_policy, download_lane_message,
+        ensure_mirror_servers, ensure_removals_not_held, format_trans_prepare_error,
+        is_keyring_related_error, local_package_siglevel, package_base_name,
+        provider_selection_message, question_refusal_error, reclaim_stale_database_lock,
+        register_configured_syncdbs, repository_siglevel, setup_alpm_callbacks, signature_policy,
+        transaction_flags, transaction_overall_percent, validate_transaction_targets,
     };
     use crate::core::paths;
+
+    #[test]
+    fn reclaim_stale_database_lock_removes_an_unheld_file() {
+        let directory = tempfile::tempdir().expect("database root");
+        let lock = directory.path().join("db.lck");
+        std::fs::write(&lock, b"").expect("stale lock");
+        reclaim_stale_database_lock(directory.path()).expect("unheld lock must be removable");
+        assert!(!lock.exists(), "stale lock must be gone");
+    }
+
+    #[test]
+    fn reclaim_stale_database_lock_keeps_a_live_lease() {
+        let directory = tempfile::tempdir().expect("database root");
+        let lease = alpm::Alpm::new("/", directory.path().to_str().expect("utf-8 path"))
+            .expect("ALPM handle");
+        lease
+            .trans_init(alpm::TransFlag::empty())
+            .expect("live lease");
+        reclaim_stale_database_lock(directory.path()).expect("live lock must be left in place");
+        assert!(
+            directory.path().join("db.lck").exists(),
+            "held lock must survive reclaim"
+        );
+    }
+
+    #[test]
+    fn transaction_percent_spans_the_whole_set() {
+        assert_eq!(transaction_overall_percent(50, 1, 9), 5);
+        assert_eq!(transaction_overall_percent(100, 9, 9), 100);
+        assert_eq!(transaction_overall_percent(40, 0, 0), 40);
+    }
+
+    #[test]
+    fn download_lane_names_in_flight_and_completed_counts() {
+        assert_eq!(download_lane_message(5, 3), "5 in flight · 3 done");
+        assert_eq!(download_lane_message(0, 18), "0 in flight · 18 done");
+    }
 
     #[test]
     fn refused_replacements_fail_the_transaction_naming_the_conflict() {
@@ -2018,5 +2202,15 @@ mod tests {
         let msg = format_trans_prepare_error("unresolvable package conflicts detected");
         assert!(msg.contains("conflicting packages or missing dependencies"));
         assert!(msg.contains("omg update && omg install <package>"));
+    }
+
+    #[test]
+    fn progress_events_throttle_percent_and_publish_on_name_change() {
+        let mut last = (String::new(), 0_i32);
+        assert!(super::progress_event_is_due(&mut last, "foo", 1));
+        assert!(!super::progress_event_is_due(&mut last, "foo", 3));
+        assert!(super::progress_event_is_due(&mut last, "foo", 6));
+        assert!(super::progress_event_is_due(&mut last, "bar", 7));
+        assert_eq!(last.0, "bar");
     }
 }

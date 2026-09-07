@@ -1,11 +1,8 @@
-//! Modern CLI UX inspired by bun, pnpm, and gh CLI
+//! Streaming print CLI chrome.
 //!
-//! Design principles:
-//! - Minimal decoration, maximum information density
-//! - Professional color scheme (blues, greens, subtle accents)
-//! - Clear visual hierarchy without box drawing
-//! - Fast, responsive feedback
-//! - Context-aware status messages
+//! Density follows Clack (one rail, one accent, no boxes). Colors follow the
+//! current Omarchy `colors.toml` when present. Phase words are gradients, not
+//! a Charm pink bar.
 
 use indicatif::{MultiProgress, ProgressBar, ProgressDrawTarget, ProgressStyle};
 use owo_colors::OwoColorize;
@@ -61,6 +58,16 @@ fn hide_progress(progress: &MultiProgress) {
     progress.set_draw_target(ProgressDrawTarget::hidden());
 }
 
+/// Hide leftover live bar rows after a finished parallel batch, then restore
+/// stderr drawing in interactive mode so later Checking spinners can attach.
+pub(crate) fn clear_live_progress() {
+    let progress = progress_registry();
+    hide_progress(progress);
+    if output_mode() == OutputMode::Interactive {
+        progress.set_draw_target(ProgressDrawTarget::stderr());
+    }
+}
+
 /// Suppress live progress drawing while an interactive prompt owns the
 /// terminal.
 ///
@@ -107,10 +114,15 @@ fn progress_registry() -> &'static MultiProgress {
 /// Lanes are visible only in [`OutputMode::Interactive`]; every other mode
 /// receives an invisible bar so callers drive one code path regardless of
 /// policy while redirected or quiet output stays free of animation and ANSI.
+///
+/// The incoming bar is detached from its constructor draw target before it
+/// joins the registry. Leaving stderr attached draws one copy of the spinner
+/// as a standalone bar and a second copy through `MultiProgress`.
 pub(crate) fn register_spinner(bar: ProgressBar) -> ProgressBar {
     if output_mode() != OutputMode::Interactive {
         return ProgressBar::hidden();
     }
+    bar.set_draw_target(ProgressDrawTarget::hidden());
     progress_registry().add(bar)
 }
 
@@ -192,25 +204,23 @@ impl AurBuildProgress {
         let line = if success {
             if crate::cli::style::colors_enabled() {
                 format!(
-                    "  {} {} {} {}",
+                    "  {} {} {}",
                     "◆".green().bold(),
-                    "forged".dimmed(),
-                    self.package.cyan().bold(),
+                    format!("Built {}", self.package).cyan().bold(),
                     format!("in {elapsed}").dimmed()
                 )
             } else {
-                format!("  OK forged {} in {elapsed}", self.package)
+                format!("  OK Built {} in {elapsed}", self.package)
             }
         } else if crate::cli::style::colors_enabled() {
             format!(
-                "  {} {} {} {}",
+                "  {} {} {}",
                 "◆".red().bold(),
-                "forge failed".red(),
-                self.package.bold(),
+                format!("Build failed {}", self.package).red(),
                 format!("after {elapsed}").dimmed()
             )
         } else {
-            format!("  X forge failed {} after {elapsed}", self.package)
+            format!("  X Build failed {} after {elapsed}", self.package)
         };
         emit_or_defer(line);
     }
@@ -234,17 +244,6 @@ pub fn aur_build_progress(package: &str, log_path: &Path) -> AurBuildProgress {
     let mode = output_mode();
     let progress = match mode {
         OutputMode::Interactive => {
-            if crate::cli::style::colors_enabled() {
-                emit_or_defer(format!(
-                    "  {} {}  {}",
-                    "◇".magenta().bold(),
-                    "AUR forge".bold(),
-                    format!("log → {}", log_path.display()).dimmed()
-                ));
-            } else {
-                emit_or_defer(format!("  + AUR forge  log -> {}", log_path.display()));
-            }
-
             let progress = register_spinner(ProgressBar::new_spinner());
             let template = if crate::cli::style::colors_enabled() {
                 "  {spinner:.magenta.bold} {prefix:.cyan.bold}  {msg:.dim}  {elapsed_precise:.blue}"
@@ -264,8 +263,7 @@ pub fn aur_build_progress(package: &str, log_path: &Path) -> AurBuildProgress {
         }
         OutputMode::Verbose => {
             println!(
-                "  ◆ AUR forge {} (verbose output; log: {})",
-                package,
+                "  Building {package} (verbose output; log: {})",
                 log_path.display()
             );
             None
@@ -342,18 +340,25 @@ pub fn modern_spinner(phase: &str, action: &str) -> ProgressBar {
 
 /// Finish spinner with success
 pub fn finish_success(pb: &ProgressBar, phase: &str, result: &str) {
+    // Animation is transient terminal state. Clear it before writing the
+    // completed status as a durable line; a visible finished bar is redrawn
+    // whenever a prompt or subprocess suspends the shared MultiProgress.
+    pb.finish_and_clear();
+    print_finished_step(phase, result);
+}
+
+/// Durable completion line for a phase that had no parent spinner, or whose
+/// spinner already cleared.
+pub fn print_finished_step(phase: &str, result: &str) {
+    if output_mode() == OutputMode::Quiet {
+        return;
+    }
     let message = if crate::cli::style::colors_enabled() {
         format!("{} {} {}", "✓".green().bold(), phase.dimmed(), result)
     } else {
         format!("✓ {phase} {result}")
     };
-    // Animation is transient terminal state. Clear it before writing the
-    // completed status as a durable line; a visible finished bar is redrawn
-    // whenever a prompt or subprocess suspends the shared MultiProgress.
-    pb.finish_and_clear();
-    if output_mode() != OutputMode::Quiet {
-        emit_or_defer(message);
-    }
+    emit_or_defer(message);
 }
 
 /// Finish spinner with info message
@@ -374,21 +379,84 @@ pub fn finish_clear(pb: &ProgressBar) {
     pb.finish_and_clear();
 }
 
+/// One check-lane result: `official  3  0.41s` or `aur  up to date`.
+pub fn print_source_lane(lane: &str, count: usize, elapsed: std::time::Duration) {
+    if output_mode() == OutputMode::Quiet {
+        return;
+    }
+    let elapsed_text = format!("{:.2}s", elapsed.as_secs_f64());
+    let line = if crate::cli::style::colors_enabled() {
+        let palette = crate::cli::chrome::palette();
+        let lane_rgb = if lane.eq_ignore_ascii_case("aur") {
+            palette.magenta
+        } else {
+            palette.cyan
+        };
+        let detail = if count == 0 {
+            "up to date"
+                .truecolor(palette.muted.r, palette.muted.g, palette.muted.b)
+                .to_string()
+        } else {
+            format!(
+                "{}  {}",
+                count
+                    .to_string()
+                    .truecolor(lane_rgb.r, lane_rgb.g, lane_rgb.b)
+                    .bold(),
+                elapsed_text.dimmed()
+            )
+        };
+        format!(
+            "  {}  {:<10}  {detail}",
+            crate::cli::chrome::rail(),
+            lane.truecolor(lane_rgb.r, lane_rgb.g, lane_rgb.b)
+        )
+    } else if count == 0 {
+        format!("  |  {lane:<10}  up to date")
+    } else {
+        format!("  |  {lane:<10}  {count}  {elapsed_text}")
+    };
+    emit_or_defer(line);
+}
+
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 // HEADERS & SECTIONS
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
-/// Print a phase header (install, update, etc.)
-pub fn print_phase_header(icon: &str, phase: &str, context: &str) {
+pub(crate) fn accent_bar() -> String {
+    crate::cli::chrome::accent_rail()
+}
+
+pub(crate) fn phase_header_text(phase: &str, context: &str) -> String {
+    if crate::cli::style::colors_enabled() {
+        format!(
+            "\n  {} {}\n    {}",
+            accent_bar(),
+            crate::cli::chrome::gradient_text(phase),
+            context.dimmed()
+        )
+    } else {
+        format!("\n  | {phase}\n    {context}")
+    }
+}
+
+/// Max packages listed before a remainder count, shared by update/search.
+pub(crate) const SUMMARY_LIST_CAP: usize = 15;
+
+#[must_use]
+pub fn is_verbose() -> bool {
+    output_mode() == OutputMode::Verbose
+}
+
+/// Print a phase header (install, update, etc.).
+///
+/// The `icon` argument is kept so call sites stay stable. Headers use a
+/// vertical rail and a gradient phase word.
+pub fn print_phase_header(_icon: &str, phase: &str, context: &str) {
     if output_mode() == OutputMode::Quiet {
         return;
     }
-    let line = if crate::cli::style::colors_enabled() {
-        format!("\n{} {} {}", icon, phase.bold(), context.dimmed())
-    } else {
-        format!("\n{icon} {phase} {context}")
-    };
-    emit_or_defer(line);
+    emit_or_defer(phase_header_text(phase, context));
 }
 
 /// Print a minimal section divider
@@ -398,9 +466,9 @@ pub fn print_section(label: &str) {
     }
     println!();
     if crate::cli::style::colors_enabled() {
-        println!("  {} {}", "·".dimmed(), label.bold());
+        println!("  {} {}", accent_bar(), label.bold());
     } else {
-        println!("  · {label}");
+        println!("  | {label}");
     }
 }
 
@@ -514,15 +582,24 @@ pub fn print_update_summary(updates: &[crate::package_managers::types::UpdateInf
     let total = updates.len();
     if crate::cli::style::colors_enabled() {
         println!(
-            "  {} {} {} available",
-            "·".blue(),
-            total.to_string().cyan().bold(),
-            if total == 1 { "update" } else { "updates" }
+            "  {} {} {}",
+            accent_bar(),
+            total.to_string().bold(),
+            if total == 1 {
+                "update available"
+            } else {
+                "updates available"
+            }
+            .dimmed()
         );
     } else {
         println!(
-            "  · {total} {} available",
-            if total == 1 { "update" } else { "updates" }
+            "  | {total} {}",
+            if total == 1 {
+                "update available"
+            } else {
+                "updates available"
+            }
         );
     }
 
@@ -555,7 +632,7 @@ pub fn print_update_summary(updates: &[crate::package_managers::types::UpdateInf
 
     // Show sample of updates (up to 15), one line each with the source
     // badge inline so long update lists stay scannable.
-    let display_limit = 15;
+    let display_limit = SUMMARY_LIST_CAP;
     for update in updates.iter().take(display_limit) {
         let name = crate::cli::style::sanitize_terminal_text(&update.name);
         let old_version = crate::cli::style::sanitize_terminal_text(&update.old_version);
@@ -602,9 +679,13 @@ pub fn print_update_summary(updates: &[crate::package_managers::types::UpdateInf
 pub fn print_up_to_date() {
     println!();
     if crate::cli::style::colors_enabled() {
-        println!("  {} System is up to date", "✓".green().bold());
+        println!(
+            "  {} {}",
+            crate::cli::chrome::accent_rail(),
+            "System is up to date".green().bold()
+        );
     } else {
-        println!("  ✓ System is up to date");
+        println!("  | System is up to date");
     }
     println!();
 }
@@ -613,50 +694,28 @@ pub fn print_up_to_date() {
 // AUR-SPECIFIC
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
-/// Print AUR package info with security notice
-pub fn print_aur_package_info(name: &str, version: &str, description: &str) {
+/// One-line AUR identity. The PKGBUILD itself is opt-in at review time.
+pub fn print_aur_package_info(name: &str, version: &str, _description: &str) {
     if output_mode() == OutputMode::Quiet {
         return;
     }
-    // AUR strings are attacker-controlled: a malicious description can carry
-    // terminal escape sequences, so every field is sanitized before display.
+    emit_or_defer(aur_package_info_line(name, version));
+}
+
+pub(crate) fn aur_package_info_line(name: &str, version: &str) -> String {
     let name = crate::cli::style::sanitize_terminal_text(name);
     let version = crate::cli::style::sanitize_terminal_text(version);
-    let description = crate::cli::style::sanitize_terminal_text(description);
-    println!();
-
     if crate::cli::style::colors_enabled() {
-        println!("  {} Package from AUR", "·".magenta());
-        println!();
-        println!("    {} {}", "name".dimmed(), name.cyan().bold());
-        println!("    {} {}", "version".dimmed(), version.green());
-        if !description.is_empty() {
-            println!("    {} {}", "description".dimmed(), description);
-        }
+        format!(
+            "  {}  {}  {}  {}",
+            crate::cli::chrome::accent_rail(),
+            "AUR".bold(),
+            name.cyan().bold(),
+            version.green()
+        )
     } else {
-        println!("  · Package from AUR");
-        println!();
-        println!("    name {name}");
-        println!("    version {version}");
-        if !description.is_empty() {
-            println!("    description {description}");
-        }
+        format!("  |  AUR  {name}  {version}")
     }
-
-    println!();
-
-    // Security notice - subdued but present
-    if crate::cli::style::colors_enabled() {
-        println!("  {} User-submitted package", "!".yellow().bold());
-        println!("    {} Not vetted by Arch maintainers", "·".dimmed());
-        println!("    {} Review PKGBUILD before installing", "·".dimmed());
-    } else {
-        println!("  ! User-submitted package");
-        println!("    · Not vetted by Arch maintainers");
-        println!("    · Review PKGBUILD before installing");
-    }
-
-    println!();
 }
 
 /// Print AUR build progress phase
@@ -787,6 +846,33 @@ mod tests {
 
     #[test]
     #[serial_test::serial]
+    fn register_spinner_detaches_the_incoming_draw_target() {
+        OUTPUT_MODE.store(OutputMode::Interactive as u8, Ordering::Relaxed);
+        let terminal = RecordingTerm::default();
+        let bar = ProgressBar::with_draw_target(
+            None,
+            ProgressDrawTarget::term_like(Box::new(terminal.clone())),
+        );
+        bar.set_message("Syncing package databases");
+        bar.tick();
+        assert!(
+            !terminal.events().is_empty(),
+            "fixture bar must draw before registration"
+        );
+        let registered = register_spinner(bar);
+        let after_register = terminal.events().len();
+        registered.tick();
+        registered.finish_and_clear();
+        OUTPUT_MODE.store(OutputMode::Plain as u8, Ordering::Relaxed);
+        assert_eq!(
+            terminal.events().len(),
+            after_register,
+            "ticks after registration must not keep drawing on the orphan target"
+        );
+    }
+
+    #[test]
+    #[serial_test::serial]
     fn finished_spinner_clears_its_animated_lane() {
         let (progress, terminal) = recording_spinner("Checking package sources");
 
@@ -837,5 +923,31 @@ mod tests {
         assert_eq!(format_duration(Duration::from_secs(9)), "9s");
         assert_eq!(format_duration(Duration::from_secs(125)), "2m 05s");
         assert_eq!(format_duration(Duration::from_secs(3_725)), "1h 02m 05s");
+    }
+
+    #[test]
+    fn phase_header_uses_a_bar_instead_of_emoji() {
+        let text = phase_header_text("Install", "3 packages");
+        assert!(!text.contains('📦'));
+        assert!(text.contains("Install"));
+        assert!(text.contains("3 packages"));
+        assert!(text.contains('|') || text.contains('│') || text.contains('┃'));
+    }
+
+    #[test]
+    fn update_check_header_still_says_checking_for_updates() {
+        let text = phase_header_text("Update", "Checking for updates");
+        assert!(text.contains("Checking for updates"));
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn aur_package_info_is_one_line() {
+        temp_env::with_var("NO_COLOR", Some("1"), || {
+            let line = aur_package_info_line("foo\x1b]0;pwn", "1.0-1");
+            assert_eq!(line, "  |  AUR  foo]0;pwn  1.0-1");
+            assert!(!line.contains('\n'));
+            assert!(!line.contains("User-submitted"));
+        });
     }
 }

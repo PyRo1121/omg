@@ -1,5 +1,3 @@
-use std::time::Instant;
-
 use anyhow::{Context, Result};
 use dialoguer::Select;
 use futures::future::BoxFuture;
@@ -18,8 +16,6 @@ use crate::package_managers::{AurClient, get_package_manager};
 use super::{MAX_REPLACEMENT_HOPS, enforce_install_policy};
 
 pub async fn install(packages: &[String], yes: bool, replacement_hops: u32) -> Result<()> {
-    let resolution_start = Instant::now();
-
     let pm = get_package_manager()?;
     let policy =
         crate::core::security::SecurityPolicy::load_default().map_err(anyhow::Error::from)?;
@@ -90,10 +86,15 @@ pub async fn install(packages: &[String], yes: bool, replacement_hops: u32) -> R
         }
     }
 
-    modern_ui::finish_clear(&pb);
-    tracing::debug!(
-        "install resolution finished in {}ms",
-        resolution_start.elapsed().as_millis()
+    let official = packages_excluding(packages, &missing_packages);
+    modern_ui::finish_success(
+        &pb,
+        "Resolved",
+        &format!(
+            "{} official · {} AUR",
+            official.len(),
+            missing_packages.len()
+        ),
     );
 
     // Officially-resolvable packages must be installed even when other
@@ -101,8 +102,6 @@ pub async fn install(packages: &[String], yes: bool, replacement_hops: u32) -> R
     // exactly one unresolved name skipped `pm.install` entirely, silently
     // dropping its official siblings from the transaction while still
     // reporting success for them.
-    let official = packages_excluding(packages, &missing_packages);
-
     let operation_result = if official.len() == packages.len() {
         match pm.install(packages).await {
             Ok(()) => Ok(()),
@@ -496,11 +495,19 @@ fn consume_replacement_hop(remaining_hops: u32, replacement: &str) -> Result<u32
 async fn try_get_suggestions(query: &str) -> Vec<String> {
     #[cfg(unix)]
     if let Ok(mut client) = DaemonClient::connect().await
-        && let Ok(suggestions) = client.suggest(query, Some(5)).await
+        && let Ok(suggestions) = client.suggest(query, Some(15)).await
+        && !suggestions.is_empty()
     {
         return suggestions;
     }
-    Vec::new()
+    let Ok(names) = crate::cli::commands::available_package_names().await else {
+        return Vec::new();
+    };
+    crate::core::completion::CompletionEngine::new()
+        .fuzzy_match(query, names)
+        .into_iter()
+        .take(15)
+        .collect()
 }
 
 #[derive(Debug, thiserror::Error, PartialEq, Eq)]

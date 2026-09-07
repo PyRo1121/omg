@@ -460,7 +460,7 @@ impl App {
     }
 
     pub async fn update_system() -> Result<()> {
-        crate::cli::packages::update(false, true, false).await
+        crate::cli::packages::update(false, true, false, false).await
     }
 
     pub async fn clean_cache() -> Result<()> {

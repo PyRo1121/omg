@@ -38,7 +38,10 @@ struct RefreshDebounce {
 }
 
 impl RefreshDebounce {
-    fn should_skip(&self, now: std::time::Instant) -> bool {
+    fn should_skip(&self, now: std::time::Instant, disk_newer_than_loaded: bool) -> bool {
+        if disk_newer_than_loaded {
+            return false;
+        }
         self.last_completed
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner)
@@ -94,6 +97,8 @@ pub struct DaemonState {
     system_backends: RwLock<SystemBackendAccess>,
     refresh_lock: tokio::sync::Mutex<()>,
     refresh_debounce: RefreshDebounce,
+    #[cfg(feature = "arch")]
+    index_epoch: RwLock<crate::package_managers::pacman_db::AlpmCatalogEpoch>,
     index_generation: AtomicU64,
     pub(super) runtime_versions: Arc<RwLock<Vec<(String, String)>>>,
     pub(super) rate_limiter: Arc<RateLimiter<NotKeyed, InMemoryState, DefaultClock>>,
@@ -169,6 +174,58 @@ impl DaemonState {
             .is_production()
     }
 
+    /// Rebuild the published index and reincarnate libalpm. Callers must hold
+    /// `refresh_lock`.
+    async fn rebuild_production_index(&self) -> anyhow::Result<usize> {
+        let index = PackageIndex::for_package_manager(Arc::clone(&self.package_manager)).await?;
+        #[cfg(feature = "arch")]
+        let epoch = crate::package_managers::pacman_db::AlpmCatalogEpoch::observe()
+            .context("Failed to observe ALPM catalog epoch after index rebuild")?;
+        self.refresh_system_backends()?;
+        let packages = self.replace_index(index);
+        self.persistent.invalidate_status();
+        #[cfg(feature = "arch")]
+        {
+            *self
+                .index_epoch
+                .write()
+                .unwrap_or_else(std::sync::PoisonError::into_inner) = epoch;
+        }
+        Ok(packages)
+    }
+
+    /// Rebuild catalog state when on-disk sync or local databases are newer
+    /// than the loaded index. Isolated daemons are a no-op.
+    #[cfg(feature = "arch")]
+    async fn heal_index_if_disk_newer(&self) -> anyhow::Result<()> {
+        if !self.uses_production_backends() {
+            return Ok(());
+        }
+        if !self.catalog_needs_heal() {
+            return Ok(());
+        }
+        let _refresh_guard = self.refresh_lock.lock().await;
+        if !self.catalog_needs_heal() {
+            return Ok(());
+        }
+        self.rebuild_production_index().await?;
+        Ok(())
+    }
+
+    #[cfg(feature = "arch")]
+    fn catalog_needs_heal(&self) -> bool {
+        match crate::package_managers::pacman_db::AlpmCatalogEpoch::observe() {
+            Err(_) => true,
+            Ok(disk) => {
+                let loaded = *self
+                    .index_epoch
+                    .read()
+                    .unwrap_or_else(std::sync::PoisonError::into_inner);
+                disk.disk_is_newer_than(loaded)
+            }
+        }
+    }
+
     pub(super) async fn status_counts(&self) -> anyhow::Result<(usize, usize, usize, usize)> {
         if self.uses_production_backends() {
             let pm_name = self.package_manager.name().to_string();
@@ -199,12 +256,17 @@ impl DaemonState {
             .with_context(|| {
                 "Failed to build package index. Ensure package databases are synced (run 'omg sync')."
             })?;
+        #[cfg(feature = "arch")]
+        let index_epoch = crate::package_managers::pacman_db::AlpmCatalogEpoch::observe()
+            .context("Failed to observe ALPM catalog epoch at daemon start")?;
 
         Ok(Self::from_index(
             persistent,
             index,
             package_manager,
             SystemBackendAccess::production()?,
+            #[cfg(feature = "arch")]
+            index_epoch,
         ))
     }
 
@@ -224,6 +286,8 @@ impl DaemonState {
             index,
             package_manager,
             SystemBackendAccess::Isolated,
+            #[cfg(feature = "arch")]
+            crate::package_managers::pacman_db::AlpmCatalogEpoch::UNIX_EPOCH,
         ))
     }
 
@@ -244,6 +308,7 @@ impl DaemonState {
         index: PackageIndex,
         package_manager: Arc<dyn PackageManager>,
         system_backends: SystemBackendAccess,
+        #[cfg(feature = "arch")] index_epoch: crate::package_managers::pacman_db::AlpmCatalogEpoch,
     ) -> Self {
         tracing::info!("Package index loaded: {} packages", index.len());
 
@@ -294,6 +359,8 @@ impl DaemonState {
             system_backends: RwLock::new(system_backends),
             refresh_lock: tokio::sync::Mutex::new(()),
             refresh_debounce: RefreshDebounce::default(),
+            #[cfg(feature = "arch")]
+            index_epoch: RwLock::new(index_epoch),
             index_generation: AtomicU64::new(0),
             runtime_versions: Arc::new(RwLock::new(Vec::new())),
             rate_limiter,
@@ -339,6 +406,16 @@ pub async fn handle_request(state: Arc<DaemonState>, request: Request) -> Respon
             code: error_codes::RATE_LIMITED,
             message: "Rate limit exceeded. Please slow down.".to_string(),
         };
+    }
+
+    #[cfg(feature = "arch")]
+    if request.reads_arch_sync_catalog()
+        && let Err(error) = state.heal_index_if_disk_newer().await
+    {
+        return internal_error(
+            request.id(),
+            format!("Failed to refresh stale package index: {error:#}"),
+        );
     }
 
     match request {
@@ -403,10 +480,32 @@ async fn handle_refresh_index(state: Arc<DaemonState>, id: RequestId) -> Respons
             result: ResponseResult::IndexRefreshed { packages },
         };
     }
+    let disk_newer_than_loaded = {
+        #[cfg(feature = "arch")]
+        {
+            match crate::package_managers::pacman_db::AlpmCatalogEpoch::observe() {
+                Ok(disk) => {
+                    let loaded = *state
+                        .index_epoch
+                        .read()
+                        .unwrap_or_else(std::sync::PoisonError::into_inner);
+                    disk.disk_is_newer_than(loaded)
+                }
+                Err(_) => true,
+            }
+        }
+        #[cfg(not(feature = "arch"))]
+        {
+            false
+        }
+    };
     if state
         .refresh_debounce
-        .should_skip(std::time::Instant::now())
+        .should_skip(std::time::Instant::now(), disk_newer_than_loaded)
     {
+        if let Err(error) = state.refresh_system_backends() {
+            return internal_error(id, format!("Failed to refresh package backends: {error:#}"));
+        }
         let packages = state.index_snapshot().len();
         tracing::debug!(packages, "Debounced recent package index refresh");
         return Response::Success {
@@ -415,20 +514,12 @@ async fn handle_refresh_index(state: Arc<DaemonState>, id: RequestId) -> Respons
         };
     }
 
-    let index = match PackageIndex::for_package_manager(Arc::clone(&state.package_manager)).await {
-        Ok(index) => index,
+    let packages = match state.rebuild_production_index().await {
+        Ok(packages) => packages,
         Err(error) => {
             return internal_error(id, format!("Failed to rebuild package index: {error:#}"));
         }
     };
-
-    if let Err(error) = state.refresh_system_backends() {
-        return internal_error(id, format!("Failed to refresh package backends: {error:#}"));
-    }
-    let packages = state.replace_index(index);
-    // Drop the persisted snapshot too: it predates the index swap and would
-    // otherwise be resurrected into the memory cache by the next status call.
-    state.persistent.invalidate_status();
     state
         .refresh_debounce
         .record_completion(std::time::Instant::now());
@@ -1320,11 +1411,12 @@ mod tests {
         let debounce = RefreshDebounce::default();
         let completed_at = std::time::Instant::now();
 
-        assert!(!debounce.should_skip(completed_at));
+        assert!(!debounce.should_skip(completed_at, false));
         debounce.record_completion(completed_at);
-        assert!(debounce.should_skip(completed_at));
-        assert!(debounce.should_skip(completed_at + std::time::Duration::from_millis(999)));
-        assert!(!debounce.should_skip(completed_at + REFRESH_DEBOUNCE));
+        assert!(debounce.should_skip(completed_at, false));
+        assert!(debounce.should_skip(completed_at + std::time::Duration::from_millis(999), false));
+        assert!(!debounce.should_skip(completed_at + REFRESH_DEBOUNCE, false));
+        assert!(!debounce.should_skip(completed_at, true));
     }
 
     #[test]
@@ -1363,6 +1455,37 @@ mod tests {
             panic!("stale snapshot action must not run");
         }));
         assert!(state.with_current_index(&current_snapshot, || {}));
+    }
+
+    #[tokio::test]
+    async fn isolated_suggest_uses_the_injected_index() {
+        let directory = tempfile::tempdir().expect("create isolated suggest directory");
+        let package_manager: Arc<dyn PackageManager> = Arc::new(
+            crate::package_managers::mock::MockPackageManager::new_in("arch", directory.path()),
+        );
+        let index = PackageIndex::from_records(&[("firefox", "1.0", "web browser")]);
+        let state = Arc::new(
+            DaemonState::new_isolated(directory.path(), index, package_manager)
+                .expect("create isolated daemon state"),
+        );
+
+        let response = handle_request(
+            state,
+            Request::Suggest {
+                id: 7,
+                query: "fire".to_string(),
+                limit: Some(5),
+            },
+        )
+        .await;
+        let Response::Success {
+            result: ResponseResult::Suggest(names),
+            ..
+        } = response
+        else {
+            panic!("isolated suggest must succeed, got {response:?}");
+        };
+        assert!(names.iter().any(|name| name == "firefox"), "got {names:?}");
     }
 
     #[tokio::test]

@@ -1,7 +1,7 @@
 //! Privilege elevation utilities
 //!
-//! Automatically elevates to root when needed for system operations,
-//! similar to how paru/yay handle this.
+//! Package database writes run as root inside this binary (sudo re-exec), never
+//! by spawning pacman or an AUR helper.
 
 use std::sync::atomic::{AtomicBool, Ordering};
 

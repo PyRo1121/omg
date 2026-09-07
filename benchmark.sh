@@ -81,7 +81,6 @@ fi
 
 OMG="./target/release/omg"
 OMGD="./target/release/omgd"
-OMG_FAST="./target/release/omg-fast"
 
 # Colors for output
 RED='\033[0;31m'
@@ -249,13 +248,8 @@ RESULTS["status,yay"]="N/A"
 echo -e "\n📋 Benchmark: EXPLICIT"
 echo "-------------------------------"
 # Warm explicit cache once to hit daemon cache for measured runs
-$OMG explicit --count > /dev/null 2>&1 || true
-# Use omg-fast for best performance
-if [ -x "$OMG_FAST" ]; then
-    RESULTS["explicit,OMG (Daemon)"]=$(run_bench "OMG (omg-fast)" "$OMG_FAST ec" $ITERATIONS $WARMUP)
-else
-    RESULTS["explicit,OMG (Daemon)"]=$(run_bench "OMG (Daemon)" "$OMG explicit --count" $ITERATIONS $WARMUP)
-fi
+$OMG ec > /dev/null 2>&1 || true
+RESULTS["explicit,OMG (Daemon)"]=$(run_bench "OMG" "$OMG ec" $ITERATIONS $WARMUP)
 if command -v pacman &> /dev/null; then
     RESULTS["explicit,pacman"]=$(run_bench "pacman" "pacman -Qe" $ITERATIONS $WARMUP)
 fi

@@ -33,7 +33,7 @@ A dedicated worker thread handles ongoing system maintenance without interruptin
 
 - **Periodic Refresh**: Every 5 minutes, the daemon performs a background "vital signs" check.
 - **Vulnerability Scanning**: Analysis of installed packages runs as part of the periodic status refresh.
-- **Prompt Status**: Updates the binary status file read by `omg-fast`. Its contents can lag system changes between refreshes.
+- **Prompt Status**: Updates the binary status file read by prompt counters (`omg ec|tc|oc|uc`). Its contents can lag system changes between refreshes.
 
 ---
 
