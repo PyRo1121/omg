@@ -467,7 +467,23 @@ fn platform_socket_path() -> PathBuf {
 
 #[cfg(unix)]
 fn uid_temp_socket_path(uid: u32) -> PathBuf {
-    PathBuf::from(format!("/tmp/omg-{uid}/omg.sock"))
+    let fallback = PathBuf::from(format!("/tmp/omg-{uid}"));
+    // Sticky /tmp lets any local user pre-create our fallback directory
+    // (macOS always lands here; minimal Linux without logind too). The
+    // parent validation below would then fail every daemon start until
+    // someone manually removes it, so divert to a directory only this user
+    // can create. Deterministic, so daemon and client agree without talking.
+    if fallback.is_dir() && validate_socket_parent(&fallback.join("omg.sock")).is_err() {
+        return home_fallback_socket_path();
+    }
+    fallback.join("omg.sock")
+}
+
+/// Runtime socket under the user's own data dir, used only when the shared
+/// /tmp fallback is unusable (squatted or wrongly permissioned).
+#[cfg(unix)]
+fn home_fallback_socket_path() -> PathBuf {
+    data_dir().join("run").join("omg.sock")
 }
 
 #[cfg(not(unix))]
@@ -533,7 +549,7 @@ pub fn validate_socket_parent(socket_path: &std::path::Path) -> std::io::Result<
 /// every [`validate_socket_parent`] failure condition.
 #[cfg(unix)]
 pub fn prepare_socket_parent(socket_path: &std::path::Path) -> std::io::Result<()> {
-    use std::os::unix::fs::DirBuilderExt;
+    use std::os::unix::fs::{DirBuilderExt, PermissionsExt};
 
     let parent = socket_path.parent().ok_or_else(|| {
         std::io::Error::new(
@@ -542,8 +558,16 @@ pub fn prepare_socket_parent(socket_path: &std::path::Path) -> std::io::Result<(
         )
     })?;
     if !parent.exists() {
+        // Single-level fast path keeps 0700 atomic at creation; nested
+        // fallbacks (e.g. <data-dir>/run) need their ancestors first, then
+        // the leaf is tightened before validation runs below.
         let mut builder = std::fs::DirBuilder::new();
-        builder.mode(0o700).create(parent)?;
+        if builder.mode(0o700).create(parent).is_err() {
+            std::fs::create_dir_all(parent)?;
+            let mut permissions = std::fs::metadata(parent)?.permissions();
+            permissions.set_mode(0o700);
+            std::fs::set_permissions(parent, permissions)?;
+        }
     }
     validate_socket_parent(socket_path)
 }
@@ -633,6 +657,47 @@ mod tests {
     fn data_dir_is_non_empty() {
         let path = data_dir();
         assert!(!path.as_os_str().is_empty());
+    }
+
+    #[test]
+    fn missing_tmp_fallback_stays_on_tmp_path() {
+        assert_eq!(
+            uid_temp_socket_path(424_243),
+            PathBuf::from("/tmp/omg-424243/omg.sock")
+        );
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn squatted_tmp_fallback_diverts_to_home_directory() {
+        // Simulate another local user squatting the /tmp fallback with a
+        // directory we do not own as that uid (fake uid keeps the real
+        // daemon path untouched).
+        let squat = PathBuf::from("/tmp/omg-424242");
+        let _ = std::fs::remove_dir(&squat);
+        std::fs::create_dir(&squat).expect("squat dir");
+        let diverted = uid_temp_socket_path(424_242);
+        std::fs::remove_dir(&squat).expect("squat cleanup");
+        assert_eq!(diverted, home_fallback_socket_path());
+        assert!(
+            diverted.starts_with(data_dir()),
+            "fallback must live under our own data dir: {}",
+            diverted.display()
+        );
+    }
+
+    #[test]
+    fn prepare_socket_parent_creates_nested_dirs_owner_only() {
+        use std::os::unix::fs::PermissionsExt;
+        let base = tempfile::tempdir().expect("temp dir");
+        let socket = base.path().join("a").join("b").join("omg.sock");
+        prepare_socket_parent(&socket).expect("nested prepare");
+        validate_socket_parent(&socket).expect("nested validate");
+        let mode = std::fs::metadata(socket.parent().expect("parent"))
+            .expect("metadata")
+            .permissions()
+            .mode();
+        assert_eq!(mode & 0o077, 0, "socket dir must be owner-only");
     }
 
     #[test]

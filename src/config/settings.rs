@@ -240,7 +240,7 @@ impl Default for AurBuildSettings {
         Self {
             build_method: AurBuildMethod::Bubblewrap,
             build_concurrency: 1,
-            review_pkgbuild: false,
+            review_pkgbuild: true,
             secure_makepkg: true,
             allow_unsafe_builds: false,
             allow_network: false,
@@ -674,18 +674,18 @@ mod tests {
     fn cli_review_flag_enables_pkgbuild_review() {
         Settings::reset_cli_review_pkgbuild();
         assert!(
-            !Settings::default().aur.review_pkgbuild,
-            "PKGBUILD review stays off unless opted in"
+            Settings::default().aur.review_pkgbuild,
+            "PKGBUILD review is on by default"
         );
         Settings::enable_cli_review_pkgbuild();
         let settings = Settings::default().with_runtime_overrides();
         Settings::reset_cli_review_pkgbuild();
         assert!(
             settings.aur.review_pkgbuild,
-            "--review must turn PKGBUILD review on for this process"
+            "--review must keep PKGBUILD review on for this process"
         );
         assert!(
-            !Settings::default().aur.review_pkgbuild,
+            Settings::default().aur.review_pkgbuild,
             "the process flag must not mutate Settings::default"
         );
     }

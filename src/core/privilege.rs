@@ -99,16 +99,32 @@ const PRIVILEGED_ENV_SCRUB: &[&str] = &[
     "CARGO_PKG_NAME",
     "CARGO_PKG_VERSION",
     "OUT_DIR",
-    // Library injection vectors
+    // Library injection vectors (Linux)
     "LD_PRELOAD",
     "LD_LIBRARY_PATH",
     "LD_AUDIT",
     "LD_DEBUG",
+    // Library injection vectors (macOS dyld; sudo strips these by default,
+    // but a permissive sudoers env_keep must not smuggle them into root)
+    "DYLD_INSERT_LIBRARIES",
+    "DYLD_LIBRARY_PATH",
+    "DYLD_FALLBACK_LIBRARY_PATH",
+    "DYLD_FALLBACK_FRAMEWORK_PATH",
+    "DYLD_FRAMEWORK_PATH",
     // Script execution vectors
     "PYTHONPATH",
+    "PYTHONHOME",
     "RUBYLIB",
+    "RUBYOPT",
     "PERL5LIB",
+    "PERL5OPT",
     "NODE_PATH",
+    "NODE_OPTIONS",
+    // Shell startup vectors: sourced by non-interactive sh/bash, which is
+    // exactly how package maintainer scripts run as root
+    "BASH_ENV",
+    "ENV",
+    "PS4",
 ];
 
 /// Strip [`PRIVILEGED_ENV_SCRUB`] from a sudo command builder.
@@ -784,6 +800,47 @@ mod tests {
         );
         assert_eq!(argv.get(marker + 2).map(String::as_str), Some("install"));
         assert_eq!(argv.last().map(String::as_str), Some("ripgrep"));
+    }
+
+    #[test]
+    fn privileged_env_scrub_covers_dyld_and_shell_startup_vectors() {
+        // A permissive sudoers env_keep must not smuggle loader or shell
+        // startup variables into the root re-exec. Every entry here is a
+        // documented code-execution vector for the payload's process tree
+        // (dyld for macOS binaries, BASH_ENV/ENV/PS4 for sh/bash maintainer
+        // scripts, *OPT for interpreter-based helpers).
+        let exe = std::path::PathBuf::from("/usr/bin/omg");
+        let command = payload_command(
+            std::path::Path::new("sudo"),
+            &exe,
+            &["install", "--", "ripgrep"],
+            true,
+        );
+        let removed: std::collections::HashSet<String> = command
+            .as_std()
+            .get_envs()
+            .filter(|&(_, value)| value.is_none())
+            .map(|(key, _)| key.to_string_lossy().into_owned())
+            .collect();
+        for name in [
+            "LD_PRELOAD",
+            "LD_LIBRARY_PATH",
+            "DYLD_INSERT_LIBRARIES",
+            "DYLD_LIBRARY_PATH",
+            "DYLD_FALLBACK_LIBRARY_PATH",
+            "BASH_ENV",
+            "ENV",
+            "PS4",
+            "PERL5OPT",
+            "PYTHONHOME",
+            "RUBYOPT",
+            "NODE_OPTIONS",
+        ] {
+            assert!(
+                removed.contains(name),
+                "{name} must be scrubbed from sudo children"
+            );
+        }
     }
 
     #[tokio::test]
