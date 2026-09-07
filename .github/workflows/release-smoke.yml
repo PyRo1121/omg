@@ -109,6 +109,9 @@ jobs:
             echo "Sentry smoke reporting disabled: OMG_SMOKE_SENTRY_DSN secret is not set"
           fi
 
+      - name: Install GNU timeout
+        run: brew install coreutils
+
       - name: Run release artifact smoke test (native)
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
