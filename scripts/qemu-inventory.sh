@@ -40,7 +40,9 @@ root=$(cd "$work" && pwd)
 guest="$root/guest"
 out="$root/inventory"
 mkdir -p "$out/rows"
-opts=(-i "$guest/client-key" -p "$ssh_port" -o BatchMode=yes -o ConnectTimeout=5
+# -n keeps ssh from forwarding (and draining) this loop's stdin, which is the
+# TSV stream: without it only the first tier-matching row ever executes.
+opts=(-n -i "$guest/client-key" -p "$ssh_port" -o BatchMode=yes -o ConnectTimeout=5
   -o ServerAliveInterval=5 -o ServerAliveCountMax=3 -o StrictHostKeyChecking=yes
   -o UserKnownHostsFile="$guest/known_hosts")
 target="$ssh_user@127.0.0.1"
