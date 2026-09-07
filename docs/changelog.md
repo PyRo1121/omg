@@ -73,6 +73,20 @@ present before the probe runs.
 - **Install**: Add interactive fuzzy package discovery
 ### 🐛 Bug Fixes
 
+- **Qa**: Keep inventory ssh from draining the TSV row stream ([#283](https://github.com/PyRo1121/omg/issues/283))
+
+qemu-inventory.sh drives TSV rows with stdin as the row stream, but each
+
+row runs over ssh without -n, so ssh forwards (drains) stdin and the loop
+
+hits EOF after the first tier-matching row. Later rows never execute while
+
+the summary still reports skipped:0, so green runs claim full-tier coverage
+
+they never performed. Pass -n so row stdin comes from /dev/null.
+
+Fixes [#282](https://github.com/PyRo1121/omg/issues/282)
+
 - **Cli,ci**: Confirm destructive clean, offline quick-gate, fail-closed config ([#278](https://github.com/PyRo1121/omg/issues/278))
 
 * config: enforce single fail-closed rule for build_concurrency and MAKEFLAGS
