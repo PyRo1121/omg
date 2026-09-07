@@ -463,6 +463,13 @@ impl HistoryManager {
         let lock = options
             .open(&lock_path)
             .with_context(|| format!("Failed to open history lock: {}", lock_path.display()))?;
+        // Creating the lock as root (elevated run in the invoking user's
+        // data dir) re-owns it as root, like `save` already handles for the
+        // history file itself: without this every later unprivileged run
+        // fails to open the lock. Best-effort: warn, never fail the op.
+        if let Err(error) = crate::core::safe_ops::restore_original_user_ownership(&lock_path) {
+            tracing::warn!("Failed to restore history lock ownership: {error:#}");
+        }
         lock.lock()
             .with_context(|| format!("Failed to lock package history: {}", lock_path.display()))?;
 
