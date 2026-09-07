@@ -35,8 +35,15 @@ class QuickGateOfflineTests(unittest.TestCase):
         self.assertIsNotNone(m, "quick-gate must declare timeout-minutes")
         self.assertLessEqual(
             int(m.group(1)),
-            5,
-            f"quick-gate timeout must stay <= 5 min for its < 2 min role, got {m.group(1)}",
+            10,
+            f"quick-gate timeout must stay <= 10 min: the gate really "
+            f"executes make ci-local-quick (~4.5 min cold), got {m.group(1)}",
+        )
+        self.assertIn(
+            "Swatinem/rust-cache",
+            gate,
+            "quick-gate must restore the Rust cache or every run pays a "
+            "cold 4+ minute check and the gate is not quick at all",
         )
         portable = job_block(text, "portable")
         self.assertIn(

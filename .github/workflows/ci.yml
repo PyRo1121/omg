@@ -66,13 +66,15 @@ env:
 
 jobs:
   #############################################################################
-  # STAGE 1: Quick Gate (< 2 min)
-  # Fast checks that gate expensive platform builds
+  # STAGE 1: Quick Gate
+  # Fast checks that gate expensive platform builds. Runs make
+  # ci-local-quick for real (not a dry run), so budget ~5 min cold,
+  # ~2 min warm via the Rust cache.
   #############################################################################
   quick-gate:
     name: "Quick Gate"
     runs-on: ubuntu-latest
-    timeout-minutes: 5
+    timeout-minutes: 10
     outputs:
       should-build: ${{ steps.changes.outputs.rust }}
     steps:
@@ -104,6 +106,13 @@ jobs:
         with:
           toolchain: "1.95.0"
           components: rustfmt, clippy
+
+      - name: Setup cache
+        if: inputs.skip-cache != true
+        uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+        with:
+          prefix-key: "v1-quick-gate"
+          shared-key: "quick-gate"
 
       - name: Check formatting
         run: cargo fmt --all -- --check
