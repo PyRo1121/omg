@@ -23,23 +23,28 @@ failures="$(jq -ce '
   if length > 10000 then error("too many results") else . end |
   if all(.[];
     (.case_id | identifier) and
-    (.distro | IN("arch", "debian", "ubuntu", "fedora")) and
-    (.result | IN("PASS", "EXPECTED_REJECTION", "PRODUCT_FAIL", "HARNESS_ERROR", "BLOCKED")) and
-    (.exit_code | type == "number" and floor == . and . >= 0 and . <= 255) and
+    (.distro | IN("arch", "debian", "ubuntu", "fedora", "macos")) and
+    (.result | IN("PASS", "SKIPPED", "EXPECTED_REJECTION", "PRODUCT_FAIL", "HARNESS_ERROR", "FAIL", "BLOCKED")) and
+    (.exit_code | type == "number" and floor == . and . >= -1 and . <= 255) and
     (.elapsed_seconds | type == "number" and . >= 0 and . <= 86400))
   then . else error("invalid result fields") end |
   map(select(.result == "PRODUCT_FAIL" or .result == "HARNESS_ERROR") |
     {case_id, distro, result, exit_code, elapsed_seconds})
 ' "$1")"
 [[ "$(jq 'length' <<< "$failures")" != 0 ]] || exit 0
-event_id="$(tr -d '-' < /proc/sys/kernel/random/uuid)"
+if command -v uuidgen >/dev/null 2>&1; then
+  event_id="$(uuidgen | tr -d '-' | tr -d '\n')"
+else
+  event_id="$(tr -d '-' < /proc/sys/kernel/random/uuid)"
+fi
 http_code="$({
   jq -cn --slurpfile config "$config" --arg id "$event_id" '{event_id:$id,dsn:$config[0].dsn}'
   printf '{"type":"event"}\n'
   jq -cn --arg id "$event_id" --arg release "$release" --arg run_id "$run_id" \
     --arg timestamp "$(date -u +%Y-%m-%dT%H:%M:%SZ)" --argjson failures "$failures" \
+    --arg environment "${OMG_SMOKE_ENVIRONMENT:-release-smoke}" \
     '{event_id:$id,timestamp:$timestamp,platform:"other",level:"error",logger:"omg-smoke",
-      environment:"release-smoke",release:$release,message:"OMG release smoke run has failures",
+      environment:$environment,release:$release,message:"OMG release smoke run has failures",
       fingerprint:["omg-smoke",$release,($failures | map(.distro+":"+.case_id+":"+.result) | sort | join(","))],
       tags:{run_id:$run_id,reporter:"post-run"},extra:{failures:$failures}}'
 } | curl --silent --show-error --connect-timeout 3 --max-time 8 --proto '=https' \
