@@ -73,6 +73,174 @@ present before the probe runs.
 - **Install**: Add interactive fuzzy package discovery
 ### 🐛 Bug Fixes
 
+- **Cli,ci**: Confirm destructive clean, offline quick-gate, fail-closed config ([#278](https://github.com/PyRo1121/omg/issues/278))
+
+* config: enforce single fail-closed rule for build_concurrency and MAKEFLAGS
+
+Validate untrusted config at both trust boundaries (CLI set and file
+
+load) through one shared allowlist/range check. Reject relative
+
+OMG_CONFIG_DIR and warn on missing env-pointed dirs instead of
+
+silently falling back to defaults.
+
+* ci: cancel superseded PR runs but never main
+
+Concurrency group keys on head_ref so PR pushes cancel each other;
+
+cancel-in-progress is false on main so queued main runs complete
+
+instead of being dropped behind a doomed run.
+
+* ci: keep quick-gate offline, fast, and honest
+
+Move the network-dependent zsh completion check into the portable job
+
+with apt retry; cap quick-gate at 5 minutes for its sub-2-minute role;
+
+execute make ci-local-quick instead of dry-running it with make -n.
+
+Covered by scripts/test_ci_gates.py operational gate tests.
+
+* http: bound AUR source fetch with read timeout
+
+Replace the 5-minute total timeout (aborts large downloads) with a
+
+60-second read timeout matching core::http::download_client. Redirects
+
+stay manual: each hop must re-resolve and re-validate public-only for
+
+SSRF protection.
+
+* cli: confirm destructive clean with --yes
+
+Add --yes/-y to clean (matching install/remove), confirm via the shared
+
+confirm_attended seam, and thread the flag through dispatch, the global
+
+yes-flag, and the TUI (button press counts as confirmation). The gate
+
+lives only on the Arch path: Fedora/Debian keep their proven
+
+backend-owned prompt and failure contracts.
+
+* cli: fast-path --json implies quiet output
+
+Thread the global --json flag through configure_fast_path_output so JSON
+
+results own stdout while diagnostics stay on stderr, on both the normal
+
+and sudo re-exec paths. Regression-tested.
+
+* build: sync Makefile phony targets
+
+Declare test-lib, fmt-check, clippy-strict, qa, coverage, tdd, and the
+
+ci-local/docker-shell targets that already existed as recipes; drop the
+
+duplicate trailing declaration.
+
+* docs: sync toolchain version and guide accuracy
+
+MSRV 1.93 to 1.95.0 across badges, prerequisites, and templates;
+
+accurate daemon-optional wording; fixed doc links and per-area guide
+
+updates.
+
+* clippy: fix -D warnings lints
+
+Array-pattern char split in PKGBUILD assignment parsers, bind the
+
+download-lane lock guard instead of holding a temporary in the if-let
+
+scrutinee, and use from_mins for the AUR read timeout.
+
+* fmt: apply cargo fmt to completions and arch imports
+
+Unblocks the quick-gate fmt check; mechanical rustfmt-only changes.
+
+* clippy: satisfy strict all-targets lints
+
+map_or over map+unwrap_or in the fast counter; inline format args in
+
+the missing-dir defaults test.
+
+* deps: sync fuzz lockfile with manifest
+
+The committed lock was missing 74 entries, so the --locked fuzz check
+
+in ci-local-quick failed everywhere. Purely additive regeneration.
+
+* ci: give quick-gate a cache and an honest timeout
+
+Restore the Rust cache in quick-gate (it runs a real 4+ minute check,
+
+not a dry run), raise the cap 5 to 10 minutes, and correct the stale
+
+'< 2 min' comment. Gate tests now assert the cache step and the
+
+10-minute budget.
+
+* clippy: silence arch-only presentation helpers in backend-less builds
+
+PKGBUILD/review chrome helpers and clear_live_progress have callers
+
+only under feature arch; follow the types.rs precedent with per-item
+
+cfg_attr allows so the pgp-only portable gate stays -D warnings clean.
+
+* clippy: gate confirm_cleanup to live cleanup configs
+
+The debian-pure isolation leg compiles out the cleanup call site in
+
+clean.rs, leaving confirm_cleanup unreferenced under -D warnings.
+
+Gate the function and its test to the same configs instead of
+
+silencing dead_code.
+
+* cli: silence below-error logs in JSON mode
+
+The advertised JSON contract requires empty stderr on success; route
+
+--json through quiet logging so warnings never contaminate machine
+
+output. Explicit RUST_LOG still wins.
+
+* test(cli): sync assertions with print-CLI contract
+
+Search/info/update headers changed in [#272](https://github.com/PyRo1121/omg/issues/272) (| Search, | Info,
+
+Refreshing catalogs); settings legacy-key notice stays warn per
+
+tracing-diagnostics contract. Adds missing behavior-inventory rows
+
+for install --review, update --review, update --no-sync.
+
+* fix(qa): port gitleaks allowlist parity, file remove-tree setup as product failure
+
+Ports .gitleaks.toml from main so the synthetic PAT-shaped scrub-test
+
+fixture (fixturefake infix) never flags this branch's scans.
+
+release-smoke.sh remove-tree setup install now exits 1 (PRODUCT_FAIL)
+
+instead of 120 (HARNESS_ERROR) so a recurrence like [#277](https://github.com/PyRo1121/omg/issues/277) files
+
+against the product. Refs [#276](https://github.com/PyRo1121/omg/issues/276), [#277](https://github.com/PyRo1121/omg/issues/277).
+
+* fix(qa): restore exact gitleaks allowlist bytes from main
+
+The ported copy carried a literal placeholder in place of the
+
+fixture-infix pattern; restore byte-exact parity with main so the
+
+synthetic scrub-test fixture is actually allowlisted. Verified
+
+locally: fixture finding suppressed with this file. Refs [#276](https://github.com/PyRo1121/omg/issues/276).
+
 - **Ci**: Install sudo in debian jobs for the privilege lookup tests
 - **Tests**: Align coverage contracts with shipped behavior
 
