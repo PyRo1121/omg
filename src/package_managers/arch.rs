@@ -3,10 +3,10 @@ use std::pin::Pin;
 
 use anyhow::Result as AnyhowResult;
 
-use crate::core::{can_write_pacman_db, privilege, Package, PackageSource};
+use crate::core::{Package, PackageSource, can_write_pacman_db, privilege};
 use crate::package_managers::{
-    get_system_status, invalidate_caches, traits::PackageManager, types::VersionDisplay,
-    TransactionKind,
+    TransactionKind, get_system_status, invalidate_caches, traits::PackageManager,
+    types::VersionDisplay,
 };
 
 /// Arch Linux package manager (ALPM) implementation
