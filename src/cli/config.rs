@@ -51,17 +51,8 @@ pub fn set(key: &str, value: &str) -> Result<()> {
         }
         "aur.build_concurrency" => {
             let concurrency: usize = value.parse().context("Invalid number")?;
-            // Security: Prevent resource exhaustion with reasonable bounds
-            const MAX_CONCURRENCY: usize = 8;
-            if concurrency == 0 {
-                anyhow::bail!("aur.build_concurrency must be at least 1");
-            }
-            if concurrency > MAX_CONCURRENCY {
-                anyhow::bail!(
-                    "aur.build_concurrency exceeds maximum of {MAX_CONCURRENCY}. \
-                     Use a value between 1 and {MAX_CONCURRENCY}."
-                );
-            }
+            // Security: same rule as Settings::load enforces on the file.
+            crate::config::validate_build_concurrency(concurrency)?;
             settings.aur.build_concurrency = concurrency;
         }
         "aur.enable_ccache" => {
@@ -77,24 +68,8 @@ pub fn set(key: &str, value: &str) -> Result<()> {
             settings.aur.makeflags = if value.is_empty() {
                 None
             } else {
-                // Security: allowlist MAKEFLAGS characters to prevent command
-                // injection. The allowlist is the enforcement point: it already
-                // excludes every shell metacharacter, so no separate denylist
-                // is needed.
-                let is_safe = value.chars().all(|c| {
-                    c.is_ascii_alphanumeric()
-                        || c == '-'
-                        || c == '='
-                        || c == ' '
-                        || c == ','
-                        || c == '.'
-                });
-                if !is_safe {
-                    anyhow::bail!(
-                        "Invalid MAKEFLAGS: only alphanumeric, '-', '=', space, comma, and '.' \
-                         are allowed (e.g. '-j8'). Shell metacharacters such as '$()' are rejected."
-                    );
-                }
+                // Security: same rule as Settings::load enforces on the file.
+                crate::config::validate_makeflags(value)?;
                 Some(value.to_string())
             };
         }

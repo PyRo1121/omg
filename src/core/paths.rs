@@ -154,19 +154,30 @@ pub fn daemon_data_dir() -> PathBuf {
 }
 
 /// Config directory (default: XDG config dir/omg or ~/.config/omg).
+///
+/// A relative `OMG_CONFIG_DIR` is rejected (warn + default fallback), mirroring
+/// the absolute-path requirement enforced by `pacman_root_result`: persistent
+/// state must never depend on the caller's current directory.
 #[must_use]
 pub fn config_dir() -> PathBuf {
-    env_path("OMG_CONFIG_DIR").unwrap_or_else(|| {
-        elevated_user_home().map_or_else(
-            || {
-                dirs::config_dir().map_or_else(
-                    || fallback_home_dir().join(".config/omg"),
-                    |d| d.join("omg"),
-                )
-            },
-            |home| home.join(".config/omg"),
-        )
-    })
+    if let Some(dir) = env_path("OMG_CONFIG_DIR") {
+        if dir.is_absolute() {
+            return dir;
+        }
+        tracing::warn!(
+            "Ignoring relative OMG_CONFIG_DIR {}: must be an absolute path; using defaults",
+            dir.display()
+        );
+    }
+    elevated_user_home().map_or_else(
+        || {
+            dirs::config_dir().map_or_else(
+                || fallback_home_dir().join(".config/omg"),
+                |d| d.join("omg"),
+            )
+        },
+        |home| home.join(".config/omg"),
+    )
 }
 
 #[inline]
@@ -628,6 +639,15 @@ mod tests {
     fn config_dir_is_non_empty() {
         let path = config_dir();
         assert!(!path.as_os_str().is_empty());
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn relative_config_dir_falls_back_to_default() {
+        let expected = temp_env::with_var_unset("OMG_CONFIG_DIR", config_dir);
+        temp_env::with_var("OMG_CONFIG_DIR", Some("relative/path"), || {
+            assert_eq!(config_dir(), expected);
+        });
     }
 
     #[test]
