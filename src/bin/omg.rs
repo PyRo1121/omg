@@ -818,8 +818,12 @@ async fn async_main(args: Vec<String>) -> Result<()> {
     // Configure terminal rendering before any long-running command starts.
     omg_lib::cli::modern_ui::configure_output(cli.verbose, cli.quiet);
 
-    // Initialize logging
-    init_logging(cli.verbose, cli.quiet);
+    // Initialize logging. JSON mode implies quiet logging: the
+    // advertised contract (tests/arch_cli_contracts.rs
+    // advertised_json_outputs_are_valid_json) requires empty stderr on
+    // success, so warnings such as the missing-config-dir notice must not
+    // leak there. Explicit RUST_LOG still wins inside init_logging.
+    init_logging(cli.verbose, cli.quiet || cli.json);
 
     let telemetry_ping = spawn_telemetry_ping();
 
