@@ -24,6 +24,12 @@ main, so these two tests never reached main. Port the leftover
 
 non-breaking coverage onto current main.
 
+### ⚡ Performance
+
+- **Cli**: Skip AUR dump on update and land print-CLI speed work ([#272](https://github.com/PyRo1121/omg/issues/272))
+
+Update discovery already falls through to RPC, so waiting on the search dump only delayed the package list. Completions now rank prefix matches, and TODO.md records later optional distro onboarding.
+
 ### ✨ New Features
 
 - **Install**: Add interactive fuzzy package discovery
