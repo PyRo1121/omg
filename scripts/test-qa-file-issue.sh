@@ -76,8 +76,13 @@ grep -q "No failures to file" <<< "$out" || fail "clean-run printed no notice"
 grep -q "filed=0 updated=0 closed=0 errors=0" <<< "$out" || fail "clean-run bad summary: $out"
 
 # 7. New issue carries a scrubbed failure excerpt plus an agent runbook.
+# Assemble the github-pat-shaped fixture at runtime so the source file
+# is not itself a gitleaks finding.
 mkdir -p "$scratch/ev/arch-search-tree"
-printf 'line one\n[32mgreen output[0m\nGH_TOKEN is fixture-secret-that-must-not-leak\nghp_fixturefakepattern00000000000000000000\nboom: exit 1\n' > "$scratch/ev/arch-search-tree/transcript.txt"
+token_prefix="ghp"
+token_body="_fixturefakepattern00000000000000000000"
+fake_pat="${token_prefix}${token_body}"
+printf 'line one\n\033[32mgreen output\033[0m\nGH_TOKEN is fixture-secret-that-must-not-leak\n%s\nboom: exit 1\n' "$fake_pat" > "$scratch/ev/arch-search-tree/transcript.txt"
 printf '%s' '[{"case_id":"search-tree","distro":"arch","result":"PRODUCT_FAIL","exit_code":1,"elapsed_seconds":2}]' > "$results"
 : > "$CALL_LOG"; export FAKE_ISSUES_JSON='[]' GH_TOKEN='fixture-secret-that-must-not-leak'
 out=$(bash "$runner" "$results" --run-url https://run/7 --source qemu --evidence-dir "$scratch/ev"); assert_rc 0 "$?" "excerpt-create"
@@ -87,7 +92,7 @@ grep -q "green output" "$CALL_LOG" || fail "excerpt-create dropped plain log tex
 grep -q "Agent runbook" "$CALL_LOG" || fail "excerpt-create omitted the runbook"
 grep -q "arch-search-tree/transcript.txt" "$CALL_LOG" || fail "excerpt-create omitted the evidence path"
 if grep -q "fixture-secret-that-must-not-leak" "$CALL_LOG"; then fail "excerpt leaked GH_TOKEN"; fi
-if grep -q "ghp_fixture" "$CALL_LOG"; then fail "excerpt leaked a token pattern"; fi
+if grep -Fq "$fake_pat" "$CALL_LOG"; then fail "excerpt leaked a token pattern"; fi
 if grep -q $'\x1b' "$CALL_LOG"; then fail "excerpt leaked ANSI escapes"; fi
 unset GH_TOKEN
 
