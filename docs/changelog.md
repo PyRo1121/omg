@@ -73,6 +73,50 @@ present before the probe runs.
 - **Install**: Add interactive fuzzy package discovery
 ### 🐛 Bug Fixes
 
+- **Qa**: Qemu-matrix concurrency scope + checkout pin ([#298](https://github.com/PyRo1121/omg/issues/298))
+
+* fix(qa): move matrix concurrency to job scope so the workflow parses
+
+The matrix context does not exist at workflow scope: referencing it in
+
+top-level concurrency failed the whole file closed (zero jobs on every
+
+event; workflow_dispatch rejected with HTTP 422 'Unrecognized
+
+named-value: matrix'). Per-distro groups now live on the four matrix
+
+jobs; the top-level default scopes non-matrix jobs by ref.
+
+* fix(qa): use the repo's known-good checkout pin in qemu-matrix
+
+All seven actions/checkout pins in this file ended in ba87, which does
+
+not resolve (jobs die in setup: unable to find version). Every other
+
+workflow uses ...ba90b1, which executes green. Align to the proven pin.
+
+* fix(qa): uniquify qemu-matrix job concurrency by job id
+
+Same-distro x86 and arm64 matrix jobs shared
+
+qemu-${{ github.ref }}-${{ matrix.distro }}, so cancel-in-progress
+
+killed sibling arch legs in the same run.
+
+- **Clippy**: Import APT_FETCH_DIRS helpers into apt test module ([#297](https://github.com/PyRo1121/omg/issues/297))
+
+Test module only imported apt_install_error, so lib tests failed
+
+to compile under debian-feature builds (E0425). Extends the
+
+super import; verified with the issue gate in debian:bookworm:
+
+cargo clippy --all-targets --no-default-features
+
+--features debian,pgp,license --locked -  - -D warnings exits 0.
+
+Fixes [#295](https://github.com/PyRo1121/omg/issues/295).
+
 - **Audit**: Trust root-owned ancestors regardless of distro group-write bits ([#292](https://github.com/PyRo1121/omg/issues/292))
 
 record_operation refused to run when any ancestor of /var/log/omg was
