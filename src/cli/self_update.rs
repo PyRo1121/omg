@@ -134,16 +134,9 @@ pub async fn run(force: bool, version: Option<String>) -> Result<()> {
             refuse_unverified_provenance()?;
         }
 
-        let cursor = std::io::Cursor::new(bytes);
-        let decoder = flate2::read::GzDecoder::new(cursor);
-        let mut archive = tar::Archive::new(decoder);
-
         let temp_dir = tempfile::tempdir().context("Failed to create temp directory for update")?;
-        archive
-            .unpack(temp_dir.path())
-            .context("Failed to extract update archive")?;
-
-        let new_binary = locate_binary(temp_dir.path(), &archive_name)
+        let new_binary = extract_update_binary(&bytes, temp_dir.path(), &archive_name)
+            .context("Failed to extract update binary")?
             .ok_or_else(|| anyhow::anyhow!("update archive did not contain an 'omg' binary"))?;
 
         let current_exe = env::current_exe().context("Failed to find current executable path")?;
@@ -198,20 +191,96 @@ fn install_binary_atomically(
     Ok(())
 }
 
-/// Locate the `omg` binary inside an unpacked release archive.
+/// Cap on decompressed update payload: a release tarball holds one binary
+/// (~10-30 MiB), so anything larger is a decompression bomb.
+const MAX_UPDATE_DECOMPRESSED_BYTES: u64 = 64 * 1024 * 1024;
+
+/// Cap on entry count: a release archive holds a wrapper dir plus binaries.
+const MAX_UPDATE_ARCHIVE_ENTRIES: usize = 16;
+
+/// Cap on a single extracted update binary.
+const MAX_UPDATE_BINARY_BYTES: u64 = 64 * 1024 * 1024;
+
+/// Extract only the `omg` binary from a release archive.
 ///
 /// CI wraps the payload in a directory named after the archive
 /// (`omg-v1.2.3-x86_64-linux-debian/omg`); a flat root-level `omg` layout is
-/// accepted as a fallback.
-fn locate_binary(extract_dir: &std::path::Path, archive_name: &str) -> Option<std::path::PathBuf> {
-    if let Some(wrapper) = archive_name.strip_suffix(".tar.gz") {
-        let wrapped = extract_dir.join(wrapper).join("omg");
-        if wrapped.is_file() {
-            return Some(wrapped);
+/// accepted as a fallback. Unlike a general extractor this allowlists those
+/// two paths and materializes a single regular file: symlinks, hard links,
+/// and special entries fail closed instead of being created, so a malicious
+/// archive cannot stage link-traversal writes or plant entries outside the
+/// temp dir, and the decompression budget stops bombs.
+fn extract_update_binary(
+    bytes: &[u8],
+    extract_dir: &std::path::Path,
+    archive_name: &str,
+) -> Result<Option<std::path::PathBuf>> {
+    use std::io::Read as _;
+
+    let wrapper: Option<std::path::PathBuf> = archive_name
+        .strip_suffix(".tar.gz")
+        .map(|stem| std::path::PathBuf::from(stem).join("omg"));
+    let flat = std::path::PathBuf::from("omg");
+
+    let cursor = std::io::Cursor::new(bytes);
+    let decoder = flate2::read::GzDecoder::new(cursor);
+    let budgeted =
+        crate::runtimes::common::BudgetedReader::new(decoder, MAX_UPDATE_DECOMPRESSED_BYTES);
+    let mut archive = tar::Archive::new(budgeted);
+
+    let mut found: Option<std::path::PathBuf> = None;
+    let mut entries = 0usize;
+    for entry in archive.entries().context("Failed to read update archive")? {
+        entries += 1;
+        anyhow::ensure!(
+            entries <= MAX_UPDATE_ARCHIVE_ENTRIES,
+            "Update archive contains too many entries"
+        );
+        let mut entry = entry.context("Failed to read update archive entry")?;
+        let path = entry.path().context("Update archive entry has no path")?;
+        let Some(relative) = crate::core::archive::stripped_archive_path(&path, 0)
+            .context("Unsafe path in update archive")?
+        else {
+            continue;
+        };
+        let wanted = Some(&relative) == wrapper.as_ref() || relative == flat;
+        let entry_type = entry.header().entry_type();
+        if entry_type.is_dir() {
+            continue;
         }
+        if !wanted {
+            // Release archives carry exactly one payload binary; anything
+            // else is ignored rather than published.
+            continue;
+        }
+        anyhow::ensure!(
+            entry_type.is_file(),
+            "Update binary entry is not a regular file: {}",
+            relative.display()
+        );
+        anyhow::ensure!(
+            found.is_none(),
+            "Update archive contains a duplicate binary entry: {}",
+            relative.display()
+        );
+        let dest_path = extract_dir.join(&relative);
+        if let Some(parent) = dest_path.parent() {
+            fs::create_dir_all(parent)
+                .with_context(|| format!("Failed to create {}", parent.display()))?;
+        }
+        let mut content = Vec::new();
+        entry
+            .read_to_end(&mut content)
+            .context("Failed to read update binary from archive")?;
+        anyhow::ensure!(
+            u64::try_from(content.len()).is_ok_and(|len| len <= MAX_UPDATE_BINARY_BYTES),
+            "Update binary exceeds the size bound"
+        );
+        fs::write(&dest_path, &content)
+            .with_context(|| format!("Failed to stage update binary {}", dest_path.display()))?;
+        found = Some(dest_path);
     }
-    let flat = extract_dir.join("omg");
-    flat.is_file().then_some(flat)
+    Ok(found)
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -777,38 +846,114 @@ mod tests {
         }
     }
 
-    #[test]
-    fn locate_binary_finds_wrapped_ci_layout() {
-        let tmp = tempfile::tempdir().expect("temp dir");
-        let wrapper = tmp.path().join("omg-v1.2.3-x86_64-linux-arch");
-        std::fs::create_dir_all(&wrapper).expect("wrapper dir");
-        std::fs::write(wrapper.join("omg"), b"#!/bin/sh\n").expect("binary");
-        assert_eq!(
-            locate_binary(tmp.path(), "omg-v1.2.3-x86_64-linux-arch.tar.gz"),
-            Some(wrapper.join("omg"))
-        );
+    fn update_test_tar(entries: &[(&str, &[u8])]) -> Vec<u8> {
+        let mut builder = tar::Builder::new(Vec::new());
+        for (name, content) in entries {
+            let mut header = tar::Header::new_gnu();
+            header.set_size(content.len() as u64);
+            header.set_mode(0o755);
+            header.set_cksum();
+            builder
+                .append_data(&mut header, name, *content)
+                .expect("append tar entry");
+        }
+        builder.into_inner().expect("finish tar")
+    }
+
+    fn gzip_bytes(raw: &[u8]) -> Vec<u8> {
+        use std::io::Write as _;
+        let mut encoder = flate2::write::GzEncoder::new(Vec::new(), flate2::Compression::fast());
+        encoder.write_all(raw).expect("gzip tar");
+        encoder.finish().expect("finish gzip")
+    }
+
+    fn update_test_archive(entries: &[(&str, &[u8])]) -> Vec<u8> {
+        gzip_bytes(&update_test_tar(entries))
+    }
+
+    /// Rewrite the first entry name of a raw tar archive, recomputing the
+    /// header checksum. The safe builder API refuses `..` names, but hostile
+    /// archives in the wild are not built with it.
+    fn retarget_first_entry(raw: &mut [u8], name: &[u8]) {
+        assert!(name.len() < 100, "entry name must fit the tar name field");
+        raw[0..100].fill(0);
+        raw[0..name.len()].copy_from_slice(name);
+        raw[148..156].fill(b' ');
+        let checksum: u32 = raw[0..512].iter().map(|byte| u32::from(*byte)).sum();
+        let encoded = format!("{checksum:06o}\0 ");
+        raw[148..156].copy_from_slice(encoded.as_bytes());
     }
 
     #[test]
-    fn locate_binary_finds_flat_layout_fallback() {
+    fn update_extraction_finds_wrapped_ci_layout() {
         let tmp = tempfile::tempdir().expect("temp dir");
-        let flat = tmp.path().join("omg");
-        std::fs::write(&flat, b"#!/bin/sh\n").expect("binary");
-        assert_eq!(
-            locate_binary(tmp.path(), "omg-v1.2.3-x86_64-linux-arch.tar.gz"),
-            Some(flat)
-        );
+        let bytes = update_test_archive(&[("omg-v1.2.3-x86_64-linux-arch/omg", b"#!/bin/sh\n")]);
+        let found =
+            extract_update_binary(&bytes, tmp.path(), "omg-v1.2.3-x86_64-linux-arch.tar.gz")
+                .expect("extraction must succeed");
+        let expected = tmp.path().join("omg-v1.2.3-x86_64-linux-arch/omg");
+        assert_eq!(found, Some(expected.clone()));
+        assert_eq!(std::fs::read(&expected).expect("binary"), b"#!/bin/sh\n");
     }
 
     #[test]
-    fn locate_binary_returns_none_when_archive_has_no_binary() {
+    fn update_extraction_finds_flat_layout_fallback() {
         let tmp = tempfile::tempdir().expect("temp dir");
-        std::fs::create_dir_all(tmp.path().join("omg-v1.2.3-x86_64-linux-arch"))
-            .expect("empty wrapper dir");
+        let bytes = update_test_archive(&[("omg", b"#!/bin/sh\n")]);
+        let found =
+            extract_update_binary(&bytes, tmp.path(), "omg-v1.2.3-x86_64-linux-arch.tar.gz")
+                .expect("extraction must succeed");
+        let expected = tmp.path().join("omg");
+        assert_eq!(found, Some(expected.clone()));
+        assert_eq!(std::fs::read(&expected).expect("binary"), b"#!/bin/sh\n");
+    }
+
+    #[test]
+    fn update_extraction_returns_none_when_archive_has_no_binary() {
+        let tmp = tempfile::tempdir().expect("temp dir");
+        let bytes = update_test_archive(&[("omg-v1.2.3-x86_64-linux-arch/README", b"docs")]);
         assert_eq!(
-            locate_binary(tmp.path(), "omg-v1.2.3-x86_64-linux-arch.tar.gz"),
+            extract_update_binary(&bytes, tmp.path(), "omg-v1.2.3-x86_64-linux-arch.tar.gz",)
+                .expect("extraction must succeed"),
             None
         );
+    }
+
+    #[test]
+    fn update_extraction_refuses_traversal_entry() {
+        let tmp = tempfile::tempdir().expect("temp dir");
+        let mut raw = update_test_tar(&[("omg-v1.2.3-x86_64-linux-arch/omg", b"pwned")]);
+        retarget_first_entry(&mut raw, b"omg-v1.2.3-x86_64-linux-arch/../../evil");
+        let bytes = gzip_bytes(&raw);
+        extract_update_binary(&bytes, tmp.path(), "omg-v1.2.3-x86_64-linux-arch.tar.gz")
+            .expect_err("traversal entry must fail closed");
+        assert!(!tmp.path().join("evil").exists());
+    }
+
+    #[test]
+    fn update_extraction_refuses_symlink_binary() {
+        use std::io::Write as _;
+        let raw = {
+            let mut builder = tar::Builder::new(Vec::new());
+            let mut header = tar::Header::new_gnu();
+            header.set_entry_type(tar::EntryType::Symlink);
+            header.set_size(0);
+            header.set_cksum();
+            builder
+                .append_link(
+                    &mut header,
+                    "omg-v1.2.3-x86_64-linux-arch/omg",
+                    "/etc/hostname",
+                )
+                .expect("append symlink");
+            builder.into_inner().expect("finish tar")
+        };
+        let mut encoder = flate2::write::GzEncoder::new(Vec::new(), flate2::Compression::fast());
+        encoder.write_all(&raw).expect("gzip tar");
+        let bytes = encoder.finish().expect("finish gzip");
+        let tmp = tempfile::tempdir().expect("temp dir");
+        extract_update_binary(&bytes, tmp.path(), "omg-v1.2.3-x86_64-linux-arch.tar.gz")
+            .expect_err("symlink binary must fail closed");
     }
 
     #[test]

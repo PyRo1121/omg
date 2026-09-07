@@ -806,6 +806,9 @@ async fn async_main(args: Vec<String>) -> Result<()> {
             | Commands::Update { yes: true, .. }
             | Commands::Clean { yes: true, .. }
             | Commands::Rollback { yes: true, .. }
+            | Commands::Workspace {
+                command: omg_lib::cli::WorkspaceCommands::Run { yes: true, .. },
+            }
             | Commands::Snapshot {
                 command: SnapshotCommands::Restore { yes: true, .. }
             }
@@ -1043,6 +1046,7 @@ async fn handle_workspace_command(command: &omg_lib::cli::WorkspaceCommands) -> 
             args,
             parallel,
             filter,
+            ..
         } => omg_lib::cli::workspace::run(cmd, args, *parallel, filter.as_deref()).await,
         WorkspaceCommands::Diff { branch } => omg_lib::cli::workspace::diff(branch),
         WorkspaceCommands::Check => omg_lib::cli::workspace::check(),

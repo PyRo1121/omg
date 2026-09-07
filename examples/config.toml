@@ -32,9 +32,9 @@
 # Adjust based on available RAM (each build can use 1-2GB)
 #build_concurrency = 8
 
-# Require interactive PKGBUILD review before building (default: false)
-# Enable with `omg update --review` / `omg install --review`, or:
-#review_pkgbuild = false
+# Require interactive PKGBUILD review before building (default: true)
+# Disable only for CI that accepts unreviewed AUR code (`aur.review_pkgbuild = false`), or:
+#review_pkgbuild = true
 
 # Use stricter makepkg flags (default: true)
 # Enables: --cleanbuild, --verifysource
@@ -101,7 +101,7 @@
 # [aur]
 # build_method = "bubblewrap"
 # build_concurrency = 4
-# review_pkgbuild = false
+# review_pkgbuild = true
 # secure_makepkg = true
 # allow_unsafe_builds = false
 # cache_builds = false

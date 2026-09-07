@@ -458,6 +458,13 @@ fn run_project_command(
             "  {} Running repo-defined command: {custom_cmd}",
             style::arrow("→")
         );
+        // Fail closed without a terminal: a planted workspace file must not
+        // auto-execute in CI. Only an explicit --yes opts in.
+        if !console::user_attended() && !crate::core::privilege::get_yes_flag() {
+            anyhow::bail!(
+                "Refusing to run '{command}' from the workspace file in '{path}' without an interactive terminal (re-run with --yes to allow it explicitly)"
+            );
+        }
         if console::user_attended()
             && !dialoguer::Confirm::new()
                 .with_prompt(format!(
@@ -816,6 +823,52 @@ mod tests {
                 vec!["web".to_string()]
             ]
         );
+    }
+
+    /// Restores the global yes flag on drop: the refusal gate below reads
+    /// process-global state, so the test must neither leak its own value
+    /// nor run concurrently with other flag users.
+    struct YesFlagGuard(bool);
+    impl Drop for YesFlagGuard {
+        fn drop(&mut self) {
+            crate::core::privilege::set_yes_flag(self.0);
+        }
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn repo_defined_command_refuses_without_terminal_or_explicit_yes() {
+        let _guard = YesFlagGuard(crate::core::privilege::get_yes_flag());
+        crate::core::privilege::set_yes_flag(false);
+        let directory = tempfile::tempdir().expect("temp directory");
+        let mut commands = HashMap::new();
+        commands.insert("evil".to_string(), "touch pwned".to_string());
+        let project = WorkspaceProject {
+            path: directory.path().to_string_lossy().into_owned(),
+            depends_on: Vec::new(),
+            commands,
+        };
+        let error = run_project_command(&directory.path().to_string_lossy(), &project, "evil", &[])
+            .expect_err("unattended repo-defined commands must refuse without --yes");
+        assert!(error.to_string().contains("Refusing"));
+        assert!(!directory.path().join("pwned").exists());
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn repo_defined_command_allows_explicit_yes_without_terminal() {
+        let _guard = YesFlagGuard(crate::core::privilege::get_yes_flag());
+        crate::core::privilege::set_yes_flag(true);
+        let directory = tempfile::tempdir().expect("temp directory");
+        let mut commands = HashMap::new();
+        commands.insert("ok".to_string(), "exit 0".to_string());
+        let project = WorkspaceProject {
+            path: directory.path().to_string_lossy().into_owned(),
+            depends_on: Vec::new(),
+            commands,
+        };
+        run_project_command(&directory.path().to_string_lossy(), &project, "ok", &[])
+            .expect("explicit --yes must allow unattended repo-defined commands");
     }
 
     #[test]

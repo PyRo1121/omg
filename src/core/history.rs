@@ -463,6 +463,11 @@ impl HistoryManager {
         let lock = options
             .open(&lock_path)
             .with_context(|| format!("Failed to open history lock: {}", lock_path.display()))?;
+        // An elevated (sudo) run creates the lock as root, locking the real
+        // user out of their own history on the next unprivileged run.
+        if let Err(error) = crate::core::safe_ops::restore_original_user_ownership(&lock_path) {
+            tracing::warn!("Failed to restore history lock ownership: {error:#}");
+        }
         lock.lock()
             .with_context(|| format!("Failed to lock package history: {}", lock_path.display()))?;
 

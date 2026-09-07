@@ -739,6 +739,10 @@ pub enum WorkspaceCommands {
         /// Only run in projects matching filter
         #[arg(short, long)]
         filter: Option<String>,
+        /// Explicitly allow repo-defined commands without an interactive
+        /// confirmation (required when no terminal is attached)
+        #[arg(short = 'y', long)]
+        yes: bool,
     },
     /// Show environment diff across workspace vs a branch
     Diff {
