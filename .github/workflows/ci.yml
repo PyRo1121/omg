@@ -72,7 +72,7 @@ jobs:
   quick-gate:
     name: "Quick Gate"
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    timeout-minutes: 5
     outputs:
       should-build: ${{ steps.changes.outputs.rust }}
     steps:
@@ -114,21 +114,8 @@ jobs:
       - name: Check shell syntax
         run: bash -n install.sh benchmark.sh benchmark-hyperfine.sh scripts/*.sh
 
-      - name: Check Bash and Zsh package completion
-        run: |
-          sudo apt-get update -qq
-          sudo apt-get install -y --no-install-recommends zsh
-          set +e
-          timeout -k 10s 30s zsh tests/shell_completion.zsh > /tmp/shell-completion.log 2>&1
-          rc=$?
-          set -e
-          cat /tmp/shell-completion.log
-          echo '--- child zsh startup log ---'
-          cat /tmp/omg-zsh-child.log 2>/dev/null || true
-          exit "$rc"
-
       - name: Check local CI targets
-        run: make -n ci-local-quick ci-local-full
+        run: make ci-local-quick
 
   portable:
     name: "Portable Rust"
@@ -170,6 +157,22 @@ jobs:
         run: |
           cargo clippy --all-targets --no-default-features \
             --features debian-pure --locked -- -D warnings
+
+      - name: Check Bash and Zsh package completion
+        run: |
+          for attempt in 1 2 3; do
+            sudo apt-get update --error-on=any -qq && break || sleep 10
+            if [ "$attempt" = 3 ]; then exit 1; fi
+          done
+          sudo apt-get install -y --no-install-recommends zsh
+          set +e
+          timeout -k 10s 30s zsh tests/shell_completion.zsh > /tmp/shell-completion.log 2>&1
+          rc=$?
+          set -e
+          cat /tmp/shell-completion.log
+          echo '--- child zsh startup log ---'
+          cat /tmp/omg-zsh-child.log 2>/dev/null || true
+          exit "$rc"
 
       - name: Install nextest
         uses: taiki-e/install-action@e67fa11c4b9316fa714ddf0abed07a0c3143b95b # v2.87.4
