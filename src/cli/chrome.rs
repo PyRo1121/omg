@@ -326,10 +326,7 @@ const PKGBUILD_KEYS: &[&str] = &[
 
 fn assignment_name(line: &str) -> Option<&str> {
     let trimmed = line.trim_start();
-    let name = trimmed
-        .split(|character: char| character == '=' || character == '(')
-        .next()?
-        .trim();
+    let name = trimmed.split(['=', '(']).next()?.trim();
     if name.is_empty() {
         return None;
     }
