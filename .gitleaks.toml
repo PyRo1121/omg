@@ -2,7 +2,7 @@
 #
 # The QA excerpt-scrub harness (scripts/test-qa-file-issue.sh) intentionally
 # embeds a PAT-*shaped but non-functional fixture token
-# (`[REDACTED]…`) to prove failure excerpts are scrubbed before
+# (`ghp_fixturefakepattern…`) to prove failure excerpts are scrubbed before
 # filing. Full-history scans (fetch-depth: 0) flag the fixture commit.
 # This allowlist matches ONLY strings containing the literal infix
 # "fixturefake", which no real credential contains; every other rule and
@@ -12,4 +12,4 @@ useDefault = true
 
 [[allowlists]]
 description = "Synthetic QA scrub-test fixture, never a credential (issue #276)"
-regexes = ['''[REDACTED][A-Za-z0-9]*''']
+regexes = ['''ghp_fixturefake[A-Za-z0-9]*''']
