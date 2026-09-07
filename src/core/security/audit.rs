@@ -1362,19 +1362,40 @@ mod tests {
     }
 }
 
-/// Durable operation records are not subject to the daemon's best-effort queue.
-pub fn record_operation(operation: &str, targets: &[String], outcome: &str) -> anyhow::Result<()> {
-    let mut logger = if crate::core::privilege::is_root() {
-        use std::os::unix::fs::MetadataExt;
-        let directory = Path::new("/var/log/omg");
-        std::fs::create_dir_all(directory)?;
-        for path in directory.ancestors() {
-            let metadata = std::fs::symlink_metadata(path)?;
+/// Fail closed when the system audit directory is not trustworthy.
+///
+/// Every component must be a root-owned real directory (symlinks fail
+/// `is_dir` under `symlink_metadata`), so a planted redirection is refused.
+/// Only the leaf itself must additionally be free of group/other write bits:
+/// system ancestors legitimately carry them by distro default (Ubuntu ships
+/// `/var/log` as group-writable `root:syslog`, which a blanket writability
+/// check turns into a refusal to run at all). Ownership plus type still rule
+/// out non-root redirection of any component.
+#[cfg(unix)]
+fn ensure_system_audit_dir_trusted(directory: &Path) -> anyhow::Result<()> {
+    use std::os::unix::fs::MetadataExt;
+    for path in directory.ancestors() {
+        let metadata = std::fs::symlink_metadata(path)?;
+        anyhow::ensure!(
+            metadata.is_dir() && metadata.uid() == 0,
+            "Untrusted system audit directory"
+        );
+        if path == directory {
             anyhow::ensure!(
-                metadata.is_dir() && metadata.uid() == 0 && metadata.mode() & 0o022 == 0,
+                metadata.mode() & 0o022 == 0,
                 "Untrusted system audit directory"
             );
         }
+    }
+    Ok(())
+}
+
+/// Durable operation records are not subject to the daemon's best-effort queue.
+pub fn record_operation(operation: &str, targets: &[String], outcome: &str) -> anyhow::Result<()> {
+    let mut logger = if crate::core::privilege::is_root() {
+        let directory = Path::new("/var/log/omg");
+        std::fs::create_dir_all(directory)?;
+        ensure_system_audit_dir_trusted(directory)?;
         AuditLogger::new_in(directory.join("audit.jsonl"))?
     } else {
         AuditLogger::new()?
