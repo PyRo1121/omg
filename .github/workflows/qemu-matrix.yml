@@ -55,7 +55,11 @@ on:
         default: false
 
 concurrency:
-  group: qemu-${{ github.ref }}-${{ matrix.distro }}
+  # NOTE: the matrix context does not exist at workflow scope — referencing
+  # it here fails closed for the whole file (zero jobs; even dispatch is
+  # rejected with HTTP 422). Per-distro groups live on the matrix jobs
+  # below; this default only scopes non-matrix jobs by ref.
+  group: qemu-${{ github.ref }}
   # Nightly evidence must never be cancelled by a newer push.
   cancel-in-progress: ${{ github.event_name != 'schedule' }}
 
@@ -73,6 +77,9 @@ jobs:
   #########################################################################
   build-staged:
     name: "Staged build (${{ matrix.distro }})"
+    concurrency:
+      group: qemu-${{ github.ref }}-${{ matrix.distro }}
+      cancel-in-progress: ${{ github.event_name != 'schedule' }}
     if: github.event_name == 'pull_request' || (github.event_name == 'workflow_dispatch' && inputs.staged)
     runs-on: ubuntu-24.04
     timeout-minutes: 30
@@ -214,6 +221,9 @@ jobs:
   #########################################################################
   build-staged-arm:
     name: "Staged build arm64 (${{ matrix.distro }})"
+    concurrency:
+      group: qemu-${{ github.ref }}-${{ matrix.distro }}
+      cancel-in-progress: ${{ github.event_name != 'schedule' }}
     if: github.event_name == 'pull_request' || (github.event_name == 'workflow_dispatch' && inputs.staged)
     runs-on: ubuntu-24.04-arm
     timeout-minutes: 30
@@ -346,6 +356,9 @@ jobs:
   #########################################################################
   guest:
     name: "QEMU guest (${{ matrix.distro }})"
+    concurrency:
+      group: qemu-${{ github.ref }}-${{ matrix.distro }}
+      cancel-in-progress: ${{ github.event_name != 'schedule' }}
     needs: [build-staged, build-staged-ubuntu]
     # Both build jobs are skipped on schedule/release-dispatch; PR and
     # dispatch-staged legs require their build green.
@@ -439,6 +452,9 @@ jobs:
   #########################################################################
   guest-arm:
     name: "QEMU guest arm64 (${{ matrix.distro }})"
+    concurrency:
+      group: qemu-${{ github.ref }}-${{ matrix.distro }}
+      cancel-in-progress: ${{ github.event_name != 'schedule' }}
     needs: [build-staged-arm, build-staged-ubuntu-arm]
     if: >-
       always() &&
