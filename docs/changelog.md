@@ -73,6 +73,22 @@ present before the probe runs.
 - **Install**: Add interactive fuzzy package discovery
 ### 🐛 Bug Fixes
 
+- **Audit**: Trust root-owned ancestors regardless of distro group-write bits ([#292](https://github.com/PyRo1121/omg/issues/292))
+
+record_operation refused to run when any ancestor of /var/log/omg was
+
+group/other-writable. Ubuntu ships /var/log group-writable (root:syslog
+
+0775) by default, so every elevated omg operation failed on stock Ubuntu
+
+with 'Untrusted system audit directory'. Keep ownership plus directory
+
+type enforced on every component (planted symlinks/redirections still
+
+refused) and keep the strict mode check on the leaf omg itself owns.
+
+Fixes [#291](https://github.com/PyRo1121/omg/issues/291)
+
 - **Qa**: Keep inventory ssh from draining the TSV row stream ([#283](https://github.com/PyRo1121/omg/issues/283))
 
 qemu-inventory.sh drives TSV rows with stdin as the row stream, but each
@@ -389,6 +405,32 @@ Preserve archive data and report persistence failures explicitly. Coordinate dat
 - **Fedora**: Distinguish database and archive header formats
 - Record v0.1.218 verification [skip ci]
 ### 🔒 Security
+
+- Close six sudo-level audit findings ([#296](https://github.com/PyRo1121/omg/issues/296))
+
+* security: close six sudo-level audit findings
+
+  - Scrub macOS DYLD_* and shell-startup env (BASH_ENV/ENV/PS4 and
+
+interpreter *OPT vars) from every sudo child
+
+  - Harden self-update extraction: allowlisted single-file unpack with
+
+fail-closed links/traversal handling and decompression budget
+
+  - Restore history.lock ownership after elevated runs (fixes [#285](https://github.com/PyRo1121/omg/issues/285))
+
+  - Refuse unattended workspace repo-commands without explicit --yes
+
+  - Default AUR PKGBUILD review on, matching documented default
+
+  - Divert daemon socket to home dir when /tmp fallback is squatted
+
+* fix(clippy): satisfy -D warnings in audit-fixes tests
+
+424_243/424_242 separators (unreadable_literal), filter+map instead
+
+of filter_map-bool-then. Unblocks arch-pgp-license leg on PR [#296](https://github.com/PyRo1121/omg/issues/296).
 
 - **Qa**: Integrate four-distro QEMU validation into qa-setup
 
