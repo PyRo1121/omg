@@ -275,11 +275,17 @@ async fn fetch_public_source(value: &str) -> Result<reqwest::Response> {
                     .all(|address| public_source_address(address.ip())),
             "AUR source resolves to a non-public address"
         );
+        // Redirects stay manual (Policy::none): each hop must re-resolve and
+        // re-validate as public-only for SSRF protection, which reqwest's
+        // automatic redirect policy cannot do. Total `.timeout()` is avoided
+        // here because it covers the whole body download and aborts large
+        // files; `.read_timeout()` only fires on stalled reads, matching
+        // core::http::download_client.
         let client = reqwest::Client::builder()
             .no_proxy()
             .redirect(reqwest::redirect::Policy::none())
             .connect_timeout(std::time::Duration::from_secs(10))
-            .timeout(std::time::Duration::from_mins(5))
+            .read_timeout(std::time::Duration::from_secs(60))
             .resolve_to_addrs(&host, &addresses)
             .build()?;
         let response = client.get(url.clone()).send().await?;
