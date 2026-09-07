@@ -21,15 +21,17 @@ This guide documents every OMG command with detailed explanations, examples, and
 | **Shell Integration** | `hook`, `completions`, `hooks`, `workspace` |
 | **Security & Audit** | `audit`, `status`, `doctor` |
 | **Task Runner** | `run` |
-| **Project Management** | `new`, `tool`, `init`, `self-update` |
+| **Project Management** | `new`, `tool`, `init`, `self-update` (alias: `up`) |
 | **Environment & Snapshots** | `env`, `snapshot`, `diff` |
 | **Team Collaboration** | `team`, `privacy` |
 | **Container Management** | `container` |
 | **CI/CD & Migration** | `ci`, `migrate` |
 | **History & Rollback** | `history`, `rollback` |
-| **Dashboard** | `dash`, `stats`, `metrics`, `daemon-status` |
+| **Dashboard** | `dash` (alias: `d`), `stats`, `metrics`, `daemon-status` |
 | **Configuration** | `config`, `daemon`, `account`, `generate-man` |
 | **Enterprise** | `fleet`, `enterprise` |
+
+> Global flags (`-v`/`--verbose`, `-q`/`--quiet`, `--json`, `--all-commands`) work with every command. `omg --help` hides advanced commands unless `--all-commands` is passed. See [🌍 Global Options](#-global-options).
 
 ---
 
@@ -560,7 +562,12 @@ omg which rust
 
 ### omg hook
 
-Print the shell hook script.
+Print the shell hook script for runtime auto-switching.
+
+> Not to be confused with [`omg hooks`](#omg-hooks) (Git hooks for environment
+> synchronization). The internal `omg hook-env` command is hidden and only
+> called by the shell hook on directory change; see
+> [Shell Integration](./shell-integration.md).
 
 ```bash
 omg hook <shell>
@@ -633,6 +640,9 @@ Follow the printed shell setup instructions after installation. See [shell compl
 ### omg hooks
 
 Manage Git hooks for environment synchronization.
+
+> Not to be confused with [`omg hook`](#omg-hook) (shell init script printed
+> via `eval "$(omg hook zsh)"`).
 
 ```bash
 omg hooks <SUBCOMMAND>
@@ -1225,8 +1235,8 @@ omg team <SUBCOMMAND>
 # Initialize team workspace
 omg team init mycompany/frontend --name "Frontend Team"
 
-# Join existing team
-omg team join https://github.com/mycompany/env-config
+# Join existing team (gist.github.com URL with a Gist ID)
+omg team join https://gist.github.com/mycompany/abc123def456
 
 # Check status
 omg team status
@@ -1526,7 +1536,7 @@ omg rollback abc123
 Launch interactive TUI dashboard.
 
 ```bash
-omg dash
+omg dash [aliases: d]
 ```
 
 **Keyboard Controls:**
@@ -1618,11 +1628,16 @@ omg account <SUBCOMMAND>
 
 ### omg daemon
 
-Start the background daemon.
+Start the background daemon (Unix only). It takes no subcommands — for daemon
+status, see [`omg daemon-status`](#omg-daemon-status).
 
 ```bash
-omg daemon
+omg daemon [--foreground]
 ```
+
+| Option | Short | Description |
+|--------|-------|-------------|
+| `--foreground` | `-f` | Run in foreground (don't daemonize) |
 
 For direct daemon control:
 
@@ -1681,8 +1696,8 @@ These options work with all commands:
 | -------- | ------- | ------------- |
 | `--help` | `-h` | Show help |
 | `--version` | `-V` | Show version |
-| `--verbose` | `-v` | Increase verbosity (-v, -vv, -vvv) |
-| `--quiet` | `-q` | Suppress all output except errors |
+| `--verbose` | `-v` | Increase verbosity; repeat (`-vv`) for more detail, also streams package build output live |
+| `--quiet` | `-q` | Suppress non-essential output (command results still print) |
 | `--json` | | Output in JSON format (for scripting) |
 | `--all-commands` | | Show all commands including advanced ones |
 

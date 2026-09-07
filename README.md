@@ -6,7 +6,7 @@
 
 [![Benchmark evidence](https://img.shields.io/badge/benchmarks-scope%20and%20raw%20data-blue?style=flat-square)](benchmarks/README.md)
 [![License](https://img.shields.io/badge/license-MIT-blue?style=flat-square)](LICENSE)
-[![Rust](https://img.shields.io/badge/rust-1.93%2B-orange?style=flat-square)](https://www.rust-lang.org)
+[![Rust](https://img.shields.io/badge/rust-1.95%2B-orange?style=flat-square)](https://www.rust-lang.org)
 [![codecov](https://codecov.io/gh/pyro1121/omg/branch/main/graph/badge.svg?style=flat-square)](https://codecov.io/gh/pyro1121/omg)
 
 OMG replaces `pacman`, `yay`, `nvm`, `pyenv`, `rustup`, `rbenv`, and `jenv` with a single binary. It queries packages in **about 11ms** (13ms mean) via a background daemon that keeps repository indexes in memory.
@@ -57,6 +57,9 @@ yay -S omg
 
 ```bash
 cargo install omg --git https://github.com/PyRo1121/omg --locked
+# Default features target Arch (`arch`). On Debian/Ubuntu use `--features debian`,
+# on Fedora `--features fedora` (see CONTRIBUTING.md). `make build/test/install`
+# shorthand hardcodes `--features arch` for the same reason.
 ```
 
 ### Shell Integration
@@ -179,7 +182,7 @@ OMG natively handles version switching and installation for major ecosystems:
 
 ---
 
-## CLI Command Reference
+## CLI Command Reference (selected)
 
 | Command | Description |
 | :--- | :--- |
@@ -197,7 +200,7 @@ OMG natively handles version switching and installation for major ecosystems:
 
 Run `omg --help` or see the [CLI documentation](docs/cli.md) for full argument details.
 
-**More docs:** [Installation](docs/installation.md) · [Runtimes](docs/runtimes.md) · [Security](docs/security.md) · [Contributing](CONTRIBUTING.md)
+**More docs:** [CLI Reference](docs/cli.md) · [Cheatsheet](docs/cheatsheet.md) · [Installation](docs/installation.md) · [Configuration](docs/configuration.md) · [Runtimes](docs/runtimes.md) · [Troubleshooting](docs/troubleshooting.md) · [FAQ](docs/faq.md) · [Security](docs/security.md) · [Contributing](CONTRIBUTING.md)
 
 ---
 

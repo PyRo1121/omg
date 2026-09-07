@@ -44,24 +44,21 @@ Example output (`omg.lock`):
 
 ```json
 {
-  "version": "1.0",
-  "timestamp": "2026-01-18T10:30:00Z",
-  "fingerprint": "a1b2c3d4e5f6...",
+  "schema_version": 1,
   "runtimes": {
     "node": "20.10.0",
-    "python": "3.12.0",
-    "rust": "1.75.0",
-    "go": "1.21.5"
+    "python": "3.12.0"
   },
-  "packages": {
-    "explicit": [
-      "firefox",
-      "neovim",
-      "visual-studio-code-bin"
-    ]
-  }
+  "packages": [
+    "firefox",
+    "neovim"
+  ],
+  "timestamp": 1768735800,
+  "hash": "a1b2c3d4e5f6..."
 }
 ```
+
+Field notes: `packages` is a flat list of explicit package names, `timestamp` is unix time, and `hash` covers runtimes + packages. Newer `schema_version` values are rejected by older OMG instead of guessed (see `src/core/env/fingerprint.rs`).
 
 ### Check for Drift
 
@@ -112,10 +109,9 @@ omg env sync https://gist.github.com/username/abc123def456
 
 This will:
 
-1. Download the lockfile
-2. Compare against local environment
-3. Prompt to install missing runtimes/packages
-4. Update local `omg.lock`
+1. Download the lockfile (Gist URL or ID)
+2. Overwrite local `omg.lock`
+3. Report drift against your environment (install nothing itself — act on the report yourself)
 
 ---
 
@@ -131,17 +127,13 @@ omg team init mycompany/frontend
 omg team init mycompany/frontend --name "Frontend Team"
 ```
 
-This creates:
-
-- Team configuration file
-- Git hooks for environment checking
-- Initial environment lock
+This writes the team workspace config only, then prompts you to run `omg env capture` for the initial lock (commit `omg.lock` to your repo; teammates run `omg team pull` to sync).
 
 ### Join Existing Team
 
 ```bash
-# Join from remote URL
-omg team join https://github.com/mycompany/env-config
+# Join from a team remote (HTTPS gist.github.com URL with a Gist ID — other hosts are rejected)
+omg team join https://gist.github.com/mycompany/abc123def456
 ```
 
 ### Team Commands
@@ -348,7 +340,7 @@ Team configuration in `.omg/team.toml`:
 [team]
 id = "mycompany/frontend"
 name = "Frontend Team"
-remote = "https://github.com/mycompany/env-config"
+remote = "https://gist.github.com/mycompany/abc123def456"
 
 [sync]
 auto_check = true  # Check on directory enter

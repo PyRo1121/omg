@@ -81,7 +81,7 @@ For broader coverage, OMG queries the Open Source Vulnerabilities (OSV) API. To 
 
 ### Parallel Scanning
 
-When you run a full system audit (`omg audit`), OMG employs a massively parallel scanning strategy:
+When you run a full system audit (`omg audit`), OMG employs a massively parallel scanning strategy. The scan requires a running daemon (start it with `omg daemon`); compliance export still runs without one but skips the vulnerability-scan section:
 
 1. **Chunking**: Your installed packages are divided into small chunks.
 2. **Concurrent Execution**: Each chunk is scanned in parallel using all available CPU cores.

@@ -37,8 +37,8 @@ These flags work with any command:
 
 | Option | Short | Description |
 | -------- | ------- | ------------- |
-| `--verbose` | `-v` | Increase verbosity (`-v`, `-vv`, `-vvv`) |
-| `--quiet` | `-q` | Suppress all output except errors |
+| `--verbose` | `-v` | Increase verbosity; repeat (`-vv`) for more detail, also streams package build output live |
+| `--quiet` | `-q` | Suppress non-essential output (command results still print) |
 | `--json` | | Output in JSON format (for scripting) |
 | `--all-commands` | | Show all commands including advanced ones |
 
@@ -338,6 +338,12 @@ omg status    # Full status
 omg search vim
 omg info vim
 ```
+
+> `ec`/`tc`/`uc`/`oc` are hidden fast-path commands (handled before full
+> argument parsing, so they don't appear in `omg --help`). See
+> [CLI Reference](./cli.md#-ultra-fast-queries). The hyphenated `omg-ec` /
+> `omg-tc` / `omg-uc` / `omg-oc` shell helpers are separate prompt functions;
+> see [Shell Integration](./shell-integration.md).
 
 ---
 
