@@ -219,6 +219,10 @@ if grep -q 'fixture-private-token' "$FAKE_SENTRY_ENVELOPE"; then
 fi
 jq -se 'length == 3 and .[1].type == "event" and .[2].extra.failures[0].result == "PRODUCT_FAIL"' "$FAKE_SENTRY_ENVELOPE" >/dev/null || fail "invalid Sentry envelope"
 rm "$FAKE_SENTRY_ENVELOPE"
+printf '%s\n' '[{"case_id":"release-package-search-tree","distro":"macos","result":"HARNESS_ERROR","exit_code":3,"elapsed_seconds":2}]' > "$scratch/sentry-run/results-macos.json"
+assert_rc 0 "$reporter" "$scratch/sentry-run/results-macos.json"
+jq -se '.[2].extra.failures[0].distro == "macos"' "$FAKE_SENTRY_ENVELOPE" >/dev/null || fail "Sentry reporter dropped the macos distro"
+rm "$FAKE_SENTRY_ENVELOPE"
 assert_rc 0 "$reporter" "$result"
 [[ ! -f "$FAKE_SENTRY_ENVELOPE" ]] || fail "passing run sent an error report"
 export FAKE_SENTRY_HTTP=429
@@ -263,6 +267,9 @@ esac
 EOF
 chmod 700 "$scratch/bin/docker"
 qemu_runner="$repo_root/scripts/benchmark-qemu.sh"
+# This host has no /dev/kvm, so the fixture legs below skip the KVM
+# device probe; dedicated probe tests further down cover it explicitly.
+export OMG_QEMU_ALLOW_NO_KVM=1
 assert_rc 1 "$qemu_runner" --distro all --staged-dir "$scratch/valid" --evidence-dir "$scratch/qemu-unavailable"
 qemu_result=$(find "$scratch/qemu-unavailable" -mindepth 2 -maxdepth 2 -name results.json -print -quit)
 [[ -n "$qemu_result" ]] || fail 'QEMU suite omitted unavailable-engine results'
@@ -303,6 +310,160 @@ for scenario in pass product-failure timeout cleanup-failure transport-failure m
     [[ ! -f "$FAKE_QEMU_STATE" ]] || fail "QEMU $scenario retained its controller"
   fi
 done
-unset FAKE_QEMU_INFO_EXIT FAKE_QEMU_STATE FAKE_QEMU_GUEST_EXIT FAKE_QEMU_CLEANUP_FAIL FAKE_QEMU_TRANSPORT_EXIT FAKE_QEMU_MISSING_RECEIPT
+native_arch=x86_64; foreign_arch=aarch64
+if [[ "$(uname -m)" == aarch64 || "$(uname -m)" == arm64 ]]; then native_arch=aarch64; foreign_arch=x86_64; fi
+# Preflight probes fail closed to HARNESS_ERROR without needing a guest.
+unset OMG_QEMU_ALLOW_NO_KVM
+export OMG_QEMU_KVM_DEVICE="$scratch/does-not-exist"
+assert_rc 3 "$qemu_runner" --distro arch --release v9.9.9 --staged-dir "$scratch/valid" --evidence-dir "$scratch/qemu-no-kvm"
+jq -e 'length == 1 and .[0].result == "HARNESS_ERROR" and .[0].exit_code == 3 and .[0].case_id == "qemu-arch-lifecycle"' "$(results_file "$scratch/qemu-no-kvm")" >/dev/null || fail "missing KVM was not a harness error"
+grep -q '^kvm=missing' "$scratch/qemu-no-kvm"/run-*/kvm-probe.log || fail "KVM probe left no evidence"
+unset OMG_QEMU_KVM_DEVICE
+export OMG_QEMU_ALLOW_NO_KVM=1
+foreign_suffix=""; [[ "$foreign_arch" == aarch64 ]] && foreign_suffix="-aarch64"
+assert_rc 3 "$qemu_runner" --distro debian --arch "$foreign_arch" --release v9.9.9 --staged-dir "$scratch/valid" --evidence-dir "$scratch/qemu-arch-mismatch"
+jq -e --arg case "qemu-debian${foreign_suffix}-lifecycle" 'length == 1 and .[0].result == "HARNESS_ERROR" and .[0].exit_code == 3 and .[0].case_id == $case' "$(results_file "$scratch/qemu-arch-mismatch")" >/dev/null || fail "arch mismatch was not a harness error"
+assert_rc 3 "$qemu_runner" --distro arch --arch aarch64 --release v9.9.9 --staged-dir "$scratch/valid" --evidence-dir "$scratch/qemu-arch-nopin"
+jq -e 'length == 1 and .[0].result == "HARNESS_ERROR" and .[0].exit_code == 3' "$(results_file "$scratch/qemu-arch-nopin")" >/dev/null || fail "unpinned arch/aarch64 was not a harness error"
+# Pin audit: exact publisher hashes, both arches, arch/aarch64 absent.
+pins="$("$qemu_runner" --print-pins)"
+[[ "$(printf '%s\n' "$pins" | wc -l)" -eq 7 ]] || fail "pin table lost a row"
+printf '%s\n' "$pins" | grep -Fq 'debian	aarch64	https://cloud.debian.org/images/cloud/bookworm/20260903-2590/debian-12-generic-arm64-20260903-2590.qcow2	b0144c1c8e09b187b54af300c8ffc22f17b318d0aa6f5a2caba13f3102441572badbeb098458e599b6897bc80dad50fd0094d6e4b9da9f4a2bd63a8f4c99dea5' || fail "debian aarch64 pin mismatch"
+printf '%s\n' "$pins" | grep -Fq 'ubuntu	aarch64	https://cloud-images.ubuntu.com/noble/20260826/noble-server-cloudimg-arm64.img	afa139bac6f2629c1e1f2f8f34215f3a9ad9779801bcb945521ba1a45016743f' || fail "ubuntu aarch64 pin mismatch"
+printf '%s\n' "$pins" | grep -Fq 'fedora	aarch64	https://download.fedoraproject.org/pub/fedora/linux/releases/44/Cloud/aarch64/images/Fedora-Cloud-Base-Generic-44-1.7.aarch64.qcow2	55c60a3b80d3616a08705afd0459e75fe9f03c54aba7a46e4002a41a72fa0d5b' || fail "fedora aarch64 pin mismatch"
+if printf '%s\n' "$pins" | grep -Fq 'arch	aarch64'; then fail "arch/aarch64 must have no pin"; fi
+printf '%s\n' "$pins" | grep -Fq 'arch	x86_64' || fail "x86_64 pins missing"
+unset FAKE_QEMU_INFO_EXIT FAKE_QEMU_STATE FAKE_QEMU_GUEST_EXIT FAKE_QEMU_CLEANUP_FAIL FAKE_QEMU_TRANSPORT_EXIT FAKE_QEMU_MISSING_RECEIPT OMG_QEMU_ALLOW_NO_KVM
+
+cat > "$scratch/bin/brew" <<'EOF'
+#!/usr/bin/env bash
+set -euo pipefail
+state="${FAKE_BREW_STATE:?}"
+if [[ -n "${FAKE_BREW_LOG:-}" ]]; then printf '%s\n' "$*" >> "$FAKE_BREW_LOG"; fi
+case "${1:-}" in
+  update) exit 0 ;;
+  list)
+    [[ "${2:-}" == tree ]] || exit 1
+    grep -qx 'tree' "$state" 2>/dev/null
+    ;;
+  install)
+    [[ "${2:-}" == tree ]] || exit 1
+    grep -qx 'tree' "$state" 2>/dev/null || printf 'tree\n' >> "$state"
+    ;;
+  uninstall|remove)
+    [[ "${2:-}" == tree ]] || exit 1
+    if [[ -f "$state" ]]; then grep -vx 'tree' "$state" > "$state.tmp" || true; mv "$state.tmp" "$state"; fi
+    ;;
+  *) exit 1 ;;
+esac
+EOF
+chmod 700 "$scratch/bin/brew"
+
+cat > "$scratch/fake-omg-good" <<'EOF'
+#!/usr/bin/env bash
+set -euo pipefail
+case "${1:-}" in
+  --version) printf 'omg 9.9.9\n' ;;
+  search)
+    [[ "${2:-}" == tree ]] || exit 1
+    printf '  tree  directory listing\n'
+    ;;
+  install) brew install tree ;;
+  remove) brew uninstall tree ;;
+  *) exit 2 ;;
+esac
+EOF
+cat > "$scratch/fake-omg-bad-search" <<'EOF'
+#!/usr/bin/env bash
+set -euo pipefail
+case "${1:-}" in
+  --version) printf 'omg 9.9.9\n' ;;
+  search) exit 1 ;;
+  install) brew install tree ;;
+  remove) brew uninstall tree ;;
+  *) exit 2 ;;
+esac
+EOF
+cat > "$scratch/fake-omg-bad-version" <<'EOF'
+#!/usr/bin/env bash
+set -euo pipefail
+case "${1:-}" in
+  --version) printf 'omgwrong\n' ;;
+  search)
+    [[ "${2:-}" == tree ]] || exit 1
+    printf '  tree  directory listing\n'
+    ;;
+  install) brew install tree ;;
+  remove) brew uninstall tree ;;
+  *) exit 2 ;;
+esac
+EOF
+
+make_macos_stage() {
+  local destination=$1 body_file=$2
+  local directory="omg-v9.9.9-aarch64-darwin"
+  local archive="$directory.tar.gz"
+  rm -rf "$destination"
+  mkdir -p "$destination/root/$directory"
+  cp "$body_file" "$destination/root/$directory/omg"
+  chmod 700 "$destination/root/$directory/omg"
+  tar -czf "$destination/$archive" -C "$destination/root" "$directory"
+  printf '%s  %s\n' "$(sha256sum "$destination/$archive" | awk '{print $1}')" "$archive" > "$destination/${archive}.sha256"
+}
+
+export FAKE_BREW_STATE="$scratch/brew-state"
+export FAKE_BREW_LOG="$scratch/brew-log"
+make_macos_stage "$scratch/macos" "$scratch/fake-omg-good"
+native_args=(--release v9.9.9 --distro macos --executor native --staged-dir "$scratch/macos")
+: > "$FAKE_BREW_STATE"
+: > "$FAKE_BREW_LOG"
+assert_rc 0 "$runner" "${native_args[@]}" --evidence-dir "$scratch/native-evidence"
+native_result=$(results_file "$scratch/native-evidence")
+[[ "$(grep -c '"case_id"' "$native_result")" -eq 3 ]] || fail "native macos did not run three contracts"
+[[ "$(grep -c '"result":"PASS"' "$native_result")" -eq 3 ]] || fail "native macos run did not pass every contract"
+grep -q '"expectation":"pass"' "$native_result" || fail "native result lost its baseline expectation"
+grep -R -q '^engine=native$' "$scratch/native-evidence" || fail "native metadata mislabels the executor"
+grep -R -q '^image=native-host$' "$scratch/native-evidence" || fail "native metadata invents a container image"
+grep -q '^update$' "$FAKE_BREW_LOG" || fail "native probe skipped the Homebrew index refresh"
+grep -q '^install tree$' "$FAKE_BREW_LOG" || fail "native probe never installed through Homebrew"
+grep -q '^list tree$' "$FAKE_BREW_LOG" || fail "native probe never asserted through Homebrew"
+grep -q '^uninstall tree$' "$FAKE_BREW_LOG" || fail "native cases did not reset the shared probe package"
+grep -R -q 'OMG_PROBE_ROOT' "$scratch/native-evidence" || fail "native evidence hides probe rooting"
+if grep -R -q 'docker\|fake-engine' "$scratch/native-evidence/macos-"*/transcript.txt 2>/dev/null; then
+  fail "native probe shelled out to a container engine"
+fi
+
+assert_rc 2 "$runner" --release v9.9.9 --distro macos --staged-dir "$scratch/macos" --evidence-dir "$scratch/native-rejected"
+assert_rc 2 "$runner" --release v9.9.9 --distro arch --executor native --staged-dir "$scratch/valid" --evidence-dir "$scratch/native-linux-rejected"
+assert_rc 2 "$runner" "${native_args[@]}" --executor bogus --evidence-dir "$scratch/native-bogus"
+
+: > "$FAKE_BREW_STATE"
+make_macos_stage "$scratch/macos-bad-search" "$scratch/fake-omg-bad-search"
+assert_rc 1 "$runner" --release v9.9.9 --distro macos --executor native --case release-package-search-tree --staged-dir "$scratch/macos-bad-search" --evidence-dir "$scratch/native-product-fail"
+grep -q '"result":"PRODUCT_FAIL"' "$(results_file "$scratch/native-product-fail")" || fail "native product failure was not blamed on the product"
+
+: > "$FAKE_BREW_STATE"
+make_macos_stage "$scratch/macos-bad-version" "$scratch/fake-omg-bad-version"
+assert_rc 1 "$runner" --release v9.9.9 --distro macos --executor native --case release-package-search-tree --staged-dir "$scratch/macos-bad-version" --evidence-dir "$scratch/native-version-fail"
+grep -q '"result":"PRODUCT_FAIL"' "$(results_file "$scratch/native-version-fail")" || fail "native version mismatch was not blamed on the product"
+
+mkdir -p "$scratch/macbin"
+for tool in awk basename bash cat chmod cp date dirname env find grep gzip head mktemp mkdir mv rm shasum tail tar tee tr wc; do
+  ln -sf "$(command -v "$tool")" "$scratch/macbin/$tool"
+done
+cat > "$scratch/macbin/gtimeout" <<EOF
+#!/usr/bin/env bash
+set -euo pipefail
+printf 'gtimeout-stub %s\n' "\$*" >> "$scratch/gtimeout-log"
+exec "$(command -v timeout)" "\$@"
+EOF
+chmod 700 "$scratch/macbin/gtimeout"
+cp "$scratch/bin/brew" "$scratch/macbin/brew"
+: > "$FAKE_BREW_STATE"
+: > "$scratch/gtimeout-log"
+PATH="$scratch/macbin" assert_rc 0 "$runner" "${native_args[@]}" --evidence-dir "$scratch/native-mac-tools"
+mac_result=$(results_file "$scratch/native-mac-tools")
+[[ "$(grep -c '"result":"PASS"' "$mac_result")" -eq 3 ]] || fail "macOS toolset run did not pass every contract"
+grep -q 'gtimeout-stub' "$scratch/gtimeout-log" || fail "macOS toolset run did not fall back to gtimeout"
 
 printf 'PASS: release smoke and QEMU fixture suite\n'
