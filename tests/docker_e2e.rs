@@ -174,9 +174,15 @@ fn test_docker_update_check() {
     require_docker_tests();
     assert!(ensure_docker_image(), "Docker image not ready");
 
-    let (success, stdout, _stderr) = run_in_docker(&["omg", "update", "--check"]);
+    let (success, stdout, stderr) = run_in_docker(&["omg", "update", "--check"]);
 
-    assert!(success, "Update check should succeed");
+    // Same contract as the install test above: never swallow the captured
+    // output — CI gave us "Update check should succeed" with zero diagnosis.
+    if !success {
+        eprintln!("STDOUT: {stdout}");
+        eprintln!("STDERR: {stderr}");
+    }
+    assert!(success, "Update check should succeed; see captured output above");
     // Contract: arch::update check_only path prints a phase header announcing
     // it is checking without syncing
     // (src/cli/packages/update/arch.rs:155-165).
