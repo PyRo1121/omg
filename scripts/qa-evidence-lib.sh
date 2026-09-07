@@ -1,0 +1,57 @@
+#!/usr/bin/env bash
+# qa-evidence-lib.sh — shared evidence helpers for the QA scripts.
+# Sourced (never executed): provides scrub() and excerpt_for().
+# Callers set evidence_dir to the run/evidence directory before calling
+# excerpt_for.
+set -euo pipefail
+
+# Best-effort secret scrubber for log excerpts. By design the harnesses
+# never print credentials; this is a second net, not the first.
+scrub() {
+  local token_esc="${GH_TOKEN:-}"
+  token_esc="${token_esc//\\/\\\\}"
+  token_esc="${token_esc//|/\\|}"
+  token_esc="${token_esc//&/\\&}"
+  sed -e 's/\x1b\[[0-9;]*[a-zA-Z]//g' -e 's/\x1b\][^\x07]*\x07//g' |
+  if [[ -n "${GH_TOKEN:-}" ]]; then sed -e "s|${token_esc}|[redacted-gh-token]|g"; else cat; fi |
+  sed -E -e 's/ghp_[A-Za-z0-9]{20,}/[redacted-token]/g' \
+    -e 's/github_pat_[A-Za-z0-9_]+/[redacted-token]/g' \
+    -e 's/gho_[A-Za-z0-9_]+/[redacted-token]/g' \
+    -e 's/ghs_[A-Za-z0-9_]+/[redacted-token]/g' \
+    -e 's/Bearer [A-Za-z0-9._~+\/-]+/[redacted-bearer]/g' \
+    -e 's/-----BEGIN [A-Z ]*PRIVATE KEY-----/[redacted-private-key]/g'
+}
+
+# Locate the richest per-case log near $evidence_dir. On success prints
+# the evidence-relative source path to FD 3 and the scrubbed tail to
+# stdout. (FD 3 because command substitution would lose a global.)
+excerpt_for() {
+  local case_id=$1 distro=$2 candidate row
+  candidate=""
+  if [[ -f "$evidence_dir/$distro-$case_id/transcript.txt" ]]; then
+    candidate="$evidence_dir/$distro-$case_id/transcript.txt"
+  elif [[ "$case_id" == qemu-*-lifecycle && -f "$evidence_dir/guest-check.log" ]]; then
+    candidate="$evidence_dir/guest-check.log"
+  else
+    row="$case_id"
+    row="${row#qemu-"$distro"-}"
+    if [[ -f "$evidence_dir/rows/$row.log" ]]; then
+      candidate="$evidence_dir/rows/$row.log"
+    elif [[ -f "$evidence_dir/inventory/rows/$row.log" ]]; then
+      candidate="$evidence_dir/inventory/rows/$row.log"
+    fi
+  fi
+  if [[ -z "$candidate" ]]; then
+    printf 'note: no excerpt found for %s on %s (looked for transcript, guest-check, and row logs under %s)\n' "$case_id" "$distro" "$evidence_dir" >&2
+    return 1
+  fi
+  printf '%s\n' "${candidate#"$evidence_dir"/}" >&3
+  # Normalize carriage returns first: tools like apt render progress as
+  # \r-separated updates, which would otherwise arrive as one giant line
+  # and bury the actual error. Pure progress lines (`N% [Working]`) are
+  # then dropped (sed, not grep -v, so an all-progress log cannot fail the
+  # pipeline under pipefail); everything else is preserved verbatim.
+  tr '\r' '\n' < "$candidate" |
+    sed -E '/^[[:space:]]*([0-9]+% )?\[Working\][[:space:]]*$/d' |
+    tail -n 40 | scrub | tail -c 3000
+}

@@ -91,6 +91,18 @@ if grep -q "ghp_fixture" "$CALL_LOG"; then fail "excerpt leaked a token pattern"
 if grep -q $'\x1b' "$CALL_LOG"; then fail "excerpt leaked ANSI escapes"; fi
 unset GH_TOKEN
 
+# 7b. Carriage-return progress spam (apt-style) is normalized away so the
+# real error stays visible in the filed excerpt.
+mkdir -p "$scratch/ev/debian-install-tree"
+printf 'Reading package lists...\r0%% [Working]\r10%% [Working]\rErr: 2 http://deb.debian.org/debian tree amd64 2.1.0-1\rCould not open partial file\rError: APT commit error: media swap\n' > "$scratch/ev/debian-install-tree/transcript.txt"
+printf '%s' '[{"case_id":"install-tree","distro":"debian","result":"PRODUCT_FAIL","exit_code":1,"elapsed_seconds":2}]' > "$results"
+: > "$CALL_LOG"; export FAKE_ISSUES_JSON='[]'
+out=$(bash "$runner" "$results" --run-url https://run/7b --source qemu --evidence-dir "$scratch/ev"); assert_rc 0 "$?" "progress-excerpt"
+grep -q "issue create" "$CALL_LOG" || fail "progress-excerpt issued no create call"
+grep -q "APT commit error" "$CALL_LOG" || fail "progress-excerpt buried the real error"
+grep -q "Could not open partial file" "$CALL_LOG" || fail "progress-excerpt dropped error context"
+if grep -q "Working" "$CALL_LOG"; then fail "progress-excerpt leaked progress spam"; fi
+
 # 8. A passing case resolves its open issue (comment + close).
 printf '%s' '[{"case_id":"search-tree","distro":"arch","result":"PASS","exit_code":0,"elapsed_seconds":2}]' > "$results"
 export FAKE_ISSUES_JSON='[{"number":7,"state":"open","body":"<!-- omg-qa-fingerprint: qemu:arch:search-tree -->"}]'

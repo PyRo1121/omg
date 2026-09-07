@@ -180,7 +180,7 @@ cleanup() {
   if [[ "$rc" -ne 0 && "$result" == PASS ]]; then result=HARNESS_ERROR; fi
   jq -n --arg distro "$distro" --arg case_id "$case_id" --arg result "$result" --arg source "$source_kind" --argjson rc "$rc" --argjson elapsed "$SECONDS" \
     '[{case_id:$case_id,distro:$distro,result:$result,artifact_source:$source,exit_code:$rc,elapsed_seconds:$elapsed}]' > "$work/results.json"
-  timeout --kill-after=2s 12s env OMG_SMOKE_RELEASE="$tag" "$repo_root/scripts/report-smoke-sentry.sh" "$work/results.json" > "$work/reporting.log" 2>&1 || true
+  timeout --kill-after=2s 12s env OMG_SMOKE_RELEASE="$tag" OMG_SMOKE_ENVIRONMENT=qemu-matrix "$repo_root/scripts/report-smoke-sentry.sh" "$work/results.json" > "$work/reporting.log" 2>&1 || true
   printf '%s %s. Evidence: %s\n' "$distro" "$result" "$work"
   exit "$rc"
 }
@@ -386,6 +386,10 @@ timeout 60 docker exec -w /work/guest "$controller" scp "${opts[@]}" -P 2222 /wo
 rc=0
 timeout 600 docker exec -w /work/guest "$controller" ssh "${opts[@]}" -p 2222 bench@127.0.0.1 "bash guest-check.sh '$distro' '$tag' '$digest' '$benchmark' '$arch' '$guest_uname'" > "$work/guest-check.log" 2>&1 || rc=$?
 timeout 60 docker exec -w /work/guest "$controller" scp -r "${opts[@]}" -P 2222 bench@127.0.0.1:evidence /work/guest/ > "$work/evidence-copy.log" 2>&1
+if [[ ! -f "$work/guest/evidence/exit-code" ]]; then
+  printf 'Guest evidence receipt is missing (transport exit %s); see %s/evidence-copy.log and %s/guest-check.log\n' "$rc" "$work" "$work" >&2
+  exit 3
+fi
 guest_rc=$(<"$work/guest/evidence/exit-code")
 if [[ ! "$guest_rc" =~ ^[0-9]+$ || "$guest_rc" != "$rc" ]]; then
   printf 'Guest exit %s differs from transport exit %s\n' "$guest_rc" "$rc" >&2
@@ -402,5 +406,13 @@ if [[ -n "$inventory_tiers" && "$rc" == 0 ]]; then
     rc=1
   fi
 fi
-case "$rc" in 0) result=PASS ;; 120|124|125|126|127|137|255) result=HARNESS_ERROR ;; *) result=PRODUCT_FAIL ;; esac
+# Verdict map: only proven-rig codes are HARNESS_ERROR. Per the GNU
+# coreutils manual, timeout exits 124 when the managed command times out
+# and 125/126/127 when timeout/the-exec itself fails
+# (https://www.gnu.org/software/coreutils/manual/html_node/timeout-invocation.html):
+# a 124 here means the guest product hung, and 137 (128+SIGKILL, the
+# OOM-killer signature) means the guest product was killed — both are
+# PRODUCT signals unless guest logs prove rig failure. 120 is this
+# pipeline's own fixture marker; 125/126/127/255 are exec/transport.
+case "$rc" in 0) result=PASS ;; 120|125|126|127|255) result=HARNESS_ERROR ;; *) result=PRODUCT_FAIL ;; esac
 exit "$rc"

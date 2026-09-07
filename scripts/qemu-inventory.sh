@@ -61,6 +61,15 @@ record() { # case_id result exit_code elapsed
 # Process substitution (not a pipeline): pass/fail counters below must
 # survive the loop; a `tail | while` pipeline would trap them in a subshell.
 while IFS=$'\t' read -r case args_json safety expected_exit expected_ux requires tier targets assertions cleanup; do
+  # Case ids flow into a remote shell command below: reject anything
+  # outside the identifier shape instead of executing it.
+  if [[ ! "$case" =~ ^[a-zA-Z0-9][a-zA-Z0-9_.-]*$ ]]; then
+    printf 'case=%s invalid identifier\n' "$case"
+    # Sanitized id: one bad TSV row must fail loudly without poisoning
+    # the whole results file for the downstream schema gate.
+    safe="invalid-$(printf '%s' "$case" | tr -c 'a-z0-9-' '-' | cut -c1-80)"
+    record "qemu-$distro-$safe" FAIL -1 0; fail=$((fail+1)); continue
+  fi
   # Tier filter (tiers are comma-separated in the TSV too).
   hit=false
   IFS=',' read -ra tier_list <<< "$tier"

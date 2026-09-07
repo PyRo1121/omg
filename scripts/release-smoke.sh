@@ -105,6 +105,29 @@ case_family() {
   esac
 }
 
+# Bash 3.2 (macOS /usr/bin/bash, frozen at 3.2.57 since 2007 because Apple
+# will not ship GPLv3 bash) has no associative arrays: `declare -A`/`-gA`,
+# `mapfile`, and $BASHPID all arrived in bash 4.0. Per-case fields therefore
+# live in parallel indexed arrays aligned with selected_cases; the release
+# contract list is tens of rows, so a linear scan is plenty.
+case_field() {
+  # C-style index loop: ${!array[@]} index expansion is avoided so this
+  # stays within bash 2.x-era features; ${#array[@]} is nounset-safe.
+  local which=$1 id=$2 i
+  for ((i = 0; i < ${#selected_cases[@]}; i++)); do
+    if [[ "${selected_cases[$i]}" == "$id" ]]; then
+      case "$which" in
+        args) printf '%s' "${case_args_list[$i]}" ;;
+        exit) printf '%s' "${case_exit_list[$i]}" ;;
+        targets) printf '%s' "${case_targets_list[$i]}" ;;
+        *) return 2 ;;
+      esac
+      return 0
+    fi
+  done
+  return 1
+}
+
 load_release_cases() {
   local header id args safety expected_exit ux requires tiers targets assertions cleanup
   IFS= read -r header < "$inventory"
@@ -115,7 +138,12 @@ load_release_cases() {
   fi
 
   selected_cases=()
-  declare -gA case_args=() case_exit=() case_targets=()
+  # Bash 3.2 (macOS /usr/bin/bash) has no associative arrays: per-case
+  # fields live in parallel indexed arrays aligned with selected_cases.
+  # Plain assignments stay global (no `local`) so run_case can read them.
+  case_args_list=()
+  case_exit_list=()
+  case_targets_list=()
   while IFS=$'\t' read -r id args safety expected_exit ux requires tiers targets assertions cleanup; do
     [[ -n "$id" ]] || continue
     [[ "$id" =~ ^[a-z0-9][a-z0-9-]*$ ]] || {
@@ -132,9 +160,9 @@ load_release_cases() {
       return 3
     }
     selected_cases+=("$id")
-    case_args["$id"]="$args"
-    case_exit["$id"]="$expected_exit"
-    case_targets["$id"]="$targets"
+    case_args_list+=("$args")
+    case_exit_list+=("$expected_exit")
+    case_targets_list+=("$targets")
   done < <(tail -n +2 "$inventory")
 
   if [[ ${#selected_cases[@]} -eq 0 ]]; then
@@ -144,8 +172,12 @@ load_release_cases() {
     return 2
   fi
   for id in "${selected_cases[@]}"; do
-    if ! probe_kind_for_args "${case_args[$id]}" >/dev/null; then
-      printf 'error: release contract %s has no container executor for %s.\n' "$id" "${case_args[$id]}" >&2
+    args="$(case_field args "$id")" || {
+      printf 'error: release contract %s has no recorded args.\n' "$id" >&2
+      return 3
+    }
+    if ! probe_kind_for_args "$args" >/dev/null; then
+      printf 'error: release contract %s has no container executor for %s.\n' "$id" "$args" >&2
       return 3
     fi
   done
@@ -176,8 +208,10 @@ validate_checksum() {
   local archive_path=$1 sidecar_path=$2 archive_name=$3
   [[ -f "$archive_path" && ! -L "$archive_path" ]] || return 1
   [[ -f "$sidecar_path" && ! -L "$sidecar_path" ]] || return 1
-  local checksum_lines=()
-  mapfile -t checksum_lines < "$sidecar_path"
+  local checksum_lines=() line
+  while IFS= read -r line || [[ -n "$line" ]]; do
+    checksum_lines+=("$line")
+  done < "$sidecar_path"
   [[ ${#checksum_lines[@]} -eq 1 ]] || return 1
   local sidecar_digest sidecar_filename sidecar_extra
   read -r sidecar_digest sidecar_filename sidecar_extra <<< "${checksum_lines[0]}"
@@ -233,7 +267,12 @@ case "$OMG_SMOKE_PROBE_KIND" in
     bash -c "${OMG_PROBE_INSTALLED_ASSERT}"
     ;;
   remove-tree)
-    "$bin" install --yes tree || exit 120
+    # A failing setup install is a PRODUCT signal (the product cannot
+    # install), not rig noise: exit 1 keeps it comparable against the
+    # expected exit instead of masking it as HARNESS_ERROR (see #277,
+    # where "Package not found: tree" from install setup hid a real
+    # repository-lookup defect behind exit 120).
+    "$bin" install --yes tree || exit 1
     bash -c "${OMG_PROBE_INSTALLED_ASSERT}" || exit 120
     "$bin" remove --yes tree || exit 1
     bash -c "${OMG_PROBE_REMOVED_ASSERT}"
@@ -248,9 +287,10 @@ PROBE
 }
 
 record_nonexecution() {
-  local distro=$1 result=$2 message=$3 case_id expectation evidence_dir
+  local distro=$1 result=$2 message=$3 case_id expectation evidence_dir targets_entry
   for case_id in "${selected_cases[@]}"; do
-    expectation="$(target_for_distro "${case_targets[$case_id]}" "$distro")" || expectation="missing"
+    targets_entry="$(case_field targets "$case_id")" || targets_entry=""
+    expectation="$(target_for_distro "$targets_entry" "$distro")" || expectation="missing"
     evidence_dir="$run_evidence/${distro}-${case_id}"
     mkdir -p "$evidence_dir"
     printf '%s: %s\n' "$result" "$message" > "$evidence_dir/transcript.txt"
@@ -291,17 +331,21 @@ resolve_artifact() {
 run_case() (
   local distro=$1 case_id=$2 stage=$3
   local expectation evidence_dir started elapsed probe_bin probe_kind observed_exit result
-  local container_name="omg-smoke-${BASHPID}-${distro}-${case_id}" cleanup_ok=true
+  # $BASHPID is bash 4.0+; $$ plus distro+case (cases run sequentially)
+  # is unique here on bash 3.2 as well.
+  local container_name="omg-smoke-$$-${distro}-${case_id}" cleanup_ok=true
   if [[ "$executor" == "native" ]]; then
     # The inventory targets name container distros only; a native macOS run
     # establishes the baseline, so a matching product exit is a pass.
     expectation="pass"
   else
-    expectation="$(target_for_distro "${case_targets[$case_id]}" "$distro")" || expectation="missing"
+    targets_entry="$(case_field targets "$case_id")" || targets_entry=""
+    expectation="$(target_for_distro "$targets_entry" "$distro")" || expectation="missing"
   fi
   evidence_dir="$run_evidence/${distro}-${case_id}"
   mkdir -p "$evidence_dir"
-  probe_kind="$(probe_kind_for_args "${case_args[$case_id]}")" || return 3
+  args_entry="$(case_field args "$case_id")" || return 3
+  probe_kind="$(probe_kind_for_args "$args_entry")" || return 3
   write_probe "$stage/probe-${case_id}.sh"
   cp "$stage/probe-${case_id}.sh" "$evidence_dir/probe.sh"
   probe_bin="omg-${tag}${distro_suffix}/omg"
@@ -355,18 +399,24 @@ run_case() (
   exec 1>&3 2>&4
   exec 3>&- 4>&-
 
+  expected_exit="$(case_field exit "$case_id")" || return 3
   case "$expectation" in
     pass|known-defect)
-      if [[ $observed_exit -eq "${case_exit[$case_id]}" ]]; then result="PASS"; else result="PRODUCT_FAIL"; fi
+      if [[ $observed_exit -eq "$expected_exit" ]]; then result="PASS"; else result="PRODUCT_FAIL"; fi
       ;;
     expected-rejection)
-      if [[ $observed_exit -eq "${case_exit[$case_id]}" ]]; then result="EXPECTED_REJECTION"; else result="PRODUCT_FAIL"; fi
+      if [[ $observed_exit -eq "$expected_exit" ]]; then result="EXPECTED_REJECTION"; else result="PRODUCT_FAIL"; fi
       ;;
     blocked|not-applicable) result="BLOCKED" ;;
     *) result="HARNESS_ERROR" ;;
   esac
+  # Only proven-rig failures map to HARNESS_ERROR: 120 is this script's own
+  # fixture marker, 125/126/127 are engine/exec failures, 255 is transport.
+  # Timeouts (124) and OOM kills (137) stay comparable so a hanging or
+  # memory-blowing product reports PRODUCT_FAIL instead of hiding as rig
+  # noise (audit: every FAIL must first be proven a TRUE product signal).
   case "$observed_exit" in
-    120|124|125|126|127|137) result="HARNESS_ERROR" ;;
+    120|125|126|127|255) result="HARNESS_ERROR" ;;
   esac
   if [[ "$cleanup_ok" != true ]]; then
     result="HARNESS_ERROR"

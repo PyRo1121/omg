@@ -110,6 +110,16 @@ assert_rc 2 "$runner" --case not-a-contract
 
 grep -q 'valid release contracts' "$scratch/command.out" || fail "unknown case did not list valid contracts"
 
+# macOS runners execute release-smoke.sh with /bin/bash 3.2 (Apple froze it
+# at 3.2.57, pre-GPLv3 bash 4.0 which introduced assoc arrays, mapfile and
+# $BASHPID per Chet Ramey's 4.0 announcement). Comments are stripped first
+# since they legitimately name these constructs. See issue #275.
+stripped="$scratch/smoke-no-comments.sh"
+sed 's/#.*//' "$runner" > "$stripped"
+for token in 'declare -A' 'declare -g' mapfile readarray BASHPID SRANDOM EPOCHSECONDS ';;&' coproc 'printf -v' '|&'; do
+  grep -qF "$token" "$stripped" && fail "bash-4+ construct '$token' breaks macOS Bash 3.2"
+done
+
 make_stage "$scratch/mismatch"
 printf '0%.0s' {1..64} > "$scratch/mismatch/omg-v9.9.9-x86_64-linux-arch.tar.gz.sha256"
 printf '  omg-v9.9.9-x86_64-linux-arch.tar.gz\n' >> "$scratch/mismatch/omg-v9.9.9-x86_64-linux-arch.tar.gz.sha256"
@@ -130,14 +140,18 @@ for failure_code in 120 125 126 127; do
 done
 unset FAKE_RUN_EXIT
 
+# A hung probe is a PRODUCT signal (timeout exits 124 only when the managed
+# command times out; 125/126/127 are the tool/exec failures). The rig's
+# responsibility — kill, cleanup proof, code preservation — is asserted
+# below and stays HARNESS_ERROR-graded only when IT fails.
 export FAKE_HANG=1
-assert_rc 3 "$runner" "${base_args[@]}" --timeout-seconds 1 --staged-dir "$scratch/valid" --evidence-dir "$scratch/timeout"
+assert_rc 1 "$runner" "${base_args[@]}" --timeout-seconds 1 --staged-dir "$scratch/valid" --evidence-dir "$scratch/timeout"
 unset FAKE_HANG
 [[ ! -e "$FAKE_CONTAINER_STATE" ]] || fail "container survived timeout"
 [[ -z "$(find "$HOME/.cache/build-targets/omg-release-smoke" -mindepth 1 -print -quit)" ]] || fail "artifact scratch survived timeout"
 grep -R -q 'verified absent:' "$scratch/timeout" || fail "timeout has no cleanup proof"
 grep -q '"exit_code":124' "$(results_file "$scratch/timeout")" || fail "timeout code was lost"
-grep -q '"result":"HARNESS_ERROR"' "$(results_file "$scratch/timeout")" || fail "timeout was reported as a product verdict"
+grep -q '"result":"PRODUCT_FAIL"' "$(results_file "$scratch/timeout")" || fail "hung product was excused as rig noise"
 
 export FAKE_CLEANUP_FAIL=1
 assert_rc 3 "$runner" "${base_args[@]}" --staged-dir "$scratch/valid" --evidence-dir "$scratch/cleanup-error"
@@ -223,6 +237,12 @@ printf '%s\n' '[{"case_id":"release-package-search-tree","distro":"macos","resul
 assert_rc 0 "$reporter" "$scratch/sentry-run/results-macos.json"
 jq -se '.[2].extra.failures[0].distro == "macos"' "$FAKE_SENTRY_ENVELOPE" >/dev/null || fail "Sentry reporter dropped the macos distro"
 rm "$FAKE_SENTRY_ENVELOPE"
+# Rows the filer accepts but telemetry does not forward (FAIL, SKIPPED,
+# exit -1) must not fail the schema gate and drop real PRODUCT_FAILs.
+printf '%s\n' '[{"case_id":"release-package-search-tree","distro":"arch","result":"PRODUCT_FAIL","exit_code":1,"elapsed_seconds":2},{"case_id":"update-turbo","distro":"arch","result":"FAIL","exit_code":-1,"elapsed_seconds":0},{"case_id":"doctor-eol","distro":"arch","result":"SKIPPED","exit_code":0,"elapsed_seconds":0}]' > "$scratch/sentry-run/results-mixed.json"
+assert_rc 0 "$reporter" "$scratch/sentry-run/results-mixed.json"
+jq -se '.[2].extra.failures | length == 1 and .[0].result == "PRODUCT_FAIL"' "$FAKE_SENTRY_ENVELOPE" >/dev/null || fail "mixed rows broke Sentry forwarding"
+rm "$FAKE_SENTRY_ENVELOPE"
 assert_rc 0 "$reporter" "$result"
 [[ ! -f "$FAKE_SENTRY_ENVELOPE" ]] || fail "passing run sent an error report"
 export FAKE_SENTRY_HTTP=429
@@ -293,10 +313,10 @@ for scenario in pass product-failure timeout cleanup-failure transport-failure m
   expected_result=PASS
   case "$scenario" in
     product-failure) export FAKE_QEMU_GUEST_EXIT=1; expected_rc=1; expected_result=PRODUCT_FAIL ;;
-    timeout) export FAKE_QEMU_GUEST_EXIT=124; expected_rc=124; expected_result=HARNESS_ERROR ;;
+    timeout) export FAKE_QEMU_GUEST_EXIT=124; expected_rc=124; expected_result=PRODUCT_FAIL ;;
     cleanup-failure) export FAKE_QEMU_CLEANUP_FAIL=1; expected_rc=3; expected_result=HARNESS_ERROR ;;
     transport-failure) export FAKE_QEMU_TRANSPORT_EXIT=1; expected_rc=3; expected_result=HARNESS_ERROR ;;
-    missing-receipt) export FAKE_QEMU_MISSING_RECEIPT=1; expected_rc=1; expected_result=HARNESS_ERROR ;;
+    missing-receipt) export FAKE_QEMU_MISSING_RECEIPT=1; expected_rc=3; expected_result=HARNESS_ERROR ;;
   esac
   evidence="$scratch/qemu-$scenario"
   assert_rc "$expected_rc" "$qemu_runner" --distro arch --release v9.9.9 --staged-dir "$scratch/valid" --evidence-dir "$evidence"

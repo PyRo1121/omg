@@ -40,7 +40,6 @@ done
 [[ "$source" =~ ^[a-z0-9][a-z0-9-]{0,63}$ ]] || exit 2
 [[ -f "$results" ]] || exit 2
 [[ -n "$evidence_dir" ]] || evidence_dir="$(dirname "$results")"
-repo="${repo:-${GITHUB_REPOSITORY:-PyRo1121/omg}}"
 for tool in jq gh; do command -v "$tool" >/dev/null || exit 3; done
 
 # Strict schema gate (mirrors report-smoke-sentry.sh): fail closed on junk.
@@ -70,42 +69,10 @@ if [[ "$(jq 'length' <<< "$failures")" == 0 && "$(jq 'length' <<< "$passes")" ==
   printf 'No failures to file and no fixes to resolve.\n'; exit 0
 fi
 
-# Best-effort secret scrubber for log excerpts. By design the harnesses
-# never print credentials; this is a second net, not the first.
-scrub() {
-  sed -e 's/\x1b\[[0-9;]*[a-zA-Z]//g' -e 's/\x1b\][^\x07]*\x07//g' |
-  if [[ -n "${GH_TOKEN:-}" ]]; then sed -e "s/${GH_TOKEN}/[redacted-gh-token]/g"; else cat; fi |
-  sed -E -e 's/ghp_[A-Za-z0-9]{20,}/[redacted-token]/g' \
-    -e 's/github_pat_[A-Za-z0-9_]+/[redacted-token]/g' \
-    -e 's/gho_[A-Za-z0-9_]+/[redacted-token]/g' \
-    -e 's/ghs_[A-Za-z0-9_]+/[redacted-token]/g' \
-    -e 's/Bearer [A-Za-z0-9._~+\/-]+/[redacted-bearer]/g' \
-    -e 's/-----BEGIN [A-Z ]*PRIVATE KEY-----/[redacted-private-key]/g'
-}
-
-# Locate the richest per-case log near the evidence dir. On success prints
-# the evidence-relative source path to FD 3 and the scrubbed tail to
-# stdout. (FD 3 because command substitution would lose a global.)
-excerpt_for() {
-  local case_id=$1 distro=$2 candidate row
-  candidate=""
-  if [[ -f "$evidence_dir/$distro-$case_id/transcript.txt" ]]; then
-    candidate="$evidence_dir/$distro-$case_id/transcript.txt"
-  elif [[ "$case_id" == qemu-*-lifecycle && -f "$evidence_dir/guest-check.log" ]]; then
-    candidate="$evidence_dir/guest-check.log"
-  else
-    row="$case_id"
-    row="${row#qemu-"$distro"-}"
-    if [[ -f "$evidence_dir/rows/$row.log" ]]; then
-      candidate="$evidence_dir/rows/$row.log"
-    elif [[ -f "$evidence_dir/inventory/rows/$row.log" ]]; then
-      candidate="$evidence_dir/inventory/rows/$row.log"
-    fi
-  fi
-  [[ -n "$candidate" ]] || return 1
-  printf '%s\n' "${candidate#"$evidence_dir"/}" >&3
-  tail -n 40 "$candidate" | scrub | tail -c 3000
-}
+# Shared evidence helpers (scrub, excerpt_for); single source of truth
+# with qa-audit.sh.
+# shellcheck disable=SC1091
+source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/qa-evidence-lib.sh"
 
 runbook_for() {
   case "$source" in
@@ -117,7 +84,14 @@ runbook_for() {
   esac
 }
 
-open_issues="$(gh issue list --repo "$repo" --label "$label" --state all --json number,body,state --limit 100)"
+if [[ -z "$repo" ]]; then
+  # Local-first default: file to the checkout's own repo (covers forks),
+  # falling back to upstream only when that cannot be determined.
+  # Deliberately after the schema gate: junk input must fail before any
+  # network call.
+  repo="${GITHUB_REPOSITORY:-$(gh repo view --json nameWithOwner --jq .nameWithOwner 2>/dev/null || printf 'PyRo1121/omg')}"
+fi
+open_issues="$(gh issue list --repo "$repo" --label "$label" --state all --json number,body,state --limit 1000)"
 filed=0; updated=0; closed=0; errors=0
 while IFS= read -r row; do
   case_id=$(jq -r '.case_id' <<< "$row")
