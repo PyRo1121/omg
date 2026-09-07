@@ -491,12 +491,30 @@ run_distro() (
   return "$case_rc"
 )
 
+write_job_summary() {
+  # GitHub-native dashboard: append a per-OS result matrix to the job
+  # summary (https://docs.github.com/en/actions/using-workflows/workflow-commands-for-github-actions#adding-a-job-summary).
+  # $GITHUB_STEP_SUMMARY exists only on runners; local runs skip silently.
+  # Row fields are identifier-constrained by the schema gate, so no
+  # pipe-escaping is needed for the Markdown table.
+  [[ -n "${GITHUB_STEP_SUMMARY:-}" ]] || return 0
+  local table
+  table="$(jq -r '.[] | "| \(.case_id) | \(.distro) | \(.result) | \(.exit_code) | \(.elapsed_seconds)s |"' "$run_evidence/results.json" 2>/dev/null)" || return 0
+  [[ -n "$table" ]] || return 0
+  {
+    printf '## Release smoke matrix — %s %s\n\n' "$distro" "$tag"
+    printf '| Case | Distro | Result | Exit | Time |\n|---|---|---|---|---|\n'
+    printf '%s\n' "$table"
+  } >> "$GITHUB_STEP_SUMMARY"
+}
+
 finalize_results() {
   {
     printf '[\n'
     awk 'NR > 1 { printf ",\n" } { printf "  %s", $0 } END { if (NR > 0) printf "\n" }' "$results_ndjson"
     printf ']\n'
   } > "$run_evidence/results.json"
+  write_job_summary
   if ! "$TIMEOUT_BIN" --kill-after=2s 12s env OMG_SMOKE_RELEASE="$tag" \
       "$repo_root/scripts/report-smoke-sentry.sh" "$run_evidence/results.json" \
       > "$run_evidence/reporting.log" 2>&1; then

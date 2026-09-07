@@ -108,6 +108,14 @@ grep -q "APT commit error" "$CALL_LOG" || fail "progress-excerpt buried the real
 grep -q "Could not open partial file" "$CALL_LOG" || fail "progress-excerpt dropped error context"
 if grep -q "Working" "$CALL_LOG"; then fail "progress-excerpt leaked progress spam"; fi
 
+# 7c. Suite-lifecycle rows (a leg that never started / died before
+# reporting) pass the schema gate but file nothing and fail nothing.
+printf '%s' '[{"case_id":"qemu-debian-lifecycle","distro":"debian","result":"NOT_RUN","exit_code":-1,"elapsed_seconds":0},{"case_id":"qemu-fedora-lifecycle","distro":"fedora","result":"INCOMPLETE","exit_code":-1,"elapsed_seconds":0}]' > "$results"
+: > "$CALL_LOG"; export FAKE_ISSUES_JSON='[]'
+out=$(bash "$runner" "$results" --run-url https://run/7c --source qemu --evidence-dir "$scratch/ev"); assert_rc 0 "$?" "lifecycle-rows"
+grep -q "No failures to file" <<< "$out" || fail "lifecycle rows were not quietly ignored"
+grep -q "issue create" "$CALL_LOG" && fail "lifecycle rows filed an issue"
+
 # 8. A passing case resolves its open issue (comment + close).
 printf '%s' '[{"case_id":"search-tree","distro":"arch","result":"PASS","exit_code":0,"elapsed_seconds":2}]' > "$results"
 export FAKE_ISSUES_JSON='[{"number":7,"state":"open","body":"<!-- omg-qa-fingerprint: qemu:arch:search-tree -->"}]'

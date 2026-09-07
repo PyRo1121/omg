@@ -100,6 +100,9 @@ export PATH="$scratch/bin:$PATH"
 export TMPDIR="$scratch/tmp"
 export HOME="$scratch/home"
 mkdir -p "$HOME"
+# Fake runs must never pollute the real CI step summary when this harness
+# itself runs on a runner; the summary test below opts back in explicitly.
+unset GITHUB_STEP_SUMMARY
 
 assert_rc 2 "$runner" --timeout-seconds 0
 assert_rc 2 "$runner" --timeout-seconds -1
@@ -199,6 +202,14 @@ if grep -R -E '(install|remove) -y tree' "$scratch/family-evidence" >/dev/null; 
   fail "probe substituted the short -y alias"
 fi
 
+# The GitHub-native dashboard: a passing run appends a result matrix to
+# the job summary, and nothing is written when the variable is unset.
+export GITHUB_STEP_SUMMARY="$scratch/summary.md"
+assert_rc 0 "$runner" "${base_args[@]}" --staged-dir "$scratch/valid" --evidence-dir "$scratch/summary-evidence"
+unset GITHUB_STEP_SUMMARY
+grep -q '^| Case | Distro | Result | Exit | Time |$' "$scratch/summary.md" || fail "job summary lacks the matrix header"
+grep -q '| release-package-search-tree | arch | PASS |' "$scratch/summary.md" || fail "job summary lacks the passing row"
+
 export GH_TOKEN='fixture-secret-that-must-not-leak'
 assert_rc 0 "$runner" "${base_args[@]}" --staged-dir "$scratch/valid" --evidence-dir "$scratch/pass-evidence"
 if grep -R -F "$GH_TOKEN" "$scratch/pass-evidence" >/dev/null; then
@@ -238,8 +249,8 @@ assert_rc 0 "$reporter" "$scratch/sentry-run/results-macos.json"
 jq -se '.[2].extra.failures[0].distro == "macos"' "$FAKE_SENTRY_ENVELOPE" >/dev/null || fail "Sentry reporter dropped the macos distro"
 rm "$FAKE_SENTRY_ENVELOPE"
 # Rows the filer accepts but telemetry does not forward (FAIL, SKIPPED,
-# exit -1) must not fail the schema gate and drop real PRODUCT_FAILs.
-printf '%s\n' '[{"case_id":"release-package-search-tree","distro":"arch","result":"PRODUCT_FAIL","exit_code":1,"elapsed_seconds":2},{"case_id":"update-turbo","distro":"arch","result":"FAIL","exit_code":-1,"elapsed_seconds":0},{"case_id":"doctor-eol","distro":"arch","result":"SKIPPED","exit_code":0,"elapsed_seconds":0}]' > "$scratch/sentry-run/results-mixed.json"
+# NOT_RUN, exit -1) must not fail the schema gate and drop real PRODUCT_FAILs.
+printf '%s\n' '[{"case_id":"release-package-search-tree","distro":"arch","result":"PRODUCT_FAIL","exit_code":1,"elapsed_seconds":2},{"case_id":"update-turbo","distro":"arch","result":"FAIL","exit_code":-1,"elapsed_seconds":0},{"case_id":"doctor-eol","distro":"arch","result":"SKIPPED","exit_code":0,"elapsed_seconds":0},{"case_id":"qemu-debian-lifecycle","distro":"debian","result":"NOT_RUN","exit_code":-1,"elapsed_seconds":0}]' > "$scratch/sentry-run/results-mixed.json"
 assert_rc 0 "$reporter" "$scratch/sentry-run/results-mixed.json"
 jq -se '.[2].extra.failures | length == 1 and .[0].result == "PRODUCT_FAIL"' "$FAKE_SENTRY_ENVELOPE" >/dev/null || fail "mixed rows broke Sentry forwarding"
 rm "$FAKE_SENTRY_ENVELOPE"

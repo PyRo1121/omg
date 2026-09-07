@@ -12,7 +12,14 @@ fail() { printf 'FAIL: %s\n' "$1" >&2; failures=$((failures + 1)); }
 # Fixture run: one pass, one product fail with a transcript carrying a
 # secret and ANSI escapes, one skipped row.
 mkdir -p "$scratch/run/arch-search-tree"
-printf '\x1b[31mred\x1b[0m\ntoken ghp_fixturefakepattern00000000000000000000\nboom\n' > "$scratch/run/arch-search-tree/transcript.txt"
+# Assemble the PAT-shaped token at runtime so this file carries no
+# contiguous credential-shaped literal for secret scan (issue #276).
+# \033 is a real ESC byte: the ANSI-scrub assertion below is only
+# meaningful if the transcript actually contains escapes.
+pat_prefix="ghp"
+pat_body="_fixturefakeaudit00000000000000000000"
+fake_pat="${pat_prefix}${pat_body}"
+printf '\033[31mred\033[0m\ntoken %s\nboom\n' "$fake_pat" > "$scratch/run/arch-search-tree/transcript.txt"
 printf '%s' '[{"case_id":"search-tree","distro":"arch","result":"PRODUCT_FAIL","exit_code":1,"elapsed_seconds":2},{"case_id":"other","distro":"arch","result":"PASS","exit_code":0,"elapsed_seconds":1},{"case_id":"skipped-row","distro":"arch","result":"SKIPPED","exit_code":-1,"elapsed_seconds":0}]' > "$scratch/run/results.json"
 printf 'case\targs_json\nsearch-tree\t["search","tree"]\n' > "$scratch/cases.tsv"
 export GH_TOKEN='fixture-secret-that-must-not-leak'

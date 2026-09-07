@@ -24,7 +24,7 @@ failures="$(jq -ce '
   if all(.[];
     (.case_id | identifier) and
     (.distro | IN("arch", "debian", "ubuntu", "fedora", "macos")) and
-    (.result | IN("PASS", "SKIPPED", "EXPECTED_REJECTION", "PRODUCT_FAIL", "HARNESS_ERROR", "FAIL", "BLOCKED")) and
+    (.result | IN("PASS", "SKIPPED", "EXPECTED_REJECTION", "PRODUCT_FAIL", "HARNESS_ERROR", "FAIL", "BLOCKED", "NOT_RUN", "INCOMPLETE")) and
     (.exit_code | type == "number" and floor == . and . >= -1 and . <= 255) and
     (.elapsed_seconds | type == "number" and . >= 0 and . <= 86400))
   then . else error("invalid result fields") end |

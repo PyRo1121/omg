@@ -43,6 +43,9 @@ done
 for tool in jq gh; do command -v "$tool" >/dev/null || exit 3; done
 
 # Strict schema gate (mirrors report-smoke-sentry.sh): fail closed on junk.
+# NOT_RUN/INCOMPLETE are legitimate suite-lifecycle states (a leg that never
+# started / died before reporting); they pass the gate but are never filed,
+# so one silent leg cannot suppress siblings that did report.
 failures="$(jq -ce '
   def identifier: type == "string" and test("^[a-z0-9][a-z0-9-]{0,127}$");
   def distro: type == "string" and IN("arch", "debian", "ubuntu", "fedora", "macos");
@@ -51,7 +54,7 @@ failures="$(jq -ce '
   if all(.[];
     (.case_id | identifier) and
     (.distro | distro) and
-    (.result | IN("PASS", "SKIPPED", "EXPECTED_REJECTION", "PRODUCT_FAIL", "HARNESS_ERROR", "FAIL", "BLOCKED")) and
+    (.result | IN("PASS", "SKIPPED", "EXPECTED_REJECTION", "PRODUCT_FAIL", "HARNESS_ERROR", "FAIL", "BLOCKED", "NOT_RUN", "INCOMPLETE")) and
     (.exit_code | type == "number" and floor == . and . >= -1 and . <= 255) and
     (.elapsed_seconds | type == "number" and . >= 0 and . <= 86400))
   then . else error("invalid result fields") end |

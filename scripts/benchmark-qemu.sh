@@ -136,6 +136,21 @@ if [[ "$print_pins" == true ]]; then
   done
   exit 0
 fi
+write_matrix_summary() {
+  # GitHub-native dashboard: append a result matrix to the job summary.
+  # $GITHUB_STEP_SUMMARY exists only on runners; local runs skip silently.
+  # Row fields are identifier-constrained by the schema gates, so no
+  # pipe-escaping is needed for the Markdown table.
+  local title=$1 file=$2 table
+  [[ -n "${GITHUB_STEP_SUMMARY:-}" && -f "$file" ]] || return 0
+  table="$(jq -r '.[] | "| \(.case_id) | \(.distro) | \(.result) | \(.exit_code) | \(.elapsed_seconds)s |"' "$file" 2>/dev/null)" || return 0
+  [[ -n "$table" ]] || return 0
+  {
+    printf '## %s\n\n' "$title"
+    printf '| Case | Distro | Result | Exit | Time |\n|---|---|---|---|---|\n'
+    printf '%s\n' "$table"
+  } >> "$GITHUB_STEP_SUMMARY"
+}
 if [[ "$distro" == all ]]; then
   suite=$(mktemp -d "$root/suite-XXXXXX")
   rc=0
@@ -144,7 +159,11 @@ if [[ "$distro" == all ]]; then
   [[ "$benchmark" == false ]] || args+=(--benchmark)
   [[ -z "$inventory_tiers" ]] || args+=(--inventory-tiers "$inventory_tiers")
   [[ "$inventory_mutations" == false ]] || args+=(--inventory-allow-mutations)
-  jq -n --arg source "$source_kind" --arg suffix "$case_suffix" '["arch", "debian", "ubuntu", "fedora"] | map({case_id:("qemu-"+.+$suffix+"-lifecycle"), distro:., result:"NOT_RUN", artifact_source:$source, exit_code:null, elapsed_seconds:0})' > "$suite/results.json"
+  # Unrun legs use exit_code -1 (never-exited sentinel): both downstream
+  # schema gates (qa-file-issue.sh, report-smoke-sentry.sh) require a
+  # NUMBER in -1..255, so null would fail the whole file closed and
+  # suppress filing/telemetry for sibling rows that did report.
+  jq -n --arg source "$source_kind" --arg suffix "$case_suffix" '["arch", "debian", "ubuntu", "fedora"] | map({case_id:("qemu-"+.+$suffix+"-lifecycle"), distro:., result:"NOT_RUN", artifact_source:$source, exit_code:-1, elapsed_seconds:0})' > "$suite/results.json"
   for target in arch debian ubuntu fedora; do
     jq --arg target "$target" 'map(if .distro == $target then .result = "INCOMPLETE" else . end)' "$suite/results.json" > "$suite/results.next.json"
     mv "$suite/results.next.json" "$suite/results.json"
@@ -156,6 +175,7 @@ if [[ "$distro" == all ]]; then
     else rc=1; fi
   done
   printf 'Suite evidence: %s\n' "$suite"
+  write_matrix_summary "QEMU suite matrix — $tag" "$suite/results.json"
   exit "$rc"
 fi
 case_id="qemu-${distro}${case_suffix}-lifecycle"
@@ -180,6 +200,7 @@ cleanup() {
   if [[ "$rc" -ne 0 && "$result" == PASS ]]; then result=HARNESS_ERROR; fi
   jq -n --arg distro "$distro" --arg case_id "$case_id" --arg result "$result" --arg source "$source_kind" --argjson rc "$rc" --argjson elapsed "$SECONDS" \
     '[{case_id:$case_id,distro:$distro,result:$result,artifact_source:$source,exit_code:$rc,elapsed_seconds:$elapsed}]' > "$work/results.json"
+  write_matrix_summary "QEMU guest matrix — $distro $arch $tag" "$work/results.json"
   timeout --kill-after=2s 12s env OMG_SMOKE_RELEASE="$tag" OMG_SMOKE_ENVIRONMENT=qemu-matrix "$repo_root/scripts/report-smoke-sentry.sh" "$work/results.json" > "$work/reporting.log" 2>&1 || true
   printf '%s %s. Evidence: %s\n' "$distro" "$result" "$work"
   exit "$rc"

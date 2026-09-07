@@ -773,7 +773,10 @@ mod tests {
             stderr.extend_from_slice(format!("progress line {index}\n").as_bytes());
         }
         stderr.extend_from_slice(b"final diagnosis\n");
-        let message = format!("{error}", error = apt_install_error(&failed_output(&stderr)));
+        let message = format!(
+            "{error}",
+            error = apt_install_error(&failed_output(&stderr))
+        );
         assert!(message.contains("final diagnosis"));
         assert!(!message.contains("progress line 0"));
         assert!(message.contains("progress line 29"));

@@ -8,6 +8,8 @@
 [![License](https://img.shields.io/badge/license-MIT-blue?style=flat-square)](LICENSE)
 [![Rust](https://img.shields.io/badge/rust-1.93%2B-orange?style=flat-square)](https://www.rust-lang.org)
 [![codecov](https://codecov.io/gh/pyro1121/omg/branch/main/graph/badge.svg?style=flat-square)](https://codecov.io/gh/pyro1121/omg)
+[![Release Smoke](https://github.com/PyRo1121/omg/actions/workflows/release-smoke.yml/badge.svg)](https://github.com/PyRo1121/omg/actions/workflows/release-smoke.yml)
+[![QEMU matrix](https://github.com/PyRo1121/omg/actions/workflows/qemu-matrix.yml/badge.svg)](https://github.com/PyRo1121/omg/actions/workflows/qemu-matrix.yml)
 
 OMG replaces `pacman`, `yay`, `nvm`, `pyenv`, `rustup`, `rbenv`, and `jenv` with a single binary. It queries packages in **about 11ms** (13ms mean) via a background daemon that keeps repository indexes in memory.
 
