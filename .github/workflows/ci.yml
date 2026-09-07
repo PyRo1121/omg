@@ -47,10 +47,10 @@ on:
         default: false
 
 concurrency:
-  group: ci-${{ github.ref }}
-  # Latest SHA wins on both PRs and main. Leaving this false queued #175
-  # behind a doomed #172 run that still had the debian Clippy failure.
-  cancel-in-progress: true
+  group: ci-${{ github.head_ref || github.ref }}
+  # PRs cancel superseded runs; main never cancels so queued main runs
+  # (e.g. #175 behind #172) still complete instead of being dropped.
+  cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
 
 permissions:
   contents: read
