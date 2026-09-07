@@ -1,6 +1,6 @@
 # OMG Makefile - Development and Testing Targets
 
-.PHONY: help build release test check fmt clippy clean bench bench-fast bench-hyperfine bench-hyperfine-fast bench-charts docker-debian docker-ubuntu docker-test install audit dev test-property test-fuzz test-advanced test-security
+.PHONY: help build release test test-lib check fmt fmt-check clippy clippy-strict clean bench bench-fast bench-hyperfine bench-hyperfine-fast bench-charts docker-debian docker-ubuntu docker-test docker-debian-shell docker-ubuntu-shell install audit dev dev-stop dev-check test-property test-fuzz test-fuzz-quick test-advanced test-security qa coverage tdd ci-local-quick ci-local-full
 
 # Default target - show help
 .DEFAULT_GOAL := help
@@ -281,5 +281,3 @@ ci-local-full: ci-local-quick
 		--locked --profile ci
 	cargo nextest run --no-default-features --features arch,pgp,license \
 		--locked --profile ci --no-fail-fast
-
-.PHONY: ci-local-quick ci-local-full
