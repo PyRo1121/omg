@@ -199,7 +199,7 @@ case "$OMG_SMOKE_PROBE_KIND" in
     bash -c "${OMG_PROBE_INSTALLED_ASSERT}"
     ;;
   remove-tree)
-    "$bin" install --yes tree || exit 120
+    "$bin" install --yes tree || exit 1
     bash -c "${OMG_PROBE_INSTALLED_ASSERT}" || exit 120
     "$bin" remove --yes tree || exit 1
     bash -c "${OMG_PROBE_REMOVED_ASSERT}"
