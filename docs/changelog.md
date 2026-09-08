@@ -13,6 +13,7 @@ OMG is the fastest unified package manager for Linux, replacing pacman, yay, nvm
 ## [Unreleased]
 ### ♻️  Refactoring
 
+- **Daemon**: Reuse catalog freshness policy ([#319](https://github.com/PyRo1121/omg/issues/319))
 - **Cli**: Unify status output and limit local build jobs
 ### ⚠️  Breaking Changes
 
@@ -73,6 +74,15 @@ present before the probe runs.
 - **Install**: Add interactive fuzzy package discovery
 ### 🐛 Bug Fixes
 
+- **Daemon**: Guard fallback info cache publication ([#318](https://github.com/PyRo1121/omg/issues/318))
+- **Hooks**: Refuse to replace symlink-managed shell configs ([#317](https://github.com/PyRo1121/omg/issues/317))
+- **Team**: Derive displayed configuration from its authoritative file ([#315](https://github.com/PyRo1121/omg/issues/315))
+- **Daemon**: Preserve search limits in prewarmed caches ([#312](https://github.com/PyRo1121/omg/issues/312))
+- **Ci**: Syntax-check every shell script through one gate ([#314](https://github.com/PyRo1121/omg/issues/314))
+- **Security**: Reject unsupported policy fields instead of ignoring them ([#313](https://github.com/PyRo1121/omg/issues/313))
+- **Daemon**: Share full search cache limit with prewarming ([#311](https://github.com/PyRo1121/omg/issues/311))
+- **Daemon**: Reject incomplete oversized audit and inventory responses ([#310](https://github.com/PyRo1121/omg/issues/310))
+- **Daemon**: Preserve maintenance deadlines across health ticks ([#309](https://github.com/PyRo1121/omg/issues/309))
 - **Doctor**: Accept compressed APT indexes in doctor check ([#308](https://github.com/PyRo1121/omg/issues/308))
 - **Usage**: Re-own usage state after elevated runs ([#301](https://github.com/PyRo1121/omg/issues/301))
 - **Qa**: Qemu-matrix concurrency scope + checkout pin ([#298](https://github.com/PyRo1121/omg/issues/298))
@@ -501,6 +511,7 @@ surfaced by the stricter toolchain
 
 ### 🧪 Testing
 
+- **Mock**: Verify empty batches preserve installed state ([#316](https://github.com/PyRo1121/omg/issues/316))
 - **Daemon**: Prove cache clear removes a populated query
 - **Completion**: Log zpty child startup and stop compinit prompting
 
