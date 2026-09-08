@@ -535,7 +535,7 @@ if [[ "$transaction_samples" != 0 && "$rc" == 0 ]]; then
       ([range(1;$count+1) as $round |
         ["install-omg-","install-native-","remove-omg-","remove-native-"][] |
         .+(("000"+($round|tostring))[-3:])] | sort) as $expected |
-      .schema_version==1 and .kind=="transaction-suite" and .complete==true and
+      .schema_version==2 and .kind=="transaction-suite" and .complete==true and
       .distro==$distro and .samples_per_tool==$count and .expected_trials==($count*4) and
       (.bases.install|test("^[0-9a-f]{64}$")) and (.bases.remove|test("^[0-9a-f]{64}$")) and
       ([.results[].id]|sort)==$expected and
@@ -548,6 +548,9 @@ if [[ "$transaction_samples" != 0 && "$rc" == 0 ]]; then
     [[ "$(<"$work/transactions/expected-version.txt")" == "$expected_version" ]] || exit 1
     read -r expected_binary _ < "$work/guest/evidence/benchmarks/binary-sha256.txt"
     for operation in install remove; do
+      read -r repository_digest _ < "$work/transactions/$operation-repository-state.sha256"
+      actual_digest=$(sha256sum "$work/transactions/$operation-repository-state.tar.gz")
+      [[ "$repository_digest" == "${actual_digest%% *}" ]] || exit 1
       for tool in omg native; do
         label_name=OMG
         if [[ "$tool" == native ]]; then
@@ -559,16 +562,22 @@ if [[ "$transaction_samples" != 0 && "$rc" == 0 ]]; then
           python3 "$work/record-benchmark-run.py" --validate-only --scenario "$operation" --source "$evidence" || exit 1
           read -r actual_binary _ < "$evidence/binary-sha256.txt"
           [[ "$actual_binary" == "$expected_binary" ]] || exit 1
+          cmp "$work/transactions/$operation-before.tsv" "$evidence/installed-before.tsv" || exit 1
+          cmp "$work/transactions/$operation-manual-before.names" "$evidence/manual-before.names" || exit 1
+          cmp "$evidence/installed-expected.tsv" "$evidence/installed-after.tsv" || exit 1
+          cmp "$evidence/manual-expected.names" "$evidence/manual-after.names" || exit 1
+          [[ -s "$evidence/cache-before.sha256" && -s "$evidence/cache-after.sha256" ]] || exit 1
           jq -e --arg label_name "$label_name" '
             .results|length==1 and .[0].command==$label_name and (.[0].times|length)==1
           ' "$evidence/$operation.json" >/dev/null || exit 1
           jq -e --arg distro "$distro" --arg operation "$operation" --arg tool "$tool" \
             --arg version "$expected_version" --arg label_name "$label_name" --arg id "$trial_id" \
             --slurpfile suite "$summary" '
-            .schema_version==1 and .kind=="transaction-trial" and .complete==true and
+            .schema_version==2 and .kind=="transaction-trial" and .complete==true and
             .distro==$distro and .operation==$operation and .tool==$tool and .expected_version==$version and
             .boot_id==([$suite[0].results[]|select(.id==$id)][0].boot_id) and
-            .state_change_verified==true and .samples==1 and .warmup==0 and .command.label==$label_name and
+            .state_change_verified==true and .manual_state_change_verified==true and
+            .samples==1 and .warmup==0 and .daemon=="disabled" and .command.label==$label_name and
             (.command.argv|type=="array" and length>0 and all(.[];type=="string"))
           ' "$evidence/summary.json" >/dev/null || exit 1
         done

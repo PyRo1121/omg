@@ -359,7 +359,7 @@ case "$1" in
 esac
 EOF
 chmod 700 "$scratch/bin/docker"
-qemu_runner="$repo_root/scripts/benchmark-qemu.sh"
+qemu_runner="${OMG_QEMU_TEST_RUNNER:-$repo_root/scripts/benchmark-qemu.sh}"
 # This host has no /dev/kvm, so the fixture legs below skip the KVM
 # device probe; dedicated probe tests further down cover it explicitly.
 export OMG_QEMU_ALLOW_NO_KVM=1
@@ -398,7 +398,11 @@ for scenario in pass product-failure product-exit-three timeout cleanup-failure 
   jq -e --arg result "$expected_result" --argjson rc "$expected_rc" 'length == 1 and .[0].result == $result and .[0].exit_code == $rc' "$qemu_result" >/dev/null || fail "QEMU $scenario verdict mismatch"
   work=${qemu_result%/results.json}
   for file in client-key guest-host-key user-data seed.img overlay.qcow2 base.qcow2 vars.fd qemu.pid; do
-    [[ ! -e "$work/guest/$file" ]] || fail "QEMU $scenario retained $file"
+    if [[ "$scenario" == cleanup-failure ]]; then
+      [[ -e "$work/guest/$file" ]] || fail "QEMU deleted $file while controller absence was unverified"
+    else
+      [[ ! -e "$work/guest/$file" ]] || fail "QEMU $scenario retained $file"
+    fi
   done
   if [[ "$scenario" != cleanup-failure ]]; then
     [[ ! -f "$FAKE_QEMU_STATE" ]] || fail "QEMU $scenario retained its controller"

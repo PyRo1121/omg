@@ -304,6 +304,11 @@ if [[ "$GUEST_MODE" == true ]]; then
             print name "\t" version;
           }' "$2"
     }
+    case "$distro" in
+        arch) explicit_native=(pacman -Qqe); explicit_name=pacman ;;
+        debian|ubuntu) explicit_native=(apt-mark showmanual); explicit_name=apt-mark ;;
+        fedora) explicit_native=(dnf -C repoquery --userinstalled --qf '%{name}\n'); explicit_name=dnf ;;
+    esac
     if [[ -n "$GUEST_TRANSACTION" ]]; then
         expected_version=${OMG_BENCH_EXPECTED_VERSION:-}
         if [[ ! "$expected_version" =~ ^[A-Za-z0-9][A-Za-z0-9.:+~_-]*$ ]]; then
@@ -367,7 +372,29 @@ if [[ "$GUEST_MODE" == true ]]; then
             cmp "$EXPORT_DIR/omg-identity-$phase.tsv" "$EXPORT_DIR/expected-identity.tsv"
             cmp "$EXPORT_DIR/native-identity-$phase.tsv" "$EXPORT_DIR/expected-identity.tsv"
         }
+        cache_manifest() {
+            local phase=$1
+            sudo -n bash -c '
+                set -euo pipefail
+                for directory do
+                    if [[ -d "$directory" ]]; then
+                        printf "%s present\n" "$directory" >&2
+                        find "$directory" -type f -exec sha256sum -- {} +
+                    else printf "%s absent\n" "$directory" >&2; fi
+                done
+            ' bash "$root_state/cache" "$root_state/data" /var/cache/pacman/pkg \
+                /var/lib/pacman/sync /var/cache/apt/archives /var/lib/apt/lists \
+                /var/cache/dnf /var/cache/libdnf5 \
+                2> "$EXPORT_DIR/cache-$phase-paths.txt" | sort > "$EXPORT_DIR/cache-$phase.sha256"
+        }
+        manual_snapshot() {
+            local phase=$1
+            "${privileged[@]}" "${explicit_native[@]}" > "$EXPORT_DIR/manual-$phase.stdout" 2> "$EXPORT_DIR/manual-$phase.stderr"
+            sort -u "$EXPORT_DIR/manual-$phase.stdout" > "$EXPORT_DIR/manual-$phase.names"
+            [[ -s "$EXPORT_DIR/manual-$phase.names" ]]
+        }
         native_snapshot before
+        manual_snapshot before
         tree_count=$(awk -F '\t' -v name="$snapshot_name" '$1 == name {count++} END {print count+0}' "$EXPORT_DIR/installed-before.tsv")
         if [[ "$GUEST_TRANSACTION" == install ]]; then
             if [[ "$tree_count" != 0 || -e /usr/bin/tree ]]; then
@@ -375,11 +402,14 @@ if [[ "$GUEST_MODE" == true ]]; then
             fi
             { cat "$EXPORT_DIR/installed-before.tsv"; printf '%s\t%s\n' "$snapshot_name" "$snapshot_version"; } |
                 sort -u > "$EXPORT_DIR/installed-expected.tsv"
+            { cat "$EXPORT_DIR/manual-before.names"; printf 'tree\n'; } | sort -u > "$EXPORT_DIR/manual-expected.names"
         else
             if [[ "$tree_count" != 1 || ! -x /usr/bin/tree ]]; then
                 echo 'Remove sample requires exactly one installed tree package.' >&2; exit 1
             fi
             awk -F '\t' -v name="$snapshot_name" '$1 != name' "$EXPORT_DIR/installed-before.tsv" > "$EXPORT_DIR/installed-expected.tsv"
+            grep -Fxq tree "$EXPORT_DIR/manual-before.names"
+            awk '$0 != "tree"' "$EXPORT_DIR/manual-before.names" > "$EXPORT_DIR/manual-expected.names"
         fi
         verify_tree_identity before
         if [[ "$GUEST_TOOL" == omg ]]; then
@@ -403,6 +433,7 @@ if [[ "$GUEST_MODE" == true ]]; then
         # The audit needs a privileged read; evidence must remain user-owned.
         # shellcheck disable=SC2024
         sudo -n cat /var/lib/omg/audit/audit.jsonl > "$EXPORT_DIR/audit-before.jsonl"
+        cache_manifest before
         printf -v transaction_command '%q ' "${transaction[@]}"
         WARMUP=0 MIN_RUNS=1 MAX_RUNS=1
         measurement_rc=0
@@ -412,16 +443,19 @@ if [[ "$GUEST_MODE" == true ]]; then
         printf '%s\n' "$measurement_rc" > "$EXPORT_DIR/hyperfine.exit"
         cp /proc/stat "$EXPORT_DIR/proc-stat-after.txt"
         native_snapshot after
+        manual_snapshot after
         # The audit needs a privileged read; evidence must remain user-owned.
         # shellcheck disable=SC2024
         sudo -n cat /var/lib/omg/audit/audit.jsonl > "$EXPORT_DIR/audit-after.jsonl"
         "${privileged[@]}" "$OMG" audit verify > "$EXPORT_DIR/audit-verify.stdout" 2> "$EXPORT_DIR/audit-verify.stderr"
+        cache_manifest after
         [[ "$measurement_rc" == 0 ]]
         jq -e --arg label_name "$transaction_label" '
           .results | length == 1 and .[0].command == $label_name and
           .[0].exit_codes == [0] and (.[0].times|length == 1)
         ' "$EXPORT_DIR/$GUEST_TRANSACTION.json" >/dev/null
         cmp "$EXPORT_DIR/installed-expected.tsv" "$EXPORT_DIR/installed-after.tsv"
+        cmp "$EXPORT_DIR/manual-expected.names" "$EXPORT_DIR/manual-after.names"
         if [[ "$GUEST_TRANSACTION" == install ]]; then
             [[ -x /usr/bin/tree ]]
             verify_tree_identity after
@@ -431,10 +465,10 @@ if [[ "$GUEST_MODE" == true ]]; then
         jq -n --arg distro "$distro" --arg operation "$GUEST_TRANSACTION" --arg tool "$GUEST_TOOL" \
             --arg version "$expected_version" --slurpfile command "$EXPORT_DIR/command.json" \
             --rawfile boot_id "$EXPORT_DIR/boot-id.txt" '
-          {schema_version:1,kind:"transaction-trial",complete:true,distro:$distro,
+          {schema_version:2,kind:"transaction-trial",complete:true,distro:$distro,
            operation:$operation,tool:$tool,package:"tree",expected_version:$version,
-           state_change_verified:true,samples:1,warmup:0,daemon:"disabled",
-           preparation:"package metadata warmed by preflight; not a cold-cache claim",
+           state_change_verified:true,manual_state_change_verified:true,samples:1,warmup:0,daemon:"disabled",
+           preparation:"metadata queries and cache-file hashes warm caches before timing; not a cold-cache claim",
            reset_evidence:"coordinator-required",
            boot_id:($boot_id|rtrimstr("\n")),command:$command[0]}
         ' > "$EXPORT_DIR/summary.json"
@@ -570,11 +604,6 @@ if [[ "$GUEST_MODE" == true ]]; then
     cmp "$EXPORT_DIR/search-native-before.names" "$EXPORT_DIR/search-native-after.names"
     if [[ ${#extra_search[@]} -gt 0 ]]; then cmp "$EXPORT_DIR/search-extra-before.names" "$EXPORT_DIR/search-extra-after.names"; fi
 
-    case "$distro" in
-        arch) explicit_native=(pacman -Qqe); explicit_name=pacman ;;
-        debian|ubuntu) explicit_native=(apt-mark showmanual); explicit_name=apt-mark ;;
-        fedora) explicit_native=(dnf -C repoquery --userinstalled --qf '%{name}\n'); explicit_name=dnf ;;
-    esac
     capture_explicit() {
         local phase=$1
         "$OMG" --json explicit > "$EXPORT_DIR/explicit-omg-$phase.stdout" 2> "$EXPORT_DIR/explicit-omg-$phase.stderr"
