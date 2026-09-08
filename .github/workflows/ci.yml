@@ -121,7 +121,7 @@ jobs:
         run: python3 -m unittest discover -s scripts -p 'test_*.py'
 
       - name: Check shell syntax
-        run: bash -n install.sh benchmark.sh benchmark-hyperfine.sh scripts/*.sh
+        run: make check-shell-syntax
 
       - name: Check local CI targets
         run: make ci-local-quick
