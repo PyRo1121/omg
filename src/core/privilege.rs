@@ -582,6 +582,11 @@ async fn sudo_payload_status(args: &[&str]) -> anyhow::Result<std::process::Exit
     sudo_payload_status_in(&trusted_program("sudo")?, exe, is_test_mode, &args).await
 }
 
+/// Privileged re-exec verbs that are not clap user commands. `update --fast`
+/// and `update --turbo` elevate as `fullupdate` / `turboupdate`; the elevated
+/// child also accepts `upgrade`. See `try_fast_elevated` in `src/bin/omg.rs`.
+const INTERNAL_PRIVILEGED_ENTRYPOINTS: &[&str] = &["upgrade", "fullupdate", "turboupdate"];
+
 fn snapshot_install_inputs(
     args: &[String],
 ) -> anyhow::Result<Option<crate::core::security::artifact::SnapshotInputs>> {
@@ -592,9 +597,20 @@ fn snapshot_install_inputs(
     } else {
         args
     };
-    let cli = crate::cli::Cli::try_parse_from(
+    let cli = match crate::cli::Cli::try_parse_from(
         std::iter::once("omg").chain(payload.iter().map(String::as_str)),
-    )?;
+    ) {
+        Ok(cli) => cli,
+        Err(error) => {
+            if payload
+                .first()
+                .is_some_and(|command| INTERNAL_PRIVILEGED_ENTRYPOINTS.contains(&command.as_str()))
+            {
+                return Ok(None);
+            }
+            return Err(error.into());
+        }
+    };
     if matches!(cli.command, crate::cli::Commands::Install { .. }) {
         Ok(Some(
             crate::core::security::artifact::SnapshotInputs::capture(args)?,
@@ -751,9 +767,15 @@ mod tests {
             vec!["remove", "--", "install", super::FLOW_PARENT_RECORDS],
             vec!["sync", "--", super::FLOW_PARENT_RECORDS],
             vec!["update", "--"],
+            vec!["fullupdate", "--"],
+            vec!["turboupdate", "--"],
+            vec!["upgrade", "--"],
         ] {
             let args = args.into_iter().map(str::to_owned).collect::<Vec<_>>();
-            assert!(super::snapshot_install_inputs(&args).unwrap().is_none());
+            assert!(
+                super::snapshot_install_inputs(&args).unwrap().is_none(),
+                "{args:?} is not an install and must still elevate"
+            );
         }
     }
 
