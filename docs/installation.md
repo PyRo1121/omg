@@ -1,457 +1,127 @@
-# Installation Guide
+# Install OMG
 
-Complete installation instructions for OMG across all supported platforms.
+OMG is alpha software. Use a recoverable development machine or disposable VM for package mutations. Keep your native package manager available.
 
-Downloaded releases require GitHub CLI (`gh`) for build-provenance verification.
-If `gh` is missing, installation stops. An explicit opt-out is documented under
-[Installation Options](#installation-options).
+## Choose a supported release target
 
-## Quick Install (Recommended)
+The [release workflow](../.github/workflows/release.yml) builds:
 
-### Linux & macOS
+- Linux x86_64 for Arch, Debian, Ubuntu, and Fedora, each with a separate backend archive.
+- macOS ARM64 for Apple Silicon, with the Homebrew backend.
 
-```bash
-curl -fsSL https://omg.latham.cloud/install.sh | bash
-```
+There is no current Intel macOS or Linux ARM64 release artifact. Rosetta does not run ARM64 binaries on Intel Macs. Native Windows is unsupported; use a supported Linux distribution inside WSL. Fedora support does not establish RHEL compatibility.
 
-### Windows Subsystem for Linux
+Arch uses ALPM and supports AUR builds. Debian and Ubuntu use the native APT backend. Fedora uses DNF, with database reads and subprocess fallbacks. macOS package operations require Homebrew; OMG itself is not packaged as a Homebrew formula here.
 
-Run the Linux installer inside your WSL distribution:
+These backends do not have identical policy, audit, or runtime coverage. The recorded `v0.1.218` Fedora package smoke tests failed. Later local candidate results do not establish that a published archive is fixed. Check the [artifact-specific evidence](../benchmarks/README.md) before choosing a release.
 
-```bash
-curl -fsSL https://omg.latham.cloud/install.sh | bash
-```
+## Review and run the installer
 
-Native Windows is not supported.
-
----
-
-## Platform-Specific Installation
-
-### 🐧 Arch Linux
-
-OMG is available in the AUR (Arch User Repository):
-
-**Prebuilt Binary (Recommended):**
+Downloaded releases require `curl`, archive tools, and GitHub CLI (`gh`) for build-provenance verification. Install those prerequisites through your trusted platform tools first.
 
 ```bash
-yay -S omg-bin
-```
-
-**Build from Source:**
-
-```bash
-yay -S omg
-```
-
-**Features:**
-
-- Native `libalpm` integration
-- 12-24x faster than pacman
-- Full AUR support
-- Daemon-based caching
-
----
-
-### 🐧 Debian & Ubuntu
-
-**Universal Installer (Recommended):**
-
-```bash
-curl -fsSL https://omg.latham.cloud/install.sh | bash
-```
-
-**Manual Installation:**
-
-```bash
-# Download latest release
-VERSION="0.1.215"
-wget "https://github.com/PyRo1121/omg/releases/download/v${VERSION}/omg-v${VERSION}-x86_64-linux-debian.tar.gz"
-
-# Extract
-tar -xzf omg-v${VERSION}-x86_64-linux-debian.tar.gz
-cd omg-v${VERSION}-x86_64-linux-debian
-
-# Install
-sudo cp omg /usr/local/bin/
-sudo chmod +x /usr/local/bin/omg
-
-# Verify
+curl --proto '=https' --tlsv1.2 -fsSL https://omg.latham.cloud/install.sh -o omg-install.sh
+less omg-install.sh
+OMG_NO_TELEMETRY=1 OMG_SKIP_SHELL=1 bash omg-install.sh
+export PATH="$HOME/.local/bin:$PATH"
 omg --version
+omg --help
 ```
 
-**Features:**
+The default destination is `~/.local/bin`. The options above disable installer telemetry and shell edits. Without `OMG_SKIP_SHELL=1`, the installer can modify shell startup files. Review any dependency-installation prompt before approving it.
 
-- Pure-Rust APT database reads first, `rust-apt` fallback
-- 59-483x faster than apt-cache/Nala
-- Direct APT database access for reads; installs and upgrades commit via libapt or `apt-get`
-- Zero subprocess overhead for queries (installs may shell out to `apt-get`)
+The installer checks the archive checksum and verifies GitHub attestation against the requested release tag and OMG release workflow. A missing `gh` or failed attestation stops release installation. There is no supported checksum-only opt-out in the current script.
 
----
+Archive verification does not authenticate the bootstrap script retroactively. The download URL is mutable. For a reproducible bootstrap, review a repository checkout at a trusted commit and run its `install.sh` instead. See [security boundaries](../SECURITY.md#security-boundaries-and-retained-trust).
 
-### 🎩 Fedora & RHEL
+## Installation options
 
-**Universal Installer (Recommended):**
+Apply environment variables to the shell running the script:
 
 ```bash
-curl -fsSL https://omg.latham.cloud/install.sh | bash
+OMG_VERSION=v0.1.218 OMG_NO_TELEMETRY=1 OMG_SKIP_SHELL=1 bash omg-install.sh
+INSTALL_DIR="$HOME/.omg/bin" OMG_SKIP_SHELL=1 bash omg-install.sh
 ```
 
-**Features:**
+The version above is an example pin, not a recommendation that its artifacts pass all tests. Select a release after reviewing its notes and evidence. A custom directory must be added to `PATH`.
 
-- Pure Rust DNF/RPM implementation for queries
-- Direct SQLite database access for reads (`rpm -qa` fallback)
-- 50-100x faster package queries
-- No subprocess calls for queries (installs, removals, and upgrades run via `dnf`)
+## Distribution availability
 
----
+Use the verified release installer or a reviewed source checkout. This guide does not establish that `omg` or `omg-bin` is currently published in the AUR, or that an `omg` crate is available on crates.io. Do not substitute an unverified similarly named package. Third-party packaging has its own build and trust path and need not execute the standalone installer's verification sequence.
 
-### 🍎 macOS
+## Build from source
 
-Homebrew packaging is not available yet. Use the universal installer:
+Use the toolchain pinned in `rust-toolchain.toml`, currently Rust 1.95.0. Build prerequisites depend on the backend. Arch needs libalpm and its development dependencies. Native Debian builds need `libapt-pkg-dev`, `clang`, `cmake`, `pkg-config`, and OpenSSL development headers. macOS needs Xcode Command Line Tools. See [contributing](../CONTRIBUTING.md) for development setup.
+
+From a reviewed checkout, select exactly one backend:
 
 ```bash
-curl -fsSL https://omg.latham.cloud/install.sh | bash
+# Arch
+cargo build --release --locked --no-default-features --features arch,pgp,license
+# Debian or Ubuntu
+cargo build --release --locked --no-default-features --features debian,pgp,license
+# Fedora
+cargo build --release --locked --no-default-features --features fedora,pgp,license
+# Apple Silicon macOS
+cargo build --release --locked --no-default-features --features macos,pgp,license
 ```
 
-**Supported Architectures:**
+Do not run every command. Cargo features are additive, so `--features debian` alone does not remove the default Arch backend. The `license` feature compiles account-linking support; it is not a local CLI paywall.
 
-- ARM64 (Apple Silicon) - Native
-- x86_64 (Intel) - Rosetta 2
+Inspect `target/release/omg --help` before installing a built binary. An explicit source-install path is `bash ./install.sh --from-source` from a trusted checkout. Source builds are not release-attested binaries.
 
-**Features:**
+## Set up your shell
 
-- Homebrew integration
-- Native macOS binaries
-- Optimized for Apple Silicon
-
----
-
-### 🪟 Windows Subsystem for Linux
-
-Run the universal Linux installer from inside the WSL distribution:
+Start with [the quickstart](./quickstart.md). For automatic directory-based runtime selection, add the appropriate line to your shell configuration once:
 
 ```bash
-curl -fsSL https://omg.latham.cloud/install.sh | bash
+# Bash
+eval "$(omg hook bash)"
+# Zsh
+eval "$(omg hook zsh)"
 ```
 
-OMG detects and uses the package backend for the installed Linux distribution. Native Windows, PowerShell, Scoop, and Winget are not supported.
-
----
-
-### 🦀 Build from Source
-
-**Prerequisites:**
-
-- Rust 1.95.0+ (`rustup`; verify with `rustc --version`)
-- Platform build tools:
-  - Linux: `gcc`, `pkg-config`, `libssl-dev`
-  - Debian/Ubuntu builds (`--features debian`): `libapt-pkg-dev`, `clang`, `cmake`
-  - macOS: Xcode Command Line Tools
-
-**Install via Cargo** (requires the `omg` crate on [crates.io](https://crates.io/crates/omg); if unavailable, build from git):
-
-```bash
-cargo install omg --git https://github.com/PyRo1121/omg --locked
-```
-
-**Build manually:**
-
-```bash
-# Clone repository
-git clone https://github.com/PyRo1121/omg.git
-cd omg
-
-# Build release binary
-cargo build --release
-
-# Install
-sudo cp target/release/omg /usr/local/bin/
-```
-
-**Platform-specific features:**
-
-```bash
-# Arch Linux (with libalpm)
-cargo build --release --features arch
-
-# Debian/Ubuntu (with rust-apt)
-cargo build --release --features debian
-
-# Fedora/RHEL (pure Rust)
-cargo build --release --features fedora
-
-# macOS (Homebrew integration)
-cargo build --release --features macos
-```
-
----
-
-## Post-Installation Setup
-
-### 1. Shell Integration
-
-Enable instant version switching for Node.js, Python, etc.
-
-**Bash:**
-
-```bash
-echo 'eval "$(omg hook bash)"' >> ~/.bashrc
-source ~/.bashrc
-```
-
-**Zsh:**
-
-```bash
-echo 'eval "$(omg hook zsh)"' >> ~/.zshrc
-source ~/.zshrc
-```
-
-**Fish:**
+For Fish:
 
 ```fish
-echo 'omg hook fish | source' >> ~/.config/fish/config.fish
-source ~/.config/fish/config.fish
+omg hook fish | source
 ```
 
-### 2. Verify Installation
+Use only the line for your shell. Review [shell integration](./shell-integration.md) before combining OMG with another runtime manager.
+
+Generate completions with `omg completions bash`, `omg completions zsh`, or `omg completions fish`. The command installs the completion file and reports its location. Use `--stdout` only when you want the script itself.
+
+## Daemon requirements
+
+Most package queries can use direct fallback paths. Vulnerability scans, Unix SOC 2 export, and metrics require the daemon. The current SBOM CLI also requires the Arch backend and advisory access, independently of daemon availability.
 
 ```bash
-# Check version
-omg --version
-
-# Run diagnostics
-omg doctor
-
-# Test search
-omg search vim
+omg daemon-status
+omg daemon
 ```
 
-### 3. Optional: Enable Shell Completions
+`omg daemon` launches the separate `omgd` binary in the background. Use `omg daemon --foreground` to see its output, or configure the optional [user service](./configuration.md). The current Arch archive includes `omgd`; the other release packaging steps include only `omg`. Those archives alone cannot provide daemon-dependent commands. A matching `omgd` build must also be installed.
 
-**Bash:**
+## Update or uninstall
 
-```bash
-omg completions bash
-source ~/.local/share/bash-completion/completions/omg
-```
-
-**Zsh:**
-
-```bash
-omg completions zsh
-```
-
-Add `~/.zfunc` to `fpath` before `compinit` in your `~/.zshrc`:
-
-```zsh
-fpath=(~/.zfunc $fpath)
-autoload -Uz compinit
-compinit
-```
-
-Start a new shell, then try `omg install frfx<Tab>` to complete a fuzzy package name.
-
-**Fish:**
-
-```bash
-omg completions fish
-```
-
-**PowerShell:**
-
-```powershell
-omg completions powershell
-```
-
-Follow the installer output to load the generated completion file. To generate a script for a custom location instead, use `omg completions <shell> --stdout`; do not redirect the installer output.
-
----
-
-## Installation Options
-
-To explicitly accept checksum-only verification when `gh` is missing, pass the
-opt-out to the shell running the installer. This cannot bypass a failed
-attestation check. Checksum and provenance refusals also stop the local-source
-fallback.
-
-```bash
-curl -fsSL https://omg.latham.cloud/install.sh | OMG_INSTALL_ALLOW_UNVERIFIED_PROVENANCE=1 bash
-```
-
-The opt-out accepts only `1`, `true`, or `yes`; other values leave verification
-required. Use it only when you accept the missing provenance verification.
-
-The universal installer (`install.sh`) supports several environment variables:
-
-```bash
-# Disable telemetry (variable must reach the installer's bash, not curl)
-curl -fsSL https://omg.latham.cloud/install.sh | OMG_NO_TELEMETRY=1 bash
-
-# Skip shell integration
-curl -fsSL https://omg.latham.cloud/install.sh | OMG_SKIP_SHELL=1 bash
-
-# Install specific version
-curl -fsSL https://omg.latham.cloud/install.sh | OMG_VERSION=v0.1.215 bash
-
-# Custom install directory
-curl -fsSL https://omg.latham.cloud/install.sh | INSTALL_DIR="$HOME/.omg/bin" bash
-
-# Combine options
-curl -fsSL https://omg.latham.cloud/install.sh |
-  OMG_VERSION=v0.1.215 OMG_NO_TELEMETRY=1 OMG_SKIP_SHELL=1 bash
-```
-
----
-
-## Updating OMG
-
-### Auto-update (Recommended)
+For a standalone release installation:
 
 ```bash
 omg self-update
 ```
 
-### Platform-specific updates
+For an AUR-managed installation, update through your AUR package manager instead. Do not mix installation methods without checking which binary `command -v omg` selects.
 
-**Arch (AUR):**
+To uninstall a script-managed installation, review and run the installer's `--uninstall` mode. Review its handling of shell entries and data before confirming. For AUR, use `yay -R omg-bin` or the package name you installed.
 
-```bash
-yay -Syu omg-bin
-```
+Do not delete `~/.local/share/omg` as a routine binary-uninstall step. It can contain runtimes, audit history, and other durable data. Back up and remove such data separately only when intended.
 
-**Homebrew (macOS):** not packaged yet — use `omg self-update` or reinstall from [releases](https://github.com/PyRo1121/omg/releases).
+## CI setup
 
-**Cargo:**
+Pin the installer source and OMG release used by your pipeline. Ensure `gh` can perform the required attestation verification. Set `OMG_NO_TELEMETRY=1` and `OMG_SKIP_SHELL=1`, and add the chosen binary directory to the CI job's `PATH` explicitly. Shell startup edits are not a substitute for CI environment setup.
 
-```bash
-cargo install omg --git https://github.com/PyRo1121/omg --locked --force
-```
+Install named system packages or select required runtimes before running project tasks. Bare `omg install` is an interactive package picker, not a project-dependency installer. `omg env check` reports drift; it does not fix it.
 
----
+## Next steps
 
-## Uninstallation
-
-### Linux/macOS
-
-**Universal installer:**
-
-```bash
-rm -f ~/.local/bin/omg
-rm -rf ~/.local/share/omg
-rm -rf ~/.config/omg
-```
-
-**AUR:**
-
-```bash
-yay -R omg-bin
-```
-
-**Homebrew:** not packaged yet — remove the binary manually (see Linux/macOS above).
-
----
-
-## Troubleshooting
-
-### Command not found
-
-**Ensure install directory is in PATH:**
-
-```bash
-# Linux/macOS
-echo $PATH | grep -o "$HOME/.local/bin"
-
-# Add to PATH if missing
-echo 'export PATH="$HOME/.local/bin:$PATH"' >> ~/.bashrc
-```
-
-### Permission denied
-
-**Linux/macOS:**
-
-```bash
-chmod +x ~/.local/bin/omg
-```
-
-### Daemon not starting
-
-The daemon is optional — most commands work without it via direct queries. `omg audit` (scan) and `omg metrics` require it; compliance export runs without it but skips the vulnerability scan.
-
-```bash
-# Check daemon status
-omg daemon-status
-
-# Run the daemon in the foreground to see errors
-omgd
-```
-
-If you created the optional systemd user service from
-[Configuration](./configuration.md), you can also inspect it with:
-
-```bash
-journalctl --user -u omgd
-```
-
----
-
-## CI/CD Integration
-
-Use OMG in CI/CD pipelines:
-
-**GitHub Actions:**
-
-```yaml
-- name: Install OMG
-  run: curl -fsSL https://omg.latham.cloud/install.sh | bash
-  
-- name: Use specific Node version
-  run: |
-    omg use node 20
-    omg run build
-```
-
-**GitLab CI:**
-
-```yaml
-before_script:
-  - curl -fsSL https://omg.latham.cloud/install.sh | bash
-  - omg use node 20
-```
-
-**Jenkins:**
-
-```groovy
-sh 'curl -fsSL https://omg.latham.cloud/install.sh | bash'
-sh 'omg use python 3.12'
-```
-
----
-
-## Next Steps
-
-After installation:
-
-1. **Read the Quick Start**: `omg help`
-2. **Search packages**: `omg search <query>`
-3. **Install a package**: `omg install <package>`
-4. **Use runtimes**: `omg use node 20`
-5. **Explore features**: Visit [GitHub docs](https://github.com/PyRo1121/omg/tree/main/docs)
-
----
-
-## Support
-
-- 📚 **Documentation**: <https://github.com/PyRo1121/omg/tree/main/docs>
-- 💬 **Discussions**: <https://github.com/PyRo1121/omg/discussions>
-- 🐛 **Issues**: <https://github.com/PyRo1121/omg/issues>
-- 📧 **Email**: <olen@latham.cloud>
-
-### Release verification prerequisite
-
-Install GitHub CLI (`gh`) before running the installer. Release archives must
-pass both checksum validation and attestation verification for the selected tag
-and OMG release workflow. Missing or rejected provenance stops installation.
-For an explicit source build, review a trusted checkout and run
-`bash ./install.sh --from-source`. See [Security boundaries](../SECURITY.md#security-boundaries-and-retained-trust)
-for bootstrap and upstream publisher trust limits.
+[Run your first project task](./quickstart.md), read [backend security limits](./security.md), or [troubleshoot installation](./troubleshooting.md).

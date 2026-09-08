@@ -194,10 +194,10 @@ impl DaemonState {
         Ok(packages)
     }
 
-    /// Rebuild catalog state when on-disk sync or local databases are newer
-    /// than the loaded index. Isolated daemons are a no-op.
+    /// Rebuild catalog state when the observed sync/local identity differs
+    /// from the loaded index. Isolated daemons are a no-op.
     #[cfg(feature = "arch")]
-    async fn heal_index_if_disk_newer(&self) -> anyhow::Result<()> {
+    async fn heal_index_if_catalog_changed(&self) -> anyhow::Result<()> {
         if !self.uses_production_backends() {
             return Ok(());
         }
@@ -221,7 +221,7 @@ impl DaemonState {
                     .index_epoch
                     .read()
                     .unwrap_or_else(std::sync::PoisonError::into_inner);
-                disk.disk_is_newer_than(loaded)
+                disk != loaded
             }
         }
     }
@@ -314,17 +314,6 @@ impl DaemonState {
 
         let cache = PackageCache::default();
 
-        match persistent.get_status() {
-            Ok(Some(status)) => {
-                cache.update_status(Arc::new(status));
-                tracing::debug!("Pre-warmed status cache from persistent storage");
-            }
-            Ok(None) => {}
-            Err(error) => {
-                tracing::warn!("Failed to load persisted status cache: {error}");
-            }
-        }
-
         let quota = Quota::per_second(crate::core::safe_ops::nonzero_u32_or_default(
             GLOBAL_RATE_LIMIT_HZ,
             1,
@@ -410,7 +399,7 @@ pub async fn handle_request(state: Arc<DaemonState>, request: Request) -> Respon
 
     #[cfg(feature = "arch")]
     if request.reads_arch_sync_catalog()
-        && let Err(error) = state.heal_index_if_disk_newer().await
+        && let Err(error) = state.heal_index_if_catalog_changed().await
     {
         return internal_error(
             request.id(),
@@ -978,19 +967,22 @@ async fn handle_status(state: Arc<DaemonState>, id: RequestId) -> Response {
     // 2. Check persistent cache (disk - slower)
     // Runs in blocking thread to avoid stalling async runtime
     let state_clone = Arc::clone(&state);
-    let cached_result =
-        tokio::task::spawn_blocking(move || state_clone.persistent.get_status()).await;
+    let cached_result = tokio::task::spawn_blocking(move || {
+        state_clone
+            .persistent
+            .get_status(state_clone.cache.status_ttl())
+    })
+    .await;
 
     match cached_result {
         Ok(Ok(Some(cached))) => {
             // METRICS: Cache hit (persistent)
             GLOBAL_METRICS.inc_cache_hits();
-            // Promote to memory cache for next hit (Arc avoids clone)
-            let cached_arc = Arc::new(cached);
-            state.cache.update_status(Arc::clone(&cached_arc));
+            // Do not restart its lifetime by promoting an old snapshot into
+            // the memory cache. Only a new backend refresh starts a new TTL.
             return Response::Success {
                 id,
-                result: ResponseResult::Status(Arc::unwrap_or_clone(cached_arc)),
+                result: ResponseResult::Status(cached),
             };
         }
         Ok(Ok(None)) => {}
@@ -1401,6 +1393,69 @@ mod tests {
             DaemonState::new_isolated(directory.path(), PackageIndex::empty(), package_manager)
                 .expect("create isolated daemon state");
         (directory, Arc::new(state))
+    }
+
+    #[tokio::test]
+    async fn persisted_status_does_not_restart_memory_ttl() -> anyhow::Result<()> {
+        let (directory, initial) = isolated_state();
+        let status = super::super::status_policy::status_snapshot(42, 20, 1, 2, vec![], Some(3)).0;
+        initial.persistent.set_status(&status)?;
+        let state = Arc::new(DaemonState::new_isolated(
+            directory.path(),
+            PackageIndex::empty(),
+            Arc::clone(&initial.package_manager),
+        )?);
+        assert!(
+            state.cache.get_status().is_none(),
+            "startup must not reset snapshot age"
+        );
+        let Response::Success {
+            result: ResponseResult::Status(result),
+            ..
+        } = handle_status(Arc::clone(&state), 81).await
+        else {
+            panic!("expected cached status")
+        };
+        assert_eq!(result.total_packages, 42);
+        assert!(
+            state.cache.get_status().is_none(),
+            "disk reads must not reset snapshot age"
+        );
+        assert!(state.cache.get_explicit_count().is_none());
+
+        std::fs::write(
+            directory.path().join("status-cache.json"),
+            serde_json::to_vec(&serde_json::json!({"format_version": 1, "status": status}))?,
+        )?;
+        let Response::Success {
+            result: ResponseResult::Status(result),
+            ..
+        } = handle_status(state, 82).await
+        else {
+            panic!("expected current backend status")
+        };
+        assert_eq!(result.total_packages, 0);
+        assert!(!result.vulnerabilities_scanned);
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn persisted_status_honors_configured_zero_ttl() -> anyhow::Result<()> {
+        let (_directory, mut state) = isolated_state();
+        Arc::get_mut(&mut state).context("unique test state")?.cache =
+            PackageCache::new_with_ttls(10, 300, 0);
+        let status = super::super::status_policy::status_snapshot(42, 20, 1, 2, vec![], Some(3)).0;
+        state.persistent.set_status(&status)?;
+        let Response::Success {
+            result: ResponseResult::Status(result),
+            ..
+        } = handle_status(state, 83).await
+        else {
+            panic!("expected current backend status")
+        };
+        assert_eq!(result.total_packages, 0);
+        assert!(!result.vulnerabilities_scanned);
+        Ok(())
     }
 
     type BackendFuture<'a, T> =

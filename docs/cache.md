@@ -6,7 +6,7 @@ description: In-memory and persistent caching strategies
 
 # Caching & Indexing
 
-OMG's performance is driven by a sophisticated, three-tiered persistence architecture. This multi-layered approach ensures that data is stored in the most efficient location based on its frequency of use and durability requirements.
+OMG uses in-memory caches, a persistent status snapshot, and a binary snapshot for prompt counters. These stores serve different requests; they are not a single fallback chain for every command.
 
 ## 🧠 Tier 1: In-Memory (Hot Cache)
 
@@ -15,7 +15,7 @@ The "Hot" layer uses a high-performance, concurrent memory cache designed for su
 - **Technology**: Built on a lock-free, concurrent caching engine.
 - **Data Types**: Stores recent search results, detailed package metadata, and system status results.
 - **Eviction Strategy**: Uses an intelligent Least Recently Used (LRU) policy to stay within memory limits.
-- **Latency**: < 0.1ms
+- **Latency**: Depends on the request and cache state; measure the complete command.
 
 ---
 
@@ -26,20 +26,20 @@ For data that must survive reboots or daemon restarts, OMG keeps a versioned JSO
 - **Technology**: Versioned JSON snapshot (`status-cache.json`).
 - **Durability**: Atomic replacement plus owner-only file mode.
 - **Location**: Stored locally in `~/.local/share/omg/` (`OMG_DAEMON_DATA_DIR` overrides it).
-- **Latency**: < 5ms (disk-dependent)
+- **Latency**: Depends on storage and snapshot size.
 
 ---
 
 ## 🔍 Tier 3: Binary Snapshot Layer
 
-A specialized binary snapshot file is maintained by the daemon to store your system's "vital signs" (update counts, error status). This is what enables `omg ec|tc|oc|uc` to power your shell prompt with zero-allocation, zero-IPC reads, achieving instantaneous updates.
+The daemon maintains a binary snapshot for package counters. The `omg ec`, `omg tc`, `omg oc`, and `omg uc` commands can read it without a daemon request. A snapshot can be stale; a prompt counter is not a live transaction-state guarantee.
 
 ---
 
 ## 🔄 Data Lifecycle Patterns
 
 ### Search Request Flow
-The system always attempts to serve results from Tier 1 (Memory). If there is a miss, it falls back to the daemon's local package index. If the local results are insufficient, only then does it make a network request to the AUR.
+Official queries can use daemon caches or a direct backend fallback. On Arch, official and AUR searches run concurrently unless `--no-aur` is set. AUR lookup does not wait for insufficient local results. See [search behavior](./package-search.md).
 
 ### Status Monitoring
 System status is generated in the background every 5 minutes and stored in both Tier 1 and Tier 2. This ensures that prompt counters (`omg ec|tc|oc|uc`) always have access to a pre-computed, durable state without needing to query the system live.

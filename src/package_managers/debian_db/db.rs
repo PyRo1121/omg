@@ -4,7 +4,7 @@
 //! and provides a high-performance index with zero-copy deserialization via rkyv.
 //!
 //! Performance features:
-//! - Zero-copy memory-mapped access via rkyv + mmap
+//! - Zero-copy rkyv access over owned cache snapshots
 //! - SIMD-accelerated search via memchr/memmem
 //! - LZ4 compressed cache for space efficiency
 //! - Parallel parsing via rayon
@@ -12,7 +12,7 @@
 #![cfg(any(feature = "debian", feature = "debian-pure"))]
 
 use std::collections::HashMap;
-use std::fs::{self, File};
+use std::fs;
 use std::io::{BufReader, Read};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -22,8 +22,8 @@ use ahash::AHashSet;
 use anyhow::{Context, Result};
 use fst::{IntoStreamer, Map, Streamer};
 use memchr::memmem;
-use memmap2::Mmap;
 use rayon::prelude::*;
+use rkyv::util::AlignedVec;
 use std::sync::RwLock;
 
 use crate::core::paths;
@@ -33,6 +33,32 @@ use crate::core::{Package, PackageSource};
 const CACHE_TTL_SECS: u64 = 30 * 60;
 const DEBIAN_INDEX_CACHE_MAGIC: [u8; 4] = *b"ODXI";
 const DEBIAN_INDEX_CACHE_FORMAT_VERSION: u32 = 2;
+const MAX_INDEX_SNAPSHOT_BYTES: u64 = 512 * 1024 * 1024;
+
+fn read_index_snapshot(path: &Path, limit: u64) -> Result<AlignedVec> {
+    use std::os::unix::fs::OpenOptionsExt;
+
+    let mut file = fs::OpenOptions::new()
+        .read(true)
+        .custom_flags(nix::libc::O_NOFOLLOW | nix::libc::O_NONBLOCK)
+        .open(path)
+        .with_context(|| format!("Failed to open index snapshot at {}", path.display()))?;
+    let metadata = file.metadata()?;
+    anyhow::ensure!(metadata.is_file(), "Index snapshot must be a regular file");
+    anyhow::ensure!(
+        metadata.len() <= limit,
+        "Index snapshot exceeds {limit} bytes"
+    );
+
+    let mut bytes = AlignedVec::new();
+    bytes.extend_from_reader(&mut Read::by_ref(&mut file).take(limit))?;
+    let mut extra = [0];
+    anyhow::ensure!(
+        file.read(&mut extra)? == 0,
+        "Index snapshot exceeds {limit} bytes"
+    );
+    Ok(bytes)
+}
 
 /// Current time as unix seconds (`0` if the clock is before the epoch).
 fn unix_now_secs() -> u64 {
@@ -63,16 +89,46 @@ static DPKG_STATUS_CACHE: LazyLock<RwLock<DpkgStatusCache>> =
 #[derive(Default)]
 struct DebianIndexCache {
     index: Option<DebianPackageIndex>,
-    /// Track individual file mtimes for incremental updates
+    /// Source set and mtimes used to invalidate the complete index.
     file_mtimes: HashMap<PathBuf, std::time::SystemTime>,
     /// Contiguous search buffer for SIMD search: "name desc\0name desc\0..."
     search_buffer: Vec<u8>,
     /// Offsets into the search buffer
     package_offsets: Vec<usize>,
-    /// Cached set of installed package names
-    installed_set: AHashSet<String>,
     /// Last access time for TTL-based eviction (unix seconds; `0` = never)
     last_accessed: u64,
+}
+
+#[derive(Debug, PartialEq, Eq)]
+enum IndexRefresh {
+    Memory,
+    Disk,
+    Rebuild,
+}
+
+impl DebianIndexCache {
+    fn refresh_requirement(
+        &mut self,
+        current_files: &HashMap<PathBuf, std::time::SystemTime>,
+    ) -> IndexRefresh {
+        let sources_match = self.file_mtimes == *current_files;
+        let has_index = self.index.is_some();
+        let expired = is_access_expired(self.last_accessed);
+        if has_index && sources_match && !expired {
+            self.last_accessed = unix_now_secs();
+            return IndexRefresh::Memory;
+        }
+        if expired {
+            *self = Self::default();
+        }
+        // Cold or expired-but-unchanged state may reuse a disk snapshot.
+        // An observed change, including removal of the last list, must rebuild.
+        if !has_index || sources_match {
+            IndexRefresh::Disk
+        } else {
+            IndexRefresh::Rebuild
+        }
+    }
 }
 
 /// Cache for /var/lib/dpkg/status to avoid expensive reparsing
@@ -139,7 +195,7 @@ fn installed_names() -> Result<Arc<AHashSet<String>>> {
     Ok(Arc::clone(&cache.installed_set))
 }
 
-/// Global mmap-based index for zero-copy access (optional, used when available)
+/// Global owned snapshot of the on-disk mmap-format index.
 static DEBIAN_MMAP_INDEX: LazyLock<RwLock<Option<DebianMmapIndex>>> =
     LazyLock::new(|| RwLock::new(None));
 
@@ -147,9 +203,51 @@ static DEBIAN_MMAP_INDEX: LazyLock<RwLock<Option<DebianMmapIndex>>> =
 /// FST provides logarithmic complexity for prefix matching vs O(n) full scan
 static DEBIAN_FST_INDEX: LazyLock<RwLock<Option<FstIndex>>> = LazyLock::new(|| RwLock::new(None));
 
+/// Canonical name-to-row identity, independent of timestamps and file names.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+struct FstMappingId([u8; 32]);
+
+fn sorted_fst_entries<'a>(names: impl IntoIterator<Item = (&'a str, u64)>) -> Vec<(String, u64)> {
+    let mut entries: HashMap<String, u64> = HashMap::new();
+    for (name, index) in names {
+        entries
+            .entry(name.to_lowercase())
+            .and_modify(|previous| *previous = (*previous).max(index))
+            .or_insert(index);
+    }
+    let mut entries: Vec<_> = entries.into_iter().collect();
+    entries.sort_unstable_by(|left, right| left.0.cmp(&right.0));
+    entries
+}
+
+impl FstMappingId {
+    fn hash_entry(hash: &mut Sha256, name: &[u8], index: u64) {
+        hash.update((name.len() as u64).to_le_bytes());
+        hash.update(name);
+        hash.update(index.to_le_bytes());
+    }
+
+    fn from_names<'a>(names: impl IntoIterator<Item = (&'a str, u64)>) -> Self {
+        let mut hash = Sha256::new();
+        for (name, index) in sorted_fst_entries(names) {
+            Self::hash_entry(&mut hash, name.as_bytes(), index);
+        }
+        Self(hash.finalize().into())
+    }
+
+    fn from_map(map: &Map<Mmap>) -> Self {
+        let mut hash = Sha256::new();
+        let mut stream = map.stream();
+        while let Some((name, index)) = stream.next() {
+            Self::hash_entry(&mut hash, name, index);
+        }
+        Self(hash.finalize().into())
+    }
+}
+
 /// FST-based search index with TTL-based eviction
 struct FstIndex {
-    map: Map<Mmap>,
+    map: Map<AlignedVec>,
     /// Index generation this FST snapshot targets (see `.gen` sidecar).
     generation: i64,
     /// Last access time for TTL-based eviction
@@ -157,36 +255,21 @@ struct FstIndex {
 }
 
 impl FstIndex {
-    /// The `.gen` sidecar records which index generation this FST file was
-    /// built from. The three search artifacts (.lz4, .mmap, .fst) are renamed
-    /// as a group, so a crash between renames can serve an old FST beside a
-    /// new mmap; readers validate the pair before trusting name->idx mapping.
-    fn generation_sidecar(path: &Path) -> PathBuf {
-        PathBuf::from(format!("{}.gen", path.display()))
-    }
-
-    /// Open an existing FST index
+    /// Open an FST and derive its identity from the actual mapping. Legacy
+    /// `.gen` files are not evidence of which bytes an open descriptor owns.
     fn open(path: &Path) -> Result<Self> {
-        let generation = fs::read_to_string(Self::generation_sidecar(path))
-            .ok()
-            .and_then(|content| content.trim().parse::<i64>().ok())
+        let generation_bytes = read_index_snapshot(&Self::generation_sidecar(path), 64)
             .context("FST generation sidecar missing or unreadable")?;
-
-        let file = File::open(path)
-            .with_context(|| format!("Failed to open FST index at {}", path.display()))?;
-
-        // SAFETY: Memory mapping is safe for read-only access
-        // - File opened read-only, no modifications possible
-        // - FST validates data integrity on construction
-        // - Mmap maintains exclusive file handle ownership
-        #[expect(unsafe_code)]
-        let mmap = unsafe { Mmap::map(&file)? };
-
-        let map = Map::new(mmap).map_err(|e| anyhow::anyhow!("Corrupted FST index: {e}"))?;
+        let generation = std::str::from_utf8(&generation_bytes)?
+            .trim()
+            .parse::<i64>()
+            .context("Invalid FST generation")?;
+        let bytes = read_index_snapshot(path, MAX_INDEX_SNAPSHOT_BYTES)?;
+        let map = Map::new(bytes).map_err(|e| anyhow::anyhow!("Corrupted FST index: {e}"))?;
 
         Ok(Self {
             map,
-            generation,
+            mapping,
             last_accessed: AtomicU64::new(unix_now_secs()),
         })
     }
@@ -202,44 +285,59 @@ impl FstIndex {
     }
 }
 
-/// Zero-copy memory-mapped Debian package index.
+/// Owned snapshot of the mmap-format Debian index, with zero-copy package access.
 pub struct DebianMmapIndex {
-    mmap: Mmap,
+    bytes: AlignedVec,
     last_accessed: AtomicU64,
 }
 
 impl DebianMmapIndex {
     /// Open and validate an existing read-only package index.
     pub fn open(path: &Path) -> Result<Self> {
-        let file = File::open(path)
-            .with_context(|| format!("Failed to open mmap index at {}", path.display()))?;
-
-        // SAFETY: the file descriptor is read-only and the mapping is owned
-        // by this value for its full lifetime.
-        #[expect(unsafe_code)]
-        let mmap = unsafe { Mmap::map(&file)? };
-        rkyv::access::<rkyv::Archived<DebianPackageIndex>, rkyv::rancor::Error>(&mmap)
+        let bytes = read_index_snapshot(path, MAX_INDEX_SNAPSHOT_BYTES)?;
+        rkyv::access::<rkyv::Archived<DebianPackageIndex>, rkyv::rancor::Error>(&bytes)
             .map_err(|error| anyhow::anyhow!("Corrupted Debian package index: {error}"))?;
 
         Ok(Self {
-            mmap,
+            bytes,
             last_accessed: AtomicU64::new(unix_now_secs()),
         })
     }
 
     fn archive(&self) -> &rkyv::Archived<DebianPackageIndex> {
-        // SAFETY: `open` validates the entire immutable mapping before
-        // constructing `Self`, and `mmap` cannot be mutated afterward.
+        // SAFETY: `open` validates these aligned, owned bytes before construction.
+        // No mutable access is exposed, and external writers cannot change them.
         #[expect(unsafe_code)]
         unsafe {
-            rkyv::access_unchecked::<rkyv::Archived<DebianPackageIndex>>(&self.mmap)
+            rkyv::access_unchecked::<rkyv::Archived<DebianPackageIndex>>(&self.bytes)
         }
     }
 
-    /// Look up one package without deserializing the full index.
-    pub fn get(&self, name: &str) -> Result<Option<&rkyv::Archived<DebianPackage>>> {
+    /// Resolve `name[:architecture[:component]]` without deserializing the index.
+    /// Uses the same fallback order as [`DebianPackageIndex::get_query`].
+    pub fn get(&self, query: &str) -> Result<Option<&rkyv::Archived<DebianPackage>>> {
         let archive = self.archive();
-        let Some(index) = archive.name_to_idx.get(name) else {
+        let index = if let Some((name, rest)) = query.split_once(':') {
+            if let Some((architecture, _)) = rest.split_once(':') {
+                archive
+                    .name_arch_component_to_idx
+                    .get(query)
+                    .or_else(|| {
+                        archive
+                            .name_arch_to_idx
+                            .get(format!("{name}:{architecture}").as_str())
+                    })
+                    .or_else(|| archive.name_to_idx.get(name))
+            } else {
+                archive
+                    .name_arch_to_idx
+                    .get(query)
+                    .or_else(|| archive.name_to_idx.get(name))
+            }
+        } else {
+            archive.name_to_idx.get(query)
+        };
+        let Some(index) = index else {
             return Ok(None);
         };
         Ok(archive.packages.get(u32::from(*index) as usize))
@@ -523,7 +621,6 @@ fn hydrate_index_cache(
     cache: &mut DebianIndexCache,
     index: DebianPackageIndex,
     file_mtimes: HashMap<PathBuf, std::time::SystemTime>,
-    installed_set: AHashSet<String>,
 ) {
     let estimated_size = index
         .packages
@@ -547,11 +644,16 @@ fn hydrate_index_cache(
     }
     package_offsets.push(search_buffer.len());
 
+    cache.fst_mapping = Some(FstMappingId::from_names(
+        index
+            .name_to_idx
+            .iter()
+            .map(|(name, index)| (name.as_str(), *index as u64)),
+    ));
     cache.index = Some(index);
     cache.file_mtimes = file_mtimes;
     cache.search_buffer = search_buffer;
     cache.package_offsets = package_offsets;
-    cache.installed_set = installed_set;
     cache.last_accessed = unix_now_secs();
 }
 
@@ -576,6 +678,9 @@ fn decode_debian_index_cache(compressed: &[u8]) -> Result<DebianPackageIndex> {
 pub fn ensure_index_loaded() -> Result<()> {
     let lists_dir = Path::new("/var/lib/apt/lists");
     if !lists_dir.exists() {
+        *crate::core::sync::write_cache(&DEBIAN_INDEX_CACHE) = DebianIndexCache::default();
+        *crate::core::sync::write_cache(&DEBIAN_MMAP_INDEX) = None;
+        *crate::core::sync::write_cache(&DEBIAN_FST_INDEX) = None;
         return Ok(());
     }
 
@@ -599,39 +704,11 @@ pub fn ensure_index_loaded() -> Result<()> {
         current_files.insert(path, mtime);
     }
 
-    // Check if we need to update
-    let needs_update = {
-        let mut cache = crate::core::sync::write_cache(&DEBIAN_INDEX_CACHE);
-
-        // Clear cache if TTL expired (safety net for unbounded growth)
-        if is_access_expired(cache.last_accessed) {
-            *cache = DebianIndexCache::default();
-            true
-        } else if cache.index.is_none() {
-            true // No index yet
-        } else {
-            // Check if any files changed or were added/removed
-            let needs_update = cache.file_mtimes != current_files;
-            if !needs_update {
-                // Cache hit - update last accessed
-                cache.last_accessed = unix_now_secs();
-            }
-            needs_update
-        }
-    };
-
-    if !needs_update {
+    let refresh =
+        crate::core::sync::write_cache(&DEBIAN_INDEX_CACHE).refresh_requirement(&current_files);
+    if refresh == IndexRefresh::Memory {
         return Ok(());
     }
-
-    // The rebuild below repopulates the full index, so only whether a file
-    // changed matters; retaining cloned paths would be discarded work.
-    let has_changed_files = {
-        let cache = crate::core::sync::read_cache(&DEBIAN_INDEX_CACHE);
-        current_files
-            .iter()
-            .any(|(path, mtime)| cache.file_mtimes.get(path) != Some(mtime))
-    };
 
     // Load or create index (with LZ4 compression support).
     // v8 adds per-package source provenance used for download-URL construction;
@@ -642,106 +719,43 @@ pub fn ensure_index_loaded() -> Result<()> {
     let cache_path = paths::cache_dir().join("debian_index_v8.lz4");
     let mmap_path = paths::cache_dir().join("debian_index_v8.mmap");
 
-    // Check if LZ4 cache is fresher than all Packages files.
-    // On cold process start, file_mtimes is empty so all files appear "changed".
-    // But if the cache file is newer than every Packages file, it's already up-to-date.
-    let mut index: Option<DebianPackageIndex> = None;
-    let mut cache_is_fresh = false;
-    if cache_path.exists() {
-        // Check if cache file is newer than all Packages files
-        if let Ok(cache_meta) = fs::metadata(&cache_path)
-            && let Ok(cache_mtime) = cache_meta.modified()
+    let index = if refresh == IndexRefresh::Disk && disk_cache_is_fresh(&cache_path, lists_dir) {
+        match fs::read(&cache_path)
+            .context("Failed to read Debian index cache")
+            .and_then(|compressed| decode_debian_index_cache(&compressed))
         {
-            cache_is_fresh = current_files
-                .values()
-                .all(|pkg_mtime| cache_mtime >= *pkg_mtime);
+            Ok(index) => Some(index),
+            Err(error) => {
+                tracing::debug!(%error, path = %cache_path.display(), "Debian index cache is unusable; rebuilding");
+                None
+            }
         }
+    } else {
+        None
+    };
 
-        match fs::read(&cache_path) {
-            Ok(compressed) => match decode_debian_index_cache(&compressed) {
-                Ok(cached_index) => index = Some(cached_index),
-                Err(error) => tracing::debug!(
-                    %error,
-                    "Debian index cache is invalid; rebuilding"
-                ),
-            },
-            Err(error) => tracing::debug!(
-                %error,
-                path = %cache_path.display(),
-                "Failed to read Debian index cache; rebuilding"
-            ),
-        }
-    }
-
-    // Try to load the mmap index for zero-copy access
-    if mmap_path.exists() {
-        let mut mmap_guard = crate::core::sync::write_cache(&DEBIAN_MMAP_INDEX);
-
-        // Clear expired mmap (TTL-based cleanup for 500MB+ resource leak)
-        if let Some(ref mmap) = *mmap_guard
-            && mmap.is_expired()
-        {
-            tracing::debug!("Clearing expired Debian mmap index (TTL exceeded)");
-            *mmap_guard = None;
-        }
-
-        if mmap_guard.is_none()
-            && let Ok(mmap_index) = DebianMmapIndex::open(&mmap_path)
-            // A torn rename group can leave an mmap from an older index
-            // generation beside a newer lz4 cache; drop the stale mmap (the
-            // rebuild below re-persists all three).
-            && index.as_ref().is_none_or(|fresh| {
-                fresh.updated_at == mmap_index.generation()
-            })
-        {
-            *mmap_guard = Some(mmap_index);
-        }
-    }
-
-    let mut index = index.unwrap_or_default();
-    // Skip rebuild if cache file is fresh (newer than all Packages files).
-    // This avoids re-parsing 94k packages on every cold process start.
-    if has_changed_files && cache_is_fresh && !index.packages.is_empty() {
+    if let Some(index) = index.filter(|index| !index.packages.is_empty()) {
         tracing::debug!(
-            "LZ4 cache is fresh (newer than all {} Packages files), skipping rebuild",
+            "LZ4 cache is fresh for the APT directory and {} Packages files, skipping rebuild",
             current_files.len()
         );
-        let installed_set = list_installed_fast()?
-            .into_iter()
-            .map(|package| package.name)
-            .collect();
+        // Preserve the cross-file generation check before publishing an mmap.
+        let mmap = DebianMmapIndex::open(&mmap_path)
+            .ok()
+            .filter(|mmap| mmap.generation() == index.updated_at);
+        *crate::core::sync::write_cache(&DEBIAN_MMAP_INDEX) = mmap;
+        *crate::core::sync::write_cache(&DEBIAN_FST_INDEX) = None;
         let mut cache = crate::core::sync::write_cache(&DEBIAN_INDEX_CACHE);
-        hydrate_index_cache(&mut cache, index, current_files, installed_set);
+        hydrate_index_cache(&mut cache, index, current_files);
         return Ok(());
     }
 
-    // Parse all files when any have changed (incremental update was broken)
-    // The mtime check above still avoids unnecessary rebuilds when nothing changed
-    if has_changed_files {
-        // Get all current Packages files
-        let all_files: Vec<PathBuf> = current_files.keys().cloned().collect();
-
-        let new_packages: Vec<DebianPackage> = all_files
-            .par_iter()
-            .map(|path| parse_packages_file_sync(path))
-            .collect::<Result<Vec<Vec<DebianPackage>>>>()?
-            .into_iter()
-            .flatten()
-            .collect();
-
-        // Clear and rebuild - simpler and correct
-        index.packages.clear();
-        index.name_to_idx.clear();
-        index.name_arch_to_idx.clear();
-        index.name_arch_component_to_idx.clear();
-
-        // Add all packages
-        for pkg in new_packages {
-            index.add_package(pkg);
-        }
-
-        // Update timestamp and save
-        index.updated_at = jiff::Timestamp::now().as_second();
+    *crate::core::sync::write_cache(&DEBIAN_MMAP_INDEX) = None;
+    *crate::core::sync::write_cache(&DEBIAN_FST_INDEX) = None;
+    let all_files: Vec<PathBuf> = current_files.keys().cloned().collect();
+    let index = rebuild_package_index(&all_files)?;
+    // Release serialization buffers before hydrating in-memory search state.
+    {
         if let Some(p) = cache_path.parent() {
             fs::create_dir_all(p).with_context(|| {
                 format!("Failed to create Debian cache directory: {}", p.display())
@@ -813,43 +827,27 @@ pub fn ensure_index_loaded() -> Result<()> {
         let fst_path = paths::cache_dir().join("debian_index_v8.fst");
         let fst_build_start = std::time::Instant::now();
 
-        let mut lower_name_to_idx: HashMap<String, usize> =
-            HashMap::with_capacity(index.name_to_idx.len());
-        for (name, idx) in &index.name_to_idx {
-            let lower = name.to_lowercase();
-            lower_name_to_idx
-                .entry(lower)
-                .and_modify(|existing_idx| {
-                    if *idx > *existing_idx {
-                        *existing_idx = *idx;
-                    }
-                })
-                .or_insert(*idx);
-        }
-
-        let mut sorted_packages: Vec<(String, usize)> = lower_name_to_idx.into_iter().collect();
-        sorted_packages.sort_by(|a, b| a.0.cmp(&b.0));
+        let sorted_packages = sorted_fst_entries(
+            index
+                .name_to_idx
+                .iter()
+                .map(|(name, index)| (name.as_str(), *index as u64)),
+        );
 
         // Build FST map: lowercased package name -> package index
         let mut fst_builder = fst::MapBuilder::memory();
         for (name, idx) in sorted_packages {
-            if let Err(e) = fst_builder.insert(name.as_bytes(), idx as u64) {
-                tracing::warn!("Failed to insert '{}' into FST: {}", name, e);
-            }
+            fst_builder
+                .insert(name.as_bytes(), idx)
+                .with_context(|| format!("Failed to insert '{name}' into FST"))?;
         }
 
         let fst_bytes = fst_builder
             .into_inner()
             .context("Failed to build FST index")?;
 
-        // Atomic write for FST index. The .gen sidecar is written first so a
-        // crash in between leaves a mismatched pair that load-time validation
-        // rejects (never an fst trusted against the wrong generation).
-        crate::core::safe_ops::atomic_write_file_sync(
-            FstIndex::generation_sidecar(&fst_path),
-            index.updated_at.to_string().as_bytes(),
-        )
-        .context("Failed to write FST generation sidecar")?;
+        // Publish the complete mapping in one rename. Readers fingerprint
+        // its contents rather than trusting separately published metadata.
         let mut temp_fst =
             NamedTempFile::new_in(parent).context("Failed to create temporary FST file")?;
         temp_fst
@@ -881,20 +879,37 @@ pub fn ensure_index_loaded() -> Result<()> {
         }
     }
 
-    let installed_set = list_installed_fast()?
-        .into_iter()
-        .map(|package| package.name)
-        .collect();
     let mut cache = crate::core::sync::write_cache(&DEBIAN_INDEX_CACHE);
-    hydrate_index_cache(&mut cache, index, current_files, installed_set);
+    hydrate_index_cache(&mut cache, index, current_files);
 
     Ok(())
+}
+
+fn rebuild_package_index(files: &[PathBuf]) -> Result<DebianPackageIndex> {
+    let packages = files
+        .par_iter()
+        .map(|path| parse_packages_file_sync(path))
+        .collect::<Result<Vec<Vec<DebianPackage>>>>()?;
+    let mut index = DebianPackageIndex::new();
+    for package in packages.into_iter().flatten() {
+        index.add_package(package);
+    }
+    index.updated_at = jiff::Timestamp::now().as_second();
+    Ok(index)
 }
 
 fn disk_cache_is_fresh(cache_path: &Path, lists_dir: &Path) -> bool {
     let Ok(cache_mtime) = fs::metadata(cache_path).and_then(|metadata| metadata.modified()) else {
         return false;
     };
+    // Deletions and renames can leave every surviving file older than the
+    // cache. The directory timestamp records those namespace changes.
+    let Ok(directory_mtime) = required_mtime(lists_dir) else {
+        return false;
+    };
+    if directory_mtime > cache_mtime {
+        return false;
+    }
     let Ok(entries) = fs::read_dir(lists_dir) else {
         return false;
     };
@@ -925,8 +940,7 @@ fn disk_cache_is_fresh(cache_path: &Path, lists_dir: &Path) -> bool {
     found_package_list
 }
 
-/// Ensure FST index is loaded (if available on disk)
-/// Returns `Ok(())` whether FST is available or not - FST is optional optimization
+/// Load an optional FST only when its mapping matches the current mmap.
 fn ensure_fst_loaded() {
     let fst_path = paths::cache_dir().join("debian_index_v8.fst");
     if !disk_cache_is_fresh(&fst_path, Path::new("/var/lib/apt/lists")) {
@@ -934,41 +948,36 @@ fn ensure_fst_loaded() {
         return;
     }
 
-    // Check if already loaded
+    // Always acquire mmap before FST when holding both locks.
+    let mmap_guard = crate::core::sync::read_cache(&DEBIAN_MMAP_INDEX);
+    let Some(mmap) = mmap_guard.as_ref() else {
+        return;
+    };
     {
         let guard = crate::core::sync::read_cache(&DEBIAN_FST_INDEX);
-        if let Some(ref fst) = *guard {
-            // Clear if expired
-            if fst.is_expired() {
-                drop(guard);
-                let mut write_guard = crate::core::sync::write_cache(&DEBIAN_FST_INDEX);
-                tracing::debug!("Clearing expired FST index (TTL exceeded)");
-                *write_guard = None;
-            } else {
-                fst.touch();
-                return;
-            }
+        if let Some(fst) = guard.as_ref()
+            && !fst.is_expired()
+            && fst.mapping == mmap.fst_mapping
+        {
+            fst.touch();
+            return;
         }
     }
-
-    // Try to load from disk. The FST only targets the same generation as the
-    // mmap when their recorded generations agree; any mismatch is treated as
-    // absent and triggers a rebuild in the regular search path.
-    let mmap_guard = crate::core::sync::read_cache(&DEBIAN_MMAP_INDEX);
-    if let Ok(fst_index) = FstIndex::open(&fst_path)
-        && let Some(ref mmap) = *mmap_guard
-        && fst_index.generation == mmap.generation()
-    {
-        let mut guard = crate::core::sync::write_cache(&DEBIAN_FST_INDEX);
-        *guard = Some(fst_index);
-        tracing::debug!("Loaded FST index from disk");
-    }
+    let candidate = match FstIndex::open(&fst_path) {
+        Ok(fst) if fst.mapping == mmap.fst_mapping => Some(fst),
+        Ok(_) => None,
+        Err(error) => {
+            tracing::debug!(%error, "FST cache rejected; using regular search");
+            None
+        }
+    };
+    *crate::core::sync::write_cache(&DEBIAN_FST_INDEX) = candidate;
 }
 
 /// Ensure the mmap index is loaded from disk (if available).
 ///
-/// This is nearly instant (just a syscall, no decompression) unlike `ensure_index_loaded()`.
-/// Used by the ultra-fast search and update paths to avoid loading the full index.
+/// Validates the archive and fingerprints its name mapping once on open,
+/// without deserializing the full index. Subsequent accesses reuse the mapping.
 #[must_use]
 pub fn ensure_mmap_loaded() -> bool {
     let mmap_path = paths::cache_dir().join("debian_index_v8.mmap");
@@ -1423,35 +1432,31 @@ pub fn search_fast(query: &str) -> Result<Vec<Package>> {
     }
 
     // ULTRA-FAST PATH: FST + mmap (no index loading, no decompression)
-    // This path takes ~5ms vs ~90ms for `ensure_index_loaded()`
-    if !query.is_empty() && !query.contains(':') {
+    if !query.is_empty() && !query.contains(':') && ensure_mmap_loaded() {
         ensure_fst_loaded();
+        let installed_set = installed_names()?;
+        // Retain the exact checked pair through the search. Do not reacquire
+        // either lock after validation, or reverse the mmap -> FST order.
+        let mmap_guard = crate::core::sync::read_cache(&DEBIAN_MMAP_INDEX);
         let fst_guard = crate::core::sync::read_cache(&DEBIAN_FST_INDEX);
-        if let Some(ref fst_index) = *fst_guard
-            && ensure_mmap_loaded()
-            && let Some(ref mmap) = *crate::core::sync::read_cache(&DEBIAN_MMAP_INDEX)
-            && fst_index.generation == mmap.generation()
+        if let Some(mmap) = mmap_guard.as_ref()
+            && let Some(fst_index) = fst_guard.as_ref()
+            && fst_index.mapping == mmap.fst_mapping
         {
-            let fst_index = fst_guard.as_ref().expect("checked is_some() above");
             fst_index.touch();
-            let query_lower = query.to_lowercase();
-            let installed_set = installed_names()?;
-            let mmap_guard = crate::core::sync::read_cache(&DEBIAN_MMAP_INDEX);
-            if let Some(ref mmap) = *mmap_guard {
-                mmap.touch();
-                return Ok(fst_mmap_search(
-                    &fst_index.map,
-                    mmap,
-                    &query_lower,
-                    &installed_set,
-                ));
-            }
+            mmap.touch();
+            return Ok(fst_mmap_search(
+                &fst_index.map,
+                mmap,
+                &query.to_lowercase(),
+                &installed_set,
+            ));
         }
-        drop(fst_guard);
     }
 
-    // Fallback: load full index (needed for empty queries or when FST/mmap unavailable)
+    // Repository and installed inventories have independent freshness rules.
     ensure_index_loaded()?;
+    let installed_set = installed_names()?;
 
     let guard = crate::core::sync::read_cache(&DEBIAN_INDEX_CACHE);
     let index = guard.index.as_ref().context(
@@ -1462,7 +1467,7 @@ pub fn search_fast(query: &str) -> Result<Vec<Package>> {
         return Ok(index
             .packages
             .iter()
-            .map(|pkg| package_with_installed_state(pkg, &guard.installed_set))
+            .map(|pkg| package_with_installed_state(pkg, &installed_set))
             .collect());
     }
 
@@ -1470,7 +1475,7 @@ pub fn search_fast(query: &str) -> Result<Vec<Package>> {
     if let Some(exact_pkg) = index.get_query(query) {
         return Ok(vec![package_with_installed_state(
             exact_pkg,
-            &guard.installed_set,
+            &installed_set,
         )]);
     }
 
@@ -1480,21 +1485,21 @@ pub fn search_fast(query: &str) -> Result<Vec<Package>> {
     {
         return Ok(vec![package_with_installed_state(
             exact_pkg,
-            &guard.installed_set,
+            &installed_set,
         )]);
     }
 
     // FST search with in-memory index
     let fst_guard = crate::core::sync::read_cache(&DEBIAN_FST_INDEX);
     if let Some(ref fst_index) = *fst_guard
-        && fst_index.generation == index.updated_at
+        && guard.fst_mapping == Some(fst_index.mapping)
     {
         fst_index.touch();
         return Ok(fst_search(
             &fst_index.map,
             index,
             &query_lower,
-            &guard.installed_set,
+            &installed_set,
         ));
     }
     drop(fst_guard);
@@ -1505,7 +1510,7 @@ pub fn search_fast(query: &str) -> Result<Vec<Package>> {
         &query_lower,
         &guard.search_buffer,
         &guard.package_offsets,
-        &guard.installed_set,
+        &installed_set,
     ))
 }
 
@@ -1513,7 +1518,7 @@ pub fn search_fast(query: &str) -> Result<Vec<Package>> {
 /// Much faster than full buffer scan for common queries
 #[inline]
 fn fst_search(
-    fst_map: &Map<Mmap>,
+    fst_map: &Map<AlignedVec>,
     index: &DebianPackageIndex,
     query_lower: &str,
     installed_set: &AHashSet<String>,
@@ -1577,7 +1582,7 @@ fn fst_search(
 /// Uses FST for name matching and mmap for zero-copy package details
 #[inline]
 fn fst_mmap_search(
-    fst_map: &Map<Mmap>,
+    fst_map: &Map<AlignedVec>,
     mmap: &DebianMmapIndex,
     query_lower: &str,
     installed_set: &AHashSet<String>,
@@ -1704,7 +1709,7 @@ pub fn get_info_fast(name: &str) -> Result<Option<Package>> {
             if let Ok(Some(pkg)) = mmap.get(name) {
                 return Ok(Some(archived_package_to_package(
                     pkg,
-                    is_installed_fast(name)?,
+                    is_installed_fast(pkg.name.as_str())?,
                 )));
             }
             // Package not in mmap - still return None without loading full index
@@ -1720,15 +1725,13 @@ pub fn get_info_fast(name: &str) -> Result<Option<Package>> {
     }
 
     ensure_index_loaded()?;
+    let installed_set = installed_names()?;
     let guard = crate::core::sync::read_cache(&DEBIAN_INDEX_CACHE);
     let index = guard.index.as_ref().context(
         "Debian package index not loaded. Run 'omg sync' to refresh the package database",
     )?;
     if let Some(pkg) = index.get_query(name) {
-        Ok(Some(package_with_installed_state(
-            pkg,
-            &guard.installed_set,
-        )))
+        Ok(Some(package_with_installed_state(pkg, &installed_set)))
     } else {
         Ok(None)
     }
@@ -1951,7 +1954,7 @@ pub fn cleanup_expired_mmaps() {
     if let Some(ref mmap) = *mmap_guard
         && mmap.is_expired()
     {
-        let size = mmap.mmap.len();
+        let size = mmap.bytes.len();
         tracing::info!(
             "Cleaning up expired Debian mmap index (size: {} MB)",
             size / 1024 / 1024
@@ -2467,30 +2470,195 @@ fn remove_deb_files(dir: &Path) -> Result<(usize, u64)> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::fs::File;
+    use std::io::Write as _;
 
-    /// Wave-8 coherence fix: the FST's recorded generation must match the
-    /// mmap/index generation or the fst->idx mapping is stale.
     #[test]
-    fn fst_index_requires_generation_sidecar() {
-        let temp = tempfile::TempDir::new().unwrap();
-        let fst_path = temp.path().join("debian_index_v8.fst");
+    fn index_snapshot_enforces_byte_budget() -> Result<()> {
+        let directory = tempfile::tempdir()?;
+        let path = directory.path().join("index");
+        fs::write(&path, b"abc")?;
+        assert_eq!(read_index_snapshot(&path, 3)?.as_slice(), b"abc");
+        assert!(read_index_snapshot(&path, 2).is_err());
+        File::create(&path)?.set_len(MAX_INDEX_SNAPSHOT_BYTES + 1)?;
+        let error = DebianMmapIndex::open(&path)
+            .err()
+            .expect("oversized index rejected");
+        assert!(error.to_string().contains("exceeds"));
+        Ok(())
+    }
 
+    #[test]
+    fn index_snapshot_rejects_symlinks_and_special_files() -> Result<()> {
+        let directory = tempfile::tempdir()?;
+        let target = directory.path().join("target");
+        let link = directory.path().join("link");
+        fs::write(&target, b"unchanged")?;
+        std::os::unix::fs::symlink(&target, &link)?;
+        assert!(read_index_snapshot(&link, 64).is_err());
+        assert_eq!(fs::read(&target)?, b"unchanged");
+        assert!(read_index_snapshot(directory.path(), 64).is_err());
+        let fifo = directory.path().join("fifo");
+        nix::unistd::mkfifo(&fifo, nix::sys::stat::Mode::S_IRWXU)?;
+        assert!(read_index_snapshot(&fifo, 64).is_err());
+        Ok(())
+    }
+
+    #[test]
+    fn package_snapshot_survives_external_overwrite_and_truncation() -> Result<()> {
+        let directory = tempfile::tempdir()?;
+        let path = directory.path().join("index.mmap");
+        let mut source = DebianPackageIndex::new();
+        source.updated_at = 41;
+        let bytes = rkyv::to_bytes::<rkyv::rancor::Error>(&source)?;
+        fs::write(&path, &bytes)?;
+        let mut writer = fs::OpenOptions::new().write(true).open(&path)?;
+        let index = DebianMmapIndex::open(&path)?;
+        assert_eq!(index.generation(), 41);
+
+        source.updated_at = 42;
+        let replacement = rkyv::to_bytes::<rkyv::rancor::Error>(&source)?;
+        assert_eq!(bytes.len(), replacement.len());
+        writer.write_all(&replacement)?;
+        assert_eq!(index.generation(), 41);
+        assert_eq!(DebianMmapIndex::open(&path)?.generation(), 42);
+        writer.set_len(0)?;
+        assert_eq!(index.generation(), 41);
+        assert!(index.packages()?.is_empty());
+        assert!(DebianMmapIndex::open(&path).is_err());
+        Ok(())
+    }
+
+    #[test]
+    fn fst_snapshot_survives_external_overwrite_and_truncation() -> Result<()> {
+        let directory = tempfile::tempdir()?;
+        let path = directory.path().join("index.fst");
+        let bytes = Map::from_iter([("demo", 1)])?.into_fst().into_inner();
+        let replacement = Map::from_iter([("demo", 2)])?.into_fst().into_inner();
+        assert_eq!(bytes.len(), replacement.len());
+        fs::write(&path, &bytes)?;
+        fs::write(FstIndex::generation_sidecar(&path), b"41")?;
+        let mut writer = fs::OpenOptions::new().write(true).open(&path)?;
+        let index = FstIndex::open(&path)?;
+        assert_eq!(index.map.get("demo"), Some(1));
+
+        writer.write_all(&replacement)?;
+        assert_eq!(index.map.get("demo"), Some(1));
+        assert_eq!(FstIndex::open(&path)?.map.get("demo"), Some(2));
+        writer.set_len(0)?;
+        assert_eq!(index.map.get("demo"), Some(1));
+        assert!(FstIndex::open(&path).is_err());
+        Ok(())
+    }
+
+    #[test]
+    fn fst_rejects_different_mapping_with_the_same_timestamp() -> Result<()> {
+        let directory = tempfile::tempdir()?;
+        let fst_path = directory.path().join("index.fst");
         let mut builder = fst::MapBuilder::memory();
-        builder.insert(b"bash", 0u64).unwrap();
-        let fst_bytes = builder.into_inner().unwrap();
+        builder.insert("bash", 0)?;
+        builder.insert("zsh", 1)?;
+        fs::write(&fst_path, builder.into_inner()?)?;
+        fs::write(directory.path().join("index.fst.gen"), b"42")?;
+        let fst = FstIndex::open(&fst_path)?;
 
-        // No sidecar: open refuses (unknown generation).
-        std::fs::write(&fst_path, &fst_bytes).unwrap();
-        assert!(
-            FstIndex::open(&fst_path).is_err(),
-            "missing sidecar rejected"
+        let mut index = DebianPackageIndex::new();
+        index.updated_at = 42;
+        for name in ["zsh", "bash"] {
+            index.add_package(parse_paragraph_str(
+                &format!("Package: {name}\nVersion: 1\nArchitecture: amd64\nDescription: shell\n"),
+                "main",
+                "stable",
+                "fixture",
+            )?);
+        }
+        let mmap_path = directory.path().join("index.mmap");
+        fs::write(
+            &mmap_path,
+            rkyv::to_bytes::<rkyv::rancor::Error>(&index)
+                .map_err(|error| anyhow::anyhow!("fixture serialization: {error}"))?,
+        )?;
+        let mapped = DebianMmapIndex::open(&mmap_path)?;
+        let unchecked = fst_search(&fst.map, &index, "ba", &AHashSet::new());
+        assert_eq!(
+            unchecked.first().context("unchecked prefix lookup")?.name,
+            "zsh",
+            "the old timestamp guard admitted the wrong row for a native prefix lookup"
         );
+        // The mmap helper re-resolves names rather than trusting row numbers;
+        // unchanged name sets do not misroute its exact lookup.
+        let mmap_exact = fst_mmap_search(&fst.map, &mapped, "bash", &AHashSet::new());
+        assert_eq!(
+            mmap_exact.first().context("mmap exact lookup")?.name,
+            "bash"
+        );
+        assert_ne!(
+            fst.mapping, mapped.fst_mapping,
+            "same-second indexes with different mappings must not pair"
+        );
+        let mut cache = DebianIndexCache::default();
+        hydrate_index_cache(&mut cache, index, HashMap::new());
+        assert_eq!(cache.fst_mapping, Some(mapped.fst_mapping));
 
-        // Sidecar present: open stores the generation it records.
-        let sidecar = FstIndex::generation_sidecar(&fst_path);
-        crate::core::safe_ops::atomic_write_file_sync(&sidecar, b"42").unwrap();
-        let index = FstIndex::open(&fst_path).expect("valid sidecar");
-        assert_eq!(index.generation, 42);
+        let mut replacement = fst::MapBuilder::memory();
+        replacement.insert("bash", 1)?;
+        replacement.insert("zsh", 0)?;
+        crate::core::safe_ops::atomic_write_file_sync(&fst_path, replacement.into_inner()?)?;
+        let current = FstIndex::open(&fst_path)?;
+        assert_eq!(current.mapping, mapped.fst_mapping);
+        assert_ne!(
+            fst.mapping, current.mapping,
+            "an open old inode keeps its own identity"
+        );
+        assert_eq!(fst.map.get("bash"), Some(0));
+        let results = fst_mmap_search(&current.map, &mapped, "bash", &AHashSet::new());
+        assert_eq!(results.len(), 1);
+        assert_eq!(results[0].name, "bash");
+        let prefix = fst_search(
+            &current.map,
+            cache.index.as_ref().context("native index")?,
+            "ba",
+            &AHashSet::new(),
+        );
+        assert_eq!(
+            prefix.first().context("validated prefix lookup")?.name,
+            "bash"
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn fst_identity_ignores_sidecars_and_rejects_corrupt_contents() -> Result<()> {
+        let directory = tempfile::tempdir()?;
+        let path = directory.path().join("index.fst");
+        let mut builder = fst::MapBuilder::memory();
+        builder.insert("bash", 0)?;
+        let mut bytes = builder.into_inner()?;
+        fs::write(&path, &bytes)?;
+        let index = FstIndex::open(&path)?;
+        assert_eq!(index.mapping, FstMappingId::from_names([("bash", 0)]));
+        fs::write(
+            directory.path().join("index.fst.gen"),
+            b"untrusted old generation",
+        )?;
+        assert_eq!(FstIndex::open(&path)?.mapping, index.mapping);
+        *bytes.last_mut().context("FST checksum")? ^= 1;
+        let corrupt = directory.path().join("corrupt.fst");
+        fs::write(&corrupt, bytes)?;
+        assert!(FstIndex::open(&corrupt).is_err());
+        Ok(())
+    }
+
+    #[test]
+    fn fst_identity_preserves_case_collision_policy_and_ignores_input_order() {
+        let names = [("Bash", 0), ("bash", 1), ("Zsh", 2)];
+        let expected = FstMappingId::from_names([("bash", 1), ("zsh", 2)]);
+        assert_eq!(FstMappingId::from_names(names), expected);
+        assert_eq!(FstMappingId::from_names(names.into_iter().rev()), expected);
+        assert_ne!(
+            FstMappingId::from_names([("bash", 0), ("zsh", 2)]),
+            expected
+        );
     }
 
     /// Serializes every test that mutates process-global `OMG_TEST_MODE`;
@@ -2542,6 +2710,120 @@ mod tests {
     }
 
     #[test]
+    fn rebuild_package_index_uses_only_current_lists() -> Result<()> {
+        let directory = tempfile::tempdir()?;
+        let kept = directory
+            .path()
+            .join("kept_dists_stable_main_binary-amd64_Packages");
+        let removed = directory
+            .path()
+            .join("removed_dists_stable_main_binary-amd64_Packages");
+        fs::write(&kept, b"Package: kept\nVersion: 1\nArchitecture: amd64\n\n")?;
+        fs::write(
+            &removed,
+            b"Package: removed\nVersion: 2\nArchitecture: amd64\n\n",
+        )?;
+        let before = rebuild_package_index(&[kept.clone(), removed.clone()])?;
+        assert!(before.get("kept").is_some());
+        assert!(before.get("removed").is_some());
+        let mut sources = HashMap::from([
+            (kept.clone(), required_mtime(&kept)?),
+            (removed.clone(), required_mtime(&removed)?),
+        ]);
+        let mut cache = DebianIndexCache::default();
+        assert_eq!(cache.refresh_requirement(&sources), IndexRefresh::Disk);
+        hydrate_index_cache(&mut cache, before, sources.clone());
+        assert_eq!(cache.refresh_requirement(&sources), IndexRefresh::Memory);
+
+        fs::remove_file(&removed)?;
+        sources.remove(&removed);
+        assert_eq!(cache.refresh_requirement(&sources), IndexRefresh::Rebuild);
+        let after = rebuild_package_index(std::slice::from_ref(&kept))?;
+        assert_eq!(after.packages().len(), 1);
+        assert!(after.get("kept").is_some());
+        assert!(after.get("removed").is_none());
+        assert!(after.get_name_arch("removed", "amd64").is_none());
+        assert!(
+            after
+                .get_name_arch_component("removed", "amd64", "main")
+                .is_none()
+        );
+        hydrate_index_cache(&mut cache, after, sources.clone());
+        assert_eq!(cache.refresh_requirement(&sources), IndexRefresh::Memory);
+        fs::remove_file(kept)?;
+        sources.clear();
+        assert_eq!(cache.refresh_requirement(&sources), IndexRefresh::Rebuild);
+        let empty = rebuild_package_index(&[])?;
+        assert!(empty.packages().is_empty());
+        assert!(empty.get("kept").is_none());
+        assert!(empty.get_name_arch("kept", "amd64").is_none());
+        assert!(
+            empty
+                .get_name_arch_component("kept", "amd64", "main")
+                .is_none()
+        );
+        hydrate_index_cache(&mut cache, empty, sources.clone());
+        assert_eq!(cache.refresh_requirement(&sources), IndexRefresh::Memory);
+        Ok(())
+    }
+
+    #[test]
+    fn rebuild_package_index_rejects_incomplete_input() -> Result<()> {
+        let directory = tempfile::tempdir()?;
+        let good = directory.path().join("good_Packages");
+        let bad = directory.path().join("bad_Packages");
+        fs::write(&good, b"Package: kept\nVersion: 1\n\n")?;
+        fs::write(&bad, b"Version: 2\n\n")?;
+        assert!(rebuild_package_index(&[good.clone(), bad.clone()]).is_err());
+        fs::remove_file(&bad)?;
+        assert!(rebuild_package_index(&[good, bad]).is_err());
+        Ok(())
+    }
+
+    #[test]
+    fn disk_cache_rejects_removed_package_lists() -> Result<()> {
+        use std::fs::FileTimes;
+        use std::time::{Duration, UNIX_EPOCH};
+
+        let directory = tempfile::tempdir()?;
+        for extension in ["lz4", "mmap", "fst"] {
+            let lists = directory.path().join(extension);
+            fs::create_dir(&lists)?;
+            let kept = lists.join("kept_dists_stable_main_binary-amd64_Packages");
+            let removed = lists.join("removed_dists_stable_main_binary-amd64_Packages");
+            for path in [&kept, &removed] {
+                fs::write(path, b"Package: fixture\nVersion: 1\n")?;
+                File::open(path)?.set_times(
+                    FileTimes::new().set_modified(UNIX_EPOCH + Duration::from_secs(10)),
+                )?;
+            }
+            File::open(&lists)?
+                .set_times(FileTimes::new().set_modified(UNIX_EPOCH + Duration::from_secs(10)))?;
+            let cache = directory.path().join(format!("index.{extension}"));
+            fs::write(&cache, b"cache")?;
+            File::open(&cache)?
+                .set_times(FileTimes::new().set_modified(UNIX_EPOCH + Duration::from_secs(20)))?;
+            assert!(disk_cache_is_fresh(&cache, &lists));
+
+            fs::remove_file(removed)?;
+            File::open(&lists)?
+                .set_times(FileTimes::new().set_modified(UNIX_EPOCH + Duration::from_secs(30)))?;
+            assert!(
+                !disk_cache_is_fresh(&cache, &lists),
+                "{extension} must not validate only the surviving list's old timestamp"
+            );
+            fs::remove_file(kept)?;
+            assert!(!disk_cache_is_fresh(&cache, &lists));
+            fs::remove_dir(lists)?;
+            assert!(!disk_cache_is_fresh(
+                &cache,
+                directory.path().join(extension).as_path()
+            ));
+        }
+        Ok(())
+    }
+
+    #[test]
     fn disk_cache_older_than_an_apt_package_list_is_stale() -> Result<()> {
         use std::fs::FileTimes;
         use std::time::{Duration, UNIX_EPOCH};
@@ -2563,6 +2845,8 @@ mod tests {
             .set_times(FileTimes::new().set_modified(UNIX_EPOCH + Duration::from_secs(20)))?;
 
         assert!(!disk_cache_is_fresh(&cache, &lists));
+        File::open(&lists)?
+            .set_times(FileTimes::new().set_modified(UNIX_EPOCH + Duration::from_secs(10)))?;
 
         std::fs::File::options()
             .write(true)
@@ -2914,19 +3198,15 @@ mod tests {
     }
 
     #[test]
-    fn test_ensure_index_loaded_missing_status_is_an_error() {
-        if !Path::new("/var/lib/apt/lists").exists() {
-            ensure_index_loaded().expect("missing apt lists is still a no-op");
-            return;
-        }
+    fn installed_names_missing_status_is_an_error() {
         if Path::new("/var/lib/dpkg/status").exists() {
-            ensure_index_loaded().expect("existing dpkg status must load");
+            installed_names().expect("existing dpkg status must load");
             return;
         }
-        let error = ensure_index_loaded()
+        let error = installed_names()
             .expect_err("missing dpkg status must not look like an empty installed set");
         assert!(
-            error.to_string().contains("dpkg status file not found"),
+            error.to_string().contains("/var/lib/dpkg/status"),
             "got: {error}"
         );
     }
@@ -2943,6 +3223,53 @@ mod tests {
     fn test_extract_component_from_path_simple_pattern() {
         let p = Path::new("/tmp/contrib_amd64_Packages");
         assert_eq!(extract_component_from_path(p), "contrib");
+    }
+
+    #[test]
+    fn mmap_lookup_preserves_qualified_query_selection() -> Result<()> {
+        let mut index = DebianPackageIndex::new();
+        for (architecture, component, version) in [
+            ("amd64", "main", "1.0"),
+            ("amd64", "contrib", "2.0"),
+            ("i386", "main", "3.0"),
+        ] {
+            let paragraph = format!(
+                "Package: demo\nVersion: {version}\nArchitecture: {architecture}\nDescription: fixture\n"
+            );
+            index.add_package(parse_paragraph_str(
+                &paragraph, component, "stable", "fixture",
+            )?);
+        }
+        let directory = tempfile::tempdir()?;
+        let path = directory.path().join("index.mmap");
+        let bytes = rkyv::to_bytes::<rkyv::rancor::Error>(&index)
+            .map_err(|error| anyhow::anyhow!("fixture serialization: {error}"))?;
+        fs::write(&path, &bytes)?;
+        let mapped = DebianMmapIndex::open(&path)?;
+
+        for (query, architecture, component, version) in [
+            ("demo:amd64", "amd64", "main", "1.0"),
+            ("demo:amd64:contrib", "amd64", "contrib", "2.0"),
+            ("demo:i386", "i386", "main", "3.0"),
+            ("demo:i386:absent", "i386", "main", "3.0"),
+        ] {
+            let package = mapped
+                .get(query)?
+                .with_context(|| format!("mmap lost qualified lookup {query}"))?;
+            assert_eq!(package.name.as_str(), "demo");
+            assert_eq!(package.architecture.as_str(), architecture);
+            assert_eq!(package.component.as_str(), component);
+            assert_eq!(package.version.as_str(), version);
+        }
+        for query in ["demo", "demo:unknown", "demo:unknown:absent"] {
+            let expected = index.get_query(query).context("normal index result")?;
+            let actual = mapped.get(query)?.context("mapped index result")?;
+            assert_eq!(actual.architecture.as_str(), expected.architecture);
+            assert_eq!(actual.component.as_str(), expected.component);
+            assert_eq!(actual.version.as_str(), expected.version);
+        }
+        assert!(mapped.get("missing:amd64:main")?.is_none());
+        Ok(())
     }
 
     #[test]
@@ -3273,19 +3600,77 @@ mod tests {
             PathBuf::from("/var/lib/apt/lists/example_Packages"),
             std::time::UNIX_EPOCH,
         )]);
-        let installed_set = AHashSet::from_iter(["bash".to_string()]);
         let mut cache = DebianIndexCache::default();
 
-        hydrate_index_cache(&mut cache, index, current_files.clone(), installed_set);
+        hydrate_index_cache(&mut cache, index, current_files.clone());
 
         assert_eq!(cache.file_mtimes, current_files);
         assert_eq!(cache.search_buffer, b"bash gnu shell\0");
         assert_eq!(cache.package_offsets, vec![0, cache.search_buffer.len()]);
-        assert!(cache.installed_set.contains("bash"));
         assert_eq!(
             cache.index.as_ref().map(|index| index.packages.len()),
             Some(1)
         );
+    }
+
+    #[test]
+    fn search_results_follow_status_without_rebuilding_repository() -> Result<()> {
+        let mut index = DebianPackageIndex::new();
+        index.add_package(parse_paragraph_str(
+            "Package: bash\nVersion: 1\nArchitecture: amd64\nDescription: GNU shell\n",
+            "main",
+            "stable",
+            "fixture",
+        )?);
+        let sources = HashMap::new();
+        let mut cache = DebianIndexCache::default();
+        hydrate_index_cache(&mut cache, index, sources.clone());
+
+        let directory = tempfile::tempdir()?;
+        let fst_path = directory.path().join("index.fst");
+        let mut builder = fst::MapBuilder::memory();
+        builder.insert("bash", 0)?;
+        fs::write(&fst_path, builder.into_inner()?)?;
+        fs::write(FstIndex::generation_sidecar(&fst_path), b"0")?;
+        let fst = FstIndex::open(&fst_path)?;
+
+        for (status, expected) in [
+            ("install ok installed", true),
+            ("deinstall ok config-files", false),
+            ("install ok installed", true),
+        ] {
+            let content =
+                format!("Package: bash\nStatus: {status}\nVersion: 1\nArchitecture: amd64\n\n");
+            let installed: AHashSet<String> = status_paragraphs(&content)
+                .filter(|paragraph| status_paragraph_is_installed(paragraph))
+                .filter_map(parse_status_paragraph)
+                .map(|(name, _, _, _)| name)
+                .collect();
+            assert_eq!(cache.refresh_requirement(&sources), IndexRefresh::Memory);
+            let index = cache.index.as_ref().context("repository index")?;
+            for query in ["bash", "ba", "ash"] {
+                for results in [
+                    simd_search_fallback(
+                        index,
+                        query,
+                        &cache.search_buffer,
+                        &cache.package_offsets,
+                        &installed,
+                    ),
+                    fst_search(&fst.map, index, query, &installed),
+                ] {
+                    assert_eq!(results.len(), 1, "{query} / {status}");
+                    assert_eq!(results[0].name, "bash");
+                    assert_eq!(results[0].installed, expected, "{query} / {status}");
+                }
+            }
+            let package = index.get_query("bash:amd64").context("qualified package")?;
+            assert_eq!(
+                package_with_installed_state(package, &installed).installed,
+                expected
+            );
+        }
+        Ok(())
     }
 
     #[test]
