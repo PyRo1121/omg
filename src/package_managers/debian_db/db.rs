@@ -63,7 +63,7 @@ static DPKG_STATUS_CACHE: LazyLock<RwLock<DpkgStatusCache>> =
 #[derive(Default)]
 struct DebianIndexCache {
     index: Option<DebianPackageIndex>,
-    /// Track individual file mtimes for incremental updates
+    /// Source set and mtimes used to invalidate the complete index.
     file_mtimes: HashMap<PathBuf, std::time::SystemTime>,
     /// Contiguous search buffer for SIMD search: "name desc\0name desc\0..."
     search_buffer: Vec<u8>,
@@ -73,6 +73,38 @@ struct DebianIndexCache {
     installed_set: AHashSet<String>,
     /// Last access time for TTL-based eviction (unix seconds; `0` = never)
     last_accessed: u64,
+}
+
+#[derive(Debug, PartialEq, Eq)]
+enum IndexRefresh {
+    Memory,
+    Disk,
+    Rebuild,
+}
+
+impl DebianIndexCache {
+    fn refresh_requirement(
+        &mut self,
+        current_files: &HashMap<PathBuf, std::time::SystemTime>,
+    ) -> IndexRefresh {
+        let sources_match = self.file_mtimes == *current_files;
+        let has_index = self.index.is_some();
+        let expired = is_access_expired(self.last_accessed);
+        if has_index && sources_match && !expired {
+            self.last_accessed = unix_now_secs();
+            return IndexRefresh::Memory;
+        }
+        if expired {
+            *self = Self::default();
+        }
+        // Cold or expired-but-unchanged state may reuse a disk snapshot.
+        // An observed change, including removal of the last list, must rebuild.
+        if !has_index || sources_match {
+            IndexRefresh::Disk
+        } else {
+            IndexRefresh::Rebuild
+        }
+    }
 }
 
 /// Cache for /var/lib/dpkg/status to avoid expensive reparsing
@@ -576,6 +608,9 @@ fn decode_debian_index_cache(compressed: &[u8]) -> Result<DebianPackageIndex> {
 pub fn ensure_index_loaded() -> Result<()> {
     let lists_dir = Path::new("/var/lib/apt/lists");
     if !lists_dir.exists() {
+        *crate::core::sync::write_cache(&DEBIAN_INDEX_CACHE) = DebianIndexCache::default();
+        *crate::core::sync::write_cache(&DEBIAN_MMAP_INDEX) = None;
+        *crate::core::sync::write_cache(&DEBIAN_FST_INDEX) = None;
         return Ok(());
     }
 
@@ -599,39 +634,11 @@ pub fn ensure_index_loaded() -> Result<()> {
         current_files.insert(path, mtime);
     }
 
-    // Check if we need to update
-    let needs_update = {
-        let mut cache = crate::core::sync::write_cache(&DEBIAN_INDEX_CACHE);
-
-        // Clear cache if TTL expired (safety net for unbounded growth)
-        if is_access_expired(cache.last_accessed) {
-            *cache = DebianIndexCache::default();
-            true
-        } else if cache.index.is_none() {
-            true // No index yet
-        } else {
-            // Check if any files changed or were added/removed
-            let needs_update = cache.file_mtimes != current_files;
-            if !needs_update {
-                // Cache hit - update last accessed
-                cache.last_accessed = unix_now_secs();
-            }
-            needs_update
-        }
-    };
-
-    if !needs_update {
+    let refresh =
+        crate::core::sync::write_cache(&DEBIAN_INDEX_CACHE).refresh_requirement(&current_files);
+    if refresh == IndexRefresh::Memory {
         return Ok(());
     }
-
-    // The rebuild below repopulates the full index, so only whether a file
-    // changed matters; retaining cloned paths would be discarded work.
-    let has_changed_files = {
-        let cache = crate::core::sync::read_cache(&DEBIAN_INDEX_CACHE);
-        current_files
-            .iter()
-            .any(|(path, mtime)| cache.file_mtimes.get(path) != Some(mtime))
-    };
 
     // Load or create index (with LZ4 compression support).
     // v8 adds per-package source provenance used for download-URL construction;
@@ -642,70 +649,32 @@ pub fn ensure_index_loaded() -> Result<()> {
     let cache_path = paths::cache_dir().join("debian_index_v8.lz4");
     let mmap_path = paths::cache_dir().join("debian_index_v8.mmap");
 
-    // Check if LZ4 cache is fresher than all Packages files.
-    // On cold process start, file_mtimes is empty so all files appear "changed".
-    // But if the cache file is newer than every Packages file, it's already up-to-date.
-    let mut index: Option<DebianPackageIndex> = None;
-    let mut cache_is_fresh = false;
-    if cache_path.exists() {
-        // Check if cache file is newer than all Packages files
-        if let Ok(cache_meta) = fs::metadata(&cache_path)
-            && let Ok(cache_mtime) = cache_meta.modified()
+    let index = if refresh == IndexRefresh::Disk && disk_cache_is_fresh(&cache_path, lists_dir) {
+        match fs::read(&cache_path)
+            .context("Failed to read Debian index cache")
+            .and_then(|compressed| decode_debian_index_cache(&compressed))
         {
-            cache_is_fresh = current_files
-                .values()
-                .all(|pkg_mtime| cache_mtime >= *pkg_mtime);
+            Ok(index) => Some(index),
+            Err(error) => {
+                tracing::debug!(%error, path = %cache_path.display(), "Debian index cache is unusable; rebuilding");
+                None
+            }
         }
+    } else {
+        None
+    };
 
-        match fs::read(&cache_path) {
-            Ok(compressed) => match decode_debian_index_cache(&compressed) {
-                Ok(cached_index) => index = Some(cached_index),
-                Err(error) => tracing::debug!(
-                    %error,
-                    "Debian index cache is invalid; rebuilding"
-                ),
-            },
-            Err(error) => tracing::debug!(
-                %error,
-                path = %cache_path.display(),
-                "Failed to read Debian index cache; rebuilding"
-            ),
-        }
-    }
-
-    // Try to load the mmap index for zero-copy access
-    if mmap_path.exists() {
-        let mut mmap_guard = crate::core::sync::write_cache(&DEBIAN_MMAP_INDEX);
-
-        // Clear expired mmap (TTL-based cleanup for 500MB+ resource leak)
-        if let Some(ref mmap) = *mmap_guard
-            && mmap.is_expired()
-        {
-            tracing::debug!("Clearing expired Debian mmap index (TTL exceeded)");
-            *mmap_guard = None;
-        }
-
-        if mmap_guard.is_none()
-            && let Ok(mmap_index) = DebianMmapIndex::open(&mmap_path)
-            // A torn rename group can leave an mmap from an older index
-            // generation beside a newer lz4 cache; drop the stale mmap (the
-            // rebuild below re-persists all three).
-            && index.as_ref().is_none_or(|fresh| {
-                fresh.updated_at == mmap_index.generation()
-            })
-        {
-            *mmap_guard = Some(mmap_index);
-        }
-    }
-
-    let mut index = index.unwrap_or_default();
-    // Skip rebuild if cache file is fresh (newer than all Packages files).
-    // This avoids re-parsing 94k packages on every cold process start.
-    if has_changed_files && cache_is_fresh && !index.packages.is_empty() {
+    if let Some(index) = index.filter(|index| !index.packages.is_empty()) {
         tracing::debug!(
-            "LZ4 cache is fresh (newer than all {} Packages files), skipping rebuild",
+            "LZ4 cache is fresh for the APT directory and {} Packages files, skipping rebuild",
             current_files.len()
         );
+        // Preserve the cross-file generation check before publishing an mmap.
+        let mmap = DebianMmapIndex::open(&mmap_path)
+            .ok()
+            .filter(|mmap| mmap.generation() == index.updated_at);
+        *crate::core::sync::write_cache(&DEBIAN_MMAP_INDEX) = mmap;
+        *crate::core::sync::write_cache(&DEBIAN_FST_INDEX) = None;
         let installed_set = list_installed_fast()?
             .into_iter()
             .map(|package| package.name)
@@ -715,33 +684,12 @@ pub fn ensure_index_loaded() -> Result<()> {
         return Ok(());
     }
 
-    // Parse all files when any have changed (incremental update was broken)
-    // The mtime check above still avoids unnecessary rebuilds when nothing changed
-    if has_changed_files {
-        // Get all current Packages files
-        let all_files: Vec<PathBuf> = current_files.keys().cloned().collect();
-
-        let new_packages: Vec<DebianPackage> = all_files
-            .par_iter()
-            .map(|path| parse_packages_file_sync(path))
-            .collect::<Result<Vec<Vec<DebianPackage>>>>()?
-            .into_iter()
-            .flatten()
-            .collect();
-
-        // Clear and rebuild - simpler and correct
-        index.packages.clear();
-        index.name_to_idx.clear();
-        index.name_arch_to_idx.clear();
-        index.name_arch_component_to_idx.clear();
-
-        // Add all packages
-        for pkg in new_packages {
-            index.add_package(pkg);
-        }
-
-        // Update timestamp and save
-        index.updated_at = jiff::Timestamp::now().as_second();
+    *crate::core::sync::write_cache(&DEBIAN_MMAP_INDEX) = None;
+    *crate::core::sync::write_cache(&DEBIAN_FST_INDEX) = None;
+    let all_files: Vec<PathBuf> = current_files.keys().cloned().collect();
+    let index = rebuild_package_index(&all_files)?;
+    // Release serialization buffers before hydrating in-memory search state.
+    {
         if let Some(p) = cache_path.parent() {
             fs::create_dir_all(p).with_context(|| {
                 format!("Failed to create Debian cache directory: {}", p.display())
@@ -891,10 +839,31 @@ pub fn ensure_index_loaded() -> Result<()> {
     Ok(())
 }
 
+fn rebuild_package_index(files: &[PathBuf]) -> Result<DebianPackageIndex> {
+    let packages = files
+        .par_iter()
+        .map(|path| parse_packages_file_sync(path))
+        .collect::<Result<Vec<Vec<DebianPackage>>>>()?;
+    let mut index = DebianPackageIndex::new();
+    for package in packages.into_iter().flatten() {
+        index.add_package(package);
+    }
+    index.updated_at = jiff::Timestamp::now().as_second();
+    Ok(index)
+}
+
 fn disk_cache_is_fresh(cache_path: &Path, lists_dir: &Path) -> bool {
     let Ok(cache_mtime) = fs::metadata(cache_path).and_then(|metadata| metadata.modified()) else {
         return false;
     };
+    // Deletions and renames can leave every surviving file older than the
+    // cache. The directory timestamp records those namespace changes.
+    let Ok(directory_mtime) = required_mtime(lists_dir) else {
+        return false;
+    };
+    if directory_mtime > cache_mtime {
+        return false;
+    }
     let Ok(entries) = fs::read_dir(lists_dir) else {
         return false;
     };
@@ -2542,6 +2511,120 @@ mod tests {
     }
 
     #[test]
+    fn rebuild_package_index_uses_only_current_lists() -> Result<()> {
+        let directory = tempfile::tempdir()?;
+        let kept = directory
+            .path()
+            .join("kept_dists_stable_main_binary-amd64_Packages");
+        let removed = directory
+            .path()
+            .join("removed_dists_stable_main_binary-amd64_Packages");
+        fs::write(&kept, b"Package: kept\nVersion: 1\nArchitecture: amd64\n\n")?;
+        fs::write(
+            &removed,
+            b"Package: removed\nVersion: 2\nArchitecture: amd64\n\n",
+        )?;
+        let before = rebuild_package_index(&[kept.clone(), removed.clone()])?;
+        assert!(before.get("kept").is_some());
+        assert!(before.get("removed").is_some());
+        let mut sources = HashMap::from([
+            (kept.clone(), required_mtime(&kept)?),
+            (removed.clone(), required_mtime(&removed)?),
+        ]);
+        let mut cache = DebianIndexCache::default();
+        assert_eq!(cache.refresh_requirement(&sources), IndexRefresh::Disk);
+        hydrate_index_cache(&mut cache, before, sources.clone(), AHashSet::new());
+        assert_eq!(cache.refresh_requirement(&sources), IndexRefresh::Memory);
+
+        fs::remove_file(&removed)?;
+        sources.remove(&removed);
+        assert_eq!(cache.refresh_requirement(&sources), IndexRefresh::Rebuild);
+        let after = rebuild_package_index(std::slice::from_ref(&kept))?;
+        assert_eq!(after.packages().len(), 1);
+        assert!(after.get("kept").is_some());
+        assert!(after.get("removed").is_none());
+        assert!(after.get_name_arch("removed", "amd64").is_none());
+        assert!(
+            after
+                .get_name_arch_component("removed", "amd64", "main")
+                .is_none()
+        );
+        hydrate_index_cache(&mut cache, after, sources.clone(), AHashSet::new());
+        assert_eq!(cache.refresh_requirement(&sources), IndexRefresh::Memory);
+        fs::remove_file(kept)?;
+        sources.clear();
+        assert_eq!(cache.refresh_requirement(&sources), IndexRefresh::Rebuild);
+        let empty = rebuild_package_index(&[])?;
+        assert!(empty.packages().is_empty());
+        assert!(empty.get("kept").is_none());
+        assert!(empty.get_name_arch("kept", "amd64").is_none());
+        assert!(
+            empty
+                .get_name_arch_component("kept", "amd64", "main")
+                .is_none()
+        );
+        hydrate_index_cache(&mut cache, empty, sources.clone(), AHashSet::new());
+        assert_eq!(cache.refresh_requirement(&sources), IndexRefresh::Memory);
+        Ok(())
+    }
+
+    #[test]
+    fn rebuild_package_index_rejects_incomplete_input() -> Result<()> {
+        let directory = tempfile::tempdir()?;
+        let good = directory.path().join("good_Packages");
+        let bad = directory.path().join("bad_Packages");
+        fs::write(&good, b"Package: kept\nVersion: 1\n\n")?;
+        fs::write(&bad, b"Version: 2\n\n")?;
+        assert!(rebuild_package_index(&[good.clone(), bad.clone()]).is_err());
+        fs::remove_file(&bad)?;
+        assert!(rebuild_package_index(&[good, bad]).is_err());
+        Ok(())
+    }
+
+    #[test]
+    fn disk_cache_rejects_removed_package_lists() -> Result<()> {
+        use std::fs::FileTimes;
+        use std::time::{Duration, UNIX_EPOCH};
+
+        let directory = tempfile::tempdir()?;
+        for extension in ["lz4", "mmap", "fst"] {
+            let lists = directory.path().join(extension);
+            fs::create_dir(&lists)?;
+            let kept = lists.join("kept_dists_stable_main_binary-amd64_Packages");
+            let removed = lists.join("removed_dists_stable_main_binary-amd64_Packages");
+            for path in [&kept, &removed] {
+                fs::write(path, b"Package: fixture\nVersion: 1\n")?;
+                File::open(path)?.set_times(
+                    FileTimes::new().set_modified(UNIX_EPOCH + Duration::from_secs(10)),
+                )?;
+            }
+            File::open(&lists)?
+                .set_times(FileTimes::new().set_modified(UNIX_EPOCH + Duration::from_secs(10)))?;
+            let cache = directory.path().join(format!("index.{extension}"));
+            fs::write(&cache, b"cache")?;
+            File::open(&cache)?
+                .set_times(FileTimes::new().set_modified(UNIX_EPOCH + Duration::from_secs(20)))?;
+            assert!(disk_cache_is_fresh(&cache, &lists));
+
+            fs::remove_file(removed)?;
+            File::open(&lists)?
+                .set_times(FileTimes::new().set_modified(UNIX_EPOCH + Duration::from_secs(30)))?;
+            assert!(
+                !disk_cache_is_fresh(&cache, &lists),
+                "{extension} must not validate only the surviving list's old timestamp"
+            );
+            fs::remove_file(kept)?;
+            assert!(!disk_cache_is_fresh(&cache, &lists));
+            fs::remove_dir(lists)?;
+            assert!(!disk_cache_is_fresh(
+                &cache,
+                directory.path().join(extension).as_path()
+            ));
+        }
+        Ok(())
+    }
+
+    #[test]
     fn disk_cache_older_than_an_apt_package_list_is_stale() -> Result<()> {
         use std::fs::FileTimes;
         use std::time::{Duration, UNIX_EPOCH};
@@ -2563,6 +2646,8 @@ mod tests {
             .set_times(FileTimes::new().set_modified(UNIX_EPOCH + Duration::from_secs(20)))?;
 
         assert!(!disk_cache_is_fresh(&cache, &lists));
+        File::open(&lists)?
+            .set_times(FileTimes::new().set_modified(UNIX_EPOCH + Duration::from_secs(10)))?;
 
         std::fs::File::options()
             .write(true)
