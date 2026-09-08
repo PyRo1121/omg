@@ -1,721 +1,101 @@
 ---
 title: Troubleshooting
 sidebar_position: 50
-description: Common issues and solutions
+description: Diagnose failures without discarding configuration or evidence
 ---
 
-# Troubleshooting Guide
+# Troubleshooting
 
-**Common Issues and Solutions for OMG**
+OMG is alpha software. Diagnose the failing operation before changing package state, configuration, or persisted data. Keep your native package manager available.
 
-This guide covers common problems, their causes, and step-by-step solutions.
-
----
-
-## 🔍 Quick Diagnostics
-
-Before diving into specific issues, run the built-in diagnostics:
+## Collect a baseline
 
 ```bash
-# Run full health check
+omg --version
 omg doctor
-
-# Check system status
 omg status
-
-# View daemon status
-omg status
+omg daemon-status
 ```
 
----
+Record the backend, operating system, exact command, exit status, and whether the failure occurs with the matching daemon running. Redact tokens, usernames, private repository paths, and account information before sharing logs. Do not rerun an installation or upgrade merely to capture output: it can change the machine again.
 
-## 🛠️ Daemon Issues
+## Daemon or socket failures
 
-### Daemon Not Running
+Only use the daemon on platforms whose release includes it; non-Arch release archives do not include `omgd`. See [installation](./installation.md) and [daemon socket resolution](./daemon.md).
 
-**Symptoms:**
-
-- Slow searches (>50ms instead of ~5-11ms)
-- `omg status` shows "Daemon: Not running"
-- Commands work but feel sluggish
-
-**Solutions:**
+If no daemon is running, start the matching executable in a separate terminal:
 
 ```bash
-# 1. Start the daemon
-omg daemon
-
-# 2. If that fails, check for stale socket
-ls -la $XDG_RUNTIME_DIR/omg.sock
-
-# 3. Remove stale socket if present
-rm $XDG_RUNTIME_DIR/omg.sock
-
-# 4. Start daemon in foreground to see errors
-omgd
-
-# 5. Check if port/socket is in use
-lsof -U | grep omg
+omg daemon --foreground
 ```
 
----
-
-### Daemon Crashes on Startup
-
-**Symptoms:**
-
-- Daemon starts then immediately exits
-- No error message visible
-
-**Solutions:**
+Do not start a second instance when your service manager already owns one. Inspect that service's status and logs instead. For a configured `omgd` user service:
 
 ```bash
-# 1. Run in foreground to see errors
-omgd
-
-# 2. Check for corrupted cache
-rm ~/.local/share/omg/cache.redb
-
-# 3. Verify permissions
-ls -la ~/.local/share/omg/
-
-# 4. Check system logs
+systemctl --user status omgd
 journalctl --user -u omgd -n 50
 ```
 
----
+A socket error is not permission to remove every candidate socket. Establish the resolved path, owning user, parent-directory permissions, and whether a process still listens there. An unset `XDG_RUNTIME_DIR` must not turn a command into an operation on `/omg.sock`. Do not run OMG as root to work around a user-socket failure or change ownership of another user's socket. If ownership cannot be established, stop and report the error.
 
-### Daemon Socket Permission Denied
+## Cache errors
 
-**Symptoms:**
+The daemon snapshot is `status-cache.json`, not the obsolete `cache.redb`. Use [cache documentation](./cache.md) to identify the actual cache and its owner. Stop the owning daemon before an approved recovery operation; preserve the failing file for diagnosis. Do not delete the entire OMG data directory: it also contains runtime installations and persisted user records.
 
-- "Permission denied" errors when running commands
-- Works with sudo but not as regular user
+A missing search result can also mean unavailable repositories, disabled sources, stale native metadata, or an unsupported backend. Compare the same query with the native package manager. `omg sync` changes repository metadata; it is not a read-only diagnostic.
 
-**Solutions:**
+## Shell hooks and completions
 
-```bash
-# 1. Check socket ownership
-ls -la $XDG_RUNTIME_DIR/omg.sock
-
-# 2. Remove and recreate socket
-rm $XDG_RUNTIME_DIR/omg.sock
-omg daemon
-
-# 3. Verify XDG_RUNTIME_DIR
-echo $XDG_RUNTIME_DIR
-# Should be /run/user/$UID
-
-# 4. Check directory permissions
-ls -la $XDG_RUNTIME_DIR
-```
-
----
-
-## 🐚 Shell Integration Issues
-
-### PATH Not Updated After Directory Change
-
-**Symptoms:**
-
-- Runtime versions don't change automatically
-- Have to run `omg use` manually each time
-- Version files (`.nvmrc`, etc.) not detected
-
-**Solutions:**
+Inspect your shell configuration before adding another hook. Use the instructions for your actual shell in [shell integration](./shell-integration.md), then open a new shell. Multiple version-manager hooks can compete for PATH ordering.
 
 ```bash
-# 1. Verify hook is installed
-grep "omg hook" ~/.zshrc  # or ~/.bashrc
-
-# 2. Check hook output
-omg hook zsh
-
-# 3. Reinstall hook
-echo 'eval "$(omg hook zsh)"' >> ~/.zshrc
-
-# 4. Restart shell (not just source)
-exec zsh
-
-# 5. Test hook manually
-cd /path/to/project/with/.nvmrc
 omg which node
+omg list node
+command -v node
 ```
 
----
+Compare the selected version and executable path. A version file does not install a missing runtime through a directory change. An explicit `omg use` can install software; review the requested version first.
 
-### Completions Not Working
+For Zsh, ensure the generated completion directory is on `fpath` before `compinit`. Generate completions using `omg completions zsh`; do not erase shell caches or append duplicate startup lines as a default repair.
 
-**Symptoms:**
+## Downloads and package failures
 
-- Tab completion doesn't show OMG commands
-- Partial completion or errors
+Check free space, provider availability, and the exact download error. Proxy URLs may contain credentials: do not print proxy environment variables into public logs. Do not disable checksums, signatures, provenance, or policy to make a failing download succeed.
 
-**Solutions:**
+AUR builds execute community build recipes. Inspect the recipe, dependencies, and retained build log before retrying. Clearing the AUR cache loses useful evidence and may require downloading and rebuilding everything. Native APT, DNF, and Homebrew transaction paths have different policy coverage from Arch; see [security](./security.md).
+
+For a policy rejection:
 
 ```bash
-# For Zsh:
-# 1. Regenerate completions
-omg completions zsh --stdout > ~/.zsh/completions/_omg
-
-# 2. Ensure completions directory is in fpath
-echo $fpath | grep completions
-
-# 3. Add to .zshrc if needed
-fpath=(~/.zsh/completions $fpath)
-autoload -Uz compinit && compinit
-
-# 4. Rebuild completions cache
-rm ~/.zcompdump
-compinit
-
-# For Bash:
-omg completions bash --stdout > /etc/bash_completion.d/omg
-source /etc/bash_completion.d/omg
+omg audit policy
+omg info PACKAGE
 ```
 
----
+Obtain the policy owner's approval before changing a requirement. A dry-run is a preview, not proof that a subsequent transaction is safe or will succeed.
 
-### Shell Hook Slowing Down Prompt
+## History, audit, and rollback failures
 
-**Symptoms:**
-
-- Noticeable delay when pressing Enter
-- Slow directory changes
-
-**Solutions:**
+Never replace malformed history with `[]`, reset audit logs, or edit hashes to make verification pass. Preserve the original bytes, backups, permissions, and error output. Stop writers before making a private backup for investigation. Missing history does not prove that no transaction occurred.
 
 ```bash
-# 1. Ensure daemon is running (bypasses slow fallback)
-omg daemon
-
-# 2. Use cached functions in prompt instead
-# Replace: $(omg explicit --count)
-# With: $(omg-ec)
-
-# 3. Check for blocking operations
-time omg hook-env -s zsh
-# Should be &lt;10ms
-
-# 4. Minimize version file checks
-# Only place version files in project roots
+omg history
+omg audit verify
 ```
 
----
+Audit-chain consistency is not authenticity or completeness. History and audit files can contain sensitive inventory information; do not publish them without review.
 
-## 📦 Package Management Issues
+Rollback depends on the backend, retained package versions, and current dependencies. It is not a filesystem snapshot or a guaranteed inverse of installation. Do not downgrade packages or rebuild an old AUR recipe without reviewing the consequences. See [history and rollback](./history.md).
 
-### Search Returns No Results
+## Terminal dashboard
 
-**Symptoms:**
+Check terminal capabilities and locale rather than forcing a misleading `TERM` value. If an exited process left the terminal unusable, `reset` or `stty sane` can restore terminal settings. Report reproducible rendering defects with the terminal name and dimensions; omit private account data from screenshots.
 
-- `omg search <query>` returns nothing
-- Known packages not found
+## Build failures
 
-**Solutions:**
+Use the backend-specific source build instructions in [installation](./installation.md). Preserve the first compiler/linker error, compiler version, feature flags, and checkout revision. Do not start with `cargo clean`, change the release profile, or disable verification based on an old troubleshooting recipe. Store build output outside `/tmp`.
 
-```bash
-# 1. Sync package databases
-omg sync
+## No blanket reset
 
-# 2. Clear and rebuild cache
-omg daemon &
-sleep 2
-omg search linux
+There is no safe universal “reset everything” command. Configuration, history, audit chains, installed runtimes, and package databases have different owners and recovery requirements. Keep the failure evidence and choose a bounded repair with a rollback plan.
 
-# 3. Check daemon cache
-omgd
-# Watch for index building messages
-
-# 4. Try direct search (bypasses cache)
-pacman -Ss <query>
-```
-
----
-
-### AUR Build Failures
-
-**Symptoms:**
-
-- AUR packages fail to build
-- Dependency errors during build
-
-**Solutions:**
-
-```bash
-# 1. Check base-devel is installed
-pacman -Q base-devel
-
-# 2. Install if missing
-sudo pacman -S base-devel
-
-# 3. Check build dependencies
-omg info <package-name>
-
-# 4. Clear AUR cache and retry
-omg clean --aur
-omg install <package>
-
-# 5. Check build logs
-cat ~/.cache/omg/logs/<package>.log
-
-# 6. Try manual build
-cd ~/.cache/omg/srcdest/<package>
-makepkg -si
-```
-
----
-
-### Package Installation Blocked by Policy
-
-**Symptoms:**
-
-- "Package grade X below minimum Y" error
-- "AUR packages not allowed" error
-
-**Solutions:**
-
-```bash
-# 1. Check current policy
-cat ~/.config/omg/policy.toml
-
-# 2. View package security grade
-omg info <package>
-
-# 3. Temporarily lower policy
-# Edit ~/.config/omg/policy.toml:
-# minimum_grade = "Community"
-# allow_aur = true
-
-# 4. Install package
-omg install <package>
-
-# 5. Restore policy
-```
-
----
-
-## 🔧 Runtime Management Issues
-
-### Runtime Version Not Switching
-
-**Symptoms:**
-
-- `omg use` completes but wrong version active
-- `node --version` shows different version than expected
-
-**Solutions:**
-
-```bash
-# 1. Check PATH order
-echo $PATH | tr ':' '\n' | head -10
-
-# 2. OMG paths should come first
-# ~/.local/share/omg/versions/node/current/bin
-
-# 3. Check for conflicting version managers
-which -a node
-# Should show OMG path first
-
-# 4. Verify symlink
-ls -la ~/.local/share/omg/versions/node/current
-
-# 5. Recreate the active version link
-omg use node 20.10.0
-
-# 6. Restart shell
-exec zsh
-```
-
----
-
-### Runtime Download Fails
-
-**Symptoms:**
-
-- "Download failed" or network errors
-- Timeout during installation
-
-**Solutions:**
-
-```bash
-# 1. Check network connectivity
-curl -I https://nodejs.org/dist/
-
-# 2. Check for proxy issues
-echo $http_proxy $https_proxy
-
-# 3. Increase timeout
-# In config.toml:
-# [network]
-# timeout = 60
-
-# 4. Try manual download
-omg list node --available
-# Note the URL and download manually
-
-# 5. Check disk space
-df -h ~/.local/share/omg/
-```
-
----
-
-### Unsupported Runtime
-
-OMG supports Node, Python, Go, Rust, Ruby, Java, Bun, and Pi. Other runtime names fail explicitly; use that runtime's own documented manager rather than expecting OMG to install a fallback.
-
----
-
-## 💾 Cache and Database Issues
-
-### Cache Corruption
-
-**Symptoms:**
-
-- Bizarre search results
-- Inconsistent package info
-- Daemon errors mentioning "cache" or "redb"
-
-**Solutions:**
-
-```bash
-# 1. Stop daemon
-pkill omgd
-
-# 2. Remove cache
-rm ~/.local/share/omg/cache.redb
-
-# 3. Start daemon (rebuilds cache)
-omg daemon
-
-# 4. Wait for cache to populate
-sleep 5
-omg status
-```
-
----
-
-### History File Corrupted
-
-**Symptoms:**
-
-- `omg history` returns empty or errors
-- Rollback doesn't work
-
-**Solutions:**
-
-```bash
-# 1. Check history file
-cat ~/.local/share/omg/history.json | head
-
-# 2. Validate JSON
-python -m json.tool ~/.local/share/omg/history.json
-
-# 3. If corrupted, back up and reset
-mv ~/.local/share/omg/history.json ~/.local/share/omg/history.json.bak
-echo "[]" > ~/.local/share/omg/history.json
-```
-
----
-
-### Audit Log Issues
-
-**Symptoms:**
-
-- `omg audit log` shows nothing
-- `omg audit verify` fails
-
-**Solutions:**
-
-```bash
-# 1. Check log file
-ls -la ~/.local/share/omg/audit/
-
-# 2. Verify log format
-head ~/.local/share/omg/audit/audit.jsonl
-
-# 3. Reset audit log if corrupted
-mv ~/.local/share/omg/audit/audit.jsonl ~/.local/share/omg/audit/audit.jsonl.bak
-```
-
----
-
-## 🖥️ TUI Dashboard Issues
-
-### Dashboard Won't Start
-
-**Symptoms:**
-
-- `omg dash` hangs or crashes immediately
-- Terminal garbled after exit
-
-**Solutions:**
-
-```bash
-# 1. Check terminal compatibility
-echo $TERM
-# Should show xterm-256color or similar
-
-# 2. Verify alternate screen support
-tput smcup
-tput rmcup
-
-# 3. Check daemon is running
-omg status
-
-# 4. Reset terminal if garbled
-reset
-# or
-stty sane
-
-# 5. Try different terminal emulator
-```
-
----
-
-### Display Garbled or Wrong Colors
-
-**Symptoms:**
-
-- Characters display incorrectly
-- Colors wrong or missing
-
-**Solutions:**
-
-```bash
-# 1. Ensure proper TERM
-export TERM=xterm-256color
-
-# 2. Use a Unicode-capable font
-# Recommended: Nerd Fonts, JetBrains Mono
-
-# 3. Resize terminal
-# Sometimes fixes rendering issues
-
-# 4. Check locale
-echo $LANG
-# Should be UTF-8
-```
-
----
-
-## 🔄 History and Rollback Issues
-
-### Rollback Fails
-
-**Symptoms:**
-
-- "Package not found in cache" error
-- Downgrade fails
-
-**Solutions:**
-
-```bash
-# 1. Check package cache
-ls /var/cache/pacman/pkg/ | grep <package>
-
-# 2. If missing, download old version
-# From Arch Archive:
-# https://archive.archlinux.org/packages/
-
-# 3. Manual downgrade
-sudo pacman -U /var/cache/pacman/pkg/<package>-<version>.pkg.tar.zst
-
-# 4. Keep more versions in cache
-# In /etc/pacman.conf:
-# CleanMethod = KeepCurrent
-```
-
----
-
-### AUR Rollback Not Supported
-
-**Symptoms:**
-
-- "AUR rollback not supported" message
-
-**Solutions:**
-
-This is a current limitation. Workarounds:
-
-```bash
-# 1. Rebuild old version manually
-cd ~/.cache/omg/srcdest/<package>
-git checkout <old-commit>
-makepkg -si
-
-# 2. Use Arch Archive for official version
-# (if package was once in official repos)
-```
-
----
-
-## 🔐 Security and Audit Issues
-
-### Security Audit Fails
-
-**Symptoms:**
-
-- `omg audit` returns errors
-- Vulnerability data not loading
-
-**Solutions:**
-
-```bash
-# 1. Ensure daemon is running
-omg daemon
-
-# 2. Check network access
-curl https://security.archlinux.org/issues/all.json | head
-
-# 3. Check OSV.dev access
-curl https://api.osv.dev/v1/query -X POST -d '{}'
-
-# 4. Clear vulnerability cache
-# Restart daemon
-pkill omgd
-omg daemon
-```
-
----
-
-### SBOM Generation Fails
-
-**Symptoms:**
-
-- `omg audit sbom` errors out
-- Empty or incomplete SBOM
-
-**Solutions:**
-
-```bash
-# 1. Check write permissions
-touch /tmp/test-sbom.json
-
-# 2. Specify output path
-omg audit sbom -o ~/sbom.json
-
-# 3. Check installed packages
-omg explicit
-```
-
----
-
-## 🔨 Build Issues
-
-### Debian/Ubuntu Linker Error (.eh_frame corruption)
-
-**Symptoms:**
-
-- Build fails with: `rust-lld: error: corrupted .eh_frame: CIE/FDE ends past end of section`
-- Build fails with: `rust-lld: error: .eh_frame: relocation is not in any piece`
-- Occurs when building with `--features debian` or `--features debian-pure`
-
-**Root Cause:**
-The `rustls` crate has a known issue with `.eh_frame` section corruption when using `rust-lld` (Rust's LLVM linker) with full LTO (Link Time Optimization) enabled.
-
-**Solutions:**
-
-```bash
-# 1. Ensure .cargo/config.toml has correct linker setting
-cat .cargo/config.toml
-# Should contain:
-# [target.x86_64-unknown-linux-gnu]
-# linker = "gcc"
-
-# 2. Clean and rebuild
-cargo clean
-cargo build --release --no-default-features --features debian-pure
-
-# 3. If issue persists, try disabling LTO temporarily
-# Edit Cargo.toml, change lto = "fat" to:
-# lto = "thin"
-# or
-# lto = false
-
-# 4. Verify linker is being used
-cargo build --release --no-default-features --features debian-pure 2>&1 | grep -i linker
-# Should show "gcc" not "rust-lld"
-```
-
-**For Docker builds:**
-The `.cargo/config.toml` file is copied into the Docker image, so the fix should work automatically. If not:
-
-```bash
-# In Dockerfile, after copying source:
-COPY --chown=omguser:omguser .cargo/config.toml .cargo/config.toml
-
-# Rebuild Docker image
-docker build --no-cache -f Dockerfile.debian -t omg-debian .
-```
-
-**Reference:**
-
-- Configuration is automatically set in `.cargo/config.toml`
-- Uses system GCC linker instead of rust-lld
-- Maintains full LTO performance on Arch Linux native builds
-
----
-
-## 📋 General Troubleshooting Steps
-
-### Reset Everything
-
-If all else fails, complete reset:
-
-```bash
-# 1. Stop daemon
-pkill omgd
-
-# 2. Backup then remove data
-mv ~/.local/share/omg ~/.local/share/omg.bak
-mv ~/.config/omg ~/.config/omg.bak
-
-# 3. Remove socket
-rm $XDG_RUNTIME_DIR/omg.sock
-
-# 4. Reinstall if needed
-cd /path/to/omg
-cargo build --release
-cp target/release/{omg,omgd} ~/.local/bin/
-
-# 5. Start fresh
-omg daemon
-omg status
-```
-
----
-
-### Collect Debug Information
-
-When reporting issues:
-
-```bash
-# 1. Get system info
-uname -a
-cat /etc/os-release
-
-# 2. Get OMG version
-omg --version
-
-# 3. Run doctor
-omg doctor
-
-# 4. Get daemon logs
-omgd 2>&1 | tee omg-debug.log
-
-# 5. Get command output
-omg <failing-command> 2>&1 | tee command-output.log
-```
-
----
-
-## 📚 See Also
-
-- [Quick Start Guide](./quickstart.md) — Initial setup and first-time issues
-- [Configuration](./configuration.md) — Configuration options and patterns
-- [Daemon Internals](./daemon.md) — Daemon troubleshooting
-- [FAQ](./faq.md) — Frequently asked questions
-- [Security](./security.md) — Security-related issues
-- [Runtimes](./runtimes.md) — Runtime version switching issues
-- [Integrations](./integrations.md) — Integration troubleshooting
+See also: [FAQ](./faq.md), [configuration](./configuration.md), and [quickstart](./quickstart.md).

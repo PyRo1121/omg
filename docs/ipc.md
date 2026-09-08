@@ -29,7 +29,7 @@ OMG uses **Length-Delimited Framing**. Every message is prefixed by a **4-byte h
 
 ### Binary Serialization
 We use the **Bitcode** high-efficiency binary serializer instead of text-based formats like JSON.
-- **Density**: Serialized messages are up to 10x smaller than equivalent JSON.
+- **Encoding**: Binary serialization avoids JSON text encoding. Payload size depends on the message; no fixed compression ratio is guaranteed.
 - **Speed**: Serialization and deserialization take only a few microseconds.
 - **Resilience**: The strictly typed nature of the binary format prevents many common communication errors.
 

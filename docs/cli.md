@@ -31,7 +31,7 @@ This guide documents every OMG command with detailed explanations, examples, and
 | **Configuration** | `config`, `daemon`, `account`, `generate-man` |
 | **Enterprise** | `fleet`, `enterprise` |
 
-> Global flags (`-v`/`--verbose`, `-q`/`--quiet`, `--json`, `--all-commands`) work with every command. `omg --help` hides advanced commands unless `--all-commands` is passed. See [🌍 Global Options](#-global-options).
+> The parser accepts global flags (`-v`/`--verbose`, `-q`/`--quiet`, `--json`, `--all-commands`), but individual commands and early fast paths need not implement every output mode. Do not assume a stable JSON schema without checking that command. `omg --help` hides advanced commands unless `--all-commands` is passed. See [🌍 Global Options](#-global-options).
 
 ---
 
@@ -68,8 +68,7 @@ omg search node --limit 10
 
 **Performance:**
 
-- With daemon: ~5-11ms
-- Without daemon: ~50-200ms
+Latency depends on the backend, cache state, query, and enabled sources. See [benchmark scope and records](../benchmarks/README.md).
 
 ---
 
@@ -87,6 +86,7 @@ omg install [packages...] [OPTIONS]
 |--------|-------|-------------|
 | `--yes` | `-y` | Skip confirmation prompt |
 | `--dry-run` | | Show what would be installed without making changes |
+| `--review` | | Force PKGBUILD review for each AUR build (on by default; see `aur.review_pkgbuild`) |
 
 **Examples:**
 
@@ -121,7 +121,7 @@ available AUR names. AUR names are cached for 24 hours; a cache miss may fetch t
 index with a bounded network timeout. If AUR is unavailable, local names remain
 available. Neither discovery path synchronizes package databases or installs packages.
 
-After [setting up shell completion](installation.md#3-optional-enable-shell-completions),
+After [setting up shell completion](shell-integration.md),
 try `omg install frfx<Tab>`. Package completion also works after `-y`, additional
 package names, and the `i` alias.
 
@@ -180,7 +180,8 @@ omg update [OPTIONS]
 | `--yes` | `-y` | Skip confirmation prompt |
 | `--dry-run` | | Show what would be updated without making changes |
 | `--fast` | `-f` | Fast mode: sync + upgrade in a single operation (no preview) |
-| `--turbo` | `-T` | Turbo mode: skip sync, use cached data, parallel extraction (fastest) |
+| `--turbo` | `-T` | Turbo mode: skip sync, use cached data, parallel extraction |
+| `--review` | | Force PKGBUILD review for each AUR build (on by default; see `aur.review_pkgbuild`) |
 
 **Examples:**
 
@@ -233,8 +234,7 @@ omg info visual-studio-code-bin
 
 **Performance:**
 
-- With daemon: ~3-6ms (cached)
-- Without daemon: ~50-200ms
+See [benchmark evidence](../benchmarks/README.md); timings depend on backend, artifact, sources, and cache state.
 
 ---
 
@@ -307,8 +307,7 @@ omg explicit --count
 
 **Performance:**
 
-- With daemon: <2ms
-- Without daemon: ~14ms
+Measure this operation on the selected backend with recorded cache conditions; no universal latency is guaranteed.
 
 ---
 
@@ -463,6 +462,58 @@ omg use <runtime> [version]
 | `ruby` | | `.ruby-version` |
 | `java` | | `.java-version` |
 | `pi` | | `.tool-versions` |
+| `deno` | | `.deno-version`, `.dvmrc` |
+| `zig` | `ziglang` | `.zig-version` |
+| `dotnet` | | `global.json` |
+
+Plus 54 GitHub-release tools managed through one generic backend
+(`ripgrep`, `fd`, `bat`, `eza`, `fzf`, `starship`, `just`, `task`, `jq`,
+`yq`, `gh`, `lazygit`, `delta`, `neovim`, `helix`, `zellij`, `helm`, `k9s`,
+`terraform`, `opentofu`, `vault`, `consul`, `minikube`, `kind`,
+`kustomize`, `tilt`, `skaffold`, `lazydocker`, `glow`, `pandoc`,
+`shellcheck`, `shfmt`, `hadolint`, `actionlint`, `hyperfine`, `tokei`,
+`dust`, `duf`, `procs`, `ruff`, `uv`, `fnm`, `protoc`, `terragrunt`,
+`packer`, `dive`, `golangci-lint`, `delve`, `stylua`, `kotlin`, `scala`,
+`elixir`, `ghcup`) plus the `dotnet` SDK, Erlang/OTP, and PHP managers —
+68 registered runtimes/tools in total. Platform availability varies by publisher. Each installs checksum-verified release
+assets into `<data-dir>/versions/<tool>/<version>/bin` (flat-layout SDKs
+like .NET expose their host binary at the version root instead), so `use`,
+`list`, `hook-env`, and version-file detection work exactly like the
+language runtimes.
+
+Erlang/OTP installs Hex bob prebuilds on Linux using the archive SHA-256
+from `builds.txt`, followed by `./Install -minimal` and an `erl` smoke test.
+Older index rows without archive checksums are not installable. It uses
+erlef/otp_builds on macOS with SHA-256 from the published CSV; override the
+Ubuntu build with `OMG_ERLANG_UBUNTU_RELEASE`. Elixir needs Erlang/OTP on
+`PATH` (its prebuilt zips are BEAM bytecode; when a release ships per-OTP
+variants OMG picks the lowest for the widest compatibility) — install both
+with `omg use erlang` then `omg use elixir`. PHP installs
+[shivammathur/php-builder](https://github.com/shivammathur/php-builder)
+prebuilts (SHA-256 GitHub asset digests, `php -v` smoke test) on
+Debian/Ubuntu; override detection with `OMG_PHP_DISTRO`. Upstream
+publishes one rolling build per minor, so versions are channels (`8.5`),
+not exact patches — reinstalling refreshes to the latest patch, and
+`.php-version` pins work via the phpenv convention. Haskell is covered
+through `ghcup`, which installs and manages GHC/cabal/HLS itself. Swift uses
+official Ubuntu toolchains with detached-signature verification and a matching
+`swift --version` check before publication. Swift installation requires an OMG
+build with the `pgp` feature; `.swift-version` pins select `usr/bin`.
+
+**mise compatibility (no mise required):** OMG reads `mise.toml` /
+`.mise.toml` `[tools]` pins, `[env]` variables, and `[tasks.*]` entries
+natively, so projects already using mise work without installing it.
+`[env]` supports plain values, `false` (unset), `{ default = … }`,
+`{ value/tools/redact = … }`, `{ required = true }`, top-level
+`redactions`, `_.path` (PATH prepend), `_.file` (dotenv/JSON/TOML —
+YAML is rejected), `_.source` (evaluated only for explicit `run`/tasks),
+`{{env.NAME}}`/`{{config_root}}`
+templates, and per-task `env` (including task `_.file`/`_.path`/`_.source`).
+Automatic hooks reject `_.source` because entering a repository does not
+constitute permission to execute its scripts. Missing env files and unmet
+required variables are skipped in hooks; malformed configuration is rejected.
+`run` and task execution fail closed on missing files and unmet
+`required` entries.
 
 Unsupported runtime names fail explicitly.
 
@@ -633,7 +684,7 @@ omg completions fish
 omg completions zsh --stdout > _omg
 ```
 
-Follow the printed shell setup instructions after installation. See [shell completion setup](installation.md#3-optional-enable-shell-completions) for Zsh's `fpath` and `compinit` configuration.
+Follow the printed shell setup instructions after installation. See [shell completion setup](shell-integration.md) for Zsh's `fpath` and `compinit` configuration.
 
 ---
 
@@ -675,10 +726,13 @@ omg workspace <SUBCOMMAND>
 | `add <path> [--name]` | Add a project to the workspace |
 | `remove <project>` | Remove a project from the workspace |
 | `list` | List all projects in the workspace |
-| `run <command> [-p] [--filter]` | Run a command across all projects |
+| `run <command> [-p] [--filter] [--yes]` | Run a command across all projects |
 | `diff [branch]` | Show environment diff across workspace vs a branch (default: main) |
 | `check` | Check all project environments without changing them |
 | `status` | Show workspace status |
+
+Running a repo-defined command prompts for confirmation when a terminal is
+attached (default No) and refuses without one unless `--yes` is passed.
 
 ---
 
@@ -720,22 +774,26 @@ omg audit [SUBCOMMAND]
 | Subcommand | Description |
 | ------------ | ------------- |
 | `scan` | Scan for vulnerabilities (default) |
-| `sbom` | Generate CycloneDX 1.5 SBOM |
+| `sbom` | Generate installed Arch package CycloneDX 1.5 inventory with advisory matching |
 | `secrets` | Scan for leaked credentials |
 | `log` | View audit log entries |
-| `verify` | Verify audit log integrity |
+| `verify` | Check local hash-chain consistency, not authenticity or completeness |
 | `policy` | Show security policy status |
-| `slsa <pkg>` | Check SLSA provenance |
+| `slsa <pkg>` | Check supported artifact signatures; requires exact `--certificate-identity`, establishes no SLSA build level |
 | `licenses` | Scan for software license compliance issues |
 | `fix` | Auto-fix vulnerabilities by upgrading packages |
 | `export` | Export compliance evidence for audit frameworks |
 | `eol` | Check end-of-life status for installed runtimes |
 
+`scan` requires the Unix daemon and does not fail solely because findings exist. `sbom` always requests Arch advisory matching; it fails on Debian-like systems and lacks a Fedora/macOS system backend. It does not resolve dependency edges. `licenses` and vulnerability auto-fix require the Arch backend.
+
+`omg audit export --framework soc2` requires the daemon and supported SBOM backend. The other accepted framework names return unimplemented errors. `--period` labels the export; it does not filter history. Output is plaintext and can be partial on failure. See [security limits](./security.md).
+
 **Options for `log`:**
 
 | Option | Short | Description |
 | -------- | ------- | ------------- |
-| `--limit` | `-l` | Number of entries to show (default: 20) |
+| `--limit` | `-l` | Entry limit; defaults to 20 on screen and all entries on export |
 | `--severity` | `-s` | Filter by severity (debug, info, warning, error, critical) |
 | `--export` | `-e` | Export logs to a file (CSV or JSON) |
 
@@ -768,8 +826,8 @@ omg audit verify
 # Show policy status
 omg audit policy
 
-# Check SLSA provenance
-omg audit slsa /path/to/package.pkg.tar.zst
+# Check an artifact against an independently trusted signer identity
+omg audit slsa ./package.pkg.tar.zst --certificate-identity "$EXPECTED_SIGNER_IDENTITY"
 ```
 
 ---
@@ -808,7 +866,7 @@ omg doctor [OPTIONS]
 | -------- | ------------- |
 | `--network` | Test network connectivity to package mirrors |
 | `--eol` | Check for end-of-life runtime versions |
-| `--turbo` | Enable turbo mode check (zero-sudo package operations via Linux capabilities) |
+| `--turbo` | Prime sudo credentials and remove legacy file capabilities; does not grant capability-based package access |
 
 **Checks performed:**
 
@@ -816,6 +874,7 @@ omg doctor [OPTIONS]
 - Shell hook installation
 - Daemon connectivity
 - Mirror availability
+- Package index health (on Debian/Ubuntu, compressed `*_Packages.lz4`/`.gz`/`.xz` indexes count as healthy)
 - PGP keyring status
 - Runtime integrity
 
@@ -1195,8 +1254,8 @@ omg env capture
 # Check for drift
 omg env check
 
-# Share environment (requires GITHUB_TOKEN)
-export GITHUB_TOKEN=your_token
+# Share environment (supply GITHUB_TOKEN through your credential manager;
+# never store a literal token in shell history or startup files)
 omg env share
 
 # Sync from shared environment
@@ -1461,7 +1520,7 @@ omg enterprise policy show
 ```
 
 **Report types:** monthly, quarterly, custom
-**Compliance frameworks:** soc2, iso27001, fedramp, hipaa, pci-dss
+**Accepted framework labels:** soc2, iso27001, fedramp, hipaa, pci-dss. This enterprise command generates the same generic Arch inventory bundle for each label, not framework-specific controls. It exports up to 100 recent audit entries. `--period` does not filter them. Files are plaintext, not encrypted or certified compliance evidence. See [enterprise export limits](./enterprise.md).
 
 > Note: policy management beyond `policy show` and self-hosted registry
 > management are not available in the CLI.
@@ -1610,7 +1669,7 @@ omg license pricing
 
 # Use instead
 omg account status
-omg account link <token>
+omg account link --token-stdin
 omg account unlink
 ```
 
@@ -1622,7 +1681,7 @@ omg account <SUBCOMMAND>
 
 | Subcommand | Description |
 | ------------ | ------------- |
-| `link <token>` | Link this machine with a dashboard token |
+| `link --token-stdin` | Read the dashboard token from standard input, not argv |
 | `status` | Show whether this machine is linked |
 | `unlink` | Remove the local dashboard identity |
 
@@ -1658,20 +1717,20 @@ omg <subcommand>
 
 **Prompt counters:**
 
-| Subcommand | Description | Latency |
-| ------------ | ------------- | --------- |
-| `ec` | Explicit count | &lt;1ms |
-| `tc` | Total count | &lt;1ms |
-| `uc` | Updates count | &lt;1ms |
-| `oc` | Orphan count | &lt;1ms |
+- `ec`: explicit count
+- `tc`: total count
+- `uc`: update count
+- `oc`: orphan count
+
+These counters have no universal latency guarantee.
 
 **Hot-path commands:**
 
-| Subcommand | Description | Latency |
-| ------------ | ------------- | --------- |
-| `status` | System status | ~3ms |
-| `search` / `s` | Search packages | daemon speed |
-| `info` / `i` | Package info | daemon speed |
+- `status`: system status
+- `search` / `s`: package search
+- `info` / `i`: package details
+
+Execution paths and costs depend on the backend and daemon availability.
 
 **Examples:**
 
@@ -1698,7 +1757,7 @@ These options work with all commands:
 | `--version` | `-V` | Show version |
 | `--verbose` | `-v` | Increase verbosity; repeat (`-vv`) for more detail, also streams package build output live |
 | `--quiet` | `-q` | Suppress non-essential output (command results still print) |
-| `--json` | | Output in JSON format (for scripting) |
+| `--json` | | Output in JSON format (for scripting). Implies quiet output: stdout carries pure JSON while diagnostics go to stderr |
 | `--all-commands` | | Show all commands including advanced ones |
 
 ---
