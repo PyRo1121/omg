@@ -8,6 +8,20 @@ description: Package verification, SBOM scope, audit logging, and export limitat
 
 OMG provides package verification, vulnerability reports, secret scanning, and local audit records. These controls do not prove that software is safe or that an organization meets a compliance framework. Capabilities depend on the compiled backend and the command path.
 
+## Privileged state storage
+
+Processes running as root use `/var/lib/omg` for data and daemon state, and `/var/cache/omg` for caches. Caller-supplied `OMG_DATA_DIR`, `OMG_DAEMON_DATA_DIR`, `OMG_CACHE_DIR`, home variables, and XDG variables do not select these privileged storage locations. Unprivileged paths and overrides are unchanged. These system directories must remain administrator-controlled; do not redirect them to user-writable storage.
+
+History, usage files, locks, and AUR metadata stay owned by the process that writes them. OMG no longer transfers ownership through a pathname after publication.
+
+Existing user files are neither moved nor rewritten. Read existing user history without sudo; `sudo omg history` reads entries in the separate root store. There is no automatic import of user-editable history into privileged storage. Operations recorded by an unprivileged parent can still appear in that parent's history, so the root store is not a complete machine audit trail. Root and user caches may need separate refreshes.
+
+Licenses, clock high-water marks, snapshots, and audit files also use the effective-user data store. A user activation does not activate the root profile. Use `omg snapshot restore <id> --yes` without sudo for a user snapshot; package backends request elevation when needed. Explicit sudo selects the root snapshot store. Legacy root-profile files are also left untouched and require administrator review before migration.
+
+Arch update parents retain official and AUR changes in the user's history even when an elevated child records official work separately. This keeps those changes available to unprivileged history and rollback.
+
+This boundary does not authenticate all package metadata or replace the separate configuration and policy checks.
+
 Report vulnerabilities privately using [SECURITY.md](../SECURITY.md).
 
 ## Vulnerability scanning

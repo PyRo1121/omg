@@ -365,8 +365,7 @@ pub async fn restore(id: &str, dry_run: bool, yes: bool) -> Result<()> {
         } else {
             anyhow::bail!(
                 "This command requires an interactive terminal or the --yes flag.\n\
-                 For automation, use: omg snapshot restore {id} --yes\n\
-                 Or run: sudo omg snapshot restore {id} --yes"
+                 For automation, use: omg snapshot restore {id} --yes"
             );
         }
     }

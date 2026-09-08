@@ -18,6 +18,8 @@ The usual settings path is `~/.config/omg/config.toml`; policy normally lives at
 
 General settings are defined by `Settings` and `AurBuildSettings` in `src/config/settings.rs`. Paths for data and sockets are resolved at load time, not deserialized configuration fields. Do not invent `[network]`, daemon, or account-token keys.
 
+Root uses `/var/lib/omg` for data and daemon state and `/var/cache/omg` for caches, ignoring caller home, XDG, and OMG storage overrides. Unprivileged storage overrides remain supported. Existing files are not automatically moved or imported; see [privileged state storage](security.md#privileged-state-storage).
+
 ## General and AUR settings
 
 This example shows the current defaults for the boolean and numeric settings:
