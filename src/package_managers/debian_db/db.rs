@@ -266,10 +266,31 @@ impl DebianMmapIndex {
         }
     }
 
-    /// Look up one package without deserializing the full index.
-    pub fn get(&self, name: &str) -> Result<Option<&rkyv::Archived<DebianPackage>>> {
+    /// Resolve `name[:architecture[:component]]` without deserializing the index.
+    /// Uses the same fallback order as [`DebianPackageIndex::get_query`].
+    pub fn get(&self, query: &str) -> Result<Option<&rkyv::Archived<DebianPackage>>> {
         let archive = self.archive();
-        let Some(index) = archive.name_to_idx.get(name) else {
+        let index = if let Some((name, rest)) = query.split_once(':') {
+            if let Some((architecture, _)) = rest.split_once(':') {
+                archive
+                    .name_arch_component_to_idx
+                    .get(query)
+                    .or_else(|| {
+                        archive
+                            .name_arch_to_idx
+                            .get(format!("{name}:{architecture}").as_str())
+                    })
+                    .or_else(|| archive.name_to_idx.get(name))
+            } else {
+                archive
+                    .name_arch_to_idx
+                    .get(query)
+                    .or_else(|| archive.name_to_idx.get(name))
+            }
+        } else {
+            archive.name_to_idx.get(query)
+        };
+        let Some(index) = index else {
             return Ok(None);
         };
         Ok(archive.packages.get(u32::from(*index) as usize))
@@ -1662,7 +1683,7 @@ pub fn get_info_fast(name: &str) -> Result<Option<Package>> {
             if let Ok(Some(pkg)) = mmap.get(name) {
                 return Ok(Some(archived_package_to_package(
                     pkg,
-                    is_installed_fast(name)?,
+                    is_installed_fast(pkg.name.as_str())?,
                 )));
             }
             // Package not in mmap - still return None without loading full index
@@ -3011,6 +3032,53 @@ mod tests {
     fn test_extract_component_from_path_simple_pattern() {
         let p = Path::new("/tmp/contrib_amd64_Packages");
         assert_eq!(extract_component_from_path(p), "contrib");
+    }
+
+    #[test]
+    fn mmap_lookup_preserves_qualified_query_selection() -> Result<()> {
+        let mut index = DebianPackageIndex::new();
+        for (architecture, component, version) in [
+            ("amd64", "main", "1.0"),
+            ("amd64", "contrib", "2.0"),
+            ("i386", "main", "3.0"),
+        ] {
+            let paragraph = format!(
+                "Package: demo\nVersion: {version}\nArchitecture: {architecture}\nDescription: fixture\n"
+            );
+            index.add_package(parse_paragraph_str(
+                &paragraph, component, "stable", "fixture",
+            )?);
+        }
+        let directory = tempfile::tempdir()?;
+        let path = directory.path().join("index.mmap");
+        let bytes = rkyv::to_bytes::<rkyv::rancor::Error>(&index)
+            .map_err(|error| anyhow::anyhow!("fixture serialization: {error}"))?;
+        fs::write(&path, &bytes)?;
+        let mapped = DebianMmapIndex::open(&path)?;
+
+        for (query, architecture, component, version) in [
+            ("demo:amd64", "amd64", "main", "1.0"),
+            ("demo:amd64:contrib", "amd64", "contrib", "2.0"),
+            ("demo:i386", "i386", "main", "3.0"),
+            ("demo:i386:absent", "i386", "main", "3.0"),
+        ] {
+            let package = mapped
+                .get(query)?
+                .with_context(|| format!("mmap lost qualified lookup {query}"))?;
+            assert_eq!(package.name.as_str(), "demo");
+            assert_eq!(package.architecture.as_str(), architecture);
+            assert_eq!(package.component.as_str(), component);
+            assert_eq!(package.version.as_str(), version);
+        }
+        for query in ["demo", "demo:unknown", "demo:unknown:absent"] {
+            let expected = index.get_query(query).context("normal index result")?;
+            let actual = mapped.get(query)?.context("mapped index result")?;
+            assert_eq!(actual.architecture.as_str(), expected.architecture);
+            assert_eq!(actual.component.as_str(), expected.component);
+            assert_eq!(actual.version.as_str(), expected.version);
+        }
+        assert!(mapped.get("missing:amd64:main")?.is_none());
+        Ok(())
     }
 
     #[test]
