@@ -1007,8 +1007,10 @@ mod tests {
                 barrier.wait();
                 for _ in 0..UPDATES_PER_WRITER {
                     // Same lock + load-modify-save shape as the public track* functions.
-                    let _lock = lock_file_at(&path.with_extension("lock"))
-                        .expect("writer must acquire lock");
+                    let _lock = match acquire_usage_lock(&path.with_extension("lock")) {
+                        Ok(lock) => lock,
+                        Err(error) => panic!("writer must acquire lock: {error:#}"),
+                    };
                     let mut stats = UsageStats::load_from(&path).expect("valid usage stats");
                     stats.record_command_on(
                         "search",
