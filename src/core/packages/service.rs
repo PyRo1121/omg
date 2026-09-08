@@ -213,27 +213,6 @@ impl PackageService {
     /// service (for example, `ArchPackageManager::with_recursive_removal`).
     /// The service records history but does not override backend removal options.
     pub async fn remove(&self, packages: &[String]) -> Result<()> {
-        // Every requested package must appear in history even when its info
-        // lookup misses (e.g. installed but absent from the repo index);
-        // otherwise we mutate packages that history will never mention.
-        let mut changes = Vec::with_capacity(packages.len());
-        for pkg in packages {
-            let known = self.backend.info(pkg).await?;
-            let (name, old_version) = match known {
-                Some(info) => {
-                    let version = info.version.version_string();
-                    (info.name, Some(version))
-                }
-                None => (pkg.clone(), None),
-            };
-            changes.push(PackageChange {
-                name,
-                old_version,
-                new_version: None,
-                source: self.backend.name().to_string(),
-            });
-        }
-
         if let Some(operation) = self.backend.transact_with_history(
             TransactionType::Remove,
             packages,
@@ -241,6 +220,26 @@ impl PackageService {
         ) {
             return operation.await;
         }
+
+        // Repository info may describe a newer candidate or omit retired
+        // packages. Capture one installed inventory before mutation instead.
+        let installed: std::collections::HashMap<_, _> = self
+            .backend
+            .list_installed()
+            .await?
+            .into_iter()
+            .map(|package| (package.name, package.version.version_string()))
+            .collect();
+        let changes = packages
+            .iter()
+            .map(|name| PackageChange {
+                name: name.clone(),
+                // Preserve every request even if its installed version is unknown.
+                old_version: installed.get(name).cloned(),
+                new_version: None,
+                source: self.backend.name().to_string(),
+            })
+            .collect();
         let result = self.backend.remove(packages).await;
 
         self.finish_transaction(TransactionType::Remove, changes, result)
@@ -586,6 +585,62 @@ mod tests {
             .await
             .expect_err("local package metadata must be checked by policy before installation");
         assert!(error.to_string().contains("banned-local"), "{error:#}");
+        Ok(())
+    }
+
+    #[tokio::test]
+    #[serial_test::serial(history_ownership)]
+    async fn removal_history_uses_installed_versions_even_after_catalog_retirement() -> Result<()> {
+        use crate::package_managers::mock::MockPackageManager;
+
+        let directory = tempfile::tempdir()?;
+        let backend = Arc::new(MockPackageManager::new_in("debian", directory.path()));
+        backend
+            .db
+            .add_package("fixture", "2.0", "new candidate", "main");
+        std::fs::write(
+            directory.path().join("mock_state_apt.json"),
+            serde_json::to_vec(&serde_json::json!({
+                "installed": { "fixture": "1.0", "retired": "3.2" },
+                "available": { "fixture": "2.0" }
+            }))?,
+        )?;
+        assert_eq!(
+            backend
+                .info("fixture")
+                .await?
+                .unwrap()
+                .version
+                .version_string(),
+            "2.0"
+        );
+        assert!(backend.info("retired").await?.is_none());
+        let history_path = directory.path().join("history.json");
+        let service = PackageService::builder(backend.clone())
+            .history(HistoryManager::new_in(&history_path)?)
+            .build()?;
+        service
+            .remove(&["fixture".into(), "retired".into(), "unknown".into()])
+            .await?;
+
+        let transactions = HistoryManager::new_in(&history_path)?.load()?;
+        assert_eq!(transactions.len(), 1);
+        assert!(transactions[0].success);
+        assert_eq!(transactions[0].transaction_type, TransactionType::Remove);
+        let changes = &transactions[0].changes;
+        assert_eq!(
+            changes.len(),
+            3,
+            "every requested package must remain recorded"
+        );
+        assert_eq!(changes[0].name, "fixture");
+        assert_eq!(changes[0].old_version.as_deref(), Some("1.0"));
+        assert_eq!(changes[1].name, "retired");
+        assert_eq!(changes[1].old_version.as_deref(), Some("3.2"));
+        assert_eq!(changes[2].name, "unknown");
+        assert!(changes[2].old_version.is_none());
+        assert!(changes.iter().all(|change| change.new_version.is_none()));
+        assert!(backend.list_installed().await?.is_empty());
         Ok(())
     }
 
