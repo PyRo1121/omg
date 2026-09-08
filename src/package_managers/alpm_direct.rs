@@ -61,9 +61,11 @@ fn refresh_cached_handle(cached: &mut Option<CachedAlpm>, current_software: u64)
     }) {
         return Ok(());
     }
-    let handle = create_alpm_handle()?;
-    let disk_epoch = pacman_db::AlpmCatalogEpoch::observe()
-        .context("Failed to observe ALPM catalog epoch after ALPM init")?;
+    let (handle, disk_epoch) = pacman_db::AlpmCatalogEpoch::load_stable(
+        pacman_db::AlpmCatalogEpoch::observe,
+        create_alpm_handle,
+    )
+    .context("Failed to load a stable ALPM handle")?;
     *cached = Some(CachedAlpm {
         handle,
         software_epoch: current_software,
@@ -476,7 +478,7 @@ mod tests {
                 set_mtime(&sync.join("core.db"), 10)?;
             }
             let restored = observe()?;
-            assert!(restored.sync < loaded.sync || restored.local < loaded.local);
+            assert_ne!(restored, loaded);
             assert!(
                 !cached_alpm_is_reusable(1, 1, loaded, restored),
                 "restoring an older {removed} timestamp must invalidate the cached handle"

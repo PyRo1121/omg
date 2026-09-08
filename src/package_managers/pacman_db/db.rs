@@ -11,9 +11,11 @@ use anyhow::{Context, Result};
 use flate2::read::GzDecoder;
 use rayon::prelude::*;
 use serde::{Deserialize, Serialize};
+use sha2::{Digest, Sha256};
 use std::collections::HashMap;
 use std::fs::{self, File};
 use std::io::{BufReader, Cursor, Read, Seek, Write};
+use std::os::unix::{ffi::OsStrExt, fs::MetadataExt};
 use std::path::{Path, PathBuf};
 use std::str::FromStr;
 use std::sync::RwLock;
@@ -27,7 +29,7 @@ use crate::runtimes::common::{BudgetedReader, BudgetedSink, BudgetedWriter};
 /// TTL for cache eviction safety net (30 minutes)
 const CACHE_TTL_SECS: u64 = 30 * 60;
 
-/// Global cache for sync databases - parsed once, used forever until invalidated
+/// Sync database cache, validated against its source identity on reuse.
 static SYNC_DB_CACHE: std::sync::LazyLock<RwLock<DbCache>> =
     std::sync::LazyLock::new(|| RwLock::new(DbCache::default()));
 
@@ -38,7 +40,7 @@ static LOCAL_DB_CACHE: std::sync::LazyLock<RwLock<LocalDbCache>> =
 #[derive(Default, Serialize, Deserialize)]
 struct DbCache {
     packages: HashMap<String, SyncDbPackage>,
-    last_modified: Option<SystemTime>,
+    last_modified: Option<SyncDbEpoch>,
     #[serde(skip)]
     last_accessed: Option<SystemTime>,
 }
@@ -727,31 +729,33 @@ fn is_cache_expired(last_accessed: Option<SystemTime>) -> bool {
     false
 }
 
-fn is_cache_reusable(
-    cache_mtime: Option<SystemTime>,
-    current_mtime: SystemTime,
+fn is_cache_reusable<E: Copy + Eq>(
+    cache_epoch: Option<E>,
+    current_epoch: E,
     has_packages: bool,
     last_accessed: Option<SystemTime>,
 ) -> bool {
-    cache_mtime == Some(current_mtime) && has_packages && !is_cache_expired(last_accessed)
+    cache_epoch == Some(current_epoch) && has_packages && !is_cache_expired(last_accessed)
 }
 
 /// Shared access to the fields that both on-disk caches serialize, so a
-/// single generic loader serves sync and local databases without changing
-/// the persisted bitcode format.
+/// single generic loader serves both timestamp and metadata identities.
+/// Each cache's disk namespace identifies its persisted representation.
 trait PackageCache: Serialize + for<'de> Deserialize<'de> {
     type Package;
+    type Epoch: Copy + Eq;
 
     fn packages(&self) -> &HashMap<String, Self::Package>;
     fn packages_mut(&mut self) -> &mut HashMap<String, Self::Package>;
-    fn last_modified(&self) -> Option<SystemTime>;
-    fn set_last_modified(&mut self, time: Option<SystemTime>);
+    fn last_modified(&self) -> Option<Self::Epoch>;
+    fn set_last_modified(&mut self, time: Option<Self::Epoch>);
     fn last_accessed(&self) -> Option<SystemTime>;
     fn set_last_accessed(&mut self, time: Option<SystemTime>);
 }
 
 impl PackageCache for DbCache {
     type Package = SyncDbPackage;
+    type Epoch = SyncDbEpoch;
 
     fn packages(&self) -> &HashMap<String, Self::Package> {
         &self.packages
@@ -759,10 +763,10 @@ impl PackageCache for DbCache {
     fn packages_mut(&mut self) -> &mut HashMap<String, Self::Package> {
         &mut self.packages
     }
-    fn last_modified(&self) -> Option<SystemTime> {
+    fn last_modified(&self) -> Option<SyncDbEpoch> {
         self.last_modified
     }
-    fn set_last_modified(&mut self, time: Option<SystemTime>) {
+    fn set_last_modified(&mut self, time: Option<SyncDbEpoch>) {
         self.last_modified = time;
     }
     fn last_accessed(&self) -> Option<SystemTime> {
@@ -775,6 +779,7 @@ impl PackageCache for DbCache {
 
 impl PackageCache for LocalDbCache {
     type Package = LocalDbPackage;
+    type Epoch = SystemTime;
 
     fn packages(&self) -> &HashMap<String, Self::Package> {
         &self.packages
@@ -810,23 +815,22 @@ fn write_lock<T>(lock: &RwLock<T>) -> std::sync::RwLockWriteGuard<'_, T> {
         .unwrap_or_else(std::sync::PoisonError::into_inner)
 }
 
-/// Ensure `cache_lock` holds a fresh cache for `current_mtime`, using (in
-/// order of cost): the in-memory cache, the on-disk cache named `disk_name`,
-/// or a fresh parse via `load_fresh`. Double-checked locking around every
-/// blocking step means concurrent readers never re-parse redundantly.
+/// Ensure `cache_lock` holds a cache for `current_epoch`, using (in order of
+/// cost) memory, disk, or `load_fresh`. Rechecking after blocking work avoids
+/// replacing an already reusable cache; concurrent parses can still occur.
 ///
 /// Expired in-memory entries are not cleared eagerly; they are never reusable
 /// (`is_cache_reusable`), so the first load replaces them wholesale.
 fn ensure_cache_loaded<C: PackageCache>(
     cache_lock: &RwLock<C>,
     disk_name: &str,
-    current_mtime: SystemTime,
+    current_epoch: C::Epoch,
     load_fresh: impl FnOnce() -> Result<HashMap<String, C::Package>>,
 ) -> Result<()> {
     let reusable = |cache: &C| {
         is_cache_reusable(
             cache.last_modified(),
-            current_mtime,
+            current_epoch,
             !cache.packages().is_empty(),
             cache.last_accessed(),
         )
@@ -868,7 +872,7 @@ fn ensure_cache_loaded<C: PackageCache>(
     }
 
     *cache.packages_mut() = packages;
-    cache.set_last_modified(Some(current_mtime));
+    cache.set_last_modified(Some(current_epoch));
     cache.set_last_accessed(now());
 
     // Persist for faster restarts; the in-memory cache is authoritative
@@ -880,8 +884,9 @@ fn ensure_cache_loaded<C: PackageCache>(
 
 /// Ensure sync cache is loaded (fast if already loaded)
 fn ensure_sync_cache_loaded(sync_dir: &Path) -> Result<()> {
-    let current_mtime = get_newest_db_mtime(sync_dir)?;
-    ensure_cache_loaded(&SYNC_DB_CACHE, "sync_db", current_mtime, || {
+    let current_mtime = SyncDbEpoch::from_sync_dir(sync_dir)?;
+    // The legacy sync_db bitcode stores a timestamp, not this identity.
+    ensure_cache_loaded(&SYNC_DB_CACHE, "sync_db_source_v1", current_mtime, || {
         load_sync_packages(sync_dir)
     })
 }
@@ -897,71 +902,34 @@ fn ensure_local_cache_loaded(local_dir: &Path) -> Result<()> {
     })
 }
 
-/// Get a modification time that changes when sync files are added, removed,
-/// or replaced. The directory timestamp covers additions/removals even when
-/// a copied file preserves an older mtime; the newest entry covers in-place
-/// replacements.
-fn get_newest_db_mtime(sync_dir: &Path) -> Result<SystemTime> {
-    if !sync_dir.exists() {
-        return Ok(SystemTime::UNIX_EPOCH);
-    }
-
-    let directory_mtime = std::fs::metadata(sync_dir)
-        .with_context(|| {
-            format!(
-                "Failed to read sync directory metadata {}",
-                sync_dir.display()
-            )
-        })?
-        .modified()
-        .with_context(|| {
-            format!(
-                "Failed to read modification time for {}",
-                sync_dir.display()
-            )
-        })?;
-    let mut newest = SystemTime::UNIX_EPOCH;
-    let mut saw_entry = false;
-    for entry in std::fs::read_dir(sync_dir).with_context(|| {
-        format!(
-            "Failed to read pacman sync directory {}",
-            sync_dir.display()
-        )
-    })? {
-        let entry = entry.with_context(|| {
-            format!(
-                "Failed to read pacman sync directory entry in {}",
-                sync_dir.display()
-            )
-        })?;
-        saw_entry = true;
-        let path = entry.path();
-        let meta = entry.metadata().with_context(|| {
-            format!(
-                "Failed to read pacman sync file metadata {}",
-                path.display()
-            )
-        })?;
-        let mtime = meta
-            .modified()
-            .with_context(|| format!("Failed to read modification time for {}", path.display()))?;
-        if mtime > newest {
-            newest = mtime;
-        }
-    }
-
-    if saw_entry && directory_mtime > newest {
-        newest = directory_mtime;
-    }
-    Ok(newest)
-}
-
-/// Identity of the on-disk pacman sync directory (`*.db` add/replace/remove).
-#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
-pub struct SyncDbEpoch(SystemTime);
+/// Metadata identity of the complete sync directory. Ordering is meaningless:
+/// compare identities for equality, never for increasing time.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct SyncDbEpoch(Option<[u8; 32]>);
 
 impl SyncDbEpoch {
-    pub const UNIX_EPOCH: Self = Self(SystemTime::UNIX_EPOCH);
+    /// Sentinel for an absent directory, retained under its existing API name.
+    /// An existing empty directory has its own observed identity.
+    pub const UNIX_EPOCH: Self = Self(None);
+
+    fn hash_metadata(hash: &mut Sha256, metadata: &fs::Metadata) {
+        for value in [
+            metadata.dev(),
+            metadata.ino(),
+            metadata.len(),
+            u64::from(metadata.mode()),
+        ] {
+            hash.update(value.to_le_bytes());
+        }
+        for value in [
+            metadata.mtime(),
+            metadata.mtime_nsec(),
+            metadata.ctime(),
+            metadata.ctime_nsec(),
+        ] {
+            hash.update(value.to_le_bytes());
+        }
+    }
 
     /// Reads the current identity of the pacman sync directory.
     ///
@@ -973,15 +941,48 @@ impl SyncDbEpoch {
         Self::from_sync_dir(&paths::pacman_sync_dir_result()?)
     }
 
-    /// Reads the identity of `sync_dir` (newest entry mtime, including the
-    /// directory itself).
+    /// Observe directory and entry identities, including symlink targets.
+    /// Hashing metadata is not content authentication or transaction locking.
     ///
     /// # Errors
-    ///
-    /// Returns an error when the directory cannot be listed or an entry's
-    /// modification time cannot be read.
+    /// Returns an error for unreadable directories/entries or dangling links.
     pub fn from_sync_dir(sync_dir: &Path) -> Result<Self> {
-        Ok(Self(get_newest_db_mtime(sync_dir)?))
+        let directory = match fs::symlink_metadata(sync_dir) {
+            Ok(metadata) => metadata,
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+                return Ok(Self::UNIX_EPOCH);
+            }
+            Err(error) => {
+                return Err(error)
+                    .with_context(|| format!("Failed to observe {}", sync_dir.display()));
+            }
+        };
+        let mut entries = fs::read_dir(sync_dir)
+            .with_context(|| format!("Failed to read sync directory {}", sync_dir.display()))?
+            .collect::<std::io::Result<Vec<_>>>()
+            .context("Failed to enumerate sync directory entries")?;
+        entries.sort_unstable_by_key(fs::DirEntry::file_name);
+        let mut hash = Sha256::new();
+        Self::hash_metadata(&mut hash, &directory);
+        if directory.file_type().is_symlink() {
+            Self::hash_metadata(&mut hash, &fs::metadata(sync_dir)?);
+        }
+        for entry in entries {
+            let name = entry.file_name();
+            hash.update((name.as_bytes().len() as u64).to_le_bytes());
+            hash.update(name.as_bytes());
+            let metadata = entry
+                .metadata()
+                .with_context(|| format!("Failed to observe {}", entry.path().display()))?;
+            Self::hash_metadata(&mut hash, &metadata);
+            if metadata.file_type().is_symlink() {
+                let target = fs::metadata(entry.path()).with_context(|| {
+                    format!("Failed to observe target of {}", entry.path().display())
+                })?;
+                Self::hash_metadata(&mut hash, &target);
+            }
+        }
+        Ok(Self(Some(hash.finalize().into())))
     }
 }
 
@@ -1009,6 +1010,27 @@ pub struct AlpmCatalogEpoch {
 }
 
 impl AlpmCatalogEpoch {
+    /// Bracket construction with observations; discard the value on mismatch.
+    /// Equal metadata does not establish a transactionally consistent snapshot.
+    pub(crate) fn load_stable<T>(
+        mut observe: impl FnMut() -> Result<Self>,
+        load: impl FnOnce() -> Result<T>,
+    ) -> Result<(T, Self)> {
+        let epoch = observe()?;
+        let value = load()?;
+        epoch.ensure_unchanged(observe()?)?;
+        Ok((value, epoch))
+    }
+
+    /// Reject observed changes, without claiming to lock external writers.
+    pub(crate) fn ensure_unchanged(self, after: Self) -> Result<()> {
+        anyhow::ensure!(
+            self == after,
+            "Package databases changed while loading; retry the operation"
+        );
+        Ok(())
+    }
+
     pub const UNIX_EPOCH: Self = Self {
         sync: SyncDbEpoch::UNIX_EPOCH,
         local: LocalDbEpoch::UNIX_EPOCH,
@@ -1675,30 +1697,191 @@ mod tests {
     }
 
     #[test]
-    fn test_get_newest_db_mtime_missing_dir_is_epoch() {
+    fn sync_identity_missing_directory_is_absent() {
         let missing = tempfile::TempDir::new()
             .unwrap()
             .path()
             .join("does-not-exist");
-        let mtime = get_newest_db_mtime(&missing).unwrap();
-        assert_eq!(mtime, SystemTime::UNIX_EPOCH);
+        let identity = SyncDbEpoch::from_sync_dir(&missing).unwrap();
+        assert_eq!(identity, SyncDbEpoch::UNIX_EPOCH);
+    }
+
+    #[test]
+    fn catalog_load_preserves_stable_values_and_observation_failures() -> Result<()> {
+        let epoch = AlpmCatalogEpoch::UNIX_EPOCH;
+        let (value, observed) = AlpmCatalogEpoch::load_stable(|| Ok(epoch), || Ok("snapshot"))?;
+        assert_eq!((value, observed), ("snapshot", epoch));
+        let called = std::cell::Cell::new(false);
+        let result = AlpmCatalogEpoch::load_stable(
+            || anyhow::bail!("observation unavailable"),
+            || {
+                called.set(true);
+                Ok(())
+            },
+        );
+        assert!(result.is_err());
+        assert!(
+            !called.get(),
+            "do not initialize when the initial observation fails"
+        );
+        let mut observations = 0;
+        let result = AlpmCatalogEpoch::load_stable(
+            || {
+                observations += 1;
+                if observations == 1 {
+                    Ok(epoch)
+                } else {
+                    anyhow::bail!("source disappeared")
+                }
+            },
+            || Ok("unpublishable"),
+        );
+        assert!(result.is_err());
+        assert_eq!(observations, 2);
+        Ok(())
+    }
+
+    #[test]
+    fn catalog_load_rejects_changes_during_construction() -> Result<()> {
+        struct Probe<'a>(&'a std::cell::Cell<bool>);
+        impl Drop for Probe<'_> {
+            fn drop(&mut self) {
+                self.0.set(true);
+            }
+        }
+        let directory = tempfile::tempdir()?;
+        let database = directory.path().join("core.db");
+        fs::write(&database, b"old")?;
+        let dropped = std::cell::Cell::new(false);
+        let result = AlpmCatalogEpoch::load_stable(
+            || {
+                Ok(AlpmCatalogEpoch {
+                    sync: SyncDbEpoch::from_sync_dir(directory.path())?,
+                    local: LocalDbEpoch::UNIX_EPOCH,
+                })
+            },
+            || {
+                fs::write(&database, b"new generation")?;
+                Ok(Probe(&dropped))
+            },
+        );
+        assert!(
+            result.is_err(),
+            "a load must not be tagged with a later source identity"
+        );
+        assert!(dropped.get(), "discard the unpublished loaded resource");
+        Ok(())
+    }
+
+    #[test]
+    fn sync_identity_detects_changes_hidden_by_a_future_timestamp() -> Result<()> {
+        let directory = tempfile::tempdir()?;
+        let future = directory.path().join("core.db");
+        let changed = directory.path().join("extra.db");
+        fs::write(&future, b"future")?;
+        fs::write(&changed, b"before")?;
+        File::open(&future)?.set_times(
+            fs::FileTimes::new()
+                .set_modified(SystemTime::now() + std::time::Duration::from_hours(24)),
+        )?;
+        File::open(&changed)?.set_times(
+            fs::FileTimes::new()
+                .set_modified(SystemTime::UNIX_EPOCH + std::time::Duration::from_secs(10)),
+        )?;
+        let before = SyncDbEpoch::from_sync_dir(directory.path())?;
+        fs::write(&changed, b"after!")?;
+        File::open(&changed)?.set_times(
+            fs::FileTimes::new()
+                .set_modified(SystemTime::UNIX_EPOCH + std::time::Duration::from_secs(20)),
+        )?;
+        let after = SyncDbEpoch::from_sync_dir(directory.path())?;
+        assert_ne!(
+            before, after,
+            "a future-dated neighbor must not mask source changes"
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn sync_identity_detects_replacement_with_preserved_mtime() -> Result<()> {
+        let directory = tempfile::tempdir()?;
+        let path = directory.path().join("core.db");
+        fs::write(&path, b"before")?;
+        let mtime = fs::metadata(&path)?.modified()?;
+        let before = SyncDbEpoch::from_sync_dir(directory.path())?;
+        assert_eq!(before, SyncDbEpoch::from_sync_dir(directory.path())?);
+        let replacement = directory.path().join("replacement");
+        fs::write(&replacement, b"after!")?;
+        File::open(&replacement)?.set_times(fs::FileTimes::new().set_modified(mtime))?;
+        fs::rename(&replacement, &path)?;
+        let after = SyncDbEpoch::from_sync_dir(directory.path())?;
+        assert_ne!(before, after);
+        assert!(!is_cache_reusable(
+            Some(before),
+            after,
+            true,
+            Some(SystemTime::now())
+        ));
+        assert!(is_cache_reusable(
+            Some(after),
+            after,
+            true,
+            Some(SystemTime::now())
+        ));
+        Ok(())
+    }
+
+    #[test]
+    fn sync_identity_tracks_symlink_targets_and_rejects_dangling_links() -> Result<()> {
+        let directory = tempfile::tempdir()?;
+        let sync = directory.path().join("sync");
+        fs::create_dir(&sync)?;
+        let target = directory.path().join("target.db");
+        fs::write(&target, b"one")?;
+        std::os::unix::fs::symlink(&target, sync.join("core.db"))?;
+        let before = SyncDbEpoch::from_sync_dir(&sync)?;
+        fs::write(&target, b"different size")?;
+        assert_ne!(before, SyncDbEpoch::from_sync_dir(&sync)?);
+        fs::remove_file(&target)?;
+        assert!(SyncDbEpoch::from_sync_dir(&sync).is_err());
+        Ok(())
+    }
+
+    #[test]
+    fn sync_identity_cache_uses_versioned_namespace() -> Result<()> {
+        let directory = tempfile::tempdir()?;
+        let cache = DbCache {
+            last_modified: Some(SyncDbEpoch::from_sync_dir(directory.path())?),
+            ..DbCache::default()
+        };
+        fs::write(directory.path().join("sync_db.bin"), b"legacy cache")?;
+        fs::write(
+            directory.path().join("sync_db_source_v1.bin"),
+            bitcode::serialize(&cache)?,
+        )?;
+        let decoded: DbCache = load_cache_from_disk_in(directory.path(), "sync_db_source_v1")?;
+        assert_eq!(decoded.last_modified, cache.last_modified);
+        assert_eq!(
+            fs::read(directory.path().join("sync_db.bin"))?,
+            b"legacy cache"
+        );
+        Ok(())
     }
 
     #[test]
     fn sync_directory_additions_and_removals_change_cache_identity() {
         let temp_dir = tempfile::TempDir::new().unwrap();
         let database = temp_dir.path().join("core.db");
-        let empty = get_newest_db_mtime(temp_dir.path()).unwrap();
-        assert_eq!(empty, SystemTime::UNIX_EPOCH);
+        let empty = SyncDbEpoch::from_sync_dir(temp_dir.path()).unwrap();
+        assert_ne!(empty, SyncDbEpoch::UNIX_EPOCH);
 
         std::fs::write(&database, b"database").unwrap();
-        let populated = get_newest_db_mtime(temp_dir.path()).unwrap();
-        assert!(populated > SystemTime::UNIX_EPOCH);
-        assert!(SyncDbEpoch::from_sync_dir(temp_dir.path()).unwrap() > SyncDbEpoch::UNIX_EPOCH);
+        let populated = SyncDbEpoch::from_sync_dir(temp_dir.path()).unwrap();
+        assert_ne!(populated, empty);
 
         std::fs::remove_file(database).unwrap();
-        let removed = get_newest_db_mtime(temp_dir.path()).unwrap();
-        assert_eq!(removed, SystemTime::UNIX_EPOCH);
+        let removed = SyncDbEpoch::from_sync_dir(temp_dir.path()).unwrap();
+        assert_ne!(removed, populated);
     }
 
     #[test]
@@ -1716,7 +1899,7 @@ mod tests {
     }
 
     #[test]
-    fn test_get_newest_db_mtime_unreadable_dir_errors() {
+    fn sync_identity_unreadable_directory_errors() {
         let temp_dir = tempfile::TempDir::new().unwrap();
         let original = std::fs::metadata(temp_dir.path()).unwrap().permissions();
         #[cfg(unix)]
@@ -1726,7 +1909,7 @@ mod tests {
                 .unwrap();
         }
         let blocked = std::fs::read_dir(temp_dir.path()).is_err();
-        let result = get_newest_db_mtime(temp_dir.path());
+        let result = SyncDbEpoch::from_sync_dir(temp_dir.path());
         let _ = std::fs::set_permissions(temp_dir.path(), original);
         if !blocked {
             return;
