@@ -65,6 +65,7 @@ impl std::fmt::Display for SecurityGrade {
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
 pub struct SecurityPolicy {
     #[serde(default = "default_minimum_grade")]
     pub minimum_grade: SecurityGrade,
@@ -140,7 +141,7 @@ impl SecurityPolicy {
     ///
     /// # Errors
     /// Returns [`PolicyError::Read`] for unreadable files and
-    /// [`PolicyError::Parse`] for malformed TOML.
+    /// [`PolicyError::Parse`] for malformed TOML or unsupported policy fields.
     pub fn load(path: impl AsRef<Path>) -> Result<Self, PolicyError> {
         let path = path.as_ref();
         let content = fs::read_to_string(path).map_err(|source| PolicyError::Read {
@@ -422,6 +423,58 @@ mod tests {
             .expect("missing policy should use defaults");
         assert_eq!(policy.minimum_grade, SecurityGrade::Community);
         assert!(policy.allow_aur);
+    }
+
+    #[test]
+    fn load_optional_rejects_unsupported_security_fields_without_rewriting() {
+        let temp = tempfile::TempDir::new().expect("temp dir");
+        let path = temp.path().join("policy.toml");
+        for (field, value) in [
+            ("max_cve_severity", "7.0"),
+            ("require_sbom", "true"),
+            ("verify_slsa", "true"),
+            ("trusted_maintainers", "[\"maintainer\"]"),
+            ("allow_ar", "false"),
+        ] {
+            let input = format!("allow_aur = false\n{field} = {value}\n");
+            fs::write(&path, &input).expect("write policy");
+            let error = SecurityPolicy::load_optional(&path)
+                .expect_err("unsupported security options must not be silently ignored");
+            let PolicyError::Parse { source, .. } = error else {
+                panic!("unknown security fields must produce a parse error");
+            };
+            assert!(source.to_string().contains("unknown field"));
+            assert!(source.to_string().contains(field));
+            assert_eq!(
+                fs::read_to_string(&path).expect("read original policy"),
+                input
+            );
+        }
+    }
+
+    #[test]
+    fn supported_policy_roundtrips_through_file_and_elevation_payload() {
+        let temp = tempfile::TempDir::new().expect("temp dir");
+        let path = temp.path().join("policy.toml");
+        let policy = SecurityPolicy {
+            minimum_grade: SecurityGrade::Verified,
+            allow_aur: false,
+            require_pgp: true,
+            allowed_licenses: vec!["MIT".to_string()],
+            banned_packages: vec!["banned".to_string()],
+        };
+        fs::write(&path, toml::to_string(&policy).expect("serialize policy"))
+            .expect("write policy");
+        assert_eq!(
+            SecurityPolicy::load_optional(&path).expect("load policy"),
+            policy
+        );
+        let payload = serde_json::to_vec(&policy).expect("serialize elevation policy");
+        assert_eq!(
+            serde_json::from_slice::<SecurityPolicy>(&payload).expect("read elevation policy"),
+            policy
+        );
+        assert!(serde_json::from_str::<SecurityPolicy>(r#"{"verify_slsa":true}"#).is_err());
     }
 
     #[test]

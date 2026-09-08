@@ -150,7 +150,7 @@ The security policy controls what packages can be installed and their required s
 #   Risk      - Known vulnerabilities present
 #   Community - AUR/unsigned packages
 #   Verified  - PGP/checksum verified (official repos)
-#   Locked    - SLSA Level 3 + PGP verified (core packages)
+#   Locked    - Reserved for provenance-backed verification; not assigned by installation
 minimum_grade = "Verified"
 
 # Allow installation of AUR packages
@@ -187,29 +187,20 @@ banned_packages = [
     # "example-malicious-package",
     # "deprecated-insecure-tool",
 ]
-
-# ═══════════════════════════════════════════════════════════════════════════
-# ADVANCED POLICY OPTIONS
-# ═══════════════════════════════════════════════════════════════════════════
-
-# Block packages with known CVEs above this severity (0.0-10.0)
-# max_cve_severity = 7.0
-
-# Require SBOM for installed packages
-# require_sbom = false
-
-# Enable SLSA provenance verification
-# verify_slsa = true
-
-# Trusted packagers/maintainers
-# trusted_maintainers = ["username1", "username2"]
 ```
+
+Only the five fields shown above are supported. Unknown policy fields cause a
+parse error; they are not ignored and the file is not rewritten. If an older
+example introduced `max_cve_severity`, `require_sbom`, `verify_slsa`, or
+`trusted_maintainers`, remove those unsupported fields after reviewing your
+requirements. These fields have never enabled enforcement. SLSA verification
+and SBOM generation are separate audit commands, not installation policy switches.
 
 ### Security Grades Explained
 
 | Grade | Level | Description | Examples |
 | ------- | ------- | ------------- | ---------- |
-| **Locked** | 3 | SLSA Level 3 + PGP verified | `glibc`, `linux`, `pacman` |
+| **Locked** | 3 | Reserved for provenance-backed verification | Not assigned by the installation policy |
 | **Verified** | 2 | PGP/checksum verified | Official repo packages |
 | **Community** | 1 | AUR/unsigned sources | AUR packages |
 | **Risk** | 0 | Known vulnerabilities | CVE-affected packages |
