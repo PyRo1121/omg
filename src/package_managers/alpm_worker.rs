@@ -41,9 +41,9 @@ fn initialize_alpm_worker() -> Result<alpm::Alpm> {
 }
 
 fn load_alpm_worker() -> Result<LoadedAlpm> {
-    let handle = initialize_alpm_worker()?;
-    let epoch = AlpmCatalogEpoch::observe()
-        .context("Failed to observe ALPM catalog epoch after ALPM init")?;
+    let (handle, epoch) =
+        AlpmCatalogEpoch::load_stable(AlpmCatalogEpoch::observe, initialize_alpm_worker)
+            .context("Failed to load a stable ALPM worker snapshot")?;
     Ok(LoadedAlpm { handle, epoch })
 }
 
