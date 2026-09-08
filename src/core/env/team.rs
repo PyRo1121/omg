@@ -289,20 +289,19 @@ impl TeamWorkspace {
             self.config.is_some(),
             "Not a team workspace. Run 'omg team init' first."
         );
+        let mut config = Self::load_config(&self.root)?;
         self.ensure_config_dir()?;
-        // The ensure! above guarantees the config is loaded, so set the remote
-        // URL directly instead of re-branching on Option.
-        let config = self.config.as_mut().context("Not a team workspace")?;
         config.remote_url = Some(remote_url.to_string());
-        let content = toml::to_string_pretty(config)?;
+        let content = toml::to_string_pretty(&config)?;
         crate::core::safe_ops::atomic_write_file_sync(self.config_path(), content)?;
+        self.config = Some(config);
 
         Ok(())
     }
 
     /// Update local member status
     pub async fn update_status(&self) -> Result<TeamStatus> {
-        let config = self.config.as_ref().context("Not a team workspace")?;
+        let config = Self::load_config(&self.root)?;
 
         // Capture current environment
         let current_env = EnvironmentState::capture().await?;
@@ -386,9 +385,12 @@ impl TeamWorkspace {
                 status.format_version
             );
         }
-        // The embedded config is a historical snapshot, not a second authority.
-        // A read-only projection avoids rewriting member state when joining a remote.
-        status.config = Self::load_config(&self.root)?;
+        let config = Self::load_config(&self.root)?;
+        anyhow::ensure!(
+            status.config.team_id == config.team_id,
+            "Team status belongs to a different team; refusing to reinterpret its member records"
+        );
+        status.config = config;
         Ok(status)
     }
 
@@ -675,6 +677,65 @@ mod tests {
             std::fs::read(root.join("other.txt")).unwrap(),
             b"staged secret\n"
         );
+    }
+
+    #[test]
+    fn status_uses_current_team_config_without_rewriting_members() -> Result<()> {
+        let directory = tempfile::tempdir()?;
+        let mut workspace = TeamWorkspace::new(directory.path())?;
+        workspace.init("fixture-team", "Before")?;
+        let persisted = std::fs::read(workspace.status_path())?;
+        let initial: TeamStatus = serde_json::from_slice(&persisted)?;
+        workspace.join("https://gist.github.com/fixture/lock")?;
+        let mut config = workspace.config().unwrap().clone();
+        config.name = "After".into();
+        std::fs::write(workspace.config_path(), toml::to_string(&config)?)?;
+        for status in [
+            workspace.load_status()?,
+            TeamWorkspace::new(directory.path())?.load_status()?,
+        ] {
+            assert_eq!(status.config.name, "After");
+            assert_eq!(
+                status.config.remote_url.as_deref(),
+                Some("https://gist.github.com/fixture/lock")
+            );
+            assert_eq!(
+                serde_json::to_value(&status.members)?,
+                serde_json::to_value(&initial.members)?
+            );
+        }
+        assert_eq!(std::fs::read(workspace.status_path())?, persisted);
+        Ok(())
+    }
+
+    #[test]
+    fn status_rejects_a_different_team_without_rewriting_data() -> Result<()> {
+        let directory = tempfile::tempdir()?;
+        let mut workspace = TeamWorkspace::new(directory.path())?;
+        workspace.init("original-team", "Fixture")?;
+        let persisted = std::fs::read(workspace.status_path())?;
+        let mut config = workspace.config().unwrap().clone();
+        config.team_id = "different-team".into();
+        std::fs::write(workspace.config_path(), toml::to_string(&config)?)?;
+        assert!(workspace.load_status().is_err());
+        assert_eq!(std::fs::read(workspace.status_path())?, persisted);
+        Ok(())
+    }
+
+    #[test]
+    fn failed_join_does_not_change_in_memory_config() -> Result<()> {
+        let directory = tempfile::tempdir()?;
+        let mut workspace = TeamWorkspace::new(directory.path())?;
+        workspace.init("fixture-team", "Fixture")?;
+        std::fs::remove_file(workspace.config_path())?;
+        std::fs::create_dir(workspace.config_path())?;
+        assert!(
+            workspace
+                .join("https://gist.github.com/fixture/lock")
+                .is_err()
+        );
+        assert!(workspace.config().unwrap().remote_url.is_none());
+        Ok(())
     }
 
     #[test]

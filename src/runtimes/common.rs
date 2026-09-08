@@ -10,7 +10,7 @@ use std::path::{Path, PathBuf};
 
 use anyhow::{Context, Result};
 use serde::Deserialize;
-use sha2::{Digest, Sha256};
+use sha2::{Digest, Sha256, Sha512};
 
 use crate::cli::{
     progress::{Accent, Outcome, ProgressTask, TaskKind, TaskSpec},
@@ -449,6 +449,109 @@ pub async fn download_with_progress(
     Ok(())
 }
 
+/// Download a file with progress bar and SHA-512 verification.
+///
+/// Structural mirror of [`download_with_progress`] for vendors that publish
+/// SHA-512 hashes (Microsoft's .NET release metadata). Kept as a separate
+/// function so the SHA-256 hot path used by every other manager is untouched.
+pub async fn download_with_progress_sha512(
+    client: &reqwest::Client,
+    url: &str,
+    dest: &Path,
+    expected_sha512: &str,
+) -> Result<()> {
+    use futures::StreamExt;
+    use tokio::io::AsyncWriteExt;
+
+    let response = client
+        .get(url)
+        .header("User-Agent", GITHUB_USER_AGENT)
+        .send()
+        .await
+        .with_context(|| format!("Failed to connect to {}", extract_domain(url)))?;
+
+    if !response.status().is_success() {
+        let status = response.status();
+        if status.as_u16() == 404 {
+            anyhow::bail!(
+                "Version not found (404). Check available versions with: omg list --available"
+            );
+        }
+        anyhow::bail!("Download failed: HTTP {status}");
+    }
+
+    let total_size = response.content_length().unwrap_or(0);
+    anyhow::ensure!(
+        total_size <= MAX_RUNTIME_DOWNLOAD_BYTES,
+        "Runtime download declares {total_size} bytes, exceeding the {MAX_RUNTIME_DOWNLOAD_BYTES}-byte limit"
+    );
+    let label = dest.file_name().map_or_else(
+        || "download".to_string(),
+        |name| name.to_string_lossy().into_owned(),
+    );
+    let task = ProgressTask::start(&TaskSpec {
+        label,
+        kind: TaskKind::Bytes {
+            total: (total_size > 0).then_some(total_size),
+        },
+        accent: Accent::Network,
+    });
+
+    let parent = dest.parent().unwrap_or_else(|| Path::new("."));
+    tokio::fs::create_dir_all(parent)
+        .await
+        .with_context(|| format!("Failed to create parent directory: {}", parent.display()))?;
+
+    // Stream into a same-filesystem temporary file so a failed, aborted, or
+    // checksum-mismatched download never leaves a partial artifact at `dest`.
+    let temporary = tempfile::Builder::new()
+        .prefix(".download-")
+        .tempfile_in(parent)
+        .with_context(|| format!("Failed to create temporary download for {}", dest.display()))?;
+    let (std_file, temporary_path) = temporary.into_parts();
+    let mut file = tokio::fs::File::from_std(std_file);
+
+    let mut stream = response.bytes_stream();
+    let mut downloaded: u64 = 0;
+    let mut hasher = Sha512::new();
+
+    while let Some(item) = stream.next().await {
+        let chunk = item.context("Error downloading chunk")?;
+        file.write_all(&chunk)
+            .await
+            .context("Error writing to file")?;
+
+        hasher.update(&chunk);
+
+        downloaded = bounded_download_size(downloaded, chunk.len())?;
+        task.set_position(downloaded);
+    }
+
+    file.flush()
+        .await
+        .with_context(|| format!("Failed to flush download to: {}", dest.display()))?;
+    file.sync_all()
+        .await
+        .with_context(|| format!("Failed to sync download to: {}", dest.display()))?;
+    drop(file);
+
+    // Verify checksum before publishing the download to its final path.
+    let actual = hex::encode(hasher.finalize());
+    let expected = expected_sha512.trim();
+    if !actual.eq_ignore_ascii_case(expected) {
+        anyhow::bail!(
+            "Checksum mismatch!\n  Expected: {expected}\n  Got: {actual}\n\nThis could indicate a corrupted download or security issue."
+        );
+    }
+
+    temporary_path
+        .persist(dest)
+        .map_err(|error| error.error)
+        .with_context(|| format!("Failed to finalize download: {}", dest.display()))?;
+    task.finish(Outcome::Done);
+    Ok(())
+}
+
 fn bounded_download_size(downloaded: u64, chunk_size: usize) -> Result<u64> {
     let next = downloaded
         .checked_add(u64::try_from(chunk_size).context("Download chunk size does not fit u64")?)
@@ -493,10 +596,13 @@ fn validate_relative_symlink_target(link_path: &Path, target: &Path) -> Result<(
     Ok(())
 }
 
-fn create_archive_links(links: Vec<PendingArchiveLink>) -> Result<()> {
+fn create_archive_links(links: Vec<PendingArchiveLink>, dest_dir: &Path) -> Result<()> {
+    let root = dest_dir.canonicalize()?;
+    let mut symbolic_paths = Vec::new();
     for link in links {
         match link {
             PendingArchiveLink::Symbolic { path, target } => {
+                symbolic_paths.push(path.clone());
                 #[cfg(unix)]
                 std::os::unix::fs::symlink(&target, &path).with_context(|| {
                     format!(
@@ -512,6 +618,13 @@ fn create_archive_links(links: Vec<PendingArchiveLink>) -> Result<()> {
                 );
             }
             PendingArchiveLink::Hard { path, target } => {
+                let target = target
+                    .canonicalize()
+                    .context("Invalid archive hard link target")?;
+                anyhow::ensure!(
+                    target.starts_with(&root),
+                    "Archive hard link escapes the extraction directory"
+                );
                 fs::hard_link(&target, &path).with_context(|| {
                     format!(
                         "Failed to create archive hard link {} -> {}",
@@ -521,6 +634,16 @@ fn create_archive_links(links: Vec<PendingArchiveLink>) -> Result<()> {
                 })?;
             }
         }
+    }
+    for path in symbolic_paths {
+        let resolved = path
+            .canonicalize()
+            .with_context(|| format!("Unresolvable archive symlink: {}", path.display()))?;
+        anyhow::ensure!(
+            resolved.starts_with(&root),
+            "Archive symlink escapes the extraction directory: {}",
+            path.display()
+        );
     }
     Ok(())
 }
@@ -597,7 +720,7 @@ fn extract_tar_entries<R: std::io::Read>(
             );
         }
     }
-    create_archive_links(pending_links)
+    create_archive_links(pending_links, dest_dir)
 }
 
 /// Synchronously extract selected entries from a .tar.gz component archive
@@ -823,6 +946,26 @@ pub(crate) fn begin_download(versions_dir: &Path) -> Result<tempfile::TempDir> {
         .context("Failed to create private runtime download directory")
 }
 
+/// Remove all contents of `dir` without removing `dir` itself.
+///
+/// Used when a staged extraction must be retried with a different layout:
+/// the staging directory stays put so its same-filesystem atomic publish
+/// still holds.
+pub(crate) fn clear_dir_contents(dir: &Path) -> Result<()> {
+    for entry in
+        fs::read_dir(dir).with_context(|| format!("Failed to re-stage {}", dir.display()))?
+    {
+        let entry = entry?;
+        let path = entry.path();
+        if path.is_symlink() || path.is_file() {
+            fs::remove_file(&path)?;
+        } else {
+            fs::remove_dir_all(&path)?;
+        }
+    }
+    Ok(())
+}
+
 /// Begin a same-filesystem staged runtime install.
 ///
 /// Extraction writes into the returned staging directory, which only becomes
@@ -857,6 +1000,12 @@ pub(crate) fn complete_staged_install(
     version_dir: &Path,
     version: &str,
 ) -> Result<()> {
+    let _mutation = try_lock_runtime_file(
+        version_dir
+            .parent()
+            .context("Runtime version has no parent")?,
+        ".mutation.lock",
+    )?;
     write_install_marker(staging.path(), version)?;
     #[cfg(any(target_os = "linux", target_os = "macos"))]
     {
@@ -888,6 +1037,12 @@ pub(crate) fn replace_staged_install(
     version_dir: &Path,
     version: &str,
 ) -> Result<()> {
+    let _mutation = try_lock_runtime_file(
+        version_dir
+            .parent()
+            .context("Runtime version has no parent")?,
+        ".mutation.lock",
+    )?;
     write_install_marker(staging.path(), version)?;
     if !is_valid_version_dir(version_dir) {
         anyhow::bail!(
@@ -984,6 +1139,33 @@ fn write_install_marker(version_dir: &Path, version: &str) -> Result<()> {
 }
 
 pub(crate) const TEST_RUNTIME_MARKER: &str = ".omg-test-mock";
+pub(crate) const INSTALL_PENDING_MARKER: &str = ".omg-installing";
+
+pub(crate) fn try_lock_runtime_install(versions_dir: &Path, version: &str) -> Result<File> {
+    crate::core::security::validate_runtime_version(version)?;
+    try_lock_runtime_file(versions_dir, &format!(".install-{version}.lock"))
+}
+
+fn try_lock_runtime_file(versions_dir: &Path, name: &str) -> Result<File> {
+    use std::os::unix::fs::{MetadataExt, OpenOptionsExt};
+    fs::create_dir_all(versions_dir)?;
+    let lock = fs::OpenOptions::new()
+        .read(true)
+        .write(true)
+        .create(true)
+        .truncate(false)
+        .mode(0o600)
+        .custom_flags((nix::fcntl::OFlag::O_NOFOLLOW | nix::fcntl::OFlag::O_NONBLOCK).bits())
+        .open(versions_dir.join(name))?;
+    let metadata = lock.metadata()?;
+    anyhow::ensure!(
+        metadata.is_file() && metadata.nlink() == 1,
+        "Unsafe runtime install lock"
+    );
+    lock.try_lock()
+        .context("Another runtime mutation is in progress; retry when it finishes")?;
+    Ok(lock)
+}
 
 /// Return whether a runtime version path is a real production directory.
 ///
@@ -993,6 +1175,7 @@ pub(crate) const TEST_RUNTIME_MARKER: &str = ".omg-test-mock";
 pub(crate) fn is_valid_version_dir(version_dir: &Path) -> bool {
     fs::symlink_metadata(version_dir).is_ok_and(|metadata| metadata.is_dir())
         && !version_dir.join(TEST_RUNTIME_MARKER).exists()
+        && matches!(fs::symlink_metadata(version_dir.join(INSTALL_PENDING_MARKER)), Err(error) if error.kind() == std::io::ErrorKind::NotFound)
 }
 
 /// Return whether a runtime binary directory is safe to prepend to `PATH`.
@@ -1128,6 +1311,7 @@ pub(crate) fn require_internal_runtime_binary(
 /// Mirrors the validation `set_current_version` applies on the way in.
 pub(crate) fn uninstall_version(versions_dir: &Path, version: &str) -> Result<()> {
     crate::core::security::validate_runtime_version(version)?;
+    let _mutation = try_lock_runtime_file(versions_dir, ".mutation.lock")?;
 
     // is_valid_version_dir rejects symlinks, so the removal below cannot
     // escape the versions tree through a linked version path.
@@ -1153,6 +1337,7 @@ pub(crate) fn uninstall_version(versions_dir: &Path, version: &str) -> Result<()
 /// Create or update the "current" symlink
 pub(crate) fn set_current_version(versions_dir: &Path, version: &str) -> Result<()> {
     crate::core::security::validate_runtime_version(version)?;
+    let _mutation = try_lock_runtime_file(versions_dir, ".mutation.lock")?;
 
     let current_link = versions_dir.join("current");
     let version_dir = versions_dir.join(version);
@@ -1376,6 +1561,18 @@ pub(crate) fn parse_sha256_digest(value: &str, source: &str) -> Result<String> {
         .and_then(|digest| digest.strip_prefix("sha256:").or(Some(digest)))
         .filter(|digest| digest.len() == 64 && digest.chars().all(|c| c.is_ascii_hexdigit()))
         .ok_or_else(|| anyhow::anyhow!("Invalid SHA-256 digest returned by {source}"))?;
+    Ok(digest.to_ascii_lowercase())
+}
+
+/// Validate a vendor-supplied SHA-512 checksum (128 lowercase hex digits),
+/// accepting an optional `sha512:` prefix and manifest-style trailing text.
+pub(crate) fn parse_sha512_digest(value: &str, source: &str) -> Result<String> {
+    let digest = value
+        .split_whitespace()
+        .next()
+        .and_then(|digest| digest.strip_prefix("sha512:").or(Some(digest)))
+        .filter(|digest| digest.len() == 128 && digest.chars().all(|c| c.is_ascii_hexdigit()))
+        .ok_or_else(|| anyhow::anyhow!("Invalid SHA-512 digest returned by {source}"))?;
     Ok(digest.to_ascii_lowercase())
 }
 
@@ -1656,6 +1853,22 @@ mod tests {
     }
 
     #[test]
+    fn parse_sha512_digest_accepts_dotnet_metadata_hashes() -> Result<()> {
+        let digest = "B".repeat(128);
+        assert_eq!(
+            parse_sha512_digest(&digest, "builds.dotnet.microsoft.com")?,
+            digest.to_lowercase()
+        );
+        assert_eq!(
+            parse_sha512_digest(&format!("sha512:{digest}"), "builds.dotnet.microsoft.com")?,
+            digest.to_lowercase()
+        );
+        assert!(parse_sha512_digest(&"C".repeat(64), "builds.dotnet.microsoft.com").is_err());
+        assert!(parse_sha512_digest("not-a-hash", "builds.dotnet.microsoft.com").is_err());
+        Ok(())
+    }
+
+    #[test]
     fn is_partial_version_accepts_only_numeric_prefixes() {
         assert!(is_partial_version("20"));
         assert!(is_partial_version("3.12"));
@@ -1758,6 +1971,50 @@ mod tests {
         assert!(parse_sha256_digest(&"z".repeat(64), "nodejs.org").is_err());
     }
 
+    #[test]
+    fn pending_runtime_is_neither_listed_activated_nor_removed() -> anyhow::Result<()> {
+        let temp = TempDir::new()?;
+        let version = temp.path().join("1.0.0");
+        fs::create_dir_all(version.join("bin"))?;
+        fs::write(version.join("bin/tool"), b"fixture")?;
+        fs::write(version.join(INSTALL_PENDING_MARKER), b"")?;
+        assert!(!is_valid_version_dir(&version));
+        assert!(list_installed_versions(temp.path())?.is_empty());
+        assert!(activate_version(temp.path(), "1.0.0", Path::new("bin/tool")).is_err());
+        assert!(uninstall_version(temp.path(), "1.0.0").is_err());
+        assert!(version.exists());
+        fs::remove_file(version.join(INSTALL_PENDING_MARKER))?;
+        assert!(is_valid_version_dir(&version));
+        assert_eq!(list_installed_versions(temp.path())?, vec!["1.0.0"]);
+        Ok(())
+    }
+
+    #[test]
+    fn activation_and_removal_share_a_mutation_lease() -> anyhow::Result<()> {
+        let temp = TempDir::new()?;
+        let version = temp.path().join("1.0.0");
+        fs::create_dir(&version)?;
+        let lease = try_lock_runtime_file(temp.path(), ".mutation.lock")?;
+        assert!(set_current_version(temp.path(), "1.0.0").is_err());
+        assert!(uninstall_version(temp.path(), "1.0.0").is_err());
+        assert!(version.exists());
+        drop(lease);
+        set_current_version(temp.path(), "1.0.0")?;
+        assert!(uninstall_version(temp.path(), "1.0.0").is_err());
+        assert!(version.exists());
+        Ok(())
+    }
+
+    #[test]
+    fn runtime_install_lease_excludes_concurrent_recovery() -> anyhow::Result<()> {
+        let temp = TempDir::new()?;
+        let lease = try_lock_runtime_install(temp.path(), "1.0.0")?;
+        assert!(try_lock_runtime_install(temp.path(), "1.0.0").is_err());
+        drop(lease);
+        let _next = try_lock_runtime_install(temp.path(), "1.0.0")?;
+        Ok(())
+    }
+
     fn tar_archive_with_symlink(target: &str) -> anyhow::Result<Vec<u8>> {
         let mut bytes = Vec::new();
         let mut builder = tar::Builder::new(&mut bytes);
@@ -1801,6 +2058,39 @@ mod tests {
                 .to_string()
                 .contains("escapes the extraction directory")
         );
+        Ok(())
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn tar_gz_extraction_rejects_composed_symlink_escape() -> anyhow::Result<()> {
+        let temp = TempDir::new()?;
+        fs::write(temp.path().join("victim"), b"untouched")?;
+        let archive_path = temp.path().join("runtime.tar.gz");
+        let encoder = flate2::write::GzEncoder::new(Vec::new(), flate2::Compression::default());
+        let mut builder = tar::Builder::new(encoder);
+        for (name, target) in [
+            ("runtime/a", "."),
+            ("runtime/usr/bin/swift", "../../a/../victim"),
+        ] {
+            let mut header = tar::Header::new_gnu();
+            header.set_entry_type(tar::EntryType::Symlink);
+            header.set_mode(0o777);
+            header.set_size(0);
+            header.set_link_name(target)?;
+            header.set_cksum();
+            builder.append_data(&mut header, name, std::io::empty())?;
+        }
+        fs::write(&archive_path, builder.into_inner()?.finish()?)?;
+        let error = extract_tar_gz(&archive_path, &temp.path().join("out"), 1)
+            .await
+            .expect_err("composed escape must fail");
+        assert!(
+            error
+                .to_string()
+                .contains("escapes the extraction directory")
+        );
+        assert_eq!(fs::read(temp.path().join("victim"))?, b"untouched");
         Ok(())
     }
 

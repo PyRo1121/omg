@@ -16,7 +16,7 @@ use tokio_util::codec::{FramedWrite, LengthDelimitedCodec};
 use tokio_util::sync::CancellationToken;
 
 use super::handlers::{DaemonState, handle_request};
-use super::protocol::{Request, Response, ResponseResult, SearchResult, error_codes};
+use super::protocol::{Request, Response, error_codes};
 use crate::core::metrics::GLOBAL_METRICS;
 use crate::core::security::{
     AuditEventType, AuditSeverity, audit_log_nonblocking, init_audit_logger,
@@ -152,6 +152,9 @@ async fn run_with_status_path(
     fast_status_path: PathBuf,
 ) -> Result<()> {
     let shutdown_token = CancellationToken::new();
+    let _cancel_on_drop = shutdown_token.clone().drop_guard();
+    let mut workers = tokio::task::JoinSet::new();
+    let mut connections = tokio::task::JoinSet::new();
     let (internal_failure_tx, mut internal_failure_rx) =
         tokio::sync::mpsc::unbounded_channel::<String>();
 
@@ -166,7 +169,7 @@ async fn run_with_status_path(
     let shutdown_trigger = shutdown_token.clone();
     let health_failure_tx = internal_failure_tx.clone();
 
-    let worker_handle = tokio::spawn(async move {
+    workers.spawn(async move {
         tracing::info!("Background status worker started");
 
         async fn refresh_status(state: &Arc<DaemonState>, fast_status_path: &std::path::Path) {
@@ -271,29 +274,25 @@ async fn run_with_status_path(
                 }
             }
 
-            // Pre-warm search cache with common queries for instant first searches
-            let state_search = Arc::clone(state);
-            if let Err(error) = tokio::task::spawn_blocking(move || {
-                let common_queries = ["", "linux", "python", "node", "firefox", "git"];
-                let index = state_search.index_snapshot();
-                for query in common_queries {
-                    let results = Arc::new(index.search(query, super::handlers::MAX_SEARCH_LIMIT));
-                    if !state_search.with_current_index(&index, || {
-                        state_search
-                            .cache
-                            .insert_arc(query.to_string(), Arc::clone(&results));
-                    }) {
-                        break;
+            let index = state.index_snapshot();
+            for query in ["", "linux", "python", "node", "firefox", "git"] {
+                let results = match super::handlers::search_index_blocking(
+                    Arc::clone(&index),
+                    query.to_string(),
+                )
+                .await
+                {
+                    Ok(results) => Arc::new(results),
+                    Err(error) => {
+                        tracing::warn!("Search cache pre-warm failed: {error}");
+                        return;
                     }
+                };
+                if !state.with_current_index(&index, || {
+                    state.cache.insert_arc(query.to_string(), results);
+                }) {
+                    return;
                 }
-                tracing::debug!(
-                    "Pre-warmed search cache with {} common queries",
-                    common_queries.len()
-                );
-            })
-            .await
-            {
-                tracing::warn!("Search cache pre-warm task failed: {error}");
             }
         }
 
@@ -302,7 +301,7 @@ async fn run_with_status_path(
         prewarm_caches(&state_worker).await;
 
         // Track last cleanup time for periodic mmap cleanup
-        let mut last_cleanup = std::time::Instant::now();
+        let mut last_cleanup = tokio::time::Instant::now();
         let mut schedule = BackgroundSchedule::new();
 
         loop {
@@ -325,7 +324,7 @@ async fn run_with_status_path(
                         {
                             crate::package_managers::debian_db::cleanup_expired_mmaps();
                         }
-                        last_cleanup = std::time::Instant::now();
+                        last_cleanup = tokio::time::Instant::now();
                     }
                 }
                 BackgroundEvent::SocketHealth => {
@@ -345,23 +344,7 @@ async fn run_with_status_path(
         }
     });
 
-    // Observe the singleton worker: an unobserved panic would silently freeze
-    // every status-refresh and cache-pre-warm path, so count the failure and
-    // shut down cleanly rather than serving stale data forever.
-    {
-        let state_monitor = Arc::clone(&state);
-        let shutdown_monitor = shutdown_token.clone();
-        let worker_failure_tx = internal_failure_tx;
-        tokio::spawn(async move {
-            if let Err(error) = worker_handle.await {
-                state_monitor.inc_background_worker_failures();
-                let failure = format!("Background status worker terminated unexpectedly: {error}");
-                tracing::error!("{failure}; initiating shutdown");
-                let _ = worker_failure_tx.send(failure);
-                shutdown_monitor.cancel();
-            }
-        });
-    }
+    drop(internal_failure_tx);
 
     tracing::info!("Daemon ready, binary IPC enabled");
 
@@ -373,6 +356,7 @@ async fn run_with_status_path(
     tokio::pin!(termination_signal);
 
     let mut internal_failure = None;
+    let intake_result: Result<()> = async {
     loop {
         tokio::select! {
             // biased: always check shutdown signal first to avoid accepting
@@ -402,6 +386,22 @@ async fn run_with_status_path(
             () = shutdown_token.cancelled() => {
                 tracing::info!("Shutdown triggered by health monitor, cleaning up...");
                 break;
+            }
+
+            Some(result) = workers.join_next() => {
+                if let Err(error) = result {
+                    state.inc_background_worker_failures();
+                    internal_failure = Some(format!("Background status worker failed: {error}"));
+                } else if !shutdown_token.is_cancelled() {
+                    internal_failure = Some("Background status worker stopped unexpectedly".into());
+                }
+                break;
+            }
+
+            Some(result) = connections.join_next(), if !connections.is_empty() => {
+                if let Err(error) = result {
+                    tracing::error!("Client task failed: {error}");
+                }
             }
 
             result = listener.accept() => {
@@ -446,28 +446,76 @@ async fn run_with_status_path(
                     continue;
                 };
 
-                tokio::spawn(async move {
+                connections.spawn(async move {
                     // Held until the task completes; Drop releases the permit.
                     let _permit = permit;
-                    tokio::select! {
-                        // biased: check cancellation first for prompt client shutdown
-                        biased;
-
-                        () = client_token.cancelled() => {
-                            tracing::debug!("Client connection closed due to shutdown");
-                        }
-                        result = handle_client(stream, state) => {
-                            if let Err(e) = result {
-                                tracing::error!("Client error: {}", e);
-                            }
-                        }
+                    if let Err(error) = handle_client(stream, state, client_token).await {
+                        tracing::error!("Client error: {error}");
                     }
                 });
             }
         }
     }
 
+    Ok(())
+    }.await;
+    drop(listener);
+    let shutdown_result = drain_daemon_tasks(
+        &shutdown_token,
+        &mut workers,
+        &mut connections,
+        Duration::from_secs(30),
+    )
+    .await;
+    if intake_result.is_err()
+        && let Err(error) = &shutdown_result
+    {
+        tracing::error!("Additional daemon shutdown failure: {error:#}");
+    }
+    intake_result?;
+    shutdown_result?;
+    if internal_failure.is_none() {
+        internal_failure = internal_failure_rx.try_recv().ok();
+    }
     daemon_shutdown_result(internal_failure)
+}
+
+async fn drain_daemon_tasks(
+    cancellation: &CancellationToken,
+    workers: &mut tokio::task::JoinSet<()>,
+    connections: &mut tokio::task::JoinSet<()>,
+    deadline: Duration,
+) -> Result<()> {
+    cancellation.cancel();
+    let drained = tokio::time::timeout(deadline, async {
+        let mut failure = None;
+        while let Some(result) = workers.join_next().await {
+            if let Err(error) = result {
+                failure = Some(error);
+            }
+        }
+        while let Some(result) = connections.join_next().await {
+            if let Err(error) = result {
+                failure = Some(error);
+            }
+        }
+        match failure {
+            Some(error) => {
+                Err(anyhow::anyhow!(error).context("Daemon task failed during shutdown"))
+            }
+            None => Ok(()),
+        }
+    })
+    .await;
+    if let Ok(result) = drained {
+        result
+    } else {
+        workers.shutdown().await;
+        connections.shutdown().await;
+        anyhow::bail!(
+            "Daemon shutdown exceeded its deadline; nested blocking work may still be running"
+        )
+    }
 }
 
 /// Maximum request size to prevent `DoS` attacks. This also bounds the sole
@@ -523,88 +571,19 @@ async fn await_client_write(
     Ok(())
 }
 
-/// Halve a discovery response so an oversized result can fit the frame budget.
-/// Exhaustive audit and inventory results must fail rather than omit entries.
-///
-/// Bitcode frames cannot be byte-truncated (the client's decode would fail),
-/// so truncation happens at the semantic level: list payloads are cut to a
-/// prefix and re-encoded into a still-valid [`Response`] the client decodes
-/// normally. Count fields are kept consistent with the delivered entries.
-/// Returns `None` when nothing can shrink further (single-entry lists, or
-/// results with no list at all).
-fn shrink_result(result: &ResponseResult) -> Option<(ResponseResult, usize)> {
-    let halve = |len: usize| len / 2;
-    let truncatable = |len: usize| len > 1;
-    match result {
-        ResponseResult::Search(r) if truncatable(r.packages.len()) => {
-            let keep = halve(r.packages.len());
-            let packages = r.packages[..keep].to_vec();
-            let dropped = r.packages.len() - keep;
-            // Keep `total` consistent with the delivered prefix so the client
-            // sees a complete (smaller) result set instead of one that hints
-            // at more matches it can never receive.
-            Some((
-                ResponseResult::Search(SearchResult {
-                    packages,
-                    total: keep,
-                }),
-                dropped,
-            ))
-        }
-        ResponseResult::DebianSearch(v) if truncatable(v.len()) => {
-            let keep = halve(v.len());
-            let dropped = v.len() - keep;
-            Some((ResponseResult::DebianSearch(v[..keep].to_vec()), dropped))
-        }
-        ResponseResult::Suggest(v) if truncatable(v.len()) => {
-            let keep = halve(v.len());
-            let dropped = v.len() - keep;
-            Some((ResponseResult::Suggest(v[..keep].to_vec()), dropped))
-        }
-        _ => None,
-    }
-}
-
 fn encode_bounded_response(response: &Response, request_id: u64) -> Result<Vec<u8>> {
     let response_bytes = crate::daemon::protocol::encode_frame(response)?;
     if response_bytes.len() <= MAX_RESPONSE_SIZE {
         return Ok(response_bytes);
     }
 
-    // Graceful degradation: shrink discovery results until the encoded
-    // frame fits the budget. Halving keeps the loop logarithmic; the frame
-    // stays valid `Response` wire data the client decodes normally.
-    if let Response::Success { result, .. } = response {
-        let mut result = result.clone();
-        let mut dropped = 0usize;
-        while let Some((shrunk, step)) = shrink_result(&result) {
-            result = shrunk;
-            dropped += step;
-            let response_bytes = crate::daemon::protocol::encode_frame(&Response::Success {
-                id: request_id,
-                result: result.clone(),
-            })?;
-            if response_bytes.len() <= MAX_RESPONSE_SIZE {
-                tracing::warn!(
-                    request_id,
-                    dropped,
-                    max_response_bytes = MAX_RESPONSE_SIZE,
-                    "Daemon response exceeded the response budget; delivered truncated results"
-                );
-                return Ok(response_bytes);
-            }
-        }
-    }
-
-    // Exhaustive results and discovery results that cannot shrink enough
-    // must return a dedicated limit error rather than a partial success —
-    // still valid `Response` semantics the client understands — never
-    // INTERNAL_ERROR, which would misreport a size limit as a daemon bug.
+    // The protocol has no partial-result marker. A reduced successful result
+    // would misrepresent audit findings, inventory, or available updates.
     tracing::error!(
         request_id,
         response_bytes = response_bytes.len(),
         max_response_bytes = MAX_RESPONSE_SIZE,
-        "Daemon response exceeded the response budget and could not be truncated"
+        "Daemon response exceeded the response budget"
     );
     GLOBAL_METRICS.inc_requests_failed();
     Ok(crate::daemon::protocol::encode_frame(&Response::Error {
@@ -654,14 +633,19 @@ async fn send_error_response<W>(
     }
 }
 
-async fn handle_client(stream: tokio::net::UnixStream, state: Arc<DaemonState>) -> Result<()> {
-    handle_client_with_idle_timeout(stream, state, CLIENT_IDLE_TIMEOUT).await
+async fn handle_client(
+    stream: tokio::net::UnixStream,
+    state: Arc<DaemonState>,
+    cancellation: CancellationToken,
+) -> Result<()> {
+    handle_client_with_idle_timeout(stream, state, CLIENT_IDLE_TIMEOUT, cancellation).await
 }
 
 async fn handle_client_with_idle_timeout(
     stream: tokio::net::UnixStream,
     state: Arc<DaemonState>,
     idle_timeout: Duration,
+    cancellation: CancellationToken,
 ) -> Result<()> {
     // METRICS: Track active connections using RAII guard
     let _guard = ConnectionGuard::new();
@@ -688,7 +672,12 @@ async fn handle_client_with_idle_timeout(
     tracing::debug!("New binary client connected");
 
     loop {
-        let request_bytes = match tokio::time::timeout(idle_timeout, framed_read.next()).await {
+        let next_frame = tokio::select! {
+            biased;
+            () = cancellation.cancelled() => break,
+            frame = tokio::time::timeout(idle_timeout, framed_read.next()) => frame,
+        };
+        let request_bytes = match next_frame {
             Ok(Some(request_bytes)) => request_bytes,
             Ok(None) => break,
             Err(_) => {
@@ -826,99 +815,192 @@ async fn handle_client_with_idle_timeout(
 
 #[cfg(test)]
 mod tests {
+    #[tokio::test]
+    async fn shutdown_waits_for_owned_work_to_finish() {
+        let cancellation = tokio_util::sync::CancellationToken::new();
+        let token = cancellation.clone();
+        let (release, pending) = tokio::sync::oneshot::channel::<()>();
+        let mut workers = tokio::task::JoinSet::new();
+        let mut connections = tokio::task::JoinSet::new();
+        let finished = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let marker = finished.clone();
+        workers.spawn(async move {
+            pending.await.unwrap();
+            marker.store(true, std::sync::atomic::Ordering::SeqCst);
+        });
+        connections.spawn(async move { token.cancelled().await });
+        let shutdown_token = cancellation.clone();
+        let shutdown = tokio::spawn(async move {
+            super::drain_daemon_tasks(
+                &shutdown_token,
+                &mut workers,
+                &mut connections,
+                std::time::Duration::from_secs(5),
+            )
+            .await?;
+            assert!(workers.is_empty() && connections.is_empty());
+            Ok::<_, anyhow::Error>(())
+        });
+        cancellation.cancelled().await;
+        assert!(!shutdown.is_finished());
+        release.send(()).unwrap();
+        shutdown.await.unwrap().unwrap();
+        assert!(finished.load(std::sync::atomic::Ordering::SeqCst));
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn shutdown_deadline_is_reported_as_failure() {
+        let cancellation = tokio_util::sync::CancellationToken::new();
+        let mut workers = tokio::task::JoinSet::new();
+        let mut connections = tokio::task::JoinSet::new();
+        workers.spawn(std::future::pending::<()>());
+        let error = super::drain_daemon_tasks(
+            &cancellation,
+            &mut workers,
+            &mut connections,
+            std::time::Duration::from_secs(1),
+        )
+        .await
+        .unwrap_err();
+        assert!(error.to_string().contains("exceeded its deadline"));
+        assert!(workers.is_empty() && connections.is_empty());
+    }
+
     use super::super::protocol::{
-        ExplicitResult, PackageInfo, SecurityAuditResult, WirePackageSource,
+        PackageInfo, ResponseResult, SearchResult, SecurityAuditResult, WirePackageSource,
     };
     use super::*;
 
-    fn assert_oversized_inventory_is_rejected(result: ResponseResult) {
-        let response = Response::Success { id: 91, result };
-        let raw = crate::daemon::protocol::encode_frame(&response).expect("encode inventory");
-        assert!(raw.len() > MAX_RESPONSE_SIZE, "fixture must exceed budget");
-        let encoded = encode_bounded_response(&response, 91).expect("bounded response");
-        assert!(encoded.len() <= MAX_RESPONSE_SIZE);
-        let (_, payload) = crate::daemon::protocol::split_frame(&encoded).expect("frame header");
-        let decoded: Response = bitcode::deserialize(payload).expect("response payload");
+    #[tokio::test(start_paused = true)]
+    async fn maintenance_deadline_survives_health_ticks() {
+        let start = tokio::time::Instant::now();
+        let mut schedule = BackgroundSchedule::new();
+        let cancellation = CancellationToken::new();
+        let deadline = start + Duration::from_mins(16);
+        let mut refreshes = 0;
+        let mut checks = 0;
+        loop {
+            tokio::select! {
+                biased;
+                () = tokio::time::sleep_until(deadline) => break,
+                event = schedule.next(&cancellation) => match event {
+                    BackgroundEvent::Maintenance => { refreshes += 1; }
+                    BackgroundEvent::SocketHealth => { checks += 1; }
+                    BackgroundEvent::Shutdown => panic!("unexpected cancellation"),
+                }
+            }
+        }
+        assert_eq!(refreshes, 3);
+        assert_eq!(checks, 15);
+    }
+
+    #[test]
+    fn oversized_security_audit_is_not_reported_as_complete() {
+        let vulnerability = super::super::protocol::Vulnerability {
+            id: "CVE-fixture".into(),
+            summary: "x".repeat(16_000),
+            score: Some("9.8".into()),
+        };
+        let response = Response::Success {
+            id: 91,
+            result: ResponseResult::SecurityAudit(SecurityAuditResult {
+                total_vulnerabilities: 600,
+                high_severity: 600,
+                vulnerabilities: (0..600)
+                    .map(|index| (format!("package-{index}"), vec![vulnerability.clone()]))
+                    .collect(),
+            }),
+        };
         assert!(
-            matches!(
+            crate::daemon::protocol::encode_frame(&response)
+                .unwrap()
+                .len()
+                > MAX_RESPONSE_SIZE
+        );
+        let encoded = encode_bounded_response(&response, 91).unwrap();
+        let (_, payload) = crate::daemon::protocol::split_frame(&encoded).unwrap();
+        let decoded: Response = bitcode::deserialize(payload).unwrap();
+        assert!(matches!(
+            decoded,
+            Response::Error {
+                id: 91,
+                code: error_codes::RESPONSE_TOO_LARGE,
+                ..
+            }
+        ));
+    }
+
+    #[test]
+    fn oversized_explicit_and_update_inventories_are_rejected_without_losing_entries() {
+        use super::super::protocol::{ExplicitResult, UpdateEntry};
+        let results = [
+            ResponseResult::Explicit(ExplicitResult {
+                packages: vec!["p".repeat(MAX_RESPONSE_SIZE / 2 + 1024); 2],
+            }),
+            ResponseResult::ListUpdates(vec![
+                UpdateEntry {
+                    name: "p".repeat(MAX_RESPONSE_SIZE / 2 + 1024),
+                    old_version: "1".into(),
+                    new_version: "2".into(),
+                    repo: "fixture".into(),
+                };
+                2
+            ]),
+        ];
+        for result in results {
+            let response = Response::Success { id: 91, result };
+            assert!(
+                crate::daemon::protocol::encode_frame(&response)
+                    .unwrap()
+                    .len()
+                    > MAX_RESPONSE_SIZE
+            );
+            let encoded = encode_bounded_response(&response, 91).unwrap();
+            assert!(encoded.len() <= MAX_RESPONSE_SIZE);
+            let (_, payload) = crate::daemon::protocol::split_frame(&encoded).unwrap();
+            let decoded: Response = bitcode::deserialize(payload).unwrap();
+            assert!(matches!(
                 decoded,
                 Response::Error {
                     id: 91,
                     code: error_codes::RESPONSE_TOO_LARGE,
                     ..
                 }
-            ),
-            "an exhaustive inventory must not become an incomplete successful response"
-        );
-    }
-
-    #[test]
-    fn oversized_security_audits_are_rejected_without_losing_findings() {
-        let vulnerability = super::super::protocol::Vulnerability {
-            id: "CVE-fixture".to_string(),
-            summary: "v".repeat(MAX_RESPONSE_SIZE / 2 + 1024),
-            score: Some("9.8".to_string()),
-        };
-        assert_oversized_inventory_is_rejected(ResponseResult::SecurityAudit(
-            SecurityAuditResult {
-                total_vulnerabilities: 2,
-                high_severity: 2,
-                vulnerabilities: vec![
-                    ("first".to_string(), vec![vulnerability.clone()]),
-                    ("second".to_string(), vec![vulnerability]),
-                ],
-            },
-        ));
-    }
-
-    #[test]
-    fn oversized_explicit_inventories_are_rejected_without_losing_packages() {
-        assert_oversized_inventory_is_rejected(ResponseResult::Explicit(ExplicitResult {
-            packages: vec!["p".repeat(MAX_RESPONSE_SIZE / 2 + 1024); 2],
-        }));
-    }
-
-    #[test]
-    fn oversized_update_inventories_are_rejected_without_losing_updates() {
-        let update = super::super::protocol::UpdateEntry {
-            name: "p".repeat(MAX_RESPONSE_SIZE / 2 + 1024),
-            old_version: "1".to_string(),
-            new_version: "2".to_string(),
-            repo: "fixture".to_string(),
-        };
-        assert_oversized_inventory_is_rejected(ResponseResult::ListUpdates(vec![update; 2]));
+            ));
+        }
     }
 
     #[test]
     fn exhaustive_responses_within_budget_are_preserved_byte_for_byte() {
+        use super::super::protocol::{ExplicitResult, UpdateEntry};
         let results = [
             ResponseResult::SecurityAudit(SecurityAuditResult {
                 total_vulnerabilities: 1,
                 high_severity: 1,
                 vulnerabilities: vec![(
-                    "package".to_string(),
+                    "package".into(),
                     vec![super::super::protocol::Vulnerability {
-                        id: "CVE-fixture".to_string(),
-                        summary: "fixture".to_string(),
-                        score: Some("9.8".to_string()),
+                        id: "CVE-fixture".into(),
+                        summary: "fixture".into(),
+                        score: Some("9.8".into()),
                     }],
                 )],
             }),
             ResponseResult::Explicit(ExplicitResult {
-                packages: vec!["package".to_string()],
+                packages: vec!["package".into()],
             }),
-            ResponseResult::ListUpdates(vec![super::super::protocol::UpdateEntry {
-                name: "package".to_string(),
-                old_version: "1".to_string(),
-                new_version: "2".to_string(),
-                repo: "fixture".to_string(),
+            ResponseResult::ListUpdates(vec![UpdateEntry {
+                name: "package".into(),
+                old_version: "1".into(),
+                new_version: "2".into(),
+                repo: "fixture".into(),
             }]),
         ];
         for result in results {
             let response = Response::Success { id: 92, result };
             assert_eq!(
-                encode_bounded_response(&response, 92).expect("bounded response"),
-                crate::daemon::protocol::encode_frame(&response).expect("original response"),
+                encode_bounded_response(&response, 92).unwrap(),
+                crate::daemon::protocol::encode_frame(&response).unwrap()
             );
         }
     }
@@ -950,7 +1032,7 @@ mod tests {
     }
 
     #[test]
-    fn oversized_debian_search_results_are_truncated_not_errored() {
+    fn oversized_debian_search_results_return_a_limit_error() {
         let entry = PackageInfo {
             name: "pkg".to_string(),
             version: "1.0".to_string(),
@@ -972,22 +1054,19 @@ mod tests {
         let encoded = encode_bounded_response(&oversized, 42).expect("bounded response");
         assert!(encoded.len() <= MAX_RESPONSE_SIZE);
         let (_, payload) = crate::daemon::protocol::split_frame(&encoded).expect("frame header");
-        let decoded: Response = bitcode::deserialize(payload).expect("truncated frame decodes");
-        match decoded {
-            Response::Success {
-                id,
-                result: ResponseResult::DebianSearch(list),
-            } => {
-                assert_eq!(id, 42);
-                assert!(list.len() < count, "list must have been truncated");
-                assert!(!list.is_empty(), "truncation must keep at least one entry");
+        let decoded: Response = bitcode::deserialize(payload).expect("limit frame decodes");
+        assert!(matches!(
+            decoded,
+            Response::Error {
+                id: 42,
+                code: error_codes::RESPONSE_TOO_LARGE,
+                ..
             }
-            other => panic!("oversized list response must stay a success, got {other:?}"),
-        }
+        ));
     }
 
     #[test]
-    fn oversized_search_results_are_truncated_with_consistent_total() {
+    fn oversized_search_results_return_a_limit_error() {
         let entry = PackageInfo {
             name: "pkg".to_string(),
             version: "1.0".to_string(),
@@ -1006,22 +1085,15 @@ mod tests {
         let encoded = encode_bounded_response(&oversized, 43).expect("bounded response");
         assert!(encoded.len() <= MAX_RESPONSE_SIZE);
         let (_, payload) = crate::daemon::protocol::split_frame(&encoded).expect("frame header");
-        let decoded: Response = bitcode::deserialize(payload).expect("truncated frame decodes");
-        match decoded {
-            Response::Success {
-                id,
-                result: ResponseResult::Search(results),
-            } => {
-                assert_eq!(id, 43);
-                assert!(results.packages.len() < count);
-                assert!(!results.packages.is_empty());
-                // The client must see a complete, internally consistent
-                // result set, not one hinting at more matches it can never
-                // receive.
-                assert_eq!(results.total, results.packages.len());
+        let decoded: Response = bitcode::deserialize(payload).expect("limit frame decodes");
+        assert!(matches!(
+            decoded,
+            Response::Error {
+                id: 43,
+                code: error_codes::RESPONSE_TOO_LARGE,
+                ..
             }
-            other => panic!("oversized search response must stay a success, got {other:?}"),
-        }
+        ));
     }
 
     #[tokio::test]
@@ -1182,8 +1254,9 @@ mod tests {
 
         let task = tokio::spawn(handle_client_with_idle_timeout(
             server,
-            state,
+            Arc::clone(&state),
             Duration::from_millis(20),
+            CancellationToken::new(),
         ));
         tokio::time::timeout(Duration::from_secs(1), task)
             .await
@@ -1194,6 +1267,21 @@ mod tests {
             baseline,
             "idle timeout must release the active connection guard"
         );
+
+        let (server, _idle_client) = tokio::net::UnixStream::pair()?;
+        let cancellation = CancellationToken::new();
+        let client_token = cancellation.clone();
+        let (started, ready) = tokio::sync::oneshot::channel();
+        let task = tokio::spawn(async move {
+            started.send(()).unwrap();
+            handle_client(server, state, client_token).await
+        });
+        ready.await?;
+        cancellation.cancel();
+        tokio::time::timeout(Duration::from_secs(1), task)
+            .await
+            .context("shutdown did not close the idle connection")???;
+        assert_eq!(GLOBAL_METRICS.snapshot().active_connections, baseline);
         Ok(())
     }
 
@@ -1262,7 +1350,6 @@ mod tests {
         })
         .await;
         server.abort();
-
         let frame = response.context("timed out waiting for prewarmed IPC search")??;
         let (_, payload) = crate::daemon::protocol::split_frame(&frame)?;
         let response: Response = bitcode::deserialize(payload)?;
@@ -1282,7 +1369,6 @@ mod tests {
             100,
             "IPC search must honor its limit"
         );
-
         for limit in [75, 120] {
             let response = handle_request(
                 Arc::clone(&state),

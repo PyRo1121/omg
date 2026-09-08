@@ -1,4 +1,4 @@
-#![cfg(feature = "arch")]
+#![cfg(unix)]
 #![expect(clippy::unwrap_used, clippy::pedantic)]
 
 //! Daemon startup, shutdown, restart, crash recovery, and process supervision.
@@ -164,6 +164,12 @@ impl DaemonProcess {
             .env("OMG_SOCKET_PATH", socket_path)
             .env("OMG_DAEMON_DATA_DIR", data_dir)
             .env("OMG_DATA_DIR", data_dir)
+            .env("OMG_CACHE_DIR", data_dir.join("cache"))
+            .env("OMG_CONFIG_DIR", data_dir.join("config"))
+            .env("HOME", data_dir.join("home"))
+            .env("OMG_TEST_MODE", "1")
+            .env("OMG_TEST_DISTRO", "fedora")
+            .env_remove("OMG_SENTRY_DSN")
             .env("RUST_LOG", "omg_lib=debug")
             .stdout(Stdio::null())
             .stderr(Stdio::null())
@@ -183,8 +189,8 @@ impl DaemonProcess {
     }
 
     fn terminate_gracefully(&mut self) -> Result<()> {
-        // Check if process is already dead
-        if let Ok(Some(_)) = self.child.try_wait() {
+        if let Some(status) = self.child.try_wait()? {
+            anyhow::ensure!(status.success(), "Daemon exited unsuccessfully: {status}");
             return Ok(());
         }
 
@@ -192,39 +198,28 @@ impl DaemonProcess {
         #[cfg(unix)]
         {
             let pid = self.pid();
-            // Only send signal if process exists (suppress stderr to avoid noise)
-            let kill_result = Command::new("kill")
+            let status = Command::new("kill")
                 .arg("-TERM")
                 .arg(pid.to_string())
                 .stderr(Stdio::null())
-                .status();
-
-            // Ignore errors if process already exited
-            if let Ok(status) = kill_result
-                && !status.success()
-            {
-                // Process might have exited already, check once more
-                if let Ok(Some(_)) = self.child.try_wait() {
-                    return Ok(());
-                }
-            }
+                .status()?;
+            anyhow::ensure!(status.success(), "Failed to send SIGTERM to fixture daemon");
         }
 
         // Wait for process to exit (with timeout)
         let start = std::time::Instant::now();
         while start.elapsed() < Duration::from_secs(5) {
-            if let Ok(Some(_)) = self.child.try_wait() {
+            if let Some(status) = self.child.try_wait()? {
+                anyhow::ensure!(status.success(), "Daemon exited unsuccessfully: {status}");
                 return Ok(());
             }
             std::thread::sleep(Duration::from_millis(100));
         }
 
-        // Force kill if still running
-        if self.is_running() {
-            self.kill()
-        } else {
-            Ok(())
-        }
+        self.kill()?;
+        anyhow::bail!(
+            "Daemon exceeded the graceful shutdown deadline and required forced termination"
+        )
     }
 
     fn is_running(&mut self) -> bool {
@@ -280,21 +275,28 @@ async fn test_daemon_graceful_shutdown() -> Result<()> {
     #[cfg(unix)]
     {
         let pid = daemon.pid();
-        let _ = Command::new("kill")
+        let status = Command::new("kill")
             .arg("-INT")
             .arg(pid.to_string())
             .stderr(Stdio::null())
-            .status();
+            .status()?;
+        anyhow::ensure!(status.success(), "Failed to signal the fixture daemon");
     }
 
     // Wait for process to exit
     let start = std::time::Instant::now();
+    let mut exit_status = None;
     while start.elapsed() < Duration::from_secs(5) {
-        if let Ok(Some(_)) = daemon.child.try_wait() {
+        if let Some(status) = daemon.child.try_wait()? {
+            exit_status = Some(status);
             break;
         }
         sleep(Duration::from_millis(100)).await;
     }
+    anyhow::ensure!(
+        exit_status.is_some_and(|status| status.success()),
+        "Daemon did not exit successfully before the shutdown deadline: {exit_status:?}"
+    );
 
     // Verify socket is cleaned up (daemon handles SIGINT and cleans up properly)
     // Poll with a bounded deadline instead of a fixed sleep so the check is

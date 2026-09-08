@@ -140,13 +140,23 @@ passwords, or a production environment dump in this file.
 The reporter sends one failure-summary event per invocation containing only case
 IDs, distribution names, result categories, exit codes, elapsed seconds, release,
 and run ID. It does not upload stdout, stderr, guest disks, serial logs, credentials,
-or arbitrary input fields. `PASS`, `EXPECTED_REJECTION`, and `BLOCKED` cases are
-not sent as errors. Full diagnostics stay in local evidence.
+or arbitrary input fields. `PRODUCT_FAIL`, `HARNESS_ERROR`, and inventory `FAIL`
+rows are sent. Other verdicts are not sent as errors. QEMU combines validated
+inventory observations with the final lifecycle result in `sentry-results.json`.
+Authoritative result files remain unchanged. Full diagnostics stay local.
+
+Input files are limited to 1 MiB. Sanitized failure metadata is limited to
+250,000 characters. Oversized reports fail explicitly rather than dropping rows.
+Only `release-smoke` and `qemu-matrix` are accepted environment labels.
 
 Transport is bounded to eight seconds, and the coordinator allows at most twelve
-seconds for reporting. It does not retry automatically. `reporting.log` records
+seconds for reporting, followed by a two-second kill grace. It does not retry automatically. `reporting.log` records
 acceptance or failure without the DSN. HTTP acceptance is not proof that an event
-is visible in the project UI. Replay a saved failure report explicitly with:
+is visible in the project UI. The log records the attempted event ID before
+sending. Fingerprints include the release and sorted failure identities, so a
+changed failure set can create another issue. This follows Sentry's documented
+[grouping by fingerprint](https://docs.sentry.io/platforms/javascript/guides/node/enriching-events/fingerprinting/).
+Replay a saved failure report explicitly with:
 
 ```bash
 OMG_SMOKE_RELEASE=v0.1.218 ./scripts/report-smoke-sentry.sh /path/to/run/results.json
@@ -190,7 +200,8 @@ Published v0.1.218 still has known Fedora defects. The passing four-guest record
 uses fixed Debian and Fedora candidates, not four passing published artifacts.
 
 Requirements are local Docker access, `/dev/kvm` available to the controller,
-`jq`, and GNU coreutils. Published downloads also require `gh`. Docker validates
+`jq`, and GNU coreutils. Benchmarks also require host Python 3 for bounded sample
+validation. Published downloads also require `gh`. Docker validates
 device access. The script does not compile software or install host packages. Prebuilt
 QEMU and SSH tools run inside disposable Debian controllers. Each controller has
 two CPUs and a 3 GiB memory limit. Each guest has two vCPUs and 1536 MiB RAM.
@@ -203,10 +214,20 @@ state. APT fixtures use HTTPS on Ubuntu, IPv4, bounded network retries, no
 translation or desktop indexes, and stopped periodic APT timers. Package signature
 validation remains enabled.
 
-Add `--benchmark` for three warmups and 30 fresh-process samples per command.
-The comparisons are OMG installed information against pacman, apt-cache, or RPM.
-Native output includes additional metadata. Debug candidates, warm queries, and
-one guest per distro do not establish release speedups or identical output work.
+Add `--benchmark` to invoke a frozen copy of the root `benchmark-hyperfine.sh`
+driver: three warmups and 20–50 fresh-process samples per command, with the daemon
+disabled and caches warmed by preflight. It measures package info, untruncated
+JSON search, and explicit installed-package counts. Native comparisons include
+pacman, both apt-cache and apt, and both RPM and DNF where applicable. Counts use
+a common Bash wrapper; native count pipelines include `wc`.
+
+Pre/post checks retain package identities and name sets. `benchmarks/summary.json`
+inside each guest evidence directory records workload-equivalence checks, exact
+command arguments, and the measurement profile. Different search result sets are
+marked non-comparable, not advertised as speedups. Native output can include extra
+fields. The host validates sample statistics, exit receipts, requested scenarios,
+and command identities. A passing measurement run is not a release speedup claim;
+these are warm-cache observations, not cold-cache or repeated-guest statistics.
 
 Evidence is retained under `~/.cache/build-targets/omg-qemu-benchmark/`.
 An all-distro run produces `suite-*/<distro>/run-*` directories and aggregate

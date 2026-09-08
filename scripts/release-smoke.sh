@@ -155,7 +155,7 @@ load_release_cases() {
     [[ "$targets" != "hermetic:pass" ]] || continue
     [[ "$(case_family "$id")" == "$family" ]] || continue
     [[ -z "$case_id" || "$id" == "$case_id" ]] || continue
-    [[ "$expected_exit" =~ ^[0-9]+$ ]] || {
+    valid_expected_exit "$expected_exit" || {
       printf 'error: release contract %s has invalid expected exit %q.\n' "$id" "$expected_exit" >&2
       return 3
     }
@@ -194,6 +194,44 @@ target_for_distro() {
     fi
   done
   return 1
+}
+# Resolve an expected_exit cell for one distro. Bare codes apply
+# everywhere; per-distro cells (arch:N,debian:N,ubuntu:N,fedora:N, #303)
+# select the matching entry. Prints the code, or nothing and fails.
+exit_for_distro() {
+  local cell=$1 wanted=$2
+  if [[ "$cell" =~ ^[0-9]+$ ]]; then
+    printf '%s\n' "$cell"
+    return 0
+  fi
+  local entry
+  local entries=()
+  IFS=',' read -ra entries <<< "$cell"
+  for entry in "${entries[@]}"; do
+    if [[ "${entry%%:*}" == "$wanted" && "${entry#*:}" =~ ^[0-9]+$ ]]; then
+      printf '%s\n' "${entry#*:}"
+      return 0
+    fi
+  done
+  return 1
+}
+# True when an expected_exit cell is a bare code or a complete
+# arch/debian/ubuntu/fedora matrix of codes. Partial matrices are
+# rejected so a missing distro can never inherit another's expectation.
+valid_expected_exit() {
+  local cell=$1
+  [[ "$cell" =~ ^[0-9]+$ ]] && return 0
+  local seen=""
+  local entry distro
+  local entries=()
+  IFS=',' read -ra entries <<< "$cell"
+  for entry in "${entries[@]}"; do
+    [[ "$entry" =~ ^(arch|debian|ubuntu|fedora):[0-9]+$ ]] || return 1
+    distro="${entry%%:*}"
+    [[ "$seen" == *",$distro,"* ]] && return 1
+    seen="$seen,$distro,"
+  done
+  [[ "$seen" == *,arch,* && "$seen" == *,debian,* && "$seen" == *,ubuntu,* && "$seen" == *,fedora,* ]]
 }
 
 select_tool() {
@@ -399,7 +437,14 @@ run_case() (
   exec 1>&3 2>&4
   exec 3>&- 4>&-
 
-  expected_exit="$(case_field exit "$case_id")" || return 3
+  # Native macOS runs have no matrix entry (matrices classify container
+  # distros only, like targets): compare against the arch reference exit,
+  # exactly matching the previous bare-code behavior on that lane.
+  if [[ "$executor" == "native" ]]; then
+    expected_exit="$(exit_for_distro "$(case_field exit "$case_id")" "arch")" || return 3
+  else
+    expected_exit="$(exit_for_distro "$(case_field exit "$case_id")" "$distro")" || return 3
+  fi
   case "$expectation" in
     pass|known-defect)
       if [[ $observed_exit -eq "$expected_exit" ]]; then result="PASS"; else result="PRODUCT_FAIL"; fi

@@ -654,10 +654,45 @@ fn run_omg_debian(args: &[&str], extra_env: &[(&str, &str)]) -> CommandResult {
     common::run_omg_with_env(args, &env)
 }
 
-/// Known-good no-panic contract: a command may legitimately fail, but it must
-/// never panic ("panicked at" in its output) or die via the Rust abort path
-/// (exit code 101).
+#[test]
+fn command_timeout_terminates_pipe_inheriting_descendants() {
+    let directory = TempDir::new().unwrap();
+    std::fs::write(
+        directory.path().join("mise.toml"),
+        "[tasks.hold]\nrun = 'sleep 5 & wait'\n",
+    )
+    .unwrap();
+    let start = std::time::Instant::now();
+    let result = common::run_omg_with_options(
+        &["run", "hold"],
+        Some(directory.path()),
+        &[("OMG_TEST_COMMAND_TIMEOUT_SECS", "1")],
+    );
+    assert!(
+        start.elapsed() < std::time::Duration::from_secs(3),
+        "descendant retained output pipes after timeout"
+    );
+    assert!(!result.success);
+    assert!(result.stderr.contains("[test harness timeout]"));
+}
+
+#[test]
+fn completion_oracle_rejects_signals_and_timeouts() {
+    for (exit_code, stderr) in [(-1, ""), (101, ""), (0, "[test harness timeout]")] {
+        let result = CommandResult {
+            success: exit_code == 0,
+            exit_code,
+            stdout: String::new(),
+            stderr: stderr.into(),
+        };
+        assert!(
+            std::panic::catch_unwind(|| assert_runs_without_panic(&result, "fixture")).is_err()
+        );
+    }
+}
+
 fn assert_runs_without_panic(result: &CommandResult, context: &str) {
+    common::assertions::assert_process_completed(result);
     let combined = result.combined_output();
     assert!(
         !combined.contains("panicked"),

@@ -28,6 +28,9 @@ const VERSION_FILES: &[(&str, &str)] = &[
     ("pyproject.toml", "python"),
     // Ruby
     (".ruby-version", "ruby"),
+    // PHP (phpenv convention)
+    (".php-version", "php"),
+    (".swift-version", "swift"),
     // Go
     (".go-version", "go"),
     ("go.mod", "go"),
@@ -38,12 +41,20 @@ const VERSION_FILES: &[(&str, &str)] = &[
     // Deno
     (".deno-version", "deno"),
     (".dvmrc", "deno"),
+    // Zig
+    (".zig-version", "zig"),
+    // .NET SDK pin (`global.json` carries `{ "sdk": { "version": "…" } }`).
+    ("global.json", "dotnet"),
     // Rust
     ("rust-toolchain", "rust"),
     ("rust-toolchain.toml", "rust"),
     // Universal
     (".tool-versions", "multi"),
     ("package.json", "multi"),
+    // mise parity: project-local tool pins live in `mise.toml` under
+    // `[tools]`; OMG reads them natively instead of shelling out to mise.
+    ("mise.toml", "mise"),
+    (".mise.toml", "mise"),
 ];
 
 /// Normalize runtime name aliases to canonical names
@@ -216,7 +227,7 @@ pub fn remove_hook(shell: &str) -> Result<bool> {
             .map(|name| name.to_string_lossy().into_owned())
             .unwrap_or_default()
     ));
-    fs::copy(&rc, &backup)
+    crate::core::safe_ops::atomic_write_file_sync(&backup, content.as_bytes())
         .with_context(|| format!("Failed to back up {} to {}", rc.display(), backup.display()))?;
     let mut rewritten = kept.join("\n");
     if content.ends_with('\n') {
@@ -246,34 +257,112 @@ pub fn hook_env(shell: &str) -> Result<()> {
     // generated hooks, which reset PATH to the user's base PATH first.
     let path_additions = build_path_additions(&versions)?;
 
-    if path_additions.is_empty() {
+    // mise `[env]` parity: project variables, `_.path` additions, and
+    // `_.source` scripts ride along with the tool PATHs. Lenient by design:
+    // hook-env runs on every prompt, so a deleted `.env` or an unset
+    // required variable warns and is skipped instead of failing the prompt.
+    let base: HashMap<String, String> = std::env::vars().collect();
+    let overlaid = crate::config::mise_env::with_path_overlay(&base, &path_additions);
+    let env = crate::config::mise_env::load_mise_env_chain(
+        &cwd,
+        &overlaid,
+        crate::config::mise_env::Strictness::Lenient,
+    )?;
+    anyhow::ensure!(
+        env.sources.is_empty(),
+        "Automatic hooks refuse mise _.source scripts without project trust; run the task explicitly instead"
+    );
+
+    let restore = environment_restore(shell, &env, &base)?;
+
+    // mise `_.path` dirs slot after tool bin dirs, before the base PATH.
+    let mut all_additions = path_additions;
+    all_additions.extend(env.path_additions.iter().cloned());
+
+    if all_additions.is_empty()
+        && env.set.is_empty()
+        && env.unset.is_empty()
+        && env.sources.is_empty()
+    {
         return Ok(());
     }
 
-    // Output shell-specific PATH modification
+    // Output shell-specific environment modification
     //
-    // SECURITY: each addition is emitted as a POSIX single-quoted word so no
-    // component can break out of the assignment via `"`, `$(`, or backticks;
-    // The generated hooks reset PATH before evaluating this output. The
-    // fallback keeps direct `eval "$(omg hook-env ...)"` calls safe too.
+    // SECURITY: every interpolated value is single-quoted and every variable
+    // name was validated as `[A-Za-z_][A-Za-z0-9_]*` at parse time, so no
+    // component can break out via `"`, `$(`, or backticks. The generated
+    // hooks reset PATH before evaluating this output. The fallback keeps
+    // direct `eval "$(omg hook-env ...)"` calls safe too.
     match shell.to_lowercase().as_str() {
         "zsh" | "bash" => {
-            let additions = path_additions
-                .iter()
-                .map(|path| posix_single_quoted(path))
-                .collect::<Vec<_>>()
-                .join(":");
-            println!("export PATH={additions}:\"${{_OMG_PATH_BASE:-$PATH}}\"");
+            println!("_OMG_ENV_RESTORE={}", posix_single_quoted(&restore));
+            if !all_additions.is_empty() {
+                let additions = all_additions
+                    .iter()
+                    .map(|path| posix_single_quoted(path))
+                    .collect::<Vec<_>>()
+                    .join(":");
+                println!("export PATH={additions}:\"${{_OMG_PATH_BASE:-$PATH}}\"");
+            }
+            for (name, value) in &env.set {
+                println!("export {name}={}", posix_single_quoted(value));
+            }
+            for name in &env.unset {
+                println!("unset {name}");
+            }
         }
         "fish" => {
-            for path in &path_additions {
+            println!("set -g _OMG_ENV_RESTORE {}", fish_single_quoted(&restore));
+            // `fish_add_path` prepends: emit in reverse so the first
+            // directory keeps the highest precedence.
+            for path in all_additions.iter().rev() {
                 println!("fish_add_path -g {}", fish_single_quoted(path));
+            }
+            for (name, value) in &env.set {
+                println!("set -gx {name} {}", fish_single_quoted(value));
+            }
+            for name in &env.unset {
+                println!("set -e {name}");
             }
         }
         _ => {}
     }
 
     Ok(())
+}
+
+fn environment_restore(
+    shell: &str,
+    env: &crate::config::mise_env::ResolvedEnv,
+    base: &HashMap<String, String>,
+) -> Result<String> {
+    let mut names: Vec<&str> = env
+        .set
+        .iter()
+        .map(|(name, _)| name.as_str())
+        .chain(env.unset.iter().map(String::as_str))
+        .collect();
+    names.sort_unstable();
+    names.dedup();
+    use std::fmt::Write as _;
+    let mut restore = String::new();
+    for name in names {
+        anyhow::ensure!(
+            !name.starts_with("_OMG_"),
+            "Project environment cannot replace reserved hook variable {name}"
+        );
+        crate::config::mise_env::validate_env_name(name)?;
+        match (shell.to_ascii_lowercase().as_str(), base.get(name)) {
+            ("fish", Some(value)) => {
+                writeln!(restore, "set -gx {name} {};", fish_single_quoted(value))
+            }
+            ("fish", None) => writeln!(restore, "set -e {name};"),
+            (_, Some(value)) => writeln!(restore, "export {name}={};", posix_single_quoted(value)),
+            (_, None) => writeln!(restore, "unset {name};"),
+        }?;
+    }
+    Ok(restore)
 }
 
 /// Detect version files for the shell hook, degrading gracefully when the
@@ -395,6 +484,45 @@ fn parse_simple_version_file(
     Ok(())
 }
 
+/// Parse a `mise.toml`/`.mise.toml` `[tools]` table into version pins.
+///
+/// Values may be plain strings (`ripgrep = "14"`) or inline tables with a
+/// `version` key (`node = { version = "20" }`); backend prefixes such as
+/// `github:owner/repo` cannot map to a native manager and are skipped.
+/// Entries are lowest priority: existing pins from dedicated files win.
+fn parse_mise_toml_file(file_path: &Path, versions: &mut HashMap<String, String>) -> Result<()> {
+    let Some(content) = read_pin_file(file_path)? else {
+        return Ok(());
+    };
+    let document: toml::Value = toml::from_str(&content)
+        .with_context(|| format!("Failed to parse {}", file_path.display()))?;
+    let Some(tools) = document.get("tools").and_then(toml::Value::as_table) else {
+        return Ok(());
+    };
+    for (name, spec) in tools {
+        // Skip backend-qualified entries (`github:…`, `cargo:…`) and option
+        // tables without a plain version: they need a backend OMG does not
+        // implement rather than a version OMG can resolve.
+        if name.contains(':') {
+            continue;
+        }
+        let version = match spec {
+            toml::Value::String(version) => Some(version.clone()),
+            toml::Value::Table(table) => table
+                .get("version")
+                .and_then(toml::Value::as_str)
+                .map(str::to_owned),
+            _ => None,
+        };
+        if let Some(version) = version.filter(|version| !version.trim().is_empty()) {
+            versions
+                .entry(normalize_runtime_name(name))
+                .or_insert_with(|| version.trim().to_owned());
+        }
+    }
+    Ok(())
+}
+
 fn try_parse_version_file(
     filename: &str,
     file_path: &Path,
@@ -404,6 +532,8 @@ fn try_parse_version_file(
 ) -> Result<()> {
     match filename {
         ".tool-versions" => parse_tool_versions_file(file_path, versions)?,
+        "mise.toml" | ".mise.toml" => parse_mise_toml_file(file_path, versions)?,
+        "global.json" => parse_global_json_file(file_path, versions)?,
         "rust-toolchain.toml" => parse_rust_toolchain_file(file_path, runtime, versions)?,
         "package.json" => {
             if let Some(extra) = read_package_json_versions(dir)? {
@@ -479,7 +609,8 @@ pub fn build_path_additions<S: std::hash::BuildHasher>(
             // Validate before using as a path component so a hostile pin like
             // `../../evil/bin` can never traverse out of the versions tree and
             // place an attacker-created directory on the shell's PATH.
-            "python" | "go" | "ruby" | "java" | "pi" | "deno" => {
+            "python" | "go" | "ruby" | "java" | "pi" | "deno" | "zig" | "erlang" | "php"
+            | "swift" => {
                 let Some(path) = resolve_runtime_bin_dir(&data_dir, runtime, version)? else {
                     continue;
                 };
@@ -487,6 +618,14 @@ pub fn build_path_additions<S: std::hash::BuildHasher>(
             }
             "bun" => {
                 let Some(path) = resolve_bun_bin_path(&data_dir, version)? else {
+                    continue;
+                };
+                path
+            }
+            // .NET SDKs install flat with the `dotnet` host at the version
+            // root, mirroring Bun's layout instead of the `bin/` convention.
+            "dotnet" => {
+                let Some(path) = resolve_dotnet_bin_path(&data_dir, version)? else {
                     continue;
                 };
                 path
@@ -499,6 +638,15 @@ pub fn build_path_additions<S: std::hash::BuildHasher>(
                     .join("versions/rust")
                     .join(toolchain.name())
                     .join("bin")
+            }
+            // Registry tools share the generic `<versions>/<tool>/<version>/bin`
+            // layout; resolution is validation-gated inside, like the
+            // language runtimes above.
+            other if crate::runtimes::tool_registry::is_registry_tool(other) => {
+                let Some(path) = resolve_runtime_bin_dir(&data_dir, other, version)? else {
+                    continue;
+                };
+                path
             }
             _ => continue,
         };
@@ -536,6 +684,22 @@ fn resolve_bun_bin_path(data_dir: &Path, version: &str) -> Result<Option<PathBuf
 
     if let Some(resolved) = resolve_installed_version_req(&versions_dir, normalized)?
         && let Some(path) = bun_version_bin_path(&versions_dir, &resolved)
+    {
+        return Ok(Some(path));
+    }
+
+    Ok(None)
+}
+
+fn resolve_dotnet_bin_path(data_dir: &Path, version: &str) -> Result<Option<PathBuf>> {
+    let normalized = version.trim_start_matches('v');
+    let versions_dir = data_dir.join("versions/dotnet");
+    if let Some(path) = dotnet_version_bin_path(&versions_dir, normalized) {
+        return Ok(Some(path));
+    }
+
+    if let Some(resolved) = resolve_installed_version_req(&versions_dir, normalized)?
+        && let Some(path) = dotnet_version_bin_path(&versions_dir, &resolved)
     {
         return Ok(Some(path));
     }
@@ -594,11 +758,11 @@ fn resolve_runtime_bin_dir(
 /// become a path component; only an existing real directory is returned.
 fn validated_runtime_bin_dir(data_dir: &Path, runtime: &str, version: &str) -> Option<PathBuf> {
     crate::core::security::validate_runtime_version(version).ok()?;
-    let path = data_dir
-        .join("versions")
-        .join(runtime)
-        .join(version)
-        .join("bin");
+    let version_dir = data_dir.join("versions").join(runtime).join(version);
+    if !crate::runtimes::common::is_valid_version_dir(&version_dir) {
+        return None;
+    }
+    let path = version_dir.join(if runtime == "swift" { "usr/bin" } else { "bin" });
     crate::runtimes::common::is_trusted_runtime_bin_dir(&path).then_some(path)
 }
 
@@ -617,6 +781,35 @@ fn bun_version_bin_path(versions_dir: &Path, version: &str) -> Option<PathBuf> {
     crate::core::security::validate_runtime_version(version).ok()?;
     let path = versions_dir.join(version);
     crate::runtimes::common::is_trusted_runtime_bin_dir(&path).then_some(path)
+}
+
+fn dotnet_version_bin_path(versions_dir: &Path, version: &str) -> Option<PathBuf> {
+    crate::core::security::validate_runtime_version(version).ok()?;
+    let path = versions_dir.join(version);
+    crate::runtimes::common::is_trusted_runtime_bin_dir(&path).then_some(path)
+}
+
+/// Parse a .NET `global.json` SDK pin (`{ "sdk": { "version": "9.0.100" } }`).
+/// Only the exact `sdk.version` string maps to a native install; roll-forward
+/// policies stay out of scope rather than resolving to a surprise SDK.
+fn parse_global_json_file(file_path: &Path, versions: &mut HashMap<String, String>) -> Result<()> {
+    let Some(content) = read_pin_file(file_path)? else {
+        return Ok(());
+    };
+    let document: serde_json::Value = serde_json::from_str(&content)
+        .with_context(|| format!("Failed to parse {}", file_path.display()))?;
+    if let Some(version) = document
+        .get("sdk")
+        .and_then(|sdk| sdk.get("version"))
+        .and_then(serde_json::Value::as_str)
+        .map(str::trim)
+        .filter(|version| !version.is_empty())
+    {
+        versions
+            .entry("dotnet".to_string())
+            .or_insert_with(|| version.to_owned());
+    }
+    Ok(())
 }
 
 fn resolve_installed_version_req(versions_dir: &Path, req: &str) -> Result<Option<String>> {
@@ -795,6 +988,8 @@ zmodload zsh/datetime
 _omg_hook() {
   trap -- '' SIGINT
   if [[ -z "${_OMG_PATH_BASE+x}" ]]; then _OMG_PATH_BASE=$PATH; fi
+  eval "${_OMG_ENV_RESTORE:-}"
+  unset _OMG_ENV_RESTORE
   export PATH="$_OMG_PATH_BASE"
   eval "$(\command omg hook-env -s zsh)"
   _omg_refresh_cache
@@ -842,7 +1037,7 @@ _omg_status_file_valid() {
 
 _omg_refresh_cache() {
   local f=__OMG_STATUS_FILE__
-  _omg_status_file_valid || return
+  _omg_status_file_valid || return 0
   local now=$EPOCHSECONDS
   # Only refresh every 60 seconds
   (( now - _OMG_CACHE_TIME < 60 )) && return
@@ -900,6 +1095,8 @@ _omg_hook() {
   local previous_exit_status=$?
   trap -- '' SIGINT
   if [[ -z "${_OMG_PATH_BASE+x}" ]]; then _OMG_PATH_BASE=$PATH; fi
+  eval "${_OMG_ENV_RESTORE:-}"
+  unset _OMG_ENV_RESTORE
   export PATH="$_OMG_PATH_BASE"
   eval "$(\command omg hook-env -s bash)"
   trap - SIGINT
@@ -984,6 +1181,10 @@ function _omg_hook --on-variable PWD --on-event fish_prompt
   if not set -q _OMG_PATH_BASE
     set -g _OMG_PATH_BASE $PATH
   end
+  if set -q _OMG_ENV_RESTORE
+    eval $_OMG_ENV_RESTORE
+    set -e _OMG_ENV_RESTORE
+  end
   set -gx PATH $_OMG_PATH_BASE
   # `command` bypasses fish functions and aliases, so a user-defined `omg`
   # function can neither shadow nor recursively invoke the real binary
@@ -999,6 +1200,72 @@ mod tests {
     use std::collections::HashMap;
     use std::fs;
     use tempfile::tempdir;
+
+    #[test]
+    fn managed_paths_require_readiness_and_support_swift_layout() {
+        let dir = tempfile::tempdir().unwrap();
+        let erlang = dir.path().join("versions/erlang/28.0/bin");
+        std::fs::create_dir_all(&erlang).unwrap();
+        assert_eq!(
+            validated_runtime_bin_dir(dir.path(), "erlang", "28.0"),
+            Some(erlang.clone())
+        );
+        std::fs::write(
+            erlang
+                .parent()
+                .unwrap()
+                .join(crate::runtimes::common::INSTALL_PENDING_MARKER),
+            b"",
+        )
+        .unwrap();
+        assert!(validated_runtime_bin_dir(dir.path(), "erlang", "28.0").is_none());
+        let swift = dir.path().join("versions/swift/6.1.2/usr/bin");
+        std::fs::create_dir_all(&swift).unwrap();
+        assert_eq!(
+            validated_runtime_bin_dir(dir.path(), "swift", "6.1.2"),
+            Some(swift)
+        );
+    }
+
+    #[test]
+    fn project_environment_delta_restores_values_and_absence() {
+        let env = crate::config::mise_env::ResolvedEnv {
+            set: vec![
+                ("PROJECT_ONLY".into(), "secret".into()),
+                ("EXISTING".into(), "project".into()),
+            ],
+            unset: vec!["REMOVED".into()],
+            ..Default::default()
+        };
+        let base = HashMap::from([
+            ("EXISTING".into(), "original ' quoted\nvalue".into()),
+            ("REMOVED".into(), "restored".into()),
+        ]);
+        for shell in ["bash", "zsh"] {
+            let restore = environment_restore(shell, &env, &base).unwrap();
+            let script = format!(
+                "export PROJECT_ONLY=secret EXISTING=project; unset REMOVED; {restore} printf '%s|%s|%s' \"${{PROJECT_ONLY-unset}}\" \"$EXISTING\" \"$REMOVED\""
+            );
+            let output = std::process::Command::new("sh")
+                .args(["-c", &script])
+                .output()
+                .unwrap();
+            assert!(output.status.success());
+            assert_eq!(
+                String::from_utf8(output.stdout).unwrap(),
+                "unset|original ' quoted\nvalue|restored"
+            );
+        }
+    }
+
+    #[test]
+    fn project_environment_cannot_replace_hook_restore_code() {
+        let env = crate::config::mise_env::ResolvedEnv {
+            set: vec![("_OMG_ENV_RESTORE".into(), "unexpected command".into())],
+            ..Default::default()
+        };
+        assert!(environment_restore("bash", &env, &HashMap::new()).is_err());
+    }
 
     /// Shell integration removal deletes exactly the lines OMG owns,
     /// backs the rc file up first, and is a no-op the second time.
@@ -1762,5 +2029,63 @@ mod tests {
                 assert!(result.is_none(), "hostile pin {hostile:?} must be refused");
             }
         }
+    }
+
+    #[test]
+    fn mise_toml_tools_parse_and_defer_to_dedicated_pins() {
+        let dir = tempdir().unwrap();
+        fs::write(
+            dir.path().join("mise.toml"),
+            "[tools]\nnode = \"20\"\nripgrep = { version = \"14\" }\n\"cargo:exa\" = \"0.10\"\nempty = \"\"\n",
+        )
+        .unwrap();
+        let mut versions = HashMap::from([("node".to_string(), "18".to_string())]);
+        parse_mise_toml_file(&dir.path().join("mise.toml"), &mut versions).unwrap();
+        // Dedicated pin files win over mise.toml.
+        assert_eq!(versions.get("node").map(String::as_str), Some("18"));
+        assert_eq!(versions.get("ripgrep").map(String::as_str), Some("14"));
+        assert!(!versions.keys().any(|key| key.contains(':')));
+        assert!(!versions.contains_key("empty"));
+
+        // Missing [tools] table is a no-op, not an error.
+        let bare = tempdir().unwrap();
+        fs::write(bare.path().join("mise.toml"), "[env]\nFOO = \"1\"\n").unwrap();
+        let mut empty = HashMap::new();
+        parse_mise_toml_file(&bare.path().join("mise.toml"), &mut empty).unwrap();
+        assert!(empty.is_empty());
+    }
+
+    #[test]
+    fn global_json_sdk_version_pins_dotnet() {
+        let dir = tempdir().unwrap();
+        fs::write(
+            dir.path().join("global.json"),
+            "{ \"sdk\": { \"version\": \"9.0.100\", \"rollForward\": \"latestMajor\" } }",
+        )
+        .unwrap();
+        let mut versions = HashMap::new();
+        parse_global_json_file(&dir.path().join("global.json"), &mut versions).unwrap();
+        assert_eq!(versions.get("dotnet").map(String::as_str), Some("9.0.100"));
+
+        // Missing or version-less SDK tables are a no-op, not an error.
+        for content in [
+            "{}",
+            "{ \"sdk\": {} }",
+            "{ \"sdk\": { \"version\": \"\" } }",
+        ] {
+            let bare = tempdir().unwrap();
+            fs::write(bare.path().join("global.json"), content).unwrap();
+            let mut empty = HashMap::new();
+            parse_global_json_file(&bare.path().join("global.json"), &mut empty).unwrap();
+            assert!(empty.is_empty(), "content {content:?} must yield no pins");
+        }
+    }
+
+    #[test]
+    fn mise_toml_end_to_end_detection() {
+        let dir = tempdir().unwrap();
+        fs::write(dir.path().join("mise.toml"), "[tools]\nripgrep = \"14\"\n").unwrap();
+        let detected = detect_versions(dir.path()).unwrap();
+        assert_eq!(detected.get("ripgrep").map(String::as_str), Some("14"));
     }
 }

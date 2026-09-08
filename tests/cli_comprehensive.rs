@@ -8,6 +8,32 @@ use clap::{CommandFactory, Parser};
 use common::*;
 use omg_lib::cli::Cli;
 
+#[test]
+fn explicit_shortcut_uses_the_same_isolated_state_as_explicit_count() {
+    for distro in ["arch", "debian", "fedora"] {
+        let project = TestProject::for_distro(distro);
+        project
+            .mock_install("git", "2.43.0")
+            .expect("seed installed git");
+        let listing = project.run(&["--json", "explicit"]);
+        listing.assert_success();
+        let payload: serde_json::Value =
+            serde_json::from_str(&listing.stdout).expect("explicit package JSON");
+        let expected = payload["packages"].as_array().expect("package array").len();
+        assert!(expected > 0, "fixture must include installed git");
+        for command in [&["explicit", "--count"][..], &["ec"][..]] {
+            let result = project.run(command);
+            result.assert_success();
+            let actual = result
+                .stdout
+                .trim()
+                .parse::<usize>()
+                .expect("package count");
+            assert_eq!(actual, expected, "{distro}: {command:?}");
+        }
+    }
+}
+
 fn command_paths() -> Vec<Vec<String>> {
     fn collect(command: &clap::Command, prefix: &mut Vec<String>, paths: &mut Vec<Vec<String>>) {
         for subcommand in command.get_subcommands() {
@@ -203,6 +229,49 @@ enum ReleaseExpectation {
     Pending,
 }
 
+/// Expected exit codes per distribution, in [`Distro::index`] order.
+/// A bare code (`0`) applies to every distro; backend-divergent rows spell
+/// out all four (`arch:0,debian:1,ubuntu:1,fedora:1`, #303). Partial
+/// matrices are rejected so a missing distro can never silently inherit
+/// another's expectation.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct ExpectedExits([i32; 4]);
+
+impl ExpectedExits {
+    fn parse(raw: &str, line_number: usize) -> Self {
+        if let Ok(code) = raw.parse::<i32>() {
+            return Self([code; 4]);
+        }
+        let mut exits = [None; 4];
+        for entry in raw.split(',') {
+            let (distro, code) = entry.split_once(':').unwrap_or_else(|| {
+                panic!(
+                    "expected exit on behavior inventory line {line_number} must be a code or distro:code: {entry}"
+                )
+            });
+            let distro = Distro::parse(distro, line_number);
+            let slot = &mut exits[distro.index()];
+            assert!(
+                slot.is_none(),
+                "duplicate distro exit on behavior inventory line {line_number}: {distro:?}"
+            );
+            *slot = Some(code.parse().unwrap_or_else(|error| {
+                panic!("invalid exit code on behavior inventory line {line_number}: {error}")
+            }));
+        }
+        let [Some(arch), Some(debian), Some(ubuntu), Some(fedora)] = exits else {
+            panic!(
+                "expected exits on behavior inventory line {line_number} must classify arch, debian, ubuntu, and fedora"
+            );
+        };
+        Self([arch, debian, ubuntu, fedora])
+    }
+
+    const fn exit_for(self, distro: Distro) -> i32 {
+        self.0[distro.index()]
+    }
+}
+
 impl ReleaseExpectation {
     fn parse(raw: &str, line_number: usize) -> Self {
         match raw {
@@ -330,7 +399,7 @@ struct BehaviorCase {
     line: usize,
     args: Vec<String>,
     safety: Safety,
-    expected_exit: Option<i32>,
+    expected_exit: Option<ExpectedExits>,
     expected_ux: UxState,
     requires: Vec<String>,
     tiers: Vec<Tier>,
@@ -470,9 +539,7 @@ fn behavior_cases() -> Vec<BehaviorCase> {
             let expected_exit = if fields[3] == "-" {
                 None
             } else {
-                Some(fields[3].parse().unwrap_or_else(|error| {
-                    panic!("invalid exit code on behavior inventory line {line_number}: {error}")
-                }))
+                Some(ExpectedExits::parse(fields[3], line_number))
             };
             let case = BehaviorCase {
                 id: fields[0].to_string(),
@@ -712,6 +779,34 @@ fn behavior_inventory_release_targets_classify_every_distro_once() {
 }
 
 #[test]
+fn behavior_inventory_expected_exits_support_per_distro_overrides() {
+    // Bare codes apply to every distro, preserving the existing contract.
+    let uniform = ExpectedExits::parse("0", 1);
+    for distro in [Distro::Arch, Distro::Debian, Distro::Ubuntu, Distro::Fedora] {
+        assert_eq!(uniform.exit_for(distro), 0);
+    }
+    // #303: backends that gracefully refuse an Arch-only operation record
+    // the refusal per distro while arch keeps passing.
+    let split = ExpectedExits::parse("arch:0,debian:1,ubuntu:1,fedora:1", 1);
+    assert_eq!(split.exit_for(Distro::Arch), 0);
+    assert_eq!(split.exit_for(Distro::Debian), 1);
+    assert_eq!(split.exit_for(Distro::Ubuntu), 1);
+    assert_eq!(split.exit_for(Distro::Fedora), 1);
+    for invalid in [
+        "arch:0,debian:1,ubuntu:1",
+        "arch:0,arch:1,debian:1,ubuntu:1,fedora:1",
+        "arch:0,debian:1,ubuntu:1,centos:1",
+        "arch:0,debian:x,ubuntu:1,fedora:1",
+        "arch:0,debian:1,ubuntu:1,fedora:",
+    ] {
+        assert!(
+            std::panic::catch_unwind(|| ExpectedExits::parse(invalid, 1)).is_err(),
+            "expected-exit parser must reject {invalid}"
+        );
+    }
+}
+
+#[test]
 fn behavior_inventory_declaration_args_parse() {
     for case in behavior_cases()
         .into_iter()
@@ -853,9 +948,12 @@ fn behavior_inventory_runs_in_hermetic_state() {
             .expect("write CLI behavior index row");
             continue;
         }
+        // The hermetic fixture always runs the arch mock backend, so the
+        // arch expectation governs here; release lanes resolve their own.
         let expected_exit = case
             .expected_exit
-            .expect("executable rows declare an exit code");
+            .expect("executable rows declare an exit code")
+            .exit_for(Distro::Arch);
         let args: Vec<&str> = expanded_args.iter().map(String::as_str).collect();
         let started = Instant::now();
         let result = project.run_with_env(
@@ -889,7 +987,11 @@ fn behavior_inventory_runs_in_hermetic_state() {
         if case.safety == Safety::HelpBoundary && !result.stdout.contains("Usage:") {
             issues.push("help boundary did not render Usage".to_string());
         }
-        if case.expected_exit != Some(0) && result.stderr.trim().is_empty() {
+        if case
+            .expected_exit
+            .is_some_and(|exits| exits.exit_for(Distro::Arch) != 0)
+            && result.stderr.trim().is_empty()
+        {
             issues.push("failure did not explain itself on stderr".to_string());
         }
         for assertion in &case.assertions {
@@ -1264,6 +1366,47 @@ mod env_tests {
         let result = run_omg(&["hooks", "--help"]);
         result.assert_success();
         result.assert_stdout_contains("hooks");
+    }
+
+    #[test]
+    fn git_hook_uninstall_preserves_composed_and_custom_automation() {
+        let repository = tempfile::tempdir().unwrap();
+        let hooks = repository.path().join("managed-hooks");
+        for args in [
+            vec!["init", "-q"],
+            vec!["config", "core.hooksPath", hooks.to_str().unwrap()],
+        ] {
+            assert!(
+                std::process::Command::new("git")
+                    .args(args)
+                    .current_dir(repository.path())
+                    .status()
+                    .unwrap()
+                    .success()
+            );
+        }
+        run_omg_in_dir(&["hooks", "install"], repository.path()).assert_success();
+        let pre_commit = hooks.join("pre-commit");
+        let composed = format!(
+            "{}\n# custom automation\ncustom_check\n",
+            std::fs::read_to_string(&pre_commit).unwrap()
+        );
+        let custom = "#!/bin/sh\n# OMG integration notes\ncustom_check\n";
+        std::fs::write(&pre_commit, &composed).unwrap();
+        std::fs::write(hooks.join("post-merge"), custom).unwrap();
+        run_omg_in_dir(&["hooks", "install"], repository.path()).assert_success();
+        let status = run_omg_in_dir(&["hooks", "status"], repository.path());
+        status.assert_success();
+        status.assert_stdout_contains("unrecognized or modified");
+        let result = run_omg_in_dir(&["hooks", "uninstall"], repository.path());
+        result.assert_success();
+        result.assert_stdout_contains("Removed 1 hook(s)");
+        assert_eq!(std::fs::read_to_string(pre_commit).unwrap(), composed);
+        assert_eq!(
+            std::fs::read_to_string(hooks.join("post-merge")).unwrap(),
+            custom
+        );
+        assert!(!hooks.join("post-checkout").exists());
     }
 
     #[test]

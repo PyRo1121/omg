@@ -164,7 +164,9 @@ S5. Transactions stay on the dnf CLI; benchmark
 + UX: adoption driver = reduced decision anxiety; lead with grouped previews,
   dependency reasons, honest undo (#5).
 
-## SpacetimeDB evaluation (backend option)
+## Historical SpacetimeDB evaluation (not an implementation decision)
+
+The following evaluation records an earlier proposal. Its provider limits, pricing, and suitability have not been revalidated. It does not authorize replacing the retained Cloudflare service or adding a fallback backend. Any such work requires separate requirements and current provider research.
 
 What it is: BSL-1.1 source-available relational DB + Rust reducer modules;
 Maincloud managed free tier (~2,500 TeV/mo ~= 3M calls, 12.5GB egress,

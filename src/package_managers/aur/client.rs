@@ -1009,17 +1009,23 @@ impl AurClient {
             .parent()
             .context("AUR build directory has no parent")?;
         create_dir_as_user_sync(parent)?;
-        let file = std::fs::OpenOptions::new()
-            .create(true)
+        let mut options = std::fs::OpenOptions::new();
+        options
             .read(true)
             .write(true)
-            .truncate(false)
             .mode(0o600)
-            .custom_flags(nix::libc::O_NOFOLLOW | nix::libc::O_NONBLOCK)
-            .open(&lock_path)
-            .with_context(|| {
-                format!("Failed to open AUR lifecycle lock {}", lock_path.display())
-            })?;
+            .custom_flags(nix::libc::O_NOFOLLOW | nix::libc::O_NONBLOCK);
+        let (file, created) = match options.create_new(true).open(&lock_path) {
+            Ok(file) => (file, true),
+            Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => {
+                (options.create_new(false).open(&lock_path)?, false)
+            }
+            Err(error) => {
+                return Err(error).with_context(|| {
+                    format!("Failed to open AUR lifecycle lock {}", lock_path.display())
+                });
+            }
+        };
         let metadata = file.metadata()?;
         anyhow::ensure!(
             metadata.is_file() && metadata.nlink() == 1,
@@ -1028,9 +1034,15 @@ impl AurClient {
         if let Some(user) = original_user() {
             let account = nix::unistd::User::from_name(&user)?
                 .with_context(|| format!("Original user '{user}' has no system account"))?;
-            // Change the opened inode, not a potentially replaced pathname.
-            nix::unistd::fchown(&file, Some(account.uid), Some(account.gid))
-                .context("Failed to restore AUR lifecycle lock ownership")?;
+            if created {
+                nix::unistd::fchown(&file, Some(account.uid), Some(account.gid))
+                    .context("Failed to set AUR lifecycle lock ownership")?;
+            } else {
+                anyhow::ensure!(
+                    metadata.uid() == account.uid.as_raw(),
+                    "Existing AUR lifecycle lock is not owned by the original user"
+                );
+            }
         }
         Ok(file)
     }
@@ -1067,7 +1079,7 @@ impl AurClient {
         let lock_dir = self.build_dir.join("_locks");
         create_dir_as_user(&lock_dir).await?;
         let lock_path = lock_dir.join(format!("{package_base}.lock"));
-        tokio::task::spawn_blocking(move || -> Result<File> {
+        self.blocking_build_work(move || -> Result<File> {
             let file = std::fs::OpenOptions::new()
                 .create(true)
                 .read(true)
@@ -1083,7 +1095,20 @@ impl AurClient {
             Ok(file)
         })
         .await
-        .context("AUR build lock worker failed")?
+        .context("AUR build lock worker failed")
+    }
+
+    async fn blocking_build_work<T: Send + 'static>(
+        &self,
+        work: impl FnOnce() -> Result<T> + Send + 'static,
+    ) -> Result<T> {
+        let lease = self.acquire_build_lifecycle().await?;
+        tokio::task::spawn_blocking(move || {
+            let _lease = lease;
+            work()
+        })
+        .await
+        .context("AUR blocking worker failed")?
     }
 
     #[must_use]
@@ -1666,6 +1691,7 @@ impl AurClient {
         crate::core::security::validate_package_name(package)?;
         crate::core::security::validate_version(version)?;
         require_unprivileged_builder(package, crate::core::is_root())?;
+
         Self::preacquire_install_privileges(package, "AUR rollback").await?;
         let sudoloop = if crate::core::sudoloop::can_use_sudoloop() {
             Some(crate::core::sudoloop::SudoLoop::start())
@@ -2077,7 +2103,8 @@ impl AurClient {
             Self::install_built_packages(&dep_packages, sudoloop).await?;
             crate::cli::modern_ui::print_success(&format!("Installed dependency: {dep}"));
         }
-        Self::ensure_dependencies_satisfied(&pkg_dir, &requested_outputs).await?;
+        self.ensure_dependencies_satisfied(&pkg_dir, &requested_outputs)
+            .await?;
 
         let _package_build_guard = package_lock.lock().await;
         let _package_build_file_guard = self.acquire_package_base_file_lock(&package).await?;
@@ -2290,7 +2317,8 @@ impl AurClient {
             Self::install_built_packages(&archives, sudoloop).await?;
             crate::cli::modern_ui::print_success(&format!("Installed dependency: {dependency}"));
         }
-        Self::ensure_dependencies_satisfied(&pkg_dir, &package_outputs).await?;
+        self.ensure_dependencies_satisfied(&pkg_dir, &package_outputs)
+            .await?;
 
         let _package_build_guard = package_lock.lock().await;
         let _package_build_file_guard = self.acquire_package_base_file_lock(package_base).await?;
@@ -3010,12 +3038,13 @@ impl AurClient {
     }
 
     async fn ensure_dependencies_satisfied(
+        &self,
         pkg_dir: &Path,
         package_outputs: &[String],
     ) -> Result<()> {
         let pkg_dir = pkg_dir.to_path_buf();
         let package_outputs = package_outputs.to_vec();
-        tokio::task::spawn_blocking(move || {
+        self.blocking_build_work(move || {
             let remaining = check_dependencies_for_outputs(&pkg_dir, &package_outputs)
                 .context("Failed to verify AUR build dependencies")?
                 .missing;
@@ -3027,7 +3056,7 @@ impl AurClient {
             Ok(())
         })
         .await
-        .context("AUR dependency verification task failed")?
+        .context("AUR dependency verification task failed")
     }
 
     async fn git_clone(&self, package: &str) -> Result<()> {
@@ -3104,9 +3133,9 @@ impl AurClient {
             .context("Invalid AUR source directory")?;
         crate::core::security::validate_package_name(package)?;
         let pkg_dir = pkg_dir.to_path_buf();
-        tokio::task::spawn_blocking(move || refresh_git_checkout(&pkg_dir))
+        self.blocking_build_work(move || refresh_git_checkout(&pkg_dir))
             .await
-            .context("Git refresh task failed")?
+            .context("Git refresh task failed")
     }
 
     async fn run_build(
@@ -3731,9 +3760,9 @@ impl AurClient {
     async fn makepkg_env(&self, pkg_dir: &Path) -> Result<MakepkgEnv> {
         let client = self.clone();
         let pkg_dir = pkg_dir.to_path_buf();
-        tokio::task::spawn_blocking(move || client.makepkg_env_sync(&pkg_dir))
+        self.blocking_build_work(move || client.makepkg_env_sync(&pkg_dir))
             .await
-            .context("AUR build environment task failed")?
+            .context("AUR build environment task failed")
     }
 
     fn makepkg_env_sync(&self, pkg_dir: &Path) -> Result<MakepkgEnv> {
@@ -3933,7 +3962,7 @@ impl AurClient {
         let cache_key = cache_key.to_string();
         let cache_path = self.cache_path(&cache_name);
 
-        tokio::task::spawn_blocking(move || {
+        self.blocking_build_work(move || {
             let Some(cached) = Self::read_text_if_exists(&cache_path)? else {
                 return Ok(None);
             };
@@ -3947,7 +3976,7 @@ impl AurClient {
                 }),
             )
         })
-        .await?
+        .await
     }
 
     async fn write_cache_key(&self, package: &str, cache_key: &str) -> Result<()> {
@@ -3981,11 +4010,11 @@ impl AurClient {
                 anyhow::bail!("Failed to write cache key as user '{user}'");
             }
         } else {
-            tokio::task::spawn_blocking(move || {
+            self.blocking_build_work(move || {
                 std::fs::write(cache_path, cache_key)?;
-                Ok::<(), anyhow::Error>(())
+                Ok(())
             })
-            .await??;
+            .await?;
         }
         Ok(())
     }
@@ -5196,6 +5225,91 @@ mod tests {
                 .to_string()
                 .contains("Circular AUR package-base dependency")
         );
+    }
+
+    #[tokio::test]
+    async fn lifecycle_lease_excludes_cleanup_until_all_builds_finish() {
+        use std::os::unix::fs::MetadataExt;
+        let directory = tempfile::tempdir().unwrap();
+        let client = AurClient {
+            build_dir: directory.path().join("aur"),
+            settings: Settings::default(),
+            package_base_locks: Arc::new(dashmap::DashMap::new()),
+        };
+        let first = client.acquire_build_lifecycle().await.unwrap();
+        let second = client.acquire_build_lifecycle().await.unwrap();
+        std::fs::create_dir_all(&client.build_dir).unwrap();
+        let marker = client.build_dir.join("active-build");
+        std::fs::write(&marker, b"in progress").unwrap();
+        assert!(client.clean_all().is_err());
+        assert!(marker.exists());
+        drop(first);
+        assert!(client.clean_all().is_err());
+        drop(second);
+        let lock_path = directory.path().join("aur.lifecycle.lock");
+        let inode = lock_path.metadata().unwrap().ino();
+        client.clean_all().unwrap();
+        assert!(!marker.exists());
+        assert_eq!(lock_path.metadata().unwrap().ino(), inode);
+        let cleanup = client.open_lifecycle_lock().unwrap();
+        cleanup.try_lock().unwrap();
+        assert!(client.acquire_build_lifecycle().await.is_err());
+        drop(cleanup);
+        assert!(client.acquire_build_lifecycle().await.is_ok());
+    }
+
+    #[tokio::test]
+    async fn cancelled_blocking_work_keeps_cache_lease_until_completion() {
+        let directory = tempfile::tempdir().unwrap();
+        let client = AurClient {
+            build_dir: directory.path().join("aur"),
+            settings: Settings::default(),
+            package_base_locks: Arc::new(dashmap::DashMap::new()),
+        };
+        let worker_client = client.clone();
+        let (started_tx, started_rx) = tokio::sync::oneshot::channel();
+        let (release_tx, release_rx) = std::sync::mpsc::channel();
+        let (completed_tx, completed_rx) = tokio::sync::oneshot::channel::<()>();
+        let worker = tokio::spawn(async move {
+            worker_client
+                .blocking_build_work(move || {
+                    started_tx.send(()).unwrap();
+                    release_rx.recv().unwrap();
+                    Ok(completed_tx)
+                })
+                .await
+        });
+        started_rx.await.unwrap();
+        worker.abort();
+        assert!(worker.await.unwrap_err().is_cancelled());
+        let cleanup_while_running = client.clean_all();
+        release_tx.send(()).unwrap();
+        // A dropped blocking task result releases this sender after its lease.
+        assert!(completed_rx.await.is_err());
+        assert!(
+            cleanup_while_running.is_err(),
+            "cleanup removed an active blocking job's cache"
+        );
+        client.clean_all().unwrap();
+    }
+
+    #[test]
+    fn lifecycle_lock_rejects_links() {
+        let directory = tempfile::tempdir().unwrap();
+        let client = AurClient {
+            build_dir: directory.path().join("aur"),
+            settings: Settings::default(),
+            package_base_locks: Arc::new(dashmap::DashMap::new()),
+        };
+        let target = directory.path().join("target");
+        let lock = directory.path().join("aur.lifecycle.lock");
+        std::fs::write(&target, b"unchanged").unwrap();
+        std::os::unix::fs::symlink(&target, &lock).unwrap();
+        assert!(client.open_lifecycle_lock().is_err());
+        std::fs::remove_file(&lock).unwrap();
+        std::fs::hard_link(&target, &lock).unwrap();
+        assert!(client.open_lifecycle_lock().is_err());
+        assert_eq!(std::fs::read(&target).unwrap(), b"unchanged");
     }
 
     #[test]
