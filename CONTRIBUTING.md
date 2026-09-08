@@ -133,6 +133,8 @@ make ci-local-full
 
 Both targets use Rust 1.95.0, locked dependencies, and build output under `~/.cache/build-targets/omg-ci-local`. The full target checks the portable, `debian-pure`, and Arch feature sets. It also runs all hermetic Arch tests. GitHub runs the native Debian, Fedora, Ubuntu, macOS, Docker, coverage, and CodeQL jobs.
 
+GitHub's Quick Gate invokes the quick target once; do not repeat its formatting, script tests, shell syntax, or fuzz compile steps in dependent jobs. Portable retains Clippy and library tests. The Linux Arch lane covers `arch,pgp,license`; the separate Debian intersection checks `debian,pgp` without license support. Instrumented coverage remains a distinct run, with its reports generated from the same captured results.
+
 Do not run `cargo clippy --all-targets --all-features` on Arch. That command enables incompatible native package-manager bindings.
 
 **Key clippy rules we follow:**
