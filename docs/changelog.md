@@ -73,6 +73,7 @@ present before the probe runs.
 - **Install**: Add interactive fuzzy package discovery
 ### 🐛 Bug Fixes
 
+- **Doctor**: Accept compressed APT indexes in doctor check ([#308](https://github.com/PyRo1121/omg/issues/308))
 - **Usage**: Re-own usage state after elevated runs ([#301](https://github.com/PyRo1121/omg/issues/301))
 - **Qa**: Qemu-matrix concurrency scope + checkout pin ([#298](https://github.com/PyRo1121/omg/issues/298))
 
