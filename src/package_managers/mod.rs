@@ -86,6 +86,11 @@ pub fn search_sync(query: &str) -> anyhow::Result<Vec<SyncPackage>> {
 }
 
 pub fn list_explicit_fast() -> anyhow::Result<Vec<String>> {
+    if crate::core::paths::test_mode() {
+        let pm = get_package_manager()?;
+        return futures::executor::block_on(pm.list_explicit());
+    }
+
     #[cfg(any(feature = "debian", feature = "debian-pure"))]
     if crate::core::env::distro::is_debian_like() {
         return debian_db::list_explicit_fast();
@@ -93,10 +98,6 @@ pub fn list_explicit_fast() -> anyhow::Result<Vec<String>> {
 
     #[cfg(feature = "arch")]
     {
-        if crate::core::paths::test_mode() {
-            let pm = get_package_manager()?;
-            return futures::executor::block_on(pm.list_explicit());
-        }
         alpm_direct::list_explicit_fast()
     }
 
