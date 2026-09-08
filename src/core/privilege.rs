@@ -568,13 +568,7 @@ async fn sudo_payload_status(args: &[&str]) -> anyhow::Result<std::process::Exit
     let is_test_mode =
         crate::core::paths::test_mode() || std::env::var("CARGO_PRIMARY_PACKAGE").is_ok();
     let owned_args = args.iter().map(|arg| (*arg).to_owned()).collect::<Vec<_>>();
-    let pinned = if args.first() == Some(&"install") {
-        Some(crate::core::security::artifact::SnapshotInputs::capture(
-            &owned_args,
-        )?)
-    } else {
-        None
-    };
+    let pinned = snapshot_install_inputs(&owned_args)?;
     let policy = crate::core::security::policy::policy_handoff()?;
     let mut args: Vec<_> = pinned
         .as_ref()
@@ -586,6 +580,28 @@ async fn sudo_payload_status(args: &[&str]) -> anyhow::Result<std::process::Exit
         args.insert(0, policy);
     }
     sudo_payload_status_in(&trusted_program("sudo")?, exe, is_test_mode, &args).await
+}
+
+fn snapshot_install_inputs(
+    args: &[String],
+) -> anyhow::Result<Option<crate::core::security::artifact::SnapshotInputs>> {
+    use clap::Parser;
+
+    let payload = if args.last().map(String::as_str) == Some(FLOW_PARENT_RECORDS) {
+        &args[..args.len() - 1]
+    } else {
+        args
+    };
+    let cli = crate::cli::Cli::try_parse_from(
+        std::iter::once("omg").chain(payload.iter().map(String::as_str)),
+    )?;
+    if matches!(cli.command, crate::cli::Commands::Install { .. }) {
+        Ok(Some(
+            crate::core::security::artifact::SnapshotInputs::capture(args)?,
+        ))
+    } else {
+        Ok(None)
+    }
 }
 
 /// Dev-mode-injectable core of [`sudo_payload_status`]: `dev_mode` short-
@@ -719,6 +735,78 @@ pub async fn run_privileged_child(args: &[&str]) -> anyhow::Result<()> {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn install_snapshot_preserves_flow_markers_and_rejects_invalid_argv() {
+        for args in [
+            vec!["install", "--", "ripgrep", super::FLOW_PARENT_RECORDS],
+            vec!["--json", "i", "ripgrep", super::FLOW_PARENT_RECORDS],
+        ] {
+            let args = args.into_iter().map(str::to_owned).collect::<Vec<_>>();
+            let pinned = super::snapshot_install_inputs(&args).unwrap().unwrap();
+            assert_eq!(pinned.targets, args);
+        }
+        let invalid = vec!["--unknown-global".to_owned(), "install".to_owned()];
+        assert!(super::snapshot_install_inputs(&invalid).is_err());
+        for args in [
+            vec!["remove", "--", "install", super::FLOW_PARENT_RECORDS],
+            vec!["sync", "--", super::FLOW_PARENT_RECORDS],
+            vec!["update", "--"],
+        ] {
+            let args = args.into_iter().map(str::to_owned).collect::<Vec<_>>();
+            assert!(super::snapshot_install_inputs(&args).unwrap().is_none());
+        }
+    }
+
+    #[test]
+    fn install_snapshot_follows_global_flags_and_aliases() {
+        use crate::core::security::artifact::{ArchiveSnapshot, is_handoff};
+        use std::io::Read;
+
+        let directory = tempfile::tempdir().unwrap();
+        let archive = directory.path().join(if cfg!(feature = "arch") {
+            "example-1-1-any.pkg.tar.zst"
+        } else {
+            "example.deb"
+        });
+        let path = archive.to_str().unwrap();
+        for flag in [
+            "--verbose",
+            "-v",
+            "-vv",
+            "--quiet",
+            "-q",
+            "--json",
+            "--all-commands",
+        ] {
+            for install in ["install", "i"] {
+                for args in [
+                    vec![flag, install, "--allow-local-file", path],
+                    vec![install, flag, "--allow-local-file", path],
+                ] {
+                    std::fs::write(&archive, b"approved bytes").unwrap();
+                    let args = args.into_iter().map(str::to_owned).collect::<Vec<_>>();
+                    let pinned = super::snapshot_install_inputs(&args)
+                        .unwrap()
+                        .expect("every install spelling must capture local inputs");
+                    let handoff = pinned
+                        .targets
+                        .iter()
+                        .find(|arg| is_handoff(arg))
+                        .expect("archive must be sealed before authentication");
+                    std::fs::write(&archive, b"replacement bytes").unwrap();
+                    let snapshot = ArchiveSnapshot::capture(std::path::Path::new(handoff)).unwrap();
+                    let mut contents = Vec::new();
+                    snapshot
+                        .reader()
+                        .unwrap()
+                        .read_to_end(&mut contents)
+                        .unwrap();
+                    assert_eq!(contents, b"approved bytes");
+                }
+            }
+        }
+    }
+
     use super::*;
     use std::os::unix::fs::PermissionsExt;
 
