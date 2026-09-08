@@ -13,6 +13,7 @@ OMG is the fastest unified package manager for Linux, replacing pacman, yay, nvm
 ## [Unreleased]
 ### Merge
 
+- Integrate single Debian snapshot without losing owned-buffer safety
 - Integrate audited WIP with current main fixes
 - **Main**: Keep audited cheatsheet and exact-match hook note
 
@@ -24,6 +25,7 @@ byte-exact current OMG hooks.
 
 ### ♻️  Refactoring
 
+- **Debian**: Use one mmap snapshot for native and zero-copy views
 - **Debian**: Separate installed flags from repository caching
 - **Debian**: Separate installed flags from repository caching
 - **Dnf**: Validate query arguments before command resolution ([#352](https://github.com/PyRo1121/omg/issues/352))
@@ -101,6 +103,8 @@ present before the probe runs.
 - **Install**: Add interactive fuzzy package discovery
 ### 🐛 Bug Fixes
 
+- **History**: Retain delegated updates in the parent state store
+- **Privilege**: Separate root state and remove ownership handbacks
 - **Pgp**: Reject expired and future signatures
 - **Qa**: Harden QEMU inventory and smoke reporting
 
@@ -536,6 +540,7 @@ Preserve archive data and report persistence failures explicitly. Coordinate dat
 - Add published release smoke matrix
 ### 📚 Documentation
 
+- **Audit**: Track privileged storage isolation review
 - **Security**: Note PGP rejects expired and future-dated signatures
 - **Audit**: Preserve review trail and presentation artifacts
 - **Daemon**: Describe private socket fallback paths
@@ -617,6 +622,7 @@ Bring in the QEMU lifecycle runner, contract-driven smoke tests, failure evidenc
 
 ### 🔧 Maintenance
 
+- Checkpoint concurrent QEMU transaction and fixture work
 - Checkpoint concurrent benchmark fixture work
 - Checkpoint team and CI WIP with local identity audit evidence
 - Checkpoint CLI and benchmark WIP with publication audit evidence
@@ -658,6 +664,8 @@ surfaced by the stricter toolchain
 
 ### 🧪 Testing
 
+- **Debian**: Add bounded snapshot-load comparison benchmark
+- **Privilege**: Verify license storage follows the effective user
 - Checkpoint benchmark evidence admission WIP
 - Checkpoint property-test WIP
 - Keep enterprise policy fixture within supported schema
