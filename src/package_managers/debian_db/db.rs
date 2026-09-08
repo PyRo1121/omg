@@ -6,7 +6,7 @@
 //! Performance features:
 //! - Zero-copy memory-mapped access via rkyv + mmap
 //! - SIMD-accelerated search via memchr/memmem
-//! - LZ4 compressed cache for space efficiency
+//! - One atomically published snapshot for native and mapped views
 //! - Parallel parsing via rayon
 
 #![cfg(any(feature = "debian", feature = "debian-pure"))]
@@ -32,8 +32,6 @@ use crate::core::{Package, PackageSource};
 
 /// TTL for cache eviction safety net (30 minutes)
 const CACHE_TTL_SECS: u64 = 30 * 60;
-const DEBIAN_INDEX_CACHE_MAGIC: [u8; 4] = *b"ODXI";
-const DEBIAN_INDEX_CACHE_FORMAT_VERSION: u32 = 2;
 
 /// Current time as unix seconds (`0` if the clock is before the epoch).
 fn unix_now_secs() -> u64 {
@@ -279,10 +277,15 @@ impl DebianMmapIndex {
         let file = File::open(path)
             .with_context(|| format!("Failed to open mmap index at {}", path.display()))?;
 
-        // SAFETY: the file descriptor is read-only and the mapping is owned
-        // by this value for its full lifetime.
+        Self::from_file(&file)
+    }
+
+    fn from_file(file: &File) -> Result<Self> {
+        // SAFETY: readers open published immutable inodes. The writer finishes
+        // and syncs its private file before mapping, then only renames it.
+        // Neither path modifies the inode while its mapping is alive.
         #[expect(unsafe_code)]
-        let mmap = unsafe { Mmap::map(&file)? };
+        let mmap = unsafe { Mmap::map(file)? };
         let archive =
             rkyv::access::<rkyv::Archived<DebianPackageIndex>, rkyv::rancor::Error>(&mmap)
                 .map_err(|error| anyhow::anyhow!("Corrupted Debian package index: {error}"))?;
@@ -298,6 +301,13 @@ impl DebianMmapIndex {
             fst_mapping,
             last_accessed: AtomicU64::new(unix_now_secs()),
         })
+    }
+
+    /// Build the native view from this exact validated inode, not another
+    /// pathname that may have been replaced during publication.
+    fn deserialize(&self) -> Result<DebianPackageIndex> {
+        rkyv::deserialize::<DebianPackageIndex, rkyv::rancor::Error>(self.archive())
+            .context("Failed to deserialize Debian snapshot")
     }
 
     fn archive(&self) -> &rkyv::Archived<DebianPackageIndex> {
@@ -323,7 +333,8 @@ impl DebianMmapIndex {
         Ok(&self.archive().packages)
     }
 
-    /// The index generation this mmap was built from (`updated_at`).
+    /// Recorded build time (`updated_at`), in seconds. This metadata is not
+    /// a unique snapshot identity or a publication token.
     pub fn generation(&self) -> i64 {
         i64::from(self.archive().updated_at)
     }
@@ -632,24 +643,6 @@ fn hydrate_index_cache(
     cache.last_accessed = unix_now_secs();
 }
 
-fn decode_debian_index_cache(compressed: &[u8]) -> Result<DebianPackageIndex> {
-    anyhow::ensure!(compressed.len() >= 8, "cache header is truncated");
-    anyhow::ensure!(
-        compressed[..4] == DEBIAN_INDEX_CACHE_MAGIC,
-        "cache magic is invalid"
-    );
-    let format_version =
-        u32::from_le_bytes([compressed[4], compressed[5], compressed[6], compressed[7]]);
-    anyhow::ensure!(
-        format_version == DEBIAN_INDEX_CACHE_FORMAT_VERSION,
-        "unsupported cache format version {format_version}"
-    );
-    let bytes = lz4_flex::decompress_size_prepended(&compressed[8..])
-        .context("cache payload is not valid LZ4 data")?;
-    rkyv::from_bytes::<DebianPackageIndex, rkyv::rancor::Error>(&bytes)
-        .context("cache payload is not a valid Debian package index")
-}
-
 pub fn ensure_index_loaded() -> Result<()> {
     let lists_dir = Path::new("/var/lib/apt/lists");
     if !lists_dir.exists() {
@@ -685,23 +678,17 @@ pub fn ensure_index_loaded() -> Result<()> {
         return Ok(());
     }
 
-    // Load or create index (with LZ4 compression support).
-    // v8 adds per-package source provenance used for download-URL construction;
-    // older caches cannot answer it and are ignored (treated as cold caches).
-    // Cache files carry a magic + format-version header so a mismatched or
-    // corrupt artifact is rejected with a resync instead of undefined
-    // deserialization behavior.
-    let cache_path = paths::cache_dir().join("debian_index_v8.lz4");
+    // The existing v8 mmap is the sole package-metadata snapshot. Legacy LZ4
+    // duplicates are neither read nor rewritten. Invalid snapshots rebuild
+    // from APT lists after checked archive validation fails.
     let mmap_path = paths::cache_dir().join("debian_index_v8.mmap");
-
-    let index = if refresh == IndexRefresh::Disk && disk_cache_is_fresh(&cache_path, lists_dir) {
-        match fs::read(&cache_path)
-            .context("Failed to read Debian index cache")
-            .and_then(|compressed| decode_debian_index_cache(&compressed))
+    let snapshot = if refresh == IndexRefresh::Disk && disk_cache_is_fresh(&mmap_path, lists_dir) {
+        match DebianMmapIndex::open(&mmap_path)
+            .and_then(|mmap| mmap.deserialize().map(|index| (index, mmap)))
         {
-            Ok(index) => Some(index),
+            Ok(snapshot) => Some(snapshot),
             Err(error) => {
-                tracing::debug!(%error, path = %cache_path.display(), "Debian index cache is unusable; rebuilding");
+                tracing::debug!(%error, path = %mmap_path.display(), "Debian snapshot is unusable; rebuilding");
                 None
             }
         }
@@ -709,16 +696,12 @@ pub fn ensure_index_loaded() -> Result<()> {
         None
     };
 
-    if let Some(index) = index.filter(|index| !index.packages.is_empty()) {
+    if let Some((index, mmap)) = snapshot {
         tracing::debug!(
-            "LZ4 cache is fresh for the APT directory and {} Packages files, skipping rebuild",
+            "Mapped snapshot is fresh for the APT directory and {} Packages files, skipping rebuild",
             current_files.len()
         );
-        // Preserve the cross-file generation check before publishing an mmap.
-        let mmap = DebianMmapIndex::open(&mmap_path)
-            .ok()
-            .filter(|mmap| mmap.generation() == index.updated_at);
-        *crate::core::sync::write_cache(&DEBIAN_MMAP_INDEX) = mmap;
+        *crate::core::sync::write_cache(&DEBIAN_MMAP_INDEX) = Some(mmap);
         *crate::core::sync::write_cache(&DEBIAN_FST_INDEX) = None;
         let mut cache = crate::core::sync::write_cache(&DEBIAN_INDEX_CACHE);
         hydrate_index_cache(&mut cache, index, current_files);
@@ -731,7 +714,7 @@ pub fn ensure_index_loaded() -> Result<()> {
     let index = rebuild_package_index(&all_files)?;
     // Release serialization buffers before hydrating in-memory search state.
     {
-        if let Some(p) = cache_path.parent() {
+        if let Some(p) = mmap_path.parent() {
             fs::create_dir_all(p).with_context(|| {
                 format!("Failed to create Debian cache directory: {}", p.display())
             })?;
@@ -742,34 +725,8 @@ pub fn ensure_index_loaded() -> Result<()> {
         use std::io::Write;
         use tempfile::NamedTempFile;
 
-        // Save compressed version for space efficiency, prefixed with the
-        // magic + format-version header the read path validates.
-        let compressed = lz4_flex::compress_prepend_size(&bytes);
-        let mut framed = Vec::with_capacity(8 + compressed.len());
-        framed.extend_from_slice(&DEBIAN_INDEX_CACHE_MAGIC);
-        framed.extend_from_slice(&DEBIAN_INDEX_CACHE_FORMAT_VERSION.to_le_bytes());
-        framed.extend_from_slice(&compressed);
-
-        // Atomic write for compressed cache
-        let parent = cache_path.parent().unwrap_or_else(|| Path::new("."));
-        let mut temp_cache =
-            NamedTempFile::new_in(parent).context("Failed to create temporary cache file")?;
-        temp_cache
-            .write_all(&framed)
-            .context("Failed to write compressed cache data")?;
-        temp_cache
-            .as_file_mut()
-            .sync_all()
-            .context("Failed to sync compressed Debian cache")?;
-        temp_cache
-            .persist(&cache_path)
-            .map_err(|error| error.error)
-            .context("Failed to persist compressed cache file")?;
-
-        // Also save uncompressed version for zero-copy mmap access
-        // (same path as the outer `mmap_path`; kept in sync by construction)
-
-        // Atomic write for mmap index
+        let parent = mmap_path.parent().unwrap_or_else(|| Path::new("."));
+        // Atomic write for the sole metadata snapshot
         // CRITICAL: Must use atomic rename to avoid crashing readers holding an mmap
         let mut temp_mmap =
             NamedTempFile::new_in(parent).context("Failed to create temporary mmap file")?;
@@ -780,22 +737,14 @@ pub fn ensure_index_loaded() -> Result<()> {
             .as_file_mut()
             .sync_all()
             .context("Failed to sync Debian mmap index")?;
+        // Capture the validated inode before publication. Reopening the path
+        // could pair this native index with another writer's replacement.
+        let mmap_index = DebianMmapIndex::from_file(temp_mmap.as_file())?;
         temp_mmap
             .persist(&mmap_path)
             .map_err(|error| error.error)
             .context("Failed to persist mmap file")?;
-
-        // Load the mmap index for zero-copy access
-        if let Ok(mmap_index) = DebianMmapIndex::open(&mmap_path) {
-            let mut mmap_guard = crate::core::sync::write_cache(&DEBIAN_MMAP_INDEX);
-
-            // Clear existing mmap before loading new one
-            if mmap_guard.is_some() {
-                tracing::debug!("Replacing existing Debian mmap index with updated version");
-            }
-
-            *mmap_guard = Some(mmap_index);
-        }
+        *crate::core::sync::write_cache(&DEBIAN_MMAP_INDEX) = Some(mmap_index);
 
         // Build FST index for O(query_len) prefix searches
         // FST requires sorted input, so we need to sort packages by name
@@ -2561,7 +2510,76 @@ mod tests {
     static ENV_LOCK: LazyLock<std::sync::Mutex<()>> = LazyLock::new(|| std::sync::Mutex::new(()));
 
     #[test]
-    fn compressed_index_cache_round_trips_with_a_plain_header() -> Result<()> {
+    fn native_and_mmap_views_use_the_same_snapshot() -> Result<()> {
+        let directory = tempfile::tempdir()?;
+        let mut index = DebianPackageIndex::new();
+        index.updated_at = 42;
+        index.add_package(parse_paragraph_str(
+            "Package: demo\nVersion: 1\nArchitecture: amd64\nDescription: fixture\n",
+            "main",
+            "stable",
+            "fixture",
+        )?);
+        let old_bytes = rkyv::to_bytes::<rkyv::rancor::Error>(&index)?;
+        let mut legacy = b"ODXI".to_vec();
+        legacy.extend_from_slice(&2_u32.to_le_bytes());
+        legacy.extend_from_slice(&lz4_flex::compress_prepend_size(&old_bytes));
+        let legacy_path = directory.path().join("debian_index_v8.lz4");
+        fs::write(&legacy_path, &legacy)?;
+        index.packages[0].version = "2".to_string();
+        let path = directory.path().join("debian_index_v8.mmap");
+        let mut pending = tempfile::NamedTempFile::new_in(directory.path())?;
+        std::io::Write::write_all(
+            pending.as_file_mut(),
+            &rkyv::to_bytes::<rkyv::rancor::Error>(&index)?,
+        )?;
+        pending.as_file().sync_all()?;
+        let mapped = DebianMmapIndex::from_file(pending.as_file())?;
+        pending.persist(&path)?;
+        let native = mapped.deserialize()?;
+        assert_eq!(native.updated_at, mapped.generation());
+        assert_eq!(
+            native.get("demo").context("native package")?.version,
+            mapped
+                .get("demo")?
+                .context("mapped package")?
+                .version
+                .as_str(),
+            "equal timestamps cannot justify combining different metadata snapshots"
+        );
+        assert_eq!(native.get("demo").context("native package")?.version, "2");
+        index.packages[0].version = "3".to_string();
+        crate::core::safe_ops::atomic_write_file_sync(
+            &path,
+            rkyv::to_bytes::<rkyv::rancor::Error>(&index)?,
+        )?;
+        let replacement = DebianMmapIndex::open(&path)?;
+        assert_eq!(
+            replacement
+                .deserialize()?
+                .get("demo")
+                .context("replacement package")?
+                .version,
+            "3"
+        );
+        assert_eq!(
+            mapped
+                .deserialize()?
+                .get("demo")
+                .context("retained package")?
+                .version,
+            "2"
+        );
+        assert_eq!(
+            fs::read(&legacy_path)?,
+            legacy,
+            "legacy duplicates remain untouched"
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn mapped_index_snapshot_round_trips_to_native() -> Result<()> {
         let mut index = DebianPackageIndex::new();
         index.add_package(DebianPackage {
             name: "demo".to_string(),
@@ -2581,14 +2599,10 @@ mod tests {
             suite: "stable".to_string(),
             source_key: "deb.example_debian".to_string(),
         });
-        let bytes = rkyv::to_bytes::<rkyv::rancor::Error>(&index)?;
-        let compressed = lz4_flex::compress_prepend_size(&bytes);
-        let mut framed = Vec::new();
-        framed.extend_from_slice(&DEBIAN_INDEX_CACHE_MAGIC);
-        framed.extend_from_slice(&DEBIAN_INDEX_CACHE_FORMAT_VERSION.to_le_bytes());
-        framed.extend_from_slice(&compressed);
-
-        let decoded = decode_debian_index_cache(&framed)?;
+        let directory = tempfile::tempdir()?;
+        let path = directory.path().join("index.mmap");
+        fs::write(&path, rkyv::to_bytes::<rkyv::rancor::Error>(&index)?)?;
+        let decoded = DebianMmapIndex::open(&path)?.deserialize()?;
         assert_eq!(
             decoded.get("demo").map(|package| package.version.as_str()),
             Some("1.0")
@@ -2597,11 +2611,33 @@ mod tests {
     }
 
     #[test]
-    fn malformed_index_cache_headers_fail_closed() {
-        assert!(decode_debian_index_cache(b"short").is_err());
-        assert!(decode_debian_index_cache(b"NOPE\x01\x00\x00\x00bad").is_err());
-        assert!(decode_debian_index_cache(b"ODXI\x02\x00\x00\x00bad").is_err());
-        assert!(decode_debian_index_cache(b"ODXI\x01\x00\x00\x00bad").is_err());
+    fn non_archive_inputs_are_rejected_by_snapshot_reader() -> Result<()> {
+        let directory = tempfile::tempdir()?;
+        let path = directory.path().join("index.mmap");
+        for bytes in [
+            b"short".as_slice(),
+            b"NOPE\x01\x00\x00\x00bad",
+            b"ODXI\x02\x00\x00\x00bad",
+            b"ODXI\x01\x00\x00\x00bad",
+        ] {
+            fs::write(&path, bytes)?;
+            assert!(DebianMmapIndex::open(&path).is_err());
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn empty_snapshot_deserializes_without_becoming_a_cache_miss() -> Result<()> {
+        let directory = tempfile::tempdir()?;
+        let path = directory.path().join("empty.mmap");
+        fs::write(
+            &path,
+            rkyv::to_bytes::<rkyv::rancor::Error>(&DebianPackageIndex::new())?,
+        )?;
+        let mapped = DebianMmapIndex::open(&path)?;
+        assert!(mapped.deserialize()?.packages.is_empty());
+        assert!(mapped.packages()?.is_empty());
+        Ok(())
     }
 
     #[test]
