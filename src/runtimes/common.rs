@@ -1082,12 +1082,19 @@ pub(crate) fn activate_version_with_linked_binary(
     version: &str,
     expected_binary: &Path,
 ) -> Result<()> {
-    let version_dir = versions_dir.join(version);
+    require_internal_runtime_binary(&versions_dir.join(version), expected_binary)?;
+    set_current_version(versions_dir, version)
+}
+
+pub(crate) fn require_internal_runtime_binary(
+    version_dir: &Path,
+    expected_binary: &Path,
+) -> Result<()> {
     let candidate = version_dir.join(expected_binary);
     let metadata = fs::symlink_metadata(&candidate)
         .with_context(|| format!("Failed to inspect runtime binary: {}", candidate.display()))?;
     if metadata.is_file() {
-        return set_current_version(versions_dir, version);
+        return Ok(());
     }
     if !metadata.file_type().is_symlink() {
         anyhow::bail!(
@@ -1096,7 +1103,7 @@ pub(crate) fn activate_version_with_linked_binary(
         );
     }
 
-    let canonical_version = fs::canonicalize(&version_dir).with_context(|| {
+    let canonical_version = fs::canonicalize(version_dir).with_context(|| {
         format!(
             "Failed to resolve runtime version directory: {}",
             version_dir.display()
@@ -1110,8 +1117,7 @@ pub(crate) fn activate_version_with_linked_binary(
             candidate.display()
         );
     }
-    require_regular_file(&canonical_binary)?;
-    set_current_version(versions_dir, version)
+    require_regular_file(&canonical_binary)
 }
 
 /// Remove an installed runtime version directory.
