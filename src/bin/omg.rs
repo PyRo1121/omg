@@ -1152,6 +1152,23 @@ async fn handle_license_command(command: &AccountCommands) -> Result<()> {
     }
 }
 
+#[derive(Debug, PartialEq, Eq)]
+enum UpdateExecution {
+    Standard,
+    SyncFast,
+    CachedFast,
+}
+
+const fn update_execution(fast: bool, turbo: bool, no_sync: bool) -> UpdateExecution {
+    if turbo || (fast && no_sync) {
+        UpdateExecution::CachedFast
+    } else if fast {
+        UpdateExecution::SyncFast
+    } else {
+        UpdateExecution::Standard
+    }
+}
+
 #[expect(clippy::fn_params_excessive_bools)] // Maps directly to CLI flags: --check, --yes, --dry-run, --no-sync, --fast, --turbo
 async fn handle_update_command(
     check: bool,
@@ -1171,12 +1188,10 @@ async fn handle_update_command(
             if check { "check" } else { "dry-run" }
         );
     }
-    if turbo {
-        packages::update_turbo().await
-    } else if fast {
-        packages::update_fast().await
-    } else {
-        packages::update(check, yes, dry_run, no_sync).await
+    match update_execution(fast, turbo, no_sync) {
+        UpdateExecution::CachedFast => packages::update_turbo().await,
+        UpdateExecution::SyncFast => packages::update_fast().await,
+        UpdateExecution::Standard => packages::update(check, yes, dry_run, no_sync).await,
     }
 }
 
@@ -1834,6 +1849,22 @@ mod fast_path_tests {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn update_flags_preserve_cached_execution() {
+        use super::{UpdateExecution, update_execution};
+        for (fast, turbo, no_sync, expected) in [
+            (false, false, false, UpdateExecution::Standard),
+            (false, false, true, UpdateExecution::Standard),
+            (true, false, false, UpdateExecution::SyncFast),
+            (true, false, true, UpdateExecution::CachedFast),
+            (false, true, false, UpdateExecution::CachedFast),
+            (false, true, true, UpdateExecution::CachedFast),
+            (true, true, false, UpdateExecution::CachedFast),
+            (true, true, true, UpdateExecution::CachedFast),
+        ] {
+            assert_eq!(update_execution(fast, turbo, no_sync), expected);
+        }
+    }
     use super::*;
 
     #[cfg(feature = "arch")]

@@ -205,7 +205,7 @@ input{flex:1;min-width:180px}
       </section>
       <section class="panel" aria-label="Road to beta">
         <h2>Road to Beta <em>in flight</em></h2>
-        <div class="progress"><div class="rail"><div class="bar" id="beta-bar"></div></div><span class="pl" id="beta-pl"></span></div>
+        <div class="progress"><span class="pl" id="beta-pl"></span></div>
         <div class="flight" id="flightlist"></div>
         <p class="betaline" id="betaline"></p>
       </section>
@@ -260,14 +260,14 @@ function ctype(t){const m=/^(\w+)\s*[(:!]/.exec(t);return m?m[1]:'other'}
 const types={};for(const c of a)types[ctype(c.title)]=(types[ctype(c.title)]||0)+1;
 
 /* hero */
-document.getElementById('lead').innerHTML='The <b>'+daysA.toFixed(1)+' days</b> after the September 4 Astra milestone converted a surge of output into an installable, tested, honest alpha: <b>'+fmt(a.length)+' commits</b>, <b>'+ma.length+' merged pull requests</b> — every fix below links to its evidence.';
+document.getElementById('lead').innerHTML='The <b>'+daysA.toFixed(1)+' days</b> after the September 4 Astra milestone recorded this work toward a stronger alpha: <b>'+fmt(a.length)+' commits</b>, <b>'+ma.length+' merged pull requests</b> — every fix below links to its evidence.';
 document.getElementById('route').innerHTML='<b>Prior Astra</b> Jan 13 – Sep 3 · '+fmt(b.length)+' commits · '+mb.length+' merges&nbsp;&nbsp;→&nbsp;&nbsp;<b>Astra</b> Sep 4&nbsp;&nbsp;→&nbsp;&nbsp;<b>Since</b> '+fmt(a.length)+' commits · '+ma.length+' merges&nbsp;&nbsp;→&nbsp;&nbsp;<b>ALPHA</b> now — limits tracked in the open (<a href="https://github.com/PyRo1121/omg/issues/277">#277</a> <a href="https://github.com/PyRo1121/omg/issues/281">#281</a>)&nbsp;&nbsp;→&nbsp;&nbsp;<b>BETA</b> next';
 document.getElementById('snapshot').textContent='Snapshot '+dt(D.now);
 
 /* metrics */
 document.getElementById('metrics').innerHTML=[
  ['var(--lime)','Commits on main since Astra',fmt(a.length),(a.length/cs.length*100).toFixed(1)+'% of lifetime in '+daysA.toFixed(1)+' days',1],
- ['var(--teal)','Merged pull requests',ma.length,(ma.length/(ma.length+mb.length)*100).toFixed(0)+'% of all-time merges landed since',0],
+ ['var(--teal)','Merged pull requests',ma.length,ma.length+' since Astra · '+mb.length+' prior · authored PRs',0],
  ['var(--sky)','Fix commits landed',types.fix||0,'plus '+(types.test||0)+' test · '+(types.docs||0)+' docs commits',0],
  ['var(--violet)','Merged PRs / day',(ma.length/daysA).toFixed(1),(ma.length/daysA/(mb.length/daysB)).toFixed(0)+'× lifetime rate · +'+Math.round(((ma.length/daysA)/(priorPR.length/7)-1)*100)+'% vs pre-Astra week',0],
  ['var(--gold)','Sudo-level findings closed',6,'one sweep · PR #296',0],
@@ -343,15 +343,14 @@ const daily={};for(let t=cut;t<end;t+=day)daily[localday(new Date(t))]=0;for(con
 const max=Math.max(...Object.values(daily),1);
 document.getElementById('daily').innerHTML=Object.entries(daily).sort().map(([d,n])=>'<div class="barrow"><span>Sep '+Number(d.slice(-2))+'</span><div class="track"><div class="fill" data-w="'+(n/max*100)+'"></div></div><span>'+n+'</span></div>').join('');
 const prLift=Math.round(((ma.length/daysA)/(priorPR.length/7)-1)*100),lifeLift=(ma.length/daysA/(mb.length/daysB)).toFixed(0);
-document.getElementById('pace').innerHTML='Since Astra: <b>'+(a.length/daysA).toFixed(1)+' commits/day</b> · <span class="hl"><b>'+(ma.length/daysA).toFixed(1)+' merged PRs/day</b></span> — <b>'+lifeLift+'×</b> the lifetime merge rate, <b>+'+prLift+'%</b> vs the week before Astra. The Astra surge became review-verified, linked work.';
+document.getElementById('pace').innerHTML='Since Astra: <b>'+(a.length/daysA).toFixed(1)+' commits/day</b> · <span class="hl"><b>'+(ma.length/daysA).toFixed(1)+' merged PRs/day</b></span> — <b>'+lifeLift+'×</b> the lifetime merge rate, <b>+'+prLift+'%</b> vs the week before Astra. Activity counts, not proof of review quality or release readiness.';
 
 /* road to beta */
-const pct=Math.round(ma.length/(ma.length+openPRs.length)*100);
-document.getElementById('beta-pl').textContent=ma.length+' merged · '+openPRs.length+' open · '+pct+'%';
-requestAnimationFrame(()=>requestAnimationFrame(()=>{document.getElementById('beta-bar').style.width=pct+'%';
+document.getElementById('beta-pl').textContent=openPRs.length+' open PRs at snapshot · not a beta-readiness score';
+requestAnimationFrame(()=>requestAnimationFrame(()=>{
  document.querySelectorAll('.barrow .fill').forEach(f=>f.style.width=f.dataset.w+'%')}));
 document.getElementById('flightlist').innerHTML=openPRs.map(p=>'<div class="row"><a href="'+esc(p.url)+'" title="'+esc(p.title)+'">'+esc(p.title)+'</a><span class="num">#'+p.number+'</span></div>').join('');
-document.getElementById('betaline').innerHTML='The beta bar: <b>green published smoke</b> on all four distros + macOS (<a href="https://github.com/PyRo1121/omg/issues/277">#277</a>) · <b>no swallowed failures</b> (<a href="https://github.com/PyRo1121/omg/pull/326">#326</a> <a href="https://github.com/PyRo1121/omg/issues/281">#281</a>)';
+document.getElementById('betaline').innerHTML='Follow-up evidence: <b>published smoke</b> on all four distros + macOS (<a href="https://github.com/PyRo1121/omg/issues/277">#277</a>) · <b>no swallowed failures</b> (<a href="https://github.com/PyRo1121/omg/pull/326">#326</a> <a href="https://github.com/PyRo1121/omg/issues/281">#281</a>)';
 
 /* evidence dialog */
 function render(type){const isPR=type==='pr',period=document.getElementById(type+'period').value,q=document.getElementById(type+'search').value.toLowerCase();

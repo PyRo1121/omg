@@ -79,6 +79,11 @@ Smallest change: track and reverse the shell environment delta before applying t
 - **Persisted daemon status:** `src/daemon/db.rs:18,35`; `src/daemon/handlers.rs:985,993`. Disk snapshots have no observation time and are promoted into a fresh memory TTL repeatedly. Persist freshness metadata through an explicit compatible reader; do not silently rewrite old or unknown user-data formats.
 - **Debian FST publication:** `src/package_managers/debian_db/db.rs:170,744,845`. Generation sidecar publication precedes FST replacement, and generations use whole seconds. Bind identity to actual bytes in one atomic publication. Fault-inject interruption and same-second rebuilds. Exact search manifestations remain unverified.
 
+### A7 remediation update, 2026-09-08
+
+- [PR #353](https://github.com/PyRo1121/omg/pull/353), commit `af4c7c7a`, fixes sequential Debian list-removal invalidation and consolidates the memory/disk/rebuild decision. Ten scoped tests and Debian-pure library Clippy pass. Concurrent APT updates and multi-file publication remain outside that verification.
+- Source-inspected follow-up, not yet reproduced: [`DebianIndexCache.installed_set` and search fallbacks](https://github.com/PyRo1121/omg/blob/af4c7c7a/src/package_managers/debian_db/db.rs) retain installed state until repository metadata is reloaded. The mmap search already uses the independently refreshed `installed_names()` path. Reproduce a dpkg-status change with unchanged APT lists, then separate installed-state freshness from repository indexing for normal and fuzzy searches.
+
 ## Refactoring and dead-code inventory
 
 ### B. CLI ownership
