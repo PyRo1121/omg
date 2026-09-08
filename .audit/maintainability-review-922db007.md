@@ -82,7 +82,9 @@ Smallest change: track and reverse the shell environment delta before applying t
 ### A7 remediation update, 2026-09-08
 
 - [PR #353](https://github.com/PyRo1121/omg/pull/353), commit `af4c7c7a`, fixes sequential Debian list-removal invalidation and consolidates the memory/disk/rebuild decision. Ten scoped tests and Debian-pure library Clippy pass. Concurrent APT updates and multi-file publication remain outside that verification.
-- Source-inspected follow-up, not yet reproduced: [`DebianIndexCache.installed_set` and search fallbacks](https://github.com/PyRo1121/omg/blob/af4c7c7a/src/package_managers/debian_db/db.rs) retain installed state until repository metadata is reloaded. The mmap search already uses the independently refreshed `installed_names()` path. Reproduce a dpkg-status change with unchanged APT lists, then separate installed-state freshness from repository indexing for normal and fuzzy searches.
+- [PR #355](https://github.com/PyRo1121/omg/pull/355), commit `376ab2b5`, removes the stale [`DebianIndexCache.installed_set`](https://github.com/PyRo1121/omg/blob/af4c7c7a/src/package_managers/debian_db/db.rs) and routes search/info fallbacks through `installed_names()`. Thirteen scoped tests cover current-status rendering and existing cache contracts. This is a source-backed ownership correction, not a pre-patch host-bound public-entrypoint reproduction. These paths use exact/prefix/substring matching, not fuzzy matching.
+- [PR #356](https://github.com/PyRo1121/omg/pull/356), commit `7463e9f9`, adds qualified mmap lookups matching the normal index. A real mapped fixture reproduced the pre-fix miss for `demo:amd64`; seven scoped tests pass after the fix. Info checks installed state using the resolved package name.
+- Combined verification of #353/#355/#356 at local `verify/audit-debian-combined` commit `f3e1ae918f408f505cb9791de1aef28c4f3e3f6f`: nineteen scoped tests and Debian-pure library Clippy pass on main base `bab687a7`. Evidence was posted on all three PRs. Full platform and concurrent APT/publication checks remain open.
 
 ## Refactoring and dead-code inventory
 

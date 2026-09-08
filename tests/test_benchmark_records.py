@@ -1,4 +1,5 @@
 """Regression checks for unbiased Hyperfine evidence admission."""
+
 from __future__ import annotations
 
 import importlib.util
@@ -61,7 +62,9 @@ class BenchmarkAdmissionTests(unittest.TestCase):
         self.assertEqual(self.recorder.validate_results(self.source), [])
 
     def test_no_arbitrary_time_or_cpu_floor(self) -> None:
-        self.write_results(measurement("OMG (Daemon)", 0.00001), measurement("pacman", 0.00002))
+        self.write_results(
+            measurement("OMG (Daemon)", 0.00001), measurement("pacman", 0.00002)
+        )
         self.assertEqual(self.recorder.validate_results(self.source), [])
 
     def test_accepts_actual_driver_command_label(self) -> None:

@@ -246,7 +246,67 @@ struct MakepkgEnv {
 pub(crate) struct AuthorizedBuild {
     package: String,
     requested_outputs: Vec<String>,
-    reviewed_digest: Option<ReviewedSource>,
+    reviewed_digest: ReviewedSource,
+    lifecycle_lease: File,
+}
+
+#[derive(Clone, Copy)]
+enum BuildAccess {
+    Build,
+    Cleanup,
+}
+
+fn lock_build_lifecycle(build_dir: &Path, access: BuildAccess) -> Result<File> {
+    use std::os::unix::fs::{MetadataExt, OpenOptionsExt};
+
+    let parent = build_dir
+        .parent()
+        .context("AUR cache has no parent directory")?;
+    let mut name = build_dir
+        .file_name()
+        .context("AUR cache has no directory name")?
+        .to_os_string();
+    name.push(".lifecycle.lock");
+    let path = parent.join(name);
+    let flags = nix::libc::O_NOFOLLOW | nix::libc::O_NONBLOCK;
+    let file = match std::fs::OpenOptions::new()
+        .read(true)
+        .write(true)
+        .create_new(true)
+        .mode(0o600)
+        .custom_flags(flags)
+        .open(&path)
+    {
+        Ok(file) => {
+            if crate::core::is_root() {
+                let owner = parent.metadata()?;
+                nix::unistd::fchown(
+                    &file,
+                    Some(nix::unistd::Uid::from_raw(owner.uid())),
+                    Some(nix::unistd::Gid::from_raw(owner.gid())),
+                )?;
+            }
+            file
+        }
+        Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => {
+            std::fs::OpenOptions::new()
+                .read(true)
+                .custom_flags(flags)
+                .open(&path)?
+        }
+        Err(error) => return Err(error.into()),
+    };
+    let metadata = file.metadata()?;
+    anyhow::ensure!(
+        metadata.is_file() && metadata.nlink() == 1,
+        "AUR lifecycle lock must be a singly linked regular file"
+    );
+    match access {
+        BuildAccess::Build => file.try_lock_shared(),
+        BuildAccess::Cleanup => file.try_lock(),
+    }
+    .context("AUR cache is busy; retry after active builds or cleanup finish")?;
+    Ok(file)
 }
 
 /// The exact local source files approved before any build command runs.
@@ -1034,6 +1094,14 @@ impl AurClient {
         .context("AUR build lock worker failed")?
     }
 
+    async fn acquire_build_lease(&self) -> Result<File> {
+        create_dir_as_user(&self.build_dir).await?;
+        let directory = self.build_dir.clone();
+        tokio::task::spawn_blocking(move || lock_build_lifecycle(&directory, BuildAccess::Build))
+            .await
+            .context("AUR lifecycle lock worker failed")?
+    }
+
     #[must_use]
     pub fn build_concurrency(&self) -> usize {
         self.settings.aur.build_concurrency.max(1)
@@ -1580,8 +1648,11 @@ impl AurClient {
             .collect())
     }
 
-    fn rollback_worktree_name(base: &str) -> String {
-        format!("{base}-{}", uuid::Uuid::new_v4())
+    fn rollback_worktree(work: &Path, base: &str) -> Result<tempfile::TempDir> {
+        tempfile::Builder::new()
+            .prefix(&format!("{base}-"))
+            .tempdir_in(work)
+            .context("Failed to create isolated AUR rollback worktree")
     }
 
     fn historical_version_not_found_message(base: &str, version: &str) -> String {
@@ -1610,6 +1681,7 @@ impl AurClient {
         crate::core::security::validate_package_name(package)?;
         crate::core::security::validate_version(version)?;
         require_unprivileged_builder(package, crate::core::is_root())?;
+        let _lifecycle_lease = self.acquire_build_lease().await?;
         Self::preacquire_install_privileges(package, "AUR rollback").await?;
         let sudoloop = if crate::core::sudoloop::can_use_sudoloop() {
             Some(crate::core::sudoloop::SudoLoop::start())
@@ -1619,12 +1691,10 @@ impl AurClient {
 
         let base = self.resolve_package_base(package).await?;
 
-        // Isolated work tree; a UUID prevents concurrent rollbacks of the
-        // same package base from sharing or deleting one another's checkout.
         let work = self.build_dir.join("_rollback");
         create_dir_as_user(&work).await?;
-        let repo_dir = work.join(Self::rollback_worktree_name(&base));
-        create_dir_as_user(&repo_dir).await?;
+        let worktree = Self::rollback_worktree(&work, &base)?;
+        let repo_dir = worktree.path().to_path_buf();
 
         // Full-history partial clone (blobs fetched on demand at checkout).
         let url = format!("{AUR_GIT_URL}/{base}.git");
@@ -1775,7 +1845,10 @@ impl AurClient {
         // leaving every UUID-named worktree behind would grow the build dir
         // without bound. Removal is best-effort: a leftover checkout never
         // affects correctness, only disk use.
-        if let Err(error) = tokio::fs::remove_dir_all(&repo_dir).await {
+        if let Err(error) = tokio::task::spawn_blocking(move || worktree.close())
+            .await
+            .context("Rollback cleanup worker failed")?
+        {
             tracing::warn!(
                 "Rollback of '{package}' succeeded but its worktree {} could not be removed: {error:#}",
                 repo_dir.display()
@@ -1874,6 +1947,7 @@ impl AurClient {
         }
         require_unprivileged_builder(package, crate::core::is_root())?;
 
+        let lifecycle_lease = self.acquire_build_lease().await?;
         let package_lock = self.package_base_lock(package);
         let _package_checkout_guard = package_lock.lock().await;
         create_dir_as_user(&self.build_dir).await?;
@@ -1933,15 +2007,16 @@ impl AurClient {
             return Err(AurError::PkgbuildNotFound(package.to_string()).into());
         }
         let reviewed_digest = if self.settings.aur.review_pkgbuild {
-            Some(Self::review_pkgbuild(package, &pkgbuild_path).await?)
+            Self::review_pkgbuild(package, &pkgbuild_path).await?
         } else {
-            Some(ReviewedSource::capture(&pkg_dir)?)
+            ReviewedSource::capture(&pkg_dir)?
         };
 
         Ok(AuthorizedBuild {
             package: package.to_string(),
             requested_outputs: requested_outputs.to_vec(),
             reviewed_digest,
+            lifecycle_lease,
         })
     }
 
@@ -1979,6 +2054,7 @@ impl AurClient {
             package,
             requested_outputs,
             reviewed_digest,
+            lifecycle_lease: _lifecycle_lease,
         } = authorized;
         let package_lock = self.package_base_lock(&package);
         let package_checkout_guard = package_lock.lock().await;
@@ -1988,9 +2064,7 @@ impl AurClient {
         if !pkgbuild_path.exists() {
             return Err(AurError::PkgbuildNotFound(package).into());
         }
-        if let Some(digest) = &reviewed_digest {
-            digest.verify(&pkg_dir)?;
-        }
+        reviewed_digest.verify(&pkg_dir)?;
 
         let pgp_home = Self::fetch_missing_pgp_keys(&pkgbuild_path).await?;
 
@@ -2062,9 +2136,7 @@ impl AurClient {
 
         let fresh = pkg_files.is_empty();
         if fresh {
-            if let Some(digest) = &reviewed_digest {
-                digest.verify(&pkg_dir)?;
-            }
+            reviewed_digest.verify(&pkg_dir)?;
             let log_path = self.build_log_path(&package);
 
             let status = self
@@ -2088,9 +2160,7 @@ impl AurClient {
 
         Self::authorize_archives(
             &pkg_files,
-            reviewed_digest
-                .as_ref()
-                .context("Missing reviewed source")?,
+            &reviewed_digest,
             &package,
             &requested_outputs,
             fresh,
@@ -2212,9 +2282,9 @@ impl AurClient {
         // Same hash seal as install_package_outputs: re-verify the reviewed
         // PKGBUILD right before this dependency build runs.
         let reviewed_digest = if self.settings.aur.review_pkgbuild {
-            Some(Self::review_pkgbuild(package_base, &pkgbuild_path).await?)
+            Self::review_pkgbuild(package_base, &pkgbuild_path).await?
         } else {
-            Some(ReviewedSource::capture(&pkg_dir)?)
+            ReviewedSource::capture(&pkg_dir)?
         };
         let pgp_home = Self::fetch_missing_pgp_keys(&pkgbuild_path).await?;
 
@@ -2252,18 +2322,14 @@ impl AurClient {
         {
             return Self::authorize_archives(
                 &archives,
-                reviewed_digest
-                    .as_ref()
-                    .context("Missing reviewed source")?,
+                &reviewed_digest,
                 package_base,
                 &package_outputs,
                 false,
             );
         }
 
-        if let Some(digest) = &reviewed_digest {
-            digest.verify(&pkg_dir)?;
-        }
+        reviewed_digest.verify(&pkg_dir)?;
         let log_path = self.build_log_path(package);
         let status = self
             .run_build(&pkg_dir, &env, package)
@@ -2284,9 +2350,7 @@ impl AurClient {
         self.write_cache_key(package_base, &cache_key).await?;
         Self::authorize_archives(
             &pkg_files,
-            reviewed_digest
-                .as_ref()
-                .context("Missing reviewed source")?,
+            &reviewed_digest,
             package_base,
             &package_outputs,
             true,
@@ -3969,6 +4033,7 @@ impl AurClient {
 
     pub fn clean_all(&self) -> Result<()> {
         if self.build_dir.exists() {
+            let _lifecycle_lease = lock_build_lifecycle(&self.build_dir, BuildAccess::Cleanup)?;
             if let Some(user) = original_user() {
                 let build_dir_str = self.build_dir.to_string_lossy();
                 let status = crate::core::privilege::system_command("sudo")?
@@ -5126,13 +5191,61 @@ mod tests {
         );
     }
 
+    #[tokio::test]
+    async fn lifecycle_lease_excludes_cleanup_until_all_builds_finish() {
+        use std::os::unix::fs::MetadataExt;
+        let directory = tempfile::tempdir().unwrap();
+        let client = AurClient {
+            build_dir: directory.path().join("aur"),
+            settings: Settings::default(),
+            package_base_locks: Arc::new(dashmap::DashMap::new()),
+        };
+        let first = client.acquire_build_lease().await.unwrap();
+        let second = client.acquire_build_lease().await.unwrap();
+        let marker = client.build_dir.join("active-build");
+        std::fs::write(&marker, b"in progress").unwrap();
+        assert!(client.clean_all().is_err());
+        assert!(marker.exists());
+        drop(first);
+        assert!(client.clean_all().is_err());
+        drop(second);
+        let lock_path = directory.path().join("aur.lifecycle.lock");
+        let inode = lock_path.metadata().unwrap().ino();
+        client.clean_all().unwrap();
+        assert!(!marker.exists());
+        assert_eq!(lock_path.metadata().unwrap().ino(), inode);
+        let cleanup = lock_build_lifecycle(&client.build_dir, BuildAccess::Cleanup).unwrap();
+        assert!(client.acquire_build_lease().await.is_err());
+        drop(cleanup);
+        assert!(client.acquire_build_lease().await.is_ok());
+    }
+
+    #[test]
+    fn lifecycle_lock_rejects_links() {
+        let directory = tempfile::tempdir().unwrap();
+        let build = directory.path().join("aur");
+        let target = directory.path().join("target");
+        let lock = directory.path().join("aur.lifecycle.lock");
+        std::fs::write(&target, b"unchanged").unwrap();
+        std::os::unix::fs::symlink(&target, &lock).unwrap();
+        assert!(lock_build_lifecycle(&build, BuildAccess::Build).is_err());
+        std::fs::remove_file(&lock).unwrap();
+        std::fs::hard_link(&target, &lock).unwrap();
+        assert!(lock_build_lifecycle(&build, BuildAccess::Cleanup).is_err());
+        assert_eq!(std::fs::read(&target).unwrap(), b"unchanged");
+    }
+
     #[test]
     fn rollback_worktrees_are_unique_for_the_same_package_base() {
-        let first = AurClient::rollback_worktree_name("example");
-        let second = AurClient::rollback_worktree_name("example");
-        assert!(first.starts_with("example-"));
-        assert!(second.starts_with("example-"));
-        assert_ne!(first, second);
+        let directory = tempfile::tempdir().unwrap();
+        let first = AurClient::rollback_worktree(directory.path(), "example").unwrap();
+        let second = AurClient::rollback_worktree(directory.path(), "example").unwrap();
+        assert_ne!(first.path(), second.path());
+        let path = first.path().to_path_buf();
+        std::fs::write(path.join("partial-clone"), b"fixture").unwrap();
+        drop(first);
+        assert!(!path.exists());
+        assert!(second.path().exists());
     }
 
     #[test]

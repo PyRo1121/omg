@@ -1,5 +1,5 @@
 #!/bin/bash
-set -e
+set -euo pipefail
 
 # ============================================================================
 # OMG Performance Benchmark with Hyperfine (Industry Best Practice)
@@ -34,6 +34,7 @@ MIN_RUNS=20
 MAX_RUNS=50
 FAST_MODE=false
 UPDATE_MODE=false
+GUEST_MODE=false
 EXPORT_DIR="benchmark_results"
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 UPDATE_WORK_DIRS=()
@@ -46,6 +47,8 @@ Usage: $0 [OPTIONS]
 
 Options:
   --fast, -f    Run in fast mode (reduced warmup and runs)
+  --guest       Benchmark installed-package info in a prepared Linux guest;
+                requires OMG_BENCH_BINARY and an installed tree fixture
   --update      Run ONLY the AUR update discovery benchmark (no daemon,
                 no other benchmarks) and exit
   --help, -h    Show this help message
@@ -77,6 +80,10 @@ while [[ $# -gt 0 ]]; do
     case $1 in
         --fast|-f)
             FAST_MODE=true
+            shift
+            ;;
+        --guest)
+            GUEST_MODE=true
             shift
             ;;
         --update)
@@ -123,12 +130,8 @@ if ! command -v hyperfine &>/dev/null; then
     echo "  macOS:       brew install hyperfine"
     echo "  Cargo:       cargo install hyperfine"
     echo ""
-    echo "Falling back to standard benchmark.sh..."
-    if [ "$FAST_MODE" = true ]; then
-        exec ./benchmark.sh --fast
-    else
-        exec ./benchmark.sh
-    fi
+    echo "Benchmark not run: hyperfine is required; no substitute timer is used." >&2
+    exit 3
 fi
 
 cleanup() {
@@ -194,6 +197,10 @@ archive_results() {
 }
 
 TARGET_DIR="${OMG_BENCH_TARGET_DIR:-$HOME/.cache/build-targets/omg-benchmark-hyperfine}"
+if [[ "$GUEST_MODE" == true && ( "$UPDATE_MODE" == true || -z "${OMG_BENCH_BINARY:-}" ) ]]; then
+    echo 'Guest benchmarks require a prebuilt binary and cannot use --update.' >&2
+    exit 2
+fi
 
 if [ -n "${OMG_BENCH_BINARY:-}" ]; then
     echo -e "${BLUE}🔧 Using prebuilt binary: $OMG_BENCH_BINARY${NC}"
@@ -215,6 +222,67 @@ fi
 if [ ! -x "$OMG" ]; then
     echo -e "${RED}❌ omg binary not executable: $OMG${NC}" >&2
     exit 1
+fi
+if [[ "$GUEST_MODE" == true ]]; then
+    export LC_ALL=C NO_COLOR=1
+    distro=$(awk -F= '$1 == "ID" {gsub(/"/, "", $2); print $2}' /etc/os-release)
+    case "$distro" in
+        arch) native=(pacman --color never -Qi tree); native_name=pacman ;;
+        debian|ubuntu) native=(apt-cache --no-all-versions show tree); native_name=apt-cache ;;
+        fedora) native=(rpm -qi tree); native_name=rpm ;;
+        *) echo "Unsupported guest distro: $distro" >&2; exit 2 ;;
+    esac
+    command -v jq >/dev/null || exit 3
+    if [[ -n $(find "$EXPORT_DIR" -mindepth 1 -maxdepth 1 -print -quit) ]]; then
+        echo 'Guest benchmark output must be empty; old evidence is never overwritten.' >&2
+        exit 2
+    fi
+    # A private, absent socket prevents accidentally timing another run's daemon.
+    export OMG_SOCKET_PATH="$EXPORT_DIR/no-daemon.sock"
+    export OMG_CACHE_DIR="$EXPORT_DIR/cache"
+    export OMG_DATA_DIR="$EXPORT_DIR/data"
+    mkdir -p "$OMG_CACHE_DIR" "$OMG_DATA_DIR"
+    "$OMG" info tree > "$EXPORT_DIR/omg-info.stdout" 2> "$EXPORT_DIR/omg-info.stderr"
+    "${native[@]}" > "$EXPORT_DIR/native-info.stdout" 2> "$EXPORT_DIR/native-info.stderr"
+    normalize_info() {
+        awk -v rpm_release="$1" '
+          /^(Name|Package)[[:space:]]*:/ {sub(/^[^:]*:[[:space:]]*/, ""); name=$0; names++}
+          /^Version[[:space:]]*:/ {sub(/^[^:]*:[[:space:]]*/, ""); version=$0; versions++}
+          /^Release[[:space:]]*:/ {sub(/^[^:]*:[[:space:]]*/, ""); release=$0; releases++}
+          END {
+            if (names != 1 || versions != 1 || name != "tree" || version == "") exit 1;
+            if (rpm_release == "true") {
+              if (releases != 1 || release == "") exit 1;
+              version=version "-" release;
+            }
+            print name "\t" version;
+          }' "$2"
+    }
+    normalize_info false "$EXPORT_DIR/omg-info.stdout" > "$EXPORT_DIR/omg-identity.tsv"
+    normalize_info "$([[ "$distro" == fedora ]] && echo true || echo false)" \
+        "$EXPORT_DIR/native-info.stdout" > "$EXPORT_DIR/native-identity.tsv"
+    cmp "$EXPORT_DIR/omg-identity.tsv" "$EXPORT_DIR/native-identity.tsv"
+    sha256sum "$OMG" > "$EXPORT_DIR/binary-sha256.txt"
+    hyperfine --version > "$EXPORT_DIR/hyperfine-version.txt"
+    uname -a > "$EXPORT_DIR/kernel.txt"
+    cp /etc/os-release "$EXPORT_DIR/os-release"
+    printf -v omg_command '%q ' "$OMG" info tree
+    printf -v native_command '%q ' "${native[@]}"
+    run_hyperfine "$EXPORT_DIR/info.json" "$EXPORT_DIR/info.md" \
+        --command-name OMG "$omg_command" \
+        --command-name "$native_name" "$native_command"
+    jq -e --argjson minimum "$MIN_RUNS" --argjson maximum "$MAX_RUNS" '
+      (.results|length) == 2 and all(.results[];
+        (.times|length) >= $minimum and (.times|length) <= $maximum and
+        (.times|length) == (.exit_codes|length) and all(.exit_codes[]; . == 0))
+    ' "$EXPORT_DIR/info.json" >/dev/null
+    jq -n --arg distro "$distro" --arg baseline "$native_name" \
+        --argjson warmup "$WARMUP" \
+        '{schema_version:1, complete:true, distro:$distro, operation:"info",
+          package:"tree", daemon:"disabled", cache:"warm after preflight and warmups",
+          comparison:"matching package identity/version; output fields and formatting differ",
+          baseline:$baseline, warmup:$warmup}' > "$EXPORT_DIR/summary.json"
+    exit 0
 fi
 if [ ! -x "$OMGD" ]; then
     echo -e "${RED}❌ omgd binary not found next to omg: $OMGD${NC}" >&2
@@ -446,13 +514,13 @@ if [ -f "$source_cache/sync_db.bin" ]; then
 fi
 
 echo "Starting OMG Daemon..."
-$OMGD > "$DAEMON_LOG" 2>&1 &
+"$OMGD" > "$DAEMON_LOG" 2>&1 &
 DAEMON_PID=$!
 
 echo -n "Waiting for daemon to be ready..."
 daemon_ready=0
 for _ in $(seq 1 80); do
-    if $OMG status > /dev/null 2>&1; then
+    if "$OMG" status > /dev/null 2>&1; then
         daemon_ready=1
         echo " status ok"
         break
@@ -468,7 +536,7 @@ fi
 echo -n "Waiting for search index (firefox)..."
 search_ready=0
 for _ in $(seq 1 100); do
-    if $OMG search firefox --no-aur 2>/dev/null | grep -qi firefox; then
+    if "$OMG" search firefox --no-aur 2>/dev/null | grep -qi firefox; then
         search_ready=1
         echo " ready"
         break
@@ -575,9 +643,7 @@ run_hyperfine "$EXPORT_DIR/explicit.json" "$EXPORT_DIR/explicit.md" "${explicit_
 if [ "$FAST_MODE" != true ] && [ "${OMG_BENCH_SKIP_UPDATE:-}" != 1 ]; then
     echo -e "\n${BLUE}🔄 Benchmark: UPDATE DISCOVERY${NC}"
     echo "-------------------------------"
-    if ! run_update_benchmark; then
-        echo -e "${YELLOW}Update discovery benchmark skipped or failed; query results still stand.${NC}"
-    fi
+    run_update_benchmark
 fi
 
 echo ""
