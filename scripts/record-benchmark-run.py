@@ -93,31 +93,48 @@ def find_result(results: list[dict], name: str) -> dict | None:
     return None
 
 
-def ms(result: dict, key: str = "mean") -> float:
-    return float(result[key]) * 1000.0
+def milliseconds(seconds: float) -> float:
+    """Convert units without allowing a finite duration to become infinity."""
+    return finite_duration(seconds * 1000.0)
 
 
-def summarize_scenario(data: dict) -> list[dict]:
-    rows = []
-    for result in data.get("results", []):
-        times = result.get("times") or []
-        exit_codes = result.get("exit_codes") or []
+def ms(result: dict[str, object], key: str = "mean") -> float:
+    return milliseconds(finite_duration(result[key]))
+
+
+def summarize_scenario(data: object) -> list[dict[str, object]]:
+    """Render admitted samples without inventing labels or a desired outcome."""
+    if not isinstance(data, dict):
+        raise TypeError("scenario must be an object")
+    results = cast(dict[str, object], data).get("results")
+    if not isinstance(results, list) or not results:
+        raise ValueError("no measurements")
+    rows: list[dict[str, object]] = []
+    seen: set[str] = set()
+    for result in cast(list[object], results):
+        measurement = parse_measurement(result)
+        if measurement.command in seen:
+            raise ValueError(f"duplicate command label {measurement.command}")
+        seen.add(measurement.command)
+        if any(code != 0 for code in measurement.exit_codes):
+            raise ValueError(f"{measurement.command}: non-zero exit in timed runs")
+        samples = measurement.samples
         rows.append(
             {
-                "command": result.get("command"),
-                "mean_ms": round(ms(result, "mean"), 3),
+                "command": measurement.command,
+                "mean_ms": round(milliseconds(statistics.mean(samples)), 3),
                 "stddev_ms": (
-                    round(ms(result, "stddev"), 3)
-                    if result.get("stddev") is not None
+                    round(milliseconds(statistics.stdev(samples)), 3)
+                    if len(samples) > 1
                     else None
                 ),
-                "median_ms": round(ms(result, "median"), 3),
-                "min_ms": round(ms(result, "min"), 3),
-                "max_ms": round(ms(result, "max"), 3),
-                "user_ms": round(ms(result, "user"), 3),
-                "system_ms": round(ms(result, "system"), 3),
-                "runs": len(times),
-                "nonzero_exits": sum(1 for code in exit_codes if code != 0),
+                "median_ms": round(milliseconds(statistics.median(samples)), 3),
+                "min_ms": round(milliseconds(min(samples)), 3),
+                "max_ms": round(milliseconds(max(samples)), 3),
+                "user_ms": round(milliseconds(measurement.user_seconds), 3),
+                "system_ms": round(milliseconds(measurement.system_seconds), 3),
+                "runs": len(samples),
+                "nonzero_exits": 0,
             }
         )
     return rows
@@ -128,6 +145,8 @@ class Measurement:
     command: str
     samples: tuple[float, ...]
     exit_codes: tuple[int, ...]
+    user_seconds: float
+    system_seconds: float
 
 
 def finite_duration(value: object) -> float:
@@ -176,9 +195,13 @@ def parse_measurement(value: object) -> Measurement:
         reported = finite_duration(record.get(field))
         if not math.isclose(reported, actual, rel_tol=1e-8, abs_tol=1e-12):
             raise ValueError(f"{command}: {field} does not match raw samples")
-    finite_duration(record.get("user"))
-    finite_duration(record.get("system"))
-    return Measurement(command, samples, tuple(codes))
+    return Measurement(
+        command,
+        samples,
+        tuple(codes),
+        finite_duration(record.get("user")),
+        finite_duration(record.get("system")),
+    )
 
 
 def validate_results(source: Path, required: tuple[str, ...] = ()) -> list[str]:
