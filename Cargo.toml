@@ -296,6 +296,7 @@ rusqlite = { version = "0.40", features = [
 cvss = "2.2.0"
 
 [dev-dependencies]
+tokio = { version = "1.49", features = ["test-util"] }
 rcgen = "=0.13.2"
 criterion = { version = "0.8", features = ["html_reports"] }
 assert_cmd = "2.1"

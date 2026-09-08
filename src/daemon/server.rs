@@ -16,10 +16,7 @@ use tokio_util::codec::{FramedWrite, LengthDelimitedCodec};
 use tokio_util::sync::CancellationToken;
 
 use super::handlers::{DaemonState, handle_request};
-use super::protocol::{
-    ExplicitResult, Request, Response, ResponseResult, SearchResult, SecurityAuditResult,
-    error_codes,
-};
+use super::protocol::{Request, Response, ResponseResult, error_codes};
 use crate::core::metrics::GLOBAL_METRICS;
 use crate::core::security::{
     AuditEventType, AuditSeverity, audit_log_nonblocking, init_audit_logger,
@@ -30,6 +27,15 @@ const REQUEST_TIMEOUT: Duration = Duration::from_secs(30);
 
 /// Status refresh interval (5 minutes)
 const STATUS_REFRESH_INTERVAL: Duration = Duration::from_mins(5);
+
+fn status_refresh_timer() -> tokio::time::Interval {
+    let mut timer = tokio::time::interval_at(
+        tokio::time::Instant::now() + STATUS_REFRESH_INTERVAL,
+        STATUS_REFRESH_INTERVAL,
+    );
+    timer.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
+    timer
+}
 
 /// Memory cleanup interval (30 minutes) - matches mmap TTL
 const MEMORY_CLEANUP_INTERVAL: Duration = Duration::from_mins(30);
@@ -264,7 +270,8 @@ async fn run_with_status_path(
         prewarm_caches(&state_worker).await;
 
         // Track last cleanup time for periodic mmap cleanup
-        let mut last_cleanup = std::time::Instant::now();
+        let mut last_cleanup = tokio::time::Instant::now();
+        let mut maintenance = status_refresh_timer();
         let mut socket_health = tokio::time::interval(SOCKET_HEALTH_CHECK_INTERVAL);
         socket_health.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
         // Consume the immediate first tick; the listener was just bound.
@@ -279,7 +286,7 @@ async fn run_with_status_path(
                     tracing::info!("Background worker shutting down");
                     break;
                 }
-                () = tokio::time::sleep(STATUS_REFRESH_INTERVAL) => {
+                _ = maintenance.tick() => {
                     tracing::debug!("Refreshing system status cache...");
                     refresh_status(&state_worker, &fast_status_path).await;
                     // Independent of status publication: a failed scan must
@@ -293,7 +300,7 @@ async fn run_with_status_path(
                         {
                             crate::package_managers::debian_db::cleanup_expired_mmaps();
                         }
-                        last_cleanup = std::time::Instant::now();
+                        last_cleanup = tokio::time::Instant::now();
                     }
                 }
                 _ = socket_health.tick() => {
@@ -491,127 +498,19 @@ async fn await_client_write(
     Ok(())
 }
 
-/// Halve a list-bearing response result so an oversized response can be
-/// degraded gracefully instead of failing.
-///
-/// Bitcode frames cannot be byte-truncated (the client's decode would fail),
-/// so truncation happens at the semantic level: list payloads are cut to a
-/// prefix and re-encoded into a still-valid [`Response`] the client decodes
-/// normally. Count fields are kept consistent with the delivered entries.
-/// Returns `None` when nothing can shrink further (single-entry lists, or
-/// results with no list at all).
-fn shrink_result(result: &ResponseResult) -> Option<(ResponseResult, usize)> {
-    let halve = |len: usize| len / 2;
-    let truncatable = |len: usize| len > 1;
-    match result {
-        ResponseResult::Search(r) if truncatable(r.packages.len()) => {
-            let keep = halve(r.packages.len());
-            let packages = r.packages[..keep].to_vec();
-            let dropped = r.packages.len() - keep;
-            // Keep `total` consistent with the delivered prefix so the client
-            // sees a complete (smaller) result set instead of one that hints
-            // at more matches it can never receive.
-            Some((
-                ResponseResult::Search(SearchResult {
-                    packages,
-                    total: keep,
-                }),
-                dropped,
-            ))
-        }
-        ResponseResult::DebianSearch(v) if truncatable(v.len()) => {
-            let keep = halve(v.len());
-            let dropped = v.len() - keep;
-            Some((ResponseResult::DebianSearch(v[..keep].to_vec()), dropped))
-        }
-        ResponseResult::Explicit(r) if truncatable(r.packages.len()) => {
-            let keep = halve(r.packages.len());
-            let dropped = r.packages.len() - keep;
-            Some((
-                ResponseResult::Explicit(ExplicitResult {
-                    packages: r.packages[..keep].to_vec(),
-                }),
-                dropped,
-            ))
-        }
-        ResponseResult::ListUpdates(v) if truncatable(v.len()) => {
-            let keep = halve(v.len());
-            let dropped = v.len() - keep;
-            Some((ResponseResult::ListUpdates(v[..keep].to_vec()), dropped))
-        }
-        ResponseResult::Suggest(v) if truncatable(v.len()) => {
-            let keep = halve(v.len());
-            let dropped = v.len() - keep;
-            Some((ResponseResult::Suggest(v[..keep].to_vec()), dropped))
-        }
-        ResponseResult::SecurityAudit(r) if truncatable(r.vulnerabilities.len()) => {
-            let keep = halve(r.vulnerabilities.len());
-            let dropped = r.vulnerabilities.len() - keep;
-            let kept = &r.vulnerabilities[..keep];
-            let total_vulnerabilities: usize = kept.iter().map(|(_, v)| v.len()).sum();
-            let high_severity = kept
-                .iter()
-                .flat_map(|(_, vulns)| vulns)
-                .filter(|v| {
-                    v.score
-                        .as_deref()
-                        .and_then(super::handlers::vulnerability_score)
-                        .is_some_and(|score| score >= 7.0)
-                })
-                .count();
-            Some((
-                ResponseResult::SecurityAudit(SecurityAuditResult {
-                    total_vulnerabilities,
-                    high_severity,
-                    vulnerabilities: kept.to_vec(),
-                }),
-                dropped,
-            ))
-        }
-        _ => None,
-    }
-}
-
 fn encode_bounded_response(response: &Response, request_id: u64) -> Result<Vec<u8>> {
     let response_bytes = crate::daemon::protocol::encode_frame(response)?;
     if response_bytes.len() <= MAX_RESPONSE_SIZE {
         return Ok(response_bytes);
     }
 
-    // Graceful degradation: shrink list-bearing results until the encoded
-    // frame fits the budget. Halving keeps the loop logarithmic; the frame
-    // stays valid `Response` wire data the client decodes normally.
-    if let Response::Success { result, .. } = response {
-        let mut result = result.clone();
-        let mut dropped = 0usize;
-        while let Some((shrunk, step)) = shrink_result(&result) {
-            result = shrunk;
-            dropped += step;
-            let response_bytes = crate::daemon::protocol::encode_frame(&Response::Success {
-                id: request_id,
-                result: result.clone(),
-            })?;
-            if response_bytes.len() <= MAX_RESPONSE_SIZE {
-                tracing::warn!(
-                    request_id,
-                    dropped,
-                    max_response_bytes = MAX_RESPONSE_SIZE,
-                    "Daemon response exceeded the response budget; delivered truncated results"
-                );
-                return Ok(response_bytes);
-            }
-        }
-    }
-
-    // Nothing left to truncate (or an untruncatable result type): a single
-    // entry alone exceeds the budget. Degrade to a dedicated limit error —
-    // still valid `Response` semantics the client understands — never
-    // INTERNAL_ERROR, which would misreport a size limit as a daemon bug.
+    // The protocol has no partial-result marker. A reduced successful result
+    // would misrepresent audit findings, inventory, or available updates.
     tracing::error!(
         request_id,
         response_bytes = response_bytes.len(),
         max_response_bytes = MAX_RESPONSE_SIZE,
-        "Daemon response exceeded the response budget and could not be truncated"
+        "Daemon response exceeded the response budget"
     );
     GLOBAL_METRICS.inc_requests_failed();
     Ok(crate::daemon::protocol::encode_frame(&Response::Error {
@@ -833,26 +732,68 @@ async fn handle_client_with_idle_timeout(
 
 #[cfg(test)]
 mod tests {
-    use super::super::protocol::{PackageInfo, WirePackageSource};
+    use super::super::protocol::{
+        PackageInfo, SearchResult, SecurityAuditResult, WirePackageSource,
+    };
     use super::*;
+
+    #[tokio::test(start_paused = true)]
+    async fn maintenance_deadline_survives_health_ticks() {
+        let start = tokio::time::Instant::now();
+        let mut maintenance = status_refresh_timer();
+        let mut health = tokio::time::interval_at(
+            start + SOCKET_HEALTH_CHECK_INTERVAL,
+            SOCKET_HEALTH_CHECK_INTERVAL,
+        );
+        let deadline = start + Duration::from_mins(16);
+        let mut refreshes = 0;
+        let mut checks = 0;
+        loop {
+            tokio::select! {
+                biased;
+                () = tokio::time::sleep_until(deadline) => break,
+                _ = maintenance.tick() => { refreshes += 1; }
+                _ = health.tick() => { checks += 1; }
+            }
+        }
+        assert_eq!(refreshes, 3);
+        assert_eq!(checks, 15);
+    }
 
     #[test]
     fn oversized_security_audit_is_not_reported_as_complete() {
         let vulnerability = super::super::protocol::Vulnerability {
-            id: "CVE-fixture".into(), summary: "x".repeat(16_000), score: Some("9.8".into()),
+            id: "CVE-fixture".into(),
+            summary: "x".repeat(16_000),
+            score: Some("9.8".into()),
         };
         let response = Response::Success {
             id: 91,
             result: ResponseResult::SecurityAudit(SecurityAuditResult {
-                total_vulnerabilities: 600, high_severity: 600,
-                vulnerabilities: (0..600).map(|index| (format!("package-{index}"), vec![vulnerability.clone()])).collect(),
+                total_vulnerabilities: 600,
+                high_severity: 600,
+                vulnerabilities: (0..600)
+                    .map(|index| (format!("package-{index}"), vec![vulnerability.clone()]))
+                    .collect(),
             }),
         };
-        assert!(crate::daemon::protocol::encode_frame(&response).unwrap().len() > MAX_RESPONSE_SIZE);
+        assert!(
+            crate::daemon::protocol::encode_frame(&response)
+                .unwrap()
+                .len()
+                > MAX_RESPONSE_SIZE
+        );
         let encoded = encode_bounded_response(&response, 91).unwrap();
         let (_, payload) = crate::daemon::protocol::split_frame(&encoded).unwrap();
         let decoded: Response = bitcode::deserialize(payload).unwrap();
-        assert!(matches!(decoded, Response::Error { id: 91, code: error_codes::RESPONSE_TOO_LARGE, .. }));
+        assert!(matches!(
+            decoded,
+            Response::Error {
+                id: 91,
+                code: error_codes::RESPONSE_TOO_LARGE,
+                ..
+            }
+        ));
     }
 
     #[test]
@@ -882,7 +823,7 @@ mod tests {
     }
 
     #[test]
-    fn oversized_debian_search_results_are_truncated_not_errored() {
+    fn oversized_debian_search_results_return_a_limit_error() {
         let entry = PackageInfo {
             name: "pkg".to_string(),
             version: "1.0".to_string(),
@@ -904,22 +845,19 @@ mod tests {
         let encoded = encode_bounded_response(&oversized, 42).expect("bounded response");
         assert!(encoded.len() <= MAX_RESPONSE_SIZE);
         let (_, payload) = crate::daemon::protocol::split_frame(&encoded).expect("frame header");
-        let decoded: Response = bitcode::deserialize(payload).expect("truncated frame decodes");
-        match decoded {
-            Response::Success {
-                id,
-                result: ResponseResult::DebianSearch(list),
-            } => {
-                assert_eq!(id, 42);
-                assert!(list.len() < count, "list must have been truncated");
-                assert!(!list.is_empty(), "truncation must keep at least one entry");
+        let decoded: Response = bitcode::deserialize(payload).expect("limit frame decodes");
+        assert!(matches!(
+            decoded,
+            Response::Error {
+                id: 42,
+                code: error_codes::RESPONSE_TOO_LARGE,
+                ..
             }
-            other => panic!("oversized list response must stay a success, got {other:?}"),
-        }
+        ));
     }
 
     #[test]
-    fn oversized_search_results_are_truncated_with_consistent_total() {
+    fn oversized_search_results_return_a_limit_error() {
         let entry = PackageInfo {
             name: "pkg".to_string(),
             version: "1.0".to_string(),
@@ -938,22 +876,15 @@ mod tests {
         let encoded = encode_bounded_response(&oversized, 43).expect("bounded response");
         assert!(encoded.len() <= MAX_RESPONSE_SIZE);
         let (_, payload) = crate::daemon::protocol::split_frame(&encoded).expect("frame header");
-        let decoded: Response = bitcode::deserialize(payload).expect("truncated frame decodes");
-        match decoded {
-            Response::Success {
-                id,
-                result: ResponseResult::Search(results),
-            } => {
-                assert_eq!(id, 43);
-                assert!(results.packages.len() < count);
-                assert!(!results.packages.is_empty());
-                // The client must see a complete, internally consistent
-                // result set, not one hinting at more matches it can never
-                // receive.
-                assert_eq!(results.total, results.packages.len());
+        let decoded: Response = bitcode::deserialize(payload).expect("limit frame decodes");
+        assert!(matches!(
+            decoded,
+            Response::Error {
+                id: 43,
+                code: error_codes::RESPONSE_TOO_LARGE,
+                ..
             }
-            other => panic!("oversized search response must stay a success, got {other:?}"),
-        }
+        ));
     }
 
     #[tokio::test]

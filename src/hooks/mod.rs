@@ -189,9 +189,14 @@ fn rc_file_for_shell(shell: &str) -> Result<PathBuf> {
 /// `.omg-backup` copy. Returns whether anything was removed.
 pub fn remove_hook(shell: &str) -> Result<bool> {
     let rc = rc_file_for_shell(shell)?;
-    let Ok(content) = fs::read_to_string(&rc) else {
-        return Ok(false);
+    let metadata = match fs::symlink_metadata(&rc) {
+        Ok(metadata) => metadata,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(false),
+        Err(error) => return Err(error).with_context(|| format!("Failed to inspect {}", rc.display())),
     };
+    anyhow::ensure!(!metadata.is_symlink(), "Refusing to replace symlink-managed shell config {}. Remove the OMG hook from its managed source instead.", rc.display());
+    anyhow::ensure!(metadata.is_file(), "Shell config is not a regular file: {}", rc.display());
+    let content = fs::read_to_string(&rc).with_context(|| format!("Failed to read {}", rc.display()))?;
     let owned = hook_lines(shell);
     let kept: Vec<&str> = content
         .lines()
@@ -209,7 +214,7 @@ pub fn remove_hook(shell: &str) -> Result<bool> {
             .map(|name| name.to_string_lossy().into_owned())
             .unwrap_or_default()
     ));
-    fs::copy(&rc, &backup)
+    crate::core::safe_ops::atomic_write_file_sync(&backup, content.as_bytes())
         .with_context(|| format!("Failed to back up {} to {}", rc.display(), backup.display()))?;
     let mut rewritten = kept.join("\n");
     if content.ends_with('\n') {
@@ -1272,6 +1277,22 @@ mod tests {
             assert!(!kept.contains("OMG Package Manager"), "{kept}");
             assert!(home.path().join(".bashrc.omg-backup").exists());
             assert!(!remove_hook("bash").unwrap());
+        });
+    }
+
+    #[serial_test::serial]
+    #[test]
+    fn hook_uninstall_preserves_symlink_managed_rc() {
+        let home = tempdir().unwrap();
+        temp_env::with_var("HOME", Some(home.path()), || {
+            let target = home.path().join("managed-bashrc");
+            let rc = home.path().join(".bashrc");
+            let content = "eval \"$(omg hook bash)\"\n";
+            fs::write(&target, content).unwrap();
+            std::os::unix::fs::symlink(&target, &rc).unwrap();
+            assert!(remove_hook("bash").is_err());
+            assert!(fs::symlink_metadata(&rc).unwrap().is_symlink());
+            assert_eq!(fs::read_to_string(&target).unwrap(), content);
         });
     }
 

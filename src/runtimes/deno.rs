@@ -119,7 +119,10 @@ impl DenoManager {
             style::informative("→"),
             version
         );
-        let download_path = self.versions_dir.join(&filename);
+        let downloads = tempfile::Builder::new()
+            .prefix(".download-")
+            .tempdir_in(&self.versions_dir)?;
+        let download_path = downloads.path().join(&filename);
         download_with_progress(self.client, &url, &download_path, &checksum).await?;
 
         println!("{} Extracting...", style::informative("→"));
