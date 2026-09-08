@@ -244,6 +244,8 @@ struct MakepkgEnv {
 
 #[derive(Debug)]
 pub(crate) struct AuthorizedBuild {
+    // Keep cleanup excluded across the review-to-build handoff and dependency work.
+    lifecycle_guard: File,
     package: String,
     requested_outputs: Vec<String>,
     reviewed_digest: Option<ReviewedSource>,
@@ -998,6 +1000,56 @@ impl AurClient {
         })
     }
 
+    /// This inode must survive removal and recreation of the build tree.
+    fn open_lifecycle_lock(&self) -> Result<File> {
+        use std::os::unix::fs::{MetadataExt, OpenOptionsExt};
+
+        let lock_path = self.build_dir.with_added_extension("lifecycle.lock");
+        let parent = lock_path
+            .parent()
+            .context("AUR build directory has no parent")?;
+        create_dir_as_user_sync(parent)?;
+        let file = std::fs::OpenOptions::new()
+            .create(true)
+            .read(true)
+            .write(true)
+            .truncate(false)
+            .mode(0o600)
+            .custom_flags(nix::libc::O_NOFOLLOW | nix::libc::O_NONBLOCK)
+            .open(&lock_path)
+            .with_context(|| {
+                format!("Failed to open AUR lifecycle lock {}", lock_path.display())
+            })?;
+        let metadata = file.metadata()?;
+        anyhow::ensure!(
+            metadata.is_file() && metadata.nlink() == 1,
+            "AUR lifecycle lock must be a single-link regular file"
+        );
+        if let Some(user) = original_user() {
+            let account = nix::unistd::User::from_name(&user)?
+                .with_context(|| format!("Original user '{user}' has no system account"))?;
+            // Change the opened inode, not a potentially replaced pathname.
+            nix::unistd::fchown(&file, Some(account.uid), Some(account.gid))
+                .context("Failed to restore AUR lifecycle lock ownership")?;
+        }
+        Ok(file)
+    }
+
+    /// File ownership spans async build work intentionally. Acquisition never
+    /// waits, and cleanup never waits for builders, so this cannot block an
+    /// executor thread behind a task holding the same lifecycle lock.
+    async fn acquire_build_lifecycle(&self) -> Result<File> {
+        let client = self.clone();
+        tokio::task::spawn_blocking(move || {
+            let file = client.open_lifecycle_lock()?;
+            file.try_lock_shared()
+                .context("Failed to acquire AUR build ownership; cleanup may be active")?;
+            Ok(file)
+        })
+        .await
+        .context("AUR lifecycle lock worker failed")?
+    }
+
     fn package_base_lock(&self, package_base: &str) -> Arc<tokio::sync::Mutex<()>> {
         Arc::clone(
             self.package_base_locks
@@ -1619,6 +1671,8 @@ impl AurClient {
 
         let base = self.resolve_package_base(package).await?;
 
+        let _lifecycle_guard = self.acquire_build_lifecycle().await?;
+
         // Isolated work tree; a UUID prevents concurrent rollbacks of the
         // same package base from sharing or deleting one another's checkout.
         let work = self.build_dir.join("_rollback");
@@ -1874,6 +1928,7 @@ impl AurClient {
         }
         require_unprivileged_builder(package, crate::core::is_root())?;
 
+        let lifecycle_guard = self.acquire_build_lifecycle().await?;
         let package_lock = self.package_base_lock(package);
         let _package_checkout_guard = package_lock.lock().await;
         create_dir_as_user(&self.build_dir).await?;
@@ -1939,6 +1994,7 @@ impl AurClient {
         };
 
         Ok(AuthorizedBuild {
+            lifecycle_guard,
             package: package.to_string(),
             requested_outputs: requested_outputs.to_vec(),
             reviewed_digest,
@@ -1976,6 +2032,7 @@ impl AurClient {
         sudoloop: Option<&crate::core::sudoloop::SudoLoop>,
     ) -> Result<Vec<ArchiveSnapshot>> {
         let AuthorizedBuild {
+            lifecycle_guard: _lifecycle_guard,
             package,
             requested_outputs,
             reviewed_digest,
@@ -3968,6 +4025,12 @@ impl AurClient {
     }
 
     pub fn clean_all(&self) -> Result<()> {
+        // Never unlink the coordination inode. Fail fast rather than wait for
+        // a build that may be awaiting user input or resolving dependencies.
+        let lifecycle_guard = self.open_lifecycle_lock()?;
+        lifecycle_guard
+            .try_lock()
+            .context("Cannot clean AUR cache: a build or another cleanup may be active")?;
         if self.build_dir.exists() {
             if let Some(user) = original_user() {
                 let build_dir_str = self.build_dir.to_string_lossy();
@@ -5148,6 +5211,123 @@ mod tests {
         assert!(build_failed.contains('\n'));
         assert!(!build_failed.contains("\\n"));
         assert!(!build_failed.contains("\\\\"));
+    }
+
+    #[tokio::test]
+    async fn cleanup_preserves_active_builds_and_the_lifecycle_inode() -> Result<()> {
+        use std::os::unix::fs::MetadataExt;
+
+        let directory = tempfile::tempdir()?;
+        let client = AurClient {
+            build_dir: directory.path().join("aur"),
+            settings: Settings::default(),
+            package_base_locks: Arc::new(dashmap::DashMap::new()),
+        };
+        let first = AuthorizedBuild {
+            lifecycle_guard: client.acquire_build_lifecycle().await?,
+            package: "fixture".into(),
+            requested_outputs: vec!["fixture".into()],
+            reviewed_digest: None,
+        };
+        let second = client.clone().acquire_build_lifecycle().await?;
+        let lifecycle_path = client.build_dir.with_added_extension("lifecycle.lock");
+        let inode = std::fs::metadata(&lifecycle_path)?.ino();
+        let package_guard = client.acquire_package_base_file_lock("fixture").await?;
+        let package_inode = package_guard.metadata()?.ino();
+        let source = client.build_dir.join("PKGBUILD");
+        std::fs::write(&source, b"reviewed source")?;
+
+        assert!(
+            client.clean_all().is_err(),
+            "cleanup must reject active builders"
+        );
+        assert_eq!(std::fs::read(&source)?, b"reviewed source");
+        assert_eq!(
+            std::fs::metadata(client.build_dir.join("_locks/fixture.lock"))?.ino(),
+            package_inode
+        );
+        drop(package_guard);
+        drop(first);
+        assert!(
+            client.clean_all().is_err(),
+            "remaining shared owner must still block cleanup"
+        );
+        drop(second);
+
+        client.clean_all()?;
+        assert!(client.build_dir.is_dir());
+        assert_eq!(std::fs::read_dir(&client.build_dir)?.count(), 0);
+        assert_eq!(std::fs::metadata(&lifecycle_path)?.ino(), inode);
+        let _next_build = client.acquire_build_lifecycle().await?;
+        assert!(
+            client.clean_all().is_err(),
+            "a new build must use the same lock inode"
+        );
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn cleanup_ownership_blocks_new_builds_and_other_cleaners() -> Result<()> {
+        let directory = tempfile::tempdir()?;
+        let client = AurClient {
+            build_dir: directory.path().join("aur"),
+            settings: Settings::default(),
+            package_base_locks: Arc::new(dashmap::DashMap::new()),
+        };
+        let cleaner = client.open_lifecycle_lock()?;
+        cleaner.try_lock()?;
+        assert!(client.acquire_build_lifecycle().await.is_err());
+        assert!(client.clean_all().is_err());
+        assert!(!client.build_dir.exists());
+        drop(cleaner);
+        let _builder = client.acquire_build_lifecycle().await?;
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn cancelled_build_releases_cleanup_ownership() -> Result<()> {
+        let directory = tempfile::tempdir()?;
+        let client = AurClient {
+            build_dir: directory.path().join("aur"),
+            settings: Settings::default(),
+            package_base_locks: Arc::new(dashmap::DashMap::new()),
+        };
+        let guard = client.acquire_build_lifecycle().await?;
+        std::fs::create_dir_all(&client.build_dir)?;
+        std::fs::write(client.build_dir.join("partial"), b"partial")?;
+        let (ready, started) = tokio::sync::oneshot::channel();
+        let task = tokio::spawn(async move {
+            let _guard = guard;
+            let _ = ready.send(());
+            std::future::pending::<()>().await;
+        });
+        started.await?;
+        assert!(client.clean_all().is_err());
+        task.abort();
+        assert!(task.await.expect_err("cancelled build task").is_cancelled());
+        client.clean_all()?;
+        assert_eq!(std::fs::read_dir(&client.build_dir)?.count(), 0);
+        Ok(())
+    }
+
+    #[test]
+    fn lifecycle_lock_rejects_symlinks_and_hardlinks() -> Result<()> {
+        let directory = tempfile::tempdir()?;
+        let client = AurClient {
+            build_dir: directory.path().join("aur"),
+            settings: Settings::default(),
+            package_base_locks: Arc::new(dashmap::DashMap::new()),
+        };
+        let target = directory.path().join("unrelated");
+        std::fs::write(&target, b"keep")?;
+        let lock_path = client.build_dir.with_added_extension("lifecycle.lock");
+        std::os::unix::fs::symlink(&target, &lock_path)?;
+        assert!(client.open_lifecycle_lock().is_err());
+        std::fs::remove_file(&lock_path)?;
+        std::fs::hard_link(&target, &lock_path)?;
+        assert!(client.open_lifecycle_lock().is_err());
+        assert_eq!(std::fs::read(target)?, b"keep");
+        Ok(())
     }
 
     #[tokio::test]
