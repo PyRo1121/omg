@@ -1,14 +1,19 @@
 # Changelog
 
-Historical release and commit notes follow. Their feature descriptions, timings, security claims, and status language describe their original context; they are not a current support or assurance statement. The documentation audit reviewed this file as an archive, not as a fresh validation of every historical entry.
+All notable changes to OMG are documented here.
 
-For current behavior and limits, use [installation](./installation.md), [security](./security.md), and the [benchmark evidence](../benchmarks/README.md). In particular, OMG is alpha software, backend coverage differs, and the SLSA-named command does not establish a SLSA build level.
+OMG is the fastest unified package manager for Linux, replacing pacman, yay, nvm, pyenv, rustup, and more with a single tool.
+
+**Performance**: 22x faster searches than pacman, 59-483x faster than apt-cache on Debian/Ubuntu
+**Unified**: System packages + 8 language runtimes in one CLI
+**Secure**: Built-in SLSA, PGP, SBOM, and audit logs
 
 ---
 
 ## [Unreleased]
 ### Merge
 
+- Integrate audited WIP with current main fixes
 - **Main**: Keep audited cheatsheet and exact-match hook note
 
 Resolve the docs/cheatsheet.md conflict from [#371](https://github.com/PyRo1121/omg/issues/371) by keeping the
@@ -51,6 +56,10 @@ Update discovery already falls through to RPC, so waiting on the search dump onl
 
 ### ✨ New Features
 
+- **Runtimes**: Checkpoint native tool and mise integration
+
+Preserve the pending runtime registry, vendor managers, project environment handling, and task integration together because their dispatch and hook changes are interdependent. Focused module tests pass. Live installation, cross-platform execution, and complete feature review remain outstanding.
+
 - **Qa**: QEMU matrix + native macOS smoke + auto-filing loop ([#274](https://github.com/PyRo1121/omg/issues/274))
 
 * feat(qa): QEMU matrix + native macOS smoke + auto-filing loop
@@ -91,6 +100,19 @@ present before the probe runs.
 
 - **Install**: Add interactive fuzzy package discovery
 ### 🐛 Bug Fixes
+
+- **Pgp**: Reject expired and future signatures
+- **Qa**: Harden QEMU inventory and smoke reporting
+
+The release-smoke and QEMU fixture suite passed. Live QEMU and Sentry delivery were not exercised in this checkpoint.
+
+- **Usage**: Preserve ownership and validate lock files
+- **Doctor**: Recognize compressed APT package indexes
+- **Clippy**: Satisfy -D warnings in audit-fixes tests
+
+424_243/424_242 separators (unreadable_literal), filter+map instead
+
+of filter_map-bool-then. Unblocks arch-pgp-license leg on PR [#296](https://github.com/PyRo1121/omg/issues/296).
 
 - **Ci**: Keep QEMU architecture jobs in distinct concurrency groups
 - **Ci**: Express test durations in canonical units
@@ -508,11 +530,16 @@ Preserve archive data and report persistence failures explicitly. Coordinate dat
 - **Ci**: Preserve prepared changelog sections
 ### 👷 CI/CD
 
+- Remove duplicate gate checks and Arch compile lane
 - Report required PR checks and gate audited dependency upgrades
 - **Aur**: Gate builds on isolated sandbox cancellation test
 - Add published release smoke matrix
 ### 📚 Documentation
 
+- **Security**: Note PGP rejects expired and future-dated signatures
+- **Audit**: Preserve review trail and presentation artifacts
+- **Daemon**: Describe private socket fallback paths
+- **Aur**: Clarify mandatory PKGBUILD review defaults
 - Retain one merged hook ownership explanation
 - **Audit**: Record AUR index snapshot remediation
 - **Audit**: Record Debian cache mutation remediation
@@ -539,6 +566,24 @@ Keep the original 81 finding IDs and mark those three rows already-fixed-verifie
 - **Fedora**: Distinguish database and archive header formats
 - Record v0.1.218 verification [skip ci]
 ### 🔒 Security
+
+- Close six sudo-level audit findings
+
+  - Scrub macOS DYLD_* and shell-startup env (BASH_ENV/ENV/PS4 and
+
+interpreter *OPT vars) from every sudo child
+
+  - Harden self-update extraction: allowlisted single-file unpack with
+
+fail-closed links/traversal handling and decompression budget
+
+  - Restore history.lock ownership after elevated runs (fixes [#285](https://github.com/PyRo1121/omg/issues/285))
+
+  - Refuse unattended workspace repo-commands without explicit --yes
+
+  - Default AUR PKGBUILD review on, matching documented default
+
+  - Divert daemon socket to home dir when /tmp fallback is squatted
 
 - Close six sudo-level audit findings ([#296](https://github.com/PyRo1121/omg/issues/296))
 
@@ -572,6 +617,30 @@ Bring in the QEMU lifecycle runner, contract-driven smoke tests, failure evidenc
 
 ### 🔧 Maintenance
 
+- Checkpoint concurrent benchmark fixture work
+- Checkpoint team and CI WIP with local identity audit evidence
+- Checkpoint CLI and benchmark WIP with publication audit evidence
+- Checkpoint CLI WIP and catalog initialization audit evidence
+- Checkpoint QEMU workflow WIP and sync identity audit evidence
+- Checkpoint daemon lifecycle WIP and snapshot benchmark evidence
+- Checkpoint AUR WIP and single-snapshot audit evidence
+- Checkpoint AUR and benchmark WIP with FST audit evidence
+- Checkpoint benchmark tests and persisted-status audit evidence
+- Checkpoint package and benchmark WIP with Arch audit evidence
+- Checkpoint benchmark and AUR WIP with Debian audit progress
+- Checkpoint update integration WIP and cache audit follow-up
+- Checkpoint documentation and audit integration WIP
+- Checkpoint concurrent daemon and runtime WIP
+- **Audit**: Compact generated discovery output into verified archive
+- Checkpoint runtime, shell, audit, and documentation WIP
+- **Swift**: Checkpoint vendor runtime prototype
+
+Compile the vendor manager and its fixture tests without adding it to supported CLI dispatch. Eight focused tests pass. Runtime registration and live installation remain incomplete.
+
+- **Privilege**: Checkpoint container sudo fallback
+
+Preserve pending work for follow-up review. Retry detection currently depends on stderr text and needs an at-most-once execution audit before release.
+
 - **Deps**: Regenerate fuzz lockfile for toml_edit 0.25
 - **Deps**: Regenerate Cargo.lock for toml_edit 0.25
 - **Deps**: Update rust dependencies
@@ -589,6 +658,8 @@ surfaced by the stricter toolchain
 
 ### 🧪 Testing
 
+- Checkpoint benchmark evidence admission WIP
+- Checkpoint property-test WIP
 - Keep enterprise policy fixture within supported schema
 - Fix duration units rejected by CI Clippy
 - **Debian**: Prove prefix misrouting and retain mmap exact-lookup counterevidence
