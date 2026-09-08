@@ -603,7 +603,7 @@ const MAX_QUERY_LENGTH: usize = 500;
 /// Default search limit
 const DEFAULT_SEARCH_LIMIT: usize = 50;
 /// Maximum search limit
-const MAX_SEARCH_LIMIT: usize = 1000;
+pub(super) const MAX_SEARCH_LIMIT: usize = 1000;
 /// Default number of suggestions returned
 const DEFAULT_SUGGEST_LIMIT: usize = 10;
 /// Maximum number of suggestions returned

@@ -239,7 +239,7 @@ async fn run_with_status_path(
                 let common_queries = ["", "linux", "python", "node", "firefox", "git"];
                 let index = state_search.index_snapshot();
                 for query in common_queries {
-                    let results = Arc::new(index.search(query, 50));
+                    let results = Arc::new(index.search(query, super::handlers::MAX_SEARCH_LIMIT));
                     if !state_search.with_current_index(&index, || {
                         state_search
                             .cache
@@ -1038,6 +1038,7 @@ mod tests {
     }
 
     #[tokio::test]
+    #[serial_test::serial]
     async fn idle_client_is_closed_and_releases_its_connection_metric() -> Result<()> {
         let directory = tempfile::tempdir()?;
         let data_dir = directory.path().join("data");
@@ -1070,13 +1071,20 @@ mod tests {
     }
 
     #[tokio::test]
+    #[serial_test::serial]
     async fn startup_prewarms_every_common_search_query() -> Result<()> {
+        let names: Vec<String> = (0..120).map(|i| format!("python-{i:03}")).collect();
+        let records: Vec<(&str, &str, &str)> = names
+            .iter()
+            .map(|name| (name.as_str(), "1.0", "Python package"))
+            .collect();
+        let index = super::super::index::PackageIndex::from_records(&records);
         let directory = tempfile::tempdir()?;
         let data_dir = directory.path().join("data");
         std::fs::create_dir_all(&data_dir)?;
         let state = Arc::new(super::super::handlers::DaemonState::new_isolated(
             &data_dir,
-            super::super::index::PackageIndex::empty(),
+            index,
             Arc::new(crate::package_managers::mock::MockPackageManager::new_in(
                 "arch", &data_dir,
             )),
@@ -1087,7 +1095,7 @@ mod tests {
         let server = tokio::spawn(run_with_status_path(
             listener,
             Arc::clone(&state),
-            socket_path,
+            socket_path.clone(),
             fast_status_path.clone(),
         ));
 
@@ -1106,7 +1114,39 @@ mod tests {
             tokio::time::sleep(Duration::from_millis(25)).await;
         }
 
+        let response = tokio::time::timeout(Duration::from_secs(5), async {
+            let stream = tokio::net::UnixStream::connect(&socket_path).await?;
+            let mut framed = LengthDelimitedCodec::builder().new_framed(stream);
+            let request = Request::Search {
+                id: 1,
+                query: "python".to_string(),
+                limit: Some(100),
+            };
+            framed
+                .send(crate::daemon::protocol::encode_frame(&request)?.into())
+                .await?;
+            framed
+                .next()
+                .await
+                .context("daemon closed before returning search results")?
+                .context("read search response")
+        })
+        .await;
         server.abort();
+
+        let frame = response.context("startup search request timed out")??;
+        let (_, payload) = crate::daemon::protocol::split_frame(&frame)?;
+        let response: Response = bitcode::deserialize(payload)?;
+        let Response::Success {
+            id,
+            result: ResponseResult::Search(result),
+        } = response
+        else {
+            anyhow::bail!("expected search response, got {response:?}");
+        };
+        assert_eq!(id, 1);
+        assert_eq!(result.packages.len(), 100);
+        assert_eq!(result.total, 120);
         Ok(())
     }
 }
