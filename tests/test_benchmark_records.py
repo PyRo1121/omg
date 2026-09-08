@@ -17,6 +17,26 @@ from typing import Protocol, cast
 class Recorder(Protocol):
     def validate_results(self, source: Path) -> list[str]: ...
 
+    def daemon_result(self, payload: dict[str, object]) -> dict[str, object] | None: ...
+
+    def native_result(self, payload: dict[str, object]) -> dict[str, object] | None: ...
+
+    def render_latest_md(self, meta: dict[str, object], source: Path) -> str: ...
+
+
+def meta_fixture() -> dict[str, object]:
+    return {
+        "id": "fixture",
+        "timestamp": "fixture",
+        "git": {"commit": "fixture", "describe": "fixture", "dirty": False},
+        "host": {
+            "cpu": "fixture",
+            "machine": "fixture",
+            "release": "fixture",
+            "ram_gib": 1,
+        },
+    }
+
 
 def load_recorder() -> Recorder:
     path = Path(__file__).resolve().parents[1] / "scripts/record-benchmark-run.py"
@@ -377,6 +397,75 @@ class BenchmarkAdmissionTests(unittest.TestCase):
         result["exit_codes"] = [False, False]
         self.write_results(result)
         self.assertTrue(self.recorder.validate_results(self.source))
+
+
+class HeadlineResolutionTests(unittest.TestCase):
+    """Headline extraction must match the labels benchmark-hyperfine.sh emits."""
+
+    def setUp(self) -> None:
+        self.directory = tempfile.TemporaryDirectory(prefix="benchmark-record-test-")
+        self.addCleanup(self.directory.cleanup)
+        self.source = Path(self.directory.name)
+        self.recorder = load_recorder()
+
+    def write_results(self, *results: dict[str, object]) -> None:
+        (self.source / "search.json").write_text(
+            json.dumps({"results": list(results)}), encoding="utf-8"
+        )
+
+    def test_current_omg_label_resolves_daemon_result(self) -> None:
+        payload = cast(
+            dict[str, object],
+            json.loads(
+                json.dumps(
+                    {"results": [measurement("OMG", 0.2), measurement("pacman", 0.4)]}
+                )
+            ),
+        )
+        daemon = self.recorder.daemon_result(payload)
+        self.assertIsNotNone(daemon)
+        self.assertAlmostEqual(cast(dict[str, object], daemon)["mean"], 0.2)  # type: ignore[arg-type]
+
+    def test_legacy_omg_label_still_resolves(self) -> None:
+        payload = cast(
+            dict[str, object],
+            json.loads(
+                json.dumps(
+                    {
+                        "results": [
+                            measurement("OMG (Daemon)", 0.2),
+                            measurement("pacman", 0.4),
+                        ]
+                    }
+                )
+            ),
+        )
+        daemon = self.recorder.daemon_result(payload)
+        self.assertIsNotNone(daemon)
+
+    def test_native_result_is_not_the_omg_driver(self) -> None:
+        payload = cast(
+            dict[str, object],
+            json.loads(
+                json.dumps(
+                    {
+                        "results": [
+                            measurement("OMG", 0.2),
+                            measurement("dnf", 0.5),
+                        ]
+                    }
+                )
+            ),
+        )
+        native = self.recorder.native_result(payload)
+        self.assertIsNotNone(native)
+        self.assertEqual(cast(dict[str, object], native)["command"], "dnf")
+
+    def test_render_uses_current_label(self) -> None:
+        self.write_results(measurement("OMG", 0.2), measurement("pacman", 0.4))
+        rendered = self.recorder.render_latest_md(meta_fixture(), self.source)
+        self.assertIn("Daemon mean **200.0 ms**", rendered)
+        self.assertIn("pacman **400.0 ms**", rendered)
 
 
 if __name__ == "__main__":
