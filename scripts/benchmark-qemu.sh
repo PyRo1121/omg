@@ -7,6 +7,7 @@ staged_dir=
 arch=
 print_pins=false
 benchmark=false
+transaction_samples=0
 inventory_tiers=
 inventory_mutations=false
 report_inventory='[]'
@@ -22,9 +23,12 @@ while (($#)); do
       esac
       shift 2 ;;
     --benchmark) benchmark=true; shift ;;
+    --benchmark-transactions)
+      [[ $# -ge 2 && "$2" =~ ^([1-9]|[1-9][0-9]|100)$ ]] || exit 2
+      benchmark=true; transaction_samples=$2; shift 2 ;;
     --print-pins) print_pins=true; shift ;;
     --inventory-allow-mutations) inventory_mutations=true; shift ;;
-    --help) printf 'Usage: scripts/benchmark-qemu.sh [--distro all|arch|debian|ubuntu|fedora] [--arch x86_64|aarch64] [--release vVERSION] [--staged-dir DIR] [--evidence-dir DIR] [--benchmark] [--print-pins] [--inventory-tiers CSV] [--inventory-allow-mutations]\nRuns sequential disposable KVM guests with pinned images, reboot, sudo, package lifecycle and optional warm read-query timing. Guests run the host architecture by default (--arch overrides, but KVM cannot cross architectures, so a mismatch fails closed instead of silently emulating). With --inventory-tiers, drives tests/cli_behavior_inventory.tsv rows over SSH after a passing lifecycle (see scripts/qemu-inventory.sh). --print-pins lists the pinned guest images without booting anything. Requires Docker, KVM, jq, coreutils; published downloads need gh and benchmarks need Python 3. No compilation or host package changes.\n'; exit 0 ;;
+    --help) printf 'Usage: scripts/benchmark-qemu.sh [--distro all|arch|debian|ubuntu|fedora] [--arch x86_64|aarch64] [--release vVERSION] [--staged-dir DIR] [--evidence-dir DIR] [--benchmark] [--benchmark-transactions COUNT] [--print-pins] [--inventory-tiers CSV] [--inventory-allow-mutations]\nRuns sequential disposable KVM guests with pinned images, reboot, sudo, package lifecycle and optional warm read-query timing. Guests run the host architecture by default (--arch overrides, but KVM cannot cross architectures, so a mismatch fails closed instead of silently emulating). With --inventory-tiers, drives tests/cli_behavior_inventory.tsv rows over SSH after a passing lifecycle (see scripts/qemu-inventory.sh). --benchmark-transactions COUNT additionally runs independently reset install/remove trials (1-100 per tool). --print-pins lists the pinned guest images without booting anything. Requires Docker, KVM, jq, coreutils; published downloads need gh and benchmarks need Python 3. No compilation or host package changes.\n'; exit 0 ;;
     *) printf 'error: unknown argument %s\n' "$1" >&2; exit 2 ;;
   esac
 done
@@ -151,6 +155,7 @@ if [[ "$distro" == all ]]; then
   args=(--release "$tag" --arch "$arch")
   [[ -z "$staged_dir" ]] || args+=(--staged-dir "$staged_dir")
   [[ "$benchmark" == false ]] || args+=(--benchmark)
+  [[ "$transaction_samples" == 0 ]] || args+=(--benchmark-transactions "$transaction_samples")
   [[ -z "$inventory_tiers" ]] || args+=(--inventory-tiers "$inventory_tiers")
   [[ "$inventory_mutations" == false ]] || args+=(--inventory-allow-mutations)
   jq -n --arg source "$source_kind" --arg suffix "$case_suffix" '["arch", "debian", "ubuntu", "fedora"] | map({case_id:("qemu-"+.+$suffix+"-lifecycle"), distro:., result:"NOT_RUN", artifact_source:$source, exit_code:null, elapsed_seconds:0})' > "$suite/results.json"
@@ -174,18 +179,27 @@ controller="omg-qemu-${work##*/}"
 printf 'Starting %s (%s). Evidence: %s\n' "$distro" "$arch" "$work"
 result=HARNESS_ERROR
 cleanup() {
-  local rc=$? remaining
+  local rc=$? remaining safe_to_remove=true
   trap - EXIT
   if [[ ${started:-false} == true ]]; then
+    safe_to_remove=false
     timeout --kill-after=5s 60s docker rm --force "$controller" >> "$work/cleanup.log" 2>&1 || { rc=3; result=HARNESS_ERROR; }
     if remaining=$(timeout 15 docker ps -aq --filter "name=^/${controller}$") && [[ -z "$remaining" ]]; then
       printf 'verified absent: %s\n' "$controller" >> "$work/cleanup.log"
+      safe_to_remove=true
     else rc=3; result=HARNESS_ERROR; fi
   fi
+  if [[ "$safe_to_remove" == true ]]; then
+  # Only the stopped controller's owned disposable disks live here, not evidence.
+  rm -rf "$work/guest/transaction-disks" || { rc=3; result=HARNESS_ERROR; }
+  [[ ! -e "$work/guest/transaction-disks" ]] || { rc=3; result=HARNESS_ERROR; }
   rm -f "$work/guest"/{client-key,guest-host-key,user-data,seed.img,overlay.qcow2,base.qcow2,vars.fd,qemu.pid} || { rc=3; result=HARNESS_ERROR; }
   for file in client-key guest-host-key user-data seed.img overlay.qcow2 base.qcow2 vars.fd qemu.pid; do
     if [[ -e "$work/guest/$file" ]]; then rc=3; result=HARNESS_ERROR; fi
   done
+  else
+    printf 'Controller absence unverified; preserving guest disks and keys\n' >> "$work/cleanup.log"
+  fi
   if [[ "$rc" -ne 0 && "$result" == PASS ]]; then result=HARNESS_ERROR; fi
   jq -n --arg distro "$distro" --arg case_id "$case_id" --arg result "$result" --arg source "$source_kind" --argjson rc "$rc" --argjson elapsed "$SECONDS" \
     '[{case_id:$case_id,distro:$distro,result:$result,artifact_source:$source,exit_code:$rc,elapsed_seconds:$elapsed}]' > "$work/results.json"
@@ -264,6 +278,17 @@ cat > "$work/boot.sh" <<'BOOT'
 #!/usr/bin/env bash
 set -euo pipefail
 cd /work/guest
+initial=true
+vm_disk=overlay.qcow2; vm_vars=vars.fd; vm_serial=serial.log
+if [[ $# == 9 ]]; then
+  initial=false
+  vm_disk=$7; vm_vars=$8; vm_serial=$9
+  [[ "$vm_disk" =~ ^/work/guest/transaction-disks/[a-z0-9-]+\.qcow2$ && -f "$vm_disk" ]] || exit 2
+  [[ "$vm_vars" =~ ^/work/guest/transaction-disks/[a-z0-9-]+\.fd$ ]] || exit 2
+  [[ "$vm_serial" == /work/transactions/* && "$vm_serial" != *'/../'* ]] || exit 2
+elif [[ $# != 6 ]]; then exit 2; fi
+[[ ! -e qemu.pid ]] || exit 2
+if [[ "$initial" == true ]]; then
 ssh-keygen -q -t ed25519 -N '' -f client-key
 ssh-keygen -q -t ed25519 -N '' -f guest-host-key
 {
@@ -281,14 +306,16 @@ cat guest-host-key.pub >> known_hosts
 cloud-localds seed.img user-data meta-data
 qemu-img create -f qcow2 -F qcow2 -b /work/guest/base.qcow2 overlay.qcow2
 qemu-img resize overlay.qcow2 12G
+fi
 firmware=()
 if [[ "$1" == uefi ]]; then
-  cp "$4" vars.fd
-  firmware=(-drive if=pflash,format=raw,readonly=on,file="$3" -drive if=pflash,format=raw,file=vars.fd)
+  if [[ "$initial" == true ]]; then cp "$4" "$vm_vars"; fi
+  [[ -f "$vm_vars" ]] || exit 2
+  firmware=(-drive if=pflash,format=raw,readonly=on,file="$3" -drive if=pflash,format=raw,file="$vm_vars")
 fi
 "$5" -machine "$6,accel=kvm" -cpu host -smp 2 -m 1536 \
-  "${firmware[@]}" -display none -serial file:serial.log \
-  -drive file=overlay.qcow2,if=virtio,format=qcow2 -drive file=seed.img,if=virtio,format=raw \
+  "${firmware[@]}" -display none -serial "file:$vm_serial" \
+  -drive "file=$vm_disk,if=virtio,format=qcow2" -drive file=seed.img,if=virtio,format=raw \
   -netdev user,id=n,ipv6=off,hostfwd=tcp:127.0.0.1:2222-:22 -device virtio-net-pci,netdev=n \
   -daemonize -pidfile qemu.pid
 opts=(-i client-key -p 2222 -o BatchMode=yes -o ConnectTimeout=2 -o ServerAliveInterval=5 -o ServerAliveCountMax=3 -o StrictHostKeyChecking=yes -o UserKnownHostsFile=known_hosts)
@@ -301,7 +328,8 @@ wait_ssh() {
   return 1
 }
 wait_ssh
-timeout 180 ssh "${opts[@]}" bench@127.0.0.1 'cloud-init status --wait; cat /etc/os-release; uname -r; sudo -n true'
+timeout 180 ssh "${opts[@]}" bench@127.0.0.1 'cloud-init status --wait && cat /etc/os-release && uname -r && sudo -n true'
+if [[ "$initial" == false ]]; then exit 0; fi
 ssh "${opts[@]}" bench@127.0.0.1 "sudo -n systemctl enable '$2'"
 before=$(ssh "${opts[@]}" bench@127.0.0.1 cat /proc/sys/kernel/random/boot_id)
 ssh "${opts[@]}" bench@127.0.0.1 'sudo -n systemctl reboot' || true
@@ -325,6 +353,10 @@ fi
 if [[ "$benchmark" == true ]]; then
   cp "$here/../benchmark-hyperfine.sh" "$work/benchmark-hyperfine.sh"
   cp "$here/record-benchmark-run.py" "$work/record-benchmark-run.py"
+  if [[ "$transaction_samples" != 0 ]]; then
+    cp "$here/qemu-transactions.sh" "$work/qemu-transactions.sh"
+    sha256sum "$work/qemu-transactions.sh" > "$work/transaction-runner-sha256.txt"
+  fi
   sha256sum "$work/benchmark-hyperfine.sh" "$work/record-benchmark-run.py" > "$work/benchmark-driver-sha256.txt"
 fi
 cat > "$work/guest-check.sh" <<'GUEST'
@@ -484,6 +516,65 @@ if [[ "$benchmark" == true && "$rc" == 0 ]]; then
     done
   ) > "$work/benchmark-validation.log" 2>&1; then
     printf 'Benchmark evidence rejected; see %s/benchmark-validation.log\n' "$work" >&2
+    rc=120
+  fi
+fi
+if [[ "$transaction_samples" != 0 && "$rc" == 0 ]]; then
+  transaction_rc=0
+  timeout --kill-after=10s 21600 docker exec -w /work "$controller" bash /work/qemu-transactions.sh \
+    "$distro" "$tag" "$arch" "$transaction_samples" "$firmware" "$ssh_service" \
+    "$firmware_code" "$firmware_vars_src" "$qemu_bin" "$qemu_machine" \
+    > "$work/transactions.log" 2>&1 || transaction_rc=$?
+  if [[ "$transaction_rc" != 0 ]]; then
+    rc=120
+  elif ! (
+    summary="$work/transactions/summary.json"
+    [[ -f "$summary" && $(wc -c < "$summary") -le 1048576 ]] || exit 1
+    jq -e --arg distro "$distro" --argjson count "$transaction_samples" '
+      . as $s |
+      ([range(1;$count+1) as $round |
+        ["install-omg-","install-native-","remove-omg-","remove-native-"][] |
+        .+(("000"+($round|tostring))[-3:])] | sort) as $expected |
+      .schema_version==1 and .kind=="transaction-suite" and .complete==true and
+      .distro==$distro and .samples_per_tool==$count and .expected_trials==($count*4) and
+      (.bases.install|test("^[0-9a-f]{64}$")) and (.bases.remove|test("^[0-9a-f]{64}$")) and
+      ([.results[].id]|sort)==$expected and
+      ([.results[].boot_id]|unique|length)==($count*4) and
+      all(.results[];.result=="PASS" and .exit_code==0 and
+        (.boot_id|test("^[0-9a-f-]{36}$")) and .base_sha256==$s.bases[.operation] and
+        .id==(.operation+"-"+.tool+"-"+(("000"+(.round|tostring))[-3:])))
+    ' "$summary" >/dev/null || exit 1
+    expected_version=$(awk '$1=="Version:" {print $2}' "$work/guest/evidence/omg-info.txt")
+    [[ "$(<"$work/transactions/expected-version.txt")" == "$expected_version" ]] || exit 1
+    read -r expected_binary _ < "$work/guest/evidence/benchmarks/binary-sha256.txt"
+    for operation in install remove; do
+      for tool in omg native; do
+        label_name=OMG
+        if [[ "$tool" == native ]]; then
+          case "$distro" in arch) label_name=pacman ;; debian|ubuntu) label_name=apt ;; fedora) label_name=dnf ;; esac
+        fi
+        for ((round=1;round<=transaction_samples;round++)); do
+          printf -v trial_id '%s-%s-%03d' "$operation" "$tool" "$round"
+          evidence="$work/transactions/trials/$trial_id/transaction-trial"
+          python3 "$work/record-benchmark-run.py" --validate-only --scenario "$operation" --source "$evidence" || exit 1
+          read -r actual_binary _ < "$evidence/binary-sha256.txt"
+          [[ "$actual_binary" == "$expected_binary" ]] || exit 1
+          jq -e --arg label_name "$label_name" '
+            .results|length==1 and .[0].command==$label_name and (.[0].times|length)==1
+          ' "$evidence/$operation.json" >/dev/null || exit 1
+          jq -e --arg distro "$distro" --arg operation "$operation" --arg tool "$tool" \
+            --arg version "$expected_version" --arg label_name "$label_name" --arg id "$trial_id" \
+            --slurpfile suite "$summary" '
+            .schema_version==1 and .kind=="transaction-trial" and .complete==true and
+            .distro==$distro and .operation==$operation and .tool==$tool and .expected_version==$version and
+            .boot_id==([$suite[0].results[]|select(.id==$id)][0].boot_id) and
+            .state_change_verified==true and .samples==1 and .warmup==0 and .command.label==$label_name and
+            (.command.argv|type=="array" and length>0 and all(.[];type=="string"))
+          ' "$evidence/summary.json" >/dev/null || exit 1
+        done
+      done
+    done
+  ) > "$work/transaction-validation.log" 2>&1; then
     rc=120
   fi
 fi
