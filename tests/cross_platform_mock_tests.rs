@@ -470,28 +470,31 @@ mod edge_cases {
     }
 
     #[tokio::test]
-    #[serial]
     async fn test_empty_package_list() -> Result<()> {
-        let pm = MockPackageManager::debian();
+        let directory = TempDir::new()?;
+        let pm = MockBackend::new_in("debian", directory.path());
+        pm.install(&["git".to_string(), "apt".to_string()]).await?;
+        let before: std::collections::BTreeMap<_, _> = pm
+            .list_installed()
+            .await?
+            .into_iter()
+            .map(|package| (package.name, package.version.to_string()))
+            .collect();
+        assert_eq!(before.len(), 2);
 
-        // Start from a known point: git is absent.
-        pm.remove(&["git".to_string()]).await?;
-
-        // Empty batches are accepted as no-ops...
-        pm.install(&[]).await?;
-        pm.remove(&[]).await?;
-
-        // ...and must not have touched any package state.
-        assert!(
-            !pm.is_installed("git").await.unwrap(),
-            "empty install batch must not install anything"
-        );
-        assert_eq!(
-            pm.list_installed().await?.len(),
-            0,
-            "empty batches must leave the installed set unchanged"
-        );
-
+        for (name, operation) in [("install", pm.install(&[])), ("remove", pm.remove(&[]))] {
+            operation.await?;
+            let after: std::collections::BTreeMap<_, _> = pm
+                .list_installed()
+                .await?
+                .into_iter()
+                .map(|package| (package.name, package.version.to_string()))
+                .collect();
+            assert_eq!(
+                after, before,
+                "empty {name} must preserve installed packages"
+            );
+        }
         Ok(())
     }
 }
