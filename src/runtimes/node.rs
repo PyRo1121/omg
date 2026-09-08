@@ -178,7 +178,7 @@ impl NodeManager {
         println!("{} Extracting (pure Rust)...", style::informative("→"));
         let staging = begin_staged_install(&self.versions_dir)?;
         extract_tar_xz(&download_path, staging.path(), 1).await?;
-        complete_staged_install(&staging, &version_dir, &version)?;
+        self.publish_install(&staging, &version)?;
 
         remove_file_best_effort(&download_path, "runtime archive");
 
@@ -186,6 +186,11 @@ impl NodeManager {
         self.use_version(&version)?;
 
         Ok(())
+    }
+
+    fn publish_install(&self, staging: &tempfile::TempDir, version: &str) -> Result<()> {
+        super::common::require_regular_file(&staging.path().join("bin/node"))?;
+        complete_staged_install(staging, &self.versions_dir.join(version), version)
     }
 
     /// Resolve a partial version request (`20`, `20.1`) to the newest matching
@@ -286,6 +291,27 @@ pub(crate) fn get_lts_name(version: &NodeVersion) -> Option<&str> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn incomplete_node_install_is_not_published_and_can_be_retried() -> Result<()> {
+        let directory = tempfile::tempdir()?;
+        let manager = NodeManager {
+            versions_dir: directory.path().to_path_buf(),
+            client: download_client(),
+        };
+        let staging = begin_staged_install(directory.path())?;
+        assert!(manager.publish_install(&staging, "22.0.0").is_err());
+        assert!(!directory.path().join("22.0.0").exists());
+        assert!(manager.list_installed()?.is_empty());
+        drop(staging);
+
+        let staging = begin_staged_install(directory.path())?;
+        fs::create_dir(staging.path().join("bin"))?;
+        fs::write(staging.path().join("bin/node"), "fixture")?;
+        manager.publish_install(&staging, "22.0.0")?;
+        assert_eq!(manager.list_installed()?, vec!["22.0.0"]);
+        Ok(())
+    }
 
     #[test]
     fn test_node_manager_new() {
