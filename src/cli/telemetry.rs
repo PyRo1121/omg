@@ -497,6 +497,13 @@ mod tests {
     #[test]
     #[serial_test::serial]
     fn opt_out_api_purges_the_queue_and_is_idempotent() {
+        if crate::core::is_root() {
+            // Elevated processes resolve the data directory to /var/lib/omg
+            // regardless of OMG_DATA_DIR, so this fixture-based purge test is
+            // only meaningful unprivileged (root containers skip it).
+            eprintln!("skipped: opt-out purge fixture requires an unprivileged process");
+            return;
+        }
         let directory = tempfile::tempdir().expect("temp directory");
         let data_dir = directory.path().join("data");
         let config_dir = directory.path().join("config");
