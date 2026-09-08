@@ -879,6 +879,37 @@ mod tests {
         );
     }
 
+    #[tokio::test]
+    async fn sudo_shaped_payload_stderr_does_not_authorize_retry() {
+        let (_directory, sudo, log) = fake_sudo(0, 1);
+        let script = format!(
+            "#!/bin/sh\nprintf '%s\\n' \"$*\" >> '{}'\n\
+             if [ \"$1\" = '-n' ] && [ \"$2\" = '-v' ]; then exit 0; fi\n\
+             printf 'sudo: unable to execute /proc/710/exe: Permission denied\\n' >&2\n\
+             exit 1\n",
+            log.display()
+        );
+        std::fs::write(&sudo, script).expect("write sudo-shaped failure fixture");
+        let status = sudo_payload_status_in(
+            &sudo,
+            std::path::PathBuf::from("/proc/710/exe"),
+            false,
+            &["sync"],
+        )
+        .await
+        .expect("fake sudo executes");
+        assert_eq!(status.code(), Some(1));
+        let invocations = std::fs::read_to_string(log).expect("read invocation log");
+        assert_eq!(
+            invocations.lines().collect::<Vec<_>>(),
+            vec![
+                "-n -v".to_string(),
+                format!("-n -- /proc/710/exe {ELEVATED_MARKER} sync")
+            ],
+            "stderr wording must not trigger a second payload"
+        );
+    }
+
     #[test]
     fn privileged_program_dev_mode_rejection_is_actionable() {
         let error = reject_privileged_program_in_dev_mode(true, "apt-get", &["update"])
