@@ -144,6 +144,9 @@ async fn run_with_status_path(
     fast_status_path: PathBuf,
 ) -> Result<()> {
     let shutdown_token = CancellationToken::new();
+    let _cancel_on_drop = shutdown_token.clone().drop_guard();
+    let mut workers = tokio::task::JoinSet::new();
+    let mut connections = tokio::task::JoinSet::new();
     let (internal_failure_tx, mut internal_failure_rx) =
         tokio::sync::mpsc::unbounded_channel::<String>();
 
@@ -158,7 +161,7 @@ async fn run_with_status_path(
     let shutdown_trigger = shutdown_token.clone();
     let health_failure_tx = internal_failure_tx.clone();
 
-    let worker_handle = tokio::spawn(async move {
+    workers.spawn(async move {
         tracing::info!("Background status worker started");
 
         async fn refresh_status(state: &Arc<DaemonState>, fast_status_path: &std::path::Path) {
@@ -338,23 +341,7 @@ async fn run_with_status_path(
         }
     });
 
-    // Observe the singleton worker: an unobserved panic would silently freeze
-    // every status-refresh and cache-pre-warm path, so count the failure and
-    // shut down cleanly rather than serving stale data forever.
-    {
-        let state_monitor = Arc::clone(&state);
-        let shutdown_monitor = shutdown_token.clone();
-        let worker_failure_tx = internal_failure_tx;
-        tokio::spawn(async move {
-            if let Err(error) = worker_handle.await {
-                state_monitor.inc_background_worker_failures();
-                let failure = format!("Background status worker terminated unexpectedly: {error}");
-                tracing::error!("{failure}; initiating shutdown");
-                let _ = worker_failure_tx.send(failure);
-                shutdown_monitor.cancel();
-            }
-        });
-    }
+    drop(internal_failure_tx);
 
     tracing::info!("Daemon ready, binary IPC enabled");
 
@@ -366,11 +353,28 @@ async fn run_with_status_path(
     tokio::pin!(termination_signal);
 
     let mut internal_failure = None;
+    let intake_result: Result<()> = async {
     loop {
         tokio::select! {
             // biased: always check shutdown signal first to avoid accepting
             // new connections after shutdown was requested
             biased;
+
+            Some(result) = workers.join_next() => {
+                if let Err(error) = result {
+                    state.inc_background_worker_failures();
+                    internal_failure = Some(format!("Background status worker failed: {error}"));
+                } else if !shutdown_token.is_cancelled() {
+                    internal_failure = Some("Background status worker stopped unexpectedly".into());
+                }
+                break;
+            }
+
+            Some(result) = connections.join_next(), if !connections.is_empty() => {
+                if let Err(error) = result {
+                    tracing::error!("Client task failed: {error}");
+                }
+            }
 
             Some(failure) = internal_failure_rx.recv() => {
                 internal_failure = Some(failure);
@@ -439,7 +443,7 @@ async fn run_with_status_path(
                     continue;
                 };
 
-                tokio::spawn(async move {
+                connections.spawn(async move {
                     // Held until the task completes; Drop releases the permit.
                     let _permit = permit;
                     tokio::select! {
@@ -460,7 +464,65 @@ async fn run_with_status_path(
         }
     }
 
+    Ok(())
+    }.await;
+    let shutdown_result = drain_daemon_tasks(
+        &shutdown_token,
+        &mut workers,
+        &mut connections,
+        Duration::from_secs(30),
+    )
+    .await;
+    if intake_result.is_err()
+        && let Err(error) = &shutdown_result
+    {
+        tracing::error!("Additional daemon shutdown failure: {error:#}");
+    }
+    intake_result?;
+    shutdown_result?;
+    if internal_failure.is_none() {
+        internal_failure = internal_failure_rx.try_recv().ok();
+    }
     daemon_shutdown_result(internal_failure)
+}
+
+async fn drain_daemon_tasks(
+    cancellation: &CancellationToken,
+    workers: &mut tokio::task::JoinSet<()>,
+    connections: &mut tokio::task::JoinSet<()>,
+    deadline: Duration,
+) -> Result<()> {
+    cancellation.cancel();
+    let drained = tokio::time::timeout(deadline, async {
+        let mut failure = None;
+        while let Some(result) = workers.join_next().await {
+            if let Err(error) = result {
+                failure = Some(error);
+            }
+        }
+        while let Some(result) = connections.join_next().await {
+            if let Err(error) = result {
+                failure = Some(error);
+            }
+        }
+        match failure {
+            Some(error) => {
+                Err(anyhow::anyhow!(error).context("Daemon task failed during shutdown"))
+            }
+            None => Ok(()),
+        }
+    })
+    .await;
+    match drained {
+        Ok(result) => result,
+        Err(_) => {
+            workers.shutdown().await;
+            connections.shutdown().await;
+            anyhow::bail!(
+                "Daemon shutdown exceeded its deadline; nested blocking work may still be running"
+            )
+        }
+    }
 }
 
 /// Maximum request size to prevent `DoS` attacks. This also bounds the sole
@@ -750,6 +812,57 @@ async fn handle_client_with_idle_timeout(
 
 #[cfg(test)]
 mod tests {
+    #[tokio::test]
+    async fn shutdown_waits_for_owned_work_to_finish() {
+        let cancellation = tokio_util::sync::CancellationToken::new();
+        let token = cancellation.clone();
+        let (release, pending) = tokio::sync::oneshot::channel::<()>();
+        let mut workers = tokio::task::JoinSet::new();
+        let mut connections = tokio::task::JoinSet::new();
+        let finished = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let marker = finished.clone();
+        workers.spawn(async move {
+            pending.await.unwrap();
+            marker.store(true, std::sync::atomic::Ordering::SeqCst);
+        });
+        connections.spawn(async move { token.cancelled().await });
+        let shutdown_token = cancellation.clone();
+        let shutdown = tokio::spawn(async move {
+            super::drain_daemon_tasks(
+                &shutdown_token,
+                &mut workers,
+                &mut connections,
+                std::time::Duration::from_secs(5),
+            )
+            .await?;
+            assert!(workers.is_empty() && connections.is_empty());
+            Ok::<_, anyhow::Error>(())
+        });
+        cancellation.cancelled().await;
+        assert!(!shutdown.is_finished());
+        release.send(()).unwrap();
+        shutdown.await.unwrap().unwrap();
+        assert!(finished.load(std::sync::atomic::Ordering::SeqCst));
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn shutdown_deadline_is_reported_as_failure() {
+        let cancellation = tokio_util::sync::CancellationToken::new();
+        let mut workers = tokio::task::JoinSet::new();
+        let mut connections = tokio::task::JoinSet::new();
+        workers.spawn(std::future::pending::<()>());
+        let error = super::drain_daemon_tasks(
+            &cancellation,
+            &mut workers,
+            &mut connections,
+            std::time::Duration::from_secs(1),
+        )
+        .await
+        .unwrap_err();
+        assert!(error.to_string().contains("exceeded its deadline"));
+        assert!(workers.is_empty() && connections.is_empty());
+    }
+
     use super::super::protocol::{
         PackageInfo, ResponseResult, SearchResult, SecurityAuditResult, WirePackageSource,
     };

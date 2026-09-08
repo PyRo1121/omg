@@ -239,6 +239,7 @@ if [[ "$arch" == aarch64 && -z "$staged_dir" ]]; then
   exit 3
 fi
 for tool in docker timeout sha256sum; do command -v "$tool" >/dev/null || exit 3; done
+[[ "$benchmark" == false ]] || { command -v python3 >/dev/null || exit 3; }
 [[ -n "$staged_dir" ]] || { command -v gh >/dev/null || exit 3; }
 timeout --kill-after=2s 15s docker version --format '{{.Server.Version}}' > "$work/engine-preflight.log" 2>&1 || exit 3
 { date -u; uname -a; cat /proc/loadavg; grep -E 'MemTotal|MemAvailable|SwapFree' /proc/meminfo; } > "$work/host-metadata.txt"
@@ -323,7 +324,8 @@ if [[ -n "$inventory_tiers" ]]; then
 fi
 if [[ "$benchmark" == true ]]; then
   cp "$here/../benchmark-hyperfine.sh" "$work/benchmark-hyperfine.sh"
-  sha256sum "$work/benchmark-hyperfine.sh" > "$work/benchmark-driver-sha256.txt"
+  cp "$here/record-benchmark-run.py" "$work/record-benchmark-run.py"
+  sha256sum "$work/benchmark-hyperfine.sh" "$work/record-benchmark-run.py" > "$work/benchmark-driver-sha256.txt"
 fi
 cat > "$work/guest-check.sh" <<'GUEST'
 #!/usr/bin/env bash
@@ -451,6 +453,27 @@ guest_rc=$(<"$work/guest/evidence/exit-code")
 if [[ ! "$guest_rc" =~ ^[0-9]+$ || "$guest_rc" != "$rc" ]]; then
   printf 'Guest exit %s differs from transport exit %s\n' "$guest_rc" "$rc" >&2
   exit 3
+fi
+if [[ "$benchmark" == true && "$rc" == 0 ]]; then
+  case "$distro" in
+    arch) expected_commands='["OMG","pacman"]' ;;
+    debian|ubuntu) expected_commands='["OMG","apt-cache","apt"]' ;;
+    fedora) expected_commands='["OMG","rpm","dnf"]' ;;
+  esac
+  benchmark_evidence="$work/guest/evidence/benchmarks"
+  if ! (
+    [[ -f "$benchmark_evidence/summary.json" && $(wc -c < "$benchmark_evidence/summary.json") -le 1048576 ]] || exit 1
+    python3 "$work/record-benchmark-run.py" --validate-only --scenario info --source "$benchmark_evidence" || exit 1
+    jq -e --arg distro "$distro" --argjson expected "$expected_commands" '
+      .schema_version == 1 and .complete == true and .distro == $distro and
+      .operation == "info" and .package == "tree" and .daemon == "disabled" and
+      .commands == $expected' "$benchmark_evidence/summary.json" >/dev/null || exit 1
+    jq -e --argjson expected "$expected_commands" '[.results[].command] == $expected' \
+      "$benchmark_evidence/info.json" >/dev/null
+  ) > "$work/benchmark-validation.log" 2>&1; then
+    printf 'Benchmark evidence rejected; see %s/benchmark-validation.log\n' "$work" >&2
+    rc=120
+  fi
 fi
 inventory_harness_error=false
 if [[ -n "$inventory_tiers" ]]; then

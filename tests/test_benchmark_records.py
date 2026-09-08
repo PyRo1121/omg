@@ -56,6 +56,30 @@ class BenchmarkAdmissionTests(unittest.TestCase):
             json.dumps({"results": results}), encoding="utf-8"
         )
 
+    def test_scoped_validation_does_not_create_records(self) -> None:
+        scripts = self.source / "scripts"
+        scripts.mkdir()
+        original = Path(__file__).resolve().parents[1] / "scripts/record-benchmark-run.py"
+        script = scripts / original.name
+        shutil.copyfile(original, script)
+        self.write_results(measurement("OMG", 0.1), measurement("rpm", 0.01))
+        (self.source / "search.json").rename(self.source / "info.json")
+        result = subprocess.run(
+            [sys.executable, str(script), "--validate-only", "--scenario", "info",
+             "--source", str(self.source)],
+            cwd=self.source, capture_output=True, text=True, check=False, timeout=10,
+        )
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertFalse((self.source / "benchmarks").exists())
+
+    def test_rejects_malformed_json_without_exception(self) -> None:
+        (self.source / "search.json").write_text("{", encoding="utf-8")
+        self.assertTrue(self.recorder.validate_results(self.source))
+
+    def test_rejects_oversized_measurement_file(self) -> None:
+        (self.source / "search.json").write_bytes(b" " * 1048577)
+        self.assertTrue(self.recorder.validate_results(self.source))
+
     def test_missing_hyperfine_never_runs_substitute_timer(self) -> None:
         tools = self.source / "tools"
         tools.mkdir()

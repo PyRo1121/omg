@@ -181,7 +181,7 @@ def parse_measurement(value: object) -> Measurement:
     return Measurement(command, samples, tuple(codes))
 
 
-def validate_results(source: Path) -> list[str]:
+def validate_results(source: Path, required: tuple[str, ...] = ()) -> list[str]:
     """Check samples and exits without requiring a preferred performance outcome."""
     errors: list[str] = []
     present = [name for name in SCENARIOS if (source / f"{name}.json").is_file()]
@@ -189,16 +189,22 @@ def validate_results(source: Path) -> list[str]:
         errors.append(f"no hyperfine JSON in {source}")
         return errors
 
-    search = load_json(source / "search.json")
-    # `--update` archives only update.json. Require search.json for every
-    # other recorded set so incomplete search runs still fail closed.
-    update_only = present == ["update"]
-    if search is None and not update_only:
-        errors.append(f"search.json missing in {source}")
-        return errors
+    expected = required or (() if present == ["update"] else ("search",))
+    for name in expected:
+        if name not in present:
+            errors.append(f"{name}.json missing in {source}")
 
     for name in present:
-        payload: object = load_json(source / f"{name}.json")
+        try:
+            with (source / f"{name}.json").open("rb") as handle:
+                content = handle.read(1048577)
+            if len(content) > 1048576:
+                errors.append(f"{name}: measurement file exceeds 1 MiB")
+                continue
+            payload: object = json.loads(content)
+        except (OSError, UnicodeError, ValueError) as error:
+            errors.append(f"{name}: cannot read measurements: {error}")
+            continue
         if not isinstance(payload, dict):
             errors.append(f"{name}: expected an object")
             continue
@@ -309,7 +315,16 @@ def main() -> int:
         default="benchmark_results",
         help="Directory containing hyperfine JSON/MD (default: benchmark_results)",
     )
+    mode = parser.add_mutually_exclusive_group()
+    mode.add_argument(
+        "--validate-only", action="store_true",
+        help="Check measurements without creating records or changing metadata",
+    )
     parser.add_argument(
+        "--scenario", action="append", choices=SCENARIOS, default=[],
+        help="Require this scenario (repeatable); useful for scoped guest measurements",
+    )
+    mode.add_argument(
         "--update-gate",
         action="store_true",
         help="Also write benchmarks/summary.json from this reviewed run",
@@ -330,7 +345,7 @@ def main() -> int:
         print(f"No hyperfine output directory at {source}", file=sys.stderr)
         return 1
 
-    errors = validate_results(source)
+    errors = validate_results(source, tuple(args.scenario))
     if errors:
         print(
             "Benchmark record rejected — invalid or failed measurements:",
@@ -339,6 +354,10 @@ def main() -> int:
         for error in errors:
             print(f"  - {error}", file=sys.stderr)
         return 1
+
+    if args.validate_only:
+        print("Measurement validation passed (not a workload-equivalence assertion)")
+        return 0
 
     git = git_capture(root)
     host = host_capture()

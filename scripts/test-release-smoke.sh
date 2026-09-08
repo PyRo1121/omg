@@ -14,6 +14,55 @@ fail() {
   exit 1
 }
 
+(
+  work="$scratch/source-install"
+  mkdir -p "$work/bin" "$work/project/target/release" "$work/home"
+  printf 'stale\n' > "$work/project/target/release/omg"
+  printf 'stale\n' > "$work/project/target/release/omgd"
+  cat > "$work/bin/rustc" <<'EOF'
+#!/usr/bin/env bash
+printf 'fixture-host\n'
+EOF
+  cat > "$work/bin/cargo" <<'EOF'
+#!/usr/bin/env bash
+set -euo pipefail
+target_dir="${CARGO_TARGET_DIR:-target}"
+host="${CARGO_BUILD_TARGET:-}"
+while (($#)); do
+  case "$1" in
+    --target-dir) target_dir=$2; shift 2 ;;
+    --target) host=$2; shift 2 ;;
+    *) shift ;;
+  esac
+done
+output="$target_dir${host:+/$host}/release"
+mkdir -p "$output"
+printf 'fresh omg\n' > "$output/omg"
+printf 'fresh omgd\n' > "$output/omgd"
+EOF
+  chmod +x "$work/bin/cargo" "$work/bin/rustc"
+  export PATH="$work/bin:$PATH" HOME="$work/home"
+  export CARGO_TARGET_DIR="$work/redirected output" CARGO_BUILD_TARGET=foreign-host
+  source <(sed -n '/^build_omg()/,/^}/p' "$repo_root/install.sh")
+  header() { :; }
+  info() { :; }
+  start_spinner() { :; }
+  stop_spinner() { :; }
+  success() { :; }
+  fail_spinner() { fail "$1"; }
+  error() { fail "$1"; }
+  detect_os() { printf linux; }
+  detect_distro() { printf arch; }
+  install_binary() { cp "$1" "$2"; }
+  IS_SOURCE_INSTALL=true SCRIPT_DIR="$work/project" INSTALL_DIR="$work/installed"
+  build_omg
+  grep -qx 'fresh omg' "$INSTALL_DIR/omg" || fail 'source installer copied a stale binary'
+  grep -qx 'fresh omgd' "$INSTALL_DIR/omgd" || fail 'source installer copied a stale daemon'
+  make -f "$repo_root/Makefile" install >/dev/null
+  grep -qx 'fresh omg' "$HOME/.local/bin/omg" || fail 'make install copied a stale binary'
+  grep -qx 'fresh omgd' "$HOME/.local/bin/omgd" || fail 'make install copied a stale daemon'
+)
+
 results_file() {
   find "$1" -mindepth 2 -maxdepth 2 -name results.json -type f -print -quit
 }

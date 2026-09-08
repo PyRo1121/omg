@@ -1075,7 +1075,7 @@ impl AurClient {
         let lock_dir = self.build_dir.join("_locks");
         create_dir_as_user(&lock_dir).await?;
         let lock_path = lock_dir.join(format!("{package_base}.lock"));
-        tokio::task::spawn_blocking(move || -> Result<File> {
+        self.blocking_build_work(move || -> Result<File> {
             let file = std::fs::OpenOptions::new()
                 .create(true)
                 .read(true)
@@ -1091,7 +1091,7 @@ impl AurClient {
             Ok(file)
         })
         .await
-        .context("AUR build lock worker failed")?
+        .context("AUR build lock worker failed")
     }
 
     async fn acquire_build_lease(&self) -> Result<File> {
@@ -1106,8 +1106,13 @@ impl AurClient {
         &self,
         work: impl FnOnce() -> Result<T> + Send + 'static,
     ) -> Result<T> {
-        let _lease = self.acquire_build_lease().await?;
-        tokio::task::spawn_blocking(work).await.context("AUR blocking worker failed")?
+        let lease = self.acquire_build_lease().await?;
+        tokio::task::spawn_blocking(move || {
+            let _lease = lease;
+            work()
+        })
+        .await
+        .context("AUR blocking worker failed")?
     }
 
     #[must_use]
@@ -2098,7 +2103,8 @@ impl AurClient {
             Self::install_built_packages(&dep_packages, sudoloop).await?;
             crate::cli::modern_ui::print_success(&format!("Installed dependency: {dep}"));
         }
-        Self::ensure_dependencies_satisfied(&pkg_dir, &requested_outputs).await?;
+        self.ensure_dependencies_satisfied(&pkg_dir, &requested_outputs)
+            .await?;
 
         let _package_build_guard = package_lock.lock().await;
         let _package_build_file_guard = self.acquire_package_base_file_lock(&package).await?;
@@ -2311,7 +2317,8 @@ impl AurClient {
             Self::install_built_packages(&archives, sudoloop).await?;
             crate::cli::modern_ui::print_success(&format!("Installed dependency: {dependency}"));
         }
-        Self::ensure_dependencies_satisfied(&pkg_dir, &package_outputs).await?;
+        self.ensure_dependencies_satisfied(&pkg_dir, &package_outputs)
+            .await?;
 
         let _package_build_guard = package_lock.lock().await;
         let _package_build_file_guard = self.acquire_package_base_file_lock(package_base).await?;
@@ -3017,12 +3024,13 @@ impl AurClient {
     }
 
     async fn ensure_dependencies_satisfied(
+        &self,
         pkg_dir: &Path,
         package_outputs: &[String],
     ) -> Result<()> {
         let pkg_dir = pkg_dir.to_path_buf();
         let package_outputs = package_outputs.to_vec();
-        tokio::task::spawn_blocking(move || {
+        self.blocking_build_work(move || {
             let remaining = check_dependencies_for_outputs(&pkg_dir, &package_outputs)
                 .context("Failed to verify AUR build dependencies")?
                 .missing;
@@ -3034,7 +3042,7 @@ impl AurClient {
             Ok(())
         })
         .await
-        .context("AUR dependency verification task failed")?
+        .context("AUR dependency verification task failed")
     }
 
     async fn git_clone(&self, package: &str) -> Result<()> {
@@ -3940,7 +3948,7 @@ impl AurClient {
         let cache_key = cache_key.to_string();
         let cache_path = self.cache_path(&cache_name);
 
-        tokio::task::spawn_blocking(move || {
+        self.blocking_build_work(move || {
             let Some(cached) = Self::read_text_if_exists(&cache_path)? else {
                 return Ok(None);
             };
@@ -3954,7 +3962,7 @@ impl AurClient {
                 }),
             )
         })
-        .await?
+        .await
     }
 
     async fn write_cache_key(&self, package: &str, cache_key: &str) -> Result<()> {
@@ -3988,11 +3996,11 @@ impl AurClient {
                 anyhow::bail!("Failed to write cache key as user '{user}'");
             }
         } else {
-            tokio::task::spawn_blocking(move || {
+            self.blocking_build_work(move || {
                 std::fs::write(cache_path, cache_key)?;
-                Ok::<(), anyhow::Error>(())
+                Ok(())
             })
-            .await??;
+            .await?;
         }
         Ok(())
     }
@@ -5241,11 +5249,13 @@ mod tests {
         let (release_tx, release_rx) = std::sync::mpsc::channel();
         let (completed_tx, completed_rx) = tokio::sync::oneshot::channel::<()>();
         let worker = tokio::spawn(async move {
-            worker_client.blocking_build_work(move || {
-                started_tx.send(()).unwrap();
-                release_rx.recv().unwrap();
-                Ok(completed_tx)
-            }).await
+            worker_client
+                .blocking_build_work(move || {
+                    started_tx.send(()).unwrap();
+                    release_rx.recv().unwrap();
+                    Ok(completed_tx)
+                })
+                .await
         });
         started_rx.await.unwrap();
         worker.abort();
@@ -5254,7 +5264,10 @@ mod tests {
         release_tx.send(()).unwrap();
         // A dropped blocking task result releases this sender after its lease.
         assert!(completed_rx.await.is_err());
-        assert!(cleanup_while_running.is_err(), "cleanup removed an active blocking job's cache");
+        assert!(
+            cleanup_while_running.is_err(),
+            "cleanup removed an active blocking job's cache"
+        );
         client.clean_all().unwrap();
     }
 
