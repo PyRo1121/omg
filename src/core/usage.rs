@@ -769,6 +769,30 @@ mod tests {
         assert!(history.load()?.is_empty());
         assert_eq!(std::fs::metadata("/var/lib/omg/history.json")?.uid(), 0);
 
+        // Exercise storage selection, not entitlement validation, with synthetic records.
+        let mut license = crate::core::license::StoredLicense {
+            key: "caller-synthetic-only".to_string(),
+            tier: "free".to_string(),
+            features: Vec::new(),
+            customer: None,
+            expires_at: None,
+            validated_at: 0,
+            token: None,
+            machine_id: None,
+        };
+        let caller_license = caller_dir.join("license.json");
+        let license_before = serde_json::to_vec(&license)?;
+        std::fs::write(&caller_license, &license_before)?;
+        assert!(crate::core::license::load_license().is_none());
+        license.key = "system-synthetic-only".to_string();
+        std::fs::write("/var/lib/omg/license.json", serde_json::to_vec(&license)?)?;
+        assert_eq!(
+            crate::core::license::load_license()
+                .expect("root fixture license")
+                .key,
+            "system-synthetic-only"
+        );
+        assert_eq!(std::fs::read(&caller_license)?, license_before);
         assert_eq!(std::fs::read(&caller_history)?, history_before);
         assert_eq!(std::fs::read(&caller_usage)?, usage_before);
         assert!(
