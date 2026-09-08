@@ -96,6 +96,7 @@ present before the probe runs.
 - **Install**: Add interactive fuzzy package discovery
 ### 🐛 Bug Fixes
 
+- **Ci**: Keep QEMU architecture jobs in distinct concurrency groups
 - **Ci**: Express test durations in canonical units
 - **Aur**: Isolate archived index entries from mutable cache files
 - **Daemon**: Bound persisted status freshness without resetting its TTL
@@ -592,6 +593,8 @@ surfaced by the stricter toolchain
 
 ### 🧪 Testing
 
+- Keep enterprise policy fixture within supported schema
+- Fix duration units rejected by CI Clippy
 - **Debian**: Prove prefix misrouting and retain mmap exact-lookup counterevidence
 - **Privilege**: Scope archive fixture to supported backends ([#351](https://github.com/PyRo1121/omg/issues/351))
 - **Aur**: Declare fixture architecture only once ([#340](https://github.com/PyRo1121/omg/issues/340))
