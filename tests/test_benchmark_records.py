@@ -23,6 +23,8 @@ class Recorder(Protocol):
 
     def render_latest_md(self, meta: dict[str, object], source: Path) -> str: ...
 
+    def summarize_scenario(self, data: object) -> list[dict[str, object]]: ...
+
 
 def meta_fixture() -> dict[str, object]:
     return {
@@ -75,6 +77,49 @@ class BenchmarkAdmissionTests(unittest.TestCase):
         (self.source / "search.json").write_text(
             json.dumps({"results": results}), encoding="utf-8"
         )
+
+    def test_summary_keeps_single_sample_deviation_unknown(self) -> None:
+        result = measurement("OMG", 0.25)
+        result.update(times=[0.25], exit_codes=[0], stddev=None)
+        rows = self.recorder.summarize_scenario({"results": [result]})
+        self.assertEqual(rows[0]["stddev_ms"], None)
+        self.assertEqual(rows[0]["mean_ms"], 250.0)
+        self.assertEqual(rows[0]["runs"], 1)
+
+    def test_summary_preserves_slower_results_and_actual_labels(self) -> None:
+        rows = self.recorder.summarize_scenario(
+            {"results": [measurement("OMG", 0.2), measurement("apt", 0.1)]}
+        )
+        self.assertEqual([row["command"] for row in rows], ["OMG", "apt"])
+        self.assertEqual([row["mean_ms"] for row in rows], [200.0, 100.0])
+
+    def test_summary_rejects_fabricated_statistics(self) -> None:
+        result = measurement("OMG", 0.2)
+        result["mean"] = 0.001
+        with self.assertRaisesRegex(ValueError, "mean does not match"):
+            self.recorder.summarize_scenario({"results": [result]})
+
+    def test_summary_rejects_failed_receipts(self) -> None:
+        result = measurement("OMG", 0.2)
+        result["exit_codes"] = [0, 1]
+        with self.assertRaisesRegex(ValueError, "non-zero exit"):
+            self.recorder.summarize_scenario({"results": [result]})
+
+    def test_summary_rejects_missing_measurements(self) -> None:
+        with self.assertRaisesRegex(ValueError, "no measurements"):
+            self.recorder.summarize_scenario({"results": []})
+
+    def test_summary_rejects_duplicate_labels(self) -> None:
+        with self.assertRaisesRegex(ValueError, "duplicate command"):
+            self.recorder.summarize_scenario(
+                {"results": [measurement("OMG", 0.1), measurement("OMG", 0.2)]}
+            )
+
+    def test_summary_rejects_unit_conversion_overflow(self) -> None:
+        result = measurement("OMG", 0.2)
+        result["user"] = 1e308
+        with self.assertRaisesRegex(ValueError, "finite"):
+            self.recorder.summarize_scenario({"results": [result]})
 
     def test_transaction_mode_refuses_unmarked_host(self) -> None:
         script = Path(__file__).resolve().parents[1] / "benchmark-hyperfine.sh"

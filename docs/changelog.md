@@ -13,6 +13,8 @@ OMG is the fastest unified package manager for Linux, replacing pacman, yay, nvm
 ## [Unreleased]
 ### Merge
 
+- Integrate Arch source and index publication fixes on current main
+- Reconcile sync-source identity with current main
 - Integrate single Debian snapshot without losing owned-buffer safety
 - Integrate audited WIP with current main fixes
 - **Main**: Keep audited cheatsheet and exact-match hook note
@@ -103,6 +105,23 @@ present before the probe runs.
 - **Install**: Add interactive fuzzy package discovery
 ### 🐛 Bug Fixes
 
+- **Arch**: Delete versioned source-identity caches on invalidate
+
+After [#364](https://github.com/PyRo1121/omg/issues/364)/[#372](https://github.com/PyRo1121/omg/issues/372), live derived caches are sync_db_source_v1.bin and
+
+local_db_source_v1.bin. invalidate_caches still removed only the
+
+legacy names, so a later process could reload a stale identity-tagged
+
+cache when the observer did not change.
+
+Remove the live files together with the leftover legacy names.
+
+- **Arch**: Observe package-directory metadata for local cache identity
+- **Daemon**: Publish index and catalog identity under one lock
+- **Arch**: Reject catalog changes observed during initialization
+- **Arch**: Fingerprint complete sync source metadata for cache reuse
+- **Arch**: Invalidate cached catalogs when observed epochs change
 - **History**: Retain delegated updates in the parent state store
 - **Privilege**: Separate root state and remove ownership handbacks
 - **Pgp**: Reject expired and future signatures
@@ -540,6 +559,7 @@ Preserve archive data and report persistence failures explicitly. Coordinate dat
 - Add published release smoke matrix
 ### 📚 Documentation
 
+- Record combined local scan verification and hot-path cost
 - **Audit**: Track privileged storage isolation review
 - **Security**: Note PGP rejects expired and future-dated signatures
 - **Audit**: Preserve review trail and presentation artifacts
@@ -622,6 +642,7 @@ Bring in the QEMU lifecycle runner, contract-driven smoke tests, failure evidenc
 
 ### 🔧 Maintenance
 
+- Checkpoint QEMU transaction follow-up
 - Checkpoint concurrent QEMU transaction and fixture work
 - Checkpoint concurrent benchmark fixture work
 - Checkpoint team and CI WIP with local identity audit evidence

@@ -14,6 +14,8 @@ and state must pass the equivalence checks before timing, not new measured resul
   with `pacman -Si`, and explicit installed packages with `pacman -Qqe`.
   Use repository-only OMG search and the same repository snapshot. `yay` is an
   optional additional comparator, not the default package-manager baseline.
+  The current guest info profile queries installed `tree` with `pacman -Qi`;
+  repository `-Si` is a distinct profile, not an interchangeable label.
 - **Debian and Ubuntu.** Report `apt search` and `apt show` as user-facing baselines.
   Also report `apt-cache search` and `apt-cache --no-all-versions show` as cached
   metadata baselines when comparing offline indexed queries. Do not pick only
@@ -295,10 +297,16 @@ For every performance record:
 - Separate warm CLI, cold process, cold daemon, and cold filesystem-cache scenarios.
   A fresh guest does not guarantee a cold host page cache. Never clear host caches
   to manufacture a cold run on this shared machine.
-- Use at least three independent fresh-guest runs for each distro. Within each
-  warm scenario, use three warmups and at least 30 samples. Preserve every sample,
-  exit code, mean, median, standard deviation, and range. Report failed assertions
-  as failures, not fast timings. Do not delete inconvenient outliers silently.
+- For warm read-query publication, use at least three independent fresh-guest
+  runs per distro, three warmups, and at least 30 samples within each run. The
+  current 20–50-sample read pilot alone does not meet that repeated-guest target.
+- For transactions, the selected budget is 20 independently reset samples per
+  tool and operation. Each guest contributes one sample, with zero warmups.
+  Repository information, installed versions, manual-install reasons, cache
+  manifests, and the base image hash are retained. Preflight warms metadata and
+  cache files; this is not a cold-cache benchmark.
+- Preserve every sample, exit code, mean, median, standard deviation, and range.
+  Failed assertions are failures, not fast timings. Do not discard outliers.
 - Run one guest and one benchmark at a time. Record host load and available memory.
   Defer performance measurements while other agents compile. Two vCPUs do not
   cap all QEMU or host I/O overhead. Do not mix KVM and software-emulation results.
@@ -309,26 +317,43 @@ For every performance record:
 warmups, preparation hooks, repeated samples, and exports. Warmup and preparation
 choices change what is measured and belong in the record.
 
-## Remaining verification gaps
+## Current candidate verification and remaining gaps
 
-The current runner covers three package probes. It reads selected registry fields
-but does not generically execute all arguments, prerequisites, assertions, and
-cleanup declarations. Exact JSON text selects a bounded executor. This is not yet
-an exhaustive registry-driven engine.
+The counter-fixed read matrix passed Arch, Debian, Ubuntu, and Fedora: 858
+Hyperfine samples across 29 command distributions, with all recorded package
+identity, version, name-set, and count checks passing. Each distro also passed
+171 executed inventory cases and retained three declaration-only skips. This
+proves the frozen candidate and selected cases, not exhaustive CLI behavior or
+release speedups. Evidence is retained in local suite `suite-RyC5fb`.
+
+The inventory executor now handles declared argument arrays, prerequisites,
+assertions, target and tier selection, and bounded execution. Coverage still
+needs to include raw-argument shortcuts outside Clap, runtime behavior, and
+credentialed or interactive cases on suitable infrastructure.
+
+`--benchmark-transactions COUNT` adds fresh-overlay install/remove trials to the
+same QEMU pipeline. The root Hyperfine driver remains the measurement owner;
+`scripts/qemu-transactions.sh` owns VM reset and trial completeness. A one-sample
+pilot must pass all four distros before the selected 20-sample matrix starts.
+Early pilots exposed evidence-copy permissions and root-owned scratch cleanup;
+their failed suite verdicts are retained rather than rewritten as passes.
+Transaction schema 2 additionally checks manual-install reasons and retains
+repository archives and cache manifests. Earlier schema-1 pilots lack that
+contract and remain diagnostic records, not publication evidence.
 
 Historical known-defect expectations are recorded separately from observed
 results. Staged candidates and published artifacts are labeled distinctly.
 Blocked declarations must never execute first and only be relabeled afterward.
 Dependency failures must identify which command was not reached.
 
-Container execution is bounded, but release lookup, downloads, and image pulls
-still need their own deadlines. Archive member validation and signature/provenance
-checks need explicit tests beyond a matching SHA-256 sidecar. Captured shell traces
-are not a general secret-redaction implementation. These are review findings,
-not claims that the missing safeguards have been implemented.
+A matching SHA-256 sidecar alone does not authenticate a publisher. Archive-member
+and signature/provenance checks need their own explicit evidence. Captured shell
+traces are not a general secret-redaction implementation. Legacy archive/report
+code still needs guest-aware labels, provenance, and single-sample rendering tests
+before generating new README claims.
 
-At the initial review Docker and `/dev/kvm` worked, but native QEMU binaries were
-unavailable. The Ubuntu runner now installs prebuilt QEMU tools in a disposable
-controller and boots the checksum-pinned 20260826 Ubuntu image. Native host QEMU
-installation is not required. Other guest targets and the full comparison protocol
-remain unimplemented. Publish only results supported by the retained run evidence.
+The shared runner installs QEMU tools inside a disposable controller; it does not
+install host packages. Use `--print-pins` for the current image references. Native
+ARM/macOS coverage remains infrastructure-dependent. Update discovery still needs
+a genuinely matched, nonempty fixture; an empty update set is not a speedup result.
+Publish only results supported by the retained evidence.

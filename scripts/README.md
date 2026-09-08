@@ -229,11 +229,43 @@ fields. The host validates sample statistics, exit receipts, requested scenarios
 and command identities. A passing measurement run is not a release speedup claim;
 these are warm-cache observations, not cold-cache or repeated-guest statistics.
 
+The experimental transaction profile adds independently reset install/remove
+samples to those read checks:
+
+```bash
+./scripts/benchmark-qemu.sh --distro all --staged-dir /path/to/artifacts \
+  --benchmark-transactions 20
+```
+
+This requests 320 sample guest boots, plus preparation and restoration. Start with
+`--benchmark-transactions 1` to verify a changed runner before collecting the full
+budget. `scripts/qemu-transactions.sh` runs inside the existing controller; do not
+invoke it as a host package-management tool. It prepares stopped disk bases,
+alternates OMG/native order, and creates a new overlay and boot identity for every
+sample. Hyperfine runs inside the guest, with one transaction and zero warmups;
+boot, SSH, preflight, and evidence collection are outside its clock.
+
+Transaction schema 2 verifies complete installed package/version and manual-reason
+sets before and after. Repository state archives, cache manifests, audit copies,
+exact arguments, binary/base hashes, and firmware hashes where applicable are
+retained. Metadata queries and cache-file hashing warm caches before timing; these
+are not cold-cache measurements. The privileged runtime state stays outside the
+unprivileged evidence directory. A root-owned guest marker prevents accidental
+host invocation of the transaction driver.
+
+`transactions/summary.json` declares every requested trial before execution.
+The host independently rejects missing, partial, failed, or identity-mismatched
+coverage. Raw files are under `transactions/trials/<operation>-<tool>-NNN/`.
+A successful one-sample pilot is correctness evidence, not a performance claim.
+
 Evidence is retained under `~/.cache/build-targets/omg-qemu-benchmark/`.
 An all-distro run produces `suite-*/<distro>/run-*` directories and aggregate
 `results.json`. Logs, raw timing samples, archive checksums, repository hashes,
 reboot proof, and cleanup receipts remain readable by the operator. Private keys
-and guest disks are deleted. Product failures and setup failures remain distinct.
+and guest disks are deleted only after controller absence is verified. If that
+check fails, state is retained for recovery and the run fails; active disks are
+never deleted to produce a clean-looking result. Product failures and setup
+failures remain distinct.
 The guest writes its own exit receipt. A missing receipt or a mismatch with the
 Docker/SSH exit status is a harness error, not a product failure or a pass.
 The optional Sentry reporter runs after timing and cleanup without uploading logs.
