@@ -13,6 +13,8 @@ OMG is the fastest unified package manager for Linux, replacing pacman, yay, nvm
 ## [Unreleased]
 ### ♻️  Refactoring
 
+- **Debian**: Separate installed flags from repository caching
+- **Debian**: Separate installed flags from repository caching
 - **Dnf**: Validate query arguments before command resolution ([#352](https://github.com/PyRo1121/omg/issues/352))
 - **Aur**: Make authorized source evidence mandatory ([#341](https://github.com/PyRo1121/omg/issues/341))
 
@@ -84,6 +86,14 @@ present before the probe runs.
 - **Install**: Add interactive fuzzy package discovery
 ### 🐛 Bug Fixes
 
+- **Aur**: Isolate archived index entries from mutable cache files
+- **Daemon**: Bound persisted status freshness without resetting its TTL
+- **Debian**: Read mutable indexes into owned validated snapshots
+- **Arch**: Invalidate cached catalogs when observed epochs change
+- **Debian**: Preserve qualified queries in mmap package lookup
+- **Privilege**: Ignore caller pacman paths in root processes
+- **Debian**: Rebuild cached indexes after package list removal
+- **Debian**: Bind FST lookup to its actual name-to-row mapping
 - **Debian**: Rebuild cached indexes after package list removal
 - **Dnf**: Bind cached inventory to RPM database generation ([#349](https://github.com/PyRo1121/omg/issues/349))
 - **Team**: Commit only the generated lockfile ([#348](https://github.com/PyRo1121/omg/issues/348))
@@ -494,6 +504,9 @@ Preserve archive data and report persistence failures explicitly. Coordinate dat
 - Add published release smoke matrix
 ### 📚 Documentation
 
+- **Audit**: Record AUR index snapshot remediation
+- **Audit**: Record Debian cache mutation remediation
+- **Audit**: Record root pacman environment remediation
 - Correct security claims and operational guidance
 - **Audit**: Preserve the 81-finding Daybreak remediation queue ([#346](https://github.com/PyRo1121/omg/issues/346))
 
@@ -565,6 +578,7 @@ surfaced by the stricter toolchain
 
 ### 🧪 Testing
 
+- **Debian**: Prove prefix misrouting and retain mmap exact-lookup counterevidence
 - **Privilege**: Scope archive fixture to supported backends ([#351](https://github.com/PyRo1121/omg/issues/351))
 - **Aur**: Declare fixture architecture only once ([#340](https://github.com/PyRo1121/omg/issues/340))
 - **Privilege**: Reject stderr-driven payload retries ([#333](https://github.com/PyRo1121/omg/issues/333))
