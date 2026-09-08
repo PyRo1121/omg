@@ -190,26 +190,6 @@ fn history_changes(updates: &[UpdateInfo]) -> Vec<crate::core::history::PackageC
         .collect()
 }
 
-/// Changes THIS process must record for an update operation.
-///
-/// Single-ownership rule: when the official upgrade was delegated to the
-/// elevated child (deferred sync), the child records the official changes and
-/// this process records only the AUR portion it builds itself. Otherwise this
-/// process performed everything and records all changes.
-fn parent_recorded_changes(
-    all_updates: &[UpdateInfo],
-    aur_packages: &[String],
-    delegated_official: bool,
-) -> Vec<crate::core::history::PackageChange> {
-    if !delegated_official {
-        return history_changes(all_updates);
-    }
-    history_changes(all_updates)
-        .into_iter()
-        .filter(|change| aur_packages.contains(&change.name))
-        .collect()
-}
-
 #[expect(clippy::fn_params_excessive_bools)] // Maps to --check / --yes / --dry-run / --no-sync
 pub async fn update(check_only: bool, yes: bool, dry_run: bool, no_sync: bool) -> Result<()> {
     let pm = get_package_manager()?;
@@ -366,11 +346,9 @@ pub async fn update(check_only: bool, yes: bool, dry_run: bool, no_sync: bool) -
     modern_ui::print_section("Installing updates");
 
     let history = crate::core::history::HistoryManager::new()?;
-    let changes = parent_recorded_changes(
-        &all_updates,
-        &aur_packages,
-        needs_deferred_sync && official_count > 0,
-    );
+    // The elevated child's store is separate; retain every change for the
+    // invoking user's history and rollback, including delegated official work.
+    let changes = history_changes(&all_updates);
     let mut installed_count = 0;
     let mut failed_count = 0;
 
@@ -497,29 +475,54 @@ mod tests {
     }
 
     #[test]
-    fn delegated_official_updates_are_recorded_by_the_child_not_twice() {
-        // Regression: with deferred elevation the child (`update` arm)
-        // records official changes; the parent must record only its own AUR
-        // portion or every official package appears twice in history.
+    fn delegated_official_updates_remain_in_the_parent_history() -> Result<()> {
+        // The elevated child now writes a separate store, so its record cannot
+        // replace the parent entry used by unprivileged history and rollback.
         let all = vec![
             update_info("linux", "core"),
             update_info("firefox", "extra"),
             update_info("paru", "aur"),
         ];
-        let aur = vec!["paru".to_string()];
+        let recorded = history_changes(&all);
 
-        let recorded = parent_recorded_changes(&all, &aur, true);
-
-        assert_eq!(recorded.len(), 1, "only the AUR change is parent-recorded");
-        assert_eq!(recorded[0].name, "paru");
+        assert_eq!(
+            recorded
+                .iter()
+                .map(|change| change.name.as_str())
+                .collect::<Vec<_>>(),
+            ["linux", "firefox", "paru"],
+            "delegation must not remove official changes from the parent store"
+        );
+        let directory = tempfile::tempdir()?;
+        let parent = crate::core::history::HistoryManager::new_in(
+            directory.path().join("user/history.json"),
+        )?;
+        let child = crate::core::history::HistoryManager::new_in(
+            directory.path().join("root/history.json"),
+        )?;
+        child.add_transaction(
+            crate::core::history::TransactionType::Update,
+            history_changes(&all[..2]),
+            true,
+        )?;
+        parent.add_transaction(
+            crate::core::history::TransactionType::Update,
+            recorded.clone(),
+            true,
+        )?;
+        let parent_history = parent.load()?;
+        assert_eq!(parent_history.len(), 1);
+        assert_eq!(parent_history[0].changes, recorded);
+        let child_history = child.load()?;
+        assert_eq!(child_history.len(), 1);
+        assert_eq!(child_history[0].changes, history_changes(&all[..2]));
+        Ok(())
     }
 
     #[test]
     fn non_delegated_updates_record_every_change_once() {
         let all = vec![update_info("linux", "core"), update_info("paru", "aur")];
-        let aur = vec!["paru".to_string()];
-
-        let recorded = parent_recorded_changes(&all, &aur, false);
+        let recorded = history_changes(&all);
 
         assert_eq!(recorded.len(), 2);
     }

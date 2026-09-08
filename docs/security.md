@@ -16,6 +16,10 @@ History, usage files, locks, and AUR metadata stay owned by the process that wri
 
 Existing user files are neither moved nor rewritten. Read existing user history without sudo; `sudo omg history` reads entries in the separate root store. There is no automatic import of user-editable history into privileged storage. Operations recorded by an unprivileged parent can still appear in that parent's history, so the root store is not a complete machine audit trail. Root and user caches may need separate refreshes.
 
+Licenses, clock high-water marks, snapshots, and audit files also use the effective-user data store. A user activation does not activate the root profile. Use `omg snapshot restore <id> --yes` without sudo for a user snapshot; package backends request elevation when needed. Explicit sudo selects the root snapshot store. Legacy root-profile files are also left untouched and require administrator review before migration.
+
+Arch update parents retain official and AUR changes in the user's history even when an elevated child records official work separately. This keeps those changes available to unprivileged history and rollback.
+
 This boundary does not authenticate all package metadata or replace the separate configuration and policy checks.
 
 ## Quick Reference
