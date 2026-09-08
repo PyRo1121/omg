@@ -371,12 +371,13 @@ impl TeamWorkspace {
         Ok(status)
     }
 
-    /// Load team status from disk
+    /// Load member status and project the authoritative configuration from team.toml.
+    /// Reading does not rewrite the persisted snapshot or change its update timestamp.
     pub fn load_status(&self) -> Result<TeamStatus> {
         Self::validate_config_dir(&self.root)?;
         let path = self.status_path();
         let content = read_regular_file(&path, "Team status")?;
-        let status: TeamStatus =
+        let mut status: TeamStatus =
             serde_json::from_str(&content).context("Failed to parse team status")?;
         if status.format_version > TeamStatus::STATUS_FORMAT_VERSION {
             anyhow::bail!(
@@ -385,6 +386,9 @@ impl TeamWorkspace {
                 status.format_version
             );
         }
+        // The embedded config is a historical snapshot, not a second authority.
+        // A read-only projection avoids rewriting member state when joining a remote.
+        status.config = Self::load_config(&self.root)?;
         Ok(status)
     }
 
@@ -643,6 +647,70 @@ mod tests {
         assert_eq!(
             std::fs::read_to_string(config_path).expect("read original config"),
             "team_id = ["
+        );
+    }
+
+    #[test]
+    fn joined_remote_is_visible_without_rewriting_member_status() {
+        let directory = tempfile::tempdir().expect("temp dir");
+        let mut workspace = TeamWorkspace::new(directory.path()).expect("create workspace");
+        workspace.init("team", "Team").expect("initialize team");
+        let observer = TeamWorkspace::new(directory.path()).expect("create existing reader");
+        let original = std::fs::read(workspace.status_path()).expect("original status");
+        let original_status = workspace.load_status().expect("load original status");
+
+        for remote in [
+            "https://gist.github.com/example/first",
+            "https://gist.github.com/example/second",
+        ] {
+            workspace.join(remote).expect("join remote");
+            for reader in [&workspace, &observer] {
+                let status = reader.load_status().expect("load joined status");
+                assert_eq!(status.config.remote_url.as_deref(), Some(remote));
+                assert_eq!(status.members.len(), original_status.members.len());
+                assert_eq!(status.members[0].id, original_status.members[0].id);
+                assert_eq!(status.lock_hash, original_status.lock_hash);
+                assert_eq!(status.updated_at, original_status.updated_at);
+            }
+            let reloaded = TeamWorkspace::new(directory.path()).expect("reload workspace");
+            assert_eq!(
+                reloaded
+                    .load_status()
+                    .expect("reload status")
+                    .config
+                    .remote_url
+                    .as_deref(),
+                Some(remote)
+            );
+            assert_eq!(
+                std::fs::read(workspace.status_path()).expect("preserved status"),
+                original
+            );
+        }
+    }
+
+    #[test]
+    fn status_projection_rejects_forward_versions_without_rewriting() {
+        let directory = tempfile::tempdir().expect("temp dir");
+        let mut workspace = TeamWorkspace::new(directory.path()).expect("create workspace");
+        workspace.init("team", "Team").expect("initialize team");
+        let mut status = workspace.load_status().expect("initial status");
+        status.format_version = TeamStatus::STATUS_FORMAT_VERSION + 1;
+        let bytes = serde_json::to_vec(&status).expect("serialize future status");
+        std::fs::write(workspace.status_path(), &bytes).expect("write future status");
+        workspace
+            .join("https://gist.github.com/example/remote")
+            .expect("join remote");
+        assert!(
+            workspace
+                .load_status()
+                .expect_err("reject forward version")
+                .to_string()
+                .contains("newer omg")
+        );
+        assert_eq!(
+            std::fs::read(workspace.status_path()).expect("original future status"),
+            bytes
         );
     }
 
