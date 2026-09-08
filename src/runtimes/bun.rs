@@ -13,10 +13,9 @@ use std::fs;
 use std::path::{Path, PathBuf};
 
 use super::common::{
-    GITHUB_USER_AGENT, GithubRelease, activate_version, begin_staged_install,
+    GITHUB_USER_AGENT, GithubRelease, activate_version, begin_download, begin_staged_install,
     complete_staged_install, download_with_progress, extract_zip, normalize_version,
-    parse_sha256_digest, print_already_installed, print_installed, print_using,
-    remove_file_best_effort, version_cmp,
+    parse_sha256_digest, print_already_installed, print_installed, print_using, version_cmp,
 };
 use crate::{cli::style, core::http::download_client};
 
@@ -102,15 +101,14 @@ impl BunManager {
             style::informative("→"),
             version
         );
-        let download_path = self.versions_dir.join(&filename);
+        let download = begin_download(&self.versions_dir)?;
+        let download_path = download.path().join(&filename);
         download_with_progress(self.client, &url, &download_path, &checksum).await?;
 
         println!("{} Extracting (pure Rust)...", style::informative("→"));
         let staging = begin_staged_install(&self.versions_dir)?;
         extract_zip(&download_path, staging.path(), 1).await?;
         complete_staged_install(&staging, &version_dir, &version)?;
-
-        remove_file_best_effort(&download_path, "runtime archive");
 
         print_installed("Bun", &version);
         self.use_version(&version)?;

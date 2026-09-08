@@ -811,6 +811,18 @@ pub(crate) fn remove_file_best_effort(path: &Path, kind: &str) {
     }
 }
 
+/// Own download files until verification and extraction finish.
+///
+/// The versions directory must already exist. The private directory is removed
+/// on ordinary return, error, or task cancellation; concurrent installs never
+/// share an archive path even when vendors reuse the same asset filename.
+pub(crate) fn begin_download(versions_dir: &Path) -> Result<tempfile::TempDir> {
+    tempfile::Builder::new()
+        .prefix(".download-")
+        .tempdir_in(versions_dir)
+        .context("Failed to create private runtime download directory")
+}
+
 /// Begin a same-filesystem staged runtime install.
 ///
 /// Extraction writes into the returned staging directory, which only becomes
@@ -1823,6 +1835,57 @@ mod tests {
 
         extract_tar_xz(&archive_path, temp.path().join("out").as_path(), 1).await?;
         assert_eq!(fs::read(temp.path().join("out/bin/tool"))?, b"tool");
+        Ok(())
+    }
+
+    #[test]
+    fn concurrent_downloads_with_identical_names_keep_independent_contents() -> anyhow::Result<()> {
+        let versions = TempDir::new()?;
+        for filename in ["bun-linux-x64.zip", "deno-x86_64-unknown-linux-gnu.zip"] {
+            let first = begin_download(versions.path())?;
+            let second = begin_download(versions.path())?;
+            let first_path = first.path().join(filename);
+            let second_path = second.path().join(filename);
+            fs::write(&first_path, b"verified first version")?;
+            fs::write(&second_path, b"verified second version")?;
+
+            assert_ne!(first_path, second_path);
+            assert_eq!(fs::read(&first_path)?, b"verified first version");
+            assert!(list_installed_versions(versions.path())?.is_empty());
+            drop(first);
+            assert!(!first_path.exists());
+            assert_eq!(fs::read(&second_path)?, b"verified second version");
+            drop(second);
+            assert!(!second_path.exists());
+        }
+        assert_eq!(fs::read_dir(versions.path())?.count(), 0);
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn cancelled_download_removes_only_its_own_directory() -> anyhow::Result<()> {
+        let versions = TempDir::new()?;
+        let surviving = begin_download(versions.path())?;
+        let cancelled = begin_download(versions.path())?;
+        let cancelled_path = cancelled.path().to_path_buf();
+        let survivor_path = surviving.path().join("runtime.zip");
+        fs::write(&survivor_path, b"verified")?;
+        fs::write(cancelled.path().join("runtime.zip"), b"partial")?;
+        let (ready, started) = tokio::sync::oneshot::channel();
+        let task = tokio::spawn(async move {
+            let _owner = cancelled;
+            let _ = ready.send(());
+            std::future::pending::<()>().await;
+        });
+        started.await?;
+        task.abort();
+        assert!(
+            task.await
+                .expect_err("task must be cancelled")
+                .is_cancelled()
+        );
+        assert!(!cancelled_path.exists());
+        assert_eq!(fs::read(&survivor_path)?, b"verified");
         Ok(())
     }
 

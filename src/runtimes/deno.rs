@@ -9,10 +9,10 @@ use std::fs;
 use std::path::{Path, PathBuf};
 
 use super::common::{
-    GITHUB_USER_AGENT, GithubAsset, GithubRelease, activate_version, begin_staged_install,
-    complete_staged_install, download_with_progress, extract_zip, fetch_github_releases,
-    normalize_version, parse_sha256_digest, print_already_installed, print_installed, print_using,
-    remove_file_best_effort, require_regular_file, validate_download_filename, version_cmp,
+    GITHUB_USER_AGENT, GithubAsset, GithubRelease, activate_version, begin_download,
+    begin_staged_install, complete_staged_install, download_with_progress, extract_zip,
+    fetch_github_releases, normalize_version, parse_sha256_digest, print_already_installed,
+    print_installed, print_using, require_regular_file, validate_download_filename, version_cmp,
 };
 use crate::{cli::style, core::http::download_client};
 
@@ -119,7 +119,8 @@ impl DenoManager {
             style::informative("→"),
             version
         );
-        let download_path = self.versions_dir.join(&filename);
+        let download = begin_download(&self.versions_dir)?;
+        let download_path = download.path().join(&filename);
         download_with_progress(self.client, &url, &download_path, &checksum).await?;
 
         println!("{} Extracting...", style::informative("→"));
@@ -132,8 +133,6 @@ impl DenoManager {
         // real regular file before the version directory can exist at all.
         require_regular_file(&staging.path().join("bin").join("deno"))?;
         complete_staged_install(&staging, &version_dir, &version)?;
-
-        remove_file_best_effort(&download_path, "runtime archive");
 
         print_installed("Deno", &version);
         self.use_version(&version)?;
