@@ -162,88 +162,49 @@ impl PackageService {
             return self.finish_transaction(TransactionType::Install, changes, result);
         }
 
-        // Generic fallback for non-arch
-        #[cfg(not(feature = "arch"))]
-        {
-            for pkg in packages {
-                if let Some(info) = self.backend.info(pkg).await? {
-                    let grade = self
-                        .policy
-                        .assign_grade(
-                            self.vulnerability_source.as_ref(),
-                            &info.name,
-                            &info.version,
-                            true,
-                        )
-                        .await?;
-                    self.policy.check_package(&info.name, false, None, grade)?;
-
-                    changes.push(PackageChange {
-                        name: info.name,
-                        old_version: None,
-                        new_version: Some(info.version.version_string()),
-                        source: self.backend.name().to_string(),
-                    });
-                } else {
-                    anyhow::bail!("Package not found: {pkg}");
-                }
+        for pkg in packages {
+            #[cfg(feature = "arch")]
+            if let Some(local) = local_metadata.get(pkg) {
+                changes.push(PackageChange {
+                    name: local.name.clone(),
+                    old_version: None,
+                    new_version: Some(local.version.version_string()),
+                    source: "local".to_string(),
+                });
+                continue;
             }
 
-            if let Some(operation) = self.backend.transact_with_history(
-                TransactionType::Install,
-                packages,
-                self.history.as_ref(),
-            ) {
-                return operation.await;
-            }
-            let result = self.backend.install(packages).await;
-            self.finish_transaction(TransactionType::Install, changes, result)
+            let Some(info) = self.backend.info(pkg).await? else {
+                anyhow::bail!("Package not found: {pkg}");
+            };
+            let grade = self
+                .policy
+                .assign_grade(
+                    self.vulnerability_source.as_ref(),
+                    &info.name,
+                    &info.version,
+                    true,
+                )
+                .await?;
+            self.policy.check_package(&info.name, false, None, grade)?;
+
+            changes.push(PackageChange {
+                name: info.name,
+                old_version: None,
+                new_version: Some(info.version.version_string()),
+                source: self.backend.name().to_string(),
+            });
         }
 
-        // Fallback for Arch without an AUR client.
-        #[cfg(feature = "arch")]
-        {
-            for pkg in packages {
-                if let Some(local) = local_metadata.get(pkg) {
-                    changes.push(PackageChange {
-                        name: local.name.clone(),
-                        old_version: None,
-                        new_version: Some(local.version.version_string()),
-                        source: "local".to_string(),
-                    });
-                } else if let Some(info) = self.backend.info(pkg).await? {
-                    let grade = self
-                        .policy
-                        .assign_grade(
-                            self.vulnerability_source.as_ref(),
-                            &info.name,
-                            &info.version,
-                            true,
-                        )
-                        .await?;
-                    self.policy.check_package(&info.name, false, None, grade)?;
-
-                    changes.push(PackageChange {
-                        name: info.name,
-                        old_version: None,
-                        new_version: Some(info.version.version_string()),
-                        source: self.backend.name().to_string(),
-                    });
-                } else {
-                    anyhow::bail!("Package not found: {pkg}");
-                }
-            }
-
-            if let Some(operation) = self.backend.transact_with_history(
-                TransactionType::Install,
-                packages,
-                self.history.as_ref(),
-            ) {
-                return operation.await;
-            }
-            let result = self.backend.install(packages).await;
-            self.finish_transaction(TransactionType::Install, changes, result)
+        if let Some(operation) = self.backend.transact_with_history(
+            TransactionType::Install,
+            packages,
+            self.history.as_ref(),
+        ) {
+            return operation.await;
         }
+        let result = self.backend.install(packages).await;
+        self.finish_transaction(TransactionType::Install, changes, result)
     }
 
     /// Remove packages
